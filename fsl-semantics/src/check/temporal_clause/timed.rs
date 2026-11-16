@@ -6,11 +6,13 @@
 //! clock binding (ADR-026 CB-1; FSpec FR-250-AC-7), so a clause under it
 //! binds `model-time` over a timed model first: FR-233's binding, read as far
 //! as FR-234 needs it. `clock "model-time"` over a model with no time source
-//! refuses `invalid_timed_model`/`model-time-on-untimed-model`, and another
-//! clock role over a model refuses as not yet implemented. Over a record
-//! trace subject the clock is a role bound by its `timed` configuration
-//! (FR-642, FR-933): the configured unit is the binding unit, and with no
-//! configuration the check refuses `missing-clock-selection`.
+//! refuses `invalid_timed_model`/`model-time-on-untimed-model`; `clock
+//! "model-steps"` contradicts the profile and any other name is no model
+//! binding, both refused with the clause's clock (FR-233). Over a record trace
+//! subject the clock is a role bound by its `timed` configuration (FR-642,
+//! FR-933): the configured unit is the binding unit, and with no configuration
+//! the check refuses `missing-clock-selection`; `model-time` and `model-steps`
+//! there refuse as FR-642 and FR-610 "Model binding names" state.
 //!
 //! Each timed interval's bounds are time quantities converted exactly to the
 //! binding's unit (FR-233 "Intervals", through FR-230's time units), then
@@ -44,7 +46,7 @@ use crate::check::refusal::{CheckRefusal, ClockSelectionFault, TemporalCause, Ti
 use crate::check::time_units::TimeScale;
 
 /// The clock role that binds `model-time` (ADR-026 CB-1).
-const MODEL_TIME: &str = "model-time";
+pub(crate) const MODEL_TIME: &str = "model-time";
 
 /// The clock role that binds a model's steps (FR-233).
 const MODEL_STEPS: &str = "model-steps";
@@ -400,7 +402,9 @@ pub(crate) fn binding(
             model,
             span: clock.span,
         }),
-        (other, _) => Err(TemporalCause::TimedProfileWithoutModelTime {
+        // The clause's clock refused every other name over a model subject
+        // before the binding is read (FR-233 "Other names").
+        (other, _) => Err(TemporalCause::ModelClockName {
             clock: other.to_owned(),
             span: clock.span,
         }),
@@ -427,8 +431,11 @@ fn role_binding(
             return Err(TemporalCause::ModelTimeOnTraceSubject { span: clock.span });
         }
         MODEL_STEPS => {
-            return Err(TemporalCause::TimedProfileWithoutModelTime {
-                clock: role.to_owned(),
+            // FR-610 "Model binding names": a trace subject has no model
+            // steps to bind.
+            return Err(TemporalCause::ClockRoleSpellsTick {
+                role: role.to_owned(),
+                profile: super::TemporalProfile::Timed,
                 span: clock.span,
             });
         }

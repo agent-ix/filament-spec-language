@@ -684,8 +684,15 @@ impl World {
     /// The package declaring the clause `C` over `x: <over>` with the
     /// activation `activation` and `formula`.
     fn clause_text(&self, over: &str, activation: &str, formula: &str) -> CheckedPackage {
+        // A model subject counts the model's steps (FR-233); a trace subject
+        // names a free role (FR-610-AC-3 reserves `model-steps`).
+        let clock = if over.starts_with("M::") {
+            "model-steps"
+        } else {
+            "events"
+        };
         let body = format!(
-            "temporal C using t0 over (x: {over}) clock \"model-steps\" {activation} {{ {formula} }}\n"
+            "temporal C using t0 over (x: {over}) clock \"{clock}\" {activation} {{ {formula} }}\n"
         );
         let graph = declarations_in(PACKAGE, &self.document, &body)
             .check(CheckMode::Linked, CheckingLimits::default())

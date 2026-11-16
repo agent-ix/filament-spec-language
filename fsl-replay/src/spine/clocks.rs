@@ -88,7 +88,15 @@ impl RequestClocks {
                 let fsl_forms::DeclarationForm::Temporal(clause) = form.form() else {
                     return None;
                 };
-                let clock = self.get(&clause.clock.as_ref()?.text)?;
+                // FR-610 "Unwritten clock": a clause with no `clock` reads the
+                // role `default`.
+                let role = clause
+                    .clock
+                    .as_ref()
+                    .map_or(fsl_semantics::check::DEFAULT_CLOCK_ROLE, |clock| {
+                        clock.text.as_str()
+                    });
+                let clock = self.get(role)?;
                 matches!(
                     clock,
                     ClockConfiguration::TimestampedEvent { .. } | ClockConfiguration::Timed { .. }

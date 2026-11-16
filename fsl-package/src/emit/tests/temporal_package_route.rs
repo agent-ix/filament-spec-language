@@ -351,7 +351,7 @@ fn aggregate_formula_graph_retains_members_and_capture_binding() {
         "language \"ix:native\" edition \"1-draft\";\n\
          profile v = \"filament.value.complete/v1\";\n\
          profile t = \"{EVENT}\";\n\
-         temporal Due using t over (e: Int[0, 9]) clock \"model-steps\" on origin {{\
+         temporal Due using t over (e: Int[0, 9]) clock \"events\" on origin {{\
            capture n: Int[0, 9] = e; always[0,5] (sum of n over past[0,2] <= 15)\
          }}\n"
     );

@@ -1096,6 +1096,15 @@ fn check_message(refusals: &[CheckRefusal]) -> String {
     }
     match &first.cause {
         CheckCause::StateGraph(cause) => {
+            if let fsl_semantics::check::StateGraphCause::TemporalProfile {
+                alias, identity, ..
+            } = &**cause
+            {
+                message = format!(
+                    "{message}: `using {alias}` selects the temporal profile `{identity}`; a \
+                     state-graph claim checks under a state-bearing layer profile"
+                );
+            }
             if let fsl_semantics::check::StateGraphCause::Predicate { cause, .. } = &**cause {
                 if let CheckCause::LayerEquality {
                     selected, required, ..
@@ -1787,7 +1796,11 @@ fn check_message(refusals: &[CheckRefusal]) -> String {
                     format!("{message}: the timed interval is invalid: {reason}")
                 }
                 TemporalCause::ModelTimeOnUntimedModel { model, .. } => {
-                    format!("{message}: `model-time` over `{model}`, which has no time member")
+                    format!(
+                        "{message}: `model-time` under `filament.temporal.timed/v1` over \
+                         `{model}`, which has no time member; a step-counted claim over this \
+                         model is written under a step profile"
+                    )
                 }
                 TemporalCause::UnitlessTimedBound { .. } => {
                     format!("{message}: a `model-time` interval bound needs a time unit")
@@ -1812,8 +1825,20 @@ fn check_message(refusals: &[CheckRefusal]) -> String {
                         "{message}: `{name}` is a unit of another `Time` dimension than the model's"
                     ),
                 },
-                TemporalCause::TimedProfileWithoutModelTime { clock, .. } => format!(
-                    "{message}: the timed profile under `clock \"{clock}\"` is not checked yet"
+                TemporalCause::TimedProfileModelSteps { .. } => format!(
+                    "{message}: the timed profile counts time units of the model's time source, \
+                     not steps; a step-counted claim over this model is written under the \
+                     event-position or infinite-trace profile with `clock \"model-steps\"`"
+                ),
+                TemporalCause::ModelClockName { clock, .. } => format!(
+                    "{message}: `clock \"{clock}\"` over a model subject; the clock of a model \
+                     claim is `model-steps` or `model-time`"
+                ),
+                TemporalCause::ClockRoleSpellsTick { role, profile, .. } => format!(
+                    "{message}: the clock role `{role}` spells a time unit or a model binding \
+                     name, but under `{}` one tick is {}; name the role otherwise",
+                    profile.identity(),
+                    profile.tick()
                 ),
                 TemporalCause::TimedTraceSubject { .. } => {
                     format!("{message}: a timed clause over a trace subject is not checked yet")
@@ -1848,9 +1873,6 @@ fn check_message(refusals: &[CheckRefusal]) -> String {
                              names the unit \"{unit}\", which is not a unit of the dimension Time"
                         ),
                     }
-                }
-                TemporalCause::MissingClock { .. } => {
-                    format!("{message}: a clause over this subject must write a `clock` member")
                 }
                 TemporalCause::TimedFacetRequired { owner, .. } => format!(
                     "{message}: `{owner}` is a timed declaration, which needs the \

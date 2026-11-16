@@ -80,6 +80,18 @@ impl TemporalProfile {
         }
     }
 
+    /// What one tick of an interval `[a,b]` counts under the profile
+    /// (FR-610 "What a tick counts").
+    pub const fn tick(self) -> &'static str {
+        match self {
+            Self::EventPositionFalseExtension => "one admitted event position",
+            Self::FixedSampleFalseExtension => "one sample of the configured period",
+            Self::TimestampedEventFiniteWindow => "one tick of the configured timestamp unit",
+            Self::InfiniteTrace => "one position of the trace",
+            Self::Timed => "an exact time quantity in the configured unit",
+        }
+    }
+
     /// The profile a header identity selects, if it is admitted for the
     /// `TemporalTrace` family (FR-110). The one place a header profile's
     /// spelling is read for that family.

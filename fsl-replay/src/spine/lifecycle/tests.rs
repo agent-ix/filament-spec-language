@@ -2064,14 +2064,14 @@ fn aggregate_package_accepts_temporal_selection_from_later_source() {
     let a_text = format!(
         "{header}model M = \"acme/orders\";\n\
          record Point {{ x: Int[0, 9]; }}\n\
-         temporal Root using ev over (input: M::Widget) clock \"events\" on origin {{ eventually[0,1] holds(true) }}"
+         temporal Root using ev over (input: M::Widget) clock \"model-steps\" on origin {{ eventually[0,1] holds(true) }}"
     );
     let a = parse_named(source_a, a_text.as_bytes());
     // FR-480: a model alias resolves only in the unit that declares it, so
     // the later source binds its own `M` to write `M::Widget`.
     let b_text = format!(
         "{header}model M = \"acme/orders\";\n\
-         temporal Due using ev over (input: M::Widget) clock \"events\" on origin {{ eventually[0,1] holds(true) }}"
+         temporal Due using ev over (input: M::Widget) clock \"model-steps\" on origin {{ eventually[0,1] holds(true) }}"
     );
     let b = parse_named(source_b, b_text.as_bytes());
     let temporal_span = b
