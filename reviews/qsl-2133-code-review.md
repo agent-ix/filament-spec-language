@@ -275,3 +275,34 @@ FR-330 return the result report for `Progressed`.
 
 Round 2 verdict: REQUEST CHANGES, for FND-013, FND-014 and FND-015. Every
 round-1 finding is fixed except FND-002, which the lead ruling defers.
+
+## Disposition pass 2
+
+Final check at a2b9162bb110d2131301bd6bc0856559a10fe055, rebased onto W5. Only the diff since a11145932 was reviewed. `cargo clippy --keep-going --workspace --all-targets -- -D warnings` is clean. Focused runs, all green with `FSPEC_DIR` set:
+
+- `cargo test -p fsl-replay --lib -- spine model_trace`: 661 passed, 8 ignored.
+- `run_wire`: 10 passed, 13 ignored.
+- `fsl-analyze` `model_trace_run` and `monitor`: 132 passed, 1 ignored.
+- `half_open_watermark`: both former W5 stubs pass.
+
+| FND | Outcome | Reason |
+| --- | --- | --- |
+| FND-002 | fixed | The constant is gone. `TraceInput::Model` carries `max_candidates`, which the reader takes from the `model` member (1 to 2^53-1, default `DEFAULT_MODEL_MAX_CANDIDATES` 1,000,000) and refuses otherwise at `trace.model.max_candidates`. A stop names the run's own bound. The bound tests pin the largest step at 5: bound 4 is `incomplete`, exit 22, outcome limit `max_candidates`; bounds 5, 6 and the default report the violation. |
+| FND-012 | rejected | The merged FR-641-AC-6/TC-2241 names `trace.progress.watermark.half_open` exactly, so the round-1 path was the defect. The revert matches the spec, and `a_half_open_watermark_of_zero_refuses_at_the_request_stage` passes. |
+| FND-013 | fixed | The `expansion-limit-reached` row, record, reader arm and validator arm are deleted. The verdict writes FR-267's `incomplete` row with outcome `{"kind": "incomplete", "limit": "max_candidates"}`, or the counter (`work_units`). The validator's `incomplete(false)` accepts it, and the work-units record reads back. |
+| FND-014 | fixed | The delegated trace-subject report now gets `counterexample(...)` for a violation and for a non-data `Undefined`, using `run_subject_observing`'s first undefined reading. `a_violated_finite_sample_trace_writes_its_counterexample` exits 10 and reads back. |
+| FND-015 | fixed | `TimestampedCase` alias; workspace clippy `-D warnings` passes. |
+
+On internal faults still reachable from a request: the delegated route keeps a
+`violation-has-its-counterexample` fault for an `Undefined` whose first
+undefined reading is not at the verdict's position. The trace-subject letters
+keep the first reading in evaluation order, while the snapshot route keeps
+the least position. An uncommitted probe tried six record-subject clauses
+built to go undefined through division by zero: each refused
+`unsupported_construct`/`expression-form` before evaluation, exit 21. So no
+`Undefined`, and no fault, is reachable from a request through this route
+today. If record-subject arithmetic gains undefined readings, the trace-subject
+letters should keep the least position, as `observed.rs` does. Result identity
+for `max_candidates` is the known W6 spec gap, not a finding.
+
+Final verdict: APPROVE. No finding's latest outcome is `still-open`.
