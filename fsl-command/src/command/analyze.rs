@@ -13,7 +13,7 @@ use fsl_analyze::analyze::document::{
     analyze_document, resolve_items, AnalyzeDocumentError, AnalyzeRun, ItemSelection, Negotiate,
     SubjectSelection,
 };
-use fsl_analyze::analyze::{AnalyzeLimits, DeadlineSupply, Engines, SourceProvision};
+use fsl_analyze::analyze::{AnalyzeLimits, DeadlineSupply, Engine, Engines, SourceProvision};
 use fsl_semantics::model::observation::DocumentProvision;
 
 use super::{
@@ -218,15 +218,46 @@ pub fn analyze_with_limits(
     negotiate: &dyn Negotiate,
     cancel: &Cancel,
 ) -> std::result::Result<RunResult, Box<RunError>> {
+    analyze_with_providers_and_limits(path, &[], limits, negotiate, cancel)
+}
+
+/// Read and run a `native-analyze/1` request with the caller's linked external
+/// providers (FR-620, FR-281). The command layer owns no provider process or
+/// configuration-file reader; the caller supplies the provider engines it
+/// has already started.
+///
+/// # Errors
+///
+/// As [`analyze_with_limits`], and `invalid_capability` if a supplied
+/// provider duplicates an in-process or previously supplied backend.
+pub fn analyze_with_providers(
+    path: &Path,
+    providers: &[Engine],
+    negotiate: &dyn Negotiate,
+    cancel: &Cancel,
+) -> std::result::Result<RunResult, Box<RunError>> {
+    analyze_with_providers_and_limits(path, providers, RunLimits::default(), negotiate, cancel)
+}
+
+/// [`analyze_with_providers`] under caller-owned request and dependent-file
+/// byte ceilings.
+pub fn analyze_with_providers_and_limits(
+    path: &Path,
+    providers: &[Engine],
+    limits: RunLimits,
+    negotiate: &dyn Negotiate,
+    cancel: &Cancel,
+) -> std::result::Result<RunResult, Box<RunError>> {
     super::with_request_limits(path, limits.request_bytes, |directory, bytes| {
         let (input, mut intake) = read(directory, bytes, limits.dependent_bytes)?;
-        run_input(&mut intake, input, negotiate, cancel)
+        run_input(&mut intake, input, providers, negotiate, cancel)
     })
 }
 
 fn run_input(
     intake: &mut super::Intake<'_>,
     input: AnalyzeInput,
+    providers: &[Engine],
     negotiate: &dyn Negotiate,
     cancel: &Cancel,
 ) -> Result<RunResult> {
@@ -259,6 +290,12 @@ fn run_input(
                 );
             }
             let engines = Engines::fsl().map_err(|_| RunCause::AnalyzeFault)?;
+            let mut engines = engines;
+            for provider in providers {
+                engines
+                    .with(provider.clone())
+                    .map_err(|_| RunCause::AnalyzeFault)?;
+            }
             let mut registry = fsl_route::Registry::new();
             for descriptor in engines.registrations() {
                 registry

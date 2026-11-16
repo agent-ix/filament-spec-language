@@ -324,6 +324,8 @@ pub enum ClauseDisposition {
     NotAPredicate {
         /// The selected name.
         name: String,
+        /// The function's declared result type.
+        result_type: String,
     },
     /// Stage `admit`: FR-106 admission's own failure, or (for a `Function`
     /// selection) the analogous snapshot-only admission failure.
@@ -418,6 +420,7 @@ impl ClauseDisposition {
             Self::Evaluate(CallOutcome::Completed(CallValue::Boolean(false))) => {
                 Category::Violation
             }
+            Self::Evaluate(CallOutcome::Undefined { .. }) => Category::Violation,
             Self::Evaluate(CallOutcome::Completed(CallValue::Reference(_))) => {
                 Category::InternalFailure
             }
@@ -429,6 +432,7 @@ impl ClauseDisposition {
     pub fn truth(&self) -> Option<bool> {
         match self {
             Self::Evaluate(CallOutcome::Completed(CallValue::Boolean(value))) => Some(*value),
+            Self::Evaluate(CallOutcome::Undefined { .. }) => Some(false),
             Self::FrameViolation(_) => Some(false),
             Self::Temporal(TemporalVerdict::Holds) => Some(true),
             Self::Temporal(TemporalVerdict::Violated { .. }) => Some(false),
@@ -1896,7 +1900,13 @@ fn run_function(
                     report(ClauseDisposition::MissingName { name: function })
                 }
                 RunRefusal::UnsupportedResult { function } => {
-                    report(ClauseDisposition::NotAPredicate { name: function })
+                    let Some(callable) = package.graph().callable(&function) else {
+                        return Ok(report(ClauseDisposition::MissingName { name: function }));
+                    };
+                    report(ClauseDisposition::NotAPredicate {
+                        name: function,
+                        result_type: format!("{:?}", callable.result),
+                    })
                 }
                 other => report(ClauseDisposition::ArgumentRefusal(Box::new(other))),
             })
@@ -1911,6 +1921,11 @@ fn run_function(
     ) {
         return Ok(report(ClauseDisposition::NotAPredicate {
             name: name.to_owned(),
+            result_type: package
+                .graph()
+                .callable(name)
+                .map(|callable| format!("{:?}", callable.result))
+                .unwrap_or_else(|| "unknown".to_owned()),
         }));
     }
 

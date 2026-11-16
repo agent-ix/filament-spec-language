@@ -60,6 +60,165 @@ fn read_paths(evaluation: &ClauseEvaluation) -> Vec<Option<RuntimeValuePath>> {
         .collect()
 }
 
+/// QSL-2184: a non-Boolean function selection reports the selected function
+/// and its declared result type at the select stage.
+#[trace("TC-468", "FR-109-AC-5")]
+#[test]
+fn function_selection_non_boolean_names_function_and_type() {
+    let label = DocumentRef {
+        authority: "test".to_owned(),
+        identity: "snap".to_owned(),
+    };
+    let bytes = snapshot_bytes(&label, &[]);
+    let mut request = request(ClauseRunSelection::Function {
+        name: "seven".to_owned(),
+        arguments: Vec::new(),
+        snapshot: label,
+    });
+    request.snapshots.insert(
+        fsl_semantics::model::observation::document_reference(&bytes)
+            .expect("a document names itself"),
+        bytes,
+    );
+
+    let report = run_clause(request).expect("the request has a report");
+    assert_eq!(report.disposition.stage(), ClauseRunStage::Select);
+    assert_eq!(report.disposition.category().exit_code(), 20);
+    let ClauseDisposition::NotAPredicate { name, result_type } = report.disposition else {
+        panic!("expected a non-Boolean function refusal");
+    };
+    assert_eq!(name, "seven");
+    assert_eq!(result_type, "Integer");
+}
+
+/// QSL-2184: a Boolean function selection still evaluates successfully.
+#[trace("TC-468", "FR-109-AC-5")]
+#[test]
+fn function_selection_boolean_is_tested() {
+    let label = DocumentRef {
+        authority: "test".to_owned(),
+        identity: "snap".to_owned(),
+    };
+    let bytes = snapshot_bytes(&label, &[]);
+    let mut request = request(ClauseRunSelection::Function {
+        name: "isPositive".to_owned(),
+        arguments: vec![ClauseArgument {
+            parameter: "n".to_owned(),
+            value: ClauseArgumentValue::Integer(5),
+        }],
+        snapshot: label,
+    });
+    request.snapshots.insert(
+        fsl_semantics::model::observation::document_reference(&bytes)
+            .expect("a document names itself"),
+        bytes,
+    );
+
+    let report = run_clause(request).expect("the request has a report");
+    assert!(matches!(
+        &report.disposition,
+        ClauseDisposition::Evaluate(CallOutcome::Completed(CallValue::Boolean(true)))
+    ));
+    assert_eq!(report.disposition.category().exit_code(), 0);
+}
+
+/// QSL-2184: an unknown function is refused with its selected name.
+#[trace("TC-468", "FR-109-AC-5")]
+#[test]
+fn function_selection_unknown_function_refused() {
+    let label = DocumentRef {
+        authority: "test".to_owned(),
+        identity: "snap".to_owned(),
+    };
+    let bytes = snapshot_bytes(&label, &[]);
+    let mut request = request(ClauseRunSelection::Function {
+        name: "absent".to_owned(),
+        arguments: Vec::new(),
+        snapshot: label,
+    });
+    request.snapshots.insert(
+        fsl_semantics::model::observation::document_reference(&bytes)
+            .expect("a document names itself"),
+        bytes,
+    );
+
+    let report = run_clause(request).expect("the request has a report");
+    let ClauseDisposition::MissingName { name } = report.disposition else {
+        panic!("expected the unknown function refusal");
+    };
+    assert_eq!(name, "absent");
+}
+
+/// QSL-2186: the same out-of-domain sum has one typed reason in a clause run
+/// and a function call; only the clause disposition is a refuted verdict.
+#[trace("TC-468", "FR-109-AC-7")]
+#[test]
+fn sum_out_of_domain_same_cause_call_and_clause() {
+    let (base, packages) = config_version_unit_and_packages();
+    let unit = format!(
+        "{base}invariant SumOutOfDomain using v on Config::ConfigVersion at current {{ \
+         sum<Int[1, 1]>(x in sequence[1, 1]: x) = 2 }}\n\
+         function SumFunction using v(): Boolean pure {{ \
+         sum<Int[1, 1]>(x in sequence[1, 1]: x) = 2 }}\n"
+    );
+    let label = DocumentRef {
+        authority: "test".to_owned(),
+        identity: "sum-out-of-domain".to_owned(),
+    };
+    let snapshot = config_version_snapshot(&label, 1, None);
+    let mut request = config_version_request_for(
+        unit.clone(),
+        packages.clone(),
+        "sum-out-of-domain.native",
+        ClauseRunSelection::Clause(config_version_current_selection(
+            "SumOutOfDomain",
+            label.clone(),
+            "root",
+        )),
+    );
+    request.snapshots.insert(
+        fsl_semantics::model::observation::document_reference(&snapshot)
+            .expect("the snapshot names itself"),
+        snapshot,
+    );
+    let snapshots = request.snapshots.clone();
+
+    let report = run_clause(request).expect("the clause request has a report");
+    assert_eq!(report.disposition.stage(), ClauseRunStage::Evaluate);
+    assert_eq!(report.disposition.category().as_str(), "violation");
+    assert_eq!(report.disposition.truth(), Some(false));
+    assert_eq!(report.disposition.exit_code(), 10);
+    let wire = write_clause_run_result(&report).expect("the report serializes");
+    let document: serde_json::Value =
+        serde_json::from_slice(&wire).expect("the report document is JSON");
+    assert_eq!(document["disposition"]["outcome"]["kind"], "undefined");
+    assert_eq!(
+        document["disposition"]["outcome"]["reason"],
+        "sum-out-of-domain"
+    );
+
+    let mut function_request = config_version_request_for(
+        unit,
+        packages,
+        "sum-out-of-domain.native",
+        ClauseRunSelection::Function {
+            name: "SumFunction".to_owned(),
+            arguments: Vec::new(),
+            snapshot: label,
+        },
+    );
+    function_request.snapshots = snapshots;
+    let function_report = run_clause(function_request).expect("the function request has a report");
+    let function_wire = write_clause_run_result(&function_report).expect("the report serializes");
+    let function_document: serde_json::Value =
+        serde_json::from_slice(&function_wire).expect("the report document is JSON");
+    assert_eq!(
+        function_document["disposition"]["outcome"]["reason"],
+        document["disposition"]["outcome"]["reason"]
+    );
+    assert_eq!(function_report.disposition.category().exit_code(), 10);
+}
+
 fn object(observations: &AdmittedObservations) -> ValuePathSubject {
     ValuePathSubject::Object(observations.self_object.clone())
 }

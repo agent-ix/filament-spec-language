@@ -9,7 +9,10 @@ mod output;
 mod output_file;
 mod wire;
 
-pub use analyze::{analyze, analyze_with_limits, prepare_analyze, AnalyzeInput, PreparedAnalyze};
+pub use analyze::{
+    analyze, analyze_with_limits, analyze_with_providers, analyze_with_providers_and_limits,
+    prepare_analyze, AnalyzeInput, PreparedAnalyze,
+};
 pub use monitor::{monitor, MonitorEvent, MonitorSummary};
 pub use output::NativeResult;
 

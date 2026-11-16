@@ -2252,7 +2252,7 @@ fn convert_outcome_drives_the_disposition_for_every_general_outcome_kind() {
     assert_eq!(disposition.truth(), Some(false));
     assert_eq!(disposition.category().exit_code(), 10);
 
-    // A kernel `Undefined`: undefined, exit 10 (FR-285).
+    // A clause's undefined evaluation is a refuted verdict, exit 10 (FR-109).
     let mapped = super::super::call::convert_outcome(
         evaluation(FamilyOutcome::Evaluated(
             filament_exact::Outcome::Undefined(filament_exact::Undefined::DivisionByZero),
@@ -2264,9 +2264,9 @@ fn convert_outcome_drives_the_disposition_for_every_general_outcome_kind() {
     let disposition = ClauseDisposition::Evaluate(mapped);
     assert_eq!(
         disposition.category(),
-        filament_semantic_value::catalog::Category::Undefined
+        filament_semantic_value::catalog::Category::Violation
     );
-    assert_eq!(disposition.truth(), None);
+    assert_eq!(disposition.truth(), Some(false));
     assert_eq!(disposition.category().exit_code(), 10);
 
     // A kernel `Incomplete`: incomplete, exit 22.

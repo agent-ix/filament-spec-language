@@ -2375,10 +2375,14 @@ impl Disposition {
                         .fields(BTreeMap::from([("name", name.clone())])),
                 );
             }
-            ClauseDisposition::NotAPredicate { name } => {
+            ClauseDisposition::NotAPredicate { name, result_type } => {
                 result.refusal = Some(
-                    RefusalWire::new(Code::IllTyped.as_str(), Some("type-mismatch"))
-                        .fields(BTreeMap::from([("name", name.clone())])),
+                    RefusalWire::new(Code::IllTyped.as_str(), Some("type-mismatch")).fields(
+                        BTreeMap::from([
+                            ("name", name.clone()),
+                            ("result_type", result_type.clone()),
+                        ]),
+                    ),
                 );
             }
             ClauseDisposition::Admit(failure) => match failure {
