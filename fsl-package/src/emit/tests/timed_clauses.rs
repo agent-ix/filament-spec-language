@@ -1764,3 +1764,62 @@ fn an_element_presence_quantifier_is_scoped_in_its_predicate() {
         .expect_err("a binder no constraint reads is refused");
     assert!(failure.contains("timed-node-reference"), "{failure}");
 }
+
+/// FR-953-AC-1, FSpec FR-772-AC-1: a presence-only quantifier ranges over
+/// its collection's slot domain, the `filament.op.option.slots` node, whose
+/// derived path names the clock place by an operand segment and never by an
+/// embedded `node_id`; the guard, invariant and urgency share that node.
+#[trace("TC-2663", "FR-953-AC-1")]
+#[trace("FSpec-TC-1862", "FSpec-FR-772-AC-1")]
+#[test]
+#[ignore = "QSL-2144: the presence quantifier's first operand is not written as the slot-domain node yet"]
+fn a_presence_quantifier_is_emitted_over_its_slot_domain() {
+    let document = slot_presence_document();
+    let body = "pre HasElement using v on Config::ConfigVersion::attemptUpdate { \
+                self.x >= 1 ms and forall(e in self.q: present(e)) }\n\
+                time invariant Held when { forall(e in self.q: present(e)) } { self.x <= 9 ms }\n\
+                urgent Soon when { exists(e in self.q: present(e)) };\n";
+    let (_, checked) = checked(&document, body);
+    let graph = checked.unwrap_or_else(|refusals| panic!("checks: {refusals:?}"));
+    let emission = emit_checked(&CheckedPackage::link(graph)).expect("the package emits");
+    let wire = wire(&emission);
+    let domains: Vec<&Value> = nodes(&wire)
+        .iter()
+        .filter(|node| node["body"]["operation"]["identity"] == "filament.op.option.slots")
+        .collect();
+    let [domain] = domains[..] else {
+        panic!("one slot-domain node shared by the three clauses: {domains:?}");
+    };
+    assert_eq!(domain["semantic_form"], "presence_read", "{domain}");
+    let path = domain["node_id"]["path"].as_array().expect("a path");
+    assert_eq!(
+        path.len(),
+        7,
+        "two arguments, identity, operator, result: {domain}"
+    );
+    assert_eq!(
+        path[..2],
+        [json!("expression"), json!("presence_read")],
+        "{domain}"
+    );
+    assert!(path[2].get("operand").is_some() && path[3].get("operand").is_some());
+    assert_eq!(
+        path[4..6],
+        [json!("filament.op.option.slots"), json!("slots")],
+        "{domain}"
+    );
+    assert!(
+        path[6].get("operand").is_some(),
+        "the result type segment: {domain}"
+    );
+    assert!(
+        domain["node_id"]["path"]
+            .as_array()
+            .expect("a path")
+            .iter()
+            .all(|segment| segment.get("package").is_none()),
+        "the path holds no node_id object: {domain}"
+    );
+    read_presence_package(&document, emission.package.bytes(), &wire)
+        .unwrap_or_else(|failure| panic!("I2 admits the slot domain: {failure}"));
+}

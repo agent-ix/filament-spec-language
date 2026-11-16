@@ -59,7 +59,15 @@ property, so the proved verdict is `violation`.
 (`CheckMode::Linked` or `CheckMode::Kernel`, FR-495) is part of what the
 original run produced: it is recorded with the proved package and its claims,
 and the package reference the request carries names that package. The
-executor SHALL recompile under the recorded mode and under no other. No
+record is per function: each checked `function` node of the package carries
+the closed, identity-bearing member `check_mode`, `linked` or `kernel`
+(FSpec FR-322, FR-952), which S4 writes from the mode the body was checked
+under. A declared clause (state, temporal, hyper and value clauses, a
+declared `vc`, and the `invariant` and `precondition` clause functions)
+is always checked under `Linked` and carries `linked`. The executor SHALL
+recompile each function body under the mode its node records and every
+declared clause under `Linked`, never under a mode fixed by the replay
+lifecycle, and under no other. No
 request member selects or overrides the mode, so a replay never re-checks a
 `Linked` claim under `Kernel` and never re-checks a `Kernel` claim under
 `Linked`. The mode matters because `Linked` refuses at check every division

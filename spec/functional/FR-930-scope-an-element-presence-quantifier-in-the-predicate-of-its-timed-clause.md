@@ -56,7 +56,9 @@ The clause's emitted node: a `clock_guard` part, a `time_invariant` or an
   application in the predicate expression, its binder a `parameter` of the
   selector's domain (FSpec FR-322 "Presence") scoped by that application, and
   every `present(e)` in the body the `presence_read` of the element place at
-  the clause's owner term and that parameter.
+  the clause's owner term and that parameter. The application's first
+  operand is the collection's slot domain, the FSpec FR-772
+  `filament.op.option.slots` node, which FR-953 specifies with its identity.
 - **Constraints beside the quantifier.** A clock constraint outside the
   quantifier SHALL be written as an unquantified constraint of the same part
   or invariant, with no slot term; the part or invariant SHALL carry no

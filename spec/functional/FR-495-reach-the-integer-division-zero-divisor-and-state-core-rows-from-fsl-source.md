@@ -329,7 +329,12 @@ bound and does not authorize a CG-side result-bound workaround.
     proved `present(x)` SHALL refuse `undefined_expression`/`unproved-presence`
     under `Linked` and SHALL check under `Kernel`, where the evaluator meets
     the absent value.
-  - `Kernel` selects how a function body is checked. A state clause a package
+  - `Kernel` selects how a function body is checked, wherever that body is
+    evaluated: a function body that the model-check, protocol, probability
+    or hybrid paths call under a world built with `CheckMode::Kernel` is
+    checked and evaluated under `Kernel`, as a body that S6a calls directly
+    is (FR-952). Every declared clause (state, temporal, hyper and value
+    clauses, and a declared `vc`) stays under `Linked`. A state clause a package
     declares (`invariant`, `pre`, `post`; FR-104), checked through
     `PackageDeclarations::check`, SHALL refuse its unproved obligation under
     `Kernel` as under `Linked`, so `Kernel` never admits a declared clause

@@ -293,6 +293,21 @@ impl World {
         )
     }
 
+    /// `model`'s S3 check result under `mode`, with the integer operators of
+    /// `filament.value.complete/v1` available as the profile `vc` (FR-952: a
+    /// Kernel world applies `Kernel` to every function body it checks).
+    pub(crate) fn try_with_mode(model: &Model, mode: CheckMode) -> Result<Self, Vec<CheckRefusal>> {
+        Self::try_build_with_mode(
+            model,
+            &[model.key],
+            &[model.key],
+            &[&model.initial],
+            false,
+            true,
+            mode,
+        )
+    }
+
     /// `model`, checked, over a universe of `keys`, every one of them live in
     /// the initial snapshot.
     pub(crate) fn with_objects(model: &Model, keys: &[&str]) -> Self {
