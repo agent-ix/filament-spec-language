@@ -47,6 +47,7 @@ mod outcome;
 mod plan;
 mod position;
 mod steps;
+mod stream;
 mod tape;
 mod tick_monitor;
 mod tick_shape;
@@ -80,6 +81,7 @@ pub use outcome::{
     InsufficientDataEvaluation, TemporalOutcome, TemporalRefusal, UndefinedEvaluation,
 };
 pub use position::{PositionRefusal, TemporalPosition};
+pub use stream::{ClauseStream, StreamStop};
 pub use tape::{read_sample_letter, LetterTape, TapeEntry, TapeLetter, TapeReading};
 pub use tick_monitor::{
     definitely_before, within_bound, TickBound, TickMonitorReference, TickMonitorSpec, TickOutcome,
