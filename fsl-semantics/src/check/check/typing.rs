@@ -127,6 +127,20 @@ fn integer_modulo_result_type(dividend: &ValueType, divisor: &ValueType) -> Valu
         return ValueType::Integer;
     }
 
+    if let ValueType::Int(dividend) = dividend {
+        let zero = Integer::zero();
+        let smallest_nonzero_modulus = if divisor.lower() > &zero {
+            divisor.lower().clone()
+        } else if divisor.upper() < &zero {
+            divisor.upper().abs()
+        } else {
+            Integer::one()
+        };
+        if dividend.lower() >= &zero && dividend.upper() < &smallest_nonzero_modulus {
+            return ValueType::Int(dividend.clone());
+        }
+    }
+
     let (lower, upper) =
         if let (ValueType::Int(dividend), true) = (dividend, divisor.lower() == divisor.upper()) {
             let modulus = divisor.lower().abs();

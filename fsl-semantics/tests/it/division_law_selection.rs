@@ -192,6 +192,7 @@ fn a_mod_node_is_typed_by_its_divisor_interval() {
         "function m1 using v(a: Int[0, 100], b: Int[1, 12]): Int[0, 11] pure { a mod b }\n\
          function m2 using v(a: Integer, b: Int[1, 12]): Int[0, 11] pure { a mod b }\n\
          function m4 using v(a: Int[0, 2], b: Int[5, 5]): Int[0, 2] pure { a mod b }\n\
+         function m5 using v(a: Int[0, 2], b: Int[5, 6]): Int[0, 2] pure { a mod b }\n\
          function s3 using v(a: Int[-7, -7], b: Int[3, 3]): Int[2, 2] pure { a mod b }",
         CheckMode::Linked,
     )
@@ -200,7 +201,8 @@ fn a_mod_node_is_typed_by_its_divisor_interval() {
         (0, 0_i64, 11_i64),
         (1, 0_i64, 11_i64),
         (2, 0_i64, 2_i64),
-        (3, 2_i64, 2_i64),
+        (3, 0_i64, 2_i64),
+        (4, 2_i64, 2_i64),
     ] {
         let function = graph
             .function_state(index)
