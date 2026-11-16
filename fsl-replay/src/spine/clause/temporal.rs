@@ -970,6 +970,21 @@ pub(super) fn run_temporal(run: &CompiledRun<'_>, request: &TemporalRun<'_>) -> 
         ObservedPositions::Samples(_) => None,
     };
 
+    // QSL-2138: only the closed finite route below reads window aggregates.
+    if sampled
+        && !(matches!(trace, TraceInput::Finite(_))
+            && clause.profile() == TemporalProfile::EventPositionFalseExtension)
+        && clause
+            .formula()
+            .nodes()
+            .iter()
+            .any(|formula| matches!(formula, FormulaNode::Aggregate { .. }))
+    {
+        return early(ClauseDisposition::TraceRefused(Box::new(
+            site.window_aggregate(trace.kind()),
+        )));
+    }
+
     // FR-330-AC-17: a closed finite trace of samples under the event-position
     // profile is the trace-subject route's, which also reads window
     // aggregates.

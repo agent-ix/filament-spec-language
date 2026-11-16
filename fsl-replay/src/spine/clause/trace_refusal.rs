@@ -122,6 +122,20 @@ impl ClauseSite<'_> {
         )
     }
 
+    /// `unsupported-window-aggregate`: a window aggregate (FR-194) over a
+    /// `kind` sample trace, which only the closed finite event-position route
+    /// reads (QSL-2138).
+    pub fn window_aggregate(&self, kind: &'static str) -> TraceRefusal {
+        self.refusal(
+            ClauseRunStage::Admit,
+            "unsupported-window-aggregate",
+            format!(
+                "clause \"{}\" reads a window aggregate, which is not yet supported over a {kind} sample trace (QSL-2138)",
+                self.node.clause().name(),
+            ),
+        )
+    }
+
     /// `ledger-without-progress`: a ledger beside a trace that asserts no
     /// progress.
     pub fn ledger_without_progress(&self) -> TraceRefusal {

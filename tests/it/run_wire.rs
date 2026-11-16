@@ -1003,3 +1003,64 @@ fn a_monitor_request_supplies_the_integer_division_law() {
         "{refused}"
     );
 }
+
+/// FR-645, QSL-2138: a window aggregate over a record trace subject is read
+/// only by the closed finite trace of the event-position profile. A
+/// `progressed` sample trace is not that route, so the run refuses with a
+/// typed refusal naming the gap, never an internal fault.
+#[test]
+#[trace("TC-1670", "FR-645-AC-3")]
+fn a_window_aggregate_over_a_progressed_sample_trace_refuses_and_never_faults() {
+    let directory = tempfile::tempdir().unwrap();
+    let unit = trace_unit()
+        + "temporal Count using e over (r: Reading) clock \"events\" on origin \
+           { always[0,2] (count where holds(r.level > 1) over past[0,2] min_count 0 <= 5) }\n";
+    std::fs::write(directory.path().join("unit.native"), unit).unwrap();
+    for trace in [
+        json!({"progressed": {
+            "positions": samples(&[0, 2, 3]),
+            "progress": progress(3),
+            "lower_boundary": "authoritative-origin",
+            "binding": binding(EVENTS, "events")}}),
+        json!({"finite": samples(&[0, 2, 3])}),
+    ] {
+        let path = directory.path().join("count.json");
+        std::fs::write(
+            &path,
+            serde_json::to_vec(&trace_request(json!({"name": "Count", "trace": trace}))).unwrap(),
+        )
+        .unwrap();
+        let output = run_file(&path);
+        let document = result(&output);
+        let category = &document["disposition"]["category"];
+        assert_ne!(category, "internal-failure", "{document}");
+        if trace.get("progressed").is_some() {
+            assert_eq!(output.status.code(), Some(20), "{document}");
+            assert_eq!(
+                find(&document, "reason"),
+                Some(&json!("unsupported-window-aggregate")),
+                "{document}"
+            );
+            let message = find(&document, "message")
+                .and_then(Value::as_str)
+                .unwrap_or_default();
+            assert!(message.contains("QSL-2138"), "{document}");
+        }
+    }
+}
+
+/// FR-642, FR-641-AC-4 (TC-1664): a `timed` trace of exact rational stamps
+/// reaches FR-330 and a timed clause is answered: `Ack` holds when level 1
+/// is read at stamp 0.
+#[test]
+#[trace("TC-1664", "FR-641-AC-4", "FR-642-AC-1")]
+#[ignore = "QSL-2254: timed clock kind"]
+fn a_timed_trace_answers_a_timed_clause() {
+    let directory = tempfile::tempdir().unwrap();
+    let request = run_request(json!({"name": "Ack", "trace": {"timed": {
+        "prefix": [{"position": sample(1), "stamp": "0"}]}}}));
+    let output = run_file(&write(directory.path(), "timed.json", &request));
+    assert_eq!(output.status.code(), Some(0), "{:?}", output.stderr);
+    let document = result(&output);
+    assert_eq!(document["disposition"]["truth"], true, "{document}");
+}
