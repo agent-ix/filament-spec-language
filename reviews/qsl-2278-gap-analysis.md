@@ -3,7 +3,7 @@ id: SR-2136
 title: "Gap analysis of QSL-2278 PR #2737"
 type: SpecReview
 analysis: gap-analysis
-scope: "agent-ix/filament-spec-language; PR #2737 diff origin/main...0640c7ffd7e8d0773cf26326a4ca0d67eebf29b6; Ticket QSL-2278; full repository matrix; focused NFR-002-AC-1..4 and TC-920"
+scope: "agent-ix/filament-spec-language; PR #2737 diff origin/main@40f224a4d12017022b0e78256d3d1d87609d9820...a44531223fd81376c09c7f2bc88a03a3436a7cda; Ticket QSL-2278; full repository matrix; focused NFR-002-AC-1..4 and TC-920"
 review_set: subset
 relationships:
   - target: ix://agent-ix/filament-spec-language/NFR-002
@@ -12,11 +12,15 @@ relationships:
 
 ## Summary
 
-Ticket QSL-2278. Planless gap analysis of the full repository matrix and the behavior changed in PR #2737. Plan completion: not assessed. The four NFR-002 acceptance criteria are tagged; the new native-first, path-order-independent launcher selection and native-only diagnostic tests bind NFR-002-AC-3 and TC-920. The focused source behavior maps to NFR-002's scoped structural-validation gate and TC-920's installed module discovery and refusal controls. No changed-source stub or untraced behavior was found. The full repository matrix reports substantial pre-existing coverage gaps outside this PR: 5,172 criteria, 3,623 tagged, 1,120 untagged, 318 tagged only by ignored tests, 98 method-without-symbol, and 13 retired. The matrix reports no run evidence across the repository. This repository-wide gap set is not attributed to this PR.
+Ticket QSL-2278. Planless gap analysis of the full repository matrix and the behavior changed in PR #2737. Plan completion: not assessed. The four NFR-002 acceptance criteria are tagged; the new native-first, path-order-independent launcher selection and native-only diagnostic tests bind NFR-002-AC-3 and TC-920. The focused source behavior maps to NFR-002's scoped structural-validation gate and TC-920's installed module discovery and refusal controls. No changed-source stub or untraced behavior was found. The previous full repository matrix run reported substantial pre-existing coverage gaps outside this PR: 5,172 criteria, 3,623 tagged, 1,120 untagged, 318 tagged only by ignored tests, 98 method-without-symbol, and 13 retired. That run reported no evidence across the repository. This repository-wide gap set is not attributed to this PR.
+
+## Review Refresh
+
+Rechecked at PR head `a44531223fd81376c09c7f2bc88a03a3436a7cda` against `origin/main` `40f224a4d12017022b0e78256d3d1d87609d9820`. The source/test patch is unchanged. The previous full-repository matrix result remains the evidence for FND-001; refreshed `quoin matrix` and `quire matrix` commands did not complete in the review environment, so the old repository-wide counts are not asserted as current. The focused NFR-002 tests remain unchanged and tagged. FND-001 remains deferred to the pre-existing QSL-2083..QSL-2098 coverage backlog; this finding does not identify a gap introduced by QSL-2278.
 
 ## Verdict
 
-**FAIL** — the full repository matrix contains untagged and ignored-only criteria, which meet gap-analysis's fail rule. The changed NFR-002-AC-1..4 criteria are all tagged, and this PR adds no gap within its changed behavior. Plan completion: not assessed.
+**FAIL (carried forward)** — the previous full repository matrix run contained untagged and ignored-only criteria, which meet gap-analysis's fail rule. Current matrix commands did not complete, so the repository-wide count was not refreshed. The changed NFR-002-AC-1..4 criteria are all tagged, and this PR adds no gap within its changed behavior. Plan completion: not assessed.
 
 ## Coverage
 
@@ -32,3 +36,9 @@ Ticket QSL-2278. Planless gap analysis of the full repository matrix and the beh
 | ID | Severity | Summary | Refs |
 | --- | --- | --- | --- |
 | FND-001 | high | The repository-wide computed matrix has 1,120 untagged criteria and 318 criteria backed only by ignored tests. These are existing repository-wide gaps, not introduced by PR #2737; they cause the planless gap-analysis verdict to fail. The four NFR-002 acceptance criteria in this PR are tagged. | NFR-002-M-1, NFR-002-M-2, NFR-002-M-3 |
+
+## Dispositions
+
+| FND | outcome | reason |
+| --- | --- | --- |
+| FND-001 | deferred | The repository-wide coverage backlog is tracked by QSL-2083 through QSL-2098 and is outside QSL-2278. The four NFR-002 acceptance criteria relevant to this PR are tagged. |

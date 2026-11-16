@@ -3,7 +3,7 @@ id: SR-2135
 title: "Code and Rust review of QSL-2278 PR #2737"
 type: SpecReview
 analysis: code-review
-scope: "agent-ix/filament-spec-language; origin/main...0640c7ffd7e8d0773cf26326a4ca0d67eebf29b6; PR #2737; Ticket QSL-2278; Makefile, xtask/ci_spec_validation.rs, xtask/src/ci_spec_validation_tests.rs; NFR-002-AC-1..4; TC-920"
+scope: "agent-ix/filament-spec-language; origin/main@40f224a4d12017022b0e78256d3d1d87609d9820...a44531223fd81376c09c7f2bc88a03a3436a7cda; PR #2737; Ticket QSL-2278; Makefile, xtask/ci_spec_validation.rs, xtask/src/ci_spec_validation_tests.rs; NFR-002-AC-1..4; TC-920"
 review_set: subset
 relationships:
   - target: ix://agent-ix/filament-spec-language/NFR-002
@@ -13,6 +13,10 @@ relationships:
 ## Summary
 
 Ticket QSL-2278. Reviewed the frozen PR diff against `origin/main`. The Rust helper resolves executable `quire` candidates to canonical npm `@agent-ix/quire-cli/bin/launcher.js` paths, selects deterministically across PATH order, passes the resolved launcher as one argument to Node, and runs the child with an empty PATH. The Make target builds the std-only helper with `rustc` before structural validation, without starting Cargo. Added tests exercise native-first selection, reversed multiple-launcher PATH order, native-only refusal, missing tool/helper failures, isolated HOME, and existing schema controls. No code defect found. No applicable `AssuranceProfile` applies under `spec/`.
+
+## Review Refresh
+
+Rechecked at PR head `a44531223fd81376c09c7f2bc88a03a3436a7cda` against `origin/main` `40f224a4d12017022b0e78256d3d1d87609d9820`. The source/test diff is unchanged from the previously reviewed patch; this rebase does not alter the prior PASS. `git diff --check origin/main...HEAD` passed. `cargo fmt --all -- --check` produced no output and stalled during refresh, then was interrupted (exit 130); focused Cargo test and Clippy were not rerun because the source/test diff is identical to the previously tested revision. No aggregate gate was run.
 
 ## Verdict
 
