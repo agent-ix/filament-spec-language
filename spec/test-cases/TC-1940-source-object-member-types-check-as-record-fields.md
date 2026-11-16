@@ -31,9 +31,16 @@ For FR-569-AC-13, assemble the pair with `T` = `Population<O>[3]` and with
 `T` the name of a source function, and compare the refusals.
 For FR-569-AC-15, assemble the AC-15 unit, read each member record of the
 retained source model view and compare its `value_type` and `Multiplicity`
-with AC-15. Then check the two `Base` overrides, the `M` override with an
-optional reference result, and the clock place of `w`, and compare the clock
-place with the one a record field of type `W` records.
+with AC-15, and compare each `value_type` with the checked type of the same
+form as a record field. Then check the two `Base` integer overrides; the `M`
+result override narrowing `Option<Reference<M::Node>>` to
+`Option<Reference<M::Leaf>>` and, over a base declaring
+`Option<Reference<M::Leaf>>`, the override widening it to
+`Option<Reference<M::Node>>`; the result override from `Reference<Order>` to
+`Option<Reference<Order>>`; and the parameter override from
+`Decimal[0, 100; 2, 2; exact]` to `Decimal[0, 200; 2, 2; exact]`. Last,
+compare the clock place of `w` with the one a record field of type `W`
+records.
 
 ## Expected Results
 
@@ -41,7 +48,10 @@ Every FR-569-AC-12 pair checks, with equal member types and no
 `unknown_required_feature`. Every FR-569-AC-13 object unit is refused at the
 type with the record unit's code and cause, and yields no checked package.
 Every FR-569-AC-15 member record holds the representation AC-15 states, and
-no member holds a temporary type. The widening override and the `M`
-override check, the narrowing override refuses
-`ill_typed`/`variance-parameter`, and `w` records the clock place the record
-field records.
+every member's `value_type` equals the checked type of the same form as a
+record field. The integer widening override and the narrowing `M` override
+check. The integer narrowing override and the `Decimal` override refuse
+`ill_typed`/`variance-parameter`. The widening `M` override and the
+`Reference<Order>` to `Option<Reference<Order>>` override refuse
+`ill_typed`/`variance-result`. `w` records the clock place the record field
+records.

@@ -12,8 +12,8 @@ relationships:
 
 Verify that `ValueTypeRef` is defined exactly as the five-member union
 `{Clock, Native(NativeValueType), Package(DeclarationKey), Unit(String),
-Resolved(Box<ValueType>)}`, with no sixth variant, that `Resolved` is built
-only by the source-object assembler and has no wire form, and that no model field type anywhere in the crate is represented
+Resolved(Box<ValueType>)}`, with no sixth variant, that no production code outside the source-object assembler builds
+`Resolved` and that no wire writer encodes it, and that no model field type anywhere in the crate is represented
 by a bare `NodeKey` or a raw string type name instead of going through
 this union. Scope: FR-088-AC-8.
 
@@ -42,8 +42,8 @@ this union. Scope: FR-088-AC-8.
    a bare `NodeKey` directly (bypassing `ValueTypeRef::Package`) and
    confirm no code path in the crate accepts this form as a model field
    type.
-5. Search the crate for every construction of `ValueTypeRef::Resolved` and
-   confirm each lies in the source-object assembler (FR-569 "The source
+5. Search the crate's production (non-test) code for every construction of
+   `ValueTypeRef::Resolved` and confirm each lies in the source-object assembler (FR-569 "The source
    model"), none in domain package intake or a wire reader. Confirm no
    serializer or wire writer encodes a `Resolved`, and that `Display` of a
    `Resolved(Decimal[0, 100; 2, 2; exact])` prints the FSL type spelling and
@@ -55,5 +55,6 @@ this union. Scope: FR-088-AC-8.
   named variants; a sixth variant or a second definition fails this step.
 - Step 3: every model field type is `ValueTypeRef`-typed.
 - Step 4: no bare-`NodeKey`/raw-string field-type path exists.
-- Step 5: `Resolved` is built only by the source-object assembler, never
-  encoded on a wire, and displayed by its FSL type spelling.
+- Step 5: no production code outside the source-object assembler builds
+  `Resolved`, no wire writer encodes it, and `Display` prints its FSL type
+  spelling.
