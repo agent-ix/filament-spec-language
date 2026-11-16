@@ -55,6 +55,7 @@ mod model_check_oracle;
 mod model_check_safety;
 mod model_instances;
 mod model_settle;
+mod model_trace_run;
 mod model_world;
 mod monitor;
 mod monitor_authority;

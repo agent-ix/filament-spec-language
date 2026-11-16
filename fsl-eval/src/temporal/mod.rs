@@ -70,8 +70,9 @@ pub use ledger::{
 pub use letters::{AtomReading, CaptureReading, LetterStop, TemporalLetters, UndefinedCause};
 pub use observed::{
     evaluate_observed, evaluate_observed_at, evaluate_observed_decisive,
-    evaluate_observed_finite_window, FirstUndefined, HoldsStop, ObservedLocus, ObservedRun,
-    ObservedWindowRun, WindowValuations,
+    evaluate_observed_finite_window, evaluate_sampled, evaluate_sampled_finite_window,
+    FirstUndefined, HoldsStop, ObservedLocus, ObservedPositions, ObservedRun, ObservedWindowRun,
+    WindowValuations,
 };
 pub use observed_window::{ObservedWindowExpressions, ObservedWindowSource};
 pub use outcome::{
@@ -135,6 +136,30 @@ pub fn evaluate_with_enabledness<L: TemporalLetters>(
         },
         trace,
         engine::Goal::Clause,
+        letters,
+        meter,
+    )
+}
+
+/// [`evaluate_with_enabledness`] that also finds the decisive atom of a
+/// violation (FR-330 "The decisive atom") on the same evaluator and meter.
+pub fn evaluate_with_enabledness_decisive<L: TemporalLetters>(
+    clause: &CheckedTemporalClause,
+    trace: TemporalTrace,
+    letters: &mut L,
+    meter: &mut Meter,
+) -> (
+    Result<TemporalOutcome, TemporalRefusal>,
+    Option<DecisiveSearch>,
+) {
+    engine::run_seeking(
+        engine::Subject {
+            fairness: &[],
+            ..engine::Subject::of_clause(clause)
+        },
+        trace,
+        engine::Goal::Clause,
+        true,
         letters,
         meter,
     )

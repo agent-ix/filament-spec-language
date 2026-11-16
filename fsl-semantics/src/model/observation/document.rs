@@ -2107,6 +2107,53 @@ fn admit_value<'a: 'w, 'w>(
         .ok_or_else(|| admission_record(Code::InvalidRuntimeInput, "wrong-value-kind"))
 }
 
+/// FR-641: admit one record sample of a record trace subject. `sample` is a
+/// closed JSON object with one member per field of the record value type
+/// `record`, each value in the snapshot document's field-value encoding
+/// (FR-106). A refusal names the typed path of the field at fault.
+///
+/// # Errors
+///
+/// `invalid_runtime_input` with `wrong-value-kind`, `missing-member` or
+/// `unknown-member` where the sample does not conform to the record type.
+pub fn admit_record_sample(
+    types: &TypeEnvironment,
+    record: &filament_exact::NodeKey,
+    sample: &[u8],
+) -> Result<Value, AdmissionRecord> {
+    let wrong = || admission_record(Code::InvalidRuntimeInput, "wrong-value-kind");
+    let document = quire_canonical::read(sample, u64::MAX).map_err(|_| wrong())?;
+    let object = Json::of(document.root()).as_object().ok_or_else(wrong)?;
+    let mut fields = Vec::new();
+    for (name, member) in object.iter() {
+        let raw = read_raw_value(member, &mut || Ok::<(), ()>(()))
+            .ok()
+            .flatten()
+            .ok_or_else(|| wrong().at(vec![PathStep::Field(name.to_owned())]))?;
+        fields.push((name.to_owned(), raw));
+    }
+    let raw = SnapshotValue::record(RECORD_SAMPLE, fields);
+    let mut references = References {
+        views: &[],
+        types,
+        admitted: BTreeMap::new(),
+        completeness: BTreeMap::new(),
+        unresolved: Vec::new(),
+        record_keys: Some(BTreeMap::from([(RECORD_SAMPLE.to_owned(), record.clone())])),
+        variant_keys: None,
+    };
+    admit_form(
+        &mut references,
+        raw.form(),
+        &filament_exact::ValueType::Composite(record.clone()),
+        None,
+    )
+}
+
+/// The node identity a record sample's synthetic record form names; its only
+/// resolution is the record type the caller supplies.
+const RECORD_SAMPLE: &str = "record-sample";
+
 /// Where a member with no checked type is written.
 #[derive(Clone, Copy)]
 pub(super) enum UntypedSlot<'a> {

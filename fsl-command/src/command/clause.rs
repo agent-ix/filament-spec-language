@@ -81,6 +81,15 @@ pub(super) fn read(
         };
         observations.insert(key.clone(), observed);
     }
+    let ledger = clause
+        .selection
+        .ledger_path()
+        .map(|path| {
+            let bytes = intake.file(path, intake.remaining)?;
+            fsl_replay::spine::read_ledger(&bytes)
+                .map_err(|error| invalid(error.member, error.reason))
+        })
+        .transpose()?;
     let source_identity = source.source().identity().clone();
     let source = ClauseRunSource::Program {
         identity: source.source().identity().clone(),
@@ -101,6 +110,7 @@ pub(super) fn read(
         observation_limits,
         accounting: super::call_accounting(&clause.accounting),
         clocks: request.clocks.clone(),
+        ledger,
     })
     .map_err(|error| invalid(error.member, error.reason))
 }

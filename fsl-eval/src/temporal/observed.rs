@@ -100,9 +100,8 @@ pub fn evaluate_observed(
     evaluate_observed_goal(
         package,
         clause,
-        environments,
+        ObservedPositions::Objects { environments, over },
         trace,
-        over,
         (super::engine::Goal::Clause, false, None),
         meter,
     )
@@ -124,9 +123,8 @@ pub fn evaluate_observed_decisive(
     evaluate_observed_goal(
         package,
         clause,
-        environments,
+        ObservedPositions::Objects { environments, over },
         trace,
-        over,
         (super::engine::Goal::Clause, true, silent_from),
         meter,
     )
@@ -148,10 +146,47 @@ pub fn evaluate_observed_at(
     evaluate_observed_goal(
         package,
         clause,
-        environments,
+        ObservedPositions::Objects { environments, over },
         trace,
-        over,
         (super::engine::Goal::At(position), false, None),
+        meter,
+    )
+}
+
+/// What the represented positions of an observed run hold.
+#[derive(Clone, Copy, Debug)]
+pub enum ObservedPositions<'a> {
+    /// Snapshot positions: the object environment each admitted, and the
+    /// object the clause's `over` parameter names.
+    Objects {
+        /// The environment of each represented position.
+        environments: &'a [ObjectEnvironment],
+        /// The object bound to `over`.
+        over: &'a ObjectReference,
+    },
+    /// FR-641: record samples of a declared record trace subject, one per
+    /// represented position. The sample is the value of the clause's subject
+    /// parameter at its position; no object environment is read.
+    Samples(&'a [Value]),
+}
+
+/// [`evaluate_observed`] over record samples (FR-641): `samples` holds the
+/// sample of each represented position, prefix first, then loop. A violation
+/// is not searched for a decisive atom.
+pub fn evaluate_sampled(
+    package: &CheckedPackage,
+    clause: &TemporalClauseNode,
+    samples: &[Value],
+    trace: TemporalTrace,
+    silent_from: Option<u64>,
+    meter: &mut Meter,
+) -> ObservedRun {
+    evaluate_observed_goal(
+        package,
+        clause,
+        ObservedPositions::Samples(samples),
+        trace,
+        (super::engine::Goal::Clause, false, silent_from),
         meter,
     )
 }
@@ -159,18 +194,17 @@ pub fn evaluate_observed_at(
 fn evaluate_observed_goal(
     package: &CheckedPackage,
     clause: &TemporalClauseNode,
-    environments: &[ObjectEnvironment],
+    positions: ObservedPositions<'_>,
     trace: TemporalTrace,
-    over: &ObjectReference,
     (goal, seek, silent_from): (super::engine::Goal, bool, Option<u64>),
     meter: &mut Meter,
 ) -> ObservedRun {
     let mut letters = ObservedLetters {
         package,
         clause,
-        environments,
+        positions,
+        empty: ObjectEnvironment::default(),
         trace,
-        over,
         stopped: None,
         undefined: None,
         absent: &[],
@@ -245,14 +279,52 @@ pub fn evaluate_observed_finite_window(
     valuations: WindowValuations<'_>,
     meter: &mut Meter,
 ) -> ObservedWindowRun {
+    evaluate_window_over(
+        package,
+        clause,
+        ObservedPositions::Objects { environments, over },
+        trace,
+        valuations,
+        meter,
+    )
+}
+
+/// [`evaluate_observed_finite_window`] over record samples (FR-641):
+/// `samples` holds the sample of each position of `trace` in canonical order.
+pub fn evaluate_sampled_finite_window(
+    package: &CheckedPackage,
+    clause: &TemporalClauseNode,
+    samples: &[Value],
+    trace: &TimestampedTrace,
+    valuations: WindowValuations<'_>,
+    meter: &mut Meter,
+) -> ObservedWindowRun {
+    evaluate_window_over(
+        package,
+        clause,
+        ObservedPositions::Samples(samples),
+        trace,
+        valuations,
+        meter,
+    )
+}
+
+fn evaluate_window_over(
+    package: &CheckedPackage,
+    clause: &TemporalClauseNode,
+    positions: ObservedPositions<'_>,
+    trace: &TimestampedTrace,
+    valuations: WindowValuations<'_>,
+    meter: &mut Meter,
+) -> ObservedWindowRun {
     let mut letters = ObservedLetters {
         package,
         clause,
-        environments,
+        positions,
+        empty: ObjectEnvironment::default(),
         trace: TemporalTrace::Finite {
             len: u64::try_from(trace.len()).unwrap_or(u64::MAX),
         },
-        over,
         stopped: None,
         undefined: None,
         absent: valuations.absent,
@@ -290,9 +362,10 @@ const ACTIVATION_CODES: [&str; 2] = [
 struct ObservedLetters<'a> {
     package: &'a CheckedPackage,
     clause: &'a TemporalClauseNode,
-    environments: &'a [ObjectEnvironment],
+    positions: ObservedPositions<'a>,
+    /// The environment a sample position reads: it holds no object.
+    empty: ObjectEnvironment,
     trace: TemporalTrace,
-    over: &'a ObjectReference,
     stopped: Option<HoldsStop>,
     /// The first undefined reading (the evaluator reports its position and
     /// cause, not its locus).
@@ -334,9 +407,13 @@ impl ObservedLetters<'_> {
             .is_some_and(|first| position.index() >= first)
     }
 
-    /// The environment position `position` observes: a lasso wraps past its
-    /// last represented position into the loop.
-    fn environment(&self, position: TemporalPosition) -> Result<&ObjectEnvironment, LetterStop> {
+    /// The environment position `position` observes and the value its `over`
+    /// parameter takes there: a lasso wraps past its last represented
+    /// position into the loop.
+    fn subject(
+        &self,
+        position: TemporalPosition,
+    ) -> Result<(&ObjectEnvironment, Value), LetterStop> {
         let index = position.index();
         let slot = match self.trace {
             TemporalTrace::Finite { .. } => Some(index),
@@ -352,14 +429,21 @@ impl ObservedLetters<'_> {
                 }
             }
         };
-        slot.and_then(|slot| usize::try_from(slot).ok())
-            .and_then(|slot| self.environments.get(slot))
-            .ok_or_else(|| {
-                LetterStop::Fault(InternalFault::new(
-                    "temporal.observed",
-                    "position-has-an-environment",
-                ))
-            })
+        let slot = slot.and_then(|slot| usize::try_from(slot).ok());
+        let found = match self.positions {
+            ObservedPositions::Objects { environments, over } => slot
+                .and_then(|slot| environments.get(slot))
+                .map(|environment| (environment, Value::Reference(over.clone()))),
+            ObservedPositions::Samples(samples) => slot
+                .and_then(|slot| samples.get(slot))
+                .map(|sample| (&self.empty, sample.clone())),
+        };
+        found.ok_or_else(|| {
+            LetterStop::Fault(InternalFault::new(
+                "temporal.observed",
+                "position-has-an-environment",
+            ))
+        })
     }
 
     /// The reading of a condition's S6a `evaluation`; the fault codes name
@@ -429,14 +513,10 @@ impl TemporalLetters for ObservedLetters<'_> {
         if self.is_silent(position) {
             return Ok(AtomReading::False);
         }
-        let objects = self.environment(position)?;
-        let evaluation = self.package.evaluate_holds(
-            self.clause,
-            atom,
-            Value::Reference(self.over.clone()),
-            objects,
-            meter,
-        );
+        let (objects, over) = self.subject(position)?;
+        let evaluation = self
+            .package
+            .evaluate_holds(self.clause, atom, over, objects, meter);
         let reading = Self::reading(&mut self.stopped, position, evaluation, HOLDS_CODES)?;
         if let AtomReading::Undefined(cause) = &reading {
             self.note(|| ObservedLocus::Atom(atom), position, cause);
@@ -473,13 +553,10 @@ impl TemporalLetters for ObservedLetters<'_> {
         position: TemporalPosition,
         meter: &mut Meter,
     ) -> Result<AtomReading, LetterStop> {
-        let objects = self.environment(position)?;
-        let evaluation = self.package.evaluate_guard(
-            self.clause,
-            Value::Reference(self.over.clone()),
-            objects,
-            meter,
-        );
+        let (objects, over) = self.subject(position)?;
+        let evaluation = self
+            .package
+            .evaluate_guard(self.clause, over, objects, meter);
         let reading = Self::reading(&mut self.stopped, position, evaluation, ACTIVATION_CODES)?;
         if let AtomReading::Undefined(cause) = &reading {
             self.note(|| ObservedLocus::Activation, position, cause);
@@ -510,7 +587,7 @@ impl ObservedLetters<'_> {
         if clause.captures().len() == 0 {
             return Ok(CaptureReading::Fixed);
         }
-        let objects = self.environment(position)?;
+        let (objects, over) = self.subject(position)?;
         let binders = 1 + usize::from(clause.trigger().is_some());
         let mut values: Vec<Value> = Vec::new();
         for (index, (name, _)) in clause.captures().enumerate() {
@@ -520,7 +597,7 @@ impl ObservedLetters<'_> {
                     "clause-has-its-typed-captures",
                 ))
             })?;
-            let mut arguments = vec![Value::Reference(self.over.clone()); binders];
+            let mut arguments = vec![over.clone(); binders];
             arguments.extend(values.iter().cloned());
             let evaluation = evaluate_capture(
                 self.package,
