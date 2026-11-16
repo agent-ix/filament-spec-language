@@ -1082,6 +1082,7 @@ pub fn check_outcome(
         },
         refinement_internals: None,
         libraries,
+        extensions: Vec::new(),
         clocks: Default::default(),
         output: None,
         handoff: None,
@@ -1749,7 +1750,7 @@ fn extension_catalog(
                 DefinitionRef::new(dependency.authority.clone(), dependency.identity.clone())
                     .map_err(|error| RunCause::ClauseRequest {
                         member: "extensions.depends_on".to_owned(),
-                        reason: error.to_string(),
+                        reason: format!("{error:?}"),
                     })
             })
             .collect::<Result<std::collections::BTreeSet<_>>>()?;

@@ -172,6 +172,7 @@ fn read<'d>(
         },
         refinement_internals: request.refinement_internals,
         libraries: request.libraries,
+        extensions: Vec::new(),
         clocks: Default::default(),
         output: None,
         handoff: None,
