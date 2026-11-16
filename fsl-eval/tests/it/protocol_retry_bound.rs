@@ -175,6 +175,10 @@ fn fixture_with_recovery_view(bound: u64, recovery_view: bool) -> Fixture {
     if recovery_view {
         source = source
             .replace(
+                "on origin {",
+                "on each (opened: M::Tick) when (opened.ready) {",
+            )
+            .replace(
                 "recover (recovered: Boolean) { true }",
                 "recover (recovered: M::Recovery) { recovered.bal = 0 }",
             )
