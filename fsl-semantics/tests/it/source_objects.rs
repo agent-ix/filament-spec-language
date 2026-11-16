@@ -2032,8 +2032,33 @@ fn temporal_tags(declarations: &str) -> Vec<&'static str> {
 #[trace("FR-230-AC-65", "TC-2361")]
 #[test]
 fn a_source_object_type_name_times_the_source_model() {
-    finish(assemble(&source_timed("time O dense unit ms;\n")).expect("the dense unit assembles"))
-        .unwrap_or_else(|refusals| panic!("time O dense unit ms checks: {refusals:?}"));
+    let graph = finish(
+        assemble(&source_timed("time O dense unit ms;\n")).expect("the dense unit assembles"),
+    )
+    .unwrap_or_else(|refusals| panic!("time O dense unit ms checks: {refusals:?}"));
+    assert_eq!(graph.time_sources()[0].model, "O");
+    let clocks: Vec<_> = graph
+        .timed_models()
+        .iter()
+        .flat_map(|model| model.clocks())
+        .map(|clock| clock.name())
+        .collect();
+    assert!(clocks.contains(&"w.c"), "{clocks:?}");
+    assert!(clocks.contains(&"d"), "{clocks:?}");
+    let missing = source_timed("time Q dense unit ms;\n");
+    let failures = finish(assemble(&missing).expect("unknown time source assembles"))
+        .expect_err("unknown source type refuses");
+    let failure = failures
+        .iter()
+        .find_map(|refusal| match &refusal.cause {
+            CheckCause::Temporal(cause) if cause.tag() == "missing-name" => Some(cause),
+            _ => None,
+        })
+        .expect("missing-name");
+    assert_eq!(failure.code(), Code::MissingDeclaration);
+    let span = failure.span();
+    let text = format!("{HEADER}{missing}\n");
+    assert_eq!(&text[span.start..span.end], "Q");
     assert_eq!(
         temporal_tags(&source_timed(
             "time O dense unit ms;\ntime Other dense unit ms;\n"
@@ -2064,6 +2089,37 @@ fn a_source_object_type_name_times_the_source_model() {
         let text = format!("{HEADER}{source}\n");
         assert!(text[span.start..span.end].contains("w: W"));
     }
+}
+
+#[trace("FR-230-AC-65", "TC-2361")]
+#[test]
+fn a_selected_models_dense_time_does_not_time_source_clocks() {
+    use fsl_semantics::model::domain_package::DomainPackageRef;
+    let package = DomainPackage::new(
+        DomainPackageRef {
+            identity: "test/orders".to_owned(),
+        },
+        vec![orders_model::object("Anchor", &[], false)],
+    );
+    let source = source_timed("time M dense unit ms;\n");
+    let failures =
+        finish(assemble_model(&source, package).expect("selected and source models assemble"))
+            .expect_err("selected model time does not cover source clocks");
+    let (field, span) = failures
+        .iter()
+        .find_map(|refusal| match &refusal.cause {
+            CheckCause::Temporal(cause) => match cause.as_ref() {
+                fsl_semantics::check::TemporalCause::ClockWithoutDenseTime { field, span } => {
+                    Some((field, span))
+                }
+                _ => None,
+            },
+            _ => None,
+        })
+        .expect("source clock requires source dense time");
+    assert_eq!(field, "w");
+    let text = model_text(&source);
+    assert!(text[span.start..span.end].contains("w: W"));
 }
 
 /// FR-088-AC-14 (TC-2360 step 8): a `Population` keeps no member type, so it
