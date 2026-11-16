@@ -80,3 +80,18 @@ Round 1, verified at fda2d6ef58dd0ac3c456fcdc3bdb2deb2d286c85. `PATH= quire vali
 | FND-016 | low | FR-644-AC-5 still ends its stream with `{"end": "open"}`. FR-644-AC-6 refuses that value form, so the AC's document would carry an extra `refusal` event it does not mention. Fix: `{"end": true}`. | spec/functional/FR-644-stream-observations-through-the-monitor-command.md:146 |
 
 Round 1 verdict: REQUEST CHANGES, for FND-011 to FND-013. FND-001 to FND-010 are fixed. On the two points the lead asked about: the identity limit does bound what a counterexample can cite (FND-007 fixed, with the low wording gap FND-014). The timed settling rule is sound in its `through` half, but its newest-stamp half contradicts AC-10 (FND-011), its success-at-finish example contradicts FR-642 (FND-012), and `through` is not enforced against later observations (FND-013).
+
+## Dispositions (round 2)
+
+Round 2, verified at aaba0f627945405fff597b0ab5579d22d370a897, scope limited to FND-011 to FND-016. `PATH= quire validate --scope . 'spec/**/*.md'` exits 0, with no warning on any changed file.
+
+| FND | Outcome | Reason |
+| --- | --- | --- |
+| FND-011 | fixed | Lead ruling: keep the newest-stamp half. The bullet now reads "a `violation` whose deciding window ends below the newest stamp, or at or below the latest `through`. Stamps are monotone and a decreasing stamp is refused ...". This is sound: the inequality is strict, and the Order rule refuses a stamp below the previous one, so no later observation can fall in a window ending below an accepted stamp. FR-643-AC-10 now settles `Ack` at the `ack` 250 step, and `req` 0 alone settles at `assert_through(250)`. FR-642 supports this reading only through its use case; QSL-2308 tracks an explicit FR-642 AC, outside this PR. |
+| FND-012 | fixed | FR-643-AC-10 now has `finish` return `pending` for the unbounded `Ack` (FR-642-AC-2), and adds the bounded `Bound` (`always[0 ms, 300 ms] ...`) over `req` 0, `ack` 150 and `through` 500. `Bound` stays `Pending` until `finish`, which returns `success`: every activation's window ends by 500. |
+| FND-013 | fixed | "When `through` `X` has been asserted, the session SHALL refuse a `Timed` observation stamped at or below `X` with `timed-stamps-decrease` ... and SHALL leave the session unchanged". FR-643-AC-10 covers stamps 260 and 300 after `through` 300. |
+| FND-014 | fixed | "that clause SHALL settle `incomplete` ... In either case the session SHALL drop that clause's `ClauseState`, so neither count grows past its limit". FR-643-AC-11 checks the dropped state and the unchanged report at a later step. |
+| FND-015 | fixed | Order now reads "If the retained progress scope is `Closed`, then the session SHALL refuse every further observation with FR-502's contradiction on `Closure` and SHALL keep its state unchanged". The finite-window bullet cites it. FR-643-AC-5 and TC-1667 test it. |
+| FND-016 | fixed | FR-644-AC-5 and TC-1668 end with `{"end": true}`. `{"end": "closed"}` remains only as FR-644-AC-6's refusal case. |
+
+Round 2 verdict: APPROVE. Every finding in this file, and in the EARS and criterion-strength files, is now fixed.
