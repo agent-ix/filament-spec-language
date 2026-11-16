@@ -72,7 +72,10 @@ domain bound (NFR-001).
   length of each segment's key spelling (`field:<name>`, `member:<name>`,
   `position:<n>`, `inner`) along its path, plus `recursion:<d>` for a
   recursion leaf. Union entry is a composite charge under the same rule;
-  each member segment contributes its literal UTF-8 byte length.
+  each member segment contributes its literal UTF-8 byte length. Typing a
+  remainder (`mod`, `rem`) charges one unit per closed form or run of
+  FR-495's remainder-interval walk, so the smallest interval of a remainder
+  is bounded by this ceiling and never widened when it is reached.
 - **Rational bit.** FR-185's measure of an exact value as written: the
   largest bit length among its written integers, and for a `decimal` or
   decimal literal the bit length of `10^s`. The bound is inclusive.

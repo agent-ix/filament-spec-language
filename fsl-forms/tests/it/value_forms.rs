@@ -581,6 +581,7 @@ fn s2_refuses_inadmissible_input_and_undispatched_declarations() {
 }
 
 #[trace("FR-091-AC-7", "TC-396")]
+#[trace("TC-2214", "FR-091-AC-7")]
 #[test]
 fn a_construct_no_variant_represents_refuses_the_unit() {
     let cases = [

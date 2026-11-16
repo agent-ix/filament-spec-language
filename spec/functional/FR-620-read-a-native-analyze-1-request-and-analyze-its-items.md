@@ -165,11 +165,19 @@ item per resolved analysis item, or a whole-request refusal (FR-624).
   names of `limits.observation` and `limits.normalization` are the FR-255
   setting names of those limits without their stage prefix: `normalization`
   takes `declaration_records`, `derivation_facts`, `effective_declarations`,
-  `dispatch_candidates`, `hashed_bytes`, `work_units`, `ancestor_steps` and
-  `family_steps` (the `model.*` rows), and `observation` takes the
-  `observation.*` rows' names, each a JSON integer from 0 to 2^53 - 1 with the
-  setting's published default when omitted. An unknown member refuses
-  `invalid-request` naming it.
+  `dispatch_candidates`, `work_units`, `ancestor_steps` and `family_steps`
+  (the `model.*` rows), and `observation` takes the `observation.*` rows'
+  names, each a JSON integer from 0 to 2^53 - 1 with the setting's published
+  default when omitted. An unknown member refuses `invalid-request` naming it.
+- `hashed_bytes` is not a normalization limit and a `limits.normalization`
+  member of that name SHALL refuse the whole request at the request stage
+  with `invalid-request`, exit 20, naming `/limits/normalization/hashed_bytes`,
+  as any unknown member does. No stage of FSL or of the standard hashes model
+  data: a model declaration's identity is compared componentwise and never
+  hashed (FSpec FR-150), and `ModelNormalizationLimitsV1` has exactly the
+  seven counters above. A limit that bounds no work would be accepted and
+  range-checked while changing nothing, so a caller who set it would believe
+  a cost was bounded that does not exist; refusing it names the mistake.
 - `deadline_ms` arms `AnalyzeLimits::deadline`. Cancellation is not a
   document member: the driver's cancel handle (FR-287) is the `&Cancel` the
   run takes. A cancellation or deadline observed before the first item runs
@@ -223,6 +231,7 @@ and one initialization snapshot `start` holding counter `a` at 0.
 | FR-620-AC-8 | `Engines::fsl()`'s registrations include `en-7` advertising `schedulability`. | Test (TC-1580) |
 | FR-620-AC-9 | A `native-analyze/1` document handed to the run reader, and a `native-run/1` document handed to the analyze reader, each refuse at the request stage with `invalid-request`, exit 20. | Test (TC-1580) |
 | FR-620-AC-10 | A Counter request with no `items` whose unit declares `BelowThree` before `Bounded` gives default items in that order, then the derived deadlock-freedom item; a `subject.universes` entry naming a snapshot the request does not provision refuses `invalid-request`, exit 20, naming the entry; `limits.normalization` `{"work_units": 5000000}` is admitted and `{"bogus": 1}` refuses `invalid-request` naming `bogus`. | Test (TC-2185) |
+| FR-620-AC-11 | A Counter request whose `limits.normalization` is `{"hashed_bytes": 1}` refuses the whole request at the request stage with `invalid-request`, exit 20, naming `hashed_bytes`, before any item runs; `{"hashed_bytes": 1, "work_units": 5000000}` refuses the same way; `{"work_units": 5000000}` is admitted. | Test (TC-2215) |
 
 ## Dependencies
 

@@ -63,3 +63,47 @@ fn some_with_a_payload_outside_the_element_type_refuses_at_the_call() {
         refusal.location
     );
 }
+
+/// FR-091-AC-76 (TC-2214): `none` is a second spelling of `absent`, and
+/// `result` builds everywhere and is judged by check, not refused at S2.
+#[trace("TC-2214", "FR-091-AC-76")]
+#[test]
+fn none_and_result_build_and_check_decides_their_position() {
+    for declaration in [
+        "function o using v(): Option<Integer> pure { none }",
+        "function a using v(): Option<Integer> pure { absent }",
+    ] {
+        check(declaration)
+            .unwrap_or_else(|refusals| panic!("{declaration}: the empty option: {refusals:?}"));
+    }
+    for (declaration, code, cause) in [
+        (
+            "function n using v(): Integer pure { none }",
+            Code::IllTyped,
+            "type-mismatch",
+        ),
+        (
+            "function l using v(): Boolean pure { let x = none in true }",
+            Code::IllTyped,
+            "ambiguous-literal",
+        ),
+        (
+            "function r using v(): Integer pure { result }",
+            Code::WrongSnapshot,
+            "wrong-anchor",
+        ),
+    ] {
+        let refusals = check(declaration).expect_err(declaration);
+        assert!(
+            refusals.iter().any(|refusal| refusal.cause.code() == code
+                && refusal.cause.cause() == Some(cause)),
+            "{declaration}: {refusals:?}"
+        );
+        assert!(
+            refusals
+                .iter()
+                .all(|refusal| refusal.cause.code() != Code::UnsupportedConstruct),
+            "{declaration}: {refusals:?}"
+        );
+    }
+}

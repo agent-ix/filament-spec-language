@@ -132,14 +132,80 @@ bound and does not authorize a CG-side result-bound workaround.
   consumer reads the proved range from the node's type as it does for `+`
   and `*`. A remainder is bounded by its divisor alone: for a divisor whose
   range excludes zero and whose largest magnitude is `m`, the Euclidean
-  remainder of `mod` (and of `rem` under the Euclidean law) lies in
-  `[0, m - 1]`, the truncating `rem` in `[-(m - 1), m - 1]` narrowed by the
-  sign of the dividend's range, and the floor `rem` in `[-(m - 1), m - 1]`
-  narrowed by the sign of the divisor's range, even when the dividend is an
-  unbounded `Integer`. A `div` over an unbounded dividend is unbounded. The
-  remainder has this type because the standard defines it so (FSpec
-  FR-147-AC-12), and a node typed `Integer` would refuse every bounded
-  consumer of a remainder that is in fact bounded.
+  remainder of `mod` (and of `rem` under the Euclidean law) lies within
+  `[0, m - 1]`, the truncating `rem` within `[-(m - 1), m - 1]` narrowed by
+  the sign of the dividend's range, and the floor `rem` within
+  `[-(m - 1), m - 1]` narrowed by the sign of the divisor's range, even when
+  the dividend is an unbounded `Integer`. These are bounds, not the type: the
+  type is the smallest interval, which is often narrower (`Int[0, 2] mod
+  Int[5, 6]` is `Int[0, 2]`, not `Int[0, 5]`). A `div` over an unbounded
+  dividend is unbounded. The remainder has this type because the standard
+  defines it so (FSpec FR-147-AC-12), and a node typed `Integer` would refuse
+  every bounded consumer of a remainder that is in fact bounded.
+- **Computing the quotient interval.** A `div` needs no search. For a divisor
+  range of one sign the quotient under each law is monotone in the dividend
+  and, for a fixed dividend, monotone in the divisor, so its extremes are
+  among the four quotients at the corners of the operand ranges. A divisor
+  range that contains zero under an exact nonzero guard is split into its
+  negative part and its positive part, and the interval is the hull of the two
+  corner sets.
+- **Computing the remainder interval.** The checker SHALL compute the
+  smallest interval of a remainder exactly, and SHALL NOT widen it to one of
+  the bounds above because the exact interval is costlier to find. The exact
+  lower endpoint has no known closed form: whether a singleton dividend `n`
+  has remainder 0 for some divisor in `[2, k]` is whether `n` has a factor no
+  larger than `k`, the decision form of integer factorization, for which no
+  algorithm polynomial in the bit length of `n` is known. The checker
+  therefore computes the interval by the bounded walk below, whose cost is
+  charged to the checking work ceiling.
+  - *Reduction.* Every remainder reduces to the Euclidean remainder
+    `x mod d` of a dividend interval `[A, B]` by a divisor magnitude interval
+    `[L, U]`, `1 <= L <= U`. The magnitudes of a divisor range that excludes
+    zero are `[min(|lo|, |hi|), max(|lo|, |hi|)]`; those of a range that
+    contains zero under an exact nonzero guard are `[1, max(|lo|, |hi|)]`.
+    `mod` and the Euclidean `rem` are `x mod d`; the truncating `rem` is
+    `x mod d` for `x >= 0` and `-((-x) mod d)` for `x < 0`; the floor `rem` is
+    `x mod d` for a positive divisor and `-((-x) mod d)` for a negative one.
+    A dividend range spanning zero and a divisor range spanning zero split
+    into at most four such sub-problems, and the interval is the hull of
+    theirs.
+  - *Unbounded operands.* An unbounded dividend has width at least `U`, so
+    the first closed form below applies. A magnitude interval with no upper
+    end (an unbounded `Integer` divisor under an exact nonzero guard) is cut
+    at `M = max(|A|, |B|)`: every magnitude above `M` leaves a nonnegative
+    dividend unchanged and maps a negative dividend `x` to `d + x`, which is
+    unbounded above. The interval is then unbounded (`Integer`) when the
+    sub-problem's dividend range has a negative member, and otherwise the
+    hull of `[A, B]` and the interval over `[L, M]`.
+  - *Closed forms.* If `B - A + 1 >= U`, every magnitude meets every residue
+    and the interval is `[0, U - 1]`. If `0 <= A` and `B < L`, every dividend
+    is below every divisor and the interval is `[A, B]`. Each closed form
+    charges one work unit.
+  - *Run walk.* Otherwise the checker SHALL walk the runs of `[L, U]`. A run
+    is a maximal interval `[d1, d2]` of magnitudes on which `floor(A / d)` and
+    `floor(B / d)` are both constant, `qa` and `qb`. On a run with `qa = qb`
+    the residues at `d` are exactly `[A - qa*d, B - qa*d]`, which are linear
+    in `d`, so the run contributes the smaller of `A - qa*d1` and
+    `A - qa*d2` as its minimum and the larger of `B - qa*d1` and `B - qa*d2`
+    as its maximum. On a run with `qa < qb` the multiple `(qa + 1)*d` lies in
+    `[A, B]` for every `d` of the run, so the run contributes the minimum 0
+    and the maximum `d2 - 1`. The walk visits the runs from the largest
+    magnitude down and stops as soon as the minimum found is 0 and the maximum
+    found is `U - 1`, the bounds no run can pass; otherwise it visits every
+    run. The interval is the minimum and maximum over the visited runs.
+    `floor(n / d)` takes at most `2*ceil(sqrt(|n|)) + 1` distinct values, so
+    there are at most `min(U - L + 1, 2*ceil(sqrt(|A|)) + 2*ceil(sqrt(|B|)) + 2)`
+    runs.
+  - *Cost and limit.* The walk charges one unit of the checking work
+    ceiling (`s3.work_units`, NFR-011) per run it visits, before visiting it.
+    If a charge would exceed the ceiling, checking SHALL stop with NFR-011's
+    stage limit: `stage_limit_exceeded`/`work-budget-exceeded` naming
+    `s3.work_units`, its bound and the count the charge would have reached,
+    located at the operator, and the package does not check. The checker
+    SHALL NOT fall back to a wider interval when the ceiling is reached: a
+    node's type is always the smallest interval, so every work ceiling under
+    which a package checks gives it the same node types, and a caller who
+    reaches the limit raises `s3.work_units` (FR-255) to finish the walk.
 - **The same obligations for `div`, `rem` and `mod`.** The nonzero
   obligation and the result interval apply equally to `div`, `rem` and `mod`
   under every selected law; `mod` is not exempt because it needs no law.
@@ -273,6 +339,8 @@ bound and does not authorize a CG-side result-bound workaround.
 | FR-495-AC-16 | With `type S = Int[0, 3];`, `function m using v(q: Sequence<S>[0, 2]): S pure { reduce<S>(acc, x in q: acc) }` (a `reduce` with no identity over a source that may be empty) refuses `undefined_expression`/`unproved-range` at the `reduce` under `CheckMode::Linked`, as its only refusal (the nonempty-reduction obligation, `size(q) >= 1` unproved), and checks under `CheckMode::Kernel`, which records no nonempty-reduction obligation, so the evaluator meets the empty source; the same function with `q: Sequence<S>[1, 2]` proves `size(q) >= 1` and checks under both modes. | Test (TC-1421) |
 | FR-495-AC-17 | Under `CheckMode::Linked`, from source with no law header: `function m0 using v(a: Int[0, 100], b: Int[0, 12]): Int[0, 11] pure { a mod b }` refuses `undefined_expression`/`unproved-nonzero` at the `mod`, as its only refusal; `function m1 using v(a: Int[0, 100], b: Int[1, 12]): Int[0, 11] pure { a mod b }` checks and the checked `mod` node has type `Int[0, 11]`; `function m2 using v(a: Integer, b: Int[1, 12]): Int[0, 11] pure { a mod b }` checks (the remainder is bounded by the divisor alone); `function m3 using v(a: Int[0, 100], b: Int[1, 12]): Int[0, 10] pure { a mod b }` refuses `unproved-range` at the `mod`. Under `CheckMode::Kernel`, `m0` checks and calling it with `b = 0` returns `Undefined::DivisionByZero` (`division-by-zero`) located at the `mod`. | Test (TC-1783) |
 | FR-495-AC-18 | Under `CheckMode::Linked` and a law header for each of the three laws (FR-670): `function r1 using v(a: Int[-100, 100], b: Int[1, 12]): Int[-11, 11] pure { a rem b }` checks, its `rem` node typed `Int[0, 11]` under Euclidean and floor and `Int[-11, 11]` under truncating; the same with result `Int[0, 11]` checks under Euclidean and floor and refuses `unproved-range` at the `rem` under truncating; `function q1 using v(a: Int[0, 100], b: Int[1, 12]): Int[0, 100] pure { a div b }` checks with its `div` node typed `Int[0, 100]`; and `q1` and `r1` with `b: Int[0, 12]` each refuse `undefined_expression`/`unproved-nonzero` at the operator, as their only refusal. | Test (TC-1783) |
+| FR-495-AC-19 | Under `CheckMode::Linked`, each remainder below checks into its stated exact interval and refuses `undefined_expression`/`unproved-range` at the operator, as its only refusal, into the interval with its lower endpoint raised by one and into the interval with its upper endpoint lowered by one: `a mod b` with `a: Int[0, 2]`, `b: Int[5, 6]` into `Int[0, 2]` (dividends below every divisor); `a: Int[91, 91]`, `b: Int[2, 12]` into `Int[0, 7]` (`91 = 7 * 13`, `91 mod 12 = 7`); `a: Int[97, 97]`, `b: Int[2, 12]` into `Int[1, 9]` (97 is prime, `97 mod 11 = 9`); `a: Int[-7, -7]`, `b: Int[3, 5]` into `Int[1, 3]`; under a truncating law header `a rem b` with `a: Int[-7, -7]`, `b: Int[3, 5]` into `Int[-3, -1]`; under a floor law header `a rem b` with `a: Int[7, 7]`, `b: Int[-5, -3]` into `Int[-3, -1]`. With `b: Integer`, `if b != 0 then a mod b else 0` over `a: Int[0, 9]` checks into `Int[0, 9]`, and over `a: Int[-1, 9]` refuses `unproved-range` into `Int[0, 1000]` (the remainder of a negative dividend by an unbounded divisor is unbounded). | Test (TC-2210) |
+| FR-495-AC-20 | Under `CheckMode::Linked` and `CheckingLimits::default()`, `function big using v(a: Int[1000000007, 1000000007], b: Int[2, 1000000006]): Int[1, 500000003] pure { a mod b }` checks and the same function into `Int[2, 500000003]` refuses `unproved-range` at the `mod` (1000000007 is prime, so the walk visits every run and the minimum is 1, at `b = 1000000006`). With the work ceiling set to 10000 (`with_work_budget(10000)`), `big` refuses `stage_limit_exceeded` with the `WorkBudget` kind and bound 10000 at the `mod`, as its only refusal, never `unproved-range`, and no checked graph is returned. | Test (TC-2211) |
 
 
 ## Dependencies

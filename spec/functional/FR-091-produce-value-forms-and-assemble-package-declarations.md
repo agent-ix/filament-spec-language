@@ -306,6 +306,8 @@ The `Value` production maps each CST expression construct to one
 | CST construct | `Expression` |
 |---|---|
 | `true`, `false` | `Boolean` |
+| `absent`, `none` | `Absent`, the one empty `Option` value; `none` is a second spelling of `absent` |
+| `self`, `result` | `SelfRef`, `Result` |
 | unsigned integer literal | `Integer` |
 | `rational(n, d)` | `Rational(n, d)` |
 | `decimal(c, s)` | `DecimalValue{coefficient, scale}`, the signed integer `c` and the unsigned integer `s` exactly as written |
@@ -377,9 +379,20 @@ measure:
 A construct that no family's variant represents refuses the whole unit with
 cause `UnrepresentedConstruct`, naming the construct's CST production and
 span, and carrying the construct payload and message of
-[FR-763](FR-763-name-the-construct-in-every-forms-stage-refusal.md). These constructs are `null` outside a record field value, `none`,
-`result`, indexing `e[i]` outside a clock place expression,
-`size<T>(e)` and `reaches(..)`. The selectors `p[i]` and `p[k]` of a clock
+[FR-763](FR-763-name-the-construct-in-every-forms-stage-refusal.md). These constructs are `null` outside a record field value, indexing `e[i]`
+outside a clock place expression, `size<T>(e)` and `reaches(..)` over a
+qualified edge. `none` and `result` are not unrepresented: S2 builds `none`
+as the same `Absent` form as `absent`, and `result` as `Result`, wherever
+they are written, and check decides whether the position admits them. An
+`Absent` takes the `Option` type its position expects; a position that
+expects no type refuses `ill_typed`/`ambiguous-literal` and one that expects
+a non-`Option` type `ill_typed`/`type-mismatch`. A `Result` reads the
+result binding of the operation clause that holds it (a `post` clause of an
+operation with a result); anywhere else, a function body included, check
+refuses `wrong_snapshot`/`wrong-anchor` at it. Building both in S2 keeps the
+decision with the checker, which knows the position, and lets the standard
+spelling `none` that refinement mappings and lookup comparisons write reach
+its meaning. The selectors `p[i]` and `p[k]` of a clock
 place expression (FR-230 "Selection") are not unrepresented: S2 builds them
 as the place expressions FR-230 admits. S2 returns no form for any
 declaration of that unit.
@@ -1234,7 +1247,7 @@ every checker of the language.
 | FR-091-AC-4 | S2 refuses a `ParsedSource` whose CST carries a recovery with cause `RecoveringCst`. It refuses an admissible parse, to which `prepend_diagnostic` has added one diagnostic, with the diagnosed-source cause holding that diagnostic's code. Neither refusal returns a parsed unit. | Test (TC-395) |
 | FR-091-AC-5 | S2 refuses the whole unit with cause `NoDispatchEntry` for an admissible unit holding a valid `function` declaration followed by `invariant Positive using v on M::T at current { true }`. The refusal names the spelling `invariant` and that declaration's span, and S2 returns no form for the `function` declaration. | Test (TC-395) |
 | FR-091-AC-6 | S2 builds a parsed unit with one form for an admissible unit whose only declaration is `enum Color { RED }`, `ordered enum Level { LOW }`, `predicate P using v(x: Boolean): Boolean { x }`, `dimension Length;` or, after `dimension Length;`, `unit m : Length = rational(1, 1);`. None of these refuses with `NoDispatchEntry`. No module under `forms` other than the `Value` family form builder names the `EnumDeclaration`, `EnumMember`, `Predicate`, `DimensionDeclaration` or `UnitDeclaration` CST production. | Test (TC-395) |
-| FR-091-AC-7 | S2 refuses the whole unit with cause `UnrepresentedConstruct`, naming the construct's CST production and span and returning no form, for a function body that holds exactly one of: `xs[0]`, `none`, `reaches(a, b, M::R)`. For FR-230-AC-21's model, whose reset `self.ts[1].x = 0 ms`, reset `self.m[k].x = 0 ms` and replacement `self.m[k] = Timer { x: 0 ms, n: 1 }` index a clock place expression, S2 refuses none of the three with `UnrepresentedConstruct` and builds the place expressions FR-230 checks; the same unit with the function body `xs[0]` added refuses with `UnrepresentedConstruct` naming that `xs[0]`'s span only. | Test |
+| FR-091-AC-7 | S2 refuses the whole unit with cause `UnrepresentedConstruct`, naming the construct's CST production and span and returning no form, for a function body that holds exactly one of: `xs[0]`, `null`, `reaches(a, b, M::R)` (naming the edge `M::R`). For FR-230-AC-21's model, whose reset `self.ts[1].x = 0 ms`, reset `self.m[k].x = 0 ms` and replacement `self.m[k] = Timer { x: 0 ms, n: 1 }` index a clock place expression, S2 refuses none of the three with `UnrepresentedConstruct` and builds the place expressions FR-230 checks; the same unit with the function body `xs[0]` added refuses with `UnrepresentedConstruct` naming that `xs[0]`'s span only. | Test (TC-2214) |
 | FR-091-AC-8 | For each of `function f using v(x: Int[0, 9]): Boolean pure { B }` with body `B` equal to `deref(x)`, `allInstances<M::T>(x)` or `pre(x)`, and `function g using v(x: Int[0, 9]): Boolean pure decreases(pre(x)) { true }`, each in a unit with no admitted domain package, S2 returns a parsed unit that holds `Deref`, `AllInstances` or `Pre` where the construct is written. Check refuses `pre(x)`, in the body and in the measure, with `wrong_snapshot`/`forbidden-pre-read`, the `ProtocolClause` cause, and `deref(x)` with `ill_typed`/`type-mismatch`. The assembler refuses `allInstances<M::T>(x)` with an unresolved-type-name error naming `M::T` (`missing_declaration`/`missing-name`). None of these refusals has code `unsupported_construct`. | Test (TC-396) |
 | FR-091-AC-9 | S2 builds a form for each of the function bodies `not`×8 `a`, `not`×20 `a` and `not`×129 `a`, each admitted by S1 at its default limits, and each form's expression tree is as deep as its body. S2 takes no limit set, and no S2 outcome names a depth. | Test (TC-397) |
 | FR-091-AC-10 | Every `Expression` node in a `Value` form carries the span of the CST node it maps from. For the body `if a then b else c + d`, the `If` node's span covers the whole body, the `Add` node's span covers `c + d`, and the `Name("d")` node's span covers `d`. For `(a + b) * c`, the `Add` node's span covers `a + b`, without the parentheses. | Test (TC-403) |
@@ -1297,6 +1310,7 @@ every checker of the language.
 | FR-091-AC-73 | Base and derived dimension identity is independent of normalized terms (QSL-1738; FSpec FR-142-AC-15 to AC-19, TC-187 U11g3). In `dimension L; dimension N = L / L; unit m : L = rational(1, 1); unit one : N = rational(1, 1);`, assembly admits both distinct named dimension nodes; `L` is base with its base-dimension term, while `N` is derived with an empty normalized term map and is dimensionless. Unit `m` retains dimension `L`; unit `one` retains dimension `N` and is dimensionless. Semantic admission preserves the same base flags and node identities; it does not infer that `N` is base from its empty terms. | Test (TC-483) |
 | FR-091-AC-74 | Over admitted canonical roots `kg`, `m` and `s`, parse and check parameter, result and conversion-target types `Quantity<kg*m^2*s^-2>`. Parsed forms retain the three qualified unit factors, exponents `1`, `2`, `-2` and their source spans. The checked type has the exact compound identity whose canonical terms name those roots with those exponents; `Quantity<s^-2*kg*m*m>` resolves to that same compound identity. `Quantity<kg>` remains declared, while `Quantity<kg^1>` and `Quantity<kg*m^0>` are the same one-term compound identity, distinct from declared `kg`; `Quantity<m*m^-1>` is the empty compound. `Quantity<J>` remains a distinct declared identity when `J` has the same base-dimension map. The existing named-unit carrier `Quantity<kg, Int[0, 10]>` still parses and checks without changing its carrier or unit. | Test |
 | FR-091-AC-75 | `Quantity<>`, `Quantity<kg*>`, `Quantity<kg**m>`, `Quantity<m^>`, `Quantity<m^n>` and `Quantity<m^1.5>` refuse typed `invalid_syntax` at their malformed unit expression. `Quantity<kg*ghost^2>` and `Quantity<ghost^0>` refuse `missing_declaration`/`missing-name` naming `ghost` at its own span, and a dimension-only factor refuses the same unit-namespace lookup. Existing source-integer and stage ceilings apply to long products and large exponents, with a typed refusal or limit stop and no truncated exponent or authoritative partial compound type. | Test |
+| FR-091-AC-76 | S2 builds the function bodies `none` and `absent` as `Absent` and `result` as `Result`, refusing neither with `UnrepresentedConstruct`. Check then admits `function o using v(): Option<Integer> pure { none }` with the empty `Option<Integer>` value, refuses `function n using v(): Integer pure { none }` `ill_typed`/`type-mismatch` at `none`, refuses `let x = none in true` `ill_typed`/`ambiguous-literal` at `none`, and refuses `function r using v(): Integer pure { result }` `wrong_snapshot`/`wrong-anchor` at `result`; no refusal of the four has code `unsupported_construct`. | Test (TC-2214) |
 
 ## Dependencies
 

@@ -379,3 +379,35 @@ fn an_analyze_request_supplies_the_integer_division_law() {
     assert_eq!(document["diagnostics"][0]["code"], "unknown_profile");
     assert_eq!(document["diagnostics"][0]["cause"], "unsupported-selection");
 }
+
+/// FR-620-AC-11 (TC-2215): `hashed_bytes` bounds no work in FSL, so a
+/// `limits.normalization` member of that name refuses the whole request.
+#[trace("TC-2215", "FR-620-AC-11")]
+#[test]
+#[ignore = "QSL-2269: the analyze request still accepts limits.normalization.hashed_bytes"]
+fn hashed_bytes_is_not_a_normalization_limit() {
+    for (n, (normalization, exit)) in [
+        (json!({"hashed_bytes": 1}), 20),
+        (json!({"hashed_bytes": 1, "work_units": 5_000_000}), 20),
+        (json!({"work_units": 5_000_000}), 0),
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let mut request = request_members(Some(json!([{"claim": "Bounded"}])));
+        request["limits"] = json!({"normalization": normalization});
+        let ws = Workspace::new(&format!("wire-hashed-bytes-{n}"));
+        let run = analyze(&counter_request_with(&ws, &bounded(), request));
+        assert_eq!(run.exit, exit, "{normalization}");
+        if exit == 20 {
+            let document = run.document();
+            assert_eq!(document["items"], json!([]), "{document}");
+            let diagnostic = &document["diagnostics"][0];
+            assert_eq!(diagnostic["code"], "invalid-request", "{document}");
+            assert!(
+                diagnostic.to_string().contains("hashed_bytes"),
+                "{document}"
+            );
+        }
+    }
+}

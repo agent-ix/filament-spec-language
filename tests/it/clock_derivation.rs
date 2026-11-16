@@ -122,3 +122,67 @@ fn library_units_share_the_request_clocks() {
     );
     assert_eq!(find(&failure, "clock"), Some(&json!("plant-ms")));
 }
+
+#[trace("TC-2212", "FR-640-AC-10", "FSpec-TC-1661", "FSpec-FR-322-AC-452")]
+#[test]
+#[ignore = "QSL-2274: the program package does not record its libraries' clock selections yet"]
+fn the_program_package_records_its_library_clock_selections() {
+    let directory = tempfile::tempdir().unwrap();
+    let library = "language \"ix:native\" edition \"1-draft\";\n\
+         profile v = \"filament.value.complete/v1\";\n\
+         profile w = \"filament.temporal.timestamped-event.finite-window/v1\";\n\
+         record Reading { level: Int[0, 9]; }\n\
+         function flag using v(): Boolean pure { true }\n\
+         temporal Late using w over (r: Reading) clock \"lib-ms\" \
+         on origin { eventually[0,5] holds(r.level > 0) }\n";
+    let plain = "language \"ix:native\" edition \"1-draft\";\n\
+         profile v = \"filament.value.complete/v1\";\n\
+         function flag using v(): Boolean pure { true }\n";
+    let program = "language \"ix:native\" edition \"1-draft\";\n\
+         profile v = \"filament.value.complete/v1\";\n\
+         import \"test/plant\" as P;\n\
+         function entry using v(): Boolean pure { P::flag() }\n";
+    write(directory.path(), "plant.native", library.as_bytes());
+    write(directory.path(), "plain.native", plain.as_bytes());
+    write(directory.path(), "unit.native", program.as_bytes());
+    let request = |file: &str, clocks: Option<Value>| {
+        let mut request = json!({"format": "native-compile/1", "request": {
+            "models": [],
+            "program": {"source": source("unit.native", "test:clocks-program")},
+            "libraries": [{"identity": "test/plant",
+                "source": source(file, "test:clocks-plant")}]}});
+        if let Some(clocks) = clocks {
+            request["request"]["clocks"] = clocks;
+        }
+        request
+    };
+    let compiled = |unit: &str| {
+        let output = compile(
+            directory.path(),
+            &request(
+                "plant.native",
+                Some(json!({"lib-ms": {"kind": "timestamped_event", "timestamp_unit": unit}})),
+            ),
+        );
+        assert_eq!(
+            output.status.code(),
+            Some(0),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        output.stdout
+    };
+    let ms = compiled("ms");
+    let package: Value = serde_json::from_slice(&ms).expect("package JSON");
+    assert_eq!(
+        package["lock"]["dependency_clock_selections"],
+        json!([{"clock_name": "lib-ms",
+            "clock": {"kind": "timestamped_event", "timestamp_unit": "ms"}}])
+    );
+    assert_ne!(ms, compiled("s"));
+
+    let output = compile(directory.path(), &request("plain.native", None));
+    assert_eq!(output.status.code(), Some(0));
+    let package: Value = serde_json::from_slice(&output.stdout).expect("package JSON");
+    assert!(package["lock"].get("dependency_clock_selections").is_none());
+}
