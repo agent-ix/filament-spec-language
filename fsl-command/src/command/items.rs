@@ -99,16 +99,20 @@ pub(super) fn run_bytes(
                 "a selection can carry at most one population selector",
             ));
         }
-        if kind == "value_invariants"
-            && (value
-                .as_object()
-                .is_none_or(|object| object.len() != 1 || !object.contains_key("snapshot"))
-                || value.get("snapshot").and_then(Value::as_str).is_none())
-        {
-            return Err(refused(
-                "value_invariants",
-                "expected exactly one string snapshot member",
-            ));
+        if kind == "value_invariants" {
+            let Some(members) = value.as_object() else {
+                return Err(refused("value_invariants", "expected an object"));
+            };
+            let valid_members = members.len() == 1 && members.contains_key("snapshot")
+                || members.len() == 2
+                    && members.contains_key("snapshot")
+                    && members.contains_key("invocation");
+            if !valid_members || members.values().any(|member| member.as_str().is_none()) {
+                return Err(refused(
+                    "value_invariants",
+                    "expected snapshot and optional invocation string members",
+                ));
+            }
         }
         let observation = match kind.as_str() {
             "clause" => value.get("observation").and_then(Value::as_str),
@@ -117,7 +121,15 @@ pub(super) fn run_bytes(
             "value_invariants" => value.get("snapshot").and_then(Value::as_str),
             _ => None,
         };
-        if let Some(observation) = observation {
+        if kind == "value_invariants" {
+            for member in ["snapshot", "invocation"] {
+                if let Some(observation) = value.get(member).and_then(Value::as_str) {
+                    if !observation_keys.contains(observation) {
+                        return Err(refused(observation, "observation key is not present"));
+                    }
+                }
+            }
+        } else if let Some(observation) = observation {
             if !observation_keys.contains(observation) {
                 return Err(refused(observation, "observation key is not present"));
             }
@@ -259,7 +271,30 @@ pub(super) fn run_bytes(
                                     .ok_or_else(|| {
                                         refused(snapshot_key, "invalid snapshot identity")
                                     })?;
-                            run_value_invariants(*request, &reference)
+                            let invocation = value
+                                .get("invocation")
+                                .and_then(Value::as_str)
+                                .map(|invocation_key| {
+                                    let file = observations
+                                        .get(invocation_key)
+                                        .and_then(Value::as_str)
+                                        .ok_or_else(|| {
+                                            refused(
+                                                invocation_key,
+                                                "observation key is not present",
+                                            )
+                                        })?;
+                                    let bytes = super::read_file(
+                                        &directory.join(file),
+                                        limits.dependent_bytes,
+                                    )?;
+                                    fsl_semantics::model::observation::document_reference(&bytes)
+                                        .ok_or_else(|| {
+                                            refused(invocation_key, "invalid invocation identity")
+                                        })
+                                })
+                                .transpose()?;
+                            run_value_invariants(*request, &reference, invocation.as_ref())
                         }
                         super::PreparedRun::Function(_) => Err(refused(
                             "value_invariants",
@@ -284,10 +319,12 @@ pub(super) fn run_bytes(
             ItemExecution::ValueInvariants(result) => match result {
                 Ok((results, item_exit)) => {
                     exit_code = more_severe(exit_code, item_exit);
-                    selection_counts
+                    if let Some(count) = selection_counts
                         .iter_mut()
                         .find(|count| count["index"] == index)
-                        .map(|count| count["expanded"] = json!(results.len()));
+                    {
+                        count["expanded"] = json!(results.len());
+                    }
                     for result in results {
                         let mut item = json!({"selection": index,
                             "invariant": result["invariant"],
@@ -463,6 +500,7 @@ fn category_for_exit(exit_code: u8) -> &'static str {
 fn run_value_invariants(
     request: fsl_replay::spine::ClauseRunRequest,
     snapshot: &fsl_semantics::model::observation::DocumentRef,
+    invocation: Option<&fsl_semantics::model::observation::DocumentRef>,
 ) -> Result<(Vec<Value>, u8)> {
     use fsl_eval::value::CheckedPackageEvaluation;
     use fsl_replay::spine::{ClauseRunSource, ParseRequest};
@@ -509,14 +547,19 @@ fn run_value_invariants(
     .into_value();
     let package = checked.package();
     let graph = package.graph();
-    let (current, admission_usage) =
-        match fsl_semantics::model::observation::admit_value_invariants_snapshot(
+    let (observations, admission_usage) =
+        match fsl_semantics::model::observation::admit_value_invariant_selection(
             graph.model_inputs(),
             graph.scope().types(),
+            graph.scope().operations(),
             &request.packages,
             request.limits.model,
-            &request.snapshots,
+            &fsl_semantics::model::observation::Provisions {
+                snapshots: &request.snapshots,
+                invocations: &request.invocations,
+            },
             snapshot,
+            invocation,
             request.observation_limits,
         ) {
             Ok(admitted) => admitted,
@@ -556,7 +599,7 @@ fn run_value_invariants(
         };
     let mut meter = filament_exact::Meter::new(request.accounting);
     let evaluation = package
-        .evaluate_current_value_invariants(&current, &mut meter)
+        .evaluate_value_invariant_selection(&observations, &mut meter)
         .map_err(|failure| refused("evaluation", failure.to_string()))?;
     let results = evaluation
         .results

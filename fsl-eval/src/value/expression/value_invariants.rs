@@ -16,7 +16,9 @@ use filament_semantic_value::declaration::{CompositeShape, TypeEnvironment};
 use fsl_package::CheckedPackage;
 use fsl_semantics::check::{CheckedTypeInvariant, TypeSlot};
 use fsl_semantics::model::object_environment::ObjectEnvironment;
-use fsl_semantics::model::observation::{AdmittedObservations, Observation, SelfKind};
+use fsl_semantics::model::observation::{
+    AdmittedObservations, Observation, SelfKind, ValueInvariantObservations,
+};
 
 use super::evaluate::Machine;
 use super::s6a::separation::{
@@ -211,6 +213,60 @@ fn collect_current<'a>(
     Ok(pending)
 }
 
+/// FR-652's current snapshot plus the explicitly selected invocation's
+/// reachable parameter, result, and state-machine receiver values.
+fn collect_selection<'a>(
+    types: &TypeEnvironment,
+    observations: &'a ValueInvariantObservations,
+) -> Result<Vec<Pending<'a>>, CallFailure> {
+    let mut pending = collect_current(types, &observations.current)?;
+    let (Some(pre), Some(post), Some(invocation)) = (
+        observations.pre.as_ref(),
+        observations.post.as_ref(),
+        observations.invocation.as_ref().map(observation_identity),
+    ) else {
+        return Ok(pending);
+    };
+    let binding = |observation: &Observation, binding: InvocationBinding| RuntimeValuePath {
+        observation: observation_identity(&observation.identity),
+        subject: ValuePathSubject::Invocation {
+            invocation: invocation.clone(),
+            binding,
+        },
+        steps: Vec::new(),
+    };
+    let mut walks = observations
+        .parameters
+        .iter()
+        .map(|(name, value)| Walk {
+            path: binding(pre, InvocationBinding::Parameter(name.clone())),
+            value: value.clone(),
+        })
+        .collect::<Vec<_>>();
+    if let Some(result) = &observations.result {
+        walks.push(Walk {
+            path: binding(post, InvocationBinding::Result),
+            value: result.clone(),
+        });
+    }
+    walk(types, &mut pending, walks)?;
+    if observations.self_kind == SelfKind::Context {
+        for (reference, side) in [
+            (observations.receiver_pre.as_ref(), pre),
+            (observations.receiver_post.as_ref(), post),
+        ] {
+            let Some(reference) = reference else { continue };
+            pending.push(Pending {
+                path: binding(side, InvocationBinding::Receiver),
+                value: Value::Reference(reference.clone()),
+                slot: TypeSlot::Object(reference.object_type().clone()),
+                environment: Some(&side.environment),
+            });
+        }
+    }
+    Ok(pending)
+}
+
 /// The object `reference` of `environment` as a value of its type, then each
 /// member of it walked.
 fn push_object<'a>(
@@ -361,6 +417,20 @@ pub(crate) fn evaluate_current(
     evaluate_values(
         package,
         collect_current(package.graph().scope().types(), current)?,
+        meter,
+    )
+}
+
+/// FR-652: evaluate a no-clause current-snapshot selection, optionally
+/// including the invocation admitted alongside it.
+pub(crate) fn evaluate_selection(
+    package: &CheckedPackage,
+    observations: &ValueInvariantObservations,
+    meter: &mut Meter,
+) -> Result<ValueInvariantEvaluation, CallFailure> {
+    evaluate_values(
+        package,
+        collect_selection(package.graph().scope().types(), observations)?,
         meter,
     )
 }

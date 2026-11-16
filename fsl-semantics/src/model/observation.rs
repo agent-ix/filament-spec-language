@@ -491,6 +491,31 @@ pub struct Observation {
     pub out_of_range: Vec<OutOfRange>,
 }
 
+/// FR-652's no-clause value-invariant input: a current snapshot and, when
+/// requested, the values admitted from one invocation. This deliberately
+/// carries no clause identity or synthetic receiver.
+#[derive(Clone, Debug)]
+pub struct ValueInvariantObservations {
+    /// The explicitly selected current snapshot.
+    pub current: Observation,
+    /// The invocation's pre snapshot, when an invocation was selected.
+    pub pre: Option<Observation>,
+    /// The invocation's post snapshot, when an invocation was selected.
+    pub post: Option<Observation>,
+    /// The admitted invocation identity.
+    pub invocation: Option<DocumentRef>,
+    /// Whether the receiver is an object or state-machine context.
+    pub self_kind: SelfKind,
+    /// The state machine context at pre, when applicable.
+    pub receiver_pre: Option<ObjectReference>,
+    /// The state machine context at post, when applicable.
+    pub receiver_post: Option<ObjectReference>,
+    /// The invocation's admitted parameters.
+    pub parameters: Vec<(String, Value)>,
+    /// The invocation's admitted result.
+    pub result: Option<Value>,
+}
+
 /// Recheck explicit protocol-reference population provenance against an
 /// admitted current snapshot, including FR-106's retained recursive closure.
 /// Each tuple is `(reference, exact population node, value-relative path)`.
@@ -1979,13 +2004,23 @@ pub fn admit_value_invariants_snapshot<'a>(
         )));
     }
     check_model_any(&views, &snapshot.model)?;
+    let required = views
+        .iter()
+        .flat_map(|view| &view.view.domain_package().records)
+        .filter_map(|record| match record {
+            crate::model::domain_package::DomainPackageRecord::Population(population) => {
+                Some(population.key.node.clone())
+            }
+            _ => None,
+        })
+        .collect::<Vec<_>>();
     let admitted = document::admit_argument_populations(
         &views,
         types,
         snapshot,
         &read.identity,
         &[],
-        &[],
+        &required,
         model_limits.ancestor_steps,
     )?;
     Ok((
@@ -1996,6 +2031,157 @@ pub fn admit_value_invariants_snapshot<'a>(
             out_of_range: admitted.out_of_range,
         },
         read.usage,
+    ))
+}
+
+/// FR-652: admit a current snapshot and optional invocation for a
+/// no-clause value-invariant selection. Invocation admission reuses FR-106's
+/// ordered checks, including check 11, without inventing a clause identity.
+#[allow(clippy::too_many_arguments)]
+pub fn admit_value_invariant_selection<'a>(
+    model_selections: impl Into<ModelSelections<'a>>,
+    types: &TypeEnvironment,
+    operations: &OperationTable,
+    packages: &PackageInput,
+    model_limits: ModelNormalizationLimits,
+    provisions: &Provisions<'_>,
+    current_selected: &DocumentRef,
+    invocation_selected: Option<&DocumentRef>,
+    limits: ObservationLimits,
+) -> Result<(ValueInvariantObservations, AdmissionUsage), AdmissionFailure> {
+    let model_selections = model_selections.into();
+    let (current, mut usage) = admit_value_invariants_snapshot(
+        model_selections,
+        types,
+        packages,
+        model_limits,
+        provisions.snapshots,
+        current_selected,
+        limits,
+    )?;
+    let Some(invocation_selected) = invocation_selected else {
+        return Ok((
+            ValueInvariantObservations {
+                current,
+                pre: None,
+                post: None,
+                invocation: None,
+                self_kind: SelfKind::Object,
+                receiver_pre: None,
+                receiver_post: None,
+                parameters: Vec::new(),
+                result: None,
+            },
+            usage,
+        ));
+    };
+
+    let views = model_views(model_selections, packages, model_limits)?;
+    let invocation_read = read_document(
+        DocumentKind::Invocation,
+        provisions.invocations,
+        invocation_selected,
+        limits,
+        &views,
+    )?;
+    let invocation = invocation_read
+        .as_invocation()
+        .ok_or_else(|| fault("expected-invocation-document"))?;
+    let (context_view, context_key) = document::find_declaration(&views, &invocation.call.context)
+        .ok_or_else(|| refuse(admission_record(Code::WrongSnapshot, "wrong-invocation")))?;
+    let context = context_view
+        .view
+        .type_identities()
+        .get(&context_key)
+        .cloned()
+        .ok_or_else(|| fault("unresolved-invocation-context"))?;
+    let context_name = invocation.call.context.clone();
+    // All populations in the invocation's two snapshots are required: this
+    // selection has no clause whose reads could narrow the admitted scope.
+    let all_populations = views
+        .iter()
+        .flat_map(|view| &view.view.domain_package().records)
+        .filter_map(|record| match record {
+            crate::model::domain_package::DomainPackageRecord::Population(population) => {
+                Some(population.key.node.clone())
+            }
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    let named = NamedReads {
+        current: Vec::new(),
+        pre: all_populations.clone(),
+        post: all_populations,
+    };
+    let admitted = admit_invocation_documents(
+        &views,
+        types,
+        context_view,
+        &context_name,
+        context.clone(),
+        OperationSource::Any(operations),
+        true,
+        &named,
+        provisions,
+        invocation_selected,
+        limits,
+        model_limits.ancestor_steps,
+    )?;
+
+    // FR-106 check 11: compare the invocation's snapshots against the
+    // resolved operation effect, and check a state machine's contexts.
+    let invocation_document = admitted.documents.invocation()?;
+    let frame_context = frame::FrameContext {
+        views: &views,
+        types,
+        context_view,
+        limits: model_limits,
+        effect: admitted.operation.effect(),
+    };
+    let binding = frame_binding(invocation_document);
+    let (created, deleted) = frame::enforce(
+        &frame_context,
+        &binding,
+        frame_snapshot(admitted.documents.pre()?),
+        frame_snapshot(admitted.documents.post()?),
+        &invocation_document.created,
+        &invocation_document.deleted,
+    )?;
+    let _ = (created, deleted);
+    if admitted.self_kind == SelfKind::Context {
+        frame::enforce_contexts(
+            &frame_context,
+            context,
+            admitted.documents.pre()?,
+            admitted.documents.post()?,
+        )?;
+    }
+    usage = usage.merged_with(admitted.usage());
+    let pre = Observation {
+        identity: admitted.documents.pre.identity.clone(),
+        environment: admitted.pre.environment,
+        populations: admitted.pre.completeness,
+        out_of_range: admitted.pre.out_of_range,
+    };
+    let post = Observation {
+        identity: admitted.documents.post.identity.clone(),
+        environment: admitted.post.environment,
+        populations: admitted.post.completeness,
+        out_of_range: admitted.post.out_of_range,
+    };
+    Ok((
+        ValueInvariantObservations {
+            current,
+            pre: Some(pre),
+            post: Some(post),
+            invocation: Some(admitted.invocation),
+            self_kind: admitted.self_kind,
+            receiver_pre: admitted.receiver_pre,
+            receiver_post: admitted.receiver_post,
+            parameters: admitted.parameters,
+            result: admitted.result,
+        },
+        usage,
     ))
 }
 
@@ -3023,13 +3209,25 @@ fn check_operation(
 ) -> Result<OperationDeclaration, AdmissionFailure> {
     let wrong_invocation = || refuse(admission_record(Code::WrongSnapshot, "wrong-invocation"));
     if !receiver.state_machine {
-        let OperationSource::Clause(operation) = source else {
-            return Err(fault("context-selection-of-an-object-receiver"));
-        };
-        if call.context != receiver.context_name || call.operation != operation.declaration.name() {
+        if call.context != receiver.context_name {
             return Err(wrong_invocation());
         }
-        return Ok(operation.declaration.clone());
+        return match source {
+            OperationSource::Clause(operation)
+                if call.operation == operation.declaration.name() =>
+            {
+                Ok(operation.declaration.clone())
+            }
+            OperationSource::Clause(_) => Err(wrong_invocation()),
+            OperationSource::Any(table) => {
+                match table.resolve(receiver.types, receiver.context.clone(), &call.operation) {
+                    OperationLookup::Declared { operation, .. } => Ok(operation.clone()),
+                    OperationLookup::Missing | OperationLookup::Ambiguous(_) => {
+                        Err(wrong_invocation())
+                    }
+                }
+            }
+        };
     }
     let invoked = document::find_declaration(receiver.views, &call.context)
         .and_then(|(view, key)| view.view.type_identities().get(&key).cloned())

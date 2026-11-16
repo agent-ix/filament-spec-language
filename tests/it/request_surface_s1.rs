@@ -186,7 +186,6 @@ fn run_refusal(directory: &Path, request: &Value) -> (u8, Value) {
 /// without the request's dependent files present.
 #[test]
 #[trace("TC-1747", "FR-664-AC-1")]
-#[ignore = "QSL-1987: the current-selection `parameters` refusal is not pinned yet"]
 fn a_current_selection_with_parameters_refuses_naming_parameters() {
     for parameters in [json!({}), json!({"target": {"reference": "child"}})] {
         for with_files in [true, false] {
@@ -741,7 +740,6 @@ fn snapshot_refusals_carry_a_document_locus() {
 /// refuse a `parameters` member before any file is read.
 #[test]
 #[trace("TC-1747", "FR-664-AC-2")]
-#[ignore = "QSL-1987: the context and value-invariants selections are not implemented yet"]
 fn context_and_value_invariant_selections_refuse_parameters() {
     for selection in [
         json!({"context": {"name": "Consistent", "invocation": "i1", "side": "pre",
