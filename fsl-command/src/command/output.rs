@@ -129,6 +129,7 @@ pub(super) fn error(error: &RunError, artifact: bool) -> Result<Value, serde_jso
         | RunCause::EmptyCompileProgram
         | RunCause::AnalyzeRequest { .. }
         | RunCause::AnalyzeUniverse(_)
+        | RunCause::AnalyzeNotYetImplemented { .. }
         | RunCause::AnalyzeRefused(_) => (types::Stage::Request, types::Details::None),
         RunCause::AnalyzeFault => (types::Stage::Output, types::Details::None),
         RunCause::Spine(failure) => (

@@ -296,6 +296,14 @@ pub enum RunCause {
     /// incomplete (`incomplete_population`).
     #[error("{0}")]
     AnalyzeUniverse(fsl_analyze::analyze::document::UniverseRefusal),
+    /// FR-620: a request member FSL admits but does not implement yet
+    /// (`unsupported_construct`/`not-yet-implemented`, FR-763), such as a
+    /// checked-package selection (QSL-2271).
+    #[error("unsupported_construct/not-yet-implemented: analyzing a {member} selection is not implemented yet")]
+    AnalyzeNotYetImplemented {
+        /// The request member the gap is in.
+        member: &'static str,
+    },
     /// FR-624: the shared subject binding or source provision of an
     /// analyze request was refused before any item ran.
     #[error("{0}")]
@@ -375,6 +383,7 @@ impl RunCause {
             Self::Spine(failure) => failure.refusal.code(),
             Self::SpineRun(refusal) => refusal.code(),
             Self::AnalyzeRequest { .. } => Code::InvalidRequest,
+            Self::AnalyzeNotYetImplemented { .. } => Code::UnsupportedConstruct,
             Self::AnalyzeUniverse(
                 fsl_analyze::analyze::document::UniverseRefusal::Unprovisioned { .. },
             ) => Code::InvalidRequest,
@@ -504,6 +513,16 @@ impl RunError {
                     None,
                     self.outcome_message(),
                 )]),
+            RunCause::AnalyzeNotYetImplemented { .. } => {
+                OutcomeDocument::new(operation, None, self.category()).with_diagnostics(vec![
+                    OutcomeDiagnostic::new(
+                        Some("not-yet-implemented"),
+                        self.cause.code().as_str(),
+                        None,
+                        self.outcome_message(),
+                    ),
+                ])
+            }
         }
     }
 

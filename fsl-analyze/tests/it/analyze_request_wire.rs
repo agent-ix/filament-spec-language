@@ -556,7 +556,7 @@ fn an_oversized_temporal_count_refuses_naming_the_member() {
 /// `unsettled` and `axes.settlement` `unsettled`, and exits 0.
 #[trace("TC-1581", "FR-621-AC-7")]
 #[test]
-#[ignore = "QSL-2121: analyze has no finite-replay engine, so an item with a supplied trace settles unsupported"]
+#[ignore = "QSL-2272: analyze has no finite-replay engine, so an item with a supplied trace settles unsupported"]
 fn a_pending_finite_replay_item_reports_its_pending_disposition() {
     let reaches =
         crate::analyze_cli_support::clause("Reaches", "", "eventually holds(c.value = 3)");
@@ -582,4 +582,63 @@ fn a_pending_finite_replay_item_reports_its_pending_disposition() {
     );
     assert_eq!(item["record"]["basis"], "unsettled", "{item}");
     assert_eq!(item["axes"]["settlement"], "unsettled", "{item}");
+}
+
+/// FR-620 "Subject, compilation and default items" (FSpec FR-520
+/// `package`): a request that selects the checked package compiled from
+/// the Counter program, with no program source, analyzes the same items as
+/// the request over the source and gives an equal outcome.
+#[trace("TC-1580", "FR-620-AC-1")]
+#[test]
+#[ignore = "QSL-2271: analyze over a checked-package selection is not implemented yet"]
+fn a_package_selection_analyzes_as_its_source() {
+    let items = json!([{"claim": "Bounded"}, {"claim": "BelowThree"}]);
+    let body = format!("{}{}", bounded(), below_three());
+    let ws = Workspace::new("wire-package-selection");
+    let source = analyze(&counter_request(&ws, &body, items.clone()));
+    let request = request_members(Some(items));
+    let compile = json!({"format": "native-compile/1", "request": {
+        "models": request["models"], "program": request["program"]}});
+    let compile_path = ws.write("compile.json", compile.to_string().as_bytes());
+    let package = fsl_command::command::compile(&compile_path).expect("the program compiles");
+    ws.write("package.json", &package);
+    let mut selected = request.clone();
+    selected
+        .as_object_mut()
+        .expect("a request object")
+        .remove("program");
+    selected["package"] = json!({"file": "package.json"});
+    let document = json!({"format": "native-analyze/1", "request": selected});
+    let path = ws.write("analyze-package.json", document.to_string().as_bytes());
+    let run = analyze(&path);
+    assert_eq!(run.exit, source.exit, "{}", run.document());
+    assert_eq!(run.document()["items"], source.document()["items"]);
+}
+
+/// A package selection is an implementation gap until QSL-2271 lands: it
+/// refuses `unsupported_construct`/`not-yet-implemented` naming `package`,
+/// never `invalid-request` or a profile prohibition (FR-763).
+#[trace("TC-1580", "FR-620-AC-3")]
+#[test]
+fn a_package_selection_names_its_implementation_gap() {
+    let ws = Workspace::new("wire-package-gap");
+    let mut request = request_members(Some(json!([{"claim": "Bounded"}])));
+    request
+        .as_object_mut()
+        .expect("a request object")
+        .remove("program");
+    request["package"] = json!({"file": "package.json"});
+    let path = counter_request_with(&ws, &bounded(), request);
+    let run = analyze(&path);
+    let document = run.document();
+    let diagnostic = &document["diagnostics"][0];
+    assert_eq!(diagnostic["code"], "unsupported_construct", "{document}");
+    assert_eq!(diagnostic["cause"], "not-yet-implemented", "{document}");
+    assert!(
+        diagnostic["message"]
+            .as_str()
+            .is_some_and(|message| message.contains("package")),
+        "{document}"
+    );
+    assert_eq!(run.exit, 21, "{document}");
 }

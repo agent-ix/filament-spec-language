@@ -100,12 +100,10 @@ fn read<'d>(
         cause => cause,
     })?;
     if request.package.is_some() {
-        // FR-027's checked-package reader is not linked into the command
-        // adapter yet; a package selection is refused rather than compiled.
-        return Err(invalid(
-            "package",
-            "a checked-package selection is not read by this build",
-        ));
+        // FR-620 admits a checked-package selection, but the engines analyze
+        // an in-process checked package that only a source compile builds:
+        // an implementation gap (QSL-2271), not a refused request.
+        return Err(RunCause::AnalyzeNotYetImplemented { member: "package" });
     }
     let Some(program) = &request.program else {
         return Err(invalid("program", "a program or package is required"));
