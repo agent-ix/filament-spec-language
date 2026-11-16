@@ -50,6 +50,50 @@ pub(super) struct CompileRequest {
     /// FR-810: the file the checked package is written to; none when absent.
     #[serde(default, deserialize_with = "from_object_opt")]
     pub output: Option<OutputMember>,
+    /// FR-665: checked-package handoff written after compilation succeeds.
+    #[serde(default, deserialize_with = "from_object_opt")]
+    pub handoff: Option<Handoff>,
+}
+
+/// FR-665's checked-package handoff selection.
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(super) struct Handoff {
+    pub directory: String,
+    pub package_name: String,
+    #[serde(default)]
+    pub execution_points: std::collections::BTreeMap<String, serde_json::Value>,
+    #[serde(default, deserialize_with = "handoff_corpus")]
+    pub corpus: HandoffCorpus,
+    #[serde(default, deserialize_with = "from_object_opt")]
+    pub native_join: Option<NativeJoin>,
+}
+
+/// The adverse corpus requested for a handoff.
+#[derive(Clone, Copy, Default)]
+pub(super) enum HandoffCorpus {
+    #[default]
+    None,
+    Standard,
+}
+
+fn handoff_corpus<'de, D: serde::Deserializer<'de>>(decoder: D) -> Result<HandoffCorpus, D::Error> {
+    let value = String::deserialize(decoder)?;
+    match value.as_str() {
+        "none" => Ok(HandoffCorpus::None),
+        "standard" => Ok(HandoffCorpus::Standard),
+        _ => Err(serde::de::Error::custom(format!(
+            "handoff.corpus must be `none` or `standard`, found {value:?}"
+        ))),
+    }
+}
+
+/// Required native-join ceilings for handoff identity joins.
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(super) struct NativeJoin {
+    pub work_units: u64,
+    pub storage: u64,
 }
 
 /// FR-810's closed `output` record.
@@ -149,6 +193,9 @@ pub(super) struct Request {
     /// FR-312: a clause run, mutually exclusive with `call` for 1-draft.
     #[serde(default, deserialize_with = "from_object_opt")]
     pub clause: Option<ClauseRun>,
+    /// FR-651: several independent call or clause selections in one request.
+    #[serde(default, deserialize_with = "from_object_opt")]
+    pub items: Option<serde_json::Value>,
     /// FR-100/ADR-015 D-1: a `1-draft` program's supplied libraries; none
     /// when absent.
     #[serde(default, deserialize_with = "deserialize_objects")]
@@ -197,6 +244,10 @@ pub(super) struct Call {
     /// FR-100: the call's accounting limits by counter name; absent is `{}`.
     #[serde(default, deserialize_with = "from_object")]
     pub accounting: Accounting,
+    /// FR-960: the call's requirement settlement and the backends of its
+    /// items, read by `requirements::read`; absent settles no item.
+    #[serde(default, deserialize_with = "present_json_value")]
+    pub requirements: Option<serde_json::Value>,
 }
 
 /// The `accounting` member of a [`Call`] (FR-100): any subset of the ten

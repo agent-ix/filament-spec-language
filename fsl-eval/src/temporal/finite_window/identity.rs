@@ -118,6 +118,10 @@ impl Encode for Head<'_> {
                 writer.string("counter")?;
                 count(writer, u128::from(uncertainty))?;
             }
+            ClockCover::Bounded { uncertainty } => {
+                writer.string("bounded")?;
+                count(writer, u128::from(uncertainty))?;
+            }
         }
         writer.string(self.link)?;
         count(writer, u128::from(self.blocks))?;

@@ -333,23 +333,23 @@ impl Unit {
                  { always[0,0] holds(c.value = c.value) }\n"
             }
             Self::Timestamped => {
-                "temporal Window using t over (c: Counters::Counter) clock \"ms\" \
+                "temporal Window using t over (c: Counters::Counter) clock \"model-steps\" \
                  on origin { eventually[0,5] holds(c.value > 0) }\n"
             }
             Self::TimestampedOne => {
-                "temporal Window using t over (c: Counters::Counter) clock \"ms\" \
+                "temporal Window using t over (c: Counters::Counter) clock \"model-steps\" \
                  on origin { eventually[0,1] holds(c.value > 0) }\n"
             }
             Self::TimestampedTwo => {
-                "temporal Window using t over (c: Counters::Counter) clock \"ms\" \
+                "temporal Window using t over (c: Counters::Counter) clock \"model-steps\" \
                  on origin { eventually[0,2] holds(c.value > 0) }\n"
             }
             Self::TimestampedLaterEventually => {
-                "temporal Window using t over (c: Counters::Counter) clock \"ms\" \
+                "temporal Window using t over (c: Counters::Counter) clock \"model-steps\" \
                  on origin { eventually[2,3] holds(c.value > 0) }\n"
             }
             Self::TimestampedLaterAlways => {
-                "temporal Window using t over (c: Counters::Counter) clock \"ms\" \
+                "temporal Window using t over (c: Counters::Counter) clock \"model-steps\" \
                  on origin { always[2,3] holds(c.value > 0) }\n"
             }
             Self::DifferentialEvent => differential_clauses!("\"model-steps\""),
@@ -358,7 +358,7 @@ impl Unit {
                 "type Zero = Int[0, 0];\n",
                 "function ints using v(xs: Sequence<Integer>[0, 3]): Sequence<Integer>[0, 3] \
                  pure { xs }\n",
-                "temporal Window using t over (c: Counters::Counter) clock \"ms\" \
+                "temporal Window using t over (c: Counters::Counter) clock \"model-steps\" \
                  on origin { always[0,10] holds(3 mod (2 - c.value) >= 0 and \
                  count<Zero>(m in ints(sequence[c.value mod 2]): m > 0) = 0) }\n",
             ),
@@ -366,36 +366,36 @@ impl Unit {
                 "type Zero = Int[0, 0];\n",
                 "function ints using v(xs: Sequence<Integer>[0, 3]): Sequence<Integer>[0, 3] \
                  pure { xs }\n",
-                "temporal Window using t over (c: Counters::Counter) clock \"ms\" \
+                "temporal Window using t over (c: Counters::Counter) clock \"model-steps\" \
                  on each (q: Counters::Counter) { always[0,0] holds(c.value = 1 and \
                  count<Zero>(m in ints(sequence[c.value]): m > 0) = 0) }\n",
             ),
             Self::TimestampedEach => {
-                "temporal Window using t over (c: Counters::Counter) clock \"ms\" \
+                "temporal Window using t over (c: Counters::Counter) clock \"model-steps\" \
                  on each (q: Counters::Counter) { eventually[0,2] holds(c.value > 0) }\n"
             }
             Self::TimestampedAlwaysFive => {
-                "temporal Window using t over (c: Counters::Counter) clock \"ms\" \
+                "temporal Window using t over (c: Counters::Counter) clock \"model-steps\" \
                  on origin { always[0,5] holds(c.value > 0) }\n"
             }
             Self::TimestampedOnce => {
-                "temporal Window using t over (c: Counters::Counter) clock \"ms\" \
+                "temporal Window using t over (c: Counters::Counter) clock \"model-steps\" \
                  on each (q: Counters::Counter) { once[0,4] holds(c.value > 0) }\n"
             }
             Self::FixedEventually => {
-                "temporal Sample using t over (c: Counters::Counter) clock \"samples\" \
+                "temporal Sample using t over (c: Counters::Counter) clock \"model-steps\" \
                  on origin { eventually[0,3] holds(c.value = 1) }\n"
             }
             Self::FixedHugeReach => {
-                "temporal Sample using t over (c: Counters::Counter) clock \"samples\" \
+                "temporal Sample using t over (c: Counters::Counter) clock \"model-steps\" \
                  on origin { eventually[0,1000000000000] holds(c.value = 1) }\n"
             }
             Self::FixedEach => {
-                "temporal Sample using t over (c: Counters::Counter) clock \"samples\" \
+                "temporal Sample using t over (c: Counters::Counter) clock \"model-steps\" \
                  on each (q: Counters::Counter) { eventually[0,1] holds(c.value = 1) }\n"
             }
             Self::FixedAlways => {
-                "temporal Sample using t over (c: Counters::Counter) clock \"samples\" \
+                "temporal Sample using t over (c: Counters::Counter) clock \"model-steps\" \
                  on origin { always[0,3] holds(c.value = 1) }\n"
             }
             Self::EventEventually => {
@@ -415,9 +415,9 @@ impl Unit {
                  on origin { eventually[0,2] holds(c.value = 2) }\n"
             }
             Self::OwnerWindow => {
-                "temporal Window using t over (c: Counters::Counter) clock \"ms\" \
+                "temporal Window using t over (c: Counters::Counter) clock \"model-steps\" \
                  on origin { eventually[0,5] holds(c.value = 2) }\n\
-                 temporal Other using t over (c: Counters::Counter) clock \"ms\" \
+                 temporal Other using t over (c: Counters::Counter) clock \"model-steps\" \
                  on origin { eventually[0,5] holds(c.value > 1) }\n"
             }
             Self::Safety => {
@@ -490,7 +490,7 @@ impl Unit {
 fn finite_window_binding() -> crate::spine::TraceBinding {
     crate::spine::TraceBinding {
         profile: "filament.temporal.timestamped-event.finite-window/v1".to_owned(),
-        clock_name: "ms".to_owned(),
+        clock_name: "model-steps".to_owned(),
         parameters: fsl_package::ClockConfiguration::TimestampedEvent {
             timestamp_unit: "ms".into(),
         },
@@ -503,7 +503,7 @@ fn progressed_binding(unit: Unit) -> crate::spine::TraceBinding {
     let (profile, clock_name, parameters) = match unit {
         Unit::FixedEventually | Unit::FixedAlways | Unit::FixedHugeReach | Unit::FixedEach => (
             "filament.temporal.fixed-sample.false-extension/v1",
-            "samples",
+            "model-steps",
             fsl_package::ClockConfiguration::FixedSample {
                 epoch: fsl_package::ClockExactNumber::Integer {
                     decimal: "0".into(),
@@ -2391,6 +2391,9 @@ fn spine_cover(cover: fsl_eval::temporal::ClockCover) -> crate::spine::Timestamp
         fsl_eval::temporal::ClockCover::Counter { uncertainty } => {
             crate::spine::TimestampedCover::Counter { uncertainty }
         }
+        fsl_eval::temporal::ClockCover::Bounded { uncertainty } => {
+            crate::spine::TimestampedCover::Bounded { uncertainty }
+        }
     }
 }
 
@@ -2998,7 +3001,10 @@ fn timestamped_binding_is_required_and_authenticated() {
         Some("Clock")
     );
     assert_eq!(clock.get("asserted").map(String::as_str), Some("us"));
-    assert_eq!(clock.get("expected").map(String::as_str), Some("ms"));
+    assert_eq!(
+        clock.get("expected").map(String::as_str),
+        Some("model-steps")
+    );
     // Both differ: the first dimension in order, `Profile`, is reported, and
     // it is reported even for an empty trace.
     let profile = refusal(timestamped_changed(
@@ -3066,7 +3072,7 @@ fn strict_readback_temporal_run_retains_authenticated_selection() {
         selection.profile.identity.as_ref(),
         "filament.temporal.timestamped-event.finite-window/v1"
     );
-    assert_eq!(selection.clock_name.as_ref(), "ms");
+    assert_eq!(selection.clock_name.as_ref(), "model-steps");
     assert_eq!(
         selection.clock,
         fsl_package::ClockConfiguration::TimestampedEvent {
@@ -3081,7 +3087,7 @@ fn strict_readback_temporal_run_retains_authenticated_selection() {
     let mut request = timestamped(&[0, 2, 5], &[0, 1, 0], 5, Some(5));
     let source_bytes = program_source_bytes(&mut request);
     let source_text = std::str::from_utf8(source_bytes).expect("fixture source is UTF-8");
-    let declaration = "temporal Window using t over (c: Counters::Counter) clock \"ms\"";
+    let declaration = "temporal Window using t over (c: Counters::Counter) clock \"model-steps\"";
     let declaration_start = source_text
         .find(declaration)
         .expect("fixture declares the checked Window temporal clause");
@@ -3203,7 +3209,7 @@ fn progressed_binding_dimensions_are_each_authenticated_and_retained() {
     let retained = report(progressed_sample(Unit::FixedEventually, fixed()))
         .authenticated_temporal_selection
         .expect("the matching fixed-sample binding is retained");
-    assert_eq!(retained.clock_name.as_ref(), "samples");
+    assert_eq!(retained.clock_name.as_ref(), "model-steps");
     assert_eq!(
         retained.clock,
         Clock::FixedSample {
@@ -4808,7 +4814,7 @@ fn mixed_unit_clock_in(library: &str, checked_with_selections: bool) -> MixedUni
          profile t = \"filament.temporal.timestamped-event.finite-window/v1\";\n\
          model Counters = {package:?};\n\
          record Sample {{ v: Int[0, 9]; }}\n\
-         temporal Window using t over (e: Sample) clock \"ms\" on origin \
+         temporal Window using t over (e: Sample) clock \"plant-ms\" on origin \
          {{ always[0,3] (count over past[0 Counters::s, 300000 Counters::ms] >= 1) }}\n"
     );
     let identity = fsl_foundation::SourceIdentity::new("test", "window");

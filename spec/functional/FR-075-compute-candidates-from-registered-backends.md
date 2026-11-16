@@ -161,7 +161,7 @@ and meets the applicable evidence-kind, dynamics and state-graph-form rules:
   result SHALL be the unknown-backend marker carrying that identity, and
   SHALL NOT be reported as an empty candidate set.
 - When the request names no backend, the set SHALL be every registered
-  backend that matches the item.
+  backend that matches the item, narrowed by FR-962.
 
 Mode (`bounded`/`unbounded`) SHALL NOT affect which backends are candidates;
 comparing a candidate's advertised mode against the item's extent is

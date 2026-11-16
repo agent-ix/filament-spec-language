@@ -2753,15 +2753,17 @@ impl Typer<'_> {
             if let (NodeKind::IntegerDivision { .. } | NodeKind::Local(_), ValueType::Int(target)) =
                 (&node.kind, required)
             {
-                let location = node.location.clone();
-                return Ok(Node {
-                    kind: NodeKind::Coerce(self.push(node), target.clone()),
-                    value_type: required.clone(),
-                    location,
-                    equality_producer: None,
-                    ordering_part: false,
-                    field_population: None,
-                });
+                if self.lowers_as_integer(&node) {
+                    let location = node.location.clone();
+                    return Ok(Node {
+                        kind: NodeKind::Coerce(self.push(node), target.clone()),
+                        value_type: required.clone(),
+                        location,
+                        equality_producer: None,
+                        ordering_part: false,
+                        field_population: None,
+                    });
+                }
             }
             return Ok(node);
         }
@@ -2785,7 +2787,8 @@ impl Typer<'_> {
                     node.kind,
                     NodeKind::IntegerDivision { .. } | NodeKind::Local(_)
                 ) && target.lower() <= source.lower()
-                    && source.upper() <= target.upper() =>
+                    && source.upper() <= target.upper()
+                    && self.lowers_as_integer(&node) =>
             {
                 let location = node.location.clone();
                 Ok(Node {

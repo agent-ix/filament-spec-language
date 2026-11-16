@@ -351,7 +351,7 @@ fn a_population_name_and_a_seq_outside_a_refinement_refuse() {
             "expression-form",
         ),
         (
-            "temporal W using inf over (r: R::Ring) clock \"t\" on origin \
+            "temporal W using inf over (r: R::Ring) clock \"model-steps\" on origin \
              { always holds(size(R::slots) = 2) }",
             "R::slots",
             Code::IllTyped,

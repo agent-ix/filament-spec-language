@@ -44,8 +44,9 @@ claims and finds every successor inside it and no bad state.
 
 - A `CertificateRequest`: the checked package recompiled by FR-098's rules,
   the model subject re-admitted by FR-120 from its byte provision and
-  universes (FR-125), and the item: a TP-1, TP-2 or TP-3 clause, or the
-  deadlock-freedom item (FR-124).
+  universes (FR-125), and the item: a TP-1, TP-2 or TP-3 clause, the
+  deadlock-freedom item (FR-124), or an invariant item (an `invariant` state
+  clause over the model subject, FR-625, FR-951).
 - Over a protocol subject with a weak `parallel` (FR-215, FR-221, FR-222),
   the request's memory bounds: `max_store_buffer: Option<u64>` and
   `max_messages: Option<u64>`, the values the run used, each `None`
@@ -220,6 +221,34 @@ clause's emitted `temporal_clause` node, its `over` node the first
 argument's parameter node), rederives its checked formula and rejects a
 foreign occurrence. For the derived deadlock item, root is the closed
 alternative `["deadlock-freedom"]`, selecting the fixed formula below.
+For an invariant item, root is the closed alternative
+`["invariant",node,role,ordinal]`. `node` is the NodeId of the invariant's
+emitted `state`/`state_clause` node (clause `invariant`, FR-105), spelled as
+for a clause root, and `role` and `ordinal` are its `claim` occurrence's
+role and ordinal in the same decimal-string domain. The leading string
+`"invariant"` tells it apart from a clause root, whose first member is a
+NodeId object, and from the deadlock root, which has one member. The
+checker resolves the triple in the recompiled package to a checked state
+clause of kind `invariant` whose context type is an object type of the
+subject. A node that is not such a clause, a clause of another kind (a
+`constraint` included) or a foreign occurrence SHALL be refused as a
+foreign clause root is refused. The root selects the fixed safety formula
+`always holds(I)`. `I` is the invariant's letter: it is true at a model
+state exactly when the checked body evaluates `Completed(true)` for every
+object of the state whose most-specific type conforms to the context type,
+read in ascending reference-key order as FR-158 "Truth at a state" reads a
+constraint. It is false at the first object that evaluates
+`Completed(false)` and undefined at the first object that evaluates
+`Undefined`, which FR-125's undefined letter then rejects. The binding is
+`[]`: the invariant quantifies over the state's objects inside its letter,
+and binds no `over` parameter or argument. `profile` is `"filament.temporal.infinite-trace/v1"` and `activation` is
+`"infinite"`, exactly as for the deadlock root: the safety formula is read
+over the subject's infinite behaviours, and the invariant root, like the
+deadlock root, has no authored profile of its own. Its automaton states
+are the `["safety", branches]` keys of the table below. A bad state
+of the certificate is a product state whose model state makes `I` false or
+undefined, so the closure check of an invariant item is the reachable-state
+check of FR-951.
 `binding` is the ordered vector of `[parameter_node,bound_value]` for the
 item's actual concrete over/argument binding, with NodeId as above.
 For a parameter bound to an instance (an `over` parameter, FR-125
@@ -269,7 +298,7 @@ The closed alternatives for `state` are:
 | --- | --- |
 | TP-2 undecided | `["bounded", clock, branches]`; `clock` is `["origin",remaining]` or `["each"]`. `remaining` is the remaining counted distance of the root's checked horizon. Each branch carries every still-open activation; it is not only the newest activation. |
 | TP-2 decided | `["accept"]` or `["reject"]`, absorbing under EN-5; under EN-1 `on each`, an accepted activation is removed from the live branches and new activations continue, so accepting one activation is not global acceptance. |
-| TP-1 / TP-3 / deadlock | `["safety", branches]`; these are the subset construction's viable elementary configurations of the formula itself after SM-6 trimming. The unique rejecting state is `["safety",[]]`. |
+| TP-1 / TP-3 / deadlock / invariant | `["safety", branches]`; these are the subset construction's viable elementary configurations of the formula itself after SM-6 trimming. The unique rejecting state is `["safety",[]]`. |
 | TP-4, guarded `on each` | `["guarded-buchi", phase, branch]`, only under activation `"each-when"`; `phase` is `"waiting"` or `"active"` ("Guarded `on each` activation" below). |
 | TP-4, unguarded `on each` | `["each-buchi", phase, branch]`, only under activation `"each"`; `phase` is `"waiting"` or `"active"`. The key represents the engine's activation-closed `always(guard implies phi)` form, with the unguarded condition fixed to `true`; its phase records whether the Büchi run has selected a violating activation. |
 | TP-4, `on origin` | `["buchi", branch]`, only under activation `"infinite"`; one elementary configuration of the negated formula, with its acceptance membership. This is not a subset-determinized safety state. |

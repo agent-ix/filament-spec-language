@@ -19,9 +19,9 @@ use fsl_eval::simulation::model::{ModelSimState, ModelSystem};
 use fsl_eval::simulation::Limits;
 use fsl_eval::temporal::AtomReading;
 use fsl_replay::{
-    BoundCovers, Code, HyperCounterexample, HyperCounterexampleKind, HyperLocus, HyperOutcome,
-    HyperStep, IncompleteCause, ModelCheckLimit, ModelCheckLimits, ModelTraceRefusal,
-    ReplayRefusal, StepMark, UndecidedCause,
+    BoundCovers, Code, HyperCounterexample, HyperCounterexampleKind, HyperOutcome, HyperStep,
+    IncompleteCause, ModelCheckLimit, ModelCheckLimits, ModelTraceRefusal, ReplayRefusal, StepMark,
+    UndecidedCause,
 };
 use fsl_semantics::check::{FormulaNodeId, OperationKey};
 use ix_trace_rs::trace;
@@ -29,9 +29,10 @@ use std::cell::RefCell;
 
 use crate::counter::ZERO;
 
-use crate::hyper::{input, inputs, positions, refuted, Exhausted, Refusing};
+use crate::hyper::{input, positions, refuted, Exhausted, Refusing};
 use crate::hyper_world::{
-    busy_of, high, input_of, key as hyper_key, low, non_interference, Vault, World, KEY,
+    assert_hyper_division_refused_in, busy_of, high, input_of, key as hyper_key, low,
+    non_interference, Vault, World, KEY,
 };
 use fsl_eval::temporal::UndefinedCause;
 
@@ -322,64 +323,30 @@ fn a_run_that_completes_inside_its_horizon_holds() {
     assert_eq!(depth, 1);
 }
 
-/// FR-178-AC-5: AC-1's clause with a `match` conjunct that has no value where
-/// `a`'s step is `step(0)` is refuted by an `Undefined` counterexample, one
-/// unmarked path per variable ending at the first such joint visible step in
-/// breadth-first order, cause `division-by-zero`.
-#[trace("TC-603", "FR-178-AC-5")]
+/// FR-495: a possibly-zero divisor in a declared projection-aligned hyper
+/// `match` is refused by S3 at the divisor expression.
+#[trace("FR-495")]
 #[test]
-fn an_undefined_match_ends_the_paths_at_the_first_such_visible_step() {
-    let world = World::busy(Vault::Busy, &IDLE, &aligned(&[INVERSE]));
-    let counterexample = refuted(run(&world));
-    let HyperCounterexampleKind::Undefined(undefined) = &counterexample.kind else {
-        panic!(
-            "expected an undefined evaluation: {:?}",
-            counterexample.kind
-        );
-    };
-    assert_eq!(
-        undefined.cause,
-        UndefinedCause::Kernel(Undefined::DivisionByZero)
+fn an_unproved_projected_match_divisor_is_refused_at_s3() {
+    assert_hyper_division_refused_in(
+        Vault::Busy,
+        false,
+        &aligned(&[INVERSE]),
+        "value(a.step.Vault::step.i)",
     );
-    assert_eq!(undefined.locus, HyperLocus::Match { conjunct: 1 });
-    assert_eq!(undefined.position, 1);
-    assert_eq!(undefined.transition, None);
-    assert_eq!(undefined.state_keys.len(), 2);
-    assert_eq!(counterexample.trace_position, 1);
-    assert_eq!(counterexample.traces.len(), 2);
-    for (index, trace) in counterexample.traces.iter().enumerate() {
-        assert_eq!(trace.steps.len(), 1);
-        assert!(trace.marks.is_empty(), "an undefined path is unmarked");
-        assert_eq!(inputs(&counterexample, index), [0]);
-    }
 }
 
-/// FR-178-AC-9: AC-5's request with both runs starting mid-operation,
-/// `(1, 0, true)`, follows two skip moves, one for each run's `mix`, to the
-/// first such step. The paths are unmarked, each holds its `mix` and the
-/// visible `step(0)`, and `trace_position` and the evaluation are at the
-/// projected position 1, the number of visible steps, not at the three moves
-/// that reach it.
-#[trace("TC-603", "FR-178-AC-9")]
+/// FR-495 refuses this unproved divisor before projected skip moves are
+/// evaluated.
+#[trace("FR-495")]
 #[test]
-fn an_undefined_match_after_skip_moves_is_at_the_projected_position() {
-    let world = World::busy(Vault::Busy, &[(1, 0, 1)], &aligned(&[INVERSE]));
-    let counterexample = refuted(run(&world));
-    let HyperCounterexampleKind::Undefined(undefined) = &counterexample.kind else {
-        panic!(
-            "expected an undefined evaluation: {:?}",
-            counterexample.kind
-        );
-    };
-    assert_eq!(undefined.position, 1);
-    assert_eq!(counterexample.trace_position, 1);
-    for trace in &counterexample.traces {
-        assert!(trace.marks.is_empty(), "an undefined path is unmarked");
-        let kinds: Vec<_> = trace.steps.iter().map(is_mix).collect();
-        assert_eq!(kinds, [true, false]);
-    }
-    assert_eq!(inputs_after_mix(&counterexample, 0), 0);
-    assert_eq!(inputs_after_mix(&counterexample, 1), 0);
+fn a_projected_match_divisor_is_refused_before_skipping_moves() {
+    assert_hyper_division_refused_in(
+        Vault::Busy,
+        false,
+        &aligned(&[INVERSE]),
+        "value(a.step.Vault::step.i)",
+    );
 }
 
 /// The input of trace `trace`'s `step`, the one after its `mix`.
@@ -584,22 +551,11 @@ fn an_evaluator_that_runs_out_while_confirming_stops_the_item() {
     );
 }
 
-/// The first product state in breadth-first order wins between an undefined
-/// `μ_U` and a rejecting monitor state (ADR-023 HV-8). Over idle starts with
-/// the body `always holds(v.l @ a = 0)`, `step(1)` rejects and `step(0)` is
-/// the visible move on which AC-5's conjunct has no value; `step(0)` is the
-/// canonically first move, so the undefined state is discovered first.
+/// FR-495: the unproved divisor in the declared clause is refused, and the
+/// engine reports a rejection before a separately stubbed undefined match.
 fn assert_an_undefined_match_discovered_before_a_rejection_wins() {
     let clause = aligned_over("always holds(v.l @ a = 0)", &[INVERSE]);
-    let world = World::busy(Vault::Busy, &IDLE, &clause);
-    let counterexample = refuted(run(&world));
-    let HyperCounterexampleKind::Undefined(undefined) = &counterexample.kind else {
-        panic!(
-            "expected the undefined state first: {:?}",
-            counterexample.kind
-        );
-    };
-    assert_eq!(undefined.locus, HyperLocus::Match { conjunct: 1 });
+    assert_hyper_division_refused_in(Vault::Busy, false, &clause, "value(a.step.Vault::step.i)");
 }
 
 /// A `μ_U` that has no value where `a`'s input is 1.
@@ -649,9 +605,8 @@ fn assert_a_rejection_discovered_before_an_undefined_match_wins() {
     assert_eq!(refuted(outcome).kind, HyperCounterexampleKind::Projected);
 }
 
-/// FR-178-AC-8: the first product state in breadth-first order decides
-/// between an undefined `μ_U` and a rejecting monitor state, whichever of the
-/// two it is.
+/// FR-178-AC-8: an unproved divisor is refused at S3, while the engine still
+/// reports a rejecting monitor state before the stub's undefined match.
 #[trace("TC-603", "FR-178-AC-8")]
 #[test]
 fn the_first_discovered_of_an_undefined_match_and_a_rejection_wins() {

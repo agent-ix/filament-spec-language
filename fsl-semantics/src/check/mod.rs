@@ -527,7 +527,7 @@ pub use temporal_clause::{
     CheckedProtocolTarget, CheckedTemporalClause, ClockUnitSelection, DurationWindow, FormulaNode,
     FormulaNodeId, ModelTimeBinding, ModelTimeSource, TemporalClaim, TemporalDeclaration,
     TemporalDeclarations, TemporalSelection, TemporalTraceFamily, TimeNominalForm, TimeNominalNode,
-    TimeNominalOrigin, TimeSourceKind, TimedPropertyForm, UnaryTemporal,
+    TimeNominalOrigin, TimeSourceKind, TimedPropertyForm, UnaryTemporal, DEFAULT_CLOCK_ROLE,
 };
 pub use timed_model::{
     CheckedTimedPredicate, ClockConstraint, ClockField, ClockGuard, ClockId, ClockOp,

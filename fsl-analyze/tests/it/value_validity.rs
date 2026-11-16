@@ -27,9 +27,7 @@ use fsl_analyze::analyze::{
     analyze_items, value_item, AnalyzeItem, AnalyzeRecord, DispositionKind, Engine, Engines,
     Settlement,
 };
-use fsl_analyze::external_provider::{
-    provider_item, ExternalProvider, ProviderRequest, ProviderVerdict,
-};
+use fsl_analyze::provider::{provider_item, ExternalProvider, ProviderRequest, ProviderVerdict};
 use fsl_analyze::value_check::{manifest, ValueRequest};
 use fsl_foundation::RequestIndex;
 use fsl_package::CheckedPackage;
@@ -1782,9 +1780,12 @@ struct Fake {
 }
 
 impl ExternalProvider for Fake {
-    fn check(&self, _request: &ProviderRequest<'_, '_>, _cancel: &Cancel) -> ProviderVerdict {
-        self.calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
-        self.verdict.clone()
+    fn settle(&self, request: &ProviderRequest<'_>, _cancel: &Cancel) -> Vec<ProviderVerdict> {
+        let verdict = {
+            self.calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            self.verdict.clone()
+        };
+        vec![verdict; request.items().len()]
     }
 }
 
@@ -1865,14 +1866,207 @@ fn provider_run(engines: &Engines, package: &CheckedPackage, key: &OccurrenceKey
         engines,
         vec![provider_item(
             index(),
-            package,
-            key,
             &fsl_foundation::BackendId::new(SMT),
-            target,
+            fsl_analyze::provider::ProviderItemInput {
+                package,
+                packages: &fsl_semantics::model::intake::PackageInput::default(),
+                claim: key,
+                routed: fsl_analyze::provider::routed_item(
+                    package,
+                    engines.registrations(),
+                    index(),
+                    key,
+                    Some(&fsl_foundation::BackendId::new(SMT)),
+                ),
+                emit: fsl_package::EmitLimits::new(u64::MAX),
+                selection: target,
+            },
         )],
         &guarded(),
     )
     .remove(0)
+}
+
+/// FSpec FR-331-AC-33: a provider item whose checked package does not emit
+/// under the run's `emit.output_bytes` settles `unsupported`
+/// `unsupported-requested-capability` naming the kind, the backend and that
+/// the package is not emitted, and the provider is never called.
+#[trace("FSpec-TC-220", "FSpec-FR-331-AC-33")]
+#[test]
+fn a_provider_item_over_a_package_that_does_not_emit_settles_unsupported() {
+    let package = package_of(GUARDED);
+    let key = only_scalar_key(&package, "q");
+    let (engines, calls) = engines_with_provider(ProviderVerdict::Proved);
+    let backend = fsl_foundation::BackendId::new(SMT);
+    let record = analyze_items(
+        &engines,
+        vec![provider_item(
+            index(),
+            &backend,
+            fsl_analyze::provider::ProviderItemInput {
+                package: &package,
+                packages: &fsl_semantics::model::intake::PackageInput::default(),
+                claim: &key,
+                routed: fsl_analyze::provider::routed_item(
+                    &package,
+                    engines.registrations(),
+                    index(),
+                    &key,
+                    Some(&backend),
+                ),
+                emit: fsl_package::EmitLimits::new(0),
+                selection: ValueTarget::select(&package, "q", &key),
+            },
+        )],
+        &guarded(),
+    )
+    .remove(0);
+    let Settlement::Disposed(disposed) = &record.settlement else {
+        panic!("expected a disposition: {:?}", record.settlement);
+    };
+    assert_eq!(disposed.kind, DispositionKind::Unsupported);
+    let diagnostic = disposed.diagnostic.as_ref().expect("a diagnostic");
+    assert_eq!(
+        diagnostic.code.to_string(),
+        "unsupported_projection/unsupported-requested-capability"
+    );
+    assert_eq!(
+        serde_json::Value::Object(diagnostic.payload.detail()),
+        serde_json::json!({
+            "kind": "value-validity",
+            "backend": SMT,
+            "reason": "package-not-emitted",
+        })
+    );
+    assert_eq!(calls.load(std::sync::atomic::Ordering::SeqCst), 0);
+}
+
+/// FR-635 "How a process provider runs an item": the request item of a
+/// claim with a requirement record is that record's item, moved to the
+/// analyze item's own request index, with the routed backend among its
+/// candidates.
+#[trace("TC-1595", "FR-635-AC-1")]
+#[test]
+fn a_record_claims_routed_item_is_its_record_item_at_the_request_index() {
+    let package = package_of(GUARDED);
+    let key = only_scalar_key(&package, "q");
+    let (engines, _) = engines_with_provider(ProviderVerdict::Proved);
+    let backend = fsl_foundation::BackendId::new(SMT);
+    let at = RequestIndex::new(7);
+    let routed = fsl_analyze::provider::routed_item(
+        &package,
+        engines.registrations(),
+        at,
+        &key,
+        Some(&backend),
+    )
+    .expect("the record's item");
+    let record = fsl_route::request::items_from_requirements(
+        package.graph().requirements(),
+        &fsl_route::Registry::new(),
+        None,
+    )
+    .into_iter()
+    .find(|item| item.occurrence() == &key)
+    .expect("the scalar record");
+    assert_eq!(routed.index(), at);
+    assert_eq!(routed.occurrence(), &key);
+    assert_eq!(routed.kind(), record.kind());
+    assert_eq!(routed.unbounded(), record.unbounded());
+    assert_eq!(routed.result_bound(), record.result_bound());
+    let fsl_route::CandidateOutcome::Candidates(set) = routed.candidates() else {
+        panic!("a candidate set");
+    };
+    let candidates: Vec<&str> = set
+        .candidates()
+        .iter()
+        .map(|candidate| candidate.id().as_str())
+        .collect();
+    assert_eq!(candidates, [SMT]);
+}
+
+/// A provider that keeps the FSpec FR-331 `request` member of each request
+/// it is sent and answers `proved`.
+#[derive(Debug, Default)]
+struct Serializing(std::sync::Arc<std::sync::Mutex<Vec<Json>>>);
+
+impl ExternalProvider for Serializing {
+    fn settle(&self, request: &ProviderRequest<'_>, _cancel: &Cancel) -> Vec<ProviderVerdict> {
+        self.0
+            .lock()
+            .expect("the record")
+            .push(serde_json::to_value(request).expect("the request serializes"));
+        vec![ProviderVerdict::Proved; request.items().len()]
+    }
+}
+
+/// FSpec FR-331 "Items": an item the analyze request named no backend for,
+/// whose one candidate is the provider, is sent with no `backend` member
+/// (the named backend is part of request identity), at `request_index` 0,
+/// its position in the request, and its verdict settles the analyze item
+/// at its own index.
+#[trace("TC-1595", "FR-635-AC-1")]
+#[test]
+fn an_unnamed_single_candidate_item_is_sent_without_backend_at_its_request_position() {
+    let package = package_of(GUARDED);
+    let key = only_scalar_key(&package, "q");
+    let provider = Serializing::default();
+    let sent = std::sync::Arc::clone(&provider.0);
+    let mut engines = Engines::default();
+    engines
+        .with(
+            Engine::external(
+                smt_descriptor(Mode::Unbounded),
+                fsl_analyze::analyze::BackendTool::new("test-provider", "1").expect("a tool"),
+                Box::new(provider),
+            )
+            .expect("an unbounded descriptor"),
+        )
+        .expect("a new backend");
+    let backend = fsl_foundation::BackendId::new(SMT);
+    let at = RequestIndex::new(3);
+    let records = analyze_items(
+        &engines,
+        vec![provider_item(
+            at,
+            &backend,
+            fsl_analyze::provider::ProviderItemInput {
+                package: &package,
+                packages: &fsl_semantics::model::intake::PackageInput::default(),
+                claim: &key,
+                routed: fsl_analyze::provider::routed_item(
+                    &package,
+                    engines.registrations(),
+                    at,
+                    &key,
+                    None,
+                ),
+                emit: fsl_package::EmitLimits::new(u64::MAX),
+                selection: ValueTarget::select(&package, "q", &key),
+            },
+        )],
+        &Cancel::new(),
+    );
+    assert_eq!(records[0].request_index, at);
+    assert!(
+        matches!(
+            records[0].terminal().map(fsl_replay::TerminalRecord::value),
+            Some(TerminalValue::Proved { .. })
+        ),
+        "{:?}",
+        records[0].settlement
+    );
+    let sent = sent.lock().expect("the record").clone();
+    let [request] = sent.as_slice() else {
+        panic!("one request: {sent:?}");
+    };
+    let item = &request["items"][0];
+    assert_eq!(item["request_index"], 0, "{item}");
+    assert!(item.get("backend").is_none(), "{item}");
+    assert_eq!(
+        item["candidates"],
+        serde_json::json!({"type": "set", "backends": [SMT]})
+    );
 }
 
 const UNGUARDED: &str = "function q using v(a: Integer, b: Integer): Integer pure { a div b }";
@@ -2053,9 +2247,12 @@ fn a_provider_proof_is_uncertified_first_party_and_trusted_as_a_plugin() {
 struct Cancelling(ProviderVerdict);
 
 impl ExternalProvider for Cancelling {
-    fn check(&self, _request: &ProviderRequest<'_, '_>, cancel: &Cancel) -> ProviderVerdict {
-        cancel.cancel(filament_exact::CancelCause::Deadline);
-        self.0.clone()
+    fn settle(&self, request: &ProviderRequest<'_>, cancel: &Cancel) -> Vec<ProviderVerdict> {
+        let verdict = {
+            cancel.cancel(filament_exact::CancelCause::Deadline);
+            self.0.clone()
+        };
+        vec![verdict; request.items().len()]
     }
 }
 
@@ -2097,10 +2294,21 @@ fn a_provider_item_stopped_by_the_case_budget_or_cancellation_is_incomplete() {
         &engines,
         vec![provider_item(
             index(),
-            &package,
-            &key,
             &fsl_foundation::BackendId::new(SMT),
-            target,
+            fsl_analyze::provider::ProviderItemInput {
+                package: &package,
+                packages: &fsl_semantics::model::intake::PackageInput::default(),
+                claim: &key,
+                routed: fsl_analyze::provider::routed_item(
+                    &package,
+                    engines.registrations(),
+                    index(),
+                    &key,
+                    Some(&fsl_foundation::BackendId::new(SMT)),
+                ),
+                emit: fsl_package::EmitLimits::new(u64::MAX),
+                selection: target,
+            },
         )],
         &cancel,
     )

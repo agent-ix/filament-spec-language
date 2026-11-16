@@ -111,7 +111,7 @@ fn refusal(error: &command::RunError, operation: Operation) -> (String, String, 
 
 /// The integer a completed run returned.
 fn returned(path: &Path) -> String {
-    let result = command::run(path).expect("the run completes");
+    let result = command::run(path, &crate::negotiation::Fr290).expect("the run completes");
     assert_eq!(result.exit_code, 0);
     result.value.as_value()["outcome"]["value"]["decimal"]
         .as_str()
@@ -297,7 +297,8 @@ fn library_entry_takes_its_own_law() {
     assert_eq!(returned(&path), "-3");
 
     let path = request(directory.path(), None, "native-run/1", body(None, "q"));
-    let error = command::run(&path).expect_err("the library has no law");
+    let error =
+        command::run(&path, &crate::negotiation::Fr290).expect_err("the library has no law");
     let (code, cause, _) = refusal(&error, Operation::Execute);
     assert_eq!(
         (code.as_str(), cause.as_str()),

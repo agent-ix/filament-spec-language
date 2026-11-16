@@ -3,10 +3,13 @@
 
 mod analyze;
 mod clause;
+mod items;
 mod monitor;
 mod output;
 mod output_file;
 mod replay;
+mod requirements;
+mod settle;
 mod tl;
 mod wire;
 
@@ -20,9 +23,12 @@ pub use tl::{record as tl_record, AtomMapping, TlRecord};
 
 use crate::formal_source::FormalSource;
 use filament_contract_model as ir;
+use fsl_analyze::analyze::document::Negotiate;
+use fsl_analyze::provider::ProviderOptions;
 use fsl_foundation::serde_object::Object;
 use fsl_foundation::{Code, Diagnostic, Source};
 use fsl_semantics::model::domain_package::DOMAIN_PACKAGE_PROFILE;
+use settle::Settle;
 use std::{
     fs::File,
     io::{self, Read},
@@ -156,12 +162,30 @@ pub struct RunResult {
     /// The FR-286 lifecycle outcome of a function run (category and last
     /// stage); `None` for the other run families.
     pub outcome: Option<fsl_replay::OutcomeDocument>,
+    /// FR-963: the settled requirement items of a call that carried
+    /// `requirements`; `None` exactly when it carried none.
+    pub requirements: Option<RequirementResults>,
+}
+
+/// The settled requirement items of a run call (FR-963), one record per
+/// item of the call in FR-395's package order.
+#[derive(Debug)]
+pub struct RequirementResults {
+    /// One terminal record per item, in package order.
+    pub records: Vec<fsl_replay::TerminalRecord>,
+    /// Exactly one reproduced counterexample per `refuted` record.
+    pub counterexamples: Vec<fsl_analyze::analyze::ItemCounterexample>,
+    /// FR-635's sorted `{backend, tool}` list of every backend the items
+    /// were negotiated against: the document's `registry` member.
+    pub registry: Vec<fsl_analyze::analyze::document::RegistryEntry>,
 }
 
 /// Successful compilation with the core's document and exact emitted bytes.
 pub struct CompileOutcome {
     package_bytes: Vec<u8>,
     document: fsl_replay::OutcomeDocument,
+    handoff_compiled: Option<crate::emit_checked_v2::Compiled>,
+    handoff_temporal_selections: Vec<crate::emit_checked_v2::ClockSelection>,
 }
 
 impl CompileOutcome {
@@ -187,6 +211,8 @@ struct FunctionRunData {
     packages: fsl_semantics::model::intake::PackageInput,
     dependencies: fsl_replay::spine::DependencyInput,
     call: fsl_replay::spine::Call,
+    /// FR-960: the call's `requirements`; `None` settles no item.
+    requirements: Option<requirements::Requirements>,
 }
 
 /// Owned inputs passed to the driver's existing execution pipeline.
@@ -331,6 +357,14 @@ pub enum RunCause {
     /// command does not admit for it, or carries no `call`.
     #[error("a 1-draft program runs through the spine; the request selects {0}")]
     CompleteRunSelection(CompleteRunSelection),
+    /// FR-960: a `call.requirements.items` entry names a claim that is no
+    /// item of the call; refused at stage `call` before any item is
+    /// negotiated.
+    #[error("missing_declaration: call.requirements names the claim {claim}, which is no item of the call")]
+    UnknownRequirementClaim {
+        /// The claim as the request spells it.
+        claim: serde_json::Value,
+    },
     /// FR-100: the spine run entry refused, at its own stage and cause code.
     #[error("{0}")]
     SpineRun(Box<fsl_replay::spine::RunRefusal>),
@@ -406,6 +440,9 @@ pub enum RunCause {
     /// FR-862: the settled replay has no FR-323 per-item result encoding.
     #[error("cannot serialize replay result: {0}")]
     ReplayOutput(#[source] fsl_replay::CauseCodecError),
+    /// An item run violated an internal runtime invariant.
+    #[error("an items run faulted")]
+    ItemsFault,
 }
 
 /// The two owner projections of the same source-intake refusal.
@@ -480,6 +517,7 @@ impl RunCause {
             Self::ExtractionRequiresRun => Code::ExtractionRequiresRun,
             Self::Spine(failure) => failure.refusal.code(),
             Self::SpineRun(refusal) => refusal.code(),
+            Self::UnknownRequirementClaim { .. } => Code::MissingDeclaration,
             Self::AnalyzeRequest { .. } => Code::InvalidRequest,
             Self::AnalyzePackage { code, .. } => *code,
             Self::AnalyzeNotYetImplemented { .. } => Code::UnsupportedConstruct,
@@ -505,7 +543,7 @@ impl RunCause {
                 .first()
                 .and_then(|diagnostic| Code::from_code(diagnostic.code()))
                 .unwrap_or(Code::RuntimeInvariant),
-            Self::AnalyzeFault | Self::MonitorFault | Self::MonitorCancelled => {
+            Self::AnalyzeFault | Self::MonitorFault | Self::ItemsFault | Self::MonitorCancelled => {
                 Code::RuntimeInvariant
             }
             Self::ReplayRequest(_) => Code::InvalidRequest,
@@ -535,6 +573,7 @@ impl RunCause {
             Self::MonitorRefused(refusal) => refusal.document().category(),
             Self::AnalyzeFault => filament_semantic_value::catalog::Category::InternalFailure,
             Self::MonitorFault => filament_semantic_value::catalog::Category::InternalFailure,
+            Self::ItemsFault => filament_semantic_value::catalog::Category::InternalFailure,
             Self::MonitorCancelled => filament_semantic_value::catalog::Category::Incomplete,
             Self::ReplayBytes { cause, .. } => cause.category(),
             Self::Replay(failure) => failure.outcome.category(),
@@ -641,7 +680,9 @@ impl RunError {
             | RunCause::MonitorCancelled
             | RunCause::ReplayRequest(_)
             | RunCause::ReplayBytes { .. }
-            | RunCause::ReplayOutput(_) => OutcomeDocument::new(operation, None, self.category())
+            | RunCause::UnknownRequirementClaim { .. }
+            | RunCause::ReplayOutput(_)
+            | RunCause::ItemsFault => OutcomeDocument::new(operation, None, self.category())
                 .with_diagnostics(vec![OutcomeDiagnostic::new(
                     None,
                     self.cause.code().as_str(),
@@ -737,6 +778,7 @@ struct Intake<'a> {
     remaining: usize,
     maximum: usize,
     dependent_limit: Option<DependentLimit>,
+    prefetched_observations: std::collections::BTreeMap<String, Vec<u8>>,
 }
 
 #[derive(Clone, Copy)]
@@ -751,6 +793,9 @@ impl Intake<'_> {
     }
 
     fn observation_file(&mut self, path: &str, ceiling: usize) -> Result<Vec<u8>> {
+        if let Some(bytes) = self.prefetched_observations.remove(path) {
+            return Ok(bytes);
+        }
         self.bounded_file(path, ceiling, true)
     }
 
@@ -800,51 +845,199 @@ impl Intake<'_> {
     }
 }
 
-/// Read a native-run/1 job and execute it locally with fresh, bounded stage state.
-pub fn run(path: &Path) -> std::result::Result<RunResult, Box<RunError>> {
-    run_with_limits(path, RunLimits::default())
+/// FR-664: refuse a current-snapshot `parameters` member before reading the
+/// program or model sources. The selected snapshot is cached for the normal
+/// clause reader so it is still consumed once.
+fn reject_current_parameters_before_sources(
+    intake: &mut Intake<'_>,
+    clause: Option<&wire::ClauseRun>,
+) -> Result<()> {
+    let Some(selection) = clause
+        .and_then(|clause| clause.selection.clause.as_ref())
+        .filter(|selection| selection.parameters.is_some())
+    else {
+        return Ok(());
+    };
+    let clause = clause.expect("the selection comes from the clause");
+    let observation_limits =
+        fsl_replay::spine::ObservationLimitsWire::resolve(clause.observation_limits.as_ref())
+            .map_err(|error| RunCause::ClauseRequest {
+                member: error.member,
+                reason: error.reason,
+            })?;
+    let file = clause
+        .observations
+        .get(&selection.observation)
+        .ok_or_else(|| RunCause::ClauseRequest {
+            member: selection.observation.clone(),
+            reason: "observation key is not present".to_owned(),
+        })?;
+    let bytes = intake.observation_file(
+        file,
+        usize::try_from(observation_limits.document_bytes).unwrap_or(usize::MAX),
+    )?;
+    let document: serde_json::Value = serde_json::from_slice(&bytes).map_err(RunCause::Json)?;
+    if document["format"] == "filament.state.snapshot/v1" && document["observation"] == "current" {
+        return Err(RunCause::ClauseRequest {
+            member: "parameters".to_owned(),
+            reason: "forbidden for current snapshot".to_owned(),
+        });
+    }
+    intake.prefetched_observations.insert(file.clone(), bytes);
+    Ok(())
+}
+
+/// Read a native-run/1 job and execute it locally with fresh, bounded stage
+/// state. A call carrying `requirements` settles its items with the linked
+/// engines alone, each negotiated by `negotiate` (FR-961 "plain
+/// `command::run` settles with the linked engines").
+pub fn run(
+    path: &Path,
+    negotiate: &dyn Negotiate,
+) -> std::result::Result<RunResult, Box<RunError>> {
+    run_with_limits(path, RunLimits::default(), negotiate)
 }
 
 /// Run with request members supplied beside the request file (FR-640).
 pub fn run_with_overrides(
     path: &Path,
     overrides: &RequestOverrides<'_>,
+    negotiate: &dyn Negotiate,
 ) -> std::result::Result<RunResult, Box<RunError>> {
-    run_with_limits_and_overrides(path, RunLimits::default(), overrides)
+    run_with_limits_and_overrides(path, RunLimits::default(), overrides, negotiate)
 }
 
 /// Run with the caller's explicit request and dependent-file byte ceilings.
 pub fn run_with_limits(
     path: &Path,
     limits: RunLimits,
+    negotiate: &dyn Negotiate,
 ) -> std::result::Result<RunResult, Box<RunError>> {
-    run_with_limits_and_overrides(path, limits, &RequestOverrides::default())
+    run_with_limits_and_overrides(path, limits, &RequestOverrides::default(), negotiate)
 }
 
 /// Run with explicit byte ceilings and request members supplied beside the
-/// request file (FR-640).
+/// request file (FR-640): [`run_with_providers`] with no provider, the
+/// default [`ProviderOptions`] and a handle that is never cancelled.
 pub fn run_with_limits_and_overrides(
     path: &Path,
     limits: RunLimits,
     overrides: &RequestOverrides<'_>,
+    negotiate: &dyn Negotiate,
 ) -> std::result::Result<RunResult, Box<RunError>> {
+    run_configured(
+        path,
+        limits,
+        overrides,
+        Settlement {
+            negotiate,
+            providers: Vec::new(),
+            options: &ProviderOptions::default(),
+            cancel: &filament_exact::Cancel::new(),
+        },
+    )
+}
+
+/// FSL's run-side provider entry (FR-961): run the call the native-run/1
+/// request at `path` names as FR-100 does and, when the call carries
+/// `requirements` (FR-960), settle its requirement items against
+/// `Engines::fsl()` with `providers` registered beside it, each item
+/// negotiated by `negotiate` before any provider is called, and every
+/// provider request carrying `options`' limits (FR-964). `cancel` governs
+/// the settlement: once it fires no further request is sent and every
+/// unsettled item settles `incomplete`. The call's own evaluation is the
+/// same with and without `requirements`, `providers` and `options`.
+///
+/// # Errors
+///
+/// As [`run`]; and `invalid-request` naming `providers` when a provider
+/// repeats a registered `BackendId`, before any stage runs.
+pub fn run_with_providers(
+    path: &Path,
+    negotiate: &dyn Negotiate,
+    providers: Vec<fsl_analyze::analyze::Engine>,
+    options: &ProviderOptions,
+    cancel: &filament_exact::Cancel,
+) -> std::result::Result<RunResult, Box<RunError>> {
+    run_configured(
+        path,
+        RunLimits::default(),
+        &RequestOverrides::default(),
+        Settlement {
+            negotiate,
+            providers,
+            options,
+            cancel,
+        },
+    )
+}
+
+/// How a run settles its call's requirement items (FR-961).
+struct Settlement<'a> {
+    negotiate: &'a dyn Negotiate,
+    providers: Vec<fsl_analyze::analyze::Engine>,
+    options: &'a ProviderOptions,
+    cancel: &'a filament_exact::Cancel,
+}
+
+fn run_configured(
+    path: &Path,
+    limits: RunLimits,
+    overrides: &RequestOverrides<'_>,
+    settlement: Settlement<'_>,
+) -> std::result::Result<RunResult, Box<RunError>> {
+    let Settlement {
+        negotiate,
+        providers,
+        options,
+        cancel,
+    } = settlement;
+    // FR-961 step 2: the registry is fixed before any stage runs, so a
+    // provider that cannot register refuses the request first.
+    let engines =
+        analyze::engines_with(providers, options).map_err(|cause| Box::new(RunError { cause }))?;
+    let settle = Settle {
+        negotiate,
+        engines: &engines,
+        cancel,
+    };
     // FR-644: a `native-monitor/1` request runs its record file as the batch
     // stream.
-    let monitored = with_request_limits(path, limits.request_bytes, |directory, bytes| {
+    let special = with_request_limits(path, limits.request_bytes, |directory, bytes| {
         if monitor::is_monitor_request(bytes) {
             monitor::run_bytes(directory, bytes, limits.dependent_bytes).map(Some)
         } else if replay::is_replay_request(bytes) {
             // FR-862: a `native-replay/1` request replays its FR-336 request.
             replay::run_bytes(directory, bytes, limits.dependent_bytes).map(Some)
         } else {
-            Ok(None)
+            items::run_bytes(directory, bytes, limits, overrides, &settle)
         }
     })?;
-    if let Some(result) = monitored {
+    if let Some(result) = special {
         return Ok(result);
     }
     let prepared = prepare_run_with_overrides(path, limits, overrides)?;
-    execute_prepared(prepared).map_err(|cause| Box::new(RunError { cause }))
+    execute_prepared(prepared, &settle).map_err(|cause| Box::new(RunError { cause }))
+}
+
+/// Inspect a checked-package handoff and return the command's successful
+/// `inspect` outcome. A refusal retains the handoff reader's typed error.
+pub fn inspect_handoff(directory: &Path) -> fsl_replay::OutcomeDocument {
+    use filament_semantic_value::catalog::Category;
+    use fsl_replay::{Operation, OutcomeDiagnostic, OutcomeDocument, OutcomeLocus};
+
+    match crate::checked_handoff::verify(directory) {
+        Ok(_) => OutcomeDocument::new(Operation::Inspect, None, Category::Success),
+        Err(error) => OutcomeDocument::new(Operation::Inspect, None, Category::Refusal)
+            .with_diagnostics(vec![OutcomeDiagnostic::new(
+                None,
+                error.code_name(),
+                Some(OutcomeLocus::Artifact {
+                    pointer: "/".to_owned(),
+                }),
+                error.to_string(),
+            )]),
+    }
 }
 
 /// Read and validate a request and its selected files without executing it.
@@ -902,6 +1095,7 @@ pub fn read_clause_run_request(
                     .len(),
             },
         )?;
+        reject_current_parameters_before_sources(&mut intake, request.clause.as_ref())?;
         let source = intake.source(&request.program.source)?;
         require_complete_edition(source.source())?;
         clause::read(&mut intake, &request, clause, source)
@@ -935,6 +1129,16 @@ pub fn compile_outcome_with_overrides(
 ) -> std::result::Result<CompileOutcome, Box<RunError>> {
     with_request(path, |directory, bytes| {
         let request: wire::CompileRequest = request_with_overrides(bytes, overrides)?;
+        if let Some(handoff) = &request.handoff {
+            validate_handoff_request(handoff, request.program.sources.len())?;
+            let destination = directory.join(&handoff.directory);
+            if destination.exists() {
+                return Err(RunCause::ClauseRequest {
+                    member: "handoff.directory".to_owned(),
+                    reason: format!("{} already exists", destination.display()),
+                });
+            }
+        }
         let output = match (&request.output, overrides.output) {
             (Some(_), Some(_)) => return Err(RunCause::OutputGivenTwice),
             (Some(member), None) => Some(directory.join(&member.package)),
@@ -970,12 +1174,151 @@ pub fn compile_outcome_with_overrides(
             require_complete_edition(source.source())?;
             sources.push(source);
         }
-        let outcome = complete(&request, &mut intake, &sources)?;
+        let mut outcome = complete(&request, &mut intake, &sources)?;
+        if let Some(handoff) = &request.handoff {
+            let compiled =
+                outcome
+                    .handoff_compiled
+                    .take()
+                    .ok_or_else(|| RunCause::ClauseRequest {
+                        member: "handoff".to_owned(),
+                        reason: "requires a single program object".to_owned(),
+                    })?;
+            write_compile_handoff(
+                directory,
+                &request,
+                handoff,
+                &outcome.package_bytes,
+                compiled,
+                std::mem::take(&mut outcome.handoff_temporal_selections),
+            )?;
+        }
         if let Some(output) = output {
             output_file::write_new_file(&output, &outcome.package_bytes)?;
         }
         Ok(outcome)
     })
+}
+
+/// Reject malformed FR-665 handoff selections before opening selected inputs.
+fn validate_handoff_request(handoff: &wire::Handoff, source_count: usize) -> Result<()> {
+    use std::path::Component;
+
+    let path = Path::new(&handoff.directory);
+    if handoff.directory.is_empty()
+        || path.components().any(|component| {
+            matches!(
+                component,
+                Component::ParentDir | Component::RootDir | Component::Prefix(_)
+            )
+        })
+    {
+        return Err(RunCause::ClauseRequest {
+            member: "handoff.directory".to_owned(),
+            reason: "must name a directory beneath the compile request directory".to_owned(),
+        });
+    }
+    if handoff.package_name.is_empty() {
+        return Err(RunCause::ClauseRequest {
+            member: "handoff.package_name".to_owned(),
+            reason: "must not be empty".to_owned(),
+        });
+    }
+    if source_count != 1 {
+        return Err(RunCause::ClauseRequest {
+            member: "handoff".to_owned(),
+            reason: "requires exactly one program source".to_owned(),
+        });
+    }
+    if handoff.native_join.is_none() {
+        return Err(RunCause::ClauseRequest {
+            member: "handoff.native_join".to_owned(),
+            reason: "is required".to_owned(),
+        });
+    }
+    decode_handoff_execution_points(handoff)?;
+    Ok(())
+}
+
+fn decode_handoff_execution_points(
+    handoff: &wire::Handoff,
+) -> Result<fsl_replay::spine::StateClauseExecutionPoints> {
+    let mut points = fsl_replay::spine::StateClauseExecutionPoints::new();
+    for (name, value) in &handoff.execution_points {
+        let point: filament_contract_model::ExecutionPoint = serde_json::from_value(value.clone())
+            .map_err(|error| RunCause::ClauseRequest {
+                member: format!("handoff.execution_points/{name}"),
+                reason: error.to_string(),
+            })?;
+        points.insert(name.clone(), point);
+    }
+    Ok(points)
+}
+
+/// Write FR-665's checked-package handoff from the exact compilation result.
+fn write_compile_handoff(
+    directory: &Path,
+    request: &wire::CompileRequest,
+    handoff: &wire::Handoff,
+    package_bytes: &[u8],
+    compiled: crate::emit_checked_v2::Compiled,
+    temporal_selections: Vec<crate::emit_checked_v2::ClockSelection>,
+) -> Result<()> {
+    let Some(native_join) = handoff.native_join.as_ref() else {
+        return Err(RunCause::ClauseRequest {
+            member: "handoff.native_join".to_owned(),
+            reason: "is required".to_owned(),
+        });
+    };
+    let source_path = directory.join(&request.program.sources[0].file);
+    let models = request
+        .models
+        .iter()
+        .map(|model| directory.join(&model.source.file))
+        .collect();
+    let libraries = request
+        .libraries
+        .iter()
+        .map(|library| {
+            (
+                library.identity.clone(),
+                directory.join(&library.source.file),
+            )
+        })
+        .collect();
+    let emit = crate::emit_checked_v2::Request {
+        source: source_path,
+        package_name: handoff.package_name.clone(),
+        models,
+        libraries,
+        execution_points: None,
+        temporal_selections,
+        out: None,
+    };
+    let corpus = match handoff.corpus {
+        wire::HandoffCorpus::None => crate::checked_handoff::Corpus::None,
+        wire::HandoffCorpus::Standard => crate::checked_handoff::Corpus::Standard,
+    };
+    let writer_request = crate::checked_handoff::CheckedHandoffRequest {
+        emit,
+        corpus,
+        native_join: fsl_package::NativeJoinLimits::new(
+            native_join.work_units,
+            native_join.storage,
+        ),
+    };
+    crate::checked_handoff::write_compiled_from_command(
+        &writer_request,
+        &directory.join(&handoff.directory),
+        compiled,
+        package_bytes,
+        &request.program.sources[0].file,
+    )
+    .map_err(|error| RunCause::ClauseRequest {
+        member: "handoff".to_owned(),
+        reason: error.to_string(),
+    })?;
+    Ok(())
 }
 
 /// Whether a request's selected model declares the one supported domain-package
@@ -1060,23 +1403,81 @@ fn complete_sources(
         intake,
         sources,
         unit_list,
-        |checked, selections, _, _, failure| {
+        |checked, selections, points, packages, _, libraries, models, inventory, failure| {
             let cancel = filament_exact::Cancel::new();
             let limits = fsl_replay::spine::SpineLimits::default();
             let result = fsl_replay::spine::package_with_temporal_selections(
-                checked,
+                &checked,
                 selections,
                 limits.package,
                 &cancel,
             );
             let document = fsl_replay::OutcomeDocument::from_package(&result);
             let emitted = result.map_err(failure)?.into_value();
+            let package_bytes = emitted.package().bytes().to_vec();
+            let handoff_temporal_selections = if request.handoff.is_some() {
+                handoff_clock_selections(&checked, selections)
+            } else {
+                Vec::new()
+            };
+            let handoff_compiled =
+                request
+                    .handoff
+                    .as_ref()
+                    .map(|_| crate::emit_checked_v2::Compiled {
+                        source: sources[0].source().text().as_bytes().to_vec(),
+                        models,
+                        libraries,
+                        packages,
+                        points,
+                        checked,
+                        inventory: inventory
+                            .expect("handoff inventory is captured for this request"),
+                        emit: limits.package.emit(),
+                        emitted,
+                    });
             Ok(CompileOutcome {
-                package_bytes: emitted.package().bytes().to_vec(),
+                package_bytes,
                 document,
+                handoff_compiled,
+                handoff_temporal_selections,
             })
         },
     )
+}
+
+/// Rebuild the emit command's clause-name clock selections from the exact
+/// checked declarations selected by FR-640's clock-name map.
+fn handoff_clock_selections(
+    checked: &fsl_replay::spine::CheckedUnit,
+    selections: &[fsl_package::TemporalClockSelection],
+) -> Vec<crate::emit_checked_v2::ClockSelection> {
+    selections
+        .iter()
+        .filter_map(|selection| {
+            let name = checked
+                .package()
+                .graph()
+                .temporal_clauses()
+                .iter()
+                .find(|node| node.clause().span() == selection.declaration_span)
+                .map(|node| node.clause().name().to_owned())
+                .or_else(|| {
+                    checked
+                        .package()
+                        .graph()
+                        .protocols()
+                        .iter()
+                        .flat_map(|protocol| &protocol.obligations.compensations)
+                        .find(|template| template.span == selection.declaration_span)
+                        .map(|template| template.name.clone())
+                })?;
+            Some(crate::emit_checked_v2::ClockSelection {
+                clause: name,
+                clock: selection.clock.clone(),
+            })
+        })
+        .collect()
 }
 
 /// The pipeline of [`complete_sources`] through S4: the checked unit is
@@ -1088,10 +1489,19 @@ fn check_sources<T>(
     sources: &[FormalSource],
     unit_list: bool,
     finish: impl FnOnce(
-        &fsl_replay::spine::CheckedUnit,
+        fsl_replay::spine::CheckedUnit,
         &[fsl_replay::spine::TemporalClockSelection],
+        fsl_replay::spine::StateClauseExecutionPoints,
         fsl_semantics::model::intake::PackageInput,
         Vec<&FormalSource>,
+        Vec<fsl_replay::spine::SuppliedLibrary>,
+        Vec<Vec<u8>>,
+        Option<
+            std::result::Result<
+                filament_contract_model::source_obligation::SourceInventoryOutcome,
+                String,
+            >,
+        >,
         &dyn Fn(fsl_replay::spine::FrontEndFailure) -> RunCause,
     ) -> Result<T>,
 ) -> Result<T> {
@@ -1113,6 +1523,31 @@ fn check_sources<T>(
         reason: refusal.detail,
     })?;
     let libraries = library_sources(request, intake)?;
+    if request.handoff.is_some() && unit_list {
+        return Err(RunCause::ClauseRequest {
+            member: "handoff".to_owned(),
+            reason: "requires a single program object".to_owned(),
+        });
+    }
+    let handoff_models = documents
+        .iter()
+        .map(|document| document.source().text().as_bytes().to_vec())
+        .collect();
+    let handoff_libraries = libraries
+        .iter()
+        .map(|(library, read)| fsl_replay::spine::SuppliedLibrary {
+            identity: library.identity.clone(),
+            source: read.source().identity().clone(),
+            path: read.source().path().to_owned(),
+            bytes: read.source().text().as_bytes().to_vec(),
+        })
+        .collect();
+    let execution_points = request
+        .handoff
+        .as_ref()
+        .map(decode_handoff_execution_points)
+        .transpose()?
+        .unwrap_or_default();
     let program_sources = sources.iter().map(FormalSource::source).collect::<Vec<_>>();
     let first_source = program_sources[0];
     let spine_failure = |refusal: fsl_replay::spine::CompileRefusal| {
@@ -1183,6 +1618,7 @@ fn check_sources<T>(
         .iter()
         .flat_map(|unit| request.clocks.check_selections(unit))
         .collect();
+    let mut handoff_inventory = None;
     let (checked, package_selections) = if unit_list {
         let admitted = fsl_replay::spine::admit_parsed_unit_list(parsed, &dependencies)
             .map_err(|refusal| spine_failure(*refusal))?;
@@ -1228,9 +1664,13 @@ fn check_sources<T>(
         let models = fsl_replay::spine::select(&parsed, &packages, limits.model, &cancel)
             .map_err(failure)?
             .into_value();
-        let checked = fsl_replay::spine::check_with_refinement_internals(
+        let checked_result = fsl_replay::spine::check_with_execution_points_and_source_inputs(
             &parsed,
-            package_name(first_source.identity()),
+            request.handoff.as_ref().map_or_else(
+                || package_name(first_source.identity()),
+                |handoff| handoff.package_name.clone(),
+            ),
+            &execution_points,
             fsl_replay::spine::SourceInputs {
                 refinement_internals: request.refinement_internals.clone(),
                 temporal_selections: &check_selections,
@@ -1240,9 +1680,18 @@ fn check_sources<T>(
             &dependencies,
             limits,
             &cancel,
-        )
-        .map_err(failure)?
-        .into_value();
+        );
+        if request.handoff.is_some() {
+            handoff_inventory = Some(
+                fsl_replay::source_inventory::fsl_inventory(
+                    Some(&parsed),
+                    &checked_result,
+                    sources[0].identity(),
+                )
+                .map_err(|refusal| refusal.to_string()),
+            );
+        }
+        let checked = checked_result.map_err(failure)?.into_value();
         let selections = request
             .clocks
             .package_selections(&checked, &[&parsed])
@@ -1250,10 +1699,14 @@ fn check_sources<T>(
         (checked, selections)
     };
     finish(
-        &checked,
+        checked,
         &package_selections,
+        execution_points,
         packages,
         libraries.iter().map(|(_, source)| source).collect(),
+        handoff_libraries,
+        handoff_models,
+        handoff_inventory,
         &failure,
     )
 }
@@ -1411,6 +1864,7 @@ fn intake(directory: &Path, counts: FileCounts) -> Result<Intake<'_>> {
         remaining: TOTAL_BYTES,
         maximum: TOTAL_BYTES,
         dependent_limit: None,
+        prefetched_observations: std::collections::BTreeMap::new(),
     })
 }
 
@@ -1421,6 +1875,7 @@ fn intake_with_bytes(directory: &Path, counts: FileCounts, maximum: usize) -> Re
         remaining: maximum,
         maximum,
         dependent_limit: Some(DependentLimit::CallerConfigured),
+        prefetched_observations: std::collections::BTreeMap::new(),
     })
 }
 
@@ -1435,6 +1890,7 @@ fn intake_with_fixed_bytes(
         remaining: maximum,
         maximum,
         dependent_limit: Some(DependentLimit::Fixed),
+        prefetched_observations: std::collections::BTreeMap::new(),
     })
 }
 
@@ -1449,6 +1905,12 @@ fn prepare_run_bytes(
     // file is read.
     if let Some(member) = &request.tl_lowering {
         tl::decode(member)?;
+    }
+    if request.items.is_some() {
+        return Err(RunCause::ClauseRequest {
+            member: "items".to_owned(),
+            reason: "items is handled by the multi-selection runner".to_owned(),
+        });
     }
     let mut intake = intake_with_bytes(
         directory,
@@ -1468,6 +1930,7 @@ fn prepare_run_bytes(
         },
         dependent_bytes,
     )?;
+    reject_current_parameters_before_sources(&mut intake, request.clause.as_ref())?;
     // The program source is read exactly once; its declared edition decides
     // the runner before any model or library source is read (FR-100).
     let source = intake.source(&request.program.source)?;
@@ -1535,6 +1998,13 @@ fn prepare_complete_run(
     let Some(call) = &request.call else {
         return Err(RunCause::CompleteRunSelection(CompleteRunSelection::NoCall));
     };
+    // FR-960: a malformed `requirements` refuses before any model,
+    // library or compile is read.
+    let requirements = call
+        .requirements
+        .as_ref()
+        .map(requirements::read)
+        .transpose()?;
     let documents = request
         .models
         .iter()
@@ -1605,6 +2075,7 @@ fn prepare_complete_run(
             packages,
             dependencies,
             call: spine_call,
+            requirements,
         }),
     }))
 }
@@ -1642,10 +2113,11 @@ fn execute_lowering(prepared: PreparedLowering) -> Result<RunResult> {
         exit_code: record.exit_code,
         value: NativeResult::lowering_document(tl::document(record.record)),
         outcome: None,
+        requirements: None,
     })
 }
 
-fn execute_prepared(prepared: PreparedRun) -> Result<RunResult> {
+fn execute_prepared(prepared: PreparedRun, settle: &settle::Settle<'_>) -> Result<RunResult> {
     let prepared = match prepared {
         PreparedRun::Function(prepared) => prepared,
         PreparedRun::TlLowering(prepared) => return execute_lowering(*prepared),
@@ -1662,25 +2134,57 @@ fn execute_prepared(prepared: PreparedRun) -> Result<RunResult> {
     };
     let prepared = *prepared.data;
     let source = &prepared.source;
-    let outcome = fsl_replay::spine::run(
-        source.source().identity().clone(),
-        package_name(source.source().identity()),
-        source.source().path(),
-        source.source().text().as_bytes(),
-        &prepared.packages,
-        &prepared.dependencies,
-        fsl_replay::spine::SpineLimits::default(),
-        &prepared.call,
-        &fsl_semantics::model::object_environment::ObjectEnvironment::default(),
-        &filament_exact::Cancel::new(),
-    )
-    .map_err(|refusal| match *refusal {
+    let compile_failure = |refusal: Box<fsl_replay::spine::RunRefusal>| match *refusal {
         fsl_replay::spine::RunRefusal::Compile(compile_refusal) => {
             spine_run_failure(source, prepared.libraries.iter(), *compile_refusal)
         }
         other => RunCause::SpineRun(Box::new(other)),
-    })?;
-    output::spine_run_result(source, &prepared.call.function, outcome)
+    };
+    // The call runs under a handle that is never cancelled: `settle.cancel`
+    // governs only the settlement of its items (FR-961), so the call's own
+    // evaluation is the same with and without them.
+    let call_cancel = filament_exact::Cancel::new();
+    let objects = fsl_semantics::model::object_environment::ObjectEnvironment::default();
+    let Some(selection) = &prepared.requirements else {
+        // FR-960: a call without `requirements` settles no item, and its run
+        // is exactly FR-100's.
+        let outcome = fsl_replay::spine::run(
+            source.source().identity().clone(),
+            package_name(source.source().identity()),
+            source.source().path(),
+            source.source().text().as_bytes(),
+            &prepared.packages,
+            &prepared.dependencies,
+            fsl_replay::spine::SpineLimits::default(),
+            &prepared.call,
+            &objects,
+            &call_cancel,
+        )
+        .map_err(compile_failure)?;
+        return output::spine_run_result(source, &prepared.call.function, outcome, None);
+    };
+    // FR-961 step 3 to 5: the call runs through FR-395's
+    // `run_with_requirements`, and its items are settled on the same compile.
+    let (ran, settled) = fsl_replay::run_with_requirements_reading(
+        &fsl_replay::RequirementsRun {
+            source: source.source().identity().clone(),
+            package_name: package_name(source.source().identity()),
+            path: source.source().path(),
+            bytes: source.source().text().as_bytes(),
+            packages: &prepared.packages,
+            dependencies: &prepared.dependencies,
+            limits: fsl_replay::spine::SpineLimits::default(),
+            call: &prepared.call,
+            objects: &objects,
+            cancel: &call_cancel,
+        },
+        |checked, members| {
+            settle::settle_call(checked, members, selection, &prepared.packages, settle)
+        },
+    )
+    .map_err(compile_failure)?;
+    let (outcome, _) = ran.into_parts();
+    output::spine_run_result(source, &prepared.call.function, outcome, Some(settled?))
 }
 
 /// The package name a program compiles under: its source identity's

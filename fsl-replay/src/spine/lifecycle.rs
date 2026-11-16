@@ -2008,6 +2008,36 @@ pub fn check_with_temporal_selections_and_execution_points(
     )
 }
 
+/// S3 and S4 with accepted execution points, refinement internals and the
+/// request's clock configurations carried together.
+#[allow(clippy::too_many_arguments)]
+pub fn check_with_execution_points_and_source_inputs(
+    parsed: &ParsedUnitSource,
+    package_name: String,
+    execution_points: &super::StateClauseExecutionPoints,
+    inputs: SourceInputs<'_>,
+    models: &AdmittedModels,
+    dependencies: &DependencyInput,
+    limits: SpineLimits,
+    cancel: &Cancel,
+) -> Result<Staged<CheckedUnit>, FrontEndFailure> {
+    check_with_context_and_temporal_selections(
+        parsed,
+        package_name,
+        execution_points,
+        inputs.refinement_internals,
+        inputs.temporal_selections,
+        inputs.clocks,
+        None,
+        None,
+        models,
+        dependencies,
+        limits,
+        cancel,
+        false,
+    )
+}
+
 /// The per-unit inputs of [`check_for_continuation`].
 pub(crate) struct ContinuationInputs<'a> {
     /// The package name the unit checks under.

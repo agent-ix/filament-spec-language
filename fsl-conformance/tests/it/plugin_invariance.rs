@@ -6,9 +6,7 @@ use filament_exact::Cancel;
 use filament_semantic_value::checking::CheckMode;
 use filament_semantic_value::checking::CheckingLimits;
 use fsl_analyze::analyze::{analyze_items, Engine, Engines};
-use fsl_analyze::external_provider::{
-    provider_item, ExternalProvider, ProviderRequest, ProviderVerdict,
-};
+use fsl_analyze::provider::{provider_item, ExternalProvider, ProviderRequest, ProviderVerdict};
 use fsl_conformance::{lifecycle_matrix, run_case_with, MatrixCell};
 use fsl_foundation::{BackendId, RequestIndex};
 use fsl_package::CheckedPackage;
@@ -31,8 +29,9 @@ const LINKED: &str = "fsl.test-linked";
 struct Standin;
 
 impl ExternalProvider for Standin {
-    fn check(&self, _request: &ProviderRequest<'_, '_>, _cancel: &Cancel) -> ProviderVerdict {
-        ProviderVerdict::Proved
+    fn settle(&self, request: &ProviderRequest<'_>, _cancel: &Cancel) -> Vec<ProviderVerdict> {
+        let verdict = { ProviderVerdict::Proved };
+        vec![verdict; request.items().len()]
     }
 }
 
@@ -202,10 +201,21 @@ fn configuration_3_runs_an_item_on_the_plugin_provider() {
         &engines_with_plugin(),
         vec![provider_item(
             RequestIndex::new(0),
-            &package,
-            &key,
             &BackendId::new(PLUGIN),
-            target,
+            fsl_analyze::provider::ProviderItemInput {
+                package: &package,
+                packages: &fsl_semantics::model::intake::PackageInput::default(),
+                claim: &key,
+                routed: fsl_analyze::provider::routed_item(
+                    &package,
+                    engines_with_plugin().registrations(),
+                    RequestIndex::new(0),
+                    &key,
+                    Some(&BackendId::new(PLUGIN)),
+                ),
+                emit: fsl_package::EmitLimits::new(u64::MAX),
+                selection: target,
+            },
         )],
         &Cancel::new(),
     );

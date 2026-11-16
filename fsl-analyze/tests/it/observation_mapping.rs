@@ -19,6 +19,10 @@ fn cover(clock: ClockCover, reading: u64, shift: i128) -> EventTimeInterval {
             let u = i128::from(uncertainty);
             (2 * (k - u), 2 * (k + 1 + u) - 1)
         }
+        ClockCover::Bounded { uncertainty } => {
+            let u = i128::from(uncertainty);
+            (2 * (k - u), 2 * (k + u))
+        }
     };
     EventTimeInterval::new(
         Identity::new("clock:counter"),

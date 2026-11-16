@@ -362,6 +362,22 @@ impl CheckedPackageEvaluation for BarePackage<'_> {
         Err(unmet(self, SOURCE_DECLARATION))
     }
 
+    fn evaluate_current_value_invariants(
+        &self,
+        _current: &fsl_semantics::model::observation::Observation,
+        _meter: &mut Meter,
+    ) -> Result<ValueInvariantEvaluation, CallFailure> {
+        Err(unmet(self, SOURCE_DECLARATION))
+    }
+
+    fn evaluate_value_invariant_selection(
+        &self,
+        _observations: &fsl_semantics::model::observation::ValueInvariantObservations,
+        _meter: &mut Meter,
+    ) -> Result<ValueInvariantEvaluation, CallFailure> {
+        Err(unmet(self, SOURCE_DECLARATION))
+    }
+
     fn check_separation(
         &self,
         _clause: &QualifiedName,

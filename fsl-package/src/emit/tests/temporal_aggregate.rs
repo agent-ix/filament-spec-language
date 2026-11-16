@@ -23,7 +23,7 @@ fn sampled(formula: &str) -> String {
         EVENT,
         &format!(
             "record Sample {{ v: Int[0, 9]; w: Int[0, 9]; }}\n\
-             temporal Window using t over (e: Sample) clock \"model-steps\" on origin \
+             temporal Window using t over (e: Sample) clock \"events\" on origin \
              {{ {formula} }}"
         ),
     )
@@ -38,7 +38,7 @@ fn timestamped(formula: &str) -> String {
             "dimension Time;\n\
              unit s : Time = rational(1, 1);\n\
              unit ms : Time = rational(1, 1000) * s;\n\
-             temporal Window using t over (e: Quantity<ms>) clock \"model-steps\" on origin \
+             temporal Window using t over (e: Quantity<ms>) clock \"events\" on origin \
              {{ {formula} }}"
         ),
     )
@@ -227,11 +227,10 @@ fn the_aggregate_bindings_decide_the_node_identity() {
 }
 
 /// FR-337 "Aggregate formula emission": FSpec FR-370 writes a `duration`
-/// window's bounds as quantities of the `scalar_type`/`unit` node whose path
-/// is `["scalar_type", "unit", T]`, `T` the selected `timestamp_unit`. A
-/// source-declared unit's node path is its declared name, so a window in it
-/// has no encoding whatever the clock names, its own unit included, and the
-/// emission refuses with no package.
+/// window's bounds as quantities of the `scalar_type`/`unit` node the
+/// selected `timestamp_unit` names (FR-965). S3 here had no clock and kept the
+/// window in `ms`, so under a clock in `s` the bounds are not of the clock
+/// unit node and the emission refuses with no package.
 #[trace("TC-1267", "FR-337-AC-15")]
 #[test]
 fn a_duration_window_outside_the_clock_unit_node_refuses() {
@@ -245,7 +244,7 @@ fn a_duration_window_outside_the_clock_unit_node_refuses() {
             crate::emit::TemporalClockSelection::new(
                 graph.source().clone(),
                 temporal.clause().span(),
-                clock_in("ms"),
+                clock_in("s"),
             )
         })
         .collect();
@@ -254,7 +253,7 @@ fn a_duration_window_outside_the_clock_unit_node_refuses() {
         &selections,
         crate::EmitLimits::fixture(),
     )
-    .expect_err("a source-declared unit is no clock unit node");
+    .expect_err("the bounds are in `ms`, not the clock unit `s`");
     assert!(
         matches!(
             refusal,
@@ -322,7 +321,7 @@ fn package_window(declarations: &str, window: &str) -> String {
         TIMESTAMPED,
         &format!(
             "{declarations}record Sample {{ v: Int[0, 9]; }}\n\
-             temporal Window using t over (e: Sample) clock \"model-steps\" on origin \
+             temporal Window using t over (e: Sample) clock \"events\" on origin \
              {{ always[0,3] (count over {window} >= 1) }}"
         ),
     )
@@ -456,4 +455,100 @@ fn a_duration_bound_of_another_time_dimension_than_the_clock_refuses() {
             }
         }
     );
+}
+
+/// The node id path of the one source-owned `scalar_type`/`unit` node of
+/// `wire` declared as `name`.
+fn source_unit_path(wire: &Value, name: &str) -> Value {
+    let found: Vec<&Value> = nodes(wire)
+        .iter()
+        .filter(|node| {
+            node["semantic_form"] == "unit"
+                && node["owner"]["kind"] == "source"
+                && node["declaration"]["qualified_name"] == json!([name])
+        })
+        .collect();
+    let [node] = found[..] else {
+        panic!("one source unit node {name}: {found:#?}");
+    };
+    node["node_id"]["path"].clone()
+}
+
+/// FR-965-AC-1, FR-965-AC-3: a `timestamp_unit` naming a unit the clause's
+/// own source declares makes that source-owned unit node the clock unit, so
+/// `past[0 ms, 300 s]` emits both bounds typed by it, and no
+/// `["scalar_type", "unit", T]` node is written; beside a selected domain
+/// package, its FCD identity still selects the model-owned node.
+#[trace("TC-2720", "FR-965-AC-1")]
+#[trace("TC-2720", "FR-965-AC-3")]
+#[test]
+#[ignore = "QSL-2138: a source-declared time unit is not admitted as the clock unit node yet"]
+fn a_source_declared_time_unit_is_the_clock_unit() {
+    let text = timestamped("always[0,3] (quantile 0.5 of e over past[0 ms, 300 s] <= 5 ms)");
+    for (clock, lower, upper) in [("ms", "0", "300000"), ("s", "0", "300")] {
+        let wire = emit_with_clock(&text, clock)
+            .unwrap_or_else(|refusals| panic!("under {clock}: {refusals:?}"))
+            .unwrap_or_else(|refusal| panic!("under {clock}: {refusal:?}"));
+        let path = source_unit_path(&wire, clock);
+        let node = aggregate(&wire);
+        for (name, expected) in [("lower", lower), ("upper", upper)] {
+            let bound = bound(node, name);
+            assert_eq!(bound["value_kind"], "quantity", "{clock} {name}");
+            assert_eq!(bound["value"], expected, "{clock} {name}");
+            assert_eq!(bound["type"]["path"], path, "{clock} {name}");
+        }
+        assert!(
+            nodes(&wire)
+                .iter()
+                .all(|node| node["node_id"]["path"] != json!(["scalar_type", "unit", clock])),
+            "no second node stands for the clock unit {clock}"
+        );
+    }
+
+    // Beside a selected domain package: the source name selects the source
+    // node, the FCD identity the model-owned one.
+    let sources = "dimension Time;\nunit s : Time = rational(1, 1);\n\
+                   unit ms : Time = rational(1, 1000) * s;\n";
+    let wire = emit_with_clock(&package_window(sources, "past[0 ms, 300 s]"), "ms")
+        .expect("checks")
+        .expect("emits under the source ms");
+    let path = source_unit_path(&wire, "ms");
+    assert_eq!(bound(aggregate(&wire), "upper")["type"]["path"], path);
+    let model = package_unit("ms");
+    let wire = emit_with_clock(
+        &package_window(sources, "past[0 Config::ms, 300 Config::s]"),
+        &model,
+    )
+    .expect("checks")
+    .expect("emits under the model ms");
+    assert_eq!(
+        bound(aggregate(&wire), "upper")["type"]["path"],
+        json!(["scalar_type", "unit", model])
+    );
+}
+
+/// FR-965-AC-2: a `timestamp_unit` naming no unit, or a unit of a dimension
+/// other than `Time`, refuses with FR-933's cause `unknown-clock-unit` or
+/// `clock-unit-dimension`, naming the clock and the unit, with no package.
+#[trace("TC-2720", "FR-965-AC-2")]
+#[test]
+#[ignore = "QSL-2138: the clock unit node rule of FR-965 is not implemented yet"]
+fn a_timestamp_unit_naming_no_time_unit_refuses() {
+    let formula = "always[0,3] (quantile 0.5 of e over past[0 ms, 300 s] <= 5 ms)";
+    let length = timestamped(formula).replace(
+        "dimension Time;\n",
+        "dimension Time;\ndimension Length;\nunit m : Length = rational(1, 1);\n",
+    );
+    for (text, clock, cause) in [
+        (timestamped(formula), "us", "unknown-clock-unit"),
+        (length, "m", "clock-unit-dimension"),
+    ] {
+        let refused = match emit_with_clock(&text, clock) {
+            Ok(Ok(_)) => panic!("{clock}: no clock unit node, no package"),
+            Ok(Err(refusal)) => format!("{refusal:?}"),
+            Err(refusals) => format!("{refusals:?}"),
+        };
+        assert!(refused.contains(cause), "{clock}: {refused}");
+        assert!(refused.contains(clock), "{clock}: {refused}");
+    }
 }

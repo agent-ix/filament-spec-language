@@ -56,6 +56,11 @@ pub(super) struct Diagnostic<'a> {
 #[serde(untagged)]
 pub(super) enum Details<'a> {
     None,
+    /// FR-960: the claim of a `call.requirements` entry naming no item of
+    /// the call.
+    Claim {
+        claim: &'a serde_json::Value,
+    },
     Io {
         path: Cow<'a, str>,
         os_code: Option<i32>,
@@ -272,6 +277,13 @@ pub(super) struct SpineRunReport<'a> {
     pub source: RunSource<'a>,
     pub function: &'a str,
     pub outcome: SpineOutcome,
+    /// FR-963: one FR-621 entry per settled requirement item, present
+    /// exactly when the call carried `requirements`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub requirements: Option<Vec<serde_json::Value>>,
+    /// FR-963: FR-635's registry the items were negotiated against.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub registry: Option<serde_json::Value>,
 }
 
 #[derive(Serialize)]

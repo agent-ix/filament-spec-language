@@ -56,7 +56,7 @@ fn run(unit: &str, with_model: bool, member: (&str, Value)) -> (u8, Value) {
 fn write_request(directory: &Path, request: &Value) -> (u8, Value) {
     let path = directory.join("request.json");
     std::fs::write(&path, serde_json::to_vec(request).unwrap()).unwrap();
-    match fsl_command::command::run(&path) {
+    match fsl_command::command::run(&path, &crate::negotiation::Fr290) {
         Ok(result) => (
             result.exit_code,
             serde_json::from_str(&result.value.to_string()).expect("a JSON document"),
@@ -958,7 +958,7 @@ fn tla_export_agrees_with_fsl_exploration() {
 #[test]
 #[trace("TC-2107", "FR-757-AC-2")]
 #[trace("TC-2107", "FR-757-AC-3")]
-#[ignore = "QSL-2147: cross_evaluate.initial (behaviour enumeration) is not implemented yet; QSL-2140: the timed `Low` writes no clock, which is refused MissingClock until FR-942 binds the default"]
+#[ignore = "QSL-2147: cross_evaluate.initial (behaviour enumeration) is not implemented yet"]
 fn tl_cross_evaluation_agrees_and_timed_clauses_do_not_lower() {
     let unit = "language \"ix:native\" edition \"1-draft\";\n\
          profile t = \"filament.temporal.event-position.false-extension/v1\";\n\
@@ -1109,7 +1109,6 @@ fn a_tl_lowering_request_selects_its_correspondence() {
 /// with no classified target and no formula.
 #[test]
 #[trace("TC-2601", "FR-931-AC-2")]
-#[ignore = "QSL-2140: the timed `Low` writes no clock, which is refused MissingClock until FR-942 binds the default"]
 fn a_timed_clause_lowers_to_no_formula() {
     let timed = timed_low();
     let (code, value) = run(&timed, true, ("tl_lowering", json!({"clause": "Low"})));

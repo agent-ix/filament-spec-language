@@ -839,10 +839,13 @@ version = "0.1.0"
 dependencies = [
  "filament-checked",
  "filament-contract-model",
+ "filament-eval",
  "filament-exact",
  "filament-semantic-value",
  "fsl-analyze",
  "fsl-cst",
+ "fsl-eval",
+ "fsl-forms",
  "fsl-foundation",
  "fsl-package",
  "fsl-replay",

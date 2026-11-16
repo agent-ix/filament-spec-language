@@ -18,7 +18,7 @@ invariant Healthy using v on M::Workflow at current {
 pre BeforeApply using v on M::Workflow::apply { amount >= 1 U }
 post AfterApply using v on M::Workflow::apply { result }
 
-temporal Due using t over (view: M::Workflow) clock "events" on origin {
+temporal Due using t over (view: M::Workflow) clock "model-steps" on origin {
     always[0,30] holds(
         L::Ready(view.ready)
         and L::RatioBounded(rational(-1, 2))
@@ -27,7 +27,7 @@ temporal Due using t over (view: M::Workflow) clock "events" on origin {
         and L::ExactBounded(rational(9223372036854775807, 9223372036854775806))
     )
 }
-temporal DueLate using t over (view: M::Workflow) clock "events" on origin {
+temporal DueLate using t over (view: M::Workflow) clock "model-steps" on origin {
     always[0,60] holds(L::Ready(view.ready))
 }
 

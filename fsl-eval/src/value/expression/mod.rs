@@ -1062,6 +1062,22 @@ pub trait CheckedPackageEvaluation: family::sealed::Sealed {
         meter: &mut Meter,
     ) -> Result<ValueInvariantEvaluation, CallFailure>;
 
+    /// FR-652: evaluate every type invariant over the reachable values in one
+    /// admitted current snapshot, using FR-366 ordering and the supplied meter.
+    fn evaluate_current_value_invariants(
+        &self,
+        current: &fsl_semantics::model::observation::Observation,
+        meter: &mut Meter,
+    ) -> Result<ValueInvariantEvaluation, CallFailure>;
+
+    /// FR-652: evaluate a no-clause value-invariant request over its current
+    /// snapshot and optional admitted invocation values.
+    fn evaluate_value_invariant_selection(
+        &self,
+        observations: &fsl_semantics::model::observation::ValueInvariantObservations,
+        meter: &mut Meter,
+    ) -> Result<ValueInvariantEvaluation, CallFailure>;
+
     /// FR-268 (ADR-031 SW-13): check that `claim` separates the state
     /// clause `clause` over `observations`, charged to `meter`: step 1
     /// resolves the claim's quantifier to a `forall` or `exists` node of the
@@ -2081,6 +2097,22 @@ impl CheckedPackageEvaluation for CheckedPackage {
         meter: &mut Meter,
     ) -> Result<ValueInvariantEvaluation, CallFailure> {
         value_invariants::evaluate(self, observations, meter)
+    }
+
+    fn evaluate_current_value_invariants(
+        &self,
+        current: &fsl_semantics::model::observation::Observation,
+        meter: &mut Meter,
+    ) -> Result<ValueInvariantEvaluation, CallFailure> {
+        value_invariants::evaluate_current(self, current, meter)
+    }
+
+    fn evaluate_value_invariant_selection(
+        &self,
+        observations: &fsl_semantics::model::observation::ValueInvariantObservations,
+        meter: &mut Meter,
+    ) -> Result<ValueInvariantEvaluation, CallFailure> {
+        value_invariants::evaluate_selection(self, observations, meter)
     }
 
     fn check_separation(

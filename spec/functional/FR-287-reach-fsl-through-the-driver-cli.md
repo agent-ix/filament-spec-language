@@ -105,7 +105,7 @@ FR-298) and takes FR-285's exit code.
   package bytes of its own for it, and `--output` on any other verb is an
   unknown option (FSpec FR-301).
 - `--provider-config <file>` on the verbs that route items to providers
-  (`analyze`, `prove`, `monitor`, `replay`, `generate`) shall read FSpec
+  (`analyze`, `prove`, `monitor`, `run`, `replay`, `generate`) shall read FSpec
   FR-561's `filament.provider-config/v1` document: its shape (`format`,
   `providers`, each entry's `path` and `arguments`), its refusals (a missing
   or unreadable file naming the path; `invalid-request` naming the file and the
@@ -118,9 +118,30 @@ FR-298) and takes FR-285's exit code.
   the started providers to the verb's FSL entry as its `providers`
   parameter, by FR-635's rule for every provider-routing entry ("One rule
   for every provider-routing entry"), so FSL's `command` and `analyze` take
-  no provider configuration of their own.
+  no provider configuration of their own. Each started provider is the
+  driver's `ProcessProvider`, an `ExternalProvider` that only transports
+  (FR-635 "How a process provider runs an item", FR-950): FSL's analyze
+  builds the complete FSpec FR-331 request, `fsl_analyze::provider::ProviderRequest`,
+  from the admitted package bytes (FR-940), the routed items and the
+  negotiated manifest entry, and calls `ExternalProvider::settle` after
+  routing and negotiation. `ProcessProvider` forwards that request
+  unchanged through `ProcessProviderSession::invoke` and maps the FR-331
+  result back to `ProviderVerdict`. The driver holds no package and no
+  routed item, and it has no provider pipeline of its own: the earlier
+  `run_configured_providers` path is removed, with no shim. `run` is a
+  provider-routing verb like the others (driver FR-006, FR-014): it takes
+  `--provider-config` and `--provider-limit`, and the provider items of its
+  request go through the same FR-950 request and transport. FSpec FR-561
+  names `run` among the verbs that take a provider configuration. `fsl run`
+  SHALL call `fsl_command::command::run_with_providers(request, negotiate,
+  providers, options, cancel)` (FR-961), with an empty `providers` when
+  `--provider-config` is absent,
+  which routes the run call's requirement items through the provider seam
+  `fsl_analyze::provider::settle_items` (build each `ProviderRequest`, then
+  `ExternalProvider::settle`) and returns the run outcome with the provider
+  verdicts that driver FR-006 and FR-014 report (FR-950).
 - `--provider-limit <name>=<value>` on the same provider-routing verbs
-  (`analyze`, `prove`, `monitor`, `replay`, `generate`) shall set one of the
+  (`analyze`, `prove`, `monitor`, `run`, `replay`, `generate`) shall set one of the
   caller limits that FSpec FR-462 and FR-305 say bound each process-plugin
   run. FR-561 keeps these budgets out of the provider-configuration
   document, so one document serves runs of any size. The option may be
@@ -152,8 +173,10 @@ FR-298) and takes FR-285's exit code.
   providers ignore. The option is accepted with or without
   `--provider-config`. The driver shall read every
   `--provider-limit` before any stage runs and before any plugin starts,
-  and pass the resolved limits with the started providers, so FSL's
-  entries take none of them. An argument with no `=`, an unknown name, a
+  and pass the resolved limits with the started providers as
+  `ProviderOptions.provider_limits`. FSL's entries parse no option. Analyze
+  writes the limits into every `ProviderRequest` it builds (FR-635), and
+  `ProcessProvider` enforces the transport limits of the request it carries. An argument with no `=`, an unknown name, a
   name given twice, or a value that is empty, zero, signed, has a leading
   zero, a non-digit or a unit suffix, or is above the range refuses
   `invalid-request` naming `--provider-limit` and the offending argument,
