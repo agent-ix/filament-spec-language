@@ -1131,7 +1131,6 @@ fn extension_set(directory: &Path, entries: Value) {
 /// definition a unit selects.
 #[test]
 #[trace("FSpec-TC-1242", "FSpec-FR-562-AC-1")]
-#[ignore = "QSL-2189: `--extensions` is not implemented yet"]
 fn check_with_an_extension_set_admits_the_selected_form() {
     let directory = tempfile::tempdir().unwrap();
     retention_definition(directory.path(), "retention.json", "retention");
@@ -1173,7 +1172,6 @@ fn check_with_an_extension_set_admits_the_selected_form() {
     "FSpec-TC-1244",
     "FSpec-FR-301-AC-5"
 )]
-#[ignore = "QSL-2189: `--extensions` is not implemented yet"]
 fn malformed_extension_sets_refuse() {
     let entry =
         json!({"authority": "agent-ix", "identity": "ext.retention", "file": "retention.json"});
