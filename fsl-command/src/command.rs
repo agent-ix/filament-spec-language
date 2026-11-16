@@ -1503,11 +1503,7 @@ fn check_sources<T>(
     let libraries = library_sources(request, intake)?;
     // FR-660: read definitions after the program and library sources, under
     // the same aggregate dependent-file ceiling.
-    let extension_catalog = if request.extensions.is_empty() {
-        None
-    } else {
-        Some(extension_catalog(&request.extensions, intake)?)
-    };
+    let extension_catalog = extension_catalog(&request.extensions, intake)?;
     if request.handoff.is_some() && unit_list {
         return Err(RunCause::ClauseRequest {
             member: "handoff".to_owned(),
@@ -1587,19 +1583,17 @@ fn check_sources<T>(
     let parsed = parse_requests
         .iter()
         .map(|parse_request| {
-            let parsed = match extension_catalog.as_ref() {
-                Some(catalog) => fsl_replay::spine::parse_selecting_extensions(
-                    parse_request,
-                    fsl_replay::spine::ProfileCatalogInput {
-                        catalog,
-                        limits: fsl_semantics::library::bundle::PackageLimits::default(),
-                    },
-                    limits.source,
-                    &cancel,
-                ),
-                None => fsl_replay::spine::parse(parse_request, limits.source, &cancel),
-            };
-            parsed.map(|stage| stage.into_value()).map_err(failure)
+            fsl_replay::spine::parse_selecting_extensions(
+                parse_request,
+                fsl_replay::spine::ProfileCatalogInput {
+                    catalog: &extension_catalog,
+                    limits: fsl_semantics::library::bundle::PackageLimits::default(),
+                },
+                limits.source,
+                &cancel,
+            )
+            .map(|stage| stage.into_value())
+            .map_err(failure)
         })
         .collect::<Result<Vec<_>>>()?;
     let check_selections: Vec<_> = parsed
@@ -2053,11 +2047,7 @@ fn prepare_complete_run(
         .map(|library| Ok((library, intake.source(&library.source)?)))
         .collect::<Result<Vec<(&wire::Library, FormalSource)>>>()?;
     // FR-660: the same request-owned catalog is available to run compilation.
-    let extension_catalog = if request.extensions.is_empty() {
-        None
-    } else {
-        Some(extension_catalog(&request.extensions, intake)?)
-    };
+    let extension_catalog = Some(extension_catalog(&request.extensions, intake)?);
     let dependencies =
         fsl_replay::spine::DependencyInput::new(libraries.iter().map(|(library, read)| {
             fsl_replay::spine::SuppliedLibrary {
