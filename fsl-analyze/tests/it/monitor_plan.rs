@@ -912,13 +912,13 @@ fn a_swapped_imported_callee_body_changes_the_plan_id() {
 }
 
 /// The checked package of [`unit_source`]'s untimed form with the clause `C`
-/// under `profile` and `clock "model-steps"`.
+/// under `profile` and `clock "model-steps"`, activated at every position.
 fn position_counted(profile: &str, formula: &str) -> CheckedPackage {
     let domain = Domain::config_version();
     let packages =
         fsl_semantics::model::intake::package_input([domain.document.as_slice()]).unwrap();
     let source = SourceIdentity::new("agent-ix", "monitor-plan-positions");
-    let unit = unit_source(formula, "", false, "on origin")
+    let unit = unit_source(formula, "", false, EACH)
         .replace("filament.temporal.timed/v1", profile)
         .replace("clock \"model-time\"", "clock \"model-steps\"");
     let parsed = fsl_cst::parse(
@@ -981,14 +981,18 @@ fn plan_of(package: &CheckedPackage) -> fsl_replay::TimedMonitorPlan {
     .0
 }
 
+/// FR-251-AC-52's `always (p implies eventually[0, 3] q)`, its outer `always`
+/// written as the activation at every position: a bounded profile refuses an
+/// operator with no interval (FR-326 "Bounded profiles").
 const STEP_DEADLINE: &str =
-    "always (holds(c.versionNumber = 2) implies eventually[0, 3] holds(c.versionNumber = 3))";
+    "holds(c.versionNumber = 2) implies eventually[0, 3] holds(c.versionNumber = 3)";
+
+const EACH: &str = "on each (q: M::ConfigVersion)";
 
 /// FR-251-AC-52: an event-position `model-steps` clause is planned with a
 /// position counter.
 #[trace("TC-2385", "FR-251-AC-52")]
 #[test]
-#[ignore = "QSL-2137: the monitor plan refuses a non-timed clause NotTimedClause"]
 fn a_non_timed_clause_is_planned_with_a_position_counter() {
     let plan = plan_of(&position_counted(
         "filament.temporal.event-position.false-extension/v1",
@@ -1004,7 +1008,6 @@ fn a_non_timed_clause_is_planned_with_a_position_counter() {
 /// planned too.
 #[trace("TC-2386", "FR-251-AC-53")]
 #[test]
-#[ignore = "QSL-2137: the monitor plan refuses a non-timed clause NotTimedClause"]
 fn fixed_sample_and_infinite_trace_clauses_are_planned() {
     let fixed = plan_of(&position_counted(
         "filament.temporal.fixed-sample.false-extension/v1",
@@ -1014,6 +1017,6 @@ fn fixed_sample_and_infinite_trace_clauses_are_planned() {
     assert_eq!(fixed.buffers(), &[(fixed.intervals()[0].0, 5)]);
     let _ = plan_of(&position_counted(
         "filament.temporal.infinite-trace/v1",
-        "always (holds(c.versionNumber = 2) implies eventually holds(c.versionNumber = 3))",
+        "holds(c.versionNumber = 2) implies eventually holds(c.versionNumber = 3)",
     ));
 }
