@@ -16,7 +16,7 @@ use fsl_semantics::check::{CheckedBody, ControlStep, ProtocolNodeId};
 use super::identity::ThreadPath;
 use super::memory::MemoryModel;
 use super::program::{Cursor, Rest};
-use super::{undetermined, Instance, ProtocolRefusal, ProtocolSystem};
+use super::{Instance, ProtocolRefusal, ProtocolSystem, undetermined};
 use crate::simulation::expansion::ExpansionStop;
 use crate::simulation::model::{ModelFinding, ModelSimState, Verdict};
 
@@ -109,7 +109,9 @@ impl<M: MemoryModel> ProtocolSystem<'_, M> {
                     | ControlStep::Fence => return Ok(Settled::Rest(Rest::Node(node))),
                     ControlStep::Finish => return Ok(Settled::Rest(Rest::Finish)),
                     ControlStep::CompensateTemplate => {
-                        return Err(ProtocolRefusal::fault("a-template-is-not-in-the-run-tree").into())
+                        return Err(
+                            ProtocolRefusal::fault("a-template-is-not-in-the-run-tree").into()
+                        );
                     }
                     ControlStep::Await => return Ok(Settled::Rest(Rest::Await(node))),
                     ControlStep::Check => {
@@ -144,7 +146,7 @@ impl<M: MemoryModel> ProtocolSystem<'_, M> {
                                 }
                                 Decision::Value(false) => {}
                                 Decision::Undecided(finding) => {
-                                    return Ok(Settled::Undecided(finding))
+                                    return Ok(Settled::Undecided(finding));
                                 }
                             }
                         }
@@ -166,7 +168,9 @@ impl<M: MemoryModel> ProtocolSystem<'_, M> {
                         }
                     }
                     ControlStep::Unstepped(_) => {
-                        return Err(ProtocolRefusal::fault("a-stepped-construct-is-admitted").into())
+                        return Err(
+                            ProtocolRefusal::fault("a-stepped-construct-is-admitted").into()
+                        );
                     }
                 },
                 Cursor::Guard(node) => {
@@ -242,7 +246,7 @@ impl<M: MemoryModel> ProtocolSystem<'_, M> {
                         | ControlStep::Finish
                         | ControlStep::CompensateTemplate
                         | ControlStep::Unstepped(_) => {
-                            return Err(ProtocolRefusal::fault("a-parent-holds-controls").into())
+                            return Err(ProtocolRefusal::fault("a-parent-holds-controls").into());
                         }
                     }
                 }

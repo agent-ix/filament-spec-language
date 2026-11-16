@@ -34,15 +34,15 @@ use super::program::{Cursor, Join, Rest};
 use super::race::AccessRecord;
 use super::settle::Settled;
 use super::{
-    undetermined, Bound, Disposition, Instance, Parallel, ParallelKey, ProtocolRefusal,
-    ProtocolState, ProtocolSystem, Thread,
+    Bound, Disposition, Instance, Parallel, ParallelKey, ProtocolRefusal, ProtocolState,
+    ProtocolSystem, Thread, undetermined,
 };
 use crate::simulation::expansion::{Expansion, ExpansionLimit, ExpansionStop};
 use crate::simulation::footprint::Location;
-use crate::simulation::model::encode::{reference_enc, value_enc, Enc};
+use crate::simulation::model::encode::{Enc, reference_enc, value_enc};
 use crate::simulation::model::{
-    verdict, Applied, Budget, ClauseOutcome, FirstApplication, ModelFinding, ModelSimState,
-    Observed, ObservedIdentities, OperationRef, Verdict, EXHAUSTED,
+    Applied, Budget, ClauseOutcome, EXHAUSTED, FirstApplication, ModelFinding, ModelSimState,
+    Observed, ObservedIdentities, OperationRef, Verdict, verdict,
 };
 use crate::simulation::subject::Cut;
 use crate::value::evaluate_join_predicate;
@@ -765,7 +765,7 @@ impl<M: MemoryModel> ProtocolSystem<'_, M> {
             | ControlStep::Finish
             | ControlStep::CompensateTemplate
             | ControlStep::Unstepped(_) => {
-                return Err(ProtocolRefusal::fault("a-thread-rests-at-an-event-node").into())
+                return Err(ProtocolRefusal::fault("a-thread-rests-at-an-event-node").into());
             }
         }
         Ok(())
@@ -2147,7 +2147,7 @@ impl<M: MemoryModel> ProtocolSystem<'_, M> {
                 | ControlStep::Finish
                 | ControlStep::CompensateTemplate
                 | ControlStep::Unstepped(_) => {
-                    return Err(ProtocolRefusal::fault("a-thread-rests-at-an-event-node").into())
+                    return Err(ProtocolRefusal::fault("a-thread-rests-at-an-event-node").into());
                 }
             },
             Rest::Check(node) => WaitCause::CheckFalse {

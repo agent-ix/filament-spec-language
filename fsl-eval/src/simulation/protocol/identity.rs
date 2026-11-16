@@ -14,7 +14,7 @@ use quire_canonical::{Encode, Error, Sink, Writer};
 
 use super::memory::{MemoryChoice, MemoryStepId};
 use super::race::{AccessRecord, DataRace};
-use crate::simulation::model::encode::{reference_enc, Enc};
+use crate::simulation::model::encode::{Enc, reference_enc};
 
 /// One step of a thread's path (FSpec FR-425): for a branch thread, the
 /// `parallel` that forked it, its branch label and the parallel instance's

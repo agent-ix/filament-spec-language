@@ -31,13 +31,13 @@ use super::memory::{Access, GatedStep, MemoryModel, Written};
 use super::program::{Rest, Template};
 use super::steps::Gathered;
 use super::{
-    undetermined, Bound, Compensating, Disposition, Instance, ProtocolRefusal, ProtocolState,
-    ProtocolSystem, Registered, Registration, Status, Thread,
+    Bound, Compensating, Disposition, Instance, ProtocolRefusal, ProtocolState, ProtocolSystem,
+    Registered, Registration, Status, Thread, undetermined,
 };
 use crate::simulation::expansion::ExpansionStop;
 use crate::simulation::model::encode::{reference_enc, value_enc};
 use crate::simulation::model::{
-    verdict, FirstApplication, ModelFinding, ModelSimState, OperationRef, Verdict,
+    FirstApplication, ModelFinding, ModelSimState, OperationRef, Verdict, verdict,
 };
 use crate::value::evaluate_protocol_slot;
 
@@ -411,7 +411,7 @@ impl<M: MemoryModel> ProtocolSystem<'_, M> {
             | Rest::End => {
                 return Err(
                     ProtocolRefusal::fault("a-compensation-thread-rests-at-its-template").into(),
-                )
+                );
             }
         };
         let template = self.program.template(index)?;

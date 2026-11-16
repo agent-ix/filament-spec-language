@@ -1085,7 +1085,7 @@ impl<'a> Program<'a> {
     pub(super) fn reaches_any(&self, rest: Rest, targets: &[ProtocolNodeId]) -> bool {
         let (at, start) = match rest {
             Rest::Finish | Rest::End | Rest::Check(_) | Rest::Compensate(_) | Rest::Retry(_) => {
-                return false
+                return false;
             }
             Rest::Node(node) | Rest::Fork(node) | Rest::Await(node) => {
                 match self.spans.get(&node) {
@@ -1229,7 +1229,7 @@ impl<'a> Program<'a> {
                         | ControlStep::Finish
                         | ControlStep::CompensateTemplate
                         | ControlStep::Unstepped(_) => {
-                            return Err(ProtocolRefusal::fault("a-parent-holds-controls"))
+                            return Err(ProtocolRefusal::fault("a-parent-holds-controls"));
                         }
                     }
                 }

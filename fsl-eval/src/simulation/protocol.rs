@@ -61,12 +61,12 @@ use crate::simulation::expansion::{Expansion, ExpansionLimit, ExpansionStop};
 use crate::simulation::explore::TransitionSystem;
 use crate::simulation::footprint::Location;
 use crate::simulation::key::{self, EncodingRefusal};
-use crate::simulation::model::encode::{map_enc, reference_enc, Canonicalizer, Enc};
+use crate::simulation::model::encode::{Canonicalizer, Enc, map_enc, reference_enc};
 use crate::simulation::model::{
-    verdict, ClauseOutcome, ModelFinding, ModelSimState, ModelSystem, Observed, TerminalClass,
-    Verdict, BROKEN,
+    BROKEN, ClauseOutcome, ModelFinding, ModelSimState, ModelSystem, Observed, TerminalClass,
+    Verdict, verdict,
 };
-use crate::simulation::not_simulated::{check_requires_bound, NotSimulated, RequiresBound};
+use crate::simulation::not_simulated::{NotSimulated, RequiresBound, check_requires_bound};
 use crate::simulation::progress::ZeroProgressError;
 use crate::simulation::subject::ConstraintError;
 use crate::simulation::subject::{Bounded, Cut, SubjectSystem};
@@ -79,11 +79,11 @@ pub use access::{
     WeakAccessShape, WeakAccesses, WeakAttempt,
 };
 pub use fairness::{
-    protocol_constraints, FairnessOrigin, ProtocolClass, ProtocolFairness, ProtocolFairnessError,
-    ProtocolTarget,
+    FairnessOrigin, ProtocolClass, ProtocolFairness, ProtocolFairnessError, ProtocolTarget,
+    protocol_constraints,
 };
 pub use footprint::{
-    visible, AnchorName, ClaimReads, ParallelInstance, ProtocolFootprintError, ProtocolLocation,
+    AnchorName, ClaimReads, ParallelInstance, ProtocolFootprintError, ProtocolLocation, visible,
 };
 pub use identity::{
     Actor, BlockedThread, CarriedComponent, PathStep, PositionAnchor, ProtocolTransition,
@@ -101,7 +101,7 @@ pub use reach::{ReachRefusal, Reachable, ReachedState};
 pub use selection::{
     MemorySelection, MemorySelectionRefusal, ResolvedMemory, ResolvedParallel, SubjectMemory,
 };
-pub use tso::{Buffered, Tso, TsoComponent, DEFAULT_MEMORY_BOUND};
+pub use tso::{Buffered, DEFAULT_MEMORY_BOUND, Tso, TsoComponent};
 pub use wire::{
     blocked_json, fairness_json, location_json, over_reference, send_record_json, transition_json,
 };
@@ -228,9 +228,9 @@ impl ProtocolRefusal {
             | Self::OverBinding { .. }
             | Self::RolePopulation { .. }
             | Self::Memory(_) => Code::InvalidRuntimeInput,
-            Self::Unsupported(_)
-            | Self::NodeFootprint { .. }
-            | Self::WeakAccessShape(_) => Code::UnsupportedConstruct,
+            Self::Unsupported(_) | Self::NodeFootprint { .. } | Self::WeakAccessShape(_) => {
+                Code::UnsupportedConstruct
+            }
             Self::InitialStop(stop) => {
                 Code::from_code(stop.cause.code()).unwrap_or(Code::RuntimeInvariant)
             }
@@ -1145,7 +1145,7 @@ impl<'a, M: MemoryModel> ProtocolSystem<'a, M> {
                     roles::Started::Undecided(_) => {
                         return Err(ProtocolRefusal::Unsupported(
                             Unsupported::UndecidedInitialGuard,
-                        ))
+                        ));
                     }
                 }
             };
