@@ -27,31 +27,34 @@ struct CompleteRequest {
     deadline_ms: u64,
 }
 
-/// The FR-331 members of `request`. The current `ProviderRequest` exposes
-/// only the claim target, index, occurrence, checked package and backend: it
-/// carries no emitted package bytes, routed request items, negotiated
-/// manifest entry or FR-462 limits, so this reads `None`. The widened
-/// `fsl_analyze::provider::ProviderRequest` (FR-950) exposes them, and this
-/// helper then reads them.
-fn complete(
-    _request: &fsl_analyze::external_provider::ProviderRequest<'_, '_>,
-) -> Option<CompleteRequest> {
-    None
+/// The FR-331 members of `request`: the admitted package bytes, the routed
+/// items' request indexes, the negotiated manifest entry and the deadline.
+fn complete(request: &fsl_analyze::provider::ProviderRequest<'_>) -> Option<CompleteRequest> {
+    Some(CompleteRequest {
+        package: request.package().bytes().to_vec(),
+        request_indexes: request
+            .items()
+            .iter()
+            .map(|item| u64::try_from(item.index().get()).expect("an index fits"))
+            .collect(),
+        manifest_backend: request.backend().as_str().to_owned(),
+        deadline_ms: request.deadline_ms(),
+    })
 }
 
 #[derive(Debug)]
 struct Recording(Arc<Mutex<Seen>>);
 
-impl fsl_analyze::external_provider::ExternalProvider for Recording {
-    fn check(
+impl fsl_analyze::provider::ExternalProvider for Recording {
+    fn settle(
         &self,
-        request: &fsl_analyze::external_provider::ProviderRequest<'_, '_>,
+        request: &fsl_analyze::provider::ProviderRequest<'_>,
         _cancel: &filament_exact::Cancel,
-    ) -> fsl_analyze::external_provider::ProviderVerdict {
+    ) -> Vec<fsl_analyze::provider::ProviderVerdict> {
         let mut seen = self.0.lock().expect("the record lock");
         seen.calls += 1;
         seen.complete.push(complete(request));
-        fsl_analyze::external_provider::ProviderVerdict::Proved
+        vec![fsl_analyze::provider::ProviderVerdict::Proved; request.items().len()]
     }
 }
 
@@ -76,6 +79,7 @@ fn recording_provider(seen: Arc<Mutex<Seen>>) -> fsl_analyze::analyze::Engine {
     fsl_analyze::analyze::Engine::external(
         descriptor,
         fsl_analyze::analyze::BackendTool::new("test-provider", "1").expect("a tool"),
+        fsl_analyze::provider::ProviderLimits::default(),
         Box::new(Recording(seen)),
     )
     .expect("the descriptor is unbounded")

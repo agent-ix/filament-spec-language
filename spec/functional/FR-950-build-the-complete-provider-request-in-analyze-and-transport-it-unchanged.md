@@ -42,12 +42,12 @@ serializes to exactly that wire and adds no contract of its own:
 | `package` (and `dependencies`) | the `EmittedPackage` bytes of the analysed unit's own S4 emission, read through FR-940's `AdmittedPackageRead` |
 | `items` | the FR-331 request items of the `RequirementItem`s that routing sent to the backend, in request order |
 | `manifest` | the full registry snapshot the candidates were checked against (FSpec FR-331 request stage `manifest`); each item's `negotiate_item` `Disposition` names its descriptor within it |
-| `request.deadline_ms` | the `deadline_ms` member of `AnalyzeOptions.provider_limits`, the FSpec FR-462 provider deadline the driver resolves from `--provider-limit` (FR-287) |
+| `request.deadline_ms` | the `deadline_ms` member of `ProviderOptions.provider_limits`, the FSpec FR-462 provider deadline the driver resolves from `--provider-limit` (FR-287) |
 
 The request also holds two members that are not serialized and never reach
 the FR-331 wire:
 
-- `transport_limits`: the other six FR-462 limits of `AnalyzeOptions.provider_limits`
+- `transport_limits`: the other six FR-462 limits of `ProviderOptions.provider_limits`
   (`max_frame_bytes`, `max_total_bytes`, `grace_ms`, `max_stderr_bytes`,
   `max_memory_bytes`, `max_cpu_ms`), which the transport enforces on the
   plugin run and which a linked provider ignores.
@@ -56,12 +56,16 @@ the FR-331 wire:
 ### The run-side entry
 
 `run` routes items to providers too (FR-287, driver FR-006, FR-014). Its
-entry is `fsl_command::run_with_providers(request, providers: &[Engine], options)`.
+entry is `fsl_command::command::run_with_providers(request, negotiate, providers,
+options, cancel)` (FR-961).
 It runs the call the request names, routes and negotiates the call's
 requirement items as analyze does, and settles the provider items through
 the same seam, `fsl_analyze::provider::settle_items`, which builds each
 `ProviderRequest` by the table above and then calls `ExternalProvider::settle`.
-`options` carries `provider_limits` as `AnalyzeOptions` does. It returns the
+`options` is the run's `ProviderOptions` (FR-964). A call names its items'
+backends through `call.requirements` (FR-960), an unnamed item is resolved by
+FR-962, plain `command::run` settles the items with the linked engines alone
+(FR-961), and FR-963 gives the outcome's item members. It returns the
 run outcome, with each provider item's verdict as driver FR-006 and FR-014
 require. `fsl run --provider-config` and `--provider-limit` call this entry.
 There is no second provider path for `run`.
@@ -70,7 +74,7 @@ There is no second provider path for `run`.
 
 - The analysis view or admitted package of the analysed unit (FR-940).
 - The routed and negotiated items of the run.
-- `AnalyzeOptions.provider_limits`.
+- `ProviderOptions.provider_limits`.
 - The registered providers (FR-635 "One rule for every provider-routing entry").
 
 ## Outputs
@@ -104,7 +108,7 @@ and one `ProviderVerdict` per request, which FR-290 and FR-281 settle.
 | ID | Criteria | Verification |
 |----|----------|--------------|
 | FR-950-AC-1 | Over FR-635-AC-1's request with a recording provider registered as a process provider, the provider's `settle` is called once, after negotiation, with a `ProviderRequest` whose `package` decodes with the v2 reader to the admitted package of the analysed unit, whose `items` hold exactly the `Even` item with its `request_index`, claim occurrence and candidate, whose `manifest` is the full registry snapshot, within which the item's `Disposition` names the provider's descriptor, and whose `request.deadline_ms` is FR-287's default 600000. | Test (TC-2660) |
-| FR-950-AC-2 | The same run with `AnalyzeOptions.provider_limits` setting `deadline_ms` 250 and `max_frame_bytes` 1048576 gives a request whose `request.deadline_ms` is 250 and whose unserialized `transport_limits` hold `max_frame_bytes` 1048576 and FR-287's defaults for the other five; the request's FR-331 serialization, which holds no transport limit, is schema-valid against `urn:filament:backend-provider:v1` and equals the bytes the transport writes as the `request` frame body. | Test (TC-2660) |
+| FR-950-AC-2 | The same run with `ProviderOptions.provider_limits` setting `deadline_ms` 250 and `max_frame_bytes` 1048576 gives a request whose `request.deadline_ms` is 250 and whose unserialized `transport_limits` hold `max_frame_bytes` 1048576 and FR-287's defaults for the other five; the request's FR-331 serialization, which holds no transport limit, is schema-valid against `urn:filament:backend-provider:v1` and equals the bytes the transport writes as the `request` frame body. | Test (TC-2660) |
 | FR-950-AC-3 | Two items routed to one provider give one request holding both items in request order; an item that negotiates to `en-1` is in no provider request; no provider is called when no item settles `Supported` on it. | Test (TC-2660) |
 | FR-950-AC-4 | Negative: an item routed to a process provider over a package that `package` refuses to emit (FR-185) settles `unsupported` `unsupported_projection`/`unsupported-requested-capability` naming the capability kind and the backend, and the provider's `settle` is never called. | Test (TC-2660) |
 | FR-950-AC-5 | `fsl_command::run_with_providers` over a run request whose call `Even(n)` holds a `value-validity` item named for the recording provider, with `options.provider_limits` setting `deadline_ms` 250, calls `provider::settle_items`, so the provider's `settle` receives one `ProviderRequest` built as AC-1 states with `request.deadline_ms` 250; the returned run outcome holds the call's result and the item's `proved` verdict naming the provider; the same request through `fsl_command::command::run` with no providers settles the item without calling the provider. | Test (TC-2664) |
