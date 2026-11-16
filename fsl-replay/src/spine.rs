@@ -58,7 +58,7 @@ mod subject;
 pub use lifecycle::{
     admit_parsed_unit_list, check, check_units, check_units_with_refinement_internals,
     check_with_execution_points, check_with_execution_points_and_refinement_internals,
-    check_with_profile_catalog, check_with_refinement_internals,
+    check_with_integer_division, check_with_profile_catalog, check_with_refinement_internals,
     check_with_temporal_selections_and_execution_points, core_vocabulary, extension_forms, package,
     package_with_temporal_selections, parse, parse_selecting_extensions, parse_with_extensions,
     preflight_unit_list, refusal_or_fault, select, select_units, AdmittedModels, AdmittedUnitList,

@@ -475,6 +475,8 @@ fn drive(
         &mut intake,
         std::slice::from_ref(&program),
         false,
+        SpineLimits::default(),
+        None,
         |checked, selections, packages, libraries, _, _, _, _| {
             let mut sources: Vec<Source> = vec![program.source().clone()];
             sources.extend(libraries.iter().map(|library| library.source().clone()));

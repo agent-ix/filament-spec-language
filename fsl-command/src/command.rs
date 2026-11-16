@@ -48,6 +48,8 @@ pub struct CheckInputs {
     pub models: Vec<(String, PathBuf)>,
     /// Libraries selected by identity and source path, in option order.
     pub libraries: Vec<(String, PathBuf)>,
+    /// The admitted integer-division law used while checking this unit.
+    pub integer_division: Option<filament_checked::integer_division::AdmittedIntegerDivision>,
     /// The caller's stage limits for parse, model selection and checking.
     pub limits: fsl_replay::spine::SpineLimits,
     /// Aggregate bytes available to supplied model and library files.
@@ -59,6 +61,7 @@ impl Default for CheckInputs {
         Self {
             models: Vec::new(),
             libraries: Vec::new(),
+            integer_division: None,
             limits: fsl_replay::spine::SpineLimits::default(),
             dependent_bytes: TOTAL_BYTES,
         }
@@ -974,7 +977,8 @@ pub fn check_outcome(
             source: check_source_file(path, &format!("library:{identity}")),
         })
         .collect::<Vec<_>>();
-    validate_check_inputs(&inputs.models, &inputs.libraries)?;
+    validate_check_inputs(&inputs.models, &inputs.libraries)
+        .map_err(|cause| Box::new(RunError { cause }))?;
     let request = wire::CompileRequest {
         models,
         program: wire::CompileProgram {
@@ -995,9 +999,12 @@ pub fn check_outcome(
             observations: 0,
         },
         inputs.dependent_bytes,
-    )?;
-    let source = intake.source(&request.program.sources[0])?;
-    require_complete_edition(source.source())?;
+    )
+    .map_err(|cause| Box::new(RunError { cause }))?;
+    let source = intake
+        .source(&request.program.sources[0])
+        .map_err(|cause| Box::new(RunError { cause }))?;
+    require_complete_edition(source.source()).map_err(|cause| Box::new(RunError { cause }))?;
 
     // Parse before opening supplied models or libraries so an unused option
     // is refused without reading its file.
@@ -1058,6 +1065,7 @@ pub fn check_outcome(
         &[source],
         false,
         inputs.limits,
+        inputs.integer_division,
         |checked, _, _, _, _, _, _, _| {
             let staged = fsl_foundation::diagnostic::Staged::new(checked);
             Ok(fsl_replay::OutcomeDocument::from_check(&Ok(staged)))
@@ -1306,6 +1314,7 @@ fn complete_sources(
         sources,
         unit_list,
         fsl_replay::spine::SpineLimits::default(),
+        None,
         |checked, selections, packages, _, libraries, models, inventory, failure| {
             let cancel = filament_exact::Cancel::new();
             let limits = fsl_replay::spine::SpineLimits::default();
@@ -1352,6 +1361,7 @@ fn check_sources<T>(
     sources: &[FormalSource],
     unit_list: bool,
     limits: fsl_replay::spine::SpineLimits,
+    integer_division: Option<filament_checked::integer_division::AdmittedIntegerDivision>,
     finish: impl FnOnce(
         fsl_replay::spine::CheckedUnit,
         &[fsl_replay::spine::TemporalClockSelection],
@@ -1520,19 +1530,31 @@ fn check_sources<T>(
         let models = fsl_replay::spine::select(&parsed, &packages, limits.model, &cancel)
             .map_err(failure)?
             .into_value();
-        let checked_result = fsl_replay::spine::check_with_refinement_internals(
-            &parsed,
-            package_name(first_source.identity()),
-            fsl_replay::spine::SourceInputs {
-                refinement_internals: request.refinement_internals.clone(),
-                temporal_selections: &check_selections,
-                clocks: Some(&request.clocks),
-            },
-            &models,
-            &dependencies,
-            limits,
-            &cancel,
-        );
+        let checked_result = if let Some(integer_division) = integer_division {
+            fsl_replay::spine::check_with_integer_division(
+                &parsed,
+                package_name(first_source.identity()),
+                &models,
+                &dependencies,
+                Some(integer_division),
+                limits,
+                &cancel,
+            )
+        } else {
+            fsl_replay::spine::check_with_refinement_internals(
+                &parsed,
+                package_name(first_source.identity()),
+                fsl_replay::spine::SourceInputs {
+                    refinement_internals: request.refinement_internals.clone(),
+                    temporal_selections: &check_selections,
+                    clocks: Some(&request.clocks),
+                },
+                &models,
+                &dependencies,
+                limits,
+                &cancel,
+            )
+        };
         if request.handoff.is_some() {
             handoff_inventory = Some(
                 fsl_replay::source_inventory::fsl_inventory(

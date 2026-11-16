@@ -276,6 +276,8 @@ fn run_input(
         intake,
         sources,
         false,
+        fsl_replay::spine::SpineLimits::default(),
+        None,
         |checked, _, packages, libraries, _, _, _, _| {
             let package = checked.package();
             let mut provision = SourceProvision::default();

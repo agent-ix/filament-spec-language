@@ -1918,6 +1918,34 @@ pub fn check_with_refinement_internals(
     )
 }
 
+/// S3 and S4 with the caller's admitted integer-division law (FR-866).
+pub fn check_with_integer_division(
+    parsed: &ParsedUnitSource,
+    package_name: String,
+    models: &AdmittedModels,
+    dependencies: &DependencyInput,
+    integer_division: Option<filament_checked::integer_division::AdmittedIntegerDivision>,
+    limits: SpineLimits,
+    cancel: &Cancel,
+) -> Result<Staged<CheckedUnit>, FrontEndFailure> {
+    let execution_points = super::StateClauseExecutionPoints::default();
+    check_with_context_and_temporal_selections(
+        parsed,
+        package_name,
+        &execution_points,
+        None,
+        &[],
+        None,
+        integer_division,
+        None,
+        models,
+        dependencies,
+        limits,
+        cancel,
+        false,
+    )
+}
+
 /// S3 and S4 with accepted execution points keyed by exact authored state
 /// clause name (FR-104-AC-15). The map applies only to `parsed`, never to
 /// independently compiled libraries.
