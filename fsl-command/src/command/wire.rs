@@ -508,3 +508,29 @@ fn clocks<'de, D: serde::Deserializer<'de>>(
     }
     decoder.deserialize_map(Visitor)
 }
+
+/// A request kind that carries FR-640's `clocks` member.
+pub(super) trait ClocksRequest: RequestKind {
+    /// The request's clock selections.
+    fn clocks_mut(&mut self) -> &mut fsl_replay::spine::RequestClocks;
+}
+
+impl ClocksRequest for Request {
+    fn clocks_mut(&mut self) -> &mut fsl_replay::spine::RequestClocks {
+        &mut self.clocks
+    }
+}
+
+impl ClocksRequest for CompileRequest {
+    fn clocks_mut(&mut self) -> &mut fsl_replay::spine::RequestClocks {
+        &mut self.clocks
+    }
+}
+
+/// Read a supplied `clocks` value exactly as the request member is read: the
+/// same object shape, repeated-name and configuration refusals.
+pub(super) fn read_clocks(
+    raw: &RawValue,
+) -> Result<fsl_replay::spine::RequestClocks, serde_json::Error> {
+    clocks(&mut serde_json::Deserializer::from_str(raw.get()))
+}

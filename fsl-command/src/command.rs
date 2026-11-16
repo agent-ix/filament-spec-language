@@ -228,6 +228,10 @@ pub enum RunCause {
     /// Closed request decoding failed.
     #[error("invalid request: {0}")]
     Json(#[from] serde_json::Error),
+    /// FR-640: the request carries `clocks` and the caller also supplied a
+    /// clocks override (the driver's `--clocks`).
+    #[error("invalid request: clocks is given both in the request and as a clocks override (--clocks); give it once")]
+    ClocksGivenTwice,
     /// FR-312: a clause request member cannot form a typed selection.
     #[error("invalid clause request member {member}: {reason}")]
     ClauseRequest {
@@ -368,7 +372,7 @@ impl RunCause {
         match self {
             Self::Io { .. } => Code::IoError,
             Self::Json(_) => Code::InvalidRequest,
-            Self::ClauseRequest { .. } => Code::InvalidRequest,
+            Self::ClauseRequest { .. } | Self::ClocksGivenTwice => Code::InvalidRequest,
             Self::Output(_) | Self::ClauseOutput(_) => Code::OutputFailure,
             Self::Format => Code::UnknownWire,
             Self::Limit(_) => Code::ResourceExhausted,
@@ -494,6 +498,7 @@ impl RunError {
             RunCause::Io { .. }
             | RunCause::Json(_)
             | RunCause::ClauseRequest { .. }
+            | RunCause::ClocksGivenTwice
             | RunCause::Output(_)
             | RunCause::ClauseOutput(_)
             | RunCause::Format
@@ -660,12 +665,30 @@ pub fn run(path: &Path) -> std::result::Result<RunResult, Box<RunError>> {
     run_with_limits(path, RunLimits::default())
 }
 
+/// Run with request members supplied beside the request file (FR-640).
+pub fn run_with_overrides(
+    path: &Path,
+    overrides: &RequestOverrides<'_>,
+) -> std::result::Result<RunResult, Box<RunError>> {
+    run_with_limits_and_overrides(path, RunLimits::default(), overrides)
+}
+
 /// Run with the caller's explicit request and dependent-file byte ceilings.
 pub fn run_with_limits(
     path: &Path,
     limits: RunLimits,
 ) -> std::result::Result<RunResult, Box<RunError>> {
-    let prepared = prepare_run(path, limits)?;
+    run_with_limits_and_overrides(path, limits, &RequestOverrides::default())
+}
+
+/// Run with explicit byte ceilings and request members supplied beside the
+/// request file (FR-640).
+pub fn run_with_limits_and_overrides(
+    path: &Path,
+    limits: RunLimits,
+    overrides: &RequestOverrides<'_>,
+) -> std::result::Result<RunResult, Box<RunError>> {
+    let prepared = prepare_run_with_overrides(path, limits, overrides)?;
     execute_prepared(prepared).map_err(|cause| Box::new(RunError { cause }))
 }
 
@@ -674,8 +697,18 @@ pub fn prepare_run(
     path: &Path,
     limits: RunLimits,
 ) -> std::result::Result<PreparedRun, Box<RunError>> {
+    prepare_run_with_overrides(path, limits, &RequestOverrides::default())
+}
+
+/// Read and validate a request, with members supplied beside the request
+/// file, and its selected files without executing it (FR-640).
+pub fn prepare_run_with_overrides(
+    path: &Path,
+    limits: RunLimits,
+    overrides: &RequestOverrides<'_>,
+) -> std::result::Result<PreparedRun, Box<RunError>> {
     with_request_limits(path, limits.request_bytes, |directory, bytes| {
-        prepare_run_bytes(directory, bytes, limits.dependent_bytes)
+        prepare_run_bytes(directory, bytes, limits.dependent_bytes, overrides)
     })
 }
 
@@ -728,8 +761,25 @@ pub fn compile(path: &Path) -> std::result::Result<Vec<u8>, Box<RunError>> {
 
 /// Compile once, retaining the actual core outcome document and package bytes.
 pub fn compile_outcome(path: &Path) -> std::result::Result<CompileOutcome, Box<RunError>> {
+    compile_outcome_with_overrides(path, &RequestOverrides::default())
+}
+
+/// Compile, taking request members supplied beside the request file (FR-640).
+pub fn compile_with_overrides(
+    path: &Path,
+    overrides: &RequestOverrides<'_>,
+) -> std::result::Result<Vec<u8>, Box<RunError>> {
+    compile_outcome_with_overrides(path, overrides).map(|outcome| outcome.package_bytes)
+}
+
+/// Compile once, taking request members supplied beside the request file
+/// (FR-640), retaining the core outcome document and package bytes.
+pub fn compile_outcome_with_overrides(
+    path: &Path,
+    overrides: &RequestOverrides<'_>,
+) -> std::result::Result<CompileOutcome, Box<RunError>> {
     with_request(path, |directory, bytes| {
-        let request: wire::CompileRequest = request(bytes)?;
+        let request: wire::CompileRequest = request_with_overrides(bytes, overrides)?;
         if request.program.extraction {
             return Err(RunCause::ExtractionRequiresRun);
         }
@@ -1123,6 +1173,32 @@ fn with_request_limits<T>(
         .map_err(|cause| Box::new(RunError { cause }))
 }
 
+/// Request members a caller supplies beside the request file rather than inside
+/// it (FR-640). Each is read exactly as the request's own member would be.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct RequestOverrides<'a> {
+    /// The `clocks` object, as the driver's `--clocks` file carries it. A request
+    /// that also carries `clocks` is refused `invalid-request` at stage `request`.
+    pub clocks: Option<&'a serde_json::value::RawValue>,
+}
+
+fn request_with_overrides<T: wire::ClocksRequest>(
+    bytes: &[u8],
+    overrides: &RequestOverrides<'_>,
+) -> Result<T> {
+    let mut request: T = request(bytes)?;
+    if let Some(supplied) = overrides.clocks {
+        let Object(envelope): Object<wire::Envelope<'_>> = serde_json::from_slice(bytes)?;
+        let members: std::collections::BTreeMap<String, &serde_json::value::RawValue> =
+            serde_json::from_str(envelope.request.get())?;
+        if members.contains_key("clocks") {
+            return Err(RunCause::ClocksGivenTwice);
+        }
+        *request.clocks_mut() = wire::read_clocks(supplied)?;
+    }
+    Ok(request)
+}
+
 fn request<T: wire::RequestKind>(bytes: &[u8]) -> Result<T> {
     let Object(envelope): Object<wire::Envelope<'_>> = serde_json::from_slice(bytes)?;
     let analyze = fsl_foundation::wire_format::WireFormat::AnalyzeRequest.as_str();
@@ -1198,8 +1274,9 @@ fn prepare_run_bytes(
     directory: &Path,
     bytes: &[u8],
     dependent_bytes: usize,
+    overrides: &RequestOverrides<'_>,
 ) -> Result<PreparedRun> {
-    let request: wire::Request = request(bytes)?;
+    let request: wire::Request = request_with_overrides(bytes, overrides)?;
     let mut intake = intake_with_bytes(
         directory,
         FileCounts {
