@@ -47,3 +47,20 @@ assert_eq!(semantic_nodes(&bare), semantic_nodes(&constructor));
 assert_eq!(semantic_nodes(&bare_parameter), semantic_nodes(&constructor_parameter));
 assert_eq!(semantic_nodes(&bare_field), semantic_nodes(&constructor_field));
 ```
+
+Round 2, rechecked at PR #2788 head `b02b7bc56fc1474867e482351d31ed1483829fa6`.
+
+| FND | outcome | reason |
+| --- | --- | --- |
+| FND-001 | fixed | The S2 forms test now checks the root of the body span tree directly against the literal span, in addition to checking the CST primary and DecimalValue payload. |
+
+### FND-001 after excerpt
+
+```text
+let spans = function.spans().expect("the form carries expression spans");
+assert_eq!(
+    spans.body.at(&[]),
+    Some(literal_span),
+    "the S2 expression span equals the `{source}` literal span"
+);
+```
