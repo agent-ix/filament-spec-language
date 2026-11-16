@@ -46,3 +46,11 @@ The checks per AC:
 - FR-632-AC-1: `zone_items_prove_with_certificates_and_refute_with_exact_delays` and `an_mitl_claim_proves_certified_and_refutes_with_exact_delays`. Assertion weaknesses are in the code-review finding FND-010.
 
 No production code in the diff lacks an owning requirement. The new modules cite FR-623, FR-626, FR-628 and FR-632, and the fsl-route and fsl-replay additions cite FSpec FR-390 and FR-393.
+
+## Dispositions
+
+| FND | outcome | reason |
+| --- | --- | --- |
+| FND-001 | fixed | - |
+
+Round 2 (head 697dec508): the test comment now says `value > 3` stands in for the AC's `value = 4` (QSL-2296). The new tests tagged FR-626-AC-1 and FR-632-AC-1/AC-3 are covered in the code-review artifact (FND-013, FND-015, FND-008).

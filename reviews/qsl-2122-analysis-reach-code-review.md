@@ -80,3 +80,62 @@ When QSL-2122, QSL-2125 and QSL-2129 close, nothing points at these stubs. Fix: 
 - **No Python and no logic-bearing shell** is in the diff.
 
 Evidence: `nice -n 19 qsl-slot cargo test -p fsl-analyze -p fsl-route -p fsl-replay`: fsl-analyze `it` 1648 passed, 0 failed, 64 ignored (the 9 FSPEC_DIR-gated tests rerun with FSPEC_DIR set, 54 passed); fsl-route + fsl-replay 1754 passed, 0 failed, 20 ignored.
+
+## New findings (disposition pass 1)
+
+| ID | Severity | Summary | Refs |
+| --- | --- | --- | --- |
+| FND-013 | high | The FND-006 fix sends `temporal.max_depth` into the derived deadlock request, but FSpec FR-368-AC-20 says a derived item carries no `max_depth` and a derived item with one is refused; the new test asserts the forbidden behaviour | fsl-analyze/src/analyze/derived_item.rs:130, fsl-analyze/tests/it/analyze_liveness_cli.rs:114 |
+| FND-014 | low | `subject_refusal` keeps `NotSimulated::Extent` as `established-invariant-broken`, and its doc says the checker rules it out, but `Extent(ClassifyFailure::Limit)` (the 2^20 `BOUND_POSITIONS` walk) is not bounded by any checker invariant found | fsl-analyze/src/analyze/timed_item.rs:206-221 |
+| FND-015 | low | The new refusal tests are tagged FR-632-AC-1 (the MITL verdict AC), which they do not verify; the unit test also omits the `RequiresBound` arm | fsl-analyze/src/analyze/timed_item.rs:383-406, fsl-analyze/tests/it/analyze_timed_cli.rs:171, 244 |
+
+### FND-013 detail
+
+FSpec FR-368-AC-20 reads: "A derived item carries no `max_depth` (a derived item with one is refused) ... no item inherits `limits`, `max_depth` or `smt_encoding` from another". The pre-fix code comment cited this AC. The round-1 FND-006 text offered "pass form.max_depth, or settle the member unsupported". The first option was the wrong suggestion, and the coder took it. Fix:
+
+- restore `max_depth: None` in `deadlock_item`;
+- refuse a derived item whose request sets `temporal.max_depth` with `invalid-request` naming `temporal.max_depth`, for both the EN-1 path and the EN-6 path (`zone_derived_item` already passes no depth);
+- replace `max_depth_bounds_a_deadlock_freedom_item` with a test of that refusal.
+
+### FND-014 detail
+
+`check_model_bounds` returns only `RequiresBound` or `Extent` (fsl-eval/src/simulation/not_simulated.rs:168-173), so the other `NotSimulated` variants (`GeneratorMismatch`, `EmptyInitial`, `KeyEncoding`) cannot reach `subject_refusal`. `Extent(Fault)` is a broken check invariant by its own definition (fsl-semantics/src/family/requirements.rs:304-311). `Extent(Limit)` is a stage limit over the model's root types, and S3 classifies claim roots, not model state roots, under its own limit. The zone engine's pre-existing mapping (items.rs:908) treats it the same way, so this is not a regression. Fix: map `Extent(Limit)` to a resource-limit refusal, or narrow the doc comment to say the limit stays a fault.
+
+`NoTimedModel` cannot be reached from a request:
+
+- `timed_model` takes the alias from `time_sources()`;
+- the checker pushes a `ModelTimeSource` only for a resolved model with exactly one object-type model node, and otherwise refuses with `MissingTimedModel` (fsl-semantics/src/check/mod.rs:1971-2000, 2148);
+- `prepare_models` builds a `TimedModel` for each source whose model it times (fsl-semantics/src/check/timed_model.rs:4409);
+- so `graph.timed_model(alias)` and `is_timed_by` both resolve.
+
+## Dispositions
+
+| FND | outcome | reason |
+| --- | --- | --- |
+| FND-001 | fixed | - |
+| FND-002 | fixed | - |
+| FND-003 | fixed | - |
+| FND-004 | fixed | - |
+| FND-005 | fixed | - |
+| FND-006 | still-open | The fix applies `max_depth` to the derived item, which FSpec FR-368-AC-20 forbids; see FND-013 for the required refusal |
+| FND-007 | fixed | - |
+| FND-008 | still-open | The untimed half is fixed. The timed half proves at `max_clocks` 1 over a one-call snapshot (one live clock), so the limit is never exercised; W6 FR-632-AC-3 provisions two calls and expects `incomplete` `LimitReached{max_clocks}` value 1 |
+| FND-009 | fixed | - |
+| FND-010 | fixed | - |
+| FND-011 | still-open | The first line was added twice: analyze_cli.rs:402-403 now repeat "FR-626-AC-1: a derived item named by its model alias is the one derived" |
+| FND-012 | fixed | - |
+
+### Round 2 notes
+
+- **FND-001: correct and complete.** `run` (analyze.rs:1539) refuses `inapplicable-kind` from the claim's family before it reads the disposition. The test double never returns `InvalidRequest` for that case. So the extra `inapplicable` clause (document.rs:1504-1512) is needed: without it, `unsupported` would win over FR-627-AC-4's exit 20. The clause computes the family as `work` does (request.rs:433-438). It omits `work`'s `wrong_occurrence` arm, which a document request cannot reach because `declarations()` keys each name by its claim occurrence. `an_unread_member_settles_unsupported_not_requires_bound` covers the `requires-bound` case.
+- **FND-010: delays from the spec and the fixture.**
+  - `Rpc` with `T = 4`: `send` resets `x`; `reply` needs `x >= 1 ms`; `ServerDeadline` keeps `x <= 3 ms` while in flight.
+  - Under `eventually[0 ms, 3 ms)` the only violating `reply` is at exactly `x = 3`. FR-241 picks the least admissible delay, which gives `send` delay 0 and then `reply` delay 3. `[0, 3]` is confirmed independently.
+  - The tail `[0, 0, 1]` (`reset` and `send` have no clock guard, so 0; `reply` after a fresh reset needs 1) matches the least-delay rule.
+  - Whether the counterexample continues past the violating `reply` comes from the lasso concretisation (FR-241 "Lassos": loop delays solved from the loop's linear constraints, stem extended by loop copies). The spec does not fix that, so the last three values pin the engine's output, not the spec.
+  - Not a defect. Asserting `[0, 3]` as a prefix, plus the operation names, would make the test spec-derived.
+- **FND-008: an observable effect exists.** EN-6 stops with `ZoneStop::LimitReached(MaxClocks)` (zone_check/search.rs:948), and settle.rs:295 maps it to `LimitReached{max_clocks}`. A two-call `Rpc` snapshot with `max_clocks` 1 should settle `incomplete` with that limit and value 1, as W6 FR-632-AC-3 (origin/fsl-spec-w6) states.
+
+Round 2 evidence: fsl-analyze + fsl-route + fsl-replay with FSPEC_DIR set, 3563 passed, 0 failed, 85 ignored.
+
+Round 2 verdict: REQUEST CHANGES for FND-013 (high) and the still-open FND-006, FND-008 and FND-011. FND-014 and FND-015 are low.
