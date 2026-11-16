@@ -149,3 +149,30 @@ fn an_exact_only_claim_with_statistical_evidence_is_unsupported() {
         "no sample is drawn: {item}"
     );
 }
+
+/// FR-186-AC-10 (TC-2167): an `on each` probabilistic claim compiles and
+/// settles a verdict per instance from source, never `unsupported`.
+#[ix_trace_rs::trace("TC-2167", "FR-186-AC-10")]
+#[ix_trace_rs::trace("FSpec-TC-1650", "FSpec-FR-407-AC-17")]
+#[test]
+#[ignore = "QSL-2151: the `on each` activation of a probabilistic claim not checked yet"]
+fn probabilistic_on_each_settles_per_instance() {
+    let claim = "probabilistic E using inf on M under Even \
+         on each (k: M::Msg) when (not k.delivered) \
+         { probability >= rational(9, 10) [ eventually holds(k.delivered) ] }";
+    let claims = format!("{EVENTUALLY}\n{claim}");
+    let document = run(
+        "on-each",
+        &claims,
+        json!([{"claim": "E"}, {"claim": "Eventually"}]),
+    );
+    let item = &document["items"][0];
+    assert_eq!(label(item), "proved", "{item}");
+    // The start snapshot holds one `Msg`, `m`, undelivered at position 0, so
+    // the one instance activates at position 0 and its exact value is the
+    // `on origin` claim's, `391/400`.
+    assert_eq!(
+        item["record"]["basis"], document["items"][1]["record"]["basis"],
+        "{document}"
+    );
+}

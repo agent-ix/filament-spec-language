@@ -54,7 +54,7 @@ than an I2 read ceiling) names no limit.
 | 3 | the refusal is `Source`, `Forms`, `OperationClause` (a kept operation clause that does not parse), `TypeInvariant` (a type-level invariant clause that does not parse), `Assembly` or `Check`, and any cause has a typed refusal code: a code other than `stage_limit_exceeded`, `resource_exhausted`, `unsupported_construct` and `unsupported_projection` | `refused` |
 | 4 | any cause has code `stage_limit_exceeded` or `resource_exhausted` (the caller's model budget, denied at I1 or at S3), whichever stage raised it | `incomplete` |
 | 5 | the refusal is `Omitted`; or any cause has code `unsupported_projection`; or any cause is `unsupported_construct` with cause `not-yet-implemented` | `unsupported` (an FSL implementation gap) |
-| 6 | otherwise: every cause is `unsupported_construct`, with cause `declaration-form`, `expression-form` or no catalog cause (a `Forms` `NoDispatchEntry` or `UnrepresentedConstruct` refusal has none) | `prohibited` (the selected profile prohibits the form, FSpec AD-003) |
+| 6 | otherwise: every cause is `unsupported_construct`, with cause `declaration-form` or `expression-form` (a `Forms` `NoDispatchEntry` or `UnrepresentedConstruct` refusal carries `not-yet-implemented`, FR-763, and takes rule 5) | `prohibited` (the selected profile prohibits the form, FSpec AD-003) |
 
 - The classification SHALL be one exhaustive `match` over `CompileRefusal`
   with no wildcard arm, so that a new refusal variant does not compile until

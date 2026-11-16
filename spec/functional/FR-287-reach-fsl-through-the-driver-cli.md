@@ -97,6 +97,19 @@ FR-298) and takes FR-285's exit code.
   the `parse`, `format`, `run` and `compile` verbs shall be as FR-287-AC-3 to
   FR-287-AC-9 state; the driver implements them and TC-1262 specifies the
   tests that bind them.
+- `--provider-config <file>` on the verbs that route items to providers
+  (`analyze`, `prove`, `monitor`, `replay`, `generate`) shall read FSpec
+  FR-561's `filament.provider-config/v1` document: its shape (`format`,
+  `providers`, each entry's `path` and `arguments`), its refusals (a missing
+  or unreadable file naming the path; `invalid-request` naming the file and the
+  member for a document that is not JSON, a missing `format` or `providers`,
+  an unknown member, an entry with no or a blank `path`, or `arguments` that
+  are not strings; `unknown_wire`/`unsupported-wire` for another `format`; each
+  exit 20 with empty stdout) and its refusal as an unknown option on a verb
+  that routes no items are FSpec FR-561's, and the driver implements them
+  (FSpec TC-1241). Each configured plugin is started and registered beside
+  the linked providers before negotiation (FR-635), so FSL's `command` and
+  `analyze` take no provider configuration of their own.
 
 ## Acceptance Criteria
 

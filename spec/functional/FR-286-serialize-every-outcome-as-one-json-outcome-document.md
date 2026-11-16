@@ -84,7 +84,11 @@ the same document (FSpec FR-300-AC-3). The document's members are:
   FR-100's `spine-run-result/1` member `outcome` carries for a completed,
   undefined or incomplete call. It is `null` for every other operation, except a
   `parse` outcome whose S1 and S2 complete, which carries FR-663's `parsed`
-  report ([FR-663](FR-663-report-the-parsed-unit-and-the-locus-of-every-refusal.md)), and
+  report ([FR-663](FR-663-report-the-parsed-unit-and-the-locus-of-every-refusal.md)),
+  a `format` outcome whose formatting completes, which carries
+  `{"kind": "formatted", "text": T}` with `T` the exact formatted source as a
+  JSON string (FR-003), so the JSON form of a format run holds the same text
+  its plain-text form writes, and
   for an `execute` outcome that is refused (its refusal record is a
   diagnostic), cancelled or a fault. Otherwise it is exactly one of:
   - `{"kind": "completed", "value": V}`, where `V` is the completed value
@@ -305,6 +309,7 @@ FR-634's members. A clause-run and a `monitor` item carry FR-622's `axes`.
 | FR-286-AC-13 | Each `MonitorRecord` the FR-283 `monitor` operation returns for the clause runs of AC-8 to AC-12 (the pending run, FR-501-AC-4's indeterminate run, and the violated, undefined-evaluation and insufficient-data runs of FR-283-AC-1, AC-5 and AC-11) renders through `OutcomeItem::from_clause_run`, and the document built from the records equals `from_clause_runs`'s document for the same runs, byte for byte. | Test (TC-770) |
 | FR-286-AC-14 | Over FR-281-AC-2's record and `ItemCounterexample`, `from_analyze` gives an item with `result` `refuted`, category violation, naming `en-1`, a `counterexample` of kind `formula` with a non-empty `prefix`, a `loop`, an `initial_state` and a `trace_position`, and no `position`, `decisive` or `witness`; the same record with no counterexample returns `Err(OutcomeItemError::MissingCounterexample)`, and FR-281-AC-1's `proved` record gives an item with no `counterexample`. For each other `Counterexample` variant, a `refuted` record with that variant gives an item whose `counterexample` has the variant's spelling in the table, and a `time-lock` `Temporal` one carries its `final_delay`. The item `provider::run` gives for the same two records serializes to equal bytes. | Test (TC-770) |
 | FR-286-AC-15 | An external caller projects a pre-admission blank-label source diagnostic through `from_source_diagnostic` and serializes a document: its code is `invalid_source_identity`, cause `blank-label`, `label` the exact typed `authority` or `identity`, `locus` null and message unchanged. Empty-path, byte-budget and located invalid-UTF-8 source diagnostics retain their exact cause, code, optional region and message while omitting `label`; the located case retains its original source reference and endpoints. Projecting the same source diagnostic through a compile refusal, a parse refusal or a format refusal gives the same diagnostic members, without a consumer-written JSON field. | Test |
+| FR-286-AC-16 | `OutcomeDocument::from_format` over a completed format of `tests/fixtures/spine-compile.native` has `result` `{"kind": "formatted", "text": T}` with `T` byte-identical to the string `fsl_cst::format` returns, category `success`, exit 0; over the format of `T` itself the `text` is again `T`; over a refused format `result` is `null` and the refusal is a diagnostic. | Test (TC-2178) |
 
 ## Status
 

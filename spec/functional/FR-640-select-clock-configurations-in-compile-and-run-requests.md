@@ -89,12 +89,32 @@ computed over the package compiled with these rows.
   `TemporalClockSelection` from the declaration's source, its declaration span
   and that configuration, in source order, before the emitter runs.
 - A declaration over a model subject takes its binding from the model
-  (FR-233) and no `clocks` member serves it. Under the event-position profile
-  the command SHALL emit its `model-steps` binding as the configuration
-  `{"kind": "event_position", "sequence_authority": M}`, `M` the model's
-  declaration identity text, because the model's step sequence is the
-  authoritative sequence (FSpec FR-090); the command derives it, so a unit whose
-  clocks all come from models compiles with no `clocks` member. Which clock
+  (FR-233) and no `clocks` member serves it. The command SHALL derive its
+  configuration from the binding and the declaration's profile, so a unit
+  whose clocks all come from models compiles with no `clocks` member, under
+  every profile:
+
+  | Profile | Binding | Derived configuration |
+  |---------|---------|-----------------------|
+  | event-position | `model-steps` | `{"kind": "event_position", "sequence_authority": M}` |
+  | fixed-sample | `model-steps` | `{"kind": "fixed_sample", "epoch": {"kind": "integer", "decimal": "0"}, "period": {"kind": "integer", "decimal": "1"}, "unit": "step"}` |
+  | timestamped-event | `model-steps` | `{"kind": "timestamped_event", "timestamp_unit": "step"}` |
+  | timed | `model-time` | `{"kind": "timed", "unit": U}` |
+
+  `M` is the model's declaration identity text and `U` the model's time unit.
+  The model's step sequence is the authoritative sequence (FSpec FR-090), so
+  each step is one event, one sample of period one step, or one time stamp
+  one step after the last; the unit `step` names that count. A `model-time`
+  binding under a profile other than timed is FR-233's refusal, not this
+  table's.
+- A hyper clause over a model's behaviours is a clock-bearing declaration
+  under the same rule: its binding comes from the model and the command
+  derives its configuration by the table above.
+- A request that compiles library units with the program (FR-099) SHALL serve
+  every unit from the one `clocks` member: a clock name is a role of the
+  request, and a library unit's clause on clock `plant-ms` reads the same
+  `plant-ms` member as a program clause. `unused-clock-selection` counts the
+  clocks of library units too. Which clock
   names a declaration may write is the rule of FR-233 (model subjects), FR-610
   (trace-subject roles) and FSpec FR-090 "Clock names", not this requirement's.
 - The configuration's `kind` SHALL be the one the declaration's profile serves
@@ -130,6 +150,20 @@ computed over the package compiled with these rows.
 - The command SHALL pass the same selections to every later step that re-emits
   the package (the replay recompile and the monitor's emission, FR-283, FR-643),
   so no step runs with an empty selection list while the request supplied one.
+  A replay request has no `clocks` member: the replay recompile SHALL read its
+  selections from the proving package's `temporal_bindings` rows, each row's
+  `clock_name` and `clock` giving one member, so it compiles with exactly the
+  configuration the proof ran under and cannot be handed a different one.  The replay
+  request wire has no `clocks` member, so a replay cannot be handed another
+  configuration; a driver that reads a replay request document refuses a
+  `clocks` member there `invalid-request` at stage `request`, naming it.
+- The driver's `--clocks <json-file>` reads the file as UTF-8 JSON whose whole
+  content is the `clocks` object. An unreadable file SHALL refuse `io-error`
+  naming the path; a file that is not one JSON object SHALL refuse
+  `invalid-request` naming `--clocks`; its members are then read exactly as a
+  request's `clocks` member, with the same refusals. The flag's argument
+  handling and tests are the driver's (FSpec FR-301); FSL's part is the
+  member it fills.
 
 ## Acceptance Criteria
 
@@ -141,6 +175,9 @@ computed over the package compiled with these rows.
 | FR-640-AC-4 | A `clocks` member with an unknown `kind`, a `fixed_sample` with `period` `{"kind": "integer", "decimal": "0"}`, and a request carrying `clocks` with a package selection each refuse `invalid-request` at stage `request`, exit 20, naming the member. | Test (TC-1661) |
 | FR-640-AC-5 | Two compile requests differing only in the `"events"` `sequence_authority` give packages with different identities; two differing only in member order give equal bytes. | Test (TC-1660) |
 | FR-640-AC-6 | A `clocks` member named `model-steps` or `model-time` refuses at stage `emit`, `invalid-request`, exit 20, `details.cause` `reserved-clock-name`, `details.clock` the name, whatever the unit declares: a model binding name is never a configurable clock role (FR-610). | Test (TC-1661) |
+| FR-640-AC-7 | Through `command::compile` with the ConfigVersion model and no `clocks` member, a unit with one fixed-sample clause and one timestamped-event clause over `Config::ConfigVersion` on clock `model-steps` exits 0, and their `temporal_bindings` rows hold `{"kind": "fixed_sample", "epoch": {"kind": "integer", "decimal": "0"}, "period": {"kind": "integer", "decimal": "1"}, "unit": "step"}` and `{"kind": "timestamped_event", "timestamp_unit": "step"}`. | Test (TC-2181) |
+| FR-640-AC-8 | The `clocks` object rebuilt from the `temporal_bindings` rows of the package FR-640-AC-1 compiles (each row's `clock_name` naming a member whose value is the row's `clock`) compiles the same program to byte-identical package bytes; this is the selection list the replay recompile builds from the proving package, so a replay recompiles under exactly the configuration the proof ran under. `ReplayRequestWire` has no `clocks` member. | Test (TC-2182) |
+| FR-640-AC-9 | A request compiling a program and one library unit whose clause writes clock `plant-ms`, with one `clocks` member `plant-ms`, binds both clauses to that member and refuses no member as `unused-clock-selection`; without the member, the library clause refuses `missing-clock-selection` naming `plant-ms`. | Test (TC-2183) |
 
 ## Dependencies
 

@@ -107,3 +107,77 @@ fn a_bounded_malformed_corpus_returns_a_parse_or_a_diagnostic() {
         }
     }
 }
+
+/// FR-764-AC-1: a bare decimal literal is a primary; a decimal literal
+/// followed by a qualified name stays a quantity literal.
+#[trace("TC-2161", "FR-764-AC-1")]
+#[trace("FSpec-TC-1648", "FSpec-FR-662-AC-1")]
+#[test]
+#[ignore = "QSL-1965: the bare decimal primary not implemented yet"]
+fn a_bare_decimal_in_a_primary_parses_as_a_decimal_literal() {
+    for (expression, literal) in [("a < 0.9", "0.9"), ("a <= 5.0", "5.0"), ("0.5", "0.5")] {
+        let text = document(expression);
+        let parsed = parse(text.as_bytes()).expect("S1 reads the unit");
+        assert!(
+            parsed.is_admissible(),
+            "{expression}: {:?}",
+            parsed.diagnostics()
+        );
+        assert!(parsed.diagnostics().is_empty(), "{expression}");
+        let start = text.rfind(literal).expect("in the unit");
+        assert!(
+            parsed.cst().nodes().iter().any(|node| {
+                node.production() == fsl_cst::Production::Primary
+                    && node.span().start == start
+                    && node.span().end == start + literal.len()
+            }),
+            "{expression}: a primary spans exactly `{literal}`"
+        );
+    }
+    for unchanged in ["decimal(5, 1) = decimal(5, 1)", "a = 5"] {
+        let parsed = parse(document(unchanged).as_bytes()).expect("S1 reads the unit");
+        assert!(
+            parsed.is_admissible(),
+            "{unchanged}: {:?}",
+            parsed.diagnostics()
+        );
+    }
+}
+
+/// FR-764-AC-4: an exponent spelling is one numeric token, refused
+/// `invalid_syntax`/`invalid-token` at the whole spelling.
+#[trace("TC-2161", "FR-764-AC-4")]
+#[trace("FSpec-TC-1648", "FSpec-FR-662-AC-4")]
+#[test]
+#[ignore = "QSL-1965: the unsupported numeric-form diagnostic not implemented yet"]
+fn an_exponent_number_is_the_unsupported_numeric_form() {
+    for spelling in ["1e5", "1.5E-3"] {
+        let text = document(&format!("a < {spelling}"));
+        let parsed = parse(text.as_bytes()).expect("S1 reads the unit");
+        assert!(!parsed.is_admissible());
+        let diagnostic = &parsed.diagnostics()[0];
+        assert_eq!(diagnostic.code, CompleteCode::InvalidSyntax, "{spelling}");
+        assert_eq!(
+            diagnostic.cause,
+            fsl_cst::CompleteCause::InvalidToken,
+            "{spelling}"
+        );
+        let start = text.rfind(spelling).expect("in the unit");
+        let span = diagnostic.byte_span().expect("located");
+        assert_eq!(
+            (span.start, span.end),
+            (start, start + spelling.len()),
+            "{spelling}"
+        );
+        assert!(
+            diagnostic.message.contains(spelling),
+            "{}",
+            diagnostic.message
+        );
+        assert!(
+            diagnostic.message.contains("decimal(c, s)"),
+            "{}",
+            diagnostic.message
+        );
+    }
+}

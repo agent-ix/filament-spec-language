@@ -371,14 +371,6 @@ fn limit(at: &str) -> (Code, Option<&'static str>, String) {
     )
 }
 
-fn not_yet(at: &str) -> (Code, Option<&'static str>, String) {
-    (
-        Code::UnsupportedConstruct,
-        Some("not-yet-implemented"),
-        at.to_owned(),
-    )
-}
-
 const D: &str = "random Server::attempt(d) ~ { 1: 90, 3: 7, 12: 3 };";
 const OUTCOME: &str =
     "random Server::attempt(outcome) ~ { Service::Outcome::Ok: 98, Service::Outcome::Fail: 2 };";
@@ -1750,18 +1742,7 @@ fn an_unbounded_event_is_refused_and_a_windowed_one_has_its_horizon() {
         panic!("an unbounded event: {:?}", causes(&inf));
     };
     assert_eq!(named, "C");
-    // The timed profile has no event reading: it is refused for that alone.
-    let timed = service(
-        None,
-        &format!(
-            "probabilistic C using tm on Service {OVER} under Steady on origin \
-             {{ probability >= 0.99 [ eventually[0,5] {holds} ] }}"
-        ),
-    );
-    let [ProbabilisticCause::TimedEventProfile { claim: named, .. }] = &causes(&timed)[..] else {
-        panic!("a timed event profile: {:?}", causes(&timed));
-    };
-    assert_eq!(named, "C");
+    // The timed profile over this untimed model: `probabilistic_claim_timed_profile_untimed_model`.
 }
 
 /// FR-186 "Kind and subject": a claim over a name that is no `model` alias
@@ -1967,14 +1948,15 @@ fn a_predicate_is_a_boolean_clause_over_the_over_parameter() {
     assert_eq!(found[0].1, Some("missing-name"));
 }
 
-/// The forms FR-195 owns, a timed window and an `on each` activation refuse
-/// `unsupported_construct`/`not-yet-implemented` at the construct: no claim
-/// compiles unchecked.
+/// The forms FR-195 owns and a timed window over this untimed model are ill
+/// typed at the construct, and an `on each` activation checks: no claim is
+/// refused `not-yet-implemented`.
 #[trace("TC-621")]
 #[test]
+#[ignore = "QSL-2152 / QSL-2151: time forms and `on each` refuse not-yet-implemented today"]
 fn what_s3_does_not_check_yet_refuses_not_yet_implemented() {
     let phase_a = format!("holds({IDLE})");
-    for (body, construct, at) in [
+    for (body, _construct, at) in [
         (
             format!("{{ expected elapsed until {phase_a} <= 3 }}"),
             "an `expected elapsed` claim",
@@ -1997,20 +1979,17 @@ fn what_s3_does_not_check_yet_refuses_not_yet_implemented() {
     ] {
         let source = claim(&body);
         let found = located(&service(None, &source));
-        assert_eq!(found, [not_yet(at)], "{body}");
-        let [ProbabilisticCause::NotYetImplemented { construct: named, .. }] =
-            &causes(&service(None, &source))[..]
-        else {
-            panic!("not yet implemented: {body}");
-        };
-        assert_eq!(*named, construct);
+        assert_eq!(
+            found,
+            [(Code::IllTyped, Some("type-mismatch"), at.to_owned())],
+            "{body}"
+        );
     }
-    // The activation, not the claim, is what is not checked.
     let each = format!(
         "probabilistic C using ev on Service {OVER} under Steady \
          on each (m: Service::Server) {{ probability >= 0.9 [ {phase_a} ] }}"
     );
-    assert_eq!(located(&service(None, &each)), [not_yet("m")]);
+    checked(&service(None, &each));
 }
 
 /// A claim `C` `using` the profile `profile`, `on origin`, over `Service`'s
@@ -2174,8 +2153,7 @@ fn a_reach_operand_must_be_a_state_predicate() {
 /// checks as `ExpectedReward` with a threshold that is a rational for an
 /// integer reward and a quantity in the reward's unit for a quantity reward;
 /// a quantity of another dimension, a quantity for an integer reward and an
-/// unknown reward are refused, and `expected elapsed` is not checked (no
-/// subject is timed).
+/// unknown reward are refused.
 #[trace("TC-630", "FR-195-AC-2")]
 #[test]
 fn an_expected_reward_claim_is_typed_by_its_rewards_unit() {
@@ -2220,7 +2198,6 @@ fn an_expected_reward_claim_is_typed_by_its_rewards_unit() {
         } if *found == ratio(5, 1)
     ));
 
-    let at = IDLE.to_owned() + " or " + &done();
     assert_eq!(
         located(&expected(&format!(
             "expected accumulate latency until {target} <= 5 m"
@@ -2243,12 +2220,7 @@ fn an_expected_reward_claim_is_typed_by_its_rewards_unit() {
             "nothing".to_owned()
         )]
     );
-    assert_eq!(
-        located(&expected(&format!(
-            "expected elapsed until {target} <= 3 ms"
-        ))),
-        [not_yet(&at)]
-    );
+    // `expected elapsed` over this untimed model: `time_forms_over_an_untimed_model_are_ill_typed`.
 }
 
 /// Checks FR-195-AC-3 (TC-630 step 3): `exact_only` is true for a reachability form,
@@ -3373,4 +3345,263 @@ fn a_bounded_profile_refuses_unbounded_operators_by_operator_admission() {
             &format!("eventually[2,*] {holds}")
         )]
     );
+}
+
+/// FR-764-AC-3: a bare decimal literal is checked exactly as the
+/// `decimal(c, s)` it spells.
+#[trace("TC-2162", "FR-764-AC-3")]
+#[trace("FSpec-TC-1648", "FSpec-FR-662-AC-2")]
+#[test]
+#[ignore = "QSL-1965: the bare decimal primary not implemented yet"]
+fn a_bare_decimal_literal_is_typed_as_its_constructor() {
+    let typed = "type D = Decimal[-1000, 1000; 0, 2; exact];";
+    for literal in ["0.9", "decimal(9, 1)"] {
+        checked(&service(
+            None,
+            &format!("{typed}\nfunction f using v(): D pure {{ {literal} }}"),
+        ));
+        assert_eq!(
+            located(&service(
+                None,
+                &format!("function g using v(n: Integer): Boolean pure {{ n < {literal} }}"),
+            )),
+            [(Code::IllTyped, Some("type-mismatch"), literal.to_owned())],
+            "{literal}"
+        );
+        assert_eq!(
+            located(&service(
+                None,
+                &format!(
+                    "function h using v(): Boolean pure {{ let x = {literal} in x > decimal(1, 1) }}"
+                ),
+            )),
+            [(Code::IllTyped, Some("ambiguous-literal"), literal.to_owned())],
+            "{literal}"
+        );
+    }
+}
+
+/// FR-764-AC-5 and AC-6: a bare decimal threshold is the exact rational it
+/// spells, and its written scale is bounded as a `decimal(c, s)`'s is.
+#[trace("TC-2163", "FR-764-AC-5")]
+#[trace("TC-2163", "FR-764-AC-6")]
+#[trace("FSpec-TC-1648", "FSpec-FR-662-AC-3")]
+#[test]
+#[ignore = "QSL-1965 / QSL-2154: the bare decimal threshold not implemented yet"]
+fn a_bare_decimal_threshold_is_the_exact_rational_it_spells() {
+    let target = format!("holds({IDLE} or {})", done());
+    let form = |threshold: &str| {
+        let graph = checked(&exact_claim(
+            "ev",
+            "Steady",
+            "",
+            &format!("expected accumulate duration until {target} <= {threshold}"),
+        ));
+        let ProbForm::ExpectedReward { bound, .. } = &claim_of(&graph).form else {
+            panic!("an expected reward: {:?}", claim_of(&graph).form);
+        };
+        bound.clone()
+    };
+    let bare = form("0.5");
+    assert_eq!(bare, Bound::AtMost(ratio(1, 2)));
+    assert_eq!(bare, form("decimal(5, 1)"));
+    assert_eq!(bare, form("rational(1, 2)"));
+    let long = format!("0.{}", "1".repeat(65536));
+    let found = located(&exact_claim(
+        "ev",
+        "Steady",
+        "",
+        &format!("expected accumulate duration until {target} <= {long}"),
+    ));
+    assert_eq!(
+        found,
+        [(Code::StageLimitExceeded, Some("work-budget-exceeded"), long)]
+    );
+}
+
+/// The service claim `C` with activation `activation`, `{LATENCY}` declared.
+fn activated(activation: &str, body: &str) -> String {
+    service(
+        None,
+        &format!(
+            "{LATENCY}\nprobabilistic C using ev on Service {OVER} under Steady \
+             {activation} {{ {body} }}"
+        ),
+    )
+}
+
+/// FR-186-AC-8 (TC-2166): an `on each` activation checks and is recorded in
+/// the claim and its normal form, with its guard when written.
+#[trace("TC-2166", "FR-186-AC-8")]
+#[test]
+#[ignore = "QSL-2151: the `on each` activation of a probabilistic claim not checked yet"]
+fn probabilistic_on_each_checks() {
+    let body = format!("probability >= 0.9 [ eventually[0,5] holds({IDLE}) ]");
+    let plain = checked(&activated("on each (m: Service::Server)", &body));
+    let guarded = checked(&activated(
+        "on each (m: Service::Server) when (m.phase = Service::Phase::Idle)",
+        &body,
+    ));
+    let plain = claim_of(&plain);
+    let guarded = claim_of(&guarded);
+    assert!(format!("{plain:?}").contains("Each"), "{plain:?}");
+    assert!(format!("{guarded:?}").contains("Each"), "{guarded:?}");
+    assert_ne!(
+        format!("{:?}", plain.normal_form),
+        format!("{:?}", guarded.normal_form)
+    );
+}
+
+/// FR-186-AC-9 (TC-2166): an `on each` over a type no population admits is
+/// `over-not-object-type` at its name, and a non-Boolean guard is ill typed.
+#[trace("TC-2166", "FR-186-AC-9")]
+#[test]
+#[ignore = "QSL-2151: the `on each` activation of a probabilistic claim not checked yet"]
+fn probabilistic_on_each_non_object_type_refused() {
+    let body = format!("probability >= 0.9 [ eventually[0,5] holds({IDLE}) ]");
+    assert_eq!(
+        located(&activated("on each (k: Integer)", &body)),
+        [invalid("over-not-object-type", "k")]
+    );
+    assert_eq!(
+        located(&activated("on each (m: Service::Server) when (1)", &body)),
+        [(Code::IllTyped, Some("type-mismatch"), "1".to_owned())]
+    );
+}
+
+/// FR-186-AC-11 (TC-2168): over the untimed service model the time forms are
+/// ill typed at the form, never not-yet-implemented.
+#[trace("TC-2168", "FR-186-AC-11")]
+#[trace("TC-630", "FR-195-AC-2")]
+#[trace("TC-630", "FR-195-AC-7")]
+#[test]
+#[ignore = "QSL-2152: time forms over an untimed model are refused not-yet-implemented today"]
+fn time_forms_over_an_untimed_model_are_ill_typed() {
+    let a = format!("holds({IDLE})");
+    let measure = format!("elapsed from {a} until {a} within 5");
+    for (body, at) in [
+        (
+            format!("{{ expected elapsed until {a} <= 3 ms }}"),
+            IDLE.to_owned(),
+        ),
+        (
+            format!("{{ probability >= 0.5 [ {measure} >= 3 ] }}"),
+            measure.clone(),
+        ),
+        (
+            format!("{{ probability >= 0.5 [ steps from {a} until {a} within 5 ms >= 3 ] }}"),
+            "5 ms".to_owned(),
+        ),
+    ] {
+        assert_eq!(
+            located(&service(None, &claim(&body))),
+            [(Code::IllTyped, Some("type-mismatch"), at)],
+            "{body}"
+        );
+    }
+}
+
+/// FR-186-AC-13 (TC-2170): under the timed profile over the untimed model the
+/// claim is refused with the standard's clock cause at the alias.
+#[trace("TC-2170", "FR-186-AC-13")]
+#[trace("TC-621", "FR-186-AC-3")]
+#[test]
+#[ignore = "QSL-2153: the timed profile over an untimed model refuses with the FSL-only timed-event-profile cause today"]
+fn probabilistic_claim_timed_profile_untimed_model() {
+    let timed = service(
+        None,
+        &format!(
+            "probabilistic C using tm on Service {OVER} under Steady on origin \
+             {{ probability >= 0.99 [ eventually[0,5] holds({IDLE}) ] }}"
+        ),
+    );
+    assert_eq!(
+        located(&timed),
+        [(
+            Code::InvalidTimedModel,
+            Some("model-time-on-untimed-model"),
+            "tm".to_owned()
+        )]
+    );
+    assert!(!causes(&timed)
+        .iter()
+        .any(|cause| matches!(cause, ProbabilisticCause::TimedEventProfile { .. })));
+}
+
+/// FR-186-AC-14 (TC-2171): every quantity position of a claim is read: the
+/// position's dimension checks, a length is a unit mismatch, and a
+/// dimensionless position refuses a quantity as a type mismatch.
+#[trace("TC-2171", "FR-186-AC-14")]
+#[test]
+#[ignore = "QSL-2157: quantity-literal positions of probabilistic claims not all read yet"]
+fn quantity_literal_positions_check_and_refuse_by_dimension() {
+    let a = format!("holds({IDLE})");
+    let latency = format!("accumulate latency from {a} until {a} within 10");
+    let with = |confidence: &str, form: &str| {
+        service(
+            None,
+            &format!(
+                "{LATENCY}\nprobabilistic C using ev on Service {OVER} under Steady \
+                 on origin {confidence} {{ {form} }}"
+            ),
+        )
+    };
+    for template in [
+        format!("probability >= 0.5 [ {latency} <= QTY ]"),
+        format!("quantile 0.95 of ({latency}) <= QTY"),
+        format!("expected accumulate latency until {a} <= QTY"),
+    ] {
+        checked(&with("", &template.replace("QTY", "5 ms")));
+        assert_eq!(
+            located(&with("", &template.replace("QTY", "5 m"))),
+            [(Code::IllTyped, Some("unit-mismatch"), "5 m".to_owned())],
+            "{template}"
+        );
+    }
+    for (confidence, form, at) in [
+        (
+            "",
+            format!("probability >= 0.5 [ fraction {a} over [0, 10] <= 5 ms ]"),
+            "5 ms",
+        ),
+        (
+            "",
+            format!("probability >= 0.5 [ steps from {a} until {a} within 5 >= 5 ms ]"),
+            "5 ms",
+        ),
+    ] {
+        assert_eq!(
+            located(&with(confidence, &form)),
+            [(Code::IllTyped, Some("type-mismatch"), at.to_owned())],
+            "{form}"
+        );
+    }
+}
+
+/// FR-764-AC-7 (TC-2186): a comparison operand that is not a literal gives a
+/// bare decimal literal its type; two literal operands fix none.
+#[trace("TC-2186", "FR-764-AC-7")]
+#[trace("FSpec-TC-1648", "FSpec-FR-662-AC-2")]
+#[test]
+#[ignore = "QSL-1965: comparison-operand typing of decimal literals not implemented yet"]
+fn a_comparison_operand_types_a_bare_decimal_literal() {
+    let typed = "type D = Decimal[-1000, 1000; 0, 2; exact];";
+    for literal in ["0.9", "decimal(9, 1)"] {
+        checked(&service(
+            None,
+            &format!("{typed}\nfunction k using v(l: D): Boolean pure {{ l < {literal} }}"),
+        ));
+        assert_eq!(
+            located(&service(
+                None,
+                &format!("function m using v(): Boolean pure {{ {literal} < decimal(1, 0) }}"),
+            )),
+            [(
+                Code::IllTyped,
+                Some("ambiguous-literal"),
+                literal.to_owned()
+            )],
+            "{literal}"
+        );
+    }
 }

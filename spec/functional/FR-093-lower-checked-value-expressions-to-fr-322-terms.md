@@ -433,15 +433,18 @@ and `decimal(1, 0)` are the values 1.00 and 1, and neither is reduced.
 `check` SHALL type the constructor by the decimal type its position gives it:
 the declared result of a function gives one, and a literal operand of `+`, `-`,
 `*` or `/` beside an operand of one named decimal type takes that type
-(FR-104 "Infix decimal arithmetic"). A negated literal takes its operand's
+(FR-104 "Infix decimal arithmetic"). A literal operand of a comparison
+(`=`, `!=`, `<`, `<=`, `>`, `>=`) takes the other operand's static type when
+that operand is not a literal (FSpec FR-140), so `self.level < decimal(9, 1)`
+over a `Decimal[..]` field `level` is typed by `level`'s type. A negated literal takes its operand's
 decimal type from the position and is typed by it. A `let` binding gives no
-type.
+type, and two literal operands of one operator give each other none.
 
 `check` SHALL decide a constructor in this order, and the first failing step
 is the refusal:
 
 1. A position that gives no type SHALL refuse `ill_typed`/`ambiguous-literal`
-   (FR-104-AC-16), and a position that expects a type that is not a
+   (FR-104-AC-16), located at the literal, and a position that expects a type that is not a
    `Decimal[..]` SHALL refuse `ill_typed`/`type-mismatch`.
 2. **Literal scale limit.** A written scale `s` above the S3 setting
    `s3.decimal_literal_scale`, default 65535 digits, SHALL refuse

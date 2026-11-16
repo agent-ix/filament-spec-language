@@ -322,6 +322,11 @@ A native-run/1 request (FR-026's closed envelope and shared limits). For a
     or counter uses the accounting default: `work_units` is 1,000,000 and
     the other nine counters are `u64::MAX`. A `work_units` member directly
     in `call` is not accepted.
+  - `evaluation`: optional, a closed object whose one member is
+    `live_occurrences`, a JSON integer from 0 to 18446744073709551615, the
+    NFR-130 live-occurrence limit of the call's evaluation; omitted, it is
+    the FR-255 default 1048576. It is not an accounting counter: it bounds the
+    frames and argument values the evaluation holds at once, not work done.
 
 ## Outputs
 
