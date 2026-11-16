@@ -529,7 +529,6 @@ impl Selection {
             .collect();
         Ok(Inputs {
             source_path: labelled(&rows.unit, "source:")?,
-            source_identity: None,
             source: read(&rows.unit)?,
             models,
             libraries,

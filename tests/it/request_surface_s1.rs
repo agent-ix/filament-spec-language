@@ -317,22 +317,37 @@ fn a_compile_handoff_member_writes_the_directory() {
     assert!(!handoff.join("mutations").exists());
 }
 
-/// FR-665-AC-3 (TC-1748): a `handoff` member without `native_join` refuses
-/// `invalid-request` naming it and writes no directory.
+/// FR-665-AC-3 (TC-1748): a missing native-join budget, invalid corpus name or
+/// unknown handoff member refuses at request admission and writes no directory.
 #[test]
 #[trace("TC-1748", "FR-665-AC-3")]
-fn a_handoff_member_without_a_native_join_budget_refuses() {
-    let directory = tempfile::tempdir().unwrap();
-    let path = handoff_request(
-        directory.path(),
-        json!({"directory": "handoff", "package_name": "spine"}),
-    );
-    let (exit, value) = compile_refusal(&path);
-    assert_eq!(exit, 20, "{value}");
-    assert_eq!(value["code"], "invalid-request", "{value}");
-    assert_eq!(value["stage"], "request", "{value}");
-    assert!(value.to_string().contains("native_join"), "{value}");
-    assert!(!directory.path().join("handoff").exists());
+fn invalid_handoff_members_refuse_before_writing() {
+    let cases = [
+        (
+            json!({"directory": "handoff", "package_name": "spine"}),
+            "native_join",
+        ),
+        (
+            json!({"directory": "handoff", "package_name": "spine", "corpus": "all",
+                "native_join": {"work_units": 1_000_000, "storage": 1_000_000}}),
+            "corpus",
+        ),
+        (
+            json!({"directory": "handoff", "package_name": "spine", "digest": "sha256",
+                "native_join": {"work_units": 1_000_000, "storage": 1_000_000}}),
+            "digest",
+        ),
+    ];
+    for (handoff, member) in cases {
+        let directory = tempfile::tempdir().unwrap();
+        let path = handoff_request(directory.path(), handoff);
+        let (exit, value) = compile_refusal(&path);
+        assert_eq!(exit, 20, "{member}: {value}");
+        assert_eq!(value["code"], "invalid-request", "{member}: {value}");
+        assert_eq!(value["stage"], "request", "{member}: {value}");
+        assert!(value.to_string().contains(member), "{member}: {value}");
+        assert!(!directory.path().join("handoff").exists());
+    }
 }
 
 /// `version` with `arguments`, through [`driver`].
@@ -743,13 +758,49 @@ fn inspect_handoff_verifies_and_refuses_an_altered_copy() {
     assert_eq!(document["operation"], "inspect");
     assert_eq!(document["category"], "success");
 
+    let selection_path = directory.path().join("handoff/selection.json");
+    let mut selection: Value =
+        serde_json::from_slice(&std::fs::read(&selection_path).unwrap()).unwrap();
+    let node_counts = selection["package"]["node_counts"]
+        .as_object_mut()
+        .expect("the selection has node counts");
+    let (form, count) = node_counts.iter_mut().next().expect("a counted node form");
+    let form = form.clone();
+    *count = (count.as_u64().unwrap() + 1).into();
+    std::fs::write(&selection_path, serde_json::to_vec(&selection).unwrap()).unwrap();
+    let mismatch = fsl_command::command::inspect_handoff(&directory.path().join("handoff"))
+        .expect_err("an altered node count is refused");
+    assert!(
+        matches!(
+            mismatch,
+            fsl_command::checked_handoff::Error::SelectionMismatch(ref refusal)
+                if refusal.axis == fsl_command::checked_handoff::SelectionAxis::PackageNodes
+        ),
+        "{form}: {mismatch:?}"
+    );
+
     let package = directory.path().join("handoff/checked-package.json");
+    // Restore the valid sidecar so the byte mutation reaches the strict reader.
+    let mut selection: Value =
+        serde_json::from_slice(&std::fs::read(&selection_path).unwrap()).unwrap();
+    let count = selection["package"]["node_counts"][&form]
+        .as_u64()
+        .expect("the changed node count is present");
+    selection["package"]["node_counts"][&form] = (count - 1).into();
+    std::fs::write(&selection_path, serde_json::to_vec(&selection).unwrap()).unwrap();
     let mut bytes = std::fs::read(&package).unwrap();
     let last = bytes.len() - 2;
     bytes[last] ^= 1;
     std::fs::write(&package, bytes).unwrap();
-    fsl_command::command::inspect_handoff(&directory.path().join("handoff"))
+    let refusal = fsl_command::command::inspect_handoff(&directory.path().join("handoff"))
         .expect_err("an altered package is refused");
+    assert!(
+        matches!(
+            refusal,
+            fsl_command::checked_handoff::Error::ReaderRefused(_)
+        ),
+        "{refusal:?}"
+    );
 }
 
 fn provider_config(directory: &Path, document: &Value) {
