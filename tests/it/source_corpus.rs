@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //! Drive checked-in source programs through the public command entry points.
 
+use fsl_replay::{Operation, OutcomeDocument};
+use ix_trace_rs::trace;
 use serde::Deserialize;
 use serde_json::{json, Value};
 use std::collections::{BTreeMap, BTreeSet};
@@ -15,13 +17,22 @@ fn corpus_areas() -> impl Iterator<Item = &'static str> {
         .filter(|line| !line.is_empty())
 }
 
+/// A member that may be absent, `null` or a string.
+fn member<'de, D: serde::Deserializer<'de>>(
+    deserializer: D,
+) -> Result<Option<Option<String>>, D::Error> {
+    Option::<String>::deserialize(deserializer).map(Some)
+}
+
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct Expectation {
     verb: String,
     exit_code: u8,
     category: Option<String>,
-    last_stage: Option<String>,
+    /// Absent: not checked. `null`: the outcome reached no stage.
+    #[serde(default, deserialize_with = "member")]
+    last_stage: Option<Option<String>>,
     code: Option<String>,
     cause: Option<String>,
     result: Option<Value>,
@@ -32,7 +43,7 @@ struct Expectation {
 struct Actual {
     exit_code: u8,
     category: Option<String>,
-    last_stage: Option<String>,
+    last_stage: Option<Option<String>>,
     code: Option<String>,
     cause: Option<String>,
     result: Option<Value>,
@@ -195,10 +206,17 @@ fn execute_request(
                 Ok(result) => {
                     let value = result.value.as_value().clone();
                     let outcome = value.get("outcome");
+                    let (category, last_stage) = match &result.outcome {
+                        Some(document) => {
+                            let (category, last_stage) = lifecycle(document)?;
+                            (Some(category), Some(last_stage))
+                        }
+                        None => (None, None),
+                    };
                     Ok(Actual {
                         exit_code: result.exit_code,
-                        category: None,
-                        last_stage: None,
+                        category,
+                        last_stage,
                         code: value
                             .get("code")
                             .or_else(|| outcome.and_then(|outcome| outcome.get("code")))
@@ -217,10 +235,10 @@ fn execute_request(
                         format!("{}: cannot encode refusal: {error}", request.display())
                     })?;
                     Ok(actual_error(
-                        category_name(error.category().as_str()),
+                        &error.outcome_document(Operation::Execute),
                         error.category().exit_code(),
                         &value,
-                    ))
+                    )?)
                 }
             }
         }
@@ -232,24 +250,27 @@ fn execute_request(
                     expected.verb
                 ));
             }
-            match fsl_command::command::compile(request) {
-                Ok(_) => Ok(Actual {
-                    exit_code: 0,
-                    category: Some("success".to_owned()),
-                    last_stage: None,
-                    code: None,
-                    cause: None,
-                    result: None,
-                }),
+            match fsl_command::command::compile_outcome(request) {
+                Ok(compiled) => {
+                    let (category, last_stage) = lifecycle(compiled.document())?;
+                    Ok(Actual {
+                        exit_code: 0,
+                        category: Some(category),
+                        last_stage: Some(last_stage),
+                        code: None,
+                        cause: None,
+                        result: None,
+                    })
+                }
                 Err(error) => {
                     let value = error.artifact_value().map_err(|error| {
                         format!("{}: cannot encode refusal: {error}", request.display())
                     })?;
                     Ok(actual_error(
-                        category_name(error.category().as_str()),
+                        &error.outcome_document(Operation::Package),
                         error.category().exit_code(),
                         &value,
-                    ))
+                    )?)
                 }
             }
         }
@@ -349,24 +370,27 @@ fn execute_compile(program: &Path, expected: &Expectation) -> Result<Actual, Str
             program.display()
         )
     })?;
-    match fsl_command::command::compile(&request_path) {
-        Ok(_) => Ok(Actual {
-            exit_code: 0,
-            category: Some("success".to_owned()),
-            last_stage: None,
-            code: None,
-            cause: None,
-            result: None,
-        }),
+    match fsl_command::command::compile_outcome(&request_path) {
+        Ok(compiled) => {
+            let (category, last_stage) = lifecycle(compiled.document())?;
+            Ok(Actual {
+                exit_code: 0,
+                category: Some(category),
+                last_stage: Some(last_stage),
+                code: None,
+                cause: None,
+                result: None,
+            })
+        }
         Err(error) => {
             let value = error.artifact_value().map_err(|error| {
                 format!("{}: cannot encode refusal: {error}", program.display())
             })?;
             Ok(actual_error(
-                category_name(error.category().as_str()),
+                &error.outcome_document(Operation::Package),
                 error.category().exit_code(),
                 &value,
-            ))
+            )?)
         }
     }
 }
@@ -375,35 +399,51 @@ fn string_member(value: &Value) -> Option<&str> {
     value.as_str()
 }
 
-fn actual_error(category: &str, exit_code: u8, value: &Value) -> Actual {
-    Actual {
+fn actual_error(
+    document: &OutcomeDocument,
+    exit_code: u8,
+    value: &Value,
+) -> Result<Actual, String> {
+    let (category, last_stage) = lifecycle(document)?;
+    Ok(Actual {
         exit_code,
-        category: Some(category.to_owned()),
-        last_stage: value
-            .get("stage")
-            .and_then(string_member)
-            .map(str::to_owned),
+        category: Some(category),
+        last_stage: Some(last_stage),
         code: value.get("code").and_then(string_member).map(str::to_owned),
         cause: value
             .get("cause")
             .and_then(string_member)
             .map(str::to_owned),
         result: None,
-    }
+    })
 }
 
-fn category_name(category: &str) -> &str {
-    if category == "internal-failure" {
-        "fault"
-    } else {
-        category
-    }
+/// The `category` and `last_stage` members of a lifecycle outcome document.
+fn lifecycle(document: &OutcomeDocument) -> Result<(String, Option<String>), String> {
+    let bytes = document
+        .to_bytes()
+        .map_err(|error| format!("cannot encode the lifecycle outcome: {error}"))?;
+    let value: Value = serde_json::from_slice(&bytes)
+        .map_err(|error| format!("invalid lifecycle outcome: {error}"))?;
+    let object = value
+        .as_object()
+        .ok_or_else(|| "the lifecycle outcome is not an object".to_owned())?;
+    let category = object
+        .get("category")
+        .and_then(Value::as_str)
+        .ok_or_else(|| "the lifecycle outcome has no category member".to_owned())?;
+    let last_stage = match object.get("last_stage") {
+        Some(Value::Null) => None,
+        Some(Value::String(stage)) => Some(stage.clone()),
+        _ => return Err("the lifecycle outcome has no last_stage member".to_owned()),
+    };
+    Ok((category.to_owned(), last_stage))
 }
 
 fn mismatch(program: &Path, expected: &Expectation, actual: &Actual) -> Option<String> {
     let differs = expected.exit_code != actual.exit_code
-        || exposed_field_differs(&expected.category, &actual.category)
-        || exposed_field_differs(&expected.last_stage, &actual.last_stage)
+        || required_differs(&expected.category, &actual.category)
+        || required_differs(&expected.last_stage, &actual.last_stage)
         || optional_differs(&expected.code, &actual.code)
         || optional_differs(&expected.cause, &actual.cause)
         || expected
@@ -419,8 +459,8 @@ fn mismatch(program: &Path, expected: &Expectation, actual: &Actual) -> Option<S
             actual.exit_code,
             display_option(&expected.category),
             display_option(&actual.category),
-            display_option(&expected.last_stage),
-            display_option(&actual.last_stage),
+            display_stage(&expected.last_stage),
+            display_stage(&actual.last_stage),
             display_option(&expected.code),
             display_option(&actual.code),
             display_option(&expected.cause),
@@ -430,17 +470,26 @@ fn mismatch(program: &Path, expected: &Expectation, actual: &Actual) -> Option<S
     })
 }
 
-fn exposed_field_differs(expected: &Option<String>, actual: &Option<String>) -> bool {
+/// An expected member must be present and equal in the actual outcome; an
+/// outcome that does not expose it differs.
+fn required_differs<T: PartialEq>(expected: &Option<T>, actual: &Option<T>) -> bool {
     expected
         .as_ref()
-        .zip(actual.as_ref())
-        .is_some_and(|(expected, actual)| expected != actual)
+        .is_some_and(|expected| actual.as_ref() != Some(expected))
 }
 
 fn optional_differs(expected: &Option<String>, actual: &Option<String>) -> bool {
     expected
         .as_ref()
         .is_some_and(|expected| actual.as_ref() != Some(expected))
+}
+
+fn display_stage(value: &Option<Option<String>>) -> &str {
+    match value {
+        None => "<not exposed>",
+        Some(None) => "null",
+        Some(Some(stage)) => stage,
+    }
 }
 
 fn display_option(value: &Option<String>) -> &str {
@@ -733,7 +782,7 @@ fn corpus_runner_uses_public_entry_point() {
                     == [
                         "fsl_command".to_owned(),
                         "command".to_owned(),
-                        "compile".to_owned(),
+                        "compile_outcome".to_owned(),
                     ]
                 {
                     self.compile = true;
@@ -763,7 +812,7 @@ fn corpus_runner_uses_public_entry_point() {
     );
     assert!(
         calls.compile,
-        "runner must call fsl_command::command::compile"
+        "runner must call fsl_command::command::compile_outcome"
     );
     assert!(calls.run, "runner must call fsl_command::command::run");
 }
@@ -774,4 +823,111 @@ fn absent_area_is_allowed_but_created_empty_area_is_rejected() {
     let directory = tempfile::tempdir().unwrap();
     let error = run_directory(directory.path()).unwrap_err();
     assert!(error.contains("no .native programs"), "{error}");
+}
+
+fn write_run_request(directory: &Path, stem: &str, function: &str) {
+    let request = json!({
+        "format":"native-run/1",
+        "request":{
+            "models":[],
+            "program":{"source":{
+                "file": format!("{stem}.native"),
+                "authority":"agent-ix",
+                "identity": format!("test:corpus:{stem}"),
+                "document":"Run",
+                "formal_revision":1
+            }},
+            "call":{"function":function,"arguments":[]}
+        }
+    });
+    std::fs::write(
+        directory.join(format!("{stem}.request.json")),
+        serde_json::to_vec(&request).unwrap(),
+    )
+    .unwrap();
+}
+
+/// FR-286-AC-1, TC-770: the runner compares the lifecycle outcome's
+/// `category` and `last_stage` members, a `null` stage included.
+#[test]
+#[trace("TC-770", "FR-286-AC-1", "FR-286-AC-5", "FR-286-AC-6")]
+fn corpus_runner_compares_category_and_last_stage() {
+    // A compiled package reached S4.
+    let directory = tempfile::tempdir().unwrap();
+    write_case(
+        directory.path(),
+        "accepting",
+        ACCEPTING_PROGRAM,
+        &json!({"verb":"check","exit_code":0,"category":"success","last_stage":"S4"}).to_string(),
+    );
+    assert_eq!(run_directory(directory.path()).unwrap(), "flips_with: none");
+
+    // A refused call stops at S6a.
+    let directory = tempfile::tempdir().unwrap();
+    write_case(
+        directory.path(),
+        "refusal",
+        RUN_PROGRAM,
+        &json!({"verb":"run","exit_code":20,"category":"refusal","last_stage":"S6a"}).to_string(),
+    );
+    write_run_request(directory.path(), "refusal", "nope");
+    assert_eq!(run_directory(directory.path()).unwrap(), "flips_with: none");
+
+    // A wrong stage, a `null` stage and a wrong category are mismatches.
+    for (member, wrong) in [
+        ("last_stage", json!("S3")),
+        ("last_stage", Value::Null),
+        ("category", json!("violation")),
+    ] {
+        let directory = tempfile::tempdir().unwrap();
+        let mut expected =
+            json!({"verb":"check","exit_code":0,"category":"success","last_stage":"S4"});
+        expected[member] = wrong;
+        write_case(
+            directory.path(),
+            "accepting",
+            ACCEPTING_PROGRAM,
+            &expected.to_string(),
+        );
+        let error = run_directory(directory.path()).unwrap_err();
+        assert!(error.contains(&format!("{member} expected=")), "{error}");
+    }
+}
+
+/// FR-286-AC-1, TC-770: an outcome that omits `category` or `last_stage` is
+/// a mismatch against an expectation naming it, never a silent pass.
+#[test]
+#[trace("TC-770", "FR-286-AC-1")]
+fn corpus_runner_detects_missing_lifecycle_fields() {
+    let expected: Expectation = serde_json::from_value(
+        json!({"verb":"run","exit_code":0,"category":"success","last_stage":null}),
+    )
+    .unwrap();
+    assert_eq!(expected.last_stage, Some(None));
+    let omitted: Expectation = serde_json::from_value(json!({"verb":"run","exit_code":0})).unwrap();
+    assert_eq!(omitted.last_stage, None);
+
+    let actual = Actual {
+        exit_code: 0,
+        category: None,
+        last_stage: None,
+        code: None,
+        cause: None,
+        result: None,
+    };
+    let mismatch =
+        mismatch_of(&expected, &actual).expect("members the outcome does not carry are a mismatch");
+    assert!(mismatch.contains("category expected=success actual=<not exposed>"));
+    assert!(mismatch.contains("last_stage expected=null actual=<not exposed>"));
+
+    let complete = Actual {
+        category: Some("success".to_owned()),
+        last_stage: Some(None),
+        ..actual
+    };
+    assert_eq!(mismatch_of(&expected, &complete), None);
+}
+
+fn mismatch_of(expected: &Expectation, actual: &Actual) -> Option<String> {
+    mismatch(Path::new("case.native"), expected, actual)
 }

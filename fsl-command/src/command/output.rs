@@ -337,6 +337,7 @@ pub(super) fn clause_report(
         // FR-285: a finite-window `pending` exits 0 and `indeterminate` 11.
         exit_code: report.disposition.exit_code(),
         value: NativeResult(value),
+        outcome: None,
     })
 }
 
@@ -417,6 +418,7 @@ pub(super) fn spine_run_result(
 ) -> super::Result<RunResult> {
     use fsl_replay::spine::{CallOutcome, CallRefusal};
     let exit_code = outcome.category().exit_code();
+    let lifecycle = fsl_replay::OutcomeDocument::from_call(&outcome);
     let outcome = match outcome {
         CallOutcome::Completed(value) => types::SpineOutcome::Completed {
             value: value.form(),
@@ -459,6 +461,7 @@ pub(super) fn spine_run_result(
     Ok(RunResult {
         exit_code,
         value: NativeResult(serde_json::to_value(document).map_err(RunCause::Output)?),
+        outcome: Some(lifecycle),
     })
 }
 

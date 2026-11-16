@@ -146,6 +146,9 @@ pub struct RunResult {
     pub exit_code: u8,
     /// Structured `native-run-result/2` or current spine call observations.
     pub value: NativeResult,
+    /// The FR-286 lifecycle outcome of a function run (category and last
+    /// stage); `None` for the other run families.
+    pub outcome: Option<fsl_replay::OutcomeDocument>,
 }
 
 /// Successful compilation with the core's document and exact emitted bytes.

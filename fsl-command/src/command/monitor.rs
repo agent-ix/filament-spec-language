@@ -709,6 +709,7 @@ pub(super) fn run_bytes(
             "events": events,
             "summary": summary.value,
         })),
+        outcome: None,
     })
 }
 
