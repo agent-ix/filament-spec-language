@@ -133,14 +133,28 @@ fn a_bare_decimal_in_a_primary_parses_as_a_decimal_literal() {
             "{expression}: a primary spans exactly `{literal}`"
         );
     }
-    for unchanged in ["0.5 M::ms", "decimal(5, 1) = decimal(5, 1)", "5", "a.b"] {
-        let parsed = parse(document(unchanged).as_bytes()).expect("S1 reads the unit");
+    for unchanged in ["decimal(5, 1) = decimal(5, 1)", "5", "a.b"] {
+        let text = document(unchanged);
+        let parsed = parse(text.as_bytes()).expect("S1 reads the unit");
         assert!(
             parsed.is_admissible(),
             "{unchanged}: {:?}",
             parsed.diagnostics()
         );
     }
+    let quantity = "0.5 M::ms";
+    let text = document(quantity);
+    let parsed = parse(text.as_bytes()).expect("S1 reads the unit");
+    assert!(parsed.is_admissible(), "{:?}", parsed.diagnostics());
+    let start = text.find(quantity).expect("quantity in the unit");
+    assert!(
+        parsed.cst().nodes().iter().any(|node| {
+            node.production() == fsl_cst::Production::QuantityLiteral
+                && node.span().start == start
+                && node.span().end == start + quantity.len()
+        }),
+        "one QuantityLiteral spans exactly `{quantity}`"
+    );
 }
 
 /// FR-764-AC-4: an exponent spelling is one numeric token, refused
