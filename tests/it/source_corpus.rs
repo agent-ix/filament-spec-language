@@ -1,6 +1,9 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //! Drive checked-in source programs through the public command entry points.
 
+use filament_exact::Cancel;
+use fsl_replay::{Operation, OutcomeDocument};
+use ix_trace_rs::trace;
 use serde::Deserialize;
 use serde_json::{json, Value};
 use std::collections::{BTreeMap, BTreeSet};
@@ -15,12 +18,19 @@ fn corpus_areas() -> impl Iterator<Item = &'static str> {
         .filter(|line| !line.is_empty())
 }
 
+/// A member that must be present: a string or `null`.
+fn member<'de, D: serde::Deserializer<'de>>(deserializer: D) -> Result<Option<String>, D::Error> {
+    Option::<String>::deserialize(deserializer)
+}
+
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct Expectation {
     verb: String,
     exit_code: u8,
-    category: Option<String>,
+    category: String,
+    /// Required: the ADR-011 stage the outcome reached, or `null` for none.
+    #[serde(deserialize_with = "member")]
     last_stage: Option<String>,
     code: Option<String>,
     cause: Option<String>,
@@ -32,7 +42,7 @@ struct Expectation {
 struct Actual {
     exit_code: u8,
     category: Option<String>,
-    last_stage: Option<String>,
+    last_stage: Option<Option<String>>,
     code: Option<String>,
     cause: Option<String>,
     result: Option<Value>,
@@ -183,22 +193,37 @@ fn execute_request(
     .map_err(|error| format!("{}: invalid request: {error}", request.display()))?;
     require_paired_program(request, paired_program, &request_json)?;
     match request_json.get("format").and_then(Value::as_str) {
-        Some("native-run/1") => {
-            if expected.verb != "run" {
+        Some(format @ ("native-run/1" | "native-monitor/1" | "native-analyze/1")) => {
+            let (verb, operation) = match format {
+                "native-run/1" => ("run", Operation::Execute),
+                "native-monitor/1" => ("monitor", Operation::Monitor),
+                _ => ("analyze", Operation::Analyze),
+            };
+            if expected.verb != verb {
                 return Err(format!(
-                    "{}: expected verb {:?} does not match native-run/1 request",
+                    "{}: expected verb {:?} does not match {format} request",
                     request.display(),
                     expected.verb
                 ));
             }
-            match fsl_command::command::run(request) {
+            let ran = if format == "native-analyze/1" {
+                fsl_command::command::analyze(request, &OneCandidate, &Cancel::new())
+            } else {
+                fsl_command::command::run(request)
+            };
+            match ran {
                 Ok(result) => {
                     let value = result.value.as_value().clone();
                     let outcome = value.get("outcome");
+                    let (category, last_stage) = match &result.outcome {
+                        Some(document) => lifecycle(document)?,
+                        None => lifecycle_members(&value)?,
+                    };
+                    let (category, last_stage) = (Some(category), Some(last_stage));
                     Ok(Actual {
                         exit_code: result.exit_code,
-                        category: None,
-                        last_stage: None,
+                        category,
+                        last_stage,
                         code: value
                             .get("code")
                             .or_else(|| outcome.and_then(|outcome| outcome.get("code")))
@@ -216,11 +241,11 @@ fn execute_request(
                     let value = error.value().map_err(|error| {
                         format!("{}: cannot encode refusal: {error}", request.display())
                     })?;
-                    Ok(actual_error(
-                        category_name(error.category().as_str()),
+                    actual_error(
+                        &error.outcome_document(operation),
                         error.category().exit_code(),
                         &value,
-                    ))
+                    )
                 }
             }
         }
@@ -232,24 +257,27 @@ fn execute_request(
                     expected.verb
                 ));
             }
-            match fsl_command::command::compile(request) {
-                Ok(_) => Ok(Actual {
-                    exit_code: 0,
-                    category: Some("success".to_owned()),
-                    last_stage: None,
-                    code: None,
-                    cause: None,
-                    result: None,
-                }),
+            match fsl_command::command::compile_outcome(request) {
+                Ok(compiled) => {
+                    let (category, last_stage) = lifecycle(compiled.document())?;
+                    Ok(Actual {
+                        exit_code: 0,
+                        category: Some(category),
+                        last_stage: Some(last_stage),
+                        code: None,
+                        cause: None,
+                        result: None,
+                    })
+                }
                 Err(error) => {
                     let value = error.artifact_value().map_err(|error| {
                         format!("{}: cannot encode refusal: {error}", request.display())
                     })?;
                     Ok(actual_error(
-                        category_name(error.category().as_str()),
+                        &error.outcome_document(Operation::Package),
                         error.category().exit_code(),
                         &value,
-                    ))
+                    )?)
                 }
             }
         }
@@ -349,24 +377,27 @@ fn execute_compile(program: &Path, expected: &Expectation) -> Result<Actual, Str
             program.display()
         )
     })?;
-    match fsl_command::command::compile(&request_path) {
-        Ok(_) => Ok(Actual {
-            exit_code: 0,
-            category: Some("success".to_owned()),
-            last_stage: None,
-            code: None,
-            cause: None,
-            result: None,
-        }),
+    match fsl_command::command::compile_outcome(&request_path) {
+        Ok(compiled) => {
+            let (category, last_stage) = lifecycle(compiled.document())?;
+            Ok(Actual {
+                exit_code: 0,
+                category: Some(category),
+                last_stage: Some(last_stage),
+                code: None,
+                cause: None,
+                result: None,
+            })
+        }
         Err(error) => {
             let value = error.artifact_value().map_err(|error| {
                 format!("{}: cannot encode refusal: {error}", program.display())
             })?;
             Ok(actual_error(
-                category_name(error.category().as_str()),
+                &error.outcome_document(Operation::Package),
                 error.category().exit_code(),
                 &value,
-            ))
+            )?)
         }
     }
 }
@@ -375,35 +406,56 @@ fn string_member(value: &Value) -> Option<&str> {
     value.as_str()
 }
 
-fn actual_error(category: &str, exit_code: u8, value: &Value) -> Actual {
-    Actual {
+fn actual_error(
+    document: &OutcomeDocument,
+    exit_code: u8,
+    value: &Value,
+) -> Result<Actual, String> {
+    let (category, last_stage) = lifecycle(document)?;
+    Ok(Actual {
         exit_code,
-        category: Some(category.to_owned()),
-        last_stage: value
-            .get("stage")
-            .and_then(string_member)
-            .map(str::to_owned),
+        category: Some(category),
+        last_stage: Some(last_stage),
         code: value.get("code").and_then(string_member).map(str::to_owned),
         cause: value
             .get("cause")
             .and_then(string_member)
             .map(str::to_owned),
         result: None,
-    }
+    })
 }
 
-fn category_name(category: &str) -> &str {
-    if category == "internal-failure" {
-        "fault"
-    } else {
-        category
-    }
+/// The `category` and `last_stage` members of a lifecycle outcome document.
+fn lifecycle(document: &OutcomeDocument) -> Result<(String, Option<String>), String> {
+    let bytes = document
+        .to_bytes()
+        .map_err(|error| format!("cannot encode the lifecycle outcome: {error}"))?;
+    let value: Value = serde_json::from_slice(&bytes)
+        .map_err(|error| format!("invalid lifecycle outcome: {error}"))?;
+    lifecycle_members(&value)
+}
+
+/// The `category` and `last_stage` members of a `filament-outcome/1` document.
+fn lifecycle_members(value: &Value) -> Result<(String, Option<String>), String> {
+    let object = value
+        .as_object()
+        .ok_or_else(|| "the lifecycle outcome is not an object".to_owned())?;
+    let category = object
+        .get("category")
+        .and_then(Value::as_str)
+        .ok_or_else(|| "the lifecycle outcome has no category member".to_owned())?;
+    let last_stage = match object.get("last_stage") {
+        Some(Value::Null) => None,
+        Some(Value::String(stage)) => Some(stage.clone()),
+        _ => return Err("the lifecycle outcome has no last_stage member".to_owned()),
+    };
+    Ok((category.to_owned(), last_stage))
 }
 
 fn mismatch(program: &Path, expected: &Expectation, actual: &Actual) -> Option<String> {
     let differs = expected.exit_code != actual.exit_code
-        || exposed_field_differs(&expected.category, &actual.category)
-        || exposed_field_differs(&expected.last_stage, &actual.last_stage)
+        || actual.category.as_ref() != Some(&expected.category)
+        || actual.last_stage.as_ref() != Some(&expected.last_stage)
         || optional_differs(&expected.code, &actual.code)
         || optional_differs(&expected.cause, &actual.cause)
         || expected
@@ -417,10 +469,10 @@ fn mismatch(program: &Path, expected: &Expectation, actual: &Actual) -> Option<S
             expected.verb,
             expected.exit_code,
             actual.exit_code,
-            display_option(&expected.category),
+            expected.category.as_str(),
             display_option(&actual.category),
-            display_option(&expected.last_stage),
-            display_option(&actual.last_stage),
+            display_stage(&Some(expected.last_stage.clone())),
+            display_stage(&actual.last_stage),
             display_option(&expected.code),
             display_option(&actual.code),
             display_option(&expected.cause),
@@ -430,17 +482,18 @@ fn mismatch(program: &Path, expected: &Expectation, actual: &Actual) -> Option<S
     })
 }
 
-fn exposed_field_differs(expected: &Option<String>, actual: &Option<String>) -> bool {
-    expected
-        .as_ref()
-        .zip(actual.as_ref())
-        .is_some_and(|(expected, actual)| expected != actual)
-}
-
 fn optional_differs(expected: &Option<String>, actual: &Option<String>) -> bool {
     expected
         .as_ref()
         .is_some_and(|expected| actual.as_ref() != Some(expected))
+}
+
+fn display_stage(value: &Option<Option<String>>) -> &str {
+    match value {
+        None => "<not exposed>",
+        Some(None) => "null",
+        Some(Some(stage)) => stage,
+    }
 }
 
 fn display_option(value: &Option<String>) -> &str {
@@ -486,7 +539,7 @@ const ACCEPTING_PROGRAM: &str = include_str!("../fixtures/spine-compile.native")
 const RUN_PROGRAM: &str = include_str!("../fixtures/spine-run.native");
 
 fn expectation(verb: &str, exit_code: u8) -> String {
-    json!({"verb":verb,"exit_code":exit_code,"category":"success"}).to_string()
+    json!({"verb":verb,"exit_code":exit_code,"category":"success","last_stage":"S4"}).to_string()
 }
 
 fn write_case(directory: &Path, name: &str, program: &str, expected: &str) {
@@ -528,7 +581,7 @@ fn corpus_runner_detects_code_and_cause_mismatch() {
             directory.path(),
             "refusing",
             invalid,
-            &json!({"verb":"check","exit_code":20,"category":"refusal","code":"wrong_code","cause":"wrong_cause"}).to_string(),
+            &json!({"verb":"check","exit_code":20,"category":"refusal","last_stage":"S3","code":"wrong_code","cause":"wrong_cause"}).to_string(),
         );
     let error = run_directory(directory.path()).unwrap_err();
     assert!(
@@ -551,6 +604,8 @@ fn corpus_runner_reads_code_from_run_outcome() {
         &json!({
             "verb":"run",
             "exit_code":20,
+            "category":"refusal",
+            "last_stage":"S6a",
             "code":"wrong_code",
             "cause":"wrong_cause"
         })
@@ -674,7 +729,7 @@ fn corpus_runner_rejects_expectation_without_program() {
 fn corpus_runner_reports_flip_keys() {
     let directory = tempfile::tempdir().unwrap();
     let expected =
-        json!({"verb":"check","exit_code":0,"category":"success","flips_with":"QSL-1965"})
+        json!({"verb":"check","exit_code":0,"category":"success","last_stage":"S4","flips_with":"QSL-1965"})
             .to_string();
     write_case(directory.path(), "one", ACCEPTING_PROGRAM, &expected);
     write_case(directory.path(), "two", ACCEPTING_PROGRAM, &expected);
@@ -687,7 +742,7 @@ fn corpus_runner_reports_flip_keys() {
 #[test]
 fn corpus_runner_executes_all_programs_before_reporting_mismatches() {
     let directory = tempfile::tempdir().unwrap();
-    let expected = json!({"verb":"check","exit_code":10,"flips_with":"QSL-1965"}).to_string();
+    let expected = json!({"verb":"check","exit_code":10,"category":"success","last_stage":"S4","flips_with":"QSL-1965"}).to_string();
     write_case(directory.path(), "one", ACCEPTING_PROGRAM, &expected);
     write_case(directory.path(), "two", ACCEPTING_PROGRAM, &expected);
 
@@ -733,7 +788,7 @@ fn corpus_runner_uses_public_entry_point() {
                     == [
                         "fsl_command".to_owned(),
                         "command".to_owned(),
-                        "compile".to_owned(),
+                        "compile_outcome".to_owned(),
                     ]
                 {
                     self.compile = true;
@@ -763,7 +818,7 @@ fn corpus_runner_uses_public_entry_point() {
     );
     assert!(
         calls.compile,
-        "runner must call fsl_command::command::compile"
+        "runner must call fsl_command::command::compile_outcome"
     );
     assert!(calls.run, "runner must call fsl_command::command::run");
 }
@@ -774,4 +829,271 @@ fn absent_area_is_allowed_but_created_empty_area_is_rejected() {
     let directory = tempfile::tempdir().unwrap();
     let error = run_directory(directory.path()).unwrap_err();
     assert!(error.contains("no .native programs"), "{error}");
+}
+
+fn write_run_request(directory: &Path, stem: &str, function: &str) {
+    let request = json!({
+        "format":"native-run/1",
+        "request":{
+            "models":[],
+            "program":{"source":{
+                "file": format!("{stem}.native"),
+                "authority":"agent-ix",
+                "identity": format!("test:corpus:{stem}"),
+                "document":"Run",
+                "formal_revision":1
+            }},
+            "call":{"function":function,"arguments":[]}
+        }
+    });
+    std::fs::write(
+        directory.join(format!("{stem}.request.json")),
+        serde_json::to_vec(&request).unwrap(),
+    )
+    .unwrap();
+}
+
+/// FR-286-AC-1, TC-770: the runner compares the lifecycle outcome's
+/// `category` and `last_stage` members, a `null` stage included.
+#[test]
+#[trace("TC-770", "FR-286-AC-1", "FR-286-AC-5", "FR-286-AC-6")]
+fn corpus_runner_compares_category_and_last_stage() {
+    // A compiled package reached S4.
+    let directory = tempfile::tempdir().unwrap();
+    write_case(
+        directory.path(),
+        "accepting",
+        ACCEPTING_PROGRAM,
+        &json!({"verb":"check","exit_code":0,"category":"success","last_stage":"S4"}).to_string(),
+    );
+    assert_eq!(run_directory(directory.path()).unwrap(), "flips_with: none");
+
+    // A refused call stops at S6a.
+    let directory = tempfile::tempdir().unwrap();
+    write_case(
+        directory.path(),
+        "refusal",
+        RUN_PROGRAM,
+        &json!({"verb":"run","exit_code":20,"category":"refusal","last_stage":"S6a"}).to_string(),
+    );
+    write_run_request(directory.path(), "refusal", "nope");
+    assert_eq!(run_directory(directory.path()).unwrap(), "flips_with: none");
+
+    // A wrong stage, a `null` stage and a wrong category are mismatches.
+    for (member, wrong) in [
+        ("last_stage", json!("S3")),
+        ("last_stage", Value::Null),
+        ("category", json!("violation")),
+    ] {
+        let directory = tempfile::tempdir().unwrap();
+        let mut expected =
+            json!({"verb":"check","exit_code":0,"category":"success","last_stage":"S4"});
+        expected[member] = wrong;
+        write_case(
+            directory.path(),
+            "accepting",
+            ACCEPTING_PROGRAM,
+            &expected.to_string(),
+        );
+        let error = run_directory(directory.path()).unwrap_err();
+        assert!(error.contains(&format!("{member} expected=")), "{error}");
+    }
+}
+
+/// FR-286-AC-1, TC-770: an outcome that omits `category` or `last_stage` is
+/// a mismatch against an expectation naming it, never a silent pass.
+#[test]
+#[trace("TC-770", "FR-286-AC-1")]
+fn corpus_runner_detects_missing_lifecycle_fields() {
+    let expected: Expectation = serde_json::from_value(
+        json!({"verb":"run","exit_code":0,"category":"success","last_stage":null}),
+    )
+    .unwrap();
+    assert_eq!(expected.last_stage, None);
+    for omitted in [
+        json!({"verb":"run","exit_code":0,"category":"success"}),
+        json!({"verb":"run","exit_code":0,"last_stage":"S6a"}),
+    ] {
+        assert!(serde_json::from_value::<Expectation>(omitted).is_err());
+    }
+
+    let actual = Actual {
+        exit_code: 0,
+        category: None,
+        last_stage: None,
+        code: None,
+        cause: None,
+        result: None,
+    };
+    let mismatch =
+        mismatch_of(&expected, &actual).expect("members the outcome does not carry are a mismatch");
+    assert!(mismatch.contains("category expected=success actual=<not exposed>"));
+    assert!(mismatch.contains("last_stage expected=null actual=<not exposed>"));
+
+    let complete = Actual {
+        category: Some("success".to_owned()),
+        last_stage: Some(None),
+        ..actual
+    };
+    assert_eq!(mismatch_of(&expected, &complete), None);
+}
+
+fn mismatch_of(expected: &Expectation, actual: &Actual) -> Option<String> {
+    mismatch(Path::new("case.native"), expected, actual)
+}
+
+/// FSpec FR-290's negotiation for the analyze corpus cases: one candidate is
+/// `supported`, none `unsupported`.
+struct OneCandidate;
+
+impl fsl_analyze::analyze::document::Negotiate for OneCandidate {
+    fn negotiate(
+        &self,
+        item: &fsl_analyze::analyze::ClaimItem,
+        candidates: &fsl_route::CandidateOutcome,
+    ) -> (
+        fsl_route::routing::Disposition,
+        Option<fsl_analyze::analyze::Diagnostic>,
+    ) {
+        use fsl_analyze::analyze::{Diagnostic, Payload};
+        use fsl_route::routing::Disposition;
+        match candidates {
+            fsl_route::CandidateOutcome::Candidates(set) if set.candidates().len() == 1 => {
+                (Disposition::Supported(set.candidates()[0].clone()), None)
+            }
+            _ => (
+                Disposition::Unsupported,
+                Some(Diagnostic {
+                    code: fsl_route::NegotiationOutcome::UnsupportedRequestedCapability.code(),
+                    payload: Payload::Kind(item.kind),
+                }),
+            ),
+        }
+    }
+}
+
+const LIFECYCLE_UNIT: &str = "language \"ix:native\" edition \"1-draft\";\n\
+    profile v = \"filament.value.complete/v1\";\n\
+    profile e = \"filament.temporal.event-position.false-extension/v1\";\n\
+    profile f = \"filament.temporal.fixed-sample.false-extension/v1\";\n\
+    profile w = \"filament.temporal.timestamped-event.finite-window/v1\";\n\
+    profile i = \"filament.temporal.infinite-trace/v1\";\n\
+    dimension Time;\n\
+    unit s : Time = rational(1, 1);\n\
+    unit ms : Time = rational(1, 1000) * s;\n\
+    record Reading { level: Int[0, 9]; }\n\
+    temporal E using e over (r: Reading) clock \"events\" on origin { eventually[0,2] holds(r.level = 2) }\n\
+    temporal S using f over (r: Reading) clock \"sample\" on origin { eventually[0,3] holds(r.level = 2) }\n\
+    temporal T using w over (r: Reading) clock \"plant-ms\" on origin { eventually[0,5] holds(r.level > 0) }\n\
+    temporal Reaches using i over (r: Reading) clock \"steps\" on origin { eventually holds(r.level = 2) }\n\
+    temporal Never using i over (r: Reading) clock \"steps\" on origin { always holds(r.level < 2) }\n";
+
+fn lifecycle_program(stem: &str) -> Value {
+    json!({"source": {"file": format!("{stem}.native"), "authority": "agent-ix",
+        "identity": format!("test:corpus:{stem}"), "document": "Lifecycle", "formal_revision": 1}})
+}
+
+fn level(level: i64) -> Value {
+    json!({"sample": {"level": {"integer": level.to_string()}}})
+}
+
+fn lifecycle_clocks() -> Value {
+    json!({
+        "events": {"kind": "event_position", "sequence_authority": "events"},
+        "sample": {"kind": "fixed_sample",
+            "epoch": {"kind": "integer", "decimal": "0"},
+            "period": {"kind": "integer", "decimal": "1"}, "unit": "s"},
+        "plant-ms": {"kind": "timestamped_event", "timestamp_unit": "ms"},
+    })
+}
+
+/// FR-286-AC-1, FR-286-AC-5, TC-770: a clause run, a monitor run and an
+/// analyze run each carry `category` and `last_stage`, and the runner
+/// compares both for each.
+#[test]
+#[trace("TC-770", "FR-286-AC-1", "FR-286-AC-5", "FR-286-AC-6")]
+fn corpus_runner_compares_lifecycle_members_of_every_command_kind() {
+    // A clause run over a temporal clause still pending at the end of the
+    // trace: pending at S6a.
+    let directory = tempfile::tempdir().unwrap();
+    write_case(
+        directory.path(),
+        "clause",
+        LIFECYCLE_UNIT,
+        &json!({"verb":"run","exit_code":0,"category":"pending","last_stage":"S6a"}).to_string(),
+    );
+    let request = json!({"format":"native-run/1","request":{
+        "models":[], "program": lifecycle_program("clause"), "clocks": lifecycle_clocks(),
+        "clause":{"selection":{"temporal":{"name":"Reaches",
+            "trace":{"finite":[level(0), level(2)]}}},"observations":{}}}});
+    std::fs::write(
+        directory.path().join("clause.request.json"),
+        serde_json::to_vec(&request).unwrap(),
+    )
+    .unwrap();
+    assert_eq!(run_directory(directory.path()).unwrap(), "flips_with: none");
+
+    // A monitor run whose `Never` clause is violated: violation at S6a.
+    let directory = tempfile::tempdir().unwrap();
+    write_case(
+        directory.path(),
+        "monitor",
+        LIFECYCLE_UNIT,
+        &json!({"verb":"monitor","exit_code":10,"category":"violation","last_stage":"S6a"})
+            .to_string(),
+    );
+    let mut records: Vec<String> = [0, 1, 2, 1]
+        .iter()
+        .map(|value| json!({"observation": level(*value)}).to_string())
+        .collect();
+    records.push(json!({"end": true}).to_string());
+    std::fs::write(directory.path().join("records.jsonl"), records.join("\n")).unwrap();
+    let request = json!({"format":"native-monitor/1","request":{
+        "models":[], "program": lifecycle_program("monitor"), "clocks": lifecycle_clocks(),
+        "clauses":[{"name":"Reaches"},{"name":"Never"}],
+        "trace":{"kind":"finite"}, "records":"records.jsonl"}});
+    std::fs::write(
+        directory.path().join("monitor.request.json"),
+        serde_json::to_vec(&request).unwrap(),
+    )
+    .unwrap();
+    assert_eq!(run_directory(directory.path()).unwrap(), "flips_with: none");
+
+    // An analyze run whose claim holds. FR-621 writes `last_stage` null.
+    let directory = tempfile::tempdir().unwrap();
+    let unit = format!(
+        "{}temporal Q using t0 over (c: M::Counter) clock \"model-steps\" on origin {{ always holds(c.value <= 3) }}\n",
+        std::str::from_utf8(include_bytes!("../../fsl-conformance/cases/counter-step.native"))
+            .unwrap()
+    );
+    write_case(
+        directory.path(),
+        "analyze",
+        &unit,
+        &json!({"verb":"analyze","exit_code":0,"category":"success","last_stage":null}).to_string(),
+    );
+    std::fs::write(
+        directory.path().join("package.json"),
+        include_bytes!("../../fsl-conformance/cases/counter-step-package.json"),
+    )
+    .unwrap();
+    std::fs::write(
+        directory.path().join("v0.json"),
+        include_bytes!("../../fsl-conformance/cases/counter-step-v0.json"),
+    )
+    .unwrap();
+    let request = json!({"format":"native-analyze/1","request":{
+        "program": {"source": {"file": "analyze.native", "authority": "test",
+            "identity": "counter-step", "document": "CounterStep", "formal_revision": 1}},
+        "models": [{"format": "semantic-ir/2.0.0", "source": {"file": "package.json",
+            "authority": "test", "identity": "counter-step-package", "document": "Package",
+            "formal_revision": 1}}],
+        "documents": [{"file": "v0.json"}],
+        "items": [{"claim": "Q"}]}});
+    std::fs::write(
+        directory.path().join("analyze.request.json"),
+        serde_json::to_vec(&request).unwrap(),
+    )
+    .unwrap();
+    assert_eq!(run_directory(directory.path()).unwrap(), "flips_with: none");
 }

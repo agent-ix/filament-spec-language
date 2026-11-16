@@ -280,6 +280,7 @@ fn run_input(
                 Ok((document, exit_code)) => Ok(RunResult {
                     exit_code,
                     value: NativeResult::analyze_document(document),
+                    outcome: None,
                 }),
                 Err(AnalyzeDocumentError::Refused(refusal)) => {
                     Err(RunCause::AnalyzeRefused(Box::new(refusal)))
