@@ -5,7 +5,7 @@
 
 use filament_eval::FamilyOutcome;
 use filament_exact::{
-    IeeeFlag, IeeeFlags, IeeeValue, LimitKind, Meter, Outcome, ScalarLimits, Value,
+    IeeeFlag, IeeeFlags, IeeeValue, LimitKind, Meter, Outcome, ScalarLimits, Undefined, Value,
 };
 use filament_semantic_value::checking::CheckMode;
 use filament_semantic_value::checking::CheckingLimits;
@@ -217,6 +217,18 @@ fn ordering_and_equality_vectors_hold_at_both_widths() {
             assert!(flags(&losses).is_empty(), "{w}: {body}: {losses:?}");
         }
     }
+}
+
+/// QSL-2188: an infinity input is undefined at the IEEE to-rational boundary.
+#[trace("TC-1091", "FR-397-AC-18")]
+#[test]
+fn infinity_to_rational_is_undefined_not_finite() {
+    let (outcome, _) = run(
+        "Rational[-100, 100; 1, 16]",
+        "convert<Rational[-100, 100; 1, 16]>(float64(bits: 0x7ff0000000000000))",
+    );
+
+    assert_eq!(outcome, Outcome::Undefined(Undefined::IeeeNotFinite));
 }
 
 /// Trace: FR-397-AC-16

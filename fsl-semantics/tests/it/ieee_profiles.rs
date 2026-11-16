@@ -2215,21 +2215,6 @@ fn f27_ieee_to_rational_sizes_maxparts_and_admits_membership_before_retention() 
     );
 }
 
-/// QSL-2188: an infinity input is undefined at the IEEE to-rational boundary.
-#[trace("FSpec-TC-193", "FSpec-FR-148-AC-9")]
-#[test]
-fn infinity_to_rational_is_undefined_not_finite() {
-    let int = BigInt::from;
-    let target = rational_type(&int(0), &int(1), &int(1), &int(2));
-    let outcome = to_rational(
-        f32v(0x7f80_0000),
-        &target,
-        &mut Meter::new(limits(32, 1, 3, 1)),
-    );
-
-    assert_eq!(outcome, Outcome::Undefined(Undefined::IeeeNotFinite));
-}
-
 #[trace("FSpec-TC-193", "FSpec-FR-148-AC-9")]
 #[test]
 fn f28_decimal_source_is_sized_by_its_retained_representation() {
