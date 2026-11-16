@@ -191,6 +191,46 @@ fn missing_division_selection_stays_typed_and_modulo_needs_no_selection() {
     }
 }
 
+#[trace("TC-2210", "FR-495-AC-19", "FSpec-TC-1660", "FSpec-FR-147-AC-14")]
+#[test]
+fn exact_mod_intervals_remain_readable_in_bounded_and_integer_consumers() {
+    let source = format!(
+        "{HEADER}function m1 using v(a: Int[0, 100], b: Int[1, 12]): Int[0, 11] pure {{ a mod b }}\n\
+         function m2 using v(a: Int[0, 100], b: Int[1, 12]): Integer pure {{ a mod b }}\n\
+         function accepts using v(r: Int[0, 11]): Boolean pure {{ r >= 0 }}\n\
+         function via_call using v(a: Int[0, 100], b: Int[1, 12]): Boolean pure {{ accepts(a mod b) }}\n\
+         function accepts_wide using v(r: Integer): Boolean pure {{ r >= 0 }}\n"
+    );
+    let compiled = compile_without_law(&source).expect("mod compiles without a division law");
+    let mut evidence = CheckedPackageEvidence::new();
+    evidence.support_feature("filament.value.complete/v1");
+    let read = match CheckedPackageV2::read(
+        compiled.bytes(),
+        CheckedPackageReadLimits::bounded(),
+        &evidence,
+    ) {
+        CheckedPackageV2ReadResult::Admitted(read) => read,
+        other => panic!("exact mod results remain independently readable: {other:?}"),
+    };
+    let modulo_nodes = read
+        .resolved_graph()
+        .nodes
+        .iter()
+        .filter_map(|node| read.term(&node.node_id))
+        .filter(|term| {
+            matches!(
+                term,
+                CheckedTerm::Application { operation, .. }
+                    if operation.identity() == Some("filament.op.integer.mod")
+            )
+        })
+        .count();
+    assert!(
+        modulo_nodes >= 1,
+        "bounded and Integer consumers retain mod"
+    );
+}
+
 #[trace("TC-1284", "FR-495-AC-8")]
 #[test]
 fn facade_admission_retains_conflicting_unknown_and_incompatible_definition_refusals() {

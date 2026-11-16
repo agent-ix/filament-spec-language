@@ -45,8 +45,8 @@
 //! flagged.
 
 use filament_checked::node::{
-    Arithmetic, CheckedLiteral, Connective, ConnectiveOrigin, NodeKind, OrderedKind, RecordField,
-    RecordSlot, Visit,
+    Arithmetic, CheckedLiteral, Connective, ConnectiveOrigin, IntegerDivisionOperator, NodeKind,
+    OrderedKind, RecordField, RecordSlot, Visit,
 };
 use fsl_foundation::source::node_table::{
     standalone, DebugTable, DebugWith, NodeKeyDebug, NodeList,
@@ -2706,6 +2706,24 @@ impl Typer<'_> {
         required: &ValueType,
     ) -> Result<Node, CheckRefusal> {
         if &node.value_type == required {
+            if let (
+                NodeKind::IntegerDivision {
+                    operator: IntegerDivisionOperator::Mod,
+                    ..
+                },
+                ValueType::Int(target),
+            ) = (&node.kind, required)
+            {
+                let location = node.location.clone();
+                return Ok(Node {
+                    kind: NodeKind::Coerce(self.push(node), target.clone()),
+                    value_type: required.clone(),
+                    location,
+                    equality_producer: None,
+                    ordering_part: false,
+                    field_population: None,
+                });
+            }
             return Ok(node);
         }
         match (&node.value_type, required) {
@@ -2723,6 +2741,26 @@ impl Typer<'_> {
                 Ok(node)
             }
             (ValueType::Integer | ValueType::Int(_), ValueType::Integer) => Ok(node),
+            (ValueType::Int(source), ValueType::Int(target))
+                if matches!(
+                    node.kind,
+                    NodeKind::IntegerDivision {
+                        operator: IntegerDivisionOperator::Mod,
+                        ..
+                    }
+                ) && target.lower() <= source.lower()
+                    && source.upper() <= target.upper() =>
+            {
+                let location = node.location.clone();
+                Ok(Node {
+                    kind: NodeKind::Coerce(self.push(node), target.clone()),
+                    value_type: required.clone(),
+                    location,
+                    equality_producer: None,
+                    ordering_part: false,
+                    field_population: None,
+                })
+            }
             (ValueType::Int(source), ValueType::Int(target))
                 if target.lower() <= source.lower() && source.upper() <= target.upper() =>
             {
@@ -4877,17 +4915,44 @@ impl<'a> Typer<'a> {
     /// the value an argument's branches yield reaches this.
     fn upcast(
         &mut self,
-        mut typed: Node,
+        typed: Node,
         required: &ValueType,
         location: &Location,
     ) -> Result<Node, CheckRefusal> {
-        typed.value_type = self.model_type(
+        let upcast_type = self.model_type(
             super::state_model::Form::Argument {
                 actual: typed.value_type.clone(),
                 required: required.clone(),
             },
             location,
         )?;
+        if matches!(
+            typed.kind,
+            NodeKind::IntegerDivision {
+                operator: IntegerDivisionOperator::Mod,
+                ..
+            }
+        ) {
+            if let ValueType::Int(target) = required {
+                let location = typed.location.clone();
+                return Ok(Node {
+                    kind: NodeKind::Coerce(self.push(typed), target.clone()),
+                    value_type: required.clone(),
+                    location,
+                    equality_producer: None,
+                    ordering_part: false,
+                    field_population: None,
+                });
+            }
+            if matches!(required, ValueType::Integer) {
+                let mut widened = typed;
+                widened.value_type = upcast_type;
+                return Ok(widened);
+            }
+            return Ok(typed);
+        }
+        let mut typed = typed;
+        typed.value_type = upcast_type;
         Ok(typed)
     }
 

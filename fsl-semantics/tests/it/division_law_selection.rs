@@ -206,11 +206,32 @@ fn a_mod_node_is_typed_by_its_divisor_interval() {
     ] {
         let graph = check(VALUE, source, CheckMode::Linked)
             .unwrap_or_else(|refusals| panic!("{source}: {refusals:?}"));
-        let body_type = graph
+        let body = graph
             .function_state(0)
             .expect("the function is checked")
-            .body
-            .value_type();
+            .body;
+        let body_type = body.value_type();
+        let children = body.children();
+        let [modulo] = children.as_slice() else {
+            panic!("the bounded consumer wraps its checked mod node: {source}");
+        };
+        assert!(
+            matches!(
+                modulo.kind(),
+                filament_checked::node::NodeKind::IntegerDivision {
+                    operator: filament_checked::node::IntegerDivisionOperator::Mod,
+                    ..
+                }
+            ),
+            "the wrapped node is mod for {source}"
+        );
+        assert_eq!(
+            modulo.value_type(),
+            &ValueType::Int(
+                IntegerInterval::new(lower.into(), upper.into()).expect("valid interval")
+            ),
+            "checked mod node type for {source}"
+        );
         assert_eq!(
             body_type,
             &ValueType::Int(
@@ -323,12 +344,16 @@ fn modulo_uses_literal_and_derived_operand_ranges() {
     let literal_source = "function literal using v(a: Int[0, 1]): Int[0, 2] pure { -7 mod 3 }";
     let literal_graph = check(VALUE, literal_source, CheckMode::Linked)
         .unwrap_or_else(|refusals| panic!("{literal_source}: {refusals:?}"));
+    let literal_body = literal_graph
+        .function_state(0)
+        .expect("the function is checked")
+        .body;
+    let children = literal_body.children();
+    let [literal_mod] = children.as_slice() else {
+        panic!("the bounded consumer wraps its checked literal mod node");
+    };
     assert_eq!(
-        literal_graph
-            .function_state(0)
-            .expect("the function is checked")
-            .body
-            .value_type(),
+        literal_mod.value_type(),
         &ValueType::Int(IntegerInterval::new(2_i64.into(), 2_i64.into()).expect("interval")),
         "the checked literal mod node has its singleton type"
     );

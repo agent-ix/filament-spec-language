@@ -4257,6 +4257,24 @@ impl<'a> Lowering<'a> {
         self.typed_application(node.location(), result_type, operator, operation, arguments)
     }
 
+    /// Lower `mod` at the catalogued unbounded result type. A checked
+    /// `Coerce` supplies a range-narrowing node when its consumer requires a
+    /// bounded integer.
+    fn modulo_application(
+        &mut self,
+        node: CheckedNode<'_>,
+        arguments: Vec<MemberTerm>,
+    ) -> Result<LeafTerm, CheckRefusal> {
+        let integer = self.type_ref(&ValueType::Integer, node.location())?;
+        self.typed_application(
+            node.location(),
+            integer,
+            Operator::Binary,
+            Operation::plain("filament.op.integer.mod"),
+            arguments,
+        )
+    }
+
     /// Key an application node typed at `result_type`, denoted by the
     /// region `location`, and return a reference to it.
     fn typed_application(
@@ -4428,7 +4446,16 @@ impl<'a> Lowering<'a> {
                 return Ok(LowerStep::Lowered(LeafTerm::reference_node(key.into())));
             }
             NodeKind::Coerce(operand, interval) => {
-                if !super::ir::coerce_builds_narrow(node.at(*operand).value_type(), interval) {
+                let preserves_mod_range = matches!(
+                    node.at(*operand).kind(),
+                    NodeKind::IntegerDivision {
+                        operator: IntegerDivisionOperator::Mod,
+                        ..
+                    }
+                );
+                if !preserves_mod_range
+                    && !super::ir::coerce_builds_narrow(node.at(*operand).value_type(), interval)
+                {
                     return Ok(LowerStep::Descend(node.at(*operand)));
                 }
                 let member =
@@ -5670,12 +5697,18 @@ impl<'a> Lowering<'a> {
                     NodeKind::Dispatch { operation, .. } => Some(*operation),
                     _ => None,
                 };
-                let term = self.application(
-                    node,
-                    operator,
-                    operation,
-                    terms.into_iter().map(MemberTerm::Leaf).collect(),
-                )?;
+                let arguments = terms.into_iter().map(MemberTerm::Leaf).collect();
+                let term = if matches!(
+                    node.kind(),
+                    NodeKind::IntegerDivision {
+                        operator: IntegerDivisionOperator::Mod,
+                        ..
+                    }
+                ) {
+                    self.modulo_application(node, arguments)?
+                } else {
+                    self.application(node, operator, operation, arguments)?
+                };
                 if let Some(data) = equality_producer {
                     let LeafTerm::Reference {
                         target: NodeRef::Admitted(key),
