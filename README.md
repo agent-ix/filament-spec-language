@@ -31,7 +31,7 @@ model `example/config-version`:
 
 ```
 language "ix:native" edition "1-draft";
-profile v = "filament.value.complete/v1";
+profile v = "filament.model.complete/v1";
 model Config = "example/config-version";
 
 invariant ParentOrder using v on Config::ConfigVersion at current {
@@ -49,8 +49,8 @@ post VersionUnchanged using v on Config::ConfigVersion::attemptUpdate {
 
 - **`language … edition`** sets the language version of the file.
 - **`profile`** selects the part of the language the rules may use.
-  `filament.value.complete/v1` covers values, records and expressions. The line
-  binds it to the name `v`, and each rule says `using v`.
+  `filament.model.complete/v1` covers values, object graphs and model operations.
+  The line binds it to the name `v`, and each rule says `using v`.
 - **`model`** imports the domain model by identity.
   A rule is checked against the model with that identity.
 - **`invariant … at current`** must hold for every `ConfigVersion` in the data.
