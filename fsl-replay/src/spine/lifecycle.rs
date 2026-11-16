@@ -1390,15 +1390,25 @@ fn select_extensions(
     .map_err(|diagnostic| Box::new(CompileRefusal::Source(diagnostic)))?;
     let held_by_catalog = |identity: &str| held_extension_of(catalog, identity);
     let mut selections: Vec<fsl_foundation::selection::DefinitionRef> = Vec::new();
+    let mut profile_refusals = Vec::new();
     for profile in &header.selections().profiles {
-        // A profile that refuses is reported by E3 in its own place.
-        if let Ok(found) = resolve_profiles(std::slice::from_ref(profile), &held_by_catalog) {
-            for selection in found {
-                if !selections.contains(&selection) {
-                    selections.push(selection);
+        match resolve_profiles(std::slice::from_ref(profile), &held_by_catalog) {
+            Ok(found) => {
+                for selection in found {
+                    if !selections.contains(&selection) {
+                        selections.push(selection);
+                    }
                 }
             }
+            Err(mut refusals) => profile_refusals.append(&mut refusals),
         }
+    }
+    if !profile_refusals.is_empty() {
+        let span = profile_refusals[0].identity_span;
+        return Err(Box::new(CompileRefusal::Profile {
+            refusals: profile_refusals,
+            region: region(header.source().reference(), span),
+        }));
     }
     // Step 2, against the core vocabulary.
     catalog
