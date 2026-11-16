@@ -131,3 +131,22 @@ fn a_constraint_never_proves_past_its_boundary() {
     let item = run.item(0);
     assert_ne!(label(&item), "proved", "{item}");
 }
+
+/// FR-621 "The record's `backend` member": a malformed reduction selection
+/// is a disposition, so its record is `settled_by` `disposition` with no
+/// `backend`, though the item was negotiated to a backend.
+#[trace("TC-2296", "FR-621-AC-10")]
+#[test]
+fn a_malformed_reduction_is_settled_by_disposition() {
+    let ws = Workspace::new("red-malformed");
+    let run = analyze(&request(
+        &ws,
+        &clause("Holds", "", "always holds(c.value <= 3)"),
+        json!([{"claim": "Holds", "reductions": {"partial_order": "yes"}}]),
+        true,
+    ));
+    let record = &run.item(0)["record"];
+    assert_eq!(record["result"], "declined", "{record}");
+    assert_eq!(record["settled_by"], "disposition", "{record}");
+    assert!(record.get("backend").is_none(), "{record}");
+}

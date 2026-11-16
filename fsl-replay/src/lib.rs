@@ -104,7 +104,8 @@ pub use application::{
 pub use bounds::{BoundExceeded, ReplayLimits, DEFAULT_REPLAY_INPUT_BYTES};
 pub use call_replay_context::{run_with_replay_context, CallReplayContext, RunWithReplayContext};
 pub use call_requirements::{
-    run_with_requirements, CallRequirement, CallRequirements, RunWithRequirements,
+    run_with_requirements, run_with_requirements_reading, CallRequirement, CallRequirements,
+    RequirementsRun, RunWithRequirements,
 };
 pub use call_site::{
     call_site, CallSite, CallSiteRefusal, CallSiteSelection, ClauseName, ClauseSite, FieldName,

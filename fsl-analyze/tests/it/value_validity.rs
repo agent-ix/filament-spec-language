@@ -1852,7 +1852,6 @@ fn engines_under(
             Engine::external(
                 descriptor,
                 fsl_analyze::analyze::BackendTool::new("test-provider", "1").expect("a tool"),
-                fsl_analyze::provider::ProviderLimits::default(),
                 Box::new(provider),
             )
             .unwrap(),
@@ -2019,7 +2018,6 @@ fn an_unnamed_single_candidate_item_is_sent_without_backend_at_its_request_posit
             Engine::external(
                 smt_descriptor(Mode::Unbounded),
                 fsl_analyze::analyze::BackendTool::new("test-provider", "1").expect("a tool"),
-                fsl_analyze::provider::ProviderLimits::default(),
                 Box::new(provider),
             )
             .expect("an unbounded descriptor"),
@@ -2201,7 +2199,6 @@ fn a_provider_is_refused_under_a_bounded_only_descriptor() {
     let refusal = Engine::external(
         smt_descriptor(Mode::Bounded),
         fsl_analyze::analyze::BackendTool::new("test-provider", "1").expect("a tool"),
-        fsl_analyze::provider::ProviderLimits::default(),
         Box::new(provider),
     )
     .expect_err("bounded only");
@@ -2211,7 +2208,6 @@ fn a_provider_is_refused_under_a_bounded_only_descriptor() {
     let engine = Engine::external(
         smt_descriptor(Mode::Unbounded),
         fsl_analyze::analyze::BackendTool::new("test-provider", "1").expect("a tool"),
-        fsl_analyze::provider::ProviderLimits::default(),
         Box::new(provider),
     )
     .unwrap();
@@ -2329,7 +2325,6 @@ fn a_provider_item_stopped_by_the_case_budget_or_cancellation_is_incomplete() {
             Engine::external(
                 smt_descriptor(Mode::Unbounded),
                 fsl_analyze::analyze::BackendTool::new("test-provider", "1").expect("a tool"),
-                fsl_analyze::provider::ProviderLimits::default(),
                 Box::new(Cancelling(refuted)),
             )
             .unwrap(),

@@ -314,7 +314,6 @@ fn a_misadvertising_plugin_is_refused_and_never_joins_the_layering_snapshot() {
 /// the record.
 #[trace("TC-2296", "FR-621-AC-10")]
 #[test]
-#[ignore = "QSL-2304: the analyze record does not write backend by settled_by yet"]
 fn a_record_names_its_backend_exactly_when_a_result_settles_it() {
     let ws = Workspace::new("rulings-backend");
     let body = format!("{}{}", bounded(), below_three());

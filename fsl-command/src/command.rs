@@ -8,6 +8,8 @@ mod monitor;
 mod output;
 mod output_file;
 mod replay;
+mod requirements;
+mod settle;
 mod tl;
 mod wire;
 
@@ -21,9 +23,12 @@ pub use tl::{record as tl_record, AtomMapping, TlRecord};
 
 use crate::formal_source::FormalSource;
 use filament_contract_model as ir;
+use fsl_analyze::analyze::document::Negotiate;
+use fsl_analyze::provider::ProviderOptions;
 use fsl_foundation::serde_object::Object;
 use fsl_foundation::{Code, Diagnostic, Source};
 use fsl_semantics::model::domain_package::DOMAIN_PACKAGE_PROFILE;
+use settle::Settle;
 use std::{
     fs::File,
     io::{self, Read},
@@ -157,6 +162,22 @@ pub struct RunResult {
     /// The FR-286 lifecycle outcome of a function run (category and last
     /// stage); `None` for the other run families.
     pub outcome: Option<fsl_replay::OutcomeDocument>,
+    /// FR-963: the settled requirement items of a call that carried
+    /// `requirements`; `None` exactly when it carried none.
+    pub requirements: Option<RequirementResults>,
+}
+
+/// The settled requirement items of a run call (FR-963), one record per
+/// item of the call in FR-395's package order.
+#[derive(Debug)]
+pub struct RequirementResults {
+    /// One terminal record per item, in package order.
+    pub records: Vec<fsl_replay::TerminalRecord>,
+    /// Exactly one reproduced counterexample per `refuted` record.
+    pub counterexamples: Vec<fsl_analyze::analyze::ItemCounterexample>,
+    /// FR-635's sorted `{backend, tool}` list of every backend the items
+    /// were negotiated against: the document's `registry` member.
+    pub registry: Vec<fsl_analyze::analyze::document::RegistryEntry>,
 }
 
 /// Successful compilation with the core's document and exact emitted bytes.
@@ -190,6 +211,8 @@ struct FunctionRunData {
     packages: fsl_semantics::model::intake::PackageInput,
     dependencies: fsl_replay::spine::DependencyInput,
     call: fsl_replay::spine::Call,
+    /// FR-960: the call's `requirements`; `None` settles no item.
+    requirements: Option<requirements::Requirements>,
 }
 
 /// Owned inputs passed to the driver's existing execution pipeline.
@@ -334,6 +357,14 @@ pub enum RunCause {
     /// command does not admit for it, or carries no `call`.
     #[error("a 1-draft program runs through the spine; the request selects {0}")]
     CompleteRunSelection(CompleteRunSelection),
+    /// FR-960: a `call.requirements.items` entry names a claim that is no
+    /// item of the call; refused at stage `call` before any item is
+    /// negotiated.
+    #[error("missing_declaration: call.requirements names the claim {claim}, which is no item of the call")]
+    UnknownRequirementClaim {
+        /// The claim as the request spells it.
+        claim: serde_json::Value,
+    },
     /// FR-100: the spine run entry refused, at its own stage and cause code.
     #[error("{0}")]
     SpineRun(Box<fsl_replay::spine::RunRefusal>),
@@ -486,6 +517,7 @@ impl RunCause {
             Self::ExtractionRequiresRun => Code::ExtractionRequiresRun,
             Self::Spine(failure) => failure.refusal.code(),
             Self::SpineRun(refusal) => refusal.code(),
+            Self::UnknownRequirementClaim { .. } => Code::MissingDeclaration,
             Self::AnalyzeRequest { .. } => Code::InvalidRequest,
             Self::AnalyzePackage { code, .. } => *code,
             Self::AnalyzeNotYetImplemented { .. } => Code::UnsupportedConstruct,
@@ -648,6 +680,7 @@ impl RunError {
             | RunCause::MonitorCancelled
             | RunCause::ReplayRequest(_)
             | RunCause::ReplayBytes { .. }
+            | RunCause::UnknownRequirementClaim { .. }
             | RunCause::ReplayOutput(_)
             | RunCause::ItemsFault => OutcomeDocument::new(operation, None, self.category())
                 .with_diagnostics(vec![OutcomeDiagnostic::new(
@@ -854,34 +887,120 @@ fn reject_current_parameters_before_sources(
     Ok(())
 }
 
-/// Read a native-run/1 job and execute it locally with fresh, bounded stage state.
-pub fn run(path: &Path) -> std::result::Result<RunResult, Box<RunError>> {
-    run_with_limits(path, RunLimits::default())
+/// Read a native-run/1 job and execute it locally with fresh, bounded stage
+/// state. A call carrying `requirements` settles its items with the linked
+/// engines alone, each negotiated by `negotiate` (FR-961 "plain
+/// `command::run` settles with the linked engines").
+pub fn run(
+    path: &Path,
+    negotiate: &dyn Negotiate,
+) -> std::result::Result<RunResult, Box<RunError>> {
+    run_with_limits(path, RunLimits::default(), negotiate)
 }
 
 /// Run with request members supplied beside the request file (FR-640).
 pub fn run_with_overrides(
     path: &Path,
     overrides: &RequestOverrides<'_>,
+    negotiate: &dyn Negotiate,
 ) -> std::result::Result<RunResult, Box<RunError>> {
-    run_with_limits_and_overrides(path, RunLimits::default(), overrides)
+    run_with_limits_and_overrides(path, RunLimits::default(), overrides, negotiate)
 }
 
 /// Run with the caller's explicit request and dependent-file byte ceilings.
 pub fn run_with_limits(
     path: &Path,
     limits: RunLimits,
+    negotiate: &dyn Negotiate,
 ) -> std::result::Result<RunResult, Box<RunError>> {
-    run_with_limits_and_overrides(path, limits, &RequestOverrides::default())
+    run_with_limits_and_overrides(path, limits, &RequestOverrides::default(), negotiate)
 }
 
 /// Run with explicit byte ceilings and request members supplied beside the
-/// request file (FR-640).
+/// request file (FR-640): [`run_with_providers`] with no provider, the
+/// default [`ProviderOptions`] and a handle that is never cancelled.
 pub fn run_with_limits_and_overrides(
     path: &Path,
     limits: RunLimits,
     overrides: &RequestOverrides<'_>,
+    negotiate: &dyn Negotiate,
 ) -> std::result::Result<RunResult, Box<RunError>> {
+    run_configured(
+        path,
+        limits,
+        overrides,
+        Settlement {
+            negotiate,
+            providers: Vec::new(),
+            options: &ProviderOptions::default(),
+            cancel: &filament_exact::Cancel::new(),
+        },
+    )
+}
+
+/// FSL's run-side provider entry (FR-961): run the call the native-run/1
+/// request at `path` names as FR-100 does and, when the call carries
+/// `requirements` (FR-960), settle its requirement items against
+/// `Engines::fsl()` with `providers` registered beside it, each item
+/// negotiated by `negotiate` before any provider is called, and every
+/// provider request carrying `options`' limits (FR-964). `cancel` governs
+/// the settlement: once it fires no further request is sent and every
+/// unsettled item settles `incomplete`. The call's own evaluation is the
+/// same with and without `requirements`, `providers` and `options`.
+///
+/// # Errors
+///
+/// As [`run`]; and `invalid-request` naming `providers` when a provider
+/// repeats a registered `BackendId`, before any stage runs.
+pub fn run_with_providers(
+    path: &Path,
+    negotiate: &dyn Negotiate,
+    providers: Vec<fsl_analyze::analyze::Engine>,
+    options: &ProviderOptions,
+    cancel: &filament_exact::Cancel,
+) -> std::result::Result<RunResult, Box<RunError>> {
+    run_configured(
+        path,
+        RunLimits::default(),
+        &RequestOverrides::default(),
+        Settlement {
+            negotiate,
+            providers,
+            options,
+            cancel,
+        },
+    )
+}
+
+/// How a run settles its call's requirement items (FR-961).
+struct Settlement<'a> {
+    negotiate: &'a dyn Negotiate,
+    providers: Vec<fsl_analyze::analyze::Engine>,
+    options: &'a ProviderOptions,
+    cancel: &'a filament_exact::Cancel,
+}
+
+fn run_configured(
+    path: &Path,
+    limits: RunLimits,
+    overrides: &RequestOverrides<'_>,
+    settlement: Settlement<'_>,
+) -> std::result::Result<RunResult, Box<RunError>> {
+    let Settlement {
+        negotiate,
+        providers,
+        options,
+        cancel,
+    } = settlement;
+    // FR-961 step 2: the registry is fixed before any stage runs, so a
+    // provider that cannot register refuses the request first.
+    let engines =
+        analyze::engines_with(providers, options).map_err(|cause| Box::new(RunError { cause }))?;
+    let settle = Settle {
+        negotiate,
+        engines: &engines,
+        cancel,
+    };
     // FR-644: a `native-monitor/1` request runs its record file as the batch
     // stream.
     let special = with_request_limits(path, limits.request_bytes, |directory, bytes| {
@@ -891,14 +1010,14 @@ pub fn run_with_limits_and_overrides(
             // FR-862: a `native-replay/1` request replays its FR-336 request.
             replay::run_bytes(directory, bytes, limits.dependent_bytes).map(Some)
         } else {
-            items::run_bytes(directory, bytes, limits, overrides)
+            items::run_bytes(directory, bytes, limits, overrides, &settle)
         }
     })?;
     if let Some(result) = special {
         return Ok(result);
     }
     let prepared = prepare_run_with_overrides(path, limits, overrides)?;
-    execute_prepared(prepared).map_err(|cause| Box::new(RunError { cause }))
+    execute_prepared(prepared, &settle).map_err(|cause| Box::new(RunError { cause }))
 }
 
 /// Inspect a checked-package handoff and return the command's successful
@@ -1879,6 +1998,13 @@ fn prepare_complete_run(
     let Some(call) = &request.call else {
         return Err(RunCause::CompleteRunSelection(CompleteRunSelection::NoCall));
     };
+    // FR-960: a malformed `requirements` refuses before any model,
+    // library or compile is read.
+    let requirements = call
+        .requirements
+        .as_ref()
+        .map(requirements::read)
+        .transpose()?;
     let documents = request
         .models
         .iter()
@@ -1949,6 +2075,7 @@ fn prepare_complete_run(
             packages,
             dependencies,
             call: spine_call,
+            requirements,
         }),
     }))
 }
@@ -1986,10 +2113,11 @@ fn execute_lowering(prepared: PreparedLowering) -> Result<RunResult> {
         exit_code: record.exit_code,
         value: NativeResult::lowering_document(tl::document(record.record)),
         outcome: None,
+        requirements: None,
     })
 }
 
-fn execute_prepared(prepared: PreparedRun) -> Result<RunResult> {
+fn execute_prepared(prepared: PreparedRun, settle: &settle::Settle<'_>) -> Result<RunResult> {
     let prepared = match prepared {
         PreparedRun::Function(prepared) => prepared,
         PreparedRun::TlLowering(prepared) => return execute_lowering(*prepared),
@@ -2006,25 +2134,57 @@ fn execute_prepared(prepared: PreparedRun) -> Result<RunResult> {
     };
     let prepared = *prepared.data;
     let source = &prepared.source;
-    let outcome = fsl_replay::spine::run(
-        source.source().identity().clone(),
-        package_name(source.source().identity()),
-        source.source().path(),
-        source.source().text().as_bytes(),
-        &prepared.packages,
-        &prepared.dependencies,
-        fsl_replay::spine::SpineLimits::default(),
-        &prepared.call,
-        &fsl_semantics::model::object_environment::ObjectEnvironment::default(),
-        &filament_exact::Cancel::new(),
-    )
-    .map_err(|refusal| match *refusal {
+    let compile_failure = |refusal: Box<fsl_replay::spine::RunRefusal>| match *refusal {
         fsl_replay::spine::RunRefusal::Compile(compile_refusal) => {
             spine_run_failure(source, prepared.libraries.iter(), *compile_refusal)
         }
         other => RunCause::SpineRun(Box::new(other)),
-    })?;
-    output::spine_run_result(source, &prepared.call.function, outcome)
+    };
+    // The call runs under a handle that is never cancelled: `settle.cancel`
+    // governs only the settlement of its items (FR-961), so the call's own
+    // evaluation is the same with and without them.
+    let call_cancel = filament_exact::Cancel::new();
+    let objects = fsl_semantics::model::object_environment::ObjectEnvironment::default();
+    let Some(selection) = &prepared.requirements else {
+        // FR-960: a call without `requirements` settles no item, and its run
+        // is exactly FR-100's.
+        let outcome = fsl_replay::spine::run(
+            source.source().identity().clone(),
+            package_name(source.source().identity()),
+            source.source().path(),
+            source.source().text().as_bytes(),
+            &prepared.packages,
+            &prepared.dependencies,
+            fsl_replay::spine::SpineLimits::default(),
+            &prepared.call,
+            &objects,
+            &call_cancel,
+        )
+        .map_err(compile_failure)?;
+        return output::spine_run_result(source, &prepared.call.function, outcome, None);
+    };
+    // FR-961 step 3 to 5: the call runs through FR-395's
+    // `run_with_requirements`, and its items are settled on the same compile.
+    let (ran, settled) = fsl_replay::run_with_requirements_reading(
+        &fsl_replay::RequirementsRun {
+            source: source.source().identity().clone(),
+            package_name: package_name(source.source().identity()),
+            path: source.source().path(),
+            bytes: source.source().text().as_bytes(),
+            packages: &prepared.packages,
+            dependencies: &prepared.dependencies,
+            limits: fsl_replay::spine::SpineLimits::default(),
+            call: &prepared.call,
+            objects: &objects,
+            cancel: &call_cancel,
+        },
+        |checked, members| {
+            settle::settle_call(checked, members, selection, &prepared.packages, settle)
+        },
+    )
+    .map_err(compile_failure)?;
+    let (outcome, _) = ran.into_parts();
+    output::spine_run_result(source, &prepared.call.function, outcome, Some(settled?))
 }
 
 /// The package name a program compiles under: its source identity's

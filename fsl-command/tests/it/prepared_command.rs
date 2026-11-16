@@ -118,7 +118,7 @@ fn preparation_retains_owned_inputs_and_the_existing_run_outcomes() {
     ] {
         let directory = tempfile::tempdir().unwrap();
         let path = run_request(directory.path(), work_units);
-        let native = command::run(&path).unwrap();
+        let native = command::run(&path, &crate::negotiation::Fr290).unwrap();
         let PreparedRun::Function(prepared) =
             command::prepare_run(&path, RunLimits::default()).unwrap()
         else {
@@ -453,7 +453,7 @@ fn borrowed_run_failure_projection_preserves_cancellation_and_fault_categories()
 fn a_function_run_document_carries_no_axes() {
     let directory = tempfile::tempdir().unwrap();
     let path = run_request(directory.path(), 100_000);
-    let native = command::run(&path).unwrap();
+    let native = command::run(&path, &crate::negotiation::Fr290).unwrap();
     let document = native.value.as_value();
     assert_eq!(document["format"], "spine-run-result/1", "{document}");
     assert!(document.get("axes").is_none(), "{document}");

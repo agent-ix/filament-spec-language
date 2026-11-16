@@ -6,6 +6,10 @@
 use std::path::{Path, PathBuf};
 
 use fsl_command::command;
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::{Arc, Mutex};
+
+use crate::negotiation::Fr290;
 use ix_trace_rs::trace;
 use serde_json::{json, Value};
 
@@ -83,11 +87,11 @@ fn entries(document: &Value) -> Vec<Value> {
 #[trace("TC-2703", "FR-963-AC-3")]
 #[trace("TC-2703", "FR-963-AC-4")]
 #[test]
-#[ignore = "QSL-2192: a run call does not read `requirements` or settle its requirement items yet"]
 fn a_run_call_names_the_backend_of_its_requirement_items() {
     let directory = tempfile::tempdir().unwrap();
     // Settlement asked for, no backend named: three items on value-checker.
-    let result = command::run(&sq(directory.path(), Some(json!({})))).expect("the run completes");
+    let result =
+        command::run(&sq(directory.path(), Some(json!({}))), &Fr290).expect("the run completes");
     let (value, outcome) = documents(&result);
     assert_eq!(
         value["outcome"],
@@ -120,10 +124,10 @@ fn a_run_call_names_the_backend_of_its_requirement_items() {
 
     // The call-level backend names value-checker for every item.
     let named = documents(
-        &command::run(&sq(
-            directory.path(),
-            Some(json!({"backend": "value-checker"})),
-        ))
+        &command::run(
+            &sq(directory.path(), Some(json!({"backend": "value-checker"}))),
+            &Fr290,
+        )
         .unwrap(),
     )
     .0;
@@ -136,7 +140,7 @@ fn a_run_call_names_the_backend_of_its_requirement_items() {
     let absent = command::run(&sq(
         directory.path(),
         Some(json!({"backend": "fsl.absent", "items": [{"claim": first_claim, "backend": "value-checker"}]})),
-    ))
+    ), &Fr290)
     .unwrap();
     assert_eq!(absent.exit_code, 20, "category refusal");
     let absent_items = entries(&documents(&absent).0);
@@ -159,10 +163,13 @@ fn a_run_call_names_the_backend_of_its_requirement_items() {
 
     // An unpublished option refuses each item and leaves the value.
     let option = documents(
-        &command::run(&sq(
-            directory.path(),
-            Some(json!({"backend": "value-checker", "options": {"unknown": "1"}})),
-        ))
+        &command::run(
+            &sq(
+                directory.path(),
+                Some(json!({"backend": "value-checker", "options": {"unknown": "1"}})),
+            ),
+            &Fr290,
+        )
         .unwrap(),
     )
     .0;
@@ -178,7 +185,7 @@ fn a_run_call_names_the_backend_of_its_requirement_items() {
     }
 
     // Without `requirements`, no member and no items.
-    let plain = command::run(&write(directory.path(), "seven", json!([]), None)).unwrap();
+    let plain = command::run(&write(directory.path(), "seven", json!([]), None), &Fr290).unwrap();
     let (value, outcome) = documents(&plain);
     assert!(
         value.get("requirements").is_none() && value.get("registry").is_none(),
@@ -191,7 +198,6 @@ fn a_run_call_names_the_backend_of_its_requirement_items() {
 /// claim of no item of the call at stage `call` with `missing_declaration`.
 #[trace("TC-2700", "FR-960-AC-3")]
 #[test]
-#[ignore = "QSL-2192: a run call does not read `requirements` yet"]
 fn malformed_requirements_refuse_before_the_call() {
     let directory = tempfile::tempdir().unwrap();
     let claim = json!({"node": {"package": "x", "path": [], "ordinal": 0}, "occurrence": 0});
@@ -210,7 +216,7 @@ fn malformed_requirements_refuse_before_the_call() {
             "/call/requirements/items/1",
         ),
     ] {
-        let error = command::run(&sq(directory.path(), Some(requirements.clone())))
+        let error = command::run(&sq(directory.path(), Some(requirements.clone())), &Fr290)
             .expect_err("a malformed member refuses");
         let envelope = error.value().expect("refusal envelope");
         assert_eq!(envelope["stage"], "request", "{requirements}: {envelope}");
@@ -220,10 +226,10 @@ fn malformed_requirements_refuse_before_the_call() {
         );
         assert_eq!(error.category().exit_code(), 20);
     }
-    let error = command::run(&sq(
-        directory.path(),
-        Some(json!({"items": [{"claim": claim}]})),
-    ))
+    let error = command::run(
+        &sq(directory.path(), Some(json!({"items": [{"claim": claim}]}))),
+        &Fr290,
+    )
     .expect_err("a claim of no item of the call refuses");
     let envelope = error.value().expect("refusal envelope");
     assert_eq!(envelope["stage"], "call", "{envelope}");
@@ -238,7 +244,6 @@ fn malformed_requirements_refuse_before_the_call() {
 /// unknown-backend, and the call's value is unchanged.
 #[trace("TC-2701", "FR-961-AC-2")]
 #[test]
-#[ignore = "QSL-2192: plain command::run does not settle a call's requirement items yet"]
 fn plain_run_settles_with_the_linked_engines_only() {
     let directory = tempfile::tempdir().unwrap();
     let request = write(
@@ -247,7 +252,7 @@ fn plain_run_settles_with_the_linked_engines_only() {
         json!([{"parameter": "n", "value": 4}]),
         Some(json!({"backend": PROVIDER})),
     );
-    let result = command::run(&request).expect("the run completes");
+    let result = command::run(&request, &Fr290).expect("the run completes");
     let (value, _) = documents(&result);
     assert_eq!(
         value["outcome"],
@@ -270,20 +275,144 @@ struct ProviderRun {
     max_frame_bytes: u64,
 }
 
+/// What the recording provider saw: its `settle` calls and the limits of
+/// the last request.
+#[derive(Debug, Default)]
+struct Seen {
+    settle_calls: usize,
+    deadline_ms: u64,
+    max_frame_bytes: u64,
+}
+
+/// A process provider that records each request and answers every item
+/// with `verdict`.
+#[derive(Debug)]
+struct Recording {
+    seen: Arc<Mutex<Seen>>,
+    verdict: fsl_analyze::provider::ProviderVerdict,
+}
+
+impl fsl_analyze::provider::ExternalProvider for Recording {
+    fn settle(
+        &self,
+        request: &fsl_analyze::provider::ProviderRequest<'_>,
+        _cancel: &filament_exact::Cancel,
+    ) -> Vec<fsl_analyze::provider::ProviderVerdict> {
+        let mut seen = self.seen.lock().expect("the record lock");
+        seen.settle_calls += 1;
+        seen.deadline_ms = request.deadline_ms();
+        seen.max_frame_bytes = request.limits().max_frame_bytes;
+        vec![self.verdict.clone(); request.items().len()]
+    }
+}
+
+/// The recording provider, advertising `value-validity` `unbounded` as a
+/// process plugin.
+fn recording_provider(
+    seen: &Arc<Mutex<Seen>>,
+    verdict: fsl_analyze::provider::ProviderVerdict,
+) -> fsl_analyze::analyze::Engine {
+    use fsl_semantics::check::Capability;
+    let descriptor = fsl_route::descriptor_from_manifest(
+        fsl_route::Candidate::new(fsl_foundation::BackendId::new(PROVIDER)),
+        fsl_route::ProviderOrigin::Process,
+        vec![(
+            Some(Capability::ValueValidity.to_wire()),
+            Some(fsl_route::Mode::Unbounded.to_wire()),
+        )],
+        fsl_route::ManifestMembers {
+            domains: Some(&[fsl_foundation::bound::DomainKind::Integer.to_wire()]),
+            fairness_kinds: None,
+            evidence_kinds: None,
+            memory_models: None,
+            reductions: None,
+        },
+    )
+    .expect("the descriptor advertises the external value arm");
+    fsl_analyze::analyze::Engine::external(
+        descriptor,
+        fsl_analyze::analyze::BackendTool::new("test-provider", "1").expect("a tool"),
+        Box::new(Recording {
+            seen: Arc::clone(seen),
+            verdict,
+        }),
+    )
+    .expect("the descriptor is unbounded")
+}
+
+/// FR-290's negotiation, counting the items it negotiates.
+struct Counting {
+    negotiations: AtomicUsize,
+}
+
+impl fsl_analyze::analyze::document::Negotiate for Counting {
+    fn negotiate(
+        &self,
+        item: &fsl_analyze::analyze::ClaimItem,
+        candidates: &fsl_route::CandidateOutcome,
+    ) -> (
+        fsl_route::routing::Disposition,
+        Option<fsl_analyze::analyze::Diagnostic>,
+    ) {
+        self.negotiations.fetch_add(1, Ordering::SeqCst);
+        fsl_analyze::analyze::document::Negotiate::negotiate(&Fr290, item, candidates)
+    }
+}
+
 /// `fsl_command::command::run_with_providers(request, negotiate, providers,
-/// options, cancel)` (FR-961) with a recording negotiator and the recording
-/// provider under `options`. The entry and `ProviderOptions` (FR-964) do not
-/// exist yet, so this returns `None`; the code ticket replaces the body with
-/// the call.
-fn run_with_providers(_request: &Path, _scenario: Scenario) -> Option<ProviderRun> {
-    None
+/// options, cancel)` (FR-961) with a counting negotiator and the recording
+/// provider set up as `scenario` says. The document is the run's
+/// `spine-run-result/1` document, or its refusal envelope.
+fn run_with_providers(request: &Path, scenario: Scenario) -> Option<ProviderRun> {
+    use fsl_analyze::provider::ProviderVerdict;
+    let seen = Arc::new(Mutex::new(Seen::default()));
+    let mut options = fsl_analyze::provider::ProviderOptions::default();
+    let cancel = filament_exact::Cancel::new();
+    let providers = match scenario {
+        Scenario::Limits {
+            deadline_ms,
+            max_frame_bytes,
+        } => {
+            options.provider_limits.deadline_ms = deadline_ms;
+            options.provider_limits.max_frame_bytes = max_frame_bytes;
+            vec![recording_provider(&seen, ProviderVerdict::Proved)]
+        }
+        Scenario::RepeatedProvider => vec![
+            recording_provider(&seen, ProviderVerdict::Proved),
+            recording_provider(&seen, ProviderVerdict::Proved),
+        ],
+        Scenario::UnreproducedRefutation => vec![recording_provider(
+            &seen,
+            ProviderVerdict::Refuted {
+                counterexample: vec![fsl_replay::Value::Integer(filament_exact::Integer::from(
+                    4_i64,
+                ))],
+            },
+        )],
+        Scenario::Cancelled => {
+            cancel.cancel(filament_exact::CancelCause::Requested);
+            vec![recording_provider(&seen, ProviderVerdict::Proved)]
+        }
+    };
+    let negotiate = Counting {
+        negotiations: AtomicUsize::new(0),
+    };
+    let document =
+        match command::run_with_providers(request, &negotiate, providers, &options, &cancel) {
+            Ok(result) => documents(&result).0,
+            Err(error) => error.value().expect("refusal envelope"),
+        };
+    let seen = seen.lock().expect("the record lock");
+    Some(ProviderRun {
+        document,
+        settle_calls: seen.settle_calls,
+        negotiations: negotiate.negotiations.load(Ordering::SeqCst),
+        deadline_ms: seen.deadline_ms,
+        max_frame_bytes: seen.max_frame_bytes,
+    })
 }
 
 /// How the recording provider and the run are set up.
-#[allow(
-    dead_code,
-    reason = "read by the run_with_providers call the code ticket adds"
-)]
 enum Scenario {
     /// One recording provider under these limits.
     Limits {
@@ -307,7 +436,6 @@ enum Scenario {
 #[trace("TC-2704", "FR-964-AC-1")]
 #[trace("TC-2704", "FR-964-AC-2")]
 #[test]
-#[ignore = "QSL-2192: run_with_providers and ProviderOptions do not exist yet"]
 fn run_with_providers_settles_the_call_s_items_after_negotiation() {
     let directory = tempfile::tempdir().unwrap();
     let request = write(
@@ -364,7 +492,6 @@ fn run_with_providers_settles_the_call_s_items_after_negotiation() {
 #[trace("TC-2701", "FR-961-AC-4")]
 #[trace("TC-2701", "FR-961-AC-5")]
 #[test]
-#[ignore = "QSL-2192: run_with_providers does not exist yet"]
 fn run_with_providers_refuses_and_settles_the_negative_cases() {
     let directory = tempfile::tempdir().unwrap();
     let request = write(
@@ -417,7 +544,6 @@ fn run_with_providers_refuses_and_settles_the_negative_cases() {
 /// settles `ambiguous-backend`; naming `value-checker` settles it there.
 #[trace("TC-2702", "FR-962-AC-4")]
 #[test]
-#[ignore = "QSL-2192: run_with_providers does not exist yet"]
 fn an_unnamed_run_item_with_two_value_validity_candidates_is_ambiguous() {
     let directory = tempfile::tempdir().unwrap();
     let limits = || Scenario::Limits {
