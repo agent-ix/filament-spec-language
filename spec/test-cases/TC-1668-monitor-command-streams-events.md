@@ -10,7 +10,7 @@ relationships:
 
 ## Description
 
-Verify FR-644-AC-1, AC-2 and AC-5: `command::monitor` hands one event per status change and a summary equal to the batch run, and a malformed record is reported without disturbing the stream.
+Verify FR-644-AC-1, AC-2 and AC-5: `command::monitor` hands one event per status change, each carrying `settled`, and a summary agreeing with the batch run, and a malformed record is reported without disturbing the stream.
 
 ## Test Procedure
 
@@ -20,4 +20,4 @@ Call `command::monitor` with a `native-monitor/1` request over TC-1666's clauses
 
 - One event per change at the record that caused it; the summary equals the closed batch run; exit 10.
 - The bad record yields one `refusal` event naming it; the other events and the summary are unchanged.
-- AC-5: each latest event's category equals the run over the samples so far; its disposition equals the run up to its record (record 2 for both clauses from record 2 on, `Never`'s counterexample three samples long); the summary equals the latest events; exit 10.
+- AC-5: each latest event's category equals the run over the samples so far; its disposition equals the run up to its record. `Never` settles at record 2 with `settled` `true` and a three-sample counterexample; `Reaches` stays `pending` with `settled` `false`. The summary equals the latest events, `settled` included; exit 10.

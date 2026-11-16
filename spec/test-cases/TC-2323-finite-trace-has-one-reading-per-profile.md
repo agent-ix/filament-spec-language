@@ -16,12 +16,12 @@ change it. Scope: FR-283-AC-17.
 
 ## Test Procedure
 
-1. Monitor `Bounded` and `Reaches` over the `Finite` trace `c.value` 0, 1, 2.
-2. Monitor a `Document` trace carrying a `closed` member.
+1. Monitor `Bounded` and `Reaches` over the `Finite` trace `c.value` 0, 1, 2; repeat with `limits.max_window_values` 1 and with an empty `temporal_selections`.
+2. Monitor a `Document` trace of the same snapshots carrying `"closed": true`, then one carrying `"open": true`.
 
 ## Expected Results
 
-- Step 1: the closed false-extension record for `Bounded`; the finite-prefix record for `Reaches`.
-- Step 2: refused `invalid_runtime_input`/`unknown-member`.
+- Step 1: `Bounded` `violation` at position 0, truth `false`; `Reaches` `pending`, no truth; the repeats give the same records.
+- Step 2: each refused `invalid_runtime_input`/`unknown-member` naming the member, before any position is admitted.
 
 Test: `fsl-analyze/tests/it/monitor_incremental.rs`.
