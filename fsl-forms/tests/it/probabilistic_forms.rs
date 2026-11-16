@@ -531,6 +531,23 @@ fn mean_expected_steps_and_elapsed_build_their_bodies() {
     assert_eq!(horizon.magnitude.first.to_string(), "10");
 }
 
+/// FR-764-AC-5: a bare decimal in an `expected` bound is parsed as an exact
+/// decimal expression and retains its source span.
+#[trace("TC-2163", "FR-764-AC-5")]
+#[test]
+fn probabilistic_bare_decimal_threshold_parses() {
+    let (text, body) = body_of("expected accumulate duration until holds(s.phase = Done) <= 0.5");
+    let ProbabilisticBody::ExpectedUntil { threshold, .. } = body else {
+        panic!("an expected-until body: {body:?}");
+    };
+    assert_eq!(source_of(&text, &threshold), "0.5");
+    assert!(matches!(
+        threshold.expression.root_node(),
+        ExprNode::DecimalValue { coefficient, scale }
+            if coefficient.to_string() == "5" && *scale == 1
+    ));
+}
+
 /// FR-392-AC-4 (TC-1077 step 4): `over (n: Node)` with `on each` keeps the
 /// parameter and the activation, and `under every scheduler` keeps two
 /// fairness items with the kind and granularity each was written with.

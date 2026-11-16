@@ -2974,7 +2974,7 @@ fn probabilistic(g: &mut Grammar) {
                 r(P::Expression),
                 x(")"),
                 bound_op(),
-                r(P::Expression),
+                c(vec![r(P::ExactValue), r(P::Expression)]),
             ]),
         ]),
     );

@@ -3473,16 +3473,30 @@ fn a_bare_decimal_literal_is_typed_as_its_constructor() {
     }
 }
 
-/// FR-764-AC-5 and AC-6: a bare decimal threshold is the exact rational it
-/// spells, and its written scale is bounded as a `decimal(c, s)`'s is.
+/// FR-764-AC-5: a bare decimal threshold is checked as the exact rational it
+/// spells, never as a binary floating-point value.
 #[trace("TC-2163", "FR-764-AC-5")]
-#[trace("TC-2163", "FR-764-AC-6")]
-#[trace("FSpec-TC-1648", "FSpec-FR-662-AC-3")]
 #[test]
-#[ignore = "QSL-1965 / QSL-2154: the bare decimal threshold not implemented yet"]
-fn a_bare_decimal_threshold_is_the_exact_rational_it_spells() {
+fn bare_decimal_threshold_is_exact() {
     let target = format!("holds({IDLE} or {})", done());
-    let form = |threshold: &str| {
+    let graph = checked(&exact_claim(
+        "ev",
+        "Steady",
+        "",
+        &format!("expected accumulate duration until {target} <= 0.5"),
+    ));
+    let ProbForm::ExpectedReward { bound, .. } = &claim_of(&graph).form else {
+        panic!("an expected reward: {:?}", claim_of(&graph).form);
+    };
+    assert_eq!(*bound, Bound::AtMost(ratio(1, 2)));
+}
+
+/// FR-764-AC-5: equivalent exact threshold spellings yield one bound.
+#[trace("TC-2163", "FR-764-AC-5")]
+#[test]
+fn decimal_forms_equivalent() {
+    let target = format!("holds({IDLE} or {})", done());
+    let bound = |threshold: &str| {
         let graph = checked(&exact_claim(
             "ev",
             "Steady",
@@ -3494,10 +3508,54 @@ fn a_bare_decimal_threshold_is_the_exact_rational_it_spells() {
         };
         bound.clone()
     };
-    let bare = form("0.5");
+    let bare = bound("0.5");
     assert_eq!(bare, Bound::AtMost(ratio(1, 2)));
-    assert_eq!(bare, form("decimal(5, 1)"));
-    assert_eq!(bare, form("rational(1, 2)"));
+    assert_eq!(bare, bound("decimal(5, 1)"));
+    assert_eq!(bare, bound("rational(1, 2)"));
+}
+
+/// FR-764-AC-7: admitting decimal literals in an expected threshold leaves
+/// the ordinary expression grammar closed to bare decimals.
+/// QSL-1965 owns changing this existing syntax refusal to the named numeric
+/// form diagnostic.
+#[trace("TC-2163", "FR-764-AC-7")]
+#[test]
+fn bare_decimal_elsewhere_still_refused() {
+    let (text, _) = service_unit("function f using v(): Boolean pure { 0.5 < 1 }");
+    let parsed = fsl_cst::parse(
+        fsl_foundation::SourceIdentity::new("test", "tc-2163"),
+        "unit.native",
+        text.as_bytes(),
+        fsl_cst::Limits::default(),
+    )
+    .expect("S1 returns a located refusal");
+    assert!(
+        !parsed.is_admissible(),
+        "ordinary expressions still refuse 0.5"
+    );
+    let diagnostic = parsed
+        .diagnostics()
+        .first()
+        .expect("the ordinary expression refusal is located");
+    let region = diagnostic
+        .region
+        .as_ref()
+        .expect("the refusal has a region");
+    let start = text.rfind("0.5").expect("the literal in the function");
+    let refusal_start = usize::try_from(region.start()).expect("the start fits usize");
+    let refusal_end = usize::try_from(region.end()).expect("the end fits usize");
+    assert!(
+        (start..=start + 5).contains(&refusal_start) && refusal_end <= start + 5,
+        "the refusal is at the bare decimal or the token that follows it: {diagnostic:?}"
+    );
+}
+
+/// FR-764-AC-6: a bare decimal with an overlong written scale is refused at
+/// the literal, as `decimal(c, s)` is.
+#[trace("TC-2163", "FR-764-AC-6")]
+#[test]
+fn bare_decimal_threshold_overlong_refused() {
+    let target = format!("holds({IDLE} or {})", done());
     let long = format!("0.{}", "1".repeat(65536));
     let found = located(&exact_claim(
         "ev",
@@ -3505,10 +3563,9 @@ fn a_bare_decimal_threshold_is_the_exact_rational_it_spells() {
         "",
         &format!("expected accumulate duration until {target} <= {long}"),
     ));
-    assert_eq!(
-        found,
-        [(Code::StageLimitExceeded, Some("work-budget-exceeded"), long)]
-    );
+    assert_eq!(found.len(), 1, "one threshold refusal: {found:?}");
+    assert_eq!(found[0].0, Code::StageLimitExceeded, "{found:?}");
+    assert_eq!(found[0].2, long, "the refusal names the whole literal");
 }
 
 /// The service claim `C` with activation `activation`, `{LATENCY}` declared.
