@@ -1340,10 +1340,8 @@ impl Pass<'_, '_> {
                         .input
                         .time_source(&claim.subject.alias, &claim.subject.package.identity)
                     else {
-                        refusals.push(temporal_refusal(TemporalCause::ModelTimeOnUntimedModel {
-                            model: claim.subject.alias.clone(),
-                            span: claim.form.profile.span,
-                        }));
+                        // `resolve_claim` already located the timed profile's
+                        // missing model-time source at the profile alias.
                         return None;
                     };
                     let target = match self.input.time_units.target(&source.unit) {

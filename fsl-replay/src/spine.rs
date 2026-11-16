@@ -1592,9 +1592,9 @@ fn check_message(refusals: &[CheckRefusal]) -> String {
                      probabilistic claim has a model subject, and observed statistics of a trace \
                      are window aggregates (FR-194)"
                 ),
-                ProbabilisticCause::TimedEventProfile { claim, .. } => format!(
-                    "{message}: claim `{claim}` is checked under the timed profile, which has no \
-                     probabilistic event reading"
+                ProbabilisticCause::TimeTypeMismatch { claim, .. } => format!(
+                    "{message}: the time-valued position of claim `{claim}` does not match its \
+                     model's time type"
                 ),
                 ProbabilisticCause::UnresolvedProfile { claim, alias, .. } => {
                     format!("{message}: claim `{claim}` uses `{alias}`, which names no profile")
@@ -1654,9 +1654,6 @@ fn check_message(refusals: &[CheckRefusal]) -> String {
                     "{message}: an operand of the reachability event of claim `{claim}` must be a \
                      `holds(..)` state predicate"
                 ),
-                ProbabilisticCause::NotYetImplemented {
-                    claim, construct, ..
-                } => format!("{message}: `probabilistic {claim}` uses {construct}, which is not checked yet"),
             };
         }
         // FR-326: name what the `TemporalTrace` check refused.
