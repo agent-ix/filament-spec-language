@@ -36,9 +36,18 @@ Checked against: FR-092 (type nodes, one node per structural id), FR-098 "Applic
 
 ## Verdict
 
-REQUEST CHANGES (with SR-202611160951002 FND-001, high). The contract itself is sound and agrees with FR-092, FR-098, FR-404, FR-075 and the W4 text. No feature is narrowed. The three findings above are gaps in coverage and in the position cases, not errors in the ruling.
+Round 1: REQUEST CHANGES (with SR-202611160951002 FND-001, high). Round 2 (head 4e76e7e2): APPROVE. FND-001 to FND-003 are fixed, and FND-004 (low) does not block. The contract itself is sound and agrees with FR-092, FR-098, FR-404, FR-075 and the W4 text. No feature is narrowed. The three findings above are gaps in coverage and in the position cases, not errors in the ruling.
+
+## New findings (disposition pass 1)
+
+| ID | Severity | Summary | Refs |
+| --- | --- | --- | --- |
+| FND-004 | low | The new "lowered type" definition gives an `if`, `let` or `case` node its checked type, even when the leaf it yields has lowered type `Integer`. Under an unbounded consumer, for example `bound` (`: Integer { let r = a mod b in r }`) or `: Integer { if c != 0 then a mod c else 0 }`, the lowered `control.let`/`control.if` has an interval `result_type` over an `Integer`-typed body or branch. A binder bound to such an `if` gets no narrow when read into `Int[..]`. Non-blocking: FR-322 does not obviously require a control node's `result_type` to match its children. Fix (follow-up): define the lowered type of an `if`/`let`/`case` as the hull of its leaves' lowered types, or say FR-322 admits the difference. | FR-495:222-226,240-246; FR-093:530-531 |
 
 ## Dispositions
 
 | FND | outcome | reason |
 | --- | --- | --- |
+| FND-001 | fixed | Round 2 (head 4e76e7e2): FR-495 "Bounded position" defines a bounded position as any `Coerce` site and passes the expected type through `if`, `let` and `case` to the leaf. "Every other position" is defined as every position `check` does not coerce into `Int[..]`. AC-21 adds `ifb` (narrow over the application in the branch) and `letb` (narrow over the binder read, no record). |
+| FND-002 | fixed | Round 2: AC-21 adds a `div`/`rem` unit under the Euclidean law header (`qb`/`rb` bounded, `qi`/`ri` Integer). AC-22 replays them (`100 div 12` is 8, `100 rem 12` is 4), and TC-2270 is extended. The intervals check out: `div` is `Int[-100, 100]` and Euclidean `rem` is `Int[0, 11]`. |
+| FND-003 | fixed | Round 2: the new FR-062-AC-16 states the rule, with RR-2 (the `Int[0, 10]` narrow node) and RR-6 (the builtin `Integer`), which match the fixtures. TC-2270 now tags FR-062-AC-16, and the FR-062-AC-13 tag is dropped. |

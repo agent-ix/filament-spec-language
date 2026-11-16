@@ -25,9 +25,10 @@ FR-062's new sentence ("The `ValueType` and the type node SHALL name the same ty
 
 ## Verdict
 
-REQUEST CHANGES for this lens, a medium finding only.
+Round 1: REQUEST CHANGES, a medium finding only. Round 2 (head 4e76e7e2): APPROVE.
 
 ## Dispositions
 
 | FND | outcome | reason |
 | --- | --- | --- |
+| FND-001 | fixed | Round 2 (head 4e76e7e2): each sub-bullet now states a SHALL with its actor: "FR-093's lowering SHALL lower ...", "`check` SHALL wrap ...", "`check` SHALL discharge ...", "`check` SHALL record ...", "The checked graph SHALL hold that type node". |

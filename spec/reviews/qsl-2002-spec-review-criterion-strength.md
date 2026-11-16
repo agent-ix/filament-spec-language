@@ -27,9 +27,10 @@ Both ACs are testable, and each can fail.
 
 ## Verdict
 
-PASS for this lens, with one low finding.
+Round 1: PASS, with one low finding. Round 2 (head 4e76e7e2): APPROVE; the finding is fixed.
 
 ## Dispositions
 
 | FND | outcome | reason |
 | --- | --- | --- |
+| FND-001 | fixed | Round 2 (head 4e76e7e2): AC-22 names the route (`run_with_replay_context` under `CallerLimits::default()`, then `PluginReplayContext::request` with plugin `acme`, then `replay` under the `replay` limits) and the expected name `acme`. It also checks the request's occurrence key, result bound node and context. The new `ifb`, `qb`, `rb`, `qi` and `ri` cases have concrete expected values (`9 mod 4` is 1, `100 div 12` is 8, `100 rem 12` is 4), so each can fail. |

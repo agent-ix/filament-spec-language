@@ -32,9 +32,11 @@ The following hold:
 
 ## Verdict
 
-REQUEST CHANGES on FND-001. FND-002 is a wording fix.
+Round 1: REQUEST CHANGES on FND-001. Round 2 (head 4e76e7e2): APPROVE; both findings are fixed.
 
 ## Dispositions
 
 | FND | outcome | reason |
 | --- | --- | --- |
+| FND-001 | fixed | Round 2 (head 4e76e7e2): FR-093's `Coerce` row and line 668 now make an exception for an operand whose lowered type is `Integer` (a division application, or a read of a `let` binder bound to one). Its `Coerce` into any `Int[..]`, a containing one included, lowers to exactly one narrow. This agrees with FR-495 and AC-21. The `letb` binder-read narrow "holds no record", which agrees with FR-062: a narrow whose operand is a binder read yields no claim, so the application's record has no direct narrow, takes its own interval and has no context, and the KeyFault rule does not apply. |
+| FND-002 | fixed | Round 2: "Range obligation of that `Coerce`" is now conditional. Under Linked the obligation is discharged inside the target and refused `unproved-range` at the leaf otherwise (at the operator for a direct `Coerce`), which agrees with AC-19. Kernel records no obligation and still builds the narrow. |
