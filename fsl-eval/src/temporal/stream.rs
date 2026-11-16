@@ -842,8 +842,9 @@ impl ClauseStream {
 }
 
 /// The part of a stream that changes from one position to the next, in its
-/// state form. A stop's records are not written: the caller holds the
-/// position that stopped and reads it again ([`ClauseStream::restore_stop`]).
+/// state form. A stop's undefined reading and refused condition are not
+/// written: the caller holds the position that stopped and reads it again
+/// ([`ClauseStream::reread_stop`]).
 #[derive(Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 struct Carried {
@@ -854,19 +855,25 @@ struct Carried {
     violated: Option<u64>,
     unknown: bool,
     stopped: Option<u64>,
+    /// The first data shortfall: position, atom node, count, `min_count`.
+    insufficient: Option<(u64, usize, u64, u64)>,
+    /// The window limit a read reached: limit, value, position.
+    window_limit: Option<(u64, u64, u64)>,
     failed: bool,
 }
 
 impl ClauseStream {
     /// The stream's state form, read back by [`Self::from_state`]; `None`
-    /// for a stream whose records the state form does not carry (a data
-    /// shortfall or a read that ended it).
+    /// for a stream a window refusal ended, which the state form does not
+    /// carry.
     pub fn to_state(&self) -> Option<serde_json::Value> {
-        if self.insufficient.is_some()
-            || matches!(self.ended, Some(Ended::WindowLimit(_) | Ended::Window(_)))
-        {
-            return None;
-        }
+        let window_limit = match &self.ended {
+            Some(Ended::WindowLimit(limit)) => {
+                Some((limit.limit, limit.value, limit.position.index()))
+            }
+            Some(Ended::Window(_)) => return None,
+            Some(Ended::Fault(_)) | None => None,
+        };
         serde_json::to_value(Carried {
             cells: self.cells.clone(),
             carries: self.carries.clone(),
@@ -875,7 +882,16 @@ impl ClauseStream {
             violated: self.violated,
             unknown: self.unknown,
             stopped: self.stopped,
-            failed: self.ended.is_some(),
+            insufficient: self.insufficient.as_ref().map(|short| {
+                (
+                    short.at.index(),
+                    short.atom.index(),
+                    short.data.count,
+                    short.data.min_count,
+                )
+            }),
+            window_limit,
+            failed: matches!(self.ended, Some(Ended::Fault(_))),
         })
         .ok()
     }
@@ -901,6 +917,22 @@ impl ClauseStream {
         stream.violated = carried.violated;
         stream.unknown = carried.unknown;
         stream.stopped = carried.stopped;
+        stream.insufficient = match carried.insufficient {
+            Some((at, atom, count, min_count)) => Some(InsufficientDataEvaluation {
+                at: TemporalPosition::new(at),
+                atom: clause.formula().node_id(atom)?,
+                data: super::window::InsufficientData { count, min_count },
+            }),
+            None => None,
+        };
+        if let Some((limit, value, position)) = carried.window_limit {
+            stream.ended = Some(Ended::WindowLimit(WindowLimitReached {
+                limit,
+                value,
+                setting: super::window::MAX_WINDOW_VALUES_SETTING,
+                position: TemporalPosition::new(position),
+            }));
+        }
         if carried.failed {
             stream.ended = Some(Ended::Fault(fault("stream-read-failed")));
         }
@@ -910,6 +942,40 @@ impl ClauseStream {
     /// The position at which the reading stopped, when it did.
     pub fn stopped(&self) -> Option<u64> {
         self.stopped
+    }
+
+    /// The least activation that is false for good, when one is.
+    pub fn violated(&self) -> Option<u64> {
+        self.violated
+    }
+
+    /// Read the position at which the reading stopped again from `source`,
+    /// which holds it at `at`, and restore what that reading recorded: its
+    /// undefined reading or the condition refused there. A stream whose
+    /// reading did not stop is unchanged.
+    pub fn reread_stop<L: TemporalLetters>(
+        &mut self,
+        clause: &CheckedTemporalClause,
+        source: &mut L,
+        at: TemporalPosition,
+        meter: &mut Meter,
+    ) {
+        let Some(index) = self.stopped else {
+            return;
+        };
+        let reader = PositionReader {
+            formula: clause.formula(),
+            atoms: &self.plan.atoms,
+            guarded: matches!(self.activation, Activation::Each { guarded: true }),
+            captured: clause.capture_site(),
+        };
+        if let Ok(letter) = reader.read(source, at, TemporalPosition::new(index), meter) {
+            match letter.stop {
+                Some(PositionStop::Undefined(undefined)) => self.undefined = Some(undefined),
+                Some(PositionStop::Refused(position)) => self.refused = Some(position),
+                None => {}
+            }
+        }
     }
 
     /// Restore what the stopped position's reading recorded, read again by

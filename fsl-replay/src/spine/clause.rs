@@ -1125,7 +1125,7 @@ impl ClauseRunReport {
 /// for a `success` or `violation` at stage `evaluate` (a `Function` run's
 /// result is decided by the whole call, a `Frame` run's witness is
 /// FR-115's), `unavailable` for every other disposition.
-fn undecided_basis(disposition: &ClauseDisposition) -> SettlementBasis {
+pub(super) fn undecided_basis(disposition: &ClauseDisposition) -> SettlementBasis {
     use filament_semantic_value::catalog::Category;
     match (disposition.stage(), disposition.category()) {
         (ClauseRunStage::Evaluate, Category::Success | Category::Violation) => {

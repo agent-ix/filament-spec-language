@@ -817,6 +817,37 @@ pub(crate) fn streamed_sample_report(
     }
 }
 
+/// FR-330 Outputs: a trace-subject violation, and an `Undefined` that is a
+/// violation, carries its counterexample: the samples of `trace` are its
+/// steps, as for the other sample routes.
+pub(crate) fn with_subject_counterexample(
+    node: &fsl_semantics::check::TemporalClauseNode,
+    trace: &TraceInput,
+    report: &mut ClauseRunReport,
+    first_undefined: Option<FirstUndefined>,
+) {
+    let needs = match &report.disposition {
+        ClauseDisposition::Temporal(TemporalVerdict::Violated { .. }) => true,
+        ClauseDisposition::Temporal(TemporalVerdict::Undefined { cause, .. }) => {
+            !matches!(cause, TemporalUndefinedCause::InsufficientData { .. })
+        }
+        _ => false,
+    };
+    if needs {
+        match counterexample(node, trace, &report.disposition, first_undefined) {
+            Some(built) => report.counterexample = Some(built),
+            None => {
+                report.disposition = ClauseDisposition::EvaluateFault(
+                    filament_semantic_value::catalog::InternalFault::new(
+                        "temporal",
+                        "violation-has-its-counterexample",
+                    ),
+                );
+            }
+        }
+    }
+}
+
 /// FR-330: run the temporal clause `name` over `trace`.
 pub(super) fn run_temporal(run: &CompiledRun<'_>, request: &TemporalRun<'_>) -> ClauseRunReport {
     let TemporalRun {
@@ -1227,26 +1258,7 @@ pub(super) fn run_temporal(run: &CompiledRun<'_>, request: &TemporalRun<'_>) -> 
         // A violation, and an `Undefined` that is a violation, carries its
         // counterexample (FR-330 Outputs): the samples are its steps, as for
         // the other sample routes.
-        let needs = match &delegated.disposition {
-            ClauseDisposition::Temporal(TemporalVerdict::Violated { .. }) => true,
-            ClauseDisposition::Temporal(TemporalVerdict::Undefined { cause, .. }) => {
-                !matches!(cause, TemporalUndefinedCause::InsufficientData { .. })
-            }
-            _ => false,
-        };
-        if needs {
-            match counterexample(node, trace, &delegated.disposition, first_undefined) {
-                Some(built) => delegated.counterexample = Some(built),
-                None => {
-                    delegated.disposition = ClauseDisposition::EvaluateFault(
-                        filament_semantic_value::catalog::InternalFault::new(
-                            "temporal",
-                            "violation-has-its-counterexample",
-                        ),
-                    );
-                }
-            }
-        }
+        with_subject_counterexample(node, trace, &mut delegated, first_undefined);
         return delegated;
     }
 

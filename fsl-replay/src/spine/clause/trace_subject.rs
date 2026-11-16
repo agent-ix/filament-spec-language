@@ -437,12 +437,32 @@ pub(super) fn run_subject_observing(
         &mut letters,
         &mut meter,
     );
-    *first_undefined = None;
+    *first_undefined = letters.first_undefined.take();
+    subject_report(
+        node,
+        result,
+        letters.undefined_atom,
+        &letters.atom_values,
+        ClauseRunUsage::from_meter(&meter, Default::default()),
+    )
+}
+
+/// FR-330-AC-17's report of the trace-subject clause `node` from the outcome
+/// `result` of its evaluation, the last data-shortfall atom it read, the atom
+/// values it read (by node and position) for the decisive aggregate, and
+/// `usage`. The batch run and FR-820's carried state build it alike.
+pub(crate) fn subject_report(
+    node: &TemporalClauseNode,
+    result: Result<TemporalOutcome, fsl_eval::temporal::TemporalRefusal>,
+    undefined_atom: Option<usize>,
+    atom_values: &BTreeMap<(usize, u64), Option<bool>>,
+    usage: ClauseRunUsage,
+) -> ClauseRunReport {
     let (disposition, decisive) = match result {
         Ok(outcome) => {
-            let decisive = decisive_aggregate(node, &outcome, &letters.atom_values);
+            let decisive = decisive_aggregate(node, &outcome, atom_values);
             (
-                ClauseDisposition::Temporal(map_outcome(outcome, letters.undefined_atom)),
+                ClauseDisposition::Temporal(map_outcome(outcome, undefined_atom)),
                 decisive,
             )
         }
@@ -454,9 +474,19 @@ pub(super) fn run_subject_observing(
             None,
         ),
     };
-    *first_undefined = letters.first_undefined.take();
-    let mut report = run.report(disposition);
-    report.usage = ClauseRunUsage::from_meter(&meter, Default::default());
+    let mut report = ClauseRunReport {
+        basis: super::undecided_basis(&disposition),
+        witness: None,
+        disposition,
+        usage,
+        consequent_source_events: super::ConsequentSourceEvents::Unavailable,
+        finite_window: None,
+        counterexample: None,
+        decisive: None,
+        ledger: None,
+        authenticated_temporal_selection: None,
+        refused_at: None,
+    };
     if let Some((atom, position)) = decisive {
         let atom = u64::try_from(atom).ok();
         let Some(atom) = atom else {
@@ -474,6 +504,160 @@ pub(super) fn run_subject_observing(
         ));
     }
     report
+}
+
+/// FR-820: what reading one record sample of a trace-subject clause into its
+/// carried stream recorded besides the stream's own state.
+#[derive(Debug, Default)]
+pub(crate) struct SubjectRead {
+    /// The last atom read short of data, when one was.
+    pub(crate) undefined_atom: Option<usize>,
+    /// The first undefined reading that is not a data shortfall.
+    pub(crate) first_undefined: Option<FirstUndefined>,
+    /// Each atom value read, by node and position.
+    pub(crate) atom_values: BTreeMap<(usize, u64), Option<bool>>,
+    /// The captures as the reading left them.
+    pub(crate) captures: Vec<Value>,
+}
+
+/// FR-820: the letters of a trace-subject clause at the newest position of a
+/// carried state: `values` holds the samples its window aggregates still
+/// read, by position, the newest included.
+fn carried_letters<'a>(
+    package: &'a fsl_package::CheckedPackage,
+    node: &'a TemporalClauseNode,
+    values: &'a BTreeMap<u64, Value>,
+    captures: &'a [Value],
+    empty: &'a LetterTape,
+    position: u64,
+    max_window_values: u64,
+) -> TraceSubjectLetters<'a> {
+    let len = position.saturating_add(1);
+    TraceSubjectLetters {
+        package,
+        node,
+        samples: SubjectSamples::Tape {
+            tape: empty,
+            values,
+            captures,
+            len,
+        },
+        max_window_values,
+        trace: WindowTrace::positions(len),
+        captures: captures.to_vec(),
+        atom_values: BTreeMap::new(),
+        undefined_atom: None,
+        first_undefined: None,
+    }
+}
+
+/// FR-820: read the sample at the stream's next position, which `values`
+/// holds beside the earlier samples its window aggregates read, into the
+/// carried `stream` of the trace-subject clause `node`, the streaming form of
+/// [`run_subject`]. `captures` are the captures the earlier positions fixed.
+///
+/// # Errors
+///
+/// [`StreamStop`](fsl_eval::temporal::StreamStop) when `meter` runs out; the
+/// stream is unchanged.
+pub(crate) fn push_subject_sample(
+    package: &fsl_package::CheckedPackage,
+    node: &TemporalClauseNode,
+    stream: &mut fsl_eval::temporal::ClauseStream,
+    values: &BTreeMap<u64, Value>,
+    captures: &[Value],
+    max_window_values: u64,
+    meter: &mut Meter,
+) -> Result<SubjectRead, fsl_eval::temporal::StreamStop> {
+    let empty = LetterTape::new();
+    let position = stream.len();
+    let mut letters = carried_letters(
+        package,
+        node,
+        values,
+        captures,
+        &empty,
+        position,
+        max_window_values,
+    );
+    stream.push(
+        node.clause(),
+        &mut letters,
+        TemporalPosition::new(position),
+        meter,
+    )?;
+    Ok(SubjectRead {
+        undefined_atom: letters.undefined_atom,
+        first_undefined: letters.first_undefined,
+        atom_values: letters.atom_values,
+        captures: letters.captures,
+    })
+}
+
+/// FR-820: read the position at which `stream`'s reading stopped again, from
+/// the samples `values` holds there, restoring the stop's records in the
+/// stream; returns what [`push_subject_sample`] recorded there.
+pub(crate) fn reread_subject_stop(
+    package: &fsl_package::CheckedPackage,
+    node: &TemporalClauseNode,
+    stream: &mut fsl_eval::temporal::ClauseStream,
+    values: &BTreeMap<u64, Value>,
+    captures: &[Value],
+    max_window_values: u64,
+    meter: &mut Meter,
+) -> SubjectRead {
+    let Some(position) = stream.stopped() else {
+        return SubjectRead::default();
+    };
+    let empty = LetterTape::new();
+    let mut letters = carried_letters(
+        package,
+        node,
+        values,
+        captures,
+        &empty,
+        position,
+        max_window_values,
+    );
+    stream.reread_stop(
+        node.clause(),
+        &mut letters,
+        TemporalPosition::new(position),
+        meter,
+    );
+    SubjectRead {
+        undefined_atom: letters.undefined_atom,
+        first_undefined: letters.first_undefined,
+        atom_values: letters.atom_values,
+        captures: letters.captures,
+    }
+}
+
+/// FR-820: the positions whose atom values the decisive aggregate of a
+/// violation at `at` reads: the aggregate root's own position, or the window
+/// of a root `always[l, u]`; `None` when the clause reports no decisive
+/// aggregate.
+pub(crate) fn decisive_reach(node: &TemporalClauseNode) -> Option<(u64, u64)> {
+    let formula = node.clause().formula();
+    if !formula
+        .nodes()
+        .iter()
+        .any(|formula_node| matches!(formula_node, FormulaNode::Aggregate { .. }))
+    {
+        return None;
+    }
+    match formula.nodes().get(formula.root().index())? {
+        FormulaNode::Aggregate { .. } => Some((0, 0)),
+        FormulaNode::Unary {
+            operator: UnaryTemporal::Always,
+            interval: Some(CheckedInterval::Steps(interval)),
+            ..
+        } => match interval.upper() {
+            fsl_foundation::bound::TemporalUpper::Finite(upper) => Some((interval.lower(), upper)),
+            _ => None,
+        },
+        _ => None,
+    }
 }
 
 fn decisive_aggregate(
