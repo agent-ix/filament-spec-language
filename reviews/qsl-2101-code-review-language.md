@@ -22,3 +22,10 @@ REQUEST CHANGES. The Makefile only passes variables through. There is no Python.
 | --- | --- | --- | --- |
 | FND-001 | medium | The trigger reader misses flow-mapping `on: {push: ...}` and a multi-line flow list `on: [` followed by `push` on the next line. Both read as non-push names, so a hosted push trigger passes the test. Fix: fail closed. Return Err when the inline value starts with `{`, has an unclosed `[`, or yields an empty name, and add both spellings to the reader test. | xtask/tests/ci_targets.rs:79-83 |
 | FND-002 | medium | `resolve` accepts any driver folder that has `Cargo.toml` and `tests/examples_gate.rs`. A sibling driver older than driver PR 158 ignores FSL_LANGUAGE_DIR, builds fsl from git main and passes. Nothing then checks this checkout, and the AC-3 test still fails as expected because it edits a record. Fix: have the driver gate print a marker line such as `fsl built from language checkout <path>`, and make `examples_check::run` fail when the marker is missing (or capture the output and check it). | xtask/src/examples_check.rs:33-37,80-96 |
+
+## Dispositions
+
+| FND | outcome | reason |
+| --- | --- | --- |
+| FND-001 | fixed | At 6e4efe59, xtask/tests/ci_targets.rs:82-97 returns Err for a flow mapping, an unclosed `[` and an empty name. All three are added as refused cases in the reader test. |
+| FND-002 | fixed | At 6e4efe59, xtask/src/examples_check.rs check_built_from requires one `fsl built from language checkout <this path>` line and no other path. The new AC-5 (TC-2194) has three stand-in gate tests, each of which can fail. |
