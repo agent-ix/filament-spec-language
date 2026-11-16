@@ -51,6 +51,8 @@ use fsl_semantics::model::refusal::MemberPath;
 
 mod clocks;
 mod lifecycle;
+#[cfg(feature = "quire-extraction")]
+mod native_fences;
 pub(crate) use clocks::ClockLocator;
 pub use clocks::{InvalidClock, RequestClocks};
 /// FR-527's TL mapping table and the native valuation a TL cross-evaluation
@@ -61,18 +63,24 @@ pub use fsl_package::checked_views::{
     Unmatched as TlUnmatched,
 };
 pub use fsl_package::TemporalClockSelection;
+#[cfg(feature = "quire-extraction")]
+pub use native_fences::{
+    check_native_fences, CheckLimits, FenceCheckCause, NativeFenceDiagnostic, NativeFenceReport,
+    NativeFenceRequest, NativeFenceResult, NativeFenceUnit,
+};
 mod subject;
 pub use lifecycle::{
-    admit_parsed_unit_list, check, check_units, check_units_with_refinement_internals,
-    check_with_execution_points, check_with_execution_points_and_refinement_internals,
-    check_with_execution_points_and_source_inputs, check_with_profile_catalog,
-    check_with_refinement_internals, check_with_temporal_selections_and_execution_points,
-    core_vocabulary, extension_forms, package, package_with_temporal_selections, parse,
-    parse_selecting_extensions, parse_with_extensions, preflight_unit_list, refusal_or_fault,
-    select, select_units, AdmittedModels, AdmittedUnitList, CheckedUnit, EmittedUnit,
-    FrontEndFailure, ObligationState, PackageLimits, ParseRequest, ParsedUnitSource,
-    PendingObligation, ProfileCatalogInput, ProfileCheckFailure, ProtocolCheckSite, SourceInputs,
-    TypeDeclaration, TypeReport, TypeRequirement,
+    admit_parsed_unit_list, check, check_units, check_units_with_integer_division,
+    check_units_with_refinement_internals, check_with_execution_points,
+    check_with_execution_points_and_refinement_internals,
+    check_with_execution_points_and_source_inputs, check_with_integer_division,
+    check_with_profile_catalog, check_with_refinement_internals,
+    check_with_temporal_selections_and_execution_points, core_vocabulary, extension_forms, package,
+    package_with_temporal_selections, parse, parse_selecting_extensions, parse_with_extensions,
+    preflight_unit_list, refusal_or_fault, select, select_units, AdmittedModels, AdmittedUnitList,
+    CheckedUnit, EmittedUnit, FrontEndFailure, ObligationState, PackageLimits, ParseRequest,
+    ParsedUnitSource, PendingObligation, ProfileCatalogInput, ProfileCheckFailure,
+    ProtocolCheckSite, SourceInputs, TypeDeclaration, TypeReport, TypeRequirement,
 };
 pub(crate) use lifecycle::{
     check_for_continuation, check_units_with_options, parse_for_continuation, ContinuationInputs,
