@@ -8,9 +8,9 @@ use fsl_eval::simulation::model::ModelSystem;
 use fsl_foundation::RequestIndex;
 use fsl_replay::{
     check_probability_certificate_document, read_long_run_probability_certificate,
-    write_long_run_probability_certificate, ExactProbabilityCertificateCheck,
-    LongRunProbabilityDocument, ModelCheckLimits, ProbabilityDocumentError,
-    ProbabilityDocumentLimits,
+    read_weighted_long_run_probability_certificate, write_long_run_probability_certificate,
+    ExactProbabilityCertificateCheck, LongRunProbabilityDocument, ModelCheckLimits,
+    ProbabilityDocumentError, ProbabilityDocumentLimits,
 };
 use ix_trace_rs::trace;
 
@@ -130,6 +130,57 @@ fn availability_proofs_preserve_original_transitions_and_gain_bias() {
             assert!(!accepted(&world, name, &bad), "mutation {mutation}");
         }
     }
+}
+
+/// FR-199-AC-4 (TC-2177): when every transition has zero reward weight, the
+/// engine uses the exact unweighted recurrent fraction and certifies it.
+#[trace("TC-2177", "FR-199-AC-4")]
+#[test]
+fn long_run_zero_weight_component() {
+    let claims = "probabilistic Zero using inf on M over (s: M::Server) under Steady on origin { long_run_fraction holds(s.phase = 0) weighted by duration >= rational(1800,1801) }\n";
+    let world = availability_with_claims(
+        claims.to_owned(),
+        "reward duration on Server::tick = 0;\nreward duration on Server::repair = 0;\n",
+    );
+    let records = analyze_items(
+        &Engines::fsl().unwrap(),
+        vec![exact_probabilistic_item(
+            RequestIndex::new(0),
+            world.request("Zero", ModelCheckLimits::default()),
+        )],
+        &Cancel::new(),
+    );
+    let terminal = records[0]
+        .terminal()
+        .unwrap_or_else(|| panic!("the zero-weight component must settle: {:?}", records[0]));
+    assert!(matches!(
+        terminal.value(),
+        fsl_replay::TerminalValue::Proved { .. }
+    ));
+    let bytes = terminal
+        .exact_certificate_document()
+        .expect("the settled result carries its exact certificate");
+    let document =
+        read_weighted_long_run_probability_certificate(bytes, limits(), &Cancel::new()).unwrap();
+    assert!(document
+        .certificate
+        .components
+        .iter()
+        .all(|component| component.value == ratio(1800, 1801)));
+
+    let system = ModelSystem::new(world.subject().simulation).unwrap();
+    let item = fsl_replay::probabilistic_claim_identity(world.claim("Zero")).unwrap();
+    assert!(matches!(
+        check_probability_certificate_document(
+            &system,
+            world.package.graph().probabilistic_model().claims(),
+            &item,
+            bytes,
+            limits(),
+            &Cancel::new(),
+        ),
+        Ok(ExactProbabilityCertificateCheck::Accepted(_))
+    ));
 }
 
 fn finite(periodic: bool) -> World {

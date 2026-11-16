@@ -185,6 +185,15 @@ impl<'c> Form<'c> {
                         interval,
                         vec![holds(*operand).ok_or_else(shape)?],
                     ),
+                    FormulaNode::Unary {
+                        operator: UnaryTemporal::Always,
+                        interval: Some(CheckedInterval::Timed(interval)),
+                        operand,
+                    } => (
+                        DeadlineKind::Always,
+                        interval,
+                        vec![holds(*operand).ok_or_else(shape)?],
+                    ),
                     FormulaNode::Binary {
                         operator: BinaryTemporal::Until,
                         interval: Some(CheckedInterval::Timed(interval)),
@@ -950,6 +959,7 @@ impl<'c> Builder<'_, '_, 'c> {
         }
         match (kind, truths) {
             (DeadlineKind::Eventually, [target]) if *target => DeadlinePhase::Accept,
+            (DeadlineKind::Always, [target]) if !*target => DeadlinePhase::Reject,
             (DeadlineKind::Until, [from, until]) => {
                 if *until {
                     DeadlinePhase::Accept
@@ -989,7 +999,10 @@ impl<'c> Builder<'_, '_, 'c> {
         if phase == DeadlinePhase::Pending {
             if let (Some(t), Some(bound)) = (reached.deadline, bound) {
                 if t > bound {
-                    phase = DeadlinePhase::Reject;
+                    phase = match kind {
+                        DeadlineKind::Always => DeadlinePhase::Accept,
+                        DeadlineKind::Eventually | DeadlineKind::Until => DeadlinePhase::Reject,
+                    };
                 }
             }
         }

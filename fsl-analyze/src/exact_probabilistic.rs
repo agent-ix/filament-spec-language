@@ -161,7 +161,7 @@ pub enum MonitorState {
     /// kind and phase. `D` and the exact elapsed clock are in the model
     /// member of the key.
     Deadline {
-        /// `eventually` or `until`.
+        /// `eventually`, `always` or `until`.
         kind: DeadlineKind,
         /// Where the event stands.
         phase: DeadlinePhase,
@@ -173,6 +173,8 @@ pub enum MonitorState {
 pub enum DeadlineKind {
     /// `eventually[0, D] holds(P)`.
     Eventually,
+    /// `always[0, D] holds(P)`.
+    Always,
     /// `holds(A) until[0, D] holds(B)`.
     Until,
 }
@@ -376,6 +378,7 @@ fn encode_cycle_monitor(identity: &mut String, monitor: Option<MonitorState>) {
             identity.push_str("monitor=deadline;");
             identity.push_str(match kind {
                 DeadlineKind::Eventually => "eventually;",
+                DeadlineKind::Always => "always;",
                 DeadlineKind::Until => "until;",
             });
             identity.push_str(match phase {

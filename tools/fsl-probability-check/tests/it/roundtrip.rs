@@ -1288,10 +1288,8 @@ fn weighted_long_run_strict_scalars_keys_and_objectives_refuse_in_fresh_process(
 
 #[trace("TC-1402", "FR-201-AC-32", "FR-201-AC-34")]
 #[test]
-fn weighted_zero_component_retains_existing_product_locus_in_fresh_process() {
-    let mut request = weighted_long_run_request();
-    let document: Value = serde_json::from_str(request["certificate"].as_str().unwrap()).unwrap();
-    let source = request["source"]["content"]
+fn weighted_zero_component_certificate_round_trips_in_fresh_process() {
+    let source = weighted_long_run_request()["source"]["content"]
         .as_str()
         .unwrap()
         .replace(
@@ -1302,16 +1300,11 @@ fn weighted_zero_component_retains_existing_product_locus_in_fresh_process() {
             "reward cost on Msg::send_b = 3;",
             "reward cost on Msg::send_b = 0;",
         );
-    replace_checked_source(&mut request, &source);
+    let request = proof_source_request(&source, |_, _, _, certificate, _limits| {
+        let document: Value = serde_json::from_slice(certificate).unwrap();
+        assert!(!document["components"].as_array().unwrap().is_empty());
+    });
     let (code, result) = run(&request, &[]);
-    assert_ne!(code, 0, "{result}");
-    assert_eq!(result["status"], "unsupported");
-    assert!(result["reason"]
-        .as_str()
-        .unwrap()
-        .contains("ZeroWeightComponent"));
-    assert_eq!(
-        result["at"]["product_key"], document["components"][0]["bias"][0]["state"],
-        "{result}"
-    );
+    assert_eq!(code, 0, "{result}");
+    assert_eq!(result["status"], "accepted", "{result}");
 }
