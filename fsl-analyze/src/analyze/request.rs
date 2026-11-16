@@ -611,12 +611,24 @@ fn work<'a>(
                     .get(backend.id())
                     .is_some_and(|engine| engine.provider().is_some())
             }) {
-                crate::external_provider::provider_item(
-                    item.request_index,
+                let routed = crate::provider::routed_item(
                     package,
+                    engines.registrations(),
+                    item.request_index,
                     &item.claim,
+                    item.backend.as_ref(),
+                );
+                crate::provider::provider_item(
+                    item.request_index,
                     backend.id(),
-                    selection,
+                    crate::provider::ProviderItemInput {
+                        package,
+                        packages: binding.packages,
+                        claim: &item.claim,
+                        routed,
+                        emit: limits.emit,
+                        selection,
+                    },
                 )
             } else {
                 let selection = selection.map(|target| crate::value_check::ValueRequest {
@@ -692,11 +704,11 @@ fn work<'a>(
         (expected, &negotiated.disposition)
     {
         if candidate.id().as_str() != expected {
-            built.work = Some(Box::new(move |_, _| {
+            built.work = Some(super::ItemWork::Engine(Box::new(move |_, _| {
                 super::EngineReport::Refused(super::Refusal::Unsupported(
                     fsl_route::NegotiationOutcome::UnsupportedRequestedCapability.code(),
                 ))
-            }));
+            })));
         }
     }
     built.kind = item.kind;

@@ -13,8 +13,8 @@ use fsl_analyze::analyze::{
     analyze, AnalyzeLimits, AnalyzeOutcome, AnalyzeRequest, ClaimItem, Counterexample, Engine,
     Engines, ItemCounterexample, NegotiatedItem, SourceProvision, SubjectBinding,
 };
-use fsl_analyze::external_provider::{ExternalProvider, ProviderRequest, ProviderVerdict};
 use fsl_analyze::provider::{self, ProviderResults};
+use fsl_analyze::provider::{ExternalProvider, ProviderRequest, ProviderVerdict};
 use fsl_foundation::source::provenance::OccurrenceKey;
 use fsl_foundation::{BackendId, RequestIndex};
 use fsl_package::CheckedPackage;
@@ -109,12 +109,15 @@ struct RecordingProvider {
 }
 
 impl ExternalProvider for RecordingProvider {
-    fn check(&self, _request: &ProviderRequest<'_, '_>, cancel: &Cancel) -> ProviderVerdict {
-        self.calls.fetch_add(1, Ordering::SeqCst);
-        if self.cancel_during_check {
-            cancel.cancel(CancelCause::Deadline);
-        }
-        self.verdict.clone()
+    fn settle(&self, request: &ProviderRequest<'_>, cancel: &Cancel) -> Vec<ProviderVerdict> {
+        let verdict = {
+            self.calls.fetch_add(1, Ordering::SeqCst);
+            if self.cancel_during_check {
+                cancel.cancel(CancelCause::Deadline);
+            }
+            self.verdict.clone()
+        };
+        vec![verdict; request.items().len()]
     }
 }
 
@@ -154,6 +157,7 @@ fn engines(
             Engine::external(
                 descriptor,
                 fsl_analyze::analyze::BackendTool::new("test-provider", "1").expect("a tool"),
+                fsl_analyze::provider::ProviderLimits::default(),
                 Box::new(RecordingProvider {
                     verdict,
                     calls: calls.clone(),

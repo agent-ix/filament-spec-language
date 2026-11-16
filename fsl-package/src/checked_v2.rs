@@ -1233,6 +1233,13 @@ impl AdmittedPackageRead<'_> {
         self.source
     }
 
+    /// The emission the strict reader admitted: its v2 bytes are the ones
+    /// this read holds, which a provider request carries (FSpec FR-331
+    /// `request.package`).
+    pub fn emission(&self) -> &Emission {
+        &self.emission
+    }
+
     /// The source map retained from the successful I2 read.
     pub fn source_map(&self) -> &PackageSourceMap {
         &self.read.source_map
