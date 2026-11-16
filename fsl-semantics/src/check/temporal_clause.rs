@@ -1388,8 +1388,14 @@ fn check_clause(
         TemporalProfile::Timed => {
             let over = types.first().ok_or_else(|| fault("over-type-resolved"))?;
             Some(
-                timed::binding(&clock, over, declarations, &form.name.name, declaration.span)
-                    .map_err(refuse)?,
+                timed::binding(
+                    &clock,
+                    over,
+                    declarations,
+                    &form.name.name,
+                    declaration.span,
+                )
+                .map_err(refuse)?,
             )
         }
         TemporalProfile::EventPositionFalseExtension

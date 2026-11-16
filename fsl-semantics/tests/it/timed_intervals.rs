@@ -394,6 +394,21 @@ fn the_timed_profile_needs_a_model_time_binding_over_a_timed_model() {
         (cause.code(), cause.tag()),
         (Code::InvalidTimedModel, "model-time-on-trace-subject")
     );
+    // FR-610 "Model binding names": `model-steps` binds no trace subject.
+    let (text, _, outcome) = check_with(&units, "Loose", "model-steps", body, vec![dense_ms()]);
+    let cause = cause_of(outcome);
+    assert_eq!(
+        cause,
+        TemporalCause::ClockRoleSpellsTick {
+            role: "model-steps".to_owned(),
+            profile: fsl_semantics::check::TemporalProfile::Timed,
+            span: first(&text, "\"model-steps\""),
+        }
+    );
+    assert_eq!(
+        (cause.code(), cause.tag()),
+        (Code::IllTyped, "type-mismatch")
+    );
 }
 
 /// FR-233 "Intervals" through FR-230's time units: a step interval has
