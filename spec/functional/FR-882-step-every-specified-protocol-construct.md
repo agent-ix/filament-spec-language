@@ -78,18 +78,19 @@ this requirement does not change.
 - **Protocol references.** A `protocol X` reference evaluated in a `check`
   condition, a guard, a capture initializer, an event or `send` constraint,
   a `finish` constraint, a `terminal when` condition, or a function body
-  that such a slot calls has the value of the clause `X` (FSpec FR-463),
-  evaluated at the protocol state the slot is read in. That value is `true`
-  when every obligation `X` declares (its `terminal` member and its required
-  temporal clauses) holds over `X`'s protocol subject rooted at the current
-  model state, with `X`'s `over` input ranging over its domain as an
-  `origin` instance (the rules above). It is `false` when one of those
-  obligations is refuted. Any other settlement of that nested check (a
-  limit, an inconclusive or unsupported result) makes the read undefined,
-  and the undefined rule above applies. A nested check that re-enters a
-  protocol whose value is already being computed at the same model state is
+  that such a slot calls has the value of the clause `X` (FSpec FR-463).
+  That value is the verdict of `X`'s obligations (its `terminal` member and
+  its required temporal clauses) checked over `X`'s protocol subject from the
+  subject's initial states, with `X`'s `over` input ranging over its domain
+  as an `origin` instance (the rules above): `true` when every obligation
+  holds and `false` when one is refuted. The reference reads no current
+  model state, binder or capture (FSpec FR-728), so it is admitted in slots
+  that bar model state and has one value for the whole item. Any other
+  settlement of that check (a limit, an inconclusive or unsupported result)
+  makes the read undefined, and the undefined rule above applies. A check
+  that re-enters a protocol whose value is already being computed is
   undefined in the same way, so a reference cycle (FR-880-AC-5) never loops.
-  The nested check runs under the enclosing item's limits and meter.
+  The check runs once per item, under the enclosing item's limits and meter.
 - **Newly written forms (FR-880).** A post-test `repeat` is stepped by FSpec
   FR-729's moves. A `terminal when` that reads `over` under `on each`
   evaluates over each instance's own `over` value. A `repeat` that steps
@@ -128,7 +129,7 @@ Each one names a limit that a request or a model sets, not a missing design:
 | FR-882-AC-5 | Under a `tso` `parallel`, an attempt whose operation body defeats footprint derivation is classified over its frame and contract reads. The protocol explores, and the access class equals the one obtained from a hand-written footprint of the same locations. | Test (TC-2506) |
 | FR-882-AC-6 | A post-test `repeat` (FR-880-AC-8), a `terminal when` that reads `over` under `on each` (FR-880-AC-6) and a protocol over `Option<M::Order>` each explore to a settled deadlock-freedom result. The post-test `repeat`'s first body step is enabled at its entry with no guard read. | Test (TC-2506) |
 | FR-882-AC-7 | Over a corpus holding one minimal protocol for each construct FR-218 admits, every protocol explores to a result. Apart from symbolic capacity, the only stepper refusals in the corpus are `UnenumerableRecord`, for a unit whose binder type has a text field, and `WeakMemory`, for a unit whose resolved model the system does not implement. | Test (TC-2505) |
-| FR-882-AC-8 | Over a state where `Other`'s terminal obligation holds, `check Gate { protocol Other }` in `Flow` passes and `Flow`'s deadlock freedom is proved. Over a state where it is refuted, the `check` blocks and deadlock freedom is refuted at `Gate`. A self-reference `while { protocol Flow }` settles `refuted` with `UndefinedEvaluation` at the guard, never `unsupported` and never a non-terminating run. A `send` constraint and a capture that hold `protocol Other` read the same value as the `check`. | Test (TC-2505) |
+| FR-882-AC-8 | Where `Other`'s terminal obligation holds from its subject's initial states, `check Gate { protocol Other }` in `Flow` passes at every state and `Flow`'s deadlock freedom is proved; where it is refuted there, the `check` blocks at every state and deadlock freedom is refuted at `Gate`. Changing the model state `Flow` has reached before `Gate` does not change the value. A self-reference `while { protocol Flow }` settles `refuted` with `UndefinedEvaluation` at the guard, never `unsupported` and never a non-terminating run. A `send` constraint and a capture that hold `protocol Other` read the same value as the `check`. | Test (TC-2505) |
 
 ## Dependencies
 
