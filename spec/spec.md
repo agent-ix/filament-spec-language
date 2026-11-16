@@ -52,6 +52,8 @@ relationships:
     type: contains
   - target: ix://agent-ix/filament-spec-language/FR-060
     type: contains
+  - target: ix://agent-ix/filament-spec-language/FR-821
+    type: contains
   - target: ix://agent-ix/filament-spec-language/NFR-009
     type: contains
   - target: ix://agent-ix/filament-spec-language/NFR-011
@@ -973,6 +975,7 @@ The full task is tmp/formalization-agent-a-language-core.md in the workspace. Th
 | [FR-005](functional/FR-005-link-shared-model.md) | FR |
 | [FR-006](functional/FR-006-check-defined-expressions.md) | FR |
 | [FR-010](functional/FR-010-report-native-outcomes.md) | FR |
+| [FR-821](functional/FR-821-analyze-flow-rules-through-native-fsl.md) | FR |
 | [US-001](usecase/US-001-author-native-source.md) | US |
 | [US-002](usecase/US-002-link-exact-models.md) | US |
 | [US-003](usecase/US-003-evaluate-bounded-state.md) | US |
