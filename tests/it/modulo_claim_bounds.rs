@@ -125,7 +125,14 @@ fn modulo_claim_bound_context_and_replay_agree_for_each_consumer() {
         (7, "letb", interval(0, 11), interval(0, 11), false, true),
         (8, "argw", interval(0, 11), interval(0, 11), false, false),
         (9, "cmp", interval(0, 11), interval(0, 11), false, false),
-        (10, "bound_value", interval(0, 11), interval(0, 11), false, false),
+        (
+            10,
+            "bound_value",
+            interval(0, 11),
+            interval(0, 11),
+            false,
+            false,
+        ),
         (
             11,
             "derived",
@@ -360,6 +367,10 @@ fn modulo_claim_bound_context_and_replay_agree_for_each_consumer() {
             record.path_condition().len(),
             usize::from(matches!(function, "ifb" | "control" | "ifw" | "letif")),
             "{function} guards"
+        );
+        assert!(
+            record.path_condition().iter().all(|guard| guard.holds()),
+            "{function} division runs in the true branch"
         );
         assert_eq!(
             record.conversion_context().is_some(),
