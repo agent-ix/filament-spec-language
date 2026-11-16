@@ -192,6 +192,25 @@ fn collect<'a>(
     Ok(pending)
 }
 
+/// FR-652's current-snapshot `ValueInvariants` selection: the reachable
+/// values of one admitted current snapshot, with no clause or invocation.
+fn collect_current<'a>(
+    types: &TypeEnvironment,
+    current: &'a Observation,
+) -> Result<Vec<Pending<'a>>, CallFailure> {
+    let mut pending = Vec::new();
+    let own = observation_identity(&current.identity);
+    for reference in current.environment.references() {
+        let root = RuntimeValuePath {
+            observation: own.clone(),
+            subject: ValuePathSubject::Object(reference.clone()),
+            steps: Vec::new(),
+        };
+        push_object(types, &mut pending, root, reference, &current.environment)?;
+    }
+    Ok(pending)
+}
+
 /// The object `reference` of `environment` as a value of its type, then each
 /// member of it walked.
 fn push_object<'a>(
@@ -325,10 +344,36 @@ pub(super) fn evaluate(
     observations: &AdmittedObservations,
     meter: &mut Meter,
 ) -> Result<ValueInvariantEvaluation, CallFailure> {
+    evaluate_values(
+        package,
+        collect(package.graph().scope().types(), observations)?,
+        meter,
+    )
+}
+
+/// FR-652: evaluate the values of an admitted current snapshot using the same
+/// FR-366 ordering and meter as `evaluate`.
+pub(crate) fn evaluate_current(
+    package: &CheckedPackage,
+    current: &Observation,
+    meter: &mut Meter,
+) -> Result<ValueInvariantEvaluation, CallFailure> {
+    evaluate_values(
+        package,
+        collect_current(package.graph().scope().types(), current)?,
+        meter,
+    )
+}
+
+fn evaluate_values(
+    package: &CheckedPackage,
+    values: Vec<Pending<'_>>,
+    meter: &mut Meter,
+) -> Result<ValueInvariantEvaluation, CallFailure> {
     let graph = package.graph();
     let invariants = graph.type_invariants();
     let mut tasks: Vec<(&CheckedTypeInvariant, Pending<'_>)> = Vec::new();
-    for value in collect(graph.scope().types(), observations)? {
+    for value in values {
         for invariant in invariants
             .iter()
             .filter(|candidate| candidate.applies_to(value.slot.clone()))

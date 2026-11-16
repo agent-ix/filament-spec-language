@@ -3,6 +3,7 @@
 
 mod analyze;
 mod clause;
+mod items;
 mod monitor;
 mod output;
 mod output_file;
@@ -162,6 +163,7 @@ pub struct RunResult {
 pub struct CompileOutcome {
     package_bytes: Vec<u8>,
     document: fsl_replay::OutcomeDocument,
+    handoff_compiled: Option<crate::emit_checked_v2::Compiled>,
 }
 
 impl CompileOutcome {
@@ -830,21 +832,34 @@ pub fn run_with_limits_and_overrides(
 ) -> std::result::Result<RunResult, Box<RunError>> {
     // FR-644: a `native-monitor/1` request runs its record file as the batch
     // stream.
-    let monitored = with_request_limits(path, limits.request_bytes, |directory, bytes| {
+    let special = with_request_limits(path, limits.request_bytes, |directory, bytes| {
         if monitor::is_monitor_request(bytes) {
             monitor::run_bytes(directory, bytes, limits.dependent_bytes).map(Some)
         } else if replay::is_replay_request(bytes) {
             // FR-862: a `native-replay/1` request replays its FR-336 request.
             replay::run_bytes(directory, bytes, limits.dependent_bytes).map(Some)
         } else {
-            Ok(None)
+            items::run_bytes(directory, bytes, limits, overrides)
         }
     })?;
-    if let Some(result) = monitored {
+    if let Some(result) = special {
         return Ok(result);
     }
     let prepared = prepare_run_with_overrides(path, limits, overrides)?;
     execute_prepared(prepared).map_err(|cause| Box::new(RunError { cause }))
+}
+
+/// Inspect a checked-package handoff and return the command's successful
+/// `inspect` outcome. A refusal retains the handoff reader's typed error.
+pub fn inspect_handoff(
+    directory: &Path,
+) -> std::result::Result<fsl_replay::OutcomeDocument, crate::checked_handoff::Error> {
+    crate::checked_handoff::verify(directory)?;
+    Ok(fsl_replay::OutcomeDocument::new(
+        fsl_replay::Operation::Inspect,
+        None,
+        filament_semantic_value::catalog::Category::Success,
+    ))
 }
 
 /// Read and validate a request and its selected files without executing it.
@@ -935,6 +950,9 @@ pub fn compile_outcome_with_overrides(
 ) -> std::result::Result<CompileOutcome, Box<RunError>> {
     with_request(path, |directory, bytes| {
         let request: wire::CompileRequest = request_with_overrides(bytes, overrides)?;
+        if let Some(handoff) = &request.handoff {
+            validate_handoff_request(handoff, request.program.sources.len())?;
+        }
         let output = match (&request.output, overrides.output) {
             (Some(_), Some(_)) => return Err(RunCause::OutputGivenTwice),
             (Some(member), None) => Some(directory.join(&member.package)),
@@ -970,12 +988,136 @@ pub fn compile_outcome_with_overrides(
             require_complete_edition(source.source())?;
             sources.push(source);
         }
-        let outcome = complete(&request, &mut intake, &sources)?;
+        let mut outcome = complete(&request, &mut intake, &sources)?;
         if let Some(output) = output {
             output_file::write_new_file(&output, &outcome.package_bytes)?;
         }
+        if let Some(handoff) = &request.handoff {
+            let compiled =
+                outcome
+                    .handoff_compiled
+                    .take()
+                    .ok_or_else(|| RunCause::ClauseRequest {
+                        member: "handoff".to_owned(),
+                        reason: "requires a single program object".to_owned(),
+                    })?;
+            write_compile_handoff(
+                directory,
+                &request,
+                handoff,
+                &outcome.package_bytes,
+                compiled,
+            )?;
+        }
         Ok(outcome)
     })
+}
+
+/// Reject malformed FR-665 handoff selections before opening selected inputs.
+fn validate_handoff_request(handoff: &wire::Handoff, source_count: usize) -> Result<()> {
+    use std::path::Component;
+
+    let path = Path::new(&handoff.directory);
+    if handoff.directory.is_empty()
+        || path.components().any(|component| {
+            matches!(
+                component,
+                Component::ParentDir | Component::RootDir | Component::Prefix(_)
+            )
+        })
+    {
+        return Err(RunCause::ClauseRequest {
+            member: "handoff.directory".to_owned(),
+            reason: "must name a directory beneath the compile request directory".to_owned(),
+        });
+    }
+    if handoff.package_name.is_empty() {
+        return Err(RunCause::ClauseRequest {
+            member: "handoff.package_name".to_owned(),
+            reason: "must not be empty".to_owned(),
+        });
+    }
+    if source_count != 1 {
+        return Err(RunCause::ClauseRequest {
+            member: "handoff".to_owned(),
+            reason: "requires exactly one program source".to_owned(),
+        });
+    }
+    if handoff.native_join.is_none() {
+        return Err(RunCause::ClauseRequest {
+            member: "handoff.native_join".to_owned(),
+            reason: "is required".to_owned(),
+        });
+    }
+    Ok(())
+}
+
+/// Write FR-665's checked-package handoff from the exact compilation result.
+fn write_compile_handoff(
+    directory: &Path,
+    request: &wire::CompileRequest,
+    handoff: &wire::Handoff,
+    package_bytes: &[u8],
+    compiled: crate::emit_checked_v2::Compiled,
+) -> Result<()> {
+    let Some(native_join) = handoff.native_join.as_ref() else {
+        return Err(RunCause::ClauseRequest {
+            member: "handoff.native_join".to_owned(),
+            reason: "is required".to_owned(),
+        });
+    };
+    let source_path = directory.join(&request.program.sources[0].file);
+    let models = request
+        .models
+        .iter()
+        .map(|model| directory.join(&model.source.file))
+        .collect();
+    let libraries = request
+        .libraries
+        .iter()
+        .map(|library| {
+            (
+                library.identity.clone(),
+                directory.join(&library.source.file),
+            )
+        })
+        .collect();
+    let emit = crate::emit_checked_v2::Request {
+        source: source_path,
+        package_name: handoff.package_name.clone(),
+        models,
+        libraries,
+        execution_points: handoff
+            .execution_points
+            .as_ref()
+            .map(|path| directory.join(path)),
+        temporal_selections: Vec::new(),
+        out: None,
+    };
+    let corpus = match handoff.corpus {
+        wire::HandoffCorpus::None => crate::checked_handoff::Corpus::None,
+        wire::HandoffCorpus::Standard => crate::checked_handoff::Corpus::Standard,
+    };
+    let writer_request = crate::checked_handoff::CheckedHandoffRequest {
+        emit,
+        corpus,
+        native_join: fsl_package::NativeJoinLimits::new(
+            native_join.work_units,
+            native_join.storage,
+        ),
+    };
+    crate::checked_handoff::write_compiled_from_command(
+        &writer_request,
+        &directory.join(&handoff.directory),
+        compiled,
+        package_bytes,
+        &request.program.sources[0].file,
+    )
+    .map_err(|error| RunCause::ClauseRequest {
+        member: "handoff".to_owned(),
+        reason: error.to_string(),
+    })?;
+    Ok(())
 }
 
 /// Whether a request's selected model declares the one supported domain-package
@@ -1060,20 +1202,38 @@ fn complete_sources(
         intake,
         sources,
         unit_list,
-        |checked, selections, _, _, failure| {
+        |checked, selections, packages, _, libraries, models, inventory, failure| {
             let cancel = filament_exact::Cancel::new();
             let limits = fsl_replay::spine::SpineLimits::default();
             let result = fsl_replay::spine::package_with_temporal_selections(
-                checked,
+                &checked,
                 selections,
                 limits.package,
                 &cancel,
             );
             let document = fsl_replay::OutcomeDocument::from_package(&result);
             let emitted = result.map_err(failure)?.into_value();
+            let package_bytes = emitted.package().bytes().to_vec();
+            let handoff_compiled =
+                request
+                    .handoff
+                    .as_ref()
+                    .map(|_| crate::emit_checked_v2::Compiled {
+                        source: sources[0].source().text().as_bytes().to_vec(),
+                        models,
+                        libraries,
+                        packages,
+                        points: Default::default(),
+                        checked,
+                        inventory: inventory
+                            .expect("handoff inventory is captured for this request"),
+                        emit: limits.package.emit(),
+                        emitted,
+                    });
             Ok(CompileOutcome {
-                package_bytes: emitted.package().bytes().to_vec(),
+                package_bytes,
                 document,
+                handoff_compiled,
             })
         },
     )
@@ -1088,10 +1248,18 @@ fn check_sources<T>(
     sources: &[FormalSource],
     unit_list: bool,
     finish: impl FnOnce(
-        &fsl_replay::spine::CheckedUnit,
+        fsl_replay::spine::CheckedUnit,
         &[fsl_replay::spine::TemporalClockSelection],
         fsl_semantics::model::intake::PackageInput,
         Vec<&FormalSource>,
+        Vec<fsl_replay::spine::SuppliedLibrary>,
+        Vec<Vec<u8>>,
+        Option<
+            std::result::Result<
+                filament_contract_model::source_obligation::SourceInventoryOutcome,
+                String,
+            >,
+        >,
         &dyn Fn(fsl_replay::spine::FrontEndFailure) -> RunCause,
     ) -> Result<T>,
 ) -> Result<T> {
@@ -1113,6 +1281,25 @@ fn check_sources<T>(
         reason: refusal.detail,
     })?;
     let libraries = library_sources(request, intake)?;
+    if request.handoff.is_some() && unit_list {
+        return Err(RunCause::ClauseRequest {
+            member: "handoff".to_owned(),
+            reason: "requires a single program object".to_owned(),
+        });
+    }
+    let handoff_models = documents
+        .iter()
+        .map(|document| document.source().text().as_bytes().to_vec())
+        .collect();
+    let handoff_libraries = libraries
+        .iter()
+        .map(|(library, read)| fsl_replay::spine::SuppliedLibrary {
+            identity: library.identity.clone(),
+            source: read.source().identity().clone(),
+            path: read.source().path().to_owned(),
+            bytes: read.source().text().as_bytes().to_vec(),
+        })
+        .collect();
     let program_sources = sources.iter().map(FormalSource::source).collect::<Vec<_>>();
     let first_source = program_sources[0];
     let spine_failure = |refusal: fsl_replay::spine::CompileRefusal| {
@@ -1183,6 +1370,7 @@ fn check_sources<T>(
         .iter()
         .flat_map(|unit| request.clocks.check_selections(unit))
         .collect();
+    let mut handoff_inventory = None;
     let (checked, package_selections) = if unit_list {
         let admitted = fsl_replay::spine::admit_parsed_unit_list(parsed, &dependencies)
             .map_err(|refusal| spine_failure(*refusal))?;
@@ -1228,7 +1416,7 @@ fn check_sources<T>(
         let models = fsl_replay::spine::select(&parsed, &packages, limits.model, &cancel)
             .map_err(failure)?
             .into_value();
-        let checked = fsl_replay::spine::check_with_refinement_internals(
+        let checked_result = fsl_replay::spine::check_with_refinement_internals(
             &parsed,
             package_name(first_source.identity()),
             fsl_replay::spine::SourceInputs {
@@ -1240,9 +1428,18 @@ fn check_sources<T>(
             &dependencies,
             limits,
             &cancel,
-        )
-        .map_err(failure)?
-        .into_value();
+        );
+        if request.handoff.is_some() {
+            handoff_inventory = Some(
+                fsl_replay::source_inventory::fsl_inventory(
+                    Some(&parsed),
+                    &checked_result,
+                    sources[0].identity(),
+                )
+                .map_err(|refusal| refusal.to_string()),
+            );
+        }
+        let checked = checked_result.map_err(failure)?.into_value();
         let selections = request
             .clocks
             .package_selections(&checked, &[&parsed])
@@ -1250,10 +1447,13 @@ fn check_sources<T>(
         (checked, selections)
     };
     finish(
-        &checked,
+        checked,
         &package_selections,
         packages,
         libraries.iter().map(|(_, source)| source).collect(),
+        handoff_libraries,
+        handoff_models,
+        handoff_inventory,
         &failure,
     )
 }
@@ -1449,6 +1649,12 @@ fn prepare_run_bytes(
     // file is read.
     if let Some(member) = &request.tl_lowering {
         tl::decode(member)?;
+    }
+    if request.items.is_some() {
+        return Err(RunCause::ClauseRequest {
+            member: "items".to_owned(),
+            reason: "items is handled by the multi-selection runner".to_owned(),
+        });
     }
     let mut intake = intake_with_bytes(
         directory,

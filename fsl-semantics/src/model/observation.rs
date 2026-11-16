@@ -1955,6 +1955,50 @@ pub fn admit_current_snapshot<'a>(
     )
 }
 
+/// FR-106's `ValueInvariants` selection: admit one current snapshot without
+/// selecting a state clause, then return the admitted values and their
+/// document identity for FR-366 evaluation.
+pub fn admit_value_invariants_snapshot<'a>(
+    model_selections: impl Into<ModelSelections<'a>>,
+    types: &TypeEnvironment,
+    packages: &PackageInput,
+    model_limits: ModelNormalizationLimits,
+    provision: &BTreeMap<DocumentRef, Vec<u8>>,
+    selected: &DocumentRef,
+    limits: ObservationLimits,
+) -> Result<(Observation, AdmissionUsage), AdmissionFailure> {
+    let views = model_views(model_selections, packages, model_limits)?;
+    let read = read_document(DocumentKind::Snapshot, provision, selected, limits, &views)?;
+    let snapshot = read
+        .as_snapshot()
+        .ok_or_else(|| fault("expected-snapshot-document"))?;
+    if snapshot.observation != document::ObservationRole::Current {
+        return Err(refuse(admission_record(
+            Code::WrongSnapshot,
+            "wrong-observation",
+        )));
+    }
+    check_model_any(&views, &snapshot.model)?;
+    let admitted = document::admit_argument_populations(
+        &views,
+        types,
+        snapshot,
+        &read.identity,
+        &[],
+        &[],
+        model_limits.ancestor_steps,
+    )?;
+    Ok((
+        Observation {
+            identity: read.identity,
+            environment: admitted.environment,
+            populations: admitted.completeness,
+            out_of_range: admitted.out_of_range,
+        },
+        read.usage,
+    ))
+}
+
 /// FR-330: one snapshot of a temporal clause's trace, admitted as
 /// [`admit_current_snapshot`] admits it, except that `required`, the
 /// populations the clause's `holds` atoms name (FR-391), are required to be

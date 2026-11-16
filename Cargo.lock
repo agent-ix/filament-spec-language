@@ -843,6 +843,7 @@ dependencies = [
  "filament-semantic-value",
  "fsl-analyze",
  "fsl-cst",
+ "fsl-eval",
  "fsl-forms",
  "fsl-foundation",
  "fsl-package",

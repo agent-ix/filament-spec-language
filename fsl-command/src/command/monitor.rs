@@ -420,6 +420,7 @@ fn read_inputs(intake: &mut super::Intake<'_>, request: wire::MonitorRequest) ->
             libraries: request.libraries,
             clocks: request.clocks,
             output: None,
+            handoff: None,
         },
     })
 }
@@ -481,7 +482,7 @@ fn drive(
         &mut intake,
         std::slice::from_ref(&program),
         false,
-        |checked, selections, packages, libraries, _| {
+        |checked, selections, packages, libraries, _, _, _, _| {
             let mut sources: Vec<Source> = vec![program.source().clone()];
             sources.extend(libraries.iter().map(|library| library.source().clone()));
             let limits = MonitorLimits {

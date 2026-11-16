@@ -27,6 +27,7 @@ fn population() -> String {
 /// violating case's snapshot as `violating-snapshot.json`.
 fn write_cases(directory: &Path) {
     spine::write(directory, Case::Healthy).unwrap();
+    add_value_invariant(directory);
     let violating = directory.join("violating");
     spine::write(&violating, Case::Violating).unwrap();
     std::fs::copy(
@@ -34,6 +35,31 @@ fn write_cases(directory: &Path) {
         directory.join("violating-snapshot.json"),
     )
     .unwrap();
+}
+
+fn add_value_invariant(directory: &Path) {
+    let path = directory.join("spine-model.semantic-ir.json");
+    let mut model: Value = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+    let object_type = model["types"]
+        .as_array_mut()
+        .and_then(|types| {
+            types.iter_mut().find(|record| {
+                record["identity"] == format!("ix://{}/ConfigVersion", spine::PACKAGE_IDENTITY)
+            })
+        })
+        .expect("ConfigVersion model type");
+    object_type["clauses"] = json!([{
+        "identity": format!("ix://{}/ConfigVersion/PositiveVersion", spine::PACKAGE_IDENTITY),
+        "language": "quire",
+        "clauseId": "PositiveVersion",
+        "text": "self.versionNumber > 1",
+        "origin": {"generated": {
+            "generatorIdentity": format!("ix://{}/ConfigVersion/PositiveVersion", spine::PACKAGE_IDENTITY),
+            "generatorVersion": "1.0.0",
+            "inputIdentities": [format!("ix://{}/ConfigVersion/PositiveVersion", spine::PACKAGE_IDENTITY)],
+        }},
+    }]);
+    std::fs::write(&path, serde_json::to_vec(&model).unwrap()).unwrap();
 }
 
 /// The `ParentOrder` clause selection over observation `observation` with
@@ -91,7 +117,6 @@ fn assert_request_refusal(output: &Output, member: &str) {
 
 #[test]
 #[trace("TC-1708", "FR-651-AC-1")]
-#[ignore = "QSL-1987: items requests across several rules and snapshots not implemented yet"]
 fn two_clause_selections_report_two_items() {
     let directory = tempfile::tempdir().unwrap();
     write_cases(directory.path());
@@ -109,14 +134,19 @@ fn two_clause_selections_report_two_items() {
         document["selections"],
         json!([{"index": 0, "expanded": 1}, {"index": 1, "expanded": 1}])
     );
-    assert_eq!(document["items"][0]["result"]["category"], "success");
-    assert_eq!(document["items"][1]["result"]["category"], "violation");
+    assert_eq!(
+        document["items"][0]["result"]["disposition"]["category"],
+        "success"
+    );
+    assert_eq!(
+        document["items"][1]["result"]["disposition"]["category"],
+        "violation"
+    );
     assert_eq!(document["category"], "violation");
 }
 
 #[test]
 #[trace("TC-1709", "FR-651-AC-2")]
-#[ignore = "QSL-1987: population selector expansion not implemented yet"]
 fn population_selector_expands_one_item_per_object() {
     let directory = tempfile::tempdir().unwrap();
     write_cases(directory.path());
@@ -137,7 +167,6 @@ fn population_selector_expands_one_item_per_object() {
 /// Negative: one refused item leaves the others unchanged.
 #[test]
 #[trace("TC-1710", "FR-651-AC-3")]
-#[ignore = "QSL-1987: per-item settlement of an items request not implemented yet"]
 fn one_refused_item_leaves_the_others_unchanged() {
     let directory = tempfile::tempdir().unwrap();
     write_cases(directory.path());
@@ -152,16 +181,24 @@ fn one_refused_item_leaves_the_others_unchanged() {
     );
     assert_eq!(output.status.code(), Some(20), "{output:?}");
     let document = items_document(&output);
-    assert_eq!(document["items"][0]["result"]["category"], "success");
-    assert_eq!(document["items"][1]["result"]["category"], "refusal");
-    assert_eq!(document["items"][2]["result"]["category"], "violation");
+    assert_eq!(
+        document["items"][0]["result"]["disposition"]["category"],
+        "success"
+    );
+    assert_eq!(
+        document["items"][1]["result"]["disposition"]["category"],
+        "refusal"
+    );
+    assert_eq!(
+        document["items"][2]["result"]["disposition"]["category"],
+        "violation"
+    );
     assert_eq!(document["category"], "refusal");
 }
 
 /// Negative: malformed items requests refuse at the request stage.
 #[test]
 #[trace("TC-1712", "FR-651-AC-5")]
-#[ignore = "QSL-1987: items request decoding not implemented yet"]
 fn malformed_items_requests_refuse_at_the_request_stage() {
     let directory = tempfile::tempdir().unwrap();
     write_cases(directory.path());
@@ -195,11 +232,26 @@ fn malformed_items_requests_refuse_at_the_request_stage() {
         ]}),
     );
     assert_request_refusal(&output, "missing");
+    let output = request(
+        directory.path(),
+        "items",
+        json!({"observations": observations(), "selections": [
+            {"value_invariants": {"snapshot": "current", "extra": true}},
+        ]}),
+    );
+    assert_request_refusal(&output, "value_invariants");
+    let output = request(
+        directory.path(),
+        "items",
+        json!({"observations": observations(), "selections": [
+            {"value_invariants": {"snapshot": "missing"}},
+        ]}),
+    );
+    assert_request_refusal(&output, "missing");
 }
 
 #[test]
 #[trace("TC-1713", "FR-651-AC-6")]
-#[ignore = "QSL-1987: unheld population selector item not implemented yet"]
 fn unheld_population_selector_gives_one_refused_item() {
     let directory = tempfile::tempdir().unwrap();
     write_cases(directory.path());
@@ -212,15 +264,23 @@ fn unheld_population_selector_gives_one_refused_item() {
         ]}),
     );
     let document = items_document(&output);
-    assert_eq!(document["items"][0]["result"]["category"], "refusal");
+    assert_eq!(
+        document["items"][0]["result"]["disposition"]["category"], "refusal",
+        "{document}"
+    );
+    assert!(document["items"][0]["result"]
+        .to_string()
+        .contains("nowhere"));
     assert!(document["items"][0].get("object").is_none());
-    assert_eq!(document["items"][1]["result"]["category"], "success");
+    assert_eq!(
+        document["items"][1]["result"]["disposition"]["category"],
+        "success"
+    );
 }
 
 /// Negative: FR-652 selections with malformed members refuse.
 #[test]
 #[trace("TC-1715", "FR-652-AC-2")]
-#[ignore = "QSL-2193: context and value_invariants request members not implemented yet"]
 fn malformed_context_and_value_invariant_selections_refuse() {
     let directory = tempfile::tempdir().unwrap();
     write_cases(directory.path());
@@ -238,13 +298,56 @@ fn malformed_context_and_value_invariant_selections_refuse() {
             {"value_invariants": {"snapshot": "current"}}}),
     );
     assert_request_refusal(&output, "value_invariants");
+    let output = request(
+        directory.path(),
+        "clause",
+        json!({"observations": observations(), "selection":
+            {"context": {"name": "ParentOrder", "invocation": "i", "side": "pre", "self": {}}}}),
+    );
+    assert_request_refusal(&output, "self");
+    let output = request(
+        directory.path(),
+        "clause",
+        json!({"observations": observations(), "selection":
+            {"context": {"name": "ParentOrder", "invocation": "current", "side": "pre"}}}),
+    );
+    assert_request_refusal(&output, "invocation");
+}
+
+/// FR-312's `parameters` member is accepted for a pre-snapshot selection.
+#[test]
+#[trace("TC-1908", "FR-312-AC-5")]
+fn parameters_member_accepted_for_pre_snapshot() {
+    let directory = tempfile::tempdir().unwrap();
+    spine::write(directory.path(), Case::Unchanged).unwrap();
+    let output = request(
+        directory.path(),
+        "clause",
+        json!({"observations": {"pre": "spine-pre-snapshot.json"}, "selection":
+            {"clause": {"name": "ParentOrder", "observation": "pre",
+                "self": child(), "parameters": {}}}}),
+    );
+    let decoded =
+        fsl_command::command::read_clause_run_request(&directory.path().join("request.json"))
+            .expect("parameters are admitted for a pre snapshot");
+    let fsl_replay::spine::ClauseRunSelection::Clause(clause) = decoded.selection else {
+        panic!("the request selects one clause");
+    };
+    assert!(matches!(
+        clause.input,
+        fsl_semantics::model::observation::ClauseSelectionInput::PreCall { .. }
+    ));
+    assert!(output.stdout.len() > 0, "{output:?}");
+    assert!(output.stderr.is_empty(), "{output:?}");
+    let document: Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(document["disposition"]["stage"], "admit");
+    assert_eq!(document["disposition"]["refusal"]["code"], "wrong_snapshot");
 }
 
 /// FR-652-AC-3: a value_invariants selection is reachable from an items
 /// request and lists one item per evaluated invariant and value.
 #[test]
 #[trace("TC-1716", "FR-652-AC-3")]
-#[ignore = "QSL-2193: value_invariants selection not implemented yet"]
 fn value_invariants_selection_is_an_items_selection() {
     let directory = tempfile::tempdir().unwrap();
     write_cases(directory.path());
@@ -256,9 +359,38 @@ fn value_invariants_selection_is_an_items_selection() {
         ]}),
     );
     let document = items_document(&output);
+    assert!(
+        !document["items"].as_array().unwrap().is_empty(),
+        "{document}"
+    );
+    assert_eq!(output.status.code(), Some(10), "{output:?}");
+    assert_eq!(document["category"], "violation", "{document}");
+    assert_eq!(document["items"].as_array().unwrap().len(), 2, "{document}");
+    assert_eq!(
+        document["items"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|item| item["path"]["root"]["subject"]["object_identity"].clone())
+            .collect::<Vec<_>>(),
+        vec![json!("child"), json!("root")],
+        "FR-366 path order: {document}"
+    );
     for item in document["items"].as_array().unwrap() {
         assert!(item.get("invariant").is_some(), "{item}");
         assert!(item.get("path").is_some(), "{item}");
+        let key = item["path"]["root"]["subject"]["object_identity"]
+            .as_str()
+            .unwrap_or_else(|| panic!("missing path object: {item}"));
+        assert_eq!(
+            item["result"]["category"],
+            if key == "root" {
+                "violation"
+            } else {
+                "success"
+            },
+            "{item}"
+        );
     }
 }
 
@@ -368,7 +500,6 @@ fn function_selection_admits_an_identity_reference() {
 /// is its own.
 #[test]
 #[trace("TC-1711", "FR-651-AC-4")]
-#[ignore = "QSL-1987: items severity order and per-item budgets not implemented yet"]
 fn items_take_the_most_severe_exit_and_their_own_budgets() {
     let directory = tempfile::tempdir().unwrap();
     write_cases(directory.path());
@@ -407,8 +538,7 @@ fn items_take_the_most_severe_exit_and_their_own_budgets() {
 /// which refuses an object invariant selected by `Context` (FR-106-AC-46).
 #[test]
 #[trace("TC-1714", "FR-652-AC-1")]
-#[ignore = "QSL-2193: context selection in a run request not implemented yet"]
-fn context_selection_reaches_admission() {
+fn context_selection_matches_in_process_for_pre_and_post() {
     let directory = tempfile::tempdir().unwrap();
     spine::write(directory.path(), Case::ForbiddenParent).unwrap();
     for side in ["pre", "post"] {
@@ -417,6 +547,20 @@ fn context_selection_reaches_admission() {
             "clause",
             json!({"observations": {"i": "spine-invocation.json"}, "selection":
                 {"context": {"name": "ParentOrder", "invocation": "i", "side": side}}}),
+        );
+        let in_process_request =
+            fsl_command::command::read_clause_run_request(&directory.path().join("request.json"))
+                .expect("context request decodes for in-process parity");
+        let selection = in_process_request.selection.clone();
+        let report = fsl_replay::spine::run_clause(in_process_request)
+            .expect("context request is non-empty");
+        let in_process = fsl_replay::spine::write_clause_run_result_for(&report, Some(&selection))
+            .expect("in-process result serializes");
+        let command_document: Value = serde_json::from_slice(&output.stdout).unwrap();
+        let direct_document: Value = serde_json::from_slice(&in_process).unwrap();
+        assert_eq!(
+            command_document, direct_document,
+            "{side}: command/direct parity"
         );
         assert_eq!(output.status.code(), Some(20), "{side}: {output:?}");
         let document: Value = serde_json::from_slice(&output.stdout).unwrap_or_else(|_| {
@@ -438,7 +582,6 @@ fn context_selection_reaches_admission() {
 /// through FR-652's `value_invariants` selection.
 #[test]
 #[trace("TC-1051", "FR-106-AC-48")]
-#[ignore = "QSL-2193: ValueInvariants admission from a run request not implemented yet"]
 fn value_invariants_admits_a_current_snapshot() {
     let directory = tempfile::tempdir().unwrap();
     write_cases(directory.path());
@@ -456,7 +599,6 @@ fn value_invariants_admits_a_current_snapshot() {
 /// is the most severe.
 #[test]
 #[trace("FSpec-TC-1202", "FSpec-FR-550-AC-3")]
-#[ignore = "QSL-1987: per-item settlement of an items request not implemented yet"]
 fn fspec_items_settle_independently() {
     let directory = tempfile::tempdir().unwrap();
     write_cases(directory.path());
@@ -474,6 +616,9 @@ fn fspec_items_settle_independently() {
         document["items"][0]["result"],
         document["items"][2]["result"]
     );
-    assert_eq!(document["items"][1]["result"]["category"], "refusal");
+    assert_eq!(
+        document["items"][1]["result"]["disposition"]["category"],
+        "refusal"
+    );
     assert_eq!(document["category"], "refusal");
 }
