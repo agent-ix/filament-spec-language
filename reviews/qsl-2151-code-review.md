@@ -64,3 +64,7 @@ fn probabilistic_on_each_settles_per_instance() {
 ```
 
 The newly added `probabilistic_on_each_empty_population` function is absent from the current file.
+
+## Round 2 recheck
+
+At head `a6ba6837f822e9528fdc359269885b41eac01788` over `origin/main` `61afe659baa1db79f0cb7063449e7e69e237eb6a`, FND-001 remains fixed from round 1: `probabilistic_on_each_settles_per_instance` has the tracked `#[ignore]`, and `probabilistic_on_each_empty_population` is absent. The QSL-1976 base integration still classifies probabilistic request items as unrouted; source routing remains outside this PR's acceptance scope. No new or still-open findings were found; no new disposition row was needed.
