@@ -259,8 +259,8 @@ fn a_finite_replay_item_over_a_temporal_clause_is_inapplicable() {
 fn possible_claims_prove_and_refute() {
     // A target outside `Int[0, 3]` refuses at check (FR-104), so the
     // unreachable target is `value = 0` from a counter started at 1.
-    let body = "possible ReachThree using t0 over (c: M::Counter) { c.value = 3 }\n\
-                possible ReachZero using t0 over (c: M::Counter) { c.value = 0 }\n";
+    let body = "possible ReachThree using v over (c: M::Counter) { c.value = 3 }\n\
+                possible ReachZero using v over (c: M::Counter) { c.value = 0 }\n";
     let ws = Workspace::new("cli-state-graph");
     let run = analyze(&counter_request(
         &ws,

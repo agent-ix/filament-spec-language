@@ -674,7 +674,7 @@ fn complete_w_activation_map_matches_read_back() {
     }
     for text in [W.to_owned(), format!("// reformatted W\n{}", W.replace(';', ";\n\n")),
         W.replace("requires temporal OrderClosureBounded;", "requires temporal OrderClosureBounded;\nrequires temporal OrderClosureBounded;"),
-        format!("temporal RefundBounded using T over (view: M::OrderView) clock \"refund-clock\" on origin {{ eventually[0,1] holds(false) }}\n{W}"),
+        format!("temporal RefundBounded using T over (view: M::OrderView) clock \"model-steps\" on origin {{ eventually[0,1] holds(false) }}\n{W}"),
         format!("temporal Unrequired using T over (view: M::OrderView) clock \"model-steps\" on origin {{ eventually[0,1] holds(false) }}\n{W}"),
     ] {
         let variant = lower_with(document(), PROFILES_W, &text);

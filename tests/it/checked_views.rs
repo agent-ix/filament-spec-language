@@ -8,7 +8,7 @@ use filament_contract_model::{
     CheckedOccurrenceRole, CheckedOperationInterval, CheckedPackageV2, CheckedTerm, ProtocolForm,
     ValueForm,
 };
-use filament_spec_language::checked_handoff::{evidence, write, Corpus};
+use fsl_command::checked_handoff::{evidence, write, Corpus};
 use fsl_package::checked_views::{
     checked_predicate, temporal_subject, Activation, PredicateKind, PredicateSelection,
     TemporalSubjectView,

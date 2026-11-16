@@ -73,7 +73,7 @@ fn timestamped<R>(
          profile t0 = \"filament.temporal.timestamped-event.finite-window/v1\";\n\
          dimension Time;\nunit s : Time = rational(1, 1);\n\
          unit ms : Time = rational(1, 1000) * s;\n\
-         temporal C using t0 over (c: Quantity<ms>) clock \"model-steps\" on origin {{ {body} }}\n"
+         temporal C using t0 over (c: Quantity<ms>) clock \"events\" on origin {{ {body} }}\n"
     );
     let parsed = fsl_cst::parse(
         fsl_foundation::SourceIdentity::new("a", "u"),
@@ -518,7 +518,7 @@ fn event_clause<R>(
         "language \"ix:native\" edition \"1-draft\";\n\
          profile v = \"filament.value.complete/v1\";\n\
          profile t0 = \"{EVENT}\";\n{prelude}\
-         temporal C using t0 over ({over}) clock \"model-steps\" on origin {{ {body} }}\n"
+         temporal C using t0 over ({over}) clock \"events\" on origin {{ {body} }}\n"
     );
     let parsed = fsl_cst::parse(
         fsl_foundation::SourceIdentity::new("a", "u"),

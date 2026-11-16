@@ -125,9 +125,9 @@ fn digital_clocks_refuse_strict_constraints_and_intervals() {
 #[test]
 #[ignore = "QSL-2296 (from QSL-2125): the fixture's `Ratio` claim divides, and the checker refuses `/` with unsupported_construct/expression-form, so the undefined arm has no checked claim to run (spec question open); the typed instance key and the budget stops are untested until it is rewritten"]
 fn state_graph_evidence_keys_loci_and_budget_stops() {
-    let body = "possible ReachThree using t0 over (c: M::Counter) { c.value = 3 }\n\
-                possible Ratio using t0 over (c: M::Counter) { 3 / (3 - c.value) = 1 }\n\
-                always possible BackToZero using t0 over (c: M::Counter) { c.value = 0 }\n";
+    let body = "possible ReachThree using v over (c: M::Counter) { c.value = 3 }\n\
+                possible Ratio using v over (c: M::Counter) { 3 / (3 - c.value) = 1 }\n\
+                always possible BackToZero using v over (c: M::Counter) { c.value = 0 }\n";
     let ws = Workspace::new("rulings-evidence");
     let run = analyze(&counter_request(
         &ws,
@@ -203,7 +203,7 @@ fn several_instances_report_the_first_refuted_and_state_graph_replay_names_the_c
     let ws = Workspace::new("rulings-replay-target");
     let run = analyze(&counter_request(
         &ws,
-        "always possible BackToZero using t0 over (c: M::Counter) { c.value = 0 }\n",
+        "always possible BackToZero using v over (c: M::Counter) { c.value = 0 }\n",
         json!([{"claim": "BackToZero"}]),
     ));
     let item = run.item(0);

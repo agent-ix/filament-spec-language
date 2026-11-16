@@ -359,9 +359,9 @@ fn an_emitted_requirement_keeps_its_temporal_clause_position() {
 #[test]
 fn one_package_checks_three_families_and_binds_the_requirement() {
     let unit = "predicate Positive using v (amount: M::Total): Boolean { amount >= 0 }\n\
-        temporal Earlier using t over (view: M::Node) clock \"orders\" on origin \
+        temporal Earlier using t over (view: M::Node) clock \"model-steps\" on origin \
         { always holds(Positive(view.total)) }\n\
-        temporal Due using t over (view: M::Node) clock \"orders\" \
+        temporal Due using t over (view: M::Node) clock \"model-steps\" \
         on each (started: M::Node) when (Positive(started.total)) \
         { capture saved: M::Total = started.total; \
         always holds(Positive(view.total) and saved >= 0) }\n\
@@ -420,7 +420,7 @@ fn a_model_type_in_a_clause_binder_resolves_to_the_models_own_type() {
                 .expect("a non-empty interval"),
         )
     };
-    let unit = "temporal Due using t over (view: M::Node) clock \"orders\" \
+    let unit = "temporal Due using t over (view: M::Node) clock \"model-steps\" \
         on each (started: M::Node) \
         { capture saved: M::Total = started.total; \
         capture level: M::Tally = started.tally; \
@@ -475,12 +475,12 @@ fn three_units_bind_a_predicate_a_clause_and_a_protocol_across_units() {
         header("profile v = \"filament.value.complete/v1\";\n")
     );
     let earlier = format!(
-        "{}temporal Earlier using t over (view: M::Node) clock \"orders\" on origin \
+        "{}temporal Earlier using t over (view: M::Node) clock \"model-steps\" on origin \
          {{ always holds(Positive(view.total)) }}\n",
         header("profile t = \"filament.temporal.infinite-trace/v1\";\n")
     );
     let clause = format!(
-        "{}temporal Due using t over (view: M::Node) clock \"orders\" \
+        "{}temporal Due using t over (view: M::Node) clock \"model-steps\" \
          on each (started: M::Node) when (Positive(started.total)) \
          {{ capture saved: M::Total = started.total; \
          always holds(Positive(view.total) and saved >= 0) }}\n",

@@ -144,7 +144,7 @@ fn a_temporal_follow_up_carries_its_extent_bounds_at_its_occurrence() {
     let item = item(
         "profile t = \"filament.temporal.event-position.false-extension/v1\";\n\
          record Loose { n: Integer; }\n\
-         temporal C using t over (c: Loose) clock \"model-steps\" on origin \
+         temporal C using t over (c: Loose) clock \"events\" on origin \
          { eventually[0, 3] holds(c.n = 2) }",
     );
     assert_eq!(item.kind(), Capability::TemporalSatisfaction);
@@ -217,7 +217,7 @@ fn subject_proof_bounds_are_independent_of_the_extent() {
     let trace = item(
         "profile t = \"filament.temporal.infinite-trace/v1\";\n\
          record Counter { level: Int[0, 9]; }\n\
-         temporal C using t over (c: Counter) clock \"model-steps\" on origin \
+         temporal C using t over (c: Counter) clock \"events\" on origin \
          { eventually holds(c.level = 2) }",
     );
     assert_eq!(trace.kind(), Capability::TemporalSatisfaction);
@@ -280,7 +280,7 @@ fn bounded_refuses_a_bounded_item_and_an_infinite_trace_item() {
     let temporal = item(
         "profile t = \"filament.temporal.infinite-trace/v1\";\n\
          record Counter { level: Int[0, 9]; }\n\
-         temporal C using t over (c: Counter) clock \"model-steps\" on origin \
+         temporal C using t over (c: Counter) clock \"events\" on origin \
          { eventually holds(c.level = 2) }",
     );
     assert_eq!(

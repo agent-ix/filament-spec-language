@@ -33,7 +33,7 @@ use ix_trace_rs::trace;
 use serde_json::Value;
 
 use super::checked_handoff::{request as handoff_request, KINDS};
-use filament_spec_language::checked_handoff::Corpus;
+use fsl_command::checked_handoff::Corpus;
 
 /// A compiled unit with the emission its clock selections give.
 pub(super) struct Built {

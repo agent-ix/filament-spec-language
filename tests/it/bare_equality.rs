@@ -9,8 +9,8 @@ use std::path::Path;
 
 use filament_contract_model::CheckedPackageV2;
 use filament_exact::NodeKey;
-use filament_spec_language::checked_handoff::{evidence, write, CheckedHandoffRequest, Corpus};
-use filament_spec_language::emit_checked_v2::Request;
+use fsl_command::checked_handoff::{evidence, write, CheckedHandoffRequest, Corpus};
+use fsl_command::emit_checked_v2::Request;
 use fsl_package::{
     BarePackage, BareSelectionFailure, BareSupply, EqualityFileRefusal, EqualityWitnessRefusal,
     ProtocolSlotDescriptor, ReadEqualityRows, ReadIdentityRows,

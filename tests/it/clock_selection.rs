@@ -210,6 +210,43 @@ fn clocks_member_binds_each_trace_subject_clock_by_name() {
     }
 }
 
+/// FR-665-AC-2: a command handoff preserves clock bindings through the
+/// sidecar's recompile and byte-equality check.
+#[test]
+#[trace("TC-1748", "FR-665-AC-2", "FR-640-AC-8")]
+fn command_handoff_recompiles_with_its_clock_bindings() {
+    let directory = tempfile::tempdir().unwrap();
+    let mut request = compile_request(mixed_clocks());
+    request["request"]["handoff"] = json!({
+        "directory": "handoff",
+        "package_name": "clock-selection",
+        "native_join": {"work_units": 1_000_000, "storage": 1_000_000}
+    });
+    let path = write(
+        directory.path(),
+        &mixed_unit(),
+        "handoff-compile.json",
+        &request,
+    );
+    let output = compile_file(&path);
+    assert_eq!(output.status.code(), Some(0), "{output:?}");
+    let handoff = directory.path().join("handoff");
+    let selection: Value =
+        serde_json::from_slice(&std::fs::read(handoff.join("selection.json")).unwrap()).unwrap();
+    assert!(
+        selection["clauses"].as_array().unwrap().iter().any(|row| {
+            row["binding"]["clock"]
+                == json!({
+                    "kind": "event_position",
+                    "sequence_authority": "events"
+                })
+        }),
+        "{selection}"
+    );
+    fsl_command::checked_handoff::compile(&handoff)
+        .expect("the sidecar's clocks reproduce the checked package bytes");
+}
+
 /// FR-640-AC-8 (TC-2182): the `clocks` object rebuilt from a package's
 /// `temporal_bindings` rows, each row's `clock_name` naming a member whose
 /// value is the row's `clock`, compiles the same program to byte-identical

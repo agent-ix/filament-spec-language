@@ -1070,7 +1070,7 @@ impl OccurrenceWire {
 /// FSpec FR-207's `runtime_value` wire form.
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-struct PathWire {
+pub(super) struct PathWire {
     kind: PathKind,
     root: RootWire,
     steps: Vec<StepWire>,
@@ -1202,7 +1202,7 @@ impl PathWire {
         Ok(())
     }
 
-    fn of(path: &RuntimeValuePath) -> Self {
+    pub(super) fn of(path: &RuntimeValuePath) -> Self {
         let observation = &path.observation;
         Self {
             kind: PathKind::RuntimeValue,

@@ -509,7 +509,7 @@ fn a_progressed_binding_is_authenticated_against_the_clock_row() {
                 ..binding
             }
         }))),
-        (owned("Clock"), owned("ms"), Some(owned("samples")))
+        (owned("Clock"), owned("ms"), Some(owned("model-steps")))
     );
 
     // The agreeing bindings run.
