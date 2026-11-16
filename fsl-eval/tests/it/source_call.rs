@@ -408,10 +408,10 @@ fn application<'a>(
 fn lowered_division_nodes_keep_the_selected_law_in_their_identity() {
     for profile in DivisionProfile::ALL {
         let mut declarations =
-            operator_declarations("a div b", "a: Integer, b: Integer", "Integer");
+            operator_declarations("a div b", "a: Integer, b: Int[1, 9]", "Integer");
         declarations.integer_division = Some(admitted_integer_division(profile));
         let graph = declarations
-            .check(CheckMode::Kernel, CheckingLimits::default())
+            .check(CheckMode::Linked, CheckingLimits::default())
             .expect("div checks");
         let (operation, _) = application(&graph, "filament.op.integer.div");
         let laws = operation.laws();
@@ -420,10 +420,10 @@ fn lowered_division_nodes_keep_the_selected_law_in_their_identity() {
         assert_eq!(laws[0].definition.identity, profile.definition_identity());
     }
 
-    let mut rem = operator_declarations("a rem b", "a: Integer, b: Integer", "Integer");
+    let mut rem = operator_declarations("a rem b", "a: Integer, b: Int[1, 9]", "Integer");
     rem.integer_division = Some(admitted_integer_division(DivisionProfile::Floor));
     let rem = rem
-        .check(CheckMode::Kernel, CheckingLimits::default())
+        .check(CheckMode::Linked, CheckingLimits::default())
         .expect("rem checks");
     let (operation, _) = application(&rem, "filament.op.integer.rem");
     assert_eq!(
@@ -431,8 +431,8 @@ fn lowered_division_nodes_keep_the_selected_law_in_their_identity() {
         DivisionProfile::Floor.definition_identity()
     );
 
-    let modulo = operator_declarations("a mod b", "a: Integer, b: Integer", "Integer")
-        .check(CheckMode::Kernel, CheckingLimits::default())
+    let modulo = operator_declarations("a mod b", "a: Integer, b: Int[1, 9]", "Integer")
+        .check(CheckMode::Linked, CheckingLimits::default())
         .expect("mod checks without division law");
     let (operation, _) = application(&modulo, "filament.op.integer.mod");
     assert!(operation.laws().is_empty());
