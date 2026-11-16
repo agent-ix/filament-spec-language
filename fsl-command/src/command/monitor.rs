@@ -460,6 +460,7 @@ fn drive(
             programs: request.libraries.len().saturating_add(1),
             models: request.models.len(),
             observations: request.observations.len(),
+            extensions: 0,
         },
         dependent_bytes,
     )?;

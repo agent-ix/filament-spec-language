@@ -120,6 +120,7 @@ fn read<'d>(
             programs: request.libraries.len().saturating_add(1),
             models: request.models.len(),
             observations: request.documents.len(),
+            extensions: 0,
         },
         dependent_bytes,
     )?;

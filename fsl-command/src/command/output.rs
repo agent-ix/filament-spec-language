@@ -21,6 +21,11 @@ impl NativeResult {
         Self(document)
     }
 
+    /// The in-process `check` command's native check outcome document.
+    pub(super) fn check_document(document: Value) -> Self {
+        Self(document)
+    }
+
     /// The FR-621 `analyze` document, written by `fsl-analyze`.
     pub(super) fn analyze_document(document: Value) -> Self {
         Self(document)

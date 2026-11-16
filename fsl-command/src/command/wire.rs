@@ -195,7 +195,9 @@ pub(super) struct DefinitionReference {
     pub identity: String,
 }
 
-fn extensions<'de, D: serde::Deserializer<'de>>(decoder: D) -> Result<Vec<Extension>, D::Error> {
+pub(super) fn extensions<'de, D: serde::Deserializer<'de>>(
+    decoder: D,
+) -> Result<Vec<Extension>, D::Error> {
     let value = serde_json::Value::deserialize(decoder)?;
     let serde_json::Value::Array(entries) = value else {
         return Err(serde::de::Error::custom(
