@@ -92,6 +92,9 @@ pub enum TraceInput {
         repeat: Vec<crate::ModelStep>,
         /// Whether the loop is the one terminal stutter step.
         terminal_stutter: bool,
+        /// FR-641, FR-255 `expansion.max_candidates`: the most candidates one
+        /// step reconstruction expands before the run stops `incomplete`.
+        max_candidates: u64,
     },
 }
 
@@ -220,6 +223,10 @@ impl TraceInput {
         }
     }
 }
+
+/// FR-641: the per-expansion candidate bound of a `model` trace that names
+/// none.
+pub const DEFAULT_MODEL_MAX_CANDIDATES: u64 = 1_000_000;
 
 /// The authority label of a position that carries a record sample.
 const SAMPLE_AUTHORITY: &str = "record-sample";
@@ -1037,21 +1044,28 @@ pub(super) fn run_temporal(run: &CompiledRun<'_>, request: &TemporalRun<'_>) -> 
         && matches!(trace, TraceInput::Finite(_))
         && clause.profile() == TemporalProfile::EventPositionFalseExtension
     {
-        let mut delegated = super::trace_subject::run_subject(
+        let mut first_undefined = None;
+        let mut delegated = super::trace_subject::run_subject_observing(
             run,
             name,
             over_type,
             &samples,
             fsl_eval::temporal::DEFAULT_MAX_WINDOW_VALUES,
             cancel,
+            &mut first_undefined,
         );
-        // A violation carries its counterexample (FR-330 Outputs): the
-        // samples are its steps, as for the other sample routes.
-        if matches!(
-            delegated.disposition,
-            ClauseDisposition::Temporal(TemporalVerdict::Violated { .. })
-        ) {
-            match counterexample(node, trace, &delegated.disposition, None) {
+        // A violation, and an `Undefined` that is a violation, carries its
+        // counterexample (FR-330 Outputs): the samples are its steps, as for
+        // the other sample routes.
+        let needs = match &delegated.disposition {
+            ClauseDisposition::Temporal(TemporalVerdict::Violated { .. }) => true,
+            ClauseDisposition::Temporal(TemporalVerdict::Undefined { cause, .. }) => {
+                !matches!(cause, TemporalUndefinedCause::InsufficientData { .. })
+            }
+            _ => false,
+        };
+        if needs {
+            match counterexample(node, trace, &delegated.disposition, first_undefined) {
                 Some(built) => delegated.counterexample = Some(built),
                 None => {
                     delegated.disposition = ClauseDisposition::EvaluateFault(

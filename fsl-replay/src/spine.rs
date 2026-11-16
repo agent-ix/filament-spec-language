@@ -219,7 +219,7 @@ pub use clause::{
     TemporalPositionRefusal, TemporalTraceRefusal, TemporalUndefinedCause, TemporalVerdict,
     TemporalWindowRefusal, TimestampedCover, TimestampedMissingValuation, TimestampedObservation,
     TimestampedOrderKey, TimestampedWindow, TraceBinding, TraceInput, TraceRefusal,
-    TraceSubjectClauseRequest,
+    TraceSubjectClauseRequest, DEFAULT_MODEL_MAX_CANDIDATES,
 };
 mod refinement;
 pub use refinement::{

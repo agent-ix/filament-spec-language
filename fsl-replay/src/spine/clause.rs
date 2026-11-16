@@ -50,7 +50,7 @@ pub use temporal::{
     sample_position, FiniteWindowAssessment, FiniteWindowPremises, FiniteWindowReport,
     FiniteWindowSupport, OverObject, PackageTemporalRequest, ProgressRefusal,
     TemporalAuthentication, TimestampedCover, TimestampedMissingValuation, TimestampedObservation,
-    TimestampedOrderKey, TimestampedWindow, TraceBinding, TraceInput,
+    TimestampedOrderKey, TimestampedWindow, TraceBinding, TraceInput, DEFAULT_MODEL_MAX_CANDIDATES,
 };
 pub use trace_refusal::{TraceRefusal, REASONS as TRACE_REFUSAL_REASONS};
 pub use trace_subject::{

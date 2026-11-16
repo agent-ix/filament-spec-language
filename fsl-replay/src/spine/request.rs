@@ -3,6 +3,9 @@
 
 use std::collections::BTreeMap;
 
+/// The largest integer RFC 8785 serializes exactly (FSpec's `Count` bound).
+const MAX_COUNT: u64 = 9_007_199_254_740_991;
+
 use filament_exact::{CollectionKind, Identifier, ScalarLimits};
 use fsl_foundation::serde_object::{deserialize_objects, from_object};
 use fsl_semantics::model::observation::{
@@ -435,6 +438,11 @@ pub struct ModelWire {
     /// Repeating steps; the one terminal stutter step closes a terminal loop.
     #[serde(rename = "loop")]
     pub repeat: Vec<ModelStepWire>,
+    /// FR-641: the per-expansion candidate bound, a positive integer from 1
+    /// to 2^53 - 1; absent is 1,000,000. Kept as read so the reader names the
+    /// member for a wrong type.
+    #[serde(default)]
+    pub max_candidates: Option<serde_json::Value>,
 }
 
 /// One step of a model-arm behaviour.
@@ -765,6 +773,8 @@ pub struct ModelParts {
     pub repeat: Vec<crate::ModelStep>,
     /// Whether the loop is the one terminal stutter step.
     pub terminal_stutter: bool,
+    /// The candidate bound.
+    pub max_candidates: u64,
 }
 
 /// A timed trace's positions with their rational stamps.
@@ -878,12 +888,25 @@ fn model_parts(model: &ModelWire) -> Result<ModelParts, ClauseRequestReadError> 
             "a terminal stutter loop is the one terminal stutter step",
         ));
     }
+    let max_candidates = match &model.max_candidates {
+        None => crate::spine::DEFAULT_MODEL_MAX_CANDIDATES,
+        Some(value) => value
+            .as_u64()
+            .filter(|bound| (1..=MAX_COUNT).contains(bound))
+            .ok_or_else(|| {
+                invalid(
+                    "trace.model.max_candidates",
+                    "expected a positive integer from 1 to 2^53 - 1",
+                )
+            })?,
+    };
     Ok(ModelParts {
         initial: model.initial.clone(),
         universes: model.universes.clone(),
         prefix: prefix.into_iter().flatten().collect(),
         repeat: looped.into_iter().flatten().collect(),
         terminal_stutter: stutters == 1,
+        max_candidates,
     })
 }
 
@@ -1438,7 +1461,7 @@ fn selection(
                 },
                 TemporalTraceParts::Progressed(parts) => TraceInput::Progressed {
                     trace: positions(&parts.positions)?,
-                    progress: progress_assertion(&parts.progress, "progressed")?,
+                    progress: progress_assertion(&parts.progress)?,
                     lower_boundary: lower_boundary(parts.lower_boundary),
                     binding: trace_binding(parts.binding),
                 },
@@ -1452,6 +1475,7 @@ fn selection(
                     prefix: parts.prefix,
                     repeat: parts.repeat,
                     terminal_stutter: parts.terminal_stutter,
+                    max_candidates: parts.max_candidates,
                 },
                 TemporalTraceParts::Timed(_) => {
                     return Err(invalid(
@@ -1476,7 +1500,7 @@ fn selection(
                         .collect::<Result<Vec<_>, ClauseRequestReadError>>()?;
                     TraceInput::Timestamped {
                         observations,
-                        progress: progress_assertion(&parts.progress, "timestamped")?,
+                        progress: progress_assertion(&parts.progress)?,
                         window: Box::new(TimestampedWindow {
                             binding: Some(trace_binding(parts.binding)),
                             authoritative_origin: matches!(
@@ -1519,16 +1543,13 @@ fn selection(
 }
 
 /// FR-641 `G` as the progress assertion the spine reads.
-fn progress_assertion(
-    wire: &ProgressWire,
-    kind: &str,
-) -> Result<ProgressAssertion, ClauseRequestReadError> {
+fn progress_assertion(wire: &ProgressWire) -> Result<ProgressAssertion, ClauseRequestReadError> {
     let watermark = match wire.watermark {
         WatermarkWire::Inclusive(tick) => tick,
         // FR-501 reads a half-open watermark as the inclusive `end - 1`.
         WatermarkWire::HalfOpen { half_open } => half_open.checked_sub(1).ok_or_else(|| {
             invalid(
-                format!("trace.{kind}.progress.watermark.half_open"),
+                "trace.progress.watermark.half_open",
                 "a half-open watermark of 0 covers no tick",
             )
         })?,
@@ -1700,6 +1721,41 @@ mod tests {
         let no_over =
             model(step, step).replace(r#","over":{"reference":{"population":"P","key":"c1"}}"#, "");
         assert!(read(no_over).is_err(), "a model trace needs an over");
+    }
+
+    /// FR-641-AC-7: a `model` trace's `max_candidates` is a positive integer
+    /// from 1 to 2^53 - 1, 1,000,000 when absent; 0, a wrong type and a
+    /// value past the bound refuse naming the member.
+    #[test]
+    #[ix_trace_rs::trace("TC-2246", "FR-641-AC-7")]
+    fn a_model_trace_reads_its_candidate_bound() {
+        let model = |bound: &str| {
+            format!(
+                r#"{{"temporal":{{"name":"E","trace":{{"model":{{"initial":"s0","universes":[],"prefix":[],"loop":[],{bound}}}}},"over":{{"reference":{{"population":"P","key":"c1"}}}}}}}}"#
+            )
+        };
+        let bound = |text: String| -> Result<u64, super::ClauseRequestReadError> {
+            let wire: ClauseRunSelectionWire = serde_json::from_str(&text).unwrap();
+            match wire.into_parts()? {
+                ClauseSelectionPartsKind::Temporal {
+                    trace: TemporalTraceParts::Model(parts),
+                    ..
+                } => Ok(parts.max_candidates),
+                _ => panic!("a model trace"),
+            }
+        };
+        assert_eq!(bound(model(r#""max_candidates":7"#)).unwrap(), 7);
+        assert_eq!(
+            bound(model(r#""max_candidates":9007199254740991"#)).unwrap(),
+            9_007_199_254_740_991
+        );
+        let absent = model("").replace(",}}", "}}");
+        assert_eq!(bound(absent).unwrap(), 1_000_000);
+        for refused in ["0", "9007199254740992", "\"7\"", "1.5", "-1", "true"] {
+            let error = bound(model(&format!(r#""max_candidates":{refused}"#)))
+                .expect_err("the bound is refused");
+            assert_eq!(error.member, "trace.model.max_candidates", "{refused}");
+        }
     }
 
     #[test]

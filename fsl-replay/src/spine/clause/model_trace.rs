@@ -31,18 +31,6 @@ use crate::model_check::limits::{meter_bound, ModelCheckLimit, ReachedLimit};
 use crate::model_check::replay::{evaluate_model_trace, ModelTraceEnd, ModelTraceRun};
 use crate::spine::TemporalVerdict;
 
-/// The per-expansion candidate bound of a model-arm run. No requirement
-/// specifies it: FR-255 gives `expansion.max_candidates` no default and
-/// FR-641 gives the run request no member to set it (W5 spec ruling
-/// pending), so the run fixes it here. A stop at the bound is reported as
-/// `ExpansionLimitReached`, never as a verdict.
-const MAX_CANDIDATES: u64 = 1_000_000;
-
-/// The expansion bound of a model-arm run.
-const EXPANSION: ExpansionLimits = ExpansionLimits {
-    max_candidates: MAX_CANDIDATES,
-};
-
 /// What a model-arm run reports besides its disposition.
 pub(super) struct ModelRun {
     pub(super) disposition: ClauseDisposition,
@@ -127,6 +115,7 @@ pub(super) fn run_model(
         prefix,
         repeat,
         terminal_stutter,
+        max_candidates,
     } = trace
     else {
         return fault("model-run-has-a-model-trace");
@@ -197,7 +186,9 @@ pub(super) fn run_model(
         initial: vec![initial.clone()],
         universes,
         observation: run.observation_limits,
-        expansion: EXPANSION,
+        expansion: ExpansionLimits {
+            max_candidates: *max_candidates,
+        },
         meter: run.accounting,
         emit: fsl_package::EmitLimits::new(u64::MAX),
     };
@@ -255,7 +246,10 @@ pub(super) fn run_model(
     {
         Ok(ModelTraceEnd::Evaluated(evaluated)) => *evaluated,
         Ok(ModelTraceEnd::Stopped(stop)) => {
-            return stopped(expansion_stop(&stop, run.accounting), admitted)
+            return stopped(
+                expansion_stop(&stop, run.accounting, *max_candidates),
+                admitted,
+            )
         }
         Err(refusal) => return stopped(replay_refusal(refusal), admitted),
     };
@@ -321,11 +315,12 @@ pub(super) fn run_model(
 fn expansion_stop(
     stop: &ExpansionStop,
     accounting: filament_exact::ScalarLimits,
+    max_candidates: u64,
 ) -> ClauseDisposition {
     let reached = match stop.limit {
         Some(ExpansionLimit::MaxCandidates) => ReachedLimit {
             limit: ModelCheckLimit::MaxCandidates,
-            value: MAX_CANDIDATES,
+            value: max_candidates,
         },
         Some(ExpansionLimit::EvaluationMeter(counter)) => ReachedLimit {
             limit: ModelCheckLimit::EvaluationMeter { counter },
@@ -379,13 +374,13 @@ mod tests {
             limit: Some(ExpansionLimit::MaxCandidates),
         };
         let ClauseDisposition::Temporal(TemporalVerdict::ExpansionLimitReached(reached)) =
-            expansion_stop(&stop, crate::AccountingLimits::default().0)
+            expansion_stop(&stop, crate::AccountingLimits::default().0, 7)
         else {
             panic!("a stop at the candidate bound is a limit");
         };
         assert_eq!(reached.limit.as_str(), "max_candidates");
         assert_eq!(reached.limit.setting(), "expansion.max_candidates");
-        assert_eq!(reached.value, MAX_CANDIDATES);
+        assert_eq!(reached.value, 7);
     }
 
     /// A stop that names no bound is a fault, never a completed run.
@@ -396,7 +391,7 @@ mod tests {
             limit: None,
         };
         assert!(matches!(
-            expansion_stop(&stop, crate::AccountingLimits::default().0),
+            expansion_stop(&stop, crate::AccountingLimits::default().0, 7),
             ClauseDisposition::EvaluateFault(_)
         ));
     }

@@ -50,6 +50,7 @@ fn model_trace(fixture: &Fixture, payload: &TemporalCounterexample) -> TraceInpu
         prefix: prefix.to_vec(),
         repeat: repeat.to_vec(),
         terminal_stutter,
+        max_candidates: fsl_replay::spine::DEFAULT_MODEL_MAX_CANDIDATES,
     }
 }
 
@@ -281,6 +282,7 @@ fn a_model_trace_with_an_unreachable_post_state_is_refused() {
         mut prefix,
         mut repeat,
         terminal_stutter,
+        max_candidates,
     } = model_trace(&fixture, &payload)
     else {
         unreachable!("model_trace builds a model trace");
@@ -297,6 +299,7 @@ fn a_model_trace_with_an_unreachable_post_state_is_refused() {
             prefix,
             repeat,
             terminal_stutter,
+            max_candidates,
         },
     );
     assert!(
@@ -304,4 +307,84 @@ fn a_model_trace_with_an_unreachable_post_state_is_refused() {
         "{:?}",
         report.disposition
     );
+}
+
+/// The `stuttering` behaviour with the candidate bound `max_candidates`.
+fn stuttering_under(max_candidates: u64) -> ClauseRunReport {
+    let (fixture, payload) = stuttering();
+    let TraceInput::Model {
+        initial,
+        universes,
+        prefix,
+        repeat,
+        terminal_stutter,
+        ..
+    } = model_trace(&fixture, &payload)
+    else {
+        unreachable!("model_trace builds a model trace");
+    };
+    run(
+        &fixture,
+        TraceInput::Model {
+            initial,
+            universes,
+            prefix,
+            repeat,
+            terminal_stutter,
+            max_candidates,
+        },
+    )
+}
+
+/// The most candidates any one step of the `stuttering` behaviour expands.
+const LARGEST_STEP: u64 = 5;
+
+/// FR-641-AC-7 (TC-2246): a bound below the candidates a step expands stops
+/// the run `incomplete`, exit 22, naming `max_candidates`, the bound and
+/// `expansion.max_candidates`, with no truth, no counterexample and no
+/// decisive record.
+#[trace("TC-2246", "FR-641-AC-7")]
+#[test]
+fn a_model_trace_over_its_candidate_bound_is_incomplete() {
+    let report = stuttering_under(LARGEST_STEP - 1);
+    let ClauseDisposition::Temporal(TemporalVerdict::ExpansionLimitReached(reached)) =
+        &report.disposition
+    else {
+        panic!("{:?}", report.disposition);
+    };
+    assert_eq!(reached.limit, ModelCheckLimit::MaxCandidates);
+    assert_eq!(reached.value, LARGEST_STEP - 1);
+    assert_eq!(reached.limit.setting(), "expansion.max_candidates");
+    assert_eq!(report.disposition.exit_code(), 22);
+    assert!(report.counterexample.is_none() && report.decisive.is_none());
+    let bytes = fsl_replay::spine::write_clause_run_result(&report).expect("the report writes");
+    let written: serde_json::Value = serde_json::from_slice(&bytes).expect("JSON");
+    assert_eq!(
+        written["disposition"]["outcome"],
+        serde_json::json!({"kind": "incomplete", "limit": "max_candidates"}),
+        "{written}"
+    );
+}
+
+/// FR-641-AC-7: a step with exactly `max_candidates` candidates is expanded
+/// in full, so the bound equal to the largest step reports FR-330-AC-16's
+/// outcome, as the default bound does, never `incomplete`.
+#[trace("TC-2246", "FR-641-AC-7")]
+#[test]
+fn a_model_trace_at_exactly_its_candidate_bound_reports_the_violation() {
+    for bound in [
+        LARGEST_STEP,
+        LARGEST_STEP + 1,
+        fsl_replay::spine::DEFAULT_MODEL_MAX_CANDIDATES,
+    ] {
+        let report = stuttering_under(bound);
+        assert!(
+            matches!(
+                report.disposition,
+                ClauseDisposition::Temporal(TemporalVerdict::Violated { at: 0 })
+            ),
+            "bound {bound}: {:?}",
+            report.disposition
+        );
+    }
 }
