@@ -1830,3 +1830,37 @@ fn a_thread_names_its_registration_and_the_commit_and_attempt_records_are_keyed(
     });
     the_attempt_record_is_keyed_while_a_retry_can_read_it();
 }
+
+/// FR-207-AC-5 (TC-652), FSpec FR-730-AC-1: a recovery predicate that
+/// reads its recovery binder is evaluated at `cend` over each recovery
+/// record, one successor per record, and nothing settles `unsupported`.
+#[trace("TC-652", "FR-207-AC-5", "FSpec-FR-730-AC-1")]
+#[test]
+#[ignore = "QSL-2206: a recovery predicate that reads its recovery binder settles unsupported instead of binding each recovery record at cend"]
+fn a_recovery_predicate_over_the_recovery_view_is_evaluated() {
+    explore(&pay("r.n = 0"), |system, explored| {
+        let reached = &explored.reached;
+        let t2 = after(
+            reached,
+            after(reached, 0, StepKind::Attempt),
+            StepKind::Event,
+        );
+        let (_, t4) = fail(system, reached, t2, true);
+        let t6 = after(reached, t4, StepKind::CAttempt);
+        let ends: Vec<usize> = reached[t6]
+            .steps
+            .iter()
+            .filter(|(step, _)| step.kind() == StepKind::CEnd)
+            .map(|(_, next)| *next)
+            .collect();
+        assert!(ends.len() >= 2, "one cend per recovery record: {ends:?}");
+        let found: BTreeSet<String> = ends
+            .iter()
+            .flat_map(|at| statuses(&key_json(system, &reached[*at])))
+            .collect();
+        assert_eq!(
+            found,
+            BTreeSet::from(["recovered".to_owned(), "unrecovered".to_owned()])
+        );
+    });
+}

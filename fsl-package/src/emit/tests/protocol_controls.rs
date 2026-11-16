@@ -1556,3 +1556,88 @@ fn e_c_shared_constraint_has_occurrence_zero_at_tried_and_one_at_picked() {
         [(0, tried), (1, picked)]
     );
 }
+
+/// FR-880-AC-8 and AC-3: a post-test `repeat` (FSpec FR-729), a `repeat`
+/// that steps through a nested `repeat`, and a `protocol` reference in a
+/// `repeat` guard are written and read back.
+#[test]
+#[trace("TC-2502", "FR-880-AC-8", "FSpec-FR-729-AC-1")]
+#[ignore = "QSL-2220: post-test repeat and repeat through repeat are refused at S4 instead of written"]
+fn every_checked_repeat_form_is_written() {
+    let post_test = emitted(&deciding(
+        "sequence Main { repeat Loop by Seller visible (got.ok) while { not got.ok } \
+         sequence Body { send Placed via Ch as (placed: Ack) { true }; \
+         receive Got via Ch of Placed as (got: Ack) { true }; } }",
+    ));
+    let repeat = run_control(&post_test.wire, "Loop");
+    assert!(
+        repeat.to_string().contains("\"post\""),
+        "the repeat carries test post: {repeat}"
+    );
+    emitted(&flow(
+        "sequence Main { repeat Loop by Buyer visible () while { true } \
+         repeat Inner by Buyer visible () while { true } \
+         sequence Step { event Tick by Buyer as (tick: Boolean) { true }; } }",
+    ));
+}
+
+/// FR-880-AC-3, FSpec FR-728-AC-1: a `protocol` reference in a `repeat`
+/// guard is written as one carrier and the package is admitted.
+#[test]
+#[trace("TC-2501", "FR-880-AC-3", "FSpec-FR-728-AC-1")]
+#[ignore = "QSL-2219: a protocol reference in a protocol body is refused at S4 instead of written"]
+fn a_protocol_reference_in_a_body_is_written() {
+    emitted(&format!(
+        "protocol Other using p over (input: M::Order) on origin {{\n\
+         role Buyer on M::Order;\nrun sequence Main {{ }}\n\
+         finish End as (outcome: Boolean) {{ true }};\n}}\n{}",
+        flow(
+            "sequence Main { repeat Loop by Buyer visible () while { protocol Other } \
+             sequence Body { event Tick by Buyer as (tick: Boolean) { true }; } }",
+        )
+    ));
+}
+
+/// FR-880-AC-5: a protocol that refers to itself is one cyclic component,
+/// written as one recursion group.
+#[test]
+#[trace("TC-2501", "FR-880-AC-5")]
+#[ignore = "QSL-2219: a protocol reference cycle is refused at S4 instead of written as a recursion group"]
+fn a_self_referring_protocol_is_written_as_one_recursion_group() {
+    let lowered = emitted(&flow(
+        "sequence Main { repeat Loop by Buyer visible () while { protocol Flow } \
+         sequence Body { event Tick by Buyer as (tick: Boolean) { true }; } }",
+    ));
+    let grouped = nodes(&lowered.wire)
+        .iter()
+        .filter(|node| !node["recursion_group"].is_null())
+        .count();
+    assert!(
+        grouped >= 2,
+        "the component shares one group: {}",
+        lowered.text
+    );
+}
+
+/// FR-880-AC-9: a pre-test `repeat` whose `visible` entry reads its body's
+/// binder refuses at S3 as an out-of-scope read, never at S4.
+#[test]
+#[trace("TC-2502", "FR-880-AC-9")]
+#[ignore = "QSL-2220: a pre-test decision that reads its body is refused at S4 as not-yet-implemented"]
+fn a_pre_test_decision_that_reads_its_body_refuses_at_s3() {
+    use super::protocol_graph::checked;
+    let text = deciding(
+        "sequence Main { repeat Loop by Seller visible (got.ok) while { true } \
+         sequence Body { send Placed via Ch as (placed: Ack) { true }; \
+         receive Got via Ch of Placed as (got: Ack) { true }; } }",
+    );
+    let refusals = checked(&text, true).expect_err(&text);
+    assert!(!refusals.is_empty());
+    for refusal in &refusals {
+        assert_eq!(
+            refusal.cause.code(),
+            fsl_foundation::Code::MissingDeclaration
+        );
+        assert_eq!(refusal.cause.cause(), Some("missing-name"));
+    }
+}
