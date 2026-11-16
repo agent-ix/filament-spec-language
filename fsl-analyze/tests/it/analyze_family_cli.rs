@@ -346,6 +346,109 @@ fn an_item_naming_a_registered_provider_settles_on_it() {
     assert_eq!(label(&run.item(1)), "proved");
 }
 
+/// A process provider double: a `Process`-origin descriptor advertising
+/// (`value-validity`, `unbounded`) over `Integer`, whose handle always
+/// answers `verdict`. It stands where the driver passes a started plugin
+/// session; the real plugin process is the driver's test (QSL-2283).
+#[derive(Debug)]
+struct AnsweringProvider(fsl_analyze::external_provider::ProviderVerdict);
+
+impl fsl_analyze::external_provider::ExternalProvider for AnsweringProvider {
+    fn check(
+        &self,
+        request: &fsl_analyze::external_provider::ProviderRequest<'_, '_>,
+        _cancel: &filament_exact::Cancel,
+    ) -> fsl_analyze::external_provider::ProviderVerdict {
+        assert_eq!(request.backend().as_str(), PROCESS_PROVIDER);
+        assert_eq!(request.claim(), request.target().claim());
+        self.0.clone()
+    }
+}
+
+const PROCESS_PROVIDER: &str = "fsl.test-process-provider";
+
+fn process_provider(
+    backend: &str,
+    verdict: fsl_analyze::external_provider::ProviderVerdict,
+) -> fsl_analyze::analyze::Engine {
+    use fsl_semantics::check::Capability;
+    let descriptor = fsl_route::descriptor_from_manifest(
+        fsl_route::Candidate::new(fsl_foundation::BackendId::new(backend)),
+        fsl_route::ProviderOrigin::Process,
+        vec![(
+            Some(Capability::ValueValidity.to_wire()),
+            Some(fsl_route::Mode::Unbounded.to_wire()),
+        )],
+        fsl_route::ManifestMembers {
+            domains: Some(&[fsl_foundation::bound::DomainKind::Integer.to_wire()]),
+            fairness_kinds: None,
+            evidence_kinds: None,
+            memory_models: None,
+            reductions: None,
+        },
+    )
+    .expect("the descriptor advertises the external value arm");
+    fsl_analyze::analyze::Engine::external(descriptor, Box::new(AnsweringProvider(verdict)))
+        .expect("the descriptor is unbounded")
+}
+
+/// FR-635 "One rule for every provider-routing entry": a process provider
+/// handed to `analyze_with_providers` registers beside `Engines::fsl()`, an
+/// item naming it settles on it with certification `trusted`, the registry
+/// lists it, and an item that does not negotiate to it is unchanged.
+#[trace("TC-1595", "FR-635-AC-2")]
+#[test]
+fn analyze_with_providers_registers_a_process_provider() {
+    use fsl_analyze::external_provider::ProviderVerdict;
+    let body = "function Even using v(n: Integer): Boolean pure { n * 2 - n = n }\n".to_owned()
+        + &crate::analyze_cli_support::bounded();
+    let ws = Workspace::new("family-process-provider");
+    let request = counter_request(
+        &ws,
+        &body,
+        json!([{"claim": "Even", "kind": "value-validity", "backend": PROCESS_PROVIDER},
+            {"claim": "Bounded"}]),
+    );
+    let run = crate::analyze_cli_support::analyze_with_providers(
+        &request,
+        vec![process_provider(PROCESS_PROVIDER, ProviderVerdict::Proved)],
+    );
+    let item = run.item(0);
+    assert_eq!(label(&item), "proved", "{item}");
+    assert_eq!(item["record"]["certification"], "trusted", "{item}");
+    let registry: Vec<Value> = run.document()["registry"]
+        .as_array()
+        .expect("registry")
+        .iter()
+        .map(|entry| entry["backend"].clone())
+        .collect();
+    assert!(registry.contains(&json!(PROCESS_PROVIDER)), "{registry:?}");
+    assert!(registry.contains(&json!("en-1")), "{registry:?}");
+    let without = analyze(&request);
+    assert_eq!(run.item(1), without.item(1));
+}
+
+/// A process provider repeating a linked `BackendId` refuses the request
+/// `invalid-request` naming `providers` before any item runs.
+#[test]
+fn analyze_with_providers_refuses_a_repeated_backend() {
+    use fsl_analyze::external_provider::ProviderVerdict;
+    let ws = Workspace::new("family-provider-repeat");
+    let request = counter_request(
+        &ws,
+        &crate::analyze_cli_support::bounded(),
+        json!([{"claim": "Bounded"}]),
+    );
+    let run = crate::analyze_cli_support::analyze_with_providers(
+        &request,
+        vec![process_provider("en-1", ProviderVerdict::Proved)],
+    );
+    assert_eq!(run.exit, 20);
+    let document = run.document();
+    assert_eq!(document["items"], json!([]), "{document}");
+    assert!(document.to_string().contains("providers"), "{document}");
+}
+
 /// The `Rpc` request at timeout `t` with `claim` and the request members
 /// `extra`.
 pub(crate) fn rpc_request(ws: &Workspace, t: u32, claim: &str, extra: Value) -> std::path::PathBuf {

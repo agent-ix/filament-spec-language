@@ -29,15 +29,43 @@ use crate::value_check::{
 };
 
 /// What a provider is asked to decide: the item's claim target, whose
-/// parameters, domains and claim a provider reads to build its query.
+/// parameters, domains and claim a provider reads to build its query, and
+/// the item's request position, claim occurrence, package and routed
+/// backend, which the caller of a process provider writes into the FSpec
+/// FR-331 request item it sends (FR-635 "How a process provider runs an
+/// item").
 pub struct ProviderRequest<'t, 'p> {
     target: &'t ValueTarget<'p>,
+    index: RequestIndex,
+    claim: &'t OccurrenceKey,
+    package: &'p CheckedPackage,
+    backend: &'t BackendId,
 }
 
 impl<'t, 'p> ProviderRequest<'t, 'p> {
     /// The claim's target.
     pub fn target(&self) -> &'t ValueTarget<'p> {
         self.target
+    }
+
+    /// The item's position in the analyze request.
+    pub fn index(&self) -> RequestIndex {
+        self.index
+    }
+
+    /// The requirement occurrence the item settles.
+    pub fn claim(&self) -> &'t OccurrenceKey {
+        self.claim
+    }
+
+    /// The checked package the claim belongs to.
+    pub fn package(&self) -> &'p CheckedPackage {
+        self.package
+    }
+
+    /// The backend the item was negotiated to.
+    pub fn backend(&self) -> &'t BackendId {
+        self.backend
     }
 }
 
@@ -87,11 +115,13 @@ pub(crate) enum ProviderReport {
 /// engine built by `Engine::external`, decides, in the `unbounded` mode.
 pub fn provider_item<'a>(
     index: RequestIndex,
-    package: &CheckedPackage,
+    package: &'a CheckedPackage,
     claim: &OccurrenceKey,
     backend: &BackendId,
     selection: Result<ValueTarget<'a>, Selection>,
 ) -> AnalyzeItem<'a> {
+    let routed = backend.clone();
+    let occurrence = claim.clone();
     AnalyzeItem::new_with_engine(
         index,
         Capability::ValueValidity,
@@ -116,7 +146,14 @@ pub fn provider_item<'a>(
                     InternalFault::new("external-provider", "engine-holds-provider").catalog_code(),
                 ));
             };
-            let verdict = provider.check(&ProviderRequest { target: &target }, cancel);
+            let request = ProviderRequest {
+                target: &target,
+                index,
+                claim: &occurrence,
+                package,
+                backend: &routed,
+            };
+            let verdict = provider.check(&request, cancel);
             let budget = engine
                 .max_cases()
                 .unwrap_or(manifest::DEFAULT_MAX_CASES)
