@@ -2665,7 +2665,8 @@ mod tests {
 
     /// FR-286 and FSpec FR-331: an item a disposition settles carries its
     /// diagnostic as `{code, cause, detail}`, `detail` keyed by FR-272 payload
-    /// names. An `unsupported` item has no `cause`; a `declined` item has both.
+    /// names. An `unsupported` item has no `cause`; an `invalid-request` item
+    /// has no `result` and no `cause` (FR-286, FR-621).
     #[trace("TC-763", "FR-281-AC-11")]
     #[test]
     fn dispositions_write_their_diagnostic_detail_into_the_item() {
@@ -2703,8 +2704,8 @@ mod tests {
             DeclarationFamily::StateModel,
             &ran,
         ));
-        assert_eq!(inapplicable["result"], "declined");
-        assert_eq!(inapplicable["cause"]["kind"], "invalid-input");
+        assert!(inapplicable.get("result").is_none(), "{inapplicable}");
+        assert!(inapplicable.get("cause").is_none(), "{inapplicable}");
         assert_eq!(
             inapplicable["diagnostic"],
             json!({
@@ -2724,7 +2725,8 @@ mod tests {
             DeclarationFamily::TemporalTrace,
             &ran,
         ));
-        assert_eq!(inconsistent["cause"]["kind"], "invalid-input");
+        assert!(inconsistent.get("result").is_none(), "{inconsistent}");
+        assert!(inconsistent.get("cause").is_none(), "{inconsistent}");
         assert_eq!(
             inconsistent["diagnostic"]["detail"],
             json!({ "candidates": ["test-a"] })

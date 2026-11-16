@@ -1491,6 +1491,9 @@ pub struct TerminalRecord {
     /// The `detail` of `diagnostic`, keyed by FR-272 payload names, present
     /// exactly when a disposition settled the record (FR-281, FR-286).
     disposition_detail: Option<serde_json::Map<String, serde_json::Value>>,
+    /// Whether a request disposition settled the record before any backend
+    /// produced a result (FR-621 `settled_by: "disposition"`).
+    disposed: bool,
     /// The `detail` of `diagnostic` for a record an engine settled, naming
     /// what the refusal concerns (a replayed trace step's position).
     diagnostic_detail: Option<serde_json::Map<String, serde_json::Value>>,
@@ -1575,6 +1578,7 @@ impl TerminalRecord {
             exact_certificate_document: None,
             disposition_detail: None,
             diagnostic_detail: None,
+            disposed: false,
         })
     }
 
@@ -1772,6 +1776,7 @@ impl TerminalRecord {
             exact_certificate_document: None,
             disposition_detail: None,
             diagnostic_detail: None,
+            disposed: true,
         }
     }
 
@@ -1803,13 +1808,14 @@ impl TerminalRecord {
             exact_certificate_document: None,
             disposition_detail: Some(detail),
             diagnostic_detail: None,
+            disposed: true,
         }
     }
 
-    /// Build the `declined` record of an `invalid-request` disposition (cause
-    /// `invalid-input`): no producing backend, and the disposition's
-    /// diagnostic with its `detail`. It writes both `cause` and `diagnostic`
-    /// (FSpec FR-331).
+    /// Build the record of an `invalid-request` disposition: no producing
+    /// backend, and the disposition's diagnostic with its `detail`. Its
+    /// item carries the diagnostic and no `result` and no `cause` (FR-286,
+    /// FR-621); the declined value is internal.
     pub fn disposition_invalid_request(
         request_index: RequestIndex,
         diagnostic: CatalogCode,
@@ -1828,6 +1834,7 @@ impl TerminalRecord {
             exact_certificate_document: None,
             disposition_detail: Some(detail),
             diagnostic_detail: None,
+            disposed: true,
         }
     }
 
@@ -1844,6 +1851,7 @@ impl TerminalRecord {
             exact_certificate_document: None,
             disposition_detail: None,
             diagnostic_detail: None,
+            disposed: true,
         }
     }
 
@@ -1943,6 +1951,7 @@ impl TerminalRecord {
             diagnostic: disposed.then(|| NegotiationOutcome::UnsupportedRequestedCapability.code()),
             disposition_detail: disposed.then(serde_json::Map::new),
             diagnostic_detail: None,
+            disposed,
             exact_certificate: None,
             exact_certificate_document: None,
         }
@@ -1966,6 +1975,7 @@ impl TerminalRecord {
             exact_certificate_document: None,
             disposition_detail: None,
             diagnostic_detail: None,
+            disposed: false,
         }
     }
 
@@ -2006,6 +2016,23 @@ impl TerminalRecord {
     /// one.
     pub fn diagnostic(&self) -> Option<CatalogCode> {
         self.diagnostic
+    }
+
+    /// Whether a request disposition settled this record, so no backend
+    /// produced a result for it (FR-621 `settled_by: "disposition"`).
+    pub const fn settled_by_disposition(&self) -> bool {
+        self.disposed
+    }
+
+    /// FR-621 "The record's `backend` member": the backend that produced
+    /// this record's result, its own or else `negotiated`, the backend its
+    /// item was negotiated to; none for a record a disposition settled.
+    pub fn producer<'a>(&'a self, negotiated: Option<&'a BackendId>) -> Option<&'a BackendId> {
+        if self.disposed {
+            None
+        } else {
+            self.backend.as_ref().or(negotiated)
+        }
     }
 
     /// The `detail` of the diagnostic of a record a disposition settled

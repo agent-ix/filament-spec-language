@@ -1880,7 +1880,7 @@ pub fn settle_run(
             None => settled.get(&index).and_then(|(name, _)| name.clone()),
         };
         let required = echo.is_none_or(|echo| echo.required);
-        let disposed = record.disposition_detail().is_some();
+        let disposed = record.settled_by_disposition();
         if required
             && !matches!(
                 record.value(),
@@ -1905,14 +1905,9 @@ pub fn settle_run(
                 detail: detail.copied(),
                 scoped: echo.is_some_and(|echo| echo.scoped),
                 axes: OutcomeAxes::of_record(record.value(), disposed),
-                producer: if disposed {
-                    None
-                } else {
-                    record
-                        .backend()
-                        .or_else(|| targets.get(&index))
-                        .map(|backend| backend.as_str().to_owned())
-                },
+                producer: record
+                    .producer(targets.get(&index))
+                    .map(|backend| backend.as_str().to_owned()),
                 disposed,
             },
         ));

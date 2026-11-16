@@ -155,7 +155,7 @@ impl RunWithRequirements {
     }
 }
 
-/// Compile `bytes` once, call `call`'s function as FR-100's
+/// Compile `run.bytes` once, call `run.call`'s function as FR-100's
 /// [`run`](crate::spine::run) does, and return the call's
 /// outcome with the requirement items whose owner is the selected function
 /// (FR-395). Arguments do not select items: the members of a call whose
@@ -165,41 +165,14 @@ impl RunWithRequirements {
 /// members. A `value-validity` record with no owner, or one whose owner names
 /// no function of the package, is a `RunRefusal::Fault` of stage `spine-run`
 /// and invariant `requirement-owner-known`.
-#[allow(
-    clippy::too_many_arguments,
-    reason = "run's signature (FR-100): the request's fields, the object context and the cancel handle"
-)]
 pub fn run_with_requirements(
-    source: SourceIdentity,
-    package_name: String,
-    path: &str,
-    bytes: &[u8],
-    packages: &fsl_semantics::model::intake::PackageInput,
-    dependencies: &DependencyInput,
-    limits: SpineLimits,
-    call: &Call,
-    objects: &ObjectEnvironment,
-    cancel: &Cancel,
+    run: &RequirementsRun<'_>,
 ) -> Result<RunWithRequirements, Box<RunRefusal>> {
-    run_with_requirements_reading(
-        &RequirementsRun {
-            source,
-            package_name,
-            path,
-            bytes,
-            packages,
-            dependencies,
-            limits,
-            call,
-            objects,
-            cancel,
-        },
-        |_, _| (),
-    )
-    .map(|(run, ())| run)
+    run_with_requirements_reading(run, |_, _| ()).map(|(run, ())| run)
 }
 
-/// The inputs of one [`run_with_requirements_reading`] run: `run`'s
+/// The inputs of one [`run_with_requirements`] or
+/// [`run_with_requirements_reading`] run: `run`'s
 /// arguments (FR-100), the request's fields, the object context and the
 /// cancel handle.
 pub struct RequirementsRun<'a> {
