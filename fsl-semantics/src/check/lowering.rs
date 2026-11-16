@@ -4272,6 +4272,22 @@ impl<'a> Lowering<'a> {
         // Retain the checked interval's type node for the requirement bound,
         // even where the catalog application itself returns Integer.
         let checked_type = self.type_ref(node.value_type(), node.location())?;
+        if matches!(node.kind(), NodeKind::IntegerDivision { .. })
+            && matches!(node.value_type(), ValueType::Int(_))
+        {
+            if let Some(key) = checked_type.admitted() {
+                if !self.occurrences.has(key.clone()) {
+                    // An inferred interval may have no incoming graph edge:
+                    // its requirement record alone names it. Give that type
+                    // node the division's source anchor before emission.
+                    self.record(
+                        key.clone(),
+                        OccurrenceRole::Generated,
+                        node.location().clone(),
+                    );
+                }
+            }
+        }
         let lowered_type = node.lowered_value_type();
         let result_type = if lowered_type.as_ref() == node.value_type() {
             checked_type
