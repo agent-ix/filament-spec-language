@@ -184,7 +184,12 @@ fn sum_out_of_domain_same_cause_call_and_clause() {
     let snapshots = request.snapshots.clone();
 
     let report = run_clause(request).expect("the clause request has a report");
-    assert_eq!(report.disposition.stage(), ClauseRunStage::Evaluate);
+    assert_eq!(
+        report.disposition.stage(),
+        ClauseRunStage::Evaluate,
+        "{:?}",
+        report.disposition
+    );
     assert_eq!(report.disposition.category().as_str(), "violation");
     assert_eq!(report.disposition.truth(), Some(false));
     assert_eq!(report.disposition.exit_code(), 10);
