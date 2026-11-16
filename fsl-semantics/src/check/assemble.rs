@@ -1735,6 +1735,24 @@ fn model_object_types(
         let mut merged = identities.clone();
         for other in foreign {
             let other_package = other.view.domain_package();
+            match variant_type_declarations(&other.view, &other.alias) {
+                Ok(declared) => {
+                    for (key, declaration) in declared {
+                        if let Some(owned) = other_package
+                            .records
+                            .iter()
+                            .find(|record| record.key() == &key)
+                            .map(DomainPackageRecord::key)
+                        {
+                            variant_shapes.insert(owned, declaration.shape());
+                        }
+                    }
+                }
+                Err(VariantTypeFault::Broken(node)) => errors.push(broken(&node)),
+                Err(VariantTypeFault::Handle(refusal)) => {
+                    errors.push(error(AssemblyCause::nominal(nominal_key_refusal(refusal))))
+                }
+            }
             records.extend(
                 other_package
                     .records
@@ -1753,6 +1771,15 @@ fn model_object_types(
                     DomainPackageRecord::RecordValueType(_) => "record_value_type",
                     DomainPackageRecord::TupleValueType(_) => "tuple_value_type",
                     DomainPackageRecord::EventType(_) => "event_type",
+                    DomainPackageRecord::Enum(variant_type)
+                        if other_package.records.iter().any(|record| {
+                            matches!(record,
+                            DomainPackageRecord::Variant(case)
+                                if case.owner == variant_type.key && case.payload_type.is_some())
+                        }) =>
+                    {
+                        "variant_type"
+                    }
                     _ => continue,
                 };
                 let key = record.key();
@@ -2572,6 +2599,9 @@ fn model_value_type(
     }
     let element = match value_type {
         ValueTypeRef::Clock => return Err(Unmapped::Unsupported),
+        ValueTypeRef::Resolved(value_type) => {
+            return with_multiplicity((**value_type).clone(), multiplicity)
+        }
         ValueTypeRef::Native(native) => match native {
             NativeValueType::Boolean => ValueType::Boolean,
             NativeValueType::Integer => ValueType::Integer,
@@ -3339,15 +3369,28 @@ fn resolution_error(unit: &Unit, error: TypeFormError) -> AssemblyError {
 /// namespace has been assembled. The synthetic domain package is needed
 /// earlier for structural model checks, before these names are available;
 /// its member types are temporary placeholders only.
+struct SourceObjectTypeContext<'a> {
+    unit: &'a Unit,
+    names: &'a Names,
+    spellings: &'a ModelSpellings,
+    source_owners: &'a BTreeMap<String, RawSourceRef>,
+}
+
 fn resolve_source_object_members(
-    unit: &Unit,
-    names: &Names,
-    spellings: &ModelSpellings,
-    source_owners: &BTreeMap<String, RawSourceRef>,
+    context: SourceObjectTypeContext<'_>,
+    models: &mut [SelectedModel],
     object_types: &mut [ObjectTypeDeclaration],
     operations: &mut OperationTable,
     errors: &mut Vec<AssemblyError>,
 ) {
+    let SourceObjectTypeContext {
+        unit,
+        names,
+        spellings,
+        source_owners,
+    } = context;
+    let mut normalized_fields = BTreeMap::new();
+    let mut normalized_operations = BTreeMap::new();
     for object in &unit.objects {
         let Some(index) = object_types
             .iter()
@@ -3359,6 +3402,24 @@ fn resolve_source_object_members(
         let key = declaration.key();
         let object_name = declaration.name().to_owned();
         let supertypes = declaration.supertypes().to_vec();
+        let owner_key = models.iter().find_map(|model| {
+            if !model.alias.is_empty() {
+                return None;
+            }
+            model
+                .view
+                .domain_package()
+                .records
+                .iter()
+                .find_map(|record| {
+                    let DomainPackageRecord::ObjectType(object_type) = record else {
+                        return None;
+                    };
+                    (type_identity_segment(&object_type.key.package, &object_type.key.node)
+                        == Some(object.name.name.as_str()))
+                    .then(|| object_type.key.clone())
+                })
+        });
         let object_names = names.in_unit(spellings, source_owners.get(&object.name.name));
         let mut fields = Vec::new();
         for member in &object.members {
@@ -3378,7 +3439,7 @@ fn resolve_source_object_members(
                 Ok(value_type) => {
                     let resolved = FieldDeclaration::new(
                         field.name.name.clone(),
-                        value_type,
+                        value_type.clone(),
                         if field.optional {
                             Presence::Optional
                         } else {
@@ -3389,6 +3450,12 @@ fn resolve_source_object_members(
                         Some(target) => resolved.with_redefines(target.clone()),
                         None => resolved,
                     });
+                    if let Some(owner) = &owner_key {
+                        normalized_fields.insert(
+                            source_member_declaration_key(owner, &field.name.name),
+                            ValueTypeRef::Resolved(Box::new(value_type)),
+                        );
+                    }
                 }
                 Err(error) => errors.push(resolution_error(unit, error)),
             }
@@ -3404,16 +3471,21 @@ fn resolve_source_object_members(
             };
             let mut parameters = Vec::new();
             let mut clocks = Vec::new();
+            let mut normalized_parameters = Vec::new();
             for (position, parameter) in operation.parameters.iter().enumerate() {
                 if matches!(
                     &parameter.value_type.head,
                     TypeFormHead::Builtin(BuiltinType::Clock)
                 ) {
                     clocks.push((position, parameter.name.name.clone()));
+                    normalized_parameters.push(ValueTypeRef::Clock);
                     continue;
                 }
                 match resolve_form(&object_names, &parameter.value_type) {
-                    Ok(value_type) => parameters.push((parameter.name.name.clone(), value_type)),
+                    Ok(value_type) => {
+                        parameters.push((parameter.name.name.clone(), value_type.clone()));
+                        normalized_parameters.push(ValueTypeRef::Resolved(Box::new(value_type)));
+                    }
                     Err(error) => errors.push(resolution_error(unit, error)),
                 }
             }
@@ -3430,6 +3502,23 @@ fn resolve_source_object_members(
                 },
                 None => (None, false),
             };
+            if let Some(owner) = &owner_key {
+                let normalized_result = match &operation.result {
+                    Some(form)
+                        if matches!(&form.head, TypeFormHead::Builtin(BuiltinType::Clock)) =>
+                    {
+                        Some(ValueTypeRef::Clock)
+                    }
+                    Some(_) => result
+                        .clone()
+                        .map(|value_type| ValueTypeRef::Resolved(Box::new(value_type))),
+                    None => None,
+                };
+                normalized_operations.insert(
+                    source_member_declaration_key(owner, &operation.name.name),
+                    (normalized_parameters, normalized_result),
+                );
+            }
             let effect = existing_operations
                 .iter()
                 .find(|existing| existing.name() == operation.name.name)
@@ -3443,6 +3532,20 @@ fn resolve_source_object_members(
         if !resolved_operations.is_empty() {
             operations.declare(key, resolved_operations);
         }
+    }
+    if !normalized_fields.is_empty() || !normalized_operations.is_empty() {
+        for model in models.iter_mut().filter(|model| model.alias.is_empty()) {
+            model.view = model
+                .view
+                .with_resolved_source_member_types(&normalized_fields, &normalized_operations);
+        }
+    }
+}
+
+fn source_member_declaration_key(owner: &DeclarationKey, name: &str) -> DeclarationKey {
+    DeclarationKey {
+        package: owner.package.clone(),
+        node: format!("{}/{name}", owner.node),
     }
 }
 
@@ -5036,10 +5139,13 @@ impl PackageDeclarations {
         }
         if errors.is_empty() {
             resolve_source_object_members(
-                &unit,
-                &names,
-                &model_spellings,
-                &source_owners,
+                SourceObjectTypeContext {
+                    unit: &unit,
+                    names: &names,
+                    spellings: &model_spellings,
+                    source_owners: &source_owners,
+                },
+                &mut models,
                 &mut object_types,
                 &mut operations,
                 &mut errors,

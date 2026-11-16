@@ -4880,6 +4880,7 @@ pub(super) fn read_tuple_value_type(
                 false
             }
             ValueTypeRef::Native(_) | ValueTypeRef::Unit(_) => true,
+            ValueTypeRef::Resolved(_) => false,
             ValueTypeRef::Package(key) => {
                 type_meanings.get(key.node.as_str()).is_none_or(|meaning| {
                     matches!(
@@ -4945,6 +4946,7 @@ fn variant_payload_is_value_type(
         ValueTypeRef::Clock => false,
         ValueTypeRef::Unit(_) => false,
         ValueTypeRef::Native(_) => true,
+        ValueTypeRef::Resolved(_) => false,
         ValueTypeRef::Package(key) => type_meanings.get(key.node.as_str()).is_some_and(|meaning| {
             matches!(
                 *meaning,
@@ -6534,6 +6536,7 @@ fn key_eligibility(records: &[DomainPackageRecord], keys: &ValueTypeRef) -> Opti
         let key = match &keys {
             ValueTypeRef::Clock => return Some(KeyEligibility::Ineligible),
             ValueTypeRef::Unit(_) => return Some(KeyEligibility::Scalar),
+            ValueTypeRef::Resolved(_) => return Some(KeyEligibility::Ineligible),
             ValueTypeRef::Native(native) => {
                 return Some(
                     if matches!(native, NativeValueType::Rational | NativeValueType::Decimal) {

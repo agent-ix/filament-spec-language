@@ -830,7 +830,8 @@ fn scalar_type(
                 record @ (DomainPackageRecord::ScalarType(_)
                 | DomainPackageRecord::AliasType(_)
                 | DomainPackageRecord::RecordValueType(_)
-                | DomainPackageRecord::TupleValueType(_)),
+                | DomainPackageRecord::TupleValueType(_)
+                | DomainPackageRecord::Enum(_)),
             ) => Ok(ValueTypeRef::Package(record.key().clone())),
             Some(_) => Err(unsupported()),
             None => Err(missing(&name.name, form.span)),

@@ -1495,6 +1495,7 @@ impl AdmittedModel {
                     break format!("ix://filament/native/{}", native.as_str())
                 }
                 ValueTypeRef::Unit(name) => break name.clone(),
+                ValueTypeRef::Resolved(value_type) => break format!("{value_type:?}"),
                 ValueTypeRef::Package(key) => match self.records.get(key) {
                     Some(DomainPackageRecord::AliasType(alias)) if steps <= self.records.len() => {
                         named = &alias.target;
@@ -1630,7 +1631,7 @@ impl AdmittedModel {
                 return;
             }
             ValueTypeRef::Package(key) => key,
-            ValueTypeRef::Native(_) | ValueTypeRef::Unit(_) => return,
+            ValueTypeRef::Native(_) | ValueTypeRef::Unit(_) | ValueTypeRef::Resolved(_) => return,
         };
         match self.records.get(key) {
             // A variant type: each case whose payload is `Clock` is a place
@@ -1946,6 +1947,7 @@ impl AdmittedModel {
                             ValueTypeRef::Clock => true,
                             ValueTypeRef::Package(inner) => self.type_bears_clock(inner, visiting),
                             ValueTypeRef::Native(_) | ValueTypeRef::Unit(_) => false,
+                            ValueTypeRef::Resolved(_) => false,
                         }
                 });
                 visiting.pop();
@@ -2774,7 +2776,8 @@ impl<'a> Lowering<'a> {
                         ValueTypeRef::Unit(name) => Some(name.as_str()),
                         ValueTypeRef::Clock
                         | ValueTypeRef::Native(_)
-                        | ValueTypeRef::Package(_) => None,
+                        | ValueTypeRef::Package(_)
+                        | ValueTypeRef::Resolved(_) => None,
                     });
                 for name in names.chain(scalar_unit) {
                     let unit = units.get(name).ok_or_else(|| {

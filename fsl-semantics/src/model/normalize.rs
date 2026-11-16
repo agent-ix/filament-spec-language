@@ -485,6 +485,45 @@ impl ObjectUniverses {
 }
 
 impl EffectiveView {
+    /// This source-model view with the exact member types resolved by the
+    /// unit assembler. Source-object structural normalization runs before
+    /// the unit's type namespace is complete; replacing only member value
+    /// refs leaves every identity and derivation fact intact while rebuilding
+    /// the index consumed by conformance.
+    pub(crate) fn with_resolved_source_member_types(
+        &self,
+        fields: &BTreeMap<DeclarationKey, ValueTypeRef>,
+        operations: &BTreeMap<DeclarationKey, (Vec<ValueTypeRef>, Option<ValueTypeRef>)>,
+    ) -> Self {
+        let mut package = self.domain_package().clone();
+        for record in &mut package.records {
+            match record {
+                DomainPackageRecord::FieldMember(field) => {
+                    if let Some(value_type) = fields.get(&field.key) {
+                        field.value_type = value_type.clone();
+                    }
+                }
+                DomainPackageRecord::OperationMember(operation) => {
+                    if let Some((parameters, result)) = operations.get(&operation.key) {
+                        for (parameter, value_type) in
+                            operation.parameters.iter_mut().zip(parameters)
+                        {
+                            parameter.value_type = value_type.clone();
+                        }
+                        if let (Some(result), Some(value_type)) = (&mut operation.result, result) {
+                            result.value_type = value_type.clone();
+                        }
+                    }
+                }
+                _ => {}
+            }
+        }
+        Self {
+            index: Arc::new(ModelIndex::build(package)),
+            body: self.body.clone(),
+        }
+    }
+
     /// This view with each operation record's `has_body` set from `bodies`:
     /// true for an operation whose key is in it, false for every other
     /// (FR-103, FR-302). Only that flag changes, so no identity, record
