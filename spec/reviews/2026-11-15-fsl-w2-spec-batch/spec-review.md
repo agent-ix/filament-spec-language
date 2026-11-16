@@ -77,3 +77,44 @@ FND-001 blocks: the bare-decimal decision does not hold against the language's t
 | FND-010 | Fixed. Every `monitor` item carries `axes`. | FR-621 `axes` row |
 | FND-011 | Fixed. TC-2154 runs the `parse` operation (exit 20); TC-2167 checks the one instance against the `on origin` claim's basis; TC-2179 exercises `EmptyUnitList`, whose cause is `established-invariant-broken`. | `tests/it/parse_operation.rs`, `probability_from_source.rs`, `fsl-semantics/tests/it/dimension_equivalence.rs`; FR-186-AC-10, FR-480-AC-19 |
 | FND-012 | Fixed. | FR-762-AC-5 ("without recovery"), FR-764 Rationale, NFR-130 Statement and Rationale |
+
+## Dispositions (round 2 verification)
+
+Verified against `6172a88d8..78cd2c74c` (language) and `0f6a4f713..8efee29fd` (standard).
+
+- `quire validate` passes on every changed spec file in both repos.
+- `quire matrix` shows every new or changed AC as `tagged` or `tagged-by-ignored-test`.
+- The new ids TC-2186 and TC-2187 are not on `origin/main`, and both branches are level with `origin/main`.
+
+| FND | Outcome | Reason |
+| --- | --- | --- |
+| FND-001 | fixed | FR-093 "Decimal constructors" and the FR-104 ordering bullet now give a comparison literal the other operand's static type. When both operands are literals, the first is `ambiguous-literal` at that literal. FR-764 adds AC-7, with TC-2186 and an ignored stub. FSpec FR-662 and TC-1648 agree, and both match FSpec FR-140. |
+| FND-002 | fixed | FR-764 "Exact positions" charges FR-093 steps 2 and 3 and says step 1 does not apply. |
+| FND-003 | fixed | `none-value` and `result-value` rows were added. AC-5 and its stub cover them. |
+| FND-004 | fixed | The FR-272 row, AC-30, the native-diagnostics row and TC-1649 now cover the work-budget cut. FR-762 adds AC-8 to AC-10 with ignored stubs (TC-2187). The locus of the work-budget cut is still unstated (FND-014). |
+| FND-005 | fixed | The stale tests are now ignored stubs keyed to QSL-2156 and QSL-1964. Each asserts the new behaviour, for example that a product is built and its exact values. They are in `digital_clocks.rs`, `free_delays.rs`, `weighted_long_run_certificate.rs`, `exact_probabilistic.rs`, `unbounded.rs` (test module only) and `temporal_clause/tests.rs`. |
+| FND-006 | fixed | FR-480-AC-19 cites FR-027. |
+| FND-007 | fixed | FR-287 points `--provider-config` to FSpec FR-561, which exists and defines the document. |
+| FND-008 | fixed | FR-204-AC-2, AC-4, AC-13 and AC-16 state exact values. The `always` complement values (1/10000, 1/100) follow from FR-204-AC-1's 99/100 and 9999/10000. |
+| FND-009 | fixed | AC-8 is now a Test with a stub that compiles to identical bytes from the rebuilt `clocks`. |
+| FND-010 | fixed | The FR-621 `axes` row says every `monitor` item carries `axes`. |
+| FND-011 | fixed | The parse-operation stub, the instance-basis check and the `EmptyUnitList` stub are added. |
+| FND-012 | fixed | The wording is corrected in FR-762, FR-764 and NFR-130. |
+
+## New findings (disposition pass 1)
+
+| ID | Severity | Summary | Refs |
+| --- | --- | --- | --- |
+| FND-013 | low | FR-104-AC-16 moves the `e2` locus from the comparison to its first literal. The active test asserts only code and cause, so nothing checks the new locus. Fix: assert the locus in `the_six_d25_expressions_check_or_refuse_as_the_criterion_states`, or add an ignored stub for it. | FR-104 AC-16; fsl-eval/tests/it/decimal_source_forms.rs:507-510 |
+| FND-014 | low | When the work budget runs out, the parser has not found the next error. Yet FSpec FR-272 and native-diagnostics place every `diagnostic-list-cut` at "the first unreported error". FR-762 states no locus for this case. Fix: locate the work-budget cut at the token where the budget ran out, in FR-762 and in both standard rows. | FR-762:113-119; FSpec FR-272:66; native-diagnostics.md:61 |
+
+## Round 2 verdict
+
+APPROVE. All twelve findings are fixed. FND-013 and FND-014 are low and can be fixed later; neither blocks the merge.
+
+## Dispositions (fix round 2)
+
+| ID | Disposition | Where |
+| --- | --- | --- |
+| FND-013 | Fixed. An ignored stub keyed QSL-1965 asserts that the `e2` refusal is located at `decimal(15, 1)`; the active test is unchanged. | `fsl-eval/tests/it/decimal_source_forms.rs` `an_ambiguous_comparison_is_refused_at_its_first_literal` |
+| FND-014 | Fixed. The work-budget cut is located at the token at which the budget ran out; the diagnostic-bound cut stays at the first unreported error. The FR-762-AC-8 stub asserts that the cut spans one whole token after the first recorded error. | FR-762 "The diagnostic bound" and AC-8; standard FR-272 `invalid_syntax` row, native-diagnostics.md row; `fsl-cst/tests/it/complete_cst.rs` `recovery_stops_at_the_work_budget` |

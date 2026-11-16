@@ -112,7 +112,8 @@ same `ParsedSource` FR-002 produces.
   reported. The outcome stays a refusal with exit code 20.
 - When `s1.work_units` is exhausted while the parser recovers after at least
   one recorded error, the parser SHALL stop recovering and append the same
-  `diagnostic-list-cut` diagnostic with the message `the diagnostic list was
+  `diagnostic-list-cut` diagnostic, located at the token at which the work
+  budget ran out, with the message `the diagnostic list was
   cut after <n> syntax errors because s1.work_units was reached; raise
   s1.work_units to see the rest`, `<n>` the count reported. The outcome is
   still the refusal, for the same reason. An exhaustion before any error is
@@ -139,7 +140,7 @@ same `ParsedSource` FR-002 produces.
 | FR-762-AC-5 | Each unit of FR-002-AC-2 (`a < b < c`, `a = b != c`, `a < b + c = d`), which holds one error, gives exactly the one diagnostic, cause and locus it gives without recovery: `invalid_syntax` at the second comparison operator. | Test (TC-2152) |
 | FR-762-AC-6 | A unit of 150 `record` declarations, each missing a field type, under the default limits gives 101 diagnostics: 100 `unexpected-token` diagnostics, then one `invalid_syntax`/`diagnostic-list-cut` diagnostic located at the 101st record's offending token whose message names `s1.diagnostics` and the bound 100. The outcome is a refusal, not `stage_limit_exceeded`. | Test (TC-2153) |
 | FR-762-AC-7 | AC-1's recovered `ParsedSource` is not admissible and still holds both diagnostics after recovery; FR-002's `parse` operation over it refuses at S1 with category `refusal` and exit 20, so no later stage receives it. | Test (TC-2154) |
-| FR-762-AC-8 | Over AC-1's unit, under the smallest `s1.work_units` at which `fsl_cst::parse` records the first record's error rather than stopping with `stage_limit_exceeded`, the report ends with one `invalid_syntax`/`diagnostic-list-cut` diagnostic whose message names `s1.work_units`, no diagnostic carries a limit, and the `ParsedSource` is not admissible (the outcome is a refusal). | Test (TC-2187) |
+| FR-762-AC-8 | Over AC-1's unit, under the smallest `s1.work_units` at which `fsl_cst::parse` records the first record's error rather than stopping with `stage_limit_exceeded`, the report ends with one `invalid_syntax`/`diagnostic-list-cut` diagnostic located at the token at which the work budget ran out, whose message names `s1.work_units`, no diagnostic carries a limit, and the `ParsedSource` is not admissible (the outcome is a refusal). | Test (TC-2187) |
 | FR-762-AC-9 | A unit whose header line `profile v = ;` lacks its identity string and whose later `record A { x: Integer y: Integer; }` lacks a `;` gives exactly two diagnostics, the first at the header's `;` and the second at the record's `y`; the record's `Declaration` node is present. | Test (TC-2187) |
 | FR-762-AC-10 | A unit whose last declaration holds a syntax error and is followed by no declaration start gives that error as its last diagnostic, with no diagnostic after it and no `diagnostic-list-cut`. | Test (TC-2187) |
 

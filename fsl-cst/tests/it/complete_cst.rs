@@ -512,6 +512,16 @@ fn recovery_stops_at_the_work_budget() {
     let last = parsed.diagnostics().last().expect("diagnostics");
     assert_eq!(last.cause.as_str(), "diagnostic-list-cut");
     assert!(last.message.contains("s1.work_units"), "{}", last.message);
+    // The cut is located at the token at which the budget ran out: one whole
+    // token of the unit, after the first recorded error.
+    let span = last.byte_span().expect("the cut is located");
+    assert!(parsed
+        .cst()
+        .tokens()
+        .iter()
+        .any(|token| token.span().start == span.start && token.span().end == span.end));
+    let first = parsed.diagnostics()[0].byte_span().expect("located");
+    assert!(span.start > first.start, "{span:?} after {first:?}");
     assert!(parsed
         .diagnostics()
         .iter()
