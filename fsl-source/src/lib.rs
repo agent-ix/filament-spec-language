@@ -449,9 +449,14 @@ pub fn extract_native_fences(
         }) {
             continue;
         }
-        if let Some(id) = line.trim_end_matches('\r').strip_prefix("### ") {
+        let line = line.trim_end_matches('\r');
+        let heading = line.trim_start_matches(' ');
+        if line.len() - heading.len() > 3 {
+            continue;
+        }
+        if let Some(id) = heading.strip_prefix("### ") {
             headings.push((number, Some(id.trim().to_owned())));
-        } else if line.starts_with("# ") || line.starts_with("## ") {
+        } else if heading.starts_with("# ") || heading.starts_with("## ") {
             headings.push((number, None));
         }
     }

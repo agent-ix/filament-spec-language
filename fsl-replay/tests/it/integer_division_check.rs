@@ -262,7 +262,7 @@ fn refused_fence_keeps_body_span_and_original_coordinates() {
     let healthy = "language \"ix:native\" edition \"1-draft\";\nprofile v = \"filament.value.complete/v1\";\nfunction good using v(): Boolean pure { true }\n";
     let broken = healthy.replace("true", "1 + true");
     let text = format!(
-        "## Invariants\n### Healthy\n```ix:native\n{healthy}```\n### Broken\n```ix:native\n{broken}```\n```text\nignored\n```\n"
+        "## Invariants\n   ### Healthy\n```ix:native\n{healthy}```\n   ### Broken\n```ix:native\n{broken}```\n```text\nignored\n```\n"
     );
     let original = fsl_foundation::Source::read(
         SourceIdentity::new("agent-ix", "doc"),
@@ -317,6 +317,59 @@ fn refused_fence_keeps_body_span_and_original_coordinates() {
     assert_eq!(wire["items"].as_array().unwrap().len(), 2);
     assert_eq!(wire["items"][1]["diagnostics"][0]["code"], "ill_typed");
     assert_eq!(wire["category"], "refusal");
+}
+
+#[cfg(feature = "quire-extraction")]
+#[test]
+#[trace("TC-1743", "FR-662-AC-1", "FR-662-AC-2")]
+fn native_fence_headings_accept_at_most_three_leading_spaces() {
+    let law = fsl_replay::admit_integer_division(
+        &[fsl_replay::DefinitionRole::IntegerDivisionFloor.reference()],
+        None,
+    )
+    .unwrap();
+    for indentation in ["", " ", "  ", "   ", "    ", "\t"] {
+        let text = format!("{indentation}### Indented\n```ix:native\n{UNIT}```\n");
+        let original = fsl_foundation::Source::read(
+            SourceIdentity::new("agent-ix", "doc"),
+            "spec.md",
+            text.as_bytes(),
+            text.len(),
+        )
+        .unwrap();
+        let report = spine::check_native_fences(
+            &spine::NativeFenceRequest {
+                original: &original,
+                packages: &Default::default(),
+                dependencies: &Default::default(),
+                extensions: None,
+                integer_division: Some(&law),
+            },
+            Default::default(),
+            &Cancel::new(),
+        )
+        .unwrap()
+        .into_value();
+        let [fence] = report.fences.as_slice() else {
+            panic!("expected one native fence for indentation {indentation:?}");
+        };
+        assert_eq!(fence.document, *original.identity());
+        assert_eq!(fence.path, "spec.md");
+        assert_eq!(fence.first_line, 3);
+        if indentation.len() <= 3 && !indentation.contains('\t') {
+            assert_eq!(fence.clause.as_deref(), Some("Indented"));
+            assert_eq!(fence.body.identity, "doc#Indented");
+            assert_eq!(fence.category, Category::Success, "{indentation:?}");
+            assert!(fence.diagnostics.is_empty());
+        } else {
+            assert_eq!(fence.clause, None);
+            assert_eq!(fence.category, Category::Refusal);
+            assert_eq!(
+                fence.diagnostics[0].diagnostic.cause(),
+                Some("missing-name")
+            );
+        }
+    }
 }
 
 #[cfg(feature = "quire-extraction")]
