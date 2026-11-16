@@ -118,7 +118,17 @@ FR-298) and takes FR-285's exit code.
   the started providers to the verb's FSL entry as its `providers`
   parameter, by FR-635's rule for every provider-routing entry ("One rule
   for every provider-routing entry"), so FSL's `command` and `analyze` take
-  no provider configuration of their own.
+  no provider configuration of their own. Each started provider is the
+  driver's `ProcessProvider`, an `ExternalProvider` that only transports
+  (FR-635 "How a process provider runs an item", FR-950): FSL's analyze
+  builds the complete FSpec FR-331 request, `fsl_analyze::provider::ProviderRequest`,
+  from the admitted package bytes (FR-940), the routed items and the
+  negotiated manifest entry, and calls `ExternalProvider::settle` after
+  routing and negotiation. `ProcessProvider` forwards that request
+  unchanged through `ProcessProviderSession::invoke` and maps the FR-331
+  result back to `ProviderVerdict`. The driver holds no package and no
+  routed item, and it has no provider pipeline of its own: the earlier
+  `run_configured_providers` path is removed, with no shim.
 - `--provider-limit <name>=<value>` on the same provider-routing verbs
   (`analyze`, `prove`, `monitor`, `replay`, `generate`) shall set one of the
   caller limits that FSpec FR-462 and FR-305 say bound each process-plugin
@@ -152,8 +162,10 @@ FR-298) and takes FR-285's exit code.
   providers ignore. The option is accepted with or without
   `--provider-config`. The driver shall read every
   `--provider-limit` before any stage runs and before any plugin starts,
-  and pass the resolved limits with the started providers, so FSL's
-  entries take none of them. An argument with no `=`, an unknown name, a
+  and pass the resolved limits with the started providers as
+  `AnalyzeOptions.provider_limits`. FSL's entries parse no option. Analyze
+  writes the limits into every `ProviderRequest` it builds (FR-635), and
+  `ProcessProvider` enforces the transport limits of the request it carries. An argument with no `=`, an unknown name, a
   name given twice, or a value that is empty, zero, signed, has a leading
   zero, a non-digit or a unit suffix, or is above the range refuses
   `invalid-request` naming `--provider-limit` and the offending argument,

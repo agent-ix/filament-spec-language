@@ -65,7 +65,9 @@ The verbs that route items to providers are `analyze`, `prove`, `monitor`,
 `replay` and `generate`, the verbs FR-287 gives `--provider-config` (FSpec
 FR-561). Every FSL command entry those verbs reach SHALL take the started
 process providers as one `providers` parameter, each value its `Process`
-descriptor and the wire handle items are sent over, and SHALL build its
+descriptor and its `ExternalProvider` transport (the driver's
+`ProcessProvider`, "How a process provider runs an item"), and the run's
+FSpec FR-462 limits as `AnalyzeOptions.provider_limits`, and SHALL build its
 registry from `Engines::fsl()` and those providers, before any negotiation.
 The entry with an empty `providers` is the entry with no plugin
 configured. No entry reads a provider configuration of its own: the driver
@@ -80,14 +82,58 @@ this rule rather than restating it.
 
 ### How a process provider runs an item
 
-An item settled `Supported` on a process provider's `BackendId` is sent to
-that provider as one FSpec FR-462 request frame carrying the FSpec FR-331
-request item and the package's v2 bytes, under `deadline_ms` as the
-provider deadline and the run's cancel handle. Its result frame is read by
-the typed FR-331 reader and settled by FR-290: `proved` with certification
-`trusted`, `refuted` only after S6a replay reproduces the counterexample,
-`unknown` as `inconclusive` `solver-inconclusive`; a crash, a malformed
-frame or an expired deadline settles as FR-291 states.
+FSL owns routing, negotiation and the routed items, so FSL also builds the
+complete request a provider receives, and the driver only carries it.
+Analyze SHALL work in this order (FR-950):
+
+1. Build every item of the request, route each one (FR-620) and negotiate
+   it through `filament-contract-codegen`'s `negotiate_item` (FSpec FR-711).
+   No provider is called while items are built.
+2. For each backend that holds at least one item settled `Supported`, build
+   one `fsl_analyze::provider::ProviderRequest`. It is the typed mirror of
+   the FSpec FR-331 request stage, serializes to exactly FR-331's wire, and
+   defines no member of its own. Its members come from these sources and
+   from nowhere else:
+   - `package`: the `EmittedPackage` bytes of the analysed unit's own S4
+     emission, read through the admitted read-back (FR-940
+     `AdmittedPackageRead`), with the dependency closure FSpec FR-331
+     "Package bytes" orders. Neither the driver nor the provider call
+     re-emits the package. When `package` refuses to emit the checked
+     package, there are no bytes: its process-provider items settle as FSpec
+     FR-331 "In-process providers" states, and no request is built for them.
+   - `items`: the FSpec FR-331 request items of the `RequirementItem`s that
+     routing sent to this backend, in request order. Each item carries its
+     `request_index`, claim `{node, occurrence}`, kind, extent, bounds,
+     options and candidates.
+   - `manifest`: the negotiated manifest entry. This is the backend's
+     descriptor as named by the `Disposition` that `negotiate_item` returned
+     for each item, beside the registry snapshot the candidates were checked
+     against.
+   - `limits`: the run's FSpec FR-462 limits, `AnalyzeOptions.provider_limits`,
+     which the driver fills from `--provider-limit` (FR-287). `deadline_ms`
+     is also written as FR-331's `request.deadline_ms`.
+   The request also holds each item's `ValueTarget`, which an in-process
+   arm reads. It is not a wire member.
+3. Call the widened provider call, `ExternalProvider::settle(&ProviderRequest)
+   -> ProviderVerdict`, once per request, under the run's cancel handle.
+   `fsl_analyze::provider::run` takes the analysis view (FR-940) or the
+   admitted package and never a bare `CheckedPackage`, so the bytes it sends
+   are the bytes that were admitted.
+
+The driver's `ProcessProvider` (FR-287) implements `ExternalProvider` and
+only transports. It starts the plugin (FSpec FR-561), converts the FR-331
+`hello` manifest into the FSL descriptor (FR-288), sends the request it is
+given unchanged as one FSpec FR-462 `request` frame through
+`ProcessProviderSession::invoke` under the request's limits, and maps the
+FR-331 `result` frame back to `ProviderVerdict`. It holds no package and no
+routed item of its own, and it builds no request member. The typed FR-331
+reader reads the result frame, and FR-290 settles it: `proved` with
+certification `trusted`; `refuted` only after S6a replay reproduces the
+counterexample; `unknown` as `inconclusive` `solver-inconclusive`. A crash,
+a malformed frame or an expired deadline settles as FR-291 states. There is
+one provider path. The earlier driver pipeline that rebuilt items and
+packages itself (`run_configured_providers` with its own driven call) is
+removed with no shim, so a request reaches a provider only by this rule.
 
 ### Relation to the production layering registry
 
@@ -132,6 +178,11 @@ builder unchanged.
 | FR-635-AC-3 | `backend` naming an unregistered `BackendId` settles `invalid-request` `unknown-backend`, exit 20. | Test (TC-1595) |
 | FR-635-AC-4 | A process provider whose `hello` manifest does not advertise (`value-validity`, `unbounded`) is refused at registration naming its `BackendId`, and the run's `registry` does not list it; a production layering snapshot (FR-489) built in the same process as AC-1's run holds exactly the linked descriptors and not the test plugin. | Test (TC-2294) |
 
+FR-950 states the acceptance criteria of the provider request and its
+transport.
+
 ## Dependencies
 
 - FR-281 owns the provider arm; FR-288, FR-289 and FR-489 own the registry.
+- [FR-950](FR-950-build-the-complete-provider-request-in-analyze-and-transport-it-unchanged.md):
+  the provider request analyze builds and the driver transports.
