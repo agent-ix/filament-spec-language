@@ -175,6 +175,7 @@ pub(super) fn parse(
                             |code| (code, CompleteCause::UnsupportedSelection),
                         )
                     };
+                    let derived = derived_form(&significant, &failure);
                     let expected = failure
                         .expected
                         .into_iter()
@@ -194,7 +195,7 @@ pub(super) fn parse(
                         },
                         span.start,
                         span.end,
-                        format!("expected {expected}"),
+                        derived.map_or_else(|| format!("expected {expected}"), str::to_owned),
                     ));
                     recoveries.push(Recovery {
                         kind: if failure.position == significant.len() {
@@ -1178,6 +1179,49 @@ fn interval_bounds(source: &Source, cst: &LosslessCst) -> Vec<CompleteDiagnostic
         }
     }
     diagnostics
+}
+
+/// FR-611: the message for `previous`, `next` or `weak until` written where
+/// a temporal formula admits an operator, naming the derived form that
+/// expresses it (FSpec FR-092 "Derived forms"); `None` for any other failure.
+#[ix_trace_rs::string_edge]
+fn derived_form(tokens: &[Significant], failure: &Failure) -> Option<&'static str> {
+    const FORMULA_STARTS: [&str; 16] = [
+        "holds",
+        "(",
+        "not",
+        "true",
+        "false",
+        "eventually",
+        "always",
+        "once",
+        "historically",
+        "count",
+        "sum",
+        "min",
+        "max",
+        "fraction",
+        "previous",
+        "next",
+    ];
+    let word = tokens.get(failure.position)?;
+    let follower = tokens.get(failure.position + 1)?;
+    let admits = |operator: &str| failure.expected.contains(&format!("`{operator}`"));
+    let starts_formula = || FORMULA_STARTS.contains(&follower.spelling.as_ref());
+    match word.spelling.as_ref() {
+        "previous" if admits("once") && starts_formula() => {
+            Some("`previous` is not a temporal operator; strong previous is written `once[1,1] p`")
+        }
+        "next" if admits("eventually") && starts_formula() => {
+            Some("`next` is not a temporal operator; next is written `eventually[1,1] p`")
+        }
+        "weak" if follower.spelling.as_ref() == "until" => Some(
+            "`weak until` is not a temporal operator; weak until is written \
+             `(p until[a,b] q) or always[a,b] p`, and under the infinite-trace profile \
+             `(p until q) or always p`",
+        ),
+        _ => None,
+    }
 }
 
 #[ix_trace_rs::string_edge]

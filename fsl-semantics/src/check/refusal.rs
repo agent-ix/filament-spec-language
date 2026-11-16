@@ -1307,11 +1307,6 @@ pub enum UnwrittenTimedMember {
     /// present(e))`), whose quantified presence form this producer does not
     /// admit yet.
     ElementPresence,
-    /// A postcondition requiring a clock presence by a comparison with
-    /// `absent` (`self.v != absent`, `not (self.v = absent)`), whose
-    /// `presence_read` S3 does not write yet; `present(self.v)` is written
-    /// (FSpec FR-322 `CW-05`).
-    ComparedPresence,
     /// A reset of an element clock that no single binder selects: a clock
     /// below two collections, or an element named by position.
     ElementReset,
@@ -1327,9 +1322,6 @@ impl UnwrittenTimedMember {
             }
             Self::ElementPresence => {
                 "a predicate reading a clock collection's element presences is not written by this producer"
-            }
-            Self::ComparedPresence => {
-                "a postcondition requiring a clock presence by comparison with `absent`"
             }
             Self::ElementReset => "a reset of an element clock no single binder selects",
         }

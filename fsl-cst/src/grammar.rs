@@ -1413,7 +1413,13 @@ fn temporal(g: &mut Grammar) {
                 x("on"),
                 x("each"),
                 bound_parameter(),
-                opt(s(vec![x("when"), x("("), r(P::Expression), x(")")])),
+                // The guard reads the same expression trees as a `holds`
+                // condition, so a hyper-only form in it is refused by the
+                // same S2 rule, not as a syntax error (FR-612).
+                opt(c(vec![
+                    s(vec![x("when"), x("("), r(P::Expression), x(")")]),
+                    s(vec![x("when"), x("("), r(P::HyperExpression), x(")")]),
+                ])),
             ]),
         ]),
     );

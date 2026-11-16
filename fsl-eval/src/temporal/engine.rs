@@ -1181,12 +1181,16 @@ impl<'a> Evaluator<'a> {
                     }
                 }
             }
+            // An unbounded past operator ranges over the positions that
+            // exist, 0 through `p - a`; it never reads the pre-origin
+            // extension a closed interval reads (FSpec FR-092 "Positions
+            // before the origin", FR-327-AC-14).
             (Direction::Past, Window::From { lower }) => {
                 let s0 = self.behind(p, lower)?;
-                if s0 < floor {
-                    Run::linear(floor, -1, 1)
+                if s0 < 0 {
+                    Run::linear(0, -1, 0)
                 } else {
-                    Run::linear(s0, -1, span(floor, s0)?)
+                    Run::linear(s0, -1, span(0, s0)?)
                 }
             }
         })

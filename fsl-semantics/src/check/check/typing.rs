@@ -1405,13 +1405,34 @@ impl<'a> Typer<'a> {
                 left,
                 right,
             } => {
+                // `p != absent` and `p = absent` of a guarded clock place are
+                // the place's presence and its negation (FR-230 "Presence and
+                // element members", FSpec FR-322 `CW-05`).
+                if let Some(comparison) = self.absent_comparison(expression, &location) {
+                    if !comparison.present {
+                        frames.push(Frame::Unary(Box::new(UnaryFrame {
+                            form: Unary::Not,
+                            location: location.clone(),
+                        })));
+                    }
+                    frames.push(Frame::PlacePresence(
+                        comparison.field,
+                        comparison.case,
+                        location,
+                    ));
+                    return Ok(Step::Descend(Goal::Infer(
+                        comparison.owner,
+                        None,
+                        comparison.owner_location,
+                    )));
+                }
                 return self.binary(
                     *operator,
                     (expression.at(*left), expression.at(*right)),
                     hint,
                     location,
                     frames,
-                )
+                );
             }
             ExprNode::Negate(operand) => {
                 // A negated `decimal(c, s)` literal takes its operand's
@@ -1440,12 +1461,42 @@ impl<'a> Typer<'a> {
                 ));
             }
             ExprNode::Not(operand) => {
+                // `not (p = absent)` is `present(p)`, located at the
+                // negation, so its spellings type to one presence read.
+                if let Some(comparison) = self
+                    .absent_comparison(expression.at(*operand), &location.child(0))
+                    .filter(|comparison| !comparison.present)
+                {
+                    frames.push(Frame::PlacePresence(
+                        comparison.field,
+                        comparison.case,
+                        location,
+                    ));
+                    return Ok(Step::Descend(Goal::Infer(
+                        comparison.owner,
+                        None,
+                        comparison.owner_location,
+                    )));
+                }
                 let goal = Goal::Expect(
                     expression.at(*operand),
                     Expected::Checked(boolean()),
                     location.child(0),
                 );
                 return Ok(Self::unary(Unary::Not, goal, location, frames));
+            }
+            // FR-612: outside a `hyper` clause, `t.step.op` over a name `t`
+            // that names nothing is a step label, refused at the form as
+            // hyper-only rather than as a missing `t`.
+            ExprNode::Field { operand, .. }
+                if self.hyper.is_none() && self.unbound_step_label(expression.at(*operand)) =>
+            {
+                return Err(CheckRefusal {
+                    location,
+                    cause: CheckCause::Hyper(Box::new(
+                        crate::check::hyper_clause::HyperCause::OutsideHyperClause,
+                    )),
+                });
             }
             ExprNode::Field { operand, field } => {
                 let operand = expression.at(*operand);
