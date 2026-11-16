@@ -1983,6 +1983,91 @@ fn a_record_claims_routed_item_is_its_record_item_at_the_request_index() {
     assert_eq!(candidates, [SMT]);
 }
 
+/// A provider that keeps the FSpec FR-331 `request` member of each request
+/// it is sent and answers `proved`.
+#[derive(Debug, Default)]
+struct Serializing(std::sync::Arc<std::sync::Mutex<Vec<Json>>>);
+
+impl ExternalProvider for Serializing {
+    fn settle(&self, request: &ProviderRequest<'_>, _cancel: &Cancel) -> Vec<ProviderVerdict> {
+        self.0
+            .lock()
+            .expect("the record")
+            .push(serde_json::to_value(request).expect("the request serializes"));
+        vec![ProviderVerdict::Proved; request.items().len()]
+    }
+}
+
+/// FSpec FR-331 "Items": an item the analyze request named no backend for,
+/// whose one candidate is the provider, is sent with no `backend` member
+/// (the named backend is part of request identity), at `request_index` 0,
+/// its position in the request, and its verdict settles the analyze item
+/// at its own index.
+#[trace("TC-1595", "FR-635-AC-1")]
+#[test]
+fn an_unnamed_single_candidate_item_is_sent_without_backend_at_its_request_position() {
+    let package = package_of(GUARDED);
+    let key = only_scalar_key(&package, "q");
+    let provider = Serializing::default();
+    let sent = std::sync::Arc::clone(&provider.0);
+    let mut engines = Engines::default();
+    engines
+        .with(
+            Engine::external(
+                smt_descriptor(Mode::Unbounded),
+                fsl_analyze::analyze::BackendTool::new("test-provider", "1").expect("a tool"),
+                fsl_analyze::provider::ProviderLimits::default(),
+                Box::new(provider),
+            )
+            .expect("an unbounded descriptor"),
+        )
+        .expect("a new backend");
+    let backend = fsl_foundation::BackendId::new(SMT);
+    let at = RequestIndex::new(3);
+    let records = analyze_items(
+        &engines,
+        vec![provider_item(
+            at,
+            &backend,
+            fsl_analyze::provider::ProviderItemInput {
+                package: &package,
+                packages: &fsl_semantics::model::intake::PackageInput::default(),
+                claim: &key,
+                routed: fsl_analyze::provider::routed_item(
+                    &package,
+                    engines.registrations(),
+                    at,
+                    &key,
+                    None,
+                ),
+                emit: fsl_package::EmitLimits::new(u64::MAX),
+                selection: ValueTarget::select(&package, "q", &key),
+            },
+        )],
+        &Cancel::new(),
+    );
+    assert_eq!(records[0].request_index, at);
+    assert!(
+        matches!(
+            records[0].terminal().map(fsl_replay::TerminalRecord::value),
+            Some(TerminalValue::Proved { .. })
+        ),
+        "{:?}",
+        records[0].settlement
+    );
+    let sent = sent.lock().expect("the record").clone();
+    let [request] = sent.as_slice() else {
+        panic!("one request: {sent:?}");
+    };
+    let item = &request["items"][0];
+    assert_eq!(item["request_index"], 0, "{item}");
+    assert!(item.get("backend").is_none(), "{item}");
+    assert_eq!(
+        item["candidates"],
+        serde_json::json!({"type": "set", "backends": [SMT]})
+    );
+}
+
 const UNGUARDED: &str = "function q using v(a: Integer, b: Integer): Integer pure { a div b }";
 const GUARDED: &str =
     "function q using v(a: Integer, b: Integer): Integer pure { if b != 0 then a div b else 0 }";

@@ -484,6 +484,18 @@ impl fsl_analyze::provider::ExternalProvider for RecordingProvider {
         let document: Value =
             serde_json::from_slice(request.package().bytes()).expect("the package is JSON");
         assert!(document.is_object());
+        // The manifest is the registry snapshot, and the negotiated entry is
+        // one of its descriptors.
+        let snapshot: Vec<&str> = request
+            .manifest()
+            .iter()
+            .map(|descriptor| descriptor.id().as_str())
+            .collect();
+        assert!(
+            snapshot.contains(&request.backend().as_str()),
+            "{snapshot:?}"
+        );
+        assert!(snapshot.contains(&"en-1"), "{snapshot:?}");
         let wire = serde_json::to_value(request).expect("the request serializes");
         self.0
             .lock()
@@ -566,7 +578,9 @@ fn analyze_builds_the_fr331_request_for_a_boolean_value_clause() {
     let items = sent["items"].as_array().expect("items");
     assert_eq!(items.len(), 1, "{sent}");
     let item = &items[0];
-    assert_eq!(item["request_index"], 1);
+    // The item's position in this one-item request, not its analyze index
+    // (1), which the verdict is joined back to.
+    assert_eq!(item["request_index"], 0);
     assert_eq!(item["kind"], "value-validity");
     assert_eq!(item["backend"], PROCESS_PROVIDER);
     assert_eq!(

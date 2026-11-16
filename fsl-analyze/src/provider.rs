@@ -207,15 +207,18 @@ impl Default for ProviderLimits {
 /// negotiated to one external provider (FR-635 "How a process provider runs
 /// an item"). It is a typed mirror of FR-331's `request` member and
 /// serializes to exactly that member: the package's v2 bytes as `package`,
-/// the caller's `deadline_ms`, and the routed items, each at its own analyze
-/// request index with the routed backend among its candidates. Beside the
-/// wire members it holds the negotiated manifest entry, the whole FR-462
+/// the caller's `deadline_ms`, and the routed items, each at its zero-based
+/// position in this request, with the routed backend among its candidates
+/// and `backend` only when the analyze request named one. Beside the wire
+/// members it holds the registry snapshot and the negotiated manifest entry
+/// within it, the whole FR-462
 /// limit set, and each item's claim target: what a linked provider reads to
 /// build its query, and what a reported counterexample is replayed at.
 pub struct ProviderRequest<'r> {
     package: &'r EmittedPackage,
     items: Vec<RequirementItem>,
     targets: Vec<&'r ValueTarget<'r>>,
+    manifest: Vec<&'r BackendDescriptor>,
     descriptor: &'r BackendDescriptor,
     limits: ProviderLimits,
     /// The node graph of `package`, which writes each node as the
@@ -231,7 +234,9 @@ impl<'r> ProviderRequest<'r> {
         self.package
     }
 
-    /// The routed request items, in request order (FR-331 `request.items`).
+    /// The routed request items, in request order (FR-331 `request.items`),
+    /// each at its position in this request; [`Self::targets`] keeps their
+    /// order, and `analyze` joins each verdict back to its own item by it.
     pub fn items(&self) -> &[RequirementItem] {
         &self.items
     }
@@ -239,6 +244,13 @@ impl<'r> ProviderRequest<'r> {
     /// The claim target of each item, in [`Self::items`] order.
     pub fn targets(&self) -> &[&'r ValueTarget<'r>] {
         &self.targets
+    }
+
+    /// The registry snapshot the items were negotiated against: every
+    /// registered backend's descriptor, linked and external (FR-331
+    /// `manifest`). [`Self::descriptor`] is one of them.
+    pub fn manifest(&self) -> &[&'r BackendDescriptor] {
+        &self.manifest
     }
 
     /// The negotiated manifest entry: the descriptor of the backend every
@@ -270,7 +282,7 @@ impl serde::Serialize for ProviderRequest<'_> {
         let items = self
             .items
             .iter()
-            .map(|item| request_item_wire(&self.graph, item, self.backend()))
+            .map(|item| request_item_wire(&self.graph, item))
             .collect::<Result<Vec<_>, _>>()
             .map_err(S::Error::custom)?;
         let mut map = serializer.serialize_map(Some(3))?;
@@ -344,11 +356,13 @@ fn proof_bound_wire(
     }))
 }
 
-/// One routed item as FR-331 `RequestItem`, `backend` its routed backend.
+/// One routed item as FR-331 `RequestItem`. `request_index` is the item's
+/// position in this request; `backend` is written only when the analyze
+/// request named one, since the named backend is part of request identity
+/// (FR-331 "Identity and validation").
 fn request_item_wire(
     graph: &WireGraph,
     item: &RequirementItem,
-    backend: &BackendId,
 ) -> Result<serde_json::Value, serde_json::Error> {
     use serde::ser::Error as _;
     let origin = item.occurrence().origin();
@@ -375,6 +389,10 @@ fn request_item_wire(
             "finite_bound_available": finite_bound_available,
         }),
     };
+    let named = match item.candidates() {
+        CandidateOutcome::Candidates(set) => set.requested_backend(),
+        CandidateOutcome::UnknownBackend(backend) => Some(backend),
+    };
     let candidates = match item.candidates() {
         CandidateOutcome::Candidates(set) => serde_json::json!({
             "type": "set",
@@ -390,7 +408,7 @@ fn request_item_wire(
     };
     let index = u64::try_from(item.index().get())
         .map_err(|_| serde_json::Error::custom("a request index outside the FR-331 count range"))?;
-    Ok(serde_json::json!({
+    let mut wire = serde_json::json!({
         "request_index": index,
         "kind": item.kind().to_wire(),
         "claim": {
@@ -398,9 +416,12 @@ fn request_item_wire(
             "occurrence": {"role": origin.role().as_str(), "ordinal": origin.ordinal()},
         },
         "extent": extent,
-        "backend": backend.as_str(),
         "candidates": candidates,
-    }))
+    });
+    if let (Some(named), Some(members)) = (named, wire.as_object_mut()) {
+        members.insert("backend".to_owned(), serde_json::json!(named.as_str()));
+    }
+    Ok(wire)
 }
 
 /// What a provider reports for one item. Only `Refuted` carries evidence,
@@ -614,7 +635,7 @@ pub(crate) fn settle_items(
         for (index, work) in &members {
             match (&work.routed, &work.selection) {
                 (Some(item), Ok(target)) => {
-                    routed.push(item.clone());
+                    routed.push(item.at_index(RequestIndex::new(routed.len())));
                     targets.push(target);
                     indices.push(*index);
                 }
@@ -652,6 +673,7 @@ pub(crate) fn settle_items(
             package: &bytes,
             items: routed,
             targets,
+            manifest: engines.registrations().collect(),
             descriptor: engine.descriptor(),
             limits: engine.provider_limits(),
         };
