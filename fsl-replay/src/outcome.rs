@@ -2148,6 +2148,10 @@ fn clause_run_cause(report: &ClauseRunReport, clause: &str) -> Option<ItemCause>
                 Some("resource_exhausted"),
             ))
         }
+        ClauseDisposition::Evaluate(CallOutcome::Refused(refusal)) => {
+            let (CallRefusal::Record { code, .. } | CallRefusal::Family { code, .. }) = refusal;
+            Some(catalog(code.code(), code.cause()))
+        }
         _ => classify_clause_run(report)
             .classification
             .causes
