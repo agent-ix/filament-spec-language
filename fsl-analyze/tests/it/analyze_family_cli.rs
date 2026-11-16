@@ -190,7 +190,7 @@ fn an_object_free_hyper_clause_is_analyzed() {
 }
 
 /// The timed `Rpc` subject of FR-239 with timeout bound `t` and `claim`.
-fn rpc_unit(t: u32, claim: &str) -> String {
+pub(crate) fn rpc_unit(t: u32, claim: &str) -> String {
     use crate::timed_world::{unit_text, DENSE, PACKAGE};
     let body = format!(
         "{DENSE}\
@@ -214,7 +214,7 @@ fn rpc_unit(t: u32, claim: &str) -> String {
     unit_text(PACKAGE, crate::zone_search::TIMED, &body)
 }
 
-fn rpc_snapshot() -> Vec<u8> {
+pub(crate) fn rpc_snapshot() -> Vec<u8> {
     let package = crate::timed_world::PACKAGE;
     json!({
         "format": "filament.state.snapshot/v1",
@@ -327,10 +327,8 @@ fn an_item_naming_a_registered_provider_settles_on_it() {
     let item = run.item(0);
     assert_eq!(label(&item), "proved");
     assert_eq!(item["record"]["backend"], provider.as_str());
-    assert!(matches!(
-        item["record"]["certification"].as_str(),
-        Some("uncertified" | "trusted")
-    ));
+    // FR-635: the test provider is a process plugin, so its proof is trusted.
+    assert_eq!(item["record"]["certification"], "trusted");
     let registry: Vec<Value> = run.document()["registry"]
         .as_array()
         .expect("registry")

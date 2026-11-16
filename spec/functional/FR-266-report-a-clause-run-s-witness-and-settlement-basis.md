@@ -64,6 +64,12 @@ clause run's own; a model-check verdict's basis is FR-127's (ADR-031 SW-3).
   pending (a finite prefix that can show no more); and `unavailable` for
   every other result (`insufficient-data`, a missing fairness premise, a
   stop, a refused condition, a trace refusal and an internal failure).
+  This top-level `basis` is the clause run's. A `Progressed` or
+  `Timestamped` run also returns FR-501's result report as
+  `ClauseRunReport::finite_window` (FR-330), whose own `basis` is the
+  evaluator's finer one: an open-scope verdict settled through silent
+  samples reports `decisive-counterexample` or `decisive-witness` there
+  (FR-504), while this member stays `closed-scope`.
 - For every other disposition (stage `compile`, `select` or `admit`, and
   category `refusal`, `undefined`, `incomplete` or `internal-failure` at
   stage `evaluate`), the entry SHALL set `basis` `unavailable` and no

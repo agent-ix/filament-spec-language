@@ -170,6 +170,47 @@ fn always_possible_refutes_and_witnesses_repeat() {
     let path = counter_request(&ws, body, items);
     let first = analyze(&path);
     assert_eq!(label(&first.item(0)), "refuted");
+    // FR-166 keeps one witness per instance and initial state; the record
+    // names the walks and seed it ran under.
+    let record = first.item(1)["record"].to_string();
+    assert!(
+        record.contains("\"witness_samples\":\"3\"") || record.contains("\"witness_samples\":3"),
+        "{record}"
+    );
+    assert!(
+        record.contains("\"seed\":\"7\"") || record.contains("\"seed\":7"),
+        "{record}"
+    );
+    // Exactly one sampled witness (one instance, one initial state), whose
+    // FSpec FR-393 source names seed 7 and a trace index below 3.
+    fn sampled_sources<'a>(value: &'a Value, out: &mut Vec<&'a Value>) {
+        match value {
+            Value::Object(members) => {
+                if members.get("type").is_some_and(|kind| kind == "sampled") {
+                    out.push(value);
+                }
+                members
+                    .values()
+                    .for_each(|member| sampled_sources(member, out));
+            }
+            Value::Array(items) => items.iter().for_each(|item| sampled_sources(item, out)),
+            _ => {}
+        }
+    }
+    let witnessed = first.item(1);
+    let mut sources = Vec::new();
+    sampled_sources(&witnessed, &mut sources);
+    let [source] = sources.as_slice() else {
+        panic!("exactly one sampled witness: {witnessed}");
+    };
+    assert_eq!(source["seed"], "7", "{source}");
+    assert!(
+        source["trace_index"]
+            .as_str()
+            .and_then(|index| index.parse::<u64>().ok())
+            .is_some_and(|index| index < 3),
+        "{source}"
+    );
     let second = analyze(&path);
     assert_eq!(
         first.item(1)["record"]["evidence"],
@@ -247,12 +288,43 @@ fn digital_clocks_agree_and_the_clock_budget_stops() {
         4,
         claim,
         json!({"items": [{"claim": "Bound"},
-            {"claim": "Bound", "options": {"method": "digital-clocks"}},
-            {"claim": "Bound", "temporal": {"limits": {"max_clocks": 0}}}]}),
+            {"claim": "Bound", "options": {"method": "digital-clocks"}}]}),
     ));
     assert_eq!(label(&run.item(0)), label(&run.item(1)));
-    assert_eq!(label(&run.item(2)), "incomplete");
-    assert_eq!(run.item(2)["record"]["cause"]["limit"], "max_clocks");
+    assert_eq!(run.item(1)["record"]["backend"], "en-1");
+    // FR-632-AC-3: two calls hold two live clocks, so `max_clocks` 1 stops
+    // the run; `max_clocks` 0 is not a positive count and refuses the request.
+    let mut snapshot: Value =
+        serde_json::from_slice(&crate::analyze_family_cli::rpc_snapshot()).expect("json");
+    let mut second = snapshot["populations"][0]["objects"][0].clone();
+    second["key"] = json!("d");
+    snapshot["populations"][0]["objects"]
+        .as_array_mut()
+        .expect("objects")
+        .push(second);
+    let ws = Workspace::new("cov-zone-two-calls");
+    let run = analyze(&crate::analyze_cli_support::request_over(
+        &ws,
+        &crate::analyze_family_cli::rpc_unit(4, claim),
+        &crate::zone_search::rpc_document(),
+        &[snapshot.to_string().into_bytes()],
+        json!({"items": [{"claim": "Bound", "temporal": {"limits": {"max_clocks": 1}}}]}),
+    ));
+    assert_eq!(label(&run.item(0)), "incomplete");
+    assert_eq!(run.item(0)["record"]["cause"]["limit"], "max_clocks");
+    let ws = Workspace::new("cov-zone-zero-clocks");
+    let run = analyze(&crate::analyze_family_cli::rpc_request(
+        &ws,
+        4,
+        claim,
+        json!({"items": [{"claim": "Bound", "temporal": {"limits": {"max_clocks": 0}}}]}),
+    ));
+    assert_eq!(run.exit, 20);
+    assert_eq!(run.document()["diagnostics"][0]["code"], "invalid-request");
+    assert!(run
+        .document()
+        .to_string()
+        .contains("temporal.limits.max_clocks"));
 }
 
 /// FR-633-AC-3: EDF proves `Ctl` in closed form.

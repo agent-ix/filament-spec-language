@@ -51,9 +51,12 @@ id of every node.
 The source is the checked tree (`check::ir::Node`), not the parsed
 `Expression`: each checked node carries its checked type, and FR-322 takes
 every `result_type` and literal `type` from the checked type, never by
-inference. The one exception is an integer `div`, `rem` or `mod` application,
+inference. The exceptions are an integer `div`, `rem` or `mod` application,
 whose `result_type` is the builtin `Integer` node while its checked type is
-FR-495's exact interval (FR-495 "Representation of an integer division
+FR-495's exact interval, and an integer-typed control node (`if`, `let`,
+`case`) whose `result_type` is the node of its lowered type, the hull of the
+lowered types of the leaves it yields, which is `Integer` when one of them is such an
+application (FR-495 "Representation of an integer division
 result"). Each `Expression` form checks to the `NodeKind` the table below
 names.
 
@@ -547,7 +550,7 @@ to `x`'s node.
 | `IeeeNumericEquality`, `IeeeTotalOrder`, `IeeeBitIdentical` (`=` over floats, and the `numericEqual`, `totalOrder` and `bitIdentical` intrinsic calls) | `call`, as the operation catalog lists them | `filament.op.ieee.numeric_equal`, `filament.op.ieee.total_order`, `filament.op.ieee.bit_identical` | law `ieee_profile`; no mode; none is a requirement claim site | `[ref(l), ref(r)]` |
 | `Order(operator, kind)` (`<`, `<=`, `>`, `>=`) | `binary` | `filament.op.<f>.lt`, `.le`, `.gt`, `.ge`, where `<f>` is `integer`, `rational`, `decimal`, `enum`, `text` or `quantity` for `kind` `Integers`, `Rationals`, `Decimals`, `Enums`, `Texts`, `Quantities` | for `text`: law `text_profile`, mode `text_profile` = the operands' profile | `[ref(l), ref(r)]` |
 | `Equality(operator, schedule)` (`=`, `!=`) | `binary` | `filament.op.<f>.eq` or `.ne` for an operand family `<f>` of `boolean`, `integer`, `rational`, `decimal`, `text`, `enum`, `quantity`, `reference`, `string`, `uuid` or `timestamp`; `filament.op.structural.eq` or `.ne` for an `option`, record, tuple, union or collection operand | for `text`: law `text_profile`, mode `text_profile`; for `string`, `uuid` and `timestamp`: no law, no mode, no member and no leaves; for `structural`: leaves `operand:0`, the compared type's text-leaf list | `[ref(l), ref(r)]` |
-| `Coerce(e, interval)` (an integer admitted into an `Int[..]` that does not contain its type, or an `e` whose lowered type is `Integer` because it is an integer `div`, `rem` or `mod` application or a read of a `let` binder bound to one, admitted into any `Int[..]`, FR-495) | `convert` | `filament.op.numeric.narrow` | member `type_argument{declaration: T(Int[interval])}` | `[ref(e)]` |
+| `Coerce(e, interval)` (an integer admitted into an `Int[..]` that does not contain its type, or an `e` whose lowered type is `Integer` because it is an integer `div`, `rem` or `mod` application, a control node yielding one, or a read of a `let` binder bound to either, admitted into any `Int[..]`, FR-495) | `convert` | `filament.op.numeric.narrow` | member `type_argument{declaration: T(Int[interval])}` | `[ref(e)]` |
 | `ConvertScalar(target, e)` whose operand type is an exact numeric type other than the target | `convert` | `filament.op.numeric.convert` | member `type_argument` of the target type node | `[ref(e)]` |
 | `ConvertScalar(target, e)` whose operand is a quantity | `convert` | `filament.op.quantity.convert` | member `type_argument` of the target type node; mode `rounding` = `exact` for a `Quantity<u>` target, and the carried node's `rounding` for a `Quantity<u, C>` target (FR-497) | `[ref(e)]` |
 | `ConvertText(target, e)` (`convert<T>(e)` whose operand has a `Text[..]` or `String` type, FSpec FR-478) | `convert` | `filament.op.text.to_<k>` for a `Text[..]` operand, `filament.op.string.to_<k>` for a `String` operand, where `<k>` is `integer` (`Integer`, `Int[..]`), `decimal` (`Decimal`, `Decimal[..]`), `rational` (`Rational`, `Rational[..]`), `float32`, `float64` or `quantity` (`Quantity<u>`) for the target | law `text_profile` for a `Text[..]` operand, then law `ieee_profile` for a `float32` or `float64` target; mode `rounding` = the target's mode for a decimal or IEEE target (`exact` when the target omits it) and `exact` for a quantity target, no mode for an integer or rational target; member `type_argument` of the target type node | `[ref(e)]` |
@@ -668,7 +671,7 @@ strict `exact` rounding, are FR-478's at evaluation.
 A `Coerce` exists only for a narrowing: an integer whose type an `Int[..]`
 contains is admitted with no node, except an operand whose lowered type is
 `Integer` while its checked type is an interval (an integer `div`, `rem` or
-`mod` application, or a read of a `let` binder bound to one; FR-495
+`mod` application, a control node yielding one, or a read of a `let` binder bound to either; FR-495
 "Representation of an integer division result"): its `Coerce` into any
 `Int[..]`, a containing one included, lowers to exactly one narrow over the
 operand. A `ConvertScalar` whose operand type equals its target builds no

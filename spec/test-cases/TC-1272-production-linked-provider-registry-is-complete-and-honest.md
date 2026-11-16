@@ -43,7 +43,8 @@ assertion verifies.
 
 - The two snapshots are equal. The registration accessor yields exactly the
   EN-1 and EN-6 `temporal-satisfaction` descriptors, the EN-4 and EN-5
-  `probabilistic-satisfaction` descriptors, the `value-checker` descriptor,
+  `probabilistic-satisfaction` descriptors, the EN-7 `schedulability`
+  descriptor (`en-7`), the `value-checker` descriptor,
   the `contract-checker` descriptor and the `protocol-analysis` descriptor
   owned by `Engines::fsl()`. For each
   descriptor, the snapshot retains its exact `BackendId`, origin and

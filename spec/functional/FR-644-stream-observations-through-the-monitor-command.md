@@ -82,7 +82,10 @@ one of
 
 In process: `command::monitor(path: &Path, records: impl Iterator<Item =
 Result<Vec<u8>, std::io::Error>>, sink: &mut dyn FnMut(&MonitorEvent), limits:
-RunLimits, cancel: &Cancel) -> Result<MonitorSummary, Box<RunError>>`.
+RunLimits, cancel: &Cancel) -> Result<MonitorSummary, Box<RunError>>`. It also
+takes the started process providers as `providers`, by FR-635's rule for
+every provider-routing entry (FR-635 "One rule for every provider-routing
+entry").
 
 ## Outputs
 

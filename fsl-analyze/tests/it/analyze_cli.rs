@@ -263,16 +263,26 @@ fn a_finite_replay_item_over_a_temporal_clause_is_inapplicable() {
 #[test]
 #[ignore = "QSL-2125: state-graph items are not reachable through fsl analyze yet"]
 fn possible_claims_prove_and_refute() {
+    // A target outside `Int[0, 3]` refuses at check (FR-104), so the
+    // unreachable target is `value = 0` from a counter started at 1.
     let body = "possible ReachThree using t0 over (c: M::Counter) { c.value = 3 }\n\
-                possible ReachFour using t0 over (c: M::Counter) { c.value = 4 }\n";
+                possible ReachZero using t0 over (c: M::Counter) { c.value = 0 }\n";
     let ws = Workspace::new("cli-state-graph");
     let run = analyze(&counter_request(
         &ws,
         body,
-        json!([{"claim": "ReachThree"}, {"claim": "ReachFour"}]),
+        json!([{"claim": "ReachThree"}]),
     ));
     assert_eq!(label(&run.item(0)), "proved");
-    assert_eq!(label(&run.item(1)), "refuted");
+    let ws = Workspace::new("cli-state-graph-from-one");
+    let run = analyze(&crate::analyze_cli_support::request_over(
+        &ws,
+        &crate::counter::unit_text(&format!("{}{body}", crate::counter::CONTRACT)),
+        &crate::counter::document(false),
+        &[crate::analyze_cli_support::counter_snapshot(&[("a", 1)])],
+        json!({"items": [{"claim": "ReachZero"}]}),
+    ));
+    assert_eq!(label(&run.item(0)), "refuted");
 }
 
 /// FR-629-AC-4: a liveness item over a release/acquire parallel always has
@@ -329,6 +339,8 @@ fn simulation_enumerates_the_counter_subject() {
     assert_eq!(item["category"], "success");
     assert_eq!(item["coverage"]["states"], "4");
     assert_eq!(item["coverage"]["transitions"], "3");
+    assert_eq!(item["coverage"]["choices"], "0");
+    assert_eq!(item["traces"].as_array().map(Vec::len), Some(1));
     assert_eq!(item["frontier"], json!([]));
     assert!(item.get("record").is_none());
 }
