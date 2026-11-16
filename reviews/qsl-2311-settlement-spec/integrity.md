@@ -50,3 +50,24 @@ Five defects remain. The `limit` trigger contradicts the new "exactly `B(s)`" ru
 ## Verdict
 
 REQUEST CHANGES. FND-001 is a contradiction between two SHALLs and makes FR-643-AC-5 unsatisfiable. FND-002 to FND-005 leave members of the new closed record undefined for some profiles. The ruling is otherwise implemented faithfully, and AC-7's decided values follow from FR-820, FR-504 and FR-501.
+
+## New findings (disposition pass 1)
+
+| ID | Severity | Summary | Refs |
+| --- | --- | --- | --- |
+| FND-009 | low | FR-644 Behavior still says "a settled clause's [latest event] carries the batch disposition over the records that decided it", with no exception for `trigger` `limit`. Under FR-643 "Settlement" as amended, a limit-settled clause carries the `incomplete` limit report, which no batch run gives. Fix: add "other than one settled on a limit, whose event carries the limit report (FR-643 \"Settlement\")". | spec/functional/FR-644-stream-observations-through-the-monitor-command.md:136-141 |
+
+## Dispositions
+
+Round 1 is checked at head 3e7a52e3952840908642ee5d9f1bf49bc17b27e0. On finding 2, the lead ruled that refused and cancelled calls do not count.
+
+| FND | Outcome | Reason |
+| --- | --- | --- |
+| FND-001 | fixed | Batch equality now says "other than on a limit", and Settlement exempts `limit` from exactly-`B(s)` and from category-and-truth agreement; FR-643-AC-5 now expects the limit settlement. |
+| FND-002 | fixed | The new "Counted calls" bullet counts accepted calls from 1, excludes refused and cancelled calls per the lead ruling, and sets `step` at `finish` to the counted calls before it. FR-644 cites it. FR-643-AC-7 (`"2"`) and FR-644-AC-5 (`"4"`) follow. |
+| FND-003 | still-open | Parts (b) and (c) are fixed: timed uses `through` when that settled the clause and the newest stamp otherwise, in exact-rational form. Part (a) is not. The new row gives fixed-sample over `Progressed` FR-504's `S = min(W, through)`. But FR-643 "Settling" (line 255-258) and FR-820 Outputs `decided` (line 102-104) both define the deciding reading of a fixed-sample clause as FR-504's open-scope reading with `S = n - 1`, so the reported horizon is not that of the reading that decided the clause. Fix one side: make the row `n - 1`, or change "Settling" and FR-820 `decided` to use FR-504's seen horizon `S`. The second fits FR-504-AC-1, where a watermark alone decides. The rest of the table is complete for every pair FR-643 admits (event-position: Finite and Progressed; fixed-sample: Finite and Progressed; finite-window: Timestamped; infinite-trace: Finite; timed: Timed, per FR-645-AC-3 and FR-641). |
+| FND-004 | fixed | `position` is now `where` for a violation (an `Undefined` violation included), the least FR-501 decision-support position for a success, and `null` otherwise. AC-7's `"2"` and `"0"` and AC-10's `"0"` follow. |
+| FND-005 | fixed | The text is now the sample's canonical value. The position's identity stays its index (FR-330), and equal samples at different indices are distinct positions. |
+| FND-006 | fixed | The session's `ClauseStatus` holds the `MonitorRecord` and its report behind an `Arc`, and FR-283 is no longer misdescribed. |
+| FND-007 | fixed | The text now reads "with no member `B(s)` lacks: for example no `finite_window` and no ledger on a `Finite` trace". |
+| FND-008 | fixed | `settlement` is in the closed member list of `filament.monitor-event/1`, present exactly when `settled` is `true`. |

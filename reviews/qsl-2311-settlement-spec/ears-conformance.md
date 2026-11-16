@@ -32,3 +32,11 @@ Ticket: QSL-2311. The diff adds two SHALL statements, both in FR-643's Settlemen
 ## Verdict
 
 PASS WITH ONE LOW.
+
+## Dispositions
+
+Round 1 is checked at head 3e7a52e3952840908642ee5d9f1bf49bc17b27e0.
+
+| FND | Outcome | Reason |
+| --- | --- | --- |
+| FND-001 | fixed | The statement now reads "The session SHALL report, for a clause settled with `trigger` `decided` or `finish`, exactly `B(s)` ...", so the session is its subject. The new "Counted calls" statement also names the session. |

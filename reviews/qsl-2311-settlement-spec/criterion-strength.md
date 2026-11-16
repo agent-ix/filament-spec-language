@@ -36,3 +36,11 @@ What remains is coverage. The new closed record defines members and triggers tha
 ## Verdict
 
 PASS WITH ONE MEDIUM.
+
+## Dispositions
+
+Round 1 is checked at head 3e7a52e3952840908642ee5d9f1bf49bc17b27e0.
+
+| FND | Outcome | Reason |
+| --- | --- | --- |
+| FND-001 | fixed | FR-643-AC-5 now expects Recent's `{step: "3", trigger: "limit"}` and no `basis`, `horizon` or `position`. FR-643-AC-10 expects Ack's `{step: "2", trigger: "decided", basis: "closed-scope", horizon: "250", position: "0", through: "250"}`: two counted calls, basis per FR-266/FR-283, and `"250"` a valid FR-642 string. FR-644-AC-5 expects Reaches' `{"step": "4", "trigger": "finish"}`. TC-1667, TC-2324 and TC-1668 match. `position` `null` and the fixed-sample and finite-window horizons remain unexercised; they are not blocking. |
