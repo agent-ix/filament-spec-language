@@ -2135,3 +2135,54 @@ fn an_undecided_protocol_capture_is_a_finding_on_each_and_a_refusal_on_origin() 
         "{refusal:?}"
     );
 }
+
+/// FR-882-AC-2 (TC-2505): an undecided protocol capture under `on origin`
+/// is an undefined value at the instance's first state, settled as a
+/// refutation by the undefined rule; the system is built and explores, it
+/// never refuses `Unsupported::UndecidedInitialGuard`.
+#[trace("TC-2505", "FR-882-AC-2")]
+#[test]
+#[ignore = "QSL-2221: an undecided initial capture refuses Unsupported::UndecidedInitialGuard instead of a refutation"]
+fn an_undecided_initial_capture_is_a_refutation_on_origin() {
+    let capture = "capture z: Boolean = 6 mod (1 - 1) >= 0;";
+    let run = "sequence Main { attempt T by w on M::Cell::inc contracts [IncPre, IncPost] \
+               as (t: Boolean) { true }; }";
+    let origin = World::new(
+        &with_captures(&unit(ORIGIN, "", "", run), capture),
+        &["c"],
+        &[0],
+    );
+    let subject = origin.subject();
+    let model = ModelSystem::new(subject.model.simulation.clone()).expect("the subject admits");
+    let system = ProtocolSystem::new(model, &subject, Sc)
+        .unwrap_or_else(|refusal| panic!("the system is built: {refusal:?}"));
+    let reached = reachable(&system);
+    let findings = system
+        .successors(&reached[0].state)
+        .expect("expands")
+        .findings;
+    assert!(
+        findings.iter().any(|finding| matches!(
+            finding,
+            ModelFinding::ProtocolExpressionUndetermined { node, .. } if node.ends_with("::z")
+        )),
+        "{findings:?}"
+    );
+}
+
+/// FR-882-AC-3 (TC-2506): an `over` input that is not an object reference
+/// ranges over its type's finite domain, one `origin` instance per value.
+#[trace("TC-2506", "FR-882-AC-3")]
+#[test]
+#[ignore = "QSL-2221: an over input that is not an object refuses Unsupported::OverNotAnObject instead of ranging over its domain"]
+fn a_non_object_over_has_one_origin_instance_per_value() {
+    let run = "sequence Main { attempt T by w on M::Cell::inc contracts [IncPre, IncPost] \
+               as (t: Boolean) { true }; }";
+    let text = unit(ORIGIN, "", "", run).replace("over (k: M::Cell)", "over (k: Int[0, 3])");
+    let world = World::new(&text, &["c"], &[0]);
+    let subject = world.subject();
+    let model = ModelSystem::new(subject.model.simulation.clone()).expect("the subject admits");
+    let system = ProtocolSystem::new(model, &subject, Sc)
+        .unwrap_or_else(|refusal| panic!("the system is built: {refusal:?}"));
+    assert_eq!(system.initial().len(), 4);
+}
