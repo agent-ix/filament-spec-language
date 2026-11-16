@@ -112,6 +112,15 @@ pub(crate) struct PackagePlace {
     /// the member identity of a field step (FSpec FR-322 "Timed-model
     /// nodes", `resolved_path`).
     pub(crate) members: Vec<(String, Option<String>)>,
+    /// Element identities supplied by checked types for source collection slots.
+    pub(crate) resolved_slots: BTreeMap<usize, String>,
+}
+
+/// A source value type's clock paths and its FR-322 type identity.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct SourceClockLayout {
+    pub identity: String,
+    pub places: Vec<SourceClockPlace>,
 }
 
 /// A clock component's path within a source-declared checked value type.
@@ -127,6 +136,7 @@ pub(crate) struct SourceClockPlace {
     pub case: bool,
     /// Resolved member rows corresponding to the steps.
     pub members: Vec<(String, Option<String>)>,
+    pub slots: BTreeMap<usize, String>,
 }
 
 /// One row of a clock place's `resolved_path` (FSpec FR-322 "Timed-model
@@ -176,6 +186,63 @@ fn collection_type(shape: CollectionShape, inner: &str) -> String {
     format!("{kind}<{inner}>")
 }
 
+/// FR-322 identities on clock-bearing value paths. Scalar data cannot hold
+/// a clock; nominal data, options, collections and map values can.
+pub(crate) fn clock_type_identity(
+    value_type: &ValueType,
+    nominal: impl Fn(&NodeKey) -> Option<String>,
+) -> Option<String> {
+    enum Part<'a> {
+        Value(&'a ValueType),
+        Text(&'static str),
+    }
+    let mut pending = vec![Part::Value(value_type)];
+    let mut output = String::new();
+    while let Some(part) = pending.pop() {
+        let value_type = match part {
+            Part::Text(text) => {
+                output.push_str(text);
+                continue;
+            }
+            Part::Value(value_type) => value_type,
+        };
+        match value_type {
+            ValueType::Composite(key) => {
+                output.push_str(&nominal(key).unwrap_or_else(|| key.to_string()))
+            }
+            ValueType::Option(inner) => {
+                output.push_str("Option<");
+                pending.push(Part::Text(">"));
+                pending.push(Part::Value(inner));
+            }
+            ValueType::Collection(collection) => {
+                output.push_str(match collection.kind() {
+                    filament_exact::CollectionKind::Sequence => "Sequence<",
+                    filament_exact::CollectionKind::Set => "Set<",
+                    filament_exact::CollectionKind::Bag => "Bag<",
+                    filament_exact::CollectionKind::OrderedSet => "OrderedSet<",
+                });
+                pending.push(Part::Text(">"));
+                pending.push(Part::Value(collection.element()));
+            }
+            ValueType::Map(map) => {
+                output.push_str("Map<");
+                pending.push(Part::Text(">"));
+                pending.push(Part::Value(map.values()));
+                pending.push(Part::Text(", "));
+                pending.push(Part::Value(map.key()));
+            }
+            ValueType::Boolean => output.push_str("ix://filament/native/Boolean"),
+            ValueType::Integer => output.push_str("ix://filament/native/Integer"),
+            ValueType::String => output.push_str("ix://filament/native/String"),
+            ValueType::Uuid => output.push_str("ix://filament/native/UUID"),
+            ValueType::Timestamp => output.push_str("ix://filament/native/Timestamp"),
+            _ => return None,
+        }
+    }
+    Some(output)
+}
+
 /// The element type of the rendered collection type `rendered`, read
 /// through an `Option<..>` around it (FSL FR-230-AC-19's `o:
 /// Option<Sequence<Clock>[0, 2]>`). A string edge: `rendered` is the
@@ -222,7 +289,13 @@ impl PackagePlace {
                 }
                 PlaceStep::Slot(_) => {
                     let parent = previous.unwrap_or_default();
-                    (element_type(&parent).to_owned(), format!("{parent}[slot]"))
+                    (
+                        self.resolved_slots
+                            .get(&index)
+                            .cloned()
+                            .unwrap_or_else(|| element_type(&parent).to_owned()),
+                        format!("{parent}[slot]"),
+                    )
                 }
                 PlaceStep::Union(case) => {
                     let declaring = previous.unwrap_or_default();
@@ -301,7 +374,8 @@ pub struct AdmittedModel {
     /// Every clock place of the package's object types
     /// ([`Self::clock_places`]), found once from `records`.
     places: Vec<PackagePlace>,
-    source_places: BTreeMap<NodeKey, Vec<SourceClockPlace>>,
+    source_places: BTreeMap<NodeKey, SourceClockLayout>,
+    source_field_spans: BTreeMap<DeclarationKey, fsl_foundation::Span>,
     /// Every required single-valued field whose type is a package object
     /// type, `(owner, field name, target)`: [`Self::referenced_object`],
     /// found once from `records`.
@@ -937,6 +1011,7 @@ impl AdmittedModel {
             population_bounds: BTreeMap::new(),
             places: Vec::new(),
             source_places: BTreeMap::new(),
+            source_field_spans: BTreeMap::new(),
             references: Vec::new(),
             selection: domain_package.model_selection.clone(),
             records: domain_package
@@ -988,6 +1063,7 @@ impl AdmittedModel {
             population_bounds: BTreeMap::new(),
             places: Vec::new(),
             source_places: BTreeMap::new(),
+            source_field_spans: BTreeMap::new(),
             references: Vec::new(),
             selection: domain_package.model_selection.clone(),
             records: domain_package
@@ -1014,7 +1090,8 @@ impl AdmittedModel {
     pub(crate) fn refresh_source_view(
         &mut self,
         view: &EffectiveView,
-        places: BTreeMap<NodeKey, Vec<SourceClockPlace>>,
+        places: BTreeMap<NodeKey, SourceClockLayout>,
+        field_spans: BTreeMap<DeclarationKey, fsl_foundation::Span>,
     ) {
         self.index = view.shared_model_index().clone();
         self.records = view
@@ -1024,8 +1101,40 @@ impl AdmittedModel {
             .map(|record| (record.key().clone(), record.clone()))
             .collect();
         self.source_places = places;
+        self.source_field_spans = field_spans;
         self.places = self.find_places();
         self.references = self.find_references();
+    }
+
+    /// The named source object's checked node, for the source model's time member.
+    pub(crate) fn source_object_time_node(&self, name: &str) -> Option<NodeKey> {
+        if self.alias() != Some("") {
+            return None;
+        }
+        self.records.values().find_map(|record| {
+            let DomainPackageRecord::ObjectType(object) = record else {
+                return None;
+            };
+            (crate::model::intake::type_identity_segment(&object.key.package, &object.key.node)
+                == Some(name))
+            .then(|| record_node_key(record).ok().flatten())
+            .flatten()
+        })
+    }
+
+    /// The first source member, in authored order, whose value contains a clock.
+    pub(crate) fn first_source_clock(&self) -> Option<(String, fsl_foundation::Span)> {
+        self.places
+            .iter()
+            .filter_map(|place| Some((place, *self.source_field_spans.get(&place.field)?)))
+            .min_by_key(|(_, span)| span.start)
+            .map(|(place, span)| {
+                let name = match place.path.first() {
+                    Some(PlaceStep::Field(name)) => name.clone(),
+                    _ => place.field.node.clone(),
+                };
+                (name, span)
+            })
     }
 
     /// Clock layouts of admitted model value types, indexed by the same
@@ -1033,7 +1142,7 @@ impl AdmittedModel {
     pub(crate) fn value_clock_layouts(
         &self,
         needed: &BTreeSet<NodeKey>,
-    ) -> BTreeMap<NodeKey, Vec<SourceClockPlace>> {
+    ) -> BTreeMap<NodeKey, SourceClockLayout> {
         let mut layouts = BTreeMap::new();
         if needed.is_empty() {
             return layouts;
@@ -1065,6 +1174,7 @@ impl AdmittedModel {
                 aliases: Vec::new(),
                 declaring: key.node.clone(),
                 members: Vec::new(),
+                resolved_slots: BTreeMap::new(),
             };
             let value_ref = crate::model::domain_package::ValueTypeRef::Package(key.clone());
             let mut places = Vec::new();
@@ -1080,16 +1190,20 @@ impl AdmittedModel {
             if !places.is_empty() {
                 layouts.insert(
                     node,
-                    places
-                        .into_iter()
-                        .map(|place| SourceClockPlace {
-                            path: place.path,
-                            optional: place.optional,
-                            bit: place.bit,
-                            case: place.case,
-                            members: place.members,
-                        })
-                        .collect(),
+                    SourceClockLayout {
+                        identity: key.node.clone(),
+                        places: places
+                            .into_iter()
+                            .map(|place| SourceClockPlace {
+                                path: place.path,
+                                optional: place.optional,
+                                bit: place.bit,
+                                case: place.case,
+                                members: place.members,
+                                slots: place.resolved_slots,
+                            })
+                            .collect(),
+                    },
                 );
             }
         }
@@ -1245,6 +1359,11 @@ impl AdmittedModel {
     /// The domain package's model selection.
     pub fn selection(&self) -> &DomainPackageRef {
         &self.selection
+    }
+
+    /// Source type names retained for diagnostics, independent of this model's identities.
+    pub fn source_spellings(&self) -> &crate::model::spelling::SourceSpellings {
+        self.index.source_spellings()
     }
 
     /// Whether `other` admits the same package content, whatever alias
@@ -1576,6 +1695,7 @@ impl AdmittedModel {
                 aliases: Vec::new(),
                 declaring: field.owner.node.clone(),
                 members: Vec::new(),
+                resolved_slots: BTreeMap::new(),
             };
             self.places_of(field, root, &mut Vec::new(), &mut places);
         }
@@ -1599,7 +1719,9 @@ impl AdmittedModel {
                     break format!("ix://filament/native/{}", native.as_str())
                 }
                 ValueTypeRef::Unit(name) => break name.clone(),
-                ValueTypeRef::Resolved(value_type) => break format!("{value_type:?}"),
+                ValueTypeRef::Resolved(value_type) => {
+                    break self.resolved_identity(value_type).unwrap_or_default()
+                }
                 ValueTypeRef::Package(key) => match self.records.get(key) {
                     Some(DomainPackageRecord::AliasType(alias)) if steps <= self.records.len() => {
                         named = &alias.target;
@@ -1630,6 +1752,11 @@ impl AdmittedModel {
         // The field step's row: the member's declared type, its collection
         // or `Option` around the type it holds.
         let declared = self.rendered(&field.value_type);
+        let resolved = matches!(
+            &field.value_type,
+            crate::model::domain_package::ValueTypeRef::Resolved(_)
+        );
+        let element_identity = declared.clone();
         let member_type = if !single(field) {
             // An optional collection member holds optional elements:
             // `q: Sequence<Option<Clock>>[0, 2]` (FSpec FR-322's
@@ -1665,7 +1792,15 @@ impl AdmittedModel {
                 max: field.multiplicity.upper,
                 map: false,
             }));
-            reached = element_type(&reached).to_owned();
+            reached = if resolved {
+                element_identity
+            } else {
+                element_type(&reached).to_owned()
+            };
+            if resolved {
+                at.resolved_slots
+                    .insert(at.path.len().saturating_sub(1), reached.clone());
+            }
             at.members.push((reached.clone(), None));
         }
         let above = at.optional;
@@ -1833,25 +1968,50 @@ impl AdmittedModel {
                         max,
                         map: false,
                     }));
-                    at.members.push((
-                        element_type(at.members.last().map_or("", |member| member.0.as_str()))
-                            .to_owned(),
-                        None,
-                    ));
+                    let element = self
+                        .resolved_identity(collection.element())
+                        .unwrap_or_default();
+                    at.resolved_slots
+                        .insert(at.path.len().saturating_sub(1), element.clone());
+                    at.members.push((element, None));
                     pending.push((collection.element(), at));
                 }
                 ValueType::Composite(key) => {
-                    if let Some(components) = self.source_places.get(key) {
-                        for component in components {
+                    if let Some(layout) = self.source_places.get(key) {
+                        for component in &layout.places {
                             let mut below = at.clone();
+                            let offset = below.path.len();
                             below.path.extend(component.path.iter().cloned());
                             below.bit = !below.optional && component.bit;
                             below.case = !below.optional && component.case;
                             below.optional |= component.optional;
                             below.members.extend(component.members.iter().cloned());
+                            below.resolved_slots.extend(
+                                component
+                                    .slots
+                                    .iter()
+                                    .map(|(index, identity)| (index + offset, identity.clone())),
+                            );
                             places.push(below);
                         }
                     }
+                }
+                ValueType::Map(map) => {
+                    let (min, max) = map
+                        .bound()
+                        .map_or((0, None), |bound| (bound.minimum(), Some(bound.maximum())));
+                    at.path.push(PlaceStep::Slot(CollectionShape {
+                        ordered: false,
+                        unique: true,
+                        min,
+                        max,
+                        map: true,
+                    }));
+                    at.members.push((
+                        self.resolved_identity(map.values()).unwrap_or_default(),
+                        None,
+                    ));
+                    pending.push((map.values(), at));
                 }
                 _ => {}
             }
@@ -1863,10 +2023,19 @@ impl AdmittedModel {
             match value_type {
                 ValueType::Option(inner) => value_type = inner,
                 ValueType::Collection(collection) => value_type = collection.element(),
+                ValueType::Map(map) => value_type = map.values(),
                 ValueType::Composite(key) => return self.source_places.contains_key(key),
                 _ => return false,
             }
         }
+    }
+
+    fn resolved_identity(&self, value_type: &ValueType) -> Option<String> {
+        clock_type_identity(value_type, |key| {
+            self.source_places
+                .get(key)
+                .map(|layout| layout.identity.clone())
+        })
     }
 
     /// Whether an object of type `object` has the fields of `owner`: the

@@ -72,6 +72,7 @@ use crate::library::{ImportView, LibraryName};
 use std::sync::Arc;
 
 mod equivalence;
+mod source_spellings;
 mod units;
 
 pub(crate) use units::{package_dimension, package_unit_key};
@@ -3571,11 +3572,33 @@ fn resolve_source_object_members(
         }
     }
     if !normalized_fields.is_empty() || !normalized_operations.is_empty() {
+        let source_spellings: BTreeMap<String, Arc<crate::model::spelling::SourceSpellings>> =
+            models
+                .iter()
+                .filter(|model| model.alias.is_empty())
+                .map(|model| {
+                    (
+                        model.view.domain_package().model_selection.identity.clone(),
+                        Arc::new(source_spellings::build(
+                            unit,
+                            names,
+                            spellings,
+                            source_owners,
+                            model,
+                            models,
+                        )),
+                    )
+                })
+                .collect();
         for model in models.iter_mut().filter(|model| model.alias.is_empty()) {
             model.view = model.view.with_resolved_source_member_types(
                 &normalized_fields,
                 &normalized_operations,
                 reference_models.clone(),
+                source_spellings
+                    .get(&model.view.domain_package().model_selection.identity)
+                    .cloned()
+                    .unwrap_or_default(),
             );
         }
     }
@@ -5260,6 +5283,33 @@ impl PackageDeclarations {
                     held.alias() == Some("")
                         && held.selection() == &model.view.domain_package().model_selection
                 }) {
+                    let mut field_spans = BTreeMap::new();
+                    for object in &unit.objects {
+                        let owner = model
+                            .view
+                            .domain_package()
+                            .records
+                            .iter()
+                            .find_map(|record| match record {
+                                DomainPackageRecord::ObjectType(ty)
+                                    if type_identity_segment(&ty.key.package, &ty.key.node)
+                                        == Some(object.name.name.as_str()) =>
+                                {
+                                    Some(&ty.key)
+                                }
+                                _ => None,
+                            });
+                        if let Some(owner) = owner {
+                            for member in &object.members {
+                                if let ObjectMemberForm::Field(field) = member {
+                                    field_spans.insert(
+                                        source_member_declaration_key(owner, &field.name.name),
+                                        field.span,
+                                    );
+                                }
+                            }
+                        }
+                    }
                     held.refresh_source_view(
                         &model.view,
                         clock_forms::source_places(
@@ -5268,6 +5318,7 @@ impl PackageDeclarations {
                             &inherited_clock_layouts,
                             &clock_roots,
                         ),
+                        field_spans,
                     );
                 }
             }

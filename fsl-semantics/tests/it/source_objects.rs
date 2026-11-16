@@ -2009,7 +2009,7 @@ fn source_timed(time: &str) -> String {
          dimension Time;\nunit ms : Time = rational(1, 1);\n\
          record W {{ c: Clock; }}\n\
          object O {{ w: W; d: Clock; operation step() modifies self.d; }}\n\
-         object P {{ n: Integer; }}\n{time}"
+         object Other {{ n: Integer; }}\n{time}"
     )
 }
 
@@ -2031,13 +2031,12 @@ fn temporal_tags(declarations: &str) -> Vec<&'static str> {
 /// refuse.
 #[trace("FR-230-AC-65", "TC-2361")]
 #[test]
-#[ignore = "QSL-2314: the source model's own time member (time O dense unit ms) not implemented yet"]
 fn a_source_object_type_name_times_the_source_model() {
     finish(assemble(&source_timed("time O dense unit ms;\n")).expect("the dense unit assembles"))
         .unwrap_or_else(|refusals| panic!("time O dense unit ms checks: {refusals:?}"));
     assert_eq!(
         temporal_tags(&source_timed(
-            "time O dense unit ms;\ntime P dense unit ms;\n"
+            "time O dense unit ms;\ntime Other dense unit ms;\n"
         )),
         ["duplicate-time-source"]
     );
@@ -2045,13 +2044,32 @@ fn a_source_object_type_name_times_the_source_model() {
         temporal_tags(&source_timed("time O tick O::step period 1 ms unit ms;\n")),
         ["clock-without-dense-time"]
     );
+    for time in ["", "time O tick O::step period 1 ms unit ms;\n"] {
+        let source = source_timed(time);
+        let refusals = finish(assemble(&source).expect("source clock model assembles"))
+            .expect_err("a clock requires source dense time");
+        let (field, span) = refusals
+            .iter()
+            .find_map(|refusal| match &refusal.cause {
+                CheckCause::Temporal(cause) => match cause.as_ref() {
+                    fsl_semantics::check::TemporalCause::ClockWithoutDenseTime { field, span } => {
+                        Some((field, span))
+                    }
+                    _ => None,
+                },
+                _ => None,
+            })
+            .expect("clock-without-dense-time");
+        assert_eq!(field, "w", "authored order precedes the direct d clock");
+        let text = format!("{HEADER}{source}\n");
+        assert!(text[span.start..span.end].contains("w: W"));
+    }
 }
 
 /// FR-088-AC-14 (TC-2360 step 8): a `Population` keeps no member type, so it
 /// prints only its `resolved:` identity form, its maximum included.
 #[trace("FR-088-AC-14", "TC-2360")]
 #[test]
-#[ignore = "QSL-2314: the Population identity fallback of the resolved: form not implemented yet"]
 fn a_population_prints_only_its_identity_form() {
     use filament_exact::ValueType;
     use fsl_semantics::model::domain_package::ValueTypeRef;
@@ -2059,4 +2077,229 @@ fn a_population_prints_only_its_identity_form() {
     let open = ValueTypeRef::Resolved(Box::new(ValueType::Population(None)));
     assert_eq!(bounded.to_string(), "resolved:Population[3]");
     assert_eq!(open.to_string(), "resolved:Population");
+    use fsl_semantics::model::spelling::{fsl_spelling, SourceSpellings};
+    let names = SourceSpellings::default();
+    assert_eq!(
+        fsl_spelling(&bounded, &names, None),
+        "resolved:Population[3]"
+    );
+    let nested = ValueTypeRef::Resolved(Box::new(ValueType::Option(Box::new(
+        ValueType::Population(Some(3)),
+    ))));
+    assert_eq!(
+        fsl_spelling(&nested, &names, None),
+        "Option<resolved:Population[3]>"
+    );
+}
+
+/// Authored aliases belong to member slots, while nominal names are diagnostic
+/// context shared by the source model. Neither changes the checked value type.
+#[trace("FR-088-AC-13", "TC-2360", "TC-260")]
+#[test]
+fn resolved_source_member_spellings_keep_aliases_without_changing_identity() {
+    use fsl_semantics::model::domain_package::{
+        DomainPackageRecord, DomainPackageRef, NativeValueType, RecordValueTypeRecord, ValueTypeRef,
+    };
+    use fsl_semantics::model::spelling::{fsl_spelling, MemberSlot};
+    let text = "type Money = Decimal[0, 100; 2, 2; exact];\n\
+        record Point { x: Integer; }\n\
+        enum Color { red, blue }\n\
+        dimension Length; unit m : Length = rational(1, 1);\n\
+        object Order { a: Money; b: Point; c: Color; d: Option<Sequence<Money>[0, 3]>;\n\
+          e: M::Total; g: Quantity<m>; h: Decimal[0, 100; 2, 2; exact];\n\
+          operation f(p: Money): Option<Reference<Order>>; }\n";
+    let package = || {
+        DomainPackage::new(
+            DomainPackageRef {
+                identity: "test/orders".to_owned(),
+            },
+            vec![
+                DomainPackageRecord::RecordValueType(RecordValueTypeRecord {
+                    key: orders_model::key("Total"),
+                    identity_fields: Vec::new(),
+                    supertypes: Vec::new(),
+                }),
+                orders_model::field(
+                    "Total",
+                    "value",
+                    ValueTypeRef::Native(NativeValueType::Integer),
+                    filament_exact::Presence::Required,
+                    0,
+                ),
+            ],
+        )
+    };
+    let declarations = assemble_model(text, package()).expect("all spelling forms assemble");
+    let second = assemble_model(text, package()).expect("repeat assembly");
+    let models = &declarations.model_inputs.as_ref().expect("models").0;
+    let source = models
+        .iter()
+        .find(|model| model.alias.is_empty())
+        .expect("source");
+    let index = source.view.model_index();
+    let spellings = index.source_spellings();
+    let records = &source.view.domain_package().records;
+    let mut point = None;
+    for (name, expected) in [
+        ("a", "Money"),
+        ("b", "Point"),
+        ("c", "Color"),
+        ("d", "Option<Sequence<Money>[0, 3]>"),
+        ("e", "M::Total"),
+        ("g", "Quantity<m>"),
+        ("h", "Decimal[0, 100; 2, 2; exact]"),
+    ] {
+        let field = records
+            .iter()
+            .find_map(|record| match record {
+                DomainPackageRecord::FieldMember(field)
+                    if field.key.node.ends_with(&format!("/Order/{name}")) =>
+                {
+                    Some(field)
+                }
+                _ => None,
+            })
+            .expect("source field");
+        let slot = MemberSlot::Field(field.key.clone());
+        assert_eq!(
+            fsl_spelling(&field.value_type, spellings, Some(&slot)),
+            expected
+        );
+        assert!(field.value_type.to_string().starts_with("resolved:"));
+        let second_models = &second.model_inputs.as_ref().expect("repeat models").0;
+        let second_source = second_models
+            .iter()
+            .find(|model| model.alias.is_empty())
+            .expect("repeat source");
+        let second_field = second_source
+            .view
+            .domain_package()
+            .records
+            .iter()
+            .find_map(|record| match record {
+                DomainPackageRecord::FieldMember(candidate) if candidate.key == field.key => {
+                    Some(candidate)
+                }
+                _ => None,
+            })
+            .expect("repeat field");
+        assert_eq!(
+            field.value_type.to_string(),
+            second_field.value_type.to_string()
+        );
+        if name == "a" {
+            assert_eq!(
+                fsl_spelling(&field.value_type, spellings, None),
+                "Decimal[0, 100; 2, 2; exact]"
+            );
+        }
+        if name == "b" {
+            point = Some(field);
+        }
+    }
+    let operation = records
+        .iter()
+        .find_map(|record| match record {
+            DomainPackageRecord::OperationMember(operation) => Some(operation),
+            _ => None,
+        })
+        .expect("operation");
+    assert_eq!(
+        fsl_spelling(
+            &operation.parameters[0].value_type,
+            spellings,
+            Some(&MemberSlot::Parameter {
+                operation: operation.key.clone(),
+                position: 0
+            })
+        ),
+        "Money"
+    );
+    assert_eq!(
+        fsl_spelling(
+            &operation.result.as_ref().expect("result").value_type,
+            spellings,
+            Some(&MemberSlot::Result(operation.key.clone()))
+        ),
+        "Option<Reference<Order>>"
+    );
+    let point = point.expect("Point member");
+    let original_type = point.value_type.clone();
+    let original_identity = point.value_type.to_string();
+    let fsl_semantics::model::domain_package::ValueTypeRef::Resolved(value) = &point.value_type
+    else {
+        panic!("resolved Point")
+    };
+    let filament_exact::ValueType::Composite(key) = value.as_ref() else {
+        panic!("nominal Point")
+    };
+    let mut renamed = spellings.clone();
+    renamed.name_node(key.clone(), "Spot".to_owned());
+    assert_eq!(fsl_spelling(&point.value_type, &renamed, None), "Spot");
+    assert_eq!(point.value_type, original_type);
+    assert_eq!(point.value_type.to_string(), original_identity);
+    finish(declarations).expect("diagnostic names leave checking unchanged");
+    let refused = assemble_model(&format!("{text}\nobject Rush extends Order {{ operation f(p: Decimal[0, 200; 2, 2; exact]): Option<Reference<Order>> redefines Order::f; }}\n"), package()).expect("override assembles");
+    let source = refused
+        .model_inputs
+        .as_ref()
+        .expect("models")
+        .0
+        .iter()
+        .find(|model| model.alias.is_empty())
+        .expect("source");
+    let operation_keys: Vec<_> = source
+        .view
+        .domain_package()
+        .records
+        .iter()
+        .filter_map(|record| match record {
+            DomainPackageRecord::OperationMember(operation) => Some(operation.key.clone()),
+            _ => None,
+        })
+        .collect();
+    let base = operation_keys
+        .iter()
+        .find(|key| key.node.ends_with("/Order/f"))
+        .expect("base");
+    let child = operation_keys
+        .iter()
+        .find(|key| key.node.ends_with("/Rush/f"))
+        .expect("child");
+    use fsl_semantics::model::conformance::{
+        check_operation_redefinition, ConformanceCheckOutcome, ConformanceOutcome,
+    };
+    let result = check_operation_redefinition(
+        source.view.model_index(),
+        child,
+        base,
+        &mut fsl_semantics::model::accounting::Meter::new(ModelNormalizationLimits::UNLIMITED),
+    );
+    let ConformanceCheckOutcome::Completed(ConformanceOutcome::Refused(failures)) = result else {
+        panic!("distinct Decimal parameter refuses: {result:?}")
+    };
+    let failure = failures
+        .iter()
+        .find(|failure| matches!(failure.cause, ModelRefusalCause::VarianceParameter { .. }))
+        .expect("variance parameter");
+    assert!(failure.detail.contains("Money"), "{}", failure.detail);
+    assert!(
+        failure.detail.contains("Decimal[0, 200; 2, 2; exact]"),
+        "{}",
+        failure.detail
+    );
+    assert!(!failure.detail.contains("resolved:"), "{}", failure.detail);
+}
+
+#[trace("FR-569-AC-15", "TC-1940", "FR-230-AC-65", "TC-2361")]
+#[test]
+fn source_dense_time_covers_direct_nested_and_collection_clock_members() {
+    for member in ["w: W;", "w: Sequence<W>[0, 2];", "w: Wrapper;"] {
+        let source = format!("dimension Time; unit ms : Time = rational(1, 1);\nrecord W {{ c: Clock; }}\nrecord Wrapper {{ value: W; }}\nobject O {{ {member} }}\ntime O dense unit ms;\n");
+        let graph = finish(assemble(&source).expect("source clock forms assemble"))
+            .unwrap_or_else(|refusals| panic!("{member}: {refusals:?}"));
+        assert_eq!(graph.time_sources().len(), 1);
+        assert_eq!(graph.time_sources()[0].model, "O");
+        assert!(graph.time_sources()[0].model_node.to_string().contains("O"));
+    }
 }

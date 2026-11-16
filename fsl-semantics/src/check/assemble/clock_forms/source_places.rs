@@ -6,7 +6,9 @@ use std::collections::{BTreeMap, BTreeSet};
 use filament_exact::{CollectionKind, NodeKey, ValueType};
 use fsl_forms::{BuiltinType, DeclarationForm, TypeForm, TypeFormHead};
 
-use crate::check::lowering::{CollectionShape, PlaceStep, SourceClockPlace};
+use crate::check::lowering::{
+    clock_type_identity, CollectionShape, PlaceStep, SourceClockLayout, SourceClockPlace,
+};
 use crate::check::type_form::TypeNames;
 use crate::model::domain_package::{DomainPackage, DomainPackageRecord, ValueTypeRef};
 
@@ -87,9 +89,9 @@ struct Pending<'a> {
 pub(in crate::check::assemble) fn source_places(
     forms: &[DeclarationForm],
     names: &impl TypeNames,
-    inherited: &BTreeMap<NodeKey, Vec<SourceClockPlace>>,
+    inherited: &BTreeMap<NodeKey, SourceClockLayout>,
     needed: &BTreeSet<NodeKey>,
-) -> BTreeMap<NodeKey, Vec<SourceClockPlace>> {
+) -> BTreeMap<NodeKey, SourceClockLayout> {
     let declarations: BTreeMap<&str, &DeclarationForm> = forms
         .iter()
         .filter_map(|form| {
@@ -104,6 +106,7 @@ pub(in crate::check::assemble) fn source_places(
         })
         .collect();
     let mut result = inherited.clone();
+    let render = |form: &TypeForm| type_identity(form, names, inherited, &declarations);
     for (name, declaration) in &declarations {
         let [ValueType::Composite(key)] = names.named_types(name) else {
             continue;
@@ -117,9 +120,10 @@ pub(in crate::check::assemble) fn source_places(
             bit: false,
             case: false,
             members: Vec::new(),
+            slots: BTreeMap::new(),
         };
         let mut pending = Vec::new();
-        members(declaration, root, vec![*name], &mut pending);
+        members(declaration, root, vec![*name], &mut pending, &render);
         let mut places = Vec::new();
         while let Some(Pending {
             form,
@@ -159,7 +163,11 @@ pub(in crate::check::assemble) fn source_places(
                         }));
                         place.bit = false;
                         place.case = false;
-                        place.members.push((spelling(inner), None));
+                        let identity = render(inner);
+                        place
+                            .slots
+                            .insert(place.path.len().saturating_sub(1), identity.clone());
+                        place.members.push((identity, None));
                         pending.push(Pending {
                             form: inner,
                             place,
@@ -170,16 +178,22 @@ pub(in crate::check::assemble) fn source_places(
                 TypeFormHead::Name(name) if !visiting.contains(&name.name.as_str()) => {
                     if let Some(declaration) = declarations.get(name.name.as_str()) {
                         visiting.push(&name.name);
-                        members(declaration, place, visiting, &mut pending);
+                        members(declaration, place, visiting, &mut pending, &render);
                     } else if let [ValueType::Composite(key)] = names.named_types(&name.name) {
-                        if let Some(components) = inherited.get(key) {
-                            for component in components {
+                        if let Some(layout) = inherited.get(key) {
+                            for component in &layout.places {
                                 let mut below = place.clone();
+                                let offset = below.path.len();
                                 below.path.extend(component.path.iter().cloned());
                                 below.bit = !below.optional && component.bit;
                                 below.case = !below.optional && component.case;
                                 below.optional |= component.optional;
                                 below.members.extend(component.members.iter().cloned());
+                                below.slots.extend(
+                                    component.slots.iter().map(|(index, identity)| {
+                                        (index + offset, identity.clone())
+                                    }),
+                                );
                                 places.push(below);
                             }
                         }
@@ -190,7 +204,13 @@ pub(in crate::check::assemble) fn source_places(
         }
         if !places.is_empty() {
             places.sort_by(|a, b| a.path.cmp(&b.path));
-            result.insert(key.clone(), places);
+            result.insert(
+                key.clone(),
+                SourceClockLayout {
+                    identity: key.to_string(),
+                    places,
+                },
+            );
         }
     }
     result
@@ -201,6 +221,7 @@ fn members<'a>(
     at: SourceClockPlace,
     visiting: Vec<&'a str>,
     pending: &mut Vec<Pending<'a>>,
+    render: &impl Fn(&TypeForm) -> String,
 ) {
     match declaration {
         DeclarationForm::Record(record) => {
@@ -210,7 +231,7 @@ fn members<'a>(
                 place.bit = field.optional && !place.optional;
                 place.case = false;
                 place.optional |= field.optional;
-                let declared = spelling(&field.type_form);
+                let declared = render(&field.type_form);
                 place.members.push((
                     if field.optional {
                         format!("Option<{declared}>")
@@ -232,7 +253,7 @@ fn members<'a>(
                 place.path.push(PlaceStep::Field(position.to_string()));
                 place.bit = false;
                 place.case = false;
-                place.members.push((spelling(form), None));
+                place.members.push((render(form), None));
                 pending.push(Pending {
                     form,
                     place,
@@ -248,7 +269,7 @@ fn members<'a>(
                     place.case = !place.optional && place.path.len() == 1;
                     place.bit = false;
                     place.optional = true;
-                    place.members.push((spelling(form), None));
+                    place.members.push((render(form), None));
                     pending.push(Pending {
                         form,
                         place,
@@ -264,6 +285,67 @@ fn members<'a>(
         }),
         _ => {}
     }
+}
+
+fn type_identity(
+    form: &TypeForm,
+    names: &impl TypeNames,
+    inherited: &BTreeMap<NodeKey, SourceClockLayout>,
+    declarations: &BTreeMap<&str, &DeclarationForm>,
+) -> String {
+    enum Part<'a> {
+        Form(&'a TypeForm),
+        Text(&'static str),
+    }
+    let mut pending = vec![Part::Form(form)];
+    let mut output = String::new();
+    while let Some(part) = pending.pop() {
+        let form = match part {
+            Part::Form(form) => form,
+            Part::Text(text) => {
+                output.push_str(text);
+                continue;
+            }
+        };
+        if let Ok(value_type) = crate::check::type_form::resolve_form(names, form) {
+            if let Some(identity) = clock_type_identity(&value_type, |key| {
+                inherited.get(key).map(|layout| layout.identity.clone())
+            }) {
+                output.push_str(&identity);
+                continue;
+            }
+        }
+        match &form.head {
+            TypeFormHead::Builtin(BuiltinType::Clock) => {
+                output.push_str("ix://filament/native/Clock")
+            }
+            TypeFormHead::Name(name) => match declarations.get(name.name.as_str()) {
+                Some(DeclarationForm::Alias(alias)) => pending.push(Part::Form(&alias.target)),
+                _ => output.push_str(&spelling(form)),
+            },
+            TypeFormHead::Builtin(BuiltinType::Option) => {
+                output.push_str("Option<");
+                pending.push(Part::Text(">"));
+                if let Some(inner) = form.arguments.first() {
+                    pending.push(Part::Form(inner));
+                }
+            }
+            TypeFormHead::Collection(kind) => {
+                output.push_str(match kind {
+                    CollectionKind::Sequence => "Sequence<",
+                    CollectionKind::Set => "Set<",
+                    CollectionKind::Bag => "Bag<",
+                    CollectionKind::OrderedSet => "OrderedSet<",
+                });
+                pending.push(Part::Text(">"));
+                if let Some(inner) = form.arguments.first() {
+                    pending.push(Part::Form(inner));
+                }
+            }
+            _ => output.push_str(&spelling(form)),
+        }
+    }
+    output
 }
 
 fn spelling(form: &TypeForm) -> String {
@@ -370,7 +452,7 @@ mod tests {
     use filament_checked::key::DeclarationKey;
     use ix_trace_rs::trace;
 
-    #[trace("FR-569-AC-15", "TC-1940")]
+    #[trace("FR-569-AC-15", "TC-1940", "FR-088-AC-13", "TC-2360")]
     #[test]
     fn resolved_source_record_members_keep_the_record_fields_clock_places() {
         let source = "language \"ix:native\" edition \"1-draft\";\n\
@@ -511,5 +593,29 @@ mod tests {
             w.members.last().expect("clock member row").0,
             "ix://filament/native/Clock"
         );
+        let rows = w.rows();
+        assert_eq!(rows[0].member_type, rows[1].declaring_type);
+        assert!(!rows[0].member_type.contains("resolved:"));
+        assert!(!rows[0].member_type.contains("Composite("));
+        let nested = source_model
+            .clock_places()
+            .iter()
+            .find(|place| {
+                place.path
+                    == vec![
+                        PlaceStep::Field("nested".to_owned()),
+                        PlaceStep::Field("w".to_owned()),
+                        PlaceStep::Field("c".to_owned()),
+                    ]
+            })
+            .expect("nested.w.c")
+            .rows();
+        assert_eq!(rows[0].member_type, nested[1].member_type);
+        assert_eq!(nested[1].member_type, nested[2].declaring_type);
+        let collection = source_model.clock_places().iter().find(|place| {
+            matches!(place.path.first(), Some(PlaceStep::Field(name)) if name == "collection")
+        }).expect("collection clock").rows();
+        assert_eq!(collection[1].member_type, rows[0].member_type);
+        assert_eq!(collection[1].member_type, collection[2].declaring_type);
     }
 }

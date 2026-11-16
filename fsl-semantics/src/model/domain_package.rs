@@ -383,7 +383,9 @@ impl std::fmt::Display for ValueTypeRef {
             Self::Native(native) => write!(f, "ix://filament/native/{}", native.as_str()),
             Self::Package(key) => f.write_str(&key.node),
             Self::Unit(name) => write!(f, "ix://filament/unit/{name}"),
-            Self::Resolved(value_type) => write!(f, "{value_type:?}"),
+            Self::Resolved(value_type) => {
+                f.write_str(&super::spelling::identity_spelling(value_type))
+            }
         }
     }
 }

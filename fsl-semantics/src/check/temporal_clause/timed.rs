@@ -133,7 +133,7 @@ impl ModelTimeSource {
     /// two packages (FR-480 "Selections and imports"), so the alias alone
     /// does not name the model.
     pub(crate) fn times(&self, model: &AdmittedModel) -> bool {
-        model.alias() == Some(self.model.as_str())
+        (model.alias() == Some(self.model.as_str()) || model.alias() == Some(""))
             && model
                 .object_type_model_node_keys()
                 .contains(&self.model_node)

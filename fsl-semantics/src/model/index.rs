@@ -130,13 +130,24 @@ struct Ancestry {
 ///
 /// A package and its index are built together and never paired afterwards,
 /// so no caller can read one package's records through another's index.
-#[derive(Debug, Eq, PartialEq)]
+#[derive(Debug)]
 pub struct ModelIndex {
     package: Arc<DomainPackage>,
     records: RecordIndex,
     type_fact_counts: BTreeMap<DeclarationKey, u64>,
     reference_models: Vec<Arc<ModelIndex>>,
+    source_spellings: Arc<super::spelling::SourceSpellings>,
 }
+
+impl PartialEq for ModelIndex {
+    fn eq(&self, other: &Self) -> bool {
+        self.package == other.package
+            && self.records == other.records
+            && self.type_fact_counts == other.type_fact_counts
+            && self.reference_models == other.reference_models
+    }
+}
+impl Eq for ModelIndex {}
 
 /// The positional index [`ModelIndex`] keeps over its package's records.
 /// Normalization builds it over a borrowed package, before a completed
@@ -332,6 +343,7 @@ impl ModelIndex {
             records,
             type_fact_counts,
             reference_models: Vec::new(),
+            source_spellings: Arc::default(),
         }
     }
 
@@ -352,6 +364,7 @@ impl ModelIndex {
             records,
             type_fact_counts,
             reference_models: Vec::new(),
+            source_spellings: Arc::default(),
         }
     }
 
@@ -359,6 +372,33 @@ impl ModelIndex {
     pub(crate) fn with_reference_models(mut self, models: Vec<Arc<ModelIndex>>) -> Self {
         self.reference_models = models;
         self
+    }
+
+    pub(crate) fn reindex(&self, package: DomainPackage) -> Self {
+        Self::build(package)
+            .with_reference_models(self.reference_models.clone())
+            .with_source_spellings(self.source_spellings.clone())
+    }
+
+    /// Diagnostic names retained by the source assembler; no names for a domain package.
+    pub fn source_spellings(&self) -> &super::spelling::SourceSpellings {
+        &self.source_spellings
+    }
+
+    pub(crate) fn with_source_spellings(
+        mut self,
+        spellings: Arc<super::spelling::SourceSpellings>,
+    ) -> Self {
+        self.source_spellings = spellings;
+        self
+    }
+
+    pub(crate) fn spelling(
+        &self,
+        value_type: &ValueTypeRef,
+        slot: &super::spelling::MemberSlot,
+    ) -> String {
+        super::spelling::fsl_spelling(value_type, &self.source_spellings, Some(slot))
     }
 
     /// Actual qualify/inherit fact count for an object type; non-object

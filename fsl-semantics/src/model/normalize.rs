@@ -500,6 +500,7 @@ impl EffectiveView {
         fields: &BTreeMap<DeclarationKey, SourceMemberType>,
         operations: &BTreeMap<DeclarationKey, SourceOperationTypes>,
         reference_models: Vec<Arc<ModelIndex>>,
+        spellings: Arc<crate::model::spelling::SourceSpellings>,
     ) -> Self {
         let mut package = self.domain_package().clone();
         for record in &mut package.records {
@@ -530,7 +531,11 @@ impl EffectiveView {
             }
         }
         Self {
-            index: Arc::new(ModelIndex::build(package).with_reference_models(reference_models)),
+            index: Arc::new(
+                ModelIndex::build(package)
+                    .with_reference_models(reference_models)
+                    .with_source_spellings(spellings),
+            ),
             body: self.body.clone(),
         }
     }
@@ -549,7 +554,7 @@ impl EffectiveView {
             }
         }
         Self {
-            index: Arc::new(ModelIndex::build(package)),
+            index: Arc::new(self.index.reindex(package)),
             body: self.body.clone(),
         }
     }
