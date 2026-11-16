@@ -1016,6 +1016,7 @@ dependencies = [
  "fsl-forms",
  "fsl-foundation",
  "fsl-package",
+ "fsl-route",
  "fsl-semantics",
  "fsl-source",
  "ix-trace-rs",
