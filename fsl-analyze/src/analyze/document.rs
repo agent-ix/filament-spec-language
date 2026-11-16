@@ -392,7 +392,6 @@ impl TemporalLimitsSelection {
     /// Whether a limit no explicit-state EN-1 run reads is set.
     fn sets_other_engine_limits(&self) -> bool {
         [
-            self.max_clocks,
             self.max_task_product_work,
             self.max_store_buffer,
             self.max_messages,
@@ -437,6 +436,18 @@ pub struct TemporalSelection {
     /// The witness-sampling seed (FSpec FR-392).
     #[serde(default)]
     pub seed: Option<Value>,
+}
+
+impl TemporalSelection {
+    /// The witness-sampling seed as an unsigned count: a JSON integer or its
+    /// decimal string; `None` when absent or neither.
+    fn seed_count(&self) -> Option<u64> {
+        match self.seed.as_ref()? {
+            Value::Number(number) => number.as_u64(),
+            Value::String(text) => text.parse().ok(),
+            _ => None,
+        }
+    }
 }
 
 /// FSpec FR-331's `check` member: the case budget of a value-validity or
@@ -512,10 +523,18 @@ impl ItemSelection {
     /// Whether the item carries a member whose in-process route `analyze`
     /// does not build yet, so the item settles `unsupported` on its own.
     fn unrouted(&self) -> bool {
+        self.unrouted_beyond_sampling()
+            || self.temporal.as_ref().is_some_and(|temporal| {
+                temporal.witness_samples.is_some() || temporal.seed.is_some()
+            })
+    }
+
+    /// [`Self::unrouted`] without the witness sampling members, which a
+    /// state-graph claim reads (FR-628).
+    fn unrouted_beyond_sampling(&self) -> bool {
         let temporal = self.temporal.as_ref();
         self.probabilistic.is_some()
             || self.hybrid.is_some()
-            || self.reductions.is_some()
             || self.correspondence.is_some()
             || self.premises.is_some()
             || self.assessed_root.is_some()
@@ -528,8 +547,6 @@ impl ItemSelection {
             || temporal.is_some_and(|temporal| {
                 temporal.abstract_subject.is_some()
                     || temporal.smt_encoding.is_some()
-                    || temporal.witness_samples.is_some()
-                    || temporal.seed.is_some()
                     || temporal
                         .limits
                         .is_some_and(|limits| limits.sets_other_engine_limits())
@@ -593,6 +610,38 @@ fn unknown_claim(index: RequestIndex, name: &str) -> ResolvedItem {
     }
 }
 
+/// FR-628 "Refusals": `witness_samples` on a claim that is not `possible`,
+/// and a `seed` that is no unsigned count, refuse the item `invalid-request`
+/// naming the member.
+fn sampling_refusal(
+    index: RequestIndex,
+    name: &str,
+    claim: &fsl_semantics::check::CheckedStateGraphClaim,
+    temporal: &TemporalSelection,
+) -> Option<ResolvedItem> {
+    let member = if temporal.witness_samples.is_some()
+        && !matches!(
+            claim.form(),
+            fsl_semantics::check::StateGraphForm::Possible { .. }
+        ) {
+        "temporal.witness_samples"
+    } else if temporal.seed.is_some() && temporal.seed_count().is_none() {
+        "temporal.seed"
+    } else {
+        return None;
+    };
+    let mut detail = Map::new();
+    detail.insert("member".to_owned(), json!(member));
+    Some(ResolvedItem::Settled {
+        claim_name: Some(name.to_owned()),
+        record: Box::new(TerminalRecord::disposition_invalid_request(
+            index,
+            CatalogCode::new("invalid_runtime_input", "invalid-value"),
+            detail,
+        )),
+    })
+}
+
 fn invalid_kind(index: RequestIndex, name: Option<&str>, cause: &'static str) -> ResolvedItem {
     ResolvedItem::Settled {
         claim_name: name.map(str::to_owned),
@@ -614,7 +663,21 @@ fn declarations(package: &CheckedPackage) -> BTreeMap<String, filament_exact::No
             .iter()
             .map(|clause| (clause.clause().name().to_owned(), clause.identity())),
     );
+    names.extend(
+        graph.state_graph_claims().iter().filter_map(|claim| {
+            Some((claim.name().to_owned(), claim.occurrence()?.node().clone()))
+        }),
+    );
     names
+}
+
+/// Whether the claim at `occurrence` is a state-graph claim (FR-165).
+pub(super) fn is_state_graph(package: &CheckedPackage, occurrence: &OccurrenceKey) -> bool {
+    package
+        .graph()
+        .state_graph_claims()
+        .iter()
+        .any(|claim| claim.occurrence() == Some(occurrence))
 }
 
 /// The semantic graph's declaring nodes by qualified name.
@@ -730,8 +793,14 @@ fn resolve_one(
         };
     };
     let Some(node) = declarations(package).get(name).cloned() else {
-        return unknown_claim(index, name);
+        return resolve_derived(package, subject, index, selection, registry, name)
+            .unwrap_or_else(|| unknown_claim(index, name));
     };
+    let state_graph = package.graph().state_graph_claim(name).filter(|claim| {
+        claim
+            .occurrence()
+            .is_some_and(|found| found.node() == &node)
+    });
     let named = selection.backend.as_deref().map(BackendId::new);
     let records = requirement_items(package, registry, named.as_ref());
     let own: Vec<&fsl_route::request::RequirementItem> = records
@@ -752,6 +821,7 @@ fn resolve_one(
             }
             match kinds.as_slice() {
                 [kind] => *kind,
+                [] if state_graph.is_some() => Capability::TemporalSatisfaction,
                 _ => return invalid_kind(index, Some(name), "absent-kind"),
             }
         }
@@ -765,15 +835,46 @@ fn resolve_one(
         || registry.candidates(kind, named.as_ref()),
         |record| record.candidates().clone(),
     );
-    let candidates = if kind == Capability::TemporalSatisfaction {
+    let candidates = if let Some(claim) = state_graph {
+        registry.restrict_to_state_graph_form(
+            registry.restrict_to_timing(candidates, timed(package)),
+            fsl_route::StateGraphFormKind::of(claim.form()),
+        )
+    } else if kind == Capability::TemporalSatisfaction {
         registry.restrict_to_timing(candidates, timed(package))
     } else {
         candidates
     };
     let temporal = selection.temporal.clone().unwrap_or_default();
     let own_subject = temporal.subject.clone().unwrap_or_else(|| subject.clone());
-    let form = (kind == Capability::TemporalSatisfaction)
-        .then(|| ItemForm::Temporal(temporal_item(package, &claim, &temporal)));
+    if let Some(claim) = state_graph {
+        if timed(package) {
+            // EN-6 lists no state-graph form and EN-1 reads no clocks, so a
+            // timed subject has no state-graph route yet (QSL-2305).
+            let mut detail = Map::new();
+            detail.insert("kind".to_owned(), json!(kind.to_wire()));
+            detail.insert(
+                "reason".to_owned(),
+                json!("a state-graph claim over a timed subject has no route (QSL-2305)"),
+            );
+            return ResolvedItem::Settled {
+                claim_name: Some(name.to_owned()),
+                record: Box::new(TerminalRecord::disposition_unsupported(
+                    index,
+                    fsl_route::NegotiationOutcome::UnsupportedRequestedCapability.code(),
+                    detail,
+                )),
+            };
+        }
+        if let Some(refused) = sampling_refusal(index, name, claim, &temporal) {
+            return refused;
+        }
+    }
+    let form = (kind == Capability::TemporalSatisfaction).then(|| {
+        let mut form = temporal_item(package, &claim, &temporal);
+        form.pending_reductions.clone_from(&selection.reductions);
+        ItemForm::Temporal(form)
+    });
     let item = ClaimItem {
         request_index: index,
         claim,
@@ -791,14 +892,132 @@ fn resolve_one(
         item,
         claim_name: name.to_owned(),
         candidates,
-        unrouted: selection.unrouted() || own_subject != *subject,
+        unrouted: if state_graph.is_some() {
+            selection.unrouted_beyond_sampling()
+        } else {
+            selection.unrouted()
+        } || (selection.reductions.is_some() && kind != Capability::TemporalSatisfaction)
+            || reads_no_clocks(package, &temporal)
+            || own_subject != *subject,
         subject: own_subject,
     }))
 }
 
+/// FR-623: admit the item's pending `reductions` over what the unit declares,
+/// so the item runs under FSpec FR-382's wire form and its echo states it. A
+/// subject the binding refuses is left for the run to refuse.
+fn admit_reductions(
+    package: &CheckedPackage,
+    binding: &SubjectBinding<'_>,
+    limits: &AnalyzeLimits,
+    item: &mut ClaimItem,
+) -> Result<(), super::reduction_item::ReductionIssue> {
+    let Some(ItemForm::Temporal(form)) = &mut item.form else {
+        return Ok(());
+    };
+    let Some(selection) = form.pending_reductions.take() else {
+        return Ok(());
+    };
+    let simulation = super::request::simulation(package, binding, limits);
+    let Ok(system) = fsl_eval::simulation::model::ModelSystem::new(simulation) else {
+        form.pending_reductions = Some(selection);
+        return Ok(());
+    };
+    form.reductions = super::reduction_item::admit(&selection, &system, &binding.universes)?;
+    Ok(())
+}
+
+/// FR-626: a derived item (`deadlock-freedom`, `time-lock-freedom` or
+/// `race-freedom`) named by the model alias of its subject, which is the
+/// declaration the derived item anchors at (FSpec FR-368 "Claim and
+/// anchor"). `None` when the item is no derived item or `name` is no model
+/// alias, so the caller settles `unknown-claim`; an alias whose subject
+/// derives no such item (a time-lock item over an untimed subject, a
+/// deadlock item under `terminal any`) settles `inapplicable-kind`.
+fn resolve_derived(
+    package: &CheckedPackage,
+    subject: &SubjectSelection,
+    index: RequestIndex,
+    selection: &ItemSelection,
+    registry: &Registry,
+    name: &str,
+) -> Option<ResolvedItem> {
+    let temporal = selection.temporal.as_ref()?;
+    let kind = temporal.item_kind?.kind();
+    if matches!(kind, ItemKind::Formula | ItemKind::Refinement) {
+        return None;
+    }
+    let graph = package.graph();
+    let identity = graph.model_package_identity(name)?;
+    let root = graph
+        .model_roots()
+        .find(|(selected, _)| selected.identity == identity)
+        .map(|(_, root)| root)?;
+    if temporal.max_depth.is_some() {
+        // FSpec FR-368-AC-20: a derived item carries no `max_depth`.
+        let mut detail = Map::new();
+        detail.insert("member".to_owned(), json!("temporal.max_depth"));
+        return Some(ResolvedItem::Settled {
+            claim_name: Some(name.to_owned()),
+            record: Box::new(TerminalRecord::disposition_invalid_request(
+                index,
+                CatalogCode::new("invalid_runtime_input", "invalid-value"),
+                detail,
+            )),
+        });
+    }
+    let derived = derived_items(package, subject, registry, &[], 0)
+        .into_iter()
+        .find_map(|resolved| match resolved {
+            ResolvedItem::Claim(claim)
+                if claim.item.claim.node() == &root
+                    && matches!(
+                        &claim.item.form,
+                        Some(ItemForm::Temporal(form)) if form.item_kind == kind
+                    ) =>
+            {
+                Some(claim)
+            }
+            ResolvedItem::Claim(_) | ResolvedItem::Settled { .. } => None,
+        });
+    let Some(mut claim) = derived else {
+        return Some(invalid_kind(index, Some(name), "inapplicable-kind"));
+    };
+    let own_subject = temporal.subject.clone().unwrap_or_else(|| subject.clone());
+    claim.item.request_index = index;
+    let named = selection.backend.as_deref().map(BackendId::new);
+    claim.candidates = registry.restrict_to_timing(
+        registry.candidates(claim.item.kind, named.as_ref()),
+        timed(package),
+    );
+    claim.item.candidates = candidate_list(&claim.candidates);
+    claim.item.backend = named;
+    claim.item.options = ItemOptions {
+        required: selection.required.unwrap_or(true),
+        max_cases: None,
+    };
+    let mut form = temporal_item(package, &claim.item.claim, temporal);
+    form.pending_reductions.clone_from(&selection.reductions);
+    claim.item.form = Some(ItemForm::Temporal(form));
+    claim.claim_name = name.to_owned();
+    claim.unrouted =
+        selection.unrouted() || reads_no_clocks(package, temporal) || own_subject != *subject;
+    claim.subject = own_subject;
+    Some(ResolvedItem::Claim(claim))
+}
+
+/// Whether the item sets `max_clocks`, which only a timed subject reads
+/// (FSpec FR-415): on an untimed subject no route reads it.
+fn reads_no_clocks(package: &CheckedPackage, temporal: &TemporalSelection) -> bool {
+    !timed(package)
+        && temporal
+            .limits
+            .is_some_and(|limits| limits.max_clocks.is_some())
+}
+
 /// Whether the model subject the package's selections give is timed
 /// (FR-243): a selected model declares a time source.
-fn timed(package: &CheckedPackage) -> bool {
+pub(super) fn timed(package: &CheckedPackage) -> bool {
     let graph = package.graph();
     let selections: BTreeSet<&str> = graph
         .model_selections()
@@ -832,6 +1051,8 @@ fn temporal_item(
         max_depth: selection
             .max_depth
             .map(|depth| usize::try_from(depth).unwrap_or(usize::MAX)),
+        witness_samples: selection.witness_samples,
+        seed: selection.seed_count(),
         ..TemporalItem::default()
     };
     if item.item_kind == ItemKind::Formula {
@@ -866,6 +1087,7 @@ fn temporal_item(
             &mut item.limits.max_automaton_states,
         );
         set(limits.max_walk_steps, &mut item.limits.max_walk_steps);
+        item.max_clocks = limits.max_clocks;
         set(limits.max_witness_set, &mut item.limits.max_witness_set);
         set(
             limits.max_relation_tuples,
@@ -976,6 +1198,16 @@ fn derived_items(
         .map(|selection| selection.identity.as_str())
         .collect();
     let mut request = fsl_route::model_request::ModelRequest::<()>::new();
+    // FSpec FR-368: a model subject has its derived items whether or not the
+    // unit authors a clause, so the subject is joined to the derivation
+    // before any authored item is written.
+    request.state_graph(
+        &fsl_route::deadlock::ModelStateGraphItem {
+            subject: &(),
+            package: graph,
+        },
+        &selections,
+    );
     let occurrences: Vec<OccurrenceKey> = authored
         .iter()
         .filter_map(|resolved| match resolved {
@@ -1119,11 +1351,23 @@ impl ClaimItem {
                         .collect::<Result<_, _>>()?,
                 ),
             );
+            if !temporal.reductions.is_empty() {
+                item.insert(
+                    "reductions".to_owned(),
+                    super::reduction_item::wire(&temporal.reductions),
+                );
+            }
             if let Some(stutter) = temporal.stutter_closure {
                 member.insert("stutter_closure".to_owned(), json!(stutter));
             }
             if let Some(depth) = temporal.max_depth {
                 member.insert("max_depth".to_owned(), json!(depth));
+            }
+            if let Some(samples) = temporal.witness_samples {
+                member.insert("witness_samples".to_owned(), json!(samples));
+            }
+            if let Some(seed) = temporal.seed {
+                member.insert("seed".to_owned(), json!(seed));
             }
             let limits = &temporal.limits;
             member.insert(
@@ -1217,12 +1461,13 @@ pub fn analyze_document(
             }
             ResolvedItem::Claim(claim) => {
                 let ResolvedClaim {
-                    item,
+                    mut item,
                     claim_name,
                     candidates,
                     subject,
                     unrouted,
                 } = *claim;
+                let admitted = admit_reductions(package, &binding, &limits, &mut item);
                 let echo = item
                     .request_item_wire(&subject)
                     .map_err(|_| AnalyzeDocumentError::Fault)?;
@@ -1240,7 +1485,46 @@ pub fn analyze_document(
                         scoped: has_activation_scope(item.kind),
                     },
                 );
-                if unrouted {
+                if let Err(refused) = admitted {
+                    let record = match refused {
+                        super::reduction_item::ReductionIssue::UnknownConstraint(name) => {
+                            let mut detail = Map::new();
+                            detail.insert("name".to_owned(), json!(name));
+                            TerminalRecord::disposition_invalid_request(
+                                item.request_index,
+                                CatalogCode::new("invalid_runtime_input", "invalid-value"),
+                                detail,
+                            )
+                        }
+                        super::reduction_item::ReductionIssue::Malformed(_) => {
+                            TerminalRecord::disposition_declined(
+                                item.request_index,
+                                fsl_replay::ProofRefusalCause::InvalidInput,
+                                fsl_replay::DeclineCode::Fsl(
+                                    fsl_foundation::Code::InvalidRuntimeInput,
+                                ),
+                                CatalogCode::new("invalid_runtime_input", "invalid-value"),
+                            )
+                        }
+                    };
+                    settled.insert(item.request_index, (None, record));
+                    continue;
+                }
+                let (disposition, diagnostic) = negotiate.negotiate(&item, &candidates);
+                // A member no route reads settles `unsupported`, except where
+                // negotiation refused the item as invalid first: a kind its
+                // claim's family does not admit (FR-507, FR-627-AC-4).
+                let temporal_kind = match &item.form {
+                    Some(ItemForm::Temporal(form)) => form.item_kind,
+                    _ => ItemKind::Formula,
+                };
+                let inapplicable =
+                    crate::claim_family::claim_family(package, temporal_kind, &item.claim)
+                        .is_none_or(|family| !item.kind.applies_to_declaration(family));
+                if unrouted
+                    && !inapplicable
+                    && !matches!(disposition, fsl_route::routing::Disposition::InvalidRequest)
+                {
                     let mut detail = Map::new();
                     detail.insert("kind".to_owned(), json!(item.kind.to_wire()));
                     settled.insert(
@@ -1257,7 +1541,6 @@ pub fn analyze_document(
                     );
                     continue;
                 }
-                let (disposition, diagnostic) = negotiate.negotiate(&item, &candidates);
                 negotiated.push(NegotiatedItem {
                     item,
                     disposition,
@@ -1459,7 +1742,8 @@ fn replay_target(found: &super::ItemCounterexample, name: &str) -> Value {
         super::Counterexample::Temporal { .. }
         | super::Counterexample::Protocol { .. }
         | super::Counterexample::Probabilistic(_)
-        | super::Counterexample::Contract(_) => json!({"state_clause": qualified}),
+        | super::Counterexample::Contract(_)
+        | super::Counterexample::StateGraph(_) => json!({"state_clause": qualified}),
     }
 }
 

@@ -126,7 +126,7 @@ fn digital_clocks_refuse_strict_constraints_and_intervals() {
 #[trace("TC-2291", "FR-628-AC-4")]
 #[trace("TC-2291", "FR-628-AC-5")]
 #[test]
-#[ignore = "QSL-2125: state-graph evidence keys, loci and budget stops are not written as specified yet"]
+#[ignore = "QSL-2296 (from QSL-2125): the fixture's `Ratio` claim divides, and the checker refuses `/` with unsupported_construct/expression-form, so the undefined arm has no checked claim to run (spec question open); the typed instance key and the budget stops are untested until it is rewritten"]
 fn state_graph_evidence_keys_loci_and_budget_stops() {
     let body = "possible ReachThree using t0 over (c: M::Counter) { c.value = 3 }\n\
                 possible Ratio using t0 over (c: M::Counter) { 3 / (3 - c.value) = 1 }\n\
@@ -182,7 +182,6 @@ fn state_graph_evidence_keys_loci_and_budget_stops() {
 /// refuted state-graph item names its claim as the replay target.
 #[trace("TC-2292", "FR-621-AC-9")]
 #[test]
-#[ignore = "QSL-2125: instance order and the state-graph replay target are not written as specified yet"]
 fn several_instances_report_the_first_refuted_and_state_graph_replay_names_the_claim() {
     let body = "temporal AtLeastOne using t0 over (c: M::Counter) clock \"model-steps\" on origin \
                 { always holds(c.value >= 1) }\n";

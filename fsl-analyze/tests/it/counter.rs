@@ -534,3 +534,14 @@ pub(crate) fn package_from_text(document: &[u8], text: &str) -> CheckedPackage {
     .unwrap_or_else(|refusals| panic!("the unit checks: {refusals:?}"));
     CheckedPackage::link(graph)
 }
+
+/// [`document`] (bounded) with the `counters` population declared
+/// `symmetric` (FR-150), the annotation a reduction selection of FR-623
+/// reads.
+pub(crate) fn symmetric_document() -> Vec<u8> {
+    let mut envelope: Json = serde_json::from_slice(&document(false)).expect("valid JSON");
+    for population in envelope["populations"].as_array_mut().expect("populations") {
+        population["symmetric"] = json!(true);
+    }
+    serde_json::to_vec(&envelope).expect("valid JSON")
+}

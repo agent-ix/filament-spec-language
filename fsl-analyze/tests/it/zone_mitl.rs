@@ -158,3 +158,98 @@ fn an_unbounded_root_requires_a_bound() {
     assert!(!roots.domains.is_empty(), "{roots:?}");
     assert_eq!(refused(), refused());
 }
+
+/// The verdict `Settles` gets over `Rpc` at `T = 4 ms` under `interval`.
+fn verdict(interval: &str) -> &'static str {
+    match decide(&settles(4, interval)) {
+        Outcome::Holds { .. } => "holds",
+        Outcome::Violated { .. } => "violated",
+        other => panic!("{interval}: neither proved nor refuted: {other:?}"),
+    }
+}
+
+/// QSL-2129 MITL breadth, closed bound: `reply` is forced by the server
+/// deadline at 3 ms, so the claim over `[0 ms, 3 ms]` holds.
+#[trace("TC-697", "FR-242")]
+#[test]
+fn a_closed_bound_holds_at_its_boundary() {
+    assert_eq!(verdict("[0 ms, 3 ms]"), "holds");
+}
+
+/// QSL-2129 MITL breadth, open bound: `reply` may fire at exactly 3 ms, which
+/// the open interval `(0 ms, 3 ms)` excludes, so the claim is refuted at the
+/// boundary delay.
+#[trace("TC-697", "FR-242")]
+#[test]
+fn an_open_bound_excludes_its_boundary() {
+    let world = settles(4, "(0 ms, 3 ms)");
+    let counterexample = violated(decide(&world));
+    assert_eq!(operations(&counterexample)[..2], ["send", "reply"]);
+    assert_eq!(delays(&counterexample)[..2], [whole(0), whole(3)]);
+    let settlement = replay(&world, &counterexample).expect("replays");
+    assert!(reproduced(&settlement), "{settlement:?}");
+}
+
+/// QSL-2129 MITL breadth, punctual bound: `[3 ms, 3 ms]` needs a position at
+/// exactly 3 ms, and `reply` at 1 ms leaves none, so the claim is refuted; the
+/// punctual `[0 ms, 0 ms]` is the waiting position itself, which is waiting.
+#[trace("TC-697", "FR-242")]
+#[test]
+fn a_punctual_bound_needs_a_position_at_its_instant() {
+    assert_eq!(verdict("[3 ms, 3 ms]"), "violated");
+    assert_eq!(verdict("[0 ms, 0 ms]"), "violated");
+}
+
+/// QSL-2129 MITL breadth, nested operators: `eventually[0,3]` wrapping the
+/// same `eventually[0,3]` holds where the flat claim does, and wrapping the
+/// open inner bound is refuted where the open flat claim is.
+#[trace("TC-697", "FR-242")]
+#[test]
+fn nested_timed_operators_compose() {
+    let nested = |outer: &str, inner: &str| {
+        rpc_claim(
+            4,
+            TIMED,
+            &format!(
+                "temporal Nested using tt over (c: M::Call) clock \"model-time\" on origin \
+                 {{ always (holds(c.phase = 1) implies eventually{outer} \
+                 (eventually{inner} holds(not (c.phase = 1)))) }}\n"
+            ),
+        )
+    };
+    assert!(matches!(
+        decide(&nested("[0 ms, 3 ms]", "[0 ms, 3 ms]")),
+        Outcome::Holds { .. }
+    ));
+    assert!(matches!(
+        decide(&nested("[0 ms, 3 ms]", "(0 ms, 3 ms)")),
+        Outcome::Violated { .. }
+    ));
+}
+
+/// QSL-2129 MITL breadth, nested `until`: a timed `until` under a timed
+/// `eventually` composes the same way. The reply is forced at 3 ms, so the
+/// closed bounds hold and the open inner bound, which excludes 3 ms, does not.
+#[trace("TC-697", "FR-242")]
+#[test]
+fn nested_until_operators_compose() {
+    let nested = |outer: &str, inner: &str| {
+        rpc_claim(
+            4,
+            TIMED,
+            &format!(
+                "temporal NestedUntil using tt over (c: M::Call) clock \"model-time\" on origin \
+                 {{ always (holds(c.phase = 1) implies eventually{outer} \
+                 (holds(c.phase = 1) until{inner} holds(not (c.phase = 1)))) }}\n"
+            ),
+        )
+    };
+    assert!(matches!(
+        decide(&nested("[0 ms, 3 ms]", "[0 ms, 3 ms]")),
+        Outcome::Holds { .. }
+    ));
+    assert!(matches!(
+        decide(&nested("[0 ms, 3 ms]", "(0 ms, 3 ms)")),
+        Outcome::Violated { .. }
+    ));
+}

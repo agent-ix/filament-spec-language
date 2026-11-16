@@ -110,7 +110,6 @@ fn a_binding_refusal_refuses_the_request() {
 /// FR-625-AC-5: an unbounded parameter with no proof bound is unsupported.
 #[trace("TC-1585", "FR-625-AC-5")]
 #[test]
-#[ignore = "QSL-2122: explicit-state items are not reachable through fsl analyze yet"]
 fn an_unbounded_domain_is_unsupported() {
     let ws = Workspace::new("cov-unbounded");
     let path = counter_request(&ws, &bounded(), json!([{"claim": "Bounded"}]));
@@ -126,7 +125,6 @@ fn an_unbounded_domain_is_unsupported() {
 #[trace("TC-1587", "FR-627-AC-2")]
 #[trace("TC-1587", "FR-627-AC-3")]
 #[test]
-#[ignore = "QSL-2123: liveness items are not reachable through fsl analyze yet"]
 fn weak_and_strong_fairness_separate() {
     let weak = clause(
         "Weak",
@@ -160,10 +158,9 @@ fn weak_and_strong_fairness_separate() {
 #[trace("TC-1588", "FR-628-AC-2")]
 #[trace("TC-1588", "FR-628-AC-3")]
 #[test]
-#[ignore = "QSL-2125: state-graph items are not reachable through fsl analyze yet"]
 fn always_possible_refutes_and_witnesses_repeat() {
-    let body = "always possible BackToZero using t0 over (c: M::Counter) { c.value = 0 }\n\
-                possible ReachThree using t0 over (c: M::Counter) { c.value = 3 }\n";
+    let body = "always possible BackToZero using v over (c: M::Counter) { c.value = 0 }\n\
+                possible ReachThree using v over (c: M::Counter) { c.value = 3 }\n";
     let items = json!([{"claim": "BackToZero"},
         {"claim": "ReachThree", "temporal": {"witness_samples": 3, "seed": 7}}]);
     let ws = Workspace::new("cov-state-graph");
@@ -199,7 +196,9 @@ fn always_possible_refutes_and_witnesses_repeat() {
     }
     let witnessed = first.item(1);
     let mut sources = Vec::new();
-    sampled_sources(&witnessed, &mut sources);
+    // The witness is spelled once in the FR-393 evidence; the record's basis and
+    // the evidence paths cite the same source again.
+    sampled_sources(&witnessed["record"]["evidence"]["sampled"], &mut sources);
     let [source] = sources.as_slice() else {
         panic!("exactly one sampled witness: {witnessed}");
     };
@@ -278,7 +277,7 @@ fn copy_swap_and_witness_budget() {
 #[trace("TC-1592", "FR-632-AC-2")]
 #[trace("TC-1592", "FR-632-AC-3")]
 #[test]
-#[ignore = "QSL-2129: timed zone items are not reachable through fsl analyze yet"]
+#[ignore = "QSL-2296 (from QSL-2129): FR-632-AC-2 selects digital-clocks for a temporal item but FR-243 routes temporal-satisfaction to EN-6 by kind alone; FR-632-AC-3 sets max_clocks 0 but FR-625 makes limits positive counts (spec question open)"]
 fn digital_clocks_agree_and_the_clock_budget_stops() {
     let claim = "temporal Bound using tt over (c: M::Call) clock \"model-time\" on origin \
                  { always holds(not c.late) }\n";
@@ -347,7 +346,7 @@ fn edf_proves_ctl() {
 #[trace("TC-1594", "FR-634-AC-2")]
 #[trace("TC-1594", "FR-634-AC-3")]
 #[test]
-#[ignore = "QSL-2132: simulation items are not reachable through fsl analyze yet"]
+#[ignore = "QSL-2296 (from QSL-2132): FR-634 does not say which traces an enumerate item reports nor what coverage.choices counts, and fsl-eval exploration returns no traces (spec question open)"]
 fn simulation_budget_and_seeded_sampling() {
     let ws = Workspace::new("cov-simulation");
     let request = request_members(Some(json!([

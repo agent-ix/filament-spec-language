@@ -191,18 +191,25 @@ fn an_object_free_hyper_clause_is_analyzed() {
 
 /// The timed `Rpc` subject of FR-239 with timeout bound `t` and `claim`.
 pub(crate) fn rpc_unit(t: u32, claim: &str) -> String {
+    rpc_unit_with(t, ">= 1", ">=", claim)
+}
+
+/// [`rpc_unit`] with `reply` guarded by `self.x {reply} ms` and `timeout` by
+/// `self.x {timeout} {t} ms`: ADR-026 section 11's strict-guard variant is
+/// `("> 3", ">")`.
+pub(crate) fn rpc_unit_with(t: u32, reply: &str, timeout: &str, claim: &str) -> String {
     use crate::timed_world::{unit_text, DENSE, PACKAGE};
     let body = format!(
         "{DENSE}\
          pre SendIdle using v on M::Call::send {{ self.phase = 0 }}\n\
          post Send using v on M::Call::send {{ \
              self.phase = 1 and self.inflight and not self.late and self.x = 0 ms }}\n\
-         pre Reply using v on M::Call::reply {{ self.inflight and self.x >= 1 ms }}\n\
+         pre Reply using v on M::Call::reply {{ self.inflight and self.x {reply} ms }}\n\
          post Replied using v on M::Call::reply {{ not self.inflight and \
              self.late = (pre(self.phase) = 3) and \
              (pre(self.phase) = 1 implies self.phase = 2) and \
              (pre(self.phase) != 1 implies self.phase = pre(self.phase)) }}\n\
-         pre Timeout using v on M::Call::timeout {{ self.phase = 1 and self.x >= {t} ms }}\n\
+         pre Timeout using v on M::Call::timeout {{ self.phase = 1 and self.x {timeout} {t} ms }}\n\
          post TimedOut using v on M::Call::timeout {{ self.phase = 3 }}\n\
          pre Reset using v on M::Call::reset {{ \
              not self.inflight and (self.phase = 2 or self.phase = 3) }}\n\
@@ -234,7 +241,6 @@ pub(crate) fn rpc_snapshot() -> Vec<u8> {
 /// timeout 4 and refutes with exact delays at timeout 3.
 #[trace("TC-1592", "FR-632-AC-1")]
 #[test]
-#[ignore = "QSL-2129: timed zone items are not reachable through fsl analyze yet"]
 fn zone_items_prove_with_certificates_and_refute_with_exact_delays() {
     let claim = "temporal NoLateReply using tt over (c: M::Call) clock \"model-time\" on origin \
                  { always holds(not c.late) }\n";
@@ -311,7 +317,7 @@ fn schedulability_proves_on_en7_and_a_tight_response_refutes() {
 #[trace("TC-1595", "FR-635-AC-1")]
 #[trace("TC-1595", "FR-635-AC-2")]
 #[test]
-#[ignore = "QSL-2132: external provider items are not reachable through fsl analyze yet"]
+#[ignore = "QSL-2296 (from QSL-2132): FR-635 says the driver loads providers from their manifests but no requirement states where manifests are found or how a process provider is run; FR-489 forbids test-only registrations in the production registry (spec question open)"]
 fn an_item_naming_a_registered_provider_settles_on_it() {
     let provider =
         std::env::var("FSL_TEST_PROVIDER").unwrap_or_else(|_| "test-value-provider".to_owned());

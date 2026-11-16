@@ -207,6 +207,17 @@ pub struct TemporalItem {
     pub smt_encoding: Option<fsl_replay::SmtEncodingLimits>,
     /// The reductions the caller selected.
     pub reductions: fsl_route::reductions::Reductions,
+    /// The most live clocks one timed state holds (FSpec FR-415); the
+    /// published default when absent.
+    pub max_clocks: Option<std::num::NonZeroU64>,
+    /// The request's `reductions` member as written, until it is admitted over
+    /// the unit's declarations (FR-623).
+    pub pending_reductions: Option<serde_json::Value>,
+    /// The witness walks per initial state of a `possible` claim (FSpec
+    /// FR-392); the published default when absent.
+    pub witness_samples: Option<u64>,
+    /// The witness-sampling seed; the published default when absent.
+    pub seed: Option<u64>,
 }
 
 impl Default for TemporalItem {
@@ -222,6 +233,10 @@ impl Default for TemporalItem {
             max_candidates: super::clause_item::DEFAULT_MAX_CANDIDATES,
             smt_encoding: None,
             reductions: fsl_route::reductions::Reductions::default(),
+            max_clocks: None,
+            pending_reductions: None,
+            witness_samples: None,
+            seed: None,
         }
     }
 }
@@ -385,7 +400,7 @@ pub(super) fn dependency_wires(
     dependencies.into_values().collect()
 }
 
-fn simulation<'a>(
+pub(super) fn simulation<'a>(
     package: &'a fsl_package::CheckedPackage,
     binding: &super::SubjectBinding<'a>,
     limits: &super::AnalyzeLimits,
@@ -438,6 +453,70 @@ fn work<'a>(
     let family = if wrong_occurrence { None } else { family };
     let absent = || AnalyzeItem::unadapted(item.request_index, item.kind, family);
     let mut built = match &item.form {
+        Some(ItemForm::Temporal(form))
+            if item.kind == Capability::TemporalSatisfaction
+                && super::document::is_state_graph(package, &item.claim) =>
+        {
+            super::state_graph_item::state_graph_item(
+                package,
+                binding,
+                *limits,
+                provision,
+                &item.claim,
+                item.request_index,
+                form,
+            )
+            .unwrap_or_else(absent)
+        }
+        Some(ItemForm::Temporal(form))
+            if item.kind == Capability::TemporalSatisfaction
+                && matches!(
+                    form.item_kind,
+                    ItemKind::DeadlockFreedom | ItemKind::TimeLockFreedom
+                ) =>
+        {
+            if super::document::timed(package) {
+                super::timed_item::zone_derived_item(
+                    package,
+                    binding,
+                    *limits,
+                    provision,
+                    &item.claim,
+                    item.request_index,
+                    form,
+                )
+                .unwrap_or_else(absent)
+            } else if form.item_kind == ItemKind::DeadlockFreedom {
+                super::derived_item::deadlock_item(
+                    package,
+                    binding,
+                    *limits,
+                    provision,
+                    &item.claim,
+                    item.request_index,
+                    form,
+                )
+                .unwrap_or_else(absent)
+            } else {
+                absent()
+            }
+        }
+        Some(ItemForm::Temporal(form))
+            if item.kind == Capability::TemporalSatisfaction
+                && form.item_kind == ItemKind::Formula
+                && super::document::timed(package) =>
+        {
+            super::timed_item::zone_clause_item(
+                package,
+                binding,
+                *limits,
+                provision,
+                &item.claim,
+                item.request_index,
+                form,
+            )
+            .unwrap_or_else(absent)
+        }
         Some(ItemForm::Temporal(form)) if item.kind == Capability::TemporalSatisfaction => {
             match super::ClauseSubject::from_provision(
                 package,
@@ -562,6 +641,12 @@ fn work<'a>(
         _ => absent(),
     };
     let expected = match &item.form {
+        Some(ItemForm::Temporal(_)) if super::document::is_state_graph(package, &item.claim) => {
+            Some(crate::model_check::manifest::BACKEND_ID)
+        }
+        Some(ItemForm::Temporal(_)) if super::document::timed(package) => {
+            Some(crate::zone_check::manifest::BACKEND_ID)
+        }
         Some(ItemForm::Temporal(_)) => Some(crate::model_check::manifest::BACKEND_ID),
         Some(ItemForm::Probabilistic(form)) => match form.evidence {
             EvidenceKind::Exact => Some(crate::exact_probabilistic::manifest::BACKEND_ID),
@@ -584,7 +669,11 @@ fn work<'a>(
     built.kind = item.kind;
     built.family = family;
     built.claim = Some(item.claim.clone());
+    // EN-6 decides over the subject's universes alone (FR-239): it advertises
+    // the bounded mode, and an item it runs is read in it.
+    let zone = matches!(&item.form, Some(ItemForm::Temporal(_))) && super::document::timed(package);
     built.mode = match item.extent {
+        _ if zone => fsl_route::Mode::Bounded,
         ExtentClassification::Bounded => fsl_route::Mode::Bounded,
         ExtentClassification::Unbounded { .. } => fsl_route::Mode::Unbounded,
     };

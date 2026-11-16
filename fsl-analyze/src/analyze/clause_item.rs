@@ -277,7 +277,6 @@ impl<'a> ClauseSubject<'a> {
             proof_bounds: self.proof_bounds.clone(),
         }
     }
-
     /// FR-128's replay of `payload` over the same source and subject.
     fn replay(
         &self,
@@ -288,77 +287,138 @@ impl<'a> ClauseSubject<'a> {
             |cause: &'static str| ReplayRefusal::Fault(InternalFault::new("analyze", cause));
         let name = clause_name(self.node).map_err(|_| fault("clause-name"))?;
         let identity = self.node.identity();
-        let emission =
-            fsl_package::emit_checked_with_temporal_selections(self.package, &[], self.limits.emit)
-                .map_err(|_| fault("package-emission"))?;
-        let package = ReplayPackage::read(
-            emission.package().bytes(),
-            ReplayLimits::default().input_bytes,
-        )
-        .map_err(|_| fault("package-emission"))?;
-        let transcript = || Witness::parse(CLAUSE_TRANSCRIPT).map_err(|_| fault("transcript"));
-        let wire = ReplayRequestWire {
-            package,
-            profile_selections: Vec::new(),
-            dependencies: super::request::dependency_wires(self.package),
-            replay_target: RequestTargetWire::state_clause(name.clone()),
-            source: ReplaySource::Witness(transcript()?),
-            obligation_identity: ObligationIdentity::new(identity.clone(), None, 0),
-            backend: en1::BACKEND_ID.to_owned(),
-            state_environment: StateEnvironment::new(Vec::new()),
-            accounting_limits: self.limits.accounting,
-            stage_limits: std::collections::BTreeMap::new(),
-            supplied_limits: None,
-            object_environment: None,
-            declared_domains: Vec::new(),
-            byte_provision: self.provision.wire_entries(),
-            documents: self
-                .binding
-                .packages
-                .values()
-                .chain(self.binding.snapshots.values())
-                .cloned()
-                .collect(),
-        };
-        let envelope = WitnessEnvelope::reconstruct(
-            WitnessPacket {
-                obligation_identity: Some(ObligationIdentity::new(identity.clone(), None, 0)),
-                occurrence_key: Some(OccurrenceKey::new(
-                    identity.clone(),
-                    self.node.claim().clone(),
-                )),
-                clause_node: Some(identity),
-                replay_target: ReplayTargetMembers::state_clause(name),
-                profile_selections: Some(Vec::new()),
-                run_limits: Some(self.limits.accounting),
-                declared_domains: Some(Vec::new()),
-                backend: Some(en1::BACKEND_ID.to_owned()),
-                trace_position: Some(None),
-                source: Some(EnvelopeSource::Witness(transcript()?)),
-                family_payload: Some(payload.clone()),
-            },
-            ReplayLimits::default(),
-        )
-        .map_err(|_| fault("envelope"))?;
-        replay_model_trace(
-            wire,
-            &ModelTraceSubject {
+        replay_over(
+            &ReplayInputs {
+                backend: en1::BACKEND_ID,
+                package: self.package,
+                binding: &self.binding,
+                limits: &self.limits,
+                provision: self.provision,
+                max_candidates: self.run.max_candidates,
                 timed: None,
-                initial: self.binding.initial.clone(),
-                universes: self.binding.universes.clone(),
-                expansion: ExpansionLimits {
-                    max_candidates: self.run.max_candidates,
-                },
             },
-            &envelope,
+            ReplayShape {
+                target: RequestTargetWire::state_clause(name.clone()),
+                members: ReplayTargetMembers::state_clause(name),
+                node: identity,
+                occurrence: OccurrenceKey::new(self.node.identity(), self.node.claim().clone()),
+                transcript: CLAUSE_TRANSCRIPT,
+            },
+            payload,
             letters,
-            ReplayLimits::default(),
         )
     }
 }
 
+/// What a replay of an EN-1 counterexample reads of the run: the checked
+/// package, the subject binding, the shared limits, the source bytes and the
+/// expansion ceiling.
+pub(super) struct ReplayInputs<'r, 'a> {
+    pub(super) package: &'a CheckedPackage,
+    pub(super) binding: &'r SubjectBinding<'a>,
+    pub(super) limits: &'r AnalyzeLimits,
+    pub(super) provision: &'r super::SourceProvision,
+    pub(super) max_candidates: u64,
+    /// FR-237: the timed reading the counterexample was found under.
+    pub(super) timed: Option<fsl_replay::TimedReplay>,
+    /// The engine whose run the counterexample came from, which the replay
+    /// request and envelope name.
+    pub(super) backend: &'static str,
+}
+
+/// How a counterexample names its item (FR-128 Inputs): the replay target,
+/// the item's node and occurrence, and the witness transcript.
+pub(super) struct ReplayShape {
+    pub(super) target: RequestTargetWire,
+    pub(super) members: ReplayTargetMembers,
+    pub(super) node: filament_exact::NodeKey,
+    pub(super) occurrence: OccurrenceKey,
+    pub(super) transcript: &'static str,
+}
+
+/// FR-128's replay of `payload` over the same source and subject, for the
+/// item `shape` names.
+pub(super) fn replay_over(
+    inputs: &ReplayInputs<'_, '_>,
+    shape: ReplayShape,
+    payload: &TemporalCounterexample,
+    letters: &dyn fsl_eval::model_subject::ModelLetters,
+) -> Result<ModelTraceReplayResult, ReplayRefusal> {
+    let fault = |cause: &'static str| ReplayRefusal::Fault(InternalFault::new("analyze", cause));
+    let ReplayShape {
+        target,
+        members,
+        node: identity,
+        occurrence,
+        transcript: text,
+    } = shape;
+    let emission =
+        fsl_package::emit_checked_with_temporal_selections(inputs.package, &[], inputs.limits.emit)
+            .map_err(|_| fault("package-emission"))?;
+    let package = ReplayPackage::read(
+        emission.package().bytes(),
+        ReplayLimits::default().input_bytes,
+    )
+    .map_err(|_| fault("package-emission"))?;
+    let transcript = || Witness::parse(text).map_err(|_| fault("transcript"));
+    let wire = ReplayRequestWire {
+        package,
+        profile_selections: Vec::new(),
+        dependencies: super::request::dependency_wires(inputs.package),
+        replay_target: target,
+        source: ReplaySource::Witness(transcript()?),
+        obligation_identity: ObligationIdentity::new(identity.clone(), None, 0),
+        backend: inputs.backend.to_owned(),
+        state_environment: StateEnvironment::new(Vec::new()),
+        accounting_limits: inputs.limits.accounting,
+        stage_limits: std::collections::BTreeMap::new(),
+        supplied_limits: None,
+        object_environment: None,
+        declared_domains: Vec::new(),
+        byte_provision: inputs.provision.wire_entries(),
+        documents: inputs
+            .binding
+            .packages
+            .values()
+            .chain(inputs.binding.snapshots.values())
+            .cloned()
+            .collect(),
+    };
+    let envelope = WitnessEnvelope::reconstruct(
+        WitnessPacket {
+            obligation_identity: Some(ObligationIdentity::new(identity.clone(), None, 0)),
+            occurrence_key: Some(occurrence),
+            clause_node: Some(identity),
+            replay_target: members,
+            profile_selections: Some(Vec::new()),
+            run_limits: Some(inputs.limits.accounting),
+            declared_domains: Some(Vec::new()),
+            backend: Some(inputs.backend.to_owned()),
+            trace_position: Some(None),
+            source: Some(EnvelopeSource::Witness(transcript()?)),
+            family_payload: Some(payload.clone()),
+        },
+        ReplayLimits::default(),
+    )
+    .map_err(|_| fault("envelope"))?;
+    replay_model_trace(
+        wire,
+        &ModelTraceSubject {
+            timed: inputs.timed.clone(),
+            initial: inputs.binding.initial.clone(),
+            universes: inputs.binding.universes.clone(),
+            expansion: ExpansionLimits {
+                max_candidates: inputs.max_candidates,
+            },
+        },
+        &envelope,
+        letters,
+        ReplayLimits::default(),
+    )
+}
+
 /// The `state_clause` target of a temporal clause: its declared name.
-fn clause_name(node: &TemporalClauseNode) -> Result<QualifiedName, ClauseItemRefusal> {
+pub(super) fn clause_name(node: &TemporalClauseNode) -> Result<QualifiedName, ClauseItemRefusal> {
     let segment =
         Identifier::new(node.clause().name()).map_err(|_| ClauseItemRefusal::UnnamedClause)?;
     QualifiedName::new(vec![segment]).map_err(|_| ClauseItemRefusal::UnnamedClause)
