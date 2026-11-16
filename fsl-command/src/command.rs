@@ -319,6 +319,9 @@ pub enum RunCause {
     /// The request's `libraries` are refused before any library is read.
     #[error("the request's libraries are refused: {0}")]
     Libraries(LibrarySelection),
+    /// The request's extension definition catalog is invalid.
+    #[error("the request's extension definitions are refused: {0}")]
+    ExtensionCatalog(String),
     /// Spine compile of a `1-draft` program refused at one stage.
     #[error("{}", .0.refusal)]
     Spine(Box<SpineFailure>),
@@ -442,6 +445,7 @@ impl RunCause {
             | Self::EmptyCompileProgram => Code::InvalidRequest,
             Self::ExtractionRequiresRun => Code::ExtractionRequiresRun,
             Self::Spine(failure) => failure.refusal.code(),
+            Self::ExtensionCatalog(_) => Code::InvalidPackage,
             Self::SpineRun(refusal) => refusal.code(),
             Self::AnalyzeRequest { .. } => Code::InvalidRequest,
             Self::AnalyzeNotYetImplemented { .. } => Code::UnsupportedConstruct,
@@ -579,6 +583,7 @@ impl RunError {
             | RunCause::ExtractionRequiresRun
             | RunCause::EmptyCompileProgram
             | RunCause::Libraries(_)
+            | RunCause::ExtensionCatalog(_)
             | RunCause::CompleteRunSelection(_)
             | RunCause::AnalyzeRequest { .. }
             | RunCause::AnalyzeUniverse(_)
@@ -1493,6 +1498,9 @@ fn check_sources<T>(
         reason: refusal.detail,
     })?;
     let libraries = library_sources(request, intake)?;
+    // FR-660: read definitions after the program and library sources, under
+    // the same aggregate dependent-file ceiling.
+    let _extension_catalog = extension_catalog(&request.extensions, intake)?;
     if request.handoff.is_some() && unit_list {
         return Err(RunCause::ClauseRequest {
             member: "handoff".to_owned(),
@@ -1698,6 +1706,71 @@ fn library_sources<'r>(
         .iter()
         .map(|library| Ok((library, intake.source(&library.source)?)))
         .collect()
+}
+
+/// Read the request's extension documents and bind them to a reader-owned
+/// definition catalog (FR-660).
+fn extension_catalog(
+    extensions: &[wire::Extension],
+    intake: &mut Intake<'_>,
+) -> Result<fsl_semantics::library::bundle::DefinitionCatalog> {
+    use fsl_foundation::selection::DefinitionRef;
+    use fsl_semantics::library::bundle::{CapabilityId, ExtensionDefinitionSource};
+
+    let mut identities = std::collections::BTreeMap::new();
+    for (index, extension) in extensions.iter().enumerate() {
+        for (member, value) in [
+            ("authority", extension.authority.as_str()),
+            ("identity", extension.identity.as_str()),
+            ("file", extension.file.as_str()),
+        ] {
+            if value.trim().is_empty() {
+                return Err(RunCause::ClauseRequest {
+                    member: format!("extensions[{index}].{member}"),
+                    reason: "must be a non-blank string".to_owned(),
+                });
+            }
+        }
+        let key = (extension.authority.as_str(), extension.identity.as_str());
+        if let Some(previous) = identities.insert(key, index) {
+            return Err(RunCause::ExtensionCatalog(format!(
+                "conflicting-definition: extensions[{previous}] and extensions[{index}] both name {}:{}",
+                extension.authority, extension.identity
+            )));
+        }
+    }
+
+    let mut definitions = Vec::with_capacity(extensions.len());
+    for extension in extensions {
+        let dependencies = extension
+            .depends_on
+            .iter()
+            .map(|dependency| {
+                DefinitionRef::new(dependency.authority.clone(), dependency.identity.clone())
+                    .map_err(|error| RunCause::ClauseRequest {
+                        member: "extensions.depends_on".to_owned(),
+                        reason: error.to_string(),
+                    })
+            })
+            .collect::<Result<std::collections::BTreeSet<_>>>()?;
+        let capabilities = extension
+            .capabilities
+            .iter()
+            .map(|capability| {
+                CapabilityId::complete(capability)
+                    .map_err(|error| RunCause::ExtensionCatalog(error.to_string()))
+            })
+            .collect::<Result<std::collections::BTreeSet<_>>>()?;
+        definitions.push(ExtensionDefinitionSource {
+            authority: extension.authority.clone(),
+            identity: extension.identity.clone(),
+            exact_bytes: intake.file(&extension.file, intake.remaining)?,
+            dependencies,
+            capabilities,
+        });
+    }
+    fsl_semantics::library::bundle::DefinitionCatalog::read_extensions(definitions)
+        .map_err(|error| RunCause::ExtensionCatalog(error.to_string()))
 }
 
 /// A request selection a complete-V1 (`1-draft`) program does not take.
@@ -1946,6 +2019,8 @@ fn prepare_complete_run(
         .iter()
         .map(|library| Ok((library, intake.source(&library.source)?)))
         .collect::<Result<Vec<(&wire::Library, FormalSource)>>>()?;
+    // FR-660: the same request-owned catalog is available to run compilation.
+    let _extension_catalog = extension_catalog(&request.extensions, intake)?;
     let dependencies =
         fsl_replay::spine::DependencyInput::new(libraries.iter().map(|(library, read)| {
             fsl_replay::spine::SuppliedLibrary {

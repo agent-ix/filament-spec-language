@@ -44,6 +44,9 @@ pub(super) struct CompileRequest {
     /// when absent.
     #[serde(default, deserialize_with = "deserialize_objects")]
     pub libraries: Vec<Library>,
+    /// FR-660: request supplied extension definitions.
+    #[serde(default, deserialize_with = "deserialize_objects")]
+    pub extensions: Vec<Extension>,
     /// FR-640: the clock configurations by clock name; empty when absent.
     #[serde(default, deserialize_with = "clocks")]
     pub clocks: fsl_replay::spine::RequestClocks,
@@ -171,6 +174,27 @@ pub(super) struct Library {
     pub source: SourceFile,
 }
 
+/// One FR-660 extension definition and its selected source document.
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(super) struct Extension {
+    pub authority: String,
+    pub identity: String,
+    pub file: String,
+    #[serde(default, deserialize_with = "deserialize_objects")]
+    pub depends_on: Vec<DefinitionReference>,
+    #[serde(default)]
+    pub capabilities: Vec<String>,
+}
+
+/// One exact definition dependency reference from FR-660.
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(super) struct DefinitionReference {
+    pub authority: String,
+    pub identity: String,
+}
+
 fn present_json_value<'de, D: serde::Deserializer<'de>>(
     decoder: D,
 ) -> Result<Option<serde_json::Value>, D::Error> {
@@ -200,6 +224,9 @@ pub(super) struct Request {
     /// when absent.
     #[serde(default, deserialize_with = "deserialize_objects")]
     pub libraries: Vec<Library>,
+    /// FR-660: request supplied extension definitions.
+    #[serde(default, deserialize_with = "deserialize_objects")]
+    pub extensions: Vec<Extension>,
     /// FR-640: the clock configurations by clock name; empty when absent.
     #[serde(default, deserialize_with = "clocks")]
     pub clocks: fsl_replay::spine::RequestClocks,
