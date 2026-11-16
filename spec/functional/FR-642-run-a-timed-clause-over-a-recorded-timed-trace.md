@@ -82,7 +82,10 @@ FR-109's `ClauseRunReport` with FSpec FR-541's verdict: `success`, `violation`
   record has no model time source.
 - Over a model subject, the FR-233 rules are unchanged.
 - The clause's intervals SHALL be read in the binding's unit: the model's time
-  unit, or the `timed` configuration's `unit`.
+  unit, or, over a record trace subject, the binding unit FR-933 states (the
+  `timed` configuration's `unit`, or with no configuration the coarsest unit
+  the clause's bounds name); unit-bearing bounds convert exactly to it and
+  unit-free bounds are magnitudes in it.
 
 ### Running
 

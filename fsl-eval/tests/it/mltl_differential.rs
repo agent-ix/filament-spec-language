@@ -5,10 +5,10 @@
 //! small closed trace.
 //!
 //! The reference below is written from FSpec FR-091 and FR-092 alone. The
-//! TL ecosystem's evaluators (tl-mltl's origin-history and infinite-trace
-//! evaluators) are held to the same definitions: the ticket that implements
-//! this differential adds tl-mltl as a dev-dependency and asserts that its
-//! verdicts equal both this reference and fsl-eval on the same cases.
+//! TL ecosystem's `tl-mltl` is held to the same definitions by FR-932's
+//! root-crate suite (`tests/it/mltl_differential.rs`), which reaches it only
+//! through `fsl-command`'s `tl_lowering`: fsl-eval names no TL crate, not even
+//! as a dev-dependency (ADR-011).
 
 use fsl_eval::temporal::{TemporalOutcome, TemporalTrace};
 use ix_trace_rs::trace;
@@ -90,6 +90,47 @@ fn traces() -> Vec<Vec<i64>> {
 #[test]
 fn fsl_eval_agrees_with_the_reference_on_the_bounded_past_and_future_fragment() {
     for (body, truth) in CASES {
+        let fx = fixture(EVENT, "c: Counter", "on each (q: Counter)", body);
+        for values in traces() {
+            let len = i64::try_from(values.len()).expect("a small trace");
+            let expected = match (0..len).find(|i| !truth(&values, *i)) {
+                None => TemporalOutcome::Holds,
+                Some(i) => violated(u64::try_from(i).expect("a position")),
+            };
+            let settled = outcome(
+                &fx,
+                TemporalTrace::Finite {
+                    len: u64::try_from(len).expect("a small trace"),
+                },
+                counters(&values),
+            );
+            assert_eq!(settled, expected, "{body} over {values:?}");
+        }
+    }
+}
+
+/// FR-932's pre-origin cases beyond [`CASES`].
+const PRE_ORIGIN_CASES: &[(&str, Reference)] = &[
+    ("once[1,1] holds(c.level = 0)", |v, i| atom(v, i - 1, 0)),
+    ("once[1,1] not holds(c.level = 0)", |v, i| {
+        !atom(v, i - 1, 0)
+    }),
+    ("historically[0,2] holds(c.level = 0)", |v, i| {
+        (0..=2).all(|d| atom(v, i - d, 0))
+    }),
+    ("historically[0,2] true", |_, _| true),
+    ("true since[1,1] not holds(c.level = 0)", |v, i| {
+        !atom(v, i - 1, 0)
+    }),
+];
+
+/// FR-932-AC-1: every corpus case, the pre-origin cases included, has the
+/// reference outcome in fsl-eval over every small trace.
+#[trace("TC-2604", "FR-932-AC-1")]
+#[test]
+#[ignore = "QSL-2148: the FR-932 corpus is not verified against fsl-eval yet"]
+fn fsl_eval_agrees_with_the_reference_on_the_whole_corpus() {
+    for (body, truth) in CASES.iter().chain(PRE_ORIGIN_CASES) {
         let fx = fixture(EVENT, "c: Counter", "on each (q: Counter)", body);
         for values in traces() {
             let len = i64::try_from(values.len()).expect("a small trace");

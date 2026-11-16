@@ -227,10 +227,12 @@ fn timed_intervals_compare_rational_stamps_exactly() {
         .expect("the trace is readable")
     };
     assert_eq!(run(third(1)), TemporalOutcome::Holds);
-    assert!(matches!(
-        run(third(2)),
-        TemporalOutcome::Violated { .. } | TemporalOutcome::Pending
-    ));
+    // FR-933-AC-1: the binding unit is `ms`, so `500 us` is `1/2`; the stamp
+    // `2/3` completes the window `[0, 1/2]` with no `ack` in it.
+    assert!(
+        matches!(run(third(2)), TemporalOutcome::Violated { .. }),
+        "the window [0, 1/2] ms is complete and unanswered"
+    );
 }
 
 /// FR-642-AC-6 (TC-2444): with no `through`, a later stamp completes a
@@ -277,4 +279,58 @@ fn a_later_stamp_completes_a_timed_window_without_through() {
         run(vec![ms(0)], vec![(true, false)]),
         TemporalOutcome::Pending
     );
+}
+
+/// FR-933-AC-1 (TC-2605): with no `timed` configuration, a role-clock clause
+/// reads its bounds in the coarsest unit they name, and a clause whose bounds
+/// name no unit reads them, and the stamps, as plain numbers.
+#[test]
+#[trace("TC-2605", "FR-933-AC-1")]
+#[ignore = "QSL-2136: a timed clause over a record trace subject with a role clock is not admitted yet"]
+fn a_role_clock_clause_reads_its_bounds_in_its_binding_unit() {
+    let outcome = |body: &str, stamps: Vec<Rational>| {
+        let text = unit("plant", body).replace(
+            "unit ms :",
+            "unit us : Time = rational(1, 1000000) * s;\nunit ms :",
+        );
+        let mut checked = check(&text);
+        let clause = match checked.pop() {
+            Some(Ok(clause)) if checked.is_empty() => clause,
+            other => panic!("{body}: one admitted clause, not {other:?}"),
+        };
+        let mut letters = Samples {
+            text: &text,
+            clause: &clause,
+            samples: vec![(false, false), (false, true)],
+        };
+        let mut meter = Meter::new(SCALAR_LIMITS_UNLIMITED);
+        evaluate_timed_at(
+            &clause,
+            &TimedTrace::new(stamps).unwrap(),
+            TemporalPosition::new(0),
+            &mut letters,
+            &mut meter,
+        )
+        .expect("the trace is readable")
+    };
+    // `[0 ms, 200 ms]`: binding unit `ms`, so a stamp 150 answers and 250 does not.
+    let ms_clause = "eventually[0 ms, 200 ms] holds(r.ack)";
+    assert_eq!(
+        outcome(ms_clause, vec![ms(0), ms(150)]),
+        TemporalOutcome::Holds
+    );
+    assert!(matches!(
+        outcome(ms_clause, vec![ms(0), ms(250)]),
+        TemporalOutcome::Violated { .. }
+    ));
+    // `[0, 200]`: no named unit; bounds and stamps are the same numbers.
+    let bare = "eventually[0, 200] holds(r.ack)";
+    assert_eq!(outcome(bare, vec![ms(0), ms(150)]), TemporalOutcome::Holds);
+    assert!(matches!(
+        outcome(bare, vec![ms(0), ms(250)]),
+        TemporalOutcome::Violated { .. }
+    ));
+    // `[0 us, 200 ms]`: the coarsest named unit is `ms`, never `us`.
+    let mixed = "eventually[0 us, 200 ms] holds(r.ack)";
+    assert_eq!(outcome(mixed, vec![ms(0), ms(150)]), TemporalOutcome::Holds);
 }

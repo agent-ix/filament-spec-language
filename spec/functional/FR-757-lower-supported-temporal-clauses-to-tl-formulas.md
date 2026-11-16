@@ -62,3 +62,5 @@ unsupported disposition, unchanged.
 ## Dependencies
 
 - FR-527 and FR-045 (classification); FSpec FR-095 (TL correspondence).
+- FR-931 (the `tl_lowering` request member, correspondence selection and
+  placement in `fsl-command`); FR-932 (the `tl-mltl` differential).
