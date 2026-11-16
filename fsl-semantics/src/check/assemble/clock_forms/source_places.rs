@@ -594,6 +594,8 @@ mod tests {
             "ix://filament/native/Clock"
         );
         let rows = w.rows();
+        let expected_w_identity = "test/source-clock-record:[\"W\",]:0";
+        assert_eq!(rows[0].member_type, expected_w_identity);
         assert_eq!(rows[0].member_type, rows[1].declaring_type);
         assert!(!rows[0].member_type.contains("resolved:"));
         assert!(!rows[0].member_type.contains("Composite("));
@@ -610,6 +612,12 @@ mod tests {
             })
             .expect("nested.w.c")
             .rows();
+        let record_field_row = nested
+            .iter()
+            .find(|row| row.member_identity == "Wrapper/w")
+            .expect("record field Wrapper.w typed W");
+        assert_eq!(record_field_row.member_type, expected_w_identity);
+        assert_eq!(rows[0].member_type, record_field_row.member_type);
         assert_eq!(rows[0].member_type, nested[1].member_type);
         assert_eq!(nested[1].member_type, nested[2].declaring_type);
         let collection = source_model.clock_places().iter().find(|place| {
