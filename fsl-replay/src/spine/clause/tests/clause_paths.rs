@@ -6,7 +6,7 @@
 use super::clause_set::{admit, documents, Documents};
 use super::frame_replay::{config_version_unit, unit_for, Unit};
 use super::*;
-use crate::spine::{CallOutcome, CallRefusal, ClauseRunReport};
+use crate::spine::{write_clause_run_result, CallOutcome, CallRefusal, CallValue, ClauseRunReport};
 use fsl_eval::value::ValuePathSubject;
 use fsl_eval::value::{ClauseEvaluation, ObservationIdentity, RuntimeValuePath, ValuePathStep};
 
