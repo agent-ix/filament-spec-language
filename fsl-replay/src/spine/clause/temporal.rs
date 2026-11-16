@@ -558,33 +558,6 @@ fn authenticate_trace(
 ) -> Result<Option<crate::spine::AuthenticatedTemporalSelection>, Box<ClauseDisposition>> {
     let node = site.node;
     let clause = node.clause();
-    // The temporal subject is read only to authenticate a clock-bearing
-    // trace.
-    let subject_of = || {
-        let Some(TemporalAuthentication {
-            clock_rows,
-            admitted_package,
-        }) = authentication
-        else {
-            return Err(filament_semantic_value::catalog::InternalFault::new(
-                "FR-050",
-                "clock-bearing-trace-has-authentication-rows",
-            ));
-        };
-        let Some(declaration) = clock_rows.declaration(&node.identity(), node.claim().ordinal())
-        else {
-            return Err(filament_semantic_value::catalog::InternalFault::new(
-                "FR-050",
-                "emitted-temporal-declaration-retains-checked-id",
-            ));
-        };
-        fsl_package::checked_views::temporal_subject(admitted_package, declaration).map_err(|_| {
-            filament_semantic_value::catalog::InternalFault::new(
-                "FR-050",
-                "admitted-temporal-subject-resolves",
-            )
-        })
-    };
     // FR-645: a trace kind the clause's profile does not read refuses at stage
     // `admit` before any position is admitted.
     if !super::trace_refusal::profile_reads(clause.profile()).contains(&trace.kind()) {
@@ -599,14 +572,27 @@ fn authenticate_trace(
             return Ok(None)
         }
     };
-    // A caller that holds no emission and asserts none (FR-820: the decided
-    // reading of a `Finite` trace needs no binding) reads the trace
-    // unauthenticated.
-    if authentication.is_none() {
+    // A caller that holds no emission asserts none (FR-820: the decided reading
+    // of a `Finite` trace needs no binding), so a clock-bearing trace is read
+    // unauthenticated. With rows, the temporal subject is read to authenticate
+    // the trace's binding.
+    let Some(TemporalAuthentication {
+        clock_rows,
+        admitted_package,
+    }) = authentication
+    else {
         return Ok(None);
-    }
-    let subject =
-        subject_of().map_err(|fault| Box::new(ClauseDisposition::EvaluateFault(fault)))?;
+    };
+    let fault = |what: &'static str| {
+        Box::new(ClauseDisposition::EvaluateFault(
+            filament_semantic_value::catalog::InternalFault::new("FR-050", what),
+        ))
+    };
+    let Some(declaration) = clock_rows.declaration(&node.identity(), node.claim().ordinal()) else {
+        return Err(fault("emitted-temporal-declaration-retains-checked-id"));
+    };
+    let subject = fsl_package::checked_views::temporal_subject(admitted_package, declaration)
+        .map_err(|_| fault("admitted-temporal-subject-resolves"))?;
     authenticate_binding(binding, &subject, node.claim().ordinal()).map(Some)
 }
 

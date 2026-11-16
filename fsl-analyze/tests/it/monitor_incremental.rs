@@ -864,7 +864,7 @@ fn a_finite_session_needs_no_selection_for_a_closed_trace_clause() {
 /// observation stamped 3, and an assertion that regresses it, even when the
 /// run is skipped.
 #[test]
-#[trace("TC-1667", "FR-643-AC-4")]
+#[trace("TC-1667", "FR-643-AC-5")]
 fn the_opening_ledger_orders_stamps_and_assertions() {
     let world = world();
     let cancel = Cancel::new();
@@ -1419,4 +1419,42 @@ fn snapshots_fed_one_at_a_time_equal_the_batch_with_settled_clauses_frozen() {
     }
     let outcome = session.finish(&cancel).expect("ends");
     assert_eq!(settled_before_end(&outcome), vec![true, false, true]);
+}
+
+/// FR-283-AC-17 (TC-2323): a `Finite` session ignores the selection list
+/// whatever it holds: a list that does not select `E`'s clock still opens and
+/// reports what the batch `Finite` run reports.
+#[test]
+#[trace("TC-2323", "FR-283-AC-17")]
+fn a_finite_session_ignores_a_non_matching_selection_list() {
+    let world = world();
+    let cancel = Cancel::new();
+    let others = &world.selections[1..];
+    assert!(others.len() < world.selections.len());
+    let mut session = MonitorSession::open(
+        world.unit.package(),
+        MonitorOpen {
+            clauses: clauses(&["E"]),
+            kind: MonitorTraceKind::Finite,
+            lower_boundary: ProgressLowerBoundary::AuthoritativeOrigin,
+            binding: None,
+            cover: None,
+            ledger: None,
+            packages: &world.packages,
+            sources: &world.sources,
+            temporal_selections: others,
+        },
+        &limits(DEFAULT_RETAINED_POSITIONS),
+        &cancel,
+    )
+    .expect("opens whatever the selections are");
+    let levels = [0, 1, 2];
+    for (index, level) in levels.iter().enumerate() {
+        let step = session.step(sample(&text(*level)), &cancel).expect("steps");
+        assert_eq!(
+            format!("{:?}", step.statuses[0].1.record().report().disposition),
+            world.batch(&["E"], &levels[..=index])[0],
+            "prefix {index}"
+        );
+    }
 }

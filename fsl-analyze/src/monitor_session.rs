@@ -301,14 +301,6 @@ fn reading_of(report: &ClauseRunReport, horizon: u64) -> DecidingReading {
     }
 }
 
-/// Whether a profile reads a trace as a closed trace by false extension.
-fn closed_trace(profile: TemporalProfile) -> bool {
-    matches!(
-        profile,
-        TemporalProfile::EventPositionFalseExtension | TemporalProfile::FixedSampleFalseExtension
-    )
-}
-
 /// A progress assertion as its checkpoint form.
 fn assertion_json(assertion: ProgressAssertion) -> Value {
     json!({
@@ -419,17 +411,9 @@ impl<'a> MonitorSession<'a> {
             }
         }
         let first = request.clauses[0].name.clone();
-        let reads_binding = request.kind.carries_progress()
-            || (!request.temporal_selections.is_empty()
-                && request.clauses.iter().any(|clause| {
-                    package
-                        .graph()
-                        .temporal_clauses()
-                        .iter()
-                        .find(|node| node.clause().name() == clause.name)
-                        .is_some_and(|node| closed_trace(node.clause().profile()))
-                }));
-        let authentication = if reads_binding {
+        // A `Finite` trace needs no binding or emission (FR-820, FR-283-AC-17):
+        // only a progress-carrying kind authenticates, as the batch run does.
+        let authentication = if request.kind.carries_progress() {
             Some(
                 authenticate_emission(
                     package,
