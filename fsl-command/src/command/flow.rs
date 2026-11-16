@@ -50,7 +50,7 @@ struct Report {
     facts: BTreeMap<String, Vec<Fact>>,
     // The denial list is deliberately discarded without deserializing its shape.
     #[serde(rename = "denials")]
-    _denials: serde::de::IgnoredAny,
+    _denials: Vec<serde::de::IgnoredAny>,
     #[serde(rename = "remediations")]
     _remediations: Vec<Value>,
 }
@@ -928,10 +928,7 @@ fn snapshot_document(
     let mut values = Vec::new();
     for (fact_index, fact) in facts.iter().enumerate() {
         for (field_index, (field, value)) in fact.fact.fields.iter().enumerate() {
-            let entries = match value {
-                Value::Array(items) => items.iter().collect::<Vec<_>>(),
-                one => vec![one],
-            };
+            let entries = field_entries(value);
             for (value_index, entry) in entries.iter().enumerate() {
                 let (kind, value) = match entry {
                     Value::String(text) => ("string", fold(text)),
@@ -968,10 +965,7 @@ fn snapshot_document(
     instances.insert("hasValue".into(), Vec::new());
     for (fact_index, fact) in facts.iter().enumerate() {
         for (field_index, (_field, value)) in fact.fact.fields.iter().enumerate() {
-            let entries = match value {
-                Value::Array(items) => items.iter().collect::<Vec<_>>(),
-                one => vec![one],
-            };
+            let entries = field_entries(value);
             for (item_index, _) in entries.iter().enumerate() {
                 let key = format!("v{fact_index}_{field_index}_{item_index}");
                 instances
@@ -1039,6 +1033,14 @@ fn link(source: &str, target: &str, source_pop: &str, target_pop: &str) -> Value
 
 fn string_wire(value: &str) -> Value {
     json!({"kind":"string","text":value})
+}
+
+fn field_entries(value: &Value) -> Vec<&Value> {
+    match value {
+        Value::Array(items) if items.is_empty() => vec![value],
+        Value::Array(items) => items.iter().collect(),
+        one => vec![one],
+    }
 }
 
 fn relationship_names(report: &Report) -> BTreeMap<(String, String), String> {
@@ -1293,6 +1295,68 @@ mod tests {
         let refusal =
             analyze_flow_report(malformed.to_string().as_bytes(), &Supported, &Cancel::new())
                 .expect_err("malformed report must refuse");
+        let FlowAnalyzeError::Native(error) = refusal else {
+            panic!("refusal must use the native request error shape");
+        };
+        assert!(matches!(
+            error.cause,
+            super::super::RunCause::AnalyzeRequest { ref member, .. } if member == "flow-report"
+        ));
+    }
+
+    #[test]
+    fn empty_array_field_is_preserved_in_the_native_snapshot() {
+        let report = json!({
+            "schema":"quire.flow-report/v1",
+            "rules":[{
+                "name":"has-labels",
+                "subject":["connection"],
+                "match":[{"path":[],"field":"labels","present":true}],
+                "unless_any":[],
+                "check":"has-labels",
+                "remediations":[],
+                "_rationale":"fixture"
+            }],
+            "vocabularies":{},
+            "facts":{"connection":[
+                {"id":"C-1","path":"c1.md","fields":{"labels":[]},"edges":[]},
+                {"id":"C-2","path":"c2.md","fields":{},"edges":[]}
+            ]},
+            "denials":[],"remediations":[]
+        });
+        let report: Report = serde_json::from_slice(report.to_string().as_bytes()).unwrap();
+        let generated = Generated::new(&report).expect("lower report into native inputs");
+        let snapshot: Value = serde_json::from_str(&generated.snapshot).unwrap();
+        let values = snapshot["populations"][1]["objects"]
+            .as_array()
+            .expect("value population");
+        assert_eq!(values.len(), 1);
+        assert_eq!(values[0]["fields"]["field"]["text"], "labels");
+        assert_eq!(values[0]["fields"]["kind"]["text"], "other");
+
+        let has_value = snapshot["relationships"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|relationship| {
+                relationship["relationship"]
+                    .as_str()
+                    .is_some_and(|name| name.ends_with("/relationship/hasValue"))
+            })
+            .expect("hasValue relationship extent");
+        let links = has_value["instances"].as_array().unwrap();
+        assert_eq!(links.len(), 1);
+        let source = links[0]["source"]["key"].as_str().unwrap();
+        assert!(source.contains("C-1"));
+    }
+
+    #[test]
+    fn non_array_denials_refuse_the_whole_request() {
+        let mut malformed: Value = serde_json::from_slice(&report(false)).unwrap();
+        malformed["denials"] = json!({"fabricated":"denial"});
+        let refusal =
+            analyze_flow_report(malformed.to_string().as_bytes(), &Supported, &Cancel::new())
+                .expect_err("denials must be an array even though their contents are ignored");
         let FlowAnalyzeError::Native(error) = refusal else {
             panic!("refusal must use the native request error shape");
         };
