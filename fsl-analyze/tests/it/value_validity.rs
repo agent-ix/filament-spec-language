@@ -370,6 +370,14 @@ pub(crate) fn package_of(declarations: &str) -> CheckedPackage {
 }
 
 pub(crate) fn package_with_source(declarations: &str) -> (CheckedPackage, Vec<u8>) {
+    package_with_source_mode(declarations, CheckMode::Linked)
+}
+
+fn package_of_mode(declarations: &str, mode: CheckMode) -> CheckedPackage {
+    package_with_source_mode(declarations, mode).0
+}
+
+fn package_with_source_mode(declarations: &str, mode: CheckMode) -> (CheckedPackage, Vec<u8>) {
     let text = format!(
         "language \"ix:native\" edition \"1-draft\";\n\
          profile v = \"filament.value.complete/v1\";\n{declarations}\n"
@@ -400,7 +408,7 @@ pub(crate) fn package_with_source(declarations: &str) -> (CheckedPackage, Vec<u8
     );
     let package = CheckedPackage::link(
         declarations
-            .check(CheckMode::Linked, CheckingLimits::default())
+            .check(mode, CheckingLimits::default())
             .unwrap_or_else(|e| panic!("the package checks: {e:?}\n{text}")),
     );
     (package, text.into_bytes())
@@ -1647,8 +1655,13 @@ fn only_scalar_key(package: &CheckedPackage, function: &str) -> OccurrenceKey {
 #[test]
 fn a_mathematical_integer_division_counterexample_replays_to_the_violation() {
     // The mutated divisor domain: nothing excludes b = 0.
-    let violated =
-        package_of("function q using v(a: Integer, b: Integer): Integer pure { a div b }");
+    // Kernel mode leaves the nonzero obligation for runtime, as this test
+    // exercises the complete-V1 executor on that counterexample. Linked
+    // refusal for the same divisor is covered by FR-495-AC-3.
+    let violated = package_of_mode(
+        "function q using v(a: Integer, b: Integer): Integer pure { a div b }",
+        CheckMode::Kernel,
+    );
     let key = only_scalar_key(&violated, "q");
     let key_of_violated = key.clone();
     let target = ValueTarget::select(&violated, "q", &key).unwrap();
@@ -1689,9 +1702,10 @@ fn a_mathematical_integer_division_counterexample_replays_to_the_violation() {
 
     // The holding obligation: the guard keeps the divisor nonzero, so no
     // assignment, the zero divisor included, violates it.
-    let holding = package_of(
+    let holding = package_of_mode(
         "function q using v(a: Integer, b: Integer): Integer pure \
          { if b != 0 then a div b else 0 }",
+        CheckMode::Kernel,
     );
     let key = only_scalar_key(&holding, "q");
     let target = ValueTarget::select(&holding, "q", &key).unwrap();
