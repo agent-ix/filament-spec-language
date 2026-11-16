@@ -22,6 +22,7 @@ fsl-cst = { path = "../fsl-cst" }
 logos = "0.16.1"
 fsl-route = { path = "../fsl-route" }
 fsl-replay = { path = "../fsl-replay" }
+fsl-command = { path = "../fsl-command" }
 fsl-semantics = { path = "../fsl-semantics" }
 filament-exact = { workspace = true }
 quire-canonical = { workspace = true, features = ["serde_json"] }

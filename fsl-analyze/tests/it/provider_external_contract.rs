@@ -153,6 +153,7 @@ fn engines(
         .with(
             Engine::external(
                 descriptor,
+                fsl_analyze::analyze::BackendTool::new("test-provider", "1").expect("a tool"),
                 Box::new(RecordingProvider {
                     verdict,
                     calls: calls.clone(),

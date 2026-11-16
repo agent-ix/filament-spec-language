@@ -370,6 +370,14 @@ pub(crate) fn package_of(declarations: &str) -> CheckedPackage {
 }
 
 pub(crate) fn package_with_source(declarations: &str) -> (CheckedPackage, Vec<u8>) {
+    package_with_source_mode(declarations, CheckMode::Linked)
+}
+
+fn package_of_mode(declarations: &str, mode: CheckMode) -> CheckedPackage {
+    package_with_source_mode(declarations, mode).0
+}
+
+fn package_with_source_mode(declarations: &str, mode: CheckMode) -> (CheckedPackage, Vec<u8>) {
     let text = format!(
         "language \"ix:native\" edition \"1-draft\";\n\
          profile v = \"filament.value.complete/v1\";\n{declarations}\n"
@@ -400,7 +408,7 @@ pub(crate) fn package_with_source(declarations: &str) -> (CheckedPackage, Vec<u8
     );
     let package = CheckedPackage::link(
         declarations
-            .check(CheckMode::Linked, CheckingLimits::default())
+            .check(mode, CheckingLimits::default())
             .unwrap_or_else(|e| panic!("the package checks: {e:?}\n{text}")),
     );
     (package, text.into_bytes())
@@ -1647,8 +1655,13 @@ fn only_scalar_key(package: &CheckedPackage, function: &str) -> OccurrenceKey {
 #[test]
 fn a_mathematical_integer_division_counterexample_replays_to_the_violation() {
     // The mutated divisor domain: nothing excludes b = 0.
-    let violated =
-        package_of("function q using v(a: Integer, b: Integer): Integer pure { a div b }");
+    // Kernel mode leaves the nonzero obligation for runtime, as this test
+    // exercises the complete-V1 executor on that counterexample. Linked
+    // refusal for the same divisor is covered by FR-495-AC-3.
+    let violated = package_of_mode(
+        "function q using v(a: Integer, b: Integer): Integer pure { a div b }",
+        CheckMode::Kernel,
+    );
     let key = only_scalar_key(&violated, "q");
     let key_of_violated = key.clone();
     let target = ValueTarget::select(&violated, "q", &key).unwrap();
@@ -1689,9 +1702,10 @@ fn a_mathematical_integer_division_counterexample_replays_to_the_violation() {
 
     // The holding obligation: the guard keeps the divisor nonzero, so no
     // assignment, the zero divisor included, violates it.
-    let holding = package_of(
+    let holding = package_of_mode(
         "function q using v(a: Integer, b: Integer): Integer pure \
          { if b != 0 then a div b else 0 }",
+        CheckMode::Kernel,
     );
     let key = only_scalar_key(&holding, "q");
     let target = ValueTarget::select(&holding, "q", &key).unwrap();
@@ -1830,7 +1844,14 @@ fn engines_under(
     let (provider, calls) = fake(verdict);
     let mut engines = Engines::fsl().unwrap();
     engines
-        .with(Engine::external(descriptor, Box::new(provider)).unwrap())
+        .with(
+            Engine::external(
+                descriptor,
+                fsl_analyze::analyze::BackendTool::new("test-provider", "1").expect("a tool"),
+                Box::new(provider),
+            )
+            .unwrap(),
+        )
         .unwrap();
     (engines, calls)
 }
@@ -1978,12 +1999,21 @@ fn registering_a_provider_leaves_the_bounded_arms_unbounded_item_requires_bound(
 #[test]
 fn a_provider_is_refused_under_a_bounded_only_descriptor() {
     let (provider, calls) = fake(ProviderVerdict::Proved);
-    let refusal = Engine::external(smt_descriptor(Mode::Bounded), Box::new(provider))
-        .expect_err("bounded only");
+    let refusal = Engine::external(
+        smt_descriptor(Mode::Bounded),
+        fsl_analyze::analyze::BackendTool::new("test-provider", "1").expect("a tool"),
+        Box::new(provider),
+    )
+    .expect_err("bounded only");
     assert_eq!(refusal.backend.as_str(), SMT);
     assert_eq!(calls.load(std::sync::atomic::Ordering::SeqCst), 0);
     let (provider, _) = fake(ProviderVerdict::Proved);
-    let engine = Engine::external(smt_descriptor(Mode::Unbounded), Box::new(provider)).unwrap();
+    let engine = Engine::external(
+        smt_descriptor(Mode::Unbounded),
+        fsl_analyze::analyze::BackendTool::new("test-provider", "1").expect("a tool"),
+        Box::new(provider),
+    )
+    .unwrap();
     assert_eq!(engine.id().as_str(), SMT);
 }
 
@@ -2083,6 +2113,7 @@ fn a_provider_item_stopped_by_the_case_budget_or_cancellation_is_incomplete() {
         .with(
             Engine::external(
                 smt_descriptor(Mode::Unbounded),
+                fsl_analyze::analyze::BackendTool::new("test-provider", "1").expect("a tool"),
                 Box::new(Cancelling(refuted)),
             )
             .unwrap(),

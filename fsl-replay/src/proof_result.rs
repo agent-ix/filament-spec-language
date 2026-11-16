@@ -1491,6 +1491,9 @@ pub struct TerminalRecord {
     /// The `detail` of `diagnostic`, keyed by FR-272 payload names, present
     /// exactly when a disposition settled the record (FR-281, FR-286).
     disposition_detail: Option<serde_json::Map<String, serde_json::Value>>,
+    /// The `detail` of `diagnostic` for a record an engine settled, naming
+    /// what the refusal concerns (a replayed trace step's position).
+    diagnostic_detail: Option<serde_json::Map<String, serde_json::Value>>,
 }
 
 impl TerminalRecord {
@@ -1571,6 +1574,7 @@ impl TerminalRecord {
             exact_certificate: None,
             exact_certificate_document: None,
             disposition_detail: None,
+            diagnostic_detail: None,
         })
     }
 
@@ -1582,6 +1586,19 @@ impl TerminalRecord {
             backend,
             TerminalValue::Proved {
                 basis: ProofBasis::Checks { success_checks },
+                certification: Certification::Certified,
+            },
+        )
+    }
+
+    /// A `proved` record for a supplied finite trace that replayed step by step
+    /// (FR-636): its basis is the completed replay depth, the trace's length.
+    pub fn proved_by_replay(request_index: RequestIndex, backend: BackendId, steps: u64) -> Self {
+        Self::with_backend(
+            request_index,
+            backend,
+            TerminalValue::Proved {
+                basis: ProofBasis::BoundedComplete { depth: steps },
                 certification: Certification::Certified,
             },
         )
@@ -1754,6 +1771,7 @@ impl TerminalRecord {
             exact_certificate: None,
             exact_certificate_document: None,
             disposition_detail: None,
+            diagnostic_detail: None,
         }
     }
 
@@ -1784,6 +1802,7 @@ impl TerminalRecord {
             exact_certificate: None,
             exact_certificate_document: None,
             disposition_detail: Some(detail),
+            diagnostic_detail: None,
         }
     }
 
@@ -1808,6 +1827,7 @@ impl TerminalRecord {
             exact_certificate: None,
             exact_certificate_document: None,
             disposition_detail: Some(detail),
+            diagnostic_detail: None,
         }
     }
 
@@ -1823,6 +1843,7 @@ impl TerminalRecord {
             exact_certificate: None,
             exact_certificate_document: None,
             disposition_detail: None,
+            diagnostic_detail: None,
         }
     }
 
@@ -1921,6 +1942,7 @@ impl TerminalRecord {
             replay: None,
             diagnostic: disposed.then(|| NegotiationOutcome::UnsupportedRequestedCapability.code()),
             disposition_detail: disposed.then(serde_json::Map::new),
+            diagnostic_detail: None,
             exact_certificate: None,
             exact_certificate_document: None,
         }
@@ -1943,6 +1965,7 @@ impl TerminalRecord {
             exact_certificate: None,
             exact_certificate_document: None,
             disposition_detail: None,
+            diagnostic_detail: None,
         }
     }
 
@@ -1989,6 +2012,22 @@ impl TerminalRecord {
     /// (`None` for every other record).
     pub fn disposition_detail(&self) -> Option<&serde_json::Map<String, serde_json::Value>> {
         self.disposition_detail.as_ref()
+    }
+
+    /// The `detail` an engine gave the diagnostic of a record it settled
+    /// (`None` when it gave none).
+    pub fn diagnostic_detail(&self) -> Option<&serde_json::Map<String, serde_json::Value>> {
+        self.diagnostic_detail.as_ref()
+    }
+
+    /// This record with `detail` as the detail of its diagnostic.
+    #[must_use]
+    pub fn with_diagnostic_detail(
+        mut self,
+        detail: serde_json::Map<String, serde_json::Value>,
+    ) -> Self {
+        self.diagnostic_detail = Some(detail);
+        self
     }
 
     /// This record with `diagnostic`, the one diagnostic its settlement

@@ -29,6 +29,9 @@ use fsl_forms::{ExprNode, Expression, ExpressionSpans};
 
 use super::signature_type_forms;
 
+mod source_places;
+pub(super) use source_places::{needed_types, source_places};
+
 /// Where a `Clock` type form is written (FR-230 "Timed facet gate").
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum ClockSite {

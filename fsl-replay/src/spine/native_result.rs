@@ -2609,6 +2609,14 @@ impl Disposition {
                     invariant: fault.invariant(),
                 });
             }
+            // A valuation is read by the TL cross-evaluation (FR-931), never
+            // written as a clause-run result.
+            ClauseDisposition::TemporalValuation(_) => {
+                result.internal_fault = Some(InternalFaultWire {
+                    stage: "clause-run",
+                    invariant: "a-valuation-is-not-a-clause-run-result",
+                });
+            }
             ClauseDisposition::Temporal(verdict) => {
                 let (wire, outcome) = temporal::verdict_wire(verdict, counterexample)?;
                 // FR-267: an `Undefined` that is a violation does not hold.

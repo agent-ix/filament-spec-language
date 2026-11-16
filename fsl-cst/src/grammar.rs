@@ -1159,6 +1159,7 @@ fn expressions(g: &mut Grammar) {
             x("result"),
             s(vec![x("protocol"), r(P::QualifiedName)]),
             r(P::QuantityLiteral),
+            decimal_literal(),
             uint(),
             text(),
             r(P::ExactNumber),
@@ -1413,7 +1414,13 @@ fn temporal(g: &mut Grammar) {
                 x("on"),
                 x("each"),
                 bound_parameter(),
-                opt(s(vec![x("when"), x("("), r(P::Expression), x(")")])),
+                // The guard reads the same expression trees as a `holds`
+                // condition, so a hyper-only form in it is refused by the
+                // same S2 rule, not as a syntax error (FR-612).
+                opt(c(vec![
+                    s(vec![x("when"), x("("), r(P::Expression), x(")")]),
+                    s(vec![x("when"), x("("), r(P::HyperExpression), x(")")]),
+                ])),
             ]),
         ]),
     );
@@ -2974,7 +2981,11 @@ fn probabilistic(g: &mut Grammar) {
                 r(P::Expression),
                 x(")"),
                 bound_op(),
-                c(vec![r(P::ExactValue), r(P::Expression)]),
+                // Parse a full expression first: an exact-value prefix such
+                // as `5` must not steal a quantity expression such as `5 ms`.
+                // The exact-value alternative still admits bare decimal
+                // thresholds that are not general primaries yet.
+                c(vec![r(P::Expression), r(P::ExactValue)]),
             ]),
         ]),
     );

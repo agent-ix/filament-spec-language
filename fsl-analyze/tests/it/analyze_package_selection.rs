@@ -50,7 +50,7 @@ fn first_diagnostic(run: &Run) -> Value {
 /// route's counterexample and replay.
 #[trace("TC-2410", "FR-850-AC-2")]
 #[test]
-#[ignore = "QSL-2271: analyze over a checked-package selection is not implemented yet"]
+#[ignore = "QSL-2271: the in-process checked-package builder from package bytes conflicts with FR-087-AC-2"]
 fn a_package_refutation_equals_the_source_refutation() {
     let body = format!("{}{}{}", bounded(), below_three(), at_most_two());
     let items = json!([{"claim": "AtMostTwo"}]);
@@ -72,19 +72,16 @@ fn a_package_refutation_equals_the_source_refutation() {
 /// request `invalid_package` at the request stage, with no item.
 #[trace("TC-2410", "FR-850-AC-3")]
 #[test]
-#[ignore = "QSL-2271: analyze over a checked-package selection is not implemented yet"]
 fn malformed_package_bytes_refuse_invalid_package() {
     let ws = Workspace::new("package-malformed");
     let (members, package) = package_request(&ws, &bounded(), json!([{"claim": "Bounded"}]));
     let good: Value = serde_json::from_slice(&package).expect("package JSON");
     let mut no_entry = good.clone();
-    if let Some(entries) = no_entry["source_map"].as_object_mut() {
-        if let Some(first) = entries.keys().next().cloned() {
-            entries.remove(&first);
-        }
+    if let Some(entries) = no_entry["source_map"].as_array_mut() {
+        entries.remove(0);
     }
     let mut v1 = good;
-    v1["format"] = json!("filament.checked-package/v1");
+    v1["contract_version"] = json!("filament.checked-package/v1");
     for (name, bytes) in [
         ("empty", b"{}".to_vec()),
         ("v1", v1.to_string().into_bytes()),
@@ -107,7 +104,6 @@ fn malformed_package_bytes_refuse_invalid_package() {
 /// and an unrecorded model refuse before any engine runs.
 #[trace("TC-2410", "FR-850-AC-4")]
 #[test]
-#[ignore = "QSL-2271: analyze over a checked-package selection is not implemented yet"]
 fn compile_members_and_mismatched_models_refuse_beside_a_package() {
     let ws = Workspace::new("package-members");
     let (members, _) = package_request(&ws, &bounded(), json!([{"claim": "Bounded"}]));
@@ -144,6 +140,12 @@ fn compile_members_and_mismatched_models_refuse_beside_a_package() {
     let diagnostic = first_diagnostic(&run);
     assert_eq!(diagnostic["code"], "missing_import", "{diagnostic}");
     assert_eq!(diagnostic["cause"], "missing-selection", "{diagnostic}");
+    assert!(
+        diagnostic["message"]
+            .as_str()
+            .is_some_and(|message| message.contains("test/counter")),
+        "{diagnostic}"
+    );
     assert_eq!(run.exit, 20);
 
     let mut extra = members;
@@ -164,7 +166,7 @@ fn compile_members_and_mismatched_models_refuse_beside_a_package() {
 /// item `unknown-claim`, as the source route does.
 #[trace("TC-2410", "FR-850-AC-5")]
 #[test]
-#[ignore = "QSL-2271: analyze over a checked-package selection is not implemented yet"]
+#[ignore = "QSL-2271: the in-process checked-package builder from package bytes conflicts with FR-087-AC-2"]
 fn an_unknown_claim_over_a_package_settles_unknown_claim() {
     let ws = Workspace::new("package-unknown-claim");
     let (members, _) = package_request(&ws, &bounded(), json!([{"claim": "Missing"}]));
@@ -180,4 +182,27 @@ fn an_unknown_claim_over_a_package_settles_unknown_claim() {
         "{item}"
     );
     assert_eq!(run.exit, 20);
+}
+
+/// FR-940-AC-1 and AC-3: the package route's `BarePackage` reads the same
+/// facts through `AnalysisView` as the source route's `AdmittedPackageRead`
+/// of the compiled package, so a `package` request is no longer
+/// refused as not implemented and its items equal the source route's.
+#[trace("TC-2620", "FR-940-AC-1", "FR-940-AC-3")]
+#[test]
+#[ignore = "QSL-2271: the analysis engines do not read a package through AnalysisView yet"]
+fn a_package_request_reads_the_source_route_facts_through_the_view() {
+    let body = format!("{}{}{}", bounded(), below_three(), at_most_two());
+    let items = json!([{"claim": "Bounded"}, {"claim": "BelowThree"}, {"claim": "AtMostTwo"}]);
+    let ws = Workspace::new("package-view");
+    let source = analyze(&counter_request(&ws, &body, items.clone()));
+    let (members, _) = package_request(&ws, &body, items);
+    let run = analyze_members(&ws, "analyze-view.json", &members);
+    assert!(
+        !run.document().to_string().contains("not-yet-implemented"),
+        "{}",
+        run.document()
+    );
+    assert_eq!(run.document()["items"], source.document()["items"]);
+    assert_eq!(run.exit, source.exit);
 }

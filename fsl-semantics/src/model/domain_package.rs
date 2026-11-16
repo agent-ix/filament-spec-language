@@ -36,6 +36,18 @@ pub struct Multiplicity {
     pub unique: bool,
 }
 
+impl Multiplicity {
+    /// Exactly one value, with no collection ordering or uniqueness contract.
+    pub(crate) const fn one() -> Self {
+        Self {
+            lower: 1,
+            upper: Some(1),
+            ordered: false,
+            unique: true,
+        }
+    }
+}
+
 /// An object type export: `{key, interfaceFeatures, abstract, supertypes}`.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ObjectTypeRecord {
@@ -371,7 +383,9 @@ impl std::fmt::Display for ValueTypeRef {
             Self::Native(native) => write!(f, "ix://filament/native/{}", native.as_str()),
             Self::Package(key) => f.write_str(&key.node),
             Self::Unit(name) => write!(f, "ix://filament/unit/{name}"),
-            Self::Resolved(value_type) => write!(f, "{value_type:?}"),
+            Self::Resolved(value_type) => {
+                f.write_str(&super::spelling::identity_spelling(value_type))
+            }
         }
     }
 }

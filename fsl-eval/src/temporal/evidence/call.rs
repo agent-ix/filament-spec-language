@@ -1412,7 +1412,8 @@ fn admit_trace(
             timestamp_unit.to_string()
         }
         fsl_package::ClockConfiguration::EventPosition { .. }
-        | fsl_package::ClockConfiguration::FixedSample { .. } => String::new(),
+        | fsl_package::ClockConfiguration::FixedSample { .. }
+        | fsl_package::ClockConfiguration::Timed { .. } => String::new(),
     };
     TimestampedTrace::admit(
         clause_facts.name(),

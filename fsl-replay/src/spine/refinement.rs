@@ -574,9 +574,8 @@ fn classify_disposition(disposition: &ClauseDisposition) -> Classification {
         ClauseDisposition::Temporal(_)
         | ClauseDisposition::TemporalRefusal(_)
         | ClauseDisposition::TraceRefused(_)
-        | ClauseDisposition::ProgressContradiction(_) => {
-            one(ToolFailure, Code::RuntimeInvariant, None)
-        }
+        | ClauseDisposition::ProgressContradiction(_)
+        | ClauseDisposition::TemporalValuation(_) => one(ToolFailure, Code::RuntimeInvariant, None),
     }
 }
 

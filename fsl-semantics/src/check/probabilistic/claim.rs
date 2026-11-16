@@ -1356,6 +1356,7 @@ impl Pass<'_, '_> {
                         units: self.input.time_units,
                         rational_bits: self.input.limits.rational_bits(),
                         target,
+                        unit_free: false,
                     })
                 } else {
                     None
@@ -1907,18 +1908,21 @@ impl Pass<'_, '_> {
         let span = root_span(expression, claim.form.span);
         let input = self.input;
         let decimal_hint = match (&measured, expression.expression.root_node()) {
-            (Measured::Expectation(_), ExprNode::DecimalValue { coefficient, scale }) => {
-                Some(ValueType::Decimal(
-                    DecimalType::new(
-                        coefficient.clone(),
-                        coefficient.clone(),
-                        u64::from(*scale),
-                        u64::from(*scale),
-                        RoundingMode::Exact,
-                    )
-                    .map_err(|_| broken("expected-decimal-domain-is-valid"))?,
-                ))
-            }
+            (
+                Measured::Expectation(_),
+                ExprNode::DecimalValue {
+                    coefficient, scale, ..
+                },
+            ) => Some(ValueType::Decimal(
+                DecimalType::new(
+                    coefficient.clone(),
+                    coefficient.clone(),
+                    u64::from(*scale),
+                    u64::from(*scale),
+                    RoundingMode::Exact,
+                )
+                .map_err(|_| broken("expected-decimal-domain-is-valid"))?,
+            )),
             _ => None,
         };
         let hint = match decimal_hint {
@@ -1975,8 +1979,9 @@ impl Pass<'_, '_> {
             (Measured::Expectation(RewardValue::Integer), value) => match value {
                 Value::Rational(rational) => Ok(rational),
                 Value::Decimal(_) => {
-                    let ExprNode::DecimalValue { coefficient, scale } =
-                        expression.expression.root_node()
+                    let ExprNode::DecimalValue {
+                        coefficient, scale, ..
+                    } = expression.expression.root_node()
                     else {
                         return Err(broken("decimal-threshold-is-a-decimal-literal"));
                     };

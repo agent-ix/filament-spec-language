@@ -1307,11 +1307,6 @@ pub enum UnwrittenTimedMember {
     /// present(e))`), whose quantified presence form this producer does not
     /// admit yet.
     ElementPresence,
-    /// A postcondition requiring a clock presence by a comparison with
-    /// `absent` (`self.v != absent`, `not (self.v = absent)`), whose
-    /// `presence_read` S3 does not write yet; `present(self.v)` is written
-    /// (FSpec FR-322 `CW-05`).
-    ComparedPresence,
     /// A reset of an element clock that no single binder selects: a clock
     /// below two collections, or an element named by position.
     ElementReset,
@@ -1327,9 +1322,6 @@ impl UnwrittenTimedMember {
             }
             Self::ElementPresence => {
                 "a predicate reading a clock collection's element presences is not written by this producer"
-            }
-            Self::ComparedPresence => {
-                "a postcondition requiring a clock presence by comparison with `absent`"
             }
             Self::ElementReset => "a reset of an element clock no single binder selects",
         }
@@ -1758,7 +1750,9 @@ pub enum TemporalCause {
         span: Span,
     },
     /// FR-233: a clause writes `clock "model-time"` over a model with no
-    /// `time` member. Located at the clock clause, naming the model.
+    /// `time` member, or (FR-942) writes no clock under the timed profile
+    /// over such a model. Located at the clock clause, or at the `using`
+    /// alias for an unwritten clock, naming the model.
     ModelTimeOnUntimedModel {
         /// The model the clause's subject belongs to.
         model: String,
@@ -1822,6 +1816,28 @@ pub enum TemporalCause {
     /// shared observation interface"). Located at the clause.
     TimedTraceSubject {
         /// The clause's span.
+        span: Span,
+    },
+    /// FR-642 "Checking": `clock "model-time"` over a record trace subject,
+    /// which has no model time source. Located at the clock argument.
+    ModelTimeOnTraceSubject {
+        /// The clock argument's span.
+        span: Span,
+    },
+    /// FR-933 "The binding unit": a role-clock timed clause whose `timed`
+    /// configuration is missing, of another kind, or names no declared unit
+    /// of the `Time` dimension. Located at the clock argument, naming the
+    /// clock role, the declaration and its profile (FR-640).
+    ClockSelection {
+        /// What is wrong with the role's configuration.
+        fault: ClockSelectionFault,
+        /// The clock role, as written.
+        clock: String,
+        /// The clause's declared name.
+        declaration: String,
+        /// The clause's profile.
+        profile: super::TemporalProfile,
+        /// The clock argument's span.
         span: Span,
     },
     /// FSL FR-246, FSpec FR-419: a task set or a claim over it that breaks a
@@ -1932,17 +1948,6 @@ pub enum TemporalCause {
         /// The second declaration's span.
         span: Span,
     },
-    /// A clause over a model subject that writes no `clock` member where
-    /// FR-233 "Default"'s binding contradicts the clause's profile: a timed
-    /// model under a step profile (the default `model-time` selects the timed
-    /// profile) or an untimed model under the timed profile (the default
-    /// `model-steps` is no model time). No requirement states this case, so
-    /// the clause is refused rather than stepped by a guessed clock. Located
-    /// at the clause.
-    MissingClock {
-        /// The clause's span.
-        span: Span,
-    },
 }
 
 /// A time member of a task, for a refusal to name (FSL FR-246).
@@ -1999,6 +2004,41 @@ pub enum TaskSetDefect {
     /// An `amc` claim over a task whose deadline exceeds its period, which
     /// AMC-rtb does not cover.
     AmcDeadlineBeyondPeriod,
+}
+
+/// What is wrong with a clock role's `timed` configuration (FR-640,
+/// FR-933 "The binding unit"), as [`TemporalCause::ClockSelection`] names it.
+#[derive(Clone, Debug, Eq, Hash, PartialEq)]
+pub enum ClockSelectionFault {
+    /// No configuration is given for the role.
+    MissingClockSelection,
+    /// The configuration's `kind` is not `timed`.
+    ClockKindMismatch {
+        /// The supplied configuration's `kind` tag.
+        supplied: &'static str,
+    },
+    /// The configured `unit` names no unit the program unit declares.
+    UnknownClockUnit {
+        /// The configured unit, as written.
+        unit: String,
+    },
+    /// The configured `unit` is a unit of another dimension than `Time`.
+    ClockUnitDimension {
+        /// The configured unit, as written.
+        unit: String,
+    },
+}
+
+impl ClockSelectionFault {
+    /// The FR-640 cause tag.
+    pub const fn tag(&self) -> &'static str {
+        match self {
+            Self::MissingClockSelection => "missing-clock-selection",
+            Self::ClockKindMismatch { .. } => "clock-kind-mismatch",
+            Self::UnknownClockUnit { .. } => "unknown-clock-unit",
+            Self::ClockUnitDimension { .. } => "clock-unit-dimension",
+        }
+    }
 }
 
 /// Why a quantity's unit is not a time unit (FR-230 "The time dimension and
@@ -2127,6 +2167,8 @@ impl TemporalCause {
             | Self::ModelClockName { span, .. }
             | Self::ClockRoleSpellsTick { span, .. }
             | Self::TimedTraceSubject { span }
+            | Self::ModelTimeOnTraceSubject { span }
+            | Self::ClockSelection { span, .. }
             | Self::InvalidTaskSet { span, .. }
             | Self::DuplicateTask { span, .. }
             | Self::DuplicateTaskSet { span, .. }
@@ -2136,8 +2178,7 @@ impl TemporalCause {
             | Self::UnknownReleaseTask { span, .. }
             | Self::UnresolvedReleaseOperation { span, .. }
             | Self::AmbiguousReleaseOperation { span, .. }
-            | Self::DuplicateRelease { span, .. }
-            | Self::MissingClock { span } => *span,
+            | Self::DuplicateRelease { span, .. } => *span,
         }
     }
 
@@ -2198,15 +2239,16 @@ impl TemporalCause {
             | Self::NotEmitted { .. }
             | Self::ProtocolFairnessNotEmitted { .. }
             | Self::ModelClockName { .. }
-            | Self::TimedTraceSubject { .. }
-            | Self::MissingClock { .. } => Code::UnsupportedConstruct,
+            | Self::TimedTraceSubject { .. } => Code::UnsupportedConstruct,
             Self::TimedProfileModelSteps { .. } | Self::ClockRoleSpellsTick { .. } => {
                 Code::IllTyped
             }
             Self::UnresolvedFairnessOperation { .. } => Code::MissingDeclaration,
             Self::InvalidTimedInterval { .. }
             | Self::ModelTimeOnUntimedModel { .. }
+            | Self::ModelTimeOnTraceSubject { .. }
             | Self::InvalidTaskSet { .. } => Code::InvalidTimedModel,
+            Self::ClockSelection { .. } => Code::InvalidRequest,
             Self::DuplicateTask { .. }
             | Self::DuplicateTaskSet { .. }
             | Self::DuplicateRelease { .. } => Code::ConflictingDeclaration,
@@ -2298,8 +2340,7 @@ impl TemporalCause {
             Self::TimedIntervalNotChecked { .. }
             | Self::NotEmitted { .. }
             | Self::ProtocolFairnessNotEmitted { .. }
-            | Self::TimedTraceSubject { .. }
-            | Self::MissingClock { .. } => "not-yet-implemented",
+            | Self::TimedTraceSubject { .. } => "not-yet-implemented",
             Self::ModelClockName { .. } => "declaration-form",
             Self::TimedProfileModelSteps { .. } | Self::ClockRoleSpellsTick { .. } => {
                 "type-mismatch"
@@ -2307,6 +2348,8 @@ impl TemporalCause {
             Self::ParameterType { fault, .. } => type_fault_class(fault).1,
             Self::InvalidTimedInterval { .. } => "invalid-interval",
             Self::ModelTimeOnUntimedModel { .. } => "model-time-on-untimed-model",
+            Self::ModelTimeOnTraceSubject { .. } => "model-time-on-trace-subject",
+            Self::ClockSelection { fault, .. } => fault.tag(),
             Self::UnitlessTimedBound { .. }
             | Self::TimedIntervalUnderStepCount { .. }
             | Self::NotAPlaceExpression { .. } => "type-mismatch",

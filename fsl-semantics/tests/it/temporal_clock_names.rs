@@ -173,7 +173,6 @@ fn forms_refusal(body: &str) -> (Code, String) {
 /// the `on each ... when` guard alike, with no S1 syntax error.
 #[trace("TC-1543", "FR-612-AC-1", "FR-612-AC-2")]
 #[test]
-#[ignore = "QSL-2143: hyper-only forms in a single-trace clause do not refuse uniformly yet"]
 fn hyper_only_forms_refuse_in_a_single_trace_clause() {
     for (body, at) in [
         (
@@ -267,4 +266,102 @@ fn the_timed_profile_refuses_model_steps() {
         (Code::UnsupportedConstruct, Some("declaration-form"))
     );
     assert_eq!(named.as_deref(), Some("\"events\""));
+}
+
+/// FR-233-AC-5's time declaration of the ConfigVersion model.
+const TIMED_MODEL: &str =
+    "dimension Time;\nunit ms : Time = rational(1, 1);\ntime Config dense unit ms;\n";
+
+/// A clause `Settles` over the model subject under the alias `t`, with no
+/// `clock` member, its body `formula`, after the header lines `before`.
+fn unclocked(before: &str, formula: &str) -> String {
+    format!(
+        "{before}temporal Settles using t over (c: Config::ConfigVersion) \
+         on origin {{ {formula} }}"
+    )
+}
+
+/// The clock binding name of the sole clause `Settles` of `graph`.
+fn sole_binding(graph: &CheckedGraph) -> String {
+    let clauses = graph.temporal_clauses();
+    assert_eq!(clauses.len(), 1, "one clause");
+    clauses[0].clause().clock().to_owned()
+}
+
+/// FR-942-AC-1, FSpec FR-765-AC-1: over a timed model under a step profile,
+/// a clause with no `clock` member binds `ModelSteps`, as the written default
+/// does, and a time-unit interval then refuses as a type mismatch.
+#[trace("TC-2622", "FR-942-AC-1", "FSpec-TC-1840", "FSpec-FR-765-AC-1")]
+#[test]
+fn an_unwritten_clock_under_a_step_profile_binds_model_steps_over_a_timed_model() {
+    let steps = profile_t("filament.temporal.event-position.false-extension/v1");
+    let unwritten = check_with(
+        &steps,
+        &unclocked(TIMED_MODEL, "eventually[0,3] holds(c.versionNumber = 2)"),
+    )
+    .unwrap_or_else(|refusals| panic!("the default binding checks: {refusals:?}"));
+    let written = check_with(
+        &steps,
+        &format!(
+            "{TIMED_MODEL}temporal Settles using t over (c: Config::ConfigVersion) \
+             clock \"model-steps\" on origin {{ eventually[0,3] holds(c.versionNumber = 2) }}"
+        ),
+    )
+    .unwrap_or_else(|refusals| panic!("model-steps checks: {refusals:?}"));
+    assert_eq!(sole_binding(&unwritten), sole_binding(&written));
+    assert_eq!(sole_binding(&unwritten), "model-steps");
+    let (code, cause, _) = sole_refusal_with(
+        &steps,
+        &unclocked(
+            TIMED_MODEL,
+            "eventually[0 ms, 3 ms] holds(c.versionNumber = 2)",
+        ),
+    );
+    assert_eq!((code, cause), (Code::IllTyped, Some("type-mismatch")));
+}
+
+/// FR-942-AC-2, FSpec FR-765-AC-2: under the timed profile over an untimed
+/// model a clause with no `clock` member refuses at its `using` alias; under
+/// infinite-trace it binds `ModelSteps`.
+#[trace("TC-2622", "FR-942-AC-2", "FSpec-TC-1840", "FSpec-FR-765-AC-2")]
+#[test]
+fn an_unwritten_clock_under_the_timed_profile_needs_a_timed_model() {
+    let (code, cause, named) = sole_refusal_with(
+        &profile_t("filament.temporal.timed/v1"),
+        &unclocked("", "eventually[0 ms, 3 ms] holds(c.versionNumber = 2)"),
+    );
+    assert_eq!(
+        (code, cause),
+        (Code::InvalidTimedModel, Some("model-time-on-untimed-model"))
+    );
+    assert_eq!(named.as_deref(), Some("t"));
+    let graph = check_with(
+        &profile_t("filament.temporal.infinite-trace/v1"),
+        &unclocked("", "eventually holds(c.versionNumber = 2)"),
+    )
+    .unwrap_or_else(|refusals| panic!("the default binding checks: {refusals:?}"));
+    assert_eq!(sole_binding(&graph), "model-steps");
+}
+
+/// FR-943-AC-1, FSpec FR-766-AC-1: under the timed profile a lower-bounded
+/// interval with no upper bound checks on past and future operators, and a
+/// unitless lower bound refuses as a type mismatch.
+#[trace("TC-2623", "FR-943-AC-1", "FSpec-TC-1841", "FSpec-FR-766-AC-1")]
+#[test]
+#[ignore = "QSL-2321: a timed interval [q, *] is refused OpenInterval under the timed profile"]
+fn a_timed_interval_with_no_upper_bound_checks() {
+    let timed = profile_t("filament.temporal.timed/v1");
+    for formula in [
+        "once[5 ms, *] holds(c.versionNumber = 2)",
+        "eventually[5 ms, *] holds(c.versionNumber = 2)",
+        "once(5 ms, *) holds(c.versionNumber = 2)",
+    ] {
+        check_with(&timed, &unclocked(TIMED_MODEL, formula))
+            .unwrap_or_else(|refusals| panic!("`{formula}` checks: {refusals:?}"));
+    }
+    let (code, cause, _) = sole_refusal_with(
+        &timed,
+        &unclocked(TIMED_MODEL, "once[5, *] holds(c.versionNumber = 2)"),
+    );
+    assert_eq!((code, cause), (Code::IllTyped, Some("type-mismatch")));
 }

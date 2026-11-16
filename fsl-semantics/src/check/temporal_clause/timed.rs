@@ -2,14 +2,16 @@
 //! FR-234: a `temporal` clause under the timed profile
 //! `filament.temporal.timed/v1` (ADR-026 DF-1 to DF-7).
 //!
-//! The timed profile is selected by a `model-time` clock binding (ADR-026
-//! CB-1; FSpec FR-250-AC-7), so a clause under it binds `model-time` over a
-//! timed model first: FR-233's binding, read as far as FR-234 needs it.
-//! `clock "model-time"` over a model with no time source refuses
-//! `invalid_timed_model`/`model-time-on-untimed-model`. `clock "model-steps"`
+//! Over a model subject the timed profile is selected by a `model-time`
+//! clock binding (ADR-026 CB-1; FSpec FR-250-AC-7), so a clause under it
+//! binds `model-time` over a timed model first: FR-233's binding, read as far
+//! as FR-234 needs it. `clock "model-time"` over a model with no time source
+//! refuses `invalid_timed_model`/`model-time-on-untimed-model`, `clock "model-steps"`
 //! contradicts the profile and any other name is no model binding; both are
-//! refused with the clause's clock (FR-233). A subject that is no model
-//! object type (a timed-trace subject) refuses as not yet implemented.
+//! refused with the clause's clock (FR-233). Over a record
+//! trace subject the clock is a role bound by its `timed` configuration
+//! (FR-642, FR-933): the configured unit is the binding unit, and with no
+//! configuration the check refuses `missing-clock-selection`.
 //!
 //! Each timed interval's bounds are time quantities converted exactly to the
 //! binding's unit (FR-233 "Intervals", through FR-230's time units), then
@@ -23,6 +25,7 @@
 //! holding a punctual interval records that interval's span: the request
 //! writer disposes its item `Unsupported`, `PunctualInterval` (DF-5).
 
+use filament_contract_model::ClockConfiguration;
 use filament_exact::{Integer, Rational, ValueType};
 use fsl_forms::{QuantityForm, TimedIntervalForm, TimedUpper};
 use fsl_foundation::bound::TimedInterval;
@@ -38,11 +41,14 @@ use super::{
 };
 use crate::check::lowering::AdmittedModel;
 use crate::check::probabilistic::{exact_value, ExactFault};
-use crate::check::refusal::{CheckRefusal, TemporalCause};
+use crate::check::refusal::{CheckRefusal, ClockSelectionFault, TemporalCause, TimeUnitCause};
 use crate::check::time_units::TimeScale;
 
 /// The clock role that binds `model-time` (ADR-026 CB-1).
 pub(crate) const MODEL_TIME: &str = "model-time";
+
+/// The clock role that binds a model's steps (FR-233).
+const MODEL_STEPS: &str = "model-steps";
 
 /// The kind of a timed model's time source (FR-230 `TimeSource`, FR-233
 /// `TimeSourceKind`).
@@ -134,7 +140,7 @@ impl ModelTimeSource {
     /// two packages (FR-480 "Selections and imports"), so the alias alone
     /// does not name the model.
     pub(crate) fn times(&self, model: &AdmittedModel) -> bool {
-        model.alias() == Some(self.model.as_str())
+        (model.alias() == Some(self.model.as_str()) || model.alias() == Some(""))
             && model
                 .object_type_model_node_keys()
                 .contains(&self.model_node)
@@ -305,6 +311,10 @@ pub(crate) struct TimedReader<'a> {
     pub(crate) units: &'a crate::check::time_units::TimeUnits,
     pub(crate) rational_bits: u64,
     pub(crate) target: TimeScale,
+    /// Whether a unit-free bound is a magnitude in the binding unit (a
+    /// clock role over a record trace subject, FR-933 "Bounds"); under
+    /// `model-time` such a bound refuses `ill_typed`/`type-mismatch`.
+    pub(crate) unit_free: bool,
 }
 
 /// The model a clause over the object type `object` binds, and its time
@@ -340,26 +350,53 @@ pub(crate) fn over_timed(over: &ValueType, declarations: &TemporalDeclarations<'
         .is_some()
 }
 
-/// The clause's `model-time` binding under the timed profile (FR-233,
-/// ADR-026 CB-1), or the refusal its clock role and subject give.
+/// How a clause under the timed profile binds its clock (FR-233, FR-642):
+/// `model-time` over a timed model, or a clock role over a record trace
+/// subject bound by the role's `timed` configuration.
+#[derive(Clone, Debug, Eq, Hash, PartialEq)]
+pub(crate) enum TimedBinding {
+    /// `model-time` over a timed model.
+    Model(ModelTimeBinding),
+    /// A clock role over a record trace subject, read in `unit`, the
+    /// declared time unit its `timed` configuration names (FR-933).
+    Role {
+        /// The configured unit's declared name.
+        unit: String,
+    },
+}
+
+impl TimedBinding {
+    /// The binding unit every interval bound converts to.
+    pub(crate) fn unit(&self) -> &str {
+        match self {
+            Self::Model(binding) => &binding.unit,
+            Self::Role { unit } => unit,
+        }
+    }
+}
+
+/// The clause's timed clock binding under the timed profile (FR-233,
+/// ADR-026 CB-1, FR-642, FR-933), or the refusal its clock role, subject and
+/// clock configuration give. `name` is the clause's declared name.
 pub(crate) fn binding(
     clock: &fsl_forms::ClockForm,
     over: &ValueType,
     declarations: &TemporalDeclarations<'_>,
+    name: &str,
     clause: Span,
-) -> Result<ModelTimeBinding, TemporalCause> {
+) -> Result<TimedBinding, TemporalCause> {
     let ValueType::Reference(object) = over else {
-        return Err(TemporalCause::TimedTraceSubject { span: clause });
+        return role_binding(clock, over, declarations, name, clause);
     };
     let Some((model, source)) = model_of(declarations, object.clone()) else {
         return Err(TemporalCause::TimedTraceSubject { span: clause });
     };
     match (clock.text.as_str(), source) {
-        (MODEL_TIME, Some(source)) => Ok(ModelTimeBinding {
+        (MODEL_TIME, Some(source)) => Ok(TimedBinding::Model(ModelTimeBinding {
             model,
             source: source.source.clone(),
             unit: source.unit.clone(),
-        }),
+        })),
         (MODEL_TIME, None) => Err(TemporalCause::ModelTimeOnUntimedModel {
             model,
             span: clock.span,
@@ -370,6 +407,82 @@ pub(crate) fn binding(
             clock: other.to_owned(),
             span: clock.span,
         }),
+    }
+}
+
+/// FR-642 "Checking", FR-933 "The binding unit": a clause over a record
+/// trace subject binds its clock role through the role's `timed`
+/// configuration, whose `unit` names a declared unit of the `Time`
+/// dimension. No unit is taken from the bounds, the trace or a default.
+fn role_binding(
+    clock: &fsl_forms::ClockForm,
+    over: &ValueType,
+    declarations: &TemporalDeclarations<'_>,
+    name: &str,
+    clause: Span,
+) -> Result<TimedBinding, TemporalCause> {
+    if !matches!(over, ValueType::Composite(_)) {
+        return Err(TemporalCause::TimedTraceSubject { span: clause });
+    }
+    let role = clock.text.as_str();
+    match role {
+        MODEL_TIME => {
+            return Err(TemporalCause::ModelTimeOnTraceSubject { span: clock.span });
+        }
+        MODEL_STEPS => {
+            // FR-610 "Model binding names": a trace subject has no model
+            // steps to bind.
+            return Err(TemporalCause::ClockRoleSpellsTick {
+                role: role.to_owned(),
+                profile: super::TemporalProfile::Timed,
+                span: clock.span,
+            });
+        }
+        _ => {}
+    }
+    let selection = declarations
+        .timed
+        .clock_units
+        .iter()
+        .find(|selected| selected.declaration_span == clause)
+        .map(|selected| &selected.clock);
+    let fault = |fault: ClockSelectionFault| TemporalCause::ClockSelection {
+        fault,
+        clock: role.to_owned(),
+        declaration: name.to_owned(),
+        profile: super::TemporalProfile::Timed,
+        span: clock.span,
+    };
+    let unit = match selection {
+        None => return Err(fault(ClockSelectionFault::MissingClockSelection)),
+        Some(ClockConfiguration::Timed { unit }) => unit.to_string(),
+        Some(other) => {
+            return Err(fault(ClockSelectionFault::ClockKindMismatch {
+                supplied: configuration_kind(other),
+            }))
+        }
+    };
+    match declarations.timed.units.target(&unit) {
+        Ok(Some(_)) => Ok(TimedBinding::Role { unit }),
+        Ok(None) => Err(fault(ClockSelectionFault::ClockUnitDimension { unit })),
+        Err(TimeUnitCause::UnknownUnit { .. } | TimeUnitCause::NoTimeDimension { .. }) => {
+            Err(fault(ClockSelectionFault::UnknownClockUnit { unit }))
+        }
+        Err(
+            TimeUnitCause::NotTimeDimension { .. }
+            | TimeUnitCause::AffineUnit { .. }
+            | TimeUnitCause::OtherTimeDimension { .. },
+        ) => Err(fault(ClockSelectionFault::ClockUnitDimension { unit })),
+    }
+}
+
+/// The `kind` tag of `clock`'s wire form (FR-640).
+fn configuration_kind(clock: &ClockConfiguration) -> &'static str {
+    match clock {
+        ClockConfiguration::EventPosition { .. } => "event_position",
+        ClockConfiguration::FixedSample { .. } => "fixed_sample",
+        ClockConfiguration::TimestampedEvent { .. } => "timestamped_event",
+        ClockConfiguration::Timed { .. } => "timed",
     }
 }
 
@@ -405,6 +518,24 @@ impl TimedReader<'_> {
                     span: quantity.unit.span,
                 })
             })
+    }
+
+    /// The timed interval the unit-free step interval `written` denotes in
+    /// the binding unit: each bound the magnitude it writes (FR-933
+    /// "Bounds"), read when [`Self::unit_free`] holds.
+    pub(crate) fn unit_free_interval(
+        written: &fsl_forms::IntervalForm,
+    ) -> Result<TimedInterval, TemporalCause> {
+        let fsl_forms::IntervalUpper::Finite(upper) = written.upper else {
+            return Err(TemporalCause::OpenInterval { span: written.span });
+        };
+        let magnitude = |value: u64| Rational::from_integer(Integer::from(value));
+        TimedInterval::new(magnitude(written.lower), true, magnitude(upper), true).map_err(
+            |reason| TemporalCause::InvalidTimedInterval {
+                reason,
+                span: written.span,
+            },
+        )
     }
 
     /// The validated interval `written` denotes in the binding's unit.

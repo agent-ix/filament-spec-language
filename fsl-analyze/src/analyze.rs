@@ -79,6 +79,7 @@ pub use clause_item::{ClauseItemRefusal, ClauseLimits, ClauseSubject, CLAUSE_TRA
 pub use exact::{exact_probabilistic_item, ExactProbabilityEvidence};
 #[cfg(feature = "test-support")]
 pub use exact::{exact_probabilistic_item_tampered, exact_probabilistic_item_witness_tampered};
+pub(crate) use items::admission;
 pub use items::{
     derived_model_item, derived_protocol_item, derived_zone_item, hyper_form_item, model_item,
     protocol_item, statistical_item, timed_refinement_item, zone_item, DerivedItemMismatch,
@@ -89,11 +90,64 @@ use crate::external_provider::{ExternalProvider, NotUnbounded, ProviderReport};
 use crate::zone_check::ZoneCheckRecord;
 use crate::{contract_check, external_provider, model_check, statistical, value_check, zone_check};
 
+/// FSpec FR-331 "Backend tool": the closed `{name, version}` naming the code
+/// that decides a backend's results. A linked FSL engine is a pure
+/// in-process engine: its tool is the crate that implements it at its
+/// package version. An external provider names the executable it fronts.
+#[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]
+pub struct BackendTool {
+    name: String,
+    version: String,
+}
+
+/// A [`BackendTool`] with an empty `name` or `version` (FSpec FR-331-AC-37).
+#[derive(Clone, Copy, Debug, Eq, PartialEq, thiserror::Error)]
+#[error("a backend tool names a nonempty name and version")]
+pub struct EmptyToolMember;
+
+impl BackendTool {
+    /// The tool `name` at `version`.
+    ///
+    /// # Errors
+    ///
+    /// [`EmptyToolMember`] when either is empty.
+    pub fn new(
+        name: impl Into<String>,
+        version: impl Into<String>,
+    ) -> Result<Self, EmptyToolMember> {
+        let (name, version) = (name.into(), version.into());
+        if name.is_empty() || version.is_empty() {
+            return Err(EmptyToolMember);
+        }
+        Ok(Self { name, version })
+    }
+
+    /// The tool of an engine linked into this crate.
+    fn linked() -> Self {
+        Self {
+            name: env!("CARGO_PKG_NAME").to_owned(),
+            version: env!("CARGO_PKG_VERSION").to_owned(),
+        }
+    }
+
+    /// The tool's name.
+    pub fn name(&self) -> &str {
+        &self.name
+    }
+
+    /// The tool's version.
+    pub fn version(&self) -> &str {
+        &self.version
+    }
+}
+
 /// One layer-A engine as `analyze` runs it: its backend identity and the
 /// descriptor FR-288 converts its manifest into.
 #[derive(Clone, Debug)]
 pub struct Engine {
     descriptor: BackendDescriptor,
+    /// The code that decides this engine's results (FSpec FR-331).
+    tool: BackendTool,
     /// The external provider an [`Engine::external`] engine decides items
     /// with; absent for the in-process engines.
     provider: Option<std::sync::Arc<dyn ExternalProvider>>,
@@ -105,6 +159,7 @@ impl Engine {
     pub(crate) fn new(descriptor: BackendDescriptor) -> Self {
         Self {
             descriptor,
+            tool: BackendTool::linked(),
             provider: None,
         }
     }
@@ -118,9 +173,10 @@ impl Engine {
     ///
     /// [`NotUnbounded`] when `descriptor` does not advertise `value-validity`
     /// in the `unbounded` mode; no engine is made and `provider` is never
-    /// called.
+    /// called. `tool` is the provider's FSpec FR-331 tool record.
     pub fn external(
         descriptor: BackendDescriptor,
+        tool: BackendTool,
         provider: Box<dyn ExternalProvider>,
     ) -> Result<Self, NotUnbounded> {
         let unbounded = descriptor
@@ -134,6 +190,7 @@ impl Engine {
         Ok(Self {
             descriptor,
             provider: Some(provider.into()),
+            tool,
         })
     }
 
@@ -412,6 +469,8 @@ pub struct ItemDetail {
     pub exploration: Option<fsl_replay::RunStats>,
     /// The qualified-core checker that accepted a proof's certificate.
     pub checker: Option<fsl_replay::CertificateChecker>,
+    /// The steps of the supplied trace a `finite-replay` proof replayed.
+    pub replayed_steps: Option<u64>,
 }
 
 impl ItemDetail {
@@ -427,6 +486,7 @@ impl ItemDetail {
             checker: model
                 .and_then(|model| model.checker)
                 .or_else(|| protocol.and_then(|protocol| protocol.checker)),
+            replayed_steps: record.replayed_steps,
         }
     }
 }
@@ -680,6 +740,13 @@ impl Engines {
         self.engines.iter().map(|engine| &engine.descriptor)
     }
 
+    /// Each registered descriptor with its FSpec FR-331 tool record.
+    pub fn tools(&self) -> impl ExactSizeIterator<Item = (&BackendDescriptor, &BackendTool)> {
+        self.engines
+            .iter()
+            .map(|engine| (&engine.descriptor, &engine.tool))
+    }
+
     /// Add `engine`.
     ///
     /// # Errors
@@ -876,6 +943,8 @@ pub(crate) enum EngineReport {
     Exact(Box<exact::ExactReport>),
     /// The protocol analysis engine's report, settled by FR-573's map.
     ProtocolAnalysis(Box<crate::protocol_analysis::ProtocolAnalysisArtifact>),
+    /// The protocol analysis engine's replay of a supplied finite trace.
+    FiniteReplay(crate::protocol_analysis::FiniteReplayReport),
     /// The engine refused the item, and its settlement map gives the refusal
     /// no terminal record.
     Refused(Refusal),
@@ -1106,6 +1175,9 @@ pub struct AnalyzeRecord {
     pub protocol_analysis: Option<Box<crate::protocol_analysis::ProtocolAnalysisArtifact>>,
     /// The state-graph engine's report (FR-628).
     pub state_graph: Option<Box<GraphReport>>,
+    /// The number of steps of a supplied trace a `finite-replay` item
+    /// replayed to its proof (FR-941).
+    pub replayed_steps: Option<u64>,
 }
 
 /// How an item settled.
@@ -1133,6 +1205,7 @@ impl AnalyzeRecord {
             probabilistic_counterexample: None,
             over_reference: None,
             protocol_subject: None,
+            replayed_steps: None,
             protocol_analysis: None,
             state_graph: None,
         }
@@ -1693,6 +1766,42 @@ fn settle(
         }
         EngineReport::Statistical(statistical) => {
             record(terminal(statistical.into_terminal(index, backend)), None)
+        }
+        EngineReport::FiniteReplay(report) => {
+            let mut replayed = None;
+            let settled_record = match report {
+                crate::protocol_analysis::FiniteReplayReport::Replayed(steps) => {
+                    replayed = Some(steps);
+                    TerminalRecord::proved_by_replay(index, backend, steps)
+                }
+                crate::protocol_analysis::FiniteReplayReport::Declined {
+                    cause,
+                    position,
+                    path,
+                } => {
+                    let declined = TerminalRecord::declined_with(
+                        index,
+                        backend,
+                        ProofRefusalCause::InvalidInput,
+                        DeclineCode::Fsl(fsl_foundation::Code::InvalidRuntimeInput),
+                        CatalogCode::new("invalid_runtime_input", cause),
+                    );
+                    let detail: serde_json::Map<String, serde_json::Value> = position
+                        .map(|position| ("position".to_owned(), serde_json::json!(position)))
+                        .into_iter()
+                        .chain(path.map(|path| ("path".to_owned(), serde_json::json!(path))))
+                        .collect();
+                    if detail.is_empty() {
+                        declined
+                    } else {
+                        declined.with_diagnostic_detail(detail)
+                    }
+                }
+            };
+            AnalyzeRecord {
+                replayed_steps: replayed,
+                ..record(terminal(settled_record), None)
+            }
         }
         EngineReport::ProtocolAnalysis(report) => {
             let (settled_record, artifact) =

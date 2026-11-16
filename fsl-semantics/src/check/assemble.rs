@@ -72,6 +72,7 @@ use crate::library::{ImportView, LibraryName};
 use std::sync::Arc;
 
 mod equivalence;
+mod source_spellings;
 mod units;
 
 pub(crate) use units::{package_dimension, package_unit_key};
@@ -978,6 +979,8 @@ pub(super) fn time_source_owner(index: usize) -> String {
 
 /// The unit's declarations, split by kind, and the names they bind.
 struct Unit {
+    /// Original source type forms, including clock components omitted from data.
+    source_types: Vec<DeclarationForm>,
     aliases: Vec<AliasForm>,
     dimensions: Vec<DimensionForm>,
     equivalences: Vec<DimensionEquivalenceForm>,
@@ -1043,6 +1046,32 @@ impl Unit {
     fn new(forms: Vec<fsl_forms::ParsedForm>, package_bearing: BTreeSet<String>) -> Self {
         let mut clock_forms = clock_forms::classify(&forms, package_bearing);
         let mut unit = Self {
+            source_types: forms
+                .iter()
+                .filter_map(|form| match form.form() {
+                    declaration @ DeclarationForm::Record(record)
+                        if clock_forms.bearing_types.contains(&record.name.name) =>
+                    {
+                        Some(declaration.clone())
+                    }
+                    declaration @ DeclarationForm::Tuple(tuple)
+                        if clock_forms.bearing_types.contains(&tuple.name.name) =>
+                    {
+                        Some(declaration.clone())
+                    }
+                    declaration @ DeclarationForm::Union(union)
+                        if clock_forms.bearing_types.contains(&union.name.name) =>
+                    {
+                        Some(declaration.clone())
+                    }
+                    declaration @ DeclarationForm::Alias(alias)
+                        if clock_forms.bearing_types.contains(&alias.name.name) =>
+                    {
+                        Some(declaration.clone())
+                    }
+                    _ => None,
+                })
+                .collect(),
             aliases: Vec::new(),
             dimensions: Vec::new(),
             equivalences: Vec::new(),
@@ -3395,6 +3424,11 @@ fn resolve_source_object_members(
     } = context;
     let mut normalized_fields = BTreeMap::new();
     let mut normalized_operations = BTreeMap::new();
+    let reference_models = models
+        .iter()
+        .filter(|model| !model.alias.is_empty())
+        .map(|model| model.view.shared_model_index().clone())
+        .collect::<Vec<_>>();
     for object in &unit.objects {
         let Some(index) = object_types
             .iter()
@@ -3457,7 +3491,7 @@ fn resolve_source_object_members(
                     if let Some(owner) = &owner_key {
                         normalized_fields.insert(
                             source_member_declaration_key(owner, &field.name.name),
-                            ValueTypeRef::Resolved(Box::new(value_type)),
+                            source_member_type(&value_type),
                         );
                     }
                 }
@@ -3482,13 +3516,13 @@ fn resolve_source_object_members(
                     TypeFormHead::Builtin(BuiltinType::Clock)
                 ) {
                     clocks.push((position, parameter.name.name.clone()));
-                    normalized_parameters.push(ValueTypeRef::Clock);
+                    normalized_parameters.push((ValueTypeRef::Clock, Multiplicity::one()));
                     continue;
                 }
                 match resolve_form(&object_names, &parameter.value_type) {
                     Ok(value_type) => {
                         parameters.push((parameter.name.name.clone(), value_type.clone()));
-                        normalized_parameters.push(ValueTypeRef::Resolved(Box::new(value_type)));
+                        normalized_parameters.push(source_member_type(&value_type));
                     }
                     Err(error) => errors.push(resolution_error(unit, error)),
                 }
@@ -3511,11 +3545,11 @@ fn resolve_source_object_members(
                     Some(form)
                         if matches!(&form.head, TypeFormHead::Builtin(BuiltinType::Clock)) =>
                     {
-                        Some(ValueTypeRef::Clock)
+                        Some((ValueTypeRef::Clock, Multiplicity::one()))
                     }
                     Some(_) => result
                         .clone()
-                        .map(|value_type| ValueTypeRef::Resolved(Box::new(value_type))),
+                        .map(|value_type| source_member_type(&value_type)),
                     None => None,
                 };
                 normalized_operations.insert(
@@ -3538,12 +3572,71 @@ fn resolve_source_object_members(
         }
     }
     if !normalized_fields.is_empty() || !normalized_operations.is_empty() {
+        let source_spellings: BTreeMap<String, Arc<crate::model::spelling::SourceSpellings>> =
+            models
+                .iter()
+                .filter(|model| model.alias.is_empty())
+                .map(|model| {
+                    (
+                        model.view.domain_package().model_selection.identity.clone(),
+                        Arc::new(source_spellings::build(
+                            unit,
+                            names,
+                            spellings,
+                            source_owners,
+                            model,
+                            models,
+                        )),
+                    )
+                })
+                .collect();
         for model in models.iter_mut().filter(|model| model.alias.is_empty()) {
-            model.view = model
-                .view
-                .with_resolved_source_member_types(&normalized_fields, &normalized_operations);
+            model.view = model.view.with_resolved_source_member_types(
+                &normalized_fields,
+                &normalized_operations,
+                reference_models.clone(),
+                source_spellings
+                    .get(&model.view.domain_package().model_selection.identity)
+                    .cloned()
+                    .unwrap_or_default(),
+            );
         }
     }
+}
+
+/// A source member separates exactly one outer collection into multiplicity.
+fn source_member_type(value_type: &ValueType) -> (ValueTypeRef, Multiplicity) {
+    let (element, multiplicity) = match value_type {
+        ValueType::Collection(collection) => {
+            let (ordered, unique) = match collection.kind() {
+                CollectionKind::Set => (false, true),
+                CollectionKind::Bag => (false, false),
+                CollectionKind::Sequence => (true, false),
+                CollectionKind::OrderedSet => (true, true),
+            };
+            let (lower, upper) = collection
+                .bound()
+                .map_or((0, None), |bound| (bound.minimum(), Some(bound.maximum())));
+            (
+                collection.element(),
+                Multiplicity {
+                    lower,
+                    upper,
+                    ordered,
+                    unique,
+                },
+            )
+        }
+        _ => (value_type, Multiplicity::one()),
+    };
+    let value_ref = match element {
+        ValueType::Reference(identity) => ValueTypeRef::Package(DeclarationKey {
+            package: identity.original().package().to_owned(),
+            node: identity.original().node().to_owned(),
+        }),
+        _ => ValueTypeRef::Resolved(Box::new(element.clone())),
+    };
+    (value_ref, multiplicity)
 }
 
 fn source_member_declaration_key(owner: &DeclarationKey, name: &str) -> DeclarationKey {
@@ -5171,6 +5264,64 @@ impl PackageDeclarations {
         }
         if !errors.is_empty() {
             return refuse(errors);
+        }
+
+        for model in &models {
+            if model.alias.is_empty() {
+                let source_names = names.in_unit(&model_spellings, None);
+                let (clock_roots, needed_clock_types) = clock_forms::needed_types(
+                    &unit.source_types,
+                    &source_names,
+                    model.view.domain_package(),
+                );
+                let inherited_clock_layouts = admitted
+                    .iter()
+                    .filter(|held| held.alias() != Some(""))
+                    .flat_map(|held| held.value_clock_layouts(&needed_clock_types))
+                    .collect();
+                for held in admitted.iter_mut().filter(|held| {
+                    held.alias() == Some("")
+                        && held.selection() == &model.view.domain_package().model_selection
+                }) {
+                    let mut field_spans = BTreeMap::new();
+                    for object in &unit.objects {
+                        let owner = model
+                            .view
+                            .domain_package()
+                            .records
+                            .iter()
+                            .find_map(|record| match record {
+                                DomainPackageRecord::ObjectType(ty)
+                                    if type_identity_segment(&ty.key.package, &ty.key.node)
+                                        == Some(object.name.name.as_str()) =>
+                                {
+                                    Some(&ty.key)
+                                }
+                                _ => None,
+                            });
+                        if let Some(owner) = owner {
+                            for member in &object.members {
+                                if let ObjectMemberForm::Field(field) = member {
+                                    field_spans.insert(
+                                        source_member_declaration_key(owner, &field.name.name),
+                                        field.span,
+                                    );
+                                }
+                            }
+                        }
+                    }
+                    held.refresh_source_view(
+                        &model.view,
+                        clock_forms::source_places(
+                            &unit.source_types,
+                            &source_names,
+                            &inherited_clock_layouts,
+                            &clock_roots,
+                        ),
+                        field_spans,
+                    );
+                }
+            }
         }
 
         // Records and tuples.

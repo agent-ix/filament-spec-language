@@ -549,9 +549,32 @@ pub enum MonitorPlanRefusal {
     /// The exact capacity does not fit in u64.
     #[error("event-buffer capacity exceeds u64")]
     BufferCapacityOverflow,
-    /// The selected clause has no timed binding.
-    #[error("selected clause has no checked model-time binding")]
+    /// The selected clause is not one of the package's temporal clauses.
+    #[error("selected clause is not a temporal clause of the package")]
+    ClauseNotInPackage,
+    /// A timestamped-event clause with no checked model-time binding: its
+    /// ticks are time stamps, yet no time unit is bound to read them.
+    #[error("selected timestamped-event clause has no checked model-time binding")]
     NotTimedClause,
+    /// A position-counted clause's target names another unit than the
+    /// clause's position counter (FR-251 "Non-timed clauses").
+    #[error("position counter unit is `{expected}`, not `{unit}`")]
+    PositionCounterUnit {
+        /// The clause's position-counter unit.
+        expected: String,
+        /// The target's unit.
+        unit: String,
+    },
+    /// A position counter has uncertainty 0, rate 1 and reading gap 1, and
+    /// the target states other premises.
+    #[error("a position counter has uncertainty 0, event rate 1 and reading gap 1")]
+    PositionCounterPremise,
+    /// An open position interval `[a, *]` with `a > 0` has no tick bound.
+    #[error("open interval of operator {node} has a lower bound above 0")]
+    OpenIntervalLowerBound {
+        /// The formula arena index.
+        node: usize,
+    },
     /// The target unit is not a checked exact time unit.
     #[error("target unit is not a checked time unit: {unit}")]
     InvalidTimeUnit {

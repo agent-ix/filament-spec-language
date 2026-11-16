@@ -432,6 +432,16 @@ may repair such a disagreement by inventing another evaluation rule.
   clause is refused only for the reasons FR-251-AC-8 names (an unsupported
   predicate or instruction), each with its typed `MonitorPlanRefusal`, never
   because its profile counts positions.
+  Under the two bounded profiles every operator carries a closed interval
+  (FR-326 "Bounded profiles"), so a non-timed clause that must hold at every
+  position is written with the `on each` activation around its bounded body
+  (`on each (q: T) { p implies eventually[0, 3] q }`), never with an outer
+  `always` that has no interval: the activation starts one obligation instance
+  per position, which is what the unbounded outer operator would have meant,
+  and S3 refuses the outer `always` form before a plan is asked for. Under the
+  infinite-trace profile both forms are admitted and both are planned: the
+  outer unbounded `always` as FR-251-AC-35 plans an unbounded operator, and
+  the `on each` form with one instance per activation.
 - **Tick cover.** A reading `k` covers the **half-open** interval `[k, k+1)`
   of the counter unit (this supersedes ADR-026 MN-2's "closed"), widened at
   each end by the declared uncertainty `u` to `[k-u, k+1+u)`.
@@ -469,6 +479,8 @@ may repair such a disagreement by inventing another evaluation rule.
   cannot decide, and never a refusal. Plan derivation SHALL NOT refuse these
   clauses, nor an unbounded operator over an unbounded one, nor one over a
   future operator; no operator is typed "unsupported" for want of an interval.
+  The timed form `[q, *]` checks under the timed profile and the step form
+  `[a, *]` under infinite-trace (FR-943), so both reach this rule.
   - **Lower boundary.** The monitor's lower-boundary kind is FR-501's
     `HistoryCutoff`, which is what `history_start`, initially the baseline,
     already means for a bounded past operator: the monitor starts at a counter
@@ -726,8 +738,8 @@ may repair such a disagreement by inventing another evaluation rule.
 | FR-251-AC-49 | The authority handoff and order materialization receive the caller's one mutable NativeJoinBudget, precharge every specified selection/materialization work and logical-storage step, and preserve previous consumption when used before row adaptation and native closure preparation. Measure genuine dense and tick handoffs at ample allowance: exact combined work and storage succeed; one short independently preserves the first unpaid native kind, full amount, original bound and non-owning locus without a context. Precharge part of the same budget before entry, then demonstrate that two individually affordable handoffs can exhaust their combined allowance without resetting counters. Package clones yield equal values and charges; zero storage denies before owned allocation, later charges preserve the first refusal within a phase, and overflow cannot wrap. Owner read/canonical ceilings do not act as a second preparation allowance. | Test, Inspection |
 | FR-251-AC-50 | A genuine dense authority returns its original checked ModelTimeSource by borrow and no IR tick period; a genuine tick authority returns its original checked source and an actual borrowed IR CheckedRational with the exact same checked numerator/denominator. The source borrow names the same element of the immutable retained checked-unit source slice. The IR period comes from the selected same-package clock's validated canonical period components, compared against the checked association and copied once under the original shared budget; exact storage for the actual IR container and two component payloads succeeds and one short refuses before copying. Repeated getters return those original values without lookup, cloning, formatting or allocation. FSL TimeSourceKind::Tick retains filament_exact::Rational and is never claimed to be an IR type alias. | Test, Inspection |
 | FR-251-AC-51 | The plan root of a tick-monitor unit with atom `holds(g(c.versionNumber))`, for a helper `g` whose parameter is the unbounded `Integer` (a type that contains the field's bounded type), is written and admitted by the strict reader, exactly as for a helper `f` whose parameter is the field's own type: the checker makes the argument widening an explicit exact integer conversion (FR-065-AC-9), so the argument's type node is the parameter's (Contract IR FR-347). A base package the strict reader refuses is still reported as the typed base-package refusal carrying the reader's catalog code, never as a producer invariant failure (QSL-1822, QSL-1824). | Test (TC-1081) |
-| FR-251-AC-52 | Over the ConfigVersion model subject under the event-position profile with `clock "model-steps"`, `always (holds(c.versionNumber = 2) implies eventually[0, 3] holds(c.versionNumber = 3))` is planned with a `MonitorTarget` of unit `step`, uncertainty 0 and rate 1, never refused `NotTimedClause`: its one interval is `[0, 3]` with no unit conversion and its buffer capacity is 5 (`ceil(1 x (3 + 1)) + 1`). | Test (TC-2385) |
-| FR-251-AC-53 | The clause of AC-52 under the fixed-sample profile with `clock "model-steps"` is planned with the same interval and capacity, and under the infinite-trace profile `always (holds(c.versionNumber = 2) implies eventually holds(c.versionNumber = 3))` is planned as FR-251-AC-35 plans an unbounded operator, each never refused `NotTimedClause`. | Test (TC-2386) |
+| FR-251-AC-52 | Over the ConfigVersion model subject (`over (c: M::ConfigVersion)`) under the event-position profile with `clock "model-steps"`, the clause `on each (q: M::ConfigVersion) { holds(c.versionNumber = 2) implies eventually[0, 3] holds(c.versionNumber = 3) }` is planned with a `MonitorTarget` of unit `step`, uncertainty 0 and rate 1, never refused `NotTimedClause`: its one interval is `[0, 3]` with no unit conversion and its buffer capacity is 5 (`ceil(1 x (3 + 1)) + 1`). The same body written with an outer `always` and no `on each` activation is refused at S3 `unsupported_construct`/`expression-form` at `always`'s span (FR-326-AC-1), so no plan is asked for. | Test (TC-2385) |
+| FR-251-AC-53 | The clause of AC-52 under the fixed-sample profile with `clock "model-steps"` is planned with the same interval and capacity. Under the infinite-trace profile, `on each (q: M::ConfigVersion) { holds(c.versionNumber = 2) implies eventually holds(c.versionNumber = 3) }` is planned with one unbounded `eventually` instance per activation counted against the activation capacity, and `on origin { always (holds(c.versionNumber = 2) implies eventually holds(c.versionNumber = 3)) }` is planned as FR-251-AC-35 plans an unbounded operator, keeping no history buffer; each is never refused `NotTimedClause`. | Test (TC-2386) |
 
 ## Dependencies
 

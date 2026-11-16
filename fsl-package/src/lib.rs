@@ -310,6 +310,10 @@ mod behind_std {}
 const TEST_PACKAGE_NAME: &str = "pkg";
 
 #[cfg(feature = "std")]
+mod package_admission;
+#[cfg(feature = "std")]
+pub use package_admission::{admit_checked_package, PackageAdmissionRefusal};
+#[cfg(feature = "std")]
 mod native_join_failure;
 #[cfg(feature = "std")]
 pub use native_join_failure::NativeJoinFailure;

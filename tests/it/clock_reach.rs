@@ -95,7 +95,7 @@ fn quantile_unit(quantile: &str) -> String {
          unit ms : Time = rational(1, 1000) * s;\n\
          record Resp {{ latency: Quantity<ms>; }}\n\
          temporal P using w over (r: Resp) clock \"plant-ms\" on origin \
-         {{ always[0 ms, 300 s] (quantile {quantile} of r.latency over past[0, 300 s] <= 5 ms) }}\n"
+         {{ always[0, 300000] (quantile {quantile} of r.latency over past[0 ms, 300 s] <= 5 ms) }}\n"
     )
 }
 
@@ -121,7 +121,6 @@ fn responses() -> Value {
 
 #[test]
 #[trace("TC-2387", "FR-194-AC-13")]
-#[ignore = "QSL-2138: spec gap: FR-194-AC-13 writes the operator interval `always[0 ms, 300 s]` under the timestamped-event profile, which FR-326 ('each operator interval SHALL be a step interval', FR-326-AC-6) refuses ill_typed/type-mismatch at S3"]
 fn a_quantile_aggregate_reaches_a_verdict_through_run() {
     let directory = tempfile::tempdir().unwrap();
     let clocks = json!({"plant-ms": {"kind": "timestamped_event", "timestamp_unit": "ms"}});

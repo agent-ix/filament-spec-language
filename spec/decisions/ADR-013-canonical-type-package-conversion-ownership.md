@@ -544,10 +544,7 @@ stopped by an `ExactProbLimits` budget maps to incomplete, with
 threshold.
 
 Amended by ADR-025 MV-1 (weak memory models). `InconclusiveCause` gains
-`MemoryBoundReached{bound, states}`, category inconclusive. The `Unsupported`
-causes gain `WeakAccessShape{failures}`, category unsupported. Its entries
-are ordered by typed protocol transition identity; the first failure supplies
-the headline reason, and the cause retains every failure.
+`MemoryBoundReached{bound, states}`, category inconclusive. No access shape is an `Unsupported` cause (ADR-025 MA-4).
 
 Agreement across backends ([FR-448](../functional/FR-448-cross-check-verification-backends-over-the-conformance-corpus.md)).
 When two or more backends answer the same requirement item, their terminal

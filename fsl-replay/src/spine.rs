@@ -40,8 +40,8 @@ pub use fsl_package::{
 use fsl_package::{ImportViewRefusal, LinkRefusal, OmittedNode};
 use fsl_semantics::check::AssemblyLimits;
 use fsl_semantics::check::{
-    AccessClass, AssemblyCause, AssemblyRefusal, CheckCause, CheckRefusal, ExtensionCause,
-    ProbabilisticCause, ProfileRefusal, ProtocolAnchorCause, ShadowedDeclaration,
+    AccessClass, AssemblyCause, AssemblyRefusal, CheckCause, CheckRefusal, ClockSelectionFault,
+    ExtensionCause, ProbabilisticCause, ProfileRefusal, ProtocolAnchorCause, ShadowedDeclaration,
     SourceObjectFault, TemporalCause, TimeUnitCause, TopologyRetained,
 };
 use fsl_semantics::library::LibraryName;
@@ -53,6 +53,13 @@ mod clocks;
 mod lifecycle;
 pub(crate) use clocks::ClockLocator;
 pub use clocks::{InvalidClock, RequestClocks};
+/// FR-527's TL mapping table and the native valuation a TL cross-evaluation
+/// reads (FR-757, FR-931), for the command adapter's correspondence stage.
+pub use fsl_eval::temporal::{AtomReading, ObservedValuation, TemporalOutcome};
+pub use fsl_package::checked_views::{
+    support_of as tl_support_of, Closure as TlClosure, Support as TlSupport, Target as TlTarget,
+    Unmatched as TlUnmatched,
+};
 pub use fsl_package::TemporalClockSelection;
 mod subject;
 pub use lifecycle::{
@@ -207,22 +214,22 @@ pub(crate) mod clause;
 pub use clause::{
     admit_progress, authenticate_emission, authenticate_package_trace, clause_trace_binding,
     name_clause_atom, read_ledger, run_clause, run_clause_with_temporal_selections,
-    run_package_temporal, run_package_trace_subject, run_trace_subject_clause, sample_position,
-    temporal_batch_exit_code, temporal_batch_outcome, write_ledger, AuthenticatedTemporalSelection,
-    AuthenticationFailure, ClauseArgument, ClauseArgumentValue, ClauseDisposition,
-    ClauseRunRefusal, ClauseRunReport, ClauseRunRequest, ClauseRunSelection, ClauseRunSource,
-    ClauseRunStage, ClauseRunUsage, ConsequentEventRefusal, ConsequentSourceEvent,
-    ConsequentSourceEvents, ConsequentState, ContradictedDimension, FiniteWindowAssessment,
-    FiniteWindowPremises, FiniteWindowReport, FiniteWindowSupport, LedgerBinding, LedgerReadError,
-    ObservedPosition, OperationName, OverObject, PackageAuthentication, PackageTemporalRequest,
-    PackageTraceSubjectRequest, PackagesStage, ProgressAssertion, ProgressClosure,
-    ProgressCompleteness, ProgressContradiction, ProgressLedger, ProgressLedgerEntry,
-    ProgressLimitReached, ProgressLowerBoundary, ProgressRefusal, ProgressValue,
-    TemporalAuthentication, TemporalIndeterminateReason, TemporalPositionRefusal,
-    TemporalTraceRefusal, TemporalUndefinedCause, TemporalVerdict, TemporalWindowRefusal,
-    TimestampedCover, TimestampedMissingValuation, TimestampedObservation, TimestampedOrderKey,
-    TimestampedWindow, TraceBinding, TraceInput, TraceRefusal, TraceSubjectClauseRequest,
-    DEFAULT_MODEL_MAX_CANDIDATES,
+    run_package_temporal, run_package_trace_subject, run_temporal_valuation,
+    run_trace_subject_clause, sample_position, temporal_batch_exit_code, temporal_batch_outcome,
+    write_ledger, AuthenticatedTemporalSelection, AuthenticationFailure, ClauseArgument,
+    ClauseArgumentValue, ClauseDisposition, ClauseRunRefusal, ClauseRunReport, ClauseRunRequest,
+    ClauseRunSelection, ClauseRunSource, ClauseRunStage, ClauseRunUsage, ConsequentEventRefusal,
+    ConsequentSourceEvent, ConsequentSourceEvents, ConsequentState, ContradictedDimension,
+    FiniteWindowAssessment, FiniteWindowPremises, FiniteWindowReport, FiniteWindowSupport,
+    LedgerBinding, LedgerReadError, ObservedPosition, OperationName, OverObject,
+    PackageAuthentication, PackageTemporalRequest, PackageTraceSubjectRequest, PackagesStage,
+    ProgressAssertion, ProgressClosure, ProgressCompleteness, ProgressContradiction,
+    ProgressLedger, ProgressLedgerEntry, ProgressLimitReached, ProgressLowerBoundary,
+    ProgressRefusal, ProgressValue, TemporalAuthentication, TemporalIndeterminateReason,
+    TemporalPositionRefusal, TemporalTraceRefusal, TemporalUndefinedCause, TemporalValuation,
+    TemporalVerdict, TemporalWindowRefusal, TimestampedCover, TimestampedMissingValuation,
+    TimestampedObservation, TimestampedOrderKey, TimestampedWindow, TraceBinding, TraceInput,
+    TraceRefusal, TraceSubjectClauseRequest, DEFAULT_MODEL_MAX_CANDIDATES,
 };
 mod refinement;
 pub use refinement::{
@@ -1787,7 +1794,11 @@ fn check_message(refusals: &[CheckRefusal]) -> String {
                     format!("{message}: the timed interval is invalid: {reason}")
                 }
                 TemporalCause::ModelTimeOnUntimedModel { model, .. } => {
-                    format!("{message}: `model-time` over `{model}`, which has no time member")
+                    format!(
+                        "{message}: `model-time` under `filament.temporal.timed/v1` over \
+                         `{model}`, which has no time member; a step-counted claim over this \
+                         model is written under a step profile"
+                    )
                 }
                 TemporalCause::UnitlessTimedBound { .. } => {
                     format!("{message}: a `model-time` interval bound needs a time unit")
@@ -1830,8 +1841,36 @@ fn check_message(refusals: &[CheckRefusal]) -> String {
                 TemporalCause::TimedTraceSubject { .. } => {
                     format!("{message}: a timed clause over a trace subject is not checked yet")
                 }
-                TemporalCause::MissingClock { .. } => {
-                    format!("{message}: a clause over this subject must write a `clock` member")
+                TemporalCause::ModelTimeOnTraceSubject { .. } => format!(
+                    "{message}: `model-time` over a record trace subject, which has no model \
+                     time source"
+                ),
+                TemporalCause::ClockSelection {
+                    fault,
+                    clock,
+                    declaration,
+                    profile,
+                    ..
+                } => {
+                    let profile = profile.identity();
+                    match fault {
+                        ClockSelectionFault::MissingClockSelection => format!(
+                            "{message}: clock \"{clock}\" used by {declaration} under {profile} \
+                             has no configuration; add \"{clock}\" to the request's clocks member"
+                        ),
+                        ClockSelectionFault::ClockKindMismatch { supplied } => format!(
+                            "{message}: clock \"{clock}\" is a {supplied} configuration but \
+                             {declaration} uses {profile}, which needs timed"
+                        ),
+                        ClockSelectionFault::UnknownClockUnit { unit } => format!(
+                            "{message}: clock \"{clock}\" used by {declaration} under {profile} \
+                             names the unit \"{unit}\", which the program unit does not declare"
+                        ),
+                        ClockSelectionFault::ClockUnitDimension { unit } => format!(
+                            "{message}: clock \"{clock}\" used by {declaration} under {profile} \
+                             names the unit \"{unit}\", which is not a unit of the dimension Time"
+                        ),
+                    }
                 }
                 TemporalCause::TimedFacetRequired { owner, .. } => format!(
                     "{message}: `{owner}` is a timed declaration, which needs the \

@@ -314,7 +314,8 @@ pub fn replay_frame(
         | ClauseDisposition::TemporalRefusal(_)
         | ClauseDisposition::TraceRefused(_)
         | ClauseDisposition::ProgressContradiction(_)
-        | ClauseDisposition::ArgumentRefusal(_) => {
+        | ClauseDisposition::ArgumentRefusal(_)
+        | ClauseDisposition::TemporalValuation(_) => {
             return Err(ReplayRefusal::Fault(InternalFault::new(
                 "replay",
                 "frame-check-reports-admission-or-evaluation",

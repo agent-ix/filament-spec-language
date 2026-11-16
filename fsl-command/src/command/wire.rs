@@ -156,6 +156,10 @@ pub(super) struct Request {
     /// FR-640: the clock configurations by clock name; empty when absent.
     #[serde(default, deserialize_with = "clocks")]
     pub clocks: fsl_replay::spine::RequestClocks,
+    /// FR-931: the TL lowering request member, decoded by its own reader so
+    /// each refusal names its member path; none when absent.
+    #[serde(default, deserialize_with = "present_json_value")]
+    pub tl_lowering: Option<serde_json::Value>,
 }
 
 fn from_object_opt<'de, D: serde::Deserializer<'de>, T: serde::Deserialize<'de>>(
@@ -353,6 +357,8 @@ pub(super) struct AnalyzeRequest {
     pub libraries: Vec<Library>,
     #[serde(default, deserialize_with = "present_json_value")]
     pub refinement_internals: Option<serde_json::Value>,
+    #[serde(default, deserialize_with = "present_json_value")]
+    pub integer_division: Option<serde_json::Value>,
     #[serde(default, deserialize_with = "deserialize_objects")]
     pub documents: Vec<FileSelection>,
     #[serde(default)]

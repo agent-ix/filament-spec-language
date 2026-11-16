@@ -471,6 +471,8 @@ pub(super) struct TemporalRun<'a> {
     pub(super) authentication: Option<TemporalAuthentication<'a>>,
     /// The caller's handle: every charge of the run's meter polls it.
     pub(super) cancel: Option<&'a filament_exact::Cancel>,
+    /// Whether the run reports its valuation (FR-757) in place of a verdict.
+    pub(super) valuation: bool,
 }
 
 /// The emitted package a clock-bearing trace is authenticated against.
@@ -729,6 +731,7 @@ pub fn run_package_temporal(request: &PackageTemporalRequest<'_>) -> ClauseRunRe
             ledger: request.ledger,
             authentication: request.authentication,
             cancel: Some(request.cancel),
+            valuation: false,
         },
     )
 }
@@ -742,6 +745,7 @@ pub(super) fn run_temporal(run: &CompiledRun<'_>, request: &TemporalRun<'_>) -> 
         ledger,
         authentication,
         cancel,
+        valuation,
     } = *request;
     // A trace is evidence for that trace only: it settles no item and
     // derives no witness (FR-332).
@@ -785,6 +789,16 @@ pub(super) fn run_temporal(run: &CompiledRun<'_>, request: &TemporalRun<'_>) -> 
         });
     };
     let clause = node.clause();
+    // FR-931: a valuation run with an empty finite trace asks for the
+    // checked clause alone.
+    if valuation && matches!(trace, TraceInput::Finite(positions) if positions.is_empty()) {
+        return early(ClauseDisposition::TemporalValuation(Box::new(
+            super::TemporalValuation {
+                clause: clause.clone(),
+                positions: None,
+            },
+        )));
+    }
     let site = ClauseSite {
         package: run.package,
         node,
@@ -1053,6 +1067,36 @@ pub(super) fn run_temporal(run: &CompiledRun<'_>, request: &TemporalRun<'_>) -> 
         ObservedPositions::Objects { environments, over } => Some((environments, over)),
         ObservedPositions::Samples(_) => None,
     };
+
+    // FR-757 "Cross-evaluation": a valuation run reads every atom and
+    // activation of the admitted closed finite trace through the one clause
+    // evaluator, in place of the verdict.
+    if valuation {
+        return match fsl_eval::temporal::observed_valuation(
+            run.package,
+            node,
+            observing,
+            shape,
+            &mut meter,
+        ) {
+            Ok(positions) => late(ClauseDisposition::TemporalValuation(Box::new(
+                super::TemporalValuation {
+                    clause: clause.clone(),
+                    positions: Some(positions),
+                },
+            ))),
+            Err(fsl_eval::temporal::ValuationStop::NotFinite) => early(refused(
+                "invalid-value",
+                BTreeMap::from([("member", "trace".to_owned())]),
+            )),
+            Err(_) => late(ClauseDisposition::EvaluateFault(
+                filament_semantic_value::catalog::InternalFault::new(
+                    "temporal",
+                    "valuation-reads-every-atom-and-activation",
+                ),
+            )),
+        };
+    }
 
     // QSL-2138: only the closed finite route below reads window aggregates.
     if sampled
