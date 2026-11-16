@@ -39,7 +39,10 @@ fn assemble(headers: &str, declarations: &str) -> Result<PackageDeclarations, St
         SelectedModels::default(),
         Vec::new(),
     )
-    .map_err(|refusal| format!("{refusal:?}"))
+    .map_err(|refusal| {
+        let codes = refusal.errors.iter().map(|error| error.cause.catalog_code().to_string()).collect::<Vec<_>>().join(", ");
+        format!("{codes}: {refusal:?}")
+    })
 }
 
 fn check(
@@ -75,6 +78,23 @@ fn only_nonzero(refusals: &[CheckRefusal]) {
 
 const DIV_REM: &str = "function q using v(a: Int[-7, 7], b: Int[1, 3]): Int[-7, 7] pure { a div b }\n\
                        function r using v(a: Int[-7, 7], b: Int[1, 3]): Int[-7, 7] pure { a rem b }";
+
+#[test]
+#[trace("TC-2188", "FR-767-AC-1")]
+fn a_large_remainder_keeps_its_exact_range_or_reports_the_work_limit() {
+    let headers = format!("{VALUE}{}", law_header("d", "euclidean"));
+    let body = "function big using v(a: Int[1000000007,1000000007], b: Int[2,1000000006]): Int[1,500000003] pure { a rem b }";
+    assemble(&headers, body).unwrap().check(CheckMode::Linked, CheckingLimits::default()).unwrap();
+    let denied = assemble(&headers, body).unwrap().check(CheckMode::Linked, CheckingLimits::default().with_work_budget(10000)).unwrap_err();
+    assert_eq!(denied.len(), 1, "{denied:?}");
+    let CheckCause::ResourceExhausted(limit) = &denied[0].cause else { panic!("{denied:?}") };
+    assert_eq!(limit.kind, fsl_semantics::check::CheckingLimitKind::WorkBudget);
+    assert_eq!(limit.limit, 10000);
+    assert_eq!(limit.actual, 10001);
+    let too_narrow = body.replace("Int[1,500000003] pure", "Int[2,500000003] pure");
+    let refused = assemble(&headers, &too_narrow).unwrap().check(CheckMode::Linked, CheckingLimits::default()).unwrap_err();
+    assert_eq!(pairs(&refused), [("undefined_expression".to_owned(), Some("unproved-range"))]);
+}
 
 #[trace("TC-1780", "FR-670-AC-1", "FSpec-TC-1280", "FSpec-FR-570-AC-1")]
 #[test]

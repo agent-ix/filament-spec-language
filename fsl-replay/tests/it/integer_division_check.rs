@@ -123,10 +123,18 @@ fn every_fence_takes_the_supplied_law() {
     );
     assert_eq!(report.fences[0].body.identity, "doc#First");
     assert_eq!(report.fences[1].body.identity, "doc#Second");
-    let document: serde_json::Value = serde_json::from_slice(&fsl_replay::OutcomeDocument::from_native_fences(&report).to_bytes().unwrap()).unwrap();
+    let document: serde_json::Value = serde_json::from_slice(
+        &fsl_replay::OutcomeDocument::from_native_fences(&report)
+            .to_bytes()
+            .unwrap(),
+    )
+    .unwrap();
     assert_eq!(document["operation"], "check");
     assert_eq!(document["items"].as_array().unwrap().len(), 2);
-    assert_eq!(document["items"][0]["unit"]["body"]["identity"], "doc#First");
+    assert_eq!(
+        document["items"][0]["unit"]["body"]["identity"],
+        "doc#First"
+    );
     request.integer_division = None;
     let report = spine::check_native_fences(&request, Default::default(), &Cancel::new())
         .unwrap()

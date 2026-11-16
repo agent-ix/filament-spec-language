@@ -3,7 +3,7 @@
 
 use filament_exact::Cancel;
 use filament_semantic_value::catalog::Category;
-use fsl_foundation::diagnostic::{StageFailure, Staged, StageWork};
+use fsl_foundation::diagnostic::{StageFailure, StageWork, Staged};
 use fsl_foundation::source::provenance::SourceRegion;
 use fsl_foundation::{Code, Diagnostic, Source, SourceIdentity};
 
@@ -47,9 +47,15 @@ impl serde::Serialize for NativeFenceDiagnostic {
         use serde::ser::SerializeStruct;
         let mut record = serializer.serialize_struct("NativeFenceDiagnostic", 2)?;
         record.serialize_field("diagnostic", &self.diagnostic)?;
-        let regions: Vec<_> = self.original_regions.iter().map(|region| OutcomeLocus::Region {
-            source: region.source().clone(), start: region.start(), end: region.end(),
-        }).collect();
+        let regions: Vec<_> = self
+            .original_regions
+            .iter()
+            .map(|region| OutcomeLocus::Region {
+                source: region.source().clone(),
+                start: region.start(),
+                end: region.end(),
+            })
+            .collect();
         record.serialize_field("original_regions", &regions)?;
         record.end()
     }
@@ -231,7 +237,9 @@ pub fn check_native_fences(
                     ),
                 }
             })();
-            if let Ok(checked) = &checked { add_work(&mut work, checked.work()); }
+            if let Ok(checked) = &checked {
+                add_work(&mut work, checked.work());
+            }
             if let Err(failure) = &checked {
                 if let StageFailure::Cancelled(cause) = failure {
                     return Err(StageFailure::Cancelled(*cause));

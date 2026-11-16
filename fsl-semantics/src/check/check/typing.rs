@@ -3043,7 +3043,31 @@ impl<'a> Typer<'a> {
                             )?
                         }
                         IntegerDivisionOperator::Div | IntegerDivisionOperator::Rem => {
-                            ValueType::Integer
+                    let range = if let Some(selection) = selection {
+                        let dividend = self.static_range(&left);
+                        let divisor = self.static_range(&right);
+                        let mut charge = || {
+                            if self.cancel.is_some_and(filament_exact::Cancel::poll) {
+                                return Err(super::cancelled_refusal(&location));
+                            }
+                            let denied = if let Some(context) = &mut self.context {
+                                context.meter.charge(filament_exact::Charge::new(filament_exact::ChargePoint::DeclarationCheck)
+                                    .work(Integer::one())).err().map(|denial| (denial.limit, u128::from(denial.consumed) + 1))
+                            } else {
+                                self.integer_division_work = self.integer_division_work.saturating_add(1);
+                                (self.integer_division_work > self.limits.work_budget()).then_some((self.limits.work_budget(), u128::from(self.integer_division_work)))
+                            };
+                            match denied {
+                                Some((limit, actual)) => Err(refuse(&location, CheckCause::ResourceExhausted(Box::new(super::StageLimitCause {
+                                    stage: super::CheckingStage::Typing, kind: super::CheckingLimitKind::WorkBudget, limit, actual, region: None,
+                                })))),
+                                None => Ok(()),
+                            }
+                        };
+                        super::integer_division_range::infer(operator, selection.profile(), dividend, divisor, &mut charge, &location)?
+                    } else { None };
+                    let value_type = match range { Some((lo,hi)) => int_type(lo,hi,&location)?, None => ValueType::Integer };
+                        value_type
                         }
                     };
                     let left = self.push(left);
