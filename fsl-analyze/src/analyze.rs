@@ -90,11 +90,64 @@ use crate::external_provider::{ExternalProvider, NotUnbounded, ProviderReport};
 use crate::zone_check::ZoneCheckRecord;
 use crate::{contract_check, external_provider, model_check, statistical, value_check, zone_check};
 
+/// FSpec FR-331 "Backend tool": the closed `{name, version}` naming the code
+/// that decides a backend's results. A linked FSL engine is a pure
+/// in-process engine: its tool is the crate that implements it at its
+/// package version. An external provider names the executable it fronts.
+#[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]
+pub struct BackendTool {
+    name: String,
+    version: String,
+}
+
+/// A [`BackendTool`] with an empty `name` or `version` (FSpec FR-331-AC-37).
+#[derive(Clone, Copy, Debug, Eq, PartialEq, thiserror::Error)]
+#[error("a backend tool names a nonempty name and version")]
+pub struct EmptyToolMember;
+
+impl BackendTool {
+    /// The tool `name` at `version`.
+    ///
+    /// # Errors
+    ///
+    /// [`EmptyToolMember`] when either is empty.
+    pub fn new(
+        name: impl Into<String>,
+        version: impl Into<String>,
+    ) -> Result<Self, EmptyToolMember> {
+        let (name, version) = (name.into(), version.into());
+        if name.is_empty() || version.is_empty() {
+            return Err(EmptyToolMember);
+        }
+        Ok(Self { name, version })
+    }
+
+    /// The tool of an engine linked into this crate.
+    fn linked() -> Self {
+        Self {
+            name: env!("CARGO_PKG_NAME").to_owned(),
+            version: env!("CARGO_PKG_VERSION").to_owned(),
+        }
+    }
+
+    /// The tool's name.
+    pub fn name(&self) -> &str {
+        &self.name
+    }
+
+    /// The tool's version.
+    pub fn version(&self) -> &str {
+        &self.version
+    }
+}
+
 /// One layer-A engine as `analyze` runs it: its backend identity and the
 /// descriptor FR-288 converts its manifest into.
 #[derive(Clone, Debug)]
 pub struct Engine {
     descriptor: BackendDescriptor,
+    /// The code that decides this engine's results (FSpec FR-331).
+    tool: BackendTool,
     /// The external provider an [`Engine::external`] engine decides items
     /// with; absent for the in-process engines.
     provider: Option<std::sync::Arc<dyn ExternalProvider>>,
@@ -106,6 +159,7 @@ impl Engine {
     pub(crate) fn new(descriptor: BackendDescriptor) -> Self {
         Self {
             descriptor,
+            tool: BackendTool::linked(),
             provider: None,
         }
     }
@@ -119,9 +173,10 @@ impl Engine {
     ///
     /// [`NotUnbounded`] when `descriptor` does not advertise `value-validity`
     /// in the `unbounded` mode; no engine is made and `provider` is never
-    /// called.
+    /// called. `tool` is the provider's FSpec FR-331 tool record.
     pub fn external(
         descriptor: BackendDescriptor,
+        tool: BackendTool,
         provider: Box<dyn ExternalProvider>,
     ) -> Result<Self, NotUnbounded> {
         let unbounded = descriptor
@@ -135,6 +190,7 @@ impl Engine {
         Ok(Self {
             descriptor,
             provider: Some(provider.into()),
+            tool,
         })
     }
 
@@ -682,6 +738,13 @@ impl Engines {
     /// callers cannot substitute a capability-only registration.
     pub fn registrations(&self) -> impl ExactSizeIterator<Item = &BackendDescriptor> {
         self.engines.iter().map(|engine| &engine.descriptor)
+    }
+
+    /// Each registered descriptor with its FSpec FR-331 tool record.
+    pub fn tools(&self) -> impl ExactSizeIterator<Item = (&BackendDescriptor, &BackendTool)> {
+        self.engines
+            .iter()
+            .map(|engine| (&engine.descriptor, &engine.tool))
     }
 
     /// Add `engine`.

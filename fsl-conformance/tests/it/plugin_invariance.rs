@@ -77,7 +77,14 @@ fn plugin() -> BackendDescriptor {
 fn engines_with_plugin() -> Engines {
     let mut engines = Engines::fsl().expect("the layer-A manifests register");
     engines
-        .with(Engine::external(plugin(), Box::new(Standin)).expect("an unbounded value arm"))
+        .with(
+            Engine::external(
+                plugin(),
+                fsl_analyze::analyze::BackendTool::new("test-provider", "1").expect("a tool"),
+                Box::new(Standin),
+            )
+            .expect("an unbounded value arm"),
+        )
         .expect("a new backend");
     engines
 }

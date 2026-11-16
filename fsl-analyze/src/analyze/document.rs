@@ -1689,10 +1689,20 @@ pub fn analyze_document(
         "status": if gaps.is_empty() { "complete" } else { "incomplete" },
         "gaps": gaps,
     });
+    // FR-635 "Outputs": `{backend, tool}` of every registered backend,
+    // sorted by backend.
+    let mut registry: Vec<(&str, &super::BackendTool)> = engines
+        .tools()
+        .map(|(descriptor, tool)| (descriptor.id().as_str(), tool))
+        .collect();
+    registry.sort_unstable();
     document["registry"] = Value::Array(
-        engines
-            .registrations()
-            .map(|descriptor| json!(descriptor.id().as_str()))
+        registry
+            .into_iter()
+            .map(|(backend, tool)| {
+                json!({"backend": backend,
+                    "tool": {"name": tool.name(), "version": tool.version()}})
+            })
             .collect(),
     );
     let category = Category::most_severe(

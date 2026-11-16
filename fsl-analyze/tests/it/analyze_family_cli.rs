@@ -343,6 +343,14 @@ fn an_item_naming_a_registered_provider_settles_on_it() {
         .collect();
     assert!(registry.contains(&json!(provider)));
     assert!(registry.contains(&json!("en-1")) && registry.contains(&json!("en-7")));
+    // FR-635 "Outputs": each entry carries its backend's FSpec FR-331 tool.
+    assert!(run.document()["registry"]
+        .as_array()
+        .expect("registry")
+        .iter()
+        .all(|entry| entry["tool"]["name"]
+            .as_str()
+            .is_some_and(|name| !name.is_empty())));
     assert_eq!(label(&run.item(1)), "proved");
 }
 
@@ -388,8 +396,12 @@ fn process_provider(
         },
     )
     .expect("the descriptor advertises the external value arm");
-    fsl_analyze::analyze::Engine::external(descriptor, Box::new(AnsweringProvider(verdict)))
-        .expect("the descriptor is unbounded")
+    fsl_analyze::analyze::Engine::external(
+        descriptor,
+        fsl_analyze::analyze::BackendTool::new("test-provider", "1").expect("a tool"),
+        Box::new(AnsweringProvider(verdict)),
+    )
+    .expect("the descriptor is unbounded")
 }
 
 /// FR-635 "One rule for every provider-routing entry": a process provider
@@ -416,12 +428,36 @@ fn analyze_with_providers_registers_a_process_provider() {
     let item = run.item(0);
     assert_eq!(label(&item), "proved", "{item}");
     assert_eq!(item["record"]["certification"], "trusted", "{item}");
-    let registry: Vec<Value> = run.document()["registry"]
+    // FR-635 "Outputs": the sorted `{backend, tool}` of every registered
+    // backend, the provider's with the tool it was registered with.
+    let entries = run.document()["registry"]
         .as_array()
         .expect("registry")
         .clone();
+    let registry: Vec<Value> = entries
+        .iter()
+        .map(|entry| entry["backend"].clone())
+        .collect();
     assert!(registry.contains(&json!(PROCESS_PROVIDER)), "{registry:?}");
     assert!(registry.contains(&json!("en-1")), "{registry:?}");
+    let mut sorted: Vec<&str> = registry.iter().filter_map(Value::as_str).collect();
+    sorted.sort_unstable();
+    let listed: Vec<&str> = registry.iter().filter_map(Value::as_str).collect();
+    assert_eq!(listed, sorted, "the registry is sorted by backend");
+    let provider = entries
+        .iter()
+        .find(|entry| entry["backend"] == PROCESS_PROVIDER)
+        .expect("the provider is listed");
+    assert_eq!(
+        provider["tool"],
+        json!({"name": "test-provider", "version": "1"}),
+        "{provider}"
+    );
+    let en1 = entries
+        .iter()
+        .find(|entry| entry["backend"] == "en-1")
+        .expect("en-1 is listed");
+    assert_eq!(en1["tool"]["name"], "fsl-analyze", "{en1}");
     let without = analyze(&request);
     assert_eq!(run.item(1), without.item(1));
 }
