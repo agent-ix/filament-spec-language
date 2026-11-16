@@ -2096,3 +2096,98 @@ fn each_call_reports_its_own_usage_and_is_charged_its_own_limit() {
     let usage = step.statuses[0].1.record().usage().expect("usage");
     assert_eq!(work(&usage.step), 0, "a settled clause charges nothing");
 }
+
+/// FR-820 "Bytes", FR-643-AC-12: a state whose call exhausted a per-call
+/// work limit writes that limit into its bytes, and the state read back
+/// reports the same `incomplete` report.
+#[test]
+#[trace("TC-2320", "FR-820-AC-3")]
+fn an_exhausted_state_reads_back_from_its_bytes_with_its_limit() {
+    let world = world();
+    let cancel = Cancel::new();
+    for name in ["AtMostOne", "Bounded"] {
+        let mut open = clause_open(
+            &world,
+            ClauseTraceKind::Finite,
+            None,
+            ProgressLowerBoundary::AuthoritativeOrigin,
+        );
+        open.limits.accounting = filament_exact::ScalarLimits {
+            work_units: 3,
+            ..UNLIMITED
+        };
+        let node = clause_node(&world, name);
+        let mut state = ClauseState::open(world.unit.package(), node, &open).expect("opens");
+        let mut exhausted = false;
+        for (index, level) in [0, 1, 1, 0].iter().enumerate() {
+            let observed = text(*level);
+            let advance = state
+                .advance(admitted(&world, name, &observed, index as u64), &cancel)
+                .expect("advances");
+            if matches!(
+                advance.report.disposition,
+                spine::ClauseDisposition::Temporal(spine::TemporalVerdict::Incomplete(_))
+            ) {
+                exhausted = true;
+                break;
+            }
+        }
+        assert!(exhausted, "{name}: the work limit ends the evaluation");
+        let bytes = state.to_bytes().expect("writes");
+        let document: serde_json::Value = serde_json::from_slice(&bytes).expect("json");
+        assert_eq!(
+            document["exhausted"]["limit_kind"], "work_units",
+            "{name}: the bytes carry the limit"
+        );
+        let resumed = ClauseState::from_bytes(world.unit.package(), node, &open, &bytes, &cancel)
+            .expect("reads back");
+        assert_eq!(
+            members(&resumed.report()),
+            members(&state.report()),
+            "{name}"
+        );
+        assert_eq!(resumed.to_bytes().expect("writes"), bytes, "{name}");
+    }
+}
+
+/// FR-820 "No partial state": `restore` puts back the state a `mark` was
+/// taken of, so a session can undo one clause's call without copying it, and
+/// the state then continues as one that never made the call.
+#[test]
+#[trace("TC-2320", "FR-820-AC-3")]
+fn a_restored_mark_undoes_one_call() {
+    let world = world();
+    let cancel = Cancel::new();
+    let levels = [0, 1, 2, 1, 0];
+    for name in ["Bounded", "Reaches", "AtMostOne", "Recent"] {
+        let mut state = finite_state(&world, name);
+        let mut uninterrupted = finite_state(&world, name);
+        for (index, level) in levels[..2].iter().enumerate() {
+            let observed = text(*level);
+            for target in [&mut state, &mut uninterrupted] {
+                target
+                    .advance(admitted(&world, name, &observed, index as u64), &cancel)
+                    .expect("advances");
+            }
+        }
+        let bytes = state.to_bytes().expect("writes");
+        let mark = state.mark();
+        let observed = text(levels[2]);
+        state
+            .advance(admitted(&world, name, &observed, 2), &cancel)
+            .expect("advances");
+        state.restore(mark);
+        assert_eq!(state.to_bytes().expect("writes"), bytes, "{name}");
+        for (index, level) in levels.iter().enumerate().skip(2) {
+            let observed = text(*level);
+            let a = state
+                .advance(admitted(&world, name, &observed, index as u64), &cancel)
+                .expect("advances");
+            let b = uninterrupted
+                .advance(admitted(&world, name, &observed, index as u64), &cancel)
+                .expect("advances");
+            assert_eq!(members(&a.report), members(&b.report), "{name} at {index}");
+            assert_eq!(state.retained(), uninterrupted.retained(), "{name}");
+        }
+    }
+}

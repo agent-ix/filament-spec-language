@@ -237,6 +237,35 @@ pub struct ClauseState<'a> {
     /// The canonical text of each record sample held by value, by
     /// position, for a state that cites its samples by index.
     texts: BTreeMap<u64, String>,
+    /// The snapshot document the latest advance added, which a restore
+    /// removes again.
+    fresh_snapshot: Option<DocumentRef>,
+}
+
+/// FR-820 "No partial state": what [`ClauseState::restore`] puts back, the
+/// state before one call. The positions and letters the state appends are
+/// kept as their counts, so a mark costs the bounded part of the state, not
+/// the trace.
+#[derive(Clone)]
+pub struct ClauseMark {
+    seen: usize,
+    tape: usize,
+    snapshots: usize,
+    fresh_snapshot: Option<DocumentRef>,
+    values: BTreeMap<u64, Value>,
+    pinned: BTreeSet<u64>,
+    captures: Vec<Value>,
+    progress: Option<ProgressAssertion>,
+    ledger: Option<ProgressLedger>,
+    report: Arc<ClauseRunReport>,
+    evaluated: Option<(usize, Option<ProgressAssertion>)>,
+    stream: Option<ClauseStream>,
+    stop: Option<(u64, Value)>,
+    exhausted: Option<filament_exact::Incomplete>,
+    atom_values: BTreeMap<(usize, u64), Option<bool>>,
+    undefined_atom: Option<usize>,
+    first_undefined: Option<FirstUndefined>,
+    texts: BTreeMap<u64, String>,
 }
 
 /// The `pending` report of a clause no evaluation has read yet.
@@ -255,6 +284,33 @@ pub fn pending_report() -> ClauseRunReport {
         authenticated_temporal_selection: None,
         refused_at: None,
     }
+}
+
+/// The state form of FR-100's incomplete record.
+pub fn incomplete_json(incomplete: &filament_exact::Incomplete) -> Json {
+    json!({
+        "limit_kind": incomplete.limit_kind.as_str(),
+        "limit": incomplete.limit,
+        "consumed": incomplete.consumed,
+        "next_charge": incomplete.next_charge.to_string(),
+        "charge_point": incomplete.charge_point.as_str(),
+    })
+}
+
+/// The incomplete record [`incomplete_json`] wrote.
+pub fn incomplete_of(value: &Json) -> Option<filament_exact::Incomplete> {
+    let text = |member: &str| value[member].as_str();
+    Some(filament_exact::Incomplete {
+        limit_kind: filament_exact::LimitKind::ALL
+            .into_iter()
+            .find(|kind| Some(kind.as_str()) == text("limit_kind"))?,
+        limit: value["limit"].as_u64()?,
+        consumed: value["consumed"].as_u64()?,
+        next_charge: text("next_charge")?.parse().ok()?,
+        charge_point: filament_exact::ChargePoint::ALL
+            .into_iter()
+            .find(|point| Some(point.as_str()) == text("charge_point"))?,
+    })
 }
 
 /// FR-330-AC-18: the identity of the record sample at `index`, its index.
@@ -363,7 +419,60 @@ impl<'a> ClauseState<'a> {
             undefined_atom: None,
             first_undefined: None,
             texts: BTreeMap::new(),
+            fresh_snapshot: None,
         })
+    }
+
+    /// FR-820 "No partial state": the state as it is now, for
+    /// [`Self::restore`] to put back after a later call.
+    pub fn mark(&self) -> ClauseMark {
+        ClauseMark {
+            seen: self.seen.len(),
+            tape: self.tape.len(),
+            snapshots: self.snapshots.len(),
+            fresh_snapshot: self.fresh_snapshot.clone(),
+            values: self.values.clone(),
+            pinned: self.pinned.clone(),
+            captures: self.captures.clone(),
+            progress: self.progress,
+            ledger: self.ledger.clone(),
+            report: Arc::clone(&self.report),
+            evaluated: self.evaluated,
+            stream: self.stream.clone(),
+            stop: self.stop.clone(),
+            exhausted: self.exhausted.clone(),
+            atom_values: self.atom_values.clone(),
+            undefined_atom: self.undefined_atom,
+            first_undefined: self.first_undefined.clone(),
+            texts: self.texts.clone(),
+        }
+    }
+
+    /// FR-820 "No partial state": put back the state `mark` was taken of,
+    /// undoing the one call made since.
+    pub fn restore(&mut self, mark: ClauseMark) {
+        self.seen.truncate(mark.seen);
+        self.tape.truncate(mark.tape);
+        if self.snapshots.len() > mark.snapshots {
+            if let Some(reference) = self.fresh_snapshot.take() {
+                self.snapshots.remove(&reference);
+            }
+        }
+        self.fresh_snapshot = mark.fresh_snapshot;
+        self.values = mark.values;
+        self.pinned = mark.pinned;
+        self.captures = mark.captures;
+        self.progress = mark.progress;
+        self.ledger = mark.ledger;
+        self.report = mark.report;
+        self.evaluated = mark.evaluated;
+        self.stream = mark.stream;
+        self.stop = mark.stop;
+        self.exhausted = mark.exhausted;
+        self.atom_values = mark.atom_values;
+        self.undefined_atom = mark.undefined_atom;
+        self.first_undefined = mark.first_undefined;
+        self.texts = mark.texts;
     }
 
     /// The ledger each later run starts from: a monitor carries one ledger
@@ -400,19 +509,9 @@ impl<'a> ClauseState<'a> {
             return self.advance_streamed(position, cancel);
         }
         let index = u64::try_from(self.seen.len()).map_err(|_| fault("position-in-u64"))?;
-        let held_values = self.values.clone();
-        let held_pins = self.pinned.clone();
-        let held_texts = self.texts.clone();
-        let held_captures = self.captures.clone();
-        let held_carried = (
-            self.stream.clone(),
-            self.exhausted.clone(),
-            self.atom_values.clone(),
-            self.undefined_atom,
-            self.first_undefined.clone(),
-        );
+        let mark = self.mark();
         let mut meter = Meter::new(self.open.limits.accounting).with_cancel(cancel.clone());
-        let snapshot = match &position.value {
+        self.fresh_snapshot = match &position.value {
             AdmittedValue::Snapshot(bytes) => {
                 let fresh = !self.snapshots.contains_key(&position.reference);
                 self.snapshots
@@ -432,30 +531,10 @@ impl<'a> ClauseState<'a> {
         }
         let evaluated =
             cancelled(cancel).and_then(|()| self.evaluate(self.progress, &mut meter, cancel));
-        match evaluated {
-            Ok(advance) => Ok(advance),
-            Err(refusal) => {
-                self.seen.pop();
-                if self.reading != Reading::Values {
-                    self.tape.pop();
-                }
-                self.values = held_values;
-                self.pinned = held_pins;
-                self.texts = held_texts;
-                self.captures = held_captures;
-                (
-                    self.stream,
-                    self.exhausted,
-                    self.atom_values,
-                    self.undefined_atom,
-                    self.first_undefined,
-                ) = held_carried;
-                if let Some(reference) = snapshot {
-                    self.snapshots.remove(&reference);
-                }
-                Err(refusal)
-            }
+        if evaluated.is_err() {
+            self.restore(mark);
         }
+        evaluated
     }
 
     /// FR-330-AC-18, FR-643 "Retained state": whether the state cites each
@@ -1051,6 +1130,7 @@ impl<'a> ClauseState<'a> {
             "values": self.values.keys().collect::<Vec<_>>(),
             "texts": self.texts.iter().map(|(index, text)| json!([index, text])).collect::<Vec<_>>(),
             "stream": stream,
+            "exhausted": self.exhausted.as_ref().map(incomplete_json),
             "stop": self.stop.as_ref().map(|(index, _)| *index),
             "pinned": self.pinned.iter().collect::<Vec<_>>(),
             "atoms": self.atom_values.iter().map(|((atom, position), value)|
@@ -1085,7 +1165,8 @@ impl<'a> ClauseState<'a> {
         let mut state = Self::open(package, clause, request)?;
         let document: Json = serde_json::from_slice(bytes).map_err(|_| mismatch())?;
         let object = document.as_object().ok_or_else(mismatch)?;
-        const MEMBERS: [&str; 14] = [
+        const MEMBERS: [&str; 15] = [
+            "exhausted",
             "texts",
             "atoms",
             "undefined_atom",
@@ -1189,6 +1270,10 @@ impl<'a> ClauseState<'a> {
             Json::Null => None,
             value => Some(assertion_of(value).ok_or_else(mismatch)?),
         };
+        state.exhausted = match &object["exhausted"] {
+            Json::Null => None,
+            value => Some(incomplete_of(value).ok_or_else(mismatch)?),
+        };
         if state.reading == Reading::Subject {
             for entry in object["atoms"].as_array().ok_or_else(mismatch)? {
                 let atom = entry[0]
@@ -1236,6 +1321,19 @@ impl<'a> ClauseState<'a> {
         }
         if state.reading == Reading::Streamed {
             let mut meter = Meter::new(request.limits.accounting).with_cancel(cancel.clone());
+            if state.exhausted.is_some() {
+                // A work limit ended the evaluation: its report is that
+                // limit's, and the stream is not carried.
+                state.report = Arc::new(state.streamed_report(
+                    None,
+                    None,
+                    state.exhausted.as_ref(),
+                    &mut meter,
+                ));
+                state.stream = None;
+                state.evaluated = Some((state.seen.len(), None));
+                return Ok(state);
+            }
             let mut stream =
                 ClauseStream::from_state(clause.clause(), &object["stream"], &mut meter)
                     .ok_or_else(mismatch)?;

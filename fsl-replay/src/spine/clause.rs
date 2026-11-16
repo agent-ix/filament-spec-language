@@ -37,8 +37,9 @@ mod temporal;
 mod trace_refusal;
 mod trace_subject;
 pub use clause_state::{
-    assertion_json, assertion_of, pending_report, AdmittedPosition, AdmittedValue, Advance,
-    ClauseLimits, ClauseOpen, ClauseRefusal, ClauseState, ClauseTraceKind, CLAUSE_STATE_FORMAT,
+    assertion_json, assertion_of, incomplete_json, incomplete_of, pending_report, AdmittedPosition,
+    AdmittedValue, Advance, ClauseLimits, ClauseMark, ClauseOpen, ClauseRefusal, ClauseState,
+    ClauseTraceKind, CLAUSE_STATE_FORMAT,
 };
 pub use ledger_wire::{read_ledger, write_ledger, LedgerReadError};
 pub use package_authentication::{

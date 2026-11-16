@@ -21,13 +21,14 @@ use fsl_package::number::ExactRational;
 use fsl_package::CheckedPackage;
 use fsl_replay::spine::{
     assertion_json, assertion_of, authenticate_emission, authenticate_package_trace,
-    pending_report, read_ledger, write_ledger, AdmittedPosition, AdmittedValue, ClauseDisposition,
-    ClauseLimits, ClauseOpen, ClauseRefusal, ClauseRunReport, ClauseState, ClauseTraceKind,
-    ContradictedDimension, LedgerBinding, LedgerReadError, PackageAuthentication,
-    ProgressAssertion, ProgressClosure, ProgressCompleteness, ProgressContradiction,
-    ProgressLedger, ProgressLimitReached, ProgressLowerBoundary, ProgressRefusal, ProgressValue,
-    SpineLimits, TemporalVerdict, TimestampedCover, TimestampedObservation, TimestampedOrderKey,
-    TimestampedWindow, TraceBinding, TraceInput,
+    incomplete_json, incomplete_of, pending_report, read_ledger, write_ledger, AdmittedPosition,
+    AdmittedValue, ClauseDisposition, ClauseLimits, ClauseMark, ClauseOpen, ClauseRefusal,
+    ClauseRunReport, ClauseState, ClauseTraceKind, ContradictedDimension, LedgerBinding,
+    LedgerReadError, PackageAuthentication, ProgressAssertion, ProgressClosure,
+    ProgressCompleteness, ProgressContradiction, ProgressLedger, ProgressLimitReached,
+    ProgressLowerBoundary, ProgressRefusal, ProgressValue, SpineLimits, TemporalVerdict,
+    TimestampedCover, TimestampedObservation, TimestampedOrderKey, TimestampedWindow, TraceBinding,
+    TraceInput,
 };
 use fsl_semantics::check::{TemporalClauseNode, TemporalProfile};
 use fsl_semantics::model::intake::PackageInput;
@@ -206,6 +207,20 @@ struct Slot<'a> {
     usage: MonitorUsage,
 }
 
+/// The members one call changes in a slot, as they were before it, kept
+/// until the call commits (FR-643: a refused or cancelled call leaves the
+/// session unchanged).
+struct Prior<'a> {
+    record: MonitorRecord,
+    settlement: Option<Settlement>,
+    limited: Option<&'static str>,
+    usage: MonitorUsage,
+    /// The mark of an unsettled clause's state before the call.
+    mark: Option<ClauseMark>,
+    /// The state of a clause the call settled, which it would drop.
+    dropped: Option<ClauseState<'a>>,
+}
+
 /// FR-643's stepping monitor.
 pub struct MonitorSession<'a> {
     package: &'a CheckedPackage,
@@ -262,33 +277,6 @@ fn meter_limit_report(incomplete: filament_exact::Incomplete) -> ClauseRunReport
         disposition: ClauseDisposition::Temporal(verdict),
         ..pending_report()
     }
-}
-
-/// The state form of FR-100's incomplete record.
-fn incomplete_json(incomplete: &filament_exact::Incomplete) -> Json {
-    json!({
-        "limit_kind": incomplete.limit_kind.as_str(),
-        "limit": incomplete.limit,
-        "consumed": incomplete.consumed,
-        "next_charge": incomplete.next_charge.to_string(),
-        "charge_point": incomplete.charge_point.as_str(),
-    })
-}
-
-/// The incomplete record [`incomplete_json`] wrote.
-fn incomplete_of(value: &Json) -> Option<filament_exact::Incomplete> {
-    let text = |member: &str| value[member].as_str();
-    Some(filament_exact::Incomplete {
-        limit_kind: filament_exact::LimitKind::ALL
-            .into_iter()
-            .find(|kind| Some(kind.as_str()) == text("limit_kind"))?,
-        limit: value["limit"].as_u64()?,
-        consumed: value["consumed"].as_u64()?,
-        next_charge: text("next_charge")?.parse().ok()?,
-        charge_point: filament_exact::ChargePoint::ALL
-            .into_iter()
-            .find(|point| Some(point.as_str()) == text("charge_point"))?,
-    })
 }
 
 /// The reading `report` is, as a settlement records it (FR-643 "Settlement"):
@@ -685,12 +673,12 @@ impl<'a> MonitorSession<'a> {
         let position = self.admit_observation(&observation)?;
         let stamp = position.stamp;
         let seen = self.seen.saturating_add(1);
-        let (slots, ledger) = self.advance(seen, self.assertion, cancel, |state, cancel| {
+        let (priors, ledger) = self.advance(seen, self.assertion, cancel, |state, cancel| {
             state.advance(position.clone(), cancel)
         })?;
         self.seen = seen;
         self.newest = Some(self.newest.map_or(stamp, |newest| newest.max(stamp)));
-        Ok(self.commit(slots, ledger))
+        Ok(self.commit(priors, ledger))
     }
 
     /// FR-643: take a `Timed` trace's completeness stamp. Only the `Timed` kind
@@ -730,35 +718,87 @@ impl<'a> MonitorSession<'a> {
                 Box::new(ProgressRefusal::from(contradiction)),
             )));
         }
-        let (slots, ledger) =
+        let (priors, ledger) =
             self.advance(self.seen, Some(progress), cancel, |state, cancel| {
                 state.assert_progress(&progress, cancel)
             })?;
         self.assertion = Some(progress);
-        Ok(self.commit(slots, ledger))
+        Ok(self.commit(priors, ledger))
     }
 
     /// Advance every unsettled clause's state by `call`, settling each clause
-    /// its profile decides or a limit ends. Nothing is kept until every
-    /// clause has advanced: a refused or cancelled call leaves the session
-    /// unchanged.
+    /// its profile decides or a limit ends. Each slot is advanced in place and
+    /// its prior members kept until the call commits: a refused or cancelled
+    /// call puts every slot back, so the session is unchanged, and no slot is
+    /// copied whole.
     fn advance<F>(
-        &self,
+        &mut self,
         seen: u64,
         assertion: Option<ProgressAssertion>,
         cancel: &Cancel,
         call: F,
-    ) -> Result<(Vec<Slot<'a>>, Option<ProgressLedger>), Failure>
+    ) -> Result<(Vec<Prior<'a>>, Option<ProgressLedger>), Failure>
     where
         F: Fn(&mut ClauseState<'a>, &Cancel) -> Result<fsl_replay::spine::Advance, ClauseRefusal>,
     {
-        let mut slots = self.slots.clone();
+        let mut priors = Vec::with_capacity(self.slots.len());
         let mut ledger = self.ledger.clone();
+        match self.advance_slots((seen, assertion), cancel, &call, &mut priors, &mut ledger) {
+            Ok(()) => Ok((priors, ledger)),
+            Err(failure) => {
+                self.rollback(priors);
+                Err(failure)
+            }
+        }
+    }
+
+    /// Put back the members each slot had before the call `priors` records.
+    fn rollback(&mut self, priors: Vec<Prior<'a>>) {
+        for (slot, prior) in self.slots.iter_mut().zip(priors) {
+            slot.record = prior.record;
+            slot.settlement = prior.settlement;
+            slot.limited = prior.limited;
+            slot.usage = prior.usage;
+            if let Some(state) = prior.dropped {
+                slot.state = Some(state);
+            }
+            if let Some(mark) = prior.mark {
+                slot.decided_state = None;
+                if let Some(state) = slot.state.as_mut() {
+                    state.restore(mark);
+                }
+            }
+        }
+    }
+
+    /// [`Self::advance`]'s pass over the slots, recording each slot's prior
+    /// members in `priors` before it changes the slot.
+    fn advance_slots<F>(
+        &mut self,
+        (seen, assertion): (u64, Option<ProgressAssertion>),
+        cancel: &Cancel,
+        call: &F,
+        priors: &mut Vec<Prior<'a>>,
+        ledger: &mut Option<ProgressLedger>,
+    ) -> Result<(), Failure>
+    where
+        F: Fn(&mut ClauseState<'a>, &Cancel) -> Result<fsl_replay::spine::Advance, ClauseRefusal>,
+    {
         let step = self.calls + 1;
         let last = seen.saturating_sub(1);
-        for (index, clause) in self.request.clauses.iter().enumerate() {
+        for index in 0..self.slots.len() {
             cancelled(cancel)?;
-            let slot = &mut slots[index];
+            let name = self.request.clauses[index].name.as_str();
+            let profile = self.node(name)?.clause().profile();
+            let slot = &mut self.slots[index];
+            priors.push(Prior {
+                record: slot.record.clone(),
+                settlement: slot.settlement.clone(),
+                limited: slot.limited,
+                usage: slot.usage.clone(),
+                mark: slot.state.as_ref().map(ClauseState::mark),
+                dropped: None,
+            });
             let Some(state) = slot.state.as_mut() else {
                 // FR-643 "Usage": a settled clause charges nothing more.
                 slot.usage = slot.usage.idle();
@@ -771,15 +811,14 @@ impl<'a> MonitorSession<'a> {
                 continue;
             }
             if let Some(updated) = &advanced.report.ledger {
-                ledger = Some(updated.clone());
+                *ledger = Some(updated.clone());
             }
             slot.record = record_of(
                 self.package,
                 self.request.sources,
-                &clause.name,
+                name,
                 Arc::clone(&advanced.report),
             )?;
-            let profile = self.node(&clause.name)?.clause().profile();
             let horizon = match (profile, self.request.kind, assertion) {
                 (TemporalProfile::TimestampedEventFiniteWindow, _, Some(a)) => a.watermark,
                 (
@@ -792,60 +831,57 @@ impl<'a> MonitorSession<'a> {
                 },
                 _ => last,
             };
-            if let Some(decided) = &advanced.decided {
+            let settled = if let Some(decided) = &advanced.decided {
                 slot.decided_state = Some(state.to_bytes().map_err(clause_failure)?);
-                slot.settlement = Some(Settlement {
-                    step,
-                    trigger: SettleTrigger::Decided,
-                    reading: Some(reading_of(decided, horizon)),
-                });
-                slot.state = None;
-                continue;
-            }
-            // FR-643 "Usage": meter limits are charged per call, so a clause
-            // whose call exhausted one settles `incomplete` on that limit.
-            if let ClauseDisposition::Temporal(TemporalVerdict::Incomplete(_)) =
+                Some((SettleTrigger::Decided, Some(reading_of(decided, horizon))))
+            } else if let ClauseDisposition::Temporal(TemporalVerdict::Incomplete(_)) =
                 &advanced.report.disposition
             {
+                // FR-643 "Usage": meter limits are charged per call, so a
+                // clause whose call exhausted one settles `incomplete` on
+                // that limit.
                 slot.limited = Some(METER_LIMIT);
-                slot.settlement = Some(Settlement {
-                    step,
-                    trigger: SettleTrigger::Limit,
-                    reading: None,
-                });
-                slot.state = None;
-                continue;
-            }
-            // FR-643 "Retained state": a clause whose state would hold more
-            // values or identities than its limit settles `incomplete`, and
-            // its state is dropped.
-            let over = if state.retained() > self.limits.retained_positions {
-                Some(("monitor.retained_positions", self.limits.retained_positions))
-            } else if state.cited() > self.limits.retained_identities {
-                Some((
-                    "monitor.retained_identities",
-                    self.limits.retained_identities,
-                ))
+                Some((SettleTrigger::Limit, None))
             } else {
-                None
+                // FR-643 "Retained state": a clause whose state would hold
+                // more values or identities than its limit settles
+                // `incomplete`, and its state is dropped.
+                let over = if state.retained() > self.limits.retained_positions {
+                    Some(("monitor.retained_positions", self.limits.retained_positions))
+                } else if state.cited() > self.limits.retained_identities {
+                    Some((
+                        "monitor.retained_identities",
+                        self.limits.retained_identities,
+                    ))
+                } else {
+                    None
+                };
+                match over {
+                    Some((setting, value)) => {
+                        slot.record = record_of(
+                            self.package,
+                            self.request.sources,
+                            name,
+                            limit_report(setting, value),
+                        )?;
+                        slot.limited = Some(setting);
+                        Some((SettleTrigger::Limit, None))
+                    }
+                    None => None,
+                }
             };
-            if let Some((setting, value)) = over {
-                slot.record = record_of(
-                    self.package,
-                    self.request.sources,
-                    &clause.name,
-                    limit_report(setting, value),
-                )?;
-                slot.limited = Some(setting);
+            if let Some((trigger, reading)) = settled {
                 slot.settlement = Some(Settlement {
                     step,
-                    trigger: SettleTrigger::Limit,
-                    reading: None,
+                    trigger,
+                    reading,
                 });
-                slot.state = None;
+                if let Some(prior) = priors.last_mut() {
+                    prior.dropped = slot.state.take();
+                }
             }
         }
-        Ok((slots, ledger))
+        Ok(())
     }
 
     /// FR-502: what `next` retreats from in the assertion the session retains.
@@ -945,12 +981,12 @@ impl<'a> MonitorSession<'a> {
         None
     }
 
-    fn commit(&mut self, slots: Vec<Slot<'a>>, ledger: Option<ProgressLedger>) -> MonitorStep {
+    fn commit(&mut self, priors: Vec<Prior<'a>>, ledger: Option<ProgressLedger>) -> MonitorStep {
         let mut changed = Vec::new();
-        for (index, slot) in slots.iter().enumerate() {
-            let before = self.slots.get(index);
+        for (index, slot) in self.slots.iter_mut().enumerate() {
+            let before = priors.get(index);
             let same = before.is_some_and(|before| {
-                before.announced
+                slot.announced
                     && before.settlement.is_some() == slot.settlement.is_some()
                     && before.record.verdict == slot.record.verdict
                     && same_disposition(before.record.report(), slot.record.report())
@@ -958,14 +994,8 @@ impl<'a> MonitorSession<'a> {
             if !same {
                 changed.push(slot.record.clause.clone());
             }
+            slot.announced = true;
         }
-        self.slots = slots
-            .into_iter()
-            .map(|slot| Slot {
-                announced: true,
-                ..slot
-            })
-            .collect();
         if ledger.is_some() {
             self.ledger = ledger;
         }

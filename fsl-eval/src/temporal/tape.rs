@@ -113,6 +113,9 @@ pub enum TapeEntry {
 #[derive(Clone, Debug, Default)]
 pub struct LetterTape {
     entries: Vec<TapeEntry>,
+    /// The number of entries held by value, kept as entries are pushed and
+    /// dropped so reading it does not walk the tape.
+    held: u64,
 }
 
 impl LetterTape {
@@ -123,12 +126,19 @@ impl LetterTape {
 
     /// Append the next position.
     pub fn push(&mut self, entry: TapeEntry) {
+        if matches!(entry, TapeEntry::Held(_)) {
+            self.held = self.held.saturating_add(1);
+        }
         self.entries.push(entry);
     }
 
-    /// Drop the newest position, undoing a refused or cancelled advance.
-    pub fn pop(&mut self) -> Option<TapeEntry> {
-        self.entries.pop()
+    /// Keep the first `len` positions, undoing the advances after them.
+    pub fn truncate(&mut self, len: usize) {
+        while self.entries.len() > len {
+            if let Some(TapeEntry::Held(_)) = self.entries.pop() {
+                self.held = self.held.saturating_sub(1);
+            }
+        }
     }
 
     /// The number of positions.
@@ -155,12 +165,7 @@ impl LetterTape {
 
     /// The number of positions held by value.
     pub fn held(&self) -> u64 {
-        let held = self
-            .entries
-            .iter()
-            .filter(|entry| matches!(entry, TapeEntry::Held(_)))
-            .count();
-        u64::try_from(held).unwrap_or(u64::MAX)
+        self.held
     }
 }
 
