@@ -277,9 +277,7 @@ fn count_out_of_domain_names_its_cause() {
             SpineLimits::default(),
         )
     };
-    let refusal = compile("Int[0, 1]")
-        .err()
-        .expect("the count can reach 2, outside Int[0, 1]");
+    let refusal = compile("Int[0, 1]").expect_err("the count can reach 2, outside Int[0, 1]");
     assert_eq!(refusal.code().as_str(), "undefined_expression");
     assert_eq!(refusal.cause(), Some("unproved-range"));
     assert_eq!(refusal.code().category().exit_code(), 20);
