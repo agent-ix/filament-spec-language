@@ -34,3 +34,12 @@ untagged fence or a pending fence that passes.
 ## Verdict
 
 REQUEST CHANGES on FND-001; FND-002 is a stub tightening.
+
+## Dispositions
+
+Round 2, verified at head a158bccc0.
+
+| FND | Outcome | Reason |
+| --- | --- | --- |
+| FND-001 | fixed | FR-641 now reads "When a step's candidate count would exceed that bound (FR-120's rule; a step with exactly `max_candidates` candidates is expanded in full)". AC-7 and TC-2246 add the exactly-N case. |
+| FND-002 | fixed | The stub now asserts that each loop step's `transition` names `setTo` and that its `post_state.state` holds `value` 0. Both spellings match the writer: `spell_states` in fsl-analyze/src/analyze/document.rs adds `state` beside the key, and FSpec FR-364 defines `{transition, post_state}`. |

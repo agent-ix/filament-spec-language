@@ -75,3 +75,15 @@ QSL-2294 tests and matches the criteria.
 REQUEST CHANGES. Rulings (a) and (c) and items 2 to 7 are sound and fully
 amended. FND-001 is the gap the author left open. FND-002 is a new
 contradiction introduced by the ruling (b) text. Both are high.
+
+## Dispositions
+
+Round 2, verified at head a158bccc0.
+
+| FND | Outcome | Reason |
+| --- | --- | --- |
+| FND-001 | fixed | FR-621 line 108 now names only `monitor` and protocol `finite-replay` evaluations. FR-621-AC-7 and TC-1581 step 7 carry the pending case on an FR-641 clause run and add the `inapplicable-kind` check. The stub `a_pending_clause_run_reports_its_pending_disposition` asserts both and keeps its QSL-2272 ignore. |
+| FND-002 | fixed | FR-489 now has a tie-break table: an invariant with a model subject goes to EN-1, and anything else goes to `contract-checker`. FR-489-AC-2, TC-1272, the FR-625 Decision and FR-625-AC-4 (`backend` `en-1`) match, and the stub asserts `record.backend` `en-1`. |
+| FND-003 | deferred | the FR-641-AC-7 reached-bound outcome and its exactly-N case have no stub, because they need a two-candidate `model` trace fixture over the FR-330-AC-16 subject. They are a coder obligation on QSL-2133, and the stub's doc names them. Every other stub was added: NFR-017-AC-5 (runs fences and checks the counts), AC-6 and AC-7, the FR-641-AC-7 reader half, and FR-640-AC-12's analyze and replay half. |
+| FND-004 | fixed | `doc_snippets.rs` no longer carries the TC-1398/NFR-017-AC-2 tag; its tests trace only TC-2242 and NFR-017-AC-5, AC-6 and AC-7. |
+| FND-005 | fixed | The model_check_oracle doc comment now says `inconclusive` `bound-reached`. The FR-627-AC-4 stub was renamed `a_finite_replay_item_over_a_temporal_clause_is_inapplicable`, and its ignore reason names `inapplicable-kind`. |

@@ -30,3 +30,11 @@ and one on new text, below.
 ## Verdict
 
 PASS with one low finding.
+
+## Dispositions
+
+Round 2, verified at head a158bccc0.
+
+| FND | Outcome | Reason |
+| --- | --- | --- |
+| FND-001 | fixed | The bullet now reads "When a request carries the progress watermark `{"half_open": 0}`, the run reader SHALL refuse ...". `quire validate` reports no EARS warning on FR-641. |

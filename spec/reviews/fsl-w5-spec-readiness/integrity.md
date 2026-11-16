@@ -29,3 +29,11 @@ base.md (FND-001, FND-002). One structural defect follows.
 ## Verdict
 
 REQUEST CHANGES on FND-001, a layout fix.
+
+## Dispositions
+
+Round 2, verified at head a158bccc0.
+
+| FND | Outcome | Reason |
+| --- | --- | --- |
+| FND-001 | fixed | FR-625's `temporal.subject`, `temporal.limits` and `reductions` bullets now come before its Decision. FR-627's Budgets and Refusals bullets now come before its Decision. |
