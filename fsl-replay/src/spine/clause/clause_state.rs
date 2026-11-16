@@ -21,7 +21,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 
-use filament_exact::{Cancel, CancelCause, Integer, Meter, Rational, Value, ValueType};
+use filament_exact::{Cancel, CancelCause, Meter, Value, ValueType};
 use filament_semantic_value::catalog::InternalFault;
 use fsl_eval::temporal::{
     read_sample_letter, InsufficientData, LetterTape, TapeEntry, TapeLetter, TapeReading,
@@ -834,7 +834,7 @@ impl<'a> ClauseState<'a> {
             .as_array()
             .ok_or_else(mismatch)?
             .iter()
-            .map(|capture| capture_of(capture).ok_or_else(mismatch))
+            .map(|capture| capture_of(package, capture).ok_or_else(mismatch))
             .collect::<Result<_, _>>()?;
         state.progress = match &object["progress"] {
             Json::Null => None,
@@ -915,43 +915,28 @@ fn letter_of(value: &Json) -> Option<TapeLetter> {
 }
 
 /// A captured value's state form (FR-860): a capture keeps the value it took
-/// at its activation across a restore, so the state writes it.
+/// at its activation across a restore, so the state writes it. A value is
+/// written in FR-269's element encoding, which carries its kind and type; a
+/// `Timestamp`, which that encoding has no form for, is written as its
+/// canonical nanosecond text.
 fn capture_json(value: &Value) -> Option<Json> {
-    Some(match value {
-        Value::Boolean(value) => json!({"boolean": value}),
-        Value::Integer(value) => json!({"integer": value.to_string()}),
-        Value::Rational(value) => json!({
-            "rational": [value.numerator().to_string(), value.denominator().to_string()]
-        }),
-        Value::String(value) => json!({"string": value}),
-        _ => return None,
-    })
+    match value {
+        Value::Timestamp(stamp) => Some(json!({"timestamp": stamp.nanoseconds().to_string()})),
+        value => crate::result::encode_state_value(value).map(Json::String),
+    }
 }
 
-fn capture_of(value: &Json) -> Option<Value> {
-    let object = value.as_object()?;
-    if object.len() != 1 {
-        return None;
-    }
-    let (kind, member) = object.iter().next()?;
-    Some(match kind.as_str() {
-        "boolean" => Value::Boolean(member.as_bool()?),
-        "integer" => Value::Integer(member.as_str()?.parse::<Integer>().ok()?),
-        "rational" => {
-            let [numerator, denominator] = member.as_array()?.as_slice() else {
-                return None;
-            };
-            Value::Rational(
-                Rational::new(
-                    numerator.as_str()?.parse::<Integer>().ok()?,
-                    denominator.as_str()?.parse::<Integer>().ok()?,
-                )
-                .ok()?,
-            )
+fn capture_of(package: &fsl_package::CheckedPackage, value: &Json) -> Option<Value> {
+    match value {
+        Json::String(element) => crate::result::decode_state_value(package, element),
+        Json::Object(object) if object.len() == 1 => {
+            let text = object.get("timestamp")?.as_str()?;
+            filament_exact::Timestamp::from_canonical_text(text)
+                .ok()
+                .map(Value::Timestamp)
         }
-        "string" => Value::String(member.as_str()?.to_owned()),
-        _ => return None,
-    })
+        _ => None,
+    }
 }
 
 /// A progress assertion as its state form.
@@ -987,4 +972,52 @@ pub fn assertion_of(value: &Json) -> Option<ProgressAssertion> {
         scope: closure(value["scope_closed"].as_bool()?),
         execution: closure(value["execution_closed"].as_bool()?),
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use filament_exact::{Decimal, EnumMember, Integer, Timestamp, VariantId};
+    use filament_semantic_value::checking::CheckMode;
+
+    fn package() -> fsl_package::CheckedPackage {
+        let declarations = fsl_semantics::check::PackageDeclarations::new(
+            fsl_semantics::check::fixture_source(),
+            "fixture",
+            fsl_foundation::IdentityLimits::default(),
+        );
+        fsl_package::CheckedPackage::link(
+            declarations
+                .check(
+                    CheckMode::Linked,
+                    filament_semantic_value::checking::CheckingLimits::default(),
+                )
+                .expect("the empty fixture package checks"),
+        )
+    }
+
+    /// FR-860: an enum, decimal or timestamp capture has a state form, and
+    /// reads back to the value it was written from.
+    #[test]
+    fn enum_decimal_and_timestamp_captures_round_trip() {
+        let package = package();
+        let variant = VariantId::new(crate::fixture_node(7), "busy").expect("a variant has a name");
+        let values = [
+            Value::Enum(EnumMember::new(variant, 1)),
+            Value::Decimal(Decimal::new(Integer::from(-1250), 2)),
+            Value::Timestamp(
+                Timestamp::from_canonical_text("1700000000000000123").expect("canonical"),
+            ),
+            Value::Boolean(true),
+        ];
+        for value in values {
+            let written = capture_json(&value).expect("the capture has a state form");
+            let read = capture_of(&package, &written).expect("the state form reads back");
+            assert_eq!(
+                filament_exact::compare_keys(&read, &value),
+                Some(std::cmp::Ordering::Equal),
+                "{written}"
+            );
+        }
+    }
 }

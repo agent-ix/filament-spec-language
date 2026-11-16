@@ -1879,7 +1879,10 @@ fn a_capture_is_kept_in_the_state_bytes() {
     }
     let bytes = original.to_bytes().expect("writes");
     let written: serde_json::Value = serde_json::from_slice(&bytes).expect("JSON");
-    assert_eq!(written["captures"], serde_json::json!([{"boolean": true}]));
+    assert_eq!(
+        written["captures"],
+        serde_json::json!([r#"{"kind":"boolean","value":true}"#])
+    );
     let mut resumed = ClauseState::from_bytes(
         world.unit.package(),
         clause_node(&world, "Fast"),
