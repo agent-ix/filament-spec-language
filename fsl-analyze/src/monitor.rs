@@ -15,9 +15,10 @@ use fsl_package::{CheckedPackage, TemporalClockSelection};
 use fsl_replay::spine::{
     authenticate_emission, authenticate_package_trace, name_clause_atom, run_package_temporal,
     run_package_trace_subject, AuthenticationFailure, ClauseDisposition, ClauseRunReport,
-    OverObject, PackageAuthentication, PackageTemporalRequest, PackageTraceSubjectRequest,
-    PackagesStage, RunRefusal, SpineLimits, TemporalIndeterminateReason, TemporalTraceRefusal,
-    TemporalUndefinedCause, TemporalVerdict, TraceInput,
+    ClauseRunStage, OverObject, PackageAuthentication, PackageTemporalRequest,
+    PackageTraceSubjectRequest, PackagesStage, RunRefusal, SpineLimits,
+    TemporalIndeterminateReason, TemporalTraceRefusal, TemporalUndefinedCause, TemporalVerdict,
+    TraceInput,
 };
 use fsl_replay::{
     ClauseRunNotAnItem, Operation, OutcomeDiagnostic, OutcomeDocument, OutcomeItem, OutcomeStage,
@@ -691,6 +692,18 @@ fn request_failure(clause: &str, disposition: &ClauseDisposition) -> Option<Fail
         },
         D::TemporalRefusal(TemporalTraceRefusal::Fault(fault)) => {
             StageFailure::Fault(fault.clone())
+        }
+        // FR-283-AC-13: a trace of a kind the clause's profile does not read
+        // is refused at admit as the request, naming the clause (FR-645).
+        D::TraceRefused(refusal) if refusal.stage == ClauseRunStage::Admit => {
+            StageFailure::Refused(MonitorRefusal::ClauseRefused {
+                clause: clause.to_owned(),
+                failure: Box::new(refused(
+                    Code::InvalidRuntimeInput,
+                    "invalid-value",
+                    BTreeMap::from([("reason", refusal.reason.to_owned())]),
+                )),
+            })
         }
         _ => return None,
     })

@@ -676,7 +676,10 @@ pub fn run_package_temporal(request: &PackageTemporalRequest<'_>) -> ClauseRunRe
         accounting: request.accounting,
         package: request.package,
         sources: request.sources,
-        progress_capacity: 0,
+        // FR-516: the capacity is the system setting
+        // `progress.covered_positions` (FR-255), not a request member, so the
+        // package route takes its default.
+        progress_capacity: fsl_eval::temporal::DEFAULT_COVERED_POSITIONS,
     };
     run_temporal(
         &run,
@@ -1048,7 +1051,11 @@ pub(super) fn run_temporal(run: &CompiledRun<'_>, request: &TemporalRun<'_>) -> 
     // the one it was given or a fresh one.
     let fresh = ProgressLedger::new();
     let mut accepted_ledger = None;
-    if let Some(ledger) = ledger.or_else(|| trace.carries_progress().then_some(&fresh)) {
+    // A fresh ledger needs the package's source identity to bind to; a run
+    // with no sources has none, and its atom naming then refuses with
+    // `SourceNotSupplied`, so the fresh admission is skipped.
+    let fresh_ledger = trace.carries_progress() && !run.sources.is_empty();
+    if let Some(ledger) = ledger.or_else(|| fresh_ledger.then_some(&fresh)) {
         let Some((assertion, positions)) = trace.progress() else {
             return early(refused("invalid-value", BTreeMap::new()));
         };
