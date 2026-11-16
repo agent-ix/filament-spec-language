@@ -31,10 +31,14 @@ use super::{
 use crate::check::call_target::{resolve_target, ResolvedTarget};
 use crate::check::family::Application;
 use crate::check::ir::{CheckedBody, IntegerRange, Node, NodeId, Slot};
-use crate::check::refusal::{CheckCause, CheckRefusal, IdentityForm, IdentityNode, KeyFault};
+use crate::check::refusal::{
+    CheckCause, CheckRefusal, CheckingLimitKind, CheckingStage, IdentityForm, IdentityNode,
+    KeyFault, StageLimitCause,
+};
 use crate::check::sum_case::{ArmHead, CaseBuilder, UnionMember, UnionRef};
 use crate::check::type_form::{IntegerOutsideI128, IntegerSite};
 use crate::check::DispatchOperation;
+use filament_exact::Cancel;
 use filament_exact::{
     ArithmeticOperator, CollectionKind, CollectionType, FloatType, IeeeValue, IeeeWidth,
     IllTypedCause, Integer, IntegerInterval, NodeKey, OrderingOperator, RoundingMode, Value,
@@ -2186,6 +2190,52 @@ impl<'a> Typer<'a> {
         })
     }
 
+    /// The checker-visible result range of Euclidean `mod` (FR-495).
+    fn modulo_result_type(
+        &mut self,
+        dividend: &ValueType,
+        divisor: &ValueType,
+        location: &Location,
+    ) -> Result<ValueType, CheckRefusal> {
+        let result = super::modulo_interval::result_type(dividend, divisor, || {
+            if self.cancel.is_some_and(Cancel::poll) {
+                return Err(super::cancelled_refusal(location));
+            }
+            if let Some(context) = self.context.as_mut() {
+                if let Err(incomplete) = context.meter.charge(
+                    filament_exact::Charge::new(filament_exact::ChargePoint::DeclarationCheck)
+                        .work(Integer::one()),
+                ) {
+                    return Err(CheckRefusal {
+                        location: location.clone(),
+                        cause: CheckCause::ResourceExhausted(Box::new(StageLimitCause {
+                            stage: CheckingStage::Typing,
+                            kind: CheckingLimitKind::WorkBudget,
+                            limit: incomplete.limit,
+                            actual: u128::from(incomplete.consumed) + 1,
+                            region: None,
+                        })),
+                    });
+                }
+            }
+            Ok(())
+        });
+
+        match result {
+            Ok(value_type) => Ok(value_type),
+            Err(super::modulo_interval::ModuloRangeError::Refused(refusal)) => Err(refusal),
+            Err(super::modulo_interval::ModuloRangeError::Invariant(_)) => Err(CheckRefusal {
+                location: location.clone(),
+                cause: CheckCause::InternalFault(Box::new(KeyFault::StageFault(
+                    filament_semantic_value::catalog::InternalFault::new(
+                        "check.integer-modulo",
+                        "range-invariant",
+                    ),
+                ))),
+            }),
+        }
+    }
+
     /// A typed equality operand and the type its peer is hinted with. A
     /// `convert<T>(e)` operand that changes the type is a `ConvertScalar`
     /// node of type `T`, which the stored equality compares as typed; the
@@ -2972,6 +3022,14 @@ impl<'a> Typer<'a> {
                         }
                         IntegerDivisionOperator::Mod => None,
                     };
+                    let value_type = match operator {
+                        IntegerDivisionOperator::Mod => {
+                            self.modulo_result_type(&left.value_type, &right.value_type, &location)?
+                        }
+                        IntegerDivisionOperator::Div | IntegerDivisionOperator::Rem => {
+                            ValueType::Integer
+                        }
+                    };
                     let left = self.push(left);
                     let right = self.push(right);
                     Ok(Step::Typed(node(
@@ -2981,7 +3039,7 @@ impl<'a> Typer<'a> {
                             left,
                             right,
                         },
-                        ValueType::Integer,
+                        value_type,
                         &location,
                     )))
                 }

@@ -186,11 +186,11 @@ fn a_mod_divisor_that_may_be_zero_refuses_unproved_nonzero() {
 
 #[trace("TC-1783", "FR-495-AC-17", "FSpec-TC-1281", "FSpec-FR-147-AC-12")]
 #[test]
-#[ignore = "QSL-2002: a mod node is typed Integer instead of its remainder interval"]
 fn a_mod_node_is_typed_by_its_divisor_interval() {
     for source in [
         "function m1 using v(a: Int[0, 100], b: Int[1, 12]): Int[0, 11] pure { a mod b }",
         "function m2 using v(a: Integer, b: Int[1, 12]): Int[0, 11] pure { a mod b }",
+        "function m4 using v(a: Integer, b: Int[-5, -1]): Int[0, 4] pure { a mod b }",
     ] {
         check(VALUE, source, CheckMode::Linked)
             .unwrap_or_else(|refusals| panic!("{source}: {refusals:?}"));
@@ -274,7 +274,6 @@ fn exact(headers: &str, parameters: &str, body: &str, lo: i64, hi: i64) {
 
 #[trace("TC-2210", "FR-495-AC-19", "FSpec-TC-1660", "FSpec-FR-147-AC-14")]
 #[test]
-#[ignore = "QSL-2002: the exact smallest remainder interval is not computed yet"]
 fn a_remainder_node_carries_its_exact_smallest_interval() {
     for (parameters, lo, hi) in [
         ("a: Int[0, 2], b: Int[5, 6]", 0, 2),
@@ -284,17 +283,6 @@ fn a_remainder_node_carries_its_exact_smallest_interval() {
     ] {
         exact(VALUE, parameters, "a mod b", lo, hi);
     }
-    let truncating = format!("{VALUE}{}", law_header("d", "truncating"));
-    exact(
-        &truncating,
-        "a: Int[-7, -7], b: Int[3, 5]",
-        "a rem b",
-        -3,
-        -1,
-    );
-    let floor = format!("{VALUE}{}", law_header("d", "floor"));
-    exact(&floor, "a: Int[7, 7], b: Int[-5, -3]", "a rem b", -3, -1);
-
     let guarded = "if b != 0 then a mod b else 0";
     let bounded = into("a: Int[0, 9], b: Integer", 0, 9, guarded);
     check(VALUE, &bounded, CheckMode::Linked)
@@ -305,9 +293,55 @@ fn a_remainder_node_carries_its_exact_smallest_interval() {
     assert!(only_range(&refusals), "{unbounded}: {refusals:?}");
 }
 
+#[trace("TC-2210", "FR-495-AC-19", "FSpec-TC-1660", "FSpec-FR-147-AC-14")]
+#[test]
+#[ignore = "QSL-1989: source div/rem selection and exact rem intervals are not implemented yet"]
+fn a_rem_node_carries_its_exact_smallest_interval_under_each_law() {
+    let truncating = format!("{VALUE}{}", law_header("d", "truncating"));
+    exact(
+        &truncating,
+        "a: Int[-7, -7], b: Int[3, 5]",
+        "a rem b",
+        -3,
+        -1,
+    );
+    let floor = format!("{VALUE}{}", law_header("d", "floor"));
+    exact(&floor, "a: Int[7, 7], b: Int[-5, -3]", "a rem b", -3, -1);
+}
+
+#[trace("TC-2210", "FR-495-AC-19", "FSpec-TC-1660", "FSpec-FR-147-AC-14")]
+#[test]
+fn small_modulo_intervals_match_all_nonzero_operand_pairs() {
+    for (dividend_lower, dividend_upper) in [(-4_i64, -2_i64), (-2, 2), (0, 3), (4, 7)] {
+        for (divisor_lower, divisor_upper) in [(-3_i64, -1_i64), (0, 4), (2, 5)] {
+            let mut remainders = Vec::new();
+            for dividend in dividend_lower..=dividend_upper {
+                for divisor in divisor_lower..=divisor_upper {
+                    if divisor != 0 {
+                        remainders.push(dividend.rem_euclid(divisor.abs()));
+                    }
+                }
+            }
+            let Some(lower) = remainders.iter().min().copied() else {
+                continue;
+            };
+            let Some(upper) = remainders.iter().max().copied() else {
+                continue;
+            };
+            if lower == upper {
+                continue;
+            }
+
+            let parameters = format!(
+                "a: Int[{dividend_lower}, {dividend_upper}], b: Int[{divisor_lower}, {divisor_upper}]"
+            );
+            exact(VALUE, &parameters, "a mod b", lower, upper);
+        }
+    }
+}
+
 #[trace("TC-2211", "FR-495-AC-20", "FSpec-TC-1660", "FSpec-FR-147-AC-14")]
 #[test]
-#[ignore = "QSL-2002: the remainder run walk and its work-ceiling charge are not implemented yet"]
 fn the_remainder_walk_is_bounded_by_the_checking_work_ceiling() {
     let parameters = "a: Int[1000000007, 1000000007], b: Int[2, 1000000006]";
     let big = into(parameters, 1, 500_000_003, "a mod b");
@@ -331,6 +365,7 @@ fn the_remainder_walk_is_bounded_by_the_checking_work_ceiling() {
     };
     assert_eq!(limit.kind, CheckingLimitKind::WorkBudget, "{limit:?}");
     assert_eq!(limit.limit, 10_000, "{limit:?}");
+    assert!(limit.actual > u128::from(limit.limit), "{limit:?}");
     // Located at the `mod`, the root of `f`'s body.
     assert!(
         matches!(

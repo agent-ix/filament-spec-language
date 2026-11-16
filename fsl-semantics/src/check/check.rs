@@ -57,6 +57,7 @@ use std::sync::Arc;
 
 #[cfg(test)]
 mod declared_type_tests;
+mod modulo_interval;
 mod native_literal;
 mod typing;
 use typing::TypedOperand;
