@@ -876,6 +876,10 @@ struct Binders<'s> {
     /// Each binder in scope by its slot. A slot is bound once at a time, so
     /// a local read finds its binder in constant time at any nesting.
     by_slot: HashMap<Slot, Binder>,
+    /// The binder name of each element-presence quantifier the expression
+    /// holds, by its checked node's location (FR-930): such a quantifier
+    /// binds its own slot parameter, which no checked slot names.
+    presence_binders: &'s [(Location, String)],
 }
 
 impl<'s> Binders<'s> {
@@ -885,6 +889,7 @@ impl<'s> Binders<'s> {
             slot_names,
             scope: Vec::new(),
             by_slot: HashMap::new(),
+            presence_binders: &[],
         };
         for parameter in parameters {
             binders.push(parameter.clone());
@@ -1402,6 +1407,15 @@ enum LowerFrame<'n> {
     Fold(Box<FoldFrame<'n>>),
     /// `case`: its scrutinee, then each arm's body under the arm's binders.
     Case(Box<CaseFrame<'n>>),
+    /// An element-presence quantifier over the owner term (FR-930): the
+    /// element place `place`, the quantifier's binder name, and whether it
+    /// is `forall`.
+    SlotPresence {
+        node: CheckedNode<'n>,
+        place: NodeKey,
+        binder: String,
+        all: bool,
+    },
 }
 
 /// A checked node's operands, in order.
@@ -5180,15 +5194,48 @@ impl<'a> Lowering<'a> {
                     frames,
                 );
             }
+            // FR-930, FSpec FR-760: `forall(e in r.q: present(e))` over a
+            // `Sequence<Option<Clock>>` place is the collection quantifier in
+            // the predicate, binding its own slot parameter `e` over the
+            // element places, its body the `presence_read` of the element
+            // place at the owner term `r` and `e`.
+            NodeKind::SlotPresence {
+                reference,
+                field,
+                all,
+            } => {
+                let location = node.location();
+                let unsupported = || {
+                    refuse(
+                        location,
+                        CheckCause::UnsupportedFeature {
+                            loci: vec![location.clone()],
+                        },
+                    )
+                };
+                let binder = binders
+                    .presence_binders
+                    .iter()
+                    .find(|(at, _)| at == location)
+                    .map(|(_, name)| name.clone())
+                    .ok_or_else(unsupported)?;
+                let place = self
+                    .element_place(field.owner.clone(), &field.name)
+                    .ok_or_else(unsupported)?;
+                frames.push(LowerFrame::SlotPresence {
+                    node,
+                    place,
+                    binder,
+                    all: *all,
+                });
+                return Ok(LowerStep::Descend(node.at(*reference)));
+            }
             // These checked forms have no S4 representation yet. In
             // particular, a clock-place reference is a descriptor, not a
             // clock value; the downstream term contract has no row for it.
-            // A quantifier over a clock collection's slots likewise has no
-            // producer form yet.
             NodeKind::PopulationObjects { .. }
             | NodeKind::History { .. }
-            | NodeKind::PlaceReference { .. }
-            | NodeKind::SlotPresence { .. } => {
+            | NodeKind::PlaceReference { .. } => {
                 return Err(refuse(
                     node.location(),
                     CheckCause::UnsupportedFeature {
@@ -6574,6 +6621,14 @@ impl<'a> Lowering<'a> {
                 )
                 .map(LowerStep::Lowered)
             }
+            LowerFrame::SlotPresence {
+                node,
+                place,
+                binder,
+                all,
+            } => self
+                .presence_quantifier(node, place, &binder, all, term, binders)
+                .map(LowerStep::Lowered),
             LowerFrame::Attribute {
                 node,
                 object,

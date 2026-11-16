@@ -33,6 +33,7 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use filament_checked::key::DeclarationKey;
 use filament_exact::{EffectiveId, NodeKey, Rational, ValueType};
+use filament_semantic_value::location::ExpressionLocation;
 use filament_semantic_value::declaration::{CompositeShape, TypeEnvironment};
 use fsl_forms::{
     BinaryOperator, ExprId, ExprNode, ExpressionForm, QuantityForm, StateClauseKind,
@@ -322,9 +323,20 @@ pub struct CheckedTimedPredicate {
     slots: usize,
     /// Each slot's binder name, for the parameter nodes lowering writes.
     slot_names: Vec<String>,
+    /// The binder name of each element-presence quantifier
+    /// (`forall(e in self.q: present(e))`) the body holds, by the checked
+    /// node's location: the quantifier binds its own slot `parameter` in
+    /// the predicate (FR-930, FSpec FR-760).
+    presence_binders: Vec<(ExpressionLocation, String)>,
 }
 
 impl CheckedTimedPredicate {
+    /// The binder name of each element-presence quantifier the body
+    /// holds, by the checked node's location (FR-930).
+    pub(crate) fn presence_binders(&self) -> &[(ExpressionLocation, String)] {
+        &self.presence_binders
+    }
+
     /// The checked body.
     pub(crate) fn checked_body(&self) -> &CheckedBody {
         &self.body
@@ -1435,13 +1447,6 @@ impl TimedModel {
                 if !part.elements.is_empty() || !part.families.is_empty() {
                     return Some((Unwritten(Member::QuantifiedClause), guard.span));
                 }
-                if part
-                    .data
-                    .as_ref()
-                    .is_some_and(|data| data.checked_body().reads_slot_presence())
-                {
-                    return Some((Unwritten(Member::ElementPresence), guard.span));
-                }
                 if part.clocks.is_empty() && !guard.covered() && !part.empty_collection_branch {
                     // Located at the disjunct: its data predicate's site.
                     let site = guard_part_site(&self.model, at, index);
@@ -1512,21 +1517,8 @@ impl TimedModel {
             }) {
                 return Some((Unwritten(Member::QuantifiedClause), invariant.span));
             }
-            if invariant
-                .alternatives
-                .iter()
-                .any(|alternative| alternative.predicate.checked_body().reads_slot_presence())
-            {
-                return Some((Unwritten(Member::ElementPresence), invariant.span));
-            }
         }
-        self.urgency
-            .iter()
-            .zip(&self.urgency_predicates)
-            .find(|(urgency, predicate)| {
-                matches!(urgency, Urgency::When { .. }) && predicate.is_none()
-            })
-            .map(|(urgency, _)| (Unwritten(Member::ElementPresence), urgency.span()))
+        None
     }
 
     /// Why S4 does not write `constraint` yet, `None` when it does: a
@@ -4638,15 +4630,42 @@ fn typed_in(
             span,
         }))
     })?;
+    let presence_binders = presence_binders(&typed.body, form);
     Ok((
         CheckedTimedPredicate {
             parameters: typed.parameters,
             body: typed.body,
             slots: typed.slots,
             slot_names: typed.slot_names,
+            presence_binders,
         },
         typed.nodes_used,
     ))
+}
+
+/// The binder name of each element-presence quantifier of `body`, typed
+/// from `form`, by its checked node's location: the source quantifier the
+/// location's path reaches (FR-930).
+fn presence_binders(body: &CheckedBody, form: &ExpressionForm) -> Vec<(ExpressionLocation, String)> {
+    body.root()
+        .descendants()
+        .into_iter()
+        .filter(|node| {
+            matches!(
+                node.kind(),
+                filament_checked::node::NodeKind::SlotPresence { .. }
+            )
+        })
+        .filter_map(|node| {
+            let location = node.location();
+            let mut id = form.expression.root_id();
+            for &index in &location.path() {
+                id = *form.expression.get(id)?.node().children().get(index)?;
+            }
+            let (_, _, binder) = slot_presence_query(form.expression.at(id))?;
+            Some((location.clone(), binder.to_owned()))
+        })
+        .collect()
 }
 
 /// `alternative` with its data predicate typed as a state predicate.
@@ -4975,14 +4994,9 @@ pub(crate) fn check(
                         )?);
                     }
                     let alternatives = typed;
-                    // A presence read of a quantified element has no
-                    // producer form in this slice.
-                    let written = alternatives
-                        .iter()
-                        .all(|alternative| {
-                            !alternative.predicate.checked_body().reads_slot_presence()
-                        })
-                        .then_some(UrgencyPredicate { sites, node: None });
+                    // An element-presence quantifier in the predicate is
+                    // written in it with its own binder (FR-930).
+                    let written = Some(UrgencyPredicate { sites, node: None });
                     (
                         Urgency::When {
                             name,

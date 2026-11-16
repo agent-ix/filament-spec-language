@@ -1406,11 +1406,6 @@ pub enum UnwrittenTimedMember {
     /// needs a point-qualified operation anchor, while this producer writes
     /// only the point-free operation anchor (FSpec FR-342-AC-11).
     PointQualifiedClause,
-    /// A guard part, time invariant or `urgent when` predicate that reads
-    /// the presences of a clock collection's elements (`forall(e in self.q:
-    /// present(e))`), whose quantified presence form this producer does not
-    /// admit yet.
-    ElementPresence,
     /// A reset of an element clock that no single binder selects: a clock
     /// below two collections, or an element named by position.
     ElementReset,
@@ -1423,9 +1418,6 @@ impl UnwrittenTimedMember {
             Self::QuantifiedClause => "a quantified timed clause is not written by this producer",
             Self::PointQualifiedClause => {
                 "a clock-reading clause bound to an execution point is not written by this producer"
-            }
-            Self::ElementPresence => {
-                "a predicate reading a clock collection's element presences is not written by this producer"
             }
             Self::ElementReset => "a reset of an element clock no single binder selects",
         }

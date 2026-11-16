@@ -572,16 +572,6 @@ impl CheckedBody {
         self.data.nodes.is_empty()
     }
 
-    /// Whether a node of the body reads the presences of a clock
-    /// collection's elements (`forall(e in r.q: present(e))`), which the
-    /// current timed-clause producer does not write.
-    pub(crate) fn reads_slot_presence(&self) -> bool {
-        self.data
-            .nodes
-            .iter()
-            .any(|node| matches!(node.kind, NodeKind::SlotPresence { .. }))
-    }
-
     /// Whether a node of the body reads the local slot `slot`: for a slot
     /// below the body's parameter count, whether it reads that parameter.
     pub fn reads_local(&self, slot: Slot) -> bool {

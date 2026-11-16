@@ -22,6 +22,7 @@ use filament_exact::{EffectiveId, Identifier, NodeKey, Value, ValueType};
 use filament_semantic_value::location::ExpressionLocation as Location;
 
 use super::{refuse, require_admitted, Binder, Binders, Lowering, PlaceStep};
+use crate::check::ir::CheckedNode;
 use crate::check::family::OccurrenceRole;
 
 use crate::check::node_key::{
@@ -483,6 +484,7 @@ impl Lowering<'_> {
             });
         }
         let mut binders = Binders::new(predicate.slot_names(), &scope);
+        binders.presence_binders = predicate.presence_binders();
         let term = self.expression(body.root(), &mut binders)?;
         let key = term
             .key()
@@ -765,6 +767,67 @@ impl Lowering<'_> {
             .iter()
             .find(|place| place.owner == owner && place.path == path)
             .map(|place| place.node.clone())
+    }
+
+    /// The `clock_place` template node of the element place of the clock
+    /// collection field `field` of `owner`: the place one slot below it.
+    pub(super) fn element_place(&self, owner: EffectiveId, field: &str) -> Option<NodeKey> {
+        self.timed_places
+            .iter()
+            .find(|place| {
+                place.owner == owner
+                    && matches!(place.path.as_slice(),
+                        [PlaceStep::Field(name), PlaceStep::Slot(_)] if name == field)
+            })
+            .map(|place| place.node.clone())
+    }
+
+    /// FR-930, FSpec FR-760: the element-presence quantifier `node`,
+    /// `forall(e in r.q: present(e))` (`all`) or `exists`, over the owner
+    /// term `owner`: the collection quantifier application over the element
+    /// place `place` that binds its own slot `parameter` `binder`, typed by
+    /// the selector's domain `Integer`, with the body the `presence_read` of
+    /// the element place at `owner` and that parameter. The parameter is
+    /// scoped by the application alone, never a part's or invariant's
+    /// `binders`.
+    pub(super) fn presence_quantifier(
+        &mut self,
+        node: CheckedNode<'_>,
+        place: NodeKey,
+        binder: &str,
+        all: bool,
+        owner: LeafTerm,
+        binders: &Binders<'_>,
+    ) -> Result<LeafTerm, CheckRefusal> {
+        let location = node.location();
+        let integer = self.type_node(&ValueType::Integer, location)?;
+        let parameter = self.parameter(binder, binders.scope.len(), integer, location)?;
+        let boolean = self.type_node(&ValueType::Boolean, location)?;
+        let read = self.typed_application(
+            location,
+            boolean,
+            Operator::Present,
+            Operation::plain("filament.op.option.present"),
+            vec![
+                MemberTerm::Leaf(LeafTerm::reference(place.clone())),
+                MemberTerm::Leaf(owner),
+                MemberTerm::Leaf(LeafTerm::reference(parameter)),
+            ],
+        )?;
+        let identity = if all {
+            "filament.op.collection.forall"
+        } else {
+            "filament.op.collection.exists"
+        };
+        self.application(
+            node,
+            Operator::Quantify,
+            Operation::plain(identity),
+            vec![
+                MemberTerm::Leaf(LeafTerm::reference(place)),
+                MemberTerm::bound(binder, read),
+            ],
+        )
     }
 
     /// The `presence_read` of the place `place` at the owner term `owner`

@@ -720,22 +720,6 @@ fn a_presence_reads_the_place_template_at_its_owner() {
     assert_declared_order(&wire);
 }
 
-/// The member a refused model names, and the text of its span in `unit`.
-fn unwritten(document: &[u8], body: &str) -> (fsl_semantics::check::UnwrittenTimedMember, String) {
-    let (unit, checked) = checked(document, body);
-    let refusals = checked.expect_err("the member is not written yet");
-    let found = refusals.iter().find_map(|refusal| match &refusal.cause {
-        fsl_semantics::check::CheckCause::Temporal(cause) => match &**cause {
-            fsl_semantics::check::TemporalCause::TimedModelNotEmitted { member, span, .. } => {
-                Some((*member, unit[span.start..span.end].to_owned()))
-            }
-            _ => None,
-        },
-        _ => None,
-    });
-    found.unwrap_or_else(|| panic!("{body}: {refusals:?}"))
-}
-
 /// FR-230-AC-55, FSpec FR-322-AC-295 and FR-415-AC-24: bounded `forall`
 /// guards encode each live length as a conjunction with one slot binder per
 /// constraint, while `exists` encodes selected slots as disjunctions and has
@@ -976,40 +960,6 @@ fn unsupported_quantified_invariant_forms_refuse_without_partial_output() {
             &unit[span.start..span.end]
         );
     }
-}
-
-/// FR-230-AC-55, FR-230-AC-56, FR-230-AC-53: element-presence reads remain
-/// unavailable in timed guards, invariants and urgency predicates until their
-/// quantified wire form is admitted. Each model refuses as a whole instead of
-/// emitting a guard with the presence requirement missing.
-#[trace("TC-685", "FR-230-AC-53", "FR-230-AC-55", "FR-230-AC-56")]
-#[test]
-fn element_presence_in_timed_predicates_refuses_without_emitting_partial_nodes() {
-    use fsl_semantics::check::UnwrittenTimedMember as Member;
-
-    let quantifier = "forall(e in self.q: present(e))";
-    let guard = format!(
-        "pre HasElement using v on Config::ConfigVersion::attemptUpdate {{ \
-         self.x >= 1 ms and {quantifier} }}"
-    );
-    let (member, text) = unwritten(&slot_presence_document(), &format!("{guard}\n"));
-    assert_eq!(
-        (member, text.as_str()),
-        (Member::ElementPresence, guard.as_str()),
-        "FR-230-AC-55: a quantified guard that reads element presence is refused at \
-         the owning guard as ElementPresence"
-    );
-
-    let invariant =
-        format!("time invariant HasElement when {{ {quantifier} }} {{ self.x <= 9 ms }}");
-    let (member, text) = unwritten(&slot_presence_document(), &format!("{invariant}\n"));
-    assert_eq!(member, Member::ElementPresence);
-    assert!(text.starts_with("time invariant HasElement"), "{text}");
-
-    let urgency = format!("urgent HasElement when {{ {quantifier} }};");
-    let (member, text) = unwritten(&slot_presence_document(), &format!("{urgency}\n"));
-    assert_eq!(member, Member::ElementPresence);
-    assert!(text.starts_with("urgent HasElement"), "{text}");
 }
 
 /// FR-230-AC-57 / TC-685 step 38: a mixed quantified and ordinary bound
@@ -1409,7 +1359,6 @@ fn presence_read_bodies(wire: &Value) -> Vec<Value> {
 /// the binder.
 #[trace("TC-2390", "FR-230-AC-66")]
 #[test]
-#[ignore = "QSL-2144: element presences in a guard, time invariant or urgency predicate have no specified binder scope beside a non-slot constraint (spec gap)"]
 fn compared_and_element_presences_are_written() {
     let post = |body: &str| {
         emitted(
@@ -1649,7 +1598,6 @@ fn predicate_operation(wire: &Value, reference: &Value) -> String {
     "FSpec-FR-760-AC-3"
 )]
 #[test]
-#[ignore = "QSL-2144: an element-presence quantifier is not yet written in its clause predicate with its own binder"]
 fn an_element_presence_quantifier_is_scoped_in_its_predicate() {
     let document = slot_presence_document();
     let emit = |body: &str| {
