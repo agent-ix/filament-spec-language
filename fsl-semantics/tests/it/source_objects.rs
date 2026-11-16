@@ -2005,7 +2005,7 @@ fn a_recursive_object_member_is_refused_as_a_recursive_record_field_is() {
 /// unit's time member.
 fn source_timed(time: &str) -> String {
     format!(
-        "profile tm = \"filament.temporal.timed/v1\";\n\
+        "profile tm = \"filament.temporal.complete/v1\";\n\
          dimension Time;\nunit ms : Time = rational(1, 1);\n\
          record W {{ c: Clock; }}\n\
          object O {{ w: W; d: Clock; operation step() modifies self.d; }}\n\
@@ -2210,6 +2210,15 @@ fn resolved_source_member_spellings_keep_aliases_without_changing_identity() {
             expected
         );
         assert!(field.value_type.to_string().starts_with("resolved:"));
+        for debug_form in [
+            "Composite(",
+            "DecimalType",
+            "EnumShape",
+            "Reference(",
+            "CollectionType",
+        ] {
+            assert!(!field.value_type.to_string().contains(debug_form));
+        }
         let second_models = &second.model_inputs.as_ref().expect("repeat models").0;
         let second_source = second_models
             .iter()
@@ -2232,6 +2241,10 @@ fn resolved_source_member_spellings_keep_aliases_without_changing_identity() {
             second_field.value_type.to_string()
         );
         if name == "a" {
+            assert_eq!(
+                field.value_type.to_string(),
+                "resolved:Decimal[0, 100; 2, 2; exact]"
+            );
             assert_eq!(
                 fsl_spelling(&field.value_type, spellings, None),
                 "Decimal[0, 100; 2, 2; exact]"
@@ -2339,7 +2352,7 @@ fn resolved_source_member_spellings_keep_aliases_without_changing_identity() {
 #[test]
 fn source_dense_time_covers_direct_nested_and_collection_clock_members() {
     for member in ["w: W;", "w: Sequence<W>[0, 2];", "w: Wrapper;"] {
-        let source = format!("dimension Time; unit ms : Time = rational(1, 1);\nrecord W {{ c: Clock; }}\nrecord Wrapper {{ value: W; }}\nobject O {{ {member} }}\ntime O dense unit ms;\n");
+        let source = format!("profile tm = \"filament.temporal.complete/v1\";\ndimension Time; unit ms : Time = rational(1, 1);\nrecord W {{ c: Clock; }}\nrecord Wrapper {{ w: W; }}\nobject O {{ {member} }}\ntime O dense unit ms;\n");
         let graph = finish(assemble(&source).expect("source clock forms assemble"))
             .unwrap_or_else(|refusals| panic!("{member}: {refusals:?}"));
         assert_eq!(graph.time_sources().len(), 1);
