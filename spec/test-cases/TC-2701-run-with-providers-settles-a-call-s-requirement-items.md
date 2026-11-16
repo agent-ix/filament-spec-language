@@ -20,7 +20,7 @@ Verify the run-side provider entry: the negotiator parameter, the order of work,
 4. Register two providers with one `BackendId`; run a call whose compile refuses.
 5. Have the provider report a counterexample the evaluator does not reproduce; run with a cancelled handle.
 
-Test: `fsl-command/tests/it/run_requirement_items.rs` `run_with_providers_settles_the_call_s_items_after_negotiation`, `plain_run_settles_with_the_linked_engines_only`.
+Test: `fsl-command/tests/it/run_requirement_items.rs` `run_with_providers_settles_the_call_s_items_after_negotiation`, `plain_run_settles_with_the_linked_engines_only`, `run_with_providers_refuses_and_settles_the_negative_cases`.
 
 ## Expected Results
 

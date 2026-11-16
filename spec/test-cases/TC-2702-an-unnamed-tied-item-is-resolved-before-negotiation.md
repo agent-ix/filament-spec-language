@@ -19,7 +19,7 @@ Verify that FR-489's claim-form rule narrows an unnamed item's candidates to one
 3. Register a process provider advertising `operation-contract` and repeat step 1's first item, unnamed and naming `en-1`.
 4. Register a process provider advertising `value-validity` and run `sq` with `requirements` `{}` and with `value-checker` named.
 
-Test: `fsl-command/tests/it/run_requirement_items.rs` `an_unnamed_tied_item_reaches_negotiation_with_one_candidate`, `an_undecided_tie_settles_ambiguous_backend`.
+Test: `fsl-analyze/tests/it/tied_item_resolution.rs` `an_unnamed_tied_item_reaches_negotiation_with_one_candidate`, `an_undecided_tie_settles_ambiguous_backend`; `fsl-command/tests/it/run_requirement_items.rs` `an_unnamed_run_item_with_two_value_validity_candidates_is_ambiguous`.
 
 ## Expected Results
 

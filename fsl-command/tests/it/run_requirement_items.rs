@@ -132,10 +132,10 @@ fn a_run_call_names_the_backend_of_its_requirement_items() {
     }
 
     // An unregistered backend settles each item unknown-backend; a per-item
-    // entry with no backend falls back to no named backend for its item.
+    // entry naming value-checker settles its item there.
     let absent = command::run(&sq(
         directory.path(),
-        Some(json!({"backend": "fsl.absent", "items": [{"claim": first_claim}]})),
+        Some(json!({"backend": "fsl.absent", "items": [{"claim": first_claim, "backend": "value-checker"}]})),
     ))
     .unwrap();
     assert_eq!(absent.exit_code, 20, "category refusal");
@@ -145,6 +145,7 @@ fn a_run_call_names_the_backend_of_its_requirement_items() {
         "{}",
         absent_items[0]
     );
+    assert_eq!(absent_items[0]["request"]["backend"], "value-checker");
     for item in &absent_items[1..] {
         assert!(item.to_string().contains("unknown-backend"), "{item}");
         assert!(item["record"].get("backend").is_none(), "{item}");

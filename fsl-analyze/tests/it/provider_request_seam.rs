@@ -79,6 +79,8 @@ fn recording_provider(seen: Arc<Mutex<Seen>>) -> fsl_analyze::analyze::Engine {
     fsl_analyze::analyze::Engine::external(
         descriptor,
         fsl_analyze::analyze::BackendTool::new("test-provider", "1").expect("a tool"),
+        // FR-964 moves the limits to `ProviderOptions`; the coder drops this
+        // argument when `Engine::external` loses it.
         fsl_analyze::provider::ProviderLimits::default(),
         Box::new(Recording(seen)),
     )
@@ -89,7 +91,6 @@ fn recording_provider(seen: Arc<Mutex<Seen>>) -> fsl_analyze::analyze::Engine {
 /// package, items, manifest entry and deadline come from analyze.
 #[trace("TC-2660", "FR-950-AC-1")]
 #[test]
-#[ignore = "QSL-2192: analyze does not build the complete FR-331 ProviderRequest or call ExternalProvider::settle yet"]
 fn the_provider_receives_the_complete_request_analyze_built() {
     let seen = Arc::new(Mutex::new(Seen::default()));
     let body = "function Even using v(n: Integer): Boolean pure { n * 2 - n = n }\n".to_owned()

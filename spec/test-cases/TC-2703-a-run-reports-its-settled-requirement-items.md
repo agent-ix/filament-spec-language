@@ -19,7 +19,7 @@ Verify the `requirements` and `registry` members of `spine-run-result/1`, `RunRe
 3. Run `sq` naming `fsl.absent`.
 4. Run `seven` without `requirements`.
 
-Test: `fsl-command/tests/it/run_requirement_items.rs` `a_run_reports_its_settled_requirement_items`.
+Test: `fsl-command/tests/it/run_requirement_items.rs` `a_run_call_names_the_backend_of_its_requirement_items`, `run_with_providers_settles_the_call_s_items_after_negotiation`.
 
 ## Expected Results
 

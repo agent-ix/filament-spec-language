@@ -17,7 +17,7 @@ Verify that analyze and run take the run's FR-462 limits as `ProviderOptions.pro
 1. Call `analyze_with_providers` and `run_with_providers` with a recording provider and `deadline_ms` 250, `max_frame_bytes` 1048576; then with `ProviderOptions::default()`.
 2. Register two recording providers in one run.
 
-Test: `fsl-command/tests/it/run_requirement_items.rs` `provider_routing_entries_share_one_options_type`.
+Test: `fsl-command/tests/it/run_requirement_items.rs` `run_with_providers_settles_the_call_s_items_after_negotiation`.
 
 ## Expected Results
 
