@@ -20,4 +20,4 @@ Catches a stub engine, or a mode chosen without the `recording` member.
 
 ## Expected Results
 
-- Step 1: `proved` with both projections and the verdicts listed; `refuted` with the deadlock and with the projection counterexample; `refuted` with `unexpected`; `Courier` refused `missing-name`; no item settles `unsupported` with a pending obligation.
+- Step 1: `proved` with the verdicts listed and both projections reported beside them; `refuted` with the deadlock; `proved` for the unmerged `repeat`, with its refuted projection reported beside the verdict; `refuted` with `unexpected`; `Courier` refused `missing-name`; no item settles `unsupported` with a pending obligation.

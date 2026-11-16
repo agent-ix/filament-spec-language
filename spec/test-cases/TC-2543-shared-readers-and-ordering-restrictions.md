@@ -23,4 +23,4 @@ Catches an ordering mismatch answered `unsupported` instead of restricted.
 
 ## Expected Results
 
-- Step 1: The reader has one successor per visible value and no `MultiLocation` entry; the load acts as `relaxed` and the store as `release`, and `ordering-restrictions` lists both.
+- Step 1: The reader has one successor per visible value and no `MultiLocation` entry; the load acts as `relaxed` and the store as `release`, and `ordering_restrictions` lists both.

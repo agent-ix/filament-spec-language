@@ -38,11 +38,14 @@ modes, selected by the item.
   - the bound model of a replicated role's population.
 
   Its operations are applied by the protocol's `attempt` steps (ADR-027
-  ST-1). The item settles `proved` exactly when both of the following hold:
-  1. Each role's projection under `bounded` (FR-890) is `proved`, so each
-     implementation can run its role's local graph without global knowledge.
-  2. The protocol system (FR-205) satisfies FR-895's obligations on every
-     behaviour.
+  ST-1). The item settles `proved` exactly when the protocol system (FR-205)
+  satisfies FR-895's obligations on every behaviour, which is FSpec
+  FR-059's judgement over every history the composition can produce.
+  Beside that verdict, and never as a premise of it, the record reports each
+  role's projection under `bounded` (FR-890): whether each implementation can
+  run its role's local graph without global knowledge. A refuted projection
+  does not refute conformance, and a proved projection does not establish
+  it.
 
   The protocol system steps only enabled steps, so in this mode causal
   order, enabledness and the channel premises hold by construction. The
@@ -55,9 +58,9 @@ modes, selected by the item.
     states.
 
   These are the protocol model-checking items of FR-636, so they settle as
-  FR-636 states. A refutation carries the failing part's counterexample: a
-  projection counterexample (FR-574) naming the role, or a protocol
-  counterexample (FSpec FR-433). Either replays.
+  FR-636 states. A refutation carries the protocol counterexample (FSpec
+  FR-433), which replays. A projection counterexample (FR-574) is reported
+  with its projection result beside the verdict.
 - **Missing implementation.** A role whose binding names no model,
   component or population in the linked package or the protocol subject is
   refused `missing_declaration`/`missing-name` naming the role, before any
@@ -69,25 +72,25 @@ this requirement, never with a stub's pending obligation.
 
 ### Decision: one meaning, two evidence sources
 
-FSpec FR-059 defines global conformance once, as conformance to the
-protocol's obligations. FR-636 used the same kind name for checking the
-protocol system, and the ticket asked for checking a set of implementations.
-These are one judgement over two sources of executions: a recorded history,
-or every behaviour that the protocol and its bound implementations can
-produce. In FSL, a role's implementation is its bound model, and the protocol
-system already composes those models through the attempts. So "do the
-implementations together follow the protocol" is answered by the
-projections, which show that each role can act locally, together with the
-model check of the composition. An out-of-protocol send cannot arise from
-the composition, because the protocol system takes only enabled steps. It
-arises only in a recording, where replay mode reports it as `unexpected`.
+FSpec FR-059 defines global conformance once, as conformance of executions
+to the protocol's obligations. A recorded history and the set of every
+behaviour that the protocol and its bound implementations can produce are
+two sources of such executions, so one claim kind serves both. In FSL a
+role's implementation is its bound model, and the protocol system already
+composes those models through the attempts, so the model check of the
+composition decides the judgement. Whether each role can also run locally is
+a different question, answered by projection; the record reports it beside
+the verdict, because FR-059 judges histories alone and a projection result
+is not one. An out-of-protocol send cannot arise from the composition,
+because the protocol system takes only enabled steps. It arises only in a
+recording, where replay mode reports it as `unexpected`.
 
 ## Acceptance Criteria
 
 | ID | Criteria | Verification |
 | --- | --- | --- |
-| FR-896-AC-1 | The FR-636 order fixture with `Buyer` and `Seller` bound to `M::Cell` settles `global-conformance` `proved` with no `recording`: both projections are `proved` and every obligation holds over every behaviour. The protocol-analysis record lists the two projection results and the obligation verdicts. | Test (TC-2532) |
-| FR-896-AC-2 | The fixture with the `receive` removed settles `refuted` with the deadlock counterexample of FR-636-AC-1, which replays. FR-890-AC-2's unmerged `repeat` settles `refuted` with its projection counterexample naming `Seller`. | Test (TC-2532) |
+| FR-896-AC-1 | The FR-636 order fixture with `Buyer` and `Seller` bound to `M::Cell` settles `global-conformance` `proved` with no `recording`, every obligation holding over every behaviour. The protocol-analysis record lists the obligation verdicts and, beside them, the two `bounded` projection results, both `proved`. | Test (TC-2532) |
+| FR-896-AC-2 | The fixture with the `receive` removed settles `refuted` with the deadlock counterexample of FR-636-AC-1, which replays. A protocol whose obligations hold on every behaviour but whose projection onto `Seller` is refuted (FR-890-AC-2's unmerged `repeat`) settles `proved`, and the record reports the refuted projection with its counterexample beside the verdict. | Test (TC-2532) |
 | FR-896-AC-3 | The same item with FR-895-AC-5's recording, in which `Seller` sends on `Tell` where the protocol enables no send, settles `refuted` with the `unexpected` verdict, and its counterexample replays as a recording prefix. | Test (TC-2532) |
 | FR-896-AC-4 | A protocol whose role `Courier on N::Truck` names a model `N` that the linked package does not select is refused `missing_declaration`/`missing-name` naming `Courier`, and no verdict is settled. No `global-conformance` item settles `unsupported` with a pending obligation in the corpus. | Test (TC-2532) |
 

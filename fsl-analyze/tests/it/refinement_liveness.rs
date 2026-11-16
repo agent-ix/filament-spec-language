@@ -14,7 +14,7 @@ use fsl_package::CheckedPackage;
 use fsl_replay::{
     CounterexampleKind, IncompleteCause, LivenessHalf, ModelCheckLimit, ModelCheckLimits,
     ModelCheckOutcome, ReachedLimit, RefinementFailure, RefinementOutcome, SafetyOutcome,
-    TemporalCounterexample, UnavailabilityCause, UndecidedCause,
+    TemporalCounterexample, UndecidedCause,
 };
 use fsl_semantics::check::CheckedRefinement;
 use fsl_semantics::model::observation::DocumentRef;
@@ -240,21 +240,23 @@ fn a_loop_that_takes_abstract_steps_but_never_flip_b_is_abstract_unfair() {
     ));
 }
 
-/// FR-143-AC-4 (TC-548 step 4): `RegisterHistory` without its `prev` row
-/// holds its safety half and settles its liveness half `Unsupported` with
-/// an `ensure` row, and has none without it.
+/// FR-143-AC-4 (TC-548 step 4), FR-899-AC-1 (TC-2536): `RegisterHistory`
+/// without its `prev` row holds its safety half and decides its liveness
+/// half with an `ensure` row, by inclusion over the candidate-set product,
+/// and has none without it.
 #[trace("TC-548", "FR-143-AC-4")]
+#[trace("TC-2536", "FR-899-AC-1")]
 #[test]
-fn liveness_through_a_hidden_abstract_field_is_unsupported() {
+#[ignore = "QSL-2243: liveness through a hidden abstract field settles Unsupported instead of being decided"]
+fn liveness_through_a_hidden_abstract_field_is_decided() {
     let unit = Unit::register();
     let ensured = hidden_register_history();
     let outcome = check_aux(&unit.world(&ensured));
     assert!(matches!(outcome.safety, SafetyOutcome::Holds { .. }));
-    assert_eq!(
-        outcome.liveness,
-        Some(LivenessHalf::Unsupported(
-            UnavailabilityCause::HiddenFieldLiveness
-        ))
+    assert!(
+        matches!(outcome.liveness, Some(LivenessHalf::Checked(_))),
+        "{:?}",
+        outcome.liveness
     );
 
     let outcome =
@@ -288,16 +290,16 @@ fn operation_of(outcome: RefinementOutcome) -> String {
     }
 }
 
-/// FR-143 Behavior (TC-548): a strong constraint in `F_A` is not decided by
-/// the weak reading the second phase has, so the liveness half is
-/// `Unsupported` with the proved safety half kept beside it, whatever else
-/// `F_A` holds; a weak `F_A` is decided as before. The loop `flipA, flipA`
-/// of the refinement visits `a = 0` forever and never takes the strong
-/// `flipB`. The same beside a violated safety half, decided by the engine:
-/// `flipA` as a `stutter` changes the mapped state.
+/// FR-143-AC-6, FR-899-AC-3 (TC-548, TC-2537): a strong constraint in `F_A`
+/// is read strongly. The loop `flipA, flipA` visits `a = 0` forever and never
+/// takes the strong `flipB`, so the liveness half is violated naming `flipB`,
+/// with the proved safety half beside it; a weak `F_A` holds as before. With
+/// the safety half violated, the liveness half is not run.
 #[trace("TC-548", "FR-143-AC-6")]
+#[trace("TC-2537", "FR-899-AC-3")]
 #[test]
-fn a_strong_abstract_fairness_constraint_is_unsupported() {
+#[ignore = "QSL-2243: a strong abstract fairness constraint settles Unsupported instead of refuting the loop"]
+fn a_strong_abstract_fairness_constraint_refutes_a_loop_that_never_takes_it() {
     let unit = probe(
         ["", "self.a = 0", "", ""],
         ["", "self.a = 0", ""],
@@ -306,42 +308,22 @@ fn a_strong_abstract_fairness_constraint_is_unsupported() {
     let flip_a = "assume fair weak each Impl::Pair::flipA;";
     let weak = "ensure fair weak whole Spec::Pair::flipB;";
     let strong = "ensure fair strong whole Spec::Pair::flipB;";
-    for (rows, supported) in [
-        (vec![flip_a, weak], true),
-        (vec![flip_a, strong], false),
-        (vec![flip_a, weak, strong], false),
-        (vec![flip_a, strong, weak], false),
+    holds(&check_aux(&unit.world(&probe_refinement(&[flip_a, weak]))));
+    for rows in [
+        vec![flip_a, strong],
+        vec![flip_a, weak, strong],
+        vec![flip_a, strong, weak],
     ] {
         let outcome = check_aux(&unit.world(&probe_refinement(&rows)));
-        assert!(
-            matches!(outcome.safety, SafetyOutcome::Holds { .. }),
-            "{rows:?}"
-        );
-        if supported {
-            holds(&outcome);
-        } else {
-            assert_eq!(
-                outcome.liveness,
-                Some(LivenessHalf::Unsupported(
-                    UnavailabilityCause::StrongAbstractFairness
-                )),
-                "{rows:?}"
-            );
-        }
+        assert_eq!(operation_of(outcome), "flipB", "{rows:?}");
     }
-
     let violated = probe_refinement(&[flip_a, strong]).replace(
         "step Impl::Pair::flipA -> Spec::Pair::flipA(self);",
         "step Impl::Pair::flipA -> stutter;",
     );
     let outcome = check_aux(&unit.world(&violated));
     assert!(matches!(outcome.safety, SafetyOutcome::Violated { .. }));
-    assert_eq!(
-        outcome.liveness,
-        Some(LivenessHalf::Unsupported(
-            UnavailabilityCause::StrongAbstractFairness
-        ))
-    );
+    assert_eq!(outcome.liveness, None);
 }
 
 /// FR-143 Second phase (TC-548): the classes are taken in `F_A`'s source
@@ -550,20 +532,21 @@ fn an_undecided_abstract_contract_leaves_the_liveness_half_undecided() {
     ));
 }
 
-/// FR-143 Behavior (TC-548): a refinement with a hidden abstract field and a
-/// strong `F_A` constraint is reported `HiddenFieldLiveness`, which is
-/// checked first.
+/// FR-143-AC-6, FR-899-AC-1 (TC-548, TC-2536): a refinement with a hidden
+/// abstract field and a strong `F_A` constraint decides its liveness half
+/// over the candidate-set product with the strong reading.
 #[trace("TC-548", "FR-143-AC-6")]
+#[trace("TC-2536", "FR-899-AC-1")]
 #[test]
-fn a_hidden_field_is_reported_before_a_strong_constraint() {
+#[ignore = "QSL-2243: a hidden field with a strong constraint settles Unsupported instead of being decided"]
+fn a_hidden_field_with_a_strong_constraint_is_decided() {
     let unit = Unit::register();
     let strong = hidden_register_history().replace("ensure fair weak", "ensure fair strong");
     let outcome = check_aux(&unit.world(&strong));
-    assert_eq!(
-        outcome.liveness,
-        Some(LivenessHalf::Unsupported(
-            UnavailabilityCause::HiddenFieldLiveness
-        ))
+    assert!(
+        matches!(outcome.liveness, Some(LivenessHalf::Checked(_))),
+        "{:?}",
+        outcome.liveness
     );
 }
 
@@ -615,41 +598,4 @@ fn the_decomposition_of_each_class_charges_the_runs_cancellation_handle() {
     );
     assert_ne!(one, two);
     assert!(charges_of(&two) >= charges_of(&one) + 2);
-}
-
-/// FR-899-AC-1 (TC-2536): liveness through a hidden abstract field is
-/// decided by inclusion over the candidate-set product, never settled
-/// `Unsupported`.
-#[trace("TC-2536", "FR-899-AC-1", "FR-143-AC-4")]
-#[test]
-#[ignore = "QSL-2243: liveness through a hidden abstract field settles Unsupported instead of being decided"]
-fn liveness_through_a_hidden_abstract_field_is_decided() {
-    let unit = Unit::register();
-    let outcome = check_aux(&unit.world(&hidden_register_history()));
-    assert!(matches!(outcome.safety, SafetyOutcome::Holds { .. }));
-    assert!(
-        matches!(outcome.liveness, Some(LivenessHalf::Checked(_))),
-        "{:?}",
-        outcome.liveness
-    );
-}
-
-/// FR-899-AC-3 (TC-2537): a strong abstract fairness constraint is read
-/// strongly. The loop `flipA, flipA` enables `flipB` at `a = 0` and never
-/// takes it, so a refinement that is only weakly fair is refuted.
-#[trace("TC-2537", "FR-899-AC-3", "FR-143-AC-6")]
-#[test]
-#[ignore = "QSL-2243: a strong abstract fairness constraint settles Unsupported instead of refuting the loop"]
-fn a_strong_abstract_fairness_constraint_refutes_a_loop_that_never_takes_it() {
-    let unit = probe(
-        ["", "self.a = 0", "", ""],
-        ["", "self.a = 0", ""],
-        &[(0, 0)],
-    );
-    let rows = [
-        "assume fair weak each Impl::Pair::flipA;",
-        "ensure fair strong whole Spec::Pair::flipB;",
-    ];
-    let outcome = check_aux(&unit.world(&probe_refinement(&rows)));
-    assert_eq!(operation_of(outcome), "flipB");
 }

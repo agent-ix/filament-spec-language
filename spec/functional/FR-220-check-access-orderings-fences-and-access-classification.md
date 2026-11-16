@@ -60,7 +60,7 @@ EN-1 SHALL keep a local access unresolved.
   location.
 - When EN-1 completes reachable-state classification exhaustively, EN-1 SHALL
   list each remaining candidate whose name was never shared as an
-  `ordering-restrictions` entry with access `local`.
+  `ordering_restrictions` entry with access `local`.
 - When exploration ends incomplete, EN-1 SHALL return an incomplete result
   without refusing unresolved candidates.
 - Potential footprints MAY identify names to track.
@@ -98,7 +98,7 @@ weak model corresponds to real accesses.
   `weak-access-shape`: every shape has the meaning FR-902 gives it (multi-location accesses, multi-location
   read-modify-writes, node readers of shared locations, orderings a kind
   does not take, and non-`all` joins). The item's record lists each
-  ordering restriction applied as `ordering-restrictions`.
+  ordering restriction applied as `ordering_restrictions`.
 
 ## Behavior
 
@@ -199,7 +199,7 @@ local access takes none).
   ordering acts as `relaxed`. A local access carries no memory effect, so
   its ordering changes nothing.
 - EN-1 SHALL list each restriction applied in the item's record as one
-  `ordering-restrictions` entry `{site, access, written, effective}`, in
+  `ordering_restrictions` entry `{site, access, written, effective}`, in
   canonical transition-identity order (ADR-027 TS-2), with a local access's
   entry added once exhaustive classification shows its name is never shared.
 - Under `sc`, an attempt whose instantiated class does not take its ordering
@@ -235,7 +235,7 @@ local access takes none).
 | FR-220-AC-11 | EN-1 classifies ADR-025 §10's `SB` under `tso` and under `ra` using only attempt applications whose selected precondition is true in the current thread observation and whose attempt constraint admits the application record: `Sx` and `Sy` are stores, `Ly` and `Lx` are loads, and (`c1`, `r`), (`c2`, `r`) are branch-local. Applications whose selected precondition is false contribute no enabled access footprint, including for a receiver or argument in the domain; their potential footprints may reserve memory backing but do not affect these classifications. | Test (EN-1 sharing; TC-665 step 10) |
 | FR-220-AC-12 | EN-1 classifies AC-7's two `relaxed` stores as two stores to one shared location. | Test (EN-1 sharing; TC-665 step 11) |
 | FR-220-AC-13 | EN-1 treats the register of AC-8 as branch-local, because attempts of one branch only touch it. | Test (EN-1 sharing; TC-665 step 12) |
-| FR-220-AC-14 | Under `tso` and `ra`, an enabled instantiated load with `release` explores as a `relaxed` load and one with `acq_rel` as an `acquire` load; a store with `acquire` explores as `relaxed` and one with `acq_rel` as `release`; an RMW with no ordering explores as `relaxed`. The record lists each as an `ordering-restrictions` entry `{site, access, written, effective}`. A local access with an ordering whose name is never shared gets an entry with access `local` once classification is exhaustive. No item settles `unsupported`. | Test (EN-1 pre-check; TC-665 step 13) |
+| FR-220-AC-14 | Under `tso` and `ra`, an enabled instantiated load with `release` explores as a `relaxed` load and one with `acq_rel` as an `acquire` load; a store with `acquire` explores as `relaxed` and one with `acq_rel` as `release`; an RMW with no ordering explores as `relaxed`. The record lists each as an `ordering_restrictions` entry `{site, access, written, effective}`. A local access with an ordering whose name is never shared gets an entry with access `local` once classification is exhaustive. No item settles `unsupported`. | Test (EN-1 pre-check; TC-665 step 13) |
 | FR-220-AC-15 | In `SB`'s `parallel` under `tso`, an `event` reader whose constraint reads `x.v` beside the branch whose enabled attempt stores `x.v` explores, its read a `relaxed` load in the reader's step with one successor per value its thread can see; with that store carrying `acquire`, it explores as a `relaxed` store and the record lists the restriction. Under `sc` the reader reads memory, and a `finish` whose constraint reads `x.v` after the `join` explores under `tso`. | Test (EN-1 pre-check; TC-665 step 14) |
 | FR-220-AC-16 | Over ADR-025 §10's `SB` under `tso` and under `ra`, with `max_candidates` 0 the deadlock-freedom item settles `Stopped{ResourceExhausted, {MaxCandidates, 0}}` with no product state explored, its record `incomplete` with `limit-reached` naming `expansion.max_candidates`, not a refusal and not a broken invariant. In a variant whose universe also holds ten `Cell` keys the initial state does not hold, `max_candidates` 6, which the enabled applications fit within (the variant without them builds), stops listing `Cell::set`'s twelve potential identities, and the item settles `Stopped{ResourceExhausted, {MaxCandidates, 6}}` the same way; with `max_candidates` 12 it builds. | Test (EN-1 pre-check; TC-665 step 15) |
 
