@@ -229,7 +229,7 @@ impl TraceInput {
 pub const DEFAULT_MODEL_MAX_CANDIDATES: u64 = 1_000_000;
 
 /// The authority label of a position that carries a record sample.
-const SAMPLE_AUTHORITY: &str = "record-sample";
+pub(crate) const SAMPLE_AUTHORITY: &str = "record-sample";
 
 /// FR-641: a record sample as one position of a
 /// [`ClauseRunSelection::SampledTemporal`](super::ClauseRunSelection)
@@ -2021,13 +2021,26 @@ fn counterexample(
     use crate::{ObservedTemporalCounterexample, ObservedTemporalKind, ObservedTemporalStep};
     let clause = node.clause();
     let documents: Vec<&DocumentRef> = trace.documents().collect();
-    let step = |document: &DocumentRef| ObservedTemporalStep {
-        document: document.clone(),
+    // FR-330-AC-18: a record sample is cited by its index in the trace, a
+    // snapshot by its labels.
+    let step = |index: usize, document: &DocumentRef| ObservedTemporalStep {
+        document: if document.authority == SAMPLE_AUTHORITY {
+            DocumentRef {
+                authority: SAMPLE_AUTHORITY.to_owned(),
+                identity: index.to_string(),
+            }
+        } else {
+            document.clone()
+        },
     };
     match disposition {
         ClauseDisposition::Temporal(TemporalVerdict::Violated { at }) => {
             Some(ObservedTemporalCounterexample {
-                prefix: documents.iter().map(|document| step(document)).collect(),
+                prefix: documents
+                    .iter()
+                    .enumerate()
+                    .map(|(index, document)| step(index, document))
+                    .collect(),
                 loop_start: match trace {
                     TraceInput::Lasso { prefix, .. } => Some(u64::try_from(prefix.len()).ok()?),
                     _ => None,
@@ -2057,7 +2070,10 @@ fn counterexample(
             };
             let last = usize::try_from(*at).ok()?;
             let prefix = (0..=last)
-                .map(|index| documents.get(slot(index)).map(|document| step(document)))
+                .map(|index| {
+                    let slot = slot(index);
+                    documents.get(slot).map(|document| step(slot, document))
+                })
                 .collect::<Option<Vec<_>>>()?;
             Some(ObservedTemporalCounterexample {
                 prefix,

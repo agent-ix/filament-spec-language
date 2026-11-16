@@ -50,6 +50,7 @@ pub use progress::{
     ProgressLimitReached, ProgressLowerBoundary, ProgressValue,
 };
 use temporal::TemporalRun;
+pub(crate) use temporal::SAMPLE_AUTHORITY;
 pub use temporal::{
     admit_progress, authenticate_package_trace, clause_trace_binding, name_clause_atom,
     run_package_temporal, sample_position, FiniteWindowAssessment, FiniteWindowPremises,

@@ -223,9 +223,27 @@ enum LocusWire {
 /// The `guard` locus value: the clause's one `on each` guard.
 const ON_EACH: &str = "on-each";
 
+/// One counterexample step: a snapshot by its labels, or a record sample by
+/// its index in the trace (FR-330-AC-18), with no value.
 #[derive(Serialize)]
-struct StepWire {
-    document: DocumentRefWire,
+#[serde(untagged)]
+enum StepWire {
+    Document { document: DocumentRefWire },
+    Sample { sample: String },
+}
+
+impl StepWire {
+    fn of(document: &fsl_semantics::model::observation::DocumentRef) -> Self {
+        if document.authority == crate::spine::clause::SAMPLE_AUTHORITY {
+            Self::Sample {
+                sample: document.identity.clone(),
+            }
+        } else {
+            Self::Document {
+                document: DocumentRefWire::from(document),
+            }
+        }
+    }
 }
 
 #[derive(Serialize)]
@@ -254,9 +272,7 @@ fn counterexample_wire(
     let steps: Vec<StepWire> = counterexample
         .prefix
         .iter()
-        .map(|step| StepWire {
-            document: DocumentRefWire::from(&step.document),
-        })
+        .map(|step| StepWire::of(&step.document))
         .collect();
     let split = counterexample
         .loop_start
@@ -1184,22 +1200,12 @@ pub struct CounterexampleRead {
 impl CounterexampleRead {
     /// The prefix's document identities, in order.
     pub fn prefix(&self) -> impl Iterator<Item = (&str, &str)> {
-        self.prefix.iter().map(|step| {
-            (
-                step.document.authority.as_str(),
-                step.document.identity.as_str(),
-            )
-        })
+        self.prefix.iter().map(StepRead::parts)
     }
 
     /// The loop's document identities, in order.
     pub fn loop_documents(&self) -> impl Iterator<Item = (&str, &str)> {
-        self.loop_steps.iter().map(|step| {
-            (
-                step.document.authority.as_str(),
-                step.document.identity.as_str(),
-            )
-        })
+        self.loop_steps.iter().map(StepRead::parts)
     }
 
     /// The failing operator interval's `lower` and `upper` spellings.
@@ -1296,10 +1302,33 @@ pub enum GuardRead {
     OnEach,
 }
 
+/// One counterexample step as read: a snapshot by its labels, or a record
+/// sample by its index (FR-330-AC-18).
 #[derive(Debug, Deserialize)]
-#[serde(deny_unknown_fields)]
-struct StepRead {
-    document: DocumentRefRead,
+#[serde(untagged)]
+enum StepRead {
+    Document { document: DocumentRefRead },
+    Sample { sample: String },
+}
+
+impl StepRead {
+    /// The step's authority and identity: a sample's is its index.
+    fn parts(&self) -> (&str, &str) {
+        match self {
+            Self::Document { document } => {
+                (document.authority.as_str(), document.identity.as_str())
+            }
+            Self::Sample { sample } => (crate::spine::clause::SAMPLE_AUTHORITY, sample.as_str()),
+        }
+    }
+
+    fn typed(&self) -> fsl_semantics::model::observation::DocumentRef {
+        let (authority, identity) = self.parts();
+        fsl_semantics::model::observation::DocumentRef {
+            authority: authority.to_owned(),
+            identity: identity.to_owned(),
+        }
+    }
 }
 
 #[derive(Debug, Deserialize)]
@@ -1402,7 +1431,7 @@ fn validate_counterexample(
                 || counterexample
                     .prefix
                     .last()
-                    .is_none_or(|step| step.document.typed() != envelope.point.document.typed())
+                    .is_none_or(|step| step.typed() != envelope.point.document.typed())
             {
                 return Err(invalid(
                     "disposition.temporal.counterexample.kind.where",
