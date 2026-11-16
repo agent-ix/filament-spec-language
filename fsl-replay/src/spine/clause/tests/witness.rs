@@ -1745,7 +1745,7 @@ fn tc_743_the_separation_check_names_its_failing_step() {
         fsl_semantics::model::intake::package_input([domain_document.as_slice()]).unwrap();
     let (package, source) =
         super::kernel_package(source(), "witness.native", text.as_bytes(), &packages);
-    let emitted = fsl_package::emit_checked(&package, EmitLimits::default())
+    let emitted = fsl_package::emit_checked(&package, EmitLimits::fixture())
         .unwrap()
         .package()
         .clone();
