@@ -23,6 +23,7 @@ mod anchors;
 mod attempts;
 mod binders;
 mod coverage;
+mod controls;
 mod graph;
 mod rules;
 

@@ -762,6 +762,8 @@ impl<M: MemoryModel> ProtocolSystem<'_, M> {
             | ControlStep::Repeat
             | ControlStep::Await
             | ControlStep::Check
+            | ControlStep::Finish
+            | ControlStep::CompensateTemplate
             | ControlStep::Unstepped(_) => {
                 return Err(ProtocolRefusal::fault("a-thread-rests-at-an-event-node").into())
             }
@@ -2142,6 +2144,8 @@ impl<M: MemoryModel> ProtocolSystem<'_, M> {
                 | ControlStep::Repeat
                 | ControlStep::Await
                 | ControlStep::Check
+                | ControlStep::Finish
+                | ControlStep::CompensateTemplate
                 | ControlStep::Unstepped(_) => {
                     return Err(ProtocolRefusal::fault("a-thread-rests-at-an-event-node").into())
                 }

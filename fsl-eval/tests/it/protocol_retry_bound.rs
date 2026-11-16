@@ -340,3 +340,23 @@ fn compensation_attempt_bound_admits_n_and_refuses_attempt_n_plus_one() {
         }
     }
 }
+
+#[test]
+#[trace("FSpec-FR-426-AC-1", "FSpec-FR-426-AC-9")]
+fn finish_is_stepped() {
+    let fixture = fixture(1);
+    let reachable = system(&fixture)
+        .reachable(NonZeroUsize::new(1).expect("one worker"))
+        .expect("finite protocol exploration completes");
+    let finishes = reachable
+        .states
+        .iter()
+        .flat_map(|state| &state.steps)
+        .filter(|(transition, _)| transition.kind() == StepKind::Finish)
+        .count();
+    assert!(finishes > 0, "the protocol reaches its finish step");
+    assert!(
+        reachable.states.iter().any(|state| state.steps.is_empty()),
+        "the explored graph includes end states after finish"
+    );
+}

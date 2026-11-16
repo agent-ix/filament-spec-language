@@ -107,6 +107,10 @@ impl<M: MemoryModel> ProtocolSystem<'_, M> {
                     | ControlStep::Receive
                     | ControlStep::Event
                     | ControlStep::Fence => return Ok(Settled::Rest(Rest::Node(node))),
+                    ControlStep::Finish => return Ok(Settled::Rest(Rest::Finish)),
+                    ControlStep::CompensateTemplate => {
+                        return Err(ProtocolRefusal::fault("a-template-is-not-in-the-run-tree").into())
+                    }
                     ControlStep::Await => return Ok(Settled::Rest(Rest::Await(node))),
                     ControlStep::Check => {
                         let condition = self
@@ -235,6 +239,8 @@ impl<M: MemoryModel> ProtocolSystem<'_, M> {
                         | ControlStep::Receive
                         | ControlStep::Event
                         | ControlStep::Fence
+                        | ControlStep::Finish
+                        | ControlStep::CompensateTemplate
                         | ControlStep::Unstepped(_) => {
                             return Err(ProtocolRefusal::fault("a-parent-holds-controls").into())
                         }
