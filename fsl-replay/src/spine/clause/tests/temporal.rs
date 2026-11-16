@@ -2672,7 +2672,6 @@ fn timestamped_report_keeps_four_independent_dimensions() {
 #[trace("TC-1582", "FR-267-AC-22")]
 #[trace("TC-1081", "FSpec-FR-521-AC-1")]
 #[test]
-#[ignore = "QSL-2121: the clause-run document does not carry the four outcome axes yet"]
 fn clause_run_document_carries_four_independent_axes() {
     let base = || {
         timestamped_with(
@@ -2702,6 +2701,32 @@ fn clause_run_document_carries_four_independent_axes() {
     assert_eq!(open["axes"]["execution"], axes["execution"]);
     assert_eq!(open["axes"]["truth"], axes["truth"]);
     assert_ne!(open["axes"]["settlement"], axes["settlement"]);
+}
+
+/// FR-622 "Clause runs and monitor items", FR-621 `axes`: every `monitor`
+/// item carries the four axes of the clause run it was built from, copied
+/// from the run (a pending run's `truth` `pending` and settlement
+/// `unsettled`, a refuted run's `false`), not recomputed from the category.
+#[trace("TC-1582", "FR-622-AC-1")]
+#[test]
+fn every_monitor_item_carries_its_clause_runs_axes() {
+    let pending = report(finite(Unit::Infinite, "Reaches", &[0, 1, 2]));
+    let refuted = report(finite(Unit::Bounded, "Bounded", &[0, 1, 2]));
+    let (_, json) = monitor_json(&[("Reaches", &pending), ("Bounded", &refuted)]);
+    for (item, run) in json["items"]
+        .as_array()
+        .expect("items")
+        .iter()
+        .zip([&pending, &refuted])
+    {
+        assert_eq!(
+            item["axes"],
+            serde_json::to_value(run.axes()).expect("the axes write"),
+            "{item}"
+        );
+    }
+    assert_eq!(json["items"][0]["axes"]["truth"], "pending");
+    assert_eq!(json["items"][1]["axes"]["truth"], "false");
 }
 
 /// FR-501-AC-16 (TC-1295 row 30): one result identity per input; each input

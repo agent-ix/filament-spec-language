@@ -246,6 +246,11 @@ impl ClauseRunRecord {
         self.0.basis.as_str()
     }
 
+    /// The document's four outcome axes (FR-622).
+    pub fn axes(&self) -> crate::OutcomeAxes {
+        self.0.axes
+    }
+
     /// Whether the document carries a separating witness.
     pub fn has_witness(&self) -> bool {
         self.0.witness.is_some()
@@ -1059,6 +1064,7 @@ struct ClauseRead {
     basis: Basis,
     #[serde(default, deserialize_with = "present")]
     witness: Option<RecordWire<Box<RawValue>>>,
+    axes: crate::OutcomeAxes,
 }
 
 #[derive(Deserialize)]
@@ -2235,6 +2241,7 @@ struct ClauseRunDocument {
     basis: &'static str,
     #[serde(skip_serializing_if = "Option::is_none")]
     witness: Option<RecordWire<Box<RawValue>>>,
+    axes: crate::OutcomeAxes,
 }
 
 impl Disposition {
@@ -2703,6 +2710,7 @@ fn write_document(report: &ClauseRunReport) -> Result<Vec<u8>, NativeRunResultEr
         },
         basis: report.basis.as_str(),
         witness,
+        axes: report.axes(),
     };
     let json = serde_json::to_vec(&document)?;
     let parsed = quire_canonical::read(&json, u64::MAX)?;

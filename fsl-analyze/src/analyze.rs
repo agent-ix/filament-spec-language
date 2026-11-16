@@ -33,6 +33,7 @@
 //! with the cancellation cause kept.
 
 mod clause_item;
+pub mod document;
 mod exact;
 mod items;
 mod request;
@@ -392,6 +393,37 @@ pub struct AnalyzeOutcome {
     /// request's required indices (FR-507-AC-5); a gap when the request
     /// repeats an index.
     pub aggregate: Result<Aggregate, AggregateGap>,
+    /// What each record's engine reported beside its terminal record, in
+    /// request order (FR-621 `exploration` and `certificate`).
+    pub details: Vec<ItemDetail>,
+}
+
+/// What an item's engine reported beside its terminal record (FR-621).
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct ItemDetail {
+    /// The item's request index.
+    pub request_index: RequestIndex,
+    /// The states, transitions and automaton states an explicit-state
+    /// engine explored; `None` for an engine that explores no states.
+    pub exploration: Option<fsl_replay::RunStats>,
+    /// The qualified-core checker that accepted a proof's certificate.
+    pub checker: Option<fsl_replay::CertificateChecker>,
+}
+
+impl ItemDetail {
+    fn of(record: &AnalyzeRecord) -> Self {
+        let model = record.model_check.as_deref();
+        let protocol = record.protocol_check.as_deref();
+        Self {
+            request_index: record.request_index,
+            exploration: model
+                .and_then(|model| model.exploration)
+                .or_else(|| protocol.and_then(|protocol| protocol.exploration)),
+            checker: model
+                .and_then(|model| model.checker)
+                .or_else(|| protocol.and_then(|protocol| protocol.checker)),
+        }
+    }
 }
 
 /// Why analyze could not admit a shared subject binding.

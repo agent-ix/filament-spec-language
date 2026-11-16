@@ -956,6 +956,77 @@ impl ClauseRunReport {
     pub fn category_label(&self) -> &'static str {
         self.disposition.category_label()
     }
+
+    /// FR-622's four outcome axes of the assessed instance, read from the
+    /// report's own fields: the activation from the disposition's stage and
+    /// verdict, the execution from the finite-window assessment or whether
+    /// evaluation completed, the truth from the verdict, and the settlement
+    /// from `basis`. The category does not decide any of them.
+    pub fn axes(&self) -> crate::OutcomeAxes {
+        use crate::{ActivationAxis, ExecutionAxis, TruthAxis};
+        let activation = match &self.disposition {
+            ClauseDisposition::Compile(_)
+            | ClauseDisposition::UnknownLanguage { .. }
+            | ClauseDisposition::MissingName { .. }
+            | ClauseDisposition::NotAPredicate { .. }
+            | ClauseDisposition::Admit(_)
+            | ClauseDisposition::ArgumentRefusal(_)
+            | ClauseDisposition::TemporalRefusal(_)
+            | ClauseDisposition::ProgressContradiction(_)
+            | ClauseDisposition::EvaluateFault(_)
+            | ClauseDisposition::Temporal(TemporalVerdict::Incomplete(_)) => {
+                ActivationAxis::Unavailable
+            }
+            ClauseDisposition::Temporal(TemporalVerdict::ActivationIncomplete { .. }) => {
+                ActivationAxis::Unknown
+            }
+            ClauseDisposition::Evaluate(_)
+            | ClauseDisposition::FrameViolation(_)
+            | ClauseDisposition::Temporal(_) => ActivationAxis::Active,
+        };
+        let stopped = matches!(
+            &self.disposition,
+            ClauseDisposition::Temporal(
+                TemporalVerdict::Incomplete(_)
+                    | TemporalVerdict::WindowLimitReached { .. }
+                    | TemporalVerdict::ProgressLimitReached(_)
+                    | TemporalVerdict::ActivationIncomplete { .. }
+            ) | ClauseDisposition::Evaluate(CallOutcome::Incomplete(_))
+        );
+        let execution = match (&self.finite_window, activation) {
+            (Some(window), _) => Some(match window.premises.assessment {
+                FiniteWindowAssessment::Completed => ExecutionAxis::Completed,
+                FiniteWindowAssessment::Failed => ExecutionAxis::Failed,
+            }),
+            (None, ActivationAxis::Unavailable) => None,
+            (None, _) if stopped => Some(ExecutionAxis::Failed),
+            (None, _) => Some(ExecutionAxis::Completed),
+        };
+        let truth = match &self.disposition {
+            ClauseDisposition::Temporal(
+                TemporalVerdict::Pending
+                | TemporalVerdict::PendingWindow { .. }
+                | TemporalVerdict::PendingNextEvent { .. },
+            ) => Some(TruthAxis::Pending),
+            disposition => disposition.truth().map(|holds| {
+                if holds {
+                    TruthAxis::True
+                } else {
+                    TruthAxis::False
+                }
+            }),
+        };
+        crate::OutcomeAxes {
+            activation,
+            execution,
+            truth,
+            settlement: Some(
+                self.finite_window
+                    .as_ref()
+                    .map_or(self.basis, |window| window.basis),
+            ),
+        }
+    }
 }
 
 /// FR-266: the basis of a report that derives no witness: `closed-scope`

@@ -324,6 +324,46 @@ impl WireLocus {
     }
 }
 
+/// The FSpec FR-331 `{node, occurrence}` locus of `claim`, the spelling a
+/// request item's `claim` member takes.
+///
+/// # Errors
+///
+/// When the node key has no wire spelling.
+pub fn claim_locus_wire(
+    claim: &fsl_foundation::source::provenance::OccurrenceKey,
+) -> Result<serde_json::Value, serde_json::Error> {
+    serde_json::to_value(WireLocus::of(claim))
+}
+
+/// FSpec FR-412's structural `CertificateIdentity` `{node_id, model,
+/// ordinal}` of the obligation `claim` names over the subject model
+/// `model`: `node_id` the claim's node, `model` the owning model's identity
+/// text and `ordinal` the claim
+/// occurrence's ordinal (FSpec FR-418-AC-9), the identity
+/// [`crate::ObligationIdentity`] mints for a claim occurrence.
+///
+/// # Errors
+///
+/// When the node key has no wire spelling.
+pub fn certificate_identity_wire(
+    claim: &fsl_foundation::source::provenance::OccurrenceKey,
+    model: &str,
+) -> Result<serde_json::Value, serde_json::Error> {
+    #[derive(Serialize)]
+    struct Identity<'a> {
+        node_id: WireNode,
+        model: &'a str,
+        ordinal: u32,
+    }
+    let identity = crate::ObligationIdentity::from_claim_occurrence(claim);
+    serde_json::to_value(Identity {
+        node_id: WireNode::of(identity.node()),
+        model,
+        ordinal: identity.ordinal(),
+    })
+}
+
 /// The value of an item cause's `limit` member.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
 #[serde(untagged)]
@@ -854,6 +894,10 @@ pub struct OutcomeItem {
     /// The qualified name of the clause a clause run settled (FR-286).
     #[serde(skip_serializing_if = "Option::is_none")]
     clause: Option<String>,
+    /// FR-622: the four outcome axes of a `monitor` item, copied from its
+    /// clause run; absent on every item not built from a clause run.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    axes: Option<crate::OutcomeAxes>,
     #[serde(serialize_with = "category_str")]
     category: Category,
 }
@@ -1096,6 +1140,7 @@ impl OutcomeItem {
             count: None,
             min_count: None,
             clause: None,
+            axes: None,
             category: value.category(),
         }
     }
@@ -1183,6 +1228,7 @@ impl OutcomeItem {
             count: None,
             min_count: None,
             clause: None,
+            axes: None,
             category: Category::Violation,
         }
     }
@@ -1246,6 +1292,7 @@ impl OutcomeItem {
             limits: None,
             limit_reached: None,
             clause: Some(clause.to_owned()),
+            axes: Some(report.axes()),
             category,
         })
     }

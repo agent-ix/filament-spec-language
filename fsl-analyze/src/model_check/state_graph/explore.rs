@@ -451,6 +451,7 @@ impl Exploration<'_, '_, '_> {
         let stats = RunStats {
             product_states: graph.stats.nodes,
             product_edges: graph.stats.edges,
+            stutter_edges: 0,
             automaton_states: 0,
             depth: graph.stats.depth,
             bound_limited: 0,

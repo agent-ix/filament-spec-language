@@ -27,6 +27,8 @@ formats! {
     RunRequest => "native-run/1",
     /// Source-only native compilation request.
     CompileRequest => "native-compile/1",
+    /// FR-620: an analyze request over every behaviour of a subject.
+    AnalyzeRequest => "native-analyze/1",
     /// Native clause-run result or command-error envelope.
     RunResult => "native-run-result/2",
     /// Source-aware rule-model authoring profile.

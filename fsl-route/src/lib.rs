@@ -1628,6 +1628,15 @@ impl Registry {
         }
     }
 
+    /// FSL FR-243: `outcome` restricted to the engines whose timing matches
+    /// the item's subject: the engines that decide timed items for a timed
+    /// subject (`timed`), and the others for an untimed one, so an untimed
+    /// clause item read from an analyze document routes to EN-1 and a timed
+    /// one to EN-6. An unknown named backend is returned unchanged.
+    pub fn restrict_to_timing(&self, outcome: CandidateOutcome, timed: bool) -> CandidateOutcome {
+        self.keep_candidates(outcome, |descriptor| descriptor.decides_timed() == timed)
+    }
+
     /// FR-144 and FSpec FR-430: `outcome`, a candidate set computed for a
     /// refinement record over an untimed or `time tick` concrete subject,
     /// restricted to the engines that do not decide timed items (EN-1, and

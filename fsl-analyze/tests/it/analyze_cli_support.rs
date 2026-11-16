@@ -1,8 +1,9 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //! Shared harness for the `native-analyze/1` stubs (FR-620 to FR-636): writes
 //! a request document and its files into a fresh directory, hands it to the
-//! in-process command adapter (`fsl_command::command::run`), and returns the
-//! exit code and the FR-286 outcome document. The driver binary is not used:
+//! in-process command adapter (`fsl_command::command::analyze`) with an FSpec
+//! FR-290 negotiation double standing for the driver's `negotiate_*`, and
+//! returns the exit code and the FR-286 outcome document. The driver binary is not used:
 //! the language repository cannot depend on the driver, and the adapter is
 //! the library half every frontend calls.
 
@@ -55,11 +56,55 @@ impl Workspace {
     }
 }
 
+/// The FSpec FR-290 settlement the driver's `negotiate_*` gives an item
+/// from its candidates, as a test double: one candidate is `supported`, none
+/// `unsupported`, several `invalid-request` `ambiguous-backend`, and an
+/// unregistered named backend `invalid-request` `unknown-backend`.
+pub(crate) struct Fr290;
+
+impl fsl_analyze::analyze::document::Negotiate for Fr290 {
+    fn negotiate(
+        &self,
+        item: &fsl_analyze::analyze::ClaimItem,
+        candidates: &fsl_route::CandidateOutcome,
+    ) -> (
+        fsl_route::routing::Disposition,
+        Option<fsl_analyze::analyze::Diagnostic>,
+    ) {
+        use fsl_analyze::analyze::{Diagnostic, Payload};
+        use fsl_route::routing::Disposition;
+        use fsl_semantics::check::NegotiationOutcome;
+        match candidates {
+            fsl_route::CandidateOutcome::UnknownBackend(backend) => (
+                Disposition::InvalidRequest,
+                Some(Diagnostic {
+                    code: NegotiationOutcome::UnknownBackend.code(),
+                    payload: Payload::Backend(backend.clone()),
+                }),
+            ),
+            fsl_route::CandidateOutcome::Candidates(set) => match set.candidates() {
+                [candidate] => (Disposition::Supported(candidate.clone()), None),
+                [] => (
+                    Disposition::Unsupported,
+                    Some(Diagnostic {
+                        code: NegotiationOutcome::UnsupportedRequestedCapability.code(),
+                        payload: Payload::Kind(item.kind),
+                    }),
+                ),
+                _ => (
+                    Disposition::InvalidRequest,
+                    Some(Diagnostic::new(NegotiationOutcome::AmbiguousBackend.code())),
+                ),
+            },
+        }
+    }
+}
+
 /// Hand `request` to the command adapter and return its exit code and its
 /// outcome document: the result document of an accepted request, or the
 /// FR-286 `analyze` document of a refused one.
 pub(crate) fn analyze(request: &Path) -> Run {
-    match fsl_command::command::run(request) {
+    match fsl_command::command::analyze(request, &Fr290, &filament_exact::Cancel::new()) {
         Ok(result) => Run {
             exit: i32::from(result.exit_code),
             stdout: result.value.to_string().into_bytes(),

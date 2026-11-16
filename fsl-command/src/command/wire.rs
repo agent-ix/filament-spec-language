@@ -305,3 +305,162 @@ fn supplied_limits<'de, D: serde::Deserializer<'de>>(
         .map(Some)
         .map_err(serde::de::Error::custom)
 }
+
+impl RequestKind for AnalyzeRequest {
+    const FORMAT: fsl_foundation::wire_format::WireFormat =
+        fsl_foundation::wire_format::WireFormat::AnalyzeRequest;
+}
+
+/// FR-620's closed `native-analyze/1` request (FSpec FR-520 "Document
+/// members").
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(super) struct AnalyzeRequest {
+    #[serde(default, deserialize_with = "from_object_opt")]
+    pub program: Option<Program>,
+    #[serde(default, deserialize_with = "from_object_opt")]
+    pub package: Option<FileSelection>,
+    #[serde(default, deserialize_with = "deserialize_objects")]
+    pub models: Vec<Model>,
+    #[serde(default, deserialize_with = "deserialize_objects")]
+    pub libraries: Vec<Library>,
+    #[serde(default, deserialize_with = "present_json_value")]
+    pub refinement_internals: Option<serde_json::Value>,
+    #[serde(default, deserialize_with = "deserialize_objects")]
+    pub documents: Vec<FileSelection>,
+    #[serde(default)]
+    pub memory: Vec<serde_json::Value>,
+    #[serde(default, deserialize_with = "from_object_opt")]
+    pub subject: Option<fsl_analyze::analyze::document::SubjectSelection>,
+    #[serde(default)]
+    pub items: Option<Vec<fsl_analyze::analyze::document::ItemSelection>>,
+    #[serde(default, deserialize_with = "from_object")]
+    pub limits: AnalyzeLimits,
+    #[serde(default, deserialize_with = "deadline")]
+    pub deadline_ms: Option<u64>,
+}
+
+/// A `{file}` selection of a supplied document or checked package.
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(super) struct FileSelection {
+    pub file: String,
+}
+
+/// The request-level `limits`: what every item of the run shares.
+#[derive(Default, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(super) struct AnalyzeLimits {
+    #[serde(default, deserialize_with = "from_object")]
+    pub accounting: Accounting,
+    #[serde(default, deserialize_with = "from_object")]
+    pub observation: ObservationLimits,
+    #[serde(default, deserialize_with = "from_object")]
+    pub normalization: NormalizationLimits,
+}
+
+/// FR-620's `limits.observation`: the FR-255 `observation.*` settings by
+/// their names without the stage prefix, each omitted one at its default.
+#[derive(Default, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(super) struct ObservationLimits {
+    #[serde(default, deserialize_with = "limit")]
+    pub input_bytes: Option<u64>,
+    #[serde(default, deserialize_with = "limit")]
+    pub objects: Option<u64>,
+    #[serde(default, deserialize_with = "limit")]
+    pub values: Option<u64>,
+}
+
+impl ObservationLimits {
+    /// The published observation limits with each stated member applied.
+    pub fn resolve(&self) -> fsl_semantics::model::observation::ObservationLimits {
+        let mut limits = fsl_semantics::model::observation::ObservationLimits::default();
+        if let Some(bound) = self.input_bytes {
+            limits.document_bytes = bound;
+        }
+        if let Some(bound) = self.objects {
+            limits.objects_per_document = bound;
+        }
+        if let Some(bound) = self.values {
+            limits.values_per_document = bound;
+        }
+        limits
+    }
+}
+
+/// FR-620's `limits.normalization`: the FR-255 `model.*` normalization
+/// settings by their names without the stage prefix, each omitted one at
+/// its default.
+#[derive(Default, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(super) struct NormalizationLimits {
+    #[serde(default, deserialize_with = "limit")]
+    pub declaration_records: Option<u64>,
+    #[serde(default, deserialize_with = "limit")]
+    pub derivation_facts: Option<u64>,
+    #[serde(default, deserialize_with = "limit")]
+    pub effective_declarations: Option<u64>,
+    #[serde(default, deserialize_with = "limit")]
+    pub dispatch_candidates: Option<u64>,
+    /// `model.hashed_bytes` is FSpec's limit name (FR-255): it is read and
+    /// range-checked so a request that states it is admitted, but FSL's
+    /// normalization hashes under no byte meter, so no FSL limit takes it.
+    #[serde(default, rename = "hashed_bytes", deserialize_with = "limit")]
+    _hashed_bytes: Option<u64>,
+    #[serde(default, deserialize_with = "limit")]
+    pub work_units: Option<u64>,
+    #[serde(default, deserialize_with = "limit")]
+    pub ancestor_steps: Option<u64>,
+    #[serde(default, deserialize_with = "limit")]
+    pub family_steps: Option<u64>,
+}
+
+impl NormalizationLimits {
+    /// The published normalization limits with each stated member applied.
+    pub fn resolve(&self) -> fsl_semantics::model::accounting::ModelNormalizationLimits {
+        let mut limits = fsl_semantics::model::accounting::ModelNormalizationLimits::default();
+        for (field, bound) in [
+            (&mut limits.declaration_records, self.declaration_records),
+            (&mut limits.derivation_facts, self.derivation_facts),
+            (
+                &mut limits.effective_declarations,
+                self.effective_declarations,
+            ),
+            (&mut limits.dispatch_candidates, self.dispatch_candidates),
+            (&mut limits.work_units, self.work_units),
+            (&mut limits.ancestor_steps, self.ancestor_steps),
+            (&mut limits.family_steps, self.family_steps),
+        ] {
+            if let Some(bound) = bound {
+                *field = bound;
+            }
+        }
+        limits
+    }
+}
+
+/// One limit member: a JSON integer from 0 to 2^53 - 1 (FR-620).
+fn limit<'de, D: serde::Deserializer<'de>>(decoder: D) -> Result<Option<u64>, D::Error> {
+    let value = u64::deserialize(decoder)?;
+    if value > MAX_DEADLINE_MS {
+        return Err(serde::de::Error::custom(format!(
+            "limit {value} exceeds {MAX_DEADLINE_MS}"
+        )));
+    }
+    Ok(Some(value))
+}
+
+/// The largest integer every JSON reader holds exactly (FSpec FR-520).
+const MAX_DEADLINE_MS: u64 = 9_007_199_254_740_991;
+
+/// `deadline_ms`: a JSON integer from 0 to 2^53 - 1.
+fn deadline<'de, D: serde::Deserializer<'de>>(decoder: D) -> Result<Option<u64>, D::Error> {
+    let value = u64::deserialize(decoder)?;
+    if value > MAX_DEADLINE_MS {
+        return Err(serde::de::Error::custom(format!(
+            "deadline_ms {value} exceeds {MAX_DEADLINE_MS}"
+        )));
+    }
+    Ok(Some(value))
+}

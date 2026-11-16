@@ -27,7 +27,7 @@ use crate::certificate::scc::ProofCertificate;
 use crate::execute::ReplayRefusal;
 use crate::model_check::counterexample::TemporalCounterexample;
 use crate::model_check::limits::{ModelCheckLimit, ModelCheckLimits, ReachedLimit};
-use crate::model_check::outcome::{MemoryCause, ModelCheckOutcome, ReductionCause};
+use crate::model_check::outcome::{MemoryCause, ModelCheckOutcome, ReductionCause, RunStats};
 use crate::model_check::replay::{
     no_value_cause, ModelTraceRefusal, ModelTraceReplayResult, ModelTraceSettlement,
     StrongFairnessHint,
@@ -186,6 +186,32 @@ pub struct ModelCheckRecord<T: SubjectTransition = ModelTransition> {
     /// AE-4, FR-209); `None` for a protocol that does not activate `on each`
     /// and for a model subject.
     pub instance_bound: Option<StatedInstanceBound>,
+    /// The run's exploration counts (FR-621 `exploration`); `None` for a
+    /// record no explicit-state run produced.
+    pub exploration: Option<RunStats>,
+    /// The qualified-core checker that accepted the proof's certificate
+    /// (FR-282), present exactly on a `proved` record whose certificate a
+    /// core checker accepted.
+    pub checker: Option<CertificateChecker>,
+}
+
+/// A qualified-core certificate checker of an EN-1 proof (FR-282).
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum CertificateChecker {
+    /// The EN-1 closure checker of a safety claim (ADR-018 PC-3).
+    Closure,
+    /// The SCC and ranking checker of a liveness claim (ADR-018 PC-4).
+    Component,
+}
+
+impl CertificateChecker {
+    /// The checker's FR-621 `certificate.checker` spelling.
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Closure => "en-1-closure",
+            Self::Component => "scc-ranking",
+        }
+    }
 }
 
 impl<T: SubjectTransition> ModelCheckRecord<T> {
@@ -536,6 +562,19 @@ fn settle<T: SubjectTransition>(
             Err(refusal) => Row::refused(&refusal),
         },
     };
+    let checker = match (outcome, &row.value) {
+        (
+            ModelCheckOutcome::Holds { certificate, .. },
+            TerminalValue::Proved {
+                certification: Certification::Certified,
+                ..
+            },
+        ) => Some(match certificate {
+            ProofCertificate::Closure(_) => CertificateChecker::Closure,
+            ProofCertificate::Component(_) => CertificateChecker::Component,
+        }),
+        _ => None,
+    };
     ModelCheckRecord {
         value: row.value,
         label: row.label,
@@ -551,6 +590,8 @@ fn settle<T: SubjectTransition>(
         warnings: Vec::new(),
         memory_bound: None,
         instance_bound: None,
+        exploration: Some(outcome.stats()),
+        checker,
     }
 }
 

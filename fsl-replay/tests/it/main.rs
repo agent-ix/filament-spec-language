@@ -34,6 +34,7 @@ mod refinement_step;
 mod refinement_unmapped;
 #[path = "../../../tests/support/ring_world.rs"]
 mod ring_world;
+mod run_axes;
 mod script_search;
 mod source_diagnostic_outcome;
 mod static_subject;
