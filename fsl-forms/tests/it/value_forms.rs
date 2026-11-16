@@ -5,9 +5,9 @@
 use filament_exact::{CollectionKind, Integer};
 use fsl_cst::{CstElement, LosslessCst, ParsedSource, Production};
 use fsl_forms::{
-    build_unit, Accumulation, BinaryOperator, BinderQuery, BuiltinType, DeclarationForm,
-    DeclarationKind, ExactNumberKind, ExprNode, ExprRef, Expression, FieldInitializer, FormsCause,
-    FunctionDeclaration, ParsedUnit, TermOperator, TypeFormHead,
+    build_unit, Accumulation, BinaryOperator, BinderQuery, BuiltinType, DecimalSpellingKind,
+    DeclarationForm, DeclarationKind, ExactNumberKind, ExprNode, ExprRef, Expression,
+    FieldInitializer, FormsCause, FunctionDeclaration, ParsedUnit, TermOperator, TypeFormHead,
 };
 use fsl_foundation::{Code, SourceIdentity, Span, SyntaxLimit};
 use ix_trace_rs::trace;
@@ -136,7 +136,9 @@ fn show(expression: ExprRef<'_>) -> String {
         ExprNode::Float32(bits) => format!("float32({bits:08x})"),
         ExprNode::Float64(bits) => format!("float64({bits:016x})"),
         ExprNode::Rational(n, d) => format!("rational({n},{d})"),
-        ExprNode::DecimalValue { coefficient, scale } => format!("decimal({coefficient},{scale})"),
+        ExprNode::DecimalValue {
+            coefficient, scale, ..
+        } => format!("decimal({coefficient},{scale})"),
         ExprNode::Quantity(quantity) => {
             format!(
                 "quantity({} {})",
@@ -1569,7 +1571,8 @@ fn a_decimal_constructor_builds_one_decimal_value_as_written() {
             root,
             &ExprNode::DecimalValue {
                 coefficient: Integer::from(coefficient),
-                scale
+                scale,
+                spelling: fsl_forms::DecimalSpellingKind::DecimalConstructor,
             },
             "{source}"
         );
@@ -1794,11 +1797,25 @@ fn a_selector_after_a_call_is_refused_at_its_own_span() {
 #[test]
 fn a_bare_decimal_literal_builds_the_decimal_value_it_spells() {
     for (source, coefficient, scale) in [("0.9", 9_i64, 1_u32), ("5.0", 50, 1), ("0.90", 90, 2)] {
+        let declarations = format!("function f using v(): Boolean pure {{ {source} }}");
+        let (text, parsed) = parse(&declarations);
+        assert!(parsed.is_admissible(), "{:?}", parsed.diagnostics());
+        let start = text.rfind(source).expect("the literal in the unit");
+        assert!(
+            parsed.cst().nodes().iter().any(|node| {
+                node.production() == fsl_cst::Production::Primary
+                    && node.span().start == start
+                    && node.span().end == start + source.len()
+            }),
+            "the expression span equals the `{source}` literal span"
+        );
+        let unit = build_unit(&parsed).expect("S2 builds the unit");
         assert_eq!(
-            body_root(source),
+            function(unit.forms()[0].form()).body.root_node().clone(),
             ExprNode::DecimalValue {
                 coefficient: Integer::from(coefficient),
-                scale
+                scale,
+                spelling: DecimalSpellingKind::DecimalLiteral,
             },
             "{source}"
         );

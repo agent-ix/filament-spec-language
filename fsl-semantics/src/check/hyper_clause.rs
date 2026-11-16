@@ -3039,7 +3039,9 @@ fn leaf_payload(node: &ExprNode, swap: Swap<'_>) -> (Vec<u8>, Vec<u8>) {
             b"rational".to_vec(),
             text_segment(&format!("{numerator}/{denominator}")),
         ),
-        ExprNode::DecimalValue { coefficient, scale } => (
+        ExprNode::DecimalValue {
+            coefficient, scale, ..
+        } => (
             b"decimal".to_vec(),
             text_segment(&format!("{coefficient}e-{scale}")),
         ),
