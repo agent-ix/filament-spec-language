@@ -30,3 +30,14 @@ Ticket: QSL-2121. Code review with the rust-review lane (rust-style loaded) of `
 ## Verdict
 
 REQUEST CHANGES (CONDITIONAL on FND-001 to FND-004). Correct as written: `limits.observation` accepts only the FR-255 `observation.*` names (`input_bytes`, `objects`, `values`). `post_state` is an admission policy, not a limit row, so dropping it follows FR-620 and is not a narrowing (it never existed on main). `protocol_refinement` is never written because EN-1 settles protocol refinement `unsupported` (items.rs:981) and no `Counterexample` variant carries it. The exhaustive match in `replay_target` will force a target when one is added, and nothing refuses it. `RunCause::AnalyzeUniverse` maps Unprovisioned to `invalid-request` and Incomplete to `incomplete_population` at the request stage. Request-level `limit()` and `deadline()` enforce integers from 0 to 2^53 - 1. The FR-285 exit change from 10 to 22 and the quotient.rs exploration alignment are justified.
+
+## Dispositions
+
+| FND | outcome | reason |
+| --- | --- | --- |
+| FND-001 | fixed | `resolve_items` takes `units` (the program, then libraries as listed) built in `run_input`; `default_items` ranks by position in it (d25c3025). |
+| FND-002 | fixed | `owning_model` reads the `over` object type's package, else the package's one model selection; `certificate_identity_wire` takes `&str`, so `null` is never written; TC-2184 asserts `test/counter`. |
+| FND-003 | fixed | Only an explicit `subject` runs `check_universes`; `binding` keeps complete populations only; covered by `only_an_explicit_universe_refuses_an_incomplete_population`. |
+| FND-004 | deferred | QSL-2271 owns package selection (now refused `unsupported_construct`/`not-yet-implemented`, exit 21, ignored stub `a_package_selection_analyzes_as_its_source`); `memory` is owned by QSL-2126. |
+| FND-005 | fixed | `count` refuses any temporal limit or `max_depth` outside 0/1..2^53-1 or not fitting `usize`, naming the member; test `an_oversized_temporal_count_refuses_naming_the_member`. |
+| FND-006 | fixed | `fairness_wire` returns `Result`, and `request_item_wire` propagates it as a fault. |

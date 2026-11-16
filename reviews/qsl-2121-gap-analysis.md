@@ -33,3 +33,11 @@ FAIL under the gap-analysis rule because FND-001 is high. The other ACs trace to
 18 ACs examined, 18 tagged, 1 tagged only by an ignored test (FR-620-AC-8, QSL-2131). Reverse gap: `Registry::restrict_to_timing` is owned by FR-243. Semantic review was skipped, beyond the targeted checks above.
 
 Plan completion: not assessed
+
+## Dispositions
+
+| FND | outcome | reason |
+| --- | --- | --- |
+| FND-001 | fixed | The universes case now writes the full subject, proves a provisioned universe, and asserts that the refusal message names `subject.universes[0]` and `nowhere`. It also asserts the third default item and that `bogus` is named. |
+| FND-002 | fixed | TC-2184 asserts `model` `test/counter`, `node_id` and `ordinal` against the echoed claim. |
+| FND-003 | deferred | QSL-2272 owns the finite-replay engine; the pending half is an ignored stub `a_pending_finite_replay_item_reports_its_pending_disposition` keyed to it. |
