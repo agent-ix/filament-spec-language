@@ -265,6 +265,10 @@ fn missing_unused_and_mismatched_clock_selections_refuse_naming_the_clock() {
     }
 }
 
+/// One FR-501-AC-4 input: the levels at stamps 0, 2 and 5, the `(position,
+/// atom)` valuations absent, and whether the run is `Indeterminate`.
+type TimestampedCase = ([i64; 3], Vec<(u64, u64)>, bool);
+
 /// The sample of `level` as the canonical text a typed position carries.
 fn typed_sample(level: i64) -> fsl_replay::DocumentRef {
     fsl_replay::spine::sample_position(&format!("{{\"level\":{{\"integer\":\"{level}\"}}}}"))
@@ -341,7 +345,7 @@ fn a_timestamped_trace_runs_from_a_request_file_and_returns_the_ledger() {
     // FR-501-AC-4: stamps 0, 2, 5 with `p` (`level > 0`) false at 0 and 5 and
     // its valuation absent at stamp 2 is `Indeterminate`; true at 5 it is
     // `Completed(true)`.
-    let cases: [([i64; 3], Vec<(u64, u64)>, bool); 3] = [
+    let cases: [TimestampedCase; 3] = [
         ([0, 0, 0], vec![(1, 1)], true),
         ([0, 0, 1], vec![(1, 1)], false),
         ([0, 0, 1], vec![], false),
@@ -413,6 +417,29 @@ fn a_timestamped_trace_runs_from_a_request_file_and_returns_the_ledger() {
             assert_eq!(output.status.code(), Some(0));
         }
     }
+}
+
+/// FR-641-AC-2, FR-330-AC-17 (TC-1662): a violated finite record-sample trace
+/// of an event-position clause, which the trace-subject route evaluates,
+/// writes its counterexample, reads back and exits 10.
+#[test]
+#[trace("TC-1662", "FR-641-AC-2", "FR-330-AC-17")]
+fn a_violated_finite_sample_trace_writes_its_counterexample() {
+    let directory = tempfile::tempdir().unwrap();
+    let request = trace_request(json!({"name": "E", "trace": {"finite": samples(&[0, 0, 0])}}));
+    let output = run_file(&write_trace(directory.path(), "finite.json", &request));
+    let document = result(&output);
+    assert_eq!(output.status.code(), Some(10), "{document}");
+    assert_eq!(
+        document["disposition"]["temporal"]["kind"], "violated",
+        "{document}"
+    );
+    assert!(
+        find(&document, "counterexample").is_some(),
+        "the violation carries its counterexample: {document}"
+    );
+    fsl_replay::spine::read_native_run_result(&serde_json::to_vec(&document).unwrap())
+        .expect("the violated record reads back");
 }
 
 /// The result document of clause `name` over one `progressed` sample at

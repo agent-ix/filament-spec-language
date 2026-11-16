@@ -1037,7 +1037,7 @@ pub(super) fn run_temporal(run: &CompiledRun<'_>, request: &TemporalRun<'_>) -> 
         && matches!(trace, TraceInput::Finite(_))
         && clause.profile() == TemporalProfile::EventPositionFalseExtension
     {
-        return super::trace_subject::run_subject(
+        let mut delegated = super::trace_subject::run_subject(
             run,
             name,
             over_type,
@@ -1045,6 +1045,25 @@ pub(super) fn run_temporal(run: &CompiledRun<'_>, request: &TemporalRun<'_>) -> 
             fsl_eval::temporal::DEFAULT_MAX_WINDOW_VALUES,
             cancel,
         );
+        // A violation carries its counterexample (FR-330 Outputs): the
+        // samples are its steps, as for the other sample routes.
+        if matches!(
+            delegated.disposition,
+            ClauseDisposition::Temporal(TemporalVerdict::Violated { .. })
+        ) {
+            match counterexample(node, trace, &delegated.disposition, None) {
+                Some(built) => delegated.counterexample = Some(built),
+                None => {
+                    delegated.disposition = ClauseDisposition::EvaluateFault(
+                        filament_semantic_value::catalog::InternalFault::new(
+                            "temporal",
+                            "violation-has-its-counterexample",
+                        ),
+                    );
+                }
+            }
+        }
+        return delegated;
     }
 
     // FR-352: a run over a trace that asserts progress returns its ledger,

@@ -255,12 +255,15 @@ fn a_model_trace_whose_expansion_stops_is_incomplete_naming_the_limit() {
     // The record reads back as the limit it wrote.
     let bytes = fsl_replay::spine::write_clause_run_result(&report).expect("the report writes");
     let written: serde_json::Value = serde_json::from_slice(&bytes).expect("JSON");
+    // FR-267 registers the `incomplete` row only: its outcome names the
+    // exhausted counter.
     assert_eq!(
-        written["disposition"]["temporal"]["limit"], "work_units",
+        written["disposition"]["temporal"]["kind"], "incomplete",
         "{written}"
     );
     assert_eq!(
-        written["disposition"]["temporal"]["setting"], "accounting.work_units",
+        written["disposition"]["outcome"],
+        serde_json::json!({"kind": "incomplete", "limit": "work_units"}),
         "{written}"
     );
     fsl_replay::spine::read_native_run_result(&bytes).expect("the written record reads back");
