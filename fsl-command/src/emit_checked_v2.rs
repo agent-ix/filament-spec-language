@@ -433,8 +433,6 @@ fn refusal(failure: spine::FrontEndFailure) -> Error {
 pub(crate) struct Inputs {
     /// The path the unit is labelled and displayed by.
     pub(crate) source_path: PathBuf,
-    /// Optional command-request identity for an in-process compile handoff.
-    pub(crate) source_identity: Option<SourceIdentity>,
     /// The unit's bytes.
     pub(crate) source: Vec<u8>,
     /// The domain package documents, in request order.
@@ -480,7 +478,6 @@ fn read_inputs(request: &Request) -> Result<Inputs, Error> {
         .unwrap_or_default();
     Ok(Inputs {
         source_path: request.source.clone(),
-        source_identity: None,
         source,
         models,
         libraries,
@@ -496,17 +493,6 @@ pub(crate) fn compile(request: &Request) -> Result<Compiled, Error> {
     compile_inputs(read_inputs(request)?)
 }
 
-/// Compile request inputs while retaining the source identity assigned by a
-/// native-compile request.
-pub(crate) fn compile_with_source_identity(
-    request: &Request,
-    source_identity: SourceIdentity,
-) -> Result<Compiled, Error> {
-    let mut inputs = read_inputs(request)?;
-    inputs.source_identity = Some(source_identity);
-    compile_inputs(inputs)
-}
-
 /// Run the spine over `inputs`.
 ///
 /// This is the spine pipeline `fsl_replay::compile_package` runs
@@ -518,7 +504,6 @@ pub(crate) fn compile_with_source_identity(
 pub(crate) fn compile_inputs(inputs: Inputs) -> Result<Compiled, Error> {
     let Inputs {
         source_path,
-        source_identity,
         source,
         models,
         libraries,
@@ -527,7 +512,7 @@ pub(crate) fn compile_inputs(inputs: Inputs) -> Result<Compiled, Error> {
         temporal_selections,
     } = inputs;
     let dependencies = DependencyInput::new(libraries.clone()).map_err(Error::Dependencies)?;
-    let unit = source_identity.unwrap_or_else(|| identity("source", &source_path));
+    let unit = identity("source", &source_path);
     let path = source_path.display().to_string();
     let package = LibraryName::new(package_name)
         .map_err(|invalid| Error::Producer(Box::new(ReplayRefusal::InvalidPackageName(invalid))))?;

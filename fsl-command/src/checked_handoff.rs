@@ -155,6 +155,9 @@ pub enum Error {
         /// What differs.
         detail: String,
     },
+    /// The admitted package departs from a sidecar row on one typed axis.
+    #[error("the admitted package differs from the selection: {0}")]
+    SelectionMismatch(#[from] SelectionRefusal),
     /// A corpus case does not get the refusal its table row declares.
     #[error("case {identity} does not get its declared refusal")]
     CaseMismatch {
@@ -225,7 +228,7 @@ impl Error {
             Self::ReaderRefused(_)
             | Self::ReaderIncomplete(_)
             | Self::ReaderCatalogUnavailable(_) => ErrorCode::Reader,
-            Self::ReadBackDiffers { .. } => ErrorCode::ReadBackDiffers,
+            Self::ReadBackDiffers { .. } | Self::SelectionMismatch(_) => ErrorCode::ReadBackDiffers,
             Self::CaseMismatch { .. } => ErrorCode::CaseMismatch,
             Self::Dependency { .. } => ErrorCode::Dependency,
             Self::Label { .. } => ErrorCode::Label,
@@ -316,12 +319,14 @@ pub fn write_with(
     write_compiled(request, directory, environment, compiled, None)
 }
 
-/// Write the command's checked package and its handoff sidecars using the
-/// identity assigned to the source by `native-compile/1`.
-pub(crate) fn write_with_source_identity(
+/// Write a handoff from the checked inputs and package already produced by
+/// `native-compile/1`. The byte equality guard runs before read-back or any
+/// filesystem write.
+pub(crate) fn write_compiled_from_command(
     request: &CheckedHandoffRequest,
     directory: &Path,
-    source_identity: fsl_foundation::SourceIdentity,
+    compiled: Compiled,
+    expected_package: &[u8],
     source_file: &str,
 ) -> Result<(), Error> {
     if tree::exists(directory) {
@@ -329,7 +334,12 @@ pub(crate) fn write_with_source_identity(
             path: directory.display().to_string(),
         });
     }
-    let compiled = emit_checked_v2::compile_with_source_identity(&request.emit, source_identity)?;
+    let package_bytes = compiled.emitted.package().bytes();
+    if package_bytes != expected_package {
+        return Err(Error::ReadBackDiffers {
+            detail: "the command package differs from the retained checked package".to_owned(),
+        });
+    }
     write_compiled(
         request,
         directory,
@@ -465,9 +475,7 @@ pub fn compile(directory: &Path) -> Result<CompiledHandoff, Error> {
     let admitted = admit(read_checked_package(&bytes, READ_LIMITS, &evidence))?;
     selection
         .check(&admitted)
-        .map_err(|refusal| Error::ReadBackDiffers {
-            detail: refusal.to_string(),
-        })?;
+        .map_err(Error::SelectionMismatch)?;
     Ok(CompiledHandoff { compiled, admitted })
 }
 
@@ -488,9 +496,7 @@ pub fn verify(directory: &Path) -> Result<Box<CheckedPackageV2>, Error> {
     let admitted = admit(read_checked_package(&bytes, READ_LIMITS, &evidence))?;
     selection
         .check(&admitted)
-        .map_err(|refusal| Error::ReadBackDiffers {
-            detail: refusal.to_string(),
-        })?;
+        .map_err(Error::SelectionMismatch)?;
     Ok(admitted)
 }
 
