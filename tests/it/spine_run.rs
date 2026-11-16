@@ -1182,7 +1182,7 @@ fn native_run_live_occurrence_limit_default_and_zero_are_accepted() {
         &directory.path().join("request.json"),
         fsl_command::command::RunLimits::default(),
     );
-    assert!(prepared.is_ok(), "{prepared:?}");
+    assert!(prepared.is_ok());
 }
 
 /// NFR-130-AC-4 request-boundary slice: malformed evaluation limits refuse
