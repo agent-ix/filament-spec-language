@@ -343,10 +343,12 @@ fn a_punctual_interval_is_unsupported_outside_a_bounded_window() {
 
 /// FR-233 as FR-234 reads it: `model-time` over a model with no time source
 /// refuses `invalid_timed_model`/`model-time-on-untimed-model` at the clock
-/// clause naming the model; another clock role, or a subject that is no
-/// model object type, has no stated timed binding and refuses as not yet
-/// implemented.
+/// clause naming the model; `clock "model-steps"` contradicts the timed
+/// profile and refuses `ill_typed`/`type-mismatch` at the clock string
+/// (FR-233-AC-5); a subject that is no model object type has no stated timed
+/// binding and refuses as not yet implemented.
 #[trace("TC-689", "FR-234")]
+#[trace("TC-2389", "FR-233-AC-5")]
 #[test]
 fn the_timed_profile_needs_a_model_time_binding_over_a_timed_model() {
     let body = "eventually[0 ms, 3 ms] holds(c.healthy)";
@@ -365,12 +367,16 @@ fn the_timed_profile_needs_a_model_time_binding_over_a_timed_model() {
     );
 
     let (text, _, outcome) = check_with(UNITS, OVER, "model-steps", body, vec![dense_ms()]);
+    let cause = cause_of(outcome);
     assert_eq!(
-        cause_of(outcome),
-        TemporalCause::TimedProfileWithoutModelTime {
-            clock: "model-steps".to_owned(),
+        cause,
+        TemporalCause::TimedProfileModelSteps {
             span: first(&text, "\"model-steps\""),
         }
+    );
+    assert_eq!(
+        (cause.code(), cause.tag()),
+        (Code::IllTyped, "type-mismatch")
     );
 
     let units = format!("{UNITS}record Loose {{ n: Integer; }}\n");

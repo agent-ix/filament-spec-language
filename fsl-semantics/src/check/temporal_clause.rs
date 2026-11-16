@@ -1259,11 +1259,6 @@ fn check_clause(
     let form = &declaration.form;
     let profile =
         clause_profile(declarations.selections, &form.profile, declaration.span).map_err(refuse)?;
-    let clock = form.clock.as_ref().ok_or_else(|| {
-        refuse(TemporalCause::MissingClock {
-            span: declaration.span,
-        })
-    })?;
     let profile_ref =
         DefinitionRef::new(super::profile::CLAUSE_PROFILE_AUTHORITY, profile.identity())
             .map_err(|_| fault("profile-identity-valid"))?;
@@ -1333,12 +1328,26 @@ fn check_clause(
     let timed = types
         .first()
         .is_some_and(|over| timed::over_timed(over, declarations));
+    let clock = types
+        .first()
+        .ok_or_else(|| fault("over-type-resolved"))
+        .and_then(|over| {
+            clause_clock(
+                form.clock.as_ref(),
+                profile,
+                over,
+                timed,
+                declarations,
+                declaration.span,
+            )
+            .map_err(refuse)
+        })?;
     // FR-234: the timed profile reads its intervals in the clause's
     // `model-time` binding's unit, so the binding comes first.
     let time_binding = match profile {
         TemporalProfile::Timed => {
             let over = types.first().ok_or_else(|| fault("over-type-resolved"))?;
-            Some(timed::binding(clock, over, declarations, declaration.span).map_err(refuse)?)
+            Some(timed::binding(&clock, over, declarations, declaration.span).map_err(refuse)?)
         }
         TemporalProfile::EventPositionFalseExtension
         | TemporalProfile::FixedSampleFalseExtension
@@ -1599,9 +1608,9 @@ fn check_clause(
         .ok_or_else(|| fault("over-type-resolved"))?;
 
     let time_binding_form = if time_binding.is_some() {
-        "model-time"
+        timed::MODEL_TIME
     } else {
-        "model-steps"
+        MODEL_STEPS
     };
     Ok(CheckedTemporalClause {
         name: form.name.name.clone(),
@@ -1609,9 +1618,9 @@ fn check_clause(
         profile,
         profile_ref,
         over: (form.over.name.name.clone(), over_type),
-        clock: clock.text.clone(),
         clock_binding: clock_binding(declarations.package_name, &clock.text, time_binding_form)
             .map_err(|_| fault("clock-binding-keyed"))?,
+        clock: clock.text,
         operators,
         horizon,
         claim: TemporalClaim {
@@ -1638,6 +1647,82 @@ fn check_clause(
         timed,
     })
 }
+
+/// The clock role a trace-subject clause reads when it writes no `clock`
+/// (FR-610 "Unwritten clock").
+pub const DEFAULT_CLOCK_ROLE: &str = "default";
+
+/// The time-unit spellings FR-610 "Unit-spelled role" reserves whether or
+/// not the unit declares them.
+const UNIT_SPELLINGS: [&str; 9] = ["ps", "ns", "us", "µs", "ms", "s", "min", "h", "d"];
+
+/// The clause's clock, as the check reads it: the written clock string, or
+/// the default an unwritten one stands for, with the span a refusal about it
+/// names.
+///
+/// - Over a model subject (FR-233) the name is `model-steps` or `model-time`
+///   under every profile ("Other names"); `model-steps` under the timed
+///   profile contradicts it ("The timed profile reads model time"); an
+///   unwritten clock is the "Default" binding, `model-time` over a timed
+///   model and `model-steps` over an untimed one, written out so its binding
+///   key equals the written form's.
+/// - Over a trace subject (FR-610) the name is a free role; one that spells a
+///   time unit or a model binding name refuses under the four step-counting
+///   profiles, and an unwritten clock is the role `default`. A timed clause
+///   over a trace subject is [`timed::binding`]'s.
+fn clause_clock(
+    written: Option<&fsl_forms::ClockForm>,
+    profile: TemporalProfile,
+    over: &ValueType,
+    timed: bool,
+    declarations: &TemporalDeclarations<'_>,
+    clause: Span,
+) -> Result<fsl_forms::ClockForm, TemporalCause> {
+    let default = |text: &str| fsl_forms::ClockForm {
+        text: text.to_owned(),
+        span: clause,
+    };
+    let timed_profile = profile == TemporalProfile::Timed;
+    if !matches!(over, ValueType::Reference(_)) {
+        let Some(written) = written else {
+            return Ok(default(DEFAULT_CLOCK_ROLE));
+        };
+        let role = written.text.as_str();
+        let spells_unit = UNIT_SPELLINGS.contains(&role)
+            || matches!(
+                declarations.timed.units.scale(role),
+                Ok(_) | Err(TimeUnitCause::AffineUnit { .. })
+            );
+        if !timed_profile && (spells_unit || role == MODEL_STEPS || role == timed::MODEL_TIME) {
+            return Err(TemporalCause::ClockRoleSpellsTick {
+                role: role.to_owned(),
+                profile,
+                span: written.span,
+            });
+        }
+        return Ok(written.clone());
+    }
+    match written {
+        Some(written) if written.text != MODEL_STEPS && written.text != timed::MODEL_TIME => {
+            Err(TemporalCause::ModelClockName {
+                clock: written.text.clone(),
+                span: written.span,
+            })
+        }
+        Some(written) if timed_profile && written.text == MODEL_STEPS => {
+            Err(TemporalCause::TimedProfileModelSteps { span: written.span })
+        }
+        Some(written) => Ok(written.clone()),
+        None => match (timed, timed_profile) {
+            (true, true) => Ok(default(timed::MODEL_TIME)),
+            (false, false) => Ok(default(MODEL_STEPS)),
+            (true, false) | (false, true) => Err(TemporalCause::MissingClock { span: clause }),
+        },
+    }
+}
+
+/// The clock name that binds a model subject's steps (FR-233, ADR-026 CB-1).
+const MODEL_STEPS: &str = "model-steps";
 
 /// The checked fairness set (FR-123, FR-129, FR-212): each constraint
 /// once, in source order of first occurrence. An unmarked kind is `weak`

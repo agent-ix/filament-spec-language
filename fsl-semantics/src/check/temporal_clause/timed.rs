@@ -6,9 +6,10 @@
 //! CB-1; FSpec FR-250-AC-7), so a clause under it binds `model-time` over a
 //! timed model first: FR-233's binding, read as far as FR-234 needs it.
 //! `clock "model-time"` over a model with no time source refuses
-//! `invalid_timed_model`/`model-time-on-untimed-model`. Any other clock role,
-//! and a subject that is no model object type (a timed-trace subject, whose
-//! binding FSL states nowhere), refuses as not yet implemented.
+//! `invalid_timed_model`/`model-time-on-untimed-model`. `clock "model-steps"`
+//! contradicts the profile and any other name is no model binding; both are
+//! refused with the clause's clock (FR-233). A subject that is no model
+//! object type (a timed-trace subject) refuses as not yet implemented.
 //!
 //! Each timed interval's bounds are time quantities converted exactly to the
 //! binding's unit (FR-233 "Intervals", through FR-230's time units), then
@@ -41,7 +42,7 @@ use crate::check::refusal::{CheckRefusal, TemporalCause};
 use crate::check::time_units::TimeScale;
 
 /// The clock role that binds `model-time` (ADR-026 CB-1).
-const MODEL_TIME: &str = "model-time";
+pub(crate) const MODEL_TIME: &str = "model-time";
 
 /// The kind of a timed model's time source (FR-230 `TimeSource`, FR-233
 /// `TimeSourceKind`).
@@ -363,7 +364,9 @@ pub(crate) fn binding(
             model,
             span: clock.span,
         }),
-        (other, _) => Err(TemporalCause::TimedProfileWithoutModelTime {
+        // The clause's clock refused every other name over a model subject
+        // before the binding is read (FR-233 "Other names").
+        (other, _) => Err(TemporalCause::ModelClockName {
             clock: other.to_owned(),
             span: clock.span,
         }),

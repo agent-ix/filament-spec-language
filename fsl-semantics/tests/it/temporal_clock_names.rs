@@ -96,7 +96,6 @@ fn clocked(profile: &str, clock: &str) -> String {
 /// checks.
 #[trace("TC-1540", "FR-233-AC-4", "FSpec-TC-1040", "FSpec-FR-090-AC-11")]
 #[test]
-#[ignore = "QSL-2141: a clock name other than model-steps or model-time over a model subject is not refused yet"]
 fn a_model_subject_refuses_a_clock_name_other_than_the_two_bindings() {
     for profile in [
         "filament.temporal.infinite-trace/v1",
@@ -121,13 +120,12 @@ fn a_model_subject_refuses_a_clock_name_other_than_the_two_bindings() {
 /// `unknown_profile`/`wrong-selection-role` at the alias; `using v` checks.
 #[trace("TC-1545", "FR-165-AC-7")]
 #[test]
-#[ignore = "QSL-2150: a temporal profile as a state-graph claim's profile is not refused yet"]
 fn a_state_graph_claim_refuses_a_temporal_profile() {
     for claim in [
         "possible Bad using inf over (c: Config::ConfigVersion) { c.versionNumber = 2 }",
         "always possible Bad using inf over (c: Config::ConfigVersion) { c.versionNumber = 2 }",
         "unique path Bad using inf over (c: Config::ConfigVersion) \
-         from (c.versionNumber = 0) to (c.versionNumber = 2)",
+         from (c.versionNumber = 0) to (c.versionNumber = 2);",
     ] {
         let (code, cause, named) = sole_refusal(claim);
         assert_eq!(
@@ -222,7 +220,6 @@ fn clauses_of_one_unit_use_their_own_temporal_profiles() {
 /// timed model are counted under a step profile.
 #[trace("TC-2389", "FR-233-AC-5")]
 #[test]
-#[ignore = "QSL-2140: the timed profile under clock model-steps is refused not-yet-implemented, not as a type mismatch"]
 fn the_timed_profile_refuses_model_steps() {
     const TIMED: &str =
         "dimension Time;\nunit ms : Time = rational(1, 1);\ntime Config dense unit ms;\n";
@@ -234,7 +231,14 @@ fn the_timed_profile_refuses_model_steps() {
             "{TIMED}temporal Settles using t over (c: Config::ConfigVersion) {clock}on origin {{ {formula} }}"
         )
     };
-    let timed = profile_t("filament.temporal.timed/v1");
+    // A unit's `time` declaration needs the complete temporal layer.
+    let header = |identity: &str| {
+        format!(
+            "{}profile tc = \"filament.temporal.complete/v1\";\n",
+            profile_t(identity)
+        )
+    };
+    let timed = header("filament.temporal.timed/v1");
     let (code, cause, named) = sole_refusal_with(
         &timed,
         &clause(Some("model-steps"), "eventually holds(c.versionNumber = 2)"),
@@ -242,7 +246,7 @@ fn the_timed_profile_refuses_model_steps() {
     assert_eq!((code, cause), (Code::IllTyped, Some("type-mismatch")));
     assert_eq!(named.as_deref(), Some("\"model-steps\""));
     check_with(
-        &profile_t("filament.temporal.event-position.false-extension/v1"),
+        &header("filament.temporal.event-position.false-extension/v1"),
         &clause(
             Some("model-steps"),
             "eventually[0,3] holds(c.versionNumber = 2)",

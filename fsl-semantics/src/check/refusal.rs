@@ -1787,15 +1787,33 @@ pub enum TemporalCause {
         /// the whole quantity.
         span: Span,
     },
-    /// A clause under the timed profile whose clock binding is not
-    /// `model-time` over a timed model: ADR-026 CB-1 has the timed profile
-    /// selected only by `model-time`, and no FSL requirement names the
-    /// refusal of the timed profile under another binding. Located at the
-    /// clock clause.
-    TimedProfileWithoutModelTime {
-        /// The clock role, as written.
+    /// FR-233-AC-5 "The timed profile reads model time": a clause under the
+    /// timed profile over a model subject that writes `clock "model-steps"`.
+    /// The timed profile counts time units of the model's time source, so the
+    /// two choices contradict each other. Located at the clock string.
+    TimedProfileModelSteps {
+        /// The clock string's span.
+        span: Span,
+    },
+    /// FR-233 "Other names": a clause over a model subject whose clock name
+    /// is neither `model-steps` nor `model-time`, under any profile. Located
+    /// at the clock string.
+    ModelClockName {
+        /// The clock name, as written.
         clock: String,
-        /// The clock clause's span.
+        /// The clock string's span.
+        span: Span,
+    },
+    /// FR-610 "Unit-spelled role" and "Model binding names": a clock role
+    /// over a trace subject that spells a time unit or a model binding name,
+    /// so it would appear to set what an interval bound counts. Located at
+    /// the clock string.
+    ClockRoleSpellsTick {
+        /// The clock role, as written.
+        role: String,
+        /// The clause's profile.
+        profile: super::profile::TemporalProfile,
+        /// The clock string's span.
         span: Span,
     },
     /// A clause under the timed profile over a subject that is not a model
@@ -1914,10 +1932,13 @@ pub enum TemporalCause {
         /// The second declaration's span.
         span: Span,
     },
-    /// A clause over a non-hybrid subject that writes no `clock` member: its
-    /// subject's default clock (FSpec FR-252, FSL FR-233 "Default") is not
-    /// built, so the clause is refused rather than stepped by a guessed
-    /// clock. Located at the clause.
+    /// A clause over a model subject that writes no `clock` member where
+    /// FR-233 "Default"'s binding contradicts the clause's profile: a timed
+    /// model under a step profile (the default `model-time` selects the timed
+    /// profile) or an untimed model under the timed profile (the default
+    /// `model-steps` is no model time). No requirement states this case, so
+    /// the clause is refused rather than stepped by a guessed clock. Located
+    /// at the clause.
     MissingClock {
         /// The clause's span.
         span: Span,
@@ -2102,7 +2123,9 @@ impl TemporalCause {
             | Self::UnitlessTimedBound { span }
             | Self::ZeroDenominator { span }
             | Self::TimeQuantity { span, .. }
-            | Self::TimedProfileWithoutModelTime { span, .. }
+            | Self::TimedProfileModelSteps { span }
+            | Self::ModelClockName { span, .. }
+            | Self::ClockRoleSpellsTick { span, .. }
             | Self::TimedTraceSubject { span }
             | Self::InvalidTaskSet { span, .. }
             | Self::DuplicateTask { span, .. }
@@ -2174,9 +2197,12 @@ impl TemporalCause {
             | Self::TimedIntervalNotChecked { .. }
             | Self::NotEmitted { .. }
             | Self::ProtocolFairnessNotEmitted { .. }
-            | Self::TimedProfileWithoutModelTime { .. }
+            | Self::ModelClockName { .. }
             | Self::TimedTraceSubject { .. }
             | Self::MissingClock { .. } => Code::UnsupportedConstruct,
+            Self::TimedProfileModelSteps { .. } | Self::ClockRoleSpellsTick { .. } => {
+                Code::IllTyped
+            }
             Self::UnresolvedFairnessOperation { .. } => Code::MissingDeclaration,
             Self::InvalidTimedInterval { .. }
             | Self::ModelTimeOnUntimedModel { .. }
@@ -2272,9 +2298,12 @@ impl TemporalCause {
             Self::TimedIntervalNotChecked { .. }
             | Self::NotEmitted { .. }
             | Self::ProtocolFairnessNotEmitted { .. }
-            | Self::TimedProfileWithoutModelTime { .. }
             | Self::TimedTraceSubject { .. }
             | Self::MissingClock { .. } => "not-yet-implemented",
+            Self::ModelClockName { .. } => "declaration-form",
+            Self::TimedProfileModelSteps { .. } | Self::ClockRoleSpellsTick { .. } => {
+                "type-mismatch"
+            }
             Self::ParameterType { fault, .. } => type_fault_class(fault).1,
             Self::InvalidTimedInterval { .. } => "invalid-interval",
             Self::ModelTimeOnUntimedModel { .. } => "model-time-on-untimed-model",
@@ -2293,6 +2322,17 @@ impl TemporalCause {
 /// path resolves in.
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
 pub enum StateGraphCause {
+    /// FR-165-AC-7: the claim's `using` alias selects a temporal profile.
+    /// A state-graph claim's predicates check under a state-bearing layer
+    /// (FR-165), so the alias selects the wrong role. Located at the alias.
+    TemporalProfile {
+        /// The alias, as written.
+        alias: String,
+        /// The temporal profile identity the alias selects.
+        identity: String,
+        /// The alias's span.
+        span: Span,
+    },
     /// A predicate reads an operation anchor (`self`), a result or a
     /// pre-state (`pre(e)`), not the state alone (ADR-022 GM-3). Located at
     /// the read.
@@ -2339,7 +2379,8 @@ impl StateGraphCause {
     /// The refusal's own span (FR-096), when it has one.
     pub fn span(&self) -> Option<Span> {
         match self {
-            Self::ReadsBeyondState { span }
+            Self::TemporalProfile { span, .. }
+            | Self::ReadsBeyondState { span }
             | Self::TemporalOperator { span }
             | Self::Fairness { span }
             | Self::Predicate { span, .. } => Some(*span),
@@ -2349,6 +2390,7 @@ impl StateGraphCause {
     /// This cause's catalog code.
     pub fn code(&self) -> Code {
         match self {
+            Self::TemporalProfile { .. } => Code::UnknownProfile,
             Self::ReadsBeyondState { .. }
             | Self::TemporalOperator { .. }
             | Self::Fairness { .. } => Code::UnsupportedConstruct,
@@ -2359,6 +2401,7 @@ impl StateGraphCause {
     /// This cause's catalog tag.
     pub fn tag(&self) -> Option<&'static str> {
         match self {
+            Self::TemporalProfile { .. } => Some("wrong-selection-role"),
             Self::ReadsBeyondState { .. }
             | Self::TemporalOperator { .. }
             | Self::Fairness { .. } => Some("expression-form"),
