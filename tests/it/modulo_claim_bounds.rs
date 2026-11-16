@@ -3,7 +3,7 @@
 //! conversion occurrence through request construction and replay.
 
 use filament_checked::node::NodeKind;
-use filament_exact::{Cancel, Integer, IntegerInterval, ValueType};
+use filament_exact::{Cancel, Integer, IntegerInterval, NodeKey, ValueType};
 use filament_semantic_value::catalog::Category;
 use filament_semantic_value::checking::{CheckMode, CheckingLimits};
 use fsl_foundation::{BackendId, SourceIdentity};
@@ -15,7 +15,10 @@ use fsl_replay::{
 };
 use fsl_route::request::items_from_requirements;
 use fsl_route::Registry;
-use fsl_semantics::check::{BodyTerm, CheckedTypeNode, PackageDeclarations, ScalarShape};
+use fsl_semantics::check::{
+    BindingValue, BodyTerm, CheckedGraph, LeafTerm, LiteralValue, MemberTerm, NodeTag,
+    PackageDeclarations,
+};
 use ix_trace_rs::trace;
 use std::collections::BTreeMap;
 
@@ -50,6 +53,52 @@ const SOURCE: &str = "language \"ix:native\" edition \"1-draft\";\n\
 
 fn interval(lower: i64, upper: i64) -> ValueType {
     ValueType::Int(IntegerInterval::new(lower.into(), upper.into()).expect("valid interval"))
+}
+
+fn graph_type(graph: &CheckedGraph, key: NodeKey) -> ValueType {
+    let node = graph
+        .semantic_graph()
+        .node(key)
+        .expect("the type node is retained in the graph");
+    match (node.node_tag(), node.semantic_form()) {
+        (NodeTag::ScalarType, "integer") => ValueType::Integer,
+        (NodeTag::BoundedDomain, "integer_range") => {
+            let base = graph
+                .semantic_graph()
+                .node(node.semantic_type().expect("range base"))
+                .expect("integer base node");
+            assert_eq!(
+                (base.node_tag(), base.semantic_form()),
+                (NodeTag::ScalarType, "integer")
+            );
+            let BodyTerm::Aggregate(body) = node.body() else {
+                panic!("integer range body")
+            };
+            let endpoints = body
+                .members
+                .iter()
+                .map(|member| {
+                    let MemberTerm::Binding(binding) = member else {
+                        panic!("range endpoint binding")
+                    };
+                    let BindingValue::Leaf(LeafTerm::Literal {
+                        value: LiteralValue::Integer(value),
+                        ..
+                    }) = &binding.value
+                    else {
+                        panic!("integer endpoint")
+                    };
+                    (binding.name.as_str(), value.clone())
+                })
+                .collect::<BTreeMap<_, _>>();
+            assert_eq!(endpoints.len(), 2);
+            ValueType::Int(
+                IntegerInterval::new(endpoints["min"].clone(), endpoints["max"].clone())
+                    .expect("nonempty integer range"),
+            )
+        }
+        _ => panic!("an integer bound names an integer type node"),
+    }
 }
 
 #[trace(
@@ -101,22 +150,11 @@ fn modulo_claim_bound_context_and_replay_agree_for_each_consumer() {
             .find(|(key, _)| key.node() == addition)
             .expect("RR record");
         assert_eq!(record.result_bound().value_type(), &expected);
-        let type_node = graph
-            .checked_type_node(record.result_bound().node())
-            .expect("RR bound node");
-        match (&expected, type_node) {
-            (ValueType::Int(expected), CheckedTypeNode::BoundedDomain { bound, .. }) => {
-                assert_eq!(bound, expected)
-            }
-            (
-                ValueType::Integer,
-                CheckedTypeNode::Scalar {
-                    shape: ScalarShape::Integer,
-                    ..
-                },
-            ) => {}
-            _ => panic!("RR bound names one type twice"),
-        }
+        assert_eq!(
+            graph_type(&graph, record.result_bound().node()),
+            expected,
+            "RR bound names one type twice"
+        );
     }
     for (index, function, expected_type, checked_type, expected_narrow, binder_narrow) in [
         (2, "equal", interval(0, 11), interval(0, 11), true, false),
@@ -213,14 +251,9 @@ fn modulo_claim_bound_context_and_replay_agree_for_each_consumer() {
                     .semantic_graph()
                     .node(graph.node_key(node).expect("control keyed").clone())
                     .expect("control lowered");
-                assert!(
-                    matches!(
-                        graph.checked_type_node(lowered.semantic_type().expect("control type")),
-                        Some(CheckedTypeNode::Scalar {
-                            shape: ScalarShape::Integer,
-                            ..
-                        })
-                    ),
+                assert_eq!(
+                    graph_type(&graph, lowered.semantic_type().expect("control type")),
+                    ValueType::Integer,
                     "{function} control uses lowered leaf hull"
                 );
             }
@@ -239,14 +272,9 @@ fn modulo_claim_bound_context_and_replay_agree_for_each_consumer() {
                     .node(key.clone())
                     .expect("division lowered");
                 let result = lowered.semantic_type().expect("application has type");
-                assert!(
-                    matches!(
-                        graph.checked_type_node(result),
-                        Some(CheckedTypeNode::Scalar {
-                            shape: ScalarShape::Integer,
-                            ..
-                        })
-                    ),
+                assert_eq!(
+                    graph_type(&graph, result),
+                    ValueType::Integer,
                     "{function} lowered catalog type"
                 );
                 division_key = Some(key);
@@ -391,16 +419,9 @@ fn modulo_claim_bound_context_and_replay_agree_for_each_consumer() {
             &expected_type,
             "{function} records the consumer's result bound"
         );
-        let bound = graph
-            .semantic_graph()
-            .nodes()
-            .find(|node| node.key() == expected_bound_node)
-            .expect("bound type exists");
-        let ValueType::Int(expected_interval) = &expected_type else {
-            panic!("interval bound")
-        };
-        assert!(
-            matches!(graph.checked_type_node(bound.key()), Some(CheckedTypeNode::BoundedDomain { bound: actual, .. }) if actual == expected_interval),
+        assert_eq!(
+            graph_type(&graph, expected_bound_node),
+            expected_type,
             "{function} bound and type node agree"
         );
         assert_eq!(
