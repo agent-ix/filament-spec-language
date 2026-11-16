@@ -78,7 +78,7 @@ FR-526's.
 ## Behavior
 
 - `fsl-eval` SHALL name `filament-observation` in its `[dependencies]`
-  (amending ADR-011's X-8 row), at `branch = "main"`, through the workspace
+  (ADR-011's X-8 row lists it), at `branch = "main"`, through the workspace
   patch that keeps one `fsl-foundation` in the graph.
 - Where the evaluator orders two uncertain event-time intervals or derives
   a partial value, it SHALL use the owner's `partial` rules.

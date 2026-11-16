@@ -78,8 +78,8 @@ table check `#[trace("FR-400-AC-1", "TC-390")]`.
   name `fsl-forms`. `fsl-eval`'s `[dependencies]` are exactly `ix-trace-rs`,
   `fsl-foundation`, `fsl-package`, `fsl-semantics`, `quire-canonical`,
   `filament-exact`, `filament-semantic-value`, `serde` and `thiserror` (ADR-011
-  X-8, FR-101), plus `filament-checked` once X-13 lands and `filament-eval` once
-  X-14 lands; it has no `[build-dependencies]`, and its
+  X-8, FR-101), plus `filament-checked` once X-13 lands, `filament-eval` once
+  X-14 lands and `filament-observation` once FR-861 lands (ADR-011 X-8); it has no `[build-dependencies]`, and its
   `[dev-dependencies]` may also name `fsl-forms` and `fsl-cst`, and no other
   workspace crate.
 - Step 5 finds `fsl-semantics` as the only workspace member that enables

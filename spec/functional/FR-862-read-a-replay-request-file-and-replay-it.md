@@ -41,8 +41,9 @@ request reader, its refusals and the result are the language's.
 
 The replay request already has one JSON encoding of every
 `ReplayRequestWire` field: FSpec FR-336 "Replay request file", which the
-conformance corpus uses (FR-350). The product request file uses the same
-member mapping under a `native-replay/1` envelope, so a corpus vector's
+conformance corpus uses (FR-350). The product request file is a `native-replay/1` file `{format, request}`
+whose `request` carries that same mapping (FSpec FR-715, FR-336), not an
+FSpec FR-323 envelope, so a corpus vector's
 request and a user's request are read by one reader, and no second encoding
 of the replay request is defined. `command::run` dispatches on the
 envelope's `format`, so every request file kind is read by one entry, as
