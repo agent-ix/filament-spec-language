@@ -15,6 +15,62 @@ use ix_trace_rs::trace;
 
 const VALUE: &str = "profile v = \"filament.value.complete/v1\";\n";
 
+#[trace("TC-2270", "FR-495-AC-21", "FR-062-AC-16")]
+#[test]
+fn an_unnarrowed_division_retains_its_otherwise_unreferenced_interval_type_node() {
+    use fsl_semantics::check::{BindingValue, BodyTerm, LeafTerm, LiteralValue, MemberTerm};
+    let graph = check(
+        VALUE,
+        "function lone using v(a: Int[0, 100], b: Int[1, 12]): Integer pure { a mod b }",
+        CheckMode::Linked,
+    )
+    .expect("the unbounded consumer checks");
+    assert_eq!(graph.requirements().len(), 1);
+    let (_, record) = graph.requirements().iter().next().expect("mod record");
+    let expected = ValueType::Int(IntegerInterval::new(0_i64.into(), 11_i64.into()).unwrap());
+    assert_eq!(record.result_bound().value_type(), &expected);
+    let body = graph.function_state(0).expect("lone function").body;
+    assert_eq!(body.value_type(), &expected);
+    let application = graph
+        .semantic_graph()
+        .node(graph.node_key(body).unwrap().clone())
+        .unwrap();
+    assert_ne!(
+        record.result_bound().node(),
+        application.semantic_type().unwrap()
+    );
+    let bound = graph
+        .semantic_graph()
+        .node(record.result_bound().node())
+        .expect("the interval node is retained without another consumer");
+    assert_eq!(bound.semantic_form(), "integer_range");
+    let BodyTerm::Aggregate(body) = bound.body() else {
+        panic!("range aggregate")
+    };
+    let endpoints = body
+        .members
+        .iter()
+        .map(|member| {
+            let MemberTerm::Binding(binding) = member else {
+                panic!("endpoint")
+            };
+            let BindingValue::Leaf(LeafTerm::Literal {
+                value: LiteralValue::Integer(value),
+                ..
+            }) = &binding.value
+            else {
+                panic!("integer endpoint")
+            };
+            (binding.name.as_str(), value.to_string())
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(
+        endpoints,
+        [("min", "0".to_owned()), ("max", "11".to_owned())]
+    );
+    assert!(record.conversion_context().is_none());
+}
+
 fn law_header(alias: &str, law: &str) -> String {
     format!("profile {alias} = \"filament.value.integer-division.{law}/v1\";\n")
 }
