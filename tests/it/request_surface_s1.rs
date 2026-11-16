@@ -237,7 +237,6 @@ fn the_run_command_reaches_markdown_extraction_by_default() {
 /// `parsed` report of the labels, path, byte count and S1 usage.
 #[test]
 #[trace("TC-1745", "FR-663-AC-1")]
-#[ignore = "QSL-2191: the parse outcome's `parsed` result is not implemented yet"]
 fn the_parse_outcome_reports_the_parsed_unit() {
     const FIXTURE: &[u8] = include_bytes!("../fixtures/spine-compile.native");
     let identity = SourceIdentity::new("agent-ix", "test:parent");
@@ -271,6 +270,40 @@ fn the_parse_outcome_reports_the_parsed_unit() {
         ["s1.input_bytes", "s1.tokens", "s1.nodes", "s1.work_units"]
     );
     assert_eq!(report["usage"][0]["used"], FIXTURE.len().to_string());
+    let repeated = parse(
+        &ParseRequest {
+            source: &identity,
+            path: "tests/fixtures/spine-compile.native",
+            bytes: FIXTURE,
+        },
+        Limits::default(),
+        &Cancel::new(),
+    );
+    let repeated: Value =
+        serde_json::from_slice(&OutcomeDocument::from_parse(&repeated).to_bytes().unwrap())
+            .unwrap();
+    assert_eq!(repeated["result"], document["result"]);
+
+    let token_bound = report["usage"][1]["used"]
+        .as_str()
+        .unwrap()
+        .parse()
+        .unwrap();
+    let bounded = parse(
+        &ParseRequest {
+            source: &identity,
+            path: "tests/fixtures/spine-compile.native",
+            bytes: FIXTURE,
+        },
+        Limits::default().with_tokens(token_bound),
+        &Cancel::new(),
+    );
+    let bounded: Value =
+        serde_json::from_slice(&OutcomeDocument::from_parse(&bounded).to_bytes().unwrap()).unwrap();
+    assert_eq!(
+        bounded["result"]["usage"][1]["used"],
+        bounded["result"]["usage"][1]["bound"]
+    );
 }
 
 fn handoff_request(directory: &Path, handoff: Value) -> std::path::PathBuf {

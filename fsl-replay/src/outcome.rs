@@ -1627,6 +1627,17 @@ pub enum ResultValue {
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum ExecuteResult {
+    /// A completed S1 parse report (FR-663).
+    Parsed {
+        /// The parsed source's caller-supplied labels.
+        source: fsl_foundation::SourceIdentity,
+        /// The display path supplied to S1.
+        path: String,
+        /// Input byte count, as an ASCII decimal string.
+        bytes: String,
+        /// The four S1 bounds and observed counts, in setting order.
+        usage: Vec<ParseUsage>,
+    },
     /// The call completed with a value.
     Completed {
         /// The value.
@@ -1642,6 +1653,14 @@ pub enum ExecuteResult {
         /// The exhausted limit.
         limit: ResultLimit,
     },
+}
+
+/// One S1 bound and observed count in a parsed result.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+pub struct ParseUsage {
+    setting: &'static str,
+    bound: String,
+    used: String,
 }
 
 /// The exhausted limit of an incomplete `execute` result (FR-277): bound and
@@ -1790,12 +1809,50 @@ impl OutcomeDocument {
         &self.diagnostics
     }
 
-    /// The document of a `parse` outcome: success at S2, with no items,
-    /// diagnostics, artifacts or evaluation result; a failure uses the
-    /// front-end's category, stage and diagnostic without running a stage.
+    /// The document of a `parse` outcome: success at S2, with the parsed
+    /// source and its S1 usage; a failure uses the front-end's category,
+    /// stage and diagnostic without running a stage.
     pub fn from_parse(result: &Result<Staged<ParsedUnitSource>, FrontEndFailure>) -> Self {
         match result {
-            Ok(_) => Self::new(Operation::Parse, Some(OutcomeStage::S2), Category::Success),
+            Ok(staged) => {
+                let parsed = staged.value();
+                let source = parsed.source();
+                let limits = parsed.syntax().effective_limits();
+                let work = staged.work();
+                let used = [
+                    source.text().len(),
+                    parsed.syntax().cst().tokens().len(),
+                    parsed.syntax().cst().nodes().len(),
+                    usize::try_from(work.s1).unwrap_or(usize::MAX),
+                ];
+                let bounds = [
+                    limits.source_bytes,
+                    limits.tokens,
+                    limits.nodes,
+                    limits.work_units,
+                ];
+                let settings = ["s1.input_bytes", "s1.tokens", "s1.nodes", "s1.work_units"];
+                let usage = settings
+                    .into_iter()
+                    .zip(bounds)
+                    .zip(used)
+                    .map(|((setting, bound), used)| ParseUsage {
+                        setting,
+                        bound: bound.to_string(),
+                        used: used.to_string(),
+                    })
+                    .collect();
+                let result = ExecuteResult::Parsed {
+                    source: source.identity().clone(),
+                    path: source.path().to_owned(),
+                    bytes: source.text().len().to_string(),
+                    usage,
+                };
+                let mut document =
+                    Self::new(Operation::Parse, Some(OutcomeStage::S2), Category::Success);
+                document.result = Some(result);
+                document
+            }
             Err(failure) => Self::from_failure(Operation::Parse, failure),
         }
     }
