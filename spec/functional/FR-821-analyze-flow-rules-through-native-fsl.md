@@ -79,9 +79,9 @@ is not an input to `fsl analyze`.
 - A syntax, type or malformed-report refusal SHALL retain the existing
   request refusal behavior; it SHALL NOT yield a partial successful outcome.
 - Two runs over the same report SHALL preserve rule and item order and give
-  equal claim outcomes and evidence. The integration does not promise a
-  `quire.differential-report/v2`, a second solver, or a solver-disagreement
-  result; `filament-outcome/1` is the analysis result.
+  equal claim outcomes and evidence. The integration SHALL return the existing
+  `filament-outcome/1` analyze result and SHALL NOT add a separate report
+  format.
 
 ## Acceptance Criteria
 
@@ -108,9 +108,12 @@ is not an input to `fsl analyze`.
   rules, vocabularies, facts, denials and remediation data. Its report-lowering
   note describes the retired `quire.contract-package/v1` path; this requirement
   uses the current source-driven native FSL analysis path instead.
-- **Capability gap:** the former PLAT-1541 AC requiring a Z3/cvc5 disagreement
-  to appear in `quire.differential-report/v2` has no equivalent in current
-  native FSL analysis. `fsl analyze` emits `filament-outcome/1` and has no
-  dual-solver comparison. That capability is outside this requirement and is
-  not a shipped acceptance criterion; FR-821-AC-5 instead requires the native
-  `incomplete` result when analysis reaches a bound.
+- **Capability gap:** FR-290 specifies per-item cvc5-primary/Z3 cross-check
+  outcomes, including solver disagreement, in `filament-outcome/1`. That SMT
+  provider route is currently unreachable through `fsl analyze` until
+  QSL-2132 exposes provider selection. This is a current reachability gap, not
+  a claim that the outcome has no existing specification or that the route is
+  already reachable. FR-821 does not add flow claims to the SMT route; the
+  former PLAT-1541 dual-solver acceptance remains outside this native analysis
+  slice until provider selection is exposed. FR-821-AC-5 retains the native
+  `incomplete` outcome for analysis that reaches a bound.
