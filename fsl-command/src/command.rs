@@ -987,6 +987,7 @@ fn check_sources<T>(
             fsl_replay::spine::SourceInputs {
                 refinement_internals: request.refinement_internals.clone(),
                 temporal_selections: &check_selections,
+                clocks: Some(&request.clocks),
             },
             &models,
             &dependencies,
@@ -1019,6 +1020,7 @@ fn check_sources<T>(
             fsl_replay::spine::SourceInputs {
                 refinement_internals: request.refinement_internals.clone(),
                 temporal_selections: &check_selections,
+                clocks: Some(&request.clocks),
             },
             &models,
             &dependencies,

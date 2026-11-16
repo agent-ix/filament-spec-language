@@ -5625,6 +5625,7 @@ impl PackageDeclarations {
             .filter_map(|profile| {
                 Some(super::temporal_clause::TemporalSelection {
                     profile: super::profile::TemporalProfile::from_identity(&profile.identity)?,
+                    alias: profile.alias.clone(),
                     span: profile.span,
                 })
             })

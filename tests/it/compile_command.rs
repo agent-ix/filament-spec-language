@@ -286,6 +286,7 @@ fn compile_accepts_a_multi_unit_program_array() {
         fsl_replay::spine::SourceInputs {
             refinement_internals: Some(json!([])),
             temporal_selections: &[],
+            clocks: None,
         },
         &models,
         &dependencies,
@@ -963,6 +964,7 @@ fn refinement_internals_compile_matches_the_spine_composition() {
             fsl_replay::spine::SourceInputs {
                 refinement_internals: root_internals,
                 temporal_selections: &[],
+                clocks: None,
             },
             &models,
             &dependencies,

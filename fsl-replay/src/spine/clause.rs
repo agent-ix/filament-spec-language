@@ -1185,11 +1185,14 @@ pub fn run_clause_with_temporal_selections(
         } else {
             temporal_selections.to_vec()
         };
-        let checked = front_end::check_with_temporal_selections_and_execution_points(
+        let checked = front_end::check_with_refinement_internals(
             &parsed,
             request.package_name.clone(),
-            &crate::spine::StateClauseExecutionPoints::new(),
-            &check_selections,
+            crate::spine::SourceInputs {
+                refinement_internals: None,
+                temporal_selections: &check_selections,
+                clocks: by_name.then_some(&request.clocks),
+            },
             &models,
             &request.dependencies,
             request.limits,

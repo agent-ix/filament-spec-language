@@ -314,6 +314,7 @@ fn the_unit_selects_exactly_one_temporal_profile() {
     assert_eq!(
         cause,
         TemporalCause::ProfileSelection {
+            alias: "v".to_owned(),
             found: Vec::new(),
             span: Span { start, end }
         }
@@ -328,7 +329,6 @@ fn the_unit_selects_exactly_one_temporal_profile() {
 #[trace("TC-836", "FR-326-AC-4")]
 #[trace("TC-2180", "FR-326-AC-7")]
 #[test]
-#[ignore = "QSL-1964: the per-clause temporal profile rule of FR-326 not implemented yet"]
 fn a_unit_may_select_two_temporal_profiles() {
     checked(&[EVENT, INFINITE], "eventually[0,1] holds(c.level = 3)");
 }

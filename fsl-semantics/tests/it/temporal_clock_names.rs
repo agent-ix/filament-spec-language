@@ -207,7 +207,6 @@ fn hyper_only_forms_refuse_in_a_single_trace_clause() {
 /// clause is checked under the profile its own `using` alias selects.
 #[trace("TC-2180", "FR-326-AC-7")]
 #[test]
-#[ignore = "QSL-1964: the per-clause temporal profile rule of FR-326 not implemented yet"]
 fn clauses_of_one_unit_use_their_own_temporal_profiles() {
     let profiles = "profile ev = \"filament.temporal.event-position.false-extension/v1\";\n\
          profile inf = \"filament.temporal.infinite-trace/v1\";\n";

@@ -4687,6 +4687,23 @@ pub fn emit_checked_with_temporal_selections_and_cancel(
     )
 }
 
+/// [`emit_checked_with_temporal_selections_and_cancel`] for a library unit a
+/// request compiles with its program (FR-099), remembering the emission. The
+/// request's clock selections (FR-640) serve its library units too, so the
+/// emission under them is the library's one package: its importers link
+/// these bytes, and a later [`emit_checked`] of it returns them.
+pub fn emit_dependency_with_temporal_selections_and_cancel(
+    package: &CheckedPackage,
+    selections: &[TemporalClockSelection],
+    cancel: &Cancel,
+    limits: EmitLimits,
+) -> Result<Emission, EmitRefusal> {
+    let emission =
+        emit_checked_with_temporal_selections_and_cancel(package, selections, cancel, limits)?;
+    package.remember_emission(&emission);
+    Ok(emission)
+}
+
 /// The metadata of a timed clause node with one `expression` occurrence,
 /// keyed `id` until the emitter rekeys it.
 fn clause_metadata(id: CheckedNodeId) -> TimedNodeMetadata {

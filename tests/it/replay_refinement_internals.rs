@@ -139,6 +139,7 @@ fn request(with_dependency: bool) -> ReplayRequestWire {
         fsl_replay::spine::SourceInputs {
             refinement_internals: Some(root_internals.clone()),
             temporal_selections: &[],
+            clocks: None,
         },
         &models,
         &dependencies,

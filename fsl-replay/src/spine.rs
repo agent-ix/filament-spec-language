@@ -51,6 +51,7 @@ use fsl_semantics::model::refusal::MemberPath;
 
 mod clocks;
 mod lifecycle;
+pub(crate) use clocks::ClockLocator;
 pub use clocks::{InvalidClock, RequestClocks};
 mod subject;
 pub use lifecycle::{
@@ -1660,11 +1661,11 @@ fn check_message(refusals: &[CheckRefusal]) -> String {
         // FR-326: name what the `TemporalTrace` check refused.
         CheckCause::Temporal(cause) => {
             message = match cause.as_ref() {
-                TemporalCause::ProfileSelection { found, .. } if found.is_empty() => {
-                    format!("{message}: the unit selects no temporal profile")
+                TemporalCause::ProfileSelection { alias, found, .. } if found.is_empty() => {
+                    format!("{message}: the clause's `using` alias `{alias}` selects no temporal profile")
                 }
-                TemporalCause::ProfileSelection { found, .. } => format!(
-                    "{message}: the unit selects {} temporal profiles: {}",
+                TemporalCause::ProfileSelection { alias, found, .. } => format!(
+                    "{message}: the clause's `using` alias `{alias}` selects {} temporal profiles: {}",
                     found.len(),
                     found.join(", ")
                 ),

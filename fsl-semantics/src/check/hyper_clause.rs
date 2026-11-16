@@ -43,7 +43,7 @@ use super::state_clause::{population_of, PopulationDomain};
 use super::temporal_clause::FormulaNodeId;
 use super::temporal_clause::{
     build_formula, checked_constraint, checked_operators, in_safety_fragment, CheckedFormula,
-    CheckedOperator, IntervalReading, TemporalClaim, TemporalDeclarations, TemporalSelection,
+    CheckedOperator, IntervalReading, TemporalClaim, TemporalDeclarations,
 };
 use super::Scope;
 use super::{AdmittedModel, Capability};
@@ -1352,10 +1352,9 @@ fn check_behaviours<'a>(
     let scope = temporal.scope;
     let clause_index = declarations.behaviours_checked.get();
     declarations.behaviours_checked.set(clause_index + 1);
-    let profile = match temporal.selections {
-        [only] => only.profile,
-        found => return Err(profile_selection(found, form.span)),
-    };
+    let profile =
+        super::temporal_clause::clause_profile(temporal.selections, &form.profile, form.span)
+            .map_err(|cause| Found::Temporal(cause).into_failure())?;
     let mut found: Vec<Found> = Vec::new();
 
     let (quantifiers, fairness_spans) = checked_quantifiers(form, declarations, &mut found)?;
@@ -1631,17 +1630,6 @@ fn check_behaviours<'a>(
         fairness_spans,
         occurrence: None,
     })
-}
-
-fn profile_selection(found: &[TemporalSelection], span: Span) -> StageFailure<CheckRefusal> {
-    Found::Temporal(TemporalCause::ProfileSelection {
-        found: found
-            .iter()
-            .map(|selection| selection.profile.identity())
-            .collect(),
-        span,
-    })
-    .into_failure()
 }
 
 /// The quantifiers, each bound to its alias and its fairness set. A quantifier

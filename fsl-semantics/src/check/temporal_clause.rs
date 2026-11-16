@@ -99,10 +99,13 @@ pub use timed::{
 const STAGE: &str = "check.temporal";
 
 /// One header profile the `TemporalTrace` catalog holds (FR-110).
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct TemporalSelection {
     /// The profile the header selected.
     pub profile: TemporalProfile,
+    /// The alias the `profile` declaration binds, which a clause names in
+    /// its `using`.
+    pub alias: String,
     /// The span of the whole `profile` declaration.
     pub span: Span,
 }
@@ -1211,23 +1214,40 @@ pub(crate) fn located(
     StageFailure::Limit(limit.at(region.map(Locus::Region)))
 }
 
+/// FR-326 "Profile identity": the temporal profile a clause's own `using`
+/// alias selects. A unit may select several temporal profiles; the alias,
+/// not the unit, names the clause's profile. An alias that resolves to no
+/// temporal profile, or to more than one, refuses at the clause's `span`,
+/// naming the alias and the temporal selections it resolved to.
+pub(crate) fn clause_profile(
+    selections: &[TemporalSelection],
+    using: &fsl_forms::UsingAlias,
+    span: Span,
+) -> Result<TemporalProfile, TemporalCause> {
+    let mut resolved = selections
+        .iter()
+        .filter(|selection| selection.alias == using.alias);
+    match (resolved.next(), resolved.next()) {
+        (Some(only), None) => Ok(only.profile),
+        _ => Err(TemporalCause::ProfileSelection {
+            alias: using.alias.clone(),
+            found: selections
+                .iter()
+                .filter(|selection| selection.alias == using.alias)
+                .map(|selection| selection.profile.identity())
+                .collect(),
+            span,
+        }),
+    }
+}
+
 fn check_clause(
     declaration: &TemporalDeclaration,
     declarations: &TemporalDeclarations<'_>,
 ) -> Result<CheckedTemporalClause, StageFailure<CheckRefusal>> {
     let form = &declaration.form;
-    let profile = match declarations.selections {
-        [only] => only.profile,
-        found => {
-            return Err(refuse(TemporalCause::ProfileSelection {
-                found: found
-                    .iter()
-                    .map(|selection| selection.profile.identity())
-                    .collect(),
-                span: declaration.span,
-            }))
-        }
-    };
+    let profile =
+        clause_profile(declarations.selections, &form.profile, declaration.span).map_err(refuse)?;
     let clock = form.clock.as_ref().ok_or_else(|| {
         refuse(TemporalCause::MissingClock {
             span: declaration.span,

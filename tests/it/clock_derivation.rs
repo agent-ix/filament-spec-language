@@ -37,7 +37,6 @@ fn find<'a>(value: &'a Value, key: &str) -> Option<&'a Value> {
 
 #[trace("TC-2181", "FR-640-AC-7")]
 #[test]
-#[ignore = "QSL-1964: derived clock configurations for fixed-sample and timestamped-event model clauses not implemented yet"]
 fn model_subject_clauses_derive_their_clock_configuration() {
     let directory = tempfile::tempdir().unwrap();
     write(directory.path(), "model.json", MODEL);
@@ -75,7 +74,6 @@ fn model_subject_clauses_derive_their_clock_configuration() {
 
 #[trace("TC-2183", "FR-640-AC-9")]
 #[test]
-#[ignore = "QSL-1964: the request `clocks` member serving library units not implemented yet"]
 fn library_units_share_the_request_clocks() {
     let directory = tempfile::tempdir().unwrap();
     let library = "language \"ix:native\" edition \"1-draft\";\n\
@@ -86,7 +84,8 @@ fn library_units_share_the_request_clocks() {
     let program = "language \"ix:native\" edition \"1-draft\";\n\
          profile w = \"filament.temporal.timestamped-event.finite-window/v1\";\n\
          import \"test/plant\" as P;\n\
-         temporal Early using w over (r: P::Reading) clock \"plant-ms\" \
+         record Reading { level: Int[0, 9]; }\n\
+         temporal Early using w over (r: Reading) clock \"plant-ms\" \
          on origin { eventually[0,2] holds(r.level > 0) }\n";
     write(directory.path(), "plant.native", library.as_bytes());
     write(directory.path(), "unit.native", program.as_bytes());
@@ -112,6 +111,19 @@ fn library_units_share_the_request_clocks() {
         Some(0),
         "{}",
         String::from_utf8_lossy(&served.stderr)
+    );
+    let package: Value = serde_json::from_slice(&served.stdout).expect("package JSON");
+    let rows = find(&package, "temporal_bindings")
+        .and_then(Value::as_array)
+        .expect("temporal binding rows");
+    assert_eq!(
+        rows.iter()
+            .map(|row| (&row["clock_name"], &row["clock"]))
+            .collect::<Vec<_>>(),
+        [(
+            &json!("plant-ms"),
+            &json!({"kind": "timestamped_event", "timestamp_unit": "ms"})
+        )]
     );
     let missing = compile(directory.path(), &request(None));
     assert_eq!(missing.status.code(), Some(20));
@@ -185,4 +197,48 @@ fn the_program_package_records_its_library_clock_selections() {
     assert_eq!(output.status.code(), Some(0));
     let package: Value = serde_json::from_slice(&output.stdout).expect("package JSON");
     assert!(package["lock"].get("dependency_clock_selections").is_none());
+}
+
+/// FR-640-AC-9: a member only a library unit's clause reads is used: a
+/// program with no clock-bearing clause of its own compiles with it, and a
+/// member no unit reads still refuses `unused-clock-selection`.
+#[trace("TC-2183", "FR-640-AC-9")]
+#[test]
+fn a_member_only_a_library_clause_reads_is_not_unused() {
+    let directory = tempfile::tempdir().unwrap();
+    let library = "language \"ix:native\" edition \"1-draft\";\n\
+         profile w = \"filament.temporal.timestamped-event.finite-window/v1\";\n\
+         record Reading { level: Int[0, 9]; }\n\
+         temporal Late using w over (r: Reading) clock \"plant-ms\" \
+         on origin { eventually[0,5] holds(r.level > 0) }\n";
+    let program = "language \"ix:native\" edition \"1-draft\";\n\
+         profile v = \"filament.value.complete/v1\";\n\
+         import \"test/plant\" as P;\n\
+         function f using v(x: Int[0, 9]): Boolean pure { x < 5 }\n";
+    write(directory.path(), "plant.native", library.as_bytes());
+    write(directory.path(), "unit.native", program.as_bytes());
+    let clock = json!({"kind": "timestamped_event", "timestamp_unit": "ms"});
+    let request = json!({"format": "native-compile/1", "request": {
+        "models": [],
+        "program": {"source": source("unit.native", "test:clocks-program")},
+        "libraries": [{"identity": "test/plant",
+            "source": source("plant.native", "test:clocks-plant")}],
+        "clocks": {"plant-ms": clock.clone()}}});
+    let output = compile(directory.path(), &request);
+    assert_eq!(
+        output.status.code(),
+        Some(0),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let mut spare = request.clone();
+    spare["request"]["clocks"]["spare"] = clock;
+    let unused = compile(directory.path(), &spare);
+    assert_eq!(unused.status.code(), Some(20));
+    let failure: Value = serde_json::from_slice(&unused.stderr).expect("a refusal");
+    assert_eq!(
+        find(&failure, "cause"),
+        Some(&json!("unused-clock-selection"))
+    );
+    assert_eq!(find(&failure, "clock"), Some(&json!("spare")));
 }

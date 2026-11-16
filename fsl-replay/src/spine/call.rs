@@ -568,11 +568,15 @@ pub(crate) fn run_reading<T>(
     let models = front_end::select(&parsed, packages, limits.model, cancel)
         .map_err(refusal)?
         .into_value();
-    let checked = front_end::check_with_temporal_selections_and_execution_points(
+    let check_selections = call.clocks.check_selections(&parsed);
+    let checked = front_end::check_with_refinement_internals(
         &parsed,
         package_name,
-        &super::StateClauseExecutionPoints::new(),
-        &call.clocks.check_selections(&parsed),
+        super::SourceInputs {
+            refinement_internals: None,
+            temporal_selections: &check_selections,
+            clocks: Some(&call.clocks),
+        },
         &models,
         dependencies,
         limits,

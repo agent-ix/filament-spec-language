@@ -1585,11 +1585,14 @@ pub enum TemporalCause {
         /// The operation name's span.
         span: Span,
     },
-    /// FR-326 "Profile identity": the unit selects no temporal profile, or
-    /// more than one. `found` names the identity of each selection it
-    /// found, in source order. Located at the clause.
+    /// FR-326 "Profile identity": the clause's `using` alias resolves to no
+    /// temporal profile, or to more than one. `found` names the identity of
+    /// each temporal selection the alias resolved to, in source order.
+    /// Located at the clause.
     ProfileSelection {
-        /// The identity of each temporal profile the unit selects.
+        /// The clause's `using` alias.
+        alias: String,
+        /// The identity of each temporal profile the alias selects.
         found: Vec<&'static str>,
         /// The clause's span.
         span: Span,
