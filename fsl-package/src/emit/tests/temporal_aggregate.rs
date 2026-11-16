@@ -348,7 +348,7 @@ fn emit_with_clock(
     let graph = assembled()
         .with_clock_units(vec![fsl_semantics::check::ClockUnitSelection {
             declaration_span: span,
-            timestamp_unit: timestamp_unit.to_owned(),
+            clock: clock_in(timestamp_unit),
         }])
         .check(CheckMode::Linked, CheckingLimits::default())?;
     let selections = [crate::emit::TemporalClockSelection::new(

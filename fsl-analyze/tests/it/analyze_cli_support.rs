@@ -104,7 +104,21 @@ impl fsl_analyze::analyze::document::Negotiate for Fr290 {
 /// outcome document: the result document of an accepted request, or the
 /// FR-286 `analyze` document of a refused one.
 pub(crate) fn analyze(request: &Path) -> Run {
-    match fsl_command::command::analyze(request, &Fr290, &filament_exact::Cancel::new()) {
+    analyze_with_providers(request, Vec::new())
+}
+
+/// [`analyze`] with `providers` registered as the caller's process providers
+/// (FR-635), through `fsl_command::command::analyze_with_providers`.
+pub(crate) fn analyze_with_providers(
+    request: &Path,
+    providers: Vec<fsl_analyze::analyze::Engine>,
+) -> Run {
+    match fsl_command::command::analyze_with_providers(
+        request,
+        &Fr290,
+        providers,
+        &filament_exact::Cancel::new(),
+    ) {
         Ok(result) => Run {
             exit: i32::from(result.exit_code),
             stdout: result.value.to_string().into_bytes(),

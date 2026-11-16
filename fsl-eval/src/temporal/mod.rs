@@ -73,9 +73,9 @@ pub use letters::{AtomReading, CaptureReading, LetterStop, TemporalLetters, Unde
 pub use observed::{
     evaluate_observed, evaluate_observed_at, evaluate_observed_decisive,
     evaluate_observed_finite_window, evaluate_positions, evaluate_positions_finite_window,
-    evaluate_sampled, evaluate_sampled_finite_window, push_sample, read_sample_stop,
-    FirstUndefined, HoldsStop, ObservedLocus, ObservedPositions, ObservedRun, ObservedWindowRun,
-    SampleStop, WindowValuations,
+    evaluate_sampled, evaluate_sampled_finite_window, observed_valuation, push_sample,
+    read_sample_stop, FirstUndefined, HoldsStop, ObservedLocus, ObservedPositions, ObservedRun,
+    ObservedValuation, ObservedWindowRun, SampleStop, ValuationStop, WindowValuations,
 };
 pub use observed_window::{ObservedWindowExpressions, ObservedWindowSource};
 pub use outcome::{

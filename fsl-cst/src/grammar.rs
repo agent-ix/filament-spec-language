@@ -1159,6 +1159,7 @@ fn expressions(g: &mut Grammar) {
             x("result"),
             s(vec![x("protocol"), r(P::QualifiedName)]),
             r(P::QuantityLiteral),
+            decimal_literal(),
             uint(),
             text(),
             r(P::ExactNumber),

@@ -400,7 +400,7 @@ pub(crate) fn protocol_package_with_provisions(
     internals: serde_json::Value,
 ) -> CheckedPackage {
     let text = unit_text_with(PROTOCOL_PROFILE, body);
-    package_with_provisions(&text, body, packages, Some(internals))
+    package_with_provisions("package", &text, body, packages, Some(internals))
 }
 
 /// The header line selecting the protocol profile.
@@ -408,10 +408,17 @@ pub(crate) const PROTOCOL_PROFILE: &str = "profile pp = \"filament.protocol.fini
 
 /// The checked package of `body` under the header's further `profiles`.
 fn package_with(profiles: &str, body: &str) -> CheckedPackage {
-    package_with_internals(profiles, body, None)
+    package_with_internals("package", profiles, body, None)
+}
+
+/// The checked package of `body` whose package identity is `name`, as the
+/// request path names the package after its program source.
+pub(crate) fn package_called(name: &str, body: &str) -> CheckedPackage {
+    package_with_internals(name, "", body, None)
 }
 
 fn package_with_internals(
+    name: &str,
     profiles: &str,
     body: &str,
     internals: Option<serde_json::Value>,
@@ -424,10 +431,11 @@ fn package_with_internals(
     };
     let text = unit_text_with(&format!("{profiles}{protocol_profile}"), body);
     let packages = package_input([document.as_slice()]).unwrap();
-    package_with_provisions(&text, body, packages, internals)
+    package_with_provisions(name, &text, body, packages, internals)
 }
 
 fn package_with_provisions(
+    name: &str,
     text: &str,
     body: &str,
     packages: fsl_semantics::model::intake::PackageInput,
@@ -458,7 +466,7 @@ fn package_with_provisions(
     .expect("the operation clauses parse");
     let declarations = PackageDeclarations::assemble(
         parsed.source().reference().clone(),
-        "package".to_owned(),
+        name.to_owned(),
         built,
         models,
         Vec::new(),

@@ -4,6 +4,7 @@
 use super::long_run_certificate::{limits, produce};
 use crate::prob_world::{self, Model, Operation, World};
 use filament_exact::{Cancel, CancelCause, Integer, Rational};
+use filament_semantic_value::checking::CheckMode;
 use fsl_analyze::analyze::{
     analyze_items, exact_probabilistic_item, DispositionKind, Engines, Settlement,
 };
@@ -24,6 +25,13 @@ fn ratio(n: i64, d: i64) -> Rational {
 }
 fn model(cost: &str, initial: i64, target: &str, bound: &str, exit: bool) -> Model {
     let package = "test/cyclic-reward";
+    let has_zero_mod = target.contains("1 mod 0 = 0");
+    let target = target.replace("1 mod 0 = 0", "zero_mod(0)");
+    let zero_mod = if has_zero_mod {
+        "function zero_mod using vc(n: Int[0, 2]): Boolean pure { 1 mod n = 0 }\n"
+    } else {
+        ""
+    };
     Model {
         package, object: "Item", population: "items", key: "x",
         integers: vec![("Phase", 0, 2)],
@@ -32,7 +40,7 @@ fn model(cost: &str, initial: i64, target: &str, bound: &str, exit: bool) -> Mod
             Operation {name:"step", parameters:vec![("done", prob_world::BOOLEAN.to_owned())], modifies:vec!["phase"], deletes:false},
             Operation {name:"after", parameters:vec![], modifies:vec!["phase"], deletes:false},
         ],
-        body: format!("pre Live using v on M::Item::step {{ self.phase = 0 }}\npost Stepped using v on M::Item::step {{ (done and self.phase = {}) or (not done and self.phase = 0) }}\npre After using v on M::Item::after {{ self.phase > 0 }}\npost Aftered using v on M::Item::after {{ (pre(self.phase) = 1 and self.phase = 2) or (pre(self.phase) = 2 and self.phase = 1) }}\nrandom Item::step(done) ~ {{ true: 1, false: 1 }};\nreward cost on Item::step = {cost};\nreward cost on Item::after = 100;\nworkload Even on M {{ weight Item::step = 1; weight Item::after = 1; }}\nprobabilistic Cost using inf on M over (x: M::Item) under Even on origin {{ expected accumulate cost until holds({target}) {bound} }}\n",i32::from(exit)),
+        body: format!("{zero_mod}pre Live using v on M::Item::step {{ self.phase = 0 }}\npost Stepped using v on M::Item::step {{ (done and self.phase = {}) or (not done and self.phase = 0) }}\npre After using v on M::Item::after {{ self.phase > 0 }}\npost Aftered using v on M::Item::after {{ (pre(self.phase) = 1 and self.phase = 2) or (pre(self.phase) = 2 and self.phase = 1) }}\nrandom Item::step(done) ~ {{ true: 1, false: 1 }};\nreward cost on Item::step = {cost};\nreward cost on Item::after = 100;\nworkload Even on M {{ weight Item::step = 1; weight Item::after = 1; }}\nprobabilistic Cost using inf on M over (x: M::Item) under Even on origin {{ expected accumulate cost until holds({target}) {bound} }}\n",i32::from(exit)),
         initial: serde_json::json!({"phase":{"integer":initial.to_string()}}),
     }
 }
@@ -177,13 +185,16 @@ fn zero_reward_still_requires_properness_and_initial_target_is_zero() {
 #[trace("TC-1403", "FR-201-AC-36")]
 #[test]
 fn predicate_undefined_only_after_target_is_not_evaluated() {
-    let world = World::new(&model(
-        "1",
-        0,
-        "if x.phase = 2 then (1 mod 0 = 0) else (x.phase = 1)",
-        "<= 2",
-        true,
-    ));
+    let world = World::new_with_mode(
+        &model(
+            "1",
+            0,
+            "if x.phase = 2 then (1 mod 0 = 0) else (x.phase = 1)",
+            "<= 2",
+            true,
+        ),
+        CheckMode::Kernel,
+    );
     let system = ModelSystem::new(world.subject().simulation).unwrap();
     let item = fsl_replay::probabilistic_claim_identity(world.claim("Cost")).unwrap();
     assert_eq!(
@@ -199,13 +210,16 @@ fn predicate_undefined_only_after_target_is_not_evaluated() {
     let (_, document) = doc(&world);
     assert_eq!(document.values.len(), 2);
     assert!(accepted(&world, &document));
-    let relevant = World::new(&model(
-        "1",
-        0,
-        "if x.phase = 0 then (1 mod 0 = 0) else (x.phase = 1)",
-        "<= 2",
-        true,
-    ));
+    let relevant = World::new_with_mode(
+        &model(
+            "1",
+            0,
+            "if x.phase = 0 then (1 mod 0 = 0) else (x.phase = 1)",
+            "<= 2",
+            true,
+        ),
+        CheckMode::Kernel,
+    );
     let bytes = write_probability_certificate(&document, limits(), &Cancel::new()).unwrap();
     let rejection = check(&relevant, &bytes, &Cancel::new(), limits());
     assert!(matches!(
@@ -397,4 +411,25 @@ fn fallback_retains_the_same_cumulative_storage_quota() {
         &Cancel::new(),
     )
     .is_ok());
+}
+/// The Kernel world checks only function bodies under `Kernel`: the same
+/// possibly-zero `mod` written directly in the declared `probabilistic`
+/// clause's target still refuses `unproved-nonzero` at S3, as under `Linked`.
+#[trace("TC-1403", "FR-495-AC-3")]
+#[test]
+fn a_declared_claim_target_refuses_an_unproved_divisor_under_a_kernel_world() {
+    use fsl_semantics::check::{CheckCause, Obligation};
+    let mut source = model("1", 0, "x.phase = 1", "<= 2", true);
+    source.body = source
+        .body
+        .replace("holds(x.phase = 1)", "holds(1 mod x.phase = 0)");
+    let Err(refusals) = World::try_new_with_mode(&source, CheckMode::Kernel) else {
+        panic!("a declared clause never admits an unproved divisor");
+    };
+    assert!(
+        refusals
+            .iter()
+            .any(|refusal| matches!(refusal.cause, CheckCause::Unproved(Obligation::Nonzero))),
+        "{refusals:?}"
+    );
 }

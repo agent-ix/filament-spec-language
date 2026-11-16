@@ -370,7 +370,10 @@ pub(crate) fn package_of(declarations: &str) -> CheckedPackage {
 }
 
 pub(crate) fn package_with_source(declarations: &str) -> (CheckedPackage, Vec<u8>) {
-    package_with_source_mode(declarations, CheckMode::Linked)
+    // Value-validity cases exercise undefinedness in the complete-V1
+    // evaluator. Kernel leaves the Nonzero obligation for that runtime path;
+    // Linked refusal is covered by the checker acceptance tests.
+    package_with_source_mode(declarations, CheckMode::Kernel)
 }
 
 fn package_of_mode(declarations: &str, mode: CheckMode) -> CheckedPackage {
@@ -1844,7 +1847,14 @@ fn engines_under(
     let (provider, calls) = fake(verdict);
     let mut engines = Engines::fsl().unwrap();
     engines
-        .with(Engine::external(descriptor, Box::new(provider)).unwrap())
+        .with(
+            Engine::external(
+                descriptor,
+                fsl_analyze::analyze::BackendTool::new("test-provider", "1").expect("a tool"),
+                Box::new(provider),
+            )
+            .unwrap(),
+        )
         .unwrap();
     (engines, calls)
 }
@@ -1992,12 +2002,21 @@ fn registering_a_provider_leaves_the_bounded_arms_unbounded_item_requires_bound(
 #[test]
 fn a_provider_is_refused_under_a_bounded_only_descriptor() {
     let (provider, calls) = fake(ProviderVerdict::Proved);
-    let refusal = Engine::external(smt_descriptor(Mode::Bounded), Box::new(provider))
-        .expect_err("bounded only");
+    let refusal = Engine::external(
+        smt_descriptor(Mode::Bounded),
+        fsl_analyze::analyze::BackendTool::new("test-provider", "1").expect("a tool"),
+        Box::new(provider),
+    )
+    .expect_err("bounded only");
     assert_eq!(refusal.backend.as_str(), SMT);
     assert_eq!(calls.load(std::sync::atomic::Ordering::SeqCst), 0);
     let (provider, _) = fake(ProviderVerdict::Proved);
-    let engine = Engine::external(smt_descriptor(Mode::Unbounded), Box::new(provider)).unwrap();
+    let engine = Engine::external(
+        smt_descriptor(Mode::Unbounded),
+        fsl_analyze::analyze::BackendTool::new("test-provider", "1").expect("a tool"),
+        Box::new(provider),
+    )
+    .unwrap();
     assert_eq!(engine.id().as_str(), SMT);
 }
 
@@ -2097,6 +2116,7 @@ fn a_provider_item_stopped_by_the_case_budget_or_cancellation_is_incomplete() {
         .with(
             Engine::external(
                 smt_descriptor(Mode::Unbounded),
+                fsl_analyze::analyze::BackendTool::new("test-provider", "1").expect("a tool"),
                 Box::new(Cancelling(refuted)),
             )
             .unwrap(),

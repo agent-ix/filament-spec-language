@@ -928,7 +928,7 @@ fn timed_refinement_refusal(refusal: &TimedRefinementRefusal) -> Refusal {
     }
 }
 
-pub(super) fn admission(failure: &AdmissionFailure) -> Refusal {
+pub(crate) fn admission(failure: &AdmissionFailure) -> Refusal {
     let declined = |cause, record: &fsl_semantics::model::observation::AdmissionRecord| {
         Refusal::Declined(
             cause,

@@ -5,9 +5,9 @@
 use filament_exact::{CollectionKind, Integer};
 use fsl_cst::{CstElement, LosslessCst, ParsedSource, Production};
 use fsl_forms::{
-    build_unit, Accumulation, BinaryOperator, BinderQuery, BuiltinType, DeclarationForm,
-    DeclarationKind, ExactNumberKind, ExprNode, ExprRef, Expression, FieldInitializer, FormsCause,
-    FunctionDeclaration, ParsedUnit, TermOperator, TypeFormHead,
+    build_unit, Accumulation, BinaryOperator, BinderQuery, BuiltinType, DecimalSpellingKind,
+    DeclarationForm, DeclarationKind, ExactNumberKind, ExprNode, ExprRef, Expression,
+    FieldInitializer, FormsCause, FunctionDeclaration, ParsedUnit, TermOperator, TypeFormHead,
 };
 use fsl_foundation::{Code, SourceIdentity, Span, SyntaxLimit};
 use ix_trace_rs::trace;
@@ -136,7 +136,9 @@ fn show(expression: ExprRef<'_>) -> String {
         ExprNode::Float32(bits) => format!("float32({bits:08x})"),
         ExprNode::Float64(bits) => format!("float64({bits:016x})"),
         ExprNode::Rational(n, d) => format!("rational({n},{d})"),
-        ExprNode::DecimalValue { coefficient, scale } => format!("decimal({coefficient},{scale})"),
+        ExprNode::DecimalValue {
+            coefficient, scale, ..
+        } => format!("decimal({coefficient},{scale})"),
         ExprNode::Quantity(quantity) => {
             format!(
                 "quantity({} {})",
@@ -1569,7 +1571,8 @@ fn a_decimal_constructor_builds_one_decimal_value_as_written() {
             root,
             &ExprNode::DecimalValue {
                 coefficient: Integer::from(coefficient),
-                scale
+                scale,
+                spelling: fsl_forms::DecimalSpellingKind::DecimalConstructor,
             },
             "{source}"
         );
@@ -1792,14 +1795,27 @@ fn a_selector_after_a_call_is_refused_at_its_own_span() {
 /// `decimal(c, s)` it spells, unreduced.
 #[trace("TC-2161", "FR-764-AC-2")]
 #[test]
-#[ignore = "QSL-1965: the bare decimal primary not implemented yet"]
 fn a_bare_decimal_literal_builds_the_decimal_value_it_spells() {
     for (source, coefficient, scale) in [("0.9", 9_i64, 1_u32), ("5.0", 50, 1), ("0.90", 90, 2)] {
+        let (text, function) = body(source);
+        let literal_span = span_of(&text, source);
+        let spans = function.spans().expect("the form carries expression spans");
         assert_eq!(
-            body_root(source),
+            spans.body.at(&[]),
+            Some(literal_span),
+            "the S2 expression span equals the `{source}` literal span"
+        );
+        assert_eq!(
+            &text[literal_span.start..literal_span.end],
+            source,
+            "the S2 expression span names the exact literal"
+        );
+        assert_eq!(
+            function.body.root_node().clone(),
             ExprNode::DecimalValue {
                 coefficient: Integer::from(coefficient),
-                scale
+                scale,
+                spelling: DecimalSpellingKind::DecimalLiteral,
             },
             "{source}"
         );

@@ -580,7 +580,9 @@ impl Builder<'_, '_, '_> {
                 n = numerator.abs(),
                 d = denominator.abs().max(filament_exact::Integer::from(1_i64)),
             )),
-            ExprNode::DecimalValue { coefficient, scale } if word == "Decimal" => Some(format!(
+            ExprNode::DecimalValue {
+                coefficient, scale, ..
+            } if word == "Decimal" => Some(format!(
                 "Decimal[-{c}, {c}; 0, {scale}; nearest-even]",
                 c = coefficient.abs(),
             )),

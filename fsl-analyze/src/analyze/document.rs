@@ -50,7 +50,8 @@ pub struct DocumentSelection {
 }
 
 impl DocumentSelection {
-    fn reference(&self) -> DocumentRef {
+    /// The document reference this selection names.
+    pub fn reference(&self) -> DocumentRef {
         DocumentRef {
             authority: self.authority.clone(),
             identity: self.identity.clone(),
@@ -538,7 +539,8 @@ impl ItemSelection {
             || self.correspondence.is_some()
             || self.premises.is_some()
             || self.assessed_root.is_some()
-            || self.trace.is_some()
+            || (self.trace.is_some()
+                && self.kind.as_deref() != Some(Capability::FiniteReplay.to_wire()))
             || self.simulation.is_some()
             || self
                 .options
@@ -705,8 +707,9 @@ fn declared_name(package: &CheckedPackage, node: &filament_exact::NodeKey) -> Op
 }
 
 /// The occurrence a claim item over the declaration `node` names: the
-/// occurrence of its requirement record, else its first checked
-/// occurrence.
+/// occurrence of its requirement record; for a `Boolean` function, the
+/// Boolean value clause its body is (FSpec FR-290, FR-484 "Forms"), at its
+/// `claim` or `declaration` occurrence; else its first checked occurrence.
 fn claim_occurrence(
     package: &CheckedPackage,
     records: &[fsl_route::request::RequirementItem],
@@ -726,10 +729,60 @@ fn claim_occurrence(
             clause.claim().clone(),
         ));
     }
+    let body = graph
+        .semantic_graph()
+        .node(node.clone())
+        .and_then(|declaration| declaration.function_body());
+    if let Some(body) = body {
+        let clause = graph
+            .occurrences()
+            .filter(|(key, origin, _)| {
+                *key == body && matches!(origin.role().as_str(), "claim" | "declaration")
+            })
+            .map(|(key, origin, _)| OccurrenceKey::new(key, origin))
+            .find(|clause| crate::claim_family::boolean_expression(graph, clause));
+        if clause.is_some() {
+            return clause;
+        }
+    }
     graph
         .occurrences()
         .find(|(key, _, _)| key == node)
         .map(|(key, origin, _)| OccurrenceKey::new(key, origin))
+}
+
+/// The extent of the Boolean value clause `claim` that the function `name`
+/// (declared at `node`) is: the domains of its parameters, the arguments
+/// the clause ranges over (FSpec FR-290, FR-484). A claim that is not that
+/// clause, or whose parameter types do not classify, is `bounded`, and its
+/// item is refused by the checker that selects it.
+fn value_clause_extent(
+    package: &CheckedPackage,
+    name: &str,
+    node: &filament_exact::NodeKey,
+    claim: &OccurrenceKey,
+) -> ExtentClassification {
+    let graph = package.graph();
+    let declaration = graph.semantic_graph().node(node.clone());
+    let is_clause = declaration
+        .as_ref()
+        .and_then(|declaration| declaration.function_body())
+        .is_some_and(|body| body == *claim.node());
+    let (Some(callable), Some(parameters), true) = (
+        graph.callable(name),
+        declaration.and_then(|declaration| declaration.function_parameters()),
+        is_clause,
+    ) else {
+        return ExtentClassification::Bounded;
+    };
+    let roots: Vec<(filament_exact::NodeKey, &filament_exact::ValueType)> = parameters
+        .into_iter()
+        .zip(callable.parameters.iter().map(|(_, value_type)| value_type))
+        .collect();
+    fsl_semantics::family::requirements::classify_extent(&roots, graph.scope().types(), u64::MAX)
+        .map_or(ExtentClassification::Bounded, |extent| {
+            ExtentClassification::of(&extent)
+        })
 }
 
 /// Resolve `selections` (FR-620 "Resolving items") over `package`, the
@@ -803,9 +856,14 @@ fn resolve_one(
     });
     let named = selection.backend.as_deref().map(BackendId::new);
     let records = requirement_items(package, registry, named.as_ref());
+    let Some(claim) = claim_occurrence(package, &records, &node) else {
+        return unknown_claim(index, name);
+    };
+    // A record keys the declaration, or the value clause a `Boolean`
+    // function's name resolves to.
     let own: Vec<&fsl_route::request::RequirementItem> = records
         .iter()
-        .filter(|record| record.node() == &node)
+        .filter(|record| record.node() == &node || record.occurrence() == &claim)
         .collect();
     let kind = match selection.kind.as_deref() {
         Some(label) => match Capability::from_wire(label) {
@@ -826,11 +884,14 @@ fn resolve_one(
             }
         }
     };
-    let Some(claim) = claim_occurrence(package, &records, &node) else {
-        return unknown_claim(index, name);
-    };
     let record = own.iter().find(|record| record.kind() == kind);
-    let extent = record.map_or(ExtentClassification::Bounded, |record| record.extent());
+    let extent = match record {
+        Some(record) => record.extent(),
+        None if kind == Capability::ValueValidity => {
+            value_clause_extent(package, name, &node, &claim)
+        }
+        None => ExtentClassification::Bounded,
+    };
     let candidates = record.map_or_else(
         || registry.candidates(kind, named.as_ref()),
         |record| record.candidates().clone(),
@@ -885,6 +946,7 @@ fn resolve_one(
         options: ItemOptions {
             required: selection.required.unwrap_or(true),
             max_cases: selection.check.map(|check| check.limits.max_cases),
+            trace: selection.trace.as_ref().map(DocumentSelection::reference),
         },
         form,
     };
@@ -995,6 +1057,7 @@ fn resolve_derived(
     claim.item.options = ItemOptions {
         required: selection.required.unwrap_or(true),
         max_cases: None,
+        trace: None,
     };
     let mut form = temporal_item(package, &claim.item.claim, temporal);
     form.pending_reductions.clone_from(&selection.reductions);
@@ -1271,6 +1334,7 @@ fn derived_items(
                     options: ItemOptions {
                         required: true,
                         max_cases: None,
+                        trace: None,
                     },
                     form: Some(ItemForm::Temporal(TemporalItem {
                         item_kind: item.item_kind().unwrap_or(ItemKind::Formula),
@@ -1330,6 +1394,12 @@ impl ClaimItem {
         );
         if let Some(backend) = &self.backend {
             item.insert("backend".to_owned(), json!(backend.as_str()));
+        }
+        if let Some(trace) = &self.options.trace {
+            item.insert(
+                "trace".to_owned(),
+                json!({"authority": trace.authority, "identity": trace.identity}),
+            );
         }
         if let Some(max_cases) = self.options.max_cases {
             item.insert(
@@ -1619,10 +1689,20 @@ pub fn analyze_document(
         "status": if gaps.is_empty() { "complete" } else { "incomplete" },
         "gaps": gaps,
     });
+    // FR-635 "Outputs": `{backend, tool}` of every registered backend,
+    // sorted by backend.
+    let mut registry: Vec<(&str, &super::BackendTool)> = engines
+        .tools()
+        .map(|(descriptor, tool)| (descriptor.id().as_str(), tool))
+        .collect();
+    registry.sort_unstable();
     document["registry"] = Value::Array(
-        engines
-            .registrations()
-            .map(|descriptor| json!(descriptor.id().as_str()))
+        registry
+            .into_iter()
+            .map(|(backend, tool)| {
+                json!({"backend": backend,
+                    "tool": {"name": tool.name(), "version": tool.version()}})
+            })
             .collect(),
     );
     let category = Category::most_severe(
@@ -1810,6 +1890,14 @@ fn item_document(written: Value, members: ItemMembers) -> Value {
             "axes".to_owned(),
             serde_json::to_value(axes).unwrap_or(Value::Null),
         );
+    }
+    // FR-941 "Bare claim": a proof over a supplied trace names the trace and
+    // the steps it replayed; it is about that trace only.
+    if let Some(steps) = detail.and_then(|detail| detail.replayed_steps) {
+        if let Some(trace) = item.get("request").and_then(|request| request.get("trace")) {
+            record.insert("trace".to_owned(), trace.clone());
+        }
+        record.insert("steps".to_owned(), json!(steps));
     }
     item.insert("record".to_owned(), Value::Object(record));
     Value::Object(item)

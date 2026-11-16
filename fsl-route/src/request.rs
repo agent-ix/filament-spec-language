@@ -85,7 +85,7 @@ impl ExtentClassification {
     }
 
     /// The classification of an item with `extent` and no proof bounds.
-    fn of(extent: &ClaimExtent) -> Self {
+    pub fn of(extent: &ClaimExtent) -> Self {
         match extent {
             ClaimExtent::Bounded => Self::Bounded,
             ClaimExtent::Unbounded(domains) => Self::Unbounded {

@@ -127,6 +127,15 @@ pub(crate) fn clause(over: &str, fairness: &str, formula: &str) -> String {
 
 /// The checked package of `text` over `domain`, and its declared clauses.
 pub(crate) fn checked(domain: &Domain, text: &str) -> (CheckedPackage, Vec<CheckedTemporalClause>) {
+    checked_with_mode(domain, text, CheckMode::Linked)
+}
+
+/// [`checked`] with an explicit checker mode.
+pub(crate) fn checked_with_mode(
+    domain: &Domain,
+    text: &str,
+    mode: CheckMode,
+) -> (CheckedPackage, Vec<CheckedTemporalClause>) {
     let packages = package_input([domain.document.as_slice()]).unwrap();
     let parsed = fsl_cst::parse(
         SourceIdentity::new("agent-ix", "units"),
@@ -156,7 +165,7 @@ pub(crate) fn checked(domain: &Domain, text: &str) -> (CheckedPackage, Vec<Check
     )
     .expect("the unit assembles");
     let graph = declarations
-        .check(CheckMode::Linked, CheckingLimits::default())
+        .check(mode, CheckingLimits::default())
         .unwrap_or_else(|refusals| panic!("{text}: the unit checks: {refusals:?}"));
     let clauses = graph
         .temporal_clauses()
@@ -183,7 +192,17 @@ impl World {
     /// The unit `text` over `domain`, started from the objects `starts`:
     /// each `(key, fields)`, the fields as snapshot values.
     pub(crate) fn new(domain: Domain, text: &str, starts: &[(&'static str, Json)]) -> Self {
-        let (package, clauses) = checked(&domain, text);
+        Self::new_with_mode(domain, text, starts, CheckMode::Linked)
+    }
+
+    /// [`Self::new`] checked under `mode`, for runtime undefinedness fixtures.
+    pub(crate) fn new_with_mode(
+        domain: Domain,
+        text: &str,
+        starts: &[(&'static str, Json)],
+        mode: CheckMode,
+    ) -> Self {
+        let (package, clauses) = checked_with_mode(&domain, text, mode);
         let packages = package_input([domain.document.as_slice()]).unwrap();
         let mut world = Self {
             unit: text.as_bytes().to_vec(),
