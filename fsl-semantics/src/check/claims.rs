@@ -48,7 +48,7 @@ use fsl_foundation::source::node_table::{
 };
 use fsl_foundation::source::provenance::OccurrenceKey;
 
-use super::ir::{coerce_builds_narrow, scalar_conversion_target, CheckedNode, Slot};
+use super::ir::{coerce_node_builds_narrow, scalar_conversion_target, CheckedNode, Slot};
 use super::lowering::SemanticGraph;
 use super::node_key::{ApplicationTerm, BodyTerm, LeafTerm, MemberTerm, NodeKeyRefusal};
 use super::references::{read_object, ModelReferences};
@@ -842,10 +842,7 @@ impl<'n> ClaimsWalk<'n, '_> {
                 .last()
                 .and_then(|parent| match parent.node.kind() {
                     NodeKind::Coerce(operand, interval)
-                        if coerce_builds_narrow(
-                            parent.node.at(*operand).value_type(),
-                            interval,
-                        ) =>
+                        if coerce_node_builds_narrow(parent.node.at(*operand), interval) =>
                     {
                         Some(interval)
                     }

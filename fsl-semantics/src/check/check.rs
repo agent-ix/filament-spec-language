@@ -2740,6 +2740,19 @@ impl Typer<'_> {
             {
                 Ok(node)
             }
+            (ValueType::Int(_), ValueType::Integer)
+                if matches!(
+                    node.kind,
+                    NodeKind::IntegerDivision {
+                        operator: IntegerDivisionOperator::Mod,
+                        ..
+                    }
+                ) =>
+            {
+                let mut widened = node;
+                widened.value_type = required.clone();
+                Ok(widened)
+            }
             (ValueType::Integer | ValueType::Int(_), ValueType::Integer) => Ok(node),
             (ValueType::Int(source), ValueType::Int(target))
                 if matches!(

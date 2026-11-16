@@ -4446,16 +4446,7 @@ impl<'a> Lowering<'a> {
                 return Ok(LowerStep::Lowered(LeafTerm::reference_node(key.into())));
             }
             NodeKind::Coerce(operand, interval) => {
-                let preserves_mod_range = matches!(
-                    node.at(*operand).kind(),
-                    NodeKind::IntegerDivision {
-                        operator: IntegerDivisionOperator::Mod,
-                        ..
-                    }
-                );
-                if !preserves_mod_range
-                    && !super::ir::coerce_builds_narrow(node.at(*operand).value_type(), interval)
-                {
+                if !super::ir::coerce_node_builds_narrow(node.at(*operand), interval) {
                     return Ok(LowerStep::Descend(node.at(*operand)));
                 }
                 let member =

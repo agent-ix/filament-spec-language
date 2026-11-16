@@ -1026,6 +1026,24 @@ pub(crate) fn coerce_builds_narrow(operand: &ValueType, interval: &IntegerInterv
         if interval.contains(source.lower()) && interval.contains(source.upper()))
 }
 
+/// Whether a checked [`NodeKind::Coerce`] around `operand` lowers to a
+/// `filament.op.numeric.narrow` application. A direct `mod` coercion remains
+/// explicit even when its exact interval fits inside the target: the target
+/// interval is the scalar claim's result bound and the narrowing occurrence
+/// is its conversion context.
+pub(crate) fn coerce_node_builds_narrow(
+    operand: CheckedNode<'_>,
+    interval: &IntegerInterval,
+) -> bool {
+    matches!(
+        operand.kind(),
+        NodeKind::IntegerDivision {
+            operator: filament_checked::node::IntegerDivisionOperator::Mod,
+            ..
+        }
+    ) || coerce_builds_narrow(operand.value_type(), interval)
+}
+
 /// The type a [`NodeKind::ConvertScalar`] of an `operand`-typed node
 /// converts to, when FR-093 lowers it to a node: a conversion to the
 /// operand's own type builds none.
