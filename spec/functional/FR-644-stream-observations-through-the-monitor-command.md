@@ -21,6 +21,8 @@ relationships:
     type: implements
   - target: ix://agent-ix/filament-specification/FR-301
     type: depends_on
+  - target: ix://agent-ix/filament-spec-language/FR-853
+    type: references
 ---
 # FR-644: Stream observations through the monitor command
 
@@ -108,8 +110,9 @@ entry").
   equality"), and carries no member of the reading that settled it. An
   event whose `settled` is `true` also carries `settlement`, FR-643's
   `Settlement` as the closed JSON object `{"step", "trigger", "basis",
-  "horizon", "position", "through"}` with each member present exactly when
-  FR-643 "Settlement" gives it, decimal positions and counts as strings and
+  "horizon", "position", "through", "cause"}` with each member present exactly
+  when FR-643 "Settlement" gives it, `cause` (`requested` or `deadline`)
+  present exactly when `trigger` is `cancelled` (FR-853), decimal positions and counts as strings and
   `position` `null` where the reading names none, for example
   `{"step": "3", "trigger": "decided", "basis": "decisive-witness",
   "horizon": "2", "position": "2"}`; an event whose `settled` is `false`
@@ -121,8 +124,11 @@ entry").
   settled before the end carries the `settlement` of the event that settled
   it, and a clause settled by the end itself carries `{"step": "<n>",
   "trigger": "finish"}`, `n` the number of counted calls made before
-  `finish` (FR-643 "Counted calls": refused records do not count); the number of records read; and the
-  final ledger exactly when the kind carries progress (`progressed` or
+  `finish` (FR-643 "Counted calls": refused records do not count), and a clause
+  still open when the stream is cancelled carries `{"step": "<n>",
+  "trigger": "cancelled", "cause": "<cause>"}` (FR-853); the number of records
+  read; `cancelled`, the handle's cause `requested` or `deadline`, present
+  exactly when the stream was cancelled (FR-853); and the final ledger exactly when the kind carries progress (`progressed` or
   `timestamped`), so a `finite` stream's summary carries no ledger.
 - The exit code: FR-285's code of the most severe final category, in the order
   internal failure (30), refusal (20), violation or undefined (10),

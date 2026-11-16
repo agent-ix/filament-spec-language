@@ -67,7 +67,8 @@ fn a_timed_possible_claim_proves_on_zones_and_refutes() {
 }
 
 /// FR-852-AC-2, FSpec FR-712-AC-2: `BackToIdle` proves; with `reset`
-/// disabled it refutes with a path ending at `phase` 2.
+/// disabled it refutes with a path ending at `phase` 2. The proof's accepted
+/// certificate carries the `E(P)` zones in its `state_graph` part.
 #[trace("TC-2412", "FR-852-AC-2")]
 #[trace("TC-2412", "FSpec-FR-712-AC-2")]
 #[test]
@@ -75,7 +76,15 @@ fn a_timed_possible_claim_proves_on_zones_and_refutes() {
 fn a_timed_always_possible_claim_proves_and_refutes() {
     let items = json!([{"claim": "BackToIdle"}]);
     let proved = run("timed-sg-always", true, items.clone());
-    assert_eq!(label(&proved.item(0)), "proved", "{}", proved.item(0));
+    let item = proved.item(0);
+    assert_eq!(label(&item), "proved", "{item}");
+    assert_eq!(item["certificate"]["accepted"], true, "{item}");
+    assert!(
+        item["certificate"]["document"]["state_graph"]["ef_nodes"]
+            .as_array()
+            .is_some_and(|nodes| !nodes.is_empty()),
+        "the proof certificate carries the E(P) zones: {item}"
+    );
     let refuted = run("timed-sg-always-no-reset", false, items);
     let item = refuted.item(0);
     assert_eq!(label(&item), "refuted", "{item}");
@@ -144,4 +153,40 @@ fn en_6_advertises_the_state_graph_forms() {
     ] {
         assert!(en6.state_graph_forms().contains(&form), "{form:?}");
     }
+}
+
+/// FR-852-AC-6: with `options.method` `digital-clocks` the closed `Rpc`
+/// subject's state-graph items settle on `en-1` over the digitized subject,
+/// the proof with basis `digitized-explicit-state`; EN-1 lists the forms.
+#[trace("TC-2412", "FR-852-AC-6")]
+#[trace("TC-2412", "FSpec-FR-712-AC-4")]
+#[test]
+#[ignore = "QSL-2305: a timed state-graph item has no digital-clock route"]
+fn digital_clocks_decide_timed_state_graph_items_on_en_1() {
+    let run = run(
+        "timed-sg-digital",
+        true,
+        json!([
+            {"claim": "Replied", "options": {"method": "digital-clocks"}},
+            {"claim": "Late", "options": {"method": "digital-clocks"}}
+        ]),
+    );
+    let proved = run.item(0);
+    assert_eq!(label(&proved), "proved", "{proved}");
+    assert_eq!(proved["record"]["backend"], "en-1", "{proved}");
+    assert_eq!(
+        proved["record"]["basis"]["type"], "digitized-explicit-state",
+        "{proved}"
+    );
+    assert_eq!(proved["replay"]["reproduced"], true, "{proved}");
+    let refuted = run.item(1);
+    assert_eq!(label(&refuted), "refuted", "{refuted}");
+    assert_eq!(refuted["record"]["backend"], "en-1", "{refuted}");
+
+    let engines = fsl_analyze::analyze::Engines::fsl().expect("the layer-A engines register");
+    let en1 = engines
+        .registrations()
+        .find(|descriptor| descriptor.id().as_str() == "en-1")
+        .expect("en-1 registers");
+    assert_eq!(en1.state_graph_forms().len(), 3);
 }

@@ -73,8 +73,12 @@ The application's successor candidates.
   `evaluate_clause` and enumerate only the values of the field's range that
   satisfy every bound, in the range's ascending order. The interval is the
   intersection of the field's range with each bound's half-line.
-- For a field with an equation, FR-120's solved assignment applies, and each
-  bound on the same field is a conjunct the solved value must satisfy.
+- For a field with an equation conjunct, FR-120's solved assignment applies,
+  also when the equation is one conjunct of a conjunction (FR-120
+  "Eligible"), and each bound on the same field is a conjunct the solved
+  value must satisfy. In `loseLidar` and `brake`, `mode` and `lidarOk` are
+  solved and `speed` is narrowed, so the application generates one
+  candidate per admitted speed.
 - When any bound's `e` evaluates to anything other than `Completed(v)` with
   an integer `v`, the field SHALL be enumerated over its whole range for that
   application, so the findings and stops are the enumeration's.
