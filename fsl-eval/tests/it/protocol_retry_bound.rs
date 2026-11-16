@@ -2,7 +2,7 @@
 //! FR-520-AC-4 / TC-1315 row 5: compensation attempt bounds at the engine.
 
 use filament_semantic_value::checking::CheckMode;
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::num::NonZeroUsize;
 
 use filament_exact::ScalarLimits;
@@ -51,6 +51,10 @@ struct Fixture {
 }
 
 fn fixture(bound: u64) -> Fixture {
+    fixture_with_recovery_view(bound, false)
+}
+
+fn fixture_with_recovery_view(bound: u64, recovery_view: bool) -> Fixture {
     let mut domain = tc1070::document();
     let total = domain["types"]
         .as_array_mut()
@@ -74,6 +78,29 @@ fn fixture(bound: u64) -> Fixture {
     node["operations"][0]["returns"]["typeRef"] = "ix://filament/native/Boolean".into();
     node["operations"][0]["frame"]["modifies"] =
         serde_json::json!([tc1070::model::id("Node/total")]);
+    if recovery_view {
+        domain["types"].as_array_mut().expect("domain types").push(
+            tc1070::model::declaration(
+                "Recovery",
+                "record",
+                json!({
+                    "fields": [tc1070::model::field("Recovery", "bal", &tc1070::model::id("Count"))]
+                }),
+            ),
+        );
+        let count = domain["types"]
+            .as_array_mut()
+            .expect("domain types")
+            .iter_mut()
+            .find(|ty| ty["displayName"] == "Count")
+            .expect("Count bounded record member type");
+        count["constraints"]
+            .as_array_mut()
+            .expect("Count constraints")
+            .iter_mut()
+            .find(|constraint| constraint["keyword"] == "max")
+            .expect("Count maximum")["operands"]["value"] = "1".into();
+    }
     let domain = serde_json::to_vec(&domain).expect("domain fixture serializes");
     let packages = package_input([domain.as_slice()]).expect("domain package admitted");
     let mut source = tc1070::SOURCE.to_owned();
@@ -144,6 +171,22 @@ fn fixture(bound: u64) -> Fixture {
             "partialEarlier.tally < 3 and partialLater.tally = partialEarlier.tally + 1\n      and true and not partialActivated",
             "true",
         );
+    if recovery_view {
+        source = source
+            .replace(
+                "recover (recovered: Boolean) { true }",
+                "recover (recovered: M::Recovery) { recovered.bal = 0 }",
+            )
+            .replace(
+                "recover (partialRecovered: Boolean) {\n      true\n    };",
+                "recover (partialRecovered: M::Recovery) {\n      partialRecovered.bal = 0\n    };",
+            )
+            .replace(
+                "effect Applied of Tried as (applied: Boolean) { true };",
+                "effect Applied of Tried as (applied: Boolean) { true };\n\
+                 event Trigger by Service as (trigger: Boolean) { true };",
+            );
+    }
     let parsed = fsl_cst::parse(
         fsl_foundation::SourceIdentity::new("qsl-1757", "unit.native"),
         "unit.native",
@@ -254,6 +297,28 @@ fn system<'a>(fixture: &'a Fixture) -> ProtocolSystem<'a, Sc> {
     ProtocolSystem::new(model, &subject, Sc).expect("protocol subject built")
 }
 
+fn named_member<'a>(value: &'a serde_json::Value, name: &str) -> Option<&'a serde_json::Value> {
+    match value {
+        serde_json::Value::Object(object) => object
+            .get(name)
+            .or_else(|| object.values().find_map(|value| named_member(value, name))),
+        serde_json::Value::Array(values) => values.iter().find_map(|value| named_member(value, name)),
+        _ => None,
+    }
+}
+
+fn scalar_text(value: &serde_json::Value) -> Option<&str> {
+    match value {
+        serde_json::Value::String(text) => Some(text),
+        serde_json::Value::Object(object) => object
+            .get("value")
+            .and_then(scalar_text)
+            .or_else(|| object.values().find_map(scalar_text)),
+        serde_json::Value::Array(values) => values.iter().find_map(scalar_text),
+        _ => None,
+    }
+}
+
 fn maximum_cattempts(
     reachable: &fsl_eval::simulation::protocol::Reachable<Sc>,
     template: &str,
@@ -358,5 +423,80 @@ fn finish_is_stepped() {
     assert!(
         reachable.states.iter().any(|state| state.steps.is_empty()),
         "the explored graph includes end states after finish"
+    );
+}
+
+#[test]
+#[trace("FSpec-FR-427-AC-6")]
+fn the_compensation_template_is_stepped() {
+    let fixture = fixture_with_recovery_view(1, true);
+    let system = system(&fixture);
+    let reachable = system
+        .reachable(NonZeroUsize::new(1).expect("one worker"))
+        .expect("finite compensation exploration completes");
+    let cends: Vec<_> = reachable
+        .states
+        .iter()
+        .flat_map(|state| &state.steps)
+        .filter(|(transition, _)| transition.kind() == StepKind::CEnd)
+        .collect();
+    assert!(!cends.is_empty(), "an activation creates a stepped thread");
+    for (transition, _) in cends {
+        assert!(transition.registration().is_some());
+        assert!(transition.thread().is_some());
+    }
+}
+
+#[test]
+#[trace("FSpec-FR-730-AC-1", "FSpec-FR-427-AC-6")]
+fn a_recovery_predicate_over_the_recovery_view_is_evaluated() {
+    let fixture = fixture_with_recovery_view(1, true);
+    let system = system(&fixture);
+    let reachable = system
+        .reachable(NonZeroUsize::new(1).expect("one worker"))
+        .expect("finite recovery exploration completes");
+    let cends: Vec<_> = reachable
+        .states
+        .iter()
+        .flat_map(|state| &state.steps)
+        .filter(|(transition, _)| transition.kind() == StepKind::CEnd)
+        .collect();
+    assert!(!cends.is_empty(), "the recovery predicate is evaluated");
+    assert!(
+        cends.iter().all(|(transition, _)| transition.binder_record().is_some()),
+        "each cend identity carries its recovery binder record"
+    );
+    let mut records = BTreeMap::<_, BTreeSet<String>>::new();
+    for (transition, next) in cends {
+        let record = system
+            .binder_record_json(transition)
+            .expect("record encoding succeeds")
+            .expect("recovery-view cend carries its record");
+        let balance = scalar_text(
+            named_member(&record, "bal").expect("the recovery record has bal"),
+        )
+        .expect("bal is a bounded integer");
+        let state_key: serde_json::Value = serde_json::from_slice(
+            reachable.states[*next].key.as_bytes(),
+        )
+        .expect("state key is canonical JSON");
+        let status = scalar_text(
+            named_member(&state_key, "status").expect("registration status is in the state key"),
+        )
+        .expect("registration status is text");
+        assert_eq!(
+            status,
+            if balance == "0" { "recovered" } else { "unrecovered" },
+            "the recovery status follows bal={balance}"
+        );
+        records
+            .entry(transition.registration().expect("cend has registration").clone())
+            .or_default()
+            .insert(serde_json::to_string(&record).expect("record JSON serializes"));
+    }
+    assert!(!records.is_empty(), "a registered template is compensated");
+    assert!(
+        records.values().all(|records| records.len() == 2),
+        "each cend has one successor per recovery record"
     );
 }
