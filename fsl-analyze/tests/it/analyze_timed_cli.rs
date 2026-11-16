@@ -270,7 +270,7 @@ fn a_state_graph_claim_over_a_timed_subject_is_unsupported() {
 /// settles `unsupported` `unsupported-requested-capability` even where its
 /// subject is unbounded: it is never told to add a bound that would still
 /// leave it unsupported.
-#[trace("TC-1302", "FR-507-AC-7")]
+#[trace("TC-762")]
 #[test]
 fn an_unread_member_settles_unsupported_not_requires_bound() {
     let document = crate::timed_world::document_unbounded(
