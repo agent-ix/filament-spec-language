@@ -193,6 +193,10 @@ pub(super) struct Call {
     /// FR-100: the call's accounting limits by counter name; absent is `{}`.
     #[serde(default, deserialize_with = "from_object")]
     pub accounting: Accounting,
+    /// FR-650: the file of the one current snapshot the call's Reference and
+    /// Population arguments resolve against.
+    #[serde(default)]
+    pub snapshot: Option<String>,
 }
 
 /// The `accounting` member of a [`Call`] (FR-100): any subset of the ten

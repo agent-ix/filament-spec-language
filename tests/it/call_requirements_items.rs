@@ -33,6 +33,7 @@ fn members(function: &str) -> Vec<(OccurrenceKey, usize)> {
     let call = Call {
         clocks: Default::default(),
         wire_arguments: Vec::new(),
+        snapshot: None,
         function: function.to_owned(),
         arguments: vec![CallArgument {
             parameter: "x".to_owned(),

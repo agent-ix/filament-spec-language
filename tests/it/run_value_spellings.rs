@@ -104,7 +104,6 @@ const SAME: &str = "function same using v(r: Config::ConfigVersion): \
 
 #[test]
 #[trace("TC-2370", "FR-650-AC-9")]
-#[ignore = "QSL-2182: structural identity spellings of a Reference result not implemented yet"]
 fn a_reference_result_spells_structural_identities() {
     let directory = spine_dir(SAME);
     let first = completed(&spine_call(
@@ -177,7 +176,6 @@ fn rational(numerator: &str, denominator: &str) -> Value {
 
 #[test]
 #[trace("TC-2371", "FR-650-AC-10")]
-#[ignore = "QSL-2182: Quantity and BoundedQuantity run value forms not implemented yet"]
 fn a_quantity_round_trips_normalized() {
     let decimal = json!({"kind": "decimal", "coefficient": "150", "scale": "2"});
     assert_eq!(
@@ -219,7 +217,6 @@ fn entry(key: &str, value: u8) -> Value {
 #[test]
 #[trace("TC-2372", "FR-650-AC-11")]
 #[trace("FSpec-TC-1720", "FSpec-FR-181-AC-31")]
-#[ignore = "QSL-2182: the Map run value form not implemented yet"]
 fn a_map_round_trips_in_key_order() {
     assert_eq!(
         completed(&run_unit(
@@ -321,7 +318,6 @@ fn extend_model(directory: &Path) {
 
 #[test]
 #[trace("TC-2373", "FR-650-AC-12")]
-#[ignore = "QSL-2182: model-declared ix:// record and variant names in the run value form not implemented yet"]
 fn model_declared_names_are_ix_identities() {
     let directory = spine_dir(
         "function id_tier using v(a: Config::Tier): Config::Tier pure { a }\n\
@@ -378,7 +374,6 @@ fn depth(value: &Value) -> usize {
 
 #[test]
 #[trace("TC-2374", "FR-650-AC-13")]
-#[ignore = "QSL-2182: depth-unlimited run value forms and the null field refusal not implemented yet"]
 fn a_deep_value_round_trips_and_null_refuses() {
     const LEVELS: usize = 60;
     let mut type_text = String::from("Int[0, 1]");
@@ -414,7 +409,6 @@ fn a_deep_value_round_trips_and_null_refuses() {
 
 #[test]
 #[trace("TC-2375", "FR-650-AC-14")]
-#[ignore = "QSL-2182: a population-typed result as the set of its member references not implemented yet"]
 fn a_population_result_is_a_set_of_references() {
     let directory = spine_dir(
         "function all using v(p: Population<Config::ConfigVersion>[4]): \
@@ -441,7 +435,6 @@ fn a_population_result_is_a_set_of_references() {
 
 #[test]
 #[trace("TC-2376", "FR-650-AC-15")]
-#[ignore = "QSL-1988: foreign identity-reference universes and call-selection snapshot keys not implemented yet"]
 fn a_foreign_universe_refuses_and_call_selection_snapshot() {
     let directory = spine_dir(SAME);
     let mut foreign = completed(&spine_call(
@@ -492,7 +485,6 @@ fn spine_refusal(functions: &str, function: &str, arguments: Value) -> (Option<i
 
 #[test]
 #[trace("TC-1705", "FR-650-AC-6")]
-#[ignore = "QSL-2182: run value forms for Quantity, Map, Reference and population types not implemented yet"]
 fn a_collection_over_a_population_refuses_at_check_and_every_other_type_has_a_form() {
     for (functions, function, arguments) in [
         (
@@ -531,7 +523,6 @@ const POPULATION_COLLECTION: &str = "tests/fixtures/population-collection.checke
 
 #[test]
 #[trace("TC-1705", "FR-650-AC-6")]
-#[ignore = "QSL-2182: a selected package declaring a collection over a population is not refused unknown_required_feature at stage call yet"]
 fn a_selected_package_with_a_population_collection_type_refuses_unsupported() {
     let fixture = std::fs::canonicalize(POPULATION_COLLECTION)
         .unwrap_or_else(|error| panic!("the fixture {POPULATION_COLLECTION} exists: {error}"));

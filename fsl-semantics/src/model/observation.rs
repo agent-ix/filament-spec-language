@@ -2353,7 +2353,7 @@ mod relationships;
 mod tree;
 mod write;
 
-pub use document::{admit_record_sample, ObservationRole};
+pub use document::{admit_record_sample, unit_id_named, unit_name_of, ObservationRole};
 use document::{read_document, DocumentKind};
 pub use encode::ValueEncoder;
 pub use extents::{

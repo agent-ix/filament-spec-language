@@ -985,6 +985,7 @@ fn tc_786_run_exit_statuses_come_from_the_exit_function() {
             &Call {
                 clocks: Default::default(),
                 wire_arguments: Vec::new(),
+                snapshot: None,
                 function: function.to_owned(),
                 arguments,
                 accounting: default_accounting(work_units),

@@ -201,8 +201,8 @@ pub(super) fn error(error: &RunError, artifact: bool) -> Result<Value, serde_jso
                             expected,
                         } => types::Details::AdmissionForeignUniverse {
                             position: *position,
-                            required: expected.root_type().to_string(),
-                            supplied: actual.to_string(),
+                            required: fsl_replay::spine::node_key_form(expected.root_type()),
+                            supplied: fsl_replay::spine::node_key_form(actual),
                         },
                         fsl_semantics::model::normalize::ModelRefusalCause::ForeignModelSelection {
                             actual,

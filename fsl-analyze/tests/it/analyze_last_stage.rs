@@ -19,7 +19,6 @@ fn last_stage(items: Value, body: &str, name: &str) -> Value {
 
 #[trace("TC-2381", "FR-621-AC-11")]
 #[test]
-#[ignore = "QSL-2258: the analyze document's last_stage is written as null for every outcome"]
 fn settled_documents_name_their_greatest_stage() {
     let body = format!("{}{}", bounded(), below_three());
     assert_eq!(
@@ -54,7 +53,6 @@ fn settled_documents_name_their_greatest_stage() {
 
 #[trace("TC-2382", "FR-621-AC-12")]
 #[test]
-#[ignore = "QSL-2258: analyze refusals after linking carry no last_stage yet"]
 fn refusals_name_their_stage() {
     let ws = Workspace::new("ls-malformed");
     let path = ws.write(
@@ -113,7 +111,6 @@ fn monitor_document(document: fsl_replay::OutcomeDocument) -> Value {
 
 #[trace("TC-2383", "FR-286-AC-20")]
 #[test]
-#[ignore = "QSL-2258: monitor refusal documents carry no last_stage yet"]
 fn monitor_documents_name_their_stage() {
     let settled = MonitorOutcome {
         records: Vec::new(),

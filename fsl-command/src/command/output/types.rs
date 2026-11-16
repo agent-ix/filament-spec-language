@@ -128,8 +128,8 @@ pub(super) enum Details<'a> {
     /// FR-100 typed model admission's foreign-universe payload.
     AdmissionForeignUniverse {
         position: usize,
-        required: String,
-        supplied: String,
+        required: serde_json::Value,
+        supplied: serde_json::Value,
     },
     /// FR-100 typed model-selection admission details for a document offer.
     AdmissionForeignModelDocument {

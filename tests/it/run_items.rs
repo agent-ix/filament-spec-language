@@ -265,7 +265,6 @@ fn value_invariants_selection_is_an_items_selection() {
 /// Negative: FR-650-AC-4's Reference argument with no call snapshot.
 #[test]
 #[trace("TC-1703", "FR-650-AC-4")]
-#[ignore = "QSL-1988: Reference arguments over a call snapshot not implemented yet"]
 fn reference_argument_without_a_snapshot_refuses() {
     let directory = tempfile::tempdir().unwrap();
     write_cases(directory.path());
@@ -322,7 +321,6 @@ fn same_of(directory: &Path, value: Value) -> Value {
 /// unchanged as an argument.
 #[test]
 #[trace("TC-1704", "FR-650-AC-5")]
-#[ignore = "QSL-2182: structural identity spelling of a Reference result and call.snapshot reference arguments not implemented yet"]
 fn reference_result_passes_back_as_an_argument() {
     let directory = tempfile::tempdir().unwrap();
     write_cases(directory.path());
@@ -340,7 +338,6 @@ fn reference_result_passes_back_as_an_argument() {
 /// FR-650-AC-7: an FR-312 `function` selection admits the run value form.
 #[test]
 #[trace("TC-1706", "FR-650-AC-7")]
-#[ignore = "QSL-1988: run value form arguments in a clause-run function selection not implemented yet"]
 fn function_selection_admits_an_identity_reference() {
     let directory = tempfile::tempdir().unwrap();
     write_cases(directory.path());

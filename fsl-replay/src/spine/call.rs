@@ -89,6 +89,24 @@ pub struct WireArgument {
     pub value: serde_json::Value,
 }
 
+/// A call's snapshot document, as the command path admitted its bytes, and
+/// the limits its admission runs under.
+#[derive(Clone)]
+pub struct CallSnapshot {
+    /// The snapshot document.
+    pub observation: super::SuppliedObservation,
+    /// FR-106's admission limits.
+    pub limits: fsl_semantics::model::observation::ObservationLimits,
+}
+
+impl std::fmt::Debug for CallSnapshot {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("CallSnapshot")
+            .field("reference", &self.observation.reference)
+            .finish_non_exhaustive()
+    }
+}
+
 /// The `call` member of a 1-draft native-run/1 request (FR-100 Inputs):
 /// which function to call, its arguments, and the S6a accounting limits the
 /// call runs under.
@@ -102,6 +120,10 @@ pub struct Call {
     /// The call's arguments as a request wrote them (FR-650); they bind with
     /// [`Self::arguments`], one per parameter.
     pub wire_arguments: Vec<WireArgument>,
+    /// FR-650 "Arguments": the one current snapshot whose object world a
+    /// Reference or Population argument resolves against; `None` for a call
+    /// with an empty object world.
+    pub snapshot: Option<CallSnapshot>,
     /// The S6a `filament.value.accounting/v1` limits the call charges under.
     pub accounting: ScalarLimits,
     /// FR-277: the caller's supplied-value helper ceilings. An omitted
@@ -130,6 +152,7 @@ impl Call {
             function,
             arguments,
             wire_arguments: Vec::new(),
+            snapshot: None,
             accounting,
             supplied,
             backend: filament_eval::ExecutionBackendChoice::default(),
@@ -160,11 +183,7 @@ impl CallValue {
         match self {
             Self::Boolean(value) => serde_json::json!({"boolean": value}),
             Self::Integer(value) => serde_json::json!({"integer": value.to_string()}),
-            Self::Reference(reference) => serde_json::json!({"reference": {
-                "universe": reference.universe().root_type().to_string(),
-                "type": crate::spine::effective_spelling(reference.object_type()),
-                "object_identity": reference.object().as_str(),
-            }}),
+            Self::Reference(reference) => super::run_value::reference_form(reference),
             Self::Written(form) => form.clone(),
         }
     }
@@ -611,6 +630,7 @@ pub(crate) fn run_reading<T>(
             Err(fault) => Box::new(RunRefusal::Fault(fault)),
         },
     };
+    let own_package = package_name.clone();
     let parsed = front_end::parse(
         &front_end::ParseRequest {
             source: &source,
@@ -651,10 +671,32 @@ pub(crate) fn run_reading<T>(
             .into_value();
     let package = checked.package();
     let selected = select(package, &call.function)?;
+    let admitted_world;
+    let objects = match &call.snapshot {
+        Some(snapshot) => {
+            admitted_world = admit_call_snapshot(package, packages, limits.model, snapshot)?;
+            &admitted_world
+        }
+        None => objects,
+    };
+    let universe_of = |declared: &filament_exact::EffectiveId| {
+        fsl_semantics::model::observation::population_universe_for(
+            package.graph().model_inputs(),
+            packages,
+            limits.model,
+            declared.clone(),
+        )
+        .ok()
+    };
+    let world = call.snapshot.as_ref().map(|_| super::run_value::World {
+        objects,
+        universe_of: &universe_of,
+    });
     let forms = Forms::new(
         package.graph().scope().types(),
         package.graph().scope().enums(),
-    );
+    )
+    .in_world(&own_package, world.as_ref());
     let supplied = admit_wire_arguments(&forms, selected.parameters, call)?;
     let arguments = bind_arguments(selected.parameters, &supplied)?;
     admit_model_arguments(
@@ -721,6 +763,36 @@ pub(crate) fn run_reading<T>(
     Ok((outcome, read))
 }
 
+/// FR-650 "Arguments": the object world of the call's snapshot, admitted
+/// as FR-109's `Function` selection admits its snapshot.
+fn admit_call_snapshot(
+    package: &CheckedPackage,
+    packages: &fsl_semantics::model::intake::PackageInput,
+    model_limits: fsl_semantics::model::accounting::ModelNormalizationLimits,
+    snapshot: &CallSnapshot,
+) -> Result<ObjectEnvironment, Box<RunRefusal>> {
+    use fsl_semantics::model::observation::AdmissionFailure;
+    let provision = BTreeMap::from([(
+        snapshot.observation.reference.clone(),
+        snapshot.observation.bytes.clone(),
+    )]);
+    match fsl_semantics::model::observation::admit_current_snapshot(
+        package.graph().model_inputs(),
+        package.graph().scope().types(),
+        packages,
+        model_limits,
+        &provision,
+        &snapshot.observation.reference,
+        snapshot.limits,
+    ) {
+        Ok((environment, _)) => Ok(environment),
+        Err(AdmissionFailure::Refused(record) | AdmissionFailure::Incomplete(record)) => {
+            Err(Box::new(RunRefusal::ObjectEnvironment(record)))
+        }
+        Err(AdmissionFailure::Fault(fault)) => Err(Box::new(RunRefusal::Fault(fault))),
+    }
+}
+
 /// The selected function: its S6a name and declared parameters.
 pub(crate) struct Selected<'a> {
     pub(crate) name: fsl_eval::value::QualifiedName,
@@ -751,8 +823,8 @@ pub(crate) fn select<'a>(
     }
     let callable = package.graph().callable(first).ok_or_else(missing)?;
     let graph_scope = package.graph().scope();
-    let result_has_form = matches!(callable.result, ValueType::Reference(_))
-        || Forms::new(graph_scope.types(), graph_scope.enums()).has_form(callable.result);
+    let result_has_form =
+        Forms::new(graph_scope.types(), graph_scope.enums()).has_form(callable.result);
     if !result_has_form {
         return Err(Box::new(RunRefusal::UnsupportedResult {
             function: function.to_owned(),
@@ -828,12 +900,7 @@ pub(crate) fn admit_wire_arguments(
         };
         // A parameter with no run value form refuses whatever the value is.
         if !forms.has_form(value_type) {
-            return Err(Box::new(match value_type {
-                ValueType::Reference(_) | ValueType::Population(_) => {
-                    RunRefusal::WrongValueKind { position }
-                }
-                _ => RunRefusal::UnsupportedParameter { position },
-            }));
+            return Err(Box::new(RunRefusal::UnsupportedParameter { position }));
         }
         let read = match &wire.value {
             serde_json::Value::Number(number) => match number.as_i64() {
