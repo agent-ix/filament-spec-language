@@ -2090,7 +2090,7 @@ const COUNTED_KINDS: [CollectionKind; 3] = [
     "FSpec-FR-145-AC-16"
 )]
 #[test]
-#[ignore = "QSL-2003: a linked count<N> result range is not proved at check yet; when it is, move the count<Zero> run-time-refusal fixtures to a package checked under CheckMode::Kernel (FR-766 Notes): fsl-replay/src/spine/clause/tests/temporal.rs:35-141,363-473, fsl-replay/src/spine/clause/tests/witness.rs:84,1736, fsl-analyze/tests/it/monitor_inputs.rs:45-55,478"]
+#[ignore = "QSL-2003: a linked count<N> result range is not proved at check yet; when it is, move the temporal-atom count<Zero> run-time-refusal fixtures to a package checked under CheckMode::Kernel (FR-766 Notes): fsl-replay/src/spine/clause/tests/temporal.rs:35-141,363-473, fsl-analyze/tests/it/monitor_inputs.rs:45-55,478; the invariant RefusedDomain fixture (witness.rs:84,1736, tc_743_the_separation_check_names_its_failing_step) moves its count<Zero> into a called function z (FR-268-AC-3) under CheckMode::Kernel and keeps its step-2 refusal record"]
 fn q14_count_refuses_unproved_range_at_check() {
     let package = plain();
     for kind in COUNTED_KINDS {
@@ -2145,7 +2145,7 @@ fn q14_count_proves_when_the_bound_fits() {
 /// FR-766-AC-2: a `size(q)` guard narrows the count's upper bound.
 #[trace("TC-2195", "FR-766-AC-2", "FSpec-TC-1653", "FSpec-FR-145-AC-16")]
 #[test]
-#[ignore = "QSL-2003: a linked count<N> result range is not proved at check yet; when it is, move the count<Zero> run-time-refusal fixtures to a package checked under CheckMode::Kernel (FR-766 Notes): fsl-replay/src/spine/clause/tests/temporal.rs:35-141,363-473, fsl-replay/src/spine/clause/tests/witness.rs:84,1736, fsl-analyze/tests/it/monitor_inputs.rs:45-55,478"]
+#[ignore = "QSL-2003: a linked count<N> result range is not proved at check yet; when it is, move the temporal-atom count<Zero> run-time-refusal fixtures to a package checked under CheckMode::Kernel (FR-766 Notes): fsl-replay/src/spine/clause/tests/temporal.rs:35-141,363-473, fsl-analyze/tests/it/monitor_inputs.rs:45-55,478; the invariant RefusedDomain fixture (witness.rs:84,1736, tc_743_the_separation_check_names_its_failing_step) moves its count<Zero> into a called function z (FR-268-AC-3) under CheckMode::Kernel and keeps its step-2 refusal record"]
 fn q14_count_under_a_size_guard_proves() {
     let package = plain();
     let guarded = |maximum: i64| {
