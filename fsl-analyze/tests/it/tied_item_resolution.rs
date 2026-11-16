@@ -201,7 +201,6 @@ fn a_provider_registers_for_the_kinds_it_advertises() {
         fsl_analyze::analyze::Engine::external(
             descriptor,
             fsl_analyze::analyze::BackendTool::new("test-provider", "1").expect("a tool"),
-            fsl_analyze::provider::ProviderLimits::default(),
             Box::new(Never),
         )
     };

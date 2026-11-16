@@ -60,8 +60,11 @@ The clause's clock unit node, or none.
   every other quantity of the unit names. An FCD identity and a declared unit
   name never coincide, because a declared name is an identifier and an FCD
   identity is an `ix://` URI, so `T` selects at most one node.
-- The clock unit node SHALL be a linear unit of a dimension named `Time`. A
-  `T` that names no declared unit SHALL refuse the clause with cause
+- The clock unit node SHALL be a linear unit of a dimension named `Time`.
+  These refusals apply only to a clause that holds a `duration` window, the
+  one form that needs a clock unit node; a clause without one keeps any
+  non-empty `timestamp_unit` (FR-640), such as the default `step`. In such a
+  clause, a `T` that names no declared unit SHALL refuse the clause with cause
   `unknown-clock-unit`, and a `T` that names a unit of another dimension with
   cause `clock-unit-dimension`, each naming the clock and the unit, as FR-933
   refuses a role clock's binding unit (through the request path,

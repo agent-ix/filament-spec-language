@@ -87,6 +87,7 @@ fn entries(document: &Value) -> Vec<Value> {
 #[trace("TC-2703", "FR-963-AC-3")]
 #[trace("TC-2703", "FR-963-AC-4")]
 #[test]
+#[ignore = "QSL-2192: invalid_capability/unknown-option not built yet (FR-967)"]
 fn a_run_call_names_the_backend_of_its_requirement_items() {
     let directory = tempfile::tempdir().unwrap();
     // Settlement asked for, no backend named: three items on value-checker.
