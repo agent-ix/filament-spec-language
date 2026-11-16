@@ -156,10 +156,11 @@ fn function_selection_unknown_function_refused() {
 fn sum_out_of_domain_same_cause_call_and_clause() {
     let (base, packages) = config_version_unit_and_packages();
     let unit = format!(
-        "{base}invariant SumOutOfDomain using v on Config::ConfigVersion at current {{ \
-         sum<Int[1, 1]>(x in sequence[1, 1]: x) = 2 }}\n\
+        "{base}type One = Int[0, 1];\n\
+         invariant SumOutOfDomain using v on Config::ConfigVersion at current {{ \
+         sum<One>(x in sequence[1, 1]: x) = 2 }}\n\
          function SumFunction using v(): Boolean pure {{ \
-         sum<Int[1, 1]>(x in sequence[1, 1]: x) = 2 }}\n"
+         sum<One>(x in sequence[1, 1]: x) = 2 }}\n"
     );
     let label = DocumentRef {
         authority: "test".to_owned(),
