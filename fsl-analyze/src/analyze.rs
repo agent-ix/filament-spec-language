@@ -890,6 +890,9 @@ pub(crate) enum Refusal {
     RequiresBound,
     /// EN-4 `NotStatistical`: `invalid-request` with `not-statistical`.
     NotStatistical,
+    /// `incomplete`: the request's subject exhausted a resource bound before
+    /// the engine ran.
+    Incomplete(fsl_replay::IncompleteCause),
     /// `unsupported` with the refusal's own diagnostic.
     Unsupported(CatalogCode),
     /// `failed` with the refusal's diagnostic.
@@ -1739,6 +1742,10 @@ fn settle(
             terminal(TerminalRecord::declined_with(
                 index, backend, cause, code, diagnostic,
             )),
+            None,
+        ),
+        EngineReport::Refused(Refusal::Incomplete(cause)) => record(
+            terminal(TerminalRecord::incomplete(index, backend, cause)),
             None,
         ),
         EngineReport::Refused(Refusal::Failed(code)) => record(

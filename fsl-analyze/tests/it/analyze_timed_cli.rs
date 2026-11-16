@@ -62,21 +62,29 @@ fn an_mitl_claim_proves_certified_and_refutes_with_exact_delays() {
     let steps = items[1]["counterexample"]["prefix"]
         .as_array()
         .expect("a finite prefix");
-    let delays: Vec<(String, String)> = steps
+    // FR-241 takes the least admissible delays: `send` at 0, then `reply` at 3 (the
+    // violating position of `[0 ms, 3 ms)`). The lasso tail is the engine's.
+    let head: Vec<(String, String, String)> = steps
         .iter()
+        .take(2)
         .map(|step| {
             let delay = &step["delay"];
             (
                 delay["numerator"].as_str().unwrap_or("-").to_owned(),
                 delay["denominator"].as_str().unwrap_or("-").to_owned(),
+                step["transition"]["operation"]["node"]
+                    .as_str()
+                    .and_then(|node| node.rsplit('/').next())
+                    .unwrap_or("-")
+                    .to_owned(),
             )
         })
         .collect();
-    let exact: Vec<(String, String)> = [("0", "1"), ("3", "1"), ("0", "1"), ("0", "1"), ("1", "1")]
+    let expected: Vec<(String, String, String)> = [("0", "1", "send"), ("3", "1", "reply")]
         .iter()
-        .map(|(n, d)| ((*n).to_owned(), (*d).to_owned()))
+        .map(|(n, d, op)| ((*n).to_owned(), (*d).to_owned(), (*op).to_owned()))
         .collect();
-    assert_eq!(delays, exact, "{}", items[1]["counterexample"]);
+    assert_eq!(head, expected, "{}", items[1]["counterexample"]);
     assert_eq!(run.exit, 10);
 }
 
@@ -168,7 +176,7 @@ fn run_over(
 /// QSL-2129: a timed subject whose clock owner takes an unbounded `Integer`
 /// parameter needs a proof bound, as zone search reports it; the request's
 /// subject cannot make the item an engine fault.
-#[trace("TC-1592", "FR-632-AC-1")]
+#[trace("TC-694")]
 #[test]
 fn a_timed_subject_with_an_unbounded_root_requires_a_bound() {
     let document = crate::timed_world::document_unbounded(
@@ -192,18 +200,39 @@ fn a_timed_subject_with_an_unbounded_root_requires_a_bound() {
     assert_eq!(run.exit, 21);
 }
 
-/// `max_clocks` is read by a timed subject (FSpec FR-415) and echoed in the
-/// item's request; on an untimed subject no route reads it, so the item is
+/// A snapshot of two `Call` objects, so the subject holds two live clocks.
+fn two_call_snapshot() -> Vec<u8> {
+    let mut snapshot: Value =
+        serde_json::from_slice(&rpc_snapshot()).expect("the snapshot is JSON");
+    let objects = snapshot["populations"][0]["objects"]
+        .as_array_mut()
+        .expect("objects");
+    let mut second = objects[0].clone();
+    second["key"] = json!("d");
+    objects.push(second);
+    snapshot.to_string().into_bytes()
+}
+
+/// W6 FR-632-AC-3: `max_clocks` is read by a timed subject. Over two calls, a
+/// budget of 1 stops EN-6 `incomplete` with `LimitReached{max_clocks}` and
+/// value 1; on an untimed subject no route reads it, so the item is
 /// `unsupported`.
 #[trace("TC-1592", "FR-632-AC-3")]
 #[test]
 fn max_clocks_is_read_on_a_timed_subject_and_unrouted_on_an_untimed_one() {
-    let (_, items) = run(
-        "timed-max-clocks",
+    let ws = Workspace::new("timed-max-clocks");
+    let timed = analyze(&request_over(
+        &ws,
         &rpc_unit(4, &settles("[0 ms, 3 ms]")),
-        json!([{"claim": "Settles", "temporal": {"limits": {"max_clocks": 1}}}]),
-    );
-    assert_eq!(label(&items[0]), "proved", "{}", items[0]);
+        &crate::zone_search::rpc_document(),
+        &[two_call_snapshot()],
+        json!({"items": [{"claim": "Settles", "temporal": {"limits": {"max_clocks": 1}}}]}),
+    ));
+    let item = timed.item(0);
+    assert_eq!(label(&item), "incomplete", "{item}");
+    assert_eq!(item["record"]["cause"]["kind"], "limit-reached", "{item}");
+    assert_eq!(item["record"]["cause"]["limit"], "max_clocks", "{item}");
+    assert_eq!(item["record"]["cause"]["value"], 1, "{item}");
     let ws = Workspace::new("untimed-max-clocks");
     let untimed = analyze(&crate::analyze_cli_support::counter_request(
         &ws,
@@ -241,7 +270,7 @@ fn a_state_graph_claim_over_a_timed_subject_is_unsupported() {
 /// settles `unsupported` `unsupported-requested-capability` even where its
 /// subject is unbounded: it is never told to add a bound that would still
 /// leave it unsupported.
-#[trace("TC-1592", "FR-632-AC-1")]
+#[trace("TC-1302", "FR-507-AC-7")]
 #[test]
 fn an_unread_member_settles_unsupported_not_requires_bound() {
     let document = crate::timed_world::document_unbounded(

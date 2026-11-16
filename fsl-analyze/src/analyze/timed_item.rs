@@ -26,6 +26,7 @@ use fsl_route::reductions::ObligationReductions;
 use fsl_route::request::ItemKind;
 use fsl_route::Mode;
 use fsl_semantics::check::{Capability, TemporalClauseNode};
+use fsl_semantics::family::ClassifyFailure;
 
 use super::clause_item::{clause_name, replay_over, ReplayInputs, ReplayShape, CLAUSE_TRANSCRIPT};
 use super::derived_item::{derived_target, NoLetters, DEADLOCK_TRANSCRIPT};
@@ -205,15 +206,20 @@ fn run(read: &Run<'_, '_>, cancel: &filament_exact::Cancel) -> EngineReport {
 
 /// The refusal of a timed subject the request's binding cannot build: an
 /// unbounded root needs a bound (as zone search maps it), a clock owner with
-/// no universe is a defect of the binding, and the forms EN-6 does not read
-/// yet are unsupported. Only the refusals the package and the checker rule out
-/// stay an engine fault.
+/// no universe is a defect of the binding, the forms EN-6 does not read yet are
+/// unsupported, and a walk of the model's root types that reaches its stage
+/// limit is a resource stop (`incomplete`). Only the refusals the package and the
+/// checker rule out (a missing timed model, a broken extent check) stay an
+/// engine fault.
 fn subject_refusal(refusal: &TimedSubjectRefusal) -> Refusal {
     match refusal {
         TimedSubjectRefusal::NotSimulated(NotSimulated::RequiresBound(_)) => Refusal::RequiresBound,
         TimedSubjectRefusal::Unbounded { .. } => Refusal::Failed(INVALID_VALUE),
         TimedSubjectRefusal::ParameterizedGuard { .. }
         | TimedSubjectRefusal::NestedUnboundedCollection { .. } => Refusal::Unsupported(NOT_YET),
+        TimedSubjectRefusal::NotSimulated(NotSimulated::Extent(ClassifyFailure::Limit(_))) => {
+            Refusal::Incomplete(fsl_replay::IncompleteCause::ResourceExhausted)
+        }
         TimedSubjectRefusal::NoTimedModel { .. } | TimedSubjectRefusal::NotSimulated(_) => {
             Refusal::Failed(BROKEN)
         }
@@ -380,13 +386,33 @@ mod tests {
     /// never an engine fault; the model-intrinsic forms EN-6 does not read are
     /// unsupported; only a missing timed model, which the package rules out,
     /// stays a fault.
-    #[trace("TC-1592", "FR-632-AC-1")]
+    #[trace("TC-694")]
     #[test]
     fn a_timed_subject_refusal_is_typed_by_what_causes_it() {
         let code = |refusal: Refusal| match refusal {
             Refusal::Failed(code) | Refusal::Unsupported(code) => Some(code),
             _ => None,
         };
+        let node = filament_exact::NodeKey::new(
+            "test",
+            vec![filament_exact::PathSegment::Text("n".to_owned())],
+            0,
+        )
+        .expect("a valid node key");
+        let domains = fsl_semantics::family::ClaimExtent::from_domains(
+            [(
+                fsl_foundation::bound::DomainKey::Node { node, path: vec![] },
+                fsl_foundation::bound::DomainKind::Integer,
+            )]
+            .into(),
+        );
+        let fsl_semantics::family::ClaimExtent::Unbounded(domains) = domains else {
+            panic!("one domain is unbounded");
+        };
+        let requires = subject_refusal(&TimedSubjectRefusal::NotSimulated(
+            NotSimulated::RequiresBound(fsl_eval::simulation::RequiresBound { domains }),
+        ));
+        assert!(matches!(requires, Refusal::RequiresBound));
         let unbounded = subject_refusal(&TimedSubjectRefusal::Unbounded {
             clock: "x".to_owned(),
         });
@@ -403,5 +429,16 @@ mod tests {
             model: "M".to_owned(),
         });
         assert_eq!(code(absent), Some(BROKEN));
+        let limit = subject_refusal(&TimedSubjectRefusal::NotSimulated(NotSimulated::Extent(
+            ClassifyFailure::Limit(fsl_foundation::diagnostic::LimitExceeded::new(
+                fsl_foundation::setting::Setting::S3Nodes,
+                1,
+                2,
+            )),
+        )));
+        assert!(matches!(
+            limit,
+            Refusal::Incomplete(fsl_replay::IncompleteCause::ResourceExhausted)
+        ));
     }
 }

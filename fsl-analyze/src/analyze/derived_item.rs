@@ -91,8 +91,8 @@ pub(super) fn derived_target() -> Option<QualifiedName> {
 
 /// The EN-1 item that decides the derived deadlock-freedom item anchored at
 /// `claim` (the `model_root` occurrence of the subject's one selection) over
-/// the binding, with the item's budgets. The item's `temporal.max_depth` is the search
-/// horizon, as for an authored clause.
+/// the binding, with the item's budgets. A derived item carries no `max_depth` (FSpec
+/// FR-368-AC-20), so the search has no horizon.
 pub(super) fn deadlock_item<'a>(
     package: &'a CheckedPackage,
     binding: &SubjectBinding<'a>,
@@ -127,7 +127,7 @@ pub(super) fn deadlock_item<'a>(
         temporal_clock_selections: &[],
         subject: subject(&binding),
         item: ModelCheckItem::DeadlockFreedom,
-        max_depth: form.max_depth,
+        max_depth: None,
         limits: form.limits,
         reductions: form.reductions.clone(),
     };

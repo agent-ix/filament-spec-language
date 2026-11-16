@@ -953,6 +953,19 @@ fn resolve_derived(
         .model_roots()
         .find(|(selected, _)| selected.identity == identity)
         .map(|(_, root)| root)?;
+    if temporal.max_depth.is_some() {
+        // FSpec FR-368-AC-20: a derived item carries no `max_depth`.
+        let mut detail = Map::new();
+        detail.insert("member".to_owned(), json!("temporal.max_depth"));
+        return Some(ResolvedItem::Settled {
+            claim_name: Some(name.to_owned()),
+            record: Box::new(TerminalRecord::disposition_invalid_request(
+                index,
+                CatalogCode::new("invalid_runtime_input", "invalid-value"),
+                detail,
+            )),
+        });
+    }
     let derived = derived_items(package, subject, registry, &[], 0)
         .into_iter()
         .find_map(|resolved| match resolved {

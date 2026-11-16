@@ -400,7 +400,6 @@ fn a_deadlock_counterexample_ends_at_the_stuck_state_and_replays() {
 }
 
 /// FR-626-AC-1: a derived item named by its model alias is the one derived
-/// FR-626-AC-1: a derived item named by its model alias is the one derived
 /// item of the subject, and a claim naming no model alias is `unknown-claim`.
 #[trace("TC-1586", "FR-626-AC-1")]
 #[test]

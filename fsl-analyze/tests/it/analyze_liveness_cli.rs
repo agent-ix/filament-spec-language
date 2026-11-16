@@ -106,12 +106,12 @@ fn a_derived_item_honours_its_named_backend() {
     assert_eq!(label(&run.item(2)), "refuted");
 }
 
-/// `temporal.max_depth` bounds a derived deadlock-freedom search: a horizon of
-/// one step stops short of the stuck state, so the item is inconclusive with
-/// `bound-reached`.
+/// FSpec FR-368-AC-20: a derived item carries no `max_depth`, so one that sets
+/// it is refused `invalid-request` naming the member, on the EN-1 and the EN-6
+/// path.
 #[trace("TC-1586", "FR-626-AC-1")]
 #[test]
-fn max_depth_bounds_a_deadlock_freedom_item() {
+fn a_derived_item_that_sets_max_depth_is_refused_naming_the_member() {
     let ws = Workspace::new("derived-depth");
     let run = analyze(&counter_request(
         &ws,
@@ -119,6 +119,13 @@ fn max_depth_bounds_a_deadlock_freedom_item() {
         json!([{"claim": "M", "temporal": {"item_kind": "deadlock-freedom", "max_depth": 1}}]),
     ));
     let item = run.item(0);
-    assert_eq!(label(&item), "inconclusive", "{item}");
-    assert_eq!(item["record"]["cause"]["kind"], "bound-reached");
+    assert_eq!(
+        item["record"]["diagnostic"]["code"], "invalid_runtime_input",
+        "{item}"
+    );
+    assert_eq!(
+        item["record"]["diagnostic"]["detail"]["member"], "temporal.max_depth",
+        "{item}"
+    );
+    assert_eq!(run.exit, 20);
 }
