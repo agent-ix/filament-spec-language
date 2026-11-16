@@ -381,3 +381,48 @@ fn the_parse_operation_admits_a_form_only_with_its_catalog() {
         "{document}"
     );
 }
+
+/// FR-660-AC-6 (TC-1740): the request reader's exact-byte catalog drives S1
+/// extension selection without a fixture authority.
+#[test]
+#[trace("TC-1740", "FR-660-AC-6")]
+fn request_catalog_parses_selected_extension_definition() {
+    let identity = identity();
+    let definition = serde_json::json!({
+        "grammar_schema": {"productions": [
+            {"keyword": "retention", "clauses": ["subject", "days"]}
+        ]},
+        "typed_node_schema": {"nodes": [
+            {"keyword": "retention", "node_kind": "retention", "clauses": [
+                {"name": "subject", "type": "Text"},
+                {"name": "days", "type": "Int[1, 3650]"}
+            ]}
+        ]}
+    });
+    let exact_bytes = serde_json::to_vec(&definition).unwrap();
+    let catalog = DefinitionCatalog::read_extensions(vec![
+        fsl_semantics::library::bundle::ExtensionDefinitionSource {
+            authority: "agent-ix".into(),
+            identity: "ext.retention".into(),
+            exact_bytes,
+            dependencies: BTreeSet::new(),
+            capabilities: BTreeSet::new(),
+        },
+    ])
+    .unwrap();
+    let bytes = format!("{HEADER}profile r = \"ext.retention\";\n{FORM}\n");
+    let parsed = fsl_replay::spine::parse_selecting_extensions(
+        &fsl_replay::spine::ParseRequest {
+            source: &identity,
+            path: "unit.native",
+            bytes: bytes.as_bytes(),
+        },
+        fsl_replay::spine::ProfileCatalogInput {
+            catalog: &catalog,
+            limits: fsl_semantics::library::bundle::PackageLimits::default(),
+        },
+        Limits::default(),
+        &filament_exact::Cancel::new(),
+    );
+    assert!(parsed.is_ok(), "{parsed:?}");
+}

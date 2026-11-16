@@ -64,7 +64,6 @@ fn compile_refusal(path: &Path) -> (u8, Value) {
 /// unknown-member request refusal.
 #[test]
 #[trace("TC-1741", "FR-660-AC-2")]
-#[ignore = "QSL-2189: the request `extensions` member is not implemented yet"]
 fn an_unsupplied_extension_selection_refuses_unknown_profile() {
     let directory = tempfile::tempdir().unwrap();
     retention_definition(directory.path(), "other.json", "other");
@@ -85,7 +84,6 @@ fn an_unsupplied_extension_selection_refuses_unknown_profile() {
 /// `typed_node_schema` refuses `invalid_package`/`missing-member` naming it.
 #[test]
 #[trace("TC-1741", "FR-660-AC-3")]
-#[ignore = "QSL-2189: the request `extensions` member is not implemented yet"]
 fn a_supplied_definition_missing_a_member_refuses() {
     let directory = tempfile::tempdir().unwrap();
     let definition = json!({"grammar_schema": {"productions": [
@@ -114,7 +112,6 @@ fn a_supplied_definition_missing_a_member_refuses() {
 /// with one identity refuse `conflicting-definition`.
 #[test]
 #[trace("TC-1741", "FR-660-AC-4")]
-#[ignore = "QSL-2189: the request `extensions` member is not implemented yet"]
 fn malformed_extension_entries_refuse_before_compile() {
     for (extensions, member) in [
         (json!(null), "extensions"),
@@ -491,7 +488,6 @@ fn stdout_json(output: &Output) -> Value {
 /// file charged against `dependent_bytes`.
 #[test]
 #[trace("TC-1741", "FR-660-AC-5")]
-#[ignore = "QSL-2189: the request `extensions` member is not implemented yet"]
 fn an_extension_document_is_charged_against_dependent_bytes() {
     let directory = tempfile::tempdir().unwrap();
     retention_definition(directory.path(), "retention.json", "retention");
