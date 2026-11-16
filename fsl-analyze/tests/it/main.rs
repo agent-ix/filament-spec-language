@@ -79,6 +79,7 @@ mod protocol_footprints;
 mod protocol_projection;
 mod protocol_realizability;
 mod protocol_roles;
+mod protocol_step_view;
 mod protocol_system;
 mod provider_external_contract;
 mod provision_contract;

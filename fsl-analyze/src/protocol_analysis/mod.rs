@@ -13,6 +13,7 @@ pub mod manifest;
 mod profile;
 mod project;
 mod realize;
+mod step_view;
 mod subject;
 
 pub(crate) use item::settle;
@@ -25,4 +26,5 @@ pub use realize::{
     realize, replay_counterexample, replay_strategy, RealizabilityOutcome, RealizabilityRefusal,
     RealizabilityRequest, ANALYZER,
 };
+pub use step_view::protocol_step_view;
 pub use subject::{protocol_subject, SubjectBindings, SubjectPackage, SubjectRefusal};

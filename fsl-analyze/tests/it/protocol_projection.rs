@@ -42,12 +42,21 @@ fn source(members: &str, run: &str) -> String {
 }
 
 pub(crate) fn admitted_source(text: &str) -> Box<CheckedPackageV2> {
-    let checked = package(text);
-    let emission = fsl_package::emit_checked(&checked, fsl_package::EmitLimits::fixture())
+    admitted(&package(text), PACKAGE, &document())
+}
+
+/// `checked` emitted and admitted with the domain package `domain`'s
+/// `document` as its evidence.
+pub(crate) fn admitted(
+    checked: &fsl_package::CheckedPackage,
+    domain: &str,
+    document: &[u8],
+) -> Box<CheckedPackageV2> {
+    let emission = fsl_package::emit_checked(checked, fsl_package::EmitLimits::fixture())
         .expect("the protocol package emits");
     let mut evidence = emission.evidence().clone();
     evidence
-        .insert_domain_package_document(PACKAGE, document().as_slice())
+        .insert_domain_package_document(domain, document)
         .expect("fresh domain evidence");
     match filament_contract_model::read_checked_package(
         emission.package().bytes(),

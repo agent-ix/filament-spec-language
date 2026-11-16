@@ -305,15 +305,17 @@ pub use refinement::{
     abstract_classes, check_initial, check_protocol_initial, check_protocol_state_relations,
     check_protocol_step, check_step, initial_history, map_state, open_protocol_systems,
     open_systems, protocol_observation_label, protocol_transition_class, step_history,
-    AbstractClass, AbstractProtocolSystem, AssumptionIdentity, AssumptionOrigin,
+    step_view_over, AbstractClass, AbstractProtocolSystem, AssumptionIdentity, AssumptionOrigin,
     AssumptionSelectedMember, AssumptionSide, AssumptionTarget, ConcreteStep, EvalFailure,
     HiddenSlot, HistoryValues, LivenessHalf, MappedState, MappingFailure, MappingRowRef,
     MappingUndetermined, ObjectKey, ObservationField, ObservationLabel, PairedAssumptionPath,
     PairedAssumptionStep, ProtocolAssumptionFairness, ProtocolAssumptionReason,
     ProtocolAssumptionWitness, ProtocolCandidate, ProtocolRelationError, ProtocolStateRelation,
-    ProtocolTrace, RefinementFailure, RefinementOutcome, RefinementPosition, RefinementSystems,
-    RequiredTemporalFairness, SafetyOutcome, SafetyUndecided, StepArgument, StepRejection,
-    StepResult, StepVerdict, SubjectRefusal, Taken, TerminalSuccessDirection, Undetermined,
+    ProtocolStep, ProtocolStepView, ProtocolSteps, ProtocolTrace, RefinementFailure,
+    RefinementOutcome, RefinementPosition, RefinementSystems, RefinementWitness,
+    RefinementWitnessError, RequiredTemporalFairness, SafetyOutcome, SafetyUndecided, StateIndex,
+    StepArgument, StepRejection, StepResult, StepVerdict, StepViewRefusal, SubjectRefusal, Taken,
+    TerminalSuccessDirection, Undetermined, UnsteppedConstruct,
 };
 // The equality operator a composite parity claim names (FR-358).
 pub use filament_semantic_value::declaration::EqualityOperator;
