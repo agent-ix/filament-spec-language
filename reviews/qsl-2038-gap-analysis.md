@@ -3,7 +3,7 @@ id: SR-2026111518064800000005
 title: "Gap analysis — QSL-2038 source corpus runner"
 type: SpecReview
 analysis: gap-analysis
-scope: "agent-ix/filament-spec-language; QSL-2038; PR #2722; full spec matrix at PR head 1851dba35a06655cfa9a8f7893f96b5197a0aa4d; current origin/main d71c0a8dfde0076cfbc4fbe13985eb2baddd7839; changed source and test files"
+scope: "agent-ix/filament-spec-language; QSL-2038; PR #2722; full spec matrix at current PR head ff5c411192ea2d6babc530e0202818450c407462; origin/main d71c0a8dfde0076cfbc4fbe13985eb2baddd7839; changed source and test files"
 review_set: subset
 ---
 
@@ -36,7 +36,7 @@ Ran the repository's evidence-backed matrix and manually mapped QSL-2038's accep
 
 ## Rebase refresh
 
-Recomputed the matrix on current origin/main `d71c0a8dfde0076cfbc4fbe13985eb2baddd7839` and rechecked the exact PR diff at head `1851dba35a06655cfa9a8f7893f96b5197a0aa4d`. The CI-selection gap remains fixed: `RunParser::close` checks actual root-suite output against required corpus-area test names, with `suite_output_missing_corpus_selection_tests_is_a_finding` exercising the missing-selection case. The new main commits only add unrelated monitor specifications; the PR diff remains conflict-free and contains no new specs or trace tags. Reverse-gap review found no new user-facing API, stub or TODO in the changed runner/xtask infrastructure. The matrix identifies 1,134 untagged and 295 ignored-only criteria across the repository; these are the preexisting, separately tracked gaps listed above.
+Rechecked the exact PR diff at head `ff5c411192ea2d6babc530e0202818450c407462` against current `origin/main` `d71c0a8dfde0076cfbc4fbe13985eb2baddd7839`. The CI-selection gap remains fixed. Targeted AC-8 review confirms `suite_output_missing_corpus_selection_tests_is_a_finding` feeds a simulated root-suite output containing only `unrelated_test` through `RunParser::finish()` and asserts a `RequiredTestNotSelected` finding for `source_corpus::corpus_values`. In the production path, `run_lane()` passes those findings to `evaluate_declared()` and returns `Error::TestSuitesFound` whenever findings remain, so omitting corpus tests from the actual selected suite makes the xtask lane fail. The earlier FND-003 statement that xtask tests exercised only the empty-area helper was stale; the simulated-output regression test does exercise the negative selection guard. The matrix remains 1,134 untagged and 295 ignored-only criteria across the repository; these are the preexisting, separately tracked gaps listed above.
 
 ## Dispositions
 
@@ -45,6 +45,7 @@ Recomputed the matrix on current origin/main `d71c0a8dfde0076cfbc4fbe13985eb2bad
 | FND-001 | deferred | Repository-wide untagged criteria remain outside QSL-2038 scope and are tracked by QSL-2083 through QSL-2098. |
 | FND-002 | deferred | FR-518-AC-11 remains bound only to the ignored test `tests/it/checked_handoff.rs::a_differing_declared_clause_name_is_refused_on_clause_name`; it is outside QSL-2038 scope and tracked by QSL-2109. |
 | FND-003 | fixed | The actual root integration-suite output is checked for every required corpus area test; missing selections produce `RequiredTestNotSelected`. |
+| FND-003 | fixed | Targeted recheck: the simulated root-suite output test asserts `RequiredTestNotSelected`, and `run_lane()` converts remaining findings to `Error::TestSuitesFound`. |
 
 ```yaml
 dispositions:
@@ -58,4 +59,18 @@ dispositions:
     outcome: fixed
     after_excerpt: |
       self.findings.extend(required_source_corpus_test_findings(&id, &tests));
+  - fnd: FND-003
+    outcome: fixed
+    after_excerpt: |
+      if !findings.is_empty() {
+          let mut summary = format!(
+              "test-suites: lane {}: {} finding(s)\n",
+              lane.name,
+              findings.len()
+          );
+          for finding in &findings {
+              summary.push_str(&format!("  {finding}\n"));
+          }
+          return Err(Error::TestSuitesFound { summary });
+      }
 ```
