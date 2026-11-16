@@ -3,7 +3,7 @@ id: SR-2136
 title: "Gap analysis of QSL-2278 PR #2737"
 type: SpecReview
 analysis: gap-analysis
-scope: "agent-ix/filament-spec-language; PR #2737 diff origin/main@40f224a4d12017022b0e78256d3d1d87609d9820...a44531223fd81376c09c7f2bc88a03a3436a7cda; Ticket QSL-2278; full repository matrix; focused NFR-002-AC-1..4 and TC-920"
+scope: "agent-ix/filament-spec-language; PR #2737 diff origin/main@f1db1f3cb65c1fe98fca5cb6481e9028a04952a8...e9cfd0cf62b8b0fe82055111ea315cac4f3ef0fa; Ticket QSL-2278; full repository matrix; focused NFR-002-AC-1..4 and TC-920"
 review_set: subset
 relationships:
   - target: ix://agent-ix/filament-spec-language/NFR-002
@@ -16,7 +16,7 @@ Ticket QSL-2278. Planless gap analysis of the full repository matrix and the beh
 
 ## Review Refresh
 
-Rechecked at PR head `a44531223fd81376c09c7f2bc88a03a3436a7cda` against `origin/main` `40f224a4d12017022b0e78256d3d1d87609d9820`. The source/test patch is unchanged. The previous full-repository matrix result remains the evidence for FND-001; refreshed `quoin matrix` and `quire matrix` commands did not complete in the review environment, so the old repository-wide counts are not asserted as current. The focused NFR-002 tests remain unchanged and tagged. FND-001 remains deferred to the pre-existing QSL-2083..QSL-2098 coverage backlog; this finding does not identify a gap introduced by QSL-2278.
+Rechecked at PR head `e9cfd0cf62b8b0fe82055111ea315cac4f3ef0fa` against `origin/main` `f1db1f3cb65c1fe98fca5cb6481e9028a04952a8`. The source/test patch is unchanged. The previous full-repository matrix result remains historical evidence for FND-001; a current `quoin matrix --repo . --json` invocation produced no output for 90 seconds and was interrupted (exit 130), so those counts are not asserted as current. The focused NFR-002 tests remain unchanged and tagged. FND-001 remains deferred to the pre-existing QSL-2083..QSL-2098 coverage backlog; this finding does not identify a gap introduced by QSL-2278.
 
 ## Verdict
 
