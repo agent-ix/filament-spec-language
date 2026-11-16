@@ -4,6 +4,7 @@
 mod analyze;
 mod clause;
 mod output;
+mod output_file;
 mod wire;
 
 pub use analyze::{analyze, analyze_with_limits, prepare_analyze, AnalyzeInput, PreparedAnalyze};
@@ -232,6 +233,16 @@ pub enum RunCause {
     /// clocks override (the driver's `--clocks`).
     #[error("invalid request: clocks is given both in the request and as a clocks override (--clocks); give it once")]
     ClocksGivenTwice,
+    /// FR-810: the request carries `output` and the caller also supplied an
+    /// output override (the driver's `--output`).
+    #[error("invalid request: output is given both in the request and as an output override (--output); give it once")]
+    OutputGivenTwice,
+    /// FR-810: a file or directory already exists at the output path.
+    #[error("invalid request: output {path} already exists; a compile never overwrites it", path = path.display())]
+    OutputExists {
+        /// The existing output path.
+        path: PathBuf,
+    },
     /// FR-312: a clause request member cannot form a typed selection.
     #[error("invalid clause request member {member}: {reason}")]
     ClauseRequest {
@@ -372,7 +383,10 @@ impl RunCause {
         match self {
             Self::Io { .. } => Code::IoError,
             Self::Json(_) => Code::InvalidRequest,
-            Self::ClauseRequest { .. } | Self::ClocksGivenTwice => Code::InvalidRequest,
+            Self::ClauseRequest { .. }
+            | Self::ClocksGivenTwice
+            | Self::OutputGivenTwice
+            | Self::OutputExists { .. } => Code::InvalidRequest,
             Self::Output(_) | Self::ClauseOutput(_) => Code::OutputFailure,
             Self::Format => Code::UnknownWire,
             Self::Limit(_) => Code::ResourceExhausted,
@@ -499,6 +513,8 @@ impl RunError {
             | RunCause::Json(_)
             | RunCause::ClauseRequest { .. }
             | RunCause::ClocksGivenTwice
+            | RunCause::OutputGivenTwice
+            | RunCause::OutputExists { .. }
             | RunCause::Output(_)
             | RunCause::ClauseOutput(_)
             | RunCause::Format
@@ -780,6 +796,11 @@ pub fn compile_outcome_with_overrides(
 ) -> std::result::Result<CompileOutcome, Box<RunError>> {
     with_request(path, |directory, bytes| {
         let request: wire::CompileRequest = request_with_overrides(bytes, overrides)?;
+        let output = match (&request.output, overrides.output) {
+            (Some(_), Some(_)) => return Err(RunCause::OutputGivenTwice),
+            (Some(member), None) => Some(directory.join(&member.package)),
+            (None, supplied) => supplied.map(Path::to_path_buf),
+        };
         if request.program.extraction {
             return Err(RunCause::ExtractionRequiresRun);
         }
@@ -810,7 +831,11 @@ pub fn compile_outcome_with_overrides(
             require_complete_edition(source.source())?;
             sources.push(source);
         }
-        complete(&request, &mut intake, &sources)
+        let outcome = complete(&request, &mut intake, &sources)?;
+        if let Some(output) = output {
+            output_file::write_new_file(&output, &outcome.package_bytes)?;
+        }
+        Ok(outcome)
     })
 }
 
@@ -1180,6 +1205,10 @@ pub struct RequestOverrides<'a> {
     /// The `clocks` object, as the driver's `--clocks` file carries it. A request
     /// that also carries `clocks` is refused `invalid-request` at stage `request`.
     pub clocks: Option<&'a serde_json::value::RawValue>,
+    /// The file the checked package is written to, as the driver's `--output`
+    /// names it (FR-810). Only a compile reads it; a request that also carries
+    /// `output` is refused `invalid-request` at stage `request`.
+    pub output: Option<&'a Path>,
 }
 
 fn request_with_overrides<T: wire::ClocksRequest>(

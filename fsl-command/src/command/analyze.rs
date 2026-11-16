@@ -173,6 +173,7 @@ fn read<'d>(
         refinement_internals: request.refinement_internals,
         libraries: request.libraries,
         clocks: Default::default(),
+        output: None,
     };
     Ok((
         AnalyzeInput {

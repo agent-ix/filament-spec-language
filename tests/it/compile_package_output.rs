@@ -29,7 +29,6 @@ fn refusal(path: &Path) -> (u8, Value) {
 /// FR-810-AC-1: the written file holds exactly the package bytes.
 #[test]
 #[trace("TC-2297", "FR-810-AC-1")]
-#[ignore = "QSL-2299: the compile request's `output` member is not implemented yet"]
 fn a_compile_output_member_writes_the_package_file() {
     let directory = tempfile::tempdir().unwrap();
     let path = request(
@@ -37,14 +36,13 @@ fn a_compile_output_member_writes_the_package_file() {
         "tests/fixtures/spine-compile.native",
         json!({"package": "spine.package.json"}),
     );
-    let package = fsl_command::command::compile(&path)
+    // One compile: a second run over the same request refuses (AC-2).
+    let outcome = fsl_command::command::compile_outcome(&path)
         .unwrap_or_else(|error| panic!("{}", error.value().unwrap()));
     assert_eq!(
         std::fs::read(directory.path().join("spine.package.json")).unwrap(),
-        package
+        outcome.package_bytes()
     );
-    let outcome = fsl_command::command::compile_outcome(&path)
-        .unwrap_or_else(|error| panic!("{}", error.value().unwrap()));
     let document: Value = serde_json::from_slice(&outcome.document().to_bytes().unwrap()).unwrap();
     assert_eq!(document["artifacts"], json!([]));
 }
@@ -53,7 +51,6 @@ fn a_compile_output_member_writes_the_package_file() {
 /// directory each refuse, and no file is written or changed.
 #[test]
 #[trace("TC-2297", "FR-810-AC-2")]
-#[ignore = "QSL-2299: the compile request's `output` member is not implemented yet"]
 fn a_compile_output_member_refuses_and_writes_nothing() {
     let directory = tempfile::tempdir().unwrap();
     let existing = directory.path().join("spine.package.json");
@@ -96,40 +93,109 @@ fn a_compile_output_member_refuses_and_writes_nothing() {
     );
     let (exit, value) = refusal(&path);
     assert_eq!(exit, 20, "{value}");
+    assert_eq!(value["code"], "io-error", "{value}");
+    assert!(
+        value.to_string().contains("missing/spine.package.json"),
+        "{value}"
+    );
     assert!(!directory.path().join("missing").exists());
-}
 
-/// FR-810-AC-3: the override entry the driver's `--output` reaches writes
-/// the same bytes. `RequestOverrides` has no `output` member yet, so this
-/// stub drives the entry over a request carrying `output`; the coder adds
-/// `RequestOverrides::output` and asserts the override and the doubly
-/// supplied refusal here.
-#[test]
-#[trace("TC-2297", "FR-810-AC-3")]
-#[ignore = "QSL-2299: RequestOverrides::output and the compile `output` member are not implemented yet"]
-fn the_override_entry_writes_the_same_package_file() {
+    // A program that does not check writes no file and refuses as it does
+    // without `output`.
     let directory = tempfile::tempdir().unwrap();
     let path = request(
         directory.path(),
         "tests/fixtures/spine-compile.native",
-        json!({"package": "cli.package.json"}),
+        json!({"package": "spine.package.json"}),
     );
-    let outcome = fsl_command::command::compile_outcome_with_overrides(
-        &path,
-        &fsl_command::command::RequestOverrides::default(),
-    )
-    .unwrap_or_else(|error| panic!("{}", error.value().unwrap()));
+    std::fs::write(directory.path().join("program.native"), b"not a program").unwrap();
+    let (exit, value) = refusal(&path);
+    assert_ne!(value["code"], "io-error", "{value}");
+    assert_ne!(value["stage"], "request", "{value}");
+    assert_ne!(exit, 0, "{value}");
+    assert!(!directory.path().join("spine.package.json").exists());
+    let mut bare: Value = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+    bare["request"].as_object_mut().unwrap().remove("output");
+    std::fs::write(&path, serde_json::to_vec(&bare).unwrap()).unwrap();
+    let (bare_exit, bare_value) = refusal(&path);
     assert_eq!(
-        std::fs::read(directory.path().join("cli.package.json")).unwrap(),
-        outcome.package_bytes()
+        (exit, &value["code"], &value["stage"], &value["message"]),
+        (
+            bare_exit,
+            &bare_value["code"],
+            &bare_value["stage"],
+            &bare_value["message"]
+        )
     );
+}
+
+/// FR-810-AC-3: `RequestOverrides::output` writes the same bytes as the
+/// request member, and supplying both refuses and writes neither file.
+#[test]
+#[trace("TC-2297", "FR-810-AC-3")]
+fn the_override_entry_writes_the_same_package_file() {
+    let directory = tempfile::tempdir().unwrap();
+    let member = request(
+        directory.path(),
+        "tests/fixtures/spine-compile.native",
+        json!({"package": "spine.package.json"}),
+    );
+    let package = fsl_command::command::compile(&member)
+        .unwrap_or_else(|error| panic!("{}", error.value().unwrap()));
+
+    let bare = tempfile::tempdir().unwrap();
+    let path = request(
+        bare.path(),
+        "tests/fixtures/spine-compile.native",
+        json!({"package": "unused"}),
+    );
+    let mut document: Value = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+    document["request"]
+        .as_object_mut()
+        .unwrap()
+        .remove("output");
+    std::fs::write(&path, serde_json::to_vec(&document).unwrap()).unwrap();
+    let cli = bare.path().join("cli.package.json");
+    let overrides = fsl_command::command::RequestOverrides {
+        output: Some(cli.as_path()),
+        ..Default::default()
+    };
+    let outcome = fsl_command::command::compile_outcome_with_overrides(&path, &overrides)
+        .unwrap_or_else(|error| panic!("{}", error.value().unwrap()));
+    assert_eq!(std::fs::read(&cli).unwrap(), package);
+    assert_eq!(outcome.package_bytes(), package);
+
+    let twice = tempfile::tempdir().unwrap();
+    let path = request(
+        twice.path(),
+        "tests/fixtures/spine-compile.native",
+        json!({"package": "spine.package.json"}),
+    );
+    let cli = twice.path().join("cli.package.json");
+    let overrides = fsl_command::command::RequestOverrides {
+        output: Some(cli.as_path()),
+        ..Default::default()
+    };
+    let error = fsl_command::command::compile_outcome_with_overrides(&path, &overrides)
+        .err()
+        .expect("both destinations refuse");
+    let value = error.value().unwrap();
+    assert_eq!(error.category().exit_code(), 20, "{value}");
+    assert_eq!(value["code"], "invalid-request", "{value}");
+    assert_eq!(value["stage"], "request", "{value}");
+    let text = value.to_string();
+    assert!(
+        text.contains("output") && text.contains("--output"),
+        "{value}"
+    );
+    assert!(!cli.exists() && !twice.path().join("spine.package.json").exists());
 }
 
 /// FR-810-AC-5: `output` and `handoff` are independent writes, and an
 /// `output` path inside the handoff directory refuses naming both.
 #[test]
 #[trace("TC-2297", "FR-810-AC-5")]
-#[ignore = "QSL-2299: the compile request's `output` member is not implemented yet"]
+#[ignore = "QSL-2299: needs the compile request's `handoff` member, which QSL-2193 (#2730) adds and main lacks"]
 fn output_and_handoff_are_independent_writes() {
     let both = |directory: &Path, output: Value| {
         let path = request(directory, "tests/fixtures/spine-compile.native", output);
