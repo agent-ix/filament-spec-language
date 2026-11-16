@@ -56,7 +56,7 @@ fn run(unit: &str, with_model: bool, member: (&str, Value)) -> (u8, Value) {
 fn write_request(directory: &Path, request: &Value) -> (u8, Value) {
     let path = directory.join("request.json");
     std::fs::write(&path, serde_json::to_vec(request).unwrap()).unwrap();
-    match fsl_command::command::run(&path) {
+    match fsl_command::command::run(&path, &crate::negotiation::Fr290) {
         Ok(result) => (
             result.exit_code,
             serde_json::from_str(&result.value.to_string()).expect("a JSON document"),

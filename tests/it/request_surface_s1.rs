@@ -175,7 +175,7 @@ fn current_clause_request() -> Value {
 fn run_refusal(directory: &Path, request: &Value) -> (u8, Value) {
     let path = directory.join("request.json");
     std::fs::write(&path, serde_json::to_vec(request).unwrap()).unwrap();
-    match fsl_command::command::run(&path) {
+    match fsl_command::command::run(&path, &crate::negotiation::Fr290) {
         Ok(result) => panic!("the request runs: {}", result.value),
         Err(error) => (error.category().exit_code(), error.value().unwrap()),
     }
@@ -451,8 +451,9 @@ fn an_extension_document_is_charged_against_dependent_bytes() {
         dependent_bytes,
         ..fsl_command::command::RunLimits::default()
     };
-    let error = fsl_command::command::run_with_limits(&path, limits(total - 1))
-        .expect_err("one byte over the ceiling refuses");
+    let error =
+        fsl_command::command::run_with_limits(&path, limits(total - 1), &crate::negotiation::Fr290)
+            .expect_err("one byte over the ceiling refuses");
     assert!(
         error
             .value()
@@ -462,8 +463,9 @@ fn an_extension_document_is_charged_against_dependent_bytes() {
         "{}",
         error.value().unwrap()
     );
-    let result = fsl_command::command::run_with_limits(&path, limits(total))
-        .unwrap_or_else(|error| panic!("{}", error.value().unwrap()));
+    let result =
+        fsl_command::command::run_with_limits(&path, limits(total), &crate::negotiation::Fr290)
+            .unwrap_or_else(|error| panic!("{}", error.value().unwrap()));
     assert_eq!(result.exit_code, 0, "{}", result.value);
 }
 
@@ -679,7 +681,7 @@ fn snapshot_refusals_carry_a_document_locus() {
         serde_json::to_vec(&current_clause_request()).unwrap(),
     )
     .unwrap();
-    let text = match fsl_command::command::run(&path) {
+    let text = match fsl_command::command::run(&path, &crate::negotiation::Fr290) {
         Ok(result) => result.value.to_string(),
         Err(error) => error.value().unwrap().to_string(),
     };
@@ -687,8 +689,11 @@ fn snapshot_refusals_carry_a_document_locus() {
     for fragment in ["\"locus\"", "\"member\":\"parent\"", "\"key\":\"child\""] {
         assert!(text.contains(fragment), "{fragment}: {text}");
     }
-    let absent = fsl_command::command::run(&directory.path().join("absent.json"))
-        .expect_err("an absent request refuses");
+    let absent = fsl_command::command::run(
+        &directory.path().join("absent.json"),
+        &crate::negotiation::Fr290,
+    )
+    .expect_err("an absent request refuses");
     let document: Value = serde_json::from_slice(
         &absent
             .outcome_document(fsl_replay::Operation::Execute)

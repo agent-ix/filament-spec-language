@@ -725,6 +725,7 @@ pub(super) fn run_bytes(
             "summary": summary.value,
         })),
         outcome: Some(summary.outcome),
+        requirements: None,
     })
 }
 

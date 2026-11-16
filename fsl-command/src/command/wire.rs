@@ -197,6 +197,10 @@ pub(super) struct Call {
     /// FR-100: the call's accounting limits by counter name; absent is `{}`.
     #[serde(default, deserialize_with = "from_object")]
     pub accounting: Accounting,
+    /// FR-960: the call's requirement settlement and the backends of its
+    /// items, read by `requirements::read`; absent settles no item.
+    #[serde(default, deserialize_with = "present_json_value")]
+    pub requirements: Option<serde_json::Value>,
 }
 
 /// The `accounting` member of a [`Call`] (FR-100): any subset of the ten

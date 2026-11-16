@@ -310,7 +310,9 @@ fn clause_run_command_uses_explicit_current_self_and_anchor() {
         };
         assert_eq!(self_object.expect("a named self").key, "child");
         assert_eq!(anchor.name, "validate");
-        let driver = fsl_command::command::run(&path.join("request.json")).unwrap();
+        let driver =
+            fsl_command::command::run(&path.join("request.json"), &crate::negotiation::Fr290)
+                .unwrap();
         assert_eq!(output.stdout, format!("{}\n", driver.value).into_bytes());
         assert_eq!(driver.exit_code, exit as u8);
     }

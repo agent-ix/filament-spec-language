@@ -37,6 +37,7 @@ mod source_corpus;
 #[cfg(feature = "checked-handoff")]
 mod selected_object_closure;
 
+pub(crate) mod negotiation;
 #[path = "../support/mod.rs"]
 pub(crate) mod support;
 
