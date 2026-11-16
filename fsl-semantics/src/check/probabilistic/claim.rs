@@ -425,9 +425,9 @@ pub enum ClaimActivation {
         /// The activation binder's name.
         binder: String,
         /// The object type whose population supplies instances.
-        value_type: ValueType,
+        value_type: Box<ValueType>,
         /// The checked activation guard, when written.
-        guard: Option<CheckedBody>,
+        guard: Option<Box<CheckedBody>>,
         /// The guard's evaluation slot count.
         guard_slots: usize,
         /// The guard's stable normal-form encoding.
@@ -802,8 +802,7 @@ impl Pass<'_, '_> {
                 &claim,
                 &profile,
                 &scheduler,
-                &fairness,
-                activation.as_ref()?,
+                (&fairness, activation.as_ref()?),
                 &form_checked,
                 confidence.as_ref(),
             ),
@@ -872,7 +871,7 @@ impl Pass<'_, '_> {
         let Some(guard) = when else {
             return Ok(ClaimActivation::Each {
                 binder: parameter.name.name.clone(),
-                value_type,
+                value_type: Box::new(value_type),
                 guard: None,
                 guard_slots: 0,
                 guard_normal_form: None,
@@ -921,12 +920,12 @@ impl Pass<'_, '_> {
         .check(body.root())?;
         Ok(ClaimActivation::Each {
             binder: parameter.name.name.clone(),
-            value_type,
+            value_type: Box::new(value_type),
             guard_normal_form: Some(encode_predicate(
                 &guard.expression,
                 Some(parameter.name.name.as_str()),
             )),
-            guard: Some(body),
+            guard: Some(Box::new(body)),
             guard_slots: slots,
         })
     }
@@ -1848,7 +1847,7 @@ impl Pass<'_, '_> {
             binder, value_type, ..
         }) = claim.activation
         {
-            bound.push((binder.clone(), value_type.clone()));
+            bound.push((binder.clone(), (**value_type).clone()));
         }
         let input = self.input;
         let mut typer = Typer::new(
@@ -2033,8 +2032,7 @@ impl Pass<'_, '_> {
         claim: &ClaimCx<'_>,
         profile: &DefinitionRef,
         scheduler: &ProbScheduler,
-        fairness: &[FairnessConstraint],
-        activation: &ClaimActivation,
+        (fairness, activation): (&[FairnessConstraint], &ClaimActivation),
         form: &ProbForm,
         confidence: Option<&Confidence>,
     ) -> Result<ClaimNormalForm, CheckRefusal> {
