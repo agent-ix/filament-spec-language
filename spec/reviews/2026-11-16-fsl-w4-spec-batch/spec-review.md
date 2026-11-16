@@ -89,3 +89,22 @@ tests/it/main.rs, so expect textual conflicts.
 | FND-003 | fixed | `missing-clock-selection` names the clock and the library in FR-640, FR-640-AC-11, FSpec FR-323 and FR-323-AC-38. The stub asserts the library name. |
 | FND-004 | fixed | The FR-495-AC-20 stub asserts the refusal's origin is `f`'s body and its path is the root, the `mod`. |
 | FND-005 | fixed | The option_values test admits `function a using v(): Option<Integer> pure { absent }`; TC-2214 lists it. |
+
+## Round 2 (language c27aefa5c, standard 711cd5b8a)
+
+I checked each disposition against the fix commits.
+
+| ID | Round-2 verdict | Evidence |
+| --- | --- | --- |
+| FND-001 | fixed | In FSpec FR-323 the clock text now follows the numbered list. Rule 2 holds `missing-clock-selection` and `clock-kind-mismatch`. The new rule 4, "after every recompile", holds `unused-clock-selection`. FR-640 states the same rule numbers and the same pointers. |
+| FND-002 | fixed | FR-640, FSpec FR-322 and FSpec FR-323 all say library units are served "from `dependency_clock_selections` entries alone, never from a program row". FR-640 and FR-322 say the entry is written even for a clock name the program shares. FR-640-AC-11, FR-323-AC-38, TC-1662 step 3 and the SHARED replay stub case cover a package without the member whose program row remains. |
+| FND-003 | fixed | `missing-clock-selection` names the clock and the library in FR-640, AC-11, FR-323 and AC-38. The stub asserts `test/plant` in the refusal. |
+| FND-004 | fixed | The stub asserts that the origin is `Body { function: "f" }` and that the path is empty, which is the `mod` at the root of the body. |
+| FND-005 | fixed | An `absent` case was added to the admitted loop. |
+
+The fixes add no new problems. The rule order and pointers agree across FSpec
+FR-323 and FR-640. Rule 4 cannot misfire on a clock that the program and a
+library share, because the library reads that entry. The fix round adds no new
+ids: the TC sets are unchanged and so are the AC maxima.
+
+Round-2 verdict: APPROVE.
