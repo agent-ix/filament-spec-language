@@ -31,3 +31,13 @@ Each examined AC names concrete fixtures and exact values: counts, basis, backen
 ## Verdict
 
 PASS WITH ONE LOW.
+
+## Dispositions
+
+Round 1, verified at b3ee227de56d7909ddfd92346cf289c31aa1aac4.
+
+| FND | Outcome | Reason |
+| --- | --- | --- |
+| FND-001 | fixed | FR-634-AC-5 now requires `coverage.states` to equal the distinct states on the three reported traces, and `coverage.transitions` the distinct steps on them. TC-2293 and the stub assert both, so the criterion can fail. |
+
+Round 1 verdict: APPROVE.

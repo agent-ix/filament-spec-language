@@ -27,3 +27,13 @@ Evidence is the quire grammar lint from `quire validate --scope . 'spec/**/*.md'
 ## Verdict
 
 PASS WITH ONE LOW. FR-810's Behavior bullets put the unwanted-behaviour cases in If/then form with the command as the subject.
+
+## Dispositions
+
+Round 1, verified at b3ee227de56d7909ddfd92346cf289c31aa1aac4. The quire grammar lint reports no warning on any changed file.
+
+| FND | Outcome | Reason |
+| --- | --- | --- |
+| FND-001 | fixed | FR-287:100 now reads "The driver shall hand `--output <file>` on `compile` to ...". The new FR-287 and FR-810 statements name their subject (the driver, the command). |
+
+Round 1 verdict: APPROVE.

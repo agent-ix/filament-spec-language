@@ -61,3 +61,20 @@ Item 3 (EN-7) follows FR-620-AC-8, and FR-489 is amended to match. The knock-on 
 Items 5 to 7 agree with FR-093/FR-495 as merged (#2745), FSpec FR-331's two artifacts and `settled_by`, and FR-267 with FSpec FR-352.
 
 FR-504-AC-1 against FR-266 is settled cleanly through `ClauseRunReport::finite_window`, which exists in `fsl-replay/src/spine/clause.rs`.
+
+## Dispositions
+
+Round 1, verified at b3ee227de56d7909ddfd92346cf289c31aa1aac4. After the fixes, `quire validate --scope . 'spec/**/*.md'` exits 0, with no warning on any changed file.
+
+| FND | Outcome | Reason |
+| --- | --- | --- |
+| FND-001 | fixed | FR-243 and FR-632 now say EN-1's digital-clock route declines before any search, with `settled_by` `result` and `backend` `en-1`, and "no search runs". FR-632-AC-4 and FR-243-AC-4 say the same, and the TC-2290 stub asserts both members. |
+| FND-002 | fixed | Lead ruling: `options.method` is a provider option negotiated against the manifests. EN-1 publishes `digital-clocks` and EN-6 publishes `zones` (its default), as FR-243 and FR-632 now state. FR-243-AC-4 adds that an absent `method` negotiates to EN-6. |
+| FND-003 | fixed | FR-635's new section "One rule for every provider-routing entry" covers analyze, prove, monitor, replay and generate. FR-287, FR-644 (`command::monitor`) and FR-280 (the prove, replay and generate entries) refer to it. |
+| FND-004 | fixed | FR-634 now reads "lies on at least one reported trace and each leaf ends exactly one ... no more traces than states". |
+| FND-005 | fixed | FR-810 now makes `output` and `handoff` independent writes, drops "around it", and adds an If/then refusal for an `output` inside the `handoff` directory, naming both members before any write. FR-810-AC-5 and its stub cover the refusal. |
+| FND-006 | fixed | The driver sentence is now FR-810-AC-4, verified "Driver test (TC-2297)" in filament-driver under QSL-2299. TC-2297 step 4 covers it. |
+| FND-007 | fixed | FR-287 now reads "remain in-process command products, except the files the command writes to disk on request: FR-665's handoff directory and FR-810's package file". |
+| FND-008 | fixed | FR-495 and FR-093 now apply the hull rule only to an integer-typed control node (checked type `Integer` or an `Int[..]`). Every other control node's lowered type is its checked type. |
+
+Round 1 verdict: APPROVE. Every finding is fixed.
