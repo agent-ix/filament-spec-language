@@ -240,6 +240,28 @@ pub(super) struct Call {
     /// FR-100: the call's accounting limits by counter name; absent is `{}`.
     #[serde(default, deserialize_with = "from_object")]
     pub accounting: Accounting,
+    /// NFR-130: evaluation limits that are independent of the ten kernel
+    /// accounting counters.
+    #[serde(default, deserialize_with = "from_object")]
+    pub evaluation: EvaluationLimits,
+}
+
+/// The call-local evaluation ceilings (NFR-130).
+#[derive(Default, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(super) struct EvaluationLimits {
+    /// The active function-frame and bound-argument occurrence ceiling.
+    #[serde(default, deserialize_with = "evaluation_live_occurrences")]
+    pub live_occurrences: Option<u64>,
+}
+
+fn evaluation_live_occurrences<'de, D: serde::Deserializer<'de>>(
+    decoder: D,
+) -> Result<Option<u64>, D::Error> {
+    let value = serde_json::Value::deserialize(decoder)?;
+    value.as_u64().map(Some).ok_or_else(|| {
+        serde::de::Error::custom("live_occurrences must be a non-negative JSON integer")
+    })
 }
 
 /// The `accounting` member of a [`Call`] (FR-100): any subset of the ten
