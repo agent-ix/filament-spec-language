@@ -1004,7 +1004,7 @@ mod tests {
         let variant = VariantId::new(crate::fixture_node(7), "busy").expect("a variant has a name");
         let values = [
             Value::Enum(EnumMember::new(variant, 1)),
-            Value::Decimal(Decimal::new(Integer::from(-1250), 2)),
+            Value::Decimal(Decimal::new(Integer::from(-1250_i64), 2)),
             Value::Timestamp(
                 Timestamp::from_canonical_text("1700000000000000123").expect("canonical"),
             ),
