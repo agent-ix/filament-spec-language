@@ -6,12 +6,15 @@
 //! checkout (`FSL_EXAMPLES_DIR`) are both required; a missing one is an
 //! error, never a skip. The driver's `tests/examples_gate.rs` runs with
 //! `FSL_LANGUAGE_DIR` naming this workspace, which makes it patch every
-//! language package of its `fsl` build to this checkout's crates and leave the
-//! driver's `Cargo.lock` as it was.
+//! language package of its `fsl` build to this checkout's crates, in a copy of
+//! the driver workspace, and print the line [`BUILT_FROM`] naming this
+//! checkout. The command fails when that line is missing or names another
+//! path: an older driver ignores `FSL_LANGUAGE_DIR` and builds `fsl` from git.
 
 use std::ffi::OsString;
+use std::io::{self, Write};
 use std::path::{Path, PathBuf};
-use std::process::Command;
+use std::process::{Command, Stdio};
 
 use crate::error::{Error, Result};
 
@@ -73,6 +76,31 @@ pub fn checkouts() -> Result<(PathBuf, PathBuf)> {
     Ok((driver, examples))
 }
 
+/// The line prefix the driver gate prints once it has checked that its `fsl`
+/// build took every language package from the named checkout (driver
+/// FR-021-AC-7).
+pub const BUILT_FROM: &str = "fsl built from language checkout ";
+
+/// Checks the driver gate's output for the line naming `language` as the
+/// checkout its `fsl` was built from. A driver that predates the
+/// `FSL_LANGUAGE_DIR` build prints none and tests `fsl` from git; a line
+/// naming another path tested another checkout.
+pub fn check_built_from(stdout: &str, language: &Path) -> Result<()> {
+    let reported: Vec<&str> = stdout
+        .lines()
+        .filter_map(|line| line.split_once(BUILT_FROM).map(|(_, path)| path.trim_end()))
+        .collect();
+    let expected = language.to_string_lossy();
+    let other = reported.iter().find(|path| **path != expected);
+    if reported.is_empty() || other.is_some() {
+        return Err(Error::ExamplesCheckUnverified {
+            language: language.to_path_buf(),
+            reported: other.map(|path| (*path).to_owned()),
+        });
+    }
+    Ok(())
+}
+
 /// Runs the driver's examples gate over the named checkouts with `fsl` built
 /// from `workspace`.
 pub fn run(workspace: &Path) -> Result<String> {
@@ -81,20 +109,38 @@ pub fn run(workspace: &Path) -> Result<String> {
         .canonicalize()
         .map_err(|source| Error::io(workspace, source))?;
     // The driver's own toolchain file and target directory apply: the
-    // gate is the driver's test, built in the driver workspace.
-    let status = Command::new("cargo")
+    // gate is the driver's test, built in the driver workspace. Its stdout
+    // is read for the built-from line, then passed on.
+    let output = Command::new("cargo")
         .current_dir(&driver)
-        .args(["test", "--locked", "--test", "examples_gate"])
+        .args([
+            "test",
+            "--locked",
+            "--test",
+            "examples_gate",
+            "--",
+            "--nocapture",
+        ])
         .env(EXAMPLES_VAR, &examples)
         .env(LANGUAGE_VAR, &language)
         .env_remove("RUSTUP_TOOLCHAIN")
         .env_remove("CARGO")
         .env_remove("CARGO_TARGET_DIR")
-        .status()
+        .stdin(Stdio::null())
+        .stderr(Stdio::inherit())
+        .output()
         .map_err(|source| Error::ExamplesCheckSpawn { source })?;
-    if !status.success() {
-        return Err(Error::ExamplesCheckFailed { status });
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    io::stdout()
+        .lock()
+        .write_all(stdout.as_bytes())
+        .map_err(|source| Error::io("<stdout>", source))?;
+    if !output.status.success() {
+        return Err(Error::ExamplesCheckFailed {
+            status: output.status,
+        });
     }
+    check_built_from(&stdout, &language)?;
     Ok(format!(
         "examples-check: {} passed with fsl built from {}\n",
         examples.display(),

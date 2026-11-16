@@ -79,8 +79,22 @@ fn triggers(workflow: &str) -> Result<Vec<String>, String> {
     let inline = lines[at].split_once(':').map_or("", |(_, v)| v);
     let inline = inline.split('#').next().unwrap_or_default().trim();
     if !inline.is_empty() {
-        let names = inline.trim_start_matches('[').trim_end_matches(']');
-        return Ok(names.split(',').map(unquote).collect());
+        // Fail closed on any inline form this reader does not split: a flow
+        // mapping, or a flow list that continues onto later lines.
+        if inline.starts_with('{') {
+            return Err(format!("`on: {inline}` is a flow mapping; write a block"));
+        }
+        let names = match inline.strip_prefix('[') {
+            Some(list) => list
+                .strip_suffix(']')
+                .ok_or_else(|| format!("`on: {inline}` has an unclosed `[`"))?,
+            None => inline,
+        };
+        let names: Vec<String> = names.split(',').map(unquote).collect();
+        if names.iter().any(String::is_empty) {
+            return Err(format!("`on: {inline}` gives an empty trigger name"));
+        }
+        return Ok(names);
     }
     let block = lines[at + 1..]
         .iter()
@@ -152,5 +166,17 @@ fn the_trigger_reader_finds_every_spelling_of_push() {
             "{workflow}"
         );
     }
-    assert!(triggers("name: x\njobs:\n").is_err());
+    // Spellings the reader cannot split are refused, so the workflow scan
+    // fails instead of reading a push trigger as some other name.
+    let refused = [
+        ("name: x\njobs:\n", "no top-level `on:` key"),
+        ("on: {push: {branches: [main]}}\n", "flow mapping"),
+        ("on: [\n  push,\n  workflow_dispatch]\n", "unclosed `[`"),
+        ("on: [push,\n  pull_request]\n", "unclosed `[`"),
+        ("on: [push, , workflow_dispatch]\n", "empty trigger name"),
+    ];
+    for (workflow, reason) in refused {
+        let error = triggers(workflow).expect_err(workflow);
+        assert!(error.contains(reason), "`{error}` does not say `{reason}`");
+    }
 }

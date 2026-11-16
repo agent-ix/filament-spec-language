@@ -45,7 +45,14 @@ workflows run only on `workflow_dispatch` to save CI minutes, so the local
   `cargo test --locked --test examples_gate` in the driver checkout with
   `FSL_EXAMPLES_DIR` set and `FSL_LANGUAGE_DIR` naming this workspace, which
   makes the driver gate patch every language package of its `fsl` build to
-  this checkout's crates and leave the driver's `Cargo.lock` unchanged.
+  this checkout's crates in a copy of the driver workspace, never writing the
+  driver's `Cargo.lock`.
+- When the driver gate passes, `cargo xtask examples-check` SHALL fail unless
+  the gate's output has a line `fsl built from language checkout <path>`
+  naming this checkout's absolute path and no such line naming another path.
+  A driver older than its FR-021-AC-7 ignores `FSL_LANGUAGE_DIR`, builds `fsl`
+  from git and prints no such line, so it cannot pass as a check of this
+  checkout.
 - `make examples-check` SHALL run that command and then the
   `xtask/tests/examples_check.rs` negative check; the Makefile only passes the
   variables through.
@@ -64,6 +71,7 @@ workflows run only on `workflow_dispatch` to save CI minutes, so the local
 | FR-765-AC-2 | No `.github/workflows/*.yml` declares a `push` or `pull_request` trigger, in scalar, flow-list or block form. | Test (TC-2191) |
 | FR-765-AC-3 | With `FSL_EXAMPLES_DIR` naming a copy of the suite in which one running case's recorded `category` differs from what this checkout's `fsl` gives, `make examples-check` exits nonzero and its output names that case as `<system>/<case>` and reports the failed driver gate. | Test (TC-2192) |
 | FR-765-AC-4 | With `FSL_DRIVER_DIR` empty or naming an absent folder, or `FSL_EXAMPLES_DIR` naming an absent folder or one without `tools/fsl-examples/Cargo.toml`, `make examples-check` exits nonzero with a message naming the variable, the folder and the missing file, and runs no later recipe line. | Test (TC-2193) |
+| FR-765-AC-5 | With a driver gate that passes and prints no `fsl built from language checkout` line, or prints one naming another path, `make examples-check` exits nonzero and names this checkout (and the other path); with one naming this checkout it exits 0. | Test (TC-2194) |
 
 ## Dependencies
 

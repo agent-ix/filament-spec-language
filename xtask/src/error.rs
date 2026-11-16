@@ -149,6 +149,15 @@ pub enum Error {
         #[source]
         source: io::Error,
     },
+    /// FR-765: the driver gate passed without reporting that it built `fsl`
+    /// from this checkout.
+    #[error("examples-check: the driver examples gate did not report building fsl from {language}{}; the sibling driver may predate the FSL_LANGUAGE_DIR build (driver FR-021-AC-7), so update it", reported.as_ref().map(|path| format!(" (it reported {path})")).unwrap_or_default())]
+    ExamplesCheckUnverified {
+        /// This language checkout.
+        language: PathBuf,
+        /// The other checkout the gate reported, if it reported one.
+        reported: Option<String>,
+    },
     /// FR-765: the driver gate failed with this checkout's `fsl`.
     #[error("examples-check: the driver examples gate failed with {status}")]
     ExamplesCheckFailed {
@@ -459,9 +468,9 @@ impl Error {
             Self::ExamplesCheckUnset { .. } | Self::ExamplesCheckMissing { .. } => {
                 Code::ExamplesCheckInput
             }
-            Self::ExamplesCheckSpawn { .. } | Self::ExamplesCheckFailed { .. } => {
-                Code::ExamplesCheck
-            }
+            Self::ExamplesCheckSpawn { .. }
+            | Self::ExamplesCheckFailed { .. }
+            | Self::ExamplesCheckUnverified { .. } => Code::ExamplesCheck,
         }
     }
 
