@@ -20,7 +20,7 @@ Verify FR-634's simulation item. Scope: FR-634-AC-1 to FR-634-AC-3.
 
 ## Expected Results
 
-- Step 1: `success`, `coverage` 4 states and 3 transitions, a trace to 3, empty frontier.
+- Step 1: `success`, `coverage` 4 states, 3 transitions and 0 choices, exactly one trace from 0 to 3, empty frontier.
 - Step 2: `incomplete` `LimitReached{max_states}`, non-empty frontier.
 - Step 3: equal documents.
 - Assertions compare the outcome document's typed members and the exit code, never message text.

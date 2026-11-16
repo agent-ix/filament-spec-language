@@ -102,6 +102,12 @@ change `WireFormat` names `native-run-result/2` and no `native-run-result/1`
   the members FSpec FR-352 defines for them, `basis` on every
   document, and `witness` exactly when `basis` is
   `decisive-counterexample` or `decisive-witness`.
+- A clause-run document over a `model` trace SHALL carry `limits`, FSpec
+  FR-352's closed object of the effective evaluation limits keyed by setting
+  name, `{"expansion.max_candidates": "N"}` with the default 1,000,000
+  written when the request set none (FR-641); a document over any other
+  trace SHALL carry no `limits`. The reader SHALL refuse the document
+  otherwise, as FSpec FR-352 states.
 - For FR-115's evaluated `Frame` violation, the writer SHALL encode
   `disposition.refusal.frame_witness` as the complete FR-115 `FrameWitness`
   under the closed form below. The enclosing `refusal` retains

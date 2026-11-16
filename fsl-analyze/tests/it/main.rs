@@ -6,6 +6,7 @@ mod analyze_cli;
 mod analyze_cli_support;
 mod analyze_coverage_cli;
 mod analyze_family_cli;
+mod analyze_reach_rulings;
 mod analyze_request_wire;
 mod analyze_wire;
 mod bounded_closure;

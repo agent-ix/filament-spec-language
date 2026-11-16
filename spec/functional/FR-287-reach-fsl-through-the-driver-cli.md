@@ -97,6 +97,11 @@ FR-298) and takes FR-285's exit code.
   the `parse`, `format`, `run` and `compile` verbs shall be as FR-287-AC-3 to
   FR-287-AC-9 state; the driver implements them and TC-1262 specifies the
   tests that bind them.
+- `--output <file>` on `compile` shall be handed to
+  `fsl_command::command::compile_outcome_with_overrides` as `RequestOverrides::output`, which writes
+  the checked package to that file as FR-810 states; the driver writes no
+  package bytes of its own for it, and `--output` on any other verb is an
+  unknown option (FSpec FR-301).
 - `--provider-config <file>` on the verbs that route items to providers
   (`analyze`, `prove`, `monitor`, `replay`, `generate`) shall read FSpec
   FR-561's `filament.provider-config/v1` document: its shape (`format`,

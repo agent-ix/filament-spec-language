@@ -150,8 +150,11 @@ refused. The member's bytes are what a later request's `ledger` file holds.
   the run reconstructs each step's successor candidates (FR-329, FR-330): a
   positive integer from 1 to 2^53 - 1, and 1,000,000 when absent. The
   request is the caller FR-255 names for this setting, so a request file can
-  raise or lower the bound exactly as an in-process caller does, and the
-  bound enters the run's result identity with the other limits. A
+  raise or lower the bound exactly as an in-process caller does. The run
+  writes the effective bound, the default included, in the result's
+  `limits` member as `{"expansion.max_candidates": "N"}` (FR-267, FSpec
+  FR-352), so the bound is part of the result document and of its identity:
+  two runs that differ only in it write unequal documents. A
   `max_candidates` of 0, of a wrong JSON type, or on a trace member other
   than `model` SHALL refuse `invalid-request` at stage `request`, exit 20,
   naming the member.
@@ -187,6 +190,7 @@ refused. The member's bytes are what a later request's `ledger` file holds.
 | FR-641-AC-5 | Reading a ledger file and writing it back from a run that changes nothing reproduces its bytes. | Test (TC-1663) |
 | FR-641-AC-6 | Through `command::run`, a `timestamped` trace of `T` whose progress watermark is `{"half_open": 0}` refuses `invalid-request` at stage `request`, exit 20, naming `trace.progress.watermark.half_open`, with no result document; the same request with `{"half_open": 6}` reports the outcome of the request with watermark 5. | Test (TC-2241) |
 | FR-641-AC-7 | Through `command::run`, FR-330-AC-16's `Model` trace written as a `model` member with no `max_candidates` reports FR-330-AC-16's outcome under the bound 1,000,000; with `max_candidates` 1 over a step whose reconstruction expands two candidates it reports `incomplete`, exit 22, with `LimitReached{limit: max_candidates, value: 1, setting: expansion.max_candidates}` and no truth; with `max_candidates` equal to the largest candidate count of any step it reports FR-330-AC-16's outcome, never `incomplete`; `max_candidates` 0, and `max_candidates` on a `lasso` member, refuse `invalid-request` at stage `request`, exit 20, naming the member; two runs differing only in `max_candidates` give different result identities. | Test (TC-2246) |
+| FR-641-AC-8 | Through `command::run`, FR-641-AC-7's `model` trace with no `max_candidates` writes a result whose `limits` member is `{"expansion.max_candidates": "1000000"}`, and with `max_candidates` 5 one whose `limits` is `{"expansion.max_candidates": "5"}` and that is otherwise equal; a run over a `finite` sample trace writes no `limits` member. | Test (TC-2299) |
 
 ## Dependencies
 
