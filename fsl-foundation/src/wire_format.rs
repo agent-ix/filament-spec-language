@@ -29,6 +29,8 @@ formats! {
     CompileRequest => "native-compile/1",
     /// FR-620: an analyze request over every behaviour of a subject.
     AnalyzeRequest => "native-analyze/1",
+    /// FR-644: a monitor request over a stream of observation records.
+    MonitorRequest => "native-monitor/1",
     /// Native clause-run result or command-error envelope.
     RunResult => "native-run-result/2",
     /// Source-aware rule-model authoring profile.

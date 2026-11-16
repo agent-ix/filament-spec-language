@@ -249,10 +249,12 @@ pub use protocol_proof::{
 pub mod query_proof;
 mod request;
 pub use request::{
-    read_clause_run_request, AnchorWire, ClauseArgumentWire, ClauseRequestParts,
-    ClauseRequestReadError, ClauseRunSelectionWire, ClauseSelectionParts, ClauseSelectionPartsKind,
-    ClauseSelectionWire, FrameSelectionWire, FunctionSelectionWire, ObjectReferenceWire,
-    ObservationLimitsWire, SuppliedObservation,
+    read_clause_run_request, read_cover, read_lower_boundary, read_progress_assertion,
+    read_sample_text, read_trace_binding, AnchorWire, BindingWire, ClauseArgumentWire,
+    ClauseRequestParts, ClauseRequestReadError, ClauseRunSelectionWire, ClauseSelectionParts,
+    ClauseSelectionPartsKind, ClauseSelectionWire, CoverWire, FrameSelectionWire,
+    FunctionSelectionWire, LowerBoundaryWire, ObjectReferenceWire, ObservationLimitsWire,
+    OrderKeyWire, ProgressWire, SuppliedObservation,
 };
 // FR-116: FR-115's frame run, shared with the frame replay (`crate::execute`).
 pub(crate) use clause::{check_clause_admitted, check_frame, ClauseCheck, CompiledRun, FrameCheck};

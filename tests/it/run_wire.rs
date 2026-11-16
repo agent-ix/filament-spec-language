@@ -733,7 +733,6 @@ fn a_timed_clause_over_untimed_samples_refuses_with_profile_and_kinds() {
     "FSpec-TC-1162",
     "FSpec-FR-114-AC-5"
 )]
-#[ignore = "QSL-1977: the monitor command does not run a record stream yet"]
 fn the_monitor_stream_equals_a_clause_run_over_each_prefix() {
     let directory = tempfile::tempdir().unwrap();
     let levels = [0, 1, 2, 1];
@@ -744,11 +743,11 @@ fn the_monitor_stream_equals_a_clause_run_over_each_prefix() {
     records.push(json!({"end": "open"}).to_string());
     std::fs::write(directory.path().join("records.jsonl"), records.join("\n")).unwrap();
     let request = json!({"format": "native-monitor/1", "request": {
-        "models": [], "program": program(), "clocks": clocks(),
+        "models": [], "program": program(), "clocks": trace_clocks(),
         "clauses": [{"name": "Reaches"}, {"name": "Never"}],
         "trace": {"kind": "finite"},
         "records": "records.jsonl"}});
-    let output = run_file(&write(directory.path(), "monitor.json", &request));
+    let output = run_file(&write_trace(directory.path(), "monitor.json", &request));
     assert_eq!(output.status.code(), Some(10));
     let run = result(&output);
     assert_eq!(run["format"], "filament.monitor-run/1", "{run}");
@@ -756,23 +755,36 @@ fn the_monitor_stream_equals_a_clause_run_over_each_prefix() {
 
     for clause in ["Reaches", "Never"] {
         let mut status = Value::Null;
+        let mut decided = 0;
+        let batch_of = |upto: usize| {
+            let prefix = trace_request(json!({"name": clause,
+                "trace": {"finite": samples(&levels[..=upto])}}));
+            result(&run_file(&write_trace(
+                directory.path(),
+                &format!("{clause}-{upto}.json"),
+                &prefix,
+            )))
+        };
         for record in 0..levels.len() {
             if let Some(event) = events
                 .iter()
                 .find(|event| event["record"] == record && event["clause"] == clause)
             {
                 status = event["disposition"].clone();
+                decided = record;
             }
-            let prefix = run_request(json!({"name": clause,
-                "trace": {"finite": samples(&levels[..=record])}}));
-            let batch = result(&run_file(&write(
-                directory.path(),
-                &format!("{clause}-{record}.json"),
-                &prefix,
-            )));
+            // A settled result never changes (FR-643-AC-3), so the status
+            // equals the clause run at the record that decided it; its
+            // category equals the clause run over every sample so far.
+            let batch = batch_of(record);
             assert_eq!(
-                status, batch["disposition"],
+                status["category"], batch["disposition"]["category"],
                 "{clause} after record {record}"
+            );
+            assert_eq!(
+                status,
+                batch_of(decided)["disposition"],
+                "{clause} as decided at record {decided}"
             );
         }
         let summary = run["summary"]["clauses"]
@@ -966,12 +978,12 @@ fn monitor_run(
     std::fs::write(directory.join(format!("{name}.jsonl")), lines.join("\n")).unwrap();
     let mut request = request;
     request["request"]["records"] = json!(format!("{name}.jsonl"));
-    run_file(&write(directory, &format!("{name}.json"), &request))
+    run_file(&write_trace(directory, &format!("{name}.json"), &request))
 }
 
 fn monitor_request(clauses: Value, trace: Value) -> Value {
     json!({"format": "native-monitor/1", "request": {
-        "models": [], "program": program(), "clocks": clocks(),
+        "models": [], "program": program(), "clocks": trace_clocks(),
         "clauses": clauses, "trace": trace}})
 }
 
@@ -987,7 +999,6 @@ fn observations(levels: &[i64]) -> Vec<Value> {
 /// ledger; a stamp at the retained watermark is refused and the stream goes on.
 #[test]
 #[trace("TC-1666", "FR-643-AC-2", "TC-1667", "FR-643-AC-5")]
-#[ignore = "QSL-1977: the monitor command does not run a record stream yet"]
 fn a_timestamped_stream_matches_the_batch_run_and_refuses_a_regressing_stamp() {
     let directory = tempfile::tempdir().unwrap();
     let trace = json!({"kind": "timestamped", "lower_boundary": "authoritative-origin",
@@ -1027,17 +1038,16 @@ fn request_batch(directory: &Path) -> Value {
         .into_iter()
         .map(|(stamp, level)| json!({"position": sample(level), "stamp": stamp}))
         .collect();
-    let request = run_request(json!({"name": "T", "trace": {"timestamped": {
+    let request = trace_request(json!({"name": "T", "trace": {"timestamped": {
         "observations": observations, "progress": progress(5),
         "lower_boundary": "authoritative-origin", "binding": binding(STAMPED, "plant-ms")}}}));
-    result(&run_file(&write(directory, "batch.json", &request)))
+    result(&run_file(&write_trace(directory, "batch.json", &request)))
 }
 
 /// FR-643-AC-3, FR-644-AC-1 (TC-1666, TC-1668): a settled violation is
 /// reported once, at the observation that decides it, and never changes.
 #[test]
 #[trace("TC-1666", "FR-643-AC-3", "TC-1668", "FR-644-AC-1")]
-#[ignore = "QSL-1977: the monitor command does not run a record stream yet"]
 fn a_settled_result_is_reported_once_and_never_changes() {
     let directory = tempfile::tempdir().unwrap();
     let mut records = observations(&[0, 1, 2, 1, 0]);
@@ -1074,7 +1084,6 @@ fn a_settled_result_is_reported_once_and_never_changes() {
 /// resumed request give the later events of the uninterrupted stream.
 #[test]
 #[trace("TC-1667", "FR-643-AC-4", "TC-1669", "FR-644-AC-3")]
-#[ignore = "QSL-1977: the monitor command does not checkpoint or resume yet"]
 fn a_checkpointed_stream_resumes_to_the_same_events() {
     let directory = tempfile::tempdir().unwrap();
     let request = monitor_request(
@@ -1115,7 +1124,6 @@ fn a_checkpointed_stream_resumes_to_the_same_events() {
 /// returns the command-error envelope before any record.
 #[test]
 #[trace("TC-1668", "FR-644-AC-2", "TC-1669", "FR-644-AC-4")]
-#[ignore = "QSL-1977: the monitor command does not run a record stream yet"]
 fn a_bad_record_is_an_event_and_a_bad_request_is_refused() {
     let directory = tempfile::tempdir().unwrap();
     let request = monitor_request(json!([{"name": "Never"}]), json!({"kind": "finite"}));
@@ -1290,4 +1298,78 @@ fn a_timed_trace_answers_a_timed_clause() {
     assert_eq!(output.status.code(), Some(0), "{:?}", output.stderr);
     let document = result(&output);
     assert_eq!(document["disposition"]["truth"], true, "{document}");
+}
+
+/// FR-644-AC-1, AC-4 (TC-1668, TC-1669): `command::monitor` hands the sink
+/// each event before reading the next record, gives the events and summary
+/// the batch form gives, and refuses a request naming no clause before any
+/// record is read.
+#[test]
+#[trace("TC-1668", "FR-644-AC-1", "TC-1669", "FR-644-AC-4")]
+fn command_monitor_streams_events_to_its_sink() {
+    use fsl_command::command::{monitor, MonitorEvent, RunLimits};
+
+    let directory = tempfile::tempdir().unwrap();
+    let request = monitor_request(
+        json!([{"name": "Reaches"}, {"name": "Never"}]),
+        json!({"kind": "finite"}),
+    );
+    let path = write_trace(directory.path(), "stream.json", &request);
+    let mut lines: Vec<String> = observations(&[0, 1, 2, 1, 0])
+        .iter()
+        .map(Value::to_string)
+        .collect();
+    lines.push(json!({"end": "closed"}).to_string());
+    let mut seen: Vec<MonitorEvent> = Vec::new();
+    let handed = std::cell::Cell::new(0_usize);
+    let records = lines.iter().enumerate().map(|(index, line)| {
+        // The events of records 0 to 2 are with the sink before record 3 is read.
+        if index == 3 {
+            assert!(handed.get() >= 3, "{}", handed.get());
+        }
+        Ok(line.clone().into_bytes())
+    });
+    let summary = monitor(
+        &path,
+        records,
+        &mut |event| {
+            handed.set(handed.get() + 1);
+            seen.push(event.clone());
+        },
+        RunLimits::default(),
+        &filament_exact::Cancel::new(),
+    )
+    .expect("the stream runs");
+    assert_eq!(summary.exit_code, 10);
+    assert!(
+        seen.iter()
+            .any(|event| event.as_value()["clause"] == "Never"
+                && event.as_value()["category"] == "violation"
+                && event.as_value()["record"] == 2),
+        "{seen:?}"
+    );
+    assert_eq!(
+        summary.as_value()["clauses"][1]["category"],
+        "violation",
+        "{}",
+        summary.as_value()
+    );
+
+    let missing = write_trace(
+        directory.path(),
+        "missing.json",
+        &monitor_request(json!([{"name": "Absent"}]), json!({"kind": "finite"})),
+    );
+    let mut nothing = 0;
+    let refused = monitor(
+        &missing,
+        lines.iter().map(|line| Ok(line.clone().into_bytes())),
+        &mut |_| nothing += 1,
+        RunLimits::default(),
+        &filament_exact::Cancel::new(),
+    );
+    let error = refused.expect_err("an unknown clause is refused");
+    assert_eq!(error.category().exit_code(), 20);
+    assert!(error.to_string().contains("Absent"), "{error}");
+    assert_eq!(nothing, 0);
 }

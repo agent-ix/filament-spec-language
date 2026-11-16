@@ -608,6 +608,8 @@ fn authenticate_trace(
 /// temporal clause `name` of `package`, before any of its positions is
 /// admitted. A clause `package` does not declare, and a `Finite` or `Lasso`
 /// trace, authenticate nothing.
+/// `authentication` is `None` for a caller that holds no emission, which
+/// can check only the kind a `Finite`, `Lasso` or `Model` trace takes.
 ///
 /// # Errors
 ///
@@ -617,7 +619,7 @@ pub fn authenticate_package_trace(
     package: &fsl_package::CheckedPackage,
     name: &str,
     trace: &TraceInput,
-    authentication: TemporalAuthentication<'_>,
+    authentication: Option<TemporalAuthentication<'_>>,
 ) -> Result<(), Box<ClauseDisposition>> {
     let Some(node) = package
         .graph()
@@ -628,7 +630,7 @@ pub fn authenticate_package_trace(
         return Ok(());
     };
     let site = ClauseSite { package, node };
-    authenticate_trace(site, trace, Some(authentication)).map(drop)
+    authenticate_trace(site, trace, authentication).map(drop)
 }
 
 /// FR-283: one temporal clause run over a checked package, with no source to
@@ -652,8 +654,13 @@ pub struct PackageTemporalRequest<'a> {
     pub name: &'a str,
     /// The supplied trace.
     pub trace: &'a TraceInput,
-    /// The object the clause's `over` parameter names.
-    pub over: &'a OverObject,
+    /// The object the clause's `over` parameter names; `None` for a clause
+    /// over a declared record trace subject, whose positions are record
+    /// samples (FR-641).
+    pub over: Option<&'a OverObject>,
+    /// The progress ledger carried into the run (FR-502); `None` starts a
+    /// fresh one for a trace that asserts progress.
+    pub ledger: Option<&'a ProgressLedger>,
     /// The unit's and each library's source the package was checked from;
     /// a locus and an atom name are rendered from them.
     pub sources: &'a [Source],
@@ -693,8 +700,8 @@ pub fn run_package_temporal(request: &PackageTemporalRequest<'_>) -> ClauseRunRe
         &TemporalRun {
             name: request.name,
             trace: request.trace,
-            over: Some(request.over),
-            ledger: None,
+            over: request.over,
+            ledger: request.ledger,
             authentication: request.authentication,
             cancel: Some(request.cancel),
         },

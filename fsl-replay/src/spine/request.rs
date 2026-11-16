@@ -1620,6 +1620,44 @@ pub fn read_clause_run_request(
     })
 }
 
+/// FR-641 `G` as the progress assertion the spine reads.
+///
+/// # Errors
+///
+/// A half-open watermark of 0, which covers no tick.
+pub fn read_progress_assertion(
+    wire: &ProgressWire,
+) -> Result<ProgressAssertion, ClauseRequestReadError> {
+    progress_assertion(wire)
+}
+
+/// FR-641's lower boundary as the spine reads it.
+pub fn read_lower_boundary(wire: LowerBoundaryWire) -> ProgressLowerBoundary {
+    lower_boundary(wire)
+}
+
+/// FR-641 `T` as the trace binding the spine authenticates.
+pub fn read_trace_binding(wire: BindingWire) -> TraceBinding {
+    trace_binding(wire)
+}
+
+/// FR-641 `C` as the cover the spine reads.
+pub fn read_cover(wire: CoverWire) -> TimestampedCover {
+    match wire {
+        CoverWire::Exact => TimestampedCover::Exact,
+        CoverWire::Counter { uncertainty } => TimestampedCover::Counter { uncertainty },
+    }
+}
+
+/// A record sample's canonical JSON object text, the identity of its position.
+///
+/// # Errors
+///
+/// A sample that is not one JSON object.
+pub fn read_sample_text(raw: &RawValue, member: &str) -> Result<String, ClauseRequestReadError> {
+    canonical_sample(raw, member)
+}
+
 #[cfg(test)]
 mod tests {
     use super::snapshot_value;

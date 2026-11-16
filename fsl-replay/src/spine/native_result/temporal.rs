@@ -37,6 +37,9 @@ const MAX_WINDOW_VALUES_SETTING: &str = "monitor.max_window_values";
 /// FR-502's covered-position limit and its setting.
 const COVERED_POSITIONS_LIMIT: &str = "node count";
 const COVERED_POSITIONS_SETTING: &str = "progress.covered_positions";
+/// FR-643's retained-position limit setting, which a monitor session names
+/// in the same record.
+const RETAINED_POSITIONS_SETTING: &str = "monitor.retained_positions";
 
 /// The undefined cause an FR-100 `reason` names: a kernel reason, or a
 /// family reason with the empty payload (the outcome carries no `fields`).
@@ -989,11 +992,15 @@ impl TemporalRecord {
                 value: *value,
                 setting: MAX_WINDOW_VALUES_SETTING,
             },
-            Self::ProgressLimitReached { value, .. } => {
+            Self::ProgressLimitReached { value, setting, .. } => {
                 TemporalVerdict::ProgressLimitReached(ProgressLimitReached {
                     limit: COVERED_POSITIONS_LIMIT,
                     value: *value,
-                    setting: COVERED_POSITIONS_SETTING,
+                    setting: if setting == RETAINED_POSITIONS_SETTING {
+                        RETAINED_POSITIONS_SETTING
+                    } else {
+                        COVERED_POSITIONS_SETTING
+                    },
                 })
             }
             Self::Incomplete {} | Self::ProgressContradicted { .. } | Self::TraceRefused { .. } => {
@@ -1766,7 +1773,8 @@ fn is_window_limit(limit: &str) -> bool {
 /// setting.
 #[ix_trace_rs::string_edge]
 fn is_progress_limit(limit: &str, setting: &str) -> bool {
-    limit == COVERED_POSITIONS_LIMIT && setting == COVERED_POSITIONS_SETTING
+    limit == COVERED_POSITIONS_LIMIT
+        && (setting == COVERED_POSITIONS_SETTING || setting == RETAINED_POSITIONS_SETTING)
 }
 
 /// Whether a window-limit row names `max_window_values` and its setting.
