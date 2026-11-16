@@ -204,6 +204,10 @@ fn modulo_claim_bound_context_and_replay_agree_for_each_consumer() {
         let mut direct_narrow = None;
         let mut narrows = 0;
         while let Some(node) = pending.pop() {
+            assert!(
+                !matches!(node.kind(), NodeKind::ConvertScalar(..)),
+                "{function} needs no synthetic Integer conversion"
+            );
             if matches!(node.kind(), NodeKind::If { .. }) && function != "ifb" {
                 let lowered = graph
                     .semantic_graph()
