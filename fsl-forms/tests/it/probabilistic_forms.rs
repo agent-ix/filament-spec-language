@@ -543,7 +543,9 @@ fn probabilistic_bare_decimal_threshold_parses() {
     assert_eq!(source_of(&text, &threshold), "0.5");
     assert!(matches!(
         threshold.expression.root_node(),
-        ExprNode::DecimalValue { coefficient, scale }
+        ExprNode::DecimalValue {
+            coefficient, scale, ..
+        }
             if coefficient.to_string() == "5" && *scale == 1
     ));
 }

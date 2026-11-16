@@ -22,7 +22,7 @@ use fsl_foundation::diagnostic::Code;
 use fsl_semantics::check::{
     Bound, BoundedMeasure, CheckCause, CheckRefusal, CheckedGraph, CheckingLimitKind, Confidence,
     Event, PackageDeclarations, PreconditionSite, ProbForm, ProbScheduler, ProbabilisticCause,
-    ProbabilisticFeature, ReachTarget, WeightOwner,
+    ProbabilisticFeature, ReachTarget, SemanticNode, WeightOwner,
 };
 use fsl_semantics::model::accounting::ModelNormalizationLimits;
 use fsl_semantics::model::intake::{admit_unit, meaning, package_input};
@@ -349,6 +349,10 @@ fn checked(body: &str) -> CheckedGraph {
     assemble(body)
         .check(CheckMode::Linked, CheckingLimits::default())
         .unwrap_or_else(|refusals| panic!("{body}: the unit checks: {refusals:?}"))
+}
+
+fn semantic_nodes(graph: &CheckedGraph) -> Vec<SemanticNode> {
+    graph.semantic_graph().nodes().cloned().collect()
 }
 
 fn checked_timed_service(body: &str) -> CheckedGraph {
@@ -3444,14 +3448,22 @@ fn a_bounded_profile_refuses_unbounded_operators_by_operator_admission() {
 #[trace("TC-2162", "FR-764-AC-3")]
 #[trace("FSpec-TC-1648", "FSpec-FR-662-AC-2")]
 #[test]
-#[ignore = "QSL-1965: the bare decimal primary not implemented yet"]
 fn a_bare_decimal_literal_is_typed_as_its_constructor() {
     let typed = "type D = Decimal[-1000, 1000; 0, 2; exact];";
-    for literal in ["0.9", "decimal(9, 1)"] {
+    let checked_body = |literal: &str| {
         checked(&service(
             None,
             &format!("{typed}\nfunction f using v(): D pure {{ {literal} }}"),
-        ));
+        ))
+    };
+    let bare = checked_body("0.9");
+    let constructor = checked_body("decimal(9, 1)");
+    assert_eq!(
+        semantic_nodes(&bare),
+        semantic_nodes(&constructor),
+        "the complete checked semantic graphs match"
+    );
+    for literal in ["0.9", "decimal(9, 1)"] {
         assert_eq!(
             located(&service(
                 None,
@@ -3809,14 +3821,38 @@ fn quantity_literal_non_quantity_position_refused() {
 #[trace("TC-2186", "FR-764-AC-7")]
 #[trace("FSpec-TC-1648", "FSpec-FR-662-AC-2")]
 #[test]
-#[ignore = "QSL-1965: comparison-operand typing of decimal literals not implemented yet"]
 fn a_comparison_operand_types_a_bare_decimal_literal() {
     let typed = "type D = Decimal[-1000, 1000; 0, 2; exact];";
-    for literal in ["0.9", "decimal(9, 1)"] {
+    let checked_parameter = |literal: &str| {
         checked(&service(
             None,
             &format!("{typed}\nfunction k using v(l: D): Boolean pure {{ l < {literal} }}"),
-        ));
+        ))
+    };
+    let bare_parameter = checked_parameter("0.9");
+    let constructor_parameter = checked_parameter("decimal(9, 1)");
+    assert_eq!(
+        semantic_nodes(&bare_parameter),
+        semantic_nodes(&constructor_parameter),
+        "the parameter comparison's complete checked semantic graphs match"
+    );
+    let checked_field = |literal: &str| {
+        checked(&service(
+            None,
+            &format!(
+                "{typed}\nrecord Reading {{ level: D; }}\n\
+                 function field_level using v(r: Reading): Boolean pure {{ r.level < {literal} }}"
+            ),
+        ))
+    };
+    let bare_field = checked_field("0.9");
+    let constructor_field = checked_field("decimal(9, 1)");
+    assert_eq!(
+        semantic_nodes(&bare_field),
+        semantic_nodes(&constructor_field),
+        "the record-field comparison's complete checked semantic graphs match"
+    );
+    for literal in ["0.9", "decimal(9, 1)"] {
         assert_eq!(
             located(&service(
                 None,

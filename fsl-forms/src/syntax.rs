@@ -604,12 +604,15 @@ pub enum ExprNode {
     /// `rational(n, d)`; it takes its unique expected `Rational[..]` type.
     Rational(Integer, Integer),
     /// `decimal(c, s)`: the coefficient and the scale exactly as written,
-    /// unreduced; it takes its unique expected `Decimal[..]` type.
+    /// unreduced; `spelling` distinguishes a constructor from a bare
+    /// `decimal-literal`; it takes its unique expected `Decimal[..]` type.
     DecimalValue {
         /// The signed coefficient `c`.
         coefficient: Integer,
         /// The unsigned scale `s`.
         scale: u32,
+        /// Whether the source used `decimal(c, s)` or a bare decimal literal.
+        spelling: DecimalSpellingKind,
     },
     /// A quantity literal such as `5 ms` (FR-393): the magnitude and the
     /// spelled unit. S2 resolves neither.
@@ -926,6 +929,15 @@ pub enum ExprNode {
     /// constructed outside the probe build.
     #[cfg(seam_probe)]
     __SeamProbe,
+}
+
+/// The source spelling that produced an exact decimal value expression.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum DecimalSpellingKind {
+    /// An explicit `decimal(c, s)` constructor.
+    DecimalConstructor,
+    /// A bare decimal-literal primary such as `0.9`.
+    DecimalLiteral,
 }
 
 impl ExprNode {
@@ -1471,7 +1483,11 @@ impl Expression {
 
     /// `decimal(coefficient, scale)`.
     pub fn decimal(coefficient: Integer, scale: u32) -> Self {
-        Self::single(ExprNode::DecimalValue { coefficient, scale })
+        Self::single(ExprNode::DecimalValue {
+            coefficient,
+            scale,
+            spelling: DecimalSpellingKind::DecimalConstructor,
+        })
     }
 
     /// A quantity literal such as `5 ms` (FR-393).
