@@ -27,3 +27,11 @@ Ticket: QSL-1964. Code review with the rust-review lane (rust-style loaded) of t
 ## Verdict
 
 REQUEST CHANGES for FND-001 and FND-002. Q1: no clause path still reads the unit profile. The temporal and hyper checks resolve through `clause_profile`, and protocol awaits, the trace-subject run and compensate templates were already per alias. The library emission remembered by `emit_dependency_with_temporal_selections_and_cancel` is per request, so it does not go stale. The unused rule counts library trace-subject clauses that a member serves. The TC-2183 edit follows FR-099-AC-5, which refuses a use of `g::R`. It does not weaken the test.
+
+## Dispositions
+
+| FND | outcome | reason |
+| --- | --- | --- |
+| FND-001 | fixed | b0e713b59: each hyper trace takes M from the declaration identity text of its own model's parameter type, the same text the single-trace path uses; traces deriving different configurations refuse unsupported_construct/not-yet-implemented (PerTraceClockConfigurations); tests a_hyper_clause_over_one_model_derives_the_single_trace_authority and a_hyper_clause_over_two_models_refuses_two_event_position_clocks |
+| FND-002 | deferred | QSL-2274 (spec decision, W4 batch); failing stub a_replay_recompiles_a_library_that_uses_its_own_clock ignored under it |
+| FND-003 | fixed | b0e713b59: ProfileSelection carries `selected`, the alias's identities; message names `filament.value.complete/v1`; asserted in a_clause_under_a_value_profile_alias_names_the_alias_and_its_selection |

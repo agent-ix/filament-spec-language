@@ -110,7 +110,7 @@ impl RequestClocks {
         while let Some(library) = pending.pop() {
             for declaration in declarations(library) {
                 if declaration.model.is_none()
-                    && profile_clock_kind(declaration.profile).is_some()
+                    && configured_kind(declaration.profile).is_some()
                     && self.get(declaration.clock).is_some()
                 {
                     used.insert(declaration.clock.to_owned());
@@ -165,7 +165,7 @@ impl RequestClocks {
         }
         let mut selections = Vec::new();
         for declaration in declarations(package) {
-            let Some(expected) = profile_clock_kind(declaration.profile) else {
+            let Some(expected) = configured_kind(declaration.profile) else {
                 continue;
             };
             let clock = if let Some(traces) = &declaration.model {
@@ -427,6 +427,18 @@ fn per_trace_clocks(declaration: &Declaration<'_>) -> Box<CompileRefusal> {
         },
         region(&declaration.source, declaration.span),
     ))
+}
+
+/// The `kind` of the configuration a declaration under `profile` takes a
+/// selection for. A timed declaration takes none yet: the binding rows carry
+/// no `timed` configuration until the contract's `ClockConfiguration` has the
+/// variant (QSL-2254), so the emitter writes no timed row and a timed clause
+/// or `compensate` template compiles, and replays, as it did before FR-640.
+fn configured_kind(profile: TemporalProfile) -> Option<&'static str> {
+    match profile {
+        TemporalProfile::Timed => None,
+        other => profile_clock_kind(other),
+    }
 }
 
 /// The sequence authority of a temporal clause over the model object type

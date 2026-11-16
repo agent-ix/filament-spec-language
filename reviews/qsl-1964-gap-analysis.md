@@ -33,3 +33,18 @@ CONDITIONAL: there are only medium and low findings. TC-2180 and TC-2181 un-igno
 11 ACs examined and 11 tagged. FR-640-AC-1..6 and AC-8 are also tagged by ignored run_wire stubs. Reverse gap: none in the diff. Semantic review was skipped, beyond the targeted checks above.
 
 Plan completion: not assessed
+
+## New findings (disposition pass 1)
+
+| ID | Severity | Summary | Refs |
+| --- | --- | --- | --- |
+| FND-004 | low | The two new hyper clock tests are tagged FR-640-AC-7 (and one AC-3), but those ACs cover single-trace model clauses; no AC states the hyper derivation or the two-model refusal. Fix: have the ticketed hyper spec work add an AC and retag, or tag FR-640 only. | tests/it/clock_derivation.rs:224,261 |
+
+## Dispositions
+
+| FND | outcome | reason |
+| --- | --- | --- |
+| FND-001 | fixed | b0e713b59: clocks_rebuilt_from_the_rows_compile_the_same_bytes compiles the mixed unit, rebuilds clocks from the rows, recompiles and compares stdout bytes |
+| FND-002 | fixed | b0e713b59: mixed_unit (aliases e/f/w) added to the AC-1 test; module doc updated |
+| FND-003 | fixed | b0e713b59: asserts details.declaration is Late |
+| FND-004 | deferred | Low trace nit; belongs with the spec-lane hyper ticket the coordinator filed; not blocking |
