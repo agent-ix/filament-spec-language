@@ -740,7 +740,7 @@ fn the_monitor_stream_equals_a_clause_run_over_each_prefix() {
         .iter()
         .map(|level| json!({"observation": sample(*level)}).to_string())
         .collect();
-    records.push(json!({"end": "open"}).to_string());
+    records.push(json!({"end": true}).to_string());
     std::fs::write(directory.path().join("records.jsonl"), records.join("\n")).unwrap();
     let request = json!({"format": "native-monitor/1", "request": {
         "models": [], "program": program(), "clocks": trace_clocks(),
@@ -772,6 +772,12 @@ fn the_monitor_stream_equals_a_clause_run_over_each_prefix() {
             {
                 status = event["disposition"].clone();
                 decided = record;
+                // Only `Never` settles, at record 2 (FR-644-AC-5).
+                assert_eq!(
+                    event["settled"],
+                    clause == "Never" && record >= 2,
+                    "{clause} settled at record {record}"
+                );
             }
             // A settled result never changes (FR-643-AC-3), so the status
             // equals the clause run at the record that decided it; its
@@ -792,6 +798,11 @@ fn the_monitor_stream_equals_a_clause_run_over_each_prefix() {
             .and_then(|clauses| clauses.iter().find(|entry| entry["clause"] == clause))
             .expect("a summary entry");
         assert_eq!(summary["disposition"], status, "{clause} summary");
+        assert_eq!(
+            summary["settled"],
+            clause == "Never",
+            "{clause} settled in the summary"
+        );
     }
 }
 
@@ -1009,7 +1020,7 @@ fn a_timestamped_stream_matches_the_batch_run_and_refuses_a_regressing_stamp() {
         records.push(json!({"progress": progress(stamp)}));
     }
     records.insert(4, json!({"observation": sample(1), "stamp": 2}));
-    records.push(json!({"end": "closed"}));
+    records.push(json!({"end": true}));
     let output = monitor_run(
         directory.path(),
         "stamped",
@@ -1051,7 +1062,7 @@ fn request_batch(directory: &Path) -> Value {
 fn a_settled_result_is_reported_once_and_never_changes() {
     let directory = tempfile::tempdir().unwrap();
     let mut records = observations(&[0, 1, 2, 1, 0]);
-    records.push(json!({"end": "open"}));
+    records.push(json!({"end": true}));
     let output = monitor_run(
         directory.path(),
         "settled",
@@ -1091,7 +1102,7 @@ fn a_checkpointed_stream_resumes_to_the_same_events() {
         json!({"kind": "finite"}),
     );
     let mut whole = observations(&[0, 1, 2, 1, 0]);
-    whole.push(json!({"end": "open"}));
+    whole.push(json!({"end": true}));
     let full = result(&monitor_run(
         directory.path(),
         "whole",
@@ -1101,12 +1112,12 @@ fn a_checkpointed_stream_resumes_to_the_same_events() {
 
     let mut head = observations(&[0, 1]);
     head.push(json!({"checkpoint": "state.json"}));
-    head.push(json!({"end": "open"}));
+    head.push(json!({"end": true}));
     monitor_run(directory.path(), "head", request.clone(), &head);
     let mut resumed_request = request;
     resumed_request["request"]["state"] = json!("state.json");
     let mut tail = observations(&[2, 1, 0]);
-    tail.push(json!({"end": "open"}));
+    tail.push(json!({"end": true}));
     let resumed = result(&monitor_run(
         directory.path(),
         "tail",
@@ -1128,7 +1139,7 @@ fn a_bad_record_is_an_event_and_a_bad_request_is_refused() {
     let directory = tempfile::tempdir().unwrap();
     let request = monitor_request(json!([{"name": "Never"}]), json!({"kind": "finite"}));
     let mut good = observations(&[0, 1, 2]);
-    good.push(json!({"end": "open"}));
+    good.push(json!({"end": true}));
     let clean = result(&monitor_run(
         directory.path(),
         "clean",
@@ -1203,7 +1214,7 @@ fn clocks_rebuilt_from_package_rows_compile_the_same_package() {
 fn a_monitor_request_supplies_the_integer_division_law() {
     let directory = tempfile::tempdir().unwrap();
     let mut records = observations(&[0, 1, 2]);
-    records.push(json!({"end": "open"}));
+    records.push(json!({"end": true}));
     let lines: Vec<String> = records.iter().map(Value::to_string).collect();
     std::fs::write(directory.path().join("half.jsonl"), lines.join("\n")).unwrap();
     let run = |law: Option<&str>| {
@@ -1319,7 +1330,7 @@ fn command_monitor_streams_events_to_its_sink() {
         .iter()
         .map(Value::to_string)
         .collect();
-    lines.push(json!({"end": "closed"}).to_string());
+    lines.push(json!({"end": true}).to_string());
     let mut seen: Vec<MonitorEvent> = Vec::new();
     let handed = std::cell::Cell::new(0_usize);
     let records = lines.iter().enumerate().map(|(index, line)| {

@@ -633,6 +633,39 @@ pub fn authenticate_package_trace(
     authenticate_trace(site, trace, authentication).map(drop)
 }
 
+/// The `TraceBinding` a trace of the clause `name` asserts to agree with the
+/// emitted package: its profile, clock name and clock configuration, read from
+/// the admitted `temporal_bindings` row. `None` for a clause the package does
+/// not declare or that has no clock row.
+pub fn clause_trace_binding(
+    package: &fsl_package::CheckedPackage,
+    name: &str,
+    authentication: TemporalAuthentication<'_>,
+) -> Option<TraceBinding> {
+    let node = package
+        .graph()
+        .temporal_clauses()
+        .iter()
+        .find(|node| node.clause().name() == name)?;
+    let declaration = authentication
+        .clock_rows
+        .declaration(&node.identity(), node.claim().ordinal())?;
+    let subject =
+        fsl_package::checked_views::temporal_subject(authentication.admitted_package, declaration)
+            .ok()?;
+    let occurrence = node.claim().ordinal();
+    let row = subject
+        .occurrences()
+        .iter()
+        .find(|found| found.ordinal == occurrence)
+        .and_then(|found| subject.clock_of(found))?;
+    Some(TraceBinding {
+        profile: subject.profile().definition.identity.to_string(),
+        clock_name: row.clock_name.to_string(),
+        parameters: row.clock.clone(),
+    })
+}
+
 /// FR-283: one temporal clause run over a checked package, with no source to
 /// compile: the caller supplies the sources the checked package was built
 /// from and, for a clock-bearing trace, the emission it authenticates

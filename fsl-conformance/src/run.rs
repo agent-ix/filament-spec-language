@@ -764,6 +764,7 @@ fn run_monitor(
         accounting: parameters.accounting,
         max_window_values: parameters.max_window_values,
         retained_positions: fsl_analyze::monitor::DEFAULT_RETAINED_POSITIONS,
+        retained_identities: fsl_analyze::monitor::DEFAULT_RETAINED_IDENTITIES,
     };
     let document = match monitor(checked.package(), &request, &limits, cancel) {
         Ok(staged) => staged

@@ -19,13 +19,13 @@ use fsl_foundation::source::Source;
 use fsl_package::number::ExactRational;
 use fsl_package::{CheckedPackage, TemporalClockSelection};
 use fsl_replay::spine::{
-    authenticate_emission, authenticate_package_trace, read_ledger, run_package_temporal,
-    write_ledger, ClauseDisposition, ClauseRunReport, ClauseRunUsage, ConsequentSourceEvents,
-    ContradictedDimension, LedgerReadError, PackageAuthentication, PackageTemporalRequest,
-    ProgressAssertion, ProgressClosure, ProgressCompleteness, ProgressContradiction,
-    ProgressLedger, ProgressLimitReached, ProgressLowerBoundary, ProgressRefusal, ProgressValue,
-    SpineLimits, TemporalVerdict, TimestampedCover, TimestampedObservation, TimestampedOrderKey,
-    TimestampedWindow, TraceBinding, TraceInput,
+    authenticate_emission, authenticate_package_trace, clause_trace_binding, read_ledger,
+    run_package_temporal, write_ledger, ClauseDisposition, ClauseRunReport, ClauseRunUsage,
+    ConsequentSourceEvents, ContradictedDimension, LedgerReadError, PackageAuthentication,
+    PackageTemporalRequest, ProgressAssertion, ProgressClosure, ProgressCompleteness,
+    ProgressContradiction, ProgressLedger, ProgressLimitReached, ProgressLowerBoundary,
+    ProgressRefusal, ProgressValue, SpineLimits, TemporalVerdict, TimestampedCover,
+    TimestampedObservation, TimestampedOrderKey, TimestampedWindow, TraceBinding, TraceInput,
 };
 use fsl_semantics::check::TemporalProfile;
 use fsl_semantics::model::intake::PackageInput;
@@ -120,15 +120,6 @@ pub struct MonitorObservation<'a> {
     pub order_key: Option<TimestampedOrderKey>,
 }
 
-/// How a trace ends.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum TraceEnd {
-    /// The execution is over.
-    Closed,
-    /// The execution may go on.
-    Open,
-}
-
 /// One clause's status after a step.
 #[derive(Clone, Debug)]
 pub enum ClauseStatus {
@@ -194,8 +185,8 @@ struct Slot {
     settled: bool,
     /// The number of positions seen when the clause settled.
     settled_at: Option<usize>,
-    /// Whether `retained_positions` ended the clause.
-    limited: bool,
+    /// The setting whose limit ended the clause, if one did.
+    limited: Option<&'static str>,
     announced: bool,
 }
 
@@ -241,17 +232,34 @@ fn pending_report() -> ClauseRunReport {
     }
 }
 
-fn limit_report(value: u64) -> ClauseRunReport {
+fn limit_report(setting: &'static str, value: u64) -> ClauseRunReport {
     let verdict = TemporalVerdict::ProgressLimitReached(ProgressLimitReached {
         limit: "node count",
         value,
-        setting: "monitor.retained_positions",
+        setting,
     });
     ClauseRunReport {
         basis: verdict.basis(),
         disposition: ClauseDisposition::Temporal(verdict),
         ..pending_report()
     }
+}
+
+/// Whether the finite-window report of `report` has a decisive basis, the
+/// definite reading FR-501 and FR-504 give.
+fn decisive_window(report: &ClauseRunReport) -> bool {
+    report
+        .finite_window
+        .as_ref()
+        .is_some_and(|window| window.basis.is_decisive())
+}
+
+/// Whether a profile reads a trace as a closed trace by false extension.
+fn closed_trace(profile: TemporalProfile) -> bool {
+    matches!(
+        profile,
+        TemporalProfile::EventPositionFalseExtension | TemporalProfile::FixedSampleFalseExtension
+    )
 }
 
 fn state_mismatch() -> Failure {
@@ -325,7 +333,16 @@ impl<'a> MonitorSession<'a> {
             }
         }
         let first = request.clauses[0].name.clone();
-        let authentication = if request.kind.carries_progress() {
+        let reads_binding = request.kind.carries_progress()
+            || request.clauses.iter().any(|clause| {
+                package
+                    .graph()
+                    .temporal_clauses()
+                    .iter()
+                    .find(|node| node.clause().name() == clause.name)
+                    .is_some_and(|node| closed_trace(node.clause().profile()))
+            });
+        let authentication = if reads_binding {
             Some(
                 authenticate_emission(
                     package,
@@ -407,7 +424,7 @@ impl<'a> MonitorSession<'a> {
                     )?,
                     settled: false,
                     settled_at: None,
-                    limited: false,
+                    limited: None,
                     announced: false,
                 })
             })
@@ -473,6 +490,22 @@ impl<'a> MonitorSession<'a> {
             return Err(observation("order_key", "unknown-member"));
         }
         if let Some(assertion) = self.assertion {
+            if assertion.scope == ProgressClosure::Closed {
+                let clock = self
+                    .request
+                    .binding
+                    .as_ref()
+                    .map(|binding| binding.clock_name.clone())
+                    .unwrap_or_default();
+                return Err(StageFailure::Refused(MonitorRefusal::Contradiction(
+                    Box::new(ProgressRefusal::from(ProgressContradiction {
+                        dimension: ContradictedDimension::Closure,
+                        clock,
+                        retained: ProgressValue::DecisionScope(ProgressClosure::Closed),
+                        asserted: ProgressValue::DecisionScope(ProgressClosure::Open),
+                    })),
+                )));
+            }
             if stamp <= assertion.watermark {
                 let clock = self
                     .request
@@ -546,6 +579,23 @@ impl<'a> MonitorSession<'a> {
                 Err(failure)
             }
         }
+    }
+
+    /// FR-643: take a `Timed` trace's completeness stamp. Only the `Timed` kind
+    /// takes one, and a `Timed` session cannot be opened until the timed clock
+    /// kind exists (QSL-2254), so every session refuses it `invalid-request`
+    /// naming `through`.
+    ///
+    /// # Errors
+    ///
+    /// The refusal above, or a cancelled call.
+    pub fn assert_through(
+        &mut self,
+        _through: ExactRational,
+        cancel: &Cancel,
+    ) -> Result<MonitorStep, Failure> {
+        cancelled(cancel)?;
+        Err(observation("through", "invalid-value"))
     }
 
     /// FR-643: take a progress assertion.
@@ -637,6 +687,8 @@ impl<'a> MonitorSession<'a> {
                 before.announced
                     && before.settled == slot.settled
                     && before.record.verdict == slot.record.verdict
+                    && format!("{:?}", before.record.report().disposition)
+                        == format!("{:?}", slot.record.report().disposition)
             });
             if !same {
                 changed.push(slot.record.clause.clone());
@@ -731,21 +783,55 @@ impl<'a> MonitorSession<'a> {
                 }
                 slot.record = record_of(self.package, self.request.sources, &clause.name, report)?;
             }
-            let (settled, limited) = self.classify(&clause.name, slot.record.verdict)?;
-            slot.settled = settled;
-            slot.limited = limited;
-            if settled {
-                slot.settled_at = Some(self.positions.len());
+            if self.positions.is_empty() {
+                continue;
             }
-            if !settled && self.over_limit(&clause.name)? {
-                slot.record = record_of(
-                    self.package,
-                    self.request.sources,
-                    &clause.name,
-                    limit_report(self.limits.retained_positions),
-                )?;
-                slot.settled = true;
-                slot.limited = true;
+            let profile = self.profile_of(&clause.name)?;
+            let mut settled = match profile {
+                TemporalProfile::InfiniteTrace => matches!(
+                    slot.record.verdict,
+                    MonitorVerdict::Violated | MonitorVerdict::Undefined
+                ),
+                TemporalProfile::TimestampedEventFiniteWindow => {
+                    evaluable
+                        && (decisive_window(slot.record.report())
+                            || (assertion.is_some_and(|a| a.scope == ProgressClosure::Closed)
+                                && matches!(
+                                    slot.record.verdict,
+                                    MonitorVerdict::Violated | MonitorVerdict::Tested
+                                )))
+                }
+                TemporalProfile::EventPositionFalseExtension
+                | TemporalProfile::FixedSampleFalseExtension => {
+                    match self.decided(&clause.name, cancel)? {
+                        Some(report) => {
+                            slot.record = record_of(
+                                self.package,
+                                self.request.sources,
+                                &clause.name,
+                                report,
+                            )?;
+                            true
+                        }
+                        None => false,
+                    }
+                }
+                TemporalProfile::Timed => false,
+            };
+            if !settled {
+                if let Some((setting, value)) = self.over_limit(&clause.name)? {
+                    slot.record = record_of(
+                        self.package,
+                        self.request.sources,
+                        &clause.name,
+                        limit_report(setting, value),
+                    )?;
+                    slot.limited = Some(setting);
+                    settled = true;
+                }
+            }
+            slot.settled = settled;
+            if settled {
                 slot.settled_at = Some(self.positions.len());
             }
         }
@@ -767,22 +853,66 @@ impl<'a> MonitorSession<'a> {
             })
     }
 
-    /// Whether a verdict is final. Only an infinite-trace clause settles
-    /// early: a bad prefix and a satisfied eventuality stay so under any
-    /// extension, which a closed-trace profile's verdict does not.
-    fn classify(&self, name: &str, verdict: MonitorVerdict) -> Result<(bool, bool), Failure> {
-        let infinite = self.profile_of(name)? == TemporalProfile::InfiniteTrace;
-        let settled = infinite
-            && matches!(
-                verdict,
-                MonitorVerdict::Violated | MonitorVerdict::Undefined | MonitorVerdict::Tested
-            );
-        Ok((settled, false))
+    /// FR-504's open-scope reading of the positions seen with `S = n - 1`, when
+    /// it is definite (a decisive basis): the report of a closed-trace clause
+    /// the next observation cannot change.
+    fn decided(&self, name: &str, cancel: &Cancel) -> Result<Option<ClauseRunReport>, Failure> {
+        let fault = |what: &'static str| StageFailure::Fault(InternalFault::new("monitor", what));
+        let Some(authentication) = self.authentication.as_ref() else {
+            return Err(fault("closed-trace-session-holds-an-emission"));
+        };
+        let Some(binding) = clause_trace_binding(self.package, name, authentication.temporal())
+        else {
+            return Err(fault("closed-trace-clause-has-a-clock-row"));
+        };
+        let Some(last) = self.positions.len().checked_sub(1) else {
+            return Ok(None);
+        };
+        let last = u64::try_from(last).map_err(|_| fault("position-count-in-u64"))?;
+        let progress = ProgressAssertion {
+            watermark: last,
+            completeness: ProgressCompleteness::Complete { through: last },
+            scope: ProgressClosure::Open,
+            execution: ProgressClosure::Open,
+        };
+        let trace = TraceInput::Progressed {
+            trace: self.positions.iter().map(|p| p.reference.clone()).collect(),
+            progress,
+            lower_boundary: self.request.lower_boundary,
+            binding,
+        };
+        let report = run_package_temporal(&PackageTemporalRequest {
+            package: self.package,
+            packages: self.request.packages,
+            model_limits: self.limits.normalization,
+            snapshots: &self.snapshots,
+            observation_limits: self.limits.observation,
+            accounting: self.limits.accounting,
+            name,
+            trace: &trace,
+            over: self
+                .request
+                .clauses
+                .iter()
+                .find(|clause| clause.name == name)
+                .and_then(|clause| clause.over.as_ref()),
+            ledger: None,
+            sources: self.request.sources,
+            authentication: Some(authentication.temporal()),
+            cancel,
+        });
+        cancelled(cancel)?;
+        if !decisive_window(&report) {
+            return Ok(None);
+        }
+        Ok(Some(report))
     }
 
-    /// FR-643 "Retained state": a pending clause that would retain more than
-    /// `retained_positions` positions.
-    fn over_limit(&self, name: &str) -> Result<bool, Failure> {
+    /// FR-643 "Retained state": the setting and value of a limit that advancing
+    /// the pending clause `name` would exceed. An infinite-trace clause holds
+    /// no observation value; a closed-trace clause holds the values of its
+    /// horizon; every unsettled clause cites every position seen.
+    fn over_limit(&self, name: &str) -> Result<Option<(&'static str, u64)>, Failure> {
         let seen = u64::try_from(self.positions.len()).unwrap_or(u64::MAX);
         let node = self
             .package
@@ -794,31 +924,41 @@ impl<'a> MonitorSession<'a> {
                 StageFailure::Fault(InternalFault::new("monitor", "session-clause-is-declared"))
             })?;
         let retained = if node.clause().profile() == TemporalProfile::InfiniteTrace {
-            seen
+            0
         } else {
             node.clause()
                 .horizon()
                 .map_or(seen, |horizon| seen.min(horizon.saturating_add(1)))
         };
-        Ok(retained > self.limits.retained_positions)
+        if retained > self.limits.retained_positions {
+            return Ok(Some((
+                "monitor.retained_positions",
+                self.limits.retained_positions,
+            )));
+        }
+        if seen > self.limits.retained_identities {
+            return Ok(Some((
+                "monitor.retained_identities",
+                self.limits.retained_identities,
+            )));
+        }
+        Ok(None)
     }
 
-    /// FR-643: end the trace and return FR-283's outcome over it.
+    /// FR-643: end the session and return FR-283's outcome over the trace.
     ///
-    /// Closure of a progress-carrying trace is what its last progress
-    /// assertion says; a finite trace is the same trace closed or open.
+    /// It adds no closure: a finite trace has one reading per profile and a
+    /// progress-carrying trace is closed as its latest assertion says.
     ///
     /// # Errors
     ///
     /// A cancelled call.
-    pub fn finish(
-        self,
-        _end: TraceEnd,
-        cancel: &Cancel,
-    ) -> Result<crate::monitor::MonitorOutcome, Failure> {
+    pub fn finish(self, cancel: &Cancel) -> Result<crate::monitor::MonitorOutcome, Failure> {
         cancelled(cancel)?;
+        let settled_before_end = self.slots.iter().map(|slot| slot.settled).collect();
         Ok(crate::monitor::MonitorOutcome {
             records: self.slots.into_iter().map(|slot| slot.record).collect(),
+            settled_before_end,
         })
     }
 
@@ -1029,16 +1169,27 @@ impl<'a> MonitorSession<'a> {
             let at = saved["settled_at"]
                 .as_u64()
                 .and_then(|at| usize::try_from(at).ok());
-            if saved["limited"].as_bool() == Some(true) {
+            if let Some(setting) = saved["limited"].as_str() {
+                let (setting, value) = match setting {
+                    "monitor.retained_positions" => (
+                        "monitor.retained_positions",
+                        session.limits.retained_positions,
+                    ),
+                    "monitor.retained_identities" => (
+                        "monitor.retained_identities",
+                        session.limits.retained_identities,
+                    ),
+                    _ => return Err(state_mismatch()),
+                };
                 let clause = session.request.clauses[index].name.clone();
                 slots[index].record = record_of(
                     package,
                     session.request.sources,
                     &clause,
-                    limit_report(session.limits.retained_positions),
+                    limit_report(setting, value),
                 )?;
                 slots[index].settled = true;
-                slots[index].limited = true;
+                slots[index].limited = Some(setting);
                 slots[index].settled_at = at;
             } else if let Some(at) = at {
                 if at > all.len() {

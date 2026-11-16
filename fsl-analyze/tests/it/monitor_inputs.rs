@@ -213,6 +213,7 @@ fn limits(max_window_values: u64) -> MonitorLimits {
         accounting: UNLIMITED,
         max_window_values,
         retained_positions: fsl_analyze::monitor::DEFAULT_RETAINED_POSITIONS,
+        retained_identities: fsl_analyze::monitor::DEFAULT_RETAINED_IDENTITIES,
     }
 }
 

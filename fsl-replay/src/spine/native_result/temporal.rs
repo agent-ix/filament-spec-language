@@ -40,6 +40,7 @@ const COVERED_POSITIONS_SETTING: &str = "progress.covered_positions";
 /// FR-643's retained-position limit setting, which a monitor session names
 /// in the same record.
 const RETAINED_POSITIONS_SETTING: &str = "monitor.retained_positions";
+const RETAINED_IDENTITIES_SETTING: &str = "monitor.retained_identities";
 
 /// The undefined cause an FR-100 `reason` names: a kernel reason, or a
 /// family reason with the empty payload (the outcome carries no `fields`).
@@ -998,6 +999,8 @@ impl TemporalRecord {
                     value: *value,
                     setting: if setting == RETAINED_POSITIONS_SETTING {
                         RETAINED_POSITIONS_SETTING
+                    } else if setting == RETAINED_IDENTITIES_SETTING {
+                        RETAINED_IDENTITIES_SETTING
                     } else {
                         COVERED_POSITIONS_SETTING
                     },
@@ -1774,7 +1777,9 @@ fn is_window_limit(limit: &str) -> bool {
 #[ix_trace_rs::string_edge]
 fn is_progress_limit(limit: &str, setting: &str) -> bool {
     limit == COVERED_POSITIONS_LIMIT
-        && (setting == COVERED_POSITIONS_SETTING || setting == RETAINED_POSITIONS_SETTING)
+        && (setting == COVERED_POSITIONS_SETTING
+            || setting == RETAINED_POSITIONS_SETTING
+            || setting == RETAINED_IDENTITIES_SETTING)
 }
 
 /// Whether a window-limit row names `max_window_values` and its setting.

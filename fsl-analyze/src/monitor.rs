@@ -101,7 +101,13 @@ pub struct MonitorLimits {
     /// FR-643's `monitor.retained_positions`: the most positions a stepping
     /// session keeps at once for one clause.
     pub retained_positions: u64,
+    /// FR-643's `monitor.retained_identities`: the most position identities one
+    /// unsettled clause keeps for the counterexample it may still report.
+    pub retained_identities: u64,
 }
+
+/// The published default of `monitor.retained_identities`.
+pub const DEFAULT_RETAINED_IDENTITIES: u64 = 1_048_576;
 
 /// The published default of `monitor.max_window_values` (FR-194).
 pub const DEFAULT_MAX_WINDOW_VALUES: u64 = fsl_eval::temporal::DEFAULT_MAX_WINDOW_VALUES;
@@ -191,6 +197,9 @@ impl MonitorRecord {
 pub struct MonitorOutcome {
     /// One record per selected clause, in request order.
     pub records: Vec<MonitorRecord>,
+    /// For each record, whether the clause had settled before the end of the
+    /// trace; empty for the one-shot `monitor`, which settles nothing early.
+    pub settled_before_end: Vec<bool>,
 }
 
 impl MonitorOutcome {
@@ -401,7 +410,10 @@ pub fn monitor_with_evaluator(
             }
         }
     }
-    Ok(Staged::new(MonitorOutcome { records }))
+    Ok(Staged::new(MonitorOutcome {
+        records,
+        settled_before_end: Vec::new(),
+    }))
 }
 
 /// One request's inputs, shared by the stages of [`monitor`].

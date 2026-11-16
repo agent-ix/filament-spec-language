@@ -11,7 +11,7 @@ use filament_exact::Cancel;
 use fsl_analyze::monitor::{MonitorClause, MonitorLimits, MonitorRefusal};
 use fsl_analyze::monitor_session::{
     ClauseStatus, MonitorObservation, MonitorOpen, MonitorPosition, MonitorSession, MonitorStamp,
-    MonitorState, MonitorStep, MonitorTraceKind, TraceEnd,
+    MonitorState, MonitorStep, MonitorTraceKind,
 };
 use fsl_foundation::diagnostic::StageFailure;
 use fsl_foundation::source::Source;
@@ -113,6 +113,7 @@ fn event(
         "record": record,
         "position": position,
         "clause": clause,
+        "settled": status.is_settled(),
         "category": disposition.get("category").cloned().unwrap_or(Value::Null),
         "basis": basis,
         "disposition": disposition,
@@ -125,6 +126,7 @@ fn refusal_event(record: usize, position: Option<u64>, member: &str, reason: &st
         "record": record,
         "position": position,
         "clause": Value::Null,
+        "settled": false,
         "category": "refusal",
         "basis": "unavailable",
         "disposition": {
@@ -153,7 +155,7 @@ enum Record {
     Observation(Box<Observed>),
     Progress(fsl_replay::spine::ProgressAssertion),
     Checkpoint(String),
-    End(TraceEnd),
+    End,
 }
 
 struct Observed {
@@ -181,7 +183,7 @@ fn read_record(
     let allowed: &[&str] = if members.contains_key("observation") {
         &["observation", "stamp", "order_key"]
     } else {
-        &["progress", "checkpoint", "end"]
+        &["progress", "checkpoint", "end", "through"]
     };
     if let Some(unknown) = members
         .keys()
@@ -275,10 +277,18 @@ fn read_record(
         }
         return Ok(Record::Checkpoint(path.to_owned()));
     }
-    match members.get("end").and_then(Value::as_str) {
-        Some("closed") => Ok(Record::End(TraceEnd::Closed)),
-        Some("open") => Ok(Record::End(TraceEnd::Open)),
-        _ => Err(refuse("end", "is \"closed\" or \"open\"")),
+    if members.contains_key("through") {
+        return Err(refuse(
+            "through",
+            "is for the timed kind, which is not built yet",
+        ));
+    }
+    match members.get("end") {
+        Some(Value::Bool(true)) => Ok(Record::End),
+        _ => Err(refuse(
+            "end",
+            "is true; the stream ends, the trace takes no closure",
+        )),
     }
 }
 
@@ -434,6 +444,7 @@ fn drive(
                 accounting: super::call_accounting(&wire::Accounting::default()),
                 max_window_values: fsl_analyze::monitor::DEFAULT_MAX_WINDOW_VALUES,
                 retained_positions: fsl_analyze::monitor::DEFAULT_RETAINED_POSITIONS,
+                retained_identities: fsl_analyze::monitor::DEFAULT_RETAINED_IDENTITIES,
             };
             let open = MonitorOpen {
                 clauses: inputs.clauses.clone(),
@@ -482,7 +493,6 @@ fn stream(
     let mut observed = 0_u64;
     let mut read = 0_u64;
     let mut refused = 0_u64;
-    let mut end = TraceEnd::Open;
     let mut emit = |value: Value| {
         sink(&MonitorEvent { value });
     };
@@ -502,10 +512,7 @@ fn stream(
             }
         };
         let stepped = match record {
-            Record::End(closing) => {
-                end = closing;
-                break;
-            }
+            Record::End => break,
             Record::Checkpoint(path) => {
                 let target = directory.join(&path);
                 std::fs::write(&target, session.checkpoint().as_bytes()).map_err(|error| {
@@ -555,12 +562,17 @@ fn stream(
             Err(other) => return Err(cause_of(other)),
         }
     }
-    let outcome = session.finish(end, cancel).map_err(cause_of)?;
+    let outcome = session.finish(cancel).map_err(cause_of)?;
     let mut clauses = Vec::new();
     let mut ledger = Value::Null;
     let mut codes = Vec::new();
-    for (name, record) in names.iter().zip(&outcome.records) {
+    for (index, (name, record)) in names.iter().zip(&outcome.records).enumerate() {
         let status = ClauseStatus::Pending(record.clone());
+        let settled = outcome
+            .settled_before_end
+            .get(index)
+            .copied()
+            .unwrap_or(false);
         let (disposition, basis, written) = report_value(&status)?;
         if !written.is_null() {
             ledger = written;
@@ -568,6 +580,7 @@ fn stream(
         codes.push(record.category.exit_code());
         clauses.push(json!({
             "clause": name,
+            "settled": settled,
             "category": disposition.get("category").cloned().unwrap_or(Value::Null),
             "basis": basis,
             "disposition": disposition,

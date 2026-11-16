@@ -9,7 +9,7 @@ use fsl_analyze::monitor::{
 };
 use fsl_analyze::monitor_session::{
     MonitorObservation, MonitorOpen, MonitorPosition, MonitorSession, MonitorStamp,
-    MonitorTraceKind, TraceEnd,
+    MonitorTraceKind,
 };
 use fsl_foundation::diagnostic::StageFailure;
 use fsl_foundation::{Source, SourceIdentity};
@@ -40,7 +40,7 @@ const UNIT: &str = "language \"ix:native\" edition \"1-draft\";\n\
     temporal E using e over (r: Reading) clock \"events\" on origin { eventually[0,2] holds(r.level = 2) }\n\
     temporal T using w over (r: Reading) clock \"plant-ms\" on origin { eventually[0,5] holds(r.level > 0) }\n\
     temporal Reaches using i over (r: Reading) clock \"steps\" on origin { eventually holds(r.level = 2) }\n\
-    temporal Never using i over (r: Reading) clock \"steps\" on origin { always holds(r.level < 2) }\n";
+    temporal Never using i over (r: Reading) clock \"steps\" on origin { always holds(r.level < 2) }\n    temporal Below using i over (r: Reading) clock \"steps\" on origin { always holds(r.level < 9) }\n    temporal Recent using e over (r: Reading) clock \"events\" on origin { always[0,9] (count where holds(r.level = 2) over past[0, 3] min_count 0 <= 1) }\n";
 
 struct World {
     unit: spine::CheckedUnit,
@@ -133,6 +133,7 @@ fn limits(retained_positions: u64) -> MonitorLimits {
         accounting: UNLIMITED,
         max_window_values: fsl_eval::temporal::DEFAULT_MAX_WINDOW_VALUES,
         retained_positions,
+        retained_identities: fsl_analyze::monitor::DEFAULT_RETAINED_IDENTITIES,
     }
 }
 
@@ -194,6 +195,30 @@ impl World {
             &limits(retained),
             &Cancel::new(),
         )
+    }
+
+    fn batch_report(&self, name: &str, levels: &[i64]) -> fsl_replay::spine::ClauseRunReport {
+        let trace = TraceInput::Finite(
+            levels
+                .iter()
+                .map(|level| spine::sample_position(&text(*level)))
+                .collect(),
+        );
+        run_package_temporal(&PackageTemporalRequest {
+            package: self.unit.package(),
+            packages: &self.packages,
+            model_limits: ModelNormalizationLimits::default(),
+            snapshots: &DocumentProvision::new(),
+            observation_limits: ObservationLimits::default(),
+            accounting: UNLIMITED,
+            name,
+            trace: &trace,
+            over: None,
+            ledger: None,
+            sources: &self.sources,
+            authentication: None,
+            cancel: &Cancel::new(),
+        })
     }
 
     /// The batch trace run over the samples `levels`, as a `finite` trace: each
@@ -291,9 +316,7 @@ fn feeding_one_at_a_time_equals_the_batch_over_each_prefix() {
             .collect();
         assert_eq!(stepped, batch, "after observation {index}");
     }
-    let outcome = session
-        .finish(TraceEnd::Closed, &Cancel::new())
-        .expect("ends");
+    let outcome = session.finish(&Cancel::new()).expect("ends");
     let finished: Vec<String> = outcome
         .records
         .iter()
@@ -385,7 +408,7 @@ fn a_regressing_stamp_is_refused_and_the_ledger_equals_the_batch_run() {
         }
     }
     let record = last.expect("a step").statuses[0].1.record().clone();
-    let outcome = session.finish(TraceEnd::Closed, &cancel).expect("ends");
+    let outcome = session.finish(&cancel).expect("ends");
     assert_eq!(outcome.records[0].verdict, record.verdict);
 
     // The batch run over the same three observations.
@@ -588,33 +611,6 @@ fn a_resumed_checkpoint_continues_as_the_original_does() {
     ));
 }
 
-/// FR-643-AC-5 (TC-1667): with `retained_positions` 2, a pending
-/// infinite-trace clause reports `incomplete` at the third observation, and a
-/// clause that settles there is unaffected.
-#[test]
-#[trace("TC-1667", "FR-643-AC-5")]
-fn the_retained_positions_limit_ends_a_pending_infinite_clause() {
-    let world = world();
-    let mut session = world
-        .open(&["Reaches", "Never"], MonitorTraceKind::Finite, None, 2)
-        .expect("opens");
-    let cancel = Cancel::new();
-    let mut last = None;
-    for level in [0, 1, 0] {
-        let observed = text(level);
-        last = Some(session.step(sample(&observed), &cancel).expect("steps"));
-    }
-    let step = last.expect("a step");
-    for (name, status) in &step.statuses {
-        let category = status.record().category;
-        assert_eq!(
-            category,
-            filament_semantic_value::catalog::Category::Incomplete,
-            "{name}"
-        );
-    }
-}
-
 /// FR-643: a kind the clause's profile does not read refuses at open, before
 /// any observation.
 #[test]
@@ -634,4 +630,233 @@ fn a_kind_the_profile_does_not_read_refuses_at_open() {
         refused,
         Some(MonitorRefusal::ClauseRefused { .. })
     ));
+}
+
+fn category(
+    step: &fsl_analyze::monitor_session::MonitorStep,
+    index: usize,
+) -> filament_semantic_value::catalog::Category {
+    step.statuses[index].1.record().category
+}
+
+/// FR-643-AC-6 (TC-2321): `Never` settles `violation` at step 3 and then
+/// reports `B(3)`; `Reaches` stays `Pending` and reports `B(k)`.
+#[test]
+#[trace("TC-2321", "FR-643-AC-6")]
+fn never_settles_at_the_bad_prefix_and_reaches_stays_pending() {
+    let world = world();
+    let names = ["Reaches", "Never"];
+    let levels = [0, 1, 2, 1];
+    let cancel = Cancel::new();
+    let mut session = world
+        .open(
+            &names,
+            MonitorTraceKind::Finite,
+            None,
+            DEFAULT_RETAINED_POSITIONS,
+        )
+        .expect("opens");
+    let mut at_three = None;
+    for (index, level) in levels.iter().enumerate() {
+        let observed = text(*level);
+        let step = session.step(sample(&observed), &cancel).expect("steps");
+        let batch = world.batch(&names, &levels[..=index]);
+        assert!(
+            !step.statuses[0].1.is_settled(),
+            "Reaches pending at {index}"
+        );
+        assert_eq!(
+            format!("{:?}", step.statuses[0].1.record().report().disposition),
+            batch[0]
+        );
+        let never = &step.statuses[1].1;
+        assert_eq!(never.is_settled(), index >= 2, "Never at {index}");
+        match index {
+            2 => at_three = Some(format!("{:?}", never.record().report().disposition)),
+            3 => {
+                assert_eq!(
+                    Some(format!("{:?}", never.record().report().disposition)),
+                    at_three,
+                    "the settled report is B(3)"
+                );
+                assert_ne!(
+                    format!("{:?}", never.record().report().counterexample),
+                    format!("{:?}", world.batch_report("Never", &levels).counterexample),
+                    "B(4) lists four samples, the settled report three"
+                );
+                assert_eq!(
+                    category(&step, 1),
+                    filament_semantic_value::catalog::Category::Violation
+                );
+            }
+            _ => {}
+        }
+    }
+    let outcome = session.finish(&cancel).expect("ends");
+    assert_eq!(
+        format!("{:?}", outcome.records[0].report().disposition),
+        world.batch(&["Reaches"], &levels)[0]
+    );
+    assert_eq!(outcome.settled_before_end, vec![false, true]);
+}
+
+/// FR-643-AC-7 (TC-2321): the event-position `E` stays `Pending` over levels
+/// 0, 1 while the closed reading is `violation`, settles `success` with a
+/// decisive witness on level 2, and `violation` with a decisive
+/// counterexample once the window is wholly observed.
+#[test]
+#[trace("TC-2321", "FR-643-AC-7")]
+fn a_closed_trace_clause_settles_on_its_decisive_reading() {
+    use filament_semantic_value::catalog::Category;
+    let world = world();
+    let cancel = Cancel::new();
+    for (levels, category_at_three) in [
+        ([0, 1, 2], Category::Success),
+        ([0, 1, 1], Category::Violation),
+    ] {
+        let mut session = world
+            .open(
+                &["E"],
+                MonitorTraceKind::Finite,
+                None,
+                DEFAULT_RETAINED_POSITIONS,
+            )
+            .expect("opens");
+        for (index, level) in levels.iter().enumerate() {
+            let observed = text(*level);
+            let step = session.step(sample(&observed), &cancel).expect("steps");
+            let status = &step.statuses[0].1;
+            if index < 2 {
+                assert!(!status.is_settled(), "pending at step {}", index + 1);
+                assert_eq!(
+                    status.record().category,
+                    Category::Violation,
+                    "closed reading"
+                );
+            } else {
+                assert!(
+                    status.is_settled(),
+                    "{levels:?} step 3: {:?} {:?}",
+                    status.record().report().basis,
+                    status.record().report().disposition
+                );
+                assert_eq!(status.record().category, category_at_three);
+                let window = status
+                    .record()
+                    .report()
+                    .finite_window
+                    .as_ref()
+                    .expect("a window report");
+                assert!(window.basis.is_decisive(), "{:?}", window.basis);
+            }
+        }
+    }
+}
+
+/// FR-643-AC-11 (TC-2324): `retained_identities` ends a pending clause
+/// `incomplete` while a settled clause keeps its report.
+#[test]
+#[trace("TC-2324", "FR-643-AC-11")]
+fn retained_identities_end_a_pending_clause_incomplete() {
+    use filament_semantic_value::catalog::Category;
+    let world = world();
+    let cancel = Cancel::new();
+    let mut session = MonitorSession::open(
+        world.unit.package(),
+        MonitorOpen {
+            clauses: clauses(&["Never", "Below"]),
+            kind: MonitorTraceKind::Finite,
+            lower_boundary: ProgressLowerBoundary::AuthoritativeOrigin,
+            binding: None,
+            cover: None,
+            ledger: None,
+            packages: &world.packages,
+            sources: &world.sources,
+            temporal_selections: &world.selections,
+        },
+        &MonitorLimits {
+            retained_identities: 3,
+            ..limits(DEFAULT_RETAINED_POSITIONS)
+        },
+        &cancel,
+    )
+    .expect("opens");
+    let mut last = None;
+    for level in [0, 0, 2, 0, 1] {
+        let observed = text(level);
+        last = Some(session.step(sample(&observed), &cancel).expect("steps"));
+    }
+    let step = last.expect("a step");
+    assert_eq!(category(&step, 0), Category::Violation);
+    assert_eq!(category(&step, 1), Category::Incomplete);
+    assert!(step.statuses.iter().all(|(_, status)| status.is_settled()));
+}
+
+/// FR-643-AC-5 (TC-1667): with `retained_positions` 2 over levels 0, 1, 0 the
+/// event-position `Recent` reports `incomplete` while `Reaches` and `Never`
+/// stay `Pending`. It waits on FR-820's value pruning.
+#[test]
+#[trace("TC-1667", "FR-643-AC-5")]
+#[ignore = "QSL-2307: FR-820 incremental ClauseState and value pruning"]
+fn recent_reports_incomplete_at_the_retained_positions_limit() {
+    use filament_semantic_value::catalog::Category;
+    let world = world();
+    let cancel = Cancel::new();
+    let mut session = world
+        .open(
+            &["Recent", "Reaches", "Never"],
+            MonitorTraceKind::Finite,
+            None,
+            2,
+        )
+        .expect("opens");
+    let mut last = None;
+    for level in [0, 1, 0] {
+        let observed = text(level);
+        last = Some(session.step(sample(&observed), &cancel).expect("steps"));
+    }
+    let step = last.expect("a step");
+    assert_eq!(category(&step, 0), Category::Incomplete);
+    assert_eq!(category(&step, 1), Category::Pending);
+    assert_eq!(category(&step, 2), Category::Pending);
+}
+
+/// FR-643-AC-5 (TC-1667): once progress with scope `closed` is retained, a
+/// further observation is refused on `Closure` and the session is unchanged.
+#[test]
+#[trace("TC-1667", "FR-643-AC-5")]
+fn an_observation_after_a_closed_scope_is_refused() {
+    let world = world();
+    let cancel = Cancel::new();
+    let mut session = world
+        .open(
+            &["T"],
+            MonitorTraceKind::Timestamped,
+            Some(stamped_binding()),
+            DEFAULT_RETAINED_POSITIONS,
+        )
+        .expect("opens");
+    let first = text(1);
+    session.step(stamped(&first, 0), &cancel).expect("steps");
+    session
+        .assert_progress(
+            ProgressAssertion {
+                scope: ProgressClosure::Closed,
+                ..progress(10)
+            },
+            &cancel,
+        )
+        .expect("progress");
+    let next = text(0);
+    let MonitorRefusal::Contradiction(contradiction) = refusal(
+        session
+            .step(stamped(&next, 11), &cancel)
+            .expect_err("the scope is closed"),
+    ) else {
+        panic!("a contradiction");
+    };
+    assert_eq!(
+        contradiction.contradiction.dimension,
+        ContradictedDimension::Closure
+    );
 }
