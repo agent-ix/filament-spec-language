@@ -26,6 +26,11 @@ impl NativeResult {
         Self(document)
     }
 
+    /// The FR-862 replay result: FR-323's `results` disposition.
+    pub(super) fn replay_document(document: Value) -> Self {
+        Self(document)
+    }
+
     /// Inspect the encoded observations without changing the admitted shape.
     pub fn as_value(&self) -> &Value {
         &self.0
@@ -144,6 +149,20 @@ pub(super) fn error(error: &RunError, artifact: bool) -> Result<Value, serde_jso
         RunCause::AnalyzeFault | RunCause::MonitorFault | RunCause::MonitorCancelled => {
             (types::Stage::Output, types::Details::None)
         }
+        RunCause::ReplayRequest(_) | RunCause::ReplayBytes { .. } => {
+            (types::Stage::Request, types::Details::None)
+        }
+        RunCause::ReplayOutput(_) => (types::Stage::Output, types::Details::None),
+        RunCause::Replay(failure) => (
+            match &failure.refusal {
+                fsl_replay::ReplayRefusal::Recompile(refusal)
+                | fsl_replay::ReplayRefusal::RecompileWithProtocolResults { refusal, .. } => {
+                    types::Stage::Spine(refusal.stage())
+                }
+                _ => types::Stage::Request,
+            },
+            types::Details::None,
+        ),
         RunCause::Spine(failure) => (
             types::Stage::Spine(failure.refusal.stage()),
             match clock_selection_refusal(&failure.refusal) {
@@ -293,6 +312,7 @@ pub(super) fn error(error: &RunError, artifact: bool) -> Result<Value, serde_jso
         code: error.cause.code().as_str(),
         cause: match &error.cause {
             RunCause::Spine(failure) => failure.refusal.cause(),
+            RunCause::Replay(failure) => failure.refusal.cause(),
             RunCause::SpineRun(refusal) => match refusal.as_ref() {
                 fsl_replay::spine::RunRefusal::Compile(refusal) => refusal.cause(),
                 fsl_replay::spine::RunRefusal::Argument { defect, .. } => Some(defect.cause),

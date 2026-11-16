@@ -3514,3 +3514,47 @@ fn an_out_of_order_row_refuses_at_its_first_offending_entry() {
         "{verdict}"
     );
 }
+
+/// FR-901-AC-1 (TC-2540): every row form FSpec FR-322 "Refinement row
+/// expressions" defines is written, so a refinement with a `history` row,
+/// a whole-population row or a `seq` row checks and emits; none refuses
+/// `RefinementNotEmitted`.
+#[trace("TC-2540", "FR-901-AC-1")]
+#[test]
+#[ignore = "QSL-2244: history, whole-population and seq rows refuse RefinementNotEmitted instead of emitting"]
+fn history_population_and_seq_rows_emit() {
+    let step = "step C::ConfigVersion::attemptUpdate -> A::ConfigVersion::attemptUpdate(self);";
+    let object = |field: &str| {
+        format!(
+            "population A::config_history from C::config_history;\n\
+             object A::ConfigVersion from C::ConfigVersion {{ {field} }}"
+        )
+    };
+    let cases = [
+        (
+            format!(
+                "{MAPS}\n{step}\nhistory C::ConfigVersion.last : Int[0, 1] = 0 \
+                 {{ on C::ConfigVersion::attemptUpdate : 0; }}"
+            ),
+            vec!["attemptUpdate"],
+        ),
+        (
+            object("versionNumber = count(s in C::config_history where s.versionNumber = 1);"),
+            Vec::new(),
+        ),
+        (
+            object(
+                "versionNumber = if size(seq(i in 0 .. 1: i)) = 2 then self.versionNumber \
+                 else self.versionNumber;",
+            ),
+            Vec::new(),
+        ),
+    ];
+    for (rows, operations) in cases {
+        let (emitted, _) = emit_rows(&rows, &operations);
+        assert!(
+            !emitted.emission.package().bytes().is_empty(),
+            "{rows}: the refinement is written"
+        );
+    }
+}

@@ -68,10 +68,8 @@ own obligation, so a proof under `sc` never answers a request under `tso`.
 - When a nested `parallel` declares a default other than its outermost
   `parallel`'s, S3 SHALL refuse it with
   `invalid_model_binding`/`conflicting-binding`, naming both controls.
-- When a `parallel` declares `tso` or `ra` and its join is not `all`, or
-  has an `outstanding` clause, S3 SHALL refuse it with
-  `unsupported_construct`/`declaration-form` at the join, naming the policy
-  and the weak default.
+- S3 SHALL admit a `parallel` that declares `tso` or `ra` whatever its join
+  policy and `outstanding` clause; EN-1 explores it by FR-902's join rule.
 
 ### Request selection
 
@@ -85,13 +83,9 @@ own obligation, so a proof under `sc` never answers a request under `tso`.
   SHALL refuse the request `invalid_runtime_input`/`invalid-value`, naming
   the entry, or both entries (FSpec FR-434).
 - When a request selects `tso` or `ra` for a `parallel` whose join is not
-  `all` with no `outstanding` clause, the pre-check SHALL add a
-  `WeakAccessShape.failures` entry `{site, transition: None, shape: JoinPolicy}`
-  for that parallel node before generating outgoing transitions from the
-  current state. It SHALL collect this entry with every other failing attempt
-  and node entry for the item at that state, in the canonical
-  transition-identity order FR-220 defines; it SHALL NOT settle a separate V-8
-  outcome for each failing parallel.
+  `all`, EN-1 SHALL explore it by FR-902's join rule: the join merges the
+  completed branches, a cancelled `tso` thread's store buffer still drains,
+  and a cancelled `ra` thread's messages stay while its view is discarded.
 - Sequential outermost `parallel` controls in one protocol MAY resolve to
   different models.
 
@@ -115,10 +109,10 @@ own obligation, so a proof under `sc` never answers a request under `tso`.
 
 | ID | Criteria | Verification |
 |----|----------|--------------|
-| FR-219-AC-1 | ADR-025 §10's `SB` protocol checks with no `memory` clause (`Sc`) and with `memory tso` (`Tso`). A `parallel` nested in a branch of `SB::Both` checks with no clause or with the same default, and refuses `invalid_model_binding`/`conflicting-binding` naming both controls with another. `memory ra` on a `parallel` joined `any … outstanding cancel` refuses `unsupported_construct`/`declaration-form` at the join, naming the policy and `ra`; so does `memory tso` with `join all … outstanding continue`. | Test (TC-664) |
+| FR-219-AC-1 | ADR-025 §10's `SB` protocol checks with no `memory` clause (`Sc`) and with `memory tso` (`Tso`). A `parallel` nested in a branch of `SB::Both` checks with no clause or with the same default, and refuses `invalid_model_binding`/`conflicting-binding` naming both controls with another. `memory ra` on a `parallel` joined `any … outstanding cancel`, and `memory tso` with `join all … outstanding continue`, each check with no refusal (FR-902-AC-5). | Test (TC-664) |
 | FR-219-AC-2 | Over `SB` with source default `sc`: a request with no `memory` member resolves `SB::Both` to `sc`; `memory: [{parallel: "SB::Both", model: "tso"}]` resolves it and its nested `parallel` to `tso`. An entry naming the nested `parallel`, or naming the attempt `SB::Both::Sx`, refuses `invalid_runtime_input`/`invalid-value`, naming the entry; two entries both naming `SB::Both`, with `tso` and `ra` or with `tso` twice, refuse `invalid_runtime_input`/`invalid-value`, naming both entries. | Test (TC-664) |
 | FR-219-AC-3 | The `sc`, `tso` and `ra` requests over `SB` carry pairwise different obligation identities and settle `proved`, `refuted` and `refuted` (ADR-025 §10). `SB` with source `memory tso` and no `memory` member carries the same identity as `SB` with source default `sc` and a `tso` selection. | Test (TC-664) |
-| FR-219-AC-4 | A protocol whose `parallel` has no `memory` clause and joins `any … outstanding cancel`: at a reachable state, a request selecting `tso` for it settles one V-8 `WeakAccessShape` before generating that state's outgoing transitions, with a `failures` entry `{site: <parallel node>, transition: None, shape: JoinPolicy}`; when the same state also has a weak-access-shape failure, both entries appear in the same list in FR-220's canonical transition-identity order. The same request with no `memory` member checks under `sc`. | Test (TC-664) |
+| FR-219-AC-4 | A protocol whose `parallel` has no `memory` clause and joins `any … outstanding cancel`, under a request selecting `tso`, explores with no `weak-access-shape` result: a state after the join holds the cancelled branch's buffered store, which a later memory step flushes (FR-902-AC-5). The same request with no `memory` member checks under `sc`. | Test (TC-664) |
 | FR-219-AC-5 | Over `SB` with source default `sc`, a request with no `memory` member writes `SB::Both` with effective model `sc` into the request, and its obligation identity equals that of a request with `memory: [{parallel: "SB::Both", model: "sc"}]`. `SB` with source `memory tso` and `SB` with source default `sc` have different emitted `package_id`s; renaming an attempt in an otherwise identical protocol also changes its emitted `package_id`. The two `tso` requests carry one obligation identity. | Test (TC-664) |
 
 ## Dependencies

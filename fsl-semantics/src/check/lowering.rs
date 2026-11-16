@@ -101,8 +101,8 @@ pub(crate) use hyper::{
 };
 pub(crate) use model::ParentSlotFailure;
 pub(crate) use model::{
-    bound_origin, equivalence_origin, model_declaration_key, quantity_origin, record_node_key,
-    strictly_below, QuantityKind,
+    bound_origin, clock_type_identity, equivalence_origin, model_declaration_key, quantity_origin,
+    record_node_key, strictly_below, QuantityKind, SourceClockLayout, SourceClockPlace,
 };
 pub use model::{
     collection_kind, model_root_key, AdmittedModel, CollectionShape, ForeignView, ModelClause,

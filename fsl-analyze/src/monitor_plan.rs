@@ -20,8 +20,10 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use filament_checked::node::NodeKind;
 
+use fsl_foundation::bound::TemporalUpper;
 use fsl_semantics::check::{
-    CheckedBody, CheckedGraph, CheckedInterval, CheckedTemporalClause, FormulaNode,
+    CheckedBody, CheckedGraph, CheckedInterval, CheckedOperator, CheckedTemporalClause,
+    FormulaNode, TemporalProfile,
 };
 use fsl_semantics::library::LibraryName;
 
@@ -61,6 +63,140 @@ fn validate_reading_gap(max_reading_gap: u64, width_bits: u32) -> Result<(), Mon
     Ok(())
 }
 
+fn one() -> Rational {
+    Rational::from_integer(ExactInteger::from(1_i64))
+}
+
+/// What one tick of a clause's plan counts (FR-251 "Non-timed clauses").
+enum Ticks<'a> {
+    /// Model time: interval bounds convert from the binding's unit to the
+    /// target's.
+    Time {
+        source_scale: &'a Rational,
+        target_scale: &'a Rational,
+    },
+    /// A position counter: one tick is one position, and bounds are
+    /// position counts read without conversion.
+    Positions,
+}
+
+impl<'a> Ticks<'a> {
+    /// The ticks of `clause` under `target`. A clause with a model-time
+    /// binding counts time; an event-position, fixed-sample or
+    /// infinite-trace clause, or a `model-steps` clause, counts positions,
+    /// and `target` must then name the position counter's unit with
+    /// uncertainty 0, rate 1 and reading gap 1.
+    fn of(
+        package: &'a CheckedPackage,
+        clause: &CheckedTemporalClause,
+        target: &MonitorTarget,
+    ) -> Result<Self, MonitorPlanRefusal> {
+        if let Some(binding) = clause.time_binding() {
+            let source_scale = package
+                .graph()
+                .time_unit_scale(&binding.unit)
+                .map_err(|_| MonitorPlanRefusal::InvalidTimeUnit {
+                    unit: binding.unit.clone(),
+                })?;
+            let target_scale = package.graph().time_unit_scale(&target.unit).map_err(|_| {
+                MonitorPlanRefusal::InvalidTimeUnit {
+                    unit: target.unit.clone(),
+                }
+            })?;
+            return Ok(Self::Time {
+                source_scale,
+                target_scale,
+            });
+        }
+        let expected = position_unit(clause).ok_or(MonitorPlanRefusal::NotTimedClause)?;
+        if target.unit != expected {
+            return Err(MonitorPlanRefusal::PositionCounterUnit {
+                expected: expected.to_owned(),
+                unit: target.unit.clone(),
+            });
+        }
+        let zero = Rational::from_integer(ExactInteger::from(0_i64));
+        let rate_is_one = target
+            .max_event_rate
+            .as_ref()
+            .is_none_or(|rate| *rate == one());
+        if target.uncertainty != zero || !rate_is_one || target.max_reading_gap != 1 {
+            return Err(MonitorPlanRefusal::PositionCounterPremise);
+        }
+        Ok(Self::Positions)
+    }
+
+    /// The exact duration of one counter tick in seconds; a position
+    /// counter's tick is one position, scaled 1.
+    fn unit_seconds(&self) -> Rational {
+        match self {
+            Self::Time { target_scale, .. } => (*target_scale).clone(),
+            Self::Positions => one(),
+        }
+    }
+
+    /// The tick bound of `operator`'s interval, or `None` for an operator
+    /// with no bounded interval (a connective, an unbounded operator, or
+    /// an interval of the other kind of tick).
+    fn bound(&self, operator: &CheckedOperator) -> Result<Option<TickBound>, MonitorPlanRefusal> {
+        match (self, &operator.interval) {
+            (
+                Self::Time {
+                    source_scale,
+                    target_scale,
+                },
+                Some(CheckedInterval::Timed(interval)),
+            ) => {
+                let convert = |value: &Rational| {
+                    value
+                        .mul(source_scale)
+                        .div(target_scale)
+                        .ok_or(MonitorPlanRefusal::IntervalConversion)
+                };
+                Ok(Some(TickBound {
+                    lower: convert(interval.lower())?,
+                    lower_closed: interval.lower_closed(),
+                    upper: convert(interval.upper())?,
+                    upper_closed: interval.upper_closed(),
+                }))
+            }
+            (Self::Positions, Some(CheckedInterval::Steps(interval))) => {
+                let count = |value: u64| Rational::from_integer(ExactInteger::from(value));
+                match interval.upper() {
+                    TemporalUpper::Finite(upper) => Ok(Some(TickBound {
+                        lower: count(interval.lower()),
+                        lower_closed: true,
+                        upper: count(upper),
+                        upper_closed: true,
+                    })),
+                    // `[0, *]` is the unbounded operator.
+                    TemporalUpper::Open if interval.lower() == 0 => Ok(None),
+                    TemporalUpper::Open => Err(MonitorPlanRefusal::OpenIntervalLowerBound {
+                        node: operator.node.index(),
+                    }),
+                }
+            }
+            _ => Ok(None),
+        }
+    }
+}
+
+/// The position-counter unit of a clause whose ticks count positions
+/// (FR-251 "Non-timed clauses", FR-233): `step` for a `model-steps` clause,
+/// otherwise `event`, `sample` or `position` by its profile. `None` for a
+/// timestamped-event clause, whose ticks are time stamps.
+fn position_unit(clause: &CheckedTemporalClause) -> Option<&'static str> {
+    if clause.clock() == "model-steps" {
+        return Some("step");
+    }
+    match clause.profile() {
+        TemporalProfile::EventPositionFalseExtension => Some("event"),
+        TemporalProfile::FixedSampleFalseExtension => Some("sample"),
+        TemporalProfile::InfiniteTrace => Some("position"),
+        TemporalProfile::TimestampedEventFiniteWindow | TemporalProfile::Timed => None,
+    }
+}
+
 /// Derive FR-251's tick plan and FR-252's per-plan timing obligations from a
 /// clause in its checked package and a target premise.
 pub fn produce(
@@ -81,25 +217,15 @@ pub fn produce(
         .temporal_clauses()
         .iter()
         .find(|node| node.clause() == clause)
-        .ok_or(MonitorPlanRefusal::NotTimedClause)?;
-    let binding = clause
-        .time_binding()
-        .ok_or(MonitorPlanRefusal::NotTimedClause)?;
-    let source_scale = package
-        .graph()
-        .time_unit_scale(&binding.unit)
-        .map_err(|_| MonitorPlanRefusal::InvalidTimeUnit {
-            unit: binding.unit.clone(),
-        })?;
-    let target_scale = package.graph().time_unit_scale(&target.unit).map_err(|_| {
-        MonitorPlanRefusal::InvalidTimeUnit {
-            unit: target.unit.clone(),
-        }
-    })?;
-    let rate_limit = target
-        .max_event_rate
-        .clone()
-        .unwrap_or_else(|| default_event_rate(target_scale));
+        .ok_or(MonitorPlanRefusal::ClauseNotInPackage)?;
+    let ticks = Ticks::of(package, clause, target)?;
+    let rate_limit = match &ticks {
+        Ticks::Time { target_scale, .. } => target
+            .max_event_rate
+            .clone()
+            .unwrap_or_else(|| default_event_rate(target_scale)),
+        Ticks::Positions => one(),
+    };
     if rate_limit <= zero {
         return Err(MonitorPlanRefusal::InvalidBufferInputs);
     }
@@ -114,41 +240,25 @@ pub fn produce(
     let clock_binding = ClockBindingKey::new(
         target.counter.clone(),
         target.unit.clone(),
-        target_scale.clone(),
+        ticks.unit_seconds(),
         target.width_bits,
     );
 
-    let convert = |value: &Rational| {
-        value
-            .mul(source_scale)
-            .div(target_scale)
-            .ok_or(MonitorPlanRefusal::IntervalConversion)
-    };
     let mut intervals = Vec::new();
     let mut buffers = Vec::new();
     let mut tick_bounds = std::collections::BTreeMap::new();
     for operator in clause.operators() {
-        let Some(CheckedInterval::Timed(interval)) = &operator.interval else {
+        let Some(bound) = ticks.bound(operator)? else {
             continue;
         };
-        let lower = convert(interval.lower())?;
-        let upper = convert(interval.upper())?;
         let id = SubformulaId::new(operator.node.index());
         let tick_interval = TickInterval::new(
-            lower.clone(),
-            interval.lower_closed(),
-            upper.clone(),
-            interval.upper_closed(),
+            bound.lower.clone(),
+            bound.lower_closed,
+            bound.upper.clone(),
+            bound.upper_closed,
         );
-        tick_bounds.insert(
-            operator.node.index(),
-            TickBound {
-                lower,
-                lower_closed: interval.lower_closed(),
-                upper,
-                upper_closed: interval.upper_closed(),
-            },
-        );
+        tick_bounds.insert(operator.node.index(), bound);
         intervals.push((id, tick_interval));
     }
     let shape = TickShape::of(clause.formula(), &tick_bounds, &target.uncertainty);

@@ -280,7 +280,7 @@ pub(super) struct Failure<'a> {
     pub stage: Stage,
     pub code: &'static str,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub cause: Option<&'static str>,
+    pub cause: Option<&'a str>,
     pub message: String,
     pub details: Details<'a>,
     pub basis: &'static str,

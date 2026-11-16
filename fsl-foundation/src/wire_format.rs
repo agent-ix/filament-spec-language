@@ -31,6 +31,8 @@ formats! {
     AnalyzeRequest => "native-analyze/1",
     /// FR-644: a monitor request over a stream of observation records.
     MonitorRequest => "native-monitor/1",
+    /// FR-862: a replay request in FSpec FR-336's replay request mapping.
+    ReplayRequest => "native-replay/1",
     /// Native clause-run result or command-error envelope.
     RunResult => "native-run-result/2",
     /// Source-aware rule-model authoring profile.
