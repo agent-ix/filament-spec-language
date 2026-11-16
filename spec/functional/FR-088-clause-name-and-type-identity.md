@@ -103,8 +103,8 @@ ADR's summary sentence as if it were itself testable.
   what that lookup resolves against.
 - Type descriptors (O-14): package types as checked graph nodes
   (`scalar_type`, `composite_type`, `bounded_domain`), identified by node
-  id; `ValueTypeRef{Clock, Native(NativeValueType), Package(DeclarationKey), Unit(String)}` for
-  model field types; the sum-type checked node form, whose variants are
+  id; `ValueTypeRef{Clock, Native(NativeValueType), Package(DeclarationKey), Unit(String), Resolved(Box<ValueType>)}`
+  for model field types, `Resolved` only for a source object member (FR-569); the sum-type checked node form, whose variants are
   declared members (O-06) and whose kernel counterpart is the QC-15 sum
   shape (opaque `VariantId`s, no `NodeKey`).
 - C-26: the total conversion function, checked type node → kernel
@@ -219,6 +219,42 @@ for a compound unit (ADR-013 T-6, OQ-B). A
 declared unit and a compound unit SHALL never be equal. C-30 SHALL admit
 only a unit node key as a declared-arm `UnitId`.
 
+### A model field type names a package node, except a source object member's
+
+A model field type SHALL be a `ValueTypeRef`, the union of five variants:
+
+- `Clock`, a place in a timed model (FR-230), with no fields;
+- `Native(NativeValueType)`, a native value type;
+- `Package(DeclarationKey)`, a type or object type node of a domain package,
+  or a source object type (FR-569);
+- `Unit(String)`, a unit name the assembler resolves (FR-056-AC-42), not a
+  type name;
+- `Resolved(Box<ValueType>)`, the checked value type of a field, operation
+  parameter or operation result of a source-declared object type.
+
+A domain package declares every type its members name, so its members use
+the first four variants only. A source object's members are typed by the
+unit's own source declarations (enums, records, tuples, unions, aliases), by
+anonymous types such as `Decimal[0, 100; 2, 2; exact]`, `Float64` or
+`Quantity<m>`, which have no domain package node, and by model-owned value,
+record, tuple and variant types such as `M::Total`. Every such member's type,
+model-owned ones included, is the `ValueType` the same type form has as a
+source record field (FR-569 "Member types", FR-092-AC-21), carried as
+`Resolved`, so every member that is neither a clock nor an object reference
+has one representation. Copying that type
+into domain package records would give one type two identities and would
+need record kinds FSpec FR-154 does not define, so the checked type itself is
+carried instead.
+
+No serializer or wire writer SHALL encode `Resolved`. No production code
+outside the assembler's source model (FR-569 "The source model") SHALL
+construct it; tests may. Domain package intake SHALL never produce it, and no domain package, snapshot, `identities.json` or
+package document SHALL carry it. A diagnostic SHALL print it as the FSL
+spelling of the checked type, not as a Rust `Debug` rendering. In the FR-569
+target emission, the binding of a `Resolved` member SHALL name the type node
+that a record field of that `ValueType` binds; the reference itself is never
+serialized.
+
 ## Constraints
 
 | ID | Constraint | Type | Validation |
@@ -240,7 +276,7 @@ only a unit node key as a declared-arm `UnitId`.
 | FR-088-AC-5 | No function exists whose signature accepts a `QualifiedName` or a bare string and returns a node id or a declaration, callable from outside the check stage; a source and call-graph scan over every crate module confirms every call site of the checker's name-resolution function lies inside the check stage, with the sole documented exception being the `replay` facade's own E9 lookup (a separate module, not built by this requirement) never called from `check` itself. | Test (TC-251) |
 | FR-088-AC-6 | `QualifiedName` is used only as a declared component of an identity preimage (for example inside `DeclarationKey`'s or a checked node's own preimage where a name participates); no equality or hashing implementation on any identity type treats a `QualifiedName` as the sole identity-bearing field where a node id is available instead. | Inspection (TC-258) |
 | FR-088-AC-7 | A package type's identity is its checked node id: node keys are content keys scoped only by owner (ADR-013 O-04, OQ-G). Two type declarations with the same structure under the same qualified name in two packages of the same owner share one node id. Two with the same structure and qualified name in packages with different source owners get distinct node ids, and two with different qualified names get distinct node ids. A builtin or anonymous type node, such as `Int[0, 9]`, has no owner and shares one id across packages and owners. A reference into another package is distinguished by the `package` component of its structural `NodeKey` (ADR-013 T-3). Within one package, two source *occurrences* of a reference to the same declared type (ADR-013 O-07's own term: "each source occurrence of a node is keyed by (node id, role, ordinal)" — for example the same type named as the field type of two different fields) resolve to the one node id the single declaration was minted with; this is not a claim about declaring a type twice; declaring a structurally identical type a second time under a colliding name is a name-binding refusal (a duplicate declaration), a different criterion, not a second occurrence of the first node id, and is out of this criterion's scope. This repository's own precedent for a duplicate name/binding — `checking::composed::proofs::CorrespondenceError::DuplicateDeclaration`, `src/checking/composed/proofs/correspondence.rs:96` — refuses rather than admits with a shared id. | Test (TC-259) |
-| FR-088-AC-8 | `ValueTypeRef` is exactly the four-member union `{Clock, Native(NativeValueType), Package(DeclarationKey), Unit(String)}`; no fifth variant exists, and no model field type is represented by a bare `NodeKey` or a raw string type name. `Clock` carries no fields (a place in a timed model, FR-230), and the `String` of `Unit` is a unit name the assembler resolves (FR-056-AC-42), not a type name. | Inspection (TC-260) |
+| FR-088-AC-8 | `ValueTypeRef` is exactly the five-member union `{Clock, Native(NativeValueType), Package(DeclarationKey), Unit(String), Resolved(Box<ValueType>)}`; no sixth variant and no second definition exists, and no model field type is represented by a bare `NodeKey` or a raw string type name. `Clock` carries no fields (a place in a timed model, FR-230), and the `String` of `Unit` is a unit name the assembler resolves (FR-056-AC-42), not a type name. No production code outside the source-object assembler (FR-569 "The source model") constructs `Resolved`, domain package intake never does, and no serializer or wire writer encodes it; and `ValueTypeRef`'s `Display` renders it by its FSL type spelling, not by `Debug`. | Inspection (TC-260) |
 | FR-088-AC-9 | C-26's conversion function is total: for every checked type-node form (`scalar_type`, `composite_type`, `bounded_domain`, and the sum form), a test constructs a checked node of that form and confirms the function returns a kernel `ValueType` with no panic, no `_`-arm fallback, and no lossy substitution; a checked type-node form added without a corresponding match arm fails to compile (`clippy::wildcard_enum_match_arm`, following ADR-011 §5's convention for other exhaustive maps). | Test (TC-252) |
 | FR-088-AC-10 | For the sum form specifically, the source checked node's own id is not re-minted by C-26's conversion (it is the same content-addressed id the node carried before conversion, read from `CheckedGraph`/`CheckedPackage`, not a value the kernel shape carries); C-26's output kernel `ValueType` carries, per variant, a `VariantId` computed from the declaring sum and that member, and the kernel shape carries no `NodeKey` anywhere in its variant representation. A sum value built from this conversion carries its `VariantId`, and an adverse test confirms no code path reads or stores a bare variant index in place of the `VariantId`. | Test (TC-252) |
 | FR-088-AC-11 | For an enum `E` declared with cases `b`, `a`, `c` in that order, each variant's `VariantId` equals the node key over `{version: filament.enum-member-node/v1, declaration_node_id: E's node key, case}`. When `E` is ordered, the variants' ranks are `b` 0, `a` 1, `c` 2, and a set of all three values visits `b`, `a`, `c`. When `E` is unordered, its canonical member list is `a`, `b`, `c`, the ranks are `a` 0, `b` 1, `c` 2, and the set visits `a`, `b`, `c`. A value that pairs `E::a`'s `VariantId` with rank 2 is refused at admission. Renaming the declaration `E` to `F` changes every `VariantId` and changes no rank and no visiting order. C-30 refuses `E`'s own declaration node key as a `VariantId`. | Test (TC-409) |
