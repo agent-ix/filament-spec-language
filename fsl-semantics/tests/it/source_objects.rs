@@ -2454,3 +2454,56 @@ fn source_dense_time_covers_direct_nested_and_collection_clock_members() {
         assert!(graph.time_sources()[0].model_node.to_string().contains("O"));
     }
 }
+
+#[trace("FR-088-AC-13", "FR-569-AC-15", "TC-2360", "TC-1940")]
+#[test]
+fn an_outer_collection_alias_moves_to_multiplicity_but_a_nested_alias_remains() {
+    use fsl_semantics::model::domain_package::DomainPackageRecord;
+    use fsl_semantics::model::spelling::{fsl_spelling, MemberSlot};
+    let declarations = assemble("type Money = Decimal[0, 100; 2, 2; exact];\ntype Totals = Sequence<Money>[0, 3];\nobject Order { a: Totals; b: Option<Totals>; }\n").expect("collection aliases assemble");
+    let source = declarations
+        .model_inputs
+        .as_ref()
+        .expect("models")
+        .0
+        .iter()
+        .find(|model| model.alias.is_empty())
+        .expect("source");
+    let spellings = source.view.model_index().source_spellings();
+    for (name, expected, lower, upper, ordered) in [
+        ("a", "Money", 0, 3, true),
+        ("b", "Option<Totals>", 1, 1, false),
+    ] {
+        let field = source
+            .view
+            .domain_package()
+            .records
+            .iter()
+            .find_map(|record| match record {
+                DomainPackageRecord::FieldMember(field)
+                    if field.key.node.ends_with(&format!("/Order/{name}")) =>
+                {
+                    Some(field)
+                }
+                _ => None,
+            })
+            .expect("source field");
+        assert_eq!(
+            fsl_spelling(
+                &field.value_type,
+                spellings,
+                Some(&MemberSlot::Field(field.key.clone()))
+            ),
+            expected
+        );
+        assert_eq!(
+            (
+                field.multiplicity.lower,
+                field.multiplicity.upper,
+                field.multiplicity.ordered
+            ),
+            (lower, Some(upper), ordered)
+        );
+    }
+    finish(declarations).expect("both alias positions check");
+}
