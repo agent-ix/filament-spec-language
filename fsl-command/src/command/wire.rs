@@ -193,6 +193,9 @@ pub(super) struct Request {
     /// FR-312: a clause run, mutually exclusive with `call` for 1-draft.
     #[serde(default, deserialize_with = "from_object_opt")]
     pub clause: Option<ClauseRun>,
+    /// FR-651: several independent call or clause selections in one request.
+    #[serde(default, deserialize_with = "from_object_opt")]
+    pub items: Option<serde_json::Value>,
     /// FR-100/ADR-015 D-1: a `1-draft` program's supplied libraries; none
     /// when absent.
     #[serde(default, deserialize_with = "deserialize_objects")]

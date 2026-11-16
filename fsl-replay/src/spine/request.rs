@@ -9,9 +9,9 @@ const MAX_COUNT: u64 = 9_007_199_254_740_991;
 use filament_exact::{CollectionKind, Identifier, ScalarLimits};
 use fsl_foundation::serde_object::{deserialize_objects, from_object};
 use fsl_semantics::model::observation::{
-    collection_kind_of_tag, AnchorKind, ClauseSelection, ClauseSelectionInput, DocumentRef,
-    NativeKind, ObservationLimits, PostStateRange, RawNativeKind, SelectedAnchor, SelectedObject,
-    SnapshotValue,
+    collection_kind_of_tag, AnchorKind, ClauseSelection, ClauseSelectionInput, ContextSide,
+    DocumentRef, NativeKind, ObservationLimits, PostStateRange, RawNativeKind, SelectedAnchor,
+    SelectedObject, SnapshotValue,
 };
 use quire_canonical::{Node, NodeRef};
 use serde_json::value::RawValue;
@@ -539,6 +539,21 @@ pub struct ClauseRunSelectionWire {
     /// A temporal clause over an observed trace.
     #[serde(default, deserialize_with = "from_object_opt")]
     pub temporal: Option<TemporalSelectionWire>,
+    /// A state-machine context on one side of an invocation.
+    #[serde(default, deserialize_with = "from_object_opt")]
+    pub context: Option<ContextSelectionWire>,
+}
+
+/// The context selection's exact FR-652 member set.
+#[derive(serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ContextSelectionWire {
+    /// The state-machine invariant name.
+    pub name: String,
+    /// Key of the invocation document.
+    pub invocation: String,
+    /// The selected invocation side, `pre` or `post`.
+    pub side: String,
 }
 
 fn from_object_opt<'de, D: serde::Deserializer<'de>, T: serde::Deserialize<'de>>(
@@ -562,10 +577,11 @@ impl ClauseRunSelectionWire {
             + usize::from(self.frame.is_some())
             + usize::from(self.function.is_some());
         let count = count + usize::from(self.temporal.is_some());
+        let count = count + usize::from(self.context.is_some());
         if count != 1 {
             return Err(invalid(
                 "selection",
-                "select exactly one clause, frame, function or temporal clause",
+                "select exactly one clause, frame, function, temporal clause or context",
             ));
         }
         if let Some(clause) = &self.clause {
@@ -598,6 +614,18 @@ impl ClauseRunSelectionWire {
         }
         if let Some(temporal) = &self.temporal {
             return temporal.selection_parts();
+        }
+        if let Some(context) = &self.context {
+            let side = match context.side.as_str() {
+                "pre" => ContextSide::Pre,
+                "post" => ContextSide::Post,
+                _ => return Err(invalid("side", "expected `pre` or `post`")),
+            };
+            return Ok(ClauseSelectionPartsKind::Context {
+                name: context.name.clone(),
+                invocation: context.invocation.clone(),
+                side,
+            });
         }
         let function = self.function.as_ref().expect("exactly one variant");
         Ok(ClauseSelectionPartsKind::Function {
@@ -696,6 +724,15 @@ pub enum ClauseSelectionPartsKind {
         /// Population and object key for the clause's `over` binding: present
         /// exactly when the trace's positions are snapshot keys.
         over: Option<(String, String)>,
+    },
+    /// A state-machine invariant over an invocation's pre or post context.
+    Context {
+        /// The invariant name.
+        name: String,
+        /// Key of its invocation document.
+        invocation: String,
+        /// Which invocation snapshot the context reads.
+        side: ContextSide,
     },
 }
 
@@ -1339,6 +1376,23 @@ fn selection(
             Ok(ClauseRunSelection::Clause(ClauseSelection {
                 name: clause.name,
                 input,
+            }))
+        }
+        ClauseSelectionPartsKind::Context {
+            name,
+            invocation,
+            side,
+        } => {
+            let document = named(observations, &invocation)?;
+            if document.format != "filament.state.invocation/v1" {
+                return Err(invalid("invocation", "context requires an invocation"));
+            }
+            Ok(ClauseRunSelection::Clause(ClauseSelection {
+                name,
+                input: ClauseSelectionInput::Context {
+                    invocation: document.reference.clone(),
+                    side,
+                },
             }))
         }
         ClauseSelectionPartsKind::Frame {

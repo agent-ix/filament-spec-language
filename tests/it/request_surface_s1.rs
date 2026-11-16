@@ -317,6 +317,27 @@ fn a_compile_handoff_member_writes_the_directory() {
     assert!(!handoff.join("mutations").exists());
 }
 
+/// FR-665's existing destination refusal leaves every existing byte intact.
+#[test]
+#[trace("TC-1748", "FR-665-AC-1")]
+fn a_compile_handoff_refuses_an_existing_destination_without_mutation() {
+    let directory = tempfile::tempdir().unwrap();
+    let handoff = directory.path().join("handoff");
+    std::fs::create_dir(&handoff).unwrap();
+    std::fs::write(handoff.join("sentinel"), b"keep me").unwrap();
+    let request = handoff_request(
+        directory.path(),
+        json!({"directory": "handoff", "package_name": "spine",
+            "native_join": {"work_units": 1_000_000, "storage": 1_000_000}}),
+    );
+
+    let (exit, value) = compile_refusal(&request);
+    assert_eq!(exit, 20, "{value}");
+    assert_eq!(value["code"], "invalid-request", "{value}");
+    assert_eq!(std::fs::read(handoff.join("sentinel")).unwrap(), b"keep me");
+    assert_eq!(std::fs::read_dir(&handoff).unwrap().count(), 1);
+}
+
 /// FR-665-AC-3 (TC-1748): a missing native-join budget, invalid corpus name or
 /// unknown handoff member refuses at request admission and writes no directory.
 #[test]

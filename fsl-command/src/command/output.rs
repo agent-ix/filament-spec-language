@@ -26,6 +26,11 @@ impl NativeResult {
         Self(document)
     }
 
+    /// The FR-651 result document for several independently settled items.
+    pub(super) fn items_document(document: Value) -> Self {
+        Self(document)
+    }
+
     /// Inspect the encoded observations without changing the admitted shape.
     pub fn as_value(&self) -> &Value {
         &self.0
