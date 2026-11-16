@@ -1160,17 +1160,29 @@ fn native_run_live_occurrence_limit_defaults_and_refusals() {
         document["outcome"],
         json!({"kind": "incomplete", "limit": "evaluation.live_occurrences"})
     );
-    for evaluation in [
-        json!({"live_occurrences": -1}),
-        json!({"live_occurrences": 1.5}),
-        json!({"live_occurrences": "x"}),
-        json!({"frames": 1}),
-    ] {
-        let (code, _, failure) = run_recursion(1000, json!({"evaluation": evaluation}));
-        assert_eq!(code, Some(20), "{evaluation}");
-        assert_eq!(failure["code"], "invalid-request", "{evaluation}");
-        assert_eq!(failure["stage"], "request", "{evaluation}");
-    }
+}
+
+/// NFR-130-AC-4 request-boundary slice: omitted settings use the request
+/// default, and zero is accepted as an explicit limit value before execution.
+#[trace("TC-2165", "NFR-130-AC-4")]
+#[test]
+fn native_run_live_occurrence_limit_default_and_zero_are_accepted() {
+    let (code, document, stderr) = run_recursion(1000, json!({}));
+    assert_eq!(code, Some(0), "{stderr}");
+    assert_eq!(
+        document["outcome"],
+        json!({"kind": "completed", "value": {"kind": "integer", "decimal": ZERO}})
+    );
+
+    let directory = tempfile::tempdir().unwrap();
+    let mut selected = call("d", json!([{"parameter": "n", "value": 1}]));
+    selected["evaluation"] = json!({"live_occurrences": 0});
+    spine_run_request(directory.path(), RECURSION.as_bytes(), selected);
+    let prepared = fsl_command::command::prepare_run(
+        &directory.path().join("request.json"),
+        fsl_command::command::RunLimits::default(),
+    );
+    assert!(prepared.is_ok(), "{prepared:?}");
 }
 
 /// NFR-130-AC-4 request-boundary slice: malformed evaluation limits refuse
