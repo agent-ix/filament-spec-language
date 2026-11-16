@@ -85,8 +85,12 @@ pub(super) trait ValueSink: StructuralSink {
     ) -> Result<Option<&'t CompositeDeclaration>, Self::Error>;
     /// Whether `value` is the member `case` of the enumeration declared by
     /// `owner`.
-    fn variant(&mut self, owner: &NodeKey, case: &str, value: &VariantId)
-        -> Result<bool, Self::Error>;
+    fn variant(
+        &mut self,
+        owner: &NodeKey,
+        case: &str,
+        value: &VariantId,
+    ) -> Result<bool, Self::Error>;
     fn fields(
         &mut self,
         model: &StateModel,

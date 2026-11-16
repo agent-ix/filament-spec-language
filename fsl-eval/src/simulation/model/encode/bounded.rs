@@ -916,7 +916,8 @@ impl ValueSink for Bounded<'_, '_> {
         case: &str,
         value: &VariantId,
     ) -> Result<bool, Self::Error> {
-        Ok(self.scope.text_equal(case, value.case())? && self.scope.node_equal(owner, value.owner())?)
+        Ok(self.scope.text_equal(case, value.case())?
+            && self.scope.node_equal(owner, value.owner())?)
     }
     fn fields(
         &mut self,
