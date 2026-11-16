@@ -67,3 +67,29 @@ Fixes:
 - FND-009: write structured JSON and refuse on a write error.
 - FND-010: refuse when a replay does not settle.
 - FND-011: compare by value, and use `invalid-request`.
+
+## New findings (disposition pass 1)
+
+Disposition pass 1 reviewed head dbda8a9a9, which is rebased on QSL-2311 (#2752). Rulings from the coordinator: FND-004 is resolved by QSL-2311, and FND-008 waits on QSL-2132.
+
+| ID | Severity | Summary | Refs |
+|----|----------|---------|------|
+| FND-012 | low | A `Finite` session skips `authenticate_emission` only when `temporal_selections` is empty. A non-empty list that is incomplete or mismatched still refuses at open, although the batch `Finite` run reads no selection (FR-283-AC-17's intent). Gate the emission on the kind alone | fsl-analyze/src/monitor_session.rs:422-445 |
+| FND-013 | low | `checkpoint()` now returns `Result<MonitorState, Failure>`, against FR-643's `-> MonitorState`. This is acceptable, because the error path is a fault-only serialization path. Record it in FR-643 Inputs together with the other signature deviations (`StageFailure`, `MonitorOpen` by value, `Sample(&str)`, the session lifetime) | fsl-analyze/src/monitor_session.rs:1250 |
+| FND-014 | low | `authenticate_trace` returns early whenever `authentication` is `None`, so the `None` branch of `subject_of` (`clock-bearing-trace-has-authentication-rows`) is now dead. The comment says "asserts none", but the trace's binding is skipped even when one is asserted. Existing callers are unaffected: the spine (`clause.rs:1367`, `:1396`) and the batch `monitor` (`Runs::authentication`) always pass `Some` for `Progressed` and `Timestamped` traces | fsl-replay/src/spine/clause/temporal.rs:563-573, 600-606 |
+
+## Dispositions
+
+| FND | outcome | reason |
+|-----|---------|--------|
+| FND-001 | fixed | Each unsettled clause checkpoints `evaluated_at` (positions seen, assertion), and resume replays that call (monitor_session.rs:1281-1284, 1481-1496). `a_resumed_timestamped_session_keeps_the_pending_window_report` covers it. |
+| FND-002 | fixed | `retained()` seeds Order and regression from the ledger's entry for each clause binding, opening ledger included (monitor_session.rs:583-617, 718-759). `the_opening_ledger_orders_stamps_and_assertions` refuses stamp 3 and W 2 under a ledger at W 5. |
+| FND-003 | fixed | A `Finite` session with no selections opens and reads the decided reading unauthenticated (monitor_session.rs:422-431, 1045-1058; `a_finite_session_needs_no_selection_for_a_closed_trace_clause`). A narrower residue remains as FND-012. |
+| FND-004 | fixed | Per QSL-2311 (#2752), the settled report is exactly `B(s)` and the deciding reading is in `Settlement`. Tests assert no `finite_window` and no ledger on a `Finite` report, and the settlement members (FR-643-AC-7, FR-644-AC-7). |
+| FND-005 | fixed | `MonitorOutcome` gains `ledger` (progress kinds only) and `settlements`, and the summary writes `outcome.ledger` (monitor_session.rs:1157-1182; command/monitor.rs summary). |
+| FND-006 | fixed | `RunCause::MonitorRefused` carries `MonitorRefusal::document()` into the envelope, and `session_refusal_event` puts FR-643's record in the event disposition (command/monitor.rs:81-91, session_refusal_event). |
+| FND-007 | fixed | The SPDX header and the `Admission::failure` doc comment are restored (monitor.rs:1, 283). |
+| FND-008 | deferred | QSL-2132: the provider type FR-635 names does not exist yet (coordinator ruling). |
+| FND-009 | fixed | The checkpoint identity is typed JSON (sources, `node_key_to_text`, serde clock parameters, boundary label), and ledger and serialization errors are faults (monitor_session.rs:1186-1305). The signature change is FND-013. |
+| FND-010 | fixed | Resume refuses `monitor-state-mismatch` when a settled clause's replay does not settle, and when a pending clause's replay does (monitor_session.rs:1473-1475, 1492-1494). |
+| FND-011 | fixed | Status changes use `same_disposition` (temporal verdicts by value), and `assert_through` refuses `invalid-request` naming `through` (monitor_session.rs:689, 1522-1528). |

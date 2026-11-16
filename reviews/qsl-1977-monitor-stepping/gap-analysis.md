@@ -41,3 +41,20 @@ No production code in the diff lacks an owning requirement. No stubs were found 
 ## Verdict
 
 REQUEST CHANGES. Coverage is broad and the oracles are mostly strong: per-prefix batch comparison, ledger equality and contradiction dimensions. FND-001 leaves the defect in code-review FND-001 uncaught. The low findings are assertions to add to existing tests.
+
+## New findings (disposition pass 1)
+
+| ID | Severity | Summary | Refs |
+|----|----------|---------|------|
+| FND-007 | low | `the_opening_ledger_orders_stamps_and_assertions` is tagged FR-643-AC-4 (checkpoint), but it tests FR-643 Order (AC-5's watermark refusal, seeded from the ledger). Retag it to FR-643-AC-5 | fsl-analyze/tests/it/monitor_incremental.rs:867 |
+
+## Dispositions
+
+| FND | outcome | reason |
+|-----|---------|--------|
+| FND-001 | fixed | `a_resumed_timestamped_session_keeps_the_pending_window_report` resumes after an unasserted step and compares reports with the original. |
+| FND-002 | fixed | `snapshots_fed_one_at_a_time_equal_the_batch_with_settled_clauses_frozen` (FR-643-AC-1) runs `Bounded` and `always holds(c.value <= 1)` over snapshots. |
+| FND-003 | fixed | The AC-11 test now asserts `Never`'s three-position counterexample, the limit record and `Below` unchanged at the fifth observation. |
+| FND-004 | fixed | The AC-7 test compares the settled report with the batch `B(3)`: the same basis, no `finite_window`, no ledger. |
+| FND-005 | fixed | `a_finite_session_needs_no_selection_for_a_closed_trace_clause` is tagged TC-2323, FR-283-AC-17. |
+| FND-006 | fixed | The open-refusal test is retagged TC-1671, FR-645-AC-3. |
