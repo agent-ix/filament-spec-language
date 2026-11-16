@@ -35,3 +35,46 @@ REQUEST CHANGES for FND-001 and FND-002. The rest of the diff was checked and is
 - Internal faults: none can be reached from a request. An output path with no file name (`.`, `..`, `/`) is refused as `io-error` `InvalidInput`, not as an internal failure.
 
 Evidence: `cargo test --test it compile_package_output` (3 passed, 1 ignored: AC-5, blocked on QSL-2193); `cargo test -p fsl-command --test it request_overrides` (4 passed); `cargo clippy -p fsl-command --all-targets -- -D warnings` clean. No Python or logic-bearing shell in the diff.
+
+## New findings (disposition pass 1)
+
+| ID | Severity | Summary | Refs |
+| --- | --- | --- | --- |
+| FND-004 | medium | The fallback's write-failure branch is untested. `write_exclusively` removes the target it created when `write_all`/`sync_all` fails. That is the branch that keeps FR-810's "leave no partial file" promise on filesystems without links, and no test reaches it. The coder calls it untestable, but it is not. The same seam that injects `link` can inject the writer: give `write_new_file_linking` (or `write_exclusively`) a write step such as `impl Fn(&mut File, &[u8]) -> io::Result<()>`, then pass one that writes some bytes and returns an error, and assert that the call returns `io-error` naming the path and that the directory is empty. | fsl-command/src/command/output_file.rs:100-111 |
+| FND-005 | low | A failure while staging the temporary file is routed into the fallback. `staged.and_then(\|()\| link(..))` merges a `write_all`/`sync_all` error on the temporary file with a link error. A failed staging write (for example `ENOSPC` or `EIO`) therefore retries the whole write directly on the target, and the call reports the fallback's error instead of the original one. That contradicts the doc comment ("When `link` fails for another reason ..."). Fix: when staging fails, remove the temporary file and return `io(error)` before calling `link`. Only a link error should fall back. | fsl-command/src/command/output_file.rs:52-63 |
+
+## Dispositions
+
+| FND | Outcome | Reason |
+| --- | --- | --- |
+| FND-001 | fixed | output_file.rs creates the temporary file with `create_new`, named pid plus an `AtomicU64` counter, and retries up to 64 times on `AlreadyExists`. Only the call that created a temporary file removes it, and a failed `create_new` never reaches the remove. A sequential double-write test and an 8-thread one-winner test pass. When all 64 attempts are used up, `create_temporary` returns `AlreadyExists`, which maps to the typed `RunCause::Io` (`io-error`, exit 20), not a fault. |
+| FND-002 | fixed | A link failure other than `AlreadyExists` falls back to `create_new` on the target, then write and sync, removing the target if that write fails. `AlreadyExists` from the link or from the fallback gives `OutputExists`. The link step is injected; the tests for a forced `Unsupported` link and for a target that appears mid-fallback pass. FND-004 records the untested removal branch. |
+| FND-003 | fixed | FR-810 line 84 now reads "links it into place without replacing an existing path, or, where the filesystem cannot link, creates the target exclusively and removes it again if that write fails". |
+
+```yaml
+dispositions:
+  - fnd: FND-001
+    outcome: fixed
+    after_excerpt: |-
+      temporary_name.push(format!(
+          ".{}.{}.tmp",
+          std::process::id(),
+          NEXT_TEMPORARY.fetch_add(1, Ordering::Relaxed)
+      ));
+      ...
+          Ok(file) => return Ok((temporary, file)),
+          Err(error) if error.kind() == io::ErrorKind::AlreadyExists => last = error,
+  - fnd: FND-002
+    outcome: fixed
+    after_excerpt: |-
+      Err(error) if error.kind() == io::ErrorKind::AlreadyExists => Err(exists()),
+      Err(_) => write_exclusively(path, bytes).map_err(|error| {
+  - fnd: FND-003
+    outcome: fixed
+    after_excerpt: |-
+      sibling temporary file and links it into place without
+      replacing an existing path, or, where the filesystem cannot link, creates
+      the target exclusively and removes it again if that write fails.
+```
+
+Round 2 evidence at head 2819774c8: `cargo test -p fsl-command --lib output_file` (4 passed), `cargo test --test it compile_package_output` (3 passed, 1 ignored), `cargo test -p fsl-command --test it request_overrides` (4 passed), `cargo clippy -p fsl-command --all-targets -D warnings` and `cargo fmt --check` clean. Round 2 verdict: REQUEST CHANGES for FND-004.

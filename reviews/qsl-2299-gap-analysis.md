@@ -29,3 +29,26 @@ PASS WITH FINDINGS. Every new production item traces to FR-810: the `output` mem
 FR-810-AC-1, AC-2 and AC-3, and the FR-810 Behavior bullets, were examined. AC-4 (driver) and AC-5 (handoff, blocked on QSL-2193) were read for context only. Reverse gap: none.
 
 Plan completion: not assessed
+
+## Dispositions
+
+| FND | Outcome | Reason |
+| --- | --- | --- |
+| FND-001 | fixed | The missing-directory case now asserts `io-error` and the path. A new case replaces the program with `not a program`, keeps `output`, and asserts that no file is written. It also asserts that the refusal (exit, code, stage, message) matches the same request without `output`. This program fails at the parse stage, not the check stage. That is enough for AC-2, because the write runs only after `complete` returns. |
+
+```yaml
+dispositions:
+  - fnd: FND-001
+    outcome: fixed
+    after_excerpt: |-
+      assert_eq!(value["code"], "io-error", "{value}");
+      assert!(
+          value.to_string().contains("missing/spine.package.json"),
+          "{value}"
+      );
+      ...
+      std::fs::write(directory.path().join("program.native"), b"not a program").unwrap();
+      let (exit, value) = refusal(&path);
+      ...
+      assert!(!directory.path().join("spine.package.json").exists());
+```
