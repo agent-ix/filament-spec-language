@@ -39,8 +39,11 @@ result override narrowing `Option<Reference<M::Node>>` to
 `Option<Reference<M::Node>>`; the result override from `Reference<Order>` to
 `Option<Reference<Order>>`; and the parameter override from
 `Decimal[0, 100; 2, 2; exact]` to `Decimal[0, 200; 2, 2; exact]`. Last,
-compare the clock place of `w` with the one a record field of type `W`
-records.
+check the AC-15 clock unit (`record W { c: Clock; }`, `object O { w: W; }`,
+`dimension Time;`, `unit ms : Time = rational(1, 1);`, `time O dense unit
+ms;`) through the whole S3 check, with `Sequence<W>[0, 2]` and record-nested
+variants of `w`, and compare each clock place with the one the record field
+of the same type records.
 
 ## Expected Results
 
@@ -53,5 +56,6 @@ record field. The integer widening override and the narrowing `M` override
 check. The integer narrowing override and the `Decimal` override refuse
 `ill_typed`/`variance-parameter`. The widening `M` override and the
 `Reference<Order>` to `Option<Reference<Order>>` override refuse
-`ill_typed`/`variance-result`. `w` records the clock place the record field
-records.
+`ill_typed`/`variance-result`. The clock units check with no refusal (no
+`clock-without-dense-time`), and `w`, its collection and its nested variants
+record the clock places their record fields record.

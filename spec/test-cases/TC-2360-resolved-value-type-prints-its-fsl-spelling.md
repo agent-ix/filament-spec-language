@@ -13,12 +13,12 @@ relationships:
 Verify that a source model keeps a `SourceSpellings` registry, that
 `fsl_spelling` prints each `Resolved` member type in its FSL spelling with
 aliases kept, that `ValueTypeRef`'s `Display` prints only the `resolved:`
-identity form, and that refusal messages and `resolved_path` rows use the
-formatter. Scope: FR-088-AC-13.
+identity form, that refusal messages use the formatter, and that emitted
+`resolved_path` rows never do. Scope: FR-088-AC-13 and FR-088-AC-14.
 
 Catches a formatter that prints a node key, a `VariantId` or `Debug` text in
-place of a name, an alias lost to its target, and a registry that takes part
-in identity.
+place of a name, an alias lost to its target, a registry that takes part
+in identity or emission, and a `resolved_path` row spelled by the formatter.
 
 ## Test Procedure
 
@@ -35,11 +35,15 @@ in identity.
    `Debug` text such as `Composite(` or `VariantId(`.
 5. In a test, replace the registry entry of `Point`'s key with `Spot`, and
    compare the spelling of `b`, the records, the `ValueType`s and the
-   conformance verdicts with step 1.
+   conformance verdicts with step 1. Emit the checked package with each
+   registry and compare the bytes.
 6. Check the `Rush` override of FR-088-AC-13 and read the refusal message.
-7. Check a unit holding `record W { c: Clock; }` under a dense time source
-   and `object O { w: W; }`, and read the `member_type` of the
-   `resolved_path` row of `field(w)`.
+7. Check a unit holding `record W { c: Clock; }`, `object O { w: W; }` and
+   `time O dense unit ms;` over a source `Time` dimension with unit `ms`,
+   and also `record R { w: W; }` with the member `r: R` on `O`. Read the
+   `member_type` of the `resolved_path` row of the step `field(w)` of the
+   place `w.c` and of the record field step `field(w)` of the place
+   `r.w.c`, and read the emitted package back through intake.
 
 ## Expected Results
 
@@ -47,7 +51,14 @@ in identity.
   depth, and `a` without a slot prints `Decimal[0, 100; 2, 2; exact]`.
 - Step 3: no key is missing.
 - Step 4: only the identity form, the same in both runs.
-- Step 5: only the spelling of `b` changes, to `Spot`.
+- Step 5: only the spelling of `b` changes, to `Spot`; the emitted package
+  bytes are equal.
 - Step 6: refused `ill_typed`/`variance-parameter`; the message names
   `Money` and `Decimal[0, 200; 2, 2; exact]` and holds no `resolved:` text.
-- Step 7: the row's member type is `W`, with no `resolved:` text.
+- Step 7: the row's `member_type` is the FR-322 identity rendering of
+  the type node `W`'s emitted binding names, equal to the record field's
+  row, with no `resolved:` or `Debug` text; it is the next row's
+  `declaring_type`, and intake joins every row.
+- Step 8: `resolved:Population[3]`, `resolved:Population` (each equal to
+  `Display`) and `Option<resolved:Population[3]>`, naming no member type;
+  no member type holds a `Population` node.

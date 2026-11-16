@@ -324,7 +324,7 @@ name and nothing below it. Every other node prints by its form:
 | `Collection` | `Sequence<T>`, `Set<T>`, `Bag<T>` or `OrderedSet<T>`, followed by `[min, max]` when the type is bounded |
 | `Map` | `Map<K, V>`, followed by `[min, max]` when the type is bounded |
 | `Reference` | `Reference<T>`, `T` the object type's registry name |
-| `Population` | `Population<T>[N]`, or `Population<T>` with no maximum |
+| `Population` | the identity form below, `resolved:Population[N]`, or `resolved:Population` with no maximum (a fallback, not a spelling) |
 
 Each nested type is spelled by the same rule, so
 `Option<Sequence<Money>[0, 3]>` keeps the alias `Money`. With no slot, or a
@@ -332,13 +332,23 @@ slot that has no alias tree, no node prints an alias. If the registry has no
 entry for a key the type holds, the formatter SHALL print that subterm in the
 identity form below; assembly is required to leave no such key (FR-088-AC-13).
 
+A `Population` node prints its identity form for the same reason. The
+kernel `ValueType::Population` keeps only its maximum `N`, not its member
+type `T`, and the registry has no population entry, so `T` cannot be named.
+The formatter SHALL NOT reconstruct `T` from any other input. The fallback is
+never user-facing for an assembled member, because the assembler refuses a
+source object member typed `Population<..>` (FR-569-AC-13), so no `Resolved`
+member type of a source model holds a `Population` node; the formatter prints
+it only for a type it is handed directly.
+
 **`Display` is an identity form.** `ValueTypeRef`'s `Display` takes no
 registry, so it cannot print FSL names. For `Resolved` it SHALL print a
 deterministic identity form: `resolved:` followed by the table's spelling,
 where each name the registry would supply is replaced by the key's canonical
 text (a `NodeKey` by its `Display`, a variant by its owner `NodeKey` and case,
 an `EffectiveId` by its declaration keys in chain order, a compound unit by
-its (unit node key, exponent) factors). It SHALL never print a Rust `Debug`
+its (unit node key, exponent) factors), and a `Population` node is
+`Population[N]`, or `Population` with no maximum. It SHALL never print a Rust `Debug`
 rendering. The form is for logs, test failure text and internal keys only. It
 is not user-facing and is not a stable interface, and no user-facing output
 SHALL contain it.
@@ -347,10 +357,20 @@ SHALL contain it.
 `ValueTypeRef` held by a source model SHALL get the text from `fsl_spelling`,
 passing the member slot when the text is about a member's declared type. This
 covers diagnostic and refusal messages from S3 to S6 (for example the
-operation member type message of model normalization), CLI and inspect
-output, and the `member_type` of a FSpec FR-322 `resolved_path` row whose
-member is `Resolved`. A row of any other member keeps its FR-322 identity
-rendering.
+operation member type message of model normalization) and CLI and inspect
+output.
+
+**Emitted rows do not use the formatter.** A FSpec FR-322 `resolved_path`
+row is checked package data: the reader joins it to its path step and the
+selected declaration without reopening source, and the row's `member_type`
+is the next row's `declaring_type`. Its text is therefore a function of the
+path and the selected declaration, and it SHALL take no input from the
+registry. The `member_type` of a row whose member is `Resolved` SHALL be the
+FR-322 identity rendering of the type node that the member's emitted binding
+names (the section above), which is the same text a record field of that
+`ValueType` gets in its row. It SHALL never come from `fsl_spelling`,
+`Display` or `Debug`, so it holds no `resolved:` text and no `Debug` text.
+Replacing a registry entry changes no byte of the emitted package.
 Code that reads a `resolved_path` row's collection element SHALL take it from
 the `ValueType`, not by parsing the rendered text.
 
@@ -380,7 +400,8 @@ the `ValueType`, not by parsing the rendered text.
 | FR-088-AC-10 | For the sum form specifically, the source checked node's own id is not re-minted by C-26's conversion (it is the same content-addressed id the node carried before conversion, read from `CheckedGraph`/`CheckedPackage`, not a value the kernel shape carries); C-26's output kernel `ValueType` carries, per variant, a `VariantId` computed from the declaring sum and that member, and the kernel shape carries no `NodeKey` anywhere in its variant representation. A sum value built from this conversion carries its `VariantId`, and an adverse test confirms no code path reads or stores a bare variant index in place of the `VariantId`. | Test (TC-252) |
 | FR-088-AC-11 | For an enum `E` declared with cases `b`, `a`, `c` in that order, each variant's `VariantId` equals the node key over `{version: filament.enum-member-node/v1, declaration_node_id: E's node key, case}`. When `E` is ordered, the variants' ranks are `b` 0, `a` 1, `c` 2, and a set of all three values visits `b`, `a`, `c`. When `E` is unordered, its canonical member list is `a`, `b`, `c`, the ranks are `a` 0, `b` 1, `c` 2, and the set visits `a`, `b`, `c`. A value that pairs `E::a`'s `VariantId` with rank 2 is refused at admission. Renaming the declaration `E` to `F` changes every `VariantId` and changes no rank and no visiting order. C-30 refuses `E`'s own declaration node key as a `VariantId`. | Test (TC-409) |
 | FR-088-AC-12 | For declared units `m` and `km` (a scaled unit of `m`) and the compound unit `m^1`, the three `UnitId`s are pairwise unequal. `m`'s `UnitId` carries `m`'s node key under the `filament.checked-semantic-node/v1` label. For every compound unit, the compound `UnitId` equals its ordered (unit node key, exponent) factor record by structural equality. C-30 refuses a dimension node key as a declared-arm `UnitId`. | Test (TC-411) |
-| FR-088-AC-13 | Over a source unit that selects a model as `M` (with record type `Total`), declares `type Money = Decimal[0, 100; 2, 2; exact];`, `record Point { x: Integer; }`, `enum Color { Red, Green }`, `dimension Length;`, `unit m : Length = rational(1, 1);` and `object Order { a: Money; b: Point; c: Color; d: Option<Sequence<Money>[0, 3]>; e: M::Total; g: Quantity<m>; h: Decimal[0, 100; 2, 2; exact]; operation f(p: Money): Option<Reference<Order>>; }`, `fsl_spelling` with each member's slot returns `Money`, `Point`, `Color`, `Option<Sequence<Money>[0, 3]>`, `M::Total`, `Quantity<m>`, `Decimal[0, 100; 2, 2; exact]`, `Money` for `p` and `Option<Reference<Order>>` for the result. Without a slot, `a` returns `Decimal[0, 100; 2, 2; exact]`. Every `NodeKey`, enum owner key, `EffectiveId` and declared unit that a `Resolved` type in the view holds has a registry entry. `Display` of each of these types starts with `resolved:`, holds no `Debug` text, and is the same in two runs. Replacing the registry entry of `Point`'s key with `Spot` changes the spelling of `b` to `Spot` and changes no record, `ValueType`, equality or conformance verdict. In a subtype `object Rush extends Order`, an override `f(p: Decimal[0, 200; 2, 2; exact]): Option<Reference<Order>>` is refused `ill_typed`/`variance-parameter`, and the refusal message names the base parameter type `Money` and the override's `Decimal[0, 200; 2, 2; exact]`. For a member `w: W`, where `record W { c: Clock; }`, the `resolved_path` row of the step `field(w)` has member type `W`. Neither output contains `resolved:` text. | Test (TC-2360) |
+| FR-088-AC-13 | Over a source unit that selects a model as `M` (with record type `Total`), declares `type Money = Decimal[0, 100; 2, 2; exact];`, `record Point { x: Integer; }`, `enum Color { Red, Green }`, `dimension Length;`, `unit m : Length = rational(1, 1);` and `object Order { a: Money; b: Point; c: Color; d: Option<Sequence<Money>[0, 3]>; e: M::Total; g: Quantity<m>; h: Decimal[0, 100; 2, 2; exact]; operation f(p: Money): Option<Reference<Order>>; }`, `fsl_spelling` with each member's slot returns `Money`, `Point`, `Color`, `Option<Sequence<Money>[0, 3]>`, `M::Total`, `Quantity<m>`, `Decimal[0, 100; 2, 2; exact]`, `Money` for `p` and `Option<Reference<Order>>` for the result. Without a slot, `a` returns `Decimal[0, 100; 2, 2; exact]`. Every `NodeKey`, enum owner key, `EffectiveId` and declared unit that a `Resolved` type in the view holds has a registry entry. `Display` of each of these types starts with `resolved:`, holds no `Debug` text, and is the same in two runs. Replacing the registry entry of `Point`'s key with `Spot` changes the spelling of `b` to `Spot` and changes no record, `ValueType`, equality or conformance verdict. In a subtype `object Rush extends Order`, an override `f(p: Decimal[0, 200; 2, 2; exact]): Option<Reference<Order>>` is refused `ill_typed`/`variance-parameter`, and the refusal message names the base parameter type `Money` and the override's `Decimal[0, 200; 2, 2; exact]`. Neither the formatter output nor the refusal message contains `resolved:` text. For a member `w: W`, where `record W { c: Clock; }`, the `resolved_path` row of the step `field(w)` has as `member_type` the FR-322 identity rendering of the type node `W`'s emitted binding names, equal to the `member_type` of a record field typed `W`; it holds no `resolved:` and no `Debug` text, it is the next row's `declaring_type`, and the package reader joins it at intake. Replacing the registry entry of `Point`'s key with `Spot` leaves the emitted checked package bytes unchanged. | Test (TC-2360) |
+| FR-088-AC-14 | `fsl_spelling` handed `Resolved` of `ValueType::Population(Some(3))`, with any registry and no slot, returns `resolved:Population[3]`, and handed `Resolved` of `ValueType::Population(None)` returns `resolved:Population`; each equals the type's `Display`, names no member type and holds no `Debug` text. `Option` of `Population(Some(3))` returns `Option<resolved:Population[3]>`. The FR-088-AC-13 unit's source model holds no `Population` node in any member type, and a source object member typed `Population<Order>[3]` is refused (FR-569-AC-13). | Test (TC-2360) |
 
 For AC-6, a hand-written `PartialEq` or `Hash`, a name beside a filler field,
 a local map, and the root crate's lane-private `QualifiedName` types are
