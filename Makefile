@@ -329,7 +329,7 @@ fuzz-deep-input:
 # Each aggregate prerequisite depends on validation, rather than racing it as
 # a sibling under -j (or continuing past it under -k). Standalone lane commands
 # retain their existing behavior; this ordering belongs to the aggregate gate.
-CI_CHECKS := conformance check-no-committed-binaries ci-default-features ci-all-features test-deep-format ci-clean-build seam-probe string-edge route-lint checked-input canonical-types refinement-versioning cargo-deny-bans ci-docs arch-lint-api-surface-fsl arch-lint-qualified-core build-no-std
+CI_CHECKS := conformance check-no-committed-binaries ci-default-features ci-all-features test-deep-format ci-clean-build seam-probe string-edge route-lint checked-input canonical-types refinement-versioning cargo-deny-bans ci-docs arch-lint-api-surface-fsl arch-lint-qualified-core build-no-std examples-check
 CI_TARGETS := $(CI_CHECKS)
 # The public aggregate validates the native documents before the xtask wrapper
 # canonicalizes FSPEC_DIR for every child lane.
@@ -365,6 +365,22 @@ check-conformance-input:
 
 conformance: check-conformance-input
 	@$(CONFORMANCE_XTASK) conformance
+
+# FR-765 (QSL-2101): the filament-examples gate over this checkout. Runs the
+# sibling filament-driver's examples gate (driver FR-021) with every language
+# package of its `fsl` build patched to this checkout's crates, then the
+# negative check that a verdict this checkout no longer gives fails the target
+# (`xtask/tests/examples_check.rs`). Hosted CI stays manual; this is local.
+# A missing driver or examples checkout is an error, never a skip.
+FSL_DRIVER_DIR ?= $(SIBLINGS)/filament-driver
+FSL_EXAMPLES_DIR ?= $(SIBLINGS)/filament-examples
+export FSL_DRIVER_DIR FSL_EXAMPLES_DIR
+EXAMPLES_XTASK ?= cargo run --locked --package xtask --
+EXAMPLES_CHECK_TESTS ?= cargo test --locked --package xtask --test examples_check
+.PHONY: examples-check
+examples-check:
+	@$(EXAMPLES_XTASK) examples-check
+	$(EXAMPLES_CHECK_TESTS)
 
 # FR-059/FR-060 (ADR-011 §7.1 T-12, #215): architecture-conformance
 # checks over the FSL/IR/RT/CG ecosystem.
