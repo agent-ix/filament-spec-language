@@ -1666,6 +1666,30 @@ pub fn check_with_profile_catalog(
     limits: SpineLimits,
     cancel: &Cancel,
 ) -> Result<Staged<CheckedUnit>, ProfileCheckFailure> {
+    check_with_profile_catalog_and_inputs(
+        parsed,
+        package_name,
+        SourceInputs::default(),
+        models,
+        dependencies,
+        profile_catalog,
+        limits,
+        cancel,
+    )
+}
+
+/// S3 and S4 with the caller's exact profile-definition registry and
+/// per-source refinement and clock inputs.
+pub fn check_with_profile_catalog_and_inputs(
+    parsed: &ParsedUnitSource,
+    package_name: String,
+    inputs: SourceInputs<'_>,
+    models: &AdmittedModels,
+    dependencies: &DependencyInput,
+    profile_catalog: ProfileCatalogInput<'_>,
+    limits: SpineLimits,
+    cancel: &Cancel,
+) -> Result<Staged<CheckedUnit>, ProfileCheckFailure> {
     let profile_uses = resolve_protocol_profile_uses(parsed, profile_catalog);
     if profile_uses.iter().any(|profile_use| {
         !matches!(
@@ -1680,9 +1704,9 @@ pub fn check_with_profile_catalog(
         parsed,
         package_name,
         &BTreeMap::new(),
-        None,
-        &[],
-        None,
+        inputs.refinement_internals,
+        inputs.temporal_selections,
+        inputs.clocks,
         None,
         Some(profile_catalog),
         models,

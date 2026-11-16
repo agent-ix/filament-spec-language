@@ -75,7 +75,7 @@ pub use lifecycle::{
     check_units_with_refinement_internals, check_with_execution_points,
     check_with_execution_points_and_refinement_internals,
     check_with_execution_points_and_source_inputs, check_with_integer_division,
-    check_with_profile_catalog, check_with_refinement_internals,
+    check_with_profile_catalog, check_with_profile_catalog_and_inputs, check_with_refinement_internals,
     check_with_temporal_selections_and_execution_points, core_vocabulary, extension_forms, package,
     package_with_temporal_selections, parse, parse_selecting_extensions, parse_with_extensions,
     preflight_unit_list, refusal_or_fault, select, select_units, AdmittedModels, AdmittedUnitList,
@@ -216,8 +216,9 @@ mod identity_form;
 mod run_value;
 pub(crate) use call::run_reading;
 pub use call::{
-    default_accounting, run, Call, CallArgument, CallIncomplete, CallLocus, CallOutcome,
-    CallRefusal, CallSnapshot, CallValue, RunRefusal, WireArgument, DEFAULT_WORK_UNITS,
+    default_accounting, run, run_with_profile_catalog, Call, CallArgument, CallIncomplete,
+    CallLocus, CallOutcome, CallRefusal, CallSnapshot, CallValue, RunRefusal, WireArgument,
+    DEFAULT_WORK_UNITS,
 };
 pub use identity_form::{effective_form, node_key_form, universe_form};
 pub use run_value::ArgumentDefect;

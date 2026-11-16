@@ -510,6 +510,7 @@ struct FunctionRunData {
     libraries: Vec<FormalSource>,
     packages: fsl_semantics::model::intake::PackageInput,
     dependencies: fsl_replay::spine::DependencyInput,
+    extension_catalog: Option<fsl_semantics::library::bundle::DefinitionCatalog>,
     call: fsl_replay::spine::Call,
     /// FR-960: the call's `requirements`; `None` settles no item.
     requirements: Option<requirements::Requirements>,
@@ -2558,7 +2559,11 @@ fn prepare_complete_run(
         })
         .collect::<Result<Vec<(&wire::Library, FormalSource)>>>()?;
     // FR-660: the same request-owned catalog is available to run compilation.
-    let _extension_catalog = extension_catalog(&request.extensions, intake)?;
+    let extension_catalog = if request.extensions.is_empty() {
+        None
+    } else {
+        Some(extension_catalog(&request.extensions, intake)?)
+    };
     let dependencies =
         fsl_replay::spine::DependencyInput::new(libraries.iter().map(|(library, read)| {
             fsl_replay::spine::SuppliedLibrary {
@@ -2628,6 +2633,7 @@ fn prepare_complete_run(
             libraries: libraries.into_iter().map(|(_, source)| source).collect(),
             packages,
             dependencies,
+            extension_catalog,
             call: spine_call,
             requirements,
         }),
@@ -2700,10 +2706,24 @@ fn execute_prepared(prepared: PreparedRun, settle: &settle::Settle<'_>) -> Resul
     // evaluation is the same with and without them.
     let call_cancel = filament_exact::Cancel::new();
     let objects = fsl_semantics::model::object_environment::ObjectEnvironment::default();
-    let Some(selection) = &prepared.requirements else {
-        // FR-960: a call without `requirements` settles no item, and its run
-        // is exactly FR-100's.
-        let outcome = fsl_replay::spine::run(
+    let run = |catalog: Option<&fsl_semantics::library::bundle::DefinitionCatalog>| match catalog {
+        Some(catalog) => fsl_replay::spine::run_with_profile_catalog(
+            source.source().identity().clone(),
+            package_name(source.source().identity()),
+            source.source().path(),
+            source.source().text().as_bytes(),
+            &prepared.packages,
+            &prepared.dependencies,
+            fsl_replay::spine::SpineLimits::default(),
+            &prepared.call,
+            &objects,
+            fsl_replay::spine::ProfileCatalogInput {
+                catalog,
+                limits: fsl_semantics::library::bundle::PackageLimits::default(),
+            },
+            &call_cancel,
+        ),
+        None => fsl_replay::spine::run(
             source.source().identity().clone(),
             package_name(source.source().identity()),
             source.source().path(),
@@ -2714,8 +2734,12 @@ fn execute_prepared(prepared: PreparedRun, settle: &settle::Settle<'_>) -> Resul
             &prepared.call,
             &objects,
             &call_cancel,
-        )
-        .map_err(compile_failure)?;
+        ),
+    };
+    let Some(selection) = &prepared.requirements else {
+        // FR-960: a call without `requirements` settles no item, and its run
+        // is exactly FR-100's.
+        let outcome = run(prepared.extension_catalog.as_ref()).map_err(compile_failure)?;
         let mut result = output::spine_run_result(source, &prepared.call.function, outcome, None)?;
         result.sources = crate::Sources::from_sources(
             std::iter::once(source.source().clone())
@@ -2731,7 +2755,7 @@ fn execute_prepared(prepared: PreparedRun, settle: &settle::Settle<'_>) -> Resul
     };
     // FR-961 step 3 to 5: the call runs through FR-395's
     // `run_with_requirements`, and its items are settled on the same compile.
-    let (ran, settled) = fsl_replay::run_with_requirements_reading(
+    let (ran, settled) = fsl_replay::run_with_requirements_reading_and_profile_catalog(
         &fsl_replay::RequirementsRun {
             source: source.source().identity().clone(),
             package_name: package_name(source.source().identity()),
@@ -2744,6 +2768,12 @@ fn execute_prepared(prepared: PreparedRun, settle: &settle::Settle<'_>) -> Resul
             objects: &objects,
             cancel: &call_cancel,
         },
+        prepared.extension_catalog.as_ref().map(|catalog| {
+            fsl_replay::spine::ProfileCatalogInput {
+                catalog,
+                limits: fsl_semantics::library::bundle::PackageLimits::default(),
+            }
+        }),
         |checked, members| {
             settle::settle_call(checked, members, selection, &prepared.packages, settle)
         },
