@@ -1462,7 +1462,12 @@ pub fn analyze_document(
                     settled.insert(item.request_index, (None, record));
                     continue;
                 }
-                if unrouted {
+                let (disposition, diagnostic) = negotiate.negotiate(&item, &candidates);
+                // A member no route reads settles `unsupported`, but only for an
+                // item negotiation would have run: a kind its claim's family
+                // does not admit is refused first (FR-507, FR-627-AC-4).
+                if unrouted && matches!(disposition, fsl_route::routing::Disposition::Supported(_))
+                {
                     let mut detail = Map::new();
                     detail.insert("kind".to_owned(), json!(item.kind.to_wire()));
                     settled.insert(
@@ -1479,7 +1484,6 @@ pub fn analyze_document(
                     );
                     continue;
                 }
-                let (disposition, diagnostic) = negotiate.negotiate(&item, &candidates);
                 negotiated.push(NegotiatedItem {
                     item,
                     disposition,

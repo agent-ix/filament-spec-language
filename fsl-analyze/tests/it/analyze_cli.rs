@@ -105,7 +105,7 @@ fn explicit_state_items_prove_and_refute() {
 /// FR-625-AC-4: an invariant state clause is an explicit-state item.
 #[trace("TC-1585", "FR-625-AC-4")]
 #[test]
-#[ignore = "QSL-2122: FR-625-AC-4 runs an invariant as temporal-satisfaction on EN-1 but FR-507 admits only operation-contract for a state-model claim (spec question open)"]
+#[ignore = "QSL-2122: needs an EN-1 invariant item form (translation, closure certificate, replayed state-clause counterexample) and FR-625-AC-4 expects record.backend, a member no record carries (FR-331 spells settled_by; adding backend changes every record and the filament-examples expected files) (spec question open)"]
 fn invariant_items_prove_and_refute() {
     let ws = Workspace::new("cli-invariant");
     let body = "invariant AtMostThree using v on M::Counter at current { self.value <= 3 }\n\
@@ -169,7 +169,6 @@ fn time_lock_freedom_over_an_untimed_subject_is_inapplicable() {
 /// FR-627-AC-1: weak fairness proves a liveness item that fails without it.
 #[trace("TC-1587", "FR-627-AC-1")]
 #[test]
-#[ignore = "QSL-2123: FR-627-AC-1 expects an unfair eventually clause refuted on the Counter, but FR-125-AC-2 evaluates it true (stutter only at a terminal state) (spec question open)"]
 fn weak_fairness_decides_liveness() {
     let fair = clause(
         "Fair",
@@ -218,7 +217,6 @@ fn weak_fairness_decides_liveness() {
 /// inapplicable to its `temporal-trace` family (FR-507).
 #[trace("TC-1587", "FR-627-AC-4")]
 #[test]
-#[ignore = "QSL-2123: a finite-replay item naming a temporal clause does not settle inapplicable-kind through fsl analyze yet"]
 fn a_finite_replay_item_over_a_temporal_clause_is_inapplicable() {
     let strong = clause(
         "Strong",
