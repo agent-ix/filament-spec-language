@@ -33,7 +33,7 @@ use ix_trace_rs::trace;
 
 use crate::counter::ZERO;
 use crate::hyper::{input, inputs, positions, refuted};
-use crate::hyper_world::{high, low, opaque, Vault, World, STARTS};
+use crate::hyper_world::{assert_hyper_division_refused, high, low, opaque, Vault, World, STARTS};
 
 /// The clause of FR-177's third criterion: two existential variables and no universal one.
 const TWO_EXISTENTIAL: &str = "hyper Hidden using inf over behaviours (v: V::Vault) \
@@ -300,59 +300,14 @@ fn a_witness_set_over_its_budget_stops_the_run() {
     );
 }
 
-/// FR-177-AC-5: `Opaque` over the secure vault with the added `match`
-/// conjunct `(if present(b.step.Vault::step.i) then 1 mod value(b.step.Vault::step.i)
-/// else 0) = 0` on the existential variable `b`, which has no value on a joint
-/// step whose `b` step is `step(0)`: the item returns `Violated` with an
-/// `Undefined` counterexample whose traces hold a path for `a` and for `b`,
-/// ending at the first such joint step in canonical order, with cause
-/// `division-by-zero`. It ties with the empty witness set that dropping the
-/// undefined step leaves, at joint position 1, and the undefined evaluation
-/// ranks first.
-#[trace("TC-602", "FR-177-AC-5")]
+/// FR-495: the declared hyper existential-match divisor is unproved and is
+/// refused at S3 at the divisor expression.
+#[trace("FR-495")]
 #[test]
-fn an_undefined_existential_match_ends_the_item_with_a_path_for_b() {
+fn an_unproved_existential_match_divisor_is_refused_at_s3() {
     let divided = " and (if present(b.step.Vault::step.i) then 1 mod value(b.step.Vault::step.i) \
                    else 0) = 0";
-    let world = World::new(Vault::Secure, false, &STARTS, &opaque(divided));
-    let counterexample = refuted(run(&world, ModelCheckLimits::default()));
-    let HyperCounterexampleKind::Undefined(undefined) = &counterexample.kind else {
-        panic!("expected an undefined-evaluation counterexample");
-    };
-    assert_eq!(
-        undefined.cause,
-        UndefinedCause::Kernel(Undefined::DivisionByZero)
-    );
-    assert_eq!(
-        undefined.locus,
-        HyperLocus::ExistentialMatch { conjunct: 1 }
-    );
-    assert_eq!(undefined.position, 1);
-    assert_eq!(counterexample.trace_position, 1);
-    assert_eq!(undefined.transition, None);
-    let variables: Vec<_> = undefined
-        .variables
-        .iter()
-        .map(|(variable, alias)| (variable.as_str(), alias.as_str()))
-        .collect();
-    assert_eq!(variables, [("a", "V"), ("b", "V")]);
-    // A path for `a` and one for `b`, each the single step into position 1:
-    // `a` from (0, 0) and its partner from (1, 0), both taking `step(0)`.
-    assert_eq!(counterexample.traces.len(), 2);
-    assert_eq!(counterexample.traces[0].initial, 0);
-    assert_eq!(counterexample.traces[1].initial, 1);
-    assert_eq!(inputs(&counterexample, 0), [0]);
-    assert_eq!(inputs(&counterexample, 1), [0]);
-    assert_eq!(positions(&world, &counterexample, 0), [(0, 0), (0, 0)]);
-    assert_eq!(positions(&world, &counterexample, 1), [(1, 0), (1, 0)]);
-    // The named states are the two post-states, and the paths end in them.
-    assert_eq!(undefined.state_keys.len(), 2);
-    for (index, expected) in undefined.state_keys.iter().enumerate() {
-        let HyperStep::Model(step) = &counterexample.traces[index].steps[0] else {
-            panic!("a model step");
-        };
-        assert_eq!(&step.post_state, expected);
-    }
+    assert_hyper_division_refused(&opaque(divided), "value(b.step.Vault::step.i)");
 }
 
 /// A `match` whose existential conjuncts exhaust their meter, reading
@@ -411,45 +366,14 @@ fn an_incomplete_existential_match_leaves_the_item_undecided() {
     assert_eq!(cause, UndecidedCause::MatchUndetermined);
 }
 
-/// FR-177 "Undefined and undetermined evaluation", the universal side: a
-/// `μ_U` conjunct with no value on a joint step ends the item with an
-/// `Undefined` counterexample while the witness set is not empty. The
-/// existential variable follows the first member's partner to the pre-state,
-/// one step short of the universal path, and the evaluation names the
-/// universal variable alone.
-#[trace("TC-602")]
+/// FR-495: an unproved universal-match divisor is refused at its divisor
+/// expression during S3.
+#[trace("FR-495")]
 #[test]
 fn an_undefined_universal_match_with_a_witness_ends_the_item_with_the_partners_path() {
     let divided = " and (if present(a.step.Vault::step.i) then 1 mod value(a.step.Vault::step.i) \
                    else 0) = 0";
-    let world = World::new(Vault::Secure, false, &STARTS, &opaque(divided));
-    let counterexample = refuted(run(&world, ModelCheckLimits::default()));
-    let HyperCounterexampleKind::Undefined(undefined) = &counterexample.kind else {
-        panic!("expected an undefined-evaluation counterexample");
-    };
-    assert_eq!(
-        undefined.cause,
-        UndefinedCause::Kernel(Undefined::DivisionByZero)
-    );
-    assert_eq!(undefined.locus, HyperLocus::Match { conjunct: 0 });
-    assert_eq!(undefined.position, 1);
-    assert_eq!(counterexample.trace_position, 1);
-    // Every variable is named with its state: `a` after the step, the partner
-    // before it.
-    assert_eq!(
-        undefined.variables,
-        [
-            ("a".to_owned(), "V".to_owned()),
-            ("b".to_owned(), "V".to_owned())
-        ]
-    );
-    assert_eq!(undefined.state_keys.len(), 2);
-    assert_eq!(counterexample.traces.len(), 2);
-    assert_eq!(counterexample.traces[0].initial, 0);
-    assert_eq!(inputs(&counterexample, 0), [0]);
-    // The partner from (1, 0) has taken no step yet.
-    assert_eq!(counterexample.traces[1].initial, 1);
-    assert!(counterexample.traces[1].steps.is_empty());
+    assert_hyper_division_refused(&opaque(divided), "value(a.step.Vault::step.i)");
 }
 
 /// A `match` whose universal conjunct has no value on any joint step.
@@ -966,13 +890,7 @@ fn two_instances(vault: Vault, limits: &[(i64, i64)], conjuncts: &str) -> World 
 fn a_later_instance_wins_only_with_a_strictly_earlier_finding() {
     let divided = " and (if present(b.step.Vault::step.i) then 1 mod value(b.step.Vault::step.i) \
                    else 0) = 0";
-    let world = two_instances(Vault::Secure, &[(0, 0), (1, 0)], divided);
-    let counterexample = refuted(run(&world, ModelCheckLimits::default()));
-    assert!(matches!(
-        counterexample.kind,
-        HyperCounterexampleKind::Undefined(_)
-    ));
-    assert_eq!(counterexample.instance, [("v".to_owned(), "v".to_owned())]);
+    assert_hyper_division_refused(&opaque(divided), "value(b.step.Vault::step.i)");
 }
 
 /// The same ranking bounds a later instance: with one initial state the two
@@ -1198,36 +1116,17 @@ fn an_undefined_contract_at_position_one_comes_before_a_refused_match_at_positio
     assert_a_state_keeps_its_earliest_refused_finding();
 }
 
-/// With two universal variables an undefined `μ_U` names all three variables,
-/// each with its state, in the order of the three traces (FSpec FR-400's
-/// reader rule): `a` and `c` after their step, the partner before it.
-#[trace("TC-602")]
+/// FR-495: the same divisor refusal is reported for a clause with two
+/// universal variables.
+#[trace("FR-495")]
 #[test]
-fn an_undefined_universal_match_names_every_variable_with_two_universals() {
+fn a_two_universal_clause_with_an_unproved_divisor_is_refused_at_s3() {
     let clause = "hyper Opaque using inf over behaviours (v: V::Vault) \
          forall trace a of V forall trace c of V exists trace b of V \
          match { (if present(a.step.Vault::step.i) then 1 mod value(a.step.Vault::step.i) else 0) = 0 \
          and a.step.Vault::step.i = b.step.Vault::step.i } \
          { holds(v.h @ a != v.h @ b) and always holds(v.l @ a = v.l @ b) }";
-    let world = World::new(Vault::Secure, false, &STARTS, clause);
-    let counterexample = refuted(run(&world, ModelCheckLimits::default()));
-    let HyperCounterexampleKind::Undefined(undefined) = &counterexample.kind else {
-        panic!("expected an undefined-evaluation counterexample");
-    };
-    assert_eq!(undefined.locus, HyperLocus::Match { conjunct: 0 });
-    let traced: Vec<_> = counterexample
-        .traces
-        .iter()
-        .map(|trace| (trace.variable.as_str(), trace.steps.len()))
-        .collect();
-    assert_eq!(traced, [("a", 1), ("c", 1), ("b", 0)]);
-    let named: Vec<_> = undefined
-        .variables
-        .iter()
-        .map(|(variable, _)| variable.as_str())
-        .collect();
-    assert_eq!(named, ["a", "c", "b"]);
-    assert_eq!(undefined.state_keys.len(), 3);
+    assert_hyper_division_refused(clause, "value(a.step.Vault::step.i)");
 }
 
 /// Reads the vault world's atoms and `match`, except for instance `v`: its
@@ -1541,50 +1440,14 @@ fn the_lasso_rotates_to_entry_zero_and_goes_on_by_a_connecting_step_when_the_loo
     assert_eq!(reached[2].1, 1, "the connecting step reaches l = 1");
 }
 
-/// FR-177-AC-10: `Opaque` over the secure vault with the added `match`
-/// conjunct `(if present(a.step.Vault::step.i) then 1 mod value(a.step.Vault::step.i)
-/// else 0) = 0` on the universal variable `a`: the item returns `Violated` with
-/// an `Undefined` counterexample at position 1 with cause `division-by-zero`,
-/// whose trace for `a` takes `step(0)` and whose trace for `b` is the first
-/// member's path, from the initial state `(1, 0)` with no step, one step short
-/// of `a`'s; the `variables` and `state_keys` fields hold two entries. With a second
-/// universal variable `c` before `b` they hold three, in the order `a`, `c`, `b`.
-///
-/// No production `StepMatch` exists, so the division-by-zero cause comes from
-/// this test's hand-modelled match reader (`hyper_world`); the test checks the
-/// engine's handling of that reading.
-#[trace("TC-602", "FR-177-AC-10")]
+/// FR-495: the declared hyper universal-match divisor is refused at S3 at the
+/// divisor expression.
+#[trace("FR-495")]
 #[test]
-fn an_undefined_universal_match_ends_one_step_short_for_the_partner() {
+fn an_unproved_universal_match_divisor_is_refused_at_s3() {
     let modded = " and (if present(a.step.Vault::step.i) then 1 mod value(a.step.Vault::step.i) \
                   else 0) = 0";
-    let world = World::new(Vault::Secure, false, &STARTS, &opaque(modded));
-    let counterexample = refuted(run(&world, ModelCheckLimits::default()));
-    let HyperCounterexampleKind::Undefined(undefined) = &counterexample.kind else {
-        panic!("expected an undefined-evaluation counterexample");
-    };
-    assert_eq!(
-        undefined.cause,
-        UndefinedCause::Kernel(Undefined::DivisionByZero)
-    );
-    assert_eq!(undefined.position, 1);
-    assert_eq!(counterexample.trace_position, 1);
-    assert_eq!(counterexample.traces.len(), 2);
-    assert_eq!(counterexample.traces[0].initial, 0);
-    assert_eq!(inputs(&counterexample, 0), [0], "a takes step(0)");
-    assert_eq!(counterexample.traces[1].initial, 1, "b starts at (1, 0)");
-    assert!(
-        counterexample.traces[1].steps.is_empty(),
-        "b is one step short of a"
-    );
-    assert_eq!(
-        undefined.variables,
-        [
-            ("a".to_owned(), "V".to_owned()),
-            ("b".to_owned(), "V".to_owned())
-        ]
-    );
-    assert_eq!(undefined.state_keys.len(), 2);
+    assert_hyper_division_refused(&opaque(modded), "value(a.step.Vault::step.i)");
 
     let clause = format!(
         "hyper Opaque using inf over behaviours (v: V::Vault) \
@@ -1592,59 +1455,17 @@ fn an_undefined_universal_match_ends_one_step_short_for_the_partner() {
          match {{ a.step.Vault::step.i = b.step.Vault::step.i{modded} }} \
          {{ holds(v.h @ a != v.h @ b) and always holds(v.l @ a = v.l @ b) }}"
     );
-    let world = World::new(Vault::Secure, false, &STARTS, &clause);
-    let counterexample = refuted(run(&world, ModelCheckLimits::default()));
-    let HyperCounterexampleKind::Undefined(undefined) = &counterexample.kind else {
-        panic!("expected an undefined-evaluation counterexample");
-    };
-    assert_eq!(
-        undefined.cause,
-        UndefinedCause::Kernel(Undefined::DivisionByZero)
-    );
-    let named: Vec<_> = undefined
-        .variables
-        .iter()
-        .map(|(variable, _)| variable.as_str())
-        .collect();
-    assert_eq!(named, ["a", "c", "b"]);
-    assert_eq!(undefined.state_keys.len(), 3);
-    let traced: Vec<_> = counterexample
-        .traces
-        .iter()
-        .map(|trace| trace.variable.as_str())
-        .collect();
-    assert_eq!(traced, ["a", "c", "b"]);
+    assert_hyper_division_refused(&clause, "value(a.step.Vault::step.i)");
 }
 
-/// FR-177-AC-11: a clause with two instances `v` and `w` that both end at the
-/// undefined `μ_E` of AC-5 at position 1 returns the first instance's
-/// counterexample. With one initial state, instance `v` is violated at position
-/// 0 by an empty `X`; instance `w` is explored through the expansion of its
-/// initial states, which needs 7 product states across both instances, so
-/// `max_states` 7 still returns `Violated` and `max_states` 6 returns
-/// `Stopped`. If instance `w` has an atom with no value at position 0, the run
-/// returns `w`'s `Undefined` counterexample at position 0, which ranks before
-/// `v`'s empty `X` at the same position.
-///
-/// No production `StepMatch` exists, so the division-by-zero cause comes from
-/// this test's hand-modelled match reader (`hyper_world`); the test checks the
-/// engine's handling and ranking of that reading.
+/// FR-495 refuses the division-bearing clause at S3. The remaining control
+/// checks that hand-modelled undefined readings keep their instance ranking.
 #[trace("TC-602", "FR-177-AC-11")]
 #[test]
 fn instances_rank_by_strictly_earlier_findings_and_a_position_zero_finding_bounds_the_rest() {
     let modded = " and (if present(b.step.Vault::step.i) then 1 mod value(b.step.Vault::step.i) \
                   else 0) = 0";
-    let world = two_instances(Vault::Secure, &[(0, 0), (1, 0)], modded);
-    let counterexample = refuted(run(&world, ModelCheckLimits::default()));
-    let HyperCounterexampleKind::Undefined(undefined) = &counterexample.kind else {
-        panic!("expected an undefined-evaluation counterexample");
-    };
-    assert_eq!(
-        undefined.cause,
-        UndefinedCause::Kernel(Undefined::DivisionByZero)
-    );
-    assert_eq!(undefined.position, 1);
-    assert_eq!(counterexample.instance, [("v".to_owned(), "v".to_owned())]);
+    assert_hyper_division_refused(&opaque(modded), "value(b.step.Vault::step.i)");
 
     let world = two_instances(Vault::Secure, &[(0, 0)], "");
     let counterexample = refuted(run(&world, ModelCheckLimits::default()));
