@@ -2241,6 +2241,9 @@ pub(crate) struct Typer<'a> {
     limits: CheckingLimits,
     nodes: &'a mut u64,
     integer_division_work: u64,
+    /// Let slots whose bound integer value lowers at Integer despite a
+    /// bounded checked type. Slots are unique throughout this typing pass.
+    integer_lowered_locals: BTreeSet<Slot>,
     /// The caller's cancellation handle, polled at every node charge
     /// (FR-276).
     cancel: Option<&'a Cancel>,
@@ -2803,6 +2806,7 @@ impl<'a> Typer<'a> {
             limits,
             nodes,
             integer_division_work: 0,
+            integer_lowered_locals: BTreeSet::new(),
             cancel: None,
             locals: Vec::new(),
             local_names: HashMap::new(),
@@ -2856,6 +2860,31 @@ impl<'a> Typer<'a> {
                 .get(id)
                 .map(|found| (&found.kind, &found.value_type))
         })
+    }
+
+    /// Whether an integer argument already has the catalog's Integer type
+    /// when lowered, so its call needs no synthetic widening conversion.
+    fn lowers_as_integer(&self, root: &Node) -> bool {
+        let mut pending = vec![root];
+        while let Some(node) = pending.pop() {
+            match &node.value_type {
+                ValueType::Integer => return true,
+                ValueType::Int(_) => {}
+                _ => continue,
+            }
+            let children = match &node.kind {
+                NodeKind::IntegerDivision { .. } => return true,
+                NodeKind::Local(slot) if self.integer_lowered_locals.contains(slot) => return true,
+                NodeKind::If {
+                    then, otherwise, ..
+                } => vec![*then, *otherwise],
+                NodeKind::Let { body, .. } => vec![*body],
+                NodeKind::Case { arms, .. } => arms.iter().map(|arm| arm.body).collect(),
+                _ => Vec::new(),
+            };
+            pending.extend(children.into_iter().filter_map(|id| self.body.get(id)));
+        }
+        false
     }
 
     /// This pass reading the concrete populations `populations` as a

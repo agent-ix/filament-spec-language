@@ -44,7 +44,9 @@ const SOURCE: &str = "language \"ix:native\" edition \"1-draft\";\n\
     function inc using v(x: Int[0, 9]): Int[0, 10] pure { x + 1 }\n\
     function big using v(n: Integer): Integer pure { n + 1 }\n\
     function ifw using v(a: Int[0, 100], b: Int[1, 12]): Integer pure { if a > 0 then a mod b else 0 }\n\
-    function letif using v(a: Int[0, 100], b: Int[1, 12]): Integer pure { let r = if a > 0 then a mod b else 0 in r }\n";
+    function letif using v(a: Int[0, 100], b: Int[1, 12]): Integer pure { let r = if a > 0 then a mod b else 0 in r }\n\
+    function letargw using v(a: Int[0, 100], b: Int[1, 12]): Boolean pure { let r = a mod b in accw(r) }\n\
+    function letargif using v(a: Int[0, 100], b: Int[1, 12]): Boolean pure { let r = if a > 0 then a mod b else 0 in accw(r) }\n";
 
 fn interval(lower: i64, upper: i64) -> ValueType {
     ValueType::Int(IntegerInterval::new(lower.into(), upper.into()).expect("valid interval"))
@@ -178,6 +180,22 @@ fn modulo_claim_bound_context_and_replay_agree_for_each_consumer() {
         (18, "control", interval(0, 11), interval(0, 11), false, true),
         (21, "ifw", interval(0, 11), interval(0, 11), false, false),
         (22, "letif", interval(0, 11), interval(0, 11), false, false),
+        (
+            23,
+            "letargw",
+            interval(0, 11),
+            interval(0, 11),
+            false,
+            false,
+        ),
+        (
+            24,
+            "letargif",
+            interval(0, 11),
+            interval(0, 11),
+            false,
+            false,
+        ),
     ] {
         let body = graph.function_state(index).expect("function checked").body;
         let mut pending = vec![body];
@@ -383,7 +401,10 @@ fn modulo_claim_bound_context_and_replay_agree_for_each_consumer() {
         );
         assert_eq!(
             record.path_condition().len(),
-            usize::from(matches!(function, "ifb" | "control" | "ifw" | "letif")),
+            usize::from(matches!(
+                function,
+                "ifb" | "control" | "ifw" | "letif" | "letargif"
+            )),
             "{function} guards"
         );
         assert!(

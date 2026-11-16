@@ -2662,7 +2662,11 @@ impl<'a> Typer<'a> {
                     .get(frame.typed.len())
                     .and_then(|index| frame.application.call_parameter(*index))
                 {
-                    Some(parameter) if integer_widens(&typed.value_type, &parameter) => {
+                    Some(parameter)
+                        if integer_widens(&typed.value_type, &parameter)
+                            && !(parameter == ValueType::Integer
+                                && self.lowers_as_integer(&typed)) =>
+                    {
                         let location = typed.location.clone();
                         self.convert(&parameter, typed, &location)?
                     }
@@ -2832,6 +2836,9 @@ impl<'a> Typer<'a> {
                     &frame.location,
                     LocalKind::Bound,
                 )?;
+                if self.lowers_as_integer(&typed) {
+                    self.integer_lowered_locals.insert(slot);
+                }
                 let goal = frame.branches.goal(frame.body, frame.location.child(1));
                 frame.value = Some((typed, slot));
                 frames.push(Frame::Let(frame));

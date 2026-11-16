@@ -395,8 +395,8 @@ impl Node {
 pub struct CheckedBody {
     /// Never empty: the root is the last node.
     nodes: Vec<Node>,
-    /// Each integer node's lowered interval; None denotes Integer.
-    lowered_integer: Vec<Option<IntegerInterval>>,
+    /// Integer nodes whose lowered type must widen to Integer.
+    lowered_integer: Vec<bool>,
     identity: Arc<()>,
 }
 
@@ -651,12 +651,10 @@ impl<'a> CheckedNode<'a> {
     /// FR-495's lowered integer type, including division-bound locals and
     /// the hull of a control node's yielded leaves.
     pub(crate) fn lowered_value_type(self) -> std::borrow::Cow<'a, ValueType> {
-        match self.value_type() {
-            ValueType::Integer | ValueType::Int(_) => match &self.body.lowered_integer[self.id.0] {
-                Some(interval) => std::borrow::Cow::Owned(ValueType::Int(interval.clone())),
-                None => std::borrow::Cow::Owned(ValueType::Integer),
-            },
-            _ => std::borrow::Cow::Borrowed(self.value_type()),
+        if self.body.lowered_integer[self.id.0] {
+            std::borrow::Cow::Owned(ValueType::Integer)
+        } else {
+            std::borrow::Cow::Borrowed(self.value_type())
         }
     }
 
@@ -1058,7 +1056,7 @@ pub(crate) fn coerce_node_builds_narrow(
 /// Compute integer lowering types once per arena. Local reads may precede
 /// the stored root of their bound value, so follow those dependencies with
 /// an explicit stack rather than relying on arena order or host recursion.
-fn lowered_integer_types(nodes: &[Node]) -> Vec<Option<IntegerInterval>> {
+fn lowered_integer_types(nodes: &[Node]) -> Vec<bool> {
     let bindings: std::collections::HashMap<_, _> = nodes
         .iter()
         .filter_map(|node| match node.kind {
@@ -1080,7 +1078,7 @@ fn lowered_integer_types(nodes: &[Node]) -> Vec<Option<IntegerInterval>> {
             _ => Vec::new(),
         }
     };
-    let mut found: Vec<Option<Option<IntegerInterval>>> = vec![None; nodes.len()];
+    let mut found = vec![None; nodes.len()];
     for index in 0..nodes.len() {
         let mut pending = vec![(NodeId(index), false)];
         while let Some((id, exit)) = pending.pop() {
@@ -1090,36 +1088,21 @@ fn lowered_integer_types(nodes: &[Node]) -> Vec<Option<IntegerInterval>> {
             let node = &nodes[id.0];
             let children = dependencies(node);
             if exit {
-                let interval = if matches!(node.kind, NodeKind::IntegerDivision { .. }) {
-                    None
-                } else if children.is_empty() {
-                    match &node.value_type {
-                        ValueType::Int(interval) => Some(interval.clone()),
-                        _ => None,
-                    }
-                } else {
-                    children
-                        .iter()
-                        .try_fold(None, |hull: Option<IntegerInterval>, child| {
-                            let interval = found[child.0].as_ref()?.as_ref()?;
-                            Some(Some(match hull {
-                                None => interval.clone(),
-                                Some(hull) => IntegerInterval::spanning(
-                                    hull.lower().min(interval.lower()).clone(),
-                                    hull.upper().max(interval.upper()).clone(),
-                                ),
-                            }))
-                        })
-                        .flatten()
-                };
-                found[id.0] = Some(interval);
+                found[id.0] = Some(
+                    matches!(node.value_type, ValueType::Integer)
+                        || matches!(node.kind, NodeKind::IntegerDivision { .. })
+                        || children.iter().any(|id| found[id.0] == Some(true)),
+                );
             } else {
                 pending.push((id, true));
                 pending.extend(children.into_iter().map(|id| (id, false)));
             }
         }
     }
-    found.into_iter().map(Option::flatten).collect()
+    found
+        .into_iter()
+        .map(|value| value.unwrap_or(false))
+        .collect()
 }
 
 /// The type a [`NodeKind::ConvertScalar`] of an `operand`-typed node
