@@ -173,12 +173,19 @@ recording is complete.
     closed verdict;
   - finite-window: a verdict FR-501 reports with a decisive basis; and, when
     the retained progress scope is `Closed`, a verdict whose every
-    activation's window the asserted progress has established, since FR-502
-    forbids reopening a closed scope;
-  - timed: a `violation` whose deciding window lies at or below the newest
-    stamp, or at or below the latest `through` (FR-642-AC-2); a `success` of
-    a timed clause settles only at `finish`, because a later timed position
-    can open an activation the recording has not yet covered.
+    activation's window the asserted progress has established: FR-502
+    forbids reopening a closed scope, and the session refuses every
+    observation after it ("Order"), so no later activation can open;
+  - timed: a `violation` whose deciding window ends below the newest stamp,
+    or at or below the latest `through`. Stamps are monotone and a
+    decreasing stamp is refused, so once a stamp above a window's end is
+    accepted no later observation can fall inside that window, and the
+    window is complete without `through`; this is FR-642's reading of a
+    window covered by the recording's stamps (FR-642 "Use case"), with
+    `through` covering a window the stamps do not reach. A `success` of a
+    timed clause settles only at `finish`, because a later timed position
+    can open an activation the recording has not yet covered; an unbounded
+    timed `always` stays `pending` even then (FR-642-AC-2).
   Each of these is sound: a decided verdict holds for every extension of
   the trace, so settling never reports a verdict the batch run over a longer
   prefix contradicts. The rule is not complete: a clause whose verdict is
@@ -190,7 +197,10 @@ recording is complete.
   session only, and SHALL keep `through` monotone: an `X` below the newest stamp is refused
   `timed-through-before-last-stamp` (FR-642), and one below a `through` already
   asserted is refused `timed-stamps-decrease` (FR-645), each leaving the
-  session unchanged. On any other kind it is refused `invalid-request`
+  session unchanged. When `through` `X` has been asserted, the session SHALL
+  refuse a `Timed` observation stamped at or below `X` with `timed-stamps-decrease`,
+  reading `X` as the stamp before it, and SHALL leave the session unchanged:
+  `through` asserts that no further position exists up to `X` (FR-642). On any other kind it is refused `invalid-request`
   naming `through`.
 - **Trace end.** `finish()` SHALL return, for each clause not yet settled,
   `B(n)` over all `n` observations, and for each settled clause its settled
@@ -210,12 +220,13 @@ recording is complete.
   positions"), and a position's identity only while some unsettled clause
   may still cite it (FR-820 "Identities"). A position no unsettled clause
   reads or cites is dropped. When advancing a clause would make its
-  `retained()` exceed `retained_positions`, that clause SHALL report
+  `retained()` exceed `retained_positions`, that clause SHALL settle
   `incomplete` with the limit record `{limit: "node count", value, setting:
   "monitor.retained_positions"}`; when it would make its `cited()` exceed
-  `retained_identities`, that clause SHALL report `incomplete` with
+  `retained_identities`, that clause SHALL settle `incomplete` with
   `{limit: "node count", value, setting: "monitor.retained_identities"}`.
-  The other clauses SHALL continue. A pending infinite-trace `always` over
+  In either case the session SHALL drop that clause's `ClauseState`, so
+  neither count grows past its limit, and the other clauses SHALL continue. A pending infinite-trace `always` over
   an unending stream therefore stops `incomplete` at `retained_identities`
   positions instead of growing without bound; a caller who needs a longer
   run raises the setting (FR-255).
@@ -223,7 +234,10 @@ recording is complete.
   or at or below the ledger's watermark for its binding (for `Timestamped` and
   `Progressed`), then the session SHALL refuse it with FR-502's contradiction or
   FR-645's `timed-stamps-decrease` and SHALL keep its state unchanged; the
-  caller can then continue with a correct observation.
+  caller can then continue with a correct observation. If the retained
+  progress scope is `Closed`, then the session SHALL refuse every further
+  observation with FR-502's contradiction on `Closure` and SHALL keep its
+  state unchanged: a closed scope says the trace holds no further position.
 - **Atomic steps.** A refused step, a cancelled step and an admission failure SHALL
   leave the session exactly as before the call.
 - **Checkpoint.** The session SHALL resume from `checkpoint()` to a session
@@ -243,13 +257,13 @@ recording is complete.
 | FR-643-AC-2 | A `Timestamped` session over FR-641-AC-1's three observations with progress asserted after each reports, after the last, FR-501-AC-4's outcome; the ledger it returns equals the one the batch run returns. | Test (TC-1666) |
 | FR-643-AC-3 | Once `always holds(c.value <= 1)` settles `violation` at the step of `c.value` 2, the later steps report the same report for it; a clause passes from `Pending` to `Settled` only at the step that decides it, a `Pending` clause whose report changes is named as changed with status still `Pending`, and each step names exactly the clauses whose status or report changed. | Test (TC-1666) |
 | FR-643-AC-4 | A checkpoint taken after step 2 and resumed gives, for steps 3 to 5, the reports of the uninterrupted session; resuming under another package, or with another clause list, refuses `monitor-state-mismatch`. | Test (TC-1667) |
-| FR-643-AC-5 | A `Timestamped` observation stamped at or below the retained watermark refuses with `contradicted_dimension` `Watermark` and leaves the session unchanged, after which a correct observation is accepted. In a separate `Finite` session with `retained_positions` 2 over levels 0, 1, 0, the event-position clause `Recent` (`always[0,9] count where holds(r.level = 2) over past[0, 3] min_count 0 <= 1`), whose window holds three positions at the third observation, reports `incomplete` naming `monitor.retained_positions` at the third observation, while the infinite-trace `Reaches` and `Never`, which retain no value (FR-820), stay `Pending`. | Test (TC-1667) |
+| FR-643-AC-5 | A `Timestamped` observation stamped at or below the retained watermark refuses with `contradicted_dimension` `Watermark` and leaves the session unchanged, after which a correct observation is accepted; after a progress assertion with scope `closed` is retained, a further observation is refused with `contradicted_dimension` `Closure` and leaves the session unchanged. In a separate `Finite` session with `retained_positions` 2 over levels 0, 1, 0, the event-position clause `Recent` (`always[0,9] count where holds(r.level = 2) over past[0, 3] min_count 0 <= 1`), whose window holds three positions at the third observation, reports `incomplete` naming `monitor.retained_positions` at the third observation, while the infinite-trace `Reaches` and `Never`, which retain no value (FR-820), stay `Pending`. | Test (TC-1667) |
 | FR-643-AC-6 | In a `Finite` session over samples with levels 0, 1, 2, 1, the infinite-trace `Never` (`always holds(r.level < 2)`) settles `violation` at step 3; at step 4 its report equals `B(3)`, whose counterexample lists three samples, while `B(4)` has the same category `violation` and truth `false` and a counterexample of four samples. `Reaches` (`eventually holds(r.level = 2)`) stays `Pending` at every step, reporting `B(k)` (`pending`, no truth) at step `k`, and `finish` returns `B(4)` for it. | Test (TC-2321) |
 | FR-643-AC-7 | In a `Finite` session, the event-position clause `E` (`eventually[0,2] holds(r.level = 2)`) over levels 0, 1 stays `Pending` at steps 1 and 2 while `B(1)` and `B(2)` report `violation` (the closed reading), and settles `success` with basis `decisive-witness` at step 3 on level 2; over levels 0, 1, 1 it settles `violation` with basis `decisive-counterexample` at step 3, when the window `[0, 2]` is wholly observed. | Test (TC-2321) |
 | FR-643-AC-8 | `finish()` of a `Finite` session over FR-643-AC-1's snapshots equals FR-283's `monitor` over that trace; a `Progressed` session whose latest assertion has scope `open` and execution `closed` returns, for each unsettled clause, `B(n)` under scope `open` and execution `closed`; `MonitorSession::finish` takes no closure argument. | Test (TC-2322) |
 | FR-643-AC-9 | A `Finite` session over 1,000 samples whose `level` cycles 0 to 8, with `retained_positions` 4, keeps the infinite-trace `Below` (`always holds(r.level < 9)`) and `Nine` (`eventually holds(r.level = 9)`) `Pending` to the end with no `incomplete`; `Recent` (at most one 2 in any four consecutive samples, which holds here) settles `success` at step 10, its state holding `min(k, 4)` values after step `k` until then; over levels 2, 0, 2 `Recent` settles `violation` at step 3. The checkpoint after the last sample holds no admitted value. | Test (TC-2322) |
-| FR-643-AC-10 | A `Timed` session of FR-642-AC-2's `Ack` with `req` at 0 and `ack` at 250 stays `Pending` until `assert_through(250)`, then settles `violation` at position 0; with `ack` at 150 it stays `Pending` through `assert_through(300)` and its `success` is reported only by `finish`; `assert_through(100)` after a stamp 150 refuses `timed-through-before-last-stamp`, `assert_through(250)` after `assert_through(300)` refuses `timed-stamps-decrease`, each leaving the session unchanged, and `assert_through` on a `Finite` session refuses `invalid-request` naming `through`. | Test (TC-2324) |
-| FR-643-AC-11 | A `Finite` session with `retained_identities` 3 over levels 0, 0, 2, 0: `Never` settles `violation` at step 3 citing three positions, and at step 4 `Below` reports `incomplete` naming `monitor.retained_identities` while `Never` keeps its settled report. | Test (TC-2324) |
+| FR-643-AC-10 | In a `Timed` session of FR-642's `Ack` (`always (holds(r.req) implies eventually[0 ms, 200 ms] holds(r.ack))`): with `req` at 0 and `ack` at 250, `Ack` settles `violation` at position 0 at the `ack` step, the stamp 250 having passed the window `[0, 200]`; with `req` at 0 and no further observation it stays `Pending` until `assert_through(250)`, which settles `violation` at position 0; with `req` at 0, `ack` at 150 and `assert_through(300)` it stays `Pending`, and `finish` returns `pending` for it, the unbounded `always` reading positions the recording does not hold (FR-642-AC-2). The bounded `Bound` (`always[0 ms, 300 ms] (holds(r.req) implies eventually[0 ms, 200 ms] holds(r.ack))`) over `req` at 0, `ack` at 150 and `assert_through(500)` stays `Pending` until `finish`, which returns `success`. `assert_through(100)` after a stamp 150 refuses `timed-through-before-last-stamp`; `assert_through(250)` after `assert_through(300)` refuses `timed-stamps-decrease`; after `assert_through(300)`, an observation stamped 260, and one stamped 300, each refuse `timed-stamps-decrease`; each refusal leaves the session unchanged, and `assert_through` on a `Finite` session refuses `invalid-request` naming `through`. | Test (TC-2324) |
+| FR-643-AC-11 | A `Finite` session with `retained_identities` 3 over levels 0, 0, 2, 0: `Never` settles `violation` at step 3 citing three positions, and at step 4 `Below` settles `incomplete` naming `monitor.retained_identities`, its state dropped, while `Never` keeps its settled report; a further observation leaves `Below`'s report unchanged. | Test (TC-2324) |
 
 ## Dependencies
 
