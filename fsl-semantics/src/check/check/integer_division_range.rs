@@ -253,7 +253,7 @@ mod tests {
     };
 
     #[test]
-    #[trace("TC-2188", "FR-767-AC-1")]
+    #[trace("TC-1284", "FR-495-AC-1")]
     fn finite_division_intervals_equal_the_hull_of_every_kernel_result() {
         let at =
             ExpressionLocation::root(filament_semantic_value::location::ExpressionOwner::Body {

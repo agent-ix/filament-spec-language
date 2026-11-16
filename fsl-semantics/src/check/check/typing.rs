@@ -2789,7 +2789,17 @@ impl<'a> Typer<'a> {
                             then.value_type.clone()
                         } else if is_integer(&then.value_type) && is_integer(&otherwise.value_type)
                         {
-                            ValueType::Integer
+                            match (self.static_range(&then), self.static_range(&otherwise)) {
+                                (
+                                    Some((then_lower, then_upper)),
+                                    Some((else_lower, else_upper)),
+                                ) => int_type(
+                                    then_lower.min(else_lower),
+                                    then_upper.max(else_upper),
+                                    &location,
+                                )?,
+                                _ => ValueType::Integer,
+                            }
                         } else {
                             return Err(mismatch(&otherwise.location));
                         }

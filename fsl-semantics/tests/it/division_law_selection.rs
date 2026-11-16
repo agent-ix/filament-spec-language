@@ -219,7 +219,6 @@ fn a_law_alias_in_using_refuses_wrong_selection_role() {
 
 #[trace("TC-1783", "FR-495-AC-17", "FSpec-TC-1281", "FSpec-FR-147-AC-13")]
 #[test]
-#[ignore = "QSL-1962: Linked records no nonzero obligation for an integer mod yet"]
 fn a_mod_divisor_that_may_be_zero_refuses_unproved_nonzero() {
     let source = "function m0 using v(a: Int[0, 100], b: Int[0, 12]): Int[0, 11] pure { a mod b }";
     only_nonzero(&check(VALUE, source, CheckMode::Linked).expect_err("b may be zero"));
@@ -306,7 +305,6 @@ fn a_mod_node_is_typed_by_its_divisor_interval() {
     "FSpec-FR-147-AC-13"
 )]
 #[test]
-#[ignore = "QSL-1962: div and rem from source need the header law and their interval and nonzero obligation"]
 fn div_and_rem_carry_their_interval_and_nonzero_obligation_under_each_law() {
     for law in ["euclidean", "floor", "truncating"] {
         let headers = format!("{VALUE}{}", law_header("d", law));
@@ -412,7 +410,6 @@ fn modulo_uses_literal_and_derived_operand_ranges() {
 
 #[trace("TC-2210", "FR-495-AC-19", "FSpec-TC-1660", "FSpec-FR-147-AC-14")]
 #[test]
-#[ignore = "QSL-1989: source div/rem selection and exact rem intervals are not implemented yet"]
 fn a_rem_node_carries_its_exact_smallest_interval_under_each_law() {
     let truncating = format!("{VALUE}{}", law_header("d", "truncating"));
     exact(
