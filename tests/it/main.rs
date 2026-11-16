@@ -59,6 +59,7 @@ mod division_law_editor;
 mod doc_snippets;
 mod effect_boundary;
 mod emit_checked_v2;
+mod emit_readback_agreement;
 mod evaluate_reads_no_display_strings;
 mod exact_decimals;
 mod extension_forms;
