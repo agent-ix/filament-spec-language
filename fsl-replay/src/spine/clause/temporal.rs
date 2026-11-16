@@ -1635,7 +1635,6 @@ fn with_decisive(
 }
 
 /// The decisive record of `atom`, read over the observation at its position.
-#[deny(clippy::wildcard_enum_match_arm)]
 fn decisive_record(
     source: &DecisiveRun<'_>,
     atom: DecisiveAtom,
@@ -1691,6 +1690,7 @@ fn decisive_record(
 
 /// The decisive record of `atom`, evaluated over `objects`, the observation
 /// `observation` names, with the clause's `over` parameter bound to `over`.
+#[deny(clippy::wildcard_enum_match_arm)]
 #[allow(clippy::too_many_arguments)]
 pub(super) fn decisive_over(
     run: &CompiledRun<'_>,
