@@ -663,8 +663,8 @@ fn a_record_can_carry_a_guard_at_a_non_checked_node() {
 #[test]
 fn a_record_names_the_parameters_its_extent_reads() {
     let checked = check(
-        "function u using v(x: Int[0, 9], y: Int[0, 9]): Integer pure { 10 mod x }\n\
-         function g using v(x: Int[0, 9], y: Int[0, 9]): Integer pure { if y > 0 then 10 mod x else 0 }",
+        "function u using v(x: Int[1, 9], y: Int[0, 9]): Integer pure { 10 mod x }\n\
+         function g using v(x: Int[1, 9], y: Int[0, 9]): Integer pure { if y > 0 then 10 mod x else 0 }",
     );
     let roots = |function: &str, guarded: bool| {
         let mut found = checked.graph.requirements().values().filter(|record| {

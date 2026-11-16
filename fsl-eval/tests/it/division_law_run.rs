@@ -133,7 +133,6 @@ fn div_and_rem_run_under_the_law_the_header_selects() {
 /// longer asserted; under `Kernel` the call stops undefined at the `mod`.
 #[trace("TC-444", "FR-100-AC-20")]
 #[test]
-#[ignore = "QSL-2002: Linked admits a mod whose divisor may be zero, so it is undefined at run instead of refused at check"]
 fn a_possibly_zero_mod_divisor_is_refused_under_linked_and_undefined_only_under_kernel() {
     let unit = "function d using v(n: Int[0, 9]): Integer pure decreases(n) \
                 { if n = 0 then 0 else d(n - 1) + 10 mod (n - 1) }\n\
@@ -152,7 +151,6 @@ fn a_possibly_zero_mod_divisor_is_refused_under_linked_and_undefined_only_under_
 
 #[trace("TC-1783", "FR-495-AC-17", "FSpec-TC-1281", "FSpec-FR-147-AC-13")]
 #[test]
-#[ignore = "QSL-1962: Linked records no nonzero obligation for an integer mod yet"]
 fn a_divisor_the_checker_cannot_exclude_is_undefined_only_under_kernel() {
     let source = "function m0 using v(a: Int[0, 100], b: Int[0, 12]): Int[0, 11] pure { a mod b }";
     only_nonzero(&check("", source, CheckMode::Linked).expect_err("b may be zero"));
