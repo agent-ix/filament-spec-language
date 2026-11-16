@@ -69,17 +69,19 @@ routed and negotiated like analyze items. Every FSL command entry those verbs re
 process providers as one `providers` parameter, each value its `Process`
 descriptor and its `ExternalProvider` transport (the driver's
 `ProcessProvider`, "How a process provider runs an item"), and the run's
-FSpec FR-462 limits as `AnalyzeOptions.provider_limits`, and SHALL build its
+FSpec FR-462 limits as `ProviderOptions.provider_limits`, and SHALL build its
 registry from `Engines::fsl()` and those providers, before any negotiation.
 The entry with an empty `providers` is the entry with no plugin
 configured. No entry reads a provider configuration of its own: the driver
 starts the processes from `--provider-config` (FR-287) and passes them in,
 so every verb sees the same registry for the same configuration. The entries
-are `fsl_command::command::analyze_with_providers(path, vocabulary,
-providers, cancel)` for `analyze` (and `prove`, which shares the analyze
+are `fsl_command::command::analyze_with_providers(path, negotiate,
+providers, options, cancel)` for `analyze` (and `prove`, which shares the analyze
 items, FR-280), with `analyze(path, vocabulary, cancel)` the same entry with
-none; `command::monitor` (FR-644); the `run` entry, whose provider items
-go through the same provider request and transport (FR-950); and the FR-280
+none; `command::monitor` (FR-644); the `run` entry `run_with_providers` (FR-961), whose provider items
+go through the same provider request and transport (FR-950); every entry takes
+the run's limits as one `ProviderOptions` (FR-964) and resolves an unnamed
+tied item by FR-962; and the FR-280
 entries the driver's `prove`, `replay` and `generate` call. Each of those requirements refers to
 this rule rather than restating it.
 
@@ -113,11 +115,11 @@ Analyze SHALL work in this order (FR-950):
      `negotiate_item` returned for each item names the negotiated
      descriptor within it.
    - `request.deadline_ms`: the `deadline_ms` of the run's FSpec FR-462
-     limits, `AnalyzeOptions.provider_limits`, which the driver fills from
+     limits, `ProviderOptions.provider_limits`, which the driver fills from
      `--provider-limit` (FR-287). It is the only limit on the FR-331 wire.
    The request also holds two members that are not serialized and are not
    wire members: `transport_limits`, the other six FR-462 limits of
-   `AnalyzeOptions.provider_limits`, which the transport enforces and a
+   `ProviderOptions.provider_limits`, which the transport enforces and a
    linked provider ignores; and each item's `ValueTarget`, which an
    in-process arm reads.
 3. Call the widened provider call, `ExternalProvider::settle(&ProviderRequest)
