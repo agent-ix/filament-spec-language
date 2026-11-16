@@ -57,9 +57,9 @@ use std::sync::Arc;
 
 #[cfg(test)]
 mod declared_type_tests;
+mod integer_division_range;
 mod native_literal;
 mod typing;
-mod integer_division_range;
 use typing::TypedOperand;
 
 use super::ir::{BodyBuilder, DispatchTable, EqualityProducerData, Node, NodeId, Slot};

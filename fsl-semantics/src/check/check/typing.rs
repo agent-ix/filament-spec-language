@@ -2980,22 +2980,57 @@ impl<'a> Typer<'a> {
                                 return Err(super::cancelled_refusal(&location));
                             }
                             let denied = if let Some(context) = &mut self.context {
-                                context.meter.charge(filament_exact::Charge::new(filament_exact::ChargePoint::DeclarationCheck)
-                                    .work(Integer::one())).err().map(|denial| (denial.limit, u128::from(denial.consumed) + 1))
+                                context
+                                    .meter
+                                    .charge(
+                                        filament_exact::Charge::new(
+                                            filament_exact::ChargePoint::DeclarationCheck,
+                                        )
+                                        .work(Integer::one()),
+                                    )
+                                    .err()
+                                    .map(|denial| (denial.limit, u128::from(denial.consumed) + 1))
                             } else {
-                                self.integer_division_work = self.integer_division_work.saturating_add(1);
-                                (self.integer_division_work > self.limits.work_budget()).then_some((self.limits.work_budget(), u128::from(self.integer_division_work)))
+                                self.integer_division_work =
+                                    self.integer_division_work.saturating_add(1);
+                                (self.integer_division_work > self.limits.work_budget()).then_some(
+                                    (
+                                        self.limits.work_budget(),
+                                        u128::from(self.integer_division_work),
+                                    ),
+                                )
                             };
                             match denied {
-                                Some((limit, actual)) => Err(refuse(&location, CheckCause::ResourceExhausted(Box::new(super::StageLimitCause {
-                                    stage: super::CheckingStage::Typing, kind: super::CheckingLimitKind::WorkBudget, limit, actual, region: None,
-                                })))),
+                                Some((limit, actual)) => Err(refuse(
+                                    &location,
+                                    CheckCause::ResourceExhausted(Box::new(
+                                        super::StageLimitCause {
+                                            stage: super::CheckingStage::Typing,
+                                            kind: super::CheckingLimitKind::WorkBudget,
+                                            limit,
+                                            actual,
+                                            region: None,
+                                        },
+                                    )),
+                                )),
                                 None => Ok(()),
                             }
                         };
-                        super::integer_division_range::infer(operator, selection.profile(), dividend, divisor, &mut charge, &location)?
-                    } else { None };
-                    let value_type = match range { Some((lo,hi)) => int_type(lo,hi,&location)?, None => ValueType::Integer };
+                        super::integer_division_range::infer(
+                            operator,
+                            selection.profile(),
+                            dividend,
+                            divisor,
+                            &mut charge,
+                            &location,
+                        )?
+                    } else {
+                        None
+                    };
+                    let value_type = match range {
+                        Some((lo, hi)) => int_type(lo, hi, &location)?,
+                        None => ValueType::Integer,
+                    };
                     let left = self.push(left);
                     let right = self.push(right);
                     Ok(Step::Typed(node(

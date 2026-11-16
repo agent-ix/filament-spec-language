@@ -200,21 +200,24 @@ pub fn resolve_integer_division(
         filament_checked::integer_division::AdmittedIntegerDivision,
         &str,
     )>,
-) -> Result<Option<filament_checked::integer_division::AdmittedIntegerDivision>, Box<ProfileRefusal>> {
+) -> Result<Option<filament_checked::integer_division::AdmittedIntegerDivision>, Box<ProfileRefusal>>
+{
     let mut selected = supplied.map(|(law, _)| law);
     for profile in profiles {
         let Some(role) = integer_division_role(&profile.identity) else {
             continue;
         };
-        let refusal = |cause, other| Box::new(ProfileRefusal {
-            alias: profile.alias.clone(),
-            identity_span: profile.identity_span,
-            selected: profile.identity.clone(),
-            required_role: role,
-            root: other,
-            cause,
-            supplied_by: supplied.map(|(_, origin)| origin.to_owned()),
-        });
+        let refusal = |cause, other| {
+            Box::new(ProfileRefusal {
+                alias: profile.alias.clone(),
+                identity_span: profile.identity_span,
+                selected: profile.identity.clone(),
+                required_role: role,
+                root: other,
+                cause,
+                supplied_by: supplied.map(|(_, origin)| origin.to_owned()),
+            })
+        };
         if let Some(law) = selected {
             if law.profile().definition_identity() != role.identity() {
                 return Err(refusal(
