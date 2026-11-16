@@ -100,34 +100,67 @@ impl SubjectSelection {
         }
     }
 
+    /// FR-620: every `universes` entry names a provisioned snapshot, and
+    /// every population those snapshots hold is complete, because a universe
+    /// is a complete population (FSpec FR-331).
+    ///
+    /// # Errors
+    ///
+    /// [`UniverseRefusal::Unprovisioned`] naming the first entry no
+    /// provisioned snapshot answers, and [`UniverseRefusal::Incomplete`]
+    /// naming the first population a referenced snapshot marks incomplete.
+    pub fn check_universes(&self, documents: &DocumentProvision) -> Result<(), UniverseRefusal> {
+        for (position, selection) in self.universes.iter().enumerate() {
+            let Some(read) = documents
+                .get(&selection.reference())
+                .and_then(|bytes| snapshot(bytes))
+            else {
+                return Err(UniverseRefusal::Unprovisioned {
+                    position,
+                    entry: selection.clone(),
+                });
+            };
+            if let Some(population) = read
+                .populations
+                .iter()
+                .find(|population| !population.complete)
+            {
+                return Err(UniverseRefusal::Incomplete {
+                    population: population.population.clone(),
+                });
+            }
+        }
+        Ok(())
+    }
+
     /// The binding `analyze` takes over this subject: the initial states,
-    /// and one universe per complete population the universe snapshots
-    /// declare, its keys the union of their objects' keys.
+    /// and one universe per population the universe snapshots declare, its
+    /// keys the union of their objects' keys in reference order. The caller
+    /// has checked the references with [`Self::check_universes`].
     pub fn binding<'a>(
         &self,
         packages: &'a fsl_semantics::model::intake::PackageInput,
         documents: &'a DocumentProvision,
     ) -> SubjectBinding<'a> {
-        let mut universes: BTreeMap<DeclarationKey, BTreeSet<String>> = BTreeMap::new();
-        for selection in &self.universes {
-            let Some(read) = documents
+        let mut universes: BTreeMap<DeclarationKey, (Vec<String>, BTreeSet<String>)> =
+            BTreeMap::new();
+        for read in self.universes.iter().filter_map(|selection| {
+            documents
                 .get(&selection.reference())
                 .and_then(|bytes| snapshot(bytes))
-            else {
-                continue;
-            };
-            for population in read
-                .populations
-                .iter()
-                .filter(|population| population.complete)
-            {
-                universes
+        }) {
+            for population in &read.populations {
+                let (keys, seen) = universes
                     .entry(DeclarationKey {
                         package: read.model.identity.clone(),
                         node: population.population.clone(),
                     })
-                    .or_default()
-                    .extend(population.objects.iter().map(|object| object.key.clone()));
+                    .or_default();
+                for object in &population.objects {
+                    if seen.insert(object.key.clone()) {
+                        keys.push(object.key.clone());
+                    }
+                }
             }
         }
         SubjectBinding {
@@ -140,10 +173,7 @@ impl SubjectSelection {
                 .collect(),
             universes: universes
                 .into_iter()
-                .map(|(population, keys)| PopulationUniverse {
-                    population,
-                    keys: keys.into_iter().collect(),
-                })
+                .map(|(population, (keys, _))| PopulationUniverse { population, keys })
                 .collect(),
         }
     }
@@ -155,6 +185,28 @@ impl SubjectSelection {
             "proof_bounds": self.proof_bounds,
         })
     }
+}
+
+/// Why a request's `subject.universes` cannot form the subject's universes
+/// (FR-620).
+#[derive(Clone, Debug, Eq, PartialEq, thiserror::Error)]
+pub enum UniverseRefusal {
+    /// The entry at `position` names no provisioned snapshot document
+    /// (`invalid-request`).
+    #[error("subject.universes[{position}] {{{}, {}}} names no provisioned snapshot", entry.authority, entry.identity)]
+    Unprovisioned {
+        /// The entry's position in `subject.universes`.
+        position: usize,
+        /// The entry.
+        entry: DocumentSelection,
+    },
+    /// A referenced snapshot marks `population` incomplete
+    /// (`incomplete_population`).
+    #[error("population {population} of a universe snapshot is incomplete")]
+    Incomplete {
+        /// The population's declaration identity.
+        population: String,
+    },
 }
 
 /// The members of a snapshot the default subject reads; the snapshot itself
@@ -743,9 +795,9 @@ fn temporal_item(
     item
 }
 
-/// FR-620's default items: one per checked claim and kind, temporal clauses
-/// first in their checked order and then every other requirement record in
-/// its key order, followed by the derived items of the model subject.
+/// FR-620's default items: one per checked claim and kind, the claims in
+/// source order across every declaration family, followed by the derived
+/// items of the model subject.
 fn default_items(
     package: &CheckedPackage,
     subject: &SubjectSelection,
@@ -763,6 +815,32 @@ fn default_items(
             nodes.push(record.node().clone());
         }
     }
+    let sources = graph.sources();
+    let position = |node: &filament_exact::NodeKey| -> (usize, u64) {
+        let region = graph
+            .temporal_clauses()
+            .iter()
+            .find(|clause| clause.identity() == *node)
+            .and_then(|clause| u64::try_from(clause.clause().span().start).ok())
+            .map(|start| (graph.source().clone(), start))
+            .or_else(|| {
+                let occurrence = claim_occurrence(package, &records, node)?;
+                let region =
+                    graph.occurrence_region(occurrence.node().clone(), occurrence.origin())?;
+                Some((region.source().clone(), region.start()))
+            });
+        region.map_or((usize::MAX, u64::MAX), |(source, start)| {
+            let unit = sources
+                .iter()
+                .position(|candidate| **candidate == source)
+                .unwrap_or(usize::MAX);
+            (unit, start)
+        })
+    };
+    // FR-620: source order across every declaration family, each unit's
+    // declarations by the start byte of their span; the sort is stable, so
+    // a node with no recorded region keeps its place after those with one.
+    nodes.sort_by_cached_key(|node| position(node));
     let mut resolved = Vec::new();
     for node in &nodes {
         let Some(name) = declared_name(package, node) else {
@@ -1034,7 +1112,7 @@ pub fn analyze_document(
     } = run;
     let mut negotiated = Vec::new();
     let mut settled: BTreeMap<RequestIndex, (Option<String>, TerminalRecord)> = BTreeMap::new();
-    let mut echoes: BTreeMap<RequestIndex, (String, Value, bool, bool)> = BTreeMap::new();
+    let mut echoes: BTreeMap<RequestIndex, Echo> = BTreeMap::new();
     for resolved in items {
         match resolved {
             ResolvedItem::Settled { claim_name, record } => {
@@ -1051,10 +1129,23 @@ pub fn analyze_document(
                 let echo = item
                     .request_item_wire(&subject)
                     .map_err(|_| AnalyzeDocumentError::Fault)?;
-                let scoped = has_activation_scope(item.kind);
+                let model = subject
+                    .initial_states
+                    .first()
+                    .and_then(|selection| binding.snapshots.get(&selection.reference()))
+                    .and_then(|bytes| snapshot(bytes))
+                    .map(|read| read.model.identity);
+                let identity = fsl_replay::certificate_identity_wire(&item.claim, model.as_deref())
+                    .map_err(|_| AnalyzeDocumentError::Fault)?;
                 echoes.insert(
                     item.request_index,
-                    (claim_name, echo, item.options.required, scoped),
+                    Echo {
+                        claim_name,
+                        request: echo,
+                        identity,
+                        required: item.options.required,
+                        scoped: has_activation_scope(item.kind),
+                    },
                 );
                 if unrouted {
                     let mut detail = Map::new();
@@ -1113,20 +1204,12 @@ pub fn analyze_document(
             .details
             .iter()
             .find(|detail| detail.request_index == index);
-        let (claim_name, request, required, scoped) = match echoes.get(&index) {
-            Some((name, request, required, scoped)) => (
-                Some(name.clone()),
-                Some(request.clone()),
-                *required,
-                *scoped,
-            ),
-            None => (
-                settled.get(&index).and_then(|(name, _)| name.clone()),
-                None,
-                true,
-                false,
-            ),
+        let echo = echoes.get(&index);
+        let claim_name = match echo {
+            Some(echo) => Some(echo.claim_name.clone()),
+            None => settled.get(&index).and_then(|(name, _)| name.clone()),
         };
+        let required = echo.is_none_or(|echo| echo.required);
         let disposed = record.disposition_detail().is_some();
         if required
             && !matches!(
@@ -1134,16 +1217,25 @@ pub fn analyze_document(
                 TerminalValue::Proved { .. } | TerminalValue::Measured(_)
             )
         {
-            gaps.push(json!({"request_index": index.get(),
-                "reason": written["result"].as_str().unwrap_or("invalid-request")}));
+            gaps.push(json!({"request_index": index.get(), "reason": "not-proved",
+                "result": written["result"].as_str().unwrap_or("invalid-request")}));
         }
+        let target = outcome
+            .counterexamples
+            .iter()
+            .find(|found| found.request_index == index)
+            .and_then(|found| claim_name.as_deref().map(|name| replay_target(found, name)));
         items.push(item_document(
             written,
-            claim_name,
-            request,
-            detail.copied(),
-            scoped,
-            OutcomeAxes::of_record(record.value(), disposed),
+            ItemMembers {
+                claim_name,
+                request: echo.map(|echo| echo.request.clone()),
+                identity: echo.map(|echo| echo.identity.clone()),
+                target,
+                detail: detail.copied(),
+                scoped: echo.is_some_and(|echo| echo.scoped),
+                axes: OutcomeAxes::of_record(record.value(), disposed),
+            },
         ));
     }
     document["items"] = Value::Array(items);
@@ -1209,15 +1301,61 @@ fn spell_states(value: &mut Value) {
     }
 }
 
-/// One FR-621 item from the FR-286 item `written`.
-fn item_document(
-    written: Value,
+/// What the run knows of an item it resolved, beside its terminal record.
+struct Echo {
+    /// The declared name the item resolved to.
+    claim_name: String,
+    /// The admitted FSpec FR-331 request item.
+    request: Value,
+    /// FSpec FR-412's certificate identity of the item's obligation.
+    identity: Value,
+    /// Whether the aggregate requires the item.
+    required: bool,
+    /// Whether the item has an activation scope (FR-622).
+    scoped: bool,
+}
+
+/// The FR-621 members [`item_document`] adds to an FR-286 item.
+struct ItemMembers {
     claim_name: Option<String>,
     request: Option<Value>,
+    identity: Option<Value>,
+    target: Option<Value>,
     detail: Option<super::ItemDetail>,
     scoped: bool,
     axes: OutcomeAxes,
-) -> Value {
+}
+
+/// FSpec FR-323's replay target member object for the reproduced
+/// counterexample `found` of the claim declared `name`: a temporal clause
+/// (over a model or a protocol subject, and a probabilistic one) and an
+/// operation contract's violated state clause name their clause by
+/// `state_clause`, and a value-validity assignment names the function its
+/// parameters belong to by `function`. The in-process engines produce no
+/// protocol-refinement counterexample, so FR-071's `protocol_refinement`
+/// target has no variant to come from here.
+fn replay_target(found: &super::ItemCounterexample, name: &str) -> Value {
+    let qualified = name.split("::").collect::<Vec<_>>().join(".");
+    match &found.counterexample {
+        super::Counterexample::Assignments(_) => json!({"function": qualified}),
+        super::Counterexample::Temporal { .. }
+        | super::Counterexample::Protocol { .. }
+        | super::Counterexample::Probabilistic(_)
+        | super::Counterexample::Contract(_) => json!({"state_clause": qualified}),
+    }
+}
+
+/// One FR-621 item from the FR-286 item `written`.
+fn item_document(written: Value, members: ItemMembers) -> Value {
+    let ItemMembers {
+        claim_name,
+        request,
+        identity,
+        target,
+        detail,
+        scoped,
+        axes,
+    } = members;
     let Value::Object(mut record) = written else {
         return written;
     };
@@ -1232,21 +1370,24 @@ fn item_document(
     );
     item.insert("request".to_owned(), request.unwrap_or(Value::Null));
     item.insert("category".to_owned(), category);
-    if let (Some(checker), Some("proved")) = (
+    if let (Some(checker), Some(identity), Some("proved")) = (
         detail.and_then(|detail| detail.checker),
+        identity,
         record.get("result").and_then(Value::as_str),
     ) {
         item.insert(
             "certificate".to_owned(),
-            json!({"checker": checker.as_str(), "accepted": true}),
+            json!({"identity": identity, "checker": checker.as_str(), "accepted": true}),
         );
     }
     if let Some(mut counterexample) = counterexample {
         spell_states(&mut counterexample);
-        item.insert(
-            "replay".to_owned(),
-            json!({"target": {"state_clause": item["claim_name"].clone()}, "reproduced": true}),
-        );
+        if let Some(target) = target {
+            item.insert(
+                "replay".to_owned(),
+                json!({"target": target, "reproduced": true}),
+            );
+        }
         item.insert("counterexample".to_owned(), counterexample);
     }
     if let Some(stats) = detail.and_then(|detail| detail.exploration) {

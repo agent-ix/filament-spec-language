@@ -291,6 +291,11 @@ pub enum RunCause {
         /// Why it is refused.
         reason: String,
     },
+    /// FR-620: a `subject.universes` entry names no provisioned snapshot
+    /// (`invalid-request`), or a population of a referenced snapshot is
+    /// incomplete (`incomplete_population`).
+    #[error("{0}")]
+    AnalyzeUniverse(fsl_analyze::analyze::document::UniverseRefusal),
     /// FR-624: the shared subject binding or source provision of an
     /// analyze request was refused before any item ran.
     #[error("{0}")]
@@ -370,6 +375,12 @@ impl RunCause {
             Self::Spine(failure) => failure.refusal.code(),
             Self::SpineRun(refusal) => refusal.code(),
             Self::AnalyzeRequest { .. } => Code::InvalidRequest,
+            Self::AnalyzeUniverse(
+                fsl_analyze::analyze::document::UniverseRefusal::Unprovisioned { .. },
+            ) => Code::InvalidRequest,
+            Self::AnalyzeUniverse(
+                fsl_analyze::analyze::document::UniverseRefusal::Incomplete { .. },
+            ) => Code::IncompletePopulation,
             Self::AnalyzeRefused(refusal) => refusal
                 .document()
                 .diagnostics()
@@ -485,6 +496,7 @@ impl RunError {
             | RunCause::Libraries(_)
             | RunCause::CompleteRunSelection(_)
             | RunCause::AnalyzeRequest { .. }
+            | RunCause::AnalyzeUniverse(_)
             | RunCause::AnalyzeFault => OutcomeDocument::new(operation, None, self.category())
                 .with_diagnostics(vec![OutcomeDiagnostic::new(
                     None,

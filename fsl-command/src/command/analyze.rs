@@ -149,15 +149,17 @@ fn read<'d>(
         accounting.set_bound(setting, bound);
     }
     limits.accounting = accounting.0;
-    limits.observation =
-        fsl_replay::spine::ObservationLimitsWire::resolve(request.limits.observation.as_ref())
-            .map_err(|error| invalid("limits.observation", error.to_string()))?;
+    limits.observation = request.limits.observation.resolve();
+    limits.normalization = request.limits.normalization.resolve();
     limits.deadline = request
         .deadline_ms
         .map_or(DeadlineSupply::Unbounded, DeadlineSupply::Milliseconds);
     let subject = request
         .subject
         .unwrap_or_else(|| SubjectSelection::default_over(&documents));
+    subject
+        .check_universes(&documents)
+        .map_err(RunCause::AnalyzeUniverse)?;
     let compile = wire::CompileRequest {
         models: request.models,
         program: wire::CompileProgram {

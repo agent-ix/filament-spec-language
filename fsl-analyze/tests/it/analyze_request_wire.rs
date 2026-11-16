@@ -252,7 +252,6 @@ fn analyze_items_carry_the_mapped_axes() {
 /// target, and an unproved required item is an aggregate gap `not-proved`.
 #[trace("TC-2184", "FR-621-AC-8")]
 #[test]
-#[ignore = "QSL-2121: certificate identity, replay target spelling and not-proved gaps not implemented yet"]
 fn analyze_items_name_certificate_replay_target_and_gaps() {
     let ws = Workspace::new("wire-identity");
     let body = format!("{}{}", bounded(), below_three());
@@ -289,7 +288,6 @@ fn analyze_items_name_certificate_replay_target_and_gaps() {
 /// setting names.
 #[trace("TC-2185", "FR-620-AC-10")]
 #[test]
-#[ignore = "QSL-2121: default order, universes and normalization limit names not implemented yet"]
 fn analyze_defaults_universes_and_limit_names() {
     let ws = Workspace::new("wire-defaults");
     let body = format!("{}{}", below_three(), bounded());
