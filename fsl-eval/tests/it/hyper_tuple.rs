@@ -14,9 +14,10 @@ use fsl_eval::temporal::{
     evaluate_projected_prefix, evaluate_tuple, AtomReading, ComponentPosition, ComponentTrace,
     LetterStop, TemporalOutcome, TemporalPosition, TemporalRefusal, TupleLetters, UndefinedCause,
 };
+use fsl_foundation::diagnostic::StageFailure;
 use fsl_foundation::SourceIdentity;
 use fsl_semantics::check::{
-    check_hyper_clauses, CheckedHyper, CheckedHyperClause, FormulaNode, FormulaNodeId,
+    check_hyper_clauses, CheckCause, CheckedHyper, CheckedHyperClause, FormulaNode, FormulaNodeId,
     PackageDeclarations, SCALAR_LIMITS_UNLIMITED,
 };
 use fsl_semantics::model::accounting::ModelNormalizationLimits;
@@ -44,6 +45,20 @@ fn fixture(body: &str) -> Fixture {
 /// [`fixture`] over a model that declares `operations`, with `alignment`
 /// (`align skip {...}` or empty) after the second trace variable.
 fn fixture_with(operations: Vec<serde_json::Value>, alignment: &str, body: &str) -> Fixture {
+    let (text, package) = fixture_package(operations, alignment, body);
+    let mut checked = check_hyper_clauses(&package);
+    let clause = match checked.pop() {
+        Some(Ok(CheckedHyper::Behaviours(clause))) if checked.is_empty() => *clause,
+        other => panic!("{body}: one checked hyper clause, not {other:?}"),
+    };
+    Fixture { text, clause }
+}
+
+fn fixture_package(
+    operations: Vec<serde_json::Value>,
+    alignment: &str,
+    body: &str,
+) -> (String, PackageDeclarations) {
     let document = counters_document(operations, false);
     let packages = package_input([document.as_slice()]).unwrap();
     let text = format!(
@@ -86,12 +101,38 @@ fn fixture_with(operations: Vec<serde_json::Value>, alignment: &str, body: &str)
         )
         .expect("the division profile admits"),
     );
-    let mut checked = check_hyper_clauses(&package);
-    let clause = match checked.pop() {
-        Some(Ok(CheckedHyper::Behaviours(clause))) if checked.is_empty() => *clause,
-        other => panic!("{body}: one checked hyper clause, not {other:?}"),
+    (text, package)
+}
+
+fn assert_division_refused(body: &str, divisor: &str) {
+    assert_division_refused_with("", body, divisor);
+}
+
+fn assert_division_refused_with(alignment: &str, body: &str, divisor: &str) {
+    let operations = if alignment.is_empty() {
+        vec![increment()]
+    } else {
+        vec![increment(), acquire()]
     };
-    Fixture { text, clause }
+    let (text, package) = fixture_package(operations, alignment, body);
+    let mut checked = check_hyper_clauses(&package);
+    let refusal = match checked.pop() {
+        Some(Err(StageFailure::Refused(refusal))) if checked.is_empty() => refusal,
+        Some(Err(StageFailure::RefusedWithPayload(refusal, _))) if checked.is_empty() => *refusal,
+        other => panic!("{body}: expected one S3 refusal, got {other:?}"),
+    };
+
+    assert_eq!(refusal.cause.code().as_str(), "undefined_expression");
+    assert_eq!(refusal.cause.cause(), Some("unproved-nonzero"));
+    let span = match &refusal.cause {
+        CheckCause::Hyper(cause) => cause.span().expect("the refusal has an expression span"),
+        other => panic!("expected a hyper refusal, got {other:?}"),
+    };
+    assert_eq!(
+        &text[span.start as usize..span.end as usize],
+        divisor,
+        "the refusal is located at the divisor"
+    );
 }
 
 /// A letter over one observation sequence per component, indexed by the
@@ -345,7 +386,7 @@ fn a_past_operator_gives_the_same_outcome_at_a_loop_position_and_its_unrolled_co
 /// FR-175 "Work": one unit per (node, joint position) visit, whether the
 /// tuple holds or is violated, so locating `trace_position` costs the caller
 /// nothing more; and each atom is read once per represented joint position.
-#[trace("TC-600")]
+#[trace("TC-600", "FR-495")]
 #[test]
 fn locating_the_false_position_costs_no_more_work_than_the_evaluation() {
     let fixture = fixture(ALWAYS_EQUAL);
@@ -449,23 +490,8 @@ fn a_violation_at_the_last_unrolled_position_is_located_through_the_future_reach
 /// the first joint position an atom is, with its cause.
 #[trace("TC-600")]
 #[test]
-fn an_atom_with_no_value_makes_the_body_undefined_at_the_first_such_joint_position() {
-    let fixture = fixture("always holds(1 mod c.value @ a = 0)");
-    let shape = [lasso(0, 2), lasso(0, 3)];
-    // `a`'s second loop position reads 0, so `1 mod value` has no value there:
-    // joint position 1.
-    let mut letters = Letters::new(&fixture, vec![vec![1, 0], vec![0, 0, 0]]);
-    let mut meter = Meter::new(SCALAR_LIMITS_UNLIMITED);
-    let outcome =
-        evaluate_tuple(&fixture.clause, &shape, &mut letters, &mut meter).expect("readable");
-    let TemporalOutcome::Undefined(undefined) = outcome else {
-        panic!("{outcome:?}");
-    };
-    assert_eq!(undefined.at, TemporalPosition::new(1));
-    assert_eq!(
-        undefined.cause,
-        UndefinedCause::Kernel(Undefined::DivisionByZero)
-    );
+fn a_tuple_atom_with_an_unproved_divisor_is_refused_at_s3() {
+    assert_division_refused("always holds(1 mod c.value @ a = 0)", "c.value @ a");
 }
 
 /// FR-175 covers lockstep only: a clause with `align skip` (FR-178) is read
@@ -662,18 +688,13 @@ fn every_component_reads_the_same_projected_position_without_stuttering() {
 /// FR-178 three-valued prefix evaluation, undefined: an atom with no value at a projected position makes
 /// the body undefined there, with its cause; the prefix is neither true nor
 /// false.
-#[trace("TC-603")]
+#[trace("TC-603", "FR-495")]
 #[test]
-fn an_atom_with_no_value_in_a_prefix_is_undefined_at_its_projected_position() {
-    let fixture = projected("always holds(1 mod c.value @ a = 0)");
-    let (outcome, _) = prefix(&fixture, 3, vec![vec![1, 0, 1], vec![0, 0, 0]]);
-    let TemporalOutcome::Undefined(undefined) = outcome else {
-        panic!("{outcome:?}");
-    };
-    assert_eq!(undefined.at, TemporalPosition::new(1));
-    assert_eq!(
-        undefined.cause,
-        UndefinedCause::Kernel(Undefined::DivisionByZero)
+fn a_projected_atom_with_an_unproved_divisor_is_refused_at_s3() {
+    assert_division_refused_with(
+        "align skip { M::Counter::acquire }",
+        "always holds(1 mod c.value @ a = 0)",
+        "c.value @ a",
     );
 }
 
