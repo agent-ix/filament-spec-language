@@ -32,7 +32,7 @@ const SOURCE: &str = "language \"ix:native\" edition \"1-draft\";\n\
     function letb using v(a: Int[0, 100], b: Int[1, 12]): Int[0, 20] pure { let r = a mod b in r }\n\
     function argw using v(a: Int[0, 100], b: Int[1, 12]): Boolean pure { accw(a mod b) }\n\
     function cmp using v(a: Int[0, 100], b: Int[1, 12]): Boolean pure { a mod b >= 0 }\n\
-    function bound using v(a: Int[0, 100], b: Int[1, 12]): Integer pure { let r = a mod b in r }\n\
+    function bound_value using v(a: Int[0, 100], b: Int[1, 12]): Integer pure { let r = a mod b in r }\n\
     function derived using v(a: Int[0, 100], b: Int[1, 12]): Integer pure { (a mod b) + 1 }\n\
     function derivedb using v(a: Int[0, 100], b: Int[1, 12]): Int[1, 12] pure { (a mod b) + 1 }\n\
     function qb using v(a: Int[-100, 100], b: Int[1, 12]): Int[-100, 100] pure { a div b }\n\
@@ -125,7 +125,7 @@ fn modulo_claim_bound_context_and_replay_agree_for_each_consumer() {
         (7, "letb", interval(0, 11), interval(0, 11), false, true),
         (8, "argw", interval(0, 11), interval(0, 11), false, false),
         (9, "cmp", interval(0, 11), interval(0, 11), false, false),
-        (10, "bound", interval(0, 11), interval(0, 11), false, false),
+        (10, "bound_value", interval(0, 11), interval(0, 11), false, false),
         (
             11,
             "derived",
