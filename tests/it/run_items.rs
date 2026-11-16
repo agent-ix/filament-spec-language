@@ -315,6 +315,65 @@ fn function_argument_population_selector_expands_one_item_per_object() {
     }
 }
 
+/// FR-651-AC-1: a scalar function item settles independently against the
+/// shared program compilation.
+#[test]
+#[trace("TC-1708", "FR-651-AC-1")]
+fn scalar_function_selection_reports_one_successful_item() {
+    let directory = tempfile::tempdir().unwrap();
+    write_cases(directory.path());
+    extend_unit(
+        directory.path(),
+        "function scalarItem using v(): Boolean pure { true }\n",
+    );
+    let output = request(
+        directory.path(),
+        "items",
+        json!({"observations": observations(), "selections": [
+            {"function": {"name": "scalarItem", "snapshot": "current", "arguments": []}}
+        ]}),
+    );
+    assert_eq!(output.status.code(), Some(0), "{output:?}");
+    let document = items_document(&output);
+    assert_eq!(document["items"].as_array().unwrap().len(), 1, "{document}");
+    assert_eq!(
+        document["items"][0]["result"]["format"],
+        "native-run-result/2"
+    );
+    assert_eq!(
+        document["items"][0]["result"]["disposition"]["category"],
+        "success"
+    );
+}
+
+/// FR-651-AC-1: a frame item reads its invocation and settles through the
+/// frame evaluator.
+#[test]
+#[trace("TC-1708", "FR-651-AC-1")]
+fn frame_selection_reports_one_successful_item() {
+    let directory = tempfile::tempdir().unwrap();
+    spine::write(directory.path(), Case::Unchanged).unwrap();
+    let output = request(
+        directory.path(),
+        "items",
+        json!({"observations": {"invocation": "spine-invocation.json",
+            "pre": "spine-pre-snapshot.json", "post": "spine-post-snapshot.json"},
+            "selections": [{"frame": {"operation": "Config::ConfigVersion::attemptUpdate",
+                "invocation": "invocation"}}]}),
+    );
+    assert_eq!(output.status.code(), Some(0), "{output:?}");
+    let document = items_document(&output);
+    assert_eq!(document["items"].as_array().unwrap().len(), 1, "{document}");
+    assert_eq!(
+        document["items"][0]["result"]["format"],
+        "native-run-result/2"
+    );
+    assert_eq!(
+        document["items"][0]["result"]["disposition"]["category"],
+        "success"
+    );
+}
+
 fn assert_request_refusal(output: &Output, member: &str) {
     assert_eq!(output.status.code(), Some(20), "{member}: {output:?}");
     assert!(output.stdout.is_empty(), "{member}");
@@ -489,6 +548,8 @@ fn items_program_syntax_error_refuses_without_an_items_document() {
     );
     assert_eq!(output.status.code(), Some(20), "{output:?}");
     assert!(output.stdout.is_empty(), "{output:?}");
+    let refusal: Value = serde_json::from_slice(&output.stderr).unwrap();
+    assert_eq!(refusal["stage"], "source", "{refusal}");
     assert!(
         !String::from_utf8_lossy(&output.stderr).contains("native-run-items/1"),
         "{output:?}"

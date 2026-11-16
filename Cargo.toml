@@ -38,6 +38,9 @@ description = "Native finite-state specification syntax and source diagnostics"
 
 [features]
 default = []
+# The checked-handoff writer and its integration acceptance modules. It adds
+# no dependency; `--all-features` enables the checked-handoff test surface.
+checked-handoff = []
 # `population_fixtures`, the writer of the `Population<T>[N]` Contract IR v2
 # packages the admission corpus emits (QSL-771). It embeds the spine-model
 # fixtures under `tests/fixtures/`, so the default build leaves it out. It adds

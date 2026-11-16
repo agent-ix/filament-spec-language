@@ -415,15 +415,40 @@ pub(super) fn run_bytes(
         }
     }
     if !clause_requests.is_empty() {
+        let batch_source = clause_requests
+            .first()
+            .and_then(|request| match &request.source {
+                fsl_replay::spine::ClauseRunSource::Program { identity, path, .. } => {
+                    Some((identity.clone(), path.clone()))
+                }
+                _ => None,
+            });
         match fsl_replay::spine::run_clause_batch(clause_requests) {
             Ok(fsl_replay::spine::ClauseRunBatchOutcome::CompileRefusal(report)) => {
-                return Err(refused(
-                    "items.selections",
-                    format!(
-                        "shared program compilation refused: {:?}",
-                        report.disposition
-                    ),
-                ));
+                match report.disposition {
+                    fsl_replay::spine::ClauseDisposition::Compile(refusal)
+                        if refusal.stage() == fsl_replay::spine::SpineStage::Source =>
+                    {
+                        if let Some((source, path)) = batch_source {
+                            return Err(RunCause::Spine(Box::new(super::SpineFailure {
+                                source,
+                                path,
+                                span: None,
+                                refusal: *refusal,
+                            })));
+                        }
+                        return Err(refused(
+                            "items.selections",
+                            "source compilation refused without a program identity",
+                        ));
+                    }
+                    disposition => {
+                        return Err(refused(
+                            "items.selections",
+                            format!("shared program compilation refused: {disposition:?}"),
+                        ));
+                    }
+                }
             }
             Ok(fsl_replay::spine::ClauseRunBatchOutcome::Reports(reports)) => {
                 if reports.len() != clause_slots.len() {

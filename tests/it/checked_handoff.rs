@@ -1292,7 +1292,7 @@ fn a_refusal_or_difference_writes_nothing() {
 #[test]
 fn command_owns_the_default_handoff_surface() {
     let manifest = std::fs::read_to_string("Cargo.toml").unwrap();
-    assert!(!manifest.contains("checked-handoff ="));
+    assert!(manifest.contains("checked-handoff = []"));
     for file in [
         "src/checked_handoff.rs",
         "src/checked_handoff/corpus.rs",
