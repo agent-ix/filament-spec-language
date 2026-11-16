@@ -159,6 +159,9 @@ fn a_model_trace_carries_its_candidate_bound() {
         let envelope: Value = serde_json::from_slice(&refused.stderr).expect("an envelope");
         assert_eq!(envelope["stage"], "request", "{name}: {envelope}");
         assert_eq!(envelope["code"], "invalid-request", "{name}: {envelope}");
-        assert!(envelope.to_string().contains("max_candidates"), "{name}: {envelope}");
+        assert!(
+            envelope.to_string().contains("max_candidates"),
+            "{name}: {envelope}"
+        );
     }
 }

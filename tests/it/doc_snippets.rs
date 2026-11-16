@@ -124,7 +124,11 @@ fn run_at_stage(fence: &Fence) -> Result<Option<String>, String> {
     )
     .map_err(|error| format!("{error:?}"))?;
     if let Some(first) = parsed.diagnostics().first() {
-        return Ok(Some(format!("{}/{}", first.code.as_str(), first.cause.as_str())));
+        return Ok(Some(format!(
+            "{}/{}",
+            first.code.as_str(),
+            first.cause.as_str()
+        )));
     }
     match fence.tag("stage") {
         Some("parse") => Ok(None),
@@ -175,8 +179,7 @@ fn every_fsl_fence_runs_at_its_declared_stage() {
         assert_eq!(found.len(), line_count(&text), "{}", file.display());
         for fence in &found {
             total += 1;
-            check(fence)
-                .unwrap_or_else(|why| panic!("{}:{}: {why}", file.display(), fence.line));
+            check(fence).unwrap_or_else(|why| panic!("{}:{}: {why}", file.display(), fence.line));
         }
     }
     assert!(total > 0, "the README holds FSL fences");
@@ -215,7 +218,10 @@ fn fence_extraction_finds_every_fsl_excerpt() {
             }
         }
     }
-    assert!(bare.is_empty(), "FSL in fences with no FSL info string: {bare:?}");
+    assert!(
+        bare.is_empty(),
+        "FSL in fences with no FSL info string: {bare:?}"
+    );
 }
 
 fn one(markdown: &str) -> Fence {
@@ -233,11 +239,16 @@ fn reject_fences_refuse_with_the_named_code() {
     let body = "type Digit = Int[0, ;\n";
     let tagged = |info: &str| one(&format!("```{info}\n{body}```\n"));
     assert_eq!(
-        check(&tagged("fsl stage=parse reject=invalid_syntax/unexpected-token")),
+        check(&tagged(
+            "fsl stage=parse reject=invalid_syntax/unexpected-token"
+        )),
         Ok(())
     );
     assert!(check(&tagged("fsl stage=parse")).is_err());
-    assert!(check(&tagged("fsl stage=parse reject=unknown_profile/unsupported-selection")).is_err());
+    assert!(check(&tagged(
+        "fsl stage=parse reject=unknown_profile/unsupported-selection"
+    ))
+    .is_err());
     assert!(check(&one("```fsl\ntype Digit = Int[0, 9];\n```\n")).is_err());
 }
 
@@ -249,14 +260,27 @@ fn reject_fences_refuse_with_the_named_code() {
 #[ignore = "QSL-2047: the doc fence check is not built yet"]
 fn pending_fences_match_their_current_refusal() {
     let fence = |body: &str, after: &str| {
-        one(&format!("```fsl stage=parse pending=QSL-0\n{body}```\n{after}\n"))
+        one(&format!(
+            "```fsl stage=parse pending=QSL-0\n{body}```\n{after}\n"
+        ))
     };
     let broken = "type Digit = Int[0, ;\n";
     assert_eq!(
-        check(&fence(broken, "<!-- expect: invalid_syntax/unexpected-token -->")),
+        check(&fence(
+            broken,
+            "<!-- expect: invalid_syntax/unexpected-token -->"
+        )),
         Ok(())
     );
-    assert!(check(&fence("type Digit = Int[0, 9];\n", "<!-- expect: invalid_syntax/unexpected-token -->")).is_err());
-    assert!(check(&fence(broken, "<!-- expect: unknown_profile/unsupported-selection -->")).is_err());
+    assert!(check(&fence(
+        "type Digit = Int[0, 9];\n",
+        "<!-- expect: invalid_syntax/unexpected-token -->"
+    ))
+    .is_err());
+    assert!(check(&fence(
+        broken,
+        "<!-- expect: unknown_profile/unsupported-selection -->"
+    ))
+    .is_err());
     assert!(check(&fence(broken, "")).is_err());
 }

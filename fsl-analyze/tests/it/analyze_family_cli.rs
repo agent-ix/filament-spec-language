@@ -390,12 +390,11 @@ fn a_hyper_clause_over_two_models_analyzes_and_replays_per_trace() {
     let ws = Workspace::new("family-hyper-two-models");
     ws.write("other.json", &other);
     let mut models = request_members(None)["models"].clone();
-    models
-        .as_array_mut()
-        .expect("models")
-        .push(json!({"format": "semantic-ir/2.0.0", "source": {"file": "other.json",
+    models.as_array_mut().expect("models").push(
+        json!({"format": "semantic-ir/2.0.0", "source": {"file": "other.json",
             "authority": "test", "identity": "vault-other-model", "document": "VaultOther",
-            "formal_revision": 1}}));
+            "formal_revision": 1}}),
+    );
     let run = analyze(&request_over(
         &ws,
         &unit,

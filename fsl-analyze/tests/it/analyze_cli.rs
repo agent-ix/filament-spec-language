@@ -127,10 +127,12 @@ fn invariant_items_prove_and_refute() {
     assert_eq!(label(&run.item(1)), "refuted");
     assert_eq!(run.item(1)["record"]["backend"], "en-1");
     let refused = run.item(2);
-    assert_eq!(refused["record"]["diagnostic"]["cause"], "inapplicable-kind");
     assert_eq!(
-        refused["record"]["diagnostic"]["detail"]["family"],
-        "state-model",
+        refused["record"]["diagnostic"]["cause"],
+        "inapplicable-kind"
+    );
+    assert_eq!(
+        refused["record"]["diagnostic"]["detail"]["family"], "state-model",
         "{refused}"
     );
 }
@@ -204,9 +206,9 @@ fn weak_fairness_decides_liveness() {
         let transition = step["transition"].to_string();
         assert!(transition.contains("setTo"), "a setTo step: {step}");
         assert!(
-            step["post_state"]["state"].to_string().contains(
-                r#""name":"value","value":{"type":"integer","value":"0"}"#
-            ),
+            step["post_state"]["state"]
+                .to_string()
+                .contains(r#""name":"value","value":{"type":"integer","value":"0"}"#),
             "at value = 0: {step}"
         );
     }
@@ -251,8 +253,7 @@ fn a_finite_replay_item_over_a_temporal_clause_is_inapplicable() {
         "{item}"
     );
     assert_eq!(
-        item["record"]["diagnostic"]["detail"]["family"],
-        "temporal-trace",
+        item["record"]["diagnostic"]["detail"]["family"], "temporal-trace",
         "{item}"
     );
 }

@@ -602,7 +602,10 @@ fn a_pending_clause_run_reports_its_pending_disposition() {
     let run = analyze(&counter_request_with(&ws, &reaches, request));
     assert_eq!(run.exit, 20);
     let item = run.item(0);
-    assert_eq!(item["record"]["diagnostic"]["cause"], "inapplicable-kind", "{item}");
+    assert_eq!(
+        item["record"]["diagnostic"]["cause"], "inapplicable-kind",
+        "{item}"
+    );
     assert_eq!(
         item["record"]["diagnostic"]["detail"]["family"], "temporal-trace",
         "{item}"
