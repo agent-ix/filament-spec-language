@@ -10,7 +10,7 @@ use filament_exact::{
 use filament_semantic_value::catalog::{CatalogCode, InternalFault};
 use filament_semantic_value::declaration::CompositeShape;
 use fsl_eval::temporal::{
-    AggregateAtom, AtomReading, CaptureReading, FirstUndefined, LetterStop, ObservedLocus,
+    AggregateAtom, AtomReading, CaptureReading, FirstUndefined, LetterStop, LetterTape, ObservedLocus, TapeEntry, TapeLetter, TapeReading,
     TemporalLetters, TemporalOutcome, TemporalPosition, TemporalTrace, UndefinedCause, WindowRead,
     WindowSource, WindowTrace, DEFAULT_MAX_WINDOW_VALUES,
 };
@@ -203,6 +203,144 @@ pub fn run_package_trace_subject(request: &PackageTraceSubjectRequest<'_>) -> Cl
     )
 }
 
+/// The record samples a trace-subject run reads: every sample by value, or
+/// FR-820's letter tape with the samples the carried state holds by value
+/// (the positions some reading still needs) and the captures fixed at the
+/// clause's origin activation.
+#[derive(Clone, Copy)]
+pub(crate) enum SubjectSamples<'a> {
+    /// One sample per position.
+    Values(&'a [Value]),
+    /// A letter tape of `len` positions.
+    Tape {
+        /// The letters read at admission.
+        tape: &'a LetterTape,
+        /// The samples held by value, by position.
+        values: &'a BTreeMap<u64, Value>,
+        /// The captures fixed at the origin activation, in source order.
+        captures: &'a [Value],
+        /// The number of positions.
+        len: u64,
+    },
+}
+
+impl<'a> SubjectSamples<'a> {
+    fn len(&self) -> u64 {
+        match self {
+            Self::Values(samples) => u64::try_from(samples.len()).unwrap_or(u64::MAX),
+            Self::Tape { len, .. } => *len,
+        }
+    }
+
+    /// The samples the run admits again: every sample, or the held ones.
+    fn admitted(&self) -> Box<dyn Iterator<Item = &'a Value> + 'a> {
+        match *self {
+            Self::Values(samples) => Box::new(samples.iter()),
+            Self::Tape { values, .. } => Box::new(values.values()),
+        }
+    }
+
+    fn fixed_captures(&self) -> &'a [Value] {
+        match *self {
+            Self::Values(_) => &[],
+            Self::Tape { captures, .. } => captures,
+        }
+    }
+
+    fn get(&self, index: u64) -> Option<&'a Value> {
+        match *self {
+            Self::Values(samples) => usize::try_from(index)
+                .ok()
+                .and_then(|index| samples.get(index)),
+            Self::Tape { values, .. } => values.get(&index),
+        }
+    }
+
+    fn letter(&self, index: u64) -> Option<&'a TapeLetter> {
+        match *self {
+            Self::Values(_) => None,
+            Self::Tape { tape, .. } => match tape.entry(index)? {
+                TapeEntry::Read(letter) => Some(letter),
+                TapeEntry::Held(_) => None,
+            },
+        }
+    }
+}
+
+/// FR-820: read the newest sample, at `position`, of a trace-subject clause
+/// into its letter. `samples` holds the earlier letters, the samples still
+/// held by value (the newest included) and the origin captures. Every `holds`
+/// and aggregate atom, the guard and, at an activation, the captures are read
+/// once; a reading that does not reduce to a letter returns `None`, so the
+/// caller holds the sample by value. The captures fixed here are returned
+/// beside the letter.
+pub(crate) fn read_subject_letter(
+    package: &fsl_package::CheckedPackage,
+    node: &TemporalClauseNode,
+    samples: SubjectSamples<'_>,
+    position: u64,
+    max_window_values: u64,
+    meter: &mut Meter,
+) -> Option<(TapeLetter, Vec<Value>)> {
+    let mut letters = TraceSubjectLetters {
+        package,
+        node,
+        samples,
+        max_window_values,
+        trace: WindowTrace::positions(position.checked_add(1)?),
+        captures: samples.fixed_captures().to_vec(),
+        atom_values: BTreeMap::new(),
+        undefined_atom: None,
+        first_undefined: None,
+    };
+    let at = TemporalPosition::new(position);
+    let clause = node.clause();
+    let activates = match clause.activation() {
+        fsl_semantics::check::Activation::Origin => position == 0,
+        fsl_semantics::check::Activation::Each { .. } => true,
+    };
+    let activation = match clause.activation() {
+        fsl_semantics::check::Activation::Each { guarded: true } => {
+            match letters.activation(at, meter).ok()? {
+                AtomReading::True => Some(true),
+                AtomReading::False => Some(false),
+                AtomReading::Undefined(_) => return None,
+            }
+        }
+        _ => None,
+    };
+    let captured = clause.captures().len() > 0;
+    // Captures fixed at a later `on each` activation would change what every
+    // atom reads, so such a clause is read by value.
+    if captured && !matches!(clause.activation(), fsl_semantics::check::Activation::Origin) {
+        return None;
+    }
+    let captures = if captured && activates {
+        match letters.captures(at, meter).ok()? {
+            CaptureReading::Fixed => true,
+            CaptureReading::Undefined { .. } => return None,
+        }
+    } else {
+        false
+    };
+    let formula = clause.formula();
+    let mut atoms = Vec::new();
+    for (index, formula_node) in formula.nodes().iter().enumerate() {
+        if matches!(
+            formula_node,
+            FormulaNode::Holds { .. } | FormulaNode::Aggregate { .. }
+        ) {
+            let id = formula.node_id(index)?;
+            let reading = letters.read_atom(id, at, meter).ok()?;
+            atoms.push((index, TapeReading::of(&reading)?));
+        }
+    }
+    Some((
+        TapeLetter::new(atoms, activation, captures),
+        letters.captures,
+    ))
+}
+
 /// FR-330-AC-17: the trace-subject evaluation of `name` over `samples`.
 pub(super) fn run_subject(
     run: &CompiledRun<'_>,
@@ -216,7 +354,7 @@ pub(super) fn run_subject(
         run,
         name,
         subject,
-        samples,
+        SubjectSamples::Values(samples),
         max_window_values,
         cancel,
         &mut None,
@@ -230,7 +368,7 @@ pub(super) fn run_subject_observing(
     run: &CompiledRun<'_>,
     name: &str,
     subject: &ValueType,
-    samples: &[Value],
+    samples: SubjectSamples<'_>,
     max_window_values: u64,
     cancel: Option<&Cancel>,
     first_undefined: &mut Option<FirstUndefined>,
@@ -257,10 +395,10 @@ pub(super) fn run_subject_observing(
     };
     let matches_subject = *subject == node.clause().over().1;
     let profile_supported = node.clause().profile() == TemporalProfile::EventPositionFalseExtension;
-    if samples.is_empty() || !record_type || !matches_subject || !profile_supported {
+    if samples.len() == 0 || !record_type || !matches_subject || !profile_supported {
         return run.report(refuse("invalid-value", BTreeMap::new()));
     }
-    for sample in samples {
+    for sample in samples.admitted() {
         if !package
             .graph()
             .scope()
@@ -271,10 +409,7 @@ pub(super) fn run_subject_observing(
             return run.report(refuse("invalid-value", BTreeMap::new()));
         }
     }
-    let len = match u64::try_from(samples.len()) {
-        Ok(len) => len,
-        Err(_) => return run.report(refuse("invalid-value", BTreeMap::new())),
-    };
+    let len = samples.len();
     let mut meter = Meter::new(run.accounting);
     if let Some(cancel) = cancel {
         meter = meter.with_cancel(cancel.clone());
@@ -285,7 +420,7 @@ pub(super) fn run_subject_observing(
         samples,
         max_window_values,
         trace: WindowTrace::positions(len),
-        captures: Vec::new(),
+        captures: samples.fixed_captures().to_vec(),
         atom_values: BTreeMap::new(),
         undefined_atom: None,
         first_undefined: None,
@@ -628,7 +763,7 @@ impl StatePredicate for Predicate<'_> {
 struct TraceSubjectLetters<'a> {
     package: &'a fsl_package::CheckedPackage,
     node: &'a TemporalClauseNode,
-    samples: &'a [Value],
+    samples: SubjectSamples<'a>,
     /// FR-194's window limit.
     max_window_values: u64,
     trace: WindowTrace,
@@ -641,9 +776,8 @@ struct TraceSubjectLetters<'a> {
 
 impl TraceSubjectLetters<'_> {
     fn sample(&self, position: TemporalPosition) -> Result<Value, LetterStop> {
-        usize::try_from(position.index())
-            .ok()
-            .and_then(|index| self.samples.get(index))
+        self.samples
+            .get(position.index())
             .cloned()
             .ok_or_else(|| fault("position-has-record-sample"))
     }
@@ -709,6 +843,27 @@ impl TraceSubjectLetters<'_> {
         position: TemporalPosition,
         meter: &mut Meter,
     ) -> Result<AtomReading, LetterStop> {
+        if let Some(letter) = self.samples.letter(position.index()) {
+            let reading = letter
+                .atom(atom.index())
+                .map(TapeReading::reading)
+                .ok_or_else(|| fault("tape-letter-reads-every-atom"))?;
+            if matches!(
+                &reading,
+                AtomReading::Undefined(UndefinedCause::InsufficientData(_))
+            ) {
+                self.undefined_atom = Some(atom.index());
+            }
+            self.atom_values.insert(
+                (atom.index(), position.index()),
+                match reading {
+                    AtomReading::True => Some(true),
+                    AtomReading::False => Some(false),
+                    AtomReading::Undefined(_) => None,
+                },
+            );
+            return Ok(reading);
+        }
         if let Some(expressions) = self.node.aggregate_conditions(atom) {
             let checked = self
                 .node
@@ -812,6 +967,13 @@ impl TemporalLetters for TraceSubjectLetters<'_> {
         let Some((guard, slots)) = self.node.guard() else {
             return Ok(AtomReading::True);
         };
+        if let Some(letter) = self.samples.letter(position.index()) {
+            return match letter.activation() {
+                Some(true) => Ok(AtomReading::True),
+                Some(false) => Ok(AtomReading::False),
+                None => Err(fault("tape-letter-reads-the-guard")),
+            };
+        }
         let sample = self.sample(position)?;
         match self.evaluate(guard, slots, vec![sample.clone(), sample], meter)? {
             ExpressionReading::Defined(Value::Boolean(true)) => Ok(AtomReading::True),
@@ -826,6 +988,16 @@ impl TemporalLetters for TraceSubjectLetters<'_> {
         position: TemporalPosition,
         meter: &mut Meter,
     ) -> Result<CaptureReading, LetterStop> {
+        if let Some(letter) = self.samples.letter(position.index()) {
+            // The captures were fixed when the tape read this position; the
+            // state carries their values (FR-860).
+            return if letter.captures() {
+                self.captures = self.samples.fixed_captures().to_vec();
+                Ok(CaptureReading::Fixed)
+            } else {
+                Err(fault("tape-letter-reads-the-captures"))
+            };
+        }
         self.captures.clear();
         let mut bindings = vec![self.sample(position)?];
         if self.node.clause().trigger().is_some() {
@@ -860,7 +1032,7 @@ impl TemporalLetters for TraceSubjectLetters<'_> {
 struct SubjectWindowSource<'a> {
     package: &'a fsl_package::CheckedPackage,
     expressions: CheckedAggregateConditionsRef<'a>,
-    samples: &'a [Value],
+    samples: SubjectSamples<'a>,
     captures: &'a [Value],
     subject_trigger: bool,
 }
@@ -875,7 +1047,7 @@ impl SubjectWindowSource<'_> {
         let (body, slots) = expression.ok_or_else(|| fault("aggregate-expression-present"))?;
         let Some(sample) = self
             .samples
-            .get(usize::try_from(position.index()).map_err(|_| fault("position-fits-usize"))?)
+            .get(position.index())
             .cloned()
         else {
             return Ok(WindowRead::Missing);

@@ -28,6 +28,7 @@ use fsl_semantics::model::observation::{
     Provisions,
 };
 
+mod clause_state;
 mod ledger_wire;
 mod model_trace;
 mod package_authentication;
@@ -35,6 +36,10 @@ mod progress;
 mod temporal;
 mod trace_refusal;
 mod trace_subject;
+pub use clause_state::{
+    assertion_json, assertion_of, pending_report, AdmittedPosition, AdmittedValue, Advance,
+    ClauseLimits, ClauseOpen, ClauseRefusal, ClauseState, ClauseTraceKind, CLAUSE_STATE_FORMAT,
+};
 pub use ledger_wire::{read_ledger, write_ledger, LedgerReadError};
 pub use package_authentication::{
     authenticate_emission, AuthenticationFailure, PackageAuthentication, PackagesStage,
@@ -1393,6 +1398,7 @@ pub fn run_clause_with_temporal_selections(
                         admitted_package,
                     }),
                     cancel: None,
+                    tape: None,
                 },
             ))
         }
@@ -1422,6 +1428,7 @@ pub fn run_clause_with_temporal_selections(
                         admitted_package,
                     }),
                     cancel: None,
+                    tape: None,
                 },
             ))
         }

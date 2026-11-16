@@ -10,7 +10,7 @@ use std::collections::BTreeMap;
 use filament_exact::{Meter, Value, ValueType};
 use filament_semantic_value::catalog::CatalogCode;
 use fsl_eval::temporal::{
-    evaluate_observed_decisive, evaluate_sampled, DecisiveAtom, DecisiveSearch, DecisiveStop,
+    evaluate_observed_decisive, DecisiveAtom, DecisiveSearch, DecisiveStop,
     FirstUndefined, HoldsStop, ObservedPositions, PositionRefusal, ProgressedRefusal,
     TemporalOutcome, TemporalPosition, TemporalRefusal, TemporalTrace, TimestampedTrace,
     UndefinedCause, UndefinedEvaluation, WindowRefusal,
@@ -471,6 +471,24 @@ pub(super) struct TemporalRun<'a> {
     pub(super) authentication: Option<TemporalAuthentication<'a>>,
     /// The caller's handle: every charge of the run's meter polls it.
     pub(super) cancel: Option<&'a filament_exact::Cancel>,
+    /// FR-820: the letter tape a carried clause state reads in place of the
+    /// record samples the trace names; `None` for a batch run.
+    pub(super) tape: Option<TapeInput<'a>>,
+}
+
+/// FR-820: what a carried clause state hands the run in place of its samples.
+#[derive(Clone, Copy)]
+pub(crate) struct TapeInput<'a> {
+    /// The letters read at admission, one per position.
+    pub(crate) tape: &'a fsl_eval::temporal::LetterTape,
+    /// The samples the state holds by value, by position.
+    pub(crate) values: &'a BTreeMap<u64, Value>,
+    /// The captures fixed at the origin activation.
+    pub(crate) captures: &'a [Value],
+    /// Whether window aggregates are read from the tape on every route: FR-504.s
+    /// open-scope reading of a closed-trace clause reads the aggregate letters
+    /// the closed route read, so it needs no window of values.
+    pub(crate) open_aggregates: bool,
 }
 
 /// The emitted package a clock-bearing trace is authenticated against.
@@ -703,6 +721,15 @@ pub struct PackageTemporalRequest<'a> {
 /// unauthenticated: its binding is not checked and its report carries no
 /// authenticated selection.
 pub fn run_package_temporal(request: &PackageTemporalRequest<'_>) -> ClauseRunReport {
+    run_package_temporal_over(request, None)
+}
+
+/// [`run_package_temporal`] reading `tape` in place of the record samples the
+/// trace names (FR-820).
+pub(crate) fn run_package_temporal_over(
+    request: &PackageTemporalRequest<'_>,
+    tape: Option<TapeInput<'_>>,
+) -> ClauseRunReport {
     let provisions = Provisions {
         snapshots: request.snapshots,
         invocations: &DocumentProvision::default(),
@@ -729,6 +756,7 @@ pub fn run_package_temporal(request: &PackageTemporalRequest<'_>) -> ClauseRunRe
             ledger: request.ledger,
             authentication: request.authentication,
             cancel: Some(request.cancel),
+            tape,
         },
     )
 }
@@ -742,6 +770,7 @@ pub(super) fn run_temporal(run: &CompiledRun<'_>, request: &TemporalRun<'_>) -> 
         ledger,
         authentication,
         cancel,
+        tape,
     } = *request;
     // A trace is evidence for that trace only: it settles no item and
     // derives no witness (FR-332).
@@ -945,7 +974,7 @@ pub(super) fn run_temporal(run: &CompiledRun<'_>, request: &TemporalRun<'_>) -> 
             )]),
         ));
     }
-    if let (true, ValueType::Composite(record)) = (sampled, over_type) {
+    if let (true, ValueType::Composite(record), None) = (sampled, over_type, tape) {
         for (index, document) in trace.documents().enumerate() {
             match fsl_semantics::model::observation::admit_record_sample(
                 graph.scope().types(),
@@ -1010,7 +1039,10 @@ pub(super) fn run_temporal(run: &CompiledRun<'_>, request: &TemporalRun<'_>) -> 
 
     // `over` resolves in the observation at position 0 (FR-330 Inputs).
     let observing = match over {
-        None => ObservedPositions::Samples(&samples),
+        None => match tape {
+            Some(tape) => ObservedPositions::Tape(tape.tape),
+            None => ObservedPositions::Samples(&samples),
+        },
         Some(over) => {
             let ValueType::Reference(type_identity) = over_type else {
                 return late(ClauseDisposition::EvaluateFault(
@@ -1051,11 +1083,12 @@ pub(super) fn run_temporal(run: &CompiledRun<'_>, request: &TemporalRun<'_>) -> 
     // record sample has neither.
     let objects = match observing {
         ObservedPositions::Objects { environments, over } => Some((environments, over)),
-        ObservedPositions::Samples(_) => None,
+        ObservedPositions::Samples(_) | ObservedPositions::Tape(_) => None,
     };
 
     // QSL-2138: only the closed finite route below reads window aggregates.
     if sampled
+        && !tape.is_some_and(|tape| tape.open_aggregates)
         && !(matches!(trace, TraceInput::Finite(_))
             && clause.profile() == TemporalProfile::EventPositionFalseExtension)
         && clause
@@ -1081,7 +1114,15 @@ pub(super) fn run_temporal(run: &CompiledRun<'_>, request: &TemporalRun<'_>) -> 
             run,
             name,
             over_type,
-            &samples,
+            match tape {
+                Some(tape) => super::trace_subject::SubjectSamples::Tape {
+                    tape: tape.tape,
+                    values: tape.values,
+                    captures: tape.captures,
+                    len: u64::try_from(tape.tape.len()).unwrap_or(u64::MAX),
+                },
+                None => super::trace_subject::SubjectSamples::Values(&samples),
+            },
             fsl_eval::temporal::DEFAULT_MAX_WINDOW_VALUES,
             cancel,
             &mut first_undefined,
@@ -1264,8 +1305,15 @@ pub(super) fn run_temporal(run: &CompiledRun<'_>, request: &TemporalRun<'_>) -> 
             None,
             &mut meter,
         ),
-        ObservedPositions::Samples(samples) => {
-            evaluate_sampled(run.package, node, samples, shape, None, &mut meter)
+        positions @ (ObservedPositions::Samples(_) | ObservedPositions::Tape(_)) => {
+            fsl_eval::temporal::evaluate_positions(
+                run.package,
+                node,
+                positions,
+                shape,
+                None,
+                &mut meter,
+            )
         }
     };
     let (disposition, refused_at) = observed_disposition(
@@ -1492,14 +1540,16 @@ fn run_window(
                 meter,
             )
         }
-        ObservedPositions::Samples(samples) => fsl_eval::temporal::evaluate_sampled_finite_window(
+        positions @ (ObservedPositions::Samples(_) | ObservedPositions::Tape(_)) => {
+            fsl_eval::temporal::evaluate_positions_finite_window(
             run.package,
             node,
-            samples,
+            positions,
             trace,
             valuations,
             meter,
-        ),
+        )
+        }
     };
     let undefined = observed.undefined;
     match (observed.stopped, observed.result) {

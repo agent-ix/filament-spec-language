@@ -741,8 +741,9 @@ pub(crate) fn record_of(
     package: &CheckedPackage,
     sources: &[Source],
     clause: &str,
-    report: ClauseRunReport,
+    report: impl Into<Arc<ClauseRunReport>>,
 ) -> Result<MonitorRecord, Failure> {
+    let report: Arc<ClauseRunReport> = report.into();
     let verdict = verdict_of(clause, &report.disposition)?;
     let atom = named_atom(package, sources, clause, &report.disposition)?;
     Ok(MonitorRecord {
@@ -750,7 +751,7 @@ pub(crate) fn record_of(
         verdict,
         category: report.category(),
         atom,
-        report: Arc::new(report),
+        report,
     })
 }
 

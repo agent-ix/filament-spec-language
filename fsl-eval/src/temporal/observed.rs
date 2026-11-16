@@ -19,6 +19,7 @@ use fsl_semantics::check::{FormulaNodeId, TemporalClauseNode};
 use fsl_semantics::model::object_environment::ObjectEnvironment;
 
 use super::engine::DecisiveSearch;
+use super::tape::{TapeEntry, TapeLetter, TapeReading};
 use super::finite_window::{evaluate_finite_window, TimestampedTrace, Valuation, WindowEvaluation};
 use super::{
     AtomReading, CaptureReading, LetterStop, TemporalLetters, TemporalOutcome, TemporalPosition,
@@ -168,6 +169,43 @@ pub enum ObservedPositions<'a> {
     /// represented position. The sample is the value of the clause's subject
     /// parameter at its position; no object environment is read.
     Samples(&'a [Value]),
+    /// FR-820: record samples read once into a letter tape, one entry per
+    /// represented position. A letter is read from the tape; a position the
+    /// tape holds by value is read as a sample.
+    Tape(&'a super::tape::LetterTape),
+}
+
+/// [`evaluate_sampled`] over any represented positions: the run FR-330 makes
+/// of a clause over record samples, or over a letter tape of them (FR-820).
+pub fn evaluate_positions(
+    package: &CheckedPackage,
+    clause: &TemporalClauseNode,
+    positions: ObservedPositions<'_>,
+    trace: TemporalTrace,
+    silent_from: Option<u64>,
+    meter: &mut Meter,
+) -> ObservedRun {
+    evaluate_observed_goal(
+        package,
+        clause,
+        positions,
+        trace,
+        (super::engine::Goal::Clause, false, silent_from),
+        meter,
+    )
+}
+
+/// [`evaluate_sampled_finite_window`] over any represented positions,
+/// a letter tape of record samples included (FR-820).
+pub fn evaluate_positions_finite_window(
+    package: &CheckedPackage,
+    clause: &TemporalClauseNode,
+    positions: ObservedPositions<'_>,
+    trace: &TimestampedTrace,
+    valuations: WindowValuations<'_>,
+    meter: &mut Meter,
+) -> ObservedWindowRun {
+    evaluate_window_over(package, clause, positions, trace, valuations, meter)
 }
 
 /// [`evaluate_observed`] over record samples (FR-641): `samples` holds the
@@ -359,7 +397,7 @@ const ACTIVATION_CODES: [&str; 2] = [
     "activation-condition-boolean",
 ];
 
-struct ObservedLetters<'a> {
+pub(super) struct ObservedLetters<'a> {
     package: &'a CheckedPackage,
     clause: &'a TemporalClauseNode,
     positions: ObservedPositions<'a>,
@@ -377,6 +415,54 @@ struct ObservedLetters<'a> {
     classes: &'a [usize],
     /// The first silent sample, where every `holds` atom reads false.
     silent_from: Option<u64>,
+}
+
+impl<'a> ObservedLetters<'a> {
+    /// Letters over `positions` of `trace`, reading no silent sample, absent
+    /// valuation or atom class.
+    pub(super) fn over(
+        package: &'a CheckedPackage,
+        clause: &'a TemporalClauseNode,
+        positions: ObservedPositions<'a>,
+        trace: TemporalTrace,
+    ) -> Self {
+        Self {
+            package,
+            clause,
+            positions,
+            empty: ObjectEnvironment::default(),
+            trace,
+            stopped: None,
+            undefined: None,
+            absent: &[],
+            classes: &[],
+            silent_from: None,
+        }
+    }
+
+    /// The letter the tape read at `position`, when the positions are a tape
+    /// that holds a letter there.
+    fn taped(&self, position: TemporalPosition) -> Option<&'a TapeLetter> {
+        let ObservedPositions::Tape(tape) = self.positions else {
+            return None;
+        };
+        let index = match self.trace {
+            TemporalTrace::Finite { .. } => position.index(),
+            TemporalTrace::Lasso { prefix, loop_len } => {
+                if position.index() < prefix {
+                    position.index()
+                } else {
+                    (position.index() - prefix)
+                        .checked_rem(loop_len)
+                        .and_then(|offset| prefix.checked_add(offset))?
+                }
+            }
+        };
+        match tape.entry(index)? {
+            TapeEntry::Read(letter) => Some(letter),
+            TapeEntry::Held(_) => None,
+        }
+    }
 }
 
 impl ObservedLetters<'_> {
@@ -437,6 +523,12 @@ impl ObservedLetters<'_> {
             ObservedPositions::Samples(samples) => slot
                 .and_then(|slot| samples.get(slot))
                 .map(|sample| (&self.empty, sample.clone())),
+            ObservedPositions::Tape(tape) => slot
+                .and_then(|slot| tape.entries().get(slot))
+                .and_then(|entry| match entry {
+                    TapeEntry::Held(sample) => Some((&self.empty, sample.clone())),
+                    TapeEntry::Read(_) => None,
+                }),
         };
         found.ok_or_else(|| {
             LetterStop::Fault(InternalFault::new(
@@ -513,6 +605,17 @@ impl TemporalLetters for ObservedLetters<'_> {
         if self.is_silent(position) {
             return Ok(AtomReading::False);
         }
+        if let Some(letter) = self.taped(position) {
+            return letter
+                .atom(atom.index())
+                .map(TapeReading::reading)
+                .ok_or_else(|| {
+                    LetterStop::Fault(InternalFault::new(
+                        "temporal.observed",
+                        "tape-letter-reads-every-atom",
+                    ))
+                });
+        }
         let (objects, over) = self.subject(position)?;
         let evaluation = self
             .package
@@ -553,6 +656,16 @@ impl TemporalLetters for ObservedLetters<'_> {
         position: TemporalPosition,
         meter: &mut Meter,
     ) -> Result<AtomReading, LetterStop> {
+        if let Some(letter) = self.taped(position) {
+            return match letter.activation() {
+                Some(true) => Ok(AtomReading::True),
+                Some(false) => Ok(AtomReading::False),
+                None => Err(LetterStop::Fault(InternalFault::new(
+                    "temporal.observed",
+                    "tape-letter-reads-the-guard",
+                ))),
+            };
+        }
         let (objects, over) = self.subject(position)?;
         let evaluation = self
             .package
@@ -569,6 +682,16 @@ impl TemporalLetters for ObservedLetters<'_> {
         position: TemporalPosition,
         meter: &mut Meter,
     ) -> Result<CaptureReading, LetterStop> {
+        if let Some(letter) = self.taped(position) {
+            return if letter.captures() {
+                Ok(CaptureReading::Fixed)
+            } else {
+                Err(LetterStop::Fault(InternalFault::new(
+                    "temporal.observed",
+                    "tape-letter-reads-the-captures",
+                )))
+            };
+        }
         self.fix_captures(position, meter)
     }
 }

@@ -47,6 +47,7 @@ mod outcome;
 mod plan;
 mod position;
 mod steps;
+mod tape;
 mod tick_monitor;
 mod tick_shape;
 mod timed;
@@ -70,7 +71,8 @@ pub use ledger::{
 pub use letters::{AtomReading, CaptureReading, LetterStop, TemporalLetters, UndefinedCause};
 pub use observed::{
     evaluate_observed, evaluate_observed_at, evaluate_observed_decisive,
-    evaluate_observed_finite_window, evaluate_sampled, evaluate_sampled_finite_window,
+    evaluate_observed_finite_window, evaluate_positions, evaluate_positions_finite_window,
+    evaluate_sampled, evaluate_sampled_finite_window,
     FirstUndefined, HoldsStop, ObservedLocus, ObservedPositions, ObservedRun, ObservedWindowRun,
     WindowValuations,
 };
@@ -79,6 +81,7 @@ pub use outcome::{
     InsufficientDataEvaluation, TemporalOutcome, TemporalRefusal, UndefinedEvaluation,
 };
 pub use position::{PositionRefusal, TemporalPosition};
+pub use tape::{read_sample_letter, LetterTape, TapeEntry, TapeLetter, TapeReading};
 pub use tick_monitor::{
     definitely_before, within_bound, TickBound, TickMonitorReference, TickMonitorSpec, TickOutcome,
     TickResult, TickStep, TickStepError,

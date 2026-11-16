@@ -205,6 +205,8 @@ pub use run_value::ArgumentDefect;
 
 pub(crate) mod clause;
 pub use clause::{
+    assertion_json, assertion_of, pending_report, AdmittedPosition, AdmittedValue, Advance,
+    ClauseLimits, ClauseOpen, ClauseRefusal, ClauseState, ClauseTraceKind, CLAUSE_STATE_FORMAT,
     admit_progress, authenticate_emission, authenticate_package_trace, clause_trace_binding,
     name_clause_atom, read_ledger, run_clause, run_clause_with_temporal_selections,
     run_package_temporal, run_package_trace_subject, run_trace_subject_clause, sample_position,
