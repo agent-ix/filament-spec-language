@@ -40,3 +40,14 @@ gains a `depends_on` edge to FR-088. `quire validate` exits 0.
 REQUEST CHANGES on FND-001. The others are wording or bookkeeping. Every pairing that FR-088-AC-8
 and TC-260 cover is consistent with FR-088-AC-7 (the checked node id stays the only package type
 identity) and with FR-092-AC-21 (the record field's `ValueType` and binding).
+
+## Dispositions
+
+Review round 2, at head d42af98e46641e08f433f8b31fb81e32bc496f9e (fix commit d42af98e4).
+
+| FND | Outcome | Reason |
+| --- | --- | --- |
+| FND-001 | fixed | FR-569:207-208 now reads "the multiplicity its type gives, as below". FR-569:223-231 adds that a non-collection outermost constructor, `Option` included, gives exactly-one multiplicity with the whole type as `value_type`, and AC-15 checks `o: Option<Sequence<Integer>[0, 3]>`. |
+| FND-002 | fixed | FR-088:236-244 names the model-owned value, record, tuple and variant types (`M::Total`) and says they are carried as `Resolved` too. |
+| FND-003 | fixed | FR-088:249-251, FR-088-AC-8 and TC-260 steps and expected results now say "no production code outside the source-object assembler", and FR-088 adds "tests may". |
+| FND-004 | fixed | ADR-013:435 (O-14) carries an amendment note naming FR-088, QSL-2175 and the fifth variant. |

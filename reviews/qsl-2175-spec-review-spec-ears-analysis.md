@@ -41,3 +41,12 @@ ubiquitous requirements with a named subject.
 ## Verdict
 
 PASS with low findings. Neither finding blocks the review.
+
+## Dispositions
+
+Review round 2, at head d42af98e46641e08f433f8b31fb81e32bc496f9e (fix commit d42af98e4).
+
+| FND | Outcome | Reason |
+| --- | --- | --- |
+| FND-001 | fixed | FR-569:223-268 now uses "The assembler SHALL record", "SHALL be", "The assembler SHALL fill", "The checker SHALL decide conformance" and "The checker SHALL record a clock place". |
+| FND-002 | fixed | FR-088:249 now reads "No serializer or wire writer SHALL encode `Resolved`". |

@@ -43,3 +43,12 @@ and its integer variance pair (one accepted, one refused) can each fail too.
 
 REQUEST CHANGES on FND-001. Without its adverse cases, the conformance half of AC-15 cannot
 distinguish a correct nested-reference check from no check at all.
+
+## Dispositions
+
+Review round 2, at head d42af98e46641e08f433f8b31fb81e32bc496f9e (fix commit d42af98e4).
+
+| FND | Outcome | Reason |
+| --- | --- | --- |
+| FND-001 | fixed | FR-569-AC-15 and TC-1940 add three adverse cases. Widening `Option<Reference<M::Leaf>>` to `Option<Reference<M::Node>>` refuses `variance-result`. `Reference<Order>` redefined as `Option<Reference<Order>>` refuses `variance-result`. A `Decimal[0, 100; 2, 2; exact]` parameter redefined as `Decimal[0, 200; 2, 2; exact]` refuses `variance-parameter`, which matches the closed list's equal-only rule for decimals and the model route. Each case can fail. |
+| FND-002 | fixed | FR-569-AC-15 and TC-1940 replace the "temporary type" clause with "Every member's `value_type` equals the checked type of the same form as a record field", which is observable. |

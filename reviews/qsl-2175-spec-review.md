@@ -61,3 +61,28 @@ ruling and with the cited requirements:
   integer containment the model route admits is kept.
 
 The remaining work is to close the conformance rule over every pairing.
+
+## New findings (disposition pass 1)
+
+Review round 2, at head d42af98e46641e08f433f8b31fb81e32bc496f9e (fix commit d42af98e4). The closed list was read against
+`value_conformance_walk` and `scalar_bounds` in `fsl-semantics/src/model/index.rs`. On the model
+route, `Native` and `Unit` conform only to an equal type, a bounded integer scalar conforms by
+interval containment or to `Integer`, and object types conform by the supertype walk. Integer
+bounds are `i128` intervals, so Decimal, Rational and Quantity conform only to an equal type. The
+source list's cases 1, 2 and 5 match this. Cases 3 and 4 are FR-569's own rules, because on the
+model route an option is a presence and a collection is a multiplicity, not part of
+`value_type`. Every pairing of `Resolved` with `Resolved` falls under a numbered case or under
+"No other pair conforms", so the list is closed.
+
+| ID | Severity | Summary | Refs | Escape Cause |
+| --- | --- | --- | --- | --- |
+| FND-004 | medium | Case 5 contradicts the sentence after the list. Case 5 admits any S and T that "have the same structure and differ only in `Reference` components", so a tuple `(Integer, Reference<M::Leaf>)` conforms to `(Integer, Reference<M::Node>)`, and so does a union with a reference payload. The next sentence says tuple and union types "conform only when they are the same type". Two implementers would decide that pair differently. Fix: narrow case 5 to the component rule, "S is `Reference<A>` and T is `Reference<B>` (as an `Option` payload or a collection element) and A conforms to B by FSpec FR-151", which cases 3 and 4 already reach by recursion. Otherwise, name tuples and unions with reference components as an exception in the "In particular" sentence. | spec/functional/FR-569-declare-object-types-populations-and-operations-in-fsl-source.md:255-262 | wrong-requirement |
+| FND-005 | low | "These are the rules FSpec FR-151's value-type axis applies to a field" does not hold. FSpec FR-151's field row uses FSpec FR-149's equality-conversion table, which admits `Decimal` and `Rational` widening and `Int` to `Rational` or `Decimal`, and admits no option or collection conversion. The closed list differs on both points. A source field also declares no redefinition (FR-569 "Out of scope"), so the claim decides nothing. Fix: drop the field clause, and say the list applies to operation parameters and results, is this requirement's own rule, and matches the model route's value conformance. | spec/functional/FR-569-declare-object-types-populations-and-operations-in-fsl-source.md:242-245 | wrong-requirement |
+
+## Dispositions
+
+| FND | Outcome | Reason |
+| --- | --- | --- |
+| FND-001 | fixed | FR-569:242-262 now gives a closed five-case list ending "No other pair conforms", names scalar, enum, record, tuple and union identity, and states the kind and bounds rule for collections. Every pairing is decided. The case 5 wording conflict is tracked as FND-004. |
+| FND-002 | fixed | The integer case cites FSpec FR-151 using FSpec FR-149's `Int` rows (FR-569:249-251), and the component-wise part is stated as this requirement's own rule. The remaining field-axis claim is FND-005. |
+| FND-003 | fixed | FR-569:263-264 adds "no type of another variant conforms to a `Resolved` type". |
