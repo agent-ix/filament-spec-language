@@ -230,7 +230,6 @@ fn assert_each_timed_form_settles_for_its_claim(claims: &str) {
 /// product and keep their own identity.
 #[trace("FR-498-AC-3", "TC-1288")]
 #[test]
-#[ignore = "QSL-2156: `always` timed windows over digital clocks not implemented yet"]
 fn timed_form_shape_names_the_selected_claim_among_equal_names() {
     assert_each_timed_form_settles_for_its_claim(&format!(
         "{}{}",
@@ -934,7 +933,6 @@ fn strict_clock_constraint_is_decided_over_regions() {
 /// `eventually` window; `c.late` is false initially, so the minimum is 0.
 #[trace("TC-2173", "FR-204-AC-14")]
 #[test]
-#[ignore = "QSL-2156: the `always` timed window over digital clocks not implemented yet"]
 fn always_window_is_decided_as_a_complement() {
     let world = every(GUARD, true);
     let built = product(&world, "Always");

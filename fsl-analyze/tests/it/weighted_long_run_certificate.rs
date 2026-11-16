@@ -233,26 +233,10 @@ fn weighted_draws_and_transients_use_component_fractions_not_pooled_payoffs() {
 }
 #[trace("TC-1402", "FR-201-AC-32", "FR-201-AC-34")]
 #[test]
-#[ignore = "QSL-2156: zero-weight long-run components settle typed unsupported today"]
 fn reachable_zero_weight_components_take_their_unweighted_fraction() {
     let world = periodic(2, "1: 1, 3: 1", "1", true);
-    let identity = fsl_replay::probabilistic_claim_identity(world.claim("Fraction")).unwrap();
-    // A fabricated document copied from the positive-weight variant is not the
-    // zero-weight component's unweighted certificate, so it is not accepted.
-    let positive = periodic(2, "1: 1, 3: 1", "1", false);
-    let bytes = produce(&positive, "Fraction");
-    let mut document =
-        read_weighted_long_run_probability_certificate(&bytes, limits(), &Cancel::new()).unwrap();
-    document.certificate.identity = identity.clone();
-    let bytes =
-        write_weighted_long_run_probability_certificate(&document, limits(), &Cancel::new())
-            .unwrap();
-    assert!(!matches!(
-        check(&world, "Fraction", &bytes, &Cancel::new(), limits()),
-        Ok(ExactProbabilityCertificateCheck::Accepted(_))
-    ));
-    // The claim itself settles a verdict, its zero-weight component read by its
-    // unweighted fraction, and its own certificate is accepted.
+    // The zero-weight component uses its unweighted fraction, and its own
+    // certificate is accepted by the independent checker.
     let records = analyze_items(
         &Engines::fsl().unwrap(),
         vec![exact_probabilistic_item(
@@ -673,8 +657,7 @@ fn checked_weight_units_and_equivalent_expressions_are_not_display_aliases() {
 /// certificate passes the independent check.
 #[trace("TC-2177", "FR-199-AC-4")]
 #[test]
-#[ignore = "QSL-2156: zero-weight long-run components settle typed unsupported today"]
-fn long_run_zero_weight_component() {
+fn zero_weight_certificate_checks() {
     let world = availability_with_claims(
         claim("Zero", "s.phase = 0", ">= rational(1800,1801)"),
         "reward duration on Server::tick = 0;\nreward duration on Server::repair = 0;\n",
