@@ -18,8 +18,8 @@
 
 use filament_contract_model::{
     BoundedDomainForm, CheckedNodeKind, ClaimForm, CompositeTypeForm, CorrespondenceForm,
-    ExpressionForm, FunctionForm, HybridForm, ModelForm, ProtocolForm, RelationForm,
-    ScalarTypeForm, StateForm, TemporalForm,
+    ExpressionForm, FunctionForm, HybridForm, ModelForm, ProbabilisticForm, ProtocolForm,
+    RelationForm, ScalarTypeForm, StateForm, TemporalForm,
 };
 use filament_semantic_value::checking::CheckMode;
 use fsl_forms::TypeFormHead;
@@ -777,6 +777,22 @@ const NOT_EMITTED_BY_QSL: &[(CheckedNodeKind, &str)] = {
         (
             K::Claim(ClaimForm::ProbabilisticClaim),
             "lowering builds no probabilistic claim node yet",
+        ),
+        (
+            K::Probabilistic(ProbabilisticForm::RandomParameter),
+            "FSL's emitter refuses checked random parameters as ProbabilisticModelNotEmitted",
+        ),
+        (
+            K::Probabilistic(ProbabilisticForm::Workload),
+            "FSL's emitter refuses checked workloads as ProbabilisticModelNotEmitted",
+        ),
+        (
+            K::Probabilistic(ProbabilisticForm::Reward),
+            "FSL's emitter refuses checked rewards as ProbabilisticModelNotEmitted",
+        ),
+        (
+            K::Probabilistic(ProbabilisticForm::DelayDistribution),
+            "FSL's emitter refuses checked delay distributions as ProbabilisticModelNotEmitted",
         ),
         (
             K::ScalarType(ScalarTypeForm::CarriedQuantity),
