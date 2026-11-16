@@ -1099,13 +1099,13 @@ fn check_message(refusals: &[CheckRefusal]) -> String {
     }
     match &first.cause {
         CheckCause::StateGraph(cause) => {
-            if let fsl_semantics::check::StateGraphCause::TemporalProfile {
+            if let fsl_semantics::check::StateGraphCause::NotStateLayer {
                 alias, identity, ..
             } = &**cause
             {
                 message = format!(
-                    "{message}: `using {alias}` selects the temporal profile `{identity}`; a \
-                     state-graph claim checks under a state-bearing layer profile"
+                    "{message}: `using {alias}` selects `{identity}`, which is not a state-bearing \
+                     layer; a state-graph claim checks under a state-bearing layer profile"
                 );
             }
             if let fsl_semantics::check::StateGraphCause::Predicate { cause, .. } = &**cause {
