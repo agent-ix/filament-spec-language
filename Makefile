@@ -14,7 +14,8 @@ export SPEC_VALIDATION_DOCUMENTS
 .PHONY: check-spec-validation
 check-spec-validation:
 	@validator=$$(command -v quire) || { echo "check-spec-validation: native quire is required on PATH" >&2; exit 127; }; \
-	PATH= "$$validator" validate --scope . "$$SPEC_VALIDATION_DOCUMENTS"
+	node=$$(command -v node) || { echo "check-spec-validation: native node is required on PATH" >&2; exit 127; }; \
+	PATH= "$$node" "$$validator" validate --scope . "$$SPEC_VALIDATION_DOCUMENTS"
 
 # The native CLI tries `quoin plugin ensure-defaults` when discovery is empty.
 # Its child PATH above is empty to prevent installation during a gate; missing
