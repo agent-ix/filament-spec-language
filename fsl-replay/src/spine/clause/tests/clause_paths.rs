@@ -236,3 +236,42 @@ fn a_parameter_read_is_rooted_at_the_invocation_and_absent_without_one() {
     assert_eq!(evaluation.receiver_path(), Some(&path("W", &a, vec![])));
     assert_eq!(read_paths(&evaluation), vec![Some(own), None]);
 }
+
+/// FR-766-AC-5 (TC-2190): a clause run compiles its unit under
+/// `CheckMode::Linked`, so an invariant whose `count<One>` can exceed `One`
+/// is refused at compile with a named cause, never run to a null-cause
+/// refusal; with a domain that holds the count it compiles.
+#[trace("TC-2190", "FR-766-AC-5")]
+#[test]
+#[ignore = "QSL-2003: a linked count<N> result range is not proved at check yet"]
+fn count_out_of_domain_names_its_cause() {
+    let (base, packages) = config_version_unit_and_packages();
+    let unit = |one: &str| {
+        format!(
+            "{base}type One = {one};\n\
+             function pair using v(a: Int[0, 1000]): Sequence<Int[0, 1000]>[0, 2] pure {{ sequence[a, a] }}\n\
+             invariant AtMostOne using v on Config::ConfigVersion at current \
+             {{ count<One>(m in pair(self.versionNumber): m >= 0) <= 1 }}\n"
+        )
+    };
+    let compile = |text: String| {
+        compose(
+            source(),
+            super::frame_replay::IDENTITY,
+            text.as_bytes(),
+            &packages,
+            &DependencyInput::default(),
+            SpineLimits::default(),
+        )
+    };
+    let refusal = compile(unit("Int[0, 1]"))
+        .err()
+        .expect("the count can reach 2, outside Int[0, 1]");
+    assert_eq!(refusal.code().as_str(), "undefined_expression");
+    assert_eq!(refusal.cause(), Some("unproved-range"));
+    assert_eq!(refusal.code().category().exit_code(), 20);
+    assert!(
+        compile(unit("Int[0, 2]")).is_ok(),
+        "a domain holding [0, 2] proves the count"
+    );
+}
