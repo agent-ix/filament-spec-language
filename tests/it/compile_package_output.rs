@@ -93,7 +93,40 @@ fn a_compile_output_member_refuses_and_writes_nothing() {
     );
     let (exit, value) = refusal(&path);
     assert_eq!(exit, 20, "{value}");
+    assert_eq!(value["code"], "io-error", "{value}");
+    assert!(
+        value.to_string().contains("missing/spine.package.json"),
+        "{value}"
+    );
     assert!(!directory.path().join("missing").exists());
+
+    // A program that does not check writes no file and refuses as it does
+    // without `output`.
+    let directory = tempfile::tempdir().unwrap();
+    let path = request(
+        directory.path(),
+        "tests/fixtures/spine-compile.native",
+        json!({"package": "spine.package.json"}),
+    );
+    std::fs::write(directory.path().join("program.native"), b"not a program").unwrap();
+    let (exit, value) = refusal(&path);
+    assert_ne!(value["code"], "io-error", "{value}");
+    assert_ne!(value["stage"], "request", "{value}");
+    assert_ne!(exit, 0, "{value}");
+    assert!(!directory.path().join("spine.package.json").exists());
+    let mut bare: Value = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+    bare["request"].as_object_mut().unwrap().remove("output");
+    std::fs::write(&path, serde_json::to_vec(&bare).unwrap()).unwrap();
+    let (bare_exit, bare_value) = refusal(&path);
+    assert_eq!(
+        (exit, &value["code"], &value["stage"], &value["message"]),
+        (
+            bare_exit,
+            &bare_value["code"],
+            &bare_value["stage"],
+            &bare_value["message"]
+        )
+    );
 }
 
 /// FR-810-AC-3: `RequestOverrides::output` writes the same bytes as the

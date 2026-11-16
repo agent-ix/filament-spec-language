@@ -81,7 +81,9 @@ between two destinations.
 - If the path's parent directory does not exist or the write fails, then
   the command SHALL report the I/O failure with its original code, exit 20
   (FR-027), naming the path, and SHALL leave no partial file: it writes a
-  sibling temporary file and renames it into place.
+  sibling temporary file and links it into place without
+  replacing an existing path, or, where the filesystem cannot link, creates
+  the target exclusively and removes it again if that write fails.
 - The library entry is FR-640's `compile_outcome_with_overrides(path,
   overrides)`, whose `RequestOverrides` SHALL gain `output: Option<&Path>`,
   the request member supplied beside the request file, as `clocks` is. A

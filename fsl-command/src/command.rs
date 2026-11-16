@@ -4,6 +4,7 @@
 mod analyze;
 mod clause;
 mod output;
+mod output_file;
 mod wire;
 
 pub use analyze::{analyze, analyze_with_limits, prepare_analyze, AnalyzeInput, PreparedAnalyze};
@@ -832,52 +833,9 @@ pub fn compile_outcome_with_overrides(
         }
         let outcome = complete(&request, &mut intake, &sources)?;
         if let Some(output) = output {
-            write_new_file(&output, &outcome.package_bytes)?;
+            output_file::write_new_file(&output, &outcome.package_bytes)?;
         }
         Ok(outcome)
-    })
-}
-
-/// FR-810: create `path` holding `bytes`, never replacing what is there. The
-/// bytes go to a sibling temporary file that is hard-linked to `path`, which
-/// fails when `path` exists, so the target is untouched on every failure and
-/// never holds a partial file.
-fn write_new_file(path: &Path, bytes: &[u8]) -> Result<()> {
-    use std::io::Write;
-    let io = |error| RunCause::Io {
-        path: path.to_path_buf(),
-        error,
-    };
-    if path.symlink_metadata().is_ok() {
-        return Err(RunCause::OutputExists {
-            path: path.to_path_buf(),
-        });
-    }
-    let name = path.file_name().ok_or_else(|| {
-        io(io::Error::new(
-            io::ErrorKind::InvalidInput,
-            "the output path names no file",
-        ))
-    })?;
-    let mut temporary_name = std::ffi::OsString::from(".");
-    temporary_name.push(name);
-    temporary_name.push(format!(".{}.tmp", std::process::id()));
-    let temporary = path.with_file_name(temporary_name);
-    let written = std::fs::OpenOptions::new()
-        .write(true)
-        .create_new(true)
-        .open(&temporary)
-        .and_then(|mut file| file.write_all(bytes).and_then(|()| file.sync_all()))
-        .and_then(|()| std::fs::hard_link(&temporary, path));
-    let _ = std::fs::remove_file(&temporary);
-    written.map_err(|error| {
-        if error.kind() == io::ErrorKind::AlreadyExists && path.symlink_metadata().is_ok() {
-            RunCause::OutputExists {
-                path: path.to_path_buf(),
-            }
-        } else {
-            io(error)
-        }
     })
 }
 
