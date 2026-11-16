@@ -91,8 +91,8 @@ counter is an unbounded natural number and only the final count is retained into
   population maximum (FR-391), so its type always contains the count and this
   obligation is discharged by construction.
 - Under `CheckMode::Kernel`, the checker SHALL NOT record the obligation for a
-  `count` outside a declared state clause: in a function body or in a
-  temporal clause atom.
+  `count` outside a declared state clause: in a function body, including the
+  body of a function a declared clause calls, or in a temporal clause atom.
 - In a state clause a package declares (`invariant`, `pre`, `post`), checked
   through `PackageDeclarations::check`, the checker SHALL record and decide the
   obligation under `CheckMode::Kernel` exactly as under `CheckMode::Linked`,
@@ -133,12 +133,18 @@ an evaluation that meets that refusal at run, such as a `holds` atom refused
 at some trace position (FR-327-AC-6) or a refused monitor condition, SHALL
 write the `count<Int[0, 0]>` atom in a temporal clause atom (or a function
 body evaluated at run) and build its package with
-`PackageDeclarations::check(CheckMode::Kernel, ..)` and link it. A fixture
-whose `count` sits in a declared `invariant`, `pre` or `post`, such as a
-separating-witness domain written in an invariant body (FR-268-AC-3), cannot
-reach the run-time refusal under either mode: its unproved count refuses at
-check (FR-495), and the fixture SHALL expect that check refusal or move the
-atom to a temporal clause. Compiling any such atom from source through spine
+`PackageDeclarations::check(CheckMode::Kernel, ..)` and link it. A fixture whose `count` sits in a declared `invariant`, `pre` or `post`
+cannot reach the run-time refusal under either mode: its unproved count
+refuses at check (FR-495). Such a fixture SHALL move the `count` into a
+function body the clause calls, as FR-268-AC-3's refused separating-witness
+domain does with `function z using v(x: Integer): Int[0, 0] pure {
+count<Int[0, 0]>(m in ints(sequence[x]): m > 0) }`, or into a temporal clause
+atom. This composes with FR-495: a called function's body is checked under
+the mode of its own declaration, and its unproved range is an obligation of
+that body, not of the declared clause. The clause sees the call typed by the
+function's signature (`Int[0, 0]`), so the clause has no unproved obligation
+and checks under `Kernel`, and S6a meets the out-of-domain count when it
+evaluates the body at run. Compiling any such atom from source through spine
 compile is refused at check by this requirement.
 
 ## Dependencies
