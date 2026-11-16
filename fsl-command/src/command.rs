@@ -41,6 +41,30 @@ pub struct RunLimits {
     pub dependent_bytes: usize,
 }
 
+/// Inputs to the source-only `check` operation (FR-866).
+#[derive(Clone, Debug)]
+pub struct CheckInputs {
+    /// Domain packages selected by identity and file path, in option order.
+    pub models: Vec<(String, PathBuf)>,
+    /// Libraries selected by identity and source path, in option order.
+    pub libraries: Vec<(String, PathBuf)>,
+    /// The caller's stage limits for parse, model selection and checking.
+    pub limits: fsl_replay::spine::SpineLimits,
+    /// Aggregate bytes available to supplied model and library files.
+    pub dependent_bytes: usize,
+}
+
+impl Default for CheckInputs {
+    fn default() -> Self {
+        Self {
+            models: Vec::new(),
+            libraries: Vec::new(),
+            limits: fsl_replay::spine::SpineLimits::default(),
+            dependent_bytes: TOTAL_BYTES,
+        }
+    }
+}
+
 impl Default for RunLimits {
     fn default() -> Self {
         Self {
@@ -914,6 +938,184 @@ pub fn compile_outcome_with_overrides(
     })
 }
 
+/// Check one complete-V1 source with its selected models and imported
+/// libraries, stopping after S4 (FR-866).
+///
+/// The supplied paths are resolved from the current working directory and
+/// share `dependent_bytes`. Model and library identities must be selected by
+/// the source before any dependent file is opened.
+pub fn check_outcome(
+    source: &Path,
+    inputs: &CheckInputs,
+) -> std::result::Result<fsl_replay::OutcomeDocument, Box<RunError>> {
+    let directory = std::env::current_dir().map_err(|error| {
+        Box::new(RunError {
+            cause: RunCause::Io {
+                path: PathBuf::from("."),
+                error,
+            },
+        })
+    })?;
+    let source_file = check_source_file(source, "source");
+    let models = inputs
+        .models
+        .iter()
+        .map(|(identity, path)| wire::Model {
+            format: DOMAIN_PACKAGE_PROFILE.to_owned(),
+            source: check_source_file(path, &format!("model:{identity}")),
+        })
+        .collect::<Vec<_>>();
+    let libraries = inputs
+        .libraries
+        .iter()
+        .map(|(identity, path)| wire::Library {
+            identity: identity.clone(),
+            refinement_internals: None,
+            source: check_source_file(path, &format!("library:{identity}")),
+        })
+        .collect::<Vec<_>>();
+    validate_check_inputs(&inputs.models, &inputs.libraries)?;
+    let request = wire::CompileRequest {
+        models,
+        program: wire::CompileProgram {
+            sources: vec![source_file],
+            extraction: false,
+        },
+        refinement_internals: None,
+        libraries,
+        clocks: Default::default(),
+        output: None,
+        handoff: None,
+    };
+    let mut intake = intake_with_bytes(
+        &directory,
+        FileCounts {
+            programs: 1 + inputs.libraries.len(),
+            models: inputs.models.len(),
+            observations: 0,
+        },
+        inputs.dependent_bytes,
+    )?;
+    let source = intake.source(&request.program.sources[0])?;
+    require_complete_edition(source.source())?;
+
+    // Parse before opening supplied models or libraries so an unused option
+    // is refused without reading its file.
+    let cancel = filament_exact::Cancel::new();
+    let parsed = fsl_replay::spine::parse(
+        &fsl_replay::spine::ParseRequest {
+            source: source.source().identity(),
+            path: source.source().path(),
+            bytes: source.source().text().as_bytes(),
+        },
+        inputs.limits.source,
+        &cancel,
+    );
+    let parsed = match parsed {
+        Ok(parsed) => parsed.into_value(),
+        Err(failure) => {
+            return Ok(fsl_replay::OutcomeDocument::from_check(&Err(failure)));
+        }
+    };
+    let selected_models: std::collections::BTreeSet<_> = parsed
+        .unit()
+        .selections()
+        .models
+        .iter()
+        .map(|selection| selection.identity.as_str())
+        .collect();
+    for (identity, _) in &inputs.models {
+        if !selected_models.contains(identity.as_str()) {
+            return Err(Box::new(RunError {
+                cause: RunCause::ClauseRequest {
+                    member: "--model".to_owned(),
+                    reason: format!("unused model identity {identity:?}"),
+                },
+            }));
+        }
+    }
+    let selected_libraries: std::collections::BTreeSet<_> = parsed
+        .unit()
+        .selections()
+        .imports
+        .iter()
+        .map(|selection| selection.identity.as_str())
+        .collect();
+    for (identity, _) in &inputs.libraries {
+        if !selected_libraries.contains(identity.as_str()) {
+            return Err(Box::new(RunError {
+                cause: RunCause::ClauseRequest {
+                    member: "--library".to_owned(),
+                    reason: format!("unused library identity {identity:?}"),
+                },
+            }));
+        }
+    }
+
+    check_sources(
+        &request,
+        &mut intake,
+        &[source],
+        false,
+        inputs.limits,
+        |checked, _, _, _, _, _, _, _| {
+            let staged = fsl_foundation::diagnostic::Staged::new(checked);
+            Ok(fsl_replay::OutcomeDocument::from_check(&Ok(staged)))
+        },
+    )
+    .map_err(|cause| Box::new(RunError { cause }))
+}
+
+fn check_source_file(path: &Path, role: &str) -> wire::SourceFile {
+    let file = path.to_string_lossy().into_owned();
+    let document = role
+        .chars()
+        .map(|character| {
+            if character.is_ascii_alphanumeric() {
+                character
+            } else {
+                '_'
+            }
+        })
+        .collect::<String>();
+    wire::SourceFile {
+        file,
+        identity: wire::Identity {
+            authority: "local".to_owned(),
+            identity: format!("{role}:{}", path.display()),
+            document,
+            formal_revision: 1,
+        },
+    }
+}
+
+fn validate_check_inputs(
+    models: &[(String, PathBuf)],
+    libraries: &[(String, PathBuf)],
+) -> Result<()> {
+    for (option, selections) in [("--model", models), ("--library", libraries)] {
+        let mut seen = std::collections::BTreeSet::new();
+        for (identity, path) in selections {
+            if identity.is_empty() || path.as_os_str().is_empty() {
+                return Err(RunCause::ClauseRequest {
+                    member: option.to_owned(),
+                    reason: format!(
+                        "expected a non-empty identity and path, found {identity:?}={:?}",
+                        path
+                    ),
+                });
+            }
+            if !seen.insert(identity) {
+                return Err(RunCause::ClauseRequest {
+                    member: option.to_owned(),
+                    reason: format!("identity {identity:?} was selected more than once"),
+                });
+            }
+        }
+    }
+    Ok(())
+}
+
 /// Reject malformed FR-665 handoff selections before opening selected inputs.
 fn validate_handoff_request(handoff: &wire::Handoff, source_count: usize) -> Result<()> {
     use std::path::Component;
@@ -1103,6 +1305,7 @@ fn complete_sources(
         intake,
         sources,
         unit_list,
+        fsl_replay::spine::SpineLimits::default(),
         |checked, selections, packages, _, libraries, models, inventory, failure| {
             let cancel = filament_exact::Cancel::new();
             let limits = fsl_replay::spine::SpineLimits::default();
@@ -1148,6 +1351,7 @@ fn check_sources<T>(
     intake: &mut Intake<'_>,
     sources: &[FormalSource],
     unit_list: bool,
+    limits: fsl_replay::spine::SpineLimits,
     finish: impl FnOnce(
         fsl_replay::spine::CheckedUnit,
         &[fsl_replay::spine::TemporalClockSelection],
@@ -1254,7 +1458,6 @@ fn check_sources<T>(
             .map_err(|refusal| spine_failure(*refusal))?;
     }
     let cancel = filament_exact::Cancel::new();
-    let limits = fsl_replay::spine::SpineLimits::default();
     let failure = |failure| match fsl_replay::spine::refusal_or_fault(failure) {
         Ok(refusal) => spine_failure(*refusal),
         Err(fault) => RunCause::SpineRun(Box::new(fsl_replay::spine::RunRefusal::Fault(fault))),

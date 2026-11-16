@@ -818,12 +818,18 @@ pub(crate) fn intake_message(cause: &UnitIntakeCause) -> String {
     match cause {
         UnitIntakeCause::Refused(refusals) => {
             let first = &refusals[0];
+            let source = if first.cause.as_str() == "missing-selection" {
+                " Supply the selected identity with `--model <identity>=<file>` or the compile request's `models` member."
+            } else {
+                ""
+            };
             with_more(
                 format!(
-                    "{} ({}): {}",
+                    "{} ({}): {}{}",
                     first.code.as_str(),
                     first.cause.as_str(),
-                    first.detail
+                    first.detail,
+                    source
                 ),
                 refusals.len(),
             )
