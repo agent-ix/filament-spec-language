@@ -289,13 +289,7 @@ fn run_input(
                     read.source().text().as_bytes().to_vec(),
                 );
             }
-            let engines = Engines::fsl().map_err(|_| RunCause::AnalyzeFault)?;
-            let mut engines = engines;
-            for provider in providers {
-                engines
-                    .with(provider.clone())
-                    .map_err(|_| RunCause::AnalyzeFault)?;
-            }
+            let engines = engines_with_providers(providers)?;
             let mut registry = fsl_route::Registry::new();
             for descriptor in engines.registrations() {
                 registry
@@ -328,6 +322,17 @@ fn run_input(
     )
 }
 
+/// The built-in analyze engines plus the caller's process providers.
+fn engines_with_providers(providers: &[Engine]) -> Result<Engines> {
+    let mut engines = Engines::fsl().map_err(|_| RunCause::AnalyzeFault)?;
+    for provider in providers {
+        engines
+            .with(provider.clone())
+            .map_err(|_| RunCause::AnalyzeFault)?;
+    }
+    Ok(engines)
+}
+
 /// Run `work` with `cancel` cancelled for `deadline` once `deadline_ms`
 /// elapses (FR-287): a deadline of 0 has passed before any item runs.
 fn with_deadline<T>(cancel: &Cancel, deadline_ms: Option<u64>, work: impl FnOnce() -> T) -> T {
@@ -353,5 +358,57 @@ fn with_deadline<T>(cancel: &Cancel, deadline_ms: Option<u64>, work: impl FnOnce
             let _ = done.send(());
             value
         }),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use fsl_analyze::external_provider::{ExternalProvider, ProviderRequest, ProviderVerdict};
+    use fsl_foundation::{bound::DomainKind, BackendId};
+    use fsl_route::{Candidate, ManifestMembers, Mode, ProviderOrigin};
+    use fsl_semantics::check::Capability;
+
+    #[derive(Debug)]
+    struct Undecided;
+
+    impl ExternalProvider for Undecided {
+        fn check(&self, _: &ProviderRequest<'_, '_>, _: &Cancel) -> ProviderVerdict {
+            ProviderVerdict::Unknown
+        }
+    }
+
+    /// QSL-2192: process providers handed to the language analyze API are
+    /// linked into the engine set and therefore the routing registry.
+    #[test]
+    fn analyze_engines_include_supplied_provider_for_routing() {
+        let descriptor = fsl_route::descriptor_from_manifest(
+            Candidate::new(BackendId::new("configured-provider")),
+            ProviderOrigin::Process,
+            [(
+                Some(Capability::ValueValidity.to_wire()),
+                Some(Mode::Unbounded.to_wire()),
+            )],
+            ManifestMembers {
+                domains: Some(&[DomainKind::Integer.to_wire()]),
+                fairness_kinds: None,
+                evidence_kinds: None,
+                memory_models: None,
+                reductions: None,
+            },
+        )
+        .expect("the provider descriptor is valid");
+        let provider = Engine::external(descriptor, Box::new(Undecided))
+            .expect("the provider advertises unbounded value validity");
+        let engines = engines_with_providers(&[provider]).expect("the engines link");
+        let mut registry = fsl_route::Registry::new();
+        for descriptor in engines.registrations() {
+            registry
+                .register(descriptor.clone())
+                .expect("each provider descriptor registers");
+        }
+        assert!(registry
+            .descriptors()
+            .any(|descriptor| { descriptor.id().as_str() == "configured-provider" }));
     }
 }
