@@ -1991,3 +1991,97 @@ fn a_long_stream_keeps_only_the_values_its_clauses_read() {
     assert_eq!(category(&step, 0), Category::Violation);
     assert_eq!(step.statuses[0].1.settlement().map(|s| s.step), Some(3));
 }
+
+/// The work units `usage` records.
+fn work(usage: &fsl_replay::spine::ClauseRunUsage) -> u64 {
+    usage
+        .evaluation_consumed
+        .iter()
+        .find(|(kind, _)| *kind == filament_exact::LimitKind::WorkUnits)
+        .map_or(0, |(_, consumed)| *consumed)
+}
+
+/// FR-643-AC-12 (TC-2628): over `always holds(level <= 1)` and levels 0, 1, 1
+/// each report's usage is the session's `{cumulative, step}`, `step` the
+/// call's own charge and `cumulative` the sum of the steps, while every
+/// other member is `B(k)`; with a per-call work limit one unit below the
+/// second call's `step` the clause settles `incomplete` on that limit at the
+/// second call and the first call is unaffected.
+#[test]
+#[trace("TC-2628", "FR-643-AC-12")]
+fn each_call_reports_its_own_usage_and_is_charged_its_own_limit() {
+    use filament_semantic_value::catalog::Category;
+    use fsl_analyze::monitor::SettleTrigger;
+    let world = world();
+    let cancel = Cancel::new();
+    let levels = [0, 1, 1];
+    let open = |accounting| {
+        MonitorSession::open(
+            world.unit.package(),
+            MonitorOpen {
+                clauses: clauses(&["AtMostOne"]),
+                kind: MonitorTraceKind::Finite,
+                lower_boundary: ProgressLowerBoundary::AuthoritativeOrigin,
+                binding: None,
+                cover: None,
+                ledger: None,
+                packages: &world.packages,
+                sources: &world.sources,
+                temporal_selections: &world.selections,
+            },
+            &MonitorLimits {
+                accounting,
+                ..limits(DEFAULT_RETAINED_POSITIONS)
+            },
+            &cancel,
+        )
+        .expect("opens")
+    };
+    let mut session = open(UNLIMITED);
+    let mut steps = Vec::new();
+    let mut sum = 0;
+    for (index, level) in levels.iter().enumerate() {
+        let observed = text(*level);
+        let step = session.step(sample(&observed), &cancel).expect("steps");
+        let record = step.statuses[0].1.record();
+        let usage = record.usage().expect("a session record carries its usage");
+        assert!(work(&usage.step) > 0, "call {} charges work", index + 1);
+        sum += work(&usage.step);
+        assert_eq!(work(&usage.cumulative), sum, "after call {}", index + 1);
+        assert_eq!(
+            members(record.report()),
+            members(&world.batch_report("AtMostOne", &levels[..=index])),
+            "after call {}",
+            index + 1
+        );
+        steps.push(work(&usage.step));
+    }
+
+    let second = steps[1];
+    assert!(steps[0] < second, "the first call is within the limit");
+    let mut limited = open(filament_exact::ScalarLimits {
+        work_units: second - 1,
+        ..UNLIMITED
+    });
+    let first = limited
+        .step(sample(&text(levels[0])), &cancel)
+        .expect("steps");
+    assert!(!first.statuses[0].1.is_settled());
+    assert_eq!(
+        members(first.statuses[0].1.record().report()),
+        members(&world.batch_report("AtMostOne", &levels[..1]))
+    );
+    let step = limited
+        .step(sample(&text(levels[1])), &cancel)
+        .expect("steps");
+    assert_eq!(category(&step, 0), Category::Incomplete);
+    assert_eq!(
+        step.statuses[0].1.settlement().map(|s| (s.step, s.trigger)),
+        Some((2, SettleTrigger::Limit))
+    );
+    let step = limited
+        .step(sample(&text(levels[2])), &cancel)
+        .expect("steps");
+    let usage = step.statuses[0].1.record().usage().expect("usage");
+    assert_eq!(work(&usage.step), 0, "a settled clause charges nothing");
+}

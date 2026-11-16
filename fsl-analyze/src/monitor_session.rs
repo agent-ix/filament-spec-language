@@ -38,7 +38,7 @@ use serde_json::{json, Value as Json};
 
 use crate::monitor::{
     record_of, refused, request_failure, DecidingReading, Failure, MonitorClause, MonitorLimits,
-    MonitorRecord, MonitorRefusal, Runs, SettleTrigger, Settlement,
+    MonitorRecord, MonitorRefusal, MonitorUsage, Runs, SettleTrigger, Settlement,
 };
 
 /// The format member of a checkpoint.
@@ -202,6 +202,8 @@ struct Slot<'a> {
     /// The setting whose limit ended the clause, if one did.
     limited: Option<&'static str>,
     announced: bool,
+    /// FR-643 "Usage": the work the session charged the clause.
+    usage: MonitorUsage,
 }
 
 /// FR-643's stepping monitor.
@@ -245,6 +247,48 @@ fn limit_report(setting: &'static str, value: u64) -> ClauseRunReport {
         disposition: ClauseDisposition::Temporal(verdict),
         ..pending_report()
     }
+}
+
+/// The `limited` mark of a clause that exhausted a per-call meter limit
+/// (FR-643 "Usage"); its report names the limit itself.
+const METER_LIMIT: &str = "accounting";
+
+/// The `incomplete` report of a clause whose call exhausted the meter limit
+/// `incomplete` names.
+fn meter_limit_report(incomplete: filament_exact::Incomplete) -> ClauseRunReport {
+    let verdict = TemporalVerdict::Incomplete(incomplete);
+    ClauseRunReport {
+        basis: verdict.basis(),
+        disposition: ClauseDisposition::Temporal(verdict),
+        ..pending_report()
+    }
+}
+
+/// The state form of FR-100's incomplete record.
+fn incomplete_json(incomplete: &filament_exact::Incomplete) -> Json {
+    json!({
+        "limit_kind": incomplete.limit_kind.as_str(),
+        "limit": incomplete.limit,
+        "consumed": incomplete.consumed,
+        "next_charge": incomplete.next_charge.to_string(),
+        "charge_point": incomplete.charge_point.as_str(),
+    })
+}
+
+/// The incomplete record [`incomplete_json`] wrote.
+fn incomplete_of(value: &Json) -> Option<filament_exact::Incomplete> {
+    let text = |member: &str| value[member].as_str();
+    Some(filament_exact::Incomplete {
+        limit_kind: filament_exact::LimitKind::ALL
+            .into_iter()
+            .find(|kind| Some(kind.as_str()) == text("limit_kind"))?,
+        limit: value["limit"].as_u64()?,
+        consumed: value["consumed"].as_u64()?,
+        next_charge: text("next_charge")?.parse().ok()?,
+        charge_point: filament_exact::ChargePoint::ALL
+            .into_iter()
+            .find(|point| Some(point.as_str()) == text("charge_point"))?,
+    })
 }
 
 /// The reading `report` is, as a settlement records it (FR-643 "Settlement"):
@@ -524,6 +568,7 @@ impl<'a> MonitorSession<'a> {
                     decided_state: None,
                     limited: None,
                     announced: false,
+                    usage: MonitorUsage::default(),
                 })
             })
             .collect()
@@ -715,10 +760,13 @@ impl<'a> MonitorSession<'a> {
             cancelled(cancel)?;
             let slot = &mut slots[index];
             let Some(state) = slot.state.as_mut() else {
+                // FR-643 "Usage": a settled clause charges nothing more.
+                slot.usage = slot.usage.idle();
                 continue;
             };
             state.carry_ledger(ledger.clone());
             let advanced = call(state, cancel).map_err(clause_failure)?;
+            slot.usage = slot.usage.charged(advanced.report.usage.clone());
             if seen == 0 {
                 continue;
             }
@@ -750,6 +798,20 @@ impl<'a> MonitorSession<'a> {
                     step,
                     trigger: SettleTrigger::Decided,
                     reading: Some(reading_of(decided, horizon)),
+                });
+                slot.state = None;
+                continue;
+            }
+            // FR-643 "Usage": meter limits are charged per call, so a clause
+            // whose call exhausted one settles `incomplete` on that limit.
+            if let ClauseDisposition::Temporal(TemporalVerdict::Incomplete(_)) =
+                &advanced.report.disposition
+            {
+                slot.limited = Some(METER_LIMIT);
+                slot.settlement = Some(Settlement {
+                    step,
+                    trigger: SettleTrigger::Limit,
+                    reading: None,
                 });
                 slot.state = None;
                 continue;
@@ -920,8 +982,11 @@ impl<'a> MonitorSession<'a> {
 
     fn status_of(slot: &Slot<'_>) -> ClauseStatus {
         match &slot.settlement {
-            Some(settlement) => ClauseStatus::Settled(slot.record.clone(), settlement.clone()),
-            None => ClauseStatus::Pending(slot.record.clone()),
+            Some(settlement) => ClauseStatus::Settled(
+                slot.record.clone().with_usage(slot.usage.clone()),
+                settlement.clone(),
+            ),
+            None => ClauseStatus::Pending(slot.record.clone().with_usage(slot.usage.clone())),
         }
     }
 
@@ -1060,6 +1125,11 @@ impl<'a> MonitorSession<'a> {
                     "reading": slot.settlement.as_ref()
                         .and_then(|s| s.reading.as_ref()).map(reading_json),
                     "limited": slot.limited,
+                    "incomplete": match &slot.record.report().disposition {
+                        ClauseDisposition::Temporal(TemporalVerdict::Incomplete(incomplete))
+                            if slot.limited == Some(METER_LIMIT) => incomplete_json(incomplete),
+                        _ => Json::Null,
+                    },
                     "announced": slot.announced,
                 }))
             })
@@ -1170,6 +1240,23 @@ impl<'a> MonitorSession<'a> {
                         state.report(),
                     )?;
                     slot.state = Some(state);
+                }
+                Some("limit") if saved["limited"].as_str() == Some(METER_LIMIT) => {
+                    let incomplete =
+                        incomplete_of(&saved["incomplete"]).ok_or_else(state_mismatch)?;
+                    slot.record = record_of(
+                        package,
+                        session.request.sources,
+                        &clause.name,
+                        meter_limit_report(incomplete),
+                    )?;
+                    slot.limited = Some(METER_LIMIT);
+                    slot.state = None;
+                    slot.settlement = Some(Settlement {
+                        step: step.ok_or_else(state_mismatch)?,
+                        trigger: SettleTrigger::Limit,
+                        reading: None,
+                    });
                 }
                 Some("limit") => {
                     let (setting, value) = match saved["limited"].as_str() {
