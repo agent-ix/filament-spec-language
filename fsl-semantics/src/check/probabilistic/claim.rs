@@ -29,8 +29,8 @@
 use std::collections::BTreeMap;
 
 use filament_exact::{
-    Identifier, IllTypedCause, Integer, IntegerInterval, Meter, NodeKey, Quantity, Rational,
-    RationalDomain, UnitId, Value, ValueType,
+    DecimalType, Identifier, IllTypedCause, Integer, IntegerInterval, Meter, NodeKey, Quantity,
+    Rational, RationalDomain, RoundingMode, UnitId, Value, ValueType,
 };
 use filament_semantic_value::fairness::{
     FairnessConstraint, FairnessGranularity, FairnessKind, FairnessOperation,
@@ -40,10 +40,11 @@ use filament_semantic_value::quantity::{
     convert_quantity, ConvertedValue, QuantityTarget, QuantityUnit, UnitQuantity,
 };
 use fsl_forms::{
-    ActivationForm, BoundOp, ClauseKind, EventForm, ExactValueForm, ExpectedQuantity,
-    ExpressionForm, FractionForm, HorizonForm, MeasureForm, MeasureWindowForm, ProbabilisticBody,
-    ProbabilisticForm, SchedulerForm, StateClauseKind, TemporalFormulaForm, TemporalNodeForm,
-    TemporalNodeId, TemporalOperator, TemporalOperatorForm, WeightingForm,
+    ActivationForm, BoundOp, ClauseKind, EventForm, ExactValueForm, ExactValueKind,
+    ExpectedQuantity, ExprNode, ExpressionForm, FractionForm, HorizonForm, MeasureForm,
+    MeasureWindowForm, ProbabilisticBody, ProbabilisticForm, SchedulerForm, StateClauseKind,
+    TemporalFormulaForm, TemporalNodeForm, TemporalNodeId, TemporalOperator, TemporalOperatorForm,
+    WeightingForm,
 };
 use fsl_foundation::bound::{DomainKey, DomainKind};
 use fsl_foundation::selection::DefinitionRef;
@@ -1905,12 +1906,30 @@ impl Pass<'_, '_> {
         let location = claim.location(expression)?;
         let span = root_span(expression, claim.form.span);
         let input = self.input;
-        let hint = match measured {
-            Measured::Fraction | Measured::Expectation(_) => Some(
-                fraction_type(self.input.limits.rational_bits())
-                    .ok_or_else(|| broken("fraction-type-valid"))?,
-            ),
-            Measured::Steps | Measured::Elapsed(_) | Measured::Reward(_) => None,
+        let decimal_hint = match (&measured, expression.expression.root_node()) {
+            (Measured::Expectation(_), ExprNode::DecimalValue { coefficient, scale }) => {
+                Some(ValueType::Decimal(
+                    DecimalType::new(
+                        coefficient.clone(),
+                        coefficient.clone(),
+                        u64::from(*scale),
+                        u64::from(*scale),
+                        RoundingMode::Exact,
+                    )
+                    .map_err(|_| broken("expected-decimal-domain-is-valid"))?,
+                ))
+            }
+            _ => None,
+        };
+        let hint = match decimal_hint {
+            Some(hint) => Some(hint),
+            None => match measured {
+                Measured::Fraction | Measured::Expectation(_) => Some(
+                    fraction_type(self.input.limits.rational_bits())
+                        .ok_or_else(|| broken("fraction-type-valid"))?,
+                ),
+                Measured::Steps | Measured::Elapsed(_) | Measured::Reward(_) => None,
+            },
         };
         let body = input
             .typer(nodes, cx)
@@ -1955,7 +1974,27 @@ impl Pass<'_, '_> {
             }
             (Measured::Expectation(RewardValue::Integer), value) => match value {
                 Value::Rational(rational) => Ok(rational),
-                Value::Decimal(decimal) => Ok(decimal.representation().to_rational()),
+                Value::Decimal(_) => {
+                    let ExprNode::DecimalValue { coefficient, scale } =
+                        expression.expression.root_node()
+                    else {
+                        return Err(broken("decimal-threshold-is-a-decimal-literal"));
+                    };
+                    let value = ExactValueForm {
+                        kind: ExactValueKind::Decimal,
+                        first: coefficient.clone(),
+                        second: Integer::from(u64::from(*scale)),
+                        span,
+                    };
+                    exact::value(&value, self.input.limits.rational_bits()).map_err(|fault| {
+                        exact_refusal(
+                            fault,
+                            self.input.limits.rational_bits(),
+                            span,
+                            location.clone(),
+                        )
+                    })
+                }
                 Value::Integer(integer) => Ok(Rational::from_integer(integer)),
                 Value::Quantity(quantity) => {
                     Err(self.unit_mismatch(claim, quantity.unit().clone(), None, span))

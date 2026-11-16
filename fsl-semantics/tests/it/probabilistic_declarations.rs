@@ -3473,41 +3473,81 @@ fn a_bare_decimal_literal_is_typed_as_its_constructor() {
     }
 }
 
-/// FR-764-AC-5 and AC-6: a bare decimal threshold is the exact rational it
-/// spells, and its written scale is bounded as a `decimal(c, s)`'s is.
+/// FR-764-AC-5: a bare decimal threshold is checked as the exact rational it
+/// spells, never as a binary floating-point value.
 #[trace("TC-2163", "FR-764-AC-5")]
-#[trace("TC-2163", "FR-764-AC-6")]
-#[trace("FSpec-TC-1648", "FSpec-FR-662-AC-3")]
 #[test]
-#[ignore = "QSL-1965 / QSL-2154: the bare decimal threshold not implemented yet"]
-fn a_bare_decimal_threshold_is_the_exact_rational_it_spells() {
+fn bare_decimal_threshold_is_exact() {
     let target = format!("holds({IDLE} or {})", done());
-    let form = |threshold: &str| {
+    let graph = checked(&exact_claim(
+        "ev",
+        "Steady",
+        "",
+        &format!("expected accumulate duration until {target} <= 0.5"),
+    ));
+    let ProbForm::ExpectedReward { bound, .. } = &claim_of(&graph).form else {
+        panic!("an expected reward: {:?}", claim_of(&graph).form);
+    };
+    assert_eq!(*bound, Bound::AtMost(ratio(1, 2)));
+}
+
+/// FR-764-AC-5: equivalent exact threshold spellings yield one bound.
+#[trace("TC-2163", "FR-764-AC-5")]
+#[test]
+fn decimal_forms_equivalent() {
+    let target = format!("holds({IDLE} or {})", done());
+    let normal_form = |threshold: &str| {
         let graph = checked(&exact_claim(
             "ev",
             "Steady",
             "",
             &format!("expected accumulate duration until {target} <= {threshold}"),
         ));
-        let ProbForm::ExpectedReward { bound, .. } = &claim_of(&graph).form else {
-            panic!("an expected reward: {:?}", claim_of(&graph).form);
-        };
-        bound.clone()
+        claim_of(&graph).normal_form.clone()
     };
-    let bare = form("0.5");
-    assert_eq!(bare, Bound::AtMost(ratio(1, 2)));
-    assert_eq!(bare, form("decimal(5, 1)"));
-    assert_eq!(bare, form("rational(1, 2)"));
+    let bare = normal_form("0.5");
+    assert_eq!(bare, normal_form("decimal(5, 1)"));
+    assert_eq!(bare, normal_form("rational(1, 2)"));
+}
+
+/// FR-764-AC-6: a bare decimal with an overlong written scale is refused at
+/// the literal, as `decimal(c, s)` is.
+#[trace("TC-2163", "FR-764-AC-6")]
+#[test]
+fn bare_decimal_threshold_overlong_refused() {
+    let target = format!("holds({IDLE} or {})", done());
     let long = format!("0.{}", "1".repeat(65536));
-    let found = located(&exact_claim(
+    let body = exact_claim(
         "ev",
         "Steady",
         "",
         &format!("expected accumulate duration until {target} <= {long}"),
-    ));
+    );
+    let declarations = assemble(&body);
+    let regions = declarations.regions();
+    let refusals = declarations
+        .check(CheckMode::Linked, CheckingLimits::default())
+        .expect_err("a threshold beyond the decimal scale limit refuses");
+    let [refusal] = refusals.as_slice() else {
+        panic!("one threshold refusal: {refusals:?}");
+    };
+    assert_eq!(refusal.cause.code(), Code::StageLimitExceeded);
+    assert_eq!(refusal.cause.cause(), Some("work-budget-exceeded"));
+    let CheckCause::ResourceExhausted(limit) = &refusal.cause else {
+        panic!("a decimal scale limit refusal: {refusal:?}");
+    };
+    assert_eq!(limit.kind, CheckingLimitKind::DecimalLiteralScale);
+    assert_eq!(limit.kind.setting().name(), "s3.decimal_literal_scale");
+    assert_eq!(limit.limit, 65_535);
+    assert_eq!(limit.actual, 65_536);
+    let region = regions
+        .refusal_region(refusal)
+        .expect("the refusal names a region of the unit");
+    let (text, _) = service_unit(&body);
     assert_eq!(
-        found,
-        [(Code::StageLimitExceeded, Some("work-budget-exceeded"), long)]
+        &text[region.start() as usize..region.end() as usize],
+        long,
+        "the refusal names the whole literal"
     );
 }
 
