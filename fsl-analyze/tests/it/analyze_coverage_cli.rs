@@ -125,7 +125,7 @@ fn an_unbounded_domain_is_unsupported() {
 #[trace("TC-1587", "FR-627-AC-2")]
 #[trace("TC-1587", "FR-627-AC-3")]
 #[test]
-#[ignore = "QSL-2123: liveness items are not reachable through fsl analyze yet"]
+#[ignore = "QSL-2123: FR-627-AC-1 expects an unfair eventually clause refuted on the Counter, but FR-125-AC-2 evaluates it true (stutter only at a terminal state) (spec question open)"]
 fn weak_and_strong_fairness_separate() {
     let weak = clause(
         "Weak",

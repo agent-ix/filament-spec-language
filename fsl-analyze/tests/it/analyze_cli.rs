@@ -169,7 +169,7 @@ fn time_lock_freedom_over_an_untimed_subject_is_inapplicable() {
 /// FR-627-AC-1: weak fairness proves a liveness item that fails without it.
 #[trace("TC-1587", "FR-627-AC-1")]
 #[test]
-#[ignore = "QSL-2123: liveness items are not reachable through fsl analyze yet"]
+#[ignore = "QSL-2123: FR-627-AC-1 expects an unfair eventually clause refuted on the Counter, but FR-125-AC-2 evaluates it true (stutter only at a terminal state) (spec question open)"]
 fn weak_fairness_decides_liveness() {
     let fair = clause(
         "Fair",
