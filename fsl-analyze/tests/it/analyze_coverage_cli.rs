@@ -234,7 +234,7 @@ fn copy_swap_and_witness_budget() {
 #[trace("TC-1592", "FR-632-AC-2")]
 #[trace("TC-1592", "FR-632-AC-3")]
 #[test]
-#[ignore = "QSL-2129: FR-632-AC-2 selects digital-clocks for a temporal item but FR-243 routes temporal-satisfaction to EN-6 by kind alone; FR-632-AC-3 sets max_clocks 0 but FR-625 makes limits positive counts (spec question open)"]
+#[ignore = "QSL-2296 (from QSL-2129): FR-632-AC-2 selects digital-clocks for a temporal item but FR-243 routes temporal-satisfaction to EN-6 by kind alone; FR-632-AC-3 sets max_clocks 0 but FR-625 makes limits positive counts (spec question open)"]
 fn digital_clocks_agree_and_the_clock_budget_stops() {
     let claim = "temporal Bound using tt over (c: M::Call) clock \"model-time\" on origin \
                  { always holds(not c.late) }\n";
@@ -272,7 +272,7 @@ fn edf_proves_ctl() {
 #[trace("TC-1594", "FR-634-AC-2")]
 #[trace("TC-1594", "FR-634-AC-3")]
 #[test]
-#[ignore = "QSL-2132: FR-634 does not say which traces an enumerate item reports nor what coverage.choices counts, and fsl-eval exploration returns no traces (spec question open)"]
+#[ignore = "QSL-2296 (from QSL-2132): FR-634 does not say which traces an enumerate item reports nor what coverage.choices counts, and fsl-eval exploration returns no traces (spec question open)"]
 fn simulation_budget_and_seeded_sampling() {
     let ws = Workspace::new("cov-simulation");
     let request = request_members(Some(json!([

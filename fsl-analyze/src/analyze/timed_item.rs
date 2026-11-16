@@ -10,8 +10,10 @@
 //! counterexample (FR-237, through `replay_model_trace`'s timed reading).
 
 use fsl_eval::simulation::model::{
-    ExpansionLimits, ModelSimulationRequest, ModelSystem, TimedSystem, DEFAULT_MAX_CLOCKS,
+    ExpansionLimits, ModelSimulationRequest, ModelSystem, TimedSubjectRefusal, TimedSystem,
+    DEFAULT_MAX_CLOCKS,
 };
+use fsl_eval::simulation::NotSimulated;
 use fsl_foundation::source::provenance::OccurrenceKey;
 use fsl_foundation::RequestIndex;
 use fsl_package::CheckedPackage;
@@ -27,7 +29,10 @@ use fsl_semantics::check::{Capability, TemporalClauseNode};
 
 use super::clause_item::{clause_name, replay_over, ReplayInputs, ReplayShape, CLAUSE_TRANSCRIPT};
 use super::derived_item::{derived_target, NoLetters, DEADLOCK_TRANSCRIPT};
-use super::items::{admission, joined_replay, settle_zone_item, TimedItem, BROKEN, CLAUSE_FAMILY};
+use super::items::{
+    admission, joined_replay, settle_zone_item, TimedItem, BROKEN, CLAUSE_FAMILY, INVALID_VALUE,
+    NOT_YET,
+};
 use super::{
     AnalyzeItem, AnalyzeLimits, EngineReport, Refusal, SourceProvision, SubjectBinding,
     TemporalItem,
@@ -131,8 +136,9 @@ fn run(read: &Run<'_, '_>, cancel: &filament_exact::Cancel) -> EngineReport {
         Err(failure) => return EngineReport::Refused(admission(&failure)),
     };
     let max_clocks = form.max_clocks.unwrap_or(DEFAULT_MAX_CLOCKS);
-    let Ok(timed) = TimedSystem::with_max_clocks(&system, model, max_clocks) else {
-        return EngineReport::Refused(Refusal::Failed(BROKEN));
+    let timed = match TimedSystem::with_max_clocks(&system, model, max_clocks) {
+        Ok(timed) => timed,
+        Err(refusal) => return EngineReport::Refused(subject_refusal(&refusal)),
     };
     let Ok(letters) = system.clause_letters(node) else {
         return EngineReport::Refused(Refusal::Failed(BROKEN));
@@ -141,6 +147,7 @@ fn run(read: &Run<'_, '_>, cancel: &filament_exact::Cancel) -> EngineReport {
         return EngineReport::Refused(Refusal::Failed(BROKEN));
     };
     let inputs = ReplayInputs {
+        backend: en6::BACKEND_ID,
         package,
         binding,
         limits: &limits,
@@ -194,6 +201,23 @@ fn run(read: &Run<'_, '_>, cancel: &filament_exact::Cancel) -> EngineReport {
         }),
     };
     settle_zone_item(item, cancel)
+}
+
+/// The refusal of a timed subject the request's binding cannot build: an
+/// unbounded root needs a bound (as zone search maps it), a clock owner with
+/// no universe is a defect of the binding, and the forms EN-6 does not read
+/// yet are unsupported. Only the refusals the package and the checker rule out
+/// stay an engine fault.
+fn subject_refusal(refusal: &TimedSubjectRefusal) -> Refusal {
+    match refusal {
+        TimedSubjectRefusal::NotSimulated(NotSimulated::RequiresBound(_)) => Refusal::RequiresBound,
+        TimedSubjectRefusal::Unbounded { .. } => Refusal::Failed(INVALID_VALUE),
+        TimedSubjectRefusal::ParameterizedGuard { .. }
+        | TimedSubjectRefusal::NestedUnboundedCollection { .. } => Refusal::Unsupported(NOT_YET),
+        TimedSubjectRefusal::NoTimedModel { .. } | TimedSubjectRefusal::NotSimulated(_) => {
+            Refusal::Failed(BROKEN)
+        }
+    }
 }
 
 /// EN-6's budgets under the item's `max_states` and `max_transitions`, which
@@ -269,10 +293,12 @@ pub(super) fn zone_derived_item<'a>(
                     Err(failure) => return EngineReport::Refused(admission(&failure)),
                 };
                 let max_clocks = form.max_clocks.unwrap_or(DEFAULT_MAX_CLOCKS);
-                let Ok(timed) = TimedSystem::with_max_clocks(&system, &model, max_clocks) else {
-                    return EngineReport::Refused(Refusal::Failed(BROKEN));
+                let timed = match TimedSystem::with_max_clocks(&system, &model, max_clocks) {
+                    Ok(timed) => timed,
+                    Err(refusal) => return EngineReport::Refused(subject_refusal(&refusal)),
                 };
                 let inputs = ReplayInputs {
+                    backend: en6::BACKEND_ID,
                     package,
                     binding: &binding,
                     limits: &limits,
@@ -342,4 +368,40 @@ pub(super) fn zone_derived_item<'a>(
         )
         .claimed(claimed),
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use ix_trace_rs::trace;
+
+    use super::*;
+
+    /// A clock owner with no universe is a defect of the request's binding,
+    /// never an engine fault; the model-intrinsic forms EN-6 does not read are
+    /// unsupported; only a missing timed model, which the package rules out,
+    /// stays a fault.
+    #[trace("TC-1592", "FR-632-AC-1")]
+    #[test]
+    fn a_timed_subject_refusal_is_typed_by_what_causes_it() {
+        let code = |refusal: Refusal| match refusal {
+            Refusal::Failed(code) | Refusal::Unsupported(code) => Some(code),
+            _ => None,
+        };
+        let unbounded = subject_refusal(&TimedSubjectRefusal::Unbounded {
+            clock: "x".to_owned(),
+        });
+        assert_eq!(code(unbounded), Some(INVALID_VALUE));
+        let nested = subject_refusal(&TimedSubjectRefusal::NestedUnboundedCollection {
+            clock: "x".to_owned(),
+        });
+        assert!(matches!(nested, Refusal::Unsupported(found) if found == NOT_YET));
+        let guard = subject_refusal(&TimedSubjectRefusal::ParameterizedGuard {
+            clause: "Reply".to_owned(),
+        });
+        assert!(matches!(guard, Refusal::Unsupported(found) if found == NOT_YET));
+        let absent = subject_refusal(&TimedSubjectRefusal::NoTimedModel {
+            model: "M".to_owned(),
+        });
+        assert_eq!(code(absent), Some(BROKEN));
+    }
 }

@@ -105,7 +105,7 @@ fn explicit_state_items_prove_and_refute() {
 /// FR-625-AC-4: an invariant state clause is an explicit-state item.
 #[trace("TC-1585", "FR-625-AC-4")]
 #[test]
-#[ignore = "QSL-2122: needs an EN-1 invariant item form (translation, closure certificate, replayed state-clause counterexample) and FR-625-AC-4 expects record.backend, a member no record carries (FR-331 spells settled_by; adding backend changes every record and the filament-examples expected files) (spec question open)"]
+#[ignore = "QSL-2301 and QSL-2304 (from QSL-2122): needs an EN-1 invariant item form (translation, closure certificate, replayed state-clause counterexample) and FR-625-AC-4 expects record.backend, a member no record carries (FR-331 spells settled_by; adding backend changes every record and the filament-examples expected files) (spec question open)"]
 fn invariant_items_prove_and_refute() {
     let ws = Workspace::new("cli-invariant");
     let body = "invariant AtMostThree using v on M::Counter at current { self.value <= 3 }\n\
@@ -256,7 +256,7 @@ fn a_finite_replay_item_over_a_temporal_clause_is_inapplicable() {
 /// FR-628-AC-1: a possible claim proves with a witness and refutes.
 #[trace("TC-1588", "FR-628-AC-1")]
 #[test]
-#[ignore = "QSL-2125: FR-628-AC-1 asks for `possible (value = 4)` over the Counter fixture, whose `value` is Int[0,3]; the checker refuses the literal 4 with undefined_expression/unproved-range (FR-104, FR-145), so the claim has no checked form (spec question open)"]
+#[ignore = "QSL-2296 (from QSL-2125): FR-628-AC-1 asks for `possible (value = 4)` over the Counter fixture, whose `value` is Int[0,3]; the checker refuses the literal 4 with undefined_expression/unproved-range (FR-104, FR-145), so the claim has no checked form (spec question open)"]
 fn possible_claims_prove_and_refute() {
     let body = "possible ReachThree using v over (c: M::Counter) { c.value = 3 }\n\
                 possible ReachFour using v over (c: M::Counter) { c.value = 4 }\n";
@@ -312,7 +312,7 @@ fn store_buffering_separates_sc_and_tso() {
 /// FR-634-AC-1: enumerating the Counter subject reports coverage and traces.
 #[trace("TC-1594", "FR-634-AC-1")]
 #[test]
-#[ignore = "QSL-2132: FR-634 does not say which traces an enumerate item reports nor what coverage.choices counts, and fsl-eval exploration returns no traces (spec question open)"]
+#[ignore = "QSL-2296 (from QSL-2132): FR-634 does not say which traces an enumerate item reports nor what coverage.choices counts, and fsl-eval exploration returns no traces (spec question open)"]
 fn simulation_enumerates_the_counter_subject() {
     let ws = Workspace::new("cli-simulation");
     let run = analyze(&counter_request(
@@ -399,6 +399,8 @@ fn a_deadlock_counterexample_ends_at_the_stuck_state_and_replays() {
     assert_eq!(run.exit, 10);
 }
 
+/// FR-626-AC-1: a derived item named by its model alias is the one derived
+/// FR-626-AC-1: a derived item named by its model alias is the one derived
 /// item of the subject, and a claim naming no model alias is `unknown-claim`.
 #[trace("TC-1586", "FR-626-AC-1")]
 #[test]

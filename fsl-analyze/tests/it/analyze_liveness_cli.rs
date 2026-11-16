@@ -79,3 +79,46 @@ fn weak_each_refutes_where_strong_each_proves() {
     assert_eq!(strong["record"]["certification"], "certified");
     assert_eq!(run.exit, 10);
 }
+
+/// FR-626: a derived item named by the model alias honours the item's
+/// `backend` and the subject's timing: an unknown backend is
+/// `unknown-backend`, and `en-6` on an untimed subject runs no engine.
+#[trace("TC-1586", "FR-626-AC-1")]
+#[test]
+fn a_derived_item_honours_its_named_backend() {
+    let ws = Workspace::new("derived-backend");
+    let run = analyze(&counter_request(
+        &ws,
+        "",
+        json!([{"claim": "M", "backend": "no-such", "temporal": {"item_kind": "deadlock-freedom"}},
+            {"claim": "M", "backend": "en-6", "temporal": {"item_kind": "deadlock-freedom"}},
+            {"claim": "M", "backend": "en-1", "temporal": {"item_kind": "deadlock-freedom"}}]),
+    ));
+    assert_eq!(
+        run.item(0)["record"]["diagnostic"]["cause"],
+        "unknown-backend",
+        "{}",
+        run.item(0)
+    );
+    let timed = run.item(1);
+    assert_eq!(label(&timed), "unsupported", "{timed}");
+    assert_eq!(timed["request"]["candidates"]["backends"], json!([]));
+    assert_eq!(label(&run.item(2)), "refuted");
+}
+
+/// `temporal.max_depth` bounds a derived deadlock-freedom search: a horizon of
+/// one step stops short of the stuck state, so the item is inconclusive with
+/// `bound-reached`.
+#[trace("TC-1586", "FR-626-AC-1")]
+#[test]
+fn max_depth_bounds_a_deadlock_freedom_item() {
+    let ws = Workspace::new("derived-depth");
+    let run = analyze(&counter_request(
+        &ws,
+        "",
+        json!([{"claim": "M", "temporal": {"item_kind": "deadlock-freedom", "max_depth": 1}}]),
+    ));
+    let item = run.item(0);
+    assert_eq!(label(&item), "inconclusive", "{item}");
+    assert_eq!(item["record"]["cause"]["kind"], "bound-reached");
+}

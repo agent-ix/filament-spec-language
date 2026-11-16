@@ -31,6 +31,7 @@ use super::clause_item::{replay_over, ReplayInputs, ReplayShape};
 use super::items::{joined_replay, run_model_item, CounterexampleReplayFn, ModelItem};
 use super::{AnalyzeItem, AnalyzeLimits, SourceProvision, SubjectBinding, TemporalItem};
 use crate::claim_family::claim_family;
+use crate::model_check::manifest as en1;
 use crate::model_check::ModelCheckRequest;
 
 /// The witness transcript of a derived deadlock-freedom counterexample: it
@@ -90,8 +91,8 @@ pub(super) fn derived_target() -> Option<QualifiedName> {
 
 /// The EN-1 item that decides the derived deadlock-freedom item anchored at
 /// `claim` (the `model_root` occurrence of the subject's one selection) over
-/// the binding, with the item's budgets. A derived item is an exhaustive
-/// search, so it carries no `max_depth` (FSpec FR-368-AC-20).
+/// the binding, with the item's budgets. The item's `temporal.max_depth` is the search
+/// horizon, as for an authored clause.
 pub(super) fn deadlock_item<'a>(
     package: &'a CheckedPackage,
     binding: &SubjectBinding<'a>,
@@ -126,7 +127,7 @@ pub(super) fn deadlock_item<'a>(
         temporal_clock_selections: &[],
         subject: subject(&binding),
         item: ModelCheckItem::DeadlockFreedom,
-        max_depth: None,
+        max_depth: form.max_depth,
         limits: form.limits,
         reductions: form.reductions.clone(),
     };
@@ -141,6 +142,7 @@ pub(super) fn deadlock_item<'a>(
         Box::new(move |payload: &TemporalCounterexample| {
             replay_derived(
                 &ReplayInputs {
+                    backend: en1::BACKEND_ID,
                     package,
                     binding: &replay_binding,
                     limits: &limits,

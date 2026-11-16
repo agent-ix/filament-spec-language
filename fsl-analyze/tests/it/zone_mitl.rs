@@ -226,3 +226,30 @@ fn nested_timed_operators_compose() {
         Outcome::Violated { .. }
     ));
 }
+
+/// QSL-2129 MITL breadth, nested `until`: a timed `until` under a timed
+/// `eventually` composes the same way. The reply is forced at 3 ms, so the
+/// closed bounds hold and the open inner bound, which excludes 3 ms, does not.
+#[trace("TC-697", "FR-242")]
+#[test]
+fn nested_until_operators_compose() {
+    let nested = |outer: &str, inner: &str| {
+        rpc_claim(
+            4,
+            TIMED,
+            &format!(
+                "temporal NestedUntil using tt over (c: M::Call) clock \"model-time\" on origin \
+                 {{ always (holds(c.phase = 1) implies eventually{outer} \
+                 (holds(c.phase = 1) until{inner} holds(not (c.phase = 1)))) }}\n"
+            ),
+        )
+    };
+    assert!(matches!(
+        decide(&nested("[0 ms, 3 ms]", "[0 ms, 3 ms]")),
+        Outcome::Holds { .. }
+    ));
+    assert!(matches!(
+        decide(&nested("[0 ms, 3 ms]", "(0 ms, 3 ms)")),
+        Outcome::Violated { .. }
+    ));
+}

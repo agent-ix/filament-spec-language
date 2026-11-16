@@ -289,6 +289,7 @@ impl<'a> ClauseSubject<'a> {
         let identity = self.node.identity();
         replay_over(
             &ReplayInputs {
+                backend: en1::BACKEND_ID,
                 package: self.package,
                 binding: &self.binding,
                 limits: &self.limits,
@@ -320,6 +321,9 @@ pub(super) struct ReplayInputs<'r, 'a> {
     pub(super) max_candidates: u64,
     /// FR-237: the timed reading the counterexample was found under.
     pub(super) timed: Option<fsl_replay::TimedReplay>,
+    /// The engine whose run the counterexample came from, which the replay
+    /// request and envelope name.
+    pub(super) backend: &'static str,
 }
 
 /// How a counterexample names its item (FR-128 Inputs): the replay target,
@@ -364,7 +368,7 @@ pub(super) fn replay_over(
         replay_target: target,
         source: ReplaySource::Witness(transcript()?),
         obligation_identity: ObligationIdentity::new(identity.clone(), None, 0),
-        backend: en1::BACKEND_ID.to_owned(),
+        backend: inputs.backend.to_owned(),
         state_environment: StateEnvironment::new(Vec::new()),
         accounting_limits: inputs.limits.accounting,
         stage_limits: std::collections::BTreeMap::new(),
@@ -389,7 +393,7 @@ pub(super) fn replay_over(
             profile_selections: Some(Vec::new()),
             run_limits: Some(inputs.limits.accounting),
             declared_domains: Some(Vec::new()),
-            backend: Some(en1::BACKEND_ID.to_owned()),
+            backend: Some(inputs.backend.to_owned()),
             trace_position: Some(None),
             source: Some(EnvelopeSource::Witness(transcript()?)),
             family_payload: Some(payload.clone()),

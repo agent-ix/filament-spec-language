@@ -837,7 +837,7 @@ fn resolve_one(
     );
     let candidates = if let Some(claim) = state_graph {
         registry.restrict_to_state_graph_form(
-            candidates,
+            registry.restrict_to_timing(candidates, timed(package)),
             fsl_route::StateGraphFormKind::of(claim.form()),
         )
     } else if kind == Capability::TemporalSatisfaction {
@@ -848,6 +848,24 @@ fn resolve_one(
     let temporal = selection.temporal.clone().unwrap_or_default();
     let own_subject = temporal.subject.clone().unwrap_or_else(|| subject.clone());
     if let Some(claim) = state_graph {
+        if timed(package) {
+            // EN-6 lists no state-graph form and EN-1 reads no clocks, so a
+            // timed subject has no state-graph route yet (QSL-2305).
+            let mut detail = Map::new();
+            detail.insert("kind".to_owned(), json!(kind.to_wire()));
+            detail.insert(
+                "reason".to_owned(),
+                json!("a state-graph claim over a timed subject has no route (QSL-2305)"),
+            );
+            return ResolvedItem::Settled {
+                claim_name: Some(name.to_owned()),
+                record: Box::new(TerminalRecord::disposition_unsupported(
+                    index,
+                    fsl_route::NegotiationOutcome::UnsupportedRequestedCapability.code(),
+                    detail,
+                )),
+            };
+        }
         if let Some(refused) = sampling_refusal(index, name, claim, &temporal) {
             return refused;
         }
@@ -879,6 +897,7 @@ fn resolve_one(
         } else {
             selection.unrouted()
         } || (selection.reductions.is_some() && kind != Capability::TemporalSatisfaction)
+            || reads_no_clocks(package, &temporal)
             || own_subject != *subject,
         subject: own_subject,
     }))
@@ -953,7 +972,13 @@ fn resolve_derived(
     };
     let own_subject = temporal.subject.clone().unwrap_or_else(|| subject.clone());
     claim.item.request_index = index;
-    claim.item.backend = selection.backend.as_deref().map(BackendId::new);
+    let named = selection.backend.as_deref().map(BackendId::new);
+    claim.candidates = registry.restrict_to_timing(
+        registry.candidates(claim.item.kind, named.as_ref()),
+        timed(package),
+    );
+    claim.item.candidates = candidate_list(&claim.candidates);
+    claim.item.backend = named;
     claim.item.options = ItemOptions {
         required: selection.required.unwrap_or(true),
         max_cases: None,
@@ -962,9 +987,19 @@ fn resolve_derived(
     form.pending_reductions.clone_from(&selection.reductions);
     claim.item.form = Some(ItemForm::Temporal(form));
     claim.claim_name = name.to_owned();
-    claim.unrouted = selection.unrouted() || own_subject != *subject;
+    claim.unrouted =
+        selection.unrouted() || reads_no_clocks(package, temporal) || own_subject != *subject;
     claim.subject = own_subject;
     Some(ResolvedItem::Claim(claim))
+}
+
+/// Whether the item sets `max_clocks`, which only a timed subject reads
+/// (FSpec FR-415): on an untimed subject no route reads it.
+fn reads_no_clocks(package: &CheckedPackage, temporal: &TemporalSelection) -> bool {
+    !timed(package)
+        && temporal
+            .limits
+            .is_some_and(|limits| limits.max_clocks.is_some())
 }
 
 /// Whether the model subject the package's selections give is timed
@@ -1463,10 +1498,19 @@ pub fn analyze_document(
                     continue;
                 }
                 let (disposition, diagnostic) = negotiate.negotiate(&item, &candidates);
-                // A member no route reads settles `unsupported`, but only for an
-                // item negotiation would have run: a kind its claim's family
-                // does not admit is refused first (FR-507, FR-627-AC-4).
-                if unrouted && matches!(disposition, fsl_route::routing::Disposition::Supported(_))
+                // A member no route reads settles `unsupported`, except where
+                // negotiation refused the item as invalid first: a kind its
+                // claim's family does not admit (FR-507, FR-627-AC-4).
+                let temporal_kind = match &item.form {
+                    Some(ItemForm::Temporal(form)) => form.item_kind,
+                    _ => ItemKind::Formula,
+                };
+                let inapplicable =
+                    crate::claim_family::claim_family(package, temporal_kind, &item.claim)
+                        .is_none_or(|family| !item.kind.applies_to_declaration(family));
+                if unrouted
+                    && !inapplicable
+                    && !matches!(disposition, fsl_route::routing::Disposition::InvalidRequest)
                 {
                     let mut detail = Map::new();
                     detail.insert("kind".to_owned(), json!(item.kind.to_wire()));

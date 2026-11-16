@@ -179,20 +179,27 @@ fn run(read: &Run<'_, '_>, cancel: &Cancel) -> EngineReport {
         )
     });
     let refuted = matches!(record.value, TerminalValue::Refuted);
-    let (counterexample, evidence) = match spelled {
-        Some(Ok(wire)) if refuted => (Some(wire), None),
-        Some(Ok(wire)) => (
-            None,
-            matches!(record.value, TerminalValue::Proved { .. }).then_some(wire),
-        ),
-        Some(Err(_)) if refuted => {
-            return EngineReport::Refused(Refusal::Failed(super::items::BROKEN));
-        }
-        Some(Err(_)) | None => (None, None),
-    };
-    if refuted && counterexample.is_none() {
+    // A refuted record and a proof by witnesses (FR-628 Outputs) each carry
+    // their evidence; one that cannot be spelled is a fault of the engine, never
+    // a record without it.
+    let witnessed = matches!(record.value, TerminalValue::Proved { .. })
+        && matches!(
+            instance.outcome,
+            StateGraphOutcome::Witnessed { .. }
+                | StateGraphOutcome::HoldsReduced {
+                    witnesses: Some(_),
+                    ..
+                }
+        );
+    let wire = spelled.and_then(Result::ok);
+    if (refuted || witnessed) && wire.is_none() {
         return EngineReport::Refused(Refusal::Failed(super::items::BROKEN));
     }
+    let (counterexample, evidence) = if refuted {
+        (wire, None)
+    } else {
+        (None, wire.filter(|_| witnessed))
+    };
     let graph = &settled.run.graph;
     let exploration = fsl_replay::RunStats {
         product_states: graph.stats.nodes,

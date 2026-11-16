@@ -23,7 +23,10 @@ fn steps(path: &Value) -> usize {
 }
 
 /// FR-628-AC-1: `possible (value = 3)` proves with a three-step witness path
-/// that replays, and `possible (value > 3)` refutes.
+/// that replays, and `possible (value > 3)` refutes. `value > 3` stands in
+/// for FR-628-AC-1's `possible (value = 4)`, which the checker refuses
+/// (`value` is Int[0,3]; QSL-2296); the W6 spec changes the claim to
+/// `possible (value = 0)`.
 #[trace("TC-1588", "FR-628-AC-1")]
 #[test]
 fn a_possible_claim_proves_with_a_replayed_witness_path_and_refutes() {
