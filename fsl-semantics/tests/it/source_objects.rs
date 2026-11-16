@@ -2083,9 +2083,8 @@ fn a_population_prints_only_its_identity_form() {
         fsl_spelling(&bounded, &names, None),
         "resolved:Population[3]"
     );
-    let nested = ValueTypeRef::Resolved(Box::new(ValueType::Option(Box::new(
-        ValueType::Population(Some(3)),
-    ))));
+    let nested =
+        ValueTypeRef::Resolved(Box::new(ValueType::option(ValueType::Population(Some(3)))));
     assert_eq!(
         fsl_spelling(&nested, &names, None),
         "Option<resolved:Population[3]>"
