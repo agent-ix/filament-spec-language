@@ -46,17 +46,35 @@ fn report(output: &Output) -> String {
     )
 }
 
-/// The fact ids the committed bindings name, in binding order.
-fn bound_facts() -> Vec<String> {
-    let text = fs::read_to_string(workspace_root().join("docs/consumer-facades.json"))
-        .expect("the committed binding document");
-    let bindings: Value = serde_json::from_str(&text).expect("bindings are JSON");
-    bindings["consumers"]
+/// The directory of the standard package the workspace pins (FR-760).
+fn pinned_standard_directory() -> PathBuf {
+    let output = cargo(&["metadata", "--locked", "--offline", "--format-version", "1"]);
+    assert!(output.status.success(), "{}", report(&output));
+    let metadata: Value = serde_json::from_slice(&output.stdout).expect("metadata JSON");
+    let package = metadata["packages"]
+        .as_array()
+        .expect("packages")
+        .iter()
+        .find(|package| package["name"] == "filament-specification-qualification")
+        .expect("the standard is a pinned dependency of the workspace");
+    Path::new(package["manifest_path"].as_str().expect("manifest path"))
+        .parent()
+        .expect("manifest directory")
+        .to_path_buf()
+}
+
+/// The fact ids of the pinned standard's consumer-fact inventory
+/// (`proposals/consumer-facades/consumer-facts.json`), in inventory order.
+fn inventory_facts() -> Vec<String> {
+    let path = pinned_standard_directory().join("proposals/consumer-facades/consumer-facts.json");
+    let inventory: Value = serde_json::from_slice(&fs::read(path).expect("the pinned inventory"))
+        .expect("inventory JSON");
+    inventory["consumers"]
         .as_array()
         .expect("consumers array")
         .iter()
         .flat_map(|consumer| consumer["facts"].as_array().expect("facts array").iter())
-        .map(|fact| fact["fact"].as_str().expect("a fact id").to_owned())
+        .map(|fact| fact["id"].as_str().expect("a fact id").to_owned())
         .collect()
 }
 
@@ -65,11 +83,11 @@ fn test_prefix(fact: &str) -> String {
     format!("{}_", fact.to_ascii_lowercase().replace('-', "_"))
 }
 
-/// A scratch contract-test directory with one live test per bound fact.
+/// A scratch contract-test directory with one live test per inventory fact.
 fn scratch_tests(extra: &str, skip: Option<&str>, attribute_on_pr_03: &str) -> tempfile::TempDir {
     let scratch = tempfile::tempdir().expect("scratch directory");
     let mut source = String::new();
-    for fact in bound_facts() {
+    for fact in inventory_facts() {
         if skip == Some(fact.as_str()) {
             continue;
         }
@@ -98,9 +116,12 @@ fn gate_over(directory: &Path) -> Output {
 
 #[test]
 #[trace("TC-2578", "FR-912-AC-1")]
-fn every_bound_fact_id_has_a_test_prefix_the_gate_reads() {
-    for fact in bound_facts() {
-        let prefix = test_prefix(&fact);
+fn test_prefix_is_the_lowercase_fact_id() {
+    assert_eq!(test_prefix("CF-PR-03"), "cf_pr_03_");
+    for fact in [
+        "CF-IR-01", "CF-PR-07", "CF-CG-04", "CF-RT-02", "CF-DR-03", "CF-OB-01",
+    ] {
+        let prefix = test_prefix(fact);
         let parts: Vec<&str> = prefix.trim_end_matches('_').split('_').collect();
         assert_eq!(parts.len(), 3, "{fact} is CF-<code>-<nn>");
         assert_eq!(parts[0], "cf");
@@ -168,7 +189,7 @@ fn every_bound_fact_has_a_passing_contract_call_test() {
     let listed = cargo(&["test", "-p", CONSUMER, "--", "--list"]);
     assert!(listed.status.success(), "{}", report(&listed));
     let names = String::from_utf8_lossy(&listed.stdout).into_owned();
-    for fact in bound_facts() {
+    for fact in inventory_facts() {
         let prefix = test_prefix(&fact);
         assert!(
             names.lines().any(|line| line
@@ -219,7 +240,7 @@ fn gate_passes_when_every_fact_has_a_live_test() {
     let output = gate_over(scratch.path());
     assert_eq!(output.status.code(), Some(0), "{}", report(&output));
     let text = report(&output);
-    for fact in bound_facts() {
+    for fact in inventory_facts() {
         assert!(text.contains(&fact), "{fact} is not reported");
         assert!(
             text.contains(&test_prefix(&fact)),

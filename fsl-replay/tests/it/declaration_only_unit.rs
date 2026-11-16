@@ -94,22 +94,40 @@ fn assert_empty_package(refused: &CompileRefusal) {
         !refused.to_string().contains("no node of the package"),
         "the refusal names the rule, not the wire: {refused}"
     );
+    // Located at the unit's `language` header declaration: byte 0 to its `;`.
+    let header_end = HEADER.find(';').expect("the language declaration ends") as u64 + 1;
+    let region = refused.region().expect("the refusal is located");
+    assert_eq!((region.start(), region.end()), (0, header_end), "{refused}");
+    // It retains the package name and the unit's source identity.
+    let retained = format!("{refused:?}");
+    assert!(retained.contains("fixture"), "no package name: {retained}");
+    assert!(
+        retained.contains(&format!("{:?}", SourceIdentity::new("a", "u"))),
+        "no source identity: {retained}"
+    );
 }
 
 #[test]
 #[trace("TC-2570", "FR-910-AC-1", "FSpec-TC-1810", "FSpec-FR-746-AC-1")]
 #[ignore = "QSL-2226: writing an unreferenced dimension or unit node is not implemented yet"]
 fn dimension_only_unit_check_and_run_agree() {
+    let is_form = |node: &Value, form: &str| {
+        node["node_id"]["path"][0] == "scalar_type" && node["node_id"]["path"][1] == form
+    };
     let only = [HEADER, "dimension Length;\n"];
     check(&only).expect("a dimension-only unit checks");
     let bytes = compile(&only).expect("a dimension-only unit compiles");
     assert!(admitted_by_the_strict_reader(&bytes));
-    let dimensions = nodes(&bytes)
+    let dimensions: Vec<Value> = nodes(&bytes)
         .into_iter()
-        .filter(|node| node["node_id"]["path"][0] == "scalar_type")
-        .filter(|node| node["node_id"]["path"][1] == "dimension")
-        .count();
-    assert_eq!(dimensions, 1);
+        .filter(|node| is_form(node, "dimension"))
+        .collect();
+    assert_eq!(dimensions.len(), 1);
+    assert!(declares(&dimensions[0], "Length"));
+    assert_eq!(
+        dimensions[0]["body"]["base"], true,
+        "Length is a base dimension"
+    );
 
     let with_unit = [
         HEADER,
@@ -118,6 +136,15 @@ fn dimension_only_unit_check_and_run_agree() {
     check(&with_unit).expect("a dimension-and-unit unit checks");
     let bytes = compile(&with_unit).expect("a dimension-and-unit unit compiles");
     assert!(admitted_by_the_strict_reader(&bytes));
+    let graph = nodes(&bytes);
+    let length = graph
+        .iter()
+        .find(|node| is_form(node, "dimension") && declares(node, "Length"))
+        .expect("the Length dimension node");
+    let units: Vec<&Value> = graph.iter().filter(|node| is_form(node, "unit")).collect();
+    assert_eq!(units.len(), 1);
+    assert!(declares(units[0], "m"));
+    assert_eq!(units[0]["body"]["dimension_node_id"], length["node_id"]);
 }
 
 #[test]

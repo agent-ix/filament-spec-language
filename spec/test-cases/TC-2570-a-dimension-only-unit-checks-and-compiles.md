@@ -24,4 +24,5 @@ Tag the tests `#[trace("TC-2570", "FR-910-AC-1", "FSpec-TC-1810", "FSpec-FR-746-
 
 - Both units pass check and compile.
 - The strict reader admits both packages.
-- The first graph holds exactly one source `scalar_type`/`dimension` node.
+- The first graph holds exactly one source `scalar_type`/`dimension` node, `Length`, whose body has `base: true`.
+- The second graph holds that dimension node and one `scalar_type`/`unit` node `m` whose `dimension_node_id` is the `Length` node's `node_id`.
