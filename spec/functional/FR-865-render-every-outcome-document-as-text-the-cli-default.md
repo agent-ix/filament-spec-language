@@ -23,12 +23,12 @@ relationships:
 ## Description
 
 Text is the driver's default output format, so the first command a reader
-types, `fsl check rule.fsl`, prints a result without a flag. Every verb that
-writes an FR-286 outcome document (`parse`, `check`, `compile`, `run`,
-`analyze`, `monitor`, `prove`, `replay` and `generate`) SHALL write, in text
-mode, the text form of that same document that FR-298's `render_outcome`
+types, `fsl check rule.fsl`, prints a result without a flag. The verbs `parse`, `check`, `compile` and `run` SHALL write, in text
+mode, the text form of the FR-286 outcome document they write that FR-298's `render_outcome`
 returns, and SHALL exit with the same FR-285 code it exits with in machine
-mode. The text form is a display of the typed document: it is built from the
+mode. `analyze` and `monitor` keep the text forms FR-621 and FR-624 and
+the driver's FR-022 and FR-025 give them; this requirement does not change
+them. The text form is a display of the typed document: it is built from the
 document and the admitted sources only, and the JSON bytes stay the
 authoritative form (FR-298).
 
@@ -82,7 +82,8 @@ Each line is one FR-298 output unit, charged against `render.output_bytes`.
 - In text mode the driver SHALL build the document exactly as in machine
   mode, render it through `render_outcome` with a `RenderSources` built
   from the admitted sources the command read, and write the rendered bytes
-  to stdout. No verb refuses text mode as `unimplemented_capability`.
+  to stdout, for `parse`, `check`, `compile` and `run`. None of these verbs
+  refuses text mode as `unimplemented_capability`.
 - `command`'s compile, run and check outcomes, and `RunError`, SHALL expose
   the admitted FR-001 `Source` values the command read, so the driver
   provides them to `RenderSources::from_sources` without reading a source a
