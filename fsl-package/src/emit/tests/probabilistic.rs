@@ -73,6 +73,14 @@ fn claim(name: &str, threshold: &str) -> String {
     )
 }
 
+fn claim_each(name: &str, threshold: &str) -> String {
+    format!(
+        "probabilistic {name} using ev on Config under every scheduler \
+         on each (m: Config::ConfigVersion) \
+         {{ probability >= {threshold} [ holds(true) ] }}"
+    )
+}
+
 /// Each checked claim's emitted `{declaration, occurrence}`, as wire JSON,
 /// by the label of the claim content it was declared with.
 fn identities(package: &CheckedPackage, labels: &[(&str, &str)]) -> Vec<(String, Value)> {
@@ -148,6 +156,26 @@ fn a_checked_claim_is_emitted_and_a_reward_still_refuses() {
             profile: Some("filament.model.complete/v1"),
         }
     );
+}
+
+/// FR-186 Activation and FR-498: the checked package retains the `on each`
+/// claim as one declaration whose activation ranges over its population.
+#[trace("TC-2166", "FR-186-AC-8")]
+#[test]
+fn probabilistic_on_each_emits_per_member() {
+    let package = claims_package(&[&claim_each("PerVersion", "0.5")]);
+    let [checked] = package.graph().probabilistic_model().claims() else {
+        panic!("one checked claim per source declaration");
+    };
+    assert!(
+        matches!(
+            &checked.activation,
+            fsl_semantics::check::ClaimActivation::Each { .. }
+        ),
+        "activation is carried by the checked claim"
+    );
+    let (rows, nodes) = emitted_claims(&package);
+    assert_eq!((rows.len(), nodes.len()), (1, 1));
 }
 
 /// FR-498 (TC-1288): two claims sharing a name, and a third, emit one

@@ -47,12 +47,16 @@ const TOO_LIKELY: &str =
      { probability >= rational(99, 100) [ eventually holds(m.delivered) ] }";
 
 fn run(name: &str, claims: &str, items: Value) -> Value {
+    run_with_snapshots(name, claims, &[LINK_START.to_vec()], items)
+}
+
+fn run_with_snapshots(name: &str, claims: &str, snapshots: &[Vec<u8>], items: Value) -> Value {
     let ws = Workspace::new(name);
     let request = request_over(
         &ws,
         &unit(claims),
         LINK_MODEL,
-        &[LINK_START.to_vec()],
+        snapshots,
         json!({"items": items}),
     );
     let run = analyze(&request);
@@ -155,7 +159,6 @@ fn an_exact_only_claim_with_statistical_evidence_is_unsupported() {
 #[ix_trace_rs::trace("TC-2167", "FR-186-AC-10")]
 #[ix_trace_rs::trace("FSpec-TC-1650", "FSpec-FR-407-AC-17")]
 #[test]
-#[ignore = "QSL-2151: the `on each` activation of a probabilistic claim not checked yet"]
 fn probabilistic_on_each_settles_per_instance() {
     let claim = "probabilistic E using inf on M under Even \
          on each (k: M::Msg) when (not k.delivered) \
@@ -175,4 +178,26 @@ fn probabilistic_on_each_settles_per_instance() {
         item["record"]["basis"], document["items"][1]["record"]["basis"],
         "{document}"
     );
+}
+
+/// FR-186 Activation: an empty population has no claim instance and settles
+/// inconclusive before exact analysis.
+#[ix_trace_rs::trace("TC-2167", "FR-186-AC-10")]
+#[test]
+fn probabilistic_on_each_empty_population() {
+    let claim = "probabilistic E using inf on M under Even \
+         on each (k: M::Msg) \
+         { probability >= rational(9, 10) [ eventually holds(k.delivered) ] }";
+    let mut snapshot: Value = serde_json::from_slice(LINK_START).expect("snapshot JSON");
+    snapshot["populations"][0]["objects"] = json!([]);
+    let snapshots = [serde_json::to_vec(&snapshot).expect("snapshot bytes")];
+    let document = run_with_snapshots(
+        "on-each-empty-population",
+        claim,
+        &snapshots,
+        json!([{"claim": "E", "probabilistic": {"evidence": "exact"}}]),
+    );
+    let item = &document["items"][0];
+    assert_eq!(label(item), "inconclusive", "{item}");
+    assert!(item.to_string().contains("no-instance"), "{item}");
 }

@@ -480,6 +480,15 @@ pub enum ProbabilisticCause {
         /// The threshold's span.
         span: Span,
     },
+    /// A time-valued form at a subject that declares no model-time binding,
+    /// or a step count where a time quantity is required.
+    /// `ill_typed`/`type-mismatch`.
+    TimeTypeMismatch {
+        /// The claim.
+        claim: String,
+        /// The time position's span.
+        span: Span,
+    },
     /// A claim's `over` parameter whose type is not an object type of the
     /// subject's model. `invalid_probabilistic_model`/`over-not-object-type`
     /// (FSL-proposed, STD-188).
@@ -499,18 +508,6 @@ pub enum ProbabilisticCause {
         /// The claim.
         claim: String,
         /// The operand's span.
-        span: Span,
-    },
-    /// A construct of a claim that S3 does not check yet: an `expected
-    /// elapsed` claim or an `elapsed` measure (no subject is timed), a timed
-    /// window or an `on each` activation.
-    /// `unsupported_construct`/`not-yet-implemented`.
-    NotYetImplemented {
-        /// The claim's name.
-        claim: String,
-        /// The construct, as the diagnostic names it.
-        construct: &'static str,
-        /// The construct's span.
         span: Span,
     },
 }
@@ -554,9 +551,9 @@ impl ProbabilisticCause {
             | Self::UnitMismatch { span, .. }
             | Self::FractionBound { span, .. }
             | Self::ThresholdNotLiteral { span, .. }
+            | Self::TimeTypeMismatch { span, .. }
             | Self::OverNotObjectType { span, .. }
-            | Self::NotStatePredicate { span, .. }
-            | Self::NotYetImplemented { span, .. } => Some(*span),
+            | Self::NotStatePredicate { span, .. } => Some(*span),
             Self::RandomReadInPrecondition { .. } => None,
         }
     }
@@ -598,7 +595,9 @@ impl ProbabilisticCause {
             | Self::OverNotObjectType { .. }
             | Self::NotStatePredicate { .. } => Code::InvalidProbabilisticModel,
             Self::InvalidDelay { .. } => Code::InvalidModelBinding,
-            Self::UnitMismatch { .. } | Self::ThresholdNotLiteral { .. } => Code::IllTyped,
+            Self::UnitMismatch { .. }
+            | Self::ThresholdNotLiteral { .. }
+            | Self::TimeTypeMismatch { .. } => Code::IllTyped,
             Self::ZeroDenominator { .. } => Code::UndefinedExpression,
             Self::UnresolvedOperation { .. }
             | Self::UnresolvedParameter { .. }
@@ -611,7 +610,6 @@ impl ProbabilisticCause {
                 Code::AmbiguousDeclaration
             }
             Self::DuplicateWorkload { .. } => Code::ConflictingDeclaration,
-            Self::NotYetImplemented { .. } => Code::UnsupportedConstruct,
         }
     }
 
@@ -650,11 +648,11 @@ impl ProbabilisticCause {
             Self::ForeignWorkload { .. } => "foreign-workload",
             Self::UnitMismatch { .. } => "unit-mismatch",
             Self::ThresholdNotLiteral { .. } => "type-mismatch",
+            Self::TimeTypeMismatch { .. } => "type-mismatch",
             Self::FractionBound { .. } => "fraction-bound-out-of-range",
             Self::OverNotObjectType { .. } => "over-not-object-type",
             Self::NotStatePredicate { .. } => "not-state-predicate",
             Self::DuplicateWorkload { .. } => "duplicate-declaration",
-            Self::NotYetImplemented { .. } => "not-yet-implemented",
         }
     }
 }

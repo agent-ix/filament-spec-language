@@ -176,11 +176,11 @@ pub use time_units::is_clock_unit_node;
 mod timed_model;
 pub use probabilistic::{
     Bound, BoundedMeasure, CheckedPredicate, CheckedProbabilisticClaim, CheckedProbabilisticModel,
-    CheckedTemporalFormula, ClaimNormalForm, Confidence, ConfidenceFault, Delay, DelayDistribution,
-    DelayFault, Event, FractionMeasure, ModelSubjectRef, OverBinding, PreconditionSite, ProbForm,
-    ProbScheduler, ProbabilisticCause, ProbabilisticDeclaration, ProbabilisticFeature,
-    ProbabilisticOperation, RandomParameter, ReachTarget, Reward, SupportValue, WeightOwner,
-    Workload,
+    CheckedTemporalFormula, ClaimActivation, ClaimNormalForm, Confidence, ConfidenceFault, Delay,
+    DelayDistribution, DelayFault, Event, FractionMeasure, ModelSubjectRef, OverBinding,
+    PreconditionSite, ProbForm, ProbScheduler, ProbabilisticCause, ProbabilisticDeclaration,
+    ProbabilisticFeature, ProbabilisticOperation, RandomParameter, ReachTarget, Reward,
+    SupportValue, WeightOwner, Workload,
 };
 pub use state_model::StateModelRefusal;
 pub use sum_case::{mint_union_member_key, ExhaustivenessObligation, SumCaseCause};
