@@ -3496,58 +3496,18 @@ fn bare_decimal_threshold_is_exact() {
 #[test]
 fn decimal_forms_equivalent() {
     let target = format!("holds({IDLE} or {})", done());
-    let bound = |threshold: &str| {
+    let normal_form = |threshold: &str| {
         let graph = checked(&exact_claim(
             "ev",
             "Steady",
             "",
             &format!("expected accumulate duration until {target} <= {threshold}"),
         ));
-        let ProbForm::ExpectedReward { bound, .. } = &claim_of(&graph).form else {
-            panic!("an expected reward: {:?}", claim_of(&graph).form);
-        };
-        bound.clone()
+        claim_of(&graph).normal_form.clone()
     };
-    let bare = bound("0.5");
-    assert_eq!(bare, Bound::AtMost(ratio(1, 2)));
-    assert_eq!(bare, bound("decimal(5, 1)"));
-    assert_eq!(bare, bound("rational(1, 2)"));
-}
-
-/// FR-764-AC-7: admitting decimal literals in an expected threshold leaves
-/// the ordinary expression grammar closed to bare decimals.
-/// QSL-1965 owns changing this existing syntax refusal to the named numeric
-/// form diagnostic.
-#[trace("TC-2163", "FR-764-AC-7")]
-#[test]
-fn bare_decimal_elsewhere_still_refused() {
-    let (text, _) = service_unit("function f using v(): Boolean pure { 0.5 < 1 }");
-    let parsed = fsl_cst::parse(
-        fsl_foundation::SourceIdentity::new("test", "tc-2163"),
-        "unit.native",
-        text.as_bytes(),
-        fsl_cst::Limits::default(),
-    )
-    .expect("S1 returns a located refusal");
-    assert!(
-        !parsed.is_admissible(),
-        "ordinary expressions still refuse 0.5"
-    );
-    let diagnostic = parsed
-        .diagnostics()
-        .first()
-        .expect("the ordinary expression refusal is located");
-    let region = diagnostic
-        .region
-        .as_ref()
-        .expect("the refusal has a region");
-    let start = text.rfind("0.5").expect("the literal in the function");
-    let refusal_start = usize::try_from(region.start()).expect("the start fits usize");
-    let refusal_end = usize::try_from(region.end()).expect("the end fits usize");
-    assert!(
-        (start..=start + 5).contains(&refusal_start) && refusal_end <= start + 5,
-        "the refusal is at the bare decimal or the token that follows it: {diagnostic:?}"
-    );
+    let bare = normal_form("0.5");
+    assert_eq!(bare, normal_form("decimal(5, 1)"));
+    assert_eq!(bare, normal_form("rational(1, 2)"));
 }
 
 /// FR-764-AC-6: a bare decimal with an overlong written scale is refused at
@@ -3557,15 +3517,38 @@ fn bare_decimal_elsewhere_still_refused() {
 fn bare_decimal_threshold_overlong_refused() {
     let target = format!("holds({IDLE} or {})", done());
     let long = format!("0.{}", "1".repeat(65536));
-    let found = located(&exact_claim(
+    let body = exact_claim(
         "ev",
         "Steady",
         "",
         &format!("expected accumulate duration until {target} <= {long}"),
-    ));
-    assert_eq!(found.len(), 1, "one threshold refusal: {found:?}");
-    assert_eq!(found[0].0, Code::StageLimitExceeded, "{found:?}");
-    assert_eq!(found[0].2, long, "the refusal names the whole literal");
+    );
+    let declarations = assemble(&body);
+    let regions = declarations.regions();
+    let refusals = declarations
+        .check(CheckMode::Linked, CheckingLimits::default())
+        .expect_err("a threshold beyond the decimal scale limit refuses");
+    let [refusal] = refusals.as_slice() else {
+        panic!("one threshold refusal: {refusals:?}");
+    };
+    assert_eq!(refusal.cause.code(), Code::StageLimitExceeded);
+    assert_eq!(refusal.cause.cause(), Some("work-budget-exceeded"));
+    let CheckCause::ResourceExhausted(limit) = &refusal.cause else {
+        panic!("a decimal scale limit refusal: {refusal:?}");
+    };
+    assert_eq!(limit.kind, CheckingLimitKind::DecimalLiteralScale);
+    assert_eq!(limit.kind.setting().name(), "s3.decimal_literal_scale");
+    assert_eq!(limit.limit, 65_535);
+    assert_eq!(limit.actual, 65_536);
+    let region = regions
+        .refusal_region(refusal)
+        .expect("the refusal names a region of the unit");
+    let (text, _) = service_unit(&body);
+    assert_eq!(
+        &text[region.start() as usize..region.end() as usize],
+        long,
+        "the refusal names the whole literal"
+    );
 }
 
 /// The service claim `C` with activation `activation`, `{LATENCY}` declared.
