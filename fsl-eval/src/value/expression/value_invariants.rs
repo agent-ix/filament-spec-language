@@ -16,7 +16,9 @@ use filament_semantic_value::declaration::{CompositeShape, TypeEnvironment};
 use fsl_package::CheckedPackage;
 use fsl_semantics::check::{CheckedTypeInvariant, TypeSlot};
 use fsl_semantics::model::object_environment::ObjectEnvironment;
-use fsl_semantics::model::observation::{AdmittedObservations, Observation, SelfKind};
+use fsl_semantics::model::observation::{
+    AdmittedObservations, Observation, SelfKind, ValueInvariantObservations,
+};
 
 use super::evaluate::Machine;
 use super::s6a::separation::{
@@ -192,6 +194,79 @@ fn collect<'a>(
     Ok(pending)
 }
 
+/// FR-652's current-snapshot `ValueInvariants` selection: the reachable
+/// values of one admitted current snapshot, with no clause or invocation.
+fn collect_current<'a>(
+    types: &TypeEnvironment,
+    current: &'a Observation,
+) -> Result<Vec<Pending<'a>>, CallFailure> {
+    let mut pending = Vec::new();
+    let own = observation_identity(&current.identity);
+    for reference in current.environment.references() {
+        let root = RuntimeValuePath {
+            observation: own.clone(),
+            subject: ValuePathSubject::Object(reference.clone()),
+            steps: Vec::new(),
+        };
+        push_object(types, &mut pending, root, reference, &current.environment)?;
+    }
+    Ok(pending)
+}
+
+/// FR-652's current snapshot plus the explicitly selected invocation's
+/// reachable parameter, result, and state-machine receiver values.
+fn collect_selection<'a>(
+    types: &TypeEnvironment,
+    observations: &'a ValueInvariantObservations,
+) -> Result<Vec<Pending<'a>>, CallFailure> {
+    let mut pending = collect_current(types, &observations.current)?;
+    let (Some(pre), Some(post), Some(invocation)) = (
+        observations.pre.as_ref(),
+        observations.post.as_ref(),
+        observations.invocation.as_ref().map(observation_identity),
+    ) else {
+        return Ok(pending);
+    };
+    let binding = |observation: &Observation, binding: InvocationBinding| RuntimeValuePath {
+        observation: observation_identity(&observation.identity),
+        subject: ValuePathSubject::Invocation {
+            invocation: invocation.clone(),
+            binding,
+        },
+        steps: Vec::new(),
+    };
+    let mut walks = observations
+        .parameters
+        .iter()
+        .map(|(name, value)| Walk {
+            path: binding(pre, InvocationBinding::Parameter(name.clone())),
+            value: value.clone(),
+        })
+        .collect::<Vec<_>>();
+    if let Some(result) = &observations.result {
+        walks.push(Walk {
+            path: binding(post, InvocationBinding::Result),
+            value: result.clone(),
+        });
+    }
+    walk(types, &mut pending, walks)?;
+    if observations.self_kind == SelfKind::Context {
+        for (reference, side) in [
+            (observations.receiver_pre.as_ref(), pre),
+            (observations.receiver_post.as_ref(), post),
+        ] {
+            let Some(reference) = reference else { continue };
+            pending.push(Pending {
+                path: binding(side, InvocationBinding::Receiver),
+                value: Value::Reference(reference.clone()),
+                slot: TypeSlot::Object(reference.object_type().clone()),
+                environment: Some(&side.environment),
+            });
+        }
+    }
+    Ok(pending)
+}
+
 /// The object `reference` of `environment` as a value of its type, then each
 /// member of it walked.
 fn push_object<'a>(
@@ -325,10 +400,50 @@ pub(super) fn evaluate(
     observations: &AdmittedObservations,
     meter: &mut Meter,
 ) -> Result<ValueInvariantEvaluation, CallFailure> {
+    evaluate_values(
+        package,
+        collect(package.graph().scope().types(), observations)?,
+        meter,
+    )
+}
+
+/// FR-652: evaluate the values of an admitted current snapshot using the same
+/// FR-366 ordering and meter as `evaluate`.
+pub(crate) fn evaluate_current(
+    package: &CheckedPackage,
+    current: &Observation,
+    meter: &mut Meter,
+) -> Result<ValueInvariantEvaluation, CallFailure> {
+    evaluate_values(
+        package,
+        collect_current(package.graph().scope().types(), current)?,
+        meter,
+    )
+}
+
+/// FR-652: evaluate a no-clause current-snapshot selection, optionally
+/// including the invocation admitted alongside it.
+pub(crate) fn evaluate_selection(
+    package: &CheckedPackage,
+    observations: &ValueInvariantObservations,
+    meter: &mut Meter,
+) -> Result<ValueInvariantEvaluation, CallFailure> {
+    evaluate_values(
+        package,
+        collect_selection(package.graph().scope().types(), observations)?,
+        meter,
+    )
+}
+
+fn evaluate_values(
+    package: &CheckedPackage,
+    values: Vec<Pending<'_>>,
+    meter: &mut Meter,
+) -> Result<ValueInvariantEvaluation, CallFailure> {
     let graph = package.graph();
     let invariants = graph.type_invariants();
     let mut tasks: Vec<(&CheckedTypeInvariant, Pending<'_>)> = Vec::new();
-    for value in collect(graph.scope().types(), observations)? {
+    for value in values {
         for invariant in invariants
             .iter()
             .filter(|candidate| candidate.applies_to(value.slot.clone()))

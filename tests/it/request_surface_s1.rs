@@ -186,7 +186,6 @@ fn run_refusal(directory: &Path, request: &Value) -> (u8, Value) {
 /// without the request's dependent files present.
 #[test]
 #[trace("TC-1747", "FR-664-AC-1")]
-#[ignore = "QSL-1987: the current-selection `parameters` refusal is not pinned yet"]
 fn a_current_selection_with_parameters_refuses_naming_parameters() {
     for parameters in [json!({}), json!({"target": {"reference": "child"}})] {
         for with_files in [true, false] {
@@ -294,7 +293,6 @@ fn handoff_request(directory: &Path, handoff: Value) -> std::path::PathBuf {
 /// checked-package handoff directory beside the compile.
 #[test]
 #[trace("TC-1748", "FR-665-AC-1")]
-#[ignore = "QSL-2193: the compile request's `handoff` member is not implemented yet"]
 fn a_compile_handoff_member_writes_the_directory() {
     let directory = tempfile::tempdir().unwrap();
     let path = handoff_request(
@@ -312,29 +310,133 @@ fn a_compile_handoff_member_writes_the_directory() {
     let selection: Value =
         serde_json::from_slice(&std::fs::read(handoff.join("selection.json")).unwrap()).unwrap();
     assert_eq!(selection["format"], "filament.checked-handoff.selection/1");
+    assert_eq!(
+        selection["package"]["source_identity"],
+        json!({"authority": "agent-ix", "identity": "test:spine"})
+    );
+    assert_eq!(
+        std::fs::read(handoff.join(&selection["package"]["unit"].as_str().unwrap())).unwrap(),
+        std::fs::read(directory.path().join("program.native")).unwrap()
+    );
+    fsl_command::checked_handoff::compile(&handoff)
+        .expect("the handoff recompiles with its caller-selected source identity");
     for file in ["identities.json", "equality.json", "inventory.json"] {
         assert!(handoff.join(file).is_file(), "{file}");
     }
     assert!(!handoff.join("mutations").exists());
 }
 
-/// FR-665-AC-3 (TC-1748): a `handoff` member without `native_join` refuses
-/// `invalid-request` naming it and writes no directory.
+/// FR-665's existing destination refusal leaves every existing byte intact.
 #[test]
-#[trace("TC-1748", "FR-665-AC-3")]
-#[ignore = "QSL-2193: the compile request's `handoff` member is not implemented yet"]
-fn a_handoff_member_without_a_native_join_budget_refuses() {
+#[trace("TC-1748", "FR-665-AC-1")]
+fn a_compile_handoff_refuses_an_existing_destination_without_mutation() {
+    let directory = tempfile::tempdir().unwrap();
+    let handoff = directory.path().join("handoff");
+    std::fs::create_dir(&handoff).unwrap();
+    std::fs::write(handoff.join("sentinel"), b"keep me").unwrap();
+    let request = handoff_request(
+        directory.path(),
+        json!({"directory": "handoff", "package_name": "spine",
+            "native_join": {"work_units": 1_000_000, "storage": 1_000_000}}),
+    );
+    let mut request_wire: Value =
+        serde_json::from_slice(&std::fs::read(&request).unwrap()).unwrap();
+    request_wire["request"]["output"] = json!("package.json");
+    std::fs::write(&request, serde_json::to_vec(&request_wire).unwrap()).unwrap();
+
+    let (exit, value) = compile_refusal(&request);
+    assert_eq!(exit, 20, "{value}");
+    assert_eq!(value["code"], "invalid-request", "{value}");
+    assert_eq!(std::fs::read(handoff.join("sentinel")).unwrap(), b"keep me");
+    assert_eq!(std::fs::read_dir(&handoff).unwrap().count(), 1);
+    assert!(!directory.path().join("package.json").exists());
+}
+
+/// FR-665/FR-517: supplied execution points are checked against authored
+/// declarations and are never silently discarded by the handoff path.
+#[test]
+#[trace("TC-1748", "FR-665-AC-2")]
+fn handoff_execution_points_are_applied_during_compile() {
     let directory = tempfile::tempdir().unwrap();
     let path = handoff_request(
         directory.path(),
-        json!({"directory": "handoff", "package_name": "spine"}),
+        json!({"directory": "handoff", "package_name": "spine",
+            "native_join": {"work_units": 1_000_000, "storage": 1_000_000}}),
     );
-    let (exit, value) = compile_refusal(&path);
-    assert_eq!(exit, 20, "{value}");
-    assert_eq!(value["code"], "invalid-request", "{value}");
-    assert_eq!(value["stage"], "request", "{value}");
-    assert!(value.to_string().contains("native_join"), "{value}");
+    let mut request: Value = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+    request["request"]["handoff"]["execution_points"] = json!({
+        "MissingClause": {"kind": "pre", "operation": "set"}
+    });
+    std::fs::write(&path, serde_json::to_vec(&request).unwrap()).unwrap();
+    let error = fsl_command::command::compile(&path).expect_err("the unknown clause refuses");
+    let refusal = error.value().unwrap();
+    assert_eq!(error.category().exit_code(), 20, "{refusal}");
+    assert!(
+        refusal.to_string().contains("missing_declaration"),
+        "{refusal}"
+    );
+    assert!(refusal.to_string().contains("MissingClause"), "{refusal}");
     assert!(!directory.path().join("handoff").exists());
+}
+
+/// FR-665: malformed execution-point values refuse at request admission and
+/// leave the handoff destination absent.
+#[test]
+#[trace("TC-1748", "FR-665-AC-3")]
+fn malformed_handoff_execution_points_refuse_before_writing() {
+    let directory = tempfile::tempdir().unwrap();
+    let path = handoff_request(
+        directory.path(),
+        json!({"directory": "handoff", "package_name": "spine",
+            "native_join": {"work_units": 1_000_000, "storage": 1_000_000}}),
+    );
+    let mut request: Value = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+    request["request"]["handoff"]["execution_points"] = json!({
+        "ParentOrder": {"kind": "before-operation", "operation": "set"}
+    });
+    std::fs::write(&path, serde_json::to_vec(&request).unwrap()).unwrap();
+    let (exit, refusal) = compile_refusal(&path);
+    assert_eq!(exit, 20, "{refusal}");
+    assert_eq!(refusal["code"], "invalid-request", "{refusal}");
+    assert_eq!(refusal["stage"], "request", "{refusal}");
+    assert!(
+        refusal.to_string().contains("execution_points"),
+        "{refusal}"
+    );
+    assert!(!directory.path().join("handoff").exists());
+}
+
+/// FR-665-AC-3 (TC-1748): a missing native-join budget, invalid corpus name or
+/// unknown handoff member refuses at request admission and writes no directory.
+#[test]
+#[trace("TC-1748", "FR-665-AC-3")]
+fn invalid_handoff_members_refuse_before_writing() {
+    let cases = [
+        (
+            json!({"directory": "handoff", "package_name": "spine"}),
+            "native_join",
+        ),
+        (
+            json!({"directory": "handoff", "package_name": "spine", "corpus": "all",
+                "native_join": {"work_units": 1_000_000, "storage": 1_000_000}}),
+            "corpus",
+        ),
+        (
+            json!({"directory": "handoff", "package_name": "spine", "digest": "sha256",
+                "native_join": {"work_units": 1_000_000, "storage": 1_000_000}}),
+            "digest",
+        ),
+    ];
+    for (handoff, member) in cases {
+        let directory = tempfile::tempdir().unwrap();
+        let path = handoff_request(directory.path(), handoff);
+        let (exit, value) = compile_refusal(&path);
+        assert_eq!(exit, 20, "{member}: {value}");
+        assert_eq!(value["code"], "invalid-request", "{member}: {value}");
+        assert_eq!(value["stage"], "request", "{member}: {value}");
+        assert!(value.to_string().contains(member), "{member}: {value}");
+        assert!(!directory.path().join("handoff").exists());
+    }
 }
 
 /// `version` with `arguments`, through [`driver`].
@@ -707,30 +809,40 @@ fn snapshot_refusals_carry_a_document_locus() {
 /// refuse a `parameters` member before any file is read.
 #[test]
 #[trace("TC-1747", "FR-664-AC-2")]
-#[ignore = "QSL-1987: the context and value-invariants selections are not implemented yet"]
 fn context_and_value_invariant_selections_refuse_parameters() {
-    for selection in [
-        json!({"context": {"name": "Consistent", "invocation": "i1", "side": "pre",
-            "parameters": {}}}),
-        json!({"value_invariants": {"snapshot": "s1", "parameters": {}}}),
-    ] {
-        let directory = tempfile::tempdir().unwrap();
-        let mut request = current_clause_request();
-        request["request"]["clause"]["selection"] = selection;
-        let (exit, value) = run_refusal(directory.path(), &request);
-        assert_eq!(exit, 20, "{value}");
-        assert_eq!(value["code"], "invalid-request", "{value}");
-        assert_eq!(value["stage"], "request", "{value}");
-        assert!(value.to_string().contains("parameters"), "{value}");
-        assert!(!value.to_string().contains("unknown variant"), "{value}");
-    }
+    let directory = tempfile::tempdir().unwrap();
+    let mut context_request = current_clause_request();
+    context_request["request"]["clause"]["selection"] = json!({
+        "context": {"name": "Consistent", "invocation": "i1", "side": "pre",
+            "parameters": {}}
+    });
+    let (exit, value) = run_refusal(directory.path(), &context_request);
+    assert_eq!(exit, 20, "{value}");
+    assert_eq!(value["code"], "invalid-request", "{value}");
+    assert_eq!(value["stage"], "request", "{value}");
+    assert!(value.to_string().contains("parameters"), "{value}");
+
+    let mut value_invariants_request = current_clause_request();
+    value_invariants_request["request"]
+        .as_object_mut()
+        .unwrap()
+        .remove("clause");
+    value_invariants_request["request"]["items"] = json!({
+        "observations": {"s1": "spine-snapshot.json"},
+        "selections": [{"value_invariants": {"snapshot": "s1", "parameters": {}}}]
+    });
+    let (exit, value) = run_refusal(directory.path(), &value_invariants_request);
+    assert_eq!(exit, 20, "{value}");
+    assert_eq!(value["code"], "invalid-request", "{value}");
+    assert_eq!(value["stage"], "request", "{value}");
+    assert!(value.to_string().contains("parameters"), "{value}");
+    assert!(!value.to_string().contains("unknown variant"), "{value}");
 }
 
 /// FR-665-AC-2, FSpec FR-301-AC-5 (TC-1748, FSpec-TC-1244): `inspect
 /// --handoff` verifies a written handoff and refuses an altered one.
 #[test]
 #[trace("TC-1748", "FR-665-AC-2", "FSpec-TC-1244", "FSpec-FR-301-AC-5")]
-#[ignore = "QSL-2193: the handoff verify command is not implemented yet"]
 fn inspect_handoff_verifies_and_refuses_an_altered_copy() {
     let directory = tempfile::tempdir().unwrap();
     let path = handoff_request(
@@ -740,23 +852,65 @@ fn inspect_handoff_verifies_and_refuses_an_altered_copy() {
     );
     fsl_command::command::compile(&path)
         .unwrap_or_else(|error| panic!("{}", error.value().unwrap()));
-    let verified = driver(
-        directory.path(),
-        &["inspect", "--handoff", "handoff", "--format", "json"],
+    let verified = fsl_command::command::inspect_handoff(&directory.path().join("handoff"));
+    let document: Value = serde_json::from_slice(&verified.to_bytes().unwrap()).unwrap();
+    assert_eq!(document["operation"], "inspect");
+    assert_eq!(document["category"], "success");
+
+    let selection_path = directory.path().join("handoff/selection.json");
+    let mut selection: Value =
+        serde_json::from_slice(&std::fs::read(&selection_path).unwrap()).unwrap();
+    let node_counts = selection["package"]["node_counts"]
+        .as_object_mut()
+        .expect("the selection has node counts");
+    let (form, count) = node_counts.iter_mut().next().expect("a counted node form");
+    let form = form.clone();
+    *count = (count.as_u64().unwrap() + 1).into();
+    std::fs::write(&selection_path, serde_json::to_vec(&selection).unwrap()).unwrap();
+    let mismatch_document =
+        fsl_command::command::inspect_handoff(&directory.path().join("handoff"));
+    let mismatch_wire: Value =
+        serde_json::from_slice(&mismatch_document.to_bytes().unwrap()).unwrap();
+    assert_eq!(mismatch_wire["format"], "filament-outcome/1");
+    assert_eq!(mismatch_wire["category"], "refusal");
+    let mismatch = fsl_command::checked_handoff::verify(&directory.path().join("handoff"))
+        .expect_err("an altered node count is refused");
+    assert!(
+        matches!(
+            mismatch,
+            fsl_command::checked_handoff::Error::SelectionMismatch(ref refusal)
+                if refusal.axis == fsl_command::checked_handoff::SelectionAxis::PackageNodes
+        ),
+        "{form}: {mismatch:?}"
     );
-    assert_eq!(verified.status.code(), Some(0), "{verified:?}");
-    assert_eq!(stdout_json(&verified)["operation"], "inspect");
 
     let package = directory.path().join("handoff/checked-package.json");
+    // Restore the valid sidecar so the byte mutation reaches the strict reader.
+    let mut selection: Value =
+        serde_json::from_slice(&std::fs::read(&selection_path).unwrap()).unwrap();
+    let count = selection["package"]["node_counts"][&form]
+        .as_u64()
+        .expect("the changed node count is present");
+    selection["package"]["node_counts"][&form] = (count - 1).into();
+    std::fs::write(&selection_path, serde_json::to_vec(&selection).unwrap()).unwrap();
     let mut bytes = std::fs::read(&package).unwrap();
     let last = bytes.len() - 2;
     bytes[last] ^= 1;
     std::fs::write(&package, bytes).unwrap();
-    let refused = driver(
-        directory.path(),
-        &["inspect", "--handoff", "handoff", "--format", "json"],
+    let refusal_document = fsl_command::command::inspect_handoff(&directory.path().join("handoff"));
+    let refusal_wire: Value =
+        serde_json::from_slice(&refusal_document.to_bytes().unwrap()).unwrap();
+    assert_eq!(refusal_wire["format"], "filament-outcome/1");
+    assert_eq!(refusal_wire["category"], "refusal");
+    let refusal = fsl_command::checked_handoff::verify(&directory.path().join("handoff"))
+        .expect_err("an altered package is refused");
+    assert!(
+        matches!(
+            refusal,
+            fsl_command::checked_handoff::Error::ReaderRefused(_)
+        ),
+        "{refusal:?}"
     );
-    assert_eq!(refused.status.code(), Some(20), "{refused:?}");
 }
 
 fn provider_config(directory: &Path, document: &Value) {

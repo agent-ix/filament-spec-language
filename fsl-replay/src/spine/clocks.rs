@@ -64,6 +64,13 @@ impl RequestClocks {
         self.members.get(name)
     }
 
+    /// The named clock configurations in request order.
+    pub fn iter(&self) -> impl Iterator<Item = (&str, &ClockConfiguration)> {
+        self.members
+            .iter()
+            .map(|(name, clock)| (name.as_str(), clock))
+    }
+
     /// The selections S3 reads before the checked graph exists: each
     /// `temporal` clause of `parsed` whose clock name has a timestamped-event
     /// or `timed` member, so S3 converts its `duration` windows to the

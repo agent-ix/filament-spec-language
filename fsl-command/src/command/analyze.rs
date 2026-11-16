@@ -198,6 +198,7 @@ fn read<'d>(
         libraries: request.libraries,
         clocks: Default::default(),
         output: None,
+        handoff: None,
     };
     Ok((
         AnalyzeInput {
@@ -325,7 +326,7 @@ fn run_input(
         intake,
         sources,
         false,
-        |checked, _, packages, libraries, _| {
+        |checked, _, _, packages, libraries, _, _, _, _| {
             let package = checked.package();
             let mut provision = SourceProvision::default();
             // FR-620: the request's units in request order, the program then

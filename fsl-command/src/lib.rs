@@ -7,7 +7,9 @@
 
 #![forbid(unsafe_code)]
 
+pub mod checked_handoff;
 pub mod command;
+pub mod emit_checked_v2;
 pub mod formal_source;
 pub mod replay_request;
 pub mod unique_json;

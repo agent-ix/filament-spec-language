@@ -479,11 +479,11 @@ pub use request::{
     StageLimitNameRefusal, StageLimits, StateEnvironment,
 };
 pub use result::{
-    read_bounded, CauseCodecError, DecidingElement, DisagreementCause, EvaluatedValue,
-    HybridTraceDisagreement, InputArmResult, InputSettlement, ObservedTemporalParity,
-    ObservedTemporalResult, ObservedTemporalSettlement, ReplayResult, SeparatingWitnessRecord,
-    SeparationReason, SeparationRefusal, TemporalDecisive, Verdict, WitnessArmResult, WitnessCheck,
-    WitnessFailure, WitnessSettlement,
+    read_bounded, runtime_value_path_json, CauseCodecError, DecidingElement, DisagreementCause,
+    EvaluatedValue, HybridTraceDisagreement, InputArmResult, InputSettlement,
+    ObservedTemporalParity, ObservedTemporalResult, ObservedTemporalSettlement, ReplayResult,
+    SeparatingWitnessRecord, SeparationReason, SeparationRefusal, TemporalDecisive, Verdict,
+    WitnessArmResult, WitnessCheck, WitnessFailure, WitnessSettlement,
 };
 pub use supplied_limits::{read_supplied_limits, SuppliedLimitsRefusal};
 // FSpec FR-323: the replay target a packet, envelope and request each carry.

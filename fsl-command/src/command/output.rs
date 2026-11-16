@@ -36,6 +36,11 @@ impl NativeResult {
         Self(document)
     }
 
+    /// The FR-651 result document for several independently settled items.
+    pub(super) fn items_document(document: Value) -> Self {
+        Self(document)
+    }
+
     /// Inspect the encoded observations without changing the admitted shape.
     pub fn as_value(&self) -> &Value {
         &self.0
@@ -172,6 +177,7 @@ pub(super) fn error(error: &RunError, artifact: bool) -> Result<Value, serde_jso
             },
             types::Details::None,
         ),
+        RunCause::ItemsFault => (types::Stage::Output, types::Details::None),
         RunCause::Spine(failure) => (
             types::Stage::Spine(failure.refusal.stage()),
             match clock_selection_refusal(&failure.refusal) {

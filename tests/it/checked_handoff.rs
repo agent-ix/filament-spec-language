@@ -12,12 +12,12 @@ use filament_contract_model::{
     CheckedPackageRefusalCode, CheckedPackageV2, ClockConfiguration, ClockExactNumber,
     ProtocolForm, TemporalForm,
 };
-use filament_spec_language::checked_handoff::{
+use fsl_command::checked_handoff::{
     compile, evidence, write, write_with, CheckedHandoffRequest, Corpus, Environment, Error,
     ErrorCode, Inventory, InventoryReadError, InventoryRow, RealEnvironment, Selection,
     SelectionAxis, SelectionRefusal,
 };
-use filament_spec_language::emit_checked_v2::{self, ClockSelection, Request};
+use fsl_command::emit_checked_v2::{self, ClockSelection, Request};
 use ix_trace_rs::trace;
 use serde_json::Value;
 
@@ -1287,55 +1287,40 @@ fn a_refusal_or_difference_writes_nothing() {
     assert_eq!(entries(fresh.path()), ["bad.native"]);
 }
 
-/// FR-517-AC-8: the module is behind `checked-handoff`, which names no
-/// dependency, and the module's sources use no dev-dependency.
+/// FR-665: the default fsl-command build owns the checked-package handoff.
 #[trace("FR-517-AC-8", "FR-042-AC-15", "TC-1312")]
 #[test]
-fn the_feature_adds_no_dependency() {
-    let manifest: toml_free::Manifest = toml_free::read("Cargo.toml");
-    assert_eq!(
-        manifest.feature_line("checked-handoff"),
-        Some("[]".to_owned())
-    );
-    let lock = std::fs::read_to_string("Cargo.lock").unwrap();
-    assert!(!lock.contains("checked-handoff"));
+fn command_owns_the_default_handoff_surface() {
+    let manifest = std::fs::read_to_string("Cargo.toml").unwrap();
+    assert!(manifest.contains("checked-handoff = []"));
     for file in [
         "src/checked_handoff.rs",
         "src/checked_handoff/corpus.rs",
         "src/checked_handoff/selection.rs",
         "src/checked_handoff/tree.rs",
+        "src/emit_checked_v2.rs",
     ] {
-        let text = std::fs::read_to_string(file).unwrap();
-        for dev in [
-            "tempfile",
-            "jsonschema",
-            "serde_json_canonicalizer",
-            "syn::",
-            "xtask",
-        ] {
-            assert!(!text.contains(dev), "{file} names dev-dependency {dev}");
-        }
+        assert!(
+            !std::path::Path::new(file).exists(),
+            "{file} remains in root"
+        );
     }
     let lib = std::fs::read_to_string("src/lib.rs").unwrap();
-    assert!(lib.contains("#[cfg(feature = \"checked-handoff\")]\npub mod checked_handoff;"));
-}
-
-/// A minimal view of `Cargo.toml`'s `[features]` lines.
-mod toml_free {
-    pub struct Manifest(String);
-
-    pub fn read(path: &str) -> Manifest {
-        Manifest(std::fs::read_to_string(path).unwrap())
-    }
-
-    impl Manifest {
-        pub fn feature_line(&self, name: &str) -> Option<String> {
-            let features = self.0.split("[features]").nth(1)?.split("\n[").next()?;
-            features
-                .lines()
-                .find_map(|line| line.strip_prefix(&format!("{name} = ")))
-                .map(|rest| rest.trim().to_owned())
-        }
+    assert!(!lib.contains("checked_handoff"));
+    assert!(!lib.contains("emit_checked_v2"));
+    let command_manifest = std::fs::read_to_string("fsl-command/Cargo.toml").unwrap();
+    assert!(command_manifest.contains("fsl-package ="));
+    let command_lib = std::fs::read_to_string("fsl-command/src/lib.rs").unwrap();
+    assert!(command_lib.contains("pub mod checked_handoff;"));
+    assert!(command_lib.contains("pub mod emit_checked_v2;"));
+    for file in [
+        "fsl-command/src/checked_handoff.rs",
+        "fsl-command/src/checked_handoff/corpus.rs",
+        "fsl-command/src/checked_handoff/selection.rs",
+        "fsl-command/src/checked_handoff/tree.rs",
+        "fsl-command/src/emit_checked_v2.rs",
+    ] {
+        assert!(std::path::Path::new(file).is_file(), "{file} is missing");
     }
 }
 
@@ -1355,10 +1340,10 @@ fn a_changed_clock_value_is_admitted_by_the_reader_and_refused_by_the_sidecar() 
     let refusal = selection.check(&changed).unwrap_err();
     assert_eq!(refusal.axis, SelectionAxis::ClockSequenceAuthority);
     for file in [
-        "src/checked_handoff.rs",
-        "src/checked_handoff/corpus.rs",
-        "src/checked_handoff/selection.rs",
-        "src/checked_handoff/tree.rs",
+        "fsl-command/src/checked_handoff.rs",
+        "fsl-command/src/checked_handoff/corpus.rs",
+        "fsl-command/src/checked_handoff/selection.rs",
+        "fsl-command/src/checked_handoff/tree.rs",
     ] {
         let text = std::fs::read_to_string(file).unwrap();
         assert!(!text.contains("CheckedPackageV2::read"), "{file}");
@@ -1963,7 +1948,7 @@ fn files_and_cases_correspond_one_to_one() {
         sorted.dedup();
         assert_eq!(sorted.len(), named.len());
     }
-    let module = std::fs::read_to_string("src/checked_handoff.rs").unwrap();
+    let module = std::fs::read_to_string("fsl-command/src/checked_handoff.rs").unwrap();
     let constants: Vec<&str> = module
         .lines()
         .filter(|line| line.starts_with("pub const"))
@@ -2214,7 +2199,7 @@ fn the_clause_name_has_no_package_side_value() {
 /// Selection::read refuses bytes that are not a sidecar of this format.
 #[test]
 fn a_sidecar_that_does_not_parse_is_refused() {
-    use filament_spec_language::checked_handoff::SelectionReadError as E;
+    use fsl_command::checked_handoff::SelectionReadError as E;
     assert!(matches!(Selection::read(b"not json"), Err(E::Malformed(_))));
     assert!(matches!(Selection::read(b"{}"), Err(E::Malformed(_))));
     let (mut sidecar, _package) = sidecar_fixture();

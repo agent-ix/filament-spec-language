@@ -35,6 +35,13 @@ use fsl_foundation::source::provenance::SourceRegion;
 pub use wire::CauseCodecError;
 pub(crate) use wire::{validate_state_element, DecisiveWire, ProtocolWitnessWire, RecordWire};
 
+/// Serialize FR-207's canonical runtime value path for command result
+/// adapters that emit FR-366 value-invariant items.
+pub fn runtime_value_path_json(path: &RuntimeValuePath) -> serde_json::Value {
+    serde_json::to_value(wire::PathWire::of(path))
+        .expect("runtime value path wire form is serializable")
+}
+
 /// The verdict a proved or replayed outcome settles to, taken from the
 /// FSpec outcome-to-verdict map fixed per ADR-013 O-16 category (QC-8). A
 /// newtype over the category, not a bare alias: FR-072 says the verdict
