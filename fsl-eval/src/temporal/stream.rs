@@ -841,6 +841,89 @@ impl ClauseStream {
     }
 }
 
+/// The part of a stream that changes from one position to the next, in its
+/// state form. A stop's records are not written: the caller holds the
+/// position that stopped and reads it again ([`ClauseStream::restore_stop`]).
+#[derive(Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+struct Carried {
+    cells: Vec<Res>,
+    carries: Vec<Carry>,
+    len: u64,
+    opens: Vec<Open>,
+    violated: Option<u64>,
+    unknown: bool,
+    stopped: Option<u64>,
+    failed: bool,
+}
+
+impl ClauseStream {
+    /// The stream's state form, read back by [`Self::from_state`]; `None`
+    /// for a stream whose records the state form does not carry (a data
+    /// shortfall or a read that ended it).
+    pub fn to_state(&self) -> Option<serde_json::Value> {
+        if self.insufficient.is_some()
+            || matches!(self.ended, Some(Ended::WindowLimit(_) | Ended::Window(_)))
+        {
+            return None;
+        }
+        serde_json::to_value(Carried {
+            cells: self.cells.clone(),
+            carries: self.carries.clone(),
+            len: self.len,
+            opens: self.opens.clone(),
+            violated: self.violated,
+            unknown: self.unknown,
+            stopped: self.stopped,
+            failed: self.ended.is_some(),
+        })
+        .ok()
+    }
+
+    /// The stream of `clause` [`Self::to_state`] wrote as `state`; `None` for
+    /// a state that is not a state form of this clause's stream.
+    pub fn from_state(
+        clause: &CheckedTemporalClause,
+        state: &serde_json::Value,
+        meter: &mut Meter,
+    ) -> Option<Self> {
+        let carried: Carried = serde_json::from_value(state.clone()).ok()?;
+        let mut stream = Self::open(clause, meter).ok()?.ok()?;
+        if carried.cells.len() != stream.cells.len()
+            || carried.carries.len() != stream.carries.len()
+        {
+            return None;
+        }
+        stream.cells = carried.cells;
+        stream.carries = carried.carries;
+        stream.len = carried.len;
+        stream.opens = carried.opens;
+        stream.violated = carried.violated;
+        stream.unknown = carried.unknown;
+        stream.stopped = carried.stopped;
+        if carried.failed {
+            stream.ended = Some(Ended::Fault(fault("stream-read-failed")));
+        }
+        Some(stream)
+    }
+
+    /// The position at which the reading stopped, when it did.
+    pub fn stopped(&self) -> Option<u64> {
+        self.stopped
+    }
+
+    /// Restore what the stopped position's reading recorded, read again by
+    /// the caller: its undefined reading or the condition refused there.
+    pub fn restore_stop(
+        &mut self,
+        undefined: Option<UndefinedEvaluation>,
+        refused: Option<TemporalPosition>,
+    ) {
+        self.undefined = undefined;
+        self.refused = refused;
+    }
+}
+
 /// The value of `res` where every node reads its stationary `values`.
 fn evaluate(res: &Res, plan: &Plan, values: &[Tri]) -> Result<Tri, Stop> {
     Ok(match res {

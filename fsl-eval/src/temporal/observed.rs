@@ -778,6 +778,108 @@ impl fsl_semantics::check::StatePredicate for Capture<'_> {
     }
 }
 
+/// FR-820: what reading one record sample found besides its letter: the
+/// condition stop and the first undefined reading there, at the sample's
+/// position in the trace.
+#[derive(Debug, Default)]
+pub struct SampleStop {
+    /// The condition stop the reading met.
+    pub stopped: Option<HoldsStop>,
+    /// The first undefined reading.
+    pub undefined: Option<FirstUndefined>,
+}
+
+impl SampleStop {
+    /// Whether the reading met no stop and no undefined reading.
+    pub fn is_empty(&self) -> bool {
+        self.stopped.is_none() && self.undefined.is_none()
+    }
+
+    fn of(letters: ObservedLetters<'_>, index: u64) -> Self {
+        let at = TemporalPosition::new(index);
+        Self {
+            stopped: letters.stopped.map(|stop| match stop {
+                HoldsStop::Refused { evaluation, .. } => HoldsStop::Refused { at, evaluation },
+                failed @ HoldsStop::Failed(_) => failed,
+            }),
+            undefined: letters.undefined.map(|first| FirstUndefined {
+                position: at,
+                ..first
+            }),
+        }
+    }
+}
+
+/// FR-820: read the record sample `sample` as the next position of `stream`,
+/// the streaming form of [`evaluate_sampled`] over a `Finite` trace.
+///
+/// # Errors
+///
+/// [`StreamStop`](super::StreamStop) when `meter` runs out; the stream is
+/// unchanged.
+pub fn push_sample(
+    package: &CheckedPackage,
+    clause: &TemporalClauseNode,
+    stream: &mut super::ClauseStream,
+    sample: &Value,
+    meter: &mut Meter,
+) -> Result<SampleStop, super::StreamStop> {
+    let index = stream.len();
+    let mut letters = ObservedLetters::over(
+        package,
+        clause,
+        ObservedPositions::Samples(std::slice::from_ref(sample)),
+        TemporalTrace::Finite { len: 1 },
+    );
+    stream.push(
+        clause.clause(),
+        &mut letters,
+        TemporalPosition::new(0),
+        meter,
+    )?;
+    Ok(SampleStop::of(letters, index))
+}
+
+/// FR-820: read the record sample `sample` at position `index` again for
+/// the stop it meets, as [`push_sample`] read it.
+pub fn read_sample_stop(
+    package: &CheckedPackage,
+    clause: &TemporalClauseNode,
+    sample: &Value,
+    index: u64,
+    meter: &mut Meter,
+) -> SampleStop {
+    let mut letters = ObservedLetters::over(
+        package,
+        clause,
+        ObservedPositions::Samples(std::slice::from_ref(sample)),
+        TemporalTrace::Finite { len: 1 },
+    );
+    let checked = clause.clause();
+    let plan = match super::plan::Plan::new(checked.formula()) {
+        Ok(plan) => plan,
+        Err(_) => return SampleStop::default(),
+    };
+    let reader = super::engine::PositionReader {
+        formula: checked.formula(),
+        atoms: &plan.atoms,
+        guarded: matches!(
+            checked.activation(),
+            fsl_semantics::check::Activation::Each { guarded: true }
+        ),
+        captured: checked.capture_site(),
+    };
+    // The reading only recovers what the letters noted; its letter was read
+    // when the sample was pushed.
+    let _ = reader.read(
+        &mut letters,
+        TemporalPosition::new(0),
+        TemporalPosition::new(index),
+        meter,
+    );
+    SampleStop::of(letters, index)
+}
+
 #[cfg(test)]
 mod tests {
     use filament_exact::{CheckedInvariantCause, Refusal};

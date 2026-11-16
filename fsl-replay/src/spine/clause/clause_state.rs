@@ -24,10 +24,11 @@ use std::sync::Arc;
 use filament_exact::{Cancel, CancelCause, Meter, Value, ValueType};
 use filament_semantic_value::catalog::InternalFault;
 use fsl_eval::temporal::{
-    read_sample_letter, InsufficientData, LetterTape, TapeEntry, TapeLetter, TapeReading,
+    push_sample, read_sample_letter, read_sample_stop, ClauseStream, InsufficientData, LetterTape,
+    ObservedRun, StreamStop, TapeEntry, TapeLetter, TapeReading, TemporalOutcome,
 };
 use fsl_foundation::source::Source;
-use fsl_semantics::check::{AggregateWindow, TemporalClauseNode, TemporalProfile};
+use fsl_semantics::check::{AggregateWindow, FormulaNode, TemporalClauseNode, TemporalProfile};
 use fsl_semantics::model::intake::PackageInput;
 use fsl_semantics::model::observation::{
     admit_record_sample, DocumentProvision, DocumentRef, ObservationLimits,
@@ -39,9 +40,9 @@ use super::progress::{
     ProgressAssertion, ProgressClosure, ProgressCompleteness, ProgressLedger, ProgressLowerBoundary,
 };
 use super::temporal::{
-    clause_trace_binding, run_package_temporal_over, PackageTemporalRequest, TapeInput,
-    TimestampedCover, TimestampedObservation, TimestampedOrderKey, TimestampedWindow, TraceBinding,
-    TraceInput,
+    clause_trace_binding, run_package_temporal_over, streamed_sample_report,
+    PackageTemporalRequest, TapeInput, TimestampedCover, TimestampedObservation,
+    TimestampedOrderKey, TimestampedWindow, TraceBinding, TraceInput,
 };
 use super::trace_subject::{read_subject_letter, SubjectSamples};
 use super::{
@@ -167,6 +168,9 @@ enum Reading {
     Subject,
     /// FR-330's observed letters over record samples.
     Observed,
+    /// FR-820's streaming evaluation of an infinite-trace clause over a
+    /// `Finite` trace of record samples.
+    Streamed,
     /// Every position held by value.
     Values,
 }
@@ -176,6 +180,7 @@ impl Reading {
         match self {
             Self::Subject => "subject",
             Self::Observed => "observed",
+            Self::Streamed => "streamed",
             Self::Values => "values",
         }
     }
@@ -210,6 +215,13 @@ pub struct ClauseState<'a> {
     report: Arc<ClauseRunReport>,
     /// The positions seen and the progress the latest report read.
     evaluated: Option<(usize, Option<ProgressAssertion>)>,
+    /// The carried evaluation of a streamed reading.
+    stream: Option<ClauseStream>,
+    /// The position at which a streamed reading stopped, held by value so
+    /// its stop is read again for each report.
+    stop: Option<(u64, Value)>,
+    /// The work limit a streamed reading reached, which ends its evaluation.
+    exhausted: Option<filament_exact::Incomplete>,
 }
 
 /// The `pending` report of a clause no evaluation has read yet.
@@ -271,14 +283,45 @@ impl<'a> ClauseState<'a> {
         }
         let sampled =
             request.over.is_none() && matches!(clause.clause().over().1, ValueType::Composite(_));
+        let aggregates = clause
+            .clause()
+            .formula()
+            .nodes()
+            .iter()
+            .any(|node| matches!(node, FormulaNode::Aggregate { .. }));
         let reading = match (sampled, request.kind, clause.clause().profile()) {
             (false, ..) | (true, ClauseTraceKind::Timestamped, _) => Reading::Values,
             (true, ClauseTraceKind::Finite, TemporalProfile::EventPositionFalseExtension) => {
                 Reading::Subject
             }
+            // FR-330 refuses a window aggregate and a ledger on this route
+            // before it evaluates; those runs keep the batch reading.
+            (true, ClauseTraceKind::Finite, TemporalProfile::InfiniteTrace)
+                if !aggregates && request.ledger.is_none() =>
+            {
+                Reading::Streamed
+            }
             (true, ..) => Reading::Observed,
         };
+        let mut exhausted = None;
+        let stream = match reading {
+            Reading::Streamed => {
+                let mut meter = Meter::new(request.limits.accounting);
+                match ClauseStream::open(clause.clause(), &mut meter) {
+                    Ok(Ok(stream)) => Some(stream),
+                    Ok(Err(StreamStop::Incomplete(incomplete))) => {
+                        exhausted = Some(incomplete);
+                        None
+                    }
+                    Err(_) => return Err(fault("infinite-trace-clause-streams")),
+                }
+            }
+            Reading::Subject | Reading::Observed | Reading::Values => None,
+        };
         Ok(Self {
+            stream,
+            stop: None,
+            exhausted,
             package,
             node: clause,
             open: request.clone(),
@@ -326,6 +369,9 @@ impl<'a> ClauseState<'a> {
         cancel: &Cancel,
     ) -> Result<Advance, ClauseRefusal> {
         cancelled(cancel)?;
+        if self.reading == Reading::Streamed {
+            return self.advance_streamed(position, cancel);
+        }
         let index = u64::try_from(self.seen.len()).map_err(|_| fault("position-in-u64"))?;
         let held_values = self.values.clone();
         let held_pins = self.pinned.clone();
@@ -365,12 +411,115 @@ impl<'a> ClauseState<'a> {
         }
     }
 
+    /// FR-820: advance a streamed reading by `position`. The sample is read
+    /// once into the stream, which keeps no position by value; only a
+    /// position whose reading stopped is held, so each report reads its stop
+    /// again.
+    fn advance_streamed(
+        &mut self,
+        position: AdmittedPosition<'_>,
+        cancel: &Cancel,
+    ) -> Result<Advance, ClauseRefusal> {
+        let index = u64::try_from(self.seen.len()).map_err(|_| fault("position-in-u64"))?;
+        let AdmittedValue::Sample(sample) = position.value else {
+            return Err(fault("streamed-position-is-a-sample"));
+        };
+        let mut meter = Meter::new(self.open.limits.accounting).with_cancel(cancel.clone());
+        let mut stream = self.stream.clone();
+        let mut exhausted = self.exhausted.clone();
+        let mut stop = self.stop.clone();
+        if let (Some(carried), None) = (stream.as_mut(), exhausted.as_ref()) {
+            match push_sample(self.package, self.node, carried, &sample, &mut meter) {
+                Ok(read) => {
+                    if !read.is_empty() && stop.is_none() {
+                        stop = Some((index, sample));
+                    }
+                }
+                Err(StreamStop::Incomplete(incomplete)) => {
+                    cancelled(cancel)?;
+                    exhausted = Some(incomplete);
+                }
+            }
+        }
+        self.seen.push(Seen {
+            reference: position.reference,
+            stamp: position.stamp,
+            order_key: position.order_key,
+        });
+        let report = self.streamed_report(
+            stream.as_ref(),
+            stop.as_ref(),
+            exhausted.as_ref(),
+            &mut meter,
+        );
+        if let Err(refusal) = cancelled(cancel) {
+            self.seen.pop();
+            return Err(refusal);
+        }
+        let report = Arc::new(report);
+        self.stream = stream;
+        self.stop = stop;
+        self.exhausted = exhausted;
+        self.report = Arc::clone(&report);
+        self.evaluated = Some((self.seen.len(), None));
+        let decided = matches!(
+            report.disposition,
+            ClauseDisposition::Temporal(
+                TemporalVerdict::Violated { .. } | TemporalVerdict::Undefined { .. }
+            )
+        )
+        .then(|| Arc::clone(&report));
+        Ok(Advance { report, decided })
+    }
+
+    /// FR-330's report over the positions seen, from the stream's outcome.
+    fn streamed_report(
+        &self,
+        stream: Option<&ClauseStream>,
+        stop: Option<&(u64, Value)>,
+        exhausted: Option<&filament_exact::Incomplete>,
+        meter: &mut Meter,
+    ) -> ClauseRunReport {
+        let result = match (exhausted, stream) {
+            (Some(incomplete), _) => Ok(TemporalOutcome::Incomplete(incomplete.clone())),
+            (None, Some(stream)) => stream.outcome(meter),
+            (None, None) => Err(fsl_eval::temporal::TemporalRefusal::Fault(
+                InternalFault::new("clause-state", "streamed-state-has-its-stream"),
+            )),
+        };
+        let read = stop
+            .map(|(index, sample)| read_sample_stop(self.package, self.node, sample, *index, meter))
+            .unwrap_or_default();
+        let observed = ObservedRun {
+            result,
+            stopped: read.stopped,
+            undefined: read.undefined,
+            decisive: None,
+        };
+        let usage = ClauseRunUsage::from_meter(meter, Default::default());
+        streamed_sample_report(
+            self.package,
+            self.open.sources,
+            self.node,
+            observed,
+            usage,
+            || {
+                TraceInput::Finite(
+                    self.seen
+                        .iter()
+                        .map(|position| position.reference.clone())
+                        .collect(),
+                )
+            },
+        )
+    }
+
     /// Read the sample at `index` into its letter, and drop the samples no
     /// window still reads.
     fn read(&mut self, index: u64, sample: Value) {
         let mut meter = Meter::new(self.open.limits.accounting);
         match self.reading {
-            Reading::Values => {}
+            Reading::Values | Reading::Streamed => {}
             Reading::Observed => {
                 let entry = read_sample_letter(self.package, self.node, &sample, &mut meter);
                 self.tape.push(entry);
@@ -520,7 +669,7 @@ impl<'a> ClauseState<'a> {
         };
         let shorter;
         let tape = match self.reading {
-            Reading::Values => None,
+            Reading::Values | Reading::Streamed => None,
             Reading::Subject | Reading::Observed => {
                 let tape = if seen < self.tape.len() {
                     let mut prefix = LetterTape::new();
@@ -667,6 +816,7 @@ impl<'a> ClauseState<'a> {
         match self.reading {
             Reading::Values => u64::try_from(self.seen.len()).unwrap_or(u64::MAX),
             Reading::Observed => self.tape.held(),
+            Reading::Streamed => u64::from(self.stop.is_some()),
             Reading::Subject => u64::try_from(self.values.len()).unwrap_or(u64::MAX),
         }
     }
@@ -711,12 +861,20 @@ impl<'a> ClauseState<'a> {
             .iter()
             .map(|value| capture_json(value).ok_or_else(|| fault("capture-has-a-state-form")))
             .collect::<Result<Vec<_>, _>>()?;
+        let stream = match (&self.stream, self.exhausted.is_some()) {
+            (Some(stream), false) => stream
+                .to_state()
+                .ok_or_else(|| fault("stream-has-a-state-form"))?,
+            (None, _) | (Some(_), true) => Json::Null,
+        };
         let document = json!({
             "format": CLAUSE_STATE_FORMAT,
             "clause": self.node.clause().name(),
             "reading": self.reading.name(),
             "positions": positions,
             "values": self.values.keys().collect::<Vec<_>>(),
+            "stream": stream,
+            "stop": self.stop.as_ref().map(|(index, _)| *index),
             "pinned": self.pinned.iter().collect::<Vec<_>>(),
             "captures": captures,
             "progress": self.progress.map(assertion_json),
@@ -747,8 +905,10 @@ impl<'a> ClauseState<'a> {
         let mut state = Self::open(package, clause, request)?;
         let document: Json = serde_json::from_slice(bytes).map_err(|_| mismatch())?;
         let object = document.as_object().ok_or_else(mismatch)?;
-        const MEMBERS: [&str; 9] = [
+        const MEMBERS: [&str; 11] = [
             "format",
+            "stream",
+            "stop",
             "clause",
             "reading",
             "positions",
@@ -800,7 +960,7 @@ impl<'a> ClauseState<'a> {
                     .snapshots
                     .insert(reference.clone(), document.into_bytes());
             }
-            if state.reading != Reading::Values {
+            if matches!(state.reading, Reading::Subject | Reading::Observed) {
                 let entry = match &position["letter"] {
                     Json::Null => TapeEntry::Held(admit(&reference)?),
                     letter => TapeEntry::Read(letter_of(letter).ok_or_else(mismatch)?),
@@ -840,6 +1000,43 @@ impl<'a> ClauseState<'a> {
             Json::Null => None,
             value => Some(assertion_of(value).ok_or_else(mismatch)?),
         };
+        if state.reading == Reading::Streamed {
+            let mut meter = Meter::new(request.limits.accounting).with_cancel(cancel.clone());
+            let mut stream =
+                ClauseStream::from_state(clause.clause(), &object["stream"], &mut meter)
+                    .ok_or_else(mismatch)?;
+            if let Some(index) = object["stop"].as_u64() {
+                let position = state
+                    .seen
+                    .get(usize::try_from(index).map_err(|_| mismatch())?)
+                    .ok_or_else(mismatch)?;
+                let sample = admit(&position.reference)?;
+                let read = read_sample_stop(package, clause, &sample, index, &mut meter);
+                let refused = match &read.stopped {
+                    Some(fsl_eval::temporal::HoldsStop::Refused { at, .. }) => Some(*at),
+                    _ => None,
+                };
+                stream.restore_stop(
+                    read.undefined
+                        .map(|first| fsl_eval::temporal::UndefinedEvaluation {
+                            at: first.position,
+                            cause: first.cause,
+                        }),
+                    refused,
+                );
+                state.stop = Some((index, sample));
+            }
+            cancelled(cancel)?;
+            state.report = Arc::new(state.streamed_report(
+                Some(&stream),
+                state.stop.as_ref(),
+                None,
+                &mut meter,
+            ));
+            state.stream = Some(stream);
+            state.evaluated = Some((state.seen.len(), None));
+            return Ok(state);
+        }
         if let Json::Object(evaluated) = &object["evaluated"] {
             let seen = evaluated
                 .get("seen")

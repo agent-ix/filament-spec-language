@@ -761,6 +761,59 @@ pub(crate) fn run_package_temporal_over(
     )
 }
 
+/// FR-820: FR-330's report of the sampled clause `node` over a `Finite` trace
+/// of `len` positions, from `observed`, the run a carried stream reached in
+/// place of the batch evaluation, and `usage`, the work it charged. `trace`
+/// builds the trace's positions, read only for a counterexample.
+pub(crate) fn streamed_sample_report(
+    package: &fsl_package::CheckedPackage,
+    sources: &[Source],
+    node: &fsl_semantics::check::TemporalClauseNode,
+    observed: fsl_eval::temporal::ObservedRun,
+    usage: ClauseRunUsage,
+    trace: impl FnOnce() -> TraceInput,
+) -> ClauseRunReport {
+    let stopped = match (observed.stopped, &observed.result) {
+        (Some(HoldsStop::Refused { .. }), Ok(_)) => None,
+        (stopped, _) => stopped,
+    };
+    let (disposition, refused_at) =
+        observed_disposition(stopped, observed.result, package.graph(), sources);
+    let needs_positions = matches!(
+        &disposition,
+        ClauseDisposition::Temporal(
+            TemporalVerdict::Violated { .. } | TemporalVerdict::Undefined { .. }
+        )
+    );
+    let positions = if needs_positions {
+        trace()
+    } else {
+        TraceInput::Finite(Vec::new())
+    };
+    let (disposition, counterexample) =
+        with_counterexample(node, &positions, disposition, observed.undefined);
+    ClauseRunReport {
+        basis: match &disposition {
+            ClauseDisposition::Temporal(verdict) => verdict.basis(),
+            _ => SettlementBasis::Unavailable,
+        },
+        witness: None,
+        consequent_source_events: if disposition.truth().is_some() {
+            ConsequentSourceEvents::Refused(ConsequentEventRefusal::Temporal)
+        } else {
+            ConsequentSourceEvents::Unavailable
+        },
+        disposition,
+        usage,
+        ledger: None,
+        finite_window: None,
+        counterexample,
+        decisive: None,
+        authenticated_temporal_selection: None,
+        refused_at,
+    }
+}
+
 /// FR-330: run the temporal clause `name` over `trace`.
 pub(super) fn run_temporal(run: &CompiledRun<'_>, request: &TemporalRun<'_>) -> ClauseRunReport {
     let TemporalRun {

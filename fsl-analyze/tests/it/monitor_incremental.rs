@@ -1967,11 +1967,16 @@ fn a_long_stream_keeps_only_the_values_its_clauses_read() {
         };
         let carried: serde_json::Value = serde_json::from_str(text).expect("a clause state");
         assert_eq!(carried["values"], serde_json::json!([]));
+        assert!(carried["stop"].is_null(), "no position stopped its reading");
+        // A streamed clause carries its residuals, no letter per position; a
+        // taped one holds a letter for each.
+        let streamed = carried["reading"] == "streamed";
         assert!(carried["positions"]
             .as_array()
             .expect("positions")
             .iter()
-            .all(|position| !position["letter"].is_null()));
+            .all(|position| streamed || !position["letter"].is_null()));
+        assert!(!streamed || carried["stream"].is_object());
     }
 
     let mut session = world
