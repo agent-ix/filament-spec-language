@@ -172,8 +172,11 @@ span on refusal.
   source object type from sharing a model alias's name, so the two never
   compete). A source object type name SHALL make the declaration the time
   member of the source model, and the checked time source SHALL retain the
-  written name and the `NodeKey` of that type's `model`/`object_type` node,
-  which is the timed-model root's `model` reference. The written type names
+  written name and the `NodeKey` of that type's `model`/`object_type` node.
+  That node is the timed-model root's `model` reference when S4 emits the
+  source model's timed model; this binding waits on QC-30 (target emission)
+  and the FSpec FR-322 source-object section, and until then FR-569
+  "Interim behavior" applies at S4 while the S3 check holds. The written type names
   the root node only; the time source times every clock of the source model,
   whichever source object type declares it, directly or below a record,
   tuple, union, alias, `Option` or collection member (FR-569 "Member types").
@@ -189,10 +192,9 @@ span on refusal.
   the source model's time member never times `M`. A clock of the source
   model with no source time member, or with a `tick` one, therefore refuses
   `invalid_timed_model`/`clock-without-dense-time` whatever time member a
-  selected model has. Under a `tick` member the refusal is at the time
-  member. With no time member it is at the first clause reading the clock
-  or, when none reads it, at the span of the source member whose type holds
-  the clock, since the source model has no model alias span.
+  selected model has. Following the rule for a clock field (Clocks and
+  resets), the refusal is at the field's span: the span of the first source
+  member, in source order, whose type holds the clock.
 - Under `time tick O period p unit u`, the checker SHALL resolve `O` to an
   operation of the model (FR-103), refusing `missing_declaration`/
   `missing-name` otherwise, and SHALL require `p` to be a positive exact
@@ -1034,7 +1036,7 @@ declaration and `clock-type` for a `Clock` in a type position. An unqualified
 | FR-230-AC-62 | Over FR-230-AC-19's `m` and a snapshot whose `m` holds the keys `"b"` and `"a"`, the live instances of `Call.m.[key].x` are those of `"a"` and then `"b"`, each with initial clock 0 and guarded by `m` holding its key. The emitted `clock_place` of `m.x` is one node whose slot step's selector references the `Text` key type node and not the `Integer` type node. With a precondition establishing that `m` holds `"a"` and a frame naming `m`, `self.m["a"].x = 0 ms` resets the `"a"` instance only, and the `"b"` instance keeps its clock; an operation that does not write `m` resets neither, and the same reset under a frame that does not name `m` refuses `invalid_timed_model`/`clock-write` at the reset. `ref(self.m["a"].x)` refuses `ill_typed`/`type-mismatch` at the `ref`. With `Call` also holding a clock `x` and a field `r: Reference<Clock>`, `deref(self.r) >= 1 ms` checks to the convex parts over the instances of `Call.x` only. A snapshot `Reference<Clock>` whose identity names the `clock_place` of `m.x` with `<slots>` `0` refuses `invalid_runtime_input`/`invalid-value`. | Test |
 | FR-230-AC-63 | Under `time dense` with tuple `Slot(Clock, Integer)` and `union Phase { Armed(Clock), Idle }` as fields `s` and `p` of a domain package whose tuple position and case `payloadType` are `ix://filament/native/Clock`: the package is admitted; the checker lists the places `s.0` (unguarded) and `p.Armed` (guarded by `present(self.p.Armed)`); the guard `present(self.p.Armed) and value(self.p.Armed) >= 1 ms` checks to one convex part carrying that data predicate, and `value(self.p.Armed) >= 1 ms` alone refuses `undefined_expression`/`unproved-presence`; `self.p = Phase::Armed(0 ms)` records a reset of `p.Armed`; `self.s.0 >= 2 ms` checks as a guard on `s.0`; `p1 = p2` over two `Phase` operands refuses `invalid_timed_model`/`clock-read-outside-constraint`. | Test (TC-1860) |
 | FR-230-AC-64 | In a unit selecting `filament.temporal.complete/v1`, `function f using t(c: Clock): Boolean pure { true }` and `predicate near using t(c: Clock, b: Quantity<ms>): Boolean { c <= b }` each check with no refusal, and no refusal of the unit has cause `not-yet-implemented`; the same declarations in a unit selecting only `filament.value.complete/v1` each refuse `unsupported_construct`/`declaration-form` from the facet gate, naming the required temporal layer. | Test (TC-1905) |
-| FR-230-AC-65 | Source route. A unit declaring `dimension Time;`, `unit ms : Time = rational(1, 1);`, `record W { c: Clock; }`, `object O { w: W; d: Clock; operation step() modifies self.d; }`, `object P { n: Integer; }` and `time O dense unit ms;` checks with no refusal: the checked time source retains the name `O` and the `NodeKey` of `O`'s `model`/`object_type` node, the source model is a timed model whose clock places include `w.c` and `d`, and its timed-model root's `model` reference is that node. The same unit with `time Q dense unit ms;`, where `Q` names nothing, refuses `missing_declaration`/`missing-name` at `Q`; with a second member `time P dense unit ms;` it refuses `invalid_timed_model`/`duplicate-time-source` at the second, naming the first; with `time O tick O::step period 1 ms unit ms;` in place of the dense member it refuses `invalid_timed_model`/`clock-without-dense-time` at that member. With no source time member, and with the unit also selecting a model `M` that has `time M dense unit ms;`, it refuses `invalid_timed_model`/`clock-without-dense-time` at the span of the member `w`, and `M`'s time member times no clock of the source model. | Test (TC-2361) |
+| FR-230-AC-65 | Source route. A unit declaring `dimension Time;`, `unit ms : Time = rational(1, 1);`, `record W { c: Clock; }`, `object O { w: W; d: Clock; operation step() modifies self.d; }`, `object P { n: Integer; }` and `time O dense unit ms;` checks with no refusal: the checked time source retains the name `O` and the `NodeKey` of `O`'s `model`/`object_type` node, and the source model is a timed model whose clock places include `w.c` and `d`. Waits on QC-30 (target emission); FSpec FR-322 source-object section: the emitted timed-model root's `model` reference is that node. The same unit with `time Q dense unit ms;`, where `Q` names nothing, refuses `missing_declaration`/`missing-name` at `Q`; with a second member `time P dense unit ms;` it refuses `invalid_timed_model`/`duplicate-time-source` at the second, naming the first; with `time O tick O::step period 1 ms unit ms;` in place of the dense member it refuses `invalid_timed_model`/`clock-without-dense-time` at the span of the member `w`. With no source time member, and with the unit also selecting a model `M` that has `time M dense unit ms;`, it refuses `invalid_timed_model`/`clock-without-dense-time` at the span of the member `w`, and `M`'s time member times no clock of the source model. | Test (TC-2361) |
 
 ## Dependencies
 

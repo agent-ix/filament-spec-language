@@ -35,15 +35,16 @@ in identity or emission, and a `resolved_path` row spelled by the formatter.
    `Debug` text such as `Composite(` or `VariantId(`.
 5. In a test, replace the registry entry of `Point`'s key with `Spot`, and
    compare the spelling of `b`, the records, the `ValueType`s and the
-   conformance verdicts with step 1. Emit the checked package with each
-   registry and compare the bytes.
+   conformance verdicts with step 1. Waits on QC-30 (target emission): emit
+   the checked package with each registry and compare the bytes.
 6. Check the `Rush` override of FR-088-AC-13 and read the refusal message.
 7. Check a unit holding `record W { c: Clock; }`, `object O { w: W; }` and
    `time O dense unit ms;` over a source `Time` dimension with unit `ms`,
    and also `record R { w: W; }` with the member `r: R` on `O`. Read the
-   `member_type` of the `resolved_path` row of the step `field(w)` of the
-   place `w.c` and of the record field step `field(w)` of the place
-   `r.w.c`, and read the emitted package back through intake.
+   `member_type` of the in-process `PlaceRow` of the step `field(w)` of the
+   place `w.c` and of the record field step `field(w)` of the place `r.w.c`.
+   Waits on QC-30 (target emission): read the emitted package back through
+   intake.
 
 ## Expected Results
 
@@ -51,14 +52,14 @@ in identity or emission, and a `resolved_path` row spelled by the formatter.
   depth, and `a` without a slot prints `Decimal[0, 100; 2, 2; exact]`.
 - Step 3: no key is missing.
 - Step 4: only the identity form, the same in both runs.
-- Step 5: only the spelling of `b` changes, to `Spot`; the emitted package
-  bytes are equal.
+- Step 5: only the spelling of `b` changes, to `Spot`; once emission lands,
+  the emitted package bytes are equal.
 - Step 6: refused `ill_typed`/`variance-parameter`; the message names
   `Money` and `Decimal[0, 200; 2, 2; exact]` and holds no `resolved:` text.
 - Step 7: the row's `member_type` is the FR-322 identity rendering of
-  the type node `W`'s emitted binding names, equal to the record field's
+  the type node that `W`'s binding names, equal to the record field's
   row, with no `resolved:` or `Debug` text; it is the next row's
-  `declaring_type`, and intake joins every row.
+  `declaring_type`; once emission lands, intake joins every row.
 - Step 8: `resolved:Population[3]`, `resolved:Population` (each equal to
   `Display`) and `Option<resolved:Population[3]>`, naming no member type;
   no member type holds a `Population` node.

@@ -22,8 +22,10 @@ admitted, and a selected model's dense source accepted for a source clock.
 ## Test Procedure
 
 1. Check, on the source route, the FR-230-AC-65 unit with
-   `time O dense unit ms;`. Read the checked time source, the source
-   model's clock places and the timed-model root's `model` reference.
+   `time O dense unit ms;`. Read the checked time source and the source
+   model's clock places. Waits on QC-30 (target emission) and the FSpec
+   FR-322 source-object section: read the emitted timed-model root's
+   `model` reference.
 2. Check the unit with `time Q dense unit ms;` in place of the dense member.
 3. Check the unit with a second member `time P dense unit ms;`.
 4. Check the unit with `time O tick O::step period 1 ms unit ms;` in place
@@ -35,11 +37,11 @@ admitted, and a selected model's dense source accepted for a source clock.
 
 - Step 1: no refusal; the time source holds the name `O` and the `NodeKey`
   of `O`'s `model`/`object_type` node, the clock places include `w.c` and
-  `d`, and the root's `model` reference is that node.
+  `d`; once emission lands, the root's `model` reference is that node.
 - Step 2: `missing_declaration`/`missing-name` at `Q`.
 - Step 3: `invalid_timed_model`/`duplicate-time-source` at the second
   member, naming the first.
-- Step 4: `invalid_timed_model`/`clock-without-dense-time` at the tick
-  member.
+- Step 4: `invalid_timed_model`/`clock-without-dense-time` at the span of
+  the member `w`.
 - Step 5: `invalid_timed_model`/`clock-without-dense-time` at the span of
   the member `w`; `M`'s time member times no source model clock.
