@@ -80,7 +80,7 @@ impl BuildInventory {
 /// admits. All compiler-owned tables are read directly; no files, environment
 /// variables or clocks are consulted.
 pub fn build_inventory(registry: &fsl_route::Registry) -> BuildInventory {
-    use fsl_semantics::value::layer::HeaderLayer;
+    use fsl_semantics::value::HeaderLayer;
 
     let ids = fsl_semantics::library::bundle::CapabilityId::complete_inventory();
     let features: Vec<_> = ids.iter().map(|id| id.as_str().to_owned()).collect();
