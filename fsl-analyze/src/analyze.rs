@@ -37,6 +37,7 @@ mod derived_item;
 pub mod document;
 mod exact;
 mod items;
+mod reduction_item;
 mod request;
 mod timed_item;
 pub(crate) use request::analyze_bound;

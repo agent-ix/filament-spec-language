@@ -10,12 +10,12 @@ use serde_json::{json, Value};
 use crate::analyze_cli_support::{
     analyze, clause, counter_request_with, label, request_members, Workspace,
 };
-use crate::counter::document;
+use crate::counter::{document, symmetric_document};
 
 /// The Counter request over two interchangeable counters `a` and `b`.
 fn two_counters(ws: &Workspace, body: &str, items: Value) -> std::path::PathBuf {
     let path = counter_request_with(ws, body, request_members(Some(items)));
-    ws.write("model.json", &document(false));
+    ws.write("model.json", &symmetric_document());
     ws.write(
         "start.json",
         &crate::analyze_cli_support::counter_snapshot(&[("a", 0), ("b", 0)]),
@@ -36,7 +36,6 @@ fn selections() -> Vec<Value> {
 /// FR-623-AC-1: every selection gives the unreduced verdict.
 #[trace("TC-1583", "FR-623-AC-1")]
 #[test]
-#[ignore = "QSL-2124: reduction selection in analyze items is not implemented yet"]
 fn every_selection_keeps_the_verdict() {
     for (name, formula, expected) in [
         ("Holds", "always holds(c.value <= 3)", "proved"),
@@ -67,7 +66,6 @@ fn every_selection_keeps_the_verdict() {
 #[trace("TC-1583", "FR-623-AC-3")]
 #[trace("TC-1080", "FSpec-FR-520-AC-4")]
 #[test]
-#[ignore = "QSL-2124: reduction selection in analyze items is not implemented yet"]
 fn a_non_preserving_selection_refuses_its_item_only() {
     let body = "temporal Window using t0 over (c: M::Counter) clock \"model-steps\" on origin \
                 { eventually[0, 3] holds(c.value = 3) }\n"
@@ -83,7 +81,7 @@ fn a_non_preserving_selection_refuses_its_item_only() {
     let refused = run.item(0);
     assert_eq!(label(&refused), "inconclusive");
     assert_eq!(
-        refused["record"]["cause"]["type"],
+        refused["record"]["cause"]["kind"],
         "reduction-not-preserving"
     );
     assert_eq!(refused["record"]["cause"]["reduction"], "partial-order");
@@ -94,19 +92,21 @@ fn a_non_preserving_selection_refuses_its_item_only() {
 /// FR-623-AC-4: an unknown constraint name and an undeclared symmetry refuse.
 #[trace("TC-1583", "FR-623-AC-4")]
 #[test]
-#[ignore = "QSL-2124: reduction selection in analyze items is not implemented yet"]
 fn malformed_selections_are_refused_typed() {
     let ws = Workspace::new("reductions-malformed");
-    let run = analyze(&two_counters(
+    let request = two_counters(
         &ws,
         &clause("Holds", "", "always holds(c.value <= 3)"),
         json!([{"claim": "Holds", "reductions": {"constraint": "NoSuchConstraint"}},
             {"claim": "Holds", "reductions": {"symmetry": "declared"}}]),
-    ));
+    );
+    // The unit annotates no population `symmetric`, so `"declared"` has no class.
+    ws.write("model.json", &document(false));
+    let run = analyze(&request);
     assert_eq!(
         run.item(0)["record"]["diagnostic"]["code"],
         "invalid_runtime_input"
     );
     assert_eq!(label(&run.item(1)), "declined");
-    assert_eq!(run.item(1)["record"]["cause"], "invalid-input");
+    assert_eq!(run.item(1)["record"]["cause"]["kind"], "invalid-input");
 }

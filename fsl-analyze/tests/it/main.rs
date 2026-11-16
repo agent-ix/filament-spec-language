@@ -7,6 +7,7 @@ mod analyze_cli_support;
 mod analyze_coverage_cli;
 mod analyze_family_cli;
 mod analyze_liveness_cli;
+mod analyze_reduction_cli;
 mod analyze_request_wire;
 mod analyze_timed_cli;
 mod analyze_wire;

@@ -514,7 +514,6 @@ impl ItemSelection {
         let temporal = self.temporal.as_ref();
         self.probabilistic.is_some()
             || self.hybrid.is_some()
-            || self.reductions.is_some()
             || self.correspondence.is_some()
             || self.premises.is_some()
             || self.assessed_root.is_some()
@@ -772,8 +771,11 @@ fn resolve_one(
     };
     let temporal = selection.temporal.clone().unwrap_or_default();
     let own_subject = temporal.subject.clone().unwrap_or_else(|| subject.clone());
-    let form = (kind == Capability::TemporalSatisfaction)
-        .then(|| ItemForm::Temporal(temporal_item(package, &claim, &temporal)));
+    let form = (kind == Capability::TemporalSatisfaction).then(|| {
+        let mut form = temporal_item(package, &claim, &temporal);
+        form.pending_reductions.clone_from(&selection.reductions);
+        ItemForm::Temporal(form)
+    });
     let item = ClaimItem {
         request_index: index,
         claim,
@@ -791,9 +793,35 @@ fn resolve_one(
         item,
         claim_name: name.to_owned(),
         candidates,
-        unrouted: selection.unrouted() || own_subject != *subject,
+        unrouted: selection.unrouted()
+            || (selection.reductions.is_some() && kind != Capability::TemporalSatisfaction)
+            || own_subject != *subject,
         subject: own_subject,
     }))
+}
+
+/// FR-623: admit the item's pending `reductions` over what the unit declares,
+/// so the item runs under FSpec FR-382's wire form and its echo states it. A
+/// subject the binding refuses is left for the run to refuse.
+fn admit_reductions(
+    package: &CheckedPackage,
+    binding: &SubjectBinding<'_>,
+    limits: &AnalyzeLimits,
+    item: &mut ClaimItem,
+) -> Result<(), super::reduction_item::ReductionIssue> {
+    let Some(ItemForm::Temporal(form)) = &mut item.form else {
+        return Ok(());
+    };
+    let Some(selection) = form.pending_reductions.take() else {
+        return Ok(());
+    };
+    let simulation = super::request::simulation(package, binding, limits);
+    let Ok(system) = fsl_eval::simulation::model::ModelSystem::new(simulation) else {
+        form.pending_reductions = Some(selection);
+        return Ok(());
+    };
+    form.reductions = super::reduction_item::admit(&selection, &system, &binding.universes)?;
+    Ok(())
 }
 
 /// FR-626: a derived item (`deadlock-freedom`, `time-lock-freedom` or
@@ -846,11 +874,9 @@ fn resolve_derived(
         required: selection.required.unwrap_or(true),
         max_cases: None,
     };
-    claim.item.form = Some(ItemForm::Temporal(temporal_item(
-        package,
-        &claim.item.claim,
-        temporal,
-    )));
+    let mut form = temporal_item(package, &claim.item.claim, temporal);
+    form.pending_reductions.clone_from(&selection.reductions);
+    claim.item.form = Some(ItemForm::Temporal(form));
     claim.claim_name = name.to_owned();
     claim.unrouted = selection.unrouted() || own_subject != *subject;
     claim.subject = own_subject;
@@ -1191,6 +1217,12 @@ impl ClaimItem {
                         .collect::<Result<_, _>>()?,
                 ),
             );
+            if !temporal.reductions.is_empty() {
+                item.insert(
+                    "reductions".to_owned(),
+                    super::reduction_item::wire(&temporal.reductions),
+                );
+            }
             if let Some(stutter) = temporal.stutter_closure {
                 member.insert("stutter_closure".to_owned(), json!(stutter));
             }
@@ -1289,12 +1321,13 @@ pub fn analyze_document(
             }
             ResolvedItem::Claim(claim) => {
                 let ResolvedClaim {
-                    item,
+                    mut item,
                     claim_name,
                     candidates,
                     subject,
                     unrouted,
                 } = *claim;
+                let admitted = admit_reductions(package, &binding, &limits, &mut item);
                 let echo = item
                     .request_item_wire(&subject)
                     .map_err(|_| AnalyzeDocumentError::Fault)?;
@@ -1312,6 +1345,31 @@ pub fn analyze_document(
                         scoped: has_activation_scope(item.kind),
                     },
                 );
+                if let Err(refused) = admitted {
+                    let record = match refused {
+                        super::reduction_item::ReductionIssue::UnknownConstraint(name) => {
+                            let mut detail = Map::new();
+                            detail.insert("name".to_owned(), json!(name));
+                            TerminalRecord::disposition_invalid_request(
+                                item.request_index,
+                                CatalogCode::new("invalid_runtime_input", "invalid-value"),
+                                detail,
+                            )
+                        }
+                        super::reduction_item::ReductionIssue::Malformed(_) => {
+                            TerminalRecord::disposition_declined(
+                                item.request_index,
+                                fsl_replay::ProofRefusalCause::InvalidInput,
+                                fsl_replay::DeclineCode::Fsl(
+                                    fsl_foundation::Code::InvalidRuntimeInput,
+                                ),
+                                CatalogCode::new("invalid_runtime_input", "invalid-value"),
+                            )
+                        }
+                    };
+                    settled.insert(item.request_index, (None, record));
+                    continue;
+                }
                 if unrouted {
                     let mut detail = Map::new();
                     detail.insert("kind".to_owned(), json!(item.kind.to_wire()));

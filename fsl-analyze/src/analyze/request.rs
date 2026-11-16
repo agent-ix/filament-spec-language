@@ -210,6 +210,9 @@ pub struct TemporalItem {
     /// The most live clocks one timed state holds (FSpec FR-415); the
     /// published default when absent.
     pub max_clocks: Option<std::num::NonZeroU64>,
+    /// The request's `reductions` member as written, until it is admitted over
+    /// the unit's declarations (FR-623).
+    pub pending_reductions: Option<serde_json::Value>,
 }
 
 impl Default for TemporalItem {
@@ -226,6 +229,7 @@ impl Default for TemporalItem {
             smt_encoding: None,
             reductions: fsl_route::reductions::Reductions::default(),
             max_clocks: None,
+            pending_reductions: None,
         }
     }
 }
@@ -389,7 +393,7 @@ pub(super) fn dependency_wires(
     dependencies.into_values().collect()
 }
 
-fn simulation<'a>(
+pub(super) fn simulation<'a>(
     package: &'a fsl_package::CheckedPackage,
     binding: &super::SubjectBinding<'a>,
     limits: &super::AnalyzeLimits,
