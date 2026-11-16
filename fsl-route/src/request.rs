@@ -803,6 +803,59 @@ pub struct RequirementItem {
 }
 
 impl RequirementItem {
+    /// The `value-validity` item of a `Boolean` value clause at
+    /// `occurrence`, which has no requirement record: the clause is a
+    /// `Boolean` function's body, and its extent is the domains of that
+    /// function's parameters (FSpec FR-290, FR-484 "Forms"). `result_bound`
+    /// is the clause's own `Boolean` type node, and `candidates` the outcome
+    /// the caller computed for the item. The item has no path condition and
+    /// no conversion context: a clause is not guarded by the function it is
+    /// the body of. FSpec FR-331 sends it to a provider like a record's item
+    /// (FR-635 "How a process provider runs an item").
+    pub fn value_clause(
+        index: RequestIndex,
+        occurrence: OccurrenceKey,
+        extent: &ClaimExtent,
+        result_bound: NodeKey,
+        candidates: CandidateOutcome,
+    ) -> Self {
+        let unbounded = match extent {
+            ClaimExtent::Bounded => Vec::new(),
+            ClaimExtent::Unbounded(domains) => domains
+                .iter()
+                .map(|(key, kind)| (key.clone(), kind))
+                .collect(),
+        };
+        Self {
+            index,
+            occurrence,
+            kind: Capability::ValueValidity,
+            hybrid_dynamics: false,
+            extent: ExtentClassification::of(extent),
+            unbounded,
+            proof_bounds: Vec::new(),
+            subject_proof_bounds: Vec::new(),
+            model_subject: false,
+            result_bound,
+            conversion_context: None,
+            path_condition: Vec::new(),
+            candidates,
+            unsupported: None,
+            evidence: None,
+        }
+    }
+
+    /// This item at position `index` of the request it is sent in, every
+    /// other member unchanged: an analyze item keeps its own request index
+    /// when it is sent to a provider (FSpec FR-331 `request_index`, FR-635),
+    /// not the record's position among the package's records.
+    pub fn at_index(&self, index: RequestIndex) -> Self {
+        Self {
+            index,
+            ..self.clone()
+        }
+    }
+
     /// The reduction this item settles V-8 `unsupported-requested-capability`
     /// on (FR-159 "Capability"): the first selected reduction that emptied
     /// its candidate set; `None` when a candidate advertises every

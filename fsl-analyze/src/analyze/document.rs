@@ -762,6 +762,22 @@ fn value_clause_extent(
     node: &filament_exact::NodeKey,
     claim: &OccurrenceKey,
 ) -> ExtentClassification {
+    value_clause_claim_extent(package, name, node, claim)
+        .map_or(ExtentClassification::Bounded, |extent| {
+            ExtentClassification::of(&extent)
+        })
+}
+
+/// The domains of the Boolean value clause `claim` that the function `name`
+/// (declared at `node`) is, as [`value_clause_extent`] classifies them;
+/// `None` when `claim` is not that clause or its parameter types do not
+/// classify.
+fn value_clause_claim_extent(
+    package: &CheckedPackage,
+    name: &str,
+    node: &filament_exact::NodeKey,
+    claim: &OccurrenceKey,
+) -> Option<fsl_semantics::family::ClaimExtent> {
     let graph = package.graph();
     let declaration = graph.semantic_graph().node(node.clone());
     let is_clause = declaration
@@ -773,16 +789,36 @@ fn value_clause_extent(
         declaration.and_then(|declaration| declaration.function_parameters()),
         is_clause,
     ) else {
-        return ExtentClassification::Bounded;
+        return None;
     };
     let roots: Vec<(filament_exact::NodeKey, &filament_exact::ValueType)> = parameters
         .into_iter()
         .zip(callable.parameters.iter().map(|(_, value_type)| value_type))
         .collect();
     fsl_semantics::family::requirements::classify_extent(&roots, graph.scope().types(), u64::MAX)
-        .map_or(ExtentClassification::Bounded, |extent| {
-            ExtentClassification::of(&extent)
-        })
+        .ok()
+}
+
+/// The extent of the Boolean value clause at `claim`, found through the
+/// declared function whose body it is (FSpec FR-290, FR-484 "Forms");
+/// `None` when no declared function's body is `claim`'s node or its
+/// parameter types do not classify.
+pub(crate) fn boolean_value_clause_extent(
+    package: &CheckedPackage,
+    claim: &OccurrenceKey,
+) -> Option<fsl_semantics::family::ClaimExtent> {
+    let graph = package.graph();
+    declarations(package).into_iter().find_map(|(name, node)| {
+        let body = graph
+            .semantic_graph()
+            .node(node.clone())
+            .and_then(|declaration| declaration.function_body());
+        if body.as_ref() == Some(claim.node()) {
+            value_clause_claim_extent(package, &name, &node, claim)
+        } else {
+            None
+        }
+    })
 }
 
 /// Resolve `selections` (FR-620 "Resolving items") over `package`, the

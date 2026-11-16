@@ -3,6 +3,7 @@
 use super::long_run_certificate::limits;
 use crate::prob_world::{Model, Operation, World};
 use filament_exact::{Cancel, CancelCause};
+use filament_semantic_value::checking::CheckMode;
 use fsl_eval::simulation::model::ModelSystem;
 use fsl_replay::{
     check_cyclic_mdp_probability_certificate_observing, check_probability_certificate_document,
@@ -35,6 +36,13 @@ fn model(op: &str, target: &str) -> Model {
         "rational(9,10)"
     };
     let post = "self.phase - outcome = 0";
+    let has_zero_mod = target.contains("1 mod 0 = 0");
+    let target = target.replace("1 mod 0 = 0", "zero_mod(0)");
+    let zero_mod = if has_zero_mod {
+        "function zero_mod using vc(n: Int[0, 0]): Boolean pure { 1 mod n = 0 }\n"
+    } else {
+        ""
+    };
     Model {
         package, object:"Item", population:"items", key:"x",
         integers:vec![("Phase",0,3),("Outcome",0,2)],
@@ -43,19 +51,22 @@ fn model(op: &str, target: &str) -> Model {
             Operation {name:"a",parameters:vec![("outcome",format!("ix://{package}/Outcome"))],modifies:vec!["phase"],deletes:false},
             Operation {name:"b",parameters:vec![("outcome",format!("ix://{package}/Outcome"))],modifies:vec!["phase"],deletes:false},
             Operation {name:"after",parameters:vec![],modifies:vec!["phase"],deletes:false}],
-        body:format!("pre A using v on M::Item::a {{ self.phase = 0 }}\npost AD using v on M::Item::a {{ {post} }}\npre B using v on M::Item::b {{ self.phase = 0 }}\npost BD using v on M::Item::b {{ {post} }}\npre After using v on M::Item::after {{ self.phase = 1 or self.phase = 3 }}\npost AfterD using v on M::Item::after {{ self.phase - (if pre(self.phase) = 1 then 3 else 1) = 0 }}\nrandom Item::a(outcome) ~ {{ 0: 5, 1: 2, 2: 3 }};\nrandom Item::b(outcome) ~ {{ 0: 5, 1: 4, 2: 1 }};\nterminal Stop using v on M when {{ self.phase = 2 }};\nprobabilistic Likely using inf on M over (x: M::Item) under every scheduler on origin {{ probability {op} {threshold} [ eventually holds({target}) ] }}\n"),
+        body:format!("pre A using v on M::Item::a {{ self.phase = 0 }}\npost AD using v on M::Item::a {{ {post} }}\npre B using v on M::Item::b {{ self.phase = 0 }}\npost BD using v on M::Item::b {{ {post} }}\npre After using v on M::Item::after {{ self.phase = 1 or self.phase = 3 }}\npost AfterD using v on M::Item::after {{ self.phase - (if pre(self.phase) = 1 then 3 else 1) = 0 }}\n{zero_mod}random Item::a(outcome) ~ {{ 0: 5, 1: 2, 2: 3 }};\nrandom Item::b(outcome) ~ {{ 0: 5, 1: 4, 2: 1 }};\nterminal Stop using v on M when {{ self.phase = 2 }};\nprobabilistic Likely using inf on M over (x: M::Item) under every scheduler on origin {{ probability {op} {threshold} [ eventually holds({target}) ] }}\n"),
         initial:serde_json::json!({"phase":{"integer":"0"}}),
     }
 }
 fn world(op: &str, target: &str) -> World {
     World::new(&model(op, target))
 }
+fn kernel_world(op: &str, target: &str) -> World {
+    World::new_with_mode(&model(op, target), CheckMode::Kernel)
+}
 
 #[trace("TC-1404", "FR-201-AC-39", "FR-201-AC-42", "FR-198-AC-5")]
 #[test]
 fn first_hit_candidate_does_not_evaluate_query_after_target_and_original_model_still_admits() {
     for op in [">=", "<="] {
-        let world = world(op, "if x.phase = 3 then (1 mod 0 = 0) else x.phase = 1");
+        let world = kernel_world(op, "if x.phase = 3 then (1 mod 0 = 0) else x.phase = 1");
         let bytes = produce(&world, "Likely");
         let document = read_probability_proof_document(&bytes, limits(), &Cancel::new()).unwrap();
         assert!(document.is_cyclic_mdp());
@@ -266,7 +277,7 @@ fn fallback_attempts_keep_the_caller_storage_ledger() {
 #[test]
 fn undefined_query_after_target_does_not_skip_original_markov_admission() {
     let target = "if x.phase = 3 then (1 mod 0 = 0) else x.phase = 1";
-    let valid = world(">=", target);
+    let valid = kernel_world(">=", target);
     let bytes = produce(&valid, "Likely");
     let document = read_probability_proof_document(&bytes, limits(), &Cancel::new()).unwrap();
     let certificate = fsl_replay::ExactProbabilityCertificate {
@@ -277,7 +288,7 @@ fn undefined_query_after_target_does_not_skip_original_markov_admission() {
         "self.phase - (if pre(self.phase) = 1 then 3 else 1) = 0",
         "self.phase = 1 or self.phase = 3",
     );
-    let invalid = World::new(&invalid);
+    let invalid = World::new_with_mode(&invalid, CheckMode::Kernel);
     let system = ModelSystem::new(invalid.subject().simulation).unwrap();
     let item = probabilistic_claim_identity(invalid.claim("Likely")).unwrap();
     assert!(
@@ -311,7 +322,7 @@ fn pre_target_undefined_retains_its_actual_cause_in_new_and_old_adapters() {
                 "pre B using v on M::Item::b { false }",
             );
         }
-        let fixture = World::new(&specification);
+        let fixture = World::new_with_mode(&specification, CheckMode::Kernel);
         let system = ModelSystem::new(fixture.subject().simulation).unwrap();
         let item = probabilistic_claim_identity(fixture.claim("Likely")).unwrap();
         let claims = fixture.package.graph().probabilistic_model().claims();
