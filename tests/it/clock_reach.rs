@@ -96,7 +96,7 @@ fn quantile_unit(quantile: &str) -> String {
          unit ms : Time = rational(1, 1000) * s;\n\
          record Resp {{ latency: Quantity<ms>; }}\n\
          temporal P using w over (r: Resp) clock \"plant-ms\" on origin \
-         {{ always[0 ms, 300 s] (quantile {quantile} of r.latency over past[0, 300 s] <= 5 ms) }}\n"
+         {{ always[0, 300000] (quantile {quantile} of r.latency over past[0 ms, 300 s] <= 5 ms) }}\n"
     )
 }
 

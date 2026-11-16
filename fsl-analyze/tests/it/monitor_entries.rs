@@ -1678,3 +1678,20 @@ fn the_emitted_program_holds_the_atom_bodies_the_entries_and_the_state_type() {
         assert!(names.contains(&format!("atom{atom}")), "atom{atom}");
     }
 }
+
+/// FR-943-AC-4 (FR-251-AC-22): an unbounded past operator reaches generated
+/// entries; entry generation never refuses `UnboundedPast`.
+#[ix_trace_rs::trace("TC-2623", "FR-943-AC-4")]
+#[test]
+#[ignore = "QSL-2321: monitor entries refuse every unbounded past operator"]
+fn unbounded_past_operators_reach_generated_entries() {
+    for formula in [
+        "once holds(c.versionNumber = 2)",
+        "historically holds(c.versionNumber = 2)",
+    ] {
+        let plan = premise_plan(formula, &base_target());
+        let spec = spec_from_plan(&plan)
+            .unwrap_or_else(|refusal| panic!("`{formula}` is generated: {refusal:?}"));
+        let _ = package_of(&render(&spec));
+    }
+}

@@ -73,6 +73,7 @@ mod monitor_inputs;
 mod monitor_plan;
 mod monitor_plan_vectors;
 mod monitor_root;
+mod observation_mapping;
 mod operation_contract;
 mod partial_order;
 mod por_world;
