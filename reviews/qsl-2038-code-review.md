@@ -28,7 +28,7 @@ Reviewed the QSL-2038 ticket acceptance criteria and the full PR diff against re
 
 ## Rebase refresh
 
-Rechecked the unchanged implementation diff at rebased head `1bfdb3efdeab7f9103cd52dd42e2e4c8f1d6eb6c` against `origin/main` `9ed0f3c4dd0fc35e97249a6726fb96bbdf37c696`. The four original findings remain fixed; no new code-review findings were found. The current aggregate gate is being run by the code lead.
+Rechecked PR #2722 at head `1851dba35a06655cfa9a8f7893f96b5197a0aa4d` against the fetched current `origin/main` `d71c0a8dfde0076cfbc4fbe13985eb2baddd7839` (the PR branch was based on `40f224a4d12017022b0e78256d3d1d87609d9820`). The newer main adds two unrelated monitor-spec commits; the PR-specific source and test changes are unchanged, and the root test file still registers `source_corpus`. GitHub reports the PR mergeable. All four original code findings remain fixed; no new code-review defects were found. No aggregate `make ci` was run in this reviewer refresh.
 
 ## Dispositions
 
