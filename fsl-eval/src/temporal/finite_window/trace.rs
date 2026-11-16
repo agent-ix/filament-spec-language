@@ -104,7 +104,7 @@ pub struct WindowClock {
 #[derive(Clone, Debug)]
 pub struct TimestampedTrace {
     pub(super) positions: Vec<TimestampedObservation>,
-    origin: Vec<usize>,
+    pub(super) origin: Vec<usize>,
     pub(super) progress: WindowProgress,
     /// The progress the request asserted, which the report and the result
     /// identity name. It is `progress` itself for a timestamped trace; a
@@ -115,6 +115,11 @@ pub struct TimestampedTrace {
     pub(super) observed: usize,
     pub(super) clock: WindowClock,
     pub(super) clause_identity: String,
+    /// The absolute index of `positions[0]`: 0 for a whole trace, the first
+    /// position a carried state still holds otherwise (FR-820).
+    pub(super) base: usize,
+    /// The stamp of the trace's position 0, which a cutoff's history reads.
+    pub(super) first: u64,
 }
 
 impl TimestampedTrace {
@@ -155,26 +160,21 @@ impl TimestampedTrace {
             return Err(TemporalRefusal::EmptyTrace);
         }
         let mut order: Vec<usize> = (0..positions.len()).collect();
-        order.sort_by(|left, right| {
-            let (Some(left), Some(right)) = (positions.get(*left), positions.get(*right)) else {
-                return std::cmp::Ordering::Equal;
-            };
-            left.stamp
-                .cmp(&right.stamp)
-                .then_with(|| match (&left.order_key, &right.order_key) {
-                    (Some(left), Some(right)) => left.cmp(right),
-                    (Some(_), None) => std::cmp::Ordering::Less,
-                    (None, Some(_)) => std::cmp::Ordering::Greater,
-                    (None, None) => std::cmp::Ordering::Equal,
-                })
-                .then_with(|| left.observation.cmp(&right.observation))
-        });
+        order.sort_by(
+            |left, right| match (positions.get(*left), positions.get(*right)) {
+                (Some(left), Some(right)) => canonical(left, right),
+                _ => std::cmp::Ordering::Equal,
+            },
+        );
         let admitted: Vec<TimestampedObservation> = order
             .iter()
             .filter_map(|index| positions.get(*index).cloned())
             .collect();
+        let first = admitted.first().map_or(0, |position| position.stamp);
         Ok(Self {
             observed: admitted.len(),
+            base: 0,
+            first,
             positions: admitted,
             origin: order,
             progress,
@@ -222,4 +222,23 @@ impl TimestampedTrace {
     pub fn clock(&self) -> &WindowClock {
         &self.clock
     }
+}
+
+/// FR-501 "Canonical order": ascending stamp, then ascending order-authority
+/// identity (an observation without an order key after every keyed one),
+/// then ascending key within the authority, then ascending observation
+/// identity.
+pub(super) fn canonical(
+    left: &TimestampedObservation,
+    right: &TimestampedObservation,
+) -> std::cmp::Ordering {
+    left.stamp
+        .cmp(&right.stamp)
+        .then_with(|| match (&left.order_key, &right.order_key) {
+            (Some(left), Some(right)) => left.cmp(right),
+            (Some(_), None) => std::cmp::Ordering::Less,
+            (None, Some(_)) => std::cmp::Ordering::Greater,
+            (None, None) => std::cmp::Ordering::Equal,
+        })
+        .then_with(|| left.observation.cmp(&right.observation))
 }

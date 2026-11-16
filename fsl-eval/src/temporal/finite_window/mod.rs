@@ -15,6 +15,7 @@
 //! `Holds` or `Violated` whenever the lifted result is a singleton, and
 //! `Pending` or `Indeterminate` only for an obligation genuinely unresolved.
 
+mod carried;
 mod cover;
 mod identity;
 mod lift;
@@ -23,6 +24,7 @@ mod progressed;
 mod run;
 mod trace;
 
+pub use carried::WindowState;
 pub use cover::{ClockCover, Containment};
 pub use outcome::{
     Assessment, Basis, IndeterminateReason, Premises, ResultIdentity, SupportPair, Valuation,

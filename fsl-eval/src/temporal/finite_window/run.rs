@@ -10,7 +10,7 @@ use filament_exact::{Charge, ChargePoint, Incomplete, Meter};
 use filament_semantic_value::catalog::InternalFault;
 use fsl_semantics::check::{Activation, CaptureSite, TemporalProfile};
 
-use super::identity::Preimage;
+use super::identity::{Block, IdentityStream};
 use super::lift::{Candidate, Cell, Lifter, Part, Poss, ScanFrame, Variant};
 use super::outcome::{
     Assessment, Basis, IndeterminateReason, Premises, SupportPair, Valuation, WindowEvaluation,
@@ -128,16 +128,90 @@ enum Ending {
     Indeterminate(IndeterminateReason),
 }
 
-struct Finished {
-    anchor: usize,
+pub(super) struct Finished {
+    pub(super) anchor: usize,
     result: Ending,
     closure: Vec<(usize, usize)>,
-    established: bool,
+    pub(super) established: bool,
     poss: Poss,
+    /// The length of the run's journal when the activation ended.
+    pub(super) journal: usize,
+}
+
+/// An activation summarized once no later position can change it (FR-820):
+/// its result and its decision support.
+#[derive(Clone, Debug)]
+pub(super) struct Summary {
+    anchor: usize,
+    result: Ending,
+    support: Vec<SupportPair>,
+}
+
+/// What the activations before the evaluated ones contributed: nothing for a
+/// batch run, the summarized activations of a carried state (FR-820).
+#[derive(Clone, Debug, Default)]
+pub(super) struct Prior {
+    /// The first activation that ended false.
+    first_false: Option<Summary>,
+    /// The first activation that ended open, before any false one.
+    first_open: Option<Summary>,
+    /// The union of the decision supports of the true activations, before
+    /// any false or open one.
+    holds: std::collections::BTreeSet<SupportPair>,
+}
+
+impl Prior {
+    /// Add the activation `finished`, which no later position changes.
+    pub(super) fn summarize<L: TemporalLetters>(
+        &mut self,
+        run: &Run<'_, L>,
+        finished: &Finished,
+    ) -> Result<(), InternalFault> {
+        if self.first_false.is_some() {
+            return Ok(());
+        }
+        let summary = || -> Result<Summary, InternalFault> {
+            Ok(Summary {
+                anchor: finished.anchor,
+                result: finished.result.clone(),
+                support: run.support(finished)?,
+            })
+        };
+        match finished.result {
+            Ending::False => self.first_false = Some(summary()?),
+            Ending::Pending { .. } | Ending::Indeterminate(_) => {
+                if self.first_open.is_none() {
+                    self.first_open = Some(summary()?);
+                }
+            }
+            Ending::True => {
+                if self.first_open.is_none() {
+                    self.holds.extend(run.support(finished)?);
+                }
+            }
+        }
+        Ok(())
+    }
+
+    /// The position identities the summaries cite.
+    pub(super) fn cited(&self) -> usize {
+        let support = |summary: &Option<Summary>| summary.as_ref().map_or(0, |s| s.support.len());
+        support(&self.first_false) + support(&self.first_open) + self.holds.len()
+    }
+}
+
+/// One change to the run's readings, with the value it replaced, so a
+/// carried state can put back the readings as they stood after its last
+/// summarized activation.
+#[derive(Clone, Debug)]
+pub(super) enum Entry {
+    Cell((usize, usize), Option<Cell>),
+    Undefined((usize, usize), Option<UndefinedCause>),
 }
 
 /// What ended the activations early, if anything did.
-enum Tail {
+#[derive(Clone, Debug)]
+pub(super) enum Tail {
     Done,
     GuardUnresolved(TemporalPosition),
     Undefined(UndefinedEvaluation),
@@ -145,9 +219,17 @@ enum Tail {
     WindowLimit(WindowLimitReached),
 }
 
-struct Run<'a, L: TemporalLetters> {
+pub(super) struct Run<'a, L: TemporalLetters> {
     clause: &'a ClauseFacts,
     trace: &'a TimestampedTrace,
+    /// The absolute index of the trace's first position.
+    base: usize,
+    /// The activation anchors the run evaluates.
+    anchors: Anchors,
+    /// Every change to `cells` and `undefined`, in order.
+    pub(super) journal: Vec<Entry>,
+    /// The anchor of the activation being evaluated.
+    pub(super) current: usize,
     plan: Plan,
     /// Each node's future reach, in ticks: the greatest sum of the upper
     /// bounds of future operators along a nesting path below it.
@@ -159,8 +241,6 @@ struct Run<'a, L: TemporalLetters> {
     meter: &'a mut Meter,
     /// The caller's own charging of the visits, when it has one.
     units: Option<&'a mut dyn WindowCharge>,
-    /// The one activation anchor the run evaluates, when the caller names it.
-    only: Option<usize>,
     visited: HashSet<(usize, usize)>,
     /// The atom each node stands for: nodes whose conditions are the same
     /// atom share one valuation at a position (FSpec FR-160).
@@ -226,93 +306,185 @@ fn run_window<'a, L: TemporalLetters>(
     units: Option<&'a mut dyn WindowCharge>,
     only: Option<usize>,
 ) -> Result<WindowEvaluation, TemporalRefusal> {
-    if !matches!(
-        clause.profile(),
-        TemporalProfile::TimestampedEventFiniteWindow
-            | TemporalProfile::EventPositionFalseExtension
-            | TemporalProfile::FixedSampleFalseExtension
-    ) {
-        return Err(TemporalRefusal::NotFiniteWindowProfile {
-            profile: clause.profile(),
-        });
-    }
-    let plan = clause
-        .formula()
-        .plan()
-        .map_err(TemporalRefusal::Fault)?
-        .clone();
-    let reach = reaches(&plan).map_err(TemporalRefusal::Fault)?;
-    let classes = (0..plan.nodes.len())
-        .map(|index| {
-            let atom = matches!(plan.nodes.get(index), Some(Node::Atom));
-            match clause.formula().node_id(index) {
-                Some(id) if atom => letters.atom_class(id),
-                _ => index,
-            }
-        })
-        .collect();
-    let mut run = Run {
+    let anchors = anchors(clause, trace, only);
+    let identity = IdentityStream::default();
+    let mut run = Run::new(
         clause,
         trace,
-        plan,
-        reach,
-        stamps: trace
-            .positions
-            .iter()
-            .map(|position| i128::from(position.stamp))
-            .collect(),
-        margin: trace.clock.cover.margin(),
-        watermark: trace.progress.watermark.inclusive(),
         letters,
         meter,
         units,
-        only,
-        visited: HashSet::new(),
-        classes,
-        cells: HashMap::new(),
-        undefined: BTreeMap::new(),
-        frames: HashMap::new(),
-        visits: 0,
-    };
-    let mut done = Vec::new();
-    let tail = match run.activations(&mut done) {
-        Ok(()) => Tail::Done,
-        Err(Stop::Incomplete(incomplete)) => Tail::Incomplete(incomplete),
-        Err(Stop::WindowLimit(limit)) => Tail::WindowLimit(limit),
-        Err(Stop::GuardUnresolved(at)) => Tail::GuardUnresolved(at),
-        Err(Stop::Undefined(undefined)) => Tail::Undefined(undefined),
-        // In evaluation order: an atom undefined at an earlier position, or
-        // an activation that ended false before the refused condition, is
-        // returned instead of it.
-        Err(Stop::ConditionRefused(at, atom_class)) => {
-            let refused = usize::try_from(at.index()).unwrap_or(usize::MAX);
-            // Only an earlier undefined atom or a lower-class atom at the
-            // refused position precedes this refusal. `read_atom` can retain
-            // lower-class valuations outside the activation's closure, so
-            // position alone cannot establish precedence for guards/captures.
-            if let Some(((position, _), cause)) =
-                run.undefined.iter().find(|((position, class), _)| {
-                    *position < refused
-                        || (*position == refused
-                            && atom_class.is_some_and(|refused_class| *class < refused_class))
-                })
-            {
-                Tail::Undefined(UndefinedEvaluation {
-                    at: position_of(*position).map_err(TemporalRefusal::Fault)?,
-                    cause: cause.clone(),
-                })
-            } else if done
-                .iter()
-                .any(|activation| activation.result == Ending::False)
-            {
-                Tail::Done
-            } else {
-                return Err(TemporalRefusal::ConditionRefused { at });
-            }
+        anchors,
+        Seed::default(),
+    )?;
+    let prior = Prior::default();
+    let (done, tail) = run.drive(&prior)?;
+    run.settle(&prior, &done, tail, &identity)
+        .map_err(TemporalRefusal::Fault)
+}
+
+/// The activation anchors of `clause` over the whole of `trace`: position 0
+/// for an `on origin` clause, every observation for an `on each` one (silent
+/// samples are no observation, FR-504), or the one `only` names.
+pub(super) fn anchors(
+    clause: &ClauseFacts,
+    trace: &TimestampedTrace,
+    only: Option<usize>,
+) -> Anchors {
+    match (clause.activation(), only) {
+        (Activation::Origin, _) => Anchors {
+            range: 0..1,
+            guarded: false,
+        },
+        // An anchored run is one instance's single activation: its guard is
+        // the instance's, established when the instance was created.
+        (Activation::Each { .. }, Some(anchor)) => Anchors {
+            range: anchor..anchor.saturating_add(1),
+            guarded: false,
+        },
+        (Activation::Each { guarded }, None) => Anchors {
+            range: 0..trace.observed,
+            guarded,
+        },
+    }
+}
+
+/// The activations a run evaluates, and whether each reads its `on each`
+/// guard first.
+#[derive(Clone, Debug)]
+pub(super) struct Anchors {
+    pub(super) range: std::ops::Range<usize>,
+    pub(super) guarded: bool,
+}
+
+/// The readings a run starts from: none for a batch run, those of the
+/// summarized activations for a carried state (FR-820).
+#[derive(Clone, Debug, Default)]
+pub(super) struct Seed {
+    pub(super) cells: HashMap<(usize, usize), Cell>,
+    pub(super) undefined: BTreeMap<(usize, usize), UndefinedCause>,
+}
+
+impl<'a, L: TemporalLetters> Run<'a, L> {
+    /// A run of `clause` over `trace` evaluating the activations at
+    /// `anchors`, from the readings `seed`.
+    ///
+    /// # Errors
+    ///
+    /// A clause under another profile, or a fault.
+    pub(super) fn new(
+        clause: &'a ClauseFacts,
+        trace: &'a TimestampedTrace,
+        letters: &'a mut L,
+        meter: &'a mut Meter,
+        units: Option<&'a mut dyn WindowCharge>,
+        anchors: Anchors,
+        seed: Seed,
+    ) -> Result<Self, TemporalRefusal> {
+        if !matches!(
+            clause.profile(),
+            TemporalProfile::TimestampedEventFiniteWindow
+                | TemporalProfile::EventPositionFalseExtension
+                | TemporalProfile::FixedSampleFalseExtension
+        ) {
+            return Err(TemporalRefusal::NotFiniteWindowProfile {
+                profile: clause.profile(),
+            });
         }
-        Err(Stop::Refused(refusal)) => return Err(refusal),
-    };
-    run.settle(done, tail).map_err(TemporalRefusal::Fault)
+        let plan = clause
+            .formula()
+            .plan()
+            .map_err(TemporalRefusal::Fault)?
+            .clone();
+        let reach = reaches(&plan).map_err(TemporalRefusal::Fault)?;
+        let classes = (0..plan.nodes.len())
+            .map(|index| {
+                let atom = matches!(plan.nodes.get(index), Some(Node::Atom));
+                match clause.formula().node_id(index) {
+                    Some(id) if atom => letters.atom_class(id),
+                    _ => index,
+                }
+            })
+            .collect();
+        Ok(Run {
+            clause,
+            trace,
+            base: trace.base,
+            current: anchors.range.start,
+            anchors,
+            journal: Vec::new(),
+            plan,
+            reach,
+            stamps: trace
+                .positions
+                .iter()
+                .map(|position| i128::from(position.stamp))
+                .collect(),
+            margin: trace.clock.cover.margin(),
+            watermark: trace.progress.watermark.inclusive(),
+            letters,
+            meter,
+            units,
+            visited: HashSet::new(),
+            classes,
+            cells: seed.cells,
+            undefined: seed.undefined,
+            frames: HashMap::new(),
+            visits: 0,
+        })
+    }
+
+    /// Evaluate every activation, in anchor order, after the ones `prior`
+    /// summarizes.
+    ///
+    /// # Errors
+    ///
+    /// The refusal that ends the run.
+    pub(super) fn drive(
+        &mut self,
+        prior: &Prior,
+    ) -> Result<(Vec<Finished>, Tail), TemporalRefusal> {
+        let mut done = Vec::new();
+        let tail = match self.activations(&mut done) {
+            Ok(()) => Tail::Done,
+            Err(Stop::Incomplete(incomplete)) => Tail::Incomplete(incomplete),
+            Err(Stop::WindowLimit(limit)) => Tail::WindowLimit(limit),
+            Err(Stop::GuardUnresolved(at)) => Tail::GuardUnresolved(at),
+            Err(Stop::Undefined(undefined)) => Tail::Undefined(undefined),
+            // In evaluation order: an atom undefined at an earlier position, or
+            // an activation that ended false before the refused condition, is
+            // returned instead of it.
+            Err(Stop::ConditionRefused(at, atom_class)) => {
+                let refused = usize::try_from(at.index()).unwrap_or(usize::MAX);
+                // Only an earlier undefined atom or a lower-class atom at the
+                // refused position precedes this refusal. `read_atom` can retain
+                // lower-class valuations outside the activation's closure, so
+                // position alone cannot establish precedence for guards/captures.
+                if let Some(((position, _), cause)) =
+                    self.undefined.iter().find(|((position, class), _)| {
+                        *position < refused
+                            || (*position == refused
+                                && atom_class.is_some_and(|refused_class| *class < refused_class))
+                    })
+                {
+                    Tail::Undefined(UndefinedEvaluation {
+                        at: position_of(*position).map_err(TemporalRefusal::Fault)?,
+                        cause: cause.clone(),
+                    })
+                } else if prior.first_false.is_some()
+                    || done
+                        .iter()
+                        .any(|activation| activation.result == Ending::False)
+                {
+                    Tail::Done
+                } else {
+                    return Err(TemporalRefusal::ConditionRefused { at });
+                }
+            }
+            Err(Stop::Refused(refusal)) => return Err(refusal),
+        };
+        Ok((done, tail))
+    }
 }
 
 /// The future reach of every node.
@@ -381,7 +553,51 @@ impl<L: TemporalLetters> Run<'_, L> {
     }
 
     fn stamp(&self, position: usize) -> Result<i128, InternalFault> {
-        slot(&self.stamps, position)
+        let index = position
+            .checked_sub(self.base)
+            .ok_or_else(|| fault("position-is-held"))?;
+        slot(&self.stamps, index)
+    }
+
+    /// The stamp of the held `position`.
+    pub(super) fn stamp_at(&self, position: usize) -> Result<i128, InternalFault> {
+        self.stamp(position)
+    }
+
+    /// One past the last position the run reads.
+    fn end(&self) -> usize {
+        self.base.saturating_add(self.stamps.len())
+    }
+
+    /// Set the valuation of `key`, journaling the one it replaces.
+    fn set_cell(&mut self, key: (usize, usize), cell: Cell) {
+        let prior = self.cells.insert(key, cell);
+        self.journal.push(Entry::Cell(key, prior));
+    }
+
+    /// The run's readings as they stood when the journal had `len` entries.
+    pub(super) fn seed_at(&self, len: usize) -> Seed {
+        let mut seed = Seed {
+            cells: self.cells.clone(),
+            undefined: self.undefined.clone(),
+        };
+        for entry in self.journal.iter().skip(len).rev() {
+            match entry {
+                Entry::Cell(key, Some(cell)) => {
+                    seed.cells.insert(*key, *cell);
+                }
+                Entry::Cell(key, None) => {
+                    seed.cells.remove(key);
+                }
+                Entry::Undefined(key, Some(cause)) => {
+                    seed.undefined.insert(*key, cause.clone());
+                }
+                Entry::Undefined(key, None) => {
+                    seed.undefined.remove(key);
+                }
+            }
+        }
+        seed
     }
 
     /// Whether the window of an activation (or sub-instance) at `tick`
@@ -395,19 +611,9 @@ impl<L: TemporalLetters> Run<'_, L> {
     /// Every activation in position order. `done` receives each activation
     /// that ended before the run stopped.
     fn activations(&mut self, done: &mut Vec<Finished>) -> Result<(), Stop> {
-        let (positions, guarded) = match self.clause.activation() {
-            Activation::Origin => (1, false),
-            // Silent samples are no observation: no `on each` activation
-            // anchors on one (FR-504).
-            Activation::Each { guarded } => (self.trace.observed, guarded),
-        };
-        // An anchored run is one instance's single activation: its guard is
-        // the instance's, established when the instance was created.
-        let (anchors, guarded) = match (self.clause.activation(), self.only) {
-            (Activation::Each { .. }, Some(anchor)) => (anchor..anchor.saturating_add(1), false),
-            _ => (0..positions, guarded),
-        };
-        for anchor in anchors {
+        let guarded = self.anchors.guarded;
+        for anchor in self.anchors.range.clone() {
+            self.current = anchor;
             let at = position_of(anchor)?;
             if guarded {
                 match self
@@ -559,18 +765,13 @@ impl<L: TemporalLetters> Run<'_, L> {
             .valuation_with_window_visits(id, at, meter, &mut aggregate_visit)
             .map_err(|stop| Stop::at(stop, at, Some(class)))?
         {
-            Valuation::True => {
-                self.cells.insert((member, class), Cell::True);
-            }
-            Valuation::False => {
-                self.cells.insert((member, class), Cell::False);
-            }
-            Valuation::Missing => {
-                self.cells.insert((member, class), Cell::Missing);
-            }
+            Valuation::True => self.set_cell((member, class), Cell::True),
+            Valuation::False => self.set_cell((member, class), Cell::False),
+            Valuation::Missing => self.set_cell((member, class), Cell::Missing),
             Valuation::Undefined(cause) => {
-                self.cells.insert((member, class), Cell::Missing);
-                self.undefined.insert((member, class), cause);
+                self.set_cell((member, class), Cell::Missing);
+                let prior = self.undefined.insert((member, class), cause);
+                self.journal.push(Entry::Undefined((member, class), prior));
             }
         }
         Ok(())
@@ -593,7 +794,7 @@ impl<L: TemporalLetters> Run<'_, L> {
         let mut group = Vec::new();
         for (index, candidate) in self.stamps.iter().enumerate() {
             if *candidate == stamp {
-                group.push(index);
+                group.push(self.base.saturating_add(index));
             }
         }
         // The letter at a position is the value of every atom there, read in
@@ -620,10 +821,11 @@ impl<L: TemporalLetters> Run<'_, L> {
                 .any(|member| held(self.cells.get(&(*member, class)), Cell::False));
         if differ {
             for member in &group {
-                if let Some(cell) = self.cells.get_mut(&(*member, class)) {
-                    if matches!(cell, Cell::True | Cell::False) {
-                        *cell = Cell::Conflicting;
-                    }
+                if let Some(cell @ (Cell::True | Cell::False)) =
+                    self.cells.get(&(*member, class)).copied()
+                {
+                    self.cells.insert((*member, class), Cell::Conflicting);
+                    self.journal.push(Entry::Cell((*member, class), Some(cell)));
                 }
             }
         }
@@ -648,9 +850,9 @@ impl<L: TemporalLetters> Run<'_, L> {
         };
         let forward = scan.base.direction() == Direction::Future;
         let order: Vec<usize> = if forward {
-            (position..self.stamps.len()).collect()
+            (position..self.end()).collect()
         } else {
-            (0..=position).rev().collect()
+            (self.base..=position).rev().collect()
         };
         let anchor = self.stamp(position)?;
         let cover = self.trace.clock.cover;
@@ -683,7 +885,7 @@ impl<L: TemporalLetters> Run<'_, L> {
         if scan.guard.is_some() {
             self.require_order(&candidates)?;
         }
-        let first = self.stamp(0)?;
+        let first = i128::from(self.trace.first);
         let (unestablished, history) = if forward {
             let reach = *self
                 .reach
@@ -720,9 +922,9 @@ impl<L: TemporalLetters> Run<'_, L> {
                 continue;
             }
             let key = |position: usize| {
-                self.trace
-                    .positions
-                    .get(position)
+                position
+                    .checked_sub(self.base)
+                    .and_then(|index| self.trace.positions.get(index))
                     .and_then(|p| p.order_key.as_ref())
             };
             let ordered = matches!(
@@ -782,6 +984,7 @@ impl<L: TemporalLetters> Run<'_, L> {
             closure,
             established,
             poss,
+            journal: self.journal.len(),
         })
     }
 
@@ -906,7 +1109,7 @@ impl<L: TemporalLetters> Run<'_, L> {
     /// The decision support of `activation`: the `(position, atom)` pairs
     /// whose single valuation, flipped or settled, or whose position, other
     /// than the anchor, removed, changes the lifted result of the activation.
-    fn support(&self, activation: &Finished) -> Result<Vec<SupportPair>, InternalFault> {
+    pub(super) fn support(&self, activation: &Finished) -> Result<Vec<SupportPair>, InternalFault> {
         let lifter = self.lifter();
         let root = (self.plan.root, activation.anchor);
         let closure = &activation.closure;
@@ -963,15 +1166,35 @@ impl<L: TemporalLetters> Run<'_, L> {
         Ok(support)
     }
 
-    /// Assemble the verdict and report from the activations that ended and
-    /// what stopped the run.
-    fn settle(self, done: Vec<Finished>, tail: Tail) -> Result<WindowEvaluation, InternalFault> {
+    /// Assemble the verdict and report from the activations `prior`
+    /// summarizes, the activations that ended and what stopped the run. The
+    /// result identity hashes `identity`'s frozen blocks, then a block for
+    /// each position the run holds.
+    pub(super) fn settle(
+        &self,
+        prior: &Prior,
+        done: &[Finished],
+        tail: Tail,
+        identity: &IdentityStream,
+    ) -> Result<WindowEvaluation, InternalFault> {
         let first_false = done.iter().find(|a| a.result == Ending::False);
         let first_open = done
             .iter()
             .find(|a| matches!(a.result, Ending::Pending { .. } | Ending::Indeterminate(_)));
         let scope_closed = self.trace.asserted.scope == ProgressClosure::Closed;
-        let (verdict, basis, support) = if let Some(activation) = first_false {
+        let (verdict, basis, support) = if let Some(summary) = &prior.first_false {
+            (
+                WindowVerdict::Violated {
+                    at: position_of(summary.anchor)?,
+                },
+                if scope_closed {
+                    Basis::ClosedScope
+                } else {
+                    Basis::DecisiveCounterexample
+                },
+                summary.support.clone(),
+            )
+        } else if let Some(activation) = first_false {
             let basis = if activation.established && scope_closed {
                 Basis::ClosedScope
             } else {
@@ -1006,52 +1229,64 @@ impl<L: TemporalLetters> Run<'_, L> {
                     Basis::Unavailable,
                     Vec::new(),
                 ),
-                Tail::Done => match first_open {
-                    Some(activation) => {
-                        let at = position_of(activation.anchor)?;
-                        let (verdict, basis) = match &activation.result {
-                            Ending::Pending { deadline } => (
-                                if self.clause.profile()
-                                    == TemporalProfile::EventPositionFalseExtension
-                                {
-                                    WindowVerdict::PendingNextEvent { at }
-                                } else {
-                                    WindowVerdict::Pending {
-                                        at,
-                                        deadline: *deadline,
-                                    }
-                                },
-                                Basis::Unsettled,
-                            ),
-                            Ending::Indeterminate(reason) => (
-                                WindowVerdict::Indeterminate {
-                                    at,
-                                    reason: reason.clone(),
-                                },
-                                Basis::Unavailable,
-                            ),
-                            Ending::True | Ending::False => {
-                                return Err(fault("open-activation-is-open"))
-                            }
-                        };
-                        (verdict, basis, self.support(activation)?)
-                    }
-                    None => {
-                        let established = done.iter().all(|a| a.established);
-                        let basis = if established && scope_closed {
-                            Basis::ClosedScope
-                        } else {
-                            Basis::DecisiveWitness
-                        };
-                        let mut support = Vec::new();
-                        for activation in &done {
-                            support.extend(self.support(activation)?);
+                Tail::Done => {
+                    let open = match (&prior.first_open, first_open) {
+                        (Some(summary), _) => {
+                            Some((summary.anchor, &summary.result, summary.support.clone()))
                         }
-                        support.sort();
-                        support.dedup();
-                        (WindowVerdict::Holds, basis, support)
+                        (None, Some(activation)) => Some((
+                            activation.anchor,
+                            &activation.result,
+                            self.support(activation)?,
+                        )),
+                        (None, None) => None,
+                    };
+                    match open {
+                        Some((anchor, result, support)) => {
+                            let at = position_of(anchor)?;
+                            let (verdict, basis) = match result {
+                                Ending::Pending { deadline } => (
+                                    if self.clause.profile()
+                                        == TemporalProfile::EventPositionFalseExtension
+                                    {
+                                        WindowVerdict::PendingNextEvent { at }
+                                    } else {
+                                        WindowVerdict::Pending {
+                                            at,
+                                            deadline: *deadline,
+                                        }
+                                    },
+                                    Basis::Unsettled,
+                                ),
+                                Ending::Indeterminate(reason) => (
+                                    WindowVerdict::Indeterminate {
+                                        at,
+                                        reason: reason.clone(),
+                                    },
+                                    Basis::Unavailable,
+                                ),
+                                Ending::True | Ending::False => {
+                                    return Err(fault("open-activation-is-open"))
+                                }
+                            };
+                            (verdict, basis, support)
+                        }
+                        None => {
+                            // Every summarized activation is established.
+                            let established = done.iter().all(|a| a.established);
+                            let basis = if established && scope_closed {
+                                Basis::ClosedScope
+                            } else {
+                                Basis::DecisiveWitness
+                            };
+                            let mut support = prior.holds.clone();
+                            for activation in done {
+                                support.extend(self.support(activation)?);
+                            }
+                            (WindowVerdict::Holds, basis, support.into_iter().collect())
+                        }
                     }
-                },
+                }
             }
         };
         let assessment = match verdict {
@@ -1066,19 +1301,16 @@ impl<L: TemporalLetters> Run<'_, L> {
             | WindowVerdict::Undefined(_) => Assessment::Completed,
         };
         let progress = self.trace.asserted;
-        let mut readings: Vec<(usize, usize, Cell)> = self
-            .cells
-            .iter()
-            .map(|((position, node), cell)| (*position, *node, *cell))
-            .collect();
-        readings.sort_unstable_by_key(|(position, node, _)| (*position, *node));
-        let identity = Preimage {
-            trace: self.trace,
-            profile: self.clause.profile().identity(),
-            readings: &readings,
-            ceilings: self.meter.limits(),
-        }
-        .identity()?;
+        let readings = self.readings();
+        let blocks = self.blocks(&readings, self.base..self.end())?;
+        let identity = identity.identity(
+            &self.trace.clause_identity,
+            self.clause.profile().identity(),
+            &self.trace.clock,
+            &blocks,
+            &progress,
+            self.meter.limits(),
+        )?;
         Ok(WindowEvaluation {
             verdict,
             basis,
@@ -1096,5 +1328,47 @@ impl<L: TemporalLetters> Run<'_, L> {
             identity,
             visits: self.visits,
         })
+    }
+
+    /// Every valuation the run holds, by position, each position's in atom
+    /// class order.
+    pub(super) fn readings(&self) -> BTreeMap<usize, Vec<(usize, Cell)>> {
+        let mut readings: BTreeMap<usize, Vec<(usize, Cell)>> = BTreeMap::new();
+        for ((position, class), cell) in &self.cells {
+            readings.entry(*position).or_default().push((*class, *cell));
+        }
+        for cells in readings.values_mut() {
+            cells.sort_unstable_by_key(|(class, _)| *class);
+        }
+        readings
+    }
+
+    /// The identity blocks of the held positions in `range`, with
+    /// `readings`.
+    pub(super) fn blocks<'r>(
+        &'r self,
+        readings: &'r BTreeMap<usize, Vec<(usize, Cell)>>,
+        range: std::ops::Range<usize>,
+    ) -> Result<Vec<Block<'r>>, InternalFault> {
+        range
+            .map(|position| {
+                let observation = position
+                    .checked_sub(self.base)
+                    .and_then(|index| self.trace.positions.get(index))
+                    .ok_or_else(|| fault("position-is-held"))?;
+                Ok(Block {
+                    observation,
+                    readings: readings.get(&position).map_or(&[], Vec::as_slice),
+                })
+            })
+            .collect()
+    }
+
+    /// Whether the progress establishes `ahead` ticks after the held
+    /// `anchor`, so no later position or progress changes its activation
+    /// (FR-820).
+    pub(super) fn settled(&self, anchor: usize, ahead: i128) -> Result<bool, InternalFault> {
+        let need = self.stamp(anchor)?.saturating_add(ahead);
+        Ok(covers(self.trace.progress.completeness, need) && self.watermark >= need)
     }
 }
