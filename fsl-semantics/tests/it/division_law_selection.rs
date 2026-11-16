@@ -85,7 +85,7 @@ const DIV_REM: &str = "function q using v(a: Int[-7, 7], b: Int[1, 3]): Int[-7, 
                        function r using v(a: Int[-7, 7], b: Int[1, 3]): Int[-7, 7] pure { a rem b }";
 
 #[test]
-#[trace("TC-2188", "FR-767-AC-1")]
+#[trace("TC-2210", "FR-495-AC-19")]
 fn a_large_remainder_keeps_its_exact_range_or_reports_the_work_limit() {
     let headers = format!("{VALUE}{}", law_header("d", "euclidean"));
     let body = "function big using v(a: Int[1000000007,1000000007], b: Int[2,1000000006]): Int[1,500000003] pure { a rem b }";
