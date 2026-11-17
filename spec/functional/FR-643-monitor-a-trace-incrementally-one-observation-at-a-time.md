@@ -131,7 +131,11 @@ spine APIs rather than a first sketch, and are accepted as its contract:
   re-serializing. It is not the position's identity: a record-sample
   position is identified by its index in the trace (FR-330), so two equal
   samples at different indices are distinct positions, each cited by its
-  own index.
+  own index. To refuse a changed sample at a covered index (FR-502), each
+  clause's carried state keeps a content fingerprint of every covered
+  sample (FR-993). That fingerprint is integrity data, not identity
+  (ADR-013 §2), and it is held only in the carried state and the
+  checkpoint, never in a report or a report's ledger.
 - **Reports are shared, not copied.** The session's `ClauseStatus` holds its
   FR-283 `MonitorRecord` and that record's `ClauseRunReport` behind an
   `Arc`: a settled report is returned at every later step
@@ -166,7 +170,8 @@ spine APIs rather than a first sketch, and are accepted as its contract:
   selections, kind, binding and lower boundary, the number of positions seen,
   the identities and stamps of the positions a counterexample can still cite,
   each settled clause's report and each unsettled clause's FR-820 `ClauseState`
-  bytes (which hold the admitted values it retains), and the ledger in
+  bytes (which hold the admitted values it retains and the FR-993 content
+  fingerprints of its covered samples), and the ledger in
   `filament.progress-ledger/1` form (FR-641).
 
 ## Behavior

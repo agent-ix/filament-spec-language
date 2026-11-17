@@ -1459,3 +1459,67 @@ fn a_finite_session_ignores_a_non_matching_selection_list() {
         );
     }
 }
+
+/// FR-993-AC-2 (TC-2810): a `Progressed` session over record
+/// samples keeps each covered sample's content fingerprint only in its
+/// carried state and checkpoint. No report's ledger, before or after a
+/// resume, spells a sample value or a `sha256:` digest; covered positions
+/// are named by index. Advancing a carried state at a covered index (the
+/// `Completeness` refusal of a changed sample, before and after
+/// `from_bytes`) is covered by the `ClauseState` unit tests.
+#[test]
+#[trace("TC-2810", "FR-993-AC-2")]
+#[ignore = "QSL-2307: covered record samples cited by index with content fingerprints held only in carried state not implemented yet"]
+fn no_report_ledger_spells_a_sample_value_or_its_fingerprint() {
+    let world = world();
+    let cancel = Cancel::new();
+    let clean = |step: &fsl_analyze::monitor_session::MonitorStep| {
+        for (_, status) in &step.statuses {
+            let ledger = format!("{:?}", status.record().report().ledger);
+            assert!(!ledger.contains("integer"), "a sample value: {ledger}");
+            assert!(!ledger.contains("sha256:"), "a fingerprint: {ledger}");
+        }
+    };
+    let mut session = world
+        .open(
+            &["E"],
+            MonitorTraceKind::Progressed,
+            Some(events_binding()),
+            DEFAULT_RETAINED_POSITIONS,
+        )
+        .expect("opens");
+    for (index, level) in [1, 2].into_iter().enumerate() {
+        let observed = text(level);
+        clean(&session.step(sample(&observed), &cancel).expect("steps"));
+        let step = session
+            .assert_progress(progress(u64::try_from(index).expect("index")), &cancel)
+            .expect("progress");
+        clean(&step);
+    }
+    let state = session.checkpoint().expect("checkpoints");
+    let mut resumed = MonitorSession::resume(
+        world.unit.package(),
+        &state,
+        MonitorOpen {
+            clauses: clauses(&["E"]),
+            kind: MonitorTraceKind::Progressed,
+            lower_boundary: ProgressLowerBoundary::AuthoritativeOrigin,
+            binding: Some(events_binding()),
+            cover: None,
+            ledger: None,
+            packages: &world.packages,
+            sources: &world.sources,
+            temporal_selections: &world.selections,
+        },
+        &limits(DEFAULT_RETAINED_POSITIONS),
+        &cancel,
+    )
+    .expect("resumes");
+    let observed = text(3);
+    clean(&resumed.step(sample(&observed), &cancel).expect("steps"));
+    clean(
+        &resumed
+            .assert_progress(progress(2), &cancel)
+            .expect("progress"),
+    );
+}

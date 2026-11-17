@@ -125,6 +125,14 @@ request supplied none. The same holds for a request that returns
   of a position in the supplied trace says whether it falls at or before the
   retained `through`, and the covered set, which holds identities only, says
   whether the retained assertion covered that identity.
+- A record-sample position is identified by its index (FR-330, FR-643), so a
+  changed sample at a covered index keeps a covered identity. A carried
+  evaluation state (FR-820) therefore also keeps a content fingerprint of each
+  covered sample (FR-993), and SHALL refuse as a contradiction on
+  `Completeness` a position at a covered index whose sample's fingerprint
+  differs from the retained one. The fingerprint is integrity data, not
+  identity: the covered set and the ledger a report returns hold index
+  identities only (ADR-013 §2).
 - A later trace that omits a position an earlier assertion covered is accepted:
   the ledger keeps the omitted position as covered and does not treat its absence
   as a contradiction; only a position that was not covered and now appears at or

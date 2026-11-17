@@ -139,10 +139,20 @@ impl ClauseState {
   can cite, count them in `cited()` and not in `retained()`, and drop them
   once no report can cite them (when the clause settles with its report
   already built, or when no open activation's counterexample reaches them).
+  A record sample is cited by its index, and no report or report ledger
+  spells a sample's text or value.
+- **Content fingerprints.** For each covered record-sample position, the
+  state SHALL keep the content fingerprint FR-993 defines, so that a changed
+  sample at a covered index is refused `Completeness` (FR-502). The
+  fingerprint is integrity data, not an identity (ADR-013 §2). It is held in
+  the state and its bytes and never in a report, and it is counted in the
+  ledger's `progress.covered_positions` bound.
 - **No partial state.** A refused or cancelled call SHALL leave the state as
   it was before the call.
 - **Bytes.** `from_bytes(to_bytes())` SHALL give a state whose later calls
-  return what the original's would.
+  return what the original's would. `from_bytes` restores the content
+  fingerprints, so a restored state still refuses a changed sample at a
+  covered index.
 
 ## Acceptance Criteria
 
