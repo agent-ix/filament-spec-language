@@ -653,7 +653,16 @@ pub fn run(
     cancel: &Cancel,
 ) -> Result<CallOutcome, Box<RunRefusal>> {
     run_with_optional_profile_catalog(
-        source, package_name, path, bytes, packages, dependencies, limits, call, objects, None,
+        source,
+        package_name,
+        path,
+        bytes,
+        packages,
+        dependencies,
+        limits,
+        call,
+        objects,
+        None,
         cancel,
     )
 }

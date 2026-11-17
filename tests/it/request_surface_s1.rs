@@ -400,15 +400,16 @@ fn the_parse_outcome_reports_the_parsed_unit() {
         Limits::default(),
         &Cancel::new(),
     );
-    let document: Value = serde_json::from_slice(
-        &OutcomeDocument::from_parse(&malformed).to_bytes().unwrap(),
-    )
-    .unwrap();
+    let document: Value =
+        serde_json::from_slice(&OutcomeDocument::from_parse(&malformed).to_bytes().unwrap())
+            .unwrap();
     assert_eq!(document["result"]["kind"], "parsed", "{document}");
     assert!(
-        document["diagnostics"].as_array().unwrap().iter().any(|diagnostic| {
-            diagnostic["code"] == "invalid_syntax"
-        }),
+        document["diagnostics"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|diagnostic| { diagnostic["code"] == "invalid_syntax" }),
         "{document}"
     );
 
@@ -422,10 +423,8 @@ fn the_parse_outcome_reports_the_parsed_unit() {
         Limits::default(),
         &Cancel::new(),
     );
-    let document: Value = serde_json::from_slice(
-        &OutcomeDocument::from_parse(&refused).to_bytes().unwrap(),
-    )
-    .unwrap();
+    let document: Value =
+        serde_json::from_slice(&OutcomeDocument::from_parse(&refused).to_bytes().unwrap()).unwrap();
     assert!(document["result"].is_null(), "{document}");
 }
 

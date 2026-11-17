@@ -2600,11 +2600,9 @@ impl Disposition {
             ClauseDisposition::Admit(failure) => match failure {
                 fsl_semantics::model::observation::AdmissionFailure::Refused(record)
                 | fsl_semantics::model::observation::AdmissionFailure::Incomplete(record) => {
-                    let refusal = RefusalWire::new(
-                        record.catalog.code(),
-                        Some(record.catalog.cause()),
-                    )
-                    .fields(record.fields.clone());
+                    let refusal =
+                        RefusalWire::new(record.catalog.code(), Some(record.catalog.cause()))
+                            .fields(record.fields.clone());
                     result.refusal = Some(refusal);
                 }
                 fsl_semantics::model::observation::AdmissionFailure::Fault(fault) => {
@@ -2617,38 +2615,41 @@ impl Disposition {
             ClauseDisposition::SnapshotAdmission { failure, document } => match failure {
                 fsl_semantics::model::observation::AdmissionFailure::Refused(record)
                 | fsl_semantics::model::observation::AdmissionFailure::Incomplete(record) => {
-                    let mut refusal = RefusalWire::new(
-                        record.catalog.code(),
-                        Some(record.catalog.cause()),
-                    )
-                    .fields(record.fields.clone());
+                    let mut refusal =
+                        RefusalWire::new(record.catalog.code(), Some(record.catalog.cause()))
+                            .fields(record.fields.clone());
                     if matches!(record.catalog.cause(), "missing-member" | "unknown-member") {
-                        let pointer = record.path.iter().fold(String::new(), |mut pointer, step| {
-                            use filament_semantic_value::admission::PathStep;
-                            match step {
-                                PathStep::Field(member) => {
-                                    pointer.push('/');
-                                    pointer.push_str(&member.replace('~', "~0").replace('/', "~1"));
+                        let pointer =
+                            record.path.iter().fold(String::new(), |mut pointer, step| {
+                                use filament_semantic_value::admission::PathStep;
+                                match step {
+                                    PathStep::Field(member) => {
+                                        pointer.push('/');
+                                        pointer.push_str(
+                                            &member.replace('~', "~0").replace('/', "~1"),
+                                        );
+                                    }
+                                    PathStep::Index(index) => {
+                                        pointer.push('/');
+                                        pointer.push_str(&index.to_string());
+                                    }
+                                    PathStep::OptionValue => {}
                                 }
-                                PathStep::Index(index) => {
-                                    pointer.push('/');
-                                    pointer.push_str(&index.to_string());
-                                }
-                                PathStep::OptionValue => {}
-                            }
-                            pointer
-                        });
+                                pointer
+                            });
                         let identity = fsl_foundation::source::provenance::RawSourceRef::new(
                             document.authority.clone(),
                             document.identity.clone(),
                         )
                         .ok();
-                        let object = record.fields.get("object").zip(
-                            record.fields.get("population"),
-                        ).map(|(key, population)| crate::outcome::DocumentObjectLocus {
-                            population: population.clone(),
-                            key: key.clone(),
-                        });
+                        let object = record
+                            .fields
+                            .get("object")
+                            .zip(record.fields.get("population"))
+                            .map(|(key, population)| crate::outcome::DocumentObjectLocus {
+                                population: population.clone(),
+                                key: key.clone(),
+                            });
                         refusal.locus = Some(crate::outcome::OutcomeLocus::Document {
                             document: identity,
                             path: None,

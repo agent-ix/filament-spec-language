@@ -3041,8 +3041,7 @@ fn function_result_type_locus(
                 continue;
             }
             let mut tokens = cst.tokens().iter().filter(|token| {
-                token.span().start >= node.span().start
-                    && token.span().end <= node.span().end
+                token.span().start >= node.span().start && token.span().end <= node.span().end
             });
             let is_selected = tokens
                 .find(|token| token.spelling() == b"function")

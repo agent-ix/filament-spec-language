@@ -2146,9 +2146,8 @@ impl OutcomeDocument {
                     | StageFailure::LimitWithPayload(_, payload) => payload.parsed.as_ref(),
                     _ => None,
                 };
-                document.result = parsed.map(|parsed| {
-                    OutcomeResult::Parsed(ParsedOutcome::from(parsed))
-                });
+                document.result =
+                    parsed.map(|parsed| OutcomeResult::Parsed(ParsedOutcome::from(parsed)));
                 document
             }
         }

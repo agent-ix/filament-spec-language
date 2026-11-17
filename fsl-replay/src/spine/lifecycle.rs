@@ -2710,10 +2710,8 @@ fn parse_unit(
                 if let Some(results) =
                     bounded_protocol_results_around_nonprotocol_diagnostic(&parsed, diagnostic)
                 {
-                    return Err(
-                        StageError::with_protocol_results(refusal, results)
-                            .with_parsed_report(report),
-                    );
+                    return Err(StageError::with_protocol_results(refusal, results)
+                        .with_parsed_report(report));
                 }
                 return Err(StageError::from(refusal).with_parsed_report(report));
             }
