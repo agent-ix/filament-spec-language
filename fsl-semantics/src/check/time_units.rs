@@ -28,7 +28,16 @@ use crate::model::domain_package::PackageUnitRecord;
 use crate::value::nominal_payload::{DimensionPayload, NominalPayload, UnitPayload};
 use crate::value::semantic_node::{ModelSubject, OwnerSubject};
 
-use super::refusal::TimeUnitCause;
+use super::refusal::{ClockSelectionFault, TimeUnitCause};
+
+/// Why a timestamped-event clause's clock names no clock unit node (FR-965).
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) enum ClockUnitRefusal {
+    /// FR-933's `unknown-clock-unit` or `clock-unit-dimension`.
+    Fault(ClockSelectionFault),
+    /// The unit is a time unit the clock cannot count in (an affine one).
+    Unit(Box<TimeUnitCause>),
+}
 
 /// The name FR-230 fixes for the time dimension's base node.
 const TIME_DIMENSION: &str = "Time";
@@ -383,6 +392,45 @@ impl TimeUnits {
         self.target(name).ok().flatten()
     }
 
+    /// FR-965: the clock unit node of a timestamped-event clause whose clock's
+    /// `timestamp_unit` is `timestamp_unit`, as a conversion target. An FCD
+    /// identity selects the model-owned node `["scalar_type", "unit", T]`
+    /// ([`Self::clock_target`]); otherwise `T` is the name of a unit the
+    /// clause's own source declares, whose source-owned node is the clock
+    /// unit. The two never coincide: a declared name is an identifier and an
+    /// FCD identity an `ix://` URI.
+    ///
+    /// # Errors
+    ///
+    /// [`ClockSelectionFault::UnknownClockUnit`] when `T` names no unit,
+    /// [`ClockSelectionFault::ClockUnitDimension`] when it names a unit of
+    /// another dimension than `Time` (FR-933's causes), and the unit's
+    /// [`TimeUnitCause::AffineUnit`] for an affine time unit, which refuses
+    /// `ill_typed`/`type-mismatch` (FR-337).
+    pub(crate) fn clock_unit(&self, timestamp_unit: &str) -> Result<TimeScale, ClockUnitRefusal> {
+        if let Some(target) = self.clock_target(timestamp_unit) {
+            return Ok(target);
+        }
+        let unit = || timestamp_unit.to_owned();
+        match self.target(timestamp_unit) {
+            Ok(Some(target)) => Ok(target),
+            Ok(None) => Err(ClockUnitRefusal::Fault(
+                ClockSelectionFault::ClockUnitDimension { unit: unit() },
+            )),
+            Err(TimeUnitCause::UnknownUnit { .. } | TimeUnitCause::NoTimeDimension { .. }) => Err(
+                ClockUnitRefusal::Fault(ClockSelectionFault::UnknownClockUnit { unit: unit() }),
+            ),
+            Err(cause @ TimeUnitCause::AffineUnit { .. }) => {
+                Err(ClockUnitRefusal::Unit(Box::new(cause)))
+            }
+            Err(
+                TimeUnitCause::NotTimeDimension { .. } | TimeUnitCause::OtherTimeDimension { .. },
+            ) => Err(ClockUnitRefusal::Fault(
+                ClockSelectionFault::ClockUnitDimension { unit: unit() },
+            )),
+        }
+    }
+
     fn nominal_dependency_closure(
         &self,
         roots: impl IntoIterator<Item = NodeKey>,
@@ -443,21 +491,28 @@ impl TimeUnits {
     }
 }
 
-/// Whether `unit` is the `scalar_type`/`unit` node whose path is
-/// `["scalar_type", "unit", timestamp_unit]`: the clock unit node a
-/// timestamped-event clock's `timestamp_unit` names (FSpec FR-370).
+/// Whether `unit` is the clock unit node a timestamped-event clock's
+/// `timestamp_unit` names (FSpec FR-370, FR-778; FSL FR-965): the model-owned
+/// node whose path is `["scalar_type", "unit", timestamp_unit]` for an FCD
+/// identity, or the source-owned unit node whose declaration path is
+/// `[timestamp_unit]` for a unit the clause's own source declares. A declared
+/// name is an identifier and an FCD identity an `ix://` URI, so the two
+/// paths never name one clock unit.
 pub fn is_clock_unit_node(unit: &NodeKey, timestamp_unit: &str) -> bool {
     use filament_exact::PathSegmentView as Segment;
     let mut path = unit.view().path();
-    matches!(
-        (path.next(), path.next(), path.next(), path.next()),
+    match (path.next(), path.next(), path.next(), path.next()) {
         (
             Some(Segment::Text("scalar_type")),
             Some(Segment::Text("unit")),
             Some(Segment::Text(last)),
             None,
-        ) if last == timestamp_unit
-    )
+        ) => last == timestamp_unit,
+        (Some(Segment::Text(declared)), None, None, None) => {
+            declared == timestamp_unit && filament_exact::is_identifier(timestamp_unit)
+        }
+        _ => false,
+    }
 }
 
 /// The exact scale and composed offset of an FCD unit along its target chain.
