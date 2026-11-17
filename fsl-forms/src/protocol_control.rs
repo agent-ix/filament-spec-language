@@ -103,6 +103,9 @@ pub struct ChannelForm {
     pub from: DeclaredName,
     /// The `to` role, as written.
     pub to: DeclaredName,
+    /// The protocol relationship carrying this channel, when written with
+    /// `via` (FR-897).
+    pub via: Option<DeclaredName>,
     /// The `carries` type, as spelled.
     pub carries: TypeForm,
     /// The ordering, with the span of its text.
@@ -448,16 +451,28 @@ fn overflow_form(cst: &LosslessCst, overflow: &CstNode) -> Result<ChannelOverflo
     }
 }
 
-/// `channel C from R to R carries T ordering o delivery d capacity c
+/// `channel C from R to R [via Link] carries T ordering o delivery d capacity c
 /// overflow p;` (FR-308): every premise as written, with its span.
 pub(crate) fn channel_form(
     cst: &LosslessCst,
     channel: &CstNode,
 ) -> Result<ChannelForm, FormsRefusal> {
     let channel_items = items(cst, channel);
-    let [name, from, to] = tokens_of(&channel_items, TokenKind::Identifier)[..] else {
+    let identifiers = tokens_of(&channel_items, TokenKind::Identifier);
+    let [name, from, to, ..] = identifiers.as_slice() else {
         return Err(unexpected(channel));
     };
+    let via = channel_items.iter().position(|item| matches!(item,
+        Item::Token(token) if token.spelling() == b"via"
+    )).map(|index| {
+        let Some(Item::Token(token)) = channel_items.get(index + 1) else {
+            return Err(unexpected(channel));
+        };
+        if token.kind() != TokenKind::Identifier {
+            return Err(unexpected(channel));
+        }
+        Ok(declared(token, channel)?)
+    }).transpose()?;
     let ordering = only(&channel_items, Production::Ordering, channel)?;
     let delivery = only(&channel_items, Production::DeliveryPolicy, channel)?;
     let capacity = only(&channel_items, Production::Capacity, channel)?;
@@ -466,6 +481,7 @@ pub(crate) fn channel_form(
         name: declared(name, channel)?,
         from: declared(from, channel)?,
         to: declared(to, channel)?,
+        via,
         carries: type_form(
             cst,
             only(&channel_items, Production::TypeReference, channel)?,

@@ -41,8 +41,24 @@ pub struct CheckedRelationship {
     pub key: DeclarationKey,
     /// The types of its source and target ends, in that order.
     pub ends: [ValueType; 2],
+    /// Systems connection facts retained for channel `via` validation.
+    pub connection: Option<CheckedConnection>,
     /// The span of the whole member.
     pub span: Span,
+}
+
+/// The admitted Port ends and direction of a protocol relationship that is a
+/// systems Connection.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct CheckedConnection {
+    /// Source and target Port declaration keys, in model declaration order.
+    pub ports: [DeclarationKey; 2],
+    /// The declared direction.
+    pub direction: crate::model::domain_package::RelationshipDirection,
+    /// The selected model identity.
+    pub model_selection: String,
+    /// The effective interface types of the source and target Ports.
+    pub interfaces: [filament_exact::EffectiveId; 2],
 }
 
 fn refusal(cause: ProtocolAnchorCause) -> CheckRefusal {
@@ -152,13 +168,30 @@ pub(crate) fn check(
             continue;
         };
         let end = |key: &DeclarationKey| model.object_type_id(key).map(ValueType::Reference);
+        let connection = model.admitted_connection_ends(&record.key).and_then(|ends| {
+            let source_port = model.declaration_record(&record.source.type_identity)?;
+            let target_port = model.declaration_record(&record.target.type_identity)?;
+            let (
+                crate::model::domain_package::DomainPackageRecord::Endpoint(source_port),
+                crate::model::domain_package::DomainPackageRecord::Endpoint(target_port),
+            ) = (source_port, target_port) else { return None };
+            Some((ends, CheckedConnection {
+                ports: [record.source.type_identity.clone(), record.target.type_identity.clone()],
+                direction: record.direction,
+                model_selection: model.selection().identity.clone(),
+                interfaces: [
+                    model.object_type_id(&source_port.value_type)?,
+                    model.object_type_id(&target_port.value_type)?,
+                ],
+            }))
+        });
         let ends = match (
             end(&record.source.type_identity),
             end(&record.target.type_identity),
         ) {
             (Some(source), Some(target)) => [source, target],
-            _ => match model.admitted_connection_ends(&record.key) {
-                Some(ends) => ends,
+            _ => match &connection {
+                Some((ends, _)) => ends.clone(),
                 None => {
                     refusals.push((
                         target.span,
@@ -176,6 +209,7 @@ pub(crate) fn check(
             name: relationship.name.name.clone(),
             key: record.key.clone(),
             ends,
+            connection: connection.map(|(_, connection)| connection),
             span: relationship.span,
         });
     }

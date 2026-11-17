@@ -614,6 +614,71 @@ pub enum ProtocolAnchorCause {
         /// The model name's span.
         span: Span,
     },
+    /// FR-897: a channel's `via` names no protocol relationship member.
+    MissingChannelConnection {
+        /// The channel name.
+        channel: String,
+        /// The relationship name as written.
+        name: String,
+        /// The `via` name span.
+        span: Span,
+    },
+    /// FR-897: a channel's `via` names a relationship that is not a systems
+    /// Connection.
+    ChannelConnectionExport {
+        /// The channel name.
+        channel: String,
+        /// The relationship name.
+        name: String,
+        /// The export's actual kind.
+        actual: &'static str,
+        /// The export key.
+        export: Box<filament_checked::key::DeclarationKey>,
+        /// The `via` name span.
+        span: Span,
+    },
+    /// FR-897: a channel endpoint role is not bound to a Port.
+    ChannelPortRole {
+        /// The channel name.
+        channel: String,
+        /// The role name.
+        role: String,
+        /// The role name span.
+        span: Span,
+    },
+    /// FR-897: the roles' Ports do not match the connection's directed ends.
+    ChannelConnectionEnds {
+        /// The channel name.
+        channel: String,
+        /// The connection name.
+        connection: String,
+        /// Expected flow-ordered Ports.
+        expected: [Box<filament_checked::key::DeclarationKey>; 2],
+        /// Actual role-bound Ports.
+        actual: [Box<filament_checked::key::DeclarationKey>; 2],
+        /// The `via` name span.
+        span: Span,
+    },
+    /// FR-897: the channel payload does not conform to the flow source Port
+    /// interface type.
+    ChannelConnectionCarries {
+        /// The channel name.
+        channel: String,
+        /// Expected flow-source interface type.
+        expected: Box<filament_exact::ValueType>,
+        /// Actual channel `carries` type.
+        actual: Box<filament_exact::ValueType>,
+        /// The `carries` type span.
+        span: Span,
+    },
+    /// FR-897: `related by` names a systems Connection, which relates Ports
+    /// rather than values.
+    RelatedConnection {
+        /// The connection name.
+        name: String,
+        /// The `related by` name span.
+        span: Span,
+    },
     /// FR-218 "Relationships": a `related by r (a, b)` clause whose `r` is
     /// no relationship the protocol declares. `missing_declaration`/
     /// `missing-name`, at the name.
@@ -1126,6 +1191,12 @@ impl ProtocolAnchorCause {
             | Self::MissingRolePopulation { span, .. }
             | Self::RolePopulationType { span, .. }
             | Self::RelationshipExport { span, .. }
+            | Self::MissingChannelConnection { span, .. }
+            | Self::ChannelConnectionExport { span, .. }
+            | Self::ChannelPortRole { span, .. }
+            | Self::ChannelConnectionEnds { span, .. }
+            | Self::ChannelConnectionCarries { span, .. }
+            | Self::RelatedConnection { span, .. }
             | Self::MissingRelated { span, .. }
             | Self::RelatedEnd { span, .. }
             | Self::RequirementKind { span, .. }
@@ -1149,6 +1220,7 @@ impl ProtocolAnchorCause {
             | Self::MissingRelationship { .. }
             | Self::MissingRolePopulation { .. }
             | Self::MissingRelated { .. } => Code::MissingDeclaration,
+            Self::MissingChannelConnection { .. } => Code::MissingDeclaration,
             Self::JoinFunctionMissing { .. } => Code::MissingDeclaration,
             Self::WrongProfileKind { .. } => Code::UnknownProfile,
             Self::RefusedDependency { .. } => Code::MissingDeclaration,
@@ -1164,6 +1236,8 @@ impl ProtocolAnchorCause {
             | Self::RequirementKind { .. }
             | Self::AccessOrdering { .. }
             | Self::RelatedEnd { .. }
+            | Self::ChannelConnectionCarries { .. }
+            | Self::RelatedConnection { .. }
             | Self::RolePopulationType { .. }
             | Self::RoleMax { .. } => Code::IllTyped,
             Self::JoinFunctionKind { .. } | Self::JoinFunctionType { .. } => Code::IllTyped,
@@ -1184,6 +1258,9 @@ impl ProtocolAnchorCause {
             }
             Self::ChannelCarriesObject { .. }
             | Self::RoleModel { .. }
+            | Self::ChannelConnectionExport { .. }
+            | Self::ChannelPortRole { .. }
+            | Self::ChannelConnectionEnds { .. }
             | Self::MemoryConflict { .. }
             | Self::RelationshipExport { .. } => Code::InvalidModelBinding,
             Self::JoinList { .. } => Code::InvalidPackage,
@@ -1207,6 +1284,7 @@ impl ProtocolAnchorCause {
             | Self::MissingRelationship { .. }
             | Self::MissingRolePopulation { .. }
             | Self::MissingRelated { .. } => "missing-name",
+            Self::MissingChannelConnection { .. } => "missing-name",
             Self::JoinFunctionMissing { .. } => "missing-name",
             Self::WrongProfileKind { .. } => "wrong-selection-role",
             Self::RefusedDependency { .. } => "missing-name",
@@ -1225,6 +1303,7 @@ impl ProtocolAnchorCause {
             | Self::SlotModelState { .. }
             | Self::AccessOrdering { .. }
             | Self::RequirementKind { .. } => "operator-ineligible",
+            Self::RelatedConnection { .. } => "operator-ineligible",
             Self::JoinFunctionKind { .. } => "operator-ineligible",
             // Only a cause that has a tag is wrapped
             // (`protocol_controls::check_fifo`, `protocol_slots`).
@@ -1245,7 +1324,12 @@ impl ProtocolAnchorCause {
             Self::BinderType { fault, .. } | Self::ChannelType { fault, .. } => {
                 type_fault_class(fault).1
             }
-            Self::ChannelCarriesObject { .. } | Self::RoleModel { .. } => "malformed-declaration",
+            Self::ChannelCarriesObject { .. }
+            | Self::RoleModel { .. }
+            | Self::ChannelPortRole { .. }
+            | Self::ChannelConnectionEnds { .. } => "malformed-declaration",
+            Self::ChannelConnectionExport { .. } => "wrong-export",
+            Self::ChannelConnectionCarries { .. } => "type-mismatch",
             Self::RelationshipExport { .. } => "wrong-export",
             Self::MemoryConflict { .. } => "conflicting-binding",
             Self::JoinList { .. } => "invalid-value",

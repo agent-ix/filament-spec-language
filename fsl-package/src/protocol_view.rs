@@ -975,6 +975,21 @@ pub fn channel_endpoints(
     })
 }
 
+/// The systems Connection a channel traverses, when its node carries the
+/// optional `connection` reference (FSpec FR-738, FSL FR-897).
+///
+/// # Errors
+///
+/// [`ViewRefusal::MalformedMember`] naming `connection` when that argument
+/// exists but is not a reference.
+pub fn channel_connection(
+    channel: &CheckedSemanticNodeV2,
+) -> Result<Option<&CheckedNodeId>, ViewRefusal> {
+    argument(channel, "connection")
+        .map(|term| reference(term).ok_or_else(|| malformed(&channel.node_id, "connection")))
+        .transpose()
+}
+
 /// A queue's capacity (FSpec FR-465 "Queue").
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum QueueCapacity<'n> {

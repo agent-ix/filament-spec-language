@@ -1779,6 +1779,7 @@ fn a_channels_ends_and_message_type_are_the_nodes_it_references() {
     for held in &fixture.protocol.channels {
         let channel = by_name(package, &held.name);
         let ends = channel_endpoints(channel).unwrap();
+        assert_eq!(channel_connection(channel).unwrap(), None);
         assert_eq!(name(package, ends.sender).last(), Some(&held.from));
         assert_eq!(name(package, ends.receiver).last(), Some(&held.to));
         assert_eq!(&*node(package, ends.sender).semantic_form, "role");

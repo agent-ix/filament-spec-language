@@ -1237,6 +1237,13 @@ pub(crate) fn check(
             else {
                 continue;
             };
+            if checked_relationship.connection.is_some() {
+                checker.refuse(ProtocolAnchorCause::RelatedConnection {
+                    name: name.name.clone(),
+                    span: name.span,
+                });
+                continue;
+            }
             let mut readable = flow.input(node);
             readable.extend(node_binder.get(&node));
             let mut ends = Vec::with_capacity(2);

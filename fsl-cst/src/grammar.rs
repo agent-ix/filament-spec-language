@@ -2022,6 +2022,7 @@ fn protocol(g: &mut Grammar) {
             ident(),
             x("to"),
             ident(),
+            opt(s(vec![x("via"), ident()])),
             x("carries"),
             r(P::TypeReference),
             x("ordering"),
