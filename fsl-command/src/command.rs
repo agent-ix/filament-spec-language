@@ -15,13 +15,13 @@ mod tl;
 mod wire;
 
 pub use analyze::{
-    analyze, analyze_with_limits, analyze_with_providers, analyze_with_providers_and_limits,
-    prepare_analyze, AnalyzeInput, PreparedAnalyze,
+    AnalyzeInput, PreparedAnalyze, analyze, analyze_with_limits, analyze_with_providers,
+    analyze_with_providers_and_limits, prepare_analyze,
 };
-pub use flow::{analyze_flow_report, FlowAnalyzeError};
-pub use monitor::{monitor, MonitorEvent, MonitorSummary};
+pub use flow::{FlowAnalyzeError, analyze_flow_report};
+pub use monitor::{MonitorEvent, MonitorSummary, monitor};
 pub use output::NativeResult;
-pub use tl::{record as tl_record, AtomMapping, TlRecord};
+pub use tl::{AtomMapping, TlRecord, record as tl_record};
 
 use crate::formal_source::FormalSource;
 use filament_contract_model as ir;
@@ -272,11 +272,15 @@ pub enum RunCause {
     Json(#[from] serde_json::Error),
     /// FR-640: the request carries `clocks` and the caller also supplied a
     /// clocks override (the driver's `--clocks`).
-    #[error("invalid request: clocks is given both in the request and as a clocks override (--clocks); give it once")]
+    #[error(
+        "invalid request: clocks is given both in the request and as a clocks override (--clocks); give it once"
+    )]
     ClocksGivenTwice,
     /// FR-810: the request carries `output` and the caller also supplied an
     /// output override (the driver's `--output`).
-    #[error("invalid request: output is given both in the request and as an output override (--output); give it once")]
+    #[error(
+        "invalid request: output is given both in the request and as an output override (--output); give it once"
+    )]
     OutputGivenTwice,
     /// FR-810: a file or directory already exists at the output path.
     #[error("invalid request: output {path} already exists; a compile never overwrites it", path = path.display())]
@@ -329,7 +333,9 @@ pub enum RunCause {
     #[error("the compile program has no source units")]
     EmptyCompileProgram,
     /// FR-931: `tl_lowering.correspondence` names no TL correspondence.
-    #[error("unknown_profile/unsupported-selection: tl_lowering.correspondence {value:?} is none of mltl.closed-trace/v1, mltl.online-prefix/v1 and mltl.origin-complete-history/v1")]
+    #[error(
+        "unknown_profile/unsupported-selection: tl_lowering.correspondence {value:?} is none of mltl.closed-trace/v1, mltl.online-prefix/v1 and mltl.origin-complete-history/v1"
+    )]
     TlCorrespondence {
         /// The value given.
         value: String,
@@ -365,7 +371,9 @@ pub enum RunCause {
     /// FR-960: a `call.requirements.items` entry names a claim that is no
     /// item of the call; refused at stage `call` before any item is
     /// negotiated.
-    #[error("missing_declaration: call.requirements names the claim {claim}, which is no item of the call")]
+    #[error(
+        "missing_declaration: call.requirements names the claim {claim}, which is no item of the call"
+    )]
     UnknownRequirementClaim {
         /// The claim as the request spells it.
         claim: serde_json::Value,
@@ -410,7 +418,9 @@ pub enum RunCause {
     /// FR-620: a request member FSL admits but does not implement yet
     /// (`unsupported_construct`/`not-yet-implemented`, FR-763), such as a
     /// checked-package selection (QSL-2271).
-    #[error("unsupported_construct/not-yet-implemented: analyzing a {member} selection is not implemented yet")]
+    #[error(
+        "unsupported_construct/not-yet-implemented: analyzing a {member} selection is not implemented yet"
+    )]
     AnalyzeNotYetImplemented {
         /// The request member the gap is in.
         member: &'static str,
@@ -632,9 +642,7 @@ impl RunError {
                 Some(failure.refusal.stage().into()),
                 self.category(),
             )
-            .with_diagnostics(vec![OutcomeDiagnostic::from_compile_refusal(
-                &failure.refusal,
-            )]),
+            .with_diagnostics(failure.refusal.outcome_diagnostics()),
             RunCause::SpineRun(refusal) => OutcomeDocument::from_run_refusal(operation, refusal),
             RunCause::AnalyzeRefused(refusal) => refusal.document(),
             RunCause::MonitorRefused(refusal) => refusal.document(),
@@ -766,7 +774,9 @@ impl RunError {
                 remaining,
                 maximum,
             }) => {
-                format!("selected files limit {maximum} exceeded: {category:?} requested {requested}, remaining {remaining}")
+                format!(
+                    "selected files limit {maximum} exceeded: {category:?} requested {requested}, remaining {remaining}"
+                )
             }
             _ => self.to_string(),
         }
@@ -2164,7 +2174,7 @@ fn execute_lowering(prepared: PreparedLowering) -> Result<RunResult> {
     let valuation = match &report.disposition {
         fsl_replay::spine::ClauseDisposition::TemporalValuation(valuation) => valuation,
         fsl_replay::spine::ClauseDisposition::MissingName { name } => {
-            return Err(RunCause::TlClause { name: name.clone() })
+            return Err(RunCause::TlClause { name: name.clone() });
         }
         _ => return output::clause_report(report, &selection),
     };

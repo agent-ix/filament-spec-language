@@ -1688,7 +1688,24 @@ impl OutcomeDiagnostic {
     /// Project a compile refusal with only the limit-setting mechanism the
     /// named operation accepts. Replay also accepts request `stage_limits`.
     fn from_compile_refusal_for_operation(operation: Operation, refusal: &CompileRefusal) -> Self {
-        let mut diagnostic = Self::from_compile_refusal(refusal);
+        let diagnostic = Self::from_compile_refusal(refusal);
+        Self::for_operation(operation, diagnostic)
+    }
+
+    /// Project every retained compile diagnostic with only the limit-setting
+    /// mechanism the named operation accepts.
+    fn from_compile_refusal_diagnostics_for_operation(
+        operation: Operation,
+        refusal: &CompileRefusal,
+    ) -> Vec<Self> {
+        refusal
+            .outcome_diagnostics()
+            .into_iter()
+            .map(|diagnostic| Self::for_operation(operation, diagnostic))
+            .collect()
+    }
+
+    fn for_operation(operation: Operation, mut diagnostic: Self) -> Self {
         if operation != Operation::Replay {
             if let Some((message, _)) = diagnostic
                 .message
@@ -2031,8 +2048,8 @@ impl OutcomeDocument {
     }
 
     /// The document of a `check` outcome: success at S4, which mints no
-    /// identity, so no artifact; a failure names its category and one
-    /// diagnostic.
+    /// identity, so no artifact; a failure names its category and retains
+    /// every diagnostic the refused stage reported.
     pub fn from_check(result: &Result<Staged<CheckedUnit>, FrontEndFailure>) -> Self {
         match result {
             Ok(_) => Self::new(Operation::Check, Some(OutcomeStage::S4), Category::Success),
@@ -2060,17 +2077,21 @@ impl OutcomeDocument {
                 Some(refusal.stage().into()),
                 refusal.code().category(),
             )
-            .with_diagnostics(vec![
-                OutcomeDiagnostic::from_compile_refusal_for_operation(operation, refusal),
-            ]),
+            .with_diagnostics(
+                OutcomeDiagnostic::from_compile_refusal_diagnostics_for_operation(
+                    operation, refusal,
+                ),
+            ),
             StageFailure::RefusedWithPayload(refusal, _) => Self::new(
                 operation,
                 Some(refusal.stage().into()),
                 refusal.code().category(),
             )
-            .with_diagnostics(vec![
-                OutcomeDiagnostic::from_compile_refusal_for_operation(operation, refusal),
-            ]),
+            .with_diagnostics(
+                OutcomeDiagnostic::from_compile_refusal_diagnostics_for_operation(
+                    operation, refusal,
+                ),
+            ),
             StageFailure::Limit(limit) => {
                 let refusal = CompileRefusal::Limit(limit.clone());
                 Self::new(
@@ -2235,8 +2256,8 @@ impl OutcomeDocument {
     /// The document of a `run`: a call that ran is [`Self::from_call`]'s
     /// document; a refusal is an
     /// `execute` document at the stage it reached with the refusal's
-    /// category and one diagnostic; a cancel is incomplete; a fault is
-    /// internal failure with its catalog code.
+    /// category and every retained diagnostic; a cancel is incomplete; a
+    /// fault is internal failure with its catalog code.
     pub fn from_run(result: &Result<CallOutcome, Box<RunRefusal>>) -> Self {
         match result {
             Ok(outcome) => Self::from_call(outcome),
@@ -2260,10 +2281,11 @@ impl OutcomeDocument {
     fn run_refusal_document(operation: Operation, refusal: &RunRefusal) -> Self {
         match refusal {
             RunRefusal::Compile(compile) => {
-                Self::new(operation, Some(compile.stage().into()), refusal.category())
-                    .with_diagnostics(vec![OutcomeDiagnostic::from_compile_refusal_for_operation(
+                Self::new(operation, Some(compile.stage().into()), refusal.category()).with_diagnostics(
+                    OutcomeDiagnostic::from_compile_refusal_diagnostics_for_operation(
                         operation, compile,
-                    )])
+                    ),
+                )
             }
             RunRefusal::Cancelled(cause) => Self::cancelled(operation, *cause),
             RunRefusal::Fault(fault) => Self::faulted(operation, fault),

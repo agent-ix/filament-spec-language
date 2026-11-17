@@ -216,8 +216,8 @@ mod identity_form;
 mod run_value;
 pub(crate) use call::run_reading;
 pub use call::{
-    default_accounting, run, Call, CallArgument, CallIncomplete, CallLocus, CallOutcome,
-    CallRefusal, CallSnapshot, CallValue, RunRefusal, WireArgument, DEFAULT_WORK_UNITS,
+    Call, CallArgument, CallIncomplete, CallLocus, CallOutcome, CallRefusal, CallSnapshot,
+    CallValue, DEFAULT_WORK_UNITS, RunRefusal, WireArgument, default_accounting, run,
 };
 pub use identity_form::{effective_form, node_key_form, universe_form};
 pub use run_value::ArgumentDefect;
@@ -303,6 +303,12 @@ pub enum CompileRefusal {
     /// recovery, which E2 does not admit. Holds the first diagnostic.
     #[error("{}", .0.message)]
     Source(Box<CompleteDiagnostic>),
+    /// E1: S1 produced several syntax diagnostics.
+    #[error("{}", source_diagnostics_message(.diagnostics))]
+    SourceDiagnostics {
+        /// Every retained syntax diagnostic, including a diagnostic-list-cut marker.
+        diagnostics: Vec<CompleteDiagnostic>,
+    },
     /// E2: the forms stage refused the unit.
     #[error("{}", forms_refusal_message(.failure))]
     Forms {
@@ -371,6 +377,14 @@ pub enum CompileRefusal {
         /// The region of the first refusal, when it names one.
         region: Option<SourceRegion>,
     },
+    /// E3: the checker refused the package with one optional region per refusal.
+    #[error("the checker refused the package: {}", check_message(.refusals))]
+    CheckDiagnostics {
+        /// Every check refusal in deterministic source/check order.
+        refusals: Vec<CheckRefusal>,
+        /// Each refusal's first source region, aligned with `refusals`.
+        regions: Vec<Option<SourceRegion>>,
+    },
     /// ADR-015 D-1: the dependency input refused. Closure-level: reported
     /// unwrapped, with no source region.
     #[error("the dependency input refused: {0}")]
@@ -420,6 +434,9 @@ impl CompileRefusal {
         match self {
             Self::UnitList(refusal) => refusal.code(),
             Self::Source(diagnostic) => diagnostic.code,
+            Self::SourceDiagnostics { diagnostics } => diagnostics
+                .first()
+                .map_or(Code::RuntimeInvariant, |diagnostic| diagnostic.code),
             Self::Forms { failure, .. } => failure.catalog_code(),
             Self::Intake { refusal, .. } => refusal.cause.code(),
             Self::OperationClause { failure, .. } | Self::TypeInvariant { failure, .. } => {
@@ -437,7 +454,7 @@ impl CompileRefusal {
                 .errors
                 .first()
                 .map_or(Code::RuntimeInvariant, |error| error.cause.code()),
-            Self::Check { refusals, .. } => refusals
+            Self::Check { refusals, .. } | Self::CheckDiagnostics { refusals, .. } => refusals
                 .first()
                 .map_or(Code::RuntimeInvariant, |refusal| refusal.cause.code()),
             Self::DependencyInput(refusal) => refusal.code(),
@@ -465,7 +482,10 @@ impl CompileRefusal {
             {
                 Some("not-yet-implemented")
             }
-            Self::Check { refusals, .. } => refusals.first()?.cause.cause(),
+            Self::SourceDiagnostics { diagnostics } => Some(diagnostics.first()?.cause.as_str()),
+            Self::Check { refusals, .. } | Self::CheckDiagnostics { refusals, .. } => {
+                refusals.first()?.cause.cause()
+            }
             Self::Assembly { refusal, .. } => refusal
                 .errors
                 .first()
@@ -500,7 +520,7 @@ impl CompileRefusal {
             Self::Dependency { refusal, .. } => refusal.fields(),
             // FR-302: a family that stopped on a caller-budget ceiling
             // reports its retained charge.
-            Self::Check { refusals, .. } => {
+            Self::Check { refusals, .. } | Self::CheckDiagnostics { refusals, .. } => {
                 let mut fields = refusals
                     .first()
                     .and_then(|refusal| refusal.cause.type_check_fields())
@@ -535,7 +555,7 @@ impl CompileRefusal {
     pub fn stage(&self) -> SpineStage {
         match self {
             Self::UnitList(_) => SpineStage::Intake,
-            Self::Source(_) => SpineStage::Source,
+            Self::Source(_) | Self::SourceDiagnostics { .. } => SpineStage::Source,
             Self::Forms { .. } => SpineStage::Forms,
             Self::Intake { .. }
             | Self::OperationClause { .. }
@@ -546,7 +566,7 @@ impl CompileRefusal {
             Self::Assembly { .. } | Self::Profile { .. } | Self::Extension(_) => {
                 SpineStage::Assembly
             }
-            Self::Check { .. } => SpineStage::Check,
+            Self::Check { .. } | Self::CheckDiagnostics { .. } => SpineStage::Check,
             Self::Link(_) | Self::Emit(..) | Self::Omitted(_) => SpineStage::Emit,
             Self::Limit(limit) => match limit.setting() {
                 // Formatting, rendering and backend prepare are never compile stages.
@@ -645,12 +665,16 @@ impl CompileRefusal {
         match self {
             Self::UnitList(refusal) => refusal.region(),
             Self::Source(diagnostic) => diagnostic.region.as_ref(),
+            Self::SourceDiagnostics { diagnostics } => diagnostics
+                .first()
+                .and_then(|diagnostic| diagnostic.region.as_ref()),
             Self::Forms { region, .. }
             | Self::Intake { region, .. }
             | Self::Assembly { region, .. }
             | Self::Profile { region, .. }
             | Self::Import { region, .. }
             | Self::Check { region, .. } => region.as_ref(),
+            Self::CheckDiagnostics { regions, .. } => regions.first().and_then(Option::as_ref),
             Self::Dependency { refusal, .. } => refusal.region(),
             Self::Emit(_, region) => region.as_ref(),
             Self::Limit(limit) => match limit.locus() {
@@ -663,6 +687,35 @@ impl CompileRefusal {
             | Self::Extension(_)
             | Self::Link(_)
             | Self::Omitted(_) => None,
+        }
+    }
+
+    /// Project every retained cause as an outcome diagnostic in source or
+    /// checker order.
+    pub fn outcome_diagnostics(&self) -> Vec<crate::outcome::OutcomeDiagnostic> {
+        use crate::outcome::{OutcomeDiagnostic, OutcomeLocus};
+
+        match self {
+            Self::SourceDiagnostics { diagnostics } => diagnostics
+                .iter()
+                .map(OutcomeDiagnostic::from_source_diagnostic)
+                .collect(),
+            Self::CheckDiagnostics { refusals, regions } => refusals
+                .iter()
+                .zip(regions)
+                .map(|(refusal, region)| {
+                    let locus = region
+                        .as_ref()
+                        .map(|region| OutcomeLocus::from(&Locus::Region(region.clone())));
+                    OutcomeDiagnostic::new(
+                        refusal.cause.cause(),
+                        refusal.cause.code().as_str(),
+                        locus,
+                        check_message_one(refusal),
+                    )
+                })
+                .collect(),
+            _ => vec![OutcomeDiagnostic::from_compile_refusal(self)],
         }
     }
 
@@ -1169,11 +1222,19 @@ fn assembly_message(refusal: &AssemblyRefusal) -> String {
     with_more(message, refusal.errors.len())
 }
 
-/// A readable account of the checker's first refusal, and how many more.
+/// A readable account of every checker refusal, in check order.
 fn check_message(refusals: &[CheckRefusal]) -> String {
-    let Some(first) = refusals.first() else {
+    if refusals.is_empty() {
         return "no refusal recorded".to_owned();
-    };
+    }
+    refusals
+        .iter()
+        .map(check_message_one)
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+fn check_message_one(first: &CheckRefusal) -> String {
     let mut message = first.cause.code().as_str().to_owned();
     if let Some(cause) = first.cause.cause() {
         message = format!("{message} ({cause})");
@@ -2154,7 +2215,7 @@ fn check_message(refusals: &[CheckRefusal]) -> String {
         }
         _ => {}
     }
-    with_more(message, refusals.len())
+    message
 }
 
 /// `message`, noting the `total - 1` further errors it does not describe.
@@ -2163,6 +2224,17 @@ fn with_more(message: String, total: usize) -> String {
         0 => message,
         more => format!("{message}, and {more} more"),
     }
+}
+
+fn source_diagnostics_message(diagnostics: &[CompleteDiagnostic]) -> String {
+    if diagnostics.is_empty() {
+        return "no source diagnostic recorded".to_owned();
+    }
+    diagnostics
+        .iter()
+        .map(ToString::to_string)
+        .collect::<Vec<_>>()
+        .join("\n")
 }
 
 /// `span` as a region of `source`.

@@ -82,6 +82,7 @@ pub(super) fn parse(
     let (tokens, significant, mut diagnostics, mut recoveries) =
         scan(&source, limits, &compounds, cancel)?;
     if diagnostics.len() > SYNTAX_DIAGNOSTIC_BOUND {
+        let omitted = diagnostics.len() - SYNTAX_DIAGNOSTIC_BOUND;
         let cut_span = diagnostics[SYNTAX_DIAGNOSTIC_BOUND]
             .byte_span()
             .unwrap_or(Span {
@@ -97,7 +98,7 @@ pub(super) fn parse(
             cut_span.start,
             cut_span.end,
             format!(
-                "the diagnostic list was cut after {SYNTAX_DIAGNOSTIC_BOUND} syntax errors; raise s1.diagnostics to see the rest"
+                "{omitted} additional syntax errors omitted after the first {SYNTAX_DIAGNOSTIC_BOUND}; raise s1.diagnostics to see the rest"
             ),
         ));
     }
@@ -224,6 +225,8 @@ fn parse_with_declaration_recovery(
     let mut diagnostics = Vec::new();
     let mut recoveries = Vec::new();
     let mut recovered_any = false;
+    let mut omitted_count = 0_usize;
+    let mut first_omitted_span = None;
 
     if scanned
         .iter()
@@ -236,6 +239,12 @@ fn parse_with_declaration_recovery(
         let mut engine = Engine::new(grammar, &tokens, limits, cancel);
         match engine.production(Production::CompleteUnit, 0) {
             Outcome::Match(_) => {
+                append_omitted_diagnostic(
+                    source,
+                    &mut diagnostics,
+                    first_omitted_span,
+                    omitted_count,
+                );
                 return Ok((engine.into_forest(), tokens, diagnostics, recoveries));
             }
             Outcome::Exhausted(refusal) => {
@@ -276,25 +285,35 @@ fn parse_with_declaration_recovery(
                     cancel,
                     failure.position,
                 ) {
-                    let diagnostic = super::diagnostic::error(
+                    if scanned.len().saturating_add(diagnostics.len()) < SYNTAX_DIAGNOSTIC_BOUND {
+                        diagnostics.push(*super::diagnostic::error(
+                            source,
+                            CompleteCode::InvalidSyntax,
+                            CompleteCause::UnexpectedToken,
+                            Phase::Parse,
+                            span.start,
+                            span.end,
+                            "expected `}` before the next protocol declaration",
+                        ));
+                    } else {
+                        omitted_count = omitted_count.saturating_add(1);
+                        first_omitted_span.get_or_insert(span);
+                    }
+                    append_omitted_diagnostic(
                         source,
-                        CompleteCode::InvalidSyntax,
-                        CompleteCause::UnexpectedToken,
-                        Phase::Parse,
-                        span.start,
-                        span.end,
-                        "expected `}` before the next protocol declaration",
+                        &mut diagnostics,
+                        first_omitted_span,
+                        omitted_count,
                     );
-                    return Ok((
-                        Some(forest),
-                        recovered,
-                        vec![*diagnostic],
-                        vec![Recovery {
+                    push_recovery(
+                        &mut recoveries,
+                        Recovery {
                             kind: RecoveryKind::Insert,
                             span,
                             expected: "}".into(),
-                        }],
-                    ));
+                        },
+                    );
+                    return Ok((Some(forest), recovered, diagnostics, recoveries));
                 }
 
                 let header_start = if recovered_any {
@@ -319,6 +338,12 @@ fn parse_with_declaration_recovery(
                 };
                 let Some(start) = declaration_start else {
                     if recovered_any {
+                        append_omitted_diagnostic(
+                            source,
+                            &mut diagnostics,
+                            first_omitted_span,
+                            omitted_count,
+                        );
                         return Ok((None, tokens, diagnostics, recoveries));
                     }
                     let span = tokens.get(failure.position).map_or(
@@ -378,15 +403,18 @@ fn parse_with_declaration_recovery(
                         span.end,
                         message,
                     ));
-                    recoveries.push(Recovery {
-                        kind: if failure.position == tokens.len() {
-                            RecoveryKind::Insert
-                        } else {
-                            RecoveryKind::Delete
+                    push_recovery(
+                        &mut recoveries,
+                        Recovery {
+                            kind: if failure.position == tokens.len() {
+                                RecoveryKind::Insert
+                            } else {
+                                RecoveryKind::Delete
+                            },
+                            span,
+                            expected,
                         },
-                        span,
-                        expected,
-                    });
+                    );
                     return Ok((None, tokens, diagnostics, recoveries));
                 };
 
@@ -446,38 +474,39 @@ fn parse_with_declaration_recovery(
                             &Failure::expected(failure.position, expected.clone()),
                         )
                         .map_or_else(|| format!("expected {expected}"), str::to_owned);
-                        diagnostics.push(*super::diagnostic::error(
+                        if scanned.len().saturating_add(diagnostics.len()) < SYNTAX_DIAGNOSTIC_BOUND
+                        {
+                            diagnostics.push(*super::diagnostic::error(
+                                source,
+                                CompleteCode::InvalidSyntax,
+                                CompleteCause::UnexpectedToken,
+                                Phase::Parse,
+                                span.start,
+                                span.end,
+                                message,
+                            ));
+                        } else {
+                            omitted_count = omitted_count.saturating_add(1);
+                            first_omitted_span.get_or_insert(span);
+                        }
+                        append_omitted_diagnostic(
                             source,
-                            CompleteCode::InvalidSyntax,
-                            CompleteCause::UnexpectedToken,
-                            Phase::Parse,
-                            span.start,
-                            span.end,
-                            message,
-                        ));
-                        recoveries.push(Recovery {
-                            kind: RecoveryKind::Insert,
-                            span,
-                            expected,
-                        });
+                            &mut diagnostics,
+                            first_omitted_span,
+                            omitted_count,
+                        );
+                        push_recovery(
+                            &mut recoveries,
+                            Recovery {
+                                kind: RecoveryKind::Insert,
+                                span,
+                                expected,
+                            },
+                        );
                         return Ok((retry.into_forest(), inserted, diagnostics, recoveries));
                     }
                 }
                 if !has_lexical_error {
-                    if scanned.len().saturating_add(diagnostics.len()) >= SYNTAX_DIAGNOSTIC_BOUND {
-                        diagnostics.push(*super::diagnostic::error(
-                            source,
-                            CompleteCode::InvalidSyntax,
-                            CompleteCause::DiagnosticListCut,
-                            Phase::Parse,
-                            failure_span(source, &tokens, failure.position).start,
-                            failure_span(source, &tokens, failure.position).end,
-                            format!(
-                                "the diagnostic list was cut after {SYNTAX_DIAGNOSTIC_BOUND} syntax errors; raise s1.diagnostics to see the rest"
-                            ),
-                        ));
-                        return Ok((None, tokens, diagnostics, recoveries));
-                    }
                     let span = failure_span(source, &tokens, failure.position);
                     let expected = failure
                         .expected
@@ -489,28 +518,42 @@ fn parse_with_declaration_recovery(
                         &Failure::expected(failure.position, expected.clone()),
                     )
                     .map_or_else(|| format!("expected {expected}"), str::to_owned);
-                    diagnostics.push(*super::diagnostic::error(
-                        source,
-                        CompleteCode::InvalidSyntax,
-                        if failure.position == tokens.len() {
-                            CompleteCause::UnexpectedEnd
-                        } else {
-                            CompleteCause::UnexpectedToken
-                        },
-                        Phase::Parse,
-                        span.start,
-                        span.end,
-                        message,
-                    ));
+                    if scanned.len().saturating_add(diagnostics.len()) < SYNTAX_DIAGNOSTIC_BOUND {
+                        diagnostics.push(*super::diagnostic::error(
+                            source,
+                            CompleteCode::InvalidSyntax,
+                            if failure.position == tokens.len() {
+                                CompleteCause::UnexpectedEnd
+                            } else {
+                                CompleteCause::UnexpectedToken
+                            },
+                            Phase::Parse,
+                            span.start,
+                            span.end,
+                            message,
+                        ));
+                    } else {
+                        omitted_count = omitted_count.saturating_add(1);
+                        first_omitted_span.get_or_insert(span);
+                    }
                 }
-                recoveries.push(Recovery {
-                    kind: RecoveryKind::Delete,
-                    span: region,
-                    expected: "next declaration".into(),
-                });
+                push_recovery(
+                    &mut recoveries,
+                    Recovery {
+                        kind: RecoveryKind::Delete,
+                        span: region,
+                        expected: "next declaration".into(),
+                    },
+                );
                 tokens.drain(start..end);
                 recovered_any = true;
                 if next.is_none() && tokens.is_empty() {
+                    append_omitted_diagnostic(
+                        source,
+                        &mut diagnostics,
+                        first_omitted_span,
+                        omitted_count,
+                    );
                     return Ok((None, tokens, diagnostics, recoveries));
                 }
             }
@@ -526,6 +569,38 @@ fn failure_span(source: &Source, tokens: &[Significant], position: usize) -> Spa
         },
         |token| token.span,
     )
+}
+
+fn append_omitted_diagnostic(
+    source: &Source,
+    diagnostics: &mut Vec<CompleteDiagnostic>,
+    first_omitted_span: Option<Span>,
+    omitted_count: usize,
+) {
+    if omitted_count == 0 {
+        return;
+    }
+    let span = first_omitted_span.unwrap_or(Span {
+        start: source.text().len(),
+        end: source.text().len(),
+    });
+    diagnostics.push(*super::diagnostic::error(
+        source,
+        CompleteCode::InvalidSyntax,
+        CompleteCause::DiagnosticListCut,
+        Phase::Parse,
+        span.start,
+        span.end,
+        format!(
+            "{omitted_count} additional syntax errors omitted after the first {SYNTAX_DIAGNOSTIC_BOUND}; raise s1.diagnostics to see the rest"
+        ),
+    ));
+}
+
+fn push_recovery(recoveries: &mut Vec<Recovery>, recovery: Recovery) {
+    if recoveries.len() < SYNTAX_DIAGNOSTIC_BOUND {
+        recoveries.push(recovery);
+    }
 }
 
 fn is_header_start(token: &Significant) -> bool {

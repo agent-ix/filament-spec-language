@@ -56,6 +56,7 @@ mod complete_editor;
 mod composition_planner;
 mod config_version_spine;
 mod control_node_lowered_type;
+mod diagnostic_golden;
 mod dimension_node_v2;
 mod dispatch_emission;
 mod division_law_editor;
