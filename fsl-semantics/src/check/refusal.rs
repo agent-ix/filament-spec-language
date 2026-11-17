@@ -2823,6 +2823,16 @@ pub enum CheckCause {
     WrongSnapshot(WrongSnapshotCause),
     /// `missing_declaration` / `missing-name` for an unqualified source name.
     MissingName(String),
+    /// A field absent from a record or model object, with the owner needed to
+    /// explain which type does not declare it.
+    UnknownField {
+        /// The type whose declaration was searched.
+        owner: String,
+        /// The field name as written.
+        field: String,
+        /// The field token's source span when it was read from source.
+        span: Option<Span>,
+    },
     /// An accepted execution point is inapplicable to its authored state
     /// clause or names a different operation member (FR-104-AC-15).
     ExecutionPointBinding(ExecutionPointRefusal),
@@ -3516,6 +3526,7 @@ impl CheckCause {
             | Self::TextLiteralOutsideBounds { .. } => Code::IllTyped,
             Self::WrongSnapshot(_) | Self::UnanchoredResult { .. } => Code::WrongSnapshot,
             Self::MissingName(_)
+            | Self::UnknownField { .. }
             | Self::MissingQualifiedName(_)
             | Self::UnresolvedUnitName { .. }
             | Self::MissingSegment { .. }
@@ -3599,6 +3610,7 @@ impl CheckCause {
             | Self::TextLiteralOutsideBounds { .. } => Some("type-mismatch"),
             Self::UnanchoredResult { .. } => Some("wrong-anchor"),
             Self::MissingName(_)
+            | Self::UnknownField { .. }
             | Self::MissingQualifiedName(_)
             | Self::UnresolvedUnitName { .. }
             | Self::MissingSegment { .. }

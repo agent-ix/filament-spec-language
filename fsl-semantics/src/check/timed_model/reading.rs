@@ -327,7 +327,7 @@ impl<'d> Body<'d> {
     fn path(&self, id: ExprId) -> Option<(ExprId, Vec<PlaceStep>)> {
         let mut steps = Vec::new();
         let mut at = id;
-        while let Some(ExprNode::Field { operand, field }) = self.node(at) {
+        while let Some(ExprNode::Field { operand, field, .. }) = self.node(at) {
             steps.push(PlaceStep::Field(field.clone()));
             at = *operand;
         }

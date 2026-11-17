@@ -669,6 +669,8 @@ pub enum ExprNode {
         operand: ExprId,
         /// The field or attribute name.
         field: String,
+        /// Its source token when the expression was read from source.
+        member_span: Option<fsl_foundation::Span>,
     },
     /// `present(e)`.
     Present(ExprId),
@@ -1559,7 +1561,11 @@ impl Expression {
     /// `operand.field`.
     pub fn field(operand: Self, field: impl Into<String>) -> Self {
         let field = field.into();
-        Self::compose([operand], |[operand]| ExprNode::Field { operand, field })
+        Self::compose([operand], |[operand]| ExprNode::Field {
+            operand,
+            field,
+            member_span: None,
+        })
     }
 
     /// `present(operand)`.

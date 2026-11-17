@@ -489,7 +489,7 @@ fn element_clock(
     let mut at = id;
     loop {
         match located.node(at)? {
-            ExprNode::Field { operand, field } => {
+            ExprNode::Field { operand, field, .. } => {
                 steps.push(field.clone());
                 at = *operand;
             }

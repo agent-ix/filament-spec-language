@@ -816,7 +816,7 @@ enum Shape {
     Negate,
     Power(Integer),
     Not,
-    Field(String),
+    Field(String, Span),
     Present,
     Value,
     Deref,
@@ -1005,11 +1005,12 @@ impl Shape {
                 arity(1)?;
                 ExprNode::Not(operands.next()?)
             }
-            Self::Field(field) => {
+            Self::Field(field, member_span) => {
                 arity(1)?;
                 ExprNode::Field {
                     operand: operands.next()?,
                     field,
+                    member_span: Some(member_span),
                 }
             }
             Self::Present => {
@@ -1815,7 +1816,7 @@ impl<'c> Mapping<'c> {
                     let shape = if call {
                         Shape::Dispatch(name)
                     } else {
-                        Shape::Field(name)
+                        Shape::Field(name, member.span())
                     };
                     suffixes.push((shape, end, arguments));
                 }
@@ -1828,7 +1829,7 @@ impl<'c> Mapping<'c> {
                     // `r.f()[s]`) is unrepresented.
                     let ahead = rest.clone();
                     let selects_a_field =
-                        matches!(suffixes.last(), Some((Shape::Field(_) | Shape::Select, ..)));
+                        matches!(suffixes.last(), Some((Shape::Field(..) | Shape::Select, ..)));
                     let selector = match (rest.next(), rest.next()) {
                         (Some(Item::Node(selector)), Some(Item::Token(close)))
                             if selects_a_field

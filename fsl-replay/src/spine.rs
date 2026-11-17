@@ -1284,6 +1284,14 @@ fn check_message_one(first: &CheckRefusal) -> String {
         | CheckCause::ClockReadingCall(name) => {
             message = format!("{message}: `{name}`");
         }
+        CheckCause::UnknownField { owner, field, .. } => {
+            message = format!("{message}: `{owner}` has no field `{field}`");
+        }
+        CheckCause::StateModel(refusal) => {
+            if let CheckCause::UnknownField { owner, field, .. } = &refusal.cause {
+                message = format!("{message}: `{owner}` has no field `{field}`");
+            }
+        }
         // FR-104-AC-2: name the clause kind and, when the clause names one,
         // the operation `result` was written under.
         CheckCause::UnanchoredResult { clause, operation } => {
