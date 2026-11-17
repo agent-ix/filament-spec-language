@@ -141,11 +141,11 @@ on each (opened: M::OrderStarted) {
       branch west attempt West by Fulfillment on M::Shipment::dispatch contracts []
         as (westRes: M::ShipmentResult) { true };
     } join all [east,west];
-    choice Outcome by Payments visible (got.ok) {
-      case shipped when { got.ok } check Done using v { true };
-      case failed when { not got.ok } check Failed using v { true };
+    choice Outcome by Fulfillment visible (eastRes.ok) {
+      case shipped when { eastRes.ok } check Done using v { true };
+      case failed when { not eastRes.ok } check Failed using v { true };
     }
-    repeat Poll by Payments visible (got.ok) max 3 while { got.ok }
+    repeat Poll by Fulfillment visible (westRes.ok) max 3 while { westRes.ok }
       attempt Polled by Fulfillment on M::Shipment::poll contracts []
         as (polled: M::ShipmentResult) { true };
       exhausted check Limit using v { true };

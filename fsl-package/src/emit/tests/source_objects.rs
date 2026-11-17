@@ -681,7 +681,9 @@ fn refused(wire: &Value) -> (Value, Option<Value>, Option<String>) {
 
 /// The `SourceOwner` `identity` of the source-declared node `name`.
 fn owner_identity(wire: &Value, name: &str) -> String {
-    nodes(wire)[source_object_node(wire, name)]["owner"]["identity"]
+    let owner = &nodes(wire)[source_object_node(wire, name)]["owner"];
+    assert_eq!(owner["kind"], "source");
+    owner["identity"]
         .as_str()
         .expect("a source owner identity")
         .to_owned()

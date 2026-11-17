@@ -1899,7 +1899,10 @@ fn s3_checks_the_on_each_guard_and_binder() {
             "function Noop using v(): Boolean pure {{ true }}\n{}",
             declared_on(
                 "Each",
-                &each("q", " when (6 mod (2 - c.versionNumber) = 0)"),
+                &each(
+                    "q",
+                    " when (c.versionNumber != 0 and 6 mod c.versionNumber = 0)",
+                ),
                 BODY
             )
         ),

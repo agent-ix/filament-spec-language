@@ -1426,6 +1426,7 @@ fn conformance_i2_read_over_fspec_checked_package_v2_fixtures() {
             "refused:unsupported_node_tag" => CheckedPackageRefusalCode::UnsupportedNodeTag,
             "refused:invalid_semantic_graph" => CheckedPackageRefusalCode::InvalidSemanticGraph,
             "refused:invalid_package" => CheckedPackageRefusalCode::InvalidPackage,
+            "refused:malformed_wire" => CheckedPackageRefusalCode::MalformedWire,
             other => panic!("{id}: unmapped adverse outcome {other}"),
         };
         let mut candidate = base.clone();
