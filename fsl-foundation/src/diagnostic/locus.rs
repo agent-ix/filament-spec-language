@@ -39,7 +39,7 @@ impl fmt::Display for Locus {
         match self {
             Self::Region(region) => write!(
                 f,
-                "`{}` bytes {}..{}",
+                "source identity `{}` bytes {}..{}",
                 region.source().identity(),
                 region.start(),
                 region.end()
