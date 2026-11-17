@@ -89,6 +89,7 @@ fn validate_recording_closure(
 /// protocol and its provisioned FR-737 bytes.
 fn recording_result(
     index: fsl_foundation::RequestIndex,
+    package: &fsl_package::CheckedPackage,
     protocol: &fsl_semantics::check::CheckedProtocol,
     subject: Option<&fsl_eval::model_subject::ProtocolSubject<'_>>,
     recording: &[u8],
@@ -119,7 +120,7 @@ fn recording_result(
             );
         }
     };
-    let assessment = match super::recording::assess_recording(protocol, &recording) {
+    let assessment = match super::recording::assess_recording(package, &recording) {
         Ok(assessment) => assessment,
         Err(refusal) => {
             let detail = [("detail".to_owned(), serde_json::json!(refusal.to_string()))]
@@ -188,7 +189,7 @@ fn recording_result(
                     );
                 }
             },
-            None => match super::recording::assess_recording(protocol, &recording) {
+            None => match super::recording::assess_recording(package, &recording) {
                 Ok(replayed)
                     if replayed.global.label == "refuted"
                         && replayed.trace_position == Some(trace_position) =>
@@ -258,6 +259,7 @@ fn recording_result(
 /// The recording arm of one global-conformance request.
 pub(crate) fn global_recording_item<'a>(
     index: fsl_foundation::RequestIndex,
+    package: &'a fsl_package::CheckedPackage,
     protocol: &'a fsl_semantics::check::CheckedProtocol,
     subject: Option<fsl_eval::model_subject::ProtocolSubject<'a>>,
     recording: Option<&'a [u8]>,
@@ -270,7 +272,7 @@ pub(crate) fn global_recording_item<'a>(
         super::manifest::BACKEND_ID,
         move |cancel| match recording {
             Some(recording) => {
-                recording_result(index, protocol, subject.as_ref(), recording, cancel)
+                recording_result(index, package, protocol, subject.as_ref(), recording, cancel)
             }
             None => crate::analyze::EngineReport::Refused(crate::analyze::Refusal::Declined(
                 fsl_replay::ProofRefusalCause::InvalidInput,
@@ -1004,8 +1006,11 @@ pub fn replay_counterexample(
                 })?;
             fsl_replay::BoundExceeded::check(recording.len(), limits)
                 .map_err(|error| ConformanceReplayRefusal::invalid(error.to_string(), None))?;
-            let assessment = super::recording::assess_recording(protocol, recording)
-                .map_err(ConformanceReplayRefusal::recording)?;
+            let assessment = super::recording::assess_recording(
+                subject.model.simulation.package,
+                recording,
+            )
+            .map_err(ConformanceReplayRefusal::recording)?;
             if assessment.global.label == "refuted"
                 && assessment.trace_position == Some(*trace_position)
             {

@@ -516,6 +516,7 @@ fn work<'a>(
                             Some(recording) => {
                                 crate::protocol_analysis::conformance::global_recording_item(
                                     item.request_index,
+                                    package,
                                     protocol,
                                     None,
                                     Some(recording),
