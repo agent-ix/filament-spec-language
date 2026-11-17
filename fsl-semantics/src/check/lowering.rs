@@ -1507,7 +1507,6 @@ enum SeqStage {
     Low,
     High,
     Body { name: String },
->>>>>>> a1792bcd9 (QSL-2244 emit each checked refinement)
 }
 
 /// A record value's members, one binding per declared field.
