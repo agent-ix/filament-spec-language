@@ -653,6 +653,10 @@ pub struct ParsedOperationClause {
     pub kind: OperationClauseKind,
     /// The clause's position in the operation's list of that kind.
     pub position: usize,
+    /// The source artifact id, when the kept clause's origin provides one.
+    pub artifact: Option<String>,
+    /// The source span, when the kept clause's origin provides one.
+    pub span: Option<fsl_foundation::source::LocatedSpan>,
     /// The parsed clause text.
     pub expression: Expression,
 }

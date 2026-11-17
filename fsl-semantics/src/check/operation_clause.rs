@@ -90,6 +90,10 @@ pub struct CheckedOperationClause {
     operation_name: String,
     kind: OperationClauseKind,
     position: usize,
+    artifact: Option<String>,
+    span: Option<fsl_foundation::source::LocatedSpan>,
+    origin: Origin,
+    member: MemberPath,
     parameters: Vec<(String, filament_exact::ValueType)>,
     body: super::CheckedBody,
     observations: Observations,
@@ -97,7 +101,7 @@ pub struct CheckedOperationClause {
     has_result: bool,
 }
 
-fsl_foundation::debug_with_struct!(CheckedOperationClause, "CheckedOperationClause" { operation: plain, declaring: plain, operation_name: plain, kind: plain, position: plain, parameters: plain, body: plain, observations: plain, slots: plain, has_result: plain });
+fsl_foundation::debug_with_struct!(CheckedOperationClause, "CheckedOperationClause" { operation: plain, declaring: plain, operation_name: plain, kind: plain, position: plain, artifact: plain, span: plain, origin: plain, member: plain, parameters: plain, body: plain, observations: plain, slots: plain, has_result: plain });
 
 impl CheckedOperationClause {
     pub(crate) fn new(declaration: &OperationClauseDeclaration, typed: TypedStateClause) -> Self {
@@ -115,6 +119,15 @@ impl CheckedOperationClause {
             operation_name: declaration.operation.declaration.name().to_owned(),
             kind: declaration.clause.kind,
             position: declaration.clause.position,
+            artifact: declaration.clause.artifact.clone(),
+            span: declaration.clause.span,
+            origin: declaration.origin(),
+            member: MemberPath::new(MemberRoot::Operation)
+                .name(match declaration.clause.kind {
+                    OperationClauseKind::Requires => "pre",
+                    OperationClauseKind::Ensures => "post",
+                })
+                .index(declaration.clause.position),
             parameters,
             body,
             observations,
@@ -146,6 +159,26 @@ impl CheckedOperationClause {
     /// The clause's zero-based position in its operation's list.
     pub fn position(&self) -> usize {
         self.position
+    }
+
+    /// The source artifact identity of the kept clause, when supplied.
+    pub fn artifact(&self) -> Option<&str> {
+        self.artifact.as_deref()
+    }
+
+    /// The kept clause's source span, when supplied.
+    pub fn span(&self) -> Option<fsl_foundation::source::LocatedSpan> {
+        self.span
+    }
+
+    /// The FR-103 model-operation-clause origin used for evaluation reporting.
+    pub fn origin(&self) -> &Origin {
+        &self.origin
+    }
+
+    /// The authored operation member, such as `Operation.pre[0]`.
+    pub fn member(&self) -> &MemberPath {
+        &self.member
     }
 
     /// `self`, then `result` when bound, then the operation parameters.

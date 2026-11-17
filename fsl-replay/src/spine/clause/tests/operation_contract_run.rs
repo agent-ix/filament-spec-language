@@ -128,6 +128,36 @@ fn assert_contract_violation(report: &super::super::ClauseRunReport, kind: &str)
         text.contains("attemptupdate"),
         "the violation names the operation: {disposition:?}"
     );
+
+    let bytes = crate::spine::write_clause_run_result(report).expect("the violation serializes");
+    let document: serde_json::Value = serde_json::from_slice(&bytes).expect("valid result JSON");
+    let contract = &document["disposition"]["operation_contract"];
+    let operation = format!("ix://{CONFIG_VERSION_PACKAGE_IDENTITY}/ConfigVersion/attemptUpdate");
+    let member = if kind == "requires" { "pre" } else { "post" };
+    assert_eq!(contract["operation"]["node"], operation);
+    assert_eq!(contract["kind"], kind);
+    assert_eq!(contract["position"], 0);
+    assert_eq!(
+        contract["artifact"],
+        format!("ix://{CONFIG_VERSION_PACKAGE_IDENTITY}/spec")
+    );
+    assert_eq!(contract["span"]["start"]["line"], 1);
+    assert_eq!(contract["span"]["start"]["column"], 1);
+    assert_eq!(contract["span"]["end"]["line"], 1);
+    assert_eq!(contract["span"]["end"]["column"], 1);
+    assert_eq!(contract["member"], format!("Operation.{member}[0]"));
+    assert_eq!(
+        contract["location"]["origin"]["kind"],
+        "model-operation-clause"
+    );
+    assert_eq!(contract["location"]["origin"]["operation"], operation);
+    assert_eq!(contract["location"]["origin"]["clause"], kind);
+    assert_eq!(contract["location"]["origin"]["position"], 0);
+    assert_eq!(contract["location"]["path"], json!([]));
+    assert!(matches!(
+        crate::spine::read_native_run_result(&bytes),
+        Ok(crate::spine::NativeRunResult::Clause(_))
+    ));
 }
 
 /// TC-1908 step 1 (FR-702-AC-1): a false `ensures` is an evaluate-stage

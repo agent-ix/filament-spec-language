@@ -430,6 +430,14 @@ pub struct OperationContractViolation {
     pub kind: filament_semantic_value::location::OperationClauseKind,
     /// The failed clause's zero-based position in its list.
     pub position: usize,
+    /// The kept clause's source artifact id, when its origin names one.
+    pub artifact: Option<String>,
+    /// The kept clause's source span, when its origin carries one.
+    pub span: Option<fsl_foundation::source::LocatedSpan>,
+    /// The FR-103 model-operation-clause origin.
+    pub origin: filament_semantic_value::location::ExpressionOwner,
+    /// The authored operation member, such as `Operation.post[0]`.
+    pub member: fsl_semantics::model::refusal::MemberPath,
 }
 
 /// What a valuation run of a temporal clause reads (FR-757, FR-931): the
@@ -2657,6 +2665,10 @@ fn evaluate_operation_contracts(
                     operation_name: clause.operation_name().to_owned(),
                     kind: clause.kind(),
                     position: clause.position(),
+                    artifact: clause.artifact().map(str::to_owned),
+                    span: clause.span(),
+                    origin: clause.origin().clone(),
+                    member: clause.member().clone(),
                 },
             ));
         }
