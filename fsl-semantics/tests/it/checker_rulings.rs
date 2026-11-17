@@ -515,13 +515,10 @@ fn a_population_only_lowers_to_collection_only() {
             }),
             "the member names the selected value type"
         );
-        let [
-            MemberTerm::Leaf(LeafTerm::Reference { target: source }),
-            MemberTerm::Binding(Binding {
-                name,
-                value: BindingValue::Leaf(LeafTerm::Reference { target: value }),
-            }),
-        ] = only.arguments.as_slice()
+        let [MemberTerm::Leaf(LeafTerm::Reference { target: source }), MemberTerm::Binding(Binding {
+            name,
+            value: BindingValue::Leaf(LeafTerm::Reference { target: value }),
+        })] = only.arguments.as_slice()
         else {
             panic!("only has a collection source and one value binder: {domain}");
         };
@@ -533,13 +530,10 @@ fn a_population_only_lowers_to_collection_only() {
         };
         let source_application = application_at(graph, source, source_identity);
         let filter_binder = if filtered {
-            let [
-                MemberTerm::Leaf(LeafTerm::Reference { target: population }),
-                MemberTerm::Binding(Binding {
-                    name: filter_binder,
-                    value: BindingValue::Leaf(LeafTerm::Reference { target: predicate }),
-                }),
-            ] = source_application.arguments.as_slice()
+            let [MemberTerm::Leaf(LeafTerm::Reference { target: population }), MemberTerm::Binding(Binding {
+                name: filter_binder,
+                value: BindingValue::Leaf(LeafTerm::Reference { target: predicate }),
+            })] = source_application.arguments.as_slice()
             else {
                 panic!("filter has a population source and a condition binder");
             };
@@ -549,10 +543,8 @@ fn a_population_only_lowers_to_collection_only() {
             assert_counter_population(graph, all_instances);
 
             let predicate = application_at(graph, predicate, "filament.op.integer.eq");
-            let [
-                MemberTerm::Leaf(LeafTerm::Reference { target: selected }),
-                MemberTerm::Leaf(LeafTerm::Reference { target: conversion }),
-            ] = predicate.arguments.as_slice()
+            let [MemberTerm::Leaf(LeafTerm::Reference { target: selected }), MemberTerm::Leaf(LeafTerm::Reference { target: conversion })] =
+                predicate.arguments.as_slice()
             else {
                 panic!("filter predicate shape: {predicate:#?}");
             };
