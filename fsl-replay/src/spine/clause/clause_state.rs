@@ -728,11 +728,16 @@ impl<'a> ClauseState<'a> {
         if !self.indexed() || reference.authority != super::temporal::SAMPLE_AUTHORITY {
             return reference;
         }
+        // FR-502: the ledger reads the sample by its content identity.
+        let cited = super::temporal::sample_index(
+            index,
+            &super::temporal::sample_content(&reference.identity),
+        );
         // A refused run reads no sample, so its text is never needed.
         if self.reading != Reading::Refused {
             self.texts.insert(index, reference.identity);
         }
-        index_reference(index)
+        cited
     }
 
     /// FR-820: advance a streamed reading by `position`. The sample is read
@@ -780,7 +785,10 @@ impl<'a> ClauseState<'a> {
             self.tape.push(entry);
         }
         let reference = if self.indexed() {
-            index_reference(index)
+            super::temporal::sample_index(
+                index,
+                &super::temporal::sample_content(&position.reference.identity),
+            )
         } else {
             position.reference
         };
@@ -1346,7 +1354,11 @@ impl<'a> ClauseState<'a> {
                 };
                 if position.reference.authority == super::temporal::SAMPLE_AUTHORITY {
                     let place = first.saturating_add(u64::try_from(at).unwrap_or(u64::MAX));
-                    let named = std::mem::replace(&mut position.reference, index_reference(place));
+                    let cited = super::temporal::sample_index(
+                        place,
+                        &super::temporal::sample_content(&position.reference.identity),
+                    );
+                    let named = std::mem::replace(&mut position.reference, cited);
                     if let Some(text) = texts.get_mut(*index) {
                         *text = Some(named.identity);
                     }

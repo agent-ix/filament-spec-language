@@ -269,13 +269,56 @@ pub fn sample_position(canonical: &str) -> DocumentRef {
     }
 }
 
-/// FR-330-AC-18, FR-643 Decision: the record sample at `index` of a trace,
-/// cited by its index, never by its value.
-pub(crate) fn sample_index(index: usize) -> DocumentRef {
+/// FR-502 "Behavior", FR-643 Decision: the content identity of the record
+/// sample whose canonical JSON text is `text`: the `sha256:` digest of its
+/// canonical bytes, encoded through `quire-canonical` (ADR-013). The ledger
+/// and the covered set read a sample by it, so a different sample at a
+/// covered position is a different position, and no sample text is kept.
+pub(crate) fn sample_content(text: &str) -> String {
+    let digest = match quire_canonical::read(text.as_bytes(), u64::MAX) {
+        Ok(document) => quire_canonical::sha256(&document, quire_canonical::Limits::new(u64::MAX)),
+        Err(_) => {
+            quire_canonical::sha256(&SampleText(text), quire_canonical::Limits::new(u64::MAX))
+        }
+    };
+    let mut identity = String::from("sha256:");
+    if let Ok(digest) = digest {
+        for byte in digest.as_bytes() {
+            identity.push_str(&format!("{byte:02x}"));
+        }
+    }
+    identity
+}
+
+/// A sample text that is not canonical JSON, encoded as one string.
+struct SampleText<'a>(&'a str);
+
+impl quire_canonical::Encode for SampleText<'_> {
+    fn encode_into<S: quire_canonical::Sink + ?Sized>(
+        &self,
+        writer: &mut quire_canonical::Writer<'_, S>,
+    ) -> Result<(), quire_canonical::Error> {
+        writer.string(self.0)
+    }
+}
+
+/// FR-330-AC-18, FR-643 Decision: the record sample at `index` of a trace
+/// whose content identity is `content` ([`sample_content`]), cited by its
+/// index and its content identity, never by its value.
+pub(crate) fn sample_index(index: u64, content: &str) -> DocumentRef {
     DocumentRef {
         authority: SAMPLE_AUTHORITY.to_owned(),
-        identity: index.to_string(),
+        identity: format!("{index}#{content}"),
     }
+}
+
+/// The index and content identity of a record sample [`sample_index`] names.
+fn indexed_sample(document: &DocumentRef) -> Option<(u64, &str)> {
+    if document.authority != SAMPLE_AUTHORITY {
+        return None;
+    }
+    let (index, content) = document.identity.split_once('#')?;
+    Some((index.parse().ok()?, content))
 }
 
 /// FR-330-AC-18, FR-643 Decision: a progress-carrying trace of record samples
@@ -299,7 +342,10 @@ fn indexed_samples(trace: &TraceInput) -> Option<TraceInput> {
                 .enumerate()
                 .map(|(index, document)| {
                     if sample(document) {
-                        sample_index(index)
+                        sample_index(
+                            u64::try_from(index).unwrap_or(u64::MAX),
+                            &sample_content(&document.identity),
+                        )
                     } else {
                         document.clone()
                     }
@@ -336,7 +382,10 @@ fn indexed_samples(trace: &TraceInput) -> Option<TraceInput> {
                 .zip(canonical)
                 .map(|(observation, canonical)| match canonical {
                     Some(index) if sample(&observation.document) => TimestampedObservation {
-                        document: sample_index(index),
+                        document: sample_index(
+                            u64::try_from(index).unwrap_or(u64::MAX),
+                            &sample_content(&observation.document.identity),
+                        ),
                         ..observation.clone()
                     },
                     _ => observation.clone(),
@@ -356,13 +405,18 @@ fn indexed_samples(trace: &TraceInput) -> Option<TraceInput> {
     }
 }
 
+/// The ledger identity of a position's document. A record sample named by its
+/// index is its content identity (FR-502 "Behavior"): the covered set names
+/// what was observed, not where a request listed it.
 fn document_identity(document: &DocumentRef) -> String {
+    let identity =
+        indexed_sample(document).map_or(document.identity.as_str(), |(_, content)| content);
     format!(
         "{}:{}{}:{}",
         document.authority.len(),
         document.authority,
-        document.identity.len(),
-        document.identity,
+        identity.len(),
+        identity,
     )
 }
 
@@ -442,11 +496,17 @@ pub struct TimestampedObservation {
 /// A record sample named by its index (FR-330-AC-18) spells the index after
 /// its two-digit length, so the identities order as the indices do.
 pub(super) fn observation_identity(document: &DocumentRef) -> String {
-    if document.authority == SAMPLE_AUTHORITY && document.identity.parse::<u64>().is_ok() {
+    let index = match indexed_sample(document) {
+        Some((index, _)) => Some(index),
+        None if document.authority == SAMPLE_AUTHORITY => document.identity.parse::<u64>().ok(),
+        None => None,
+    };
+    if let Some(index) = index {
+        // The identity starts with the index, so it orders as the index does.
         return format!(
             "{}\0{:02}:{}",
             document.authority,
-            document.identity.len(),
+            index.to_string().len(),
             document.identity
         );
     }

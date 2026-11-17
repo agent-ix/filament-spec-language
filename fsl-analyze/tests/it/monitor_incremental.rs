@@ -1987,14 +1987,22 @@ fn a_long_stream_keeps_only_the_values_its_clauses_read() {
         let carried: serde_json::Value = serde_json::from_str(text).expect("a clause state");
         assert_eq!(carried["values"], serde_json::json!([]));
         assert_eq!(carried["texts"], serde_json::json!([]), "no sample is held");
-        // A position identity names the sample's index, never its value.
+        // A position identity names the sample's index and its content
+        // identity (FR-502), never its value.
         for (index, position) in carried["positions"]
             .as_array()
             .expect("positions")
             .iter()
             .enumerate()
         {
-            assert_eq!(position["identity"], index.to_string(), "{position}");
+            assert_eq!(
+                position["identity"]
+                    .as_str()
+                    .and_then(|identity| identity.split_once("#sha256:"))
+                    .map(|(cited, digest)| (cited, digest.len())),
+                Some((index.to_string().as_str(), 64)),
+                "{position}"
+            );
             assert!(position["document"].is_null(), "{position}");
         }
         assert!(carried["stop"].is_null(), "no position stopped its reading");
@@ -2578,6 +2586,88 @@ fn a_carried_state_admits_only_the_new_positions_into_its_trace_and_ledger() {
     }
 }
 
+/// The contradicted dimension of a progress-refused report, if any.
+fn contradicted(report: &ClauseRunReport) -> Option<String> {
+    match &report.disposition {
+        spine::ClauseDisposition::ProgressContradiction(contradiction) => contradiction
+            .record
+            .fields
+            .get("contradicted_dimension")
+            .cloned(),
+        _ => None,
+    }
+}
+
+/// Whether every covered position of `ledger` is named by a content
+/// identity, holding no sample text.
+fn content_named(ledger: &spine::ProgressLedger) -> bool {
+    ledger
+        .entries()
+        .flat_map(|(_, entry)| entry.covered())
+        .all(|position| {
+            position.identity.contains("sha256:") && !position.identity.contains("integer")
+        })
+}
+
+/// FR-502-AC-10 (TC-1296) over record samples: once `Complete { through }`
+/// is retained, a later request that lists the same sample at a covered
+/// position is accepted, and one that lists a different sample there is
+/// refused `Completeness`, for a `Progressed` and for a `Timestamped` trace.
+/// The ledger names each sample by its content identity, not its text.
+#[test]
+#[trace("TC-1296", "FR-502-AC-10")]
+fn a_different_record_sample_at_a_covered_position_is_refused() {
+    let world = world();
+    let progressed = |levels: &[i64], through: u64| TraceInput::Progressed {
+        trace: levels
+            .iter()
+            .map(|level| spine::sample_position(&text(*level)))
+            .collect(),
+        progress: progress(through),
+        lower_boundary: ProgressLowerBoundary::AuthoritativeOrigin,
+        binding: events_binding(),
+    };
+    let held = batch_from(&world, "Past", &progressed(&[1, 2], 1), None)
+        .ledger
+        .expect("the retained ledger");
+    assert!(content_named(&held), "{held:?}");
+    let same = batch_from(&world, "Past", &progressed(&[1, 2, 3], 2), Some(&held));
+    assert_eq!(contradicted(&same), None, "{:?}", same.disposition);
+    assert!(same.ledger.is_some_and(|ledger| ledger != held));
+    let other = batch_from(&world, "Past", &progressed(&[1, 5, 3], 2), Some(&held));
+    assert_eq!(contradicted(&other).as_deref(), Some("Completeness"));
+    assert_eq!(other.ledger, Some(held));
+
+    let stamped = |levels: &[i64], through: u64| TraceInput::Timestamped {
+        observations: levels
+            .iter()
+            .zip(0u64..)
+            .map(|(level, stamp)| TimestampedObservation {
+                document: spine::sample_position(&text(*level)),
+                stamp,
+                order_key: None,
+            })
+            .collect(),
+        progress: progress(through),
+        window: Box::new(TimestampedWindow {
+            binding: Some(stamped_binding()),
+            authoritative_origin: true,
+            cover: None,
+            missing_valuations: Vec::new(),
+        }),
+    };
+    let held = batch_from(&world, "Window", &stamped(&[1, 2], 1), None)
+        .ledger
+        .expect("the retained ledger");
+    assert!(content_named(&held), "{held:?}");
+    let same = batch_from(&world, "Window", &stamped(&[1, 2, 3], 2), Some(&held));
+    assert_eq!(contradicted(&same), None, "{:?}", same.disposition);
+    assert!(same.ledger.is_some_and(|ledger| ledger != held));
+    let other = batch_from(&world, "Window", &stamped(&[1, 5, 3], 2), Some(&held));
+    assert_eq!(contradicted(&other).as_deref(), Some("Completeness"));
+    assert_eq!(other.ledger, Some(held));
+}
+
 /// FR-820-AC-1 (TC-2320) over snapshots: `Bounded`, `Reaches` and
 /// `always holds(c.value <= 1)` over `c.value` 0, 1, 2, 1, 0. Each snapshot is
 /// admitted once; the report after each `advance` is FR-330's over the prefix,
@@ -2897,9 +2987,13 @@ fn every_reading_cites_its_samples_by_index() {
             .iter()
             .enumerate()
         {
+            // FR-502: the index, then the sample's content identity.
+            let identity = position["identity"].as_str().unwrap_or_default();
             assert_eq!(
-                position["identity"],
-                index.to_string(),
+                identity
+                    .split_once("#sha256:")
+                    .map(|(cited, digest)| (cited, digest.len())),
+                Some((index.to_string().as_str(), 64)),
                 "{name} at {at}: {position}"
             );
         }
