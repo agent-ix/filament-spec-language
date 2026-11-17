@@ -35,8 +35,8 @@ admitted, and a selected model's dense source accepted for a source clock.
 
 ## Expected Results
 
-- Step 1: no refusal; the time source holds the name `O` and the `NodeKey`
-  of `O`'s `model`/`object_type` node, the clock places include `w.c` and
+- Step 1: no refusal; the time source holds the name `O` and the source declaration key
+  `{package: I, node: "ix://I/O"}` (`I` the unit's `SourceOwner` identity; FSpec FR-788, FR-995), not a model/object_type key, the clock places include `w.c` and
   `d`; once emission lands, the root's `model` reference is that node.
 - Step 2: `missing_declaration`/`missing-name` at `Q`.
 - Step 3: `invalid_timed_model`/`duplicate-time-source` at the second
