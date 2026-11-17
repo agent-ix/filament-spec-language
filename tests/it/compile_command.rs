@@ -395,7 +395,10 @@ fn compile_uses_fixed_byte_ceilings() {
     let failure: Value = serde_json::from_slice(&output.stderr).unwrap();
     assert_eq!(failure["details"]["limit"], "dependent_bytes", "{failure}");
     assert_eq!(failure["details"]["maximum"], 8_388_608, "{failure}");
-    assert!(failure["details"].get("option").is_none(), "{failure}");
+    assert_eq!(
+        failure["details"]["option"], "--dependent-bytes",
+        "{failure}"
+    );
 }
 
 /// Rewrite `compile.json` under `directory` through `change` and run `compile`.
