@@ -506,7 +506,7 @@ pub use refusal::{
     CheckingLimitKind, CheckingStage, ClockSelectionFault, DispatchFunctionRole, DispatchLinkCause,
     DispatchSubtypeFailure, ExcludedClauseForm, ExecutionPointRefusal, IdentityForm, IdentityNode,
     IdentityObserving, InvalidDispatchDeclaration, JoinFault, KeyFault, MeasureObligation,
-    MemberCandidate, NavigationBound, Obligation, ObservationReason, PredicateRole,
+    MemberCandidate, NavigationBound, Obligation, ObservationReason, OperandText, PredicateRole,
     ProtocolAnchorCause, ProtocolCheckRefusal, ProtocolConstruct, ProtocolReferenceCause,
     ProvedInterval, QualifiedCandidate, RefusedProtocolDependency, RelatedEnd, ShadowedDeclaration,
     SlotKind, StageLimitCause, StateGraphCause, TaskSetDefect, TaskTimeMember, TemporalCause,

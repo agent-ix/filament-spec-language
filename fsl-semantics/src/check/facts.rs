@@ -1173,6 +1173,7 @@ impl<'a> Definedness<'a> {
                 Obligation::Range {
                     required: Box::new(ProvedInterval::default()),
                     proved: Box::new(ProvedInterval::default()),
+                    operand: Default::default(),
                 },
             )
         })
@@ -1344,6 +1345,7 @@ impl<'a> Definedness<'a> {
                         Obligation::Range {
                             required: Box::new(required.proved()),
                             proved: Box::new(proved.proved()),
+                            operand: Default::default(),
                         },
                     ))
                 }
@@ -1503,6 +1505,7 @@ impl<'a> Definedness<'a> {
                                 Obligation::Range {
                                     required: Box::new(required.proved()),
                                     proved: Box::new(proved.proved()),
+                                    operand: Default::default(),
                                 },
                             ))
                         }
@@ -1516,6 +1519,7 @@ impl<'a> Definedness<'a> {
                                 Obligation::Range {
                                     required: Box::new(ProvedInterval::default()),
                                     proved: Box::new(ProvedInterval::default()),
+                                    operand: Default::default(),
                                 },
                             ))
                         }
@@ -1529,6 +1533,7 @@ impl<'a> Definedness<'a> {
                                 Obligation::Range {
                                     required: Box::new(ProvedInterval::default()),
                                     proved: Box::new(ProvedInterval::default()),
+                                    operand: Default::default(),
                                 },
                             ))
                         }
@@ -1549,6 +1554,7 @@ impl<'a> Definedness<'a> {
                                     Obligation::Range {
                                         required: Box::new(required.proved()),
                                         proved: Box::new(proved.proved()),
+                                        operand: Default::default(),
                                     },
                                 ))
                             }

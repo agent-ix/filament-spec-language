@@ -100,7 +100,7 @@ use fsl_package as pkg;
 use fsl_package::{read_import_view, AdmittedPackages, Emission, Import, ImportViewRefusal};
 use fsl_semantics::check::{
     resolve_profiles, AdmittedImport, AssemblyCause, AssemblyError, CheckCause, CheckRefusal,
-    CorrespondenceConflict, KeyFault, PackageDeclarations,
+    CorrespondenceConflict, KeyFault, Obligation, OperandText, PackageDeclarations,
 };
 use fsl_semantics::library::extension::{CoreVocabulary, HeldExtensions};
 use fsl_semantics::library::{ImportView, LibraryName};
@@ -716,6 +716,45 @@ impl ParsedUnitSource {
     /// the unit after an attributable protocol refusal.
     pub fn protocol_results(&self) -> &[super::ProtocolResult] {
         &self.protocol_results
+    }
+}
+
+/// Give an unproved range refusal the exact source spelling of its arithmetic
+/// node for the diagnostic message (FR-577).
+fn name_operand(
+    refusals: &mut [CheckRefusal],
+    region: Option<&SourceRegion>,
+    sources: &[ParsedUnitSource],
+) {
+    let (
+        Some(CheckRefusal {
+            cause:
+                CheckCause::Unproved(Obligation::Range {
+                    required, operand, ..
+                }),
+            ..
+        }),
+        Some(region),
+    ) = (refusals.first_mut(), region)
+    else {
+        return;
+    };
+    if required.lower.is_none() && required.upper.is_none() {
+        return;
+    }
+    let (Ok(start), Ok(end)) = (
+        usize::try_from(region.start()),
+        usize::try_from(region.end()),
+    ) else {
+        return;
+    };
+    if let Some(text) = sources
+        .iter()
+        .map(ParsedUnitSource::source)
+        .find(|source| source.render(region).is_some())
+        .and_then(|source| source.slice(fsl_foundation::Span { start, end }))
+    {
+        *operand = OperandText::new(text);
     }
 }
 
@@ -3859,6 +3898,7 @@ impl<'a> Resolution<'a> {
                     return refusal;
                 }
             }
+            let mut refusals = refusals;
             let region = refusals.first().and_then(|refusal| {
                 regions
                     .refusal_region(refusal)
@@ -3871,6 +3911,7 @@ impl<'a> Resolution<'a> {
                         _ => None,
                     })
             });
+            name_operand(&mut refusals, region.as_ref(), &frame.source_units);
             Box::new(CompileRefusal::Check { region, refusals })
         })?;
         // The protocol continuation check keeps a refused state clause on the
@@ -3878,10 +3919,11 @@ impl<'a> Resolution<'a> {
         let graph = if graph.unit_refusals().is_empty() {
             graph
         } else {
-            let refusals = pending.report(graph.unit_refusals().to_vec());
+            let mut refusals = pending.report(graph.unit_refusals().to_vec());
             let region = refusals
                 .first()
                 .and_then(|refusal| regions.refusal_region(refusal));
+            name_operand(&mut refusals, region.as_ref(), &frame.source_units);
             graph.with_unit_refusals(refusals, region)
         };
         charged(cancel, &mut self.work.s4, || {
