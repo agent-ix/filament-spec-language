@@ -1,0 +1,1 @@
+{"format":"native-run/1","request":{"models":[],"program":{"source":{"file":"rat-int-eq-convert.native","authority":"agent-ix","identity":"test:corpus:rat-int-eq-convert","document":"rat-int-eq-convert","formal_revision":1}},"call":{"function":"f","arguments":[{"parameter":"a","value":{"kind":"rational","numerator":"1","denominator":"2"}}]}}}

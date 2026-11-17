@@ -1,0 +1,4 @@
+language "ix:native" edition "1-draft";
+profile v = "filament.value.complete/v1";
+function inc using v(n: Int[0, 9]): Int[1, 10] pure { n + 1 }
+function f using v(): Boolean pure { inc(1) = 2 }

@@ -7,6 +7,7 @@ use std::collections::BTreeMap;
 const MAX_COUNT: u64 = 9_007_199_254_740_991;
 
 use filament_exact::{CollectionKind, Identifier, ScalarLimits};
+use fsl_eval::temporal::{LateCutoff, StampInterval};
 use fsl_foundation::serde_object::{deserialize_objects, from_object};
 use fsl_semantics::model::observation::{
     collection_kind_of_tag, AnchorKind, ClauseSelection, ClauseSelectionInput, ContextSide,
@@ -18,10 +19,10 @@ use serde_json::value::RawValue;
 
 use super::{
     sample_position, ClauseArgument, ClauseArgumentValue, ClauseRunRequest, ClauseRunSelection,
-    ClauseRunSource, DependencyInput, OperationName, OverObject, ProgressAssertion,
-    ProgressClosure, ProgressCompleteness, ProgressLedger, ProgressLowerBoundary, SpineLimits,
-    TimestampedCover, TimestampedMissingValuation, TimestampedObservation, TimestampedOrderKey,
-    TimestampedWindow, TraceBinding, TraceInput,
+    ClauseRunSource, DependencyInput, LateInputs, OperationName, OverObject, ProgressAssertion,
+    ProgressClosure, ProgressCompleteness, ProgressLedger, ProgressLowerBoundary, RunRelation,
+    SpineLimits, TimestampedCover, TimestampedMissingValuation, TimestampedObservation,
+    TimestampedOrderKey, TimestampedWindow, TraceBinding, TraceInput,
 };
 
 /// A selected observation whose bytes and document identity were admitted by
@@ -307,6 +308,40 @@ pub struct ObservationWire {
     /// The order key, where the observation has one.
     #[serde(default, deserialize_with = "from_object_opt")]
     pub order_key: Option<OrderKeyWire>,
+    /// FR-501 "Request-file spelling": the observation's own interval
+    /// stamp, which overrides `cover` for it.
+    #[serde(default, deserialize_with = "from_object_opt")]
+    pub interval: Option<IntervalWire>,
+    /// The progress watermark at which the observation was admitted.
+    #[serde(default, deserialize_with = "present")]
+    pub arrival: Option<u64>,
+}
+
+/// FR-501 "Request-file spelling": an interval stamp, each flag `false`
+/// when absent.
+#[derive(Clone, Copy, Debug, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct IntervalWire {
+    /// The earliest instant.
+    pub earliest: u64,
+    /// The latest instant.
+    pub latest: u64,
+    /// Whether `earliest` is excluded.
+    #[serde(default)]
+    pub earliest_open: bool,
+    /// Whether `latest` is excluded.
+    #[serde(default)]
+    pub latest_open: bool,
+}
+
+/// FR-501 "Request-file spelling": the late-data cutoff.
+#[derive(Clone, Copy, Debug, serde::Deserialize)]
+#[serde(rename_all = "snake_case", deny_unknown_fields)]
+pub enum LateCutoffWire {
+    /// `{"allowed_lateness": N}`.
+    AllowedLateness(u64),
+    /// `{"fixed_instant": N}`.
+    FixedInstant(u64),
 }
 
 /// An order key comparable within one authority.
@@ -366,6 +401,9 @@ pub struct TimestampedWire {
     /// Atom valuations absent from an admitted observation.
     #[serde(default)]
     pub missing: Vec<MissingWire>,
+    /// The late-data cutoff, when one is selected.
+    #[serde(default, deserialize_with = "from_object_opt")]
+    pub late_data_cutoff: Option<LateCutoffWire>,
 }
 
 /// One temporal trace shape in an FR-312 request (FR-641 "Trace kinds").
@@ -503,6 +541,30 @@ pub struct TemporalSelectionWire {
     /// The relative path of a `filament.progress-ledger/1` file (FR-641).
     #[serde(default, deserialize_with = "present")]
     pub ledger: Option<String>,
+    /// FR-526: the relation of this run's result to a prior one.
+    #[serde(default, deserialize_with = "present")]
+    pub relation: Option<RelationWire>,
+    /// FR-526: the relative path of the evidence ledger file a prior run
+    /// wrote.
+    #[serde(default, deserialize_with = "present")]
+    pub evidence_ledger: Option<String>,
+    /// FR-526: the late observations a superseding repair admits, by
+    /// observation identity.
+    #[serde(default, deserialize_with = "present")]
+    pub admit_late: Option<Vec<String>>,
+}
+
+/// FR-526 "On FR-641's run request": `"original"`, `{"superseding": ID}` or
+/// `{"invalidating": ID}`.
+#[derive(Clone, Debug, serde::Deserialize)]
+#[serde(rename_all = "snake_case", deny_unknown_fields)]
+pub enum RelationWire {
+    /// The first result of a chain.
+    Original,
+    /// The result replaces the predecessor with this `result_identity`.
+    Superseding(String),
+    /// The result retracts the predecessor with this `result_identity`.
+    Invalidating(String),
 }
 
 fn present<'de, D: serde::Deserializer<'de>, T: serde::Deserialize<'de>>(
@@ -575,6 +637,18 @@ impl ClauseRunSelectionWire {
         self.temporal
             .as_ref()
             .and_then(|temporal| temporal.ledger.as_deref())
+    }
+
+    /// FR-526: the `temporal` selection's relation, evidence ledger path and
+    /// admitted late observations.
+    pub fn correction(&self) -> Option<(Option<&RelationWire>, Option<&str>, &[String])> {
+        self.temporal.as_ref().map(|temporal| {
+            (
+                temporal.relation.as_ref(),
+                temporal.evidence_ledger.as_deref(),
+                temporal.admit_late.as_deref().unwrap_or_default(),
+            )
+        })
     }
 
     /// The closed selection this member set names.
@@ -783,6 +857,9 @@ pub struct TimestampedParts {
     pub cover: Option<CoverWire>,
     /// Atom valuations absent from an admitted observation.
     pub missing: Vec<MissingWire>,
+    /// The interval stamps, arrival watermarks, late-data cutoff and
+    /// admitted late observations (FR-501, FR-526).
+    pub late: Box<LateInputs>,
 }
 
 /// An FR-641 trace before observation lookup.
@@ -791,7 +868,9 @@ pub enum TemporalTraceParts {
     Finite(Vec<TemporalPosition>),
     /// Prefix and repeating loop.
     Lasso {
+        /// The positions before the loop.
         prefix: Vec<TemporalPosition>,
+        /// The repeating positions.
         repeat: Vec<TemporalPosition>,
     },
     /// A progressed event-position or fixed-sample trace.
@@ -991,6 +1070,22 @@ impl TemporalSelectionWire {
                 "select exactly one finite, lasso, model, progressed, timestamped or timed trace",
             ));
         }
+        // FR-526: a correction chain links finite-window results, which only
+        // a timestamped trace has.
+        if trace.timestamped.is_none() {
+            for (member, given) in [
+                ("relation", self.relation.is_some()),
+                ("evidence_ledger", self.evidence_ledger.is_some()),
+                ("admit_late", self.admit_late.is_some()),
+            ] {
+                if given {
+                    return Err(invalid(
+                        member,
+                        "a correction relation links finite-window results of a timestamped trace",
+                    ));
+                }
+            }
+        }
         let parts = if let Some(positions) = &trace.finite {
             TemporalTraceParts::Finite(position_parts(positions, "trace.finite")?)
         } else if let Some(lasso) = &trace.lasso {
@@ -1028,6 +1123,42 @@ impl TemporalSelectionWire {
                 binding: timestamped.binding.clone(),
                 cover: timestamped.cover,
                 missing: timestamped.missing.clone(),
+                late: Box::new(LateInputs {
+                    intervals: timestamped
+                        .observations
+                        .iter()
+                        .map(|observation| {
+                            observation.interval.map(|interval| StampInterval {
+                                earliest: interval.earliest,
+                                latest: interval.latest,
+                                earliest_open: interval.earliest_open,
+                                latest_open: interval.latest_open,
+                            })
+                        })
+                        .collect(),
+                    arrivals: timestamped
+                        .observations
+                        .iter()
+                        .map(|observation| observation.arrival)
+                        .collect(),
+                    cutoff: timestamped.late_data_cutoff.map(|cutoff| match cutoff {
+                        LateCutoffWire::AllowedLateness(lateness) => {
+                            LateCutoff::AllowedLateness { lateness }
+                        }
+                        LateCutoffWire::FixedInstant(cutoff) => LateCutoff::FixedInstant { cutoff },
+                    }),
+                    admit_late: self.admit_late.clone().unwrap_or_default(),
+                    relation: match &self.relation {
+                        None | Some(RelationWire::Original) => RunRelation::Original,
+                        Some(RelationWire::Superseding(previous)) => {
+                            RunRelation::Superseding(previous.clone())
+                        }
+                        Some(RelationWire::Invalidating(previous)) => {
+                            RunRelation::Invalidating(previous.clone())
+                        }
+                    },
+                    evidence_ledger: None,
+                }),
             })
         } else if let Some(model) = &trace.model {
             TemporalTraceParts::Model(model_parts(model)?)
@@ -1586,6 +1717,7 @@ fn selection(
                                     atom: missing.atom,
                                 })
                                 .collect(),
+                            late: *parts.late,
                         }),
                     }
                 }

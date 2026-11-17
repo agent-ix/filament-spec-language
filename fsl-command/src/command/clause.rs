@@ -90,6 +90,28 @@ pub(super) fn read(
                 .map_err(|error| invalid(error.member, error.reason))
         })
         .transpose()?;
+    // FR-526: the evidence ledger file a prior run wrote, read once here.
+    let evidence_ledger = clause
+        .selection
+        .correction()
+        .and_then(|(_, path, _)| path)
+        .map(|path| {
+            let bytes = intake.file(path, intake.remaining)?;
+            fsl_replay::spine::read_evidence_ledger(&bytes)
+                .map_err(|error| invalid("evidence_ledger", error.to_string()))
+        })
+        .transpose()?;
+    let mut selection = clause
+        .selection
+        .into_parts()
+        .map_err(|error| invalid(error.member, error.reason))?;
+    if let fsl_replay::spine::ClauseSelectionPartsKind::Temporal {
+        trace: fsl_replay::spine::TemporalTraceParts::Timestamped(timestamped),
+        ..
+    } = &mut selection
+    {
+        timestamped.late.evidence_ledger = evidence_ledger;
+    }
     let source_identity = source.source().identity().clone();
     let source = ClauseRunSource::Program {
         identity: source.source().identity().clone(),
@@ -102,10 +124,7 @@ pub(super) fn read(
         packages,
         dependencies,
         observations,
-        selection: clause
-            .selection
-            .into_parts()
-            .map_err(|error| invalid(error.member, error.reason))?,
+        selection,
         limits: SpineLimits::default(),
         observation_limits,
         accounting: super::call_accounting(&clause.accounting),

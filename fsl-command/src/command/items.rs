@@ -518,7 +518,7 @@ pub(super) fn run_bytes(
                     fsl_replay::spine::ProgramBatchItemResult::Clause(report),
                     None,
                     Some(selection),
-                ) => ItemExecution::Run(super::output::clause_report(&report, &selection)),
+                ) => ItemExecution::Run(super::output::clause_report(*report, &selection)),
                 (
                     fsl_replay::spine::ProgramBatchItemResult::Call(result),
                     Some(call_output),

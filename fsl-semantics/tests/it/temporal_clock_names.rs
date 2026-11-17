@@ -144,7 +144,6 @@ fn a_state_graph_claim_refuses_a_temporal_profile() {
 /// `using` the header layer `filament.temporal.complete/v1` checks.
 #[trace("TC-1545", "FR-165-AC-7")]
 #[test]
-#[ignore = "QSL-2150: a state-graph claim using the protocol profile is not refused yet"]
 fn a_state_graph_claim_refuses_the_protocol_profile() {
     let profiles = "profile pp = \"filament.protocol.finite-global/v1\";\n\
                     profile tc = \"filament.temporal.complete/v1\";\n";

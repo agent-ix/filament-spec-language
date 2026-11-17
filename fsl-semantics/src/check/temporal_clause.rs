@@ -1487,11 +1487,12 @@ fn check_clause(
                         else {
                             return Err(fault("aggregate-duration-window-bounds"));
                         };
-                        // FSpec FR-370: both bounds are quantities of the
-                        // clause's clock unit; with no clock selected yet,
+                        // FSpec FR-370, FR-965: both bounds are quantities
+                        // of the clause's clock unit node, a source-declared
+                        // or a model-owned unit; with no clock selected yet,
                         // of the lower bound's written unit.
                         let units = declarations.timed.units;
-                        let clock = declarations
+                        let selected = declarations
                             .timed
                             .clock_units
                             .iter()
@@ -1499,11 +1500,26 @@ fn check_clause(
                             .and_then(|selected| match &selected.clock {
                                 filament_contract_model::ClockConfiguration::TimestampedEvent {
                                     timestamp_unit,
-                                } => units.clock_target(timestamp_unit),
+                                } => Some(timestamp_unit.to_string()),
                                 _ => None,
                             });
-                        let target = match clock {
-                            Some(target) => target,
+                        let target = match selected {
+                            Some(timestamp_unit) => units.clock_unit(&timestamp_unit).map_err(
+                                |refusal| match refusal {
+                                    super::time_units::ClockUnitRefusal::Fault(fault) => {
+                                        refuse(TemporalCause::ClockSelection {
+                                            fault,
+                                            clock: clock.text.clone(),
+                                            declaration: form.name.name.clone(),
+                                            profile,
+                                            span: clock.span,
+                                        })
+                                    }
+                                    super::time_units::ClockUnitRefusal::Unit(cause) => {
+                                        window_bound_refusal(*cause, clock.span)
+                                    }
+                                },
+                            )?,
                             None => units
                                 .target(&lower.unit.name)
                                 .map_err(|cause| window_bound_refusal(cause, lower.unit.span))?

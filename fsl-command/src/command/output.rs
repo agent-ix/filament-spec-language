@@ -264,6 +264,14 @@ pub(super) fn error(error: &RunError, artifact: bool) -> Result<Value, serde_jso
             types::Stage::SpineRun("call"),
             types::Details::Claim { claim },
         ),
+        RunCause::TemporalCorrection(refusal) => (
+            types::Stage::SpineRun("evaluate"),
+            types::Details::Correction {
+                cause: refusal.cause,
+                member: refusal.member,
+                observation: refusal.observation.as_deref(),
+            },
+        ),
         RunCause::SpineRun(refusal) => (
             // A cancel has no stage (FR-286); the command never cancels its
             // own handle, so the envelope names the request that owns it.
@@ -322,6 +330,7 @@ pub(super) fn error(error: &RunError, artifact: bool) -> Result<Value, serde_jso
                 }
                 _ => None,
             },
+            RunCause::TemporalCorrection(_) => Some("invalid-value"),
             RunCause::TlCorrespondence { .. } => Some("unsupported-selection"),
             RunCause::TlClause { .. } => Some("missing-name"),
             RunCause::TlNotYetImplemented { .. } => Some("not-yet-implemented"),
@@ -364,9 +373,14 @@ pub(super) fn monitor_outcome<'a>(
 
 /// FR-267: expose the library's canonical clause report to the CLI adapter.
 pub(super) fn clause_report(
-    report: &fsl_replay::spine::ClauseRunReport,
+    mut report: fsl_replay::spine::ClauseRunReport,
     selection: &fsl_replay::spine::ClauseRunSelection,
 ) -> super::Result<RunResult> {
+    // FR-526: a timestamped run settles its correction relation before any
+    // result document is written; a refused relation writes none.
+    fsl_replay::spine::settle_run_correction(&mut report, selection)
+        .map_err(RunCause::TemporalCorrection)?;
+    let report = &report;
     let bytes = fsl_replay::spine::write_clause_run_result_for(report, Some(selection))
         .map_err(RunCause::ClauseOutput)?;
     let outcome = monitor_outcome(std::iter::once((&selection.clause_name()[..], report)));
