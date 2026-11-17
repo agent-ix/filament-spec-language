@@ -166,7 +166,7 @@ fn a_fifo_key_is_checked_over_its_binder() {
 /// check because the clause checker admits `=` over them; a key of an event
 /// type, over which it admits no `=`, refuses `ill_typed`/
 /// `operator-ineligible` at the key, retaining the type.
-#[trace("TC-1056", "FR-218-AC-20")]
+#[trace("TC-1056", "FR-218-AC-20", "FR-881-AC-1")]
 #[test]
 fn a_fifo_key_admits_equality() {
     for (carries, key) in [("M::Flag", "m.ready"), ("M::Flag", "m")] {
@@ -188,6 +188,23 @@ fn a_fifo_key_admits_equality() {
     assert_eq!(channel, "Q");
     assert!(matches!(**key_type, ValueType::Composite(_)));
     assert_eq!(at, "m");
+}
+
+/// FR-881-AC-1: IEEE float keys refuse at the key with the same
+/// `operator-ineligible` cause used for event keys.
+#[trace("FR-881-AC-1", "FSpec-FR-726-AC-3")]
+#[test]
+fn an_ieee_fifo_key_refuses_at_the_key() {
+    for carries in ["Float64[nearest-even]", "Option<Float32[nearest-even]>"] {
+        let text = with_channel(carries, &format!("fifo by (m: {carries}) {{ m }}"));
+        let (cause, pair, at) = only(&text);
+        assert_eq!(pair, ("ill_typed", Some("operator-ineligible")));
+        let ProtocolAnchorCause::KeyEquality { channel, .. } = &cause else {
+            panic!("a FIFO-key-stable refusal, got {cause:?}");
+        };
+        assert_eq!(channel, "Q");
+        assert_eq!(at, "m");
+    }
 }
 
 /// A protocol `Decide` whose run tree is `run`, over `view: M::Node`.
@@ -459,7 +476,7 @@ fn a_guard_reads_no_model_state_and_partitions_its_facts() {
             crate::check::ArmFault::DuplicateArm
         ]
     );
-    assert_eq!(at, "Pick");
+    assert_eq!(at, "choice Pick by Service");
     // TC-1056 row 45: one atom and its negation, `not (got.count > 0)`,
     // partition over the individual non-Boolean entry.
     check(&decide(
