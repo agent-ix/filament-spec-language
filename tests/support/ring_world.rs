@@ -351,7 +351,15 @@ fn packages(variant: Variant) -> fsl_semantics::model::intake::PackageInput {
 
 /// The checked graph of the unit with `refinement`, or its refusals.
 pub fn check(variant: Variant, refinement: &str) -> Result<CheckedGraph, String> {
-    check_in(CheckMode::Linked, variant, refinement)
+    check_in(
+        if variant.kernel {
+            CheckMode::Kernel
+        } else {
+            CheckMode::Linked
+        },
+        variant,
+        refinement,
+    )
 }
 
 /// The checked graph of the unit with `refinement` under `mode`, or its
