@@ -3718,13 +3718,27 @@ impl<'a> Typer<'a> {
                 location,
             ));
         }
-        let undeclared_case = name.rsplit_once("::").is_some_and(|(type_name, _)| {
-            self.scope
+        if let Some((type_name, case)) = name.rsplit_once("::") {
+            if let Some(declared) = self
+                .scope
                 .variant_type_named(self.source_owner.as_ref(), type_name)
-                .is_some()
-        });
-        if undeclared_case
-            || self.signatures.declares(name)
+            {
+                let owner = declared
+                    .name()
+                    .rsplit("::")
+                    .next()
+                    .unwrap_or(declared.name())
+                    .to_owned();
+                return Err(refuse(
+                    location,
+                    CheckCause::UndeclaredVariantCase {
+                        owner,
+                        case: case.to_owned(),
+                    },
+                ));
+            }
+        }
+        if self.signatures.declares(name)
             || (self.scope.is_variant_case_name(name)
                 && matches!(expected, Some(ValueType::Enum(shape)) if self.scope.is_variant_shape(shape)))
         {
