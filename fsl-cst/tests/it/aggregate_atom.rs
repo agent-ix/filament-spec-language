@@ -53,8 +53,10 @@ fn an_aggregate_followed_by_and_is_a_temporal_conjunction() {
         texts(&text, &parsed, Production::AggregateAtom),
         ["count where holds(s.ok) over past[0,1] >= 1"]
     );
-    assert!(texts(&text, &parsed, Production::TemporalConjunction)
-        .contains(&"count where holds(s.ok) over past[0,1] >= 1 and holds(s.done)"));
+    assert!(
+        texts(&text, &parsed, Production::TemporalConjunction)
+            .contains(&"count where holds(s.ok) over past[0,1] >= 1 and holds(s.done)")
+    );
 
     let text = clause("count where holds(s.ok) over past[0,1] >= s.k + 1");
     let parsed = parse(&text);
