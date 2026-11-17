@@ -852,6 +852,7 @@ dependencies = [
  "fsl-replay",
  "fsl-route",
  "fsl-semantics",
+ "fsl-source",
  "ix-trace-rs",
  "quire-canonical",
  "serde",

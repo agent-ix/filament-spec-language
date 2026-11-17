@@ -2,7 +2,6 @@
 #![cfg(feature = "quire-extraction")]
 
 use fsl_command::command::{read_clause_run_request, RunCause};
-use fsl_replay::Operation;
 use serde_json::{json, Value};
 use std::fs;
 
@@ -42,13 +41,7 @@ fn request(binding_count: usize) -> Value {
 }
 
 fn outcome(error: &fsl_command::command::RunError) -> Value {
-    serde_json::from_slice(
-        &error
-            .outcome_document(Operation::Execute)
-            .to_bytes()
-            .expect("outcome serializes"),
-    )
-    .expect("outcome is JSON")
+    error.value().expect("error envelope serializes")
 }
 
 /// Trace: TC-109, FR-031-AC-6.
@@ -63,7 +56,7 @@ fn extraction_and_package_conflict_refuses_before_reading_files() {
     assert!(matches!(&error.cause, RunCause::ExtractionPackageConflict));
     let outcome = outcome(&error);
     assert_eq!(outcome["stage"], "request");
-    assert_eq!(outcome["exit_code"], 20);
+    assert_eq!(error.category().exit_code(), 20);
     assert_eq!(
         outcome["diagnostics"][0]["code"],
         "extraction-package-conflict"
@@ -83,7 +76,7 @@ fn extraction_requires_one_clause_binding_and_reports_the_actual_count() {
         );
         let outcome = outcome(&error);
         assert_eq!(outcome["stage"], "request");
-        assert_eq!(outcome["exit_code"], 20);
+        assert_eq!(error.category().exit_code(), 20);
         assert_eq!(outcome["diagnostics"][0]["code"], "extraction-clause-count");
         assert_eq!(outcome["diagnostics"][0]["details"]["actual"], actual);
     }
@@ -102,7 +95,7 @@ fn quire_context_refusal_preserves_its_diagnostics() {
     };
     let outcome = outcome(&error);
     assert_eq!(outcome["stage"], "quire-context");
-    assert_eq!(outcome["exit_code"], 20);
+    assert_eq!(error.category().exit_code(), 20);
     assert_eq!(outcome["diagnostics"][0]["code"], "invalid-quire-context");
     assert_eq!(
         outcome["diagnostics"][0]["details"]["diagnostics"],

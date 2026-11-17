@@ -1089,6 +1089,8 @@ impl RunError {
             | RunCause::Identifier { .. }
             | RunCause::CompleteSelection(_)
             | RunCause::ExtractionRequiresRun
+            | RunCause::ExtractionPackageConflict
+            | RunCause::ExtractionClauseCount { .. }
             | RunCause::EmptyCompileProgram
             | RunCause::Libraries(_)
             | RunCause::ExtensionCatalog(_)
@@ -1131,32 +1133,15 @@ impl RunError {
                 ])
             }
             #[cfg(feature = "quire-extraction")]
-            RunCause::InvalidQuireContext { diagnostics } => {
-                let details = serde_json::json!({ "diagnostics": diagnostics });
-                OutcomeDocument::new(operation, Some("quire-context".to_owned()), self.category())
-                    .with_diagnostics(vec![OutcomeDiagnostic::new(
-                        None,
-                        Code::InvalidQuireContext.as_str(),
-                        None,
-                        self.outcome_message(),
-                    )
-                    .with_details(details.as_object().cloned())])
-            }
-            RunCause::ExtractionPackageConflict | RunCause::ExtractionClauseCount { .. } => {
-                let details = match &self.cause {
-                    RunCause::ExtractionClauseCount { actual } => Some(serde_json::Map::from_iter(
-                        [("actual".to_owned(), serde_json::json!(actual))],
-                    )),
-                    _ => None,
-                };
-                OutcomeDocument::new(operation, Some("request".to_owned()), self.category())
-                    .with_diagnostics(vec![OutcomeDiagnostic::new(
+            RunCause::InvalidQuireContext { .. } => {
+                OutcomeDocument::new(operation, None, self.category()).with_diagnostics(vec![
+                    OutcomeDiagnostic::new(
                         None,
                         self.cause.code().as_str(),
                         None,
                         self.outcome_message(),
-                    )
-                    .with_details(details)])
+                    ),
+                ])
             }
         }
     }
