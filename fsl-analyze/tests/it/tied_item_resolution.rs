@@ -221,16 +221,13 @@ fn a_provider_registers_for_the_kinds_it_advertises() {
             .unwrap_or_else(|refusal| panic!("{id} registers: {refusal:?}"));
         assert_eq!(engine.id().as_str(), id);
     }
-    for (id, pairs) in [(
-        "fsl.test-bounded-validity",
-        vec![
-            (OperationContract, Mode::Unbounded),
-            (ValueValidity, Mode::Bounded),
-        ],
-    )] {
-        let refusal = build(advertising(id, &pairs)).expect_err("refused at registration");
-        assert_eq!(refusal.backend.as_str(), id);
-    }
+    let id = "fsl.test-bounded-validity";
+    let pairs = [
+        (OperationContract, Mode::Unbounded),
+        (ValueValidity, Mode::Bounded),
+    ];
+    let refusal = build(advertising(id, &pairs)).expect_err("refused at registration");
+    assert_eq!(refusal.backend.as_str(), id);
     // No advertised pair: refused by the manifest reader (FR-288-AC-3) or at
     // registration, never registered.
     let empty = fsl_route::descriptor_from_manifest(
