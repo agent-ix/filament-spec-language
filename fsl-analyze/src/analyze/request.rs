@@ -477,6 +477,64 @@ fn work<'a>(
     let family = if wrong_occurrence { None } else { family };
     let absent = || AnalyzeItem::unadapted(item.request_index, item.kind, family);
     let mut built = match &item.form {
+        Some(ItemForm::Temporal(_form)) if item.kind == Capability::GlobalConformance => {
+            let protocol = package.graph().protocols().iter().find(|protocol| {
+                package
+                    .graph()
+                    .protocol_node_keys(&protocol.name)
+                    .and_then(|keys| keys.clause.as_ref())
+                    == Some(item.claim.node())
+            });
+            match protocol {
+                Some(protocol) => {
+                    let missing_role = if item.options.recording.is_some() {
+                        None
+                    } else {
+                        let selected_model_packages: std::collections::BTreeSet<&str> = binding
+                            .universes
+                            .iter()
+                            .map(|universe| universe.population.package.as_str())
+                            .collect();
+                        protocol.roles.iter().find(|role| {
+                            role.context.as_ref().is_some_and(|context| {
+                                !selected_model_packages.contains(context.original().package())
+                            })
+                        })
+                    };
+                    if let Some(role) = missing_role {
+                        crate::protocol_analysis::conformance::missing_role_item(
+                            item.request_index,
+                            &role.name,
+                        )
+                    } else {
+                        let recording = item
+                            .options
+                            .recording
+                            .as_ref()
+                            .and_then(|reference| binding.snapshots.get(reference));
+                        match recording {
+                            Some(recording) => {
+                                crate::protocol_analysis::conformance::global_recording_item(
+                                    item.request_index,
+                                    protocol,
+                                    None,
+                                    Some(recording),
+                                )
+                            }
+                            None => crate::protocol_analysis::conformance::global_behavior_item(
+                                item.request_index,
+                                package,
+                                binding.clone(),
+                                *limits,
+                                protocol,
+                                _form,
+                            ),
+                        }
+                    }
+                }
+                None => absent(),
+            }
+        }
         Some(ItemForm::Temporal(form))
             if item.kind == Capability::TemporalSatisfaction
                 && super::document::is_state_graph(package, &item.claim) =>

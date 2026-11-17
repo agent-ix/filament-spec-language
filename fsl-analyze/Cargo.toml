@@ -17,6 +17,7 @@ description = "ADR-011 §6.1 layer A: in-process analysis engines, including ret
 # and its arithmetic is its own, so the checker recomputes it independently.
 [dependencies]
 fsl-eval = { path = "../fsl-eval" }
+fsl-forms = { path = "../fsl-forms" }
 fsl-foundation = { path = "../fsl-foundation" }
 fsl-package = { path = "../fsl-package" }
 fsl-replay = { path = "../fsl-replay" }
@@ -65,7 +66,6 @@ fsl-replay = { path = "../fsl-replay", features = ["test-support"] }
 # The model-check tests compile a modelled unit through S1 to S4 and check
 # its temporal clauses with `fsl-semantics`' test-only `check_clauses`.
 fsl-cst = { path = "../fsl-cst" }
-fsl-forms = { path = "../fsl-forms" }
 filament-checked = { workspace = true, features = ["test-support"] }
 fsl-semantics = { path = "../fsl-semantics", features = ["test-support"] }
 # `ProtocolTransition::carrying` and `SendRecord::with_outcome`, which the

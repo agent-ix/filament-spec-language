@@ -1074,7 +1074,10 @@ mod tests {
 
     fn code(refusal: &Refusal) -> Option<String> {
         match refusal {
-            Refusal::Declined(_, _, code) | Refusal::Unsupported(code) | Refusal::Failed(code) => {
+            Refusal::Declined(_, _, code)
+            | Refusal::DeclinedWithDetail(_, _, code, _)
+            | Refusal::Unsupported(code)
+            | Refusal::Failed(code) => {
                 Some(code.to_string())
             }
             Refusal::RequiresBound

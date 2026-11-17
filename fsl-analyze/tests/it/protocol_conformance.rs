@@ -6,9 +6,9 @@
 //! replays in process. Driven through the in-process command adapter.
 
 use ix_trace_rs::trace;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
-use crate::analyze_cli_support::{analyze, label, litmus_request, order_protocol, Workspace};
+use crate::analyze_cli_support::{Workspace, analyze, label, litmus_request, order_protocol};
 
 /// The order protocol with a second channel `Tell` from `Seller` to `Buyer`,
 /// on which `Seller` sends `Told` only after `Ship`.
@@ -51,6 +51,7 @@ fn conformance(name: &str, unit: &str, members: Value, documents: &[(&str, Value
 fn order_recording(closure: Value) -> Value {
     json!({
         "format": "filament.protocol-recording/1",
+        "identity": {"authority": "test", "identity": "recording"},
         "protocol": "Flow",
         "observations": [
             {"kind": "send", "node": "Flow::Main::Placed", "role": "Buyer",
@@ -100,7 +101,6 @@ fn obligations(item: &Value) -> &Vec<Value> {
     "FSpec-FR-059-AC-1"
 )]
 #[test]
-#[ignore = "QSL-2209: global-conformance settles unsupported; no per-obligation, closure or global result is reported"]
 fn matching_implementations_conform_globally() {
     let item = conformance("gc-match", &order_protocol(true), json!({}), &[]);
     assert_eq!(label(&item), "proved", "{item}");
@@ -146,7 +146,6 @@ fn matching_implementations_conform_globally() {
     "FSpec-FR-059-AC-2"
 )]
 #[test]
-#[ignore = "QSL-2209: no replay-mode global-conformance engine reports or replays an unexpected send"]
 fn an_out_of_protocol_send_refutes_conformance() {
     let mut recording = order_recording(json!({"state": "closed", "premises": order_premises()}));
     recording["observations"]
@@ -154,7 +153,7 @@ fn an_out_of_protocol_send_refutes_conformance() {
         .expect("observations")
         .insert(
             0,
-            json!({"kind": "send", "node": "Flow::Main::Ship::Told", "role": "Seller",
+            json!({"kind": "send", "node": "Flow::Main::Decide::yes::Ship::Told", "role": "Seller",
                    "instance": "w-1", "keys": {"message": "m-0", "delivery": "d-0"},
                    "record": {"ok": true}}),
         );
@@ -186,7 +185,6 @@ fn an_out_of_protocol_send_refutes_conformance() {
 /// `open`, and an item `replay` that reproduced.
 #[trace("TC-2800", "TC-2802", "FR-990-AC-2", "FR-991-AC-2", "FR-896-AC-2")]
 #[test]
-#[ignore = "QSL-2209: global-conformance writes no protocol-analysis record with obligations, closure and global members"]
 fn conformance_writes_the_analysis_record() {
     let item = conformance("gc-record", &order_protocol(false), json!({}), &[]);
     assert_eq!(label(&item), "refuted", "{item}");
@@ -209,7 +207,6 @@ fn conformance_writes_the_analysis_record() {
 /// obligations `pending` and the closure `incomplete`, never `proved`.
 #[trace("TC-2800", "FR-990-AC-5", "FSpec-FR-059-AC-3")]
 #[test]
-#[ignore = "QSL-2209: a limited global-conformance run reports no pending obligations or incomplete closure"]
 fn a_limited_run_leaves_obligations_pending_and_closure_incomplete() {
     let item = conformance(
         "gc-limit",
@@ -225,9 +222,11 @@ fn a_limited_run_leaves_obligations_pending_and_closure_incomplete() {
         item.to_string().contains("max_states"),
         "names the limit: {item}"
     );
-    assert!(obligations(&item)
-        .iter()
-        .any(|entry| entry["verdict"] == "pending"));
+    assert!(
+        obligations(&item)
+            .iter()
+            .any(|entry| entry["verdict"] == "pending")
+    );
     assert_eq!(item["closure"]["state"], "incomplete");
     assert_eq!(item["global"]["complete"], false);
 }
@@ -236,18 +235,55 @@ fn a_limited_run_leaves_obligations_pending_and_closure_incomplete() {
 /// select is refused naming the role, and nothing is settled.
 #[trace("TC-2532", "FR-896-AC-4")]
 #[test]
-#[ignore = "QSL-2209: a missing role implementation is not refused before analysis"]
 fn a_missing_role_implementation_refuses() {
-    let unit = order_protocol(true).replace(
+    let ws = Workspace::new("gc-missing");
+    let protocol = order_protocol(true).replace(
         "role Seller on M::Cell;",
-        "role Seller on M::Cell;\nrole Courier on N::Truck;",
+        "role Seller on M::Cell;\nrole Courier on N::Core;",
     );
-    let item = conformance("gc-missing", &unit, json!({}), &[]);
-    let diagnostic = &item["diagnostics"][0];
-    assert_eq!(diagnostic["code"], "missing_declaration", "{item}");
+    let request_path = litmus_request(
+        &ws,
+        &protocol,
+        json!({"items": [
+            {"claim": "Flow", "kind": "global-conformance"}
+        ]}),
+    );
+    let source = crate::litmus::unit_text(&protocol).replace(
+        "model M = \"test/litmus\";",
+        "model M = \"test/litmus\";\nmodel N = \"test/second\";",
+    );
+    ws.write("program.fsl", source.as_bytes());
+    let second_model = String::from_utf8(crate::litmus::document())
+        .expect("litmus model is UTF-8")
+        .replace("test/litmus", "test/second");
+    ws.write("second-model.json", second_model.as_bytes());
+
+    let request_bytes = std::fs::read(&request_path).expect("analyze request is readable");
+    let mut request: Value = serde_json::from_slice(&request_bytes).expect("request is JSON");
+    request["request"]["models"]
+        .as_array_mut()
+        .expect("model selections")
+        .push(json!({
+            "format": "semantic-ir/2.0.0",
+            "source": {"file": "second-model.json", "authority": "test",
+                "identity": "second-model", "document": "Second", "formal_revision": 1}
+        }));
+    ws.write("analyze.json", request.to_string().as_bytes());
+    let run = analyze(&request_path);
+    let item = run.item(0);
+    let diagnostic = &item["record"]["diagnostic"];
+    assert_eq!(
+        diagnostic["code"],
+        "missing_declaration",
+        "item={item}; document={}",
+        run.document()
+    );
     assert_eq!(diagnostic["cause"], "missing-name");
     assert!(diagnostic.to_string().contains("Courier"), "{item}");
-    assert!(item["record"]["result"].is_null(), "{item}");
+    assert_eq!(item["record"]["result"], "declined", "{item}");
+    assert!(item["obligations"].is_null(), "{item}");
+    assert!(item["closure"].is_null(), "{item}");
+    assert!(item["global"].is_null(), "{item}");
 }
 
 /// FR-990-AC-3: over a recording the closure record is the recording's, and
@@ -255,7 +291,6 @@ fn a_missing_role_implementation_refuses() {
 /// withhold it without changing a decided verdict.
 #[trace("TC-2801", "FR-990-AC-3", "FSpec-FR-059-AC-5", "FSpec-FR-247-AC-5")]
 #[test]
-#[ignore = "QSL-2209: no global result or closure record is reported over a recording"]
 fn only_a_closed_recording_closure_gives_complete_success() {
     let run = |state: &str| {
         conformance(
@@ -296,7 +331,6 @@ fn only_a_closed_recording_closure_gives_complete_success() {
 /// recording naming it, and an observed `finish` never upgrades `open`.
 #[trace("TC-2801", "FR-990-AC-4", "FSpec-FR-059-AC-5", "FSpec-FR-247-AC-3")]
 #[test]
-#[ignore = "QSL-2209: the recording's closure premise set is not checked by a strict reader"]
 fn a_malformed_closure_premise_set_refuses_the_recording() {
     let premises = order_premises();
     let all = premises.as_array().expect("premises").clone();
@@ -324,7 +358,11 @@ fn a_malformed_closure_premise_set_refuses_the_recording() {
             )],
         );
         assert_eq!(
-            item["diagnostics"][0]["code"], "invalid_runtime_input",
+            item["record"]["diagnostic"]["code"], "invalid_runtime_input",
+            "{name}: {item}"
+        );
+        assert_eq!(
+            item["record"]["diagnostic"]["cause"], "invalid-value",
             "{name}: {item}"
         );
         assert!(item["obligations"].is_null(), "{name}: {item}");
@@ -354,7 +392,6 @@ fn crate_source(path: &str) -> String {
 /// enabled step (`ReplayParity`).
 #[trace("TC-2802", "FR-991-AC-1", "FR-991-AC-3")]
 #[test]
-#[ignore = "QSL-2209: fsl_analyze::protocol_analysis::conformance::replay_counterexample is not published"]
 fn conformance_replay_is_published_with_coded_refusals() {
     let module = crate_source("fsl-analyze/src/protocol_analysis/mod.rs");
     assert!(module.contains("pub mod conformance"), "module not public");
@@ -372,25 +409,108 @@ fn conformance_replay_is_published_with_coded_refusals() {
     }
 }
 
-/// FR-992-AC-1 to AC-3: a compiled handoff publishes its sources by label.
-/// The coder replaces this surface check with a test over a handoff of the
-/// order fixture and one library: exactly two entries with the files' bytes,
-/// `get` by the unit's provenance label, and `entries()` accepted as a
-/// replay request's byte provision (refused without the unit entry).
+/// FR-992-AC-1 to AC-3: a compiled handoff publishes source bytes by label,
+/// and analyze admits that provision but refuses one without its unit.
 #[trace("TC-2804", "FR-992-AC-1", "FR-992-AC-2", "FR-992-AC-3")]
 #[test]
-#[ignore = "QSL-2209: CompiledHandoff::sources() and SourceProvision::entries() are not published"]
 fn a_compiled_handoff_publishes_its_source_provision() {
-    let handoff = crate_source("fsl-command/src/checked_handoff.rs");
-    assert!(
-        handoff.contains("pub fn sources(&self) -> &fsl_analyze::analyze::SourceProvision"),
-        "CompiledHandoff::sources() not published"
+    use fsl_analyze::analyze::document::SubjectSelection;
+    use fsl_analyze::analyze::{
+        AnalyzeLimits, AnalyzeRefusal, AnalyzeRequest, Engines, SourceProvision, analyze,
+    };
+    use fsl_command::checked_handoff::{CheckedHandoffRequest, Corpus, compile, write};
+    use fsl_command::emit_checked_v2::Request;
+    use fsl_foundation::source::provenance::RawSourceRef;
+
+    let workspace = Workspace::new("gc-source-provision");
+    let library_bytes = b"language \"ix:native\" edition \"1-draft\";\n\
+        profile v = \"filament.value.complete/v1\";\n\
+        function helper using v(): Boolean pure { true }\n";
+    let source = crate::litmus::unit_text(&order_protocol(true)).replace(
+        "model M = \"test/litmus\";",
+        "import \"test/protocol-helper\" as g;\nmodel M = \"test/litmus\";",
     );
-    let request = crate_source("fsl-analyze/src/analyze/request.rs");
-    assert!(
-        request.contains("pub fn entries(&self)"),
-        "SourceProvision::entries() not published"
+    let source_path = workspace.write("program.fsl", source.as_bytes());
+    let model_path = workspace.write("model.json", &crate::litmus::document());
+    let library_path = workspace.write("library.fsl", library_bytes);
+    let handoff_path = source_path
+        .parent()
+        .expect("workspace source has a parent")
+        .join("compiled-handoff");
+    let request = CheckedHandoffRequest {
+        emit: Request {
+            source: source_path.clone(),
+            package_name: "qsl-2209-source-provision".to_owned(),
+            models: vec![model_path],
+            libraries: vec![("test/protocol-helper".to_owned(), library_path.clone())],
+            execution_points: None,
+            temporal_selections: Vec::new(),
+            out: None,
+        },
+        corpus: Corpus::None,
+        native_join: fsl_package::NativeJoinLimits::new(1_000_000, 1_000_000),
+    };
+    write(&request, &handoff_path).expect("the checked handoff is written");
+    let handoff = compile(&handoff_path).expect("the handoff compiles in process");
+
+    let unit_source = handoff.checked().graph().source();
+    let library_source = RawSourceRef::new("local", format!("library:{}", library_path.display()))
+        .expect("the library source label is valid");
+    assert_eq!(handoff.sources().get(unit_source), Some(source.as_bytes()));
+    assert_eq!(
+        handoff.sources().get(&library_source),
+        Some(library_bytes.as_slice())
     );
+    let entries: Vec<_> = handoff.sources().entries().collect();
+    assert_eq!(entries.len(), 2, "both unit and library bytes are present");
+    assert!(entries.iter().any(|(authority, identity, bytes)| {
+        *authority == unit_source.authority()
+            && *identity == unit_source.identity()
+            && *bytes == source.as_bytes()
+    }));
+    assert!(entries.iter().any(|(authority, identity, bytes)| {
+        *authority == library_source.authority()
+            && *identity == library_source.identity()
+            && *bytes == library_bytes.as_slice()
+    }));
+
+    let world = crate::litmus::Documents::new();
+    let selection = SubjectSelection::default_over(&world.snapshots);
+    let binding = selection.binding(handoff.packages(), &world.snapshots);
+    let limits = AnalyzeLimits::unbounded();
+    let engines = Engines::fsl().expect("FSL engines are registered");
+    let cancel = filament_exact::Cancel::new();
+    let complete = AnalyzeRequest {
+        binding: binding.clone(),
+        items: Vec::new(),
+        provision: handoff.sources().clone(),
+    };
+    assert!(
+        analyze(handoff.checked(), &complete, &engines, &limits, &cancel).is_ok(),
+        "the complete handoff provision admits"
+    );
+
+    let mut without_unit = SourceProvision::default();
+    for (authority, identity, bytes) in handoff.sources().entries() {
+        if (authority, identity) != (unit_source.authority(), unit_source.identity()) {
+            let source = RawSourceRef::new(authority, identity).expect("valid source label");
+            without_unit.insert(&source, bytes.to_vec());
+        }
+    }
+    let incomplete = AnalyzeRequest {
+        binding,
+        items: Vec::new(),
+        provision: without_unit,
+    };
+    let refusal = analyze(handoff.checked(), &incomplete, &engines, &limits, &cancel)
+        .expect_err("analyze refuses a provision without the unit source")
+        .into_refused()
+        .expect("missing source is a refusal");
+    let AnalyzeRefusal::Provision(refusal) = refusal else {
+        panic!("expected a missing source refusal, got {refusal:?}");
+    };
+    assert_eq!(refusal.authority, unit_source.authority());
+    assert_eq!(refusal.identity, unit_source.identity());
 }
 
 /// FR-990-AC-6 (TC-2831): each closure premise is `{kind, instance, node}`

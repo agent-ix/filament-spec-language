@@ -2037,6 +2037,49 @@ mod tests {
     use super::*;
     use ix_trace_rs::trace;
 
+    /// Quantity roots become integral before `classify_extent` decides
+    /// whether the root is bounded.
+    /// Provenance: QSL-2209.
+    #[trace("TC-660")]
+    #[test]
+    fn quantity_root_types_classify_as_integer() {
+        use filament_exact::{
+            BoundedQuantityType, CarriedQuantityType, Integer, IntegerInterval, QuantityCarrier,
+            RoundingMode, UnitId,
+        };
+
+        let unit = UnitId::declared(crate::test_ids::node_key("metre"));
+        let quantity = ValueType::Quantity(unit.clone());
+        let bounded = ValueType::BoundedQuantity(
+            BoundedQuantityType::new(unit.clone(), None, None)
+                .expect("empty bounds are admitted")
+                .into(),
+        );
+        let carried = ValueType::CarriedQuantity(
+            CarriedQuantityType::new(
+                unit,
+                QuantityCarrier::Integer {
+                    domain: IntegerInterval::new(Integer::from(0_i64), Integer::from(10_i64))
+                        .expect("ordered carrier bounds"),
+                    rounding: RoundingMode::Exact,
+                },
+            )
+            .into(),
+        );
+
+        for (kind, root) in [
+            ("quantity", quantity),
+            ("bounded", bounded),
+            ("carried", carried),
+        ] {
+            assert_eq!(
+                root_classification_type(&root),
+                ValueType::Integer,
+                "the {kind} root is classified as Integer",
+            );
+        }
+    }
+
     /// FR-120 "Post-states": the two stops a model expansion makes carry the
     /// catalog's codes.
     #[trace("TC-472", "FR-120-AC-6")]

@@ -9,7 +9,7 @@
 //! settle each result by the FR-573 map (PA-4, PA-20).
 
 pub mod conformance;
-mod finite_replay;
+pub(crate) mod finite_replay;
 mod item;
 pub mod manifest;
 mod profile;

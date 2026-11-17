@@ -738,6 +738,7 @@ impl ItemCause {
             }
             ReportedInconclusiveCause::Cause(
                 InconclusiveCause::UndecidedSuccessor
+                | InconclusiveCause::OpenHistory
                 | InconclusiveCause::NoInitialState
                 | InconclusiveCause::NoInstance
                 | InconclusiveCause::KaniVacuousProof
@@ -944,6 +945,16 @@ pub struct ProtocolConformanceOutput {
     /// Per-role projection results, absent in recording mode.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub projections: Option<Vec<ConformanceProjectionOutput>>,
+    /// Whether the global counterexample replay reproduced its violation.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub replay: Option<ConformanceReplayOutput>,
+}
+
+/// The in-process replay result for a global-conformance counterexample.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+pub struct ConformanceReplayOutput {
+    /// Whether replay reproduced the claimed violation.
+    pub reproduced: bool,
 }
 
 /// One FR-990 verdict and its evidence.
@@ -2983,6 +2994,7 @@ mod tests {
                     label: "proved".to_owned(),
                     counterexample: None,
                 }]),
+                replay: Some(ConformanceReplayOutput { reproduced: true }),
             });
         let wire = serde_json::to_value(item).expect("serializes");
         assert_eq!(wire["result"], "tested");
@@ -2990,6 +3002,7 @@ mod tests {
         assert_eq!(wire["closure"]["state"], "closed");
         assert_eq!(wire["global"]["complete"], true);
         assert_eq!(wire["projections"][0]["role"], "Buyer");
+        assert_eq!(wire["replay"]["reproduced"], true);
     }
 
     /// FR-286-AC-1: `check` over the spine fixture is one whole document, at

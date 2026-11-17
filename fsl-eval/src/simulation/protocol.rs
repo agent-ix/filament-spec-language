@@ -1136,6 +1136,28 @@ impl<'a, M: MemoryModel> ProtocolSystem<'a, M> {
         self
     }
 
+    /// Whether any live instance holds an undelivered message on an
+    /// exactly-once-premise channel.
+    ///
+    /// Global conformance uses this at `finish`: the protocol simulator
+    /// retires an instance there, while FR-896 still owes the channel's
+    /// exactly-once premise over the completed execution.
+    pub fn has_pending_exactly_once_delivery(&self, state: &ProtocolState<M>) -> bool {
+        state.instances.values().any(|instance| {
+            instance.queues.iter().any(|(queue, entries)| {
+                !entries.is_empty()
+                    && self
+                        .program
+                        .channels
+                        .get(queue.channel)
+                        .is_some_and(|channel| {
+                            channel.delivery
+                                == fsl_semantics::check::ChannelDelivery::ExactlyOncePremise
+                        })
+            })
+        })
+    }
+
     /// The objects of each replicated role's population (ADR-027 RR-1): the
     /// objects of its object type in the subject's universe, in reference
     /// order.

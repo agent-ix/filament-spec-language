@@ -1119,6 +1119,13 @@ pub(crate) enum Refusal {
     /// `declined`, with the refusal's cause, `DeclineCode` and full
     /// diagnostic.
     Declined(ProofRefusalCause, DeclineCode, CatalogCode),
+    /// A declined request with structured detail naming the missing input.
+    DeclinedWithDetail(
+        ProofRefusalCause,
+        DeclineCode,
+        CatalogCode,
+        serde_json::Map<String, serde_json::Value>,
+    ),
     /// An unbounded extent: `unsupported` with `unbounded-extent`.
     RequiresBound,
     /// EN-4 `NotStatistical`: `invalid-request` with `not-statistical`.
@@ -1646,7 +1653,10 @@ impl Counterexample {
                 undefined_cause(Some(&counterexample.kind), None)
             }
             Self::Assignments(found) => undefined_cause(None, Some(found)),
-            Self::Probabilistic(_) | Self::Contract(_) | Self::StateGraph(_) => None,
+            Self::Probabilistic(_)
+            | Self::Contract(_)
+            | Self::StateGraph(_)
+            | Self::GlobalConformance(_) => None,
         }
     }
 }
@@ -2115,6 +2125,15 @@ fn settle(
             )),
             None,
         ),
+        EngineReport::Refused(Refusal::DeclinedWithDetail(cause, code, diagnostic, detail)) => {
+            record(
+                terminal(
+                    TerminalRecord::declined_with(index, backend, cause, code, diagnostic)
+                        .with_diagnostic_detail(detail),
+                ),
+                None,
+            )
+        }
         EngineReport::Refused(Refusal::Incomplete(cause)) => record(
             terminal(TerminalRecord::incomplete(index, backend, cause)),
             None,
@@ -2236,6 +2255,7 @@ mod tests {
                 label: "proved".to_owned(),
                 counterexample: None,
             }]),
+            replay: None,
         };
         let document = analyze_document_routed_with_conformance(
             &[terminal],
