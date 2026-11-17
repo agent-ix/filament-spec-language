@@ -109,9 +109,14 @@ is a closed JSON object `{"format": "filament.progress-ledger/1", "entries":
 [E, ...]}`, entries in ascending binding order, each `E` a closed object
 `{"binding": {"package", "clause", "occurrence", "clock", "profile"},
 "watermark", "completeness", "scope", "execution", "covered": [{"identity",
-"stamp"}, ...]}` holding FR-502's `LedgerBinding` (the clause as the declaration
-node key's canonical text) and `ProgressLedgerEntry`, `covered` in
-identity-then-stamp order.
+"stamp", "fingerprint"?}, ...]}` holding FR-502's `LedgerBinding` (the clause as
+the declaration node key's canonical text) and `ProgressLedgerEntry`, `covered`
+in identity-then-stamp order. A covered entry's `fingerprint` is FR-993's
+content fingerprint, the lowercase hexadecimal SHA-256 digest prefixed
+`sha256:`. It is required on the entry of a record-sample position and absent
+on every other entry. It is integrity data (ADR-013 §2): it takes no part in
+the entry order, a citation or a key, and the entry's identity stays the
+sample's index.
 
 ## Outputs
 
@@ -173,8 +178,10 @@ refused. The member's bytes are what a later request's `ledger` file holds.
   `ProgressLedger`, and two runs whose second request carries the ledger file
   the first wrote SHALL give the same outcomes as the two in-process calls
   sharing one ledger (FSpec FR-094).
-- A ledger file that is not a closed `filament.progress-ledger/1` document, or
-  whose entries are out of order or repeat a binding, SHALL refuse
+- A ledger file that is not a closed `filament.progress-ledger/1` document,
+  whose entries are out of order or repeat a binding, or whose covered entry
+  lacks a `fingerprint` for a record sample or carries one for any other
+  position, SHALL refuse
   `invalid-request` at stage `request`, naming `ledger`.
 - The writer SHALL write the ledger canonically (members in the order above,
   entries in binding order), so writing a read ledger reproduces its bytes.
@@ -192,6 +199,7 @@ refused. The member's bytes are what a later request's `ledger` file holds.
 | FR-641-AC-7 | Through `command::run`, FR-330-AC-16's `Model` trace written as a `model` member with no `max_candidates` reports FR-330-AC-16's outcome under the bound 1,000,000; with `max_candidates` 1 over a step whose reconstruction expands two candidates it reports `incomplete`, exit 22, with `LimitReached{limit: max_candidates, value: 1, setting: expansion.max_candidates}` and no truth; with `max_candidates` equal to the largest candidate count of any step it reports FR-330-AC-16's outcome, never `incomplete`; `max_candidates` 0, and `max_candidates` on a `lasso` member, refuse `invalid-request` at stage `request`, exit 20, naming the member; two runs differing only in `max_candidates` give different result identities. | Test (TC-2246) |
 | FR-641-AC-8 | Through `command::run`, FR-641-AC-7's `model` trace with no `max_candidates` writes a result whose `limits` member is `{"expansion.max_candidates": "1000000"}`, and with `max_candidates` 5 one whose `limits` is `{"expansion.max_candidates": "5"}` and that is otherwise equal; a run over a `finite` sample trace writes no `limits` member. | Test (TC-2299) |
 | FR-641-AC-9 | Through `command::run`, a `progressed` trace of a fixed-sample clause `eventually[0,3] holds(r.level = 2)` over one sample at level 0 reports `pending-window` with `deadline` 3, exit 0, at scope `open`, `W` 0 and `{"complete": {"through": 0}}` (an open prefix), and reports `indeterminate` with reason `IncompleteInput`, exit 11, never `violated`, at scope `closed`, `W` 5 and completeness `"incomplete"` (an incomplete input, to which no false extension applies, FR-504-AC-4). The two results are distinct `disposition.temporal` kinds. | Test (TC-2384) |
+| FR-641-AC-10 | Through `command::run`, a `progressed` record-sample run over levels 1, 2 with `Complete { through: 1 }` writes a ledger whose covered entries each carry `identity` (the index), `stamp` and a `fingerprint` of the form `sha256:` and 64 lowercase hexadecimal digits, and no sample text or value; a second run carrying that ledger file over levels 1, 5, 3 refuses `Completeness` and over levels 1, 2, 3 is accepted, as the in-process calls do; reading and writing the ledger file reproduces its bytes; a ledger whose record-sample entry lacks `fingerprint`, and a snapshot-position entry that carries one, each refuse `invalid-request` at stage `request` naming `ledger`. | Test (TC-2811) |
 
 ## Dependencies
 
