@@ -197,6 +197,9 @@ fn nested_not_emission_bytes_are_linear_at_one_and_five_thousand_levels() {
     let per_not_at_five_thousand = at_five_thousand / 5_000;
     let difference = per_not_at_one_thousand.abs_diff(per_not_at_five_thousand);
 
+    eprintln!(
+        "measured canonical bytes per not: depth 1,000 => {per_not_at_one_thousand}, depth 5,000 => {per_not_at_five_thousand}"
+    );
     assert!(
         per_not_at_one_thousand > 0,
         "the emitted package is nonempty"
