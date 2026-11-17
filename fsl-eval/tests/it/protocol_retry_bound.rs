@@ -430,25 +430,24 @@ fn recovery_counterexample_path(
 }
 
 fn replay_transition_path(
-    reachable: &fsl_eval::simulation::protocol::Reachable<Sc>,
+    system: &ProtocolSystem<'_, Sc>,
     path: &[serde_json::Value],
-) -> Option<usize> {
-    let mut at = 0;
+) -> Option<serde_json::Value> {
+    use fsl_eval::simulation::{SubjectSystem, TransitionSystem};
+
+    let mut state = system.initial().into_iter().next()?;
     for expected in path {
-        let (_, next) = reachable
-            .states
-            .get(at)?
-            .steps
-            .iter()
-            .find(|(transition, _)| {
-                fsl_eval::simulation::protocol::transition_json(transition)
-                    .ok()
-                    .as_ref()
-                    == Some(expected)
-            })?;
-        at = *next;
+        let expansion = system.successors(&state).ok()?;
+        let (_, next) = expansion.successors.into_iter().find(|(transition, _)| {
+            fsl_eval::simulation::protocol::transition_json(transition)
+                .ok()
+                .as_ref()
+                == Some(expected)
+        })?;
+        state = next;
     }
-    Some(at)
+    let (bytes, _) = system.state_key(&state).ok()?;
+    serde_json::from_slice(&bytes).ok()
 }
 
 fn replace_named_scalar(value: &mut serde_json::Value, name: &str, from: &str, to: &str) -> bool {
@@ -699,14 +698,9 @@ fn a_recovery_predicate_over_the_recovery_view_is_evaluated() {
     );
 
     let replay_fixture = fixture_with_recovery_view(1, true);
-    let replay_reachable = system(&replay_fixture)
-        .reachable(NonZeroUsize::new(1).expect("one worker"))
-        .expect("counterexample replay exploration completes");
-    let replayed_at =
-        replay_transition_path(&replay_reachable, &path).expect("the recorded cend path replays");
-    let replayed_state: serde_json::Value =
-        serde_json::from_slice(replay_reachable.states[replayed_at].key.as_bytes())
-            .expect("replayed state key is canonical JSON");
+    let replay_system = system(&replay_fixture);
+    let replayed_state =
+        replay_transition_path(&replay_system, &path).expect("the recorded cend path replays");
     let registration = named_member(cend, "registration").expect("cend names its registration");
     assert_eq!(
         registration_status(&replayed_state, registration),
@@ -721,11 +715,8 @@ fn a_recovery_predicate_over_the_recovery_view_is_evaluated() {
         "1",
         "0"
     ));
-    let changed_at = replay_transition_path(&replay_reachable, &changed)
+    let changed_state = replay_transition_path(&replay_system, &changed)
         .expect("the cend transition with bal 0 replays");
-    let changed_state: serde_json::Value =
-        serde_json::from_slice(replay_reachable.states[changed_at].key.as_bytes())
-            .expect("changed replay state key is canonical JSON");
     assert_eq!(
         registration_status(&changed_state, registration),
         Some("recovered"),

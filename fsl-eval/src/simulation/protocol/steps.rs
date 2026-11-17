@@ -34,15 +34,15 @@ use super::program::{Cursor, Join, Rest};
 use super::race::AccessRecord;
 use super::settle::Settled;
 use super::{
-    Bound, Disposition, Instance, Parallel, ParallelKey, ProtocolRefusal, ProtocolState,
-    ProtocolSystem, Thread, undetermined,
+    undetermined, Bound, Disposition, Instance, Parallel, ParallelKey, ProtocolRefusal,
+    ProtocolState, ProtocolSystem, Thread,
 };
 use crate::simulation::expansion::{Expansion, ExpansionLimit, ExpansionStop};
 use crate::simulation::footprint::Location;
-use crate::simulation::model::encode::{Enc, reference_enc, value_enc};
+use crate::simulation::model::encode::{reference_enc, value_enc, Enc};
 use crate::simulation::model::{
-    Applied, Budget, ClauseOutcome, EXHAUSTED, FirstApplication, ModelFinding, ModelSimState,
-    Observed, ObservedIdentities, OperationRef, Verdict, verdict,
+    verdict, Applied, Budget, ClauseOutcome, FirstApplication, ModelFinding, ModelSimState,
+    Observed, ObservedIdentities, OperationRef, Verdict, EXHAUSTED,
 };
 use crate::simulation::subject::Cut;
 use crate::value::evaluate_join_predicate;

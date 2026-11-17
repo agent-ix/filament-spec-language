@@ -31,13 +31,13 @@ use super::memory::{Access, GatedStep, MemoryModel, Written};
 use super::program::{Rest, Template};
 use super::steps::Gathered;
 use super::{
-    Bound, Compensating, Disposition, Instance, ProtocolRefusal, ProtocolState, ProtocolSystem,
-    Registered, Registration, Status, Thread, undetermined,
+    undetermined, Bound, Compensating, Disposition, Instance, ProtocolRefusal, ProtocolState,
+    ProtocolSystem, Registered, Registration, Status, Thread,
 };
 use crate::simulation::expansion::ExpansionStop;
 use crate::simulation::model::encode::{reference_enc, value_enc};
 use crate::simulation::model::{
-    FirstApplication, ModelFinding, ModelSimState, OperationRef, Verdict, verdict,
+    verdict, FirstApplication, ModelFinding, ModelSimState, OperationRef, Verdict,
 };
 use crate::value::evaluate_protocol_slot;
 

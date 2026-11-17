@@ -16,7 +16,7 @@ use fsl_semantics::check::{CheckedBody, ControlStep, ProtocolNodeId};
 use super::identity::ThreadPath;
 use super::memory::MemoryModel;
 use super::program::{Cursor, Rest};
-use super::{Instance, ProtocolRefusal, ProtocolSystem, undetermined};
+use super::{undetermined, Instance, ProtocolRefusal, ProtocolSystem};
 use crate::simulation::expansion::ExpansionStop;
 use crate::simulation::model::{ModelFinding, ModelSimState, Verdict};
 
