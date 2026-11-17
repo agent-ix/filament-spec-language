@@ -2168,9 +2168,11 @@ impl<M: MemoryModel> ProtocolSystem<'_, M> {
                 };
                 Ok(Access {
                     class,
-                    ordering: effective_ordering(access_kind, weak.ordering).or_else(|| {
-                        (access_kind == AccessClass::Rmw).then_some(AccessOrdering::AcqRel)
-                    }),
+                    ordering: if locked && weak.ordering.is_none() {
+                        Some(AccessOrdering::AcqRel)
+                    } else {
+                        effective_ordering(access_kind, weak.ordering)
+                    },
                     shared: Some(SharedCell {
                         location,
                         cell,
