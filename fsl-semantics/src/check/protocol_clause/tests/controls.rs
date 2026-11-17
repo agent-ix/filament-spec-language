@@ -42,7 +42,6 @@ fn no_specified_control_is_unstepped() {
 }
 
 /// A recovery predicate remains restricted to its declared stage binders.
-#[trace("FSpec-FR-427-AC-6")]
 #[test]
 fn a_recovery_predicate_over_an_unbound_name_refuses() {
     let source = recovery_flow("Main::Committed", "").replace(
