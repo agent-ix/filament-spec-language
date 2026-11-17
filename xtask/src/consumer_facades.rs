@@ -63,12 +63,6 @@ pub fn run(workspace_root: &Path, arguments: &[OsString]) -> Result<Outcome> {
         .map_err(|source| Error::ConsumerFacadesJson { source })?;
 
     let mut failures = Vec::new();
-    validate_object(
-        &inventory,
-        &["inventory", "consumers"],
-        "inventory",
-        &mut failures,
-    );
     if inventory.get("inventory").and_then(Value::as_str) != Some("filament.consumer-facts/v1") {
         failures.push("inventory: unsupported or missing format identifier".to_owned());
     }
@@ -258,12 +252,6 @@ fn facts_by_consumer(
         return result;
     };
     for consumer in consumers {
-        validate_object(
-            consumer,
-            &["consumer", "role", "facts"],
-            "inventory consumer",
-            failures,
-        );
         let Some(name) = consumer.get("consumer").and_then(Value::as_str) else {
             failures.push("inventory: consumer has no name".to_owned());
             continue;
@@ -274,12 +262,6 @@ fn facts_by_consumer(
         };
         let mut entries = Vec::new();
         for fact in facts {
-            validate_object(
-                fact,
-                &["id", "fact", "requirement"],
-                "inventory fact",
-                failures,
-            );
             let Some(id) = fact.get("id").and_then(Value::as_str) else {
                 failures.push(format!("inventory {name}: fact has no id"));
                 continue;
