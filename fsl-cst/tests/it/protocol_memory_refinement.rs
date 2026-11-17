@@ -216,7 +216,8 @@ fn an_empty_join_list_is_refused_at_its_closing_bracket() {
     assert_eq!(
         diagnostic.byte_span().expect("located").start,
         text.find("];").expect("the closing bracket"),
-        "{text}"
+        "{text}: {:?}",
+        parsed.diagnostics()
     );
 
     let run = "sequence Main { parallel Plain { branch a sequence A { } branch b sequence B { } } join all [a]; }";
