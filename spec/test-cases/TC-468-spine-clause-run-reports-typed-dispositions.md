@@ -71,6 +71,6 @@ Tag the tests `#[trace("TC-468", "FR-109-AC-n")]`.
   body alone; `violation`, exit 10; `compile`, `missing_import`/
   `missing-selection`; `compile`, `refusal`, `unknown_language`, exit 20,
   no `package_id`.
-- Step 7: `evaluate`, `undefined`, `UndefinedEvaluation{cause:
-  precondition-false}`, no `truth`, exit 10.
+- Step 7: `evaluate`, `violation`, `truth` false, `UndefinedEvaluation{cause:
+  precondition-false}`, exit 10.
 - Step 8: `compile`, `ill_typed`, exit 20, no `package_id`, no `truth`.

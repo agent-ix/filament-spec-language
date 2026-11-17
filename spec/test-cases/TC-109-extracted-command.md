@@ -67,7 +67,7 @@ AC-4 and steps 5 to 9 for AC-6 to AC-10 (AC-5 is TC-430 step 5); step 9 also
 - Step 4: the source names the body identity with the extracted body's
   identity and the original identity, and the extraction
   record holds Quire's unchanged outcome and the verified map.
-- Step 5: `extraction-package-conflict`; `extraction-clause-count` with
+- Step 5: `invalid-request` naming `package`, and no `extraction-package-conflict`; `extraction-clause-count` with
   `{"actual": 0}` and `{"actual": 2}`; `extraction-requires-run` twice;
   `invalid-request` naming the member three times; each at stage `request`,
   exit 20, empty stdout, with no model file read.

@@ -141,3 +141,19 @@ fn every_complete_cause_appears_in_a_diagnostic_test() {
         );
     }
 }
+
+/// FR-031-AC-6 (TC-109): a run request has no `package` member (FR-493), so
+/// `extraction-package-conflict` has no producer and is retired from the
+/// catalogue and its documentation; `invalid-quire-context` stays, produced
+/// by the clause-run request reader.
+#[ix_trace_rs::trace("TC-109", "FR-031-AC-6", "FR-031-AC-7")]
+#[test]
+#[ignore = "QSL-2203: extraction-package-conflict is retired with the request package member; not implemented yet"]
+fn extraction_package_conflict_is_retired_and_invalid_quire_context_stays() {
+    assert_eq!(Code::from_code("extraction-package-conflict"), None);
+    assert!(!DOCUMENTATION.contains("| extraction-package-conflict |"));
+    assert_eq!(
+        Code::from_code("invalid-quire-context"),
+        Some(Code::InvalidQuireContext)
+    );
+}

@@ -444,3 +444,86 @@ fn a_count_against_an_int_operand_is_a_type_mismatch() {
         );
     }
 }
+
+/// The protocol `W` over the `Counter` unit, with `extra` in its run.
+fn population_protocol(extra: &str) -> String {
+    format!(
+        "profile p = \"filament.protocol.finite-global/v1\";\n\
+         record Ack {{ ok: Boolean; }}\n\
+         protocol W using p over (c: M::Counter) on origin {{\n\
+         capture n: Integer = size(allInstances<M::Counter>(M::counters));\n\
+         capture o: Option<M::Counter> = lookup<M::Counter>(M::counters, c);\n\
+         role R on M::Counter;\nrole S on M::Counter;\n\
+         channel ch from R to S carries Ack ordering unordered delivery exactly-once-premise \
+         capacity 2 overflow reject;\n\
+         run sequence Main {{\n\
+         send Go via ch as (go: Ack) {{ count(x in M::counters where x.v = 0) >= 1 }};\n\
+         receive Got via ch of Go as (got: Ack) {{ true }};\n{extra} }}\n\
+         finish Done as (d: Boolean) {{ forall(x in M::counters : x.v < 3) }};\n}}"
+    )
+}
+
+/// FR-391-AC-11 (TC-2832): a protocol capture, a `send` constraint and a
+/// `finish` constraint name `M::counters`; a `choice` guard, which bars model
+/// state, refuses the read `operator-ineligible`.
+#[trace("TC-2832", "FR-391-AC-11", "FR-883-AC-1", "FR-883-AC-2")]
+#[test]
+#[ignore = "QSL-2216: a protocol slot that reads model state is not a population position yet"]
+fn a_protocol_slot_that_reads_model_state_names_a_population() {
+    checked(false, &population_protocol(""));
+    let (code, cause, at) = refused(
+        false,
+        &population_protocol(
+            "choice Pick by S visible () { \
+             case yes when { count(x in M::counters where true) = 0 } sequence Yes { } \
+             case no when { true } sequence No { } }",
+        ),
+    );
+    assert_eq!(
+        (code.as_str(), cause.as_str()),
+        ("ill_typed", "operator-ineligible")
+    );
+    assert!(at.contains("M::counters"), "{at}");
+}
+
+/// FR-1000-AC-2 (TC-2834): a reference literal types `Reference<M::Counter>`,
+/// refuses its unknown type, its non-object type and its empty key, and a
+/// barred-slot occurrence stays pending at S3 rather than refusing.
+#[trace("TC-2834", "FR-1000-AC-2", "FSpec-TC-965", "FSpec-FR-480-AC-2")]
+#[test]
+#[ignore = "QSL-2166: S3 does not type a reference literal or keep it pending yet"]
+fn a_reference_literal_checks_and_stays_pending_in_a_barred_slot() {
+    let clause = |body: &str| format!("invariant R using v on M::Counter at current {{ {body} }}");
+    checked(false, &clause("self = M::Counter#\"a\""));
+    for (body, expected, at) in [
+        (
+            "self = M::Nothing#\"a\"",
+            ("missing_declaration", "missing-name"),
+            "Nothing",
+        ),
+        (
+            "self = M::Level#\"a\"",
+            ("ill_typed", "type-mismatch"),
+            "M::Level",
+        ),
+        (
+            "self = M::Counter#\"\"",
+            ("invalid_package", "invalid-value"),
+            "\"\"",
+        ),
+    ] {
+        let (code, cause, text) = refused(false, &clause(body));
+        assert_eq!((code.as_str(), cause.as_str()), expected, "{body}");
+        assert_eq!(text, at, "{body}");
+    }
+    checked(
+        false,
+        "profile p = \"filament.protocol.finite-global/v1\";\n\
+         protocol L using p over (c: M::Counter) on origin {\n\
+         role S on M::Counter;\n\
+         run sequence Main { choice Pick by S visible () { \
+         case yes when { c = M::Counter#\"z\" } sequence Yes { } \
+         case no when { not (c = M::Counter#\"z\") } sequence No { } } }\n\
+         finish Done as (d: Boolean) { true };\n}",
+    );
+}
