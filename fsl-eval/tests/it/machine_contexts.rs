@@ -319,7 +319,6 @@ impl Orders {
         .expect("the Orders fixture checks");
         let model = json!({
             "identity": crate::tc235_k2::PACKAGE,
-            "version": "1",
         });
         Self {
             package,

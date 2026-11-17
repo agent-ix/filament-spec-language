@@ -15,13 +15,13 @@ mod tl;
 mod wire;
 
 pub use analyze::{
-    AnalyzeInput, PreparedAnalyze, analyze, analyze_with_limits, analyze_with_providers,
-    analyze_with_providers_and_limits, prepare_analyze,
+    analyze, analyze_with_limits, analyze_with_providers, analyze_with_providers_and_limits,
+    prepare_analyze, AnalyzeInput, PreparedAnalyze,
 };
-pub use flow::{FlowAnalyzeError, analyze_flow_report};
-pub use monitor::{MonitorEvent, MonitorSummary, monitor};
+pub use flow::{analyze_flow_report, FlowAnalyzeError};
+pub use monitor::{monitor, MonitorEvent, MonitorSummary};
 pub use output::NativeResult;
-pub use tl::{AtomMapping, TlRecord, record as tl_record};
+pub use tl::{record as tl_record, AtomMapping, TlRecord};
 
 use crate::formal_source::FormalSource;
 use filament_contract_model as ir;
@@ -1185,6 +1185,7 @@ struct Intake<'a> {
 
 #[derive(Clone, Copy)]
 enum DependentLimit {
+    Fixed,
     CallerConfigured,
 }
 
@@ -1202,6 +1203,11 @@ impl Intake<'_> {
                 RunCause::Limit(LimitKind::FileBytes) => match self.dependent_limit {
                     Some(DependentLimit::CallerConfigured) => {
                         RunCause::Limit(LimitKind::DependentBytes {
+                            maximum: self.maximum,
+                        })
+                    }
+                    Some(DependentLimit::Fixed) => {
+                        RunCause::Limit(LimitKind::FixedDependentBytes {
                             maximum: self.maximum,
                         })
                     }
@@ -1756,21 +1762,22 @@ fn compile_outcome_inner(
         if request.program.sources.is_empty() {
             return Err(RunCause::EmptyCompileProgram);
         }
-        let mut intake = intake_with_bytes(
-            directory,
-            FileCounts {
-                // A library source is a program source a `1-draft` program
-                // imports, and counts toward the same file limits (FR-027).
-                programs: request
-                    .libraries
-                    .len()
-                    .saturating_add(request.program.sources.len()),
-                models: request.models.len(),
-                observations: 0,
-                extensions: request.extensions.len(),
-            },
-            run_limits.dependent_bytes,
-        )?;
+        let counts = FileCounts {
+            // A library source is a program source a `1-draft` program
+            // imports, and counts toward the same file limits (FR-027).
+            programs: request
+                .libraries
+                .len()
+                .saturating_add(request.program.sources.len()),
+            models: request.models.len(),
+            observations: 0,
+            extensions: request.extensions.len(),
+        };
+        let mut intake = if request_limit_is_configured {
+            intake_with_bytes(directory, counts, run_limits.dependent_bytes)?
+        } else {
+            intake_with_fixed_bytes(directory, counts, run_limits.dependent_bytes)?
+        };
         // Every unit's edition is decided before any model is read: a
         // `1-draft` program takes domain packages only, and a request
         // selecting a native rule model for it refuses whatever state the
@@ -2610,6 +2617,22 @@ fn intake_with_bytes(directory: &Path, counts: FileCounts, maximum: usize) -> Re
         remaining: maximum,
         maximum,
         dependent_limit: Some(DependentLimit::CallerConfigured),
+        prefetched_observations: std::collections::BTreeMap::new(),
+        sources: Vec::new(),
+    })
+}
+
+fn intake_with_fixed_bytes(
+    directory: &Path,
+    counts: FileCounts,
+    maximum: usize,
+) -> Result<Intake<'_>> {
+    check_file_count(counts)?;
+    Ok(Intake {
+        directory,
+        remaining: maximum,
+        maximum,
+        dependent_limit: Some(DependentLimit::Fixed),
         prefetched_observations: std::collections::BTreeMap::new(),
         sources: Vec::new(),
     })

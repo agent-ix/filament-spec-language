@@ -1012,7 +1012,7 @@ fn evaluate_gate(precondition: bool) -> ProtocolSlotEvaluation {
             "identity": selected.identity.clone(),
             },
         "observation": "current",
-        "model": {"identity": "test/orders", "version": "1.0.0", "digest": "set at admission"},
+        "model": {"identity": "test/orders"},
         "populations": [{
             "population": "ix://test/orders/pop",
             "complete": true,

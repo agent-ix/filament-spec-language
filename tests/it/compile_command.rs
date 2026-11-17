@@ -195,7 +195,12 @@ fn source_selection_and_dependent_byte_refusals_are_typed() {
         "x".repeat(8 * 1024 * 1024)
     );
     spine_request(directory.path(), oversized.as_bytes());
-    let error = compile_in_process(directory.path()).unwrap_err();
+    let error = fsl_command::command::compile_outcome_with_limits_and_overrides(
+        &directory.path().join("compile.json"),
+        fsl_command::command::RunLimits::default(),
+        &fsl_command::command::RequestOverrides::default(),
+    )
+    .unwrap_err();
     let value = error.value().unwrap();
     assert_eq!(value["code"], "resource_exhausted", "{value}");
     assert_eq!(value["details"]["limit"], "dependent_bytes", "{value}");
@@ -395,10 +400,7 @@ fn compile_uses_fixed_byte_ceilings() {
     let failure: Value = serde_json::from_slice(&output.stderr).unwrap();
     assert_eq!(failure["details"]["limit"], "dependent_bytes", "{failure}");
     assert_eq!(failure["details"]["maximum"], 8_388_608, "{failure}");
-    assert_eq!(
-        failure["details"]["option"], "--dependent-bytes",
-        "{failure}"
-    );
+    assert!(failure["details"].get("option").is_none(), "{failure}");
 }
 
 /// Rewrite `compile.json` under `directory` through `change` and run `compile`.

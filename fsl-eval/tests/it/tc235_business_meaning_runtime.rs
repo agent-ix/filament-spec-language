@@ -288,7 +288,6 @@ pub(crate) fn lifecycle_observation(
         "observation": observation,
         "model": {
             "identity": crate::tc235_k2::PACKAGE,
-            "version": "1",
         },
         "populations": [],
         "contexts": contexts,
@@ -320,7 +319,6 @@ pub(crate) fn lifecycle_invocation_with(
         "identity": lifecycle_identity(&identity),
         "model": {
             "identity": crate::tc235_k2::PACKAGE,
-            "version": "1",
         },
         "context": crate::tc235_k2::id("OrderLifecycle"),
         "operation": "place",

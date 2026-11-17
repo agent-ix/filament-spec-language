@@ -430,7 +430,7 @@ fn ep_snapshot(
     let snapshot = serde_json::json!({
         "format":"filament.state.snapshot/v1",
         "identity":{"authority":selected.authority, "identity":selected.identity},
-        "observation":"current", "model":{"identity":model::PACKAGE,"version":"1.0.0","digest":"set at admission"},
+        "observation":"current", "model":{"identity":model::PACKAGE},
         "populations":populations,
         "relationships":[{"relationship":model::id("relationship/otherLinks"),"complete":true,"instances":relationship_target.map(|(population,key)| vec![serde_json::json!({"source":{"population":model::id("otherSpare"),"key":"ghost"},"target":{"population":model::id(population),"key":key}})]).unwrap_or_default()}]
     });
@@ -1116,7 +1116,7 @@ fn observation_with_row<'a>(
             "identity": selected.identity.clone(),
             },
         "observation": "current",
-        "model": {"identity": model::PACKAGE, "version": "1.0.0", "digest": "set at admission"},
+        "model": {"identity": model::PACKAGE},
         "populations": populations,
     });
     let snapshots = [(selected.clone(), serde_json::to_vec(&snapshot).unwrap())]
@@ -4651,7 +4651,7 @@ fn another_model_snapshot_returns_the_original_fsv_refusal() {
             "identity": selected.identity.clone(),
             },
         "observation": "current",
-        "model": {"identity": "test/foreign", "version": "1.0.0", "digest": "set at admission"},
+        "model": {"identity": "test/foreign"},
         "populations": [{
             "population": "ix://test/foreign/nodes",
             "complete": true,

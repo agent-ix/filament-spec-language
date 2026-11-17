@@ -84,12 +84,7 @@ pub(super) fn read(
         let observed = if let Some(existing) = by_file.get(file) {
             existing.clone()
         } else {
-            let observed = observation(
-                intake,
-                key,
-                file,
-                observation_limits.document_bytes,
-            )?;
+            let observed = observation(intake, key, file, observation_limits.document_bytes)?;
             by_file.insert(file.clone(), observed.clone());
             observed
         };
