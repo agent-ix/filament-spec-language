@@ -1156,7 +1156,7 @@ fn a_prepared_tl_lowering_uses_the_public_executor_and_keeps_limits() {
     )
     .err()
     .expect("the configured dependent-file ceiling must refuse before execution");
-    assert_eq!(limited.category().exit_code(), 20);
+    assert_eq!(limited.category().exit_code(), 22);
     let refusal = limited.value().expect("a refusal outcome document");
     assert!(refusal.to_string().contains("dependent_bytes"), "{refusal}");
 }
