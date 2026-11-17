@@ -15,6 +15,8 @@ relationships:
     type: depends_on
   - target: ix://agent-ix/filament-spec-language/FR-526
     type: depends_on
+  - target: ix://agent-ix/filament-observation/FR-013
+    type: depends_on
 ---
 # FR-944: Map the evaluator's trace facts onto filament-observation's contexts, selections and views
 
@@ -178,17 +180,22 @@ The owner's `completeness` module derives one assessment from per-member
 facts and has no rule that compares a new assertion with a retained one.
 FR-502 needs it, so `filament-observation` SHALL provide it, as its own
 requirement (filament-observation FR-013, "Revise a completeness assertion
-monotonically across revisions", not yet filed upstream; tracked as
-QSL-2327):
+monotonically across revisions", the normative source of this rule; tracked as
+QSL-2327). Where the summary below and FR-013 differ, FR-013 governs:
 
 - `completeness::Selection` SHALL carry a `TemporalBoundary`, and
   `completeness::revise(prior: &View, context, selection, limits)` SHALL derive
   a successor document whose context names `prior`'s document as predecessor.
+- `revise` SHALL waive the owner's same-subject predecessor check: each
+  request carries its own admitted history, so the successor's scope and
+  population identity are its own (filament-observation FR-013).
 - `revise` SHALL refuse with a typed error naming the contradicted member or
   boundary when the successor's boundary is below the prior's, when a prior
   `Complete` assessment is succeeded by an `Incomplete` one, or when the
   successor holds a member at or before the prior boundary that the prior did
-  not hold; it SHALL accept a boundary at or above the prior's and a member
+  not hold, or when a member both hold `Available` carries a different
+  observation identity in the successor (`MemberObservationChanged`, which
+  backs FR-502's changed-fingerprint refusal); it SHALL accept a boundary at or above the prior's and a member
   absent from the successor that the prior held, which stays held.
 - `revise` SHALL leave `prior` unchanged on refusal.
 
@@ -204,7 +211,7 @@ the owner.
 | FR-944-AC-1 | For readings 0 to 6 under `Counter { uncertainty: 1 }` and under `Exact`, with bounds 0 to 6, `definitely_before` and `within_bound` read through the owner's `relation_to` on the half-tick intervals equal `ClockCover`'s answers on every pair. | Test (TC-2624) |
 | FR-944-AC-2 | FR-501-AC-13's counter-cover trace admits through `filament_observation::admit` with one record per position whose identity is the owner's `record_identity`, and every report names the position's FR-106 identity through the side mapping; a `ms` stamp 3 admits as `event_time_nanos` 3000000, and stamp 3 under a declared unit of factor `rational(1, 2000000000)` (1/2 ns) refuses at stage `admit` naming its position; and the partial facts of its atoms read back through `partial::read` with the possibility sets and reasons of their Kleene values. | Test (TC-2624) |
 | FR-944-AC-3 | FR-524-AC-27 to AC-29's scopes give `Active`, `Inactive` and the three `Unknown` kinds through `activation::derive` and the mapping above, equal to the dispositions the evaluator reports; FR-526-AC-2's superseding request gives a repair plan that invalidates exactly the superseded result and retains the other's bytes. | Test (TC-2624) |
-| FR-944-AC-4 | Once filament-observation FR-013 lands, FR-502-AC-2's cases through `completeness::revise` refuse `Complete { through: 60 }`, `Incomplete` and the uncovered position stamped 80, and accept `Complete { through: 100 }` and `{ through: 140 }`, exactly as FR-502's ledger does. | Test (TC-2624) |
+| FR-944-AC-4 | Once filament-observation FR-013 lands, FR-502-AC-2's cases through `completeness::revise` refuse `Complete { through: 60 }`, `Incomplete` and the uncovered position stamped 80, refuse a covered position re-delivered under a different observation identity (`MemberObservationChanged`, FR-502's changed-fingerprint case), accept a successor over its own admitted history with another subject, and accept `Complete { through: 100 }` and `{ through: 140 }`, exactly as FR-502's ledger does. | Test (TC-2624) |
 
 ## Dependencies
 
