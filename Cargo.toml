@@ -25,7 +25,7 @@ filament-checked = { git = "https://github.com/agent-ix/filament-eval", branch =
 # its own repository so RT and CG depend on it without the FSL repo.
 filament-eval = { git = "https://github.com/agent-ix/filament-eval", branch = "main" }
 # IR-owned staged identity, operation-member, and model-enum witness joins.
-filament-contract-model = { git = "https://github.com/agent-ix/filament-contract-ir", tag = "v0.1.0" }
+filament-contract-model = { git = "https://github.com/agent-ix/filament-contract-ir", branch = "main" }
 
 [package]
 name = "filament-spec-language"
