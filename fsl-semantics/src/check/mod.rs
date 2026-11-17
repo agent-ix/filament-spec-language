@@ -6408,6 +6408,10 @@ impl PackageDeclarations {
         {
             refusals.push(refusal);
         }
+        let declared_nominal_nodes: Vec<_> = self.nominal_spans.keys().cloned().collect();
+        if let Err(refusal) = lowering.declared_nominal_nodes(&declared_nominal_nodes) {
+            refusals.push(refusal);
+        }
         // FR-092 rule 1: every admitted enum's declaration and member nodes,
         // which enum types and enum literals name by key.
         for enum_binding in scope.enums() {
@@ -7824,6 +7828,24 @@ impl PackageDeclarations {
             }
         }
         finish_step_relations(&mut graph, checked_relations, lowered_relations)?;
+        // FSpec FR-746 admits no empty checked graph. A type alias is a
+        // name for another node and does not itself populate the wire graph,
+        // so refuse it here at S3 rather than letting E4 report an empty
+        // projection later. Type declarations are kept separately from the
+        // expression semantic graph, which is why both inventories are
+        // checked.
+        if graph.semantic_graph.nodes().next().is_none()
+            && graph.type_nodes.is_empty()
+            && graph.model_roots.is_empty()
+        {
+            return Err(vec![CheckRefusal {
+                location: root(Origin::Expression),
+                cause: CheckCause::EmptyPackage {
+                    package_name: graph.package_name.clone(),
+                    sources: graph.sources.clone(),
+                },
+            }]);
+        }
         Ok(graph)
     }
 }

@@ -1255,6 +1255,19 @@ fn check_message_one(first: &CheckRefusal) -> String {
         );
     }
     match &first.cause {
+        CheckCause::EmptyPackage {
+            package_name,
+            sources,
+        } => {
+            let identities = sources
+                .iter()
+                .map(|source| format!("{}:{}", source.authority(), source.identity()))
+                .collect::<Vec<_>>()
+                .join(", ");
+            message = format!(
+                "{message}: checked package `{package_name}` needs at least one declaration that has a node; a type alias has none (sources: {identities})"
+            );
+        }
         CheckCause::OperandTypeMismatch {
             operator,
             left_type,

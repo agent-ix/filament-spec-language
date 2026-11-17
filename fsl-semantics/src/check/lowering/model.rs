@@ -3454,6 +3454,27 @@ impl<'a> Lowering<'a> {
         Ok(())
     }
 
+    /// FR-910: retain every source-owned dimension and unit node, including
+    /// declarations no model type or function references.
+    pub(in crate::check) fn declared_nominal_nodes(
+        &mut self,
+        keys: &[NodeKey],
+    ) -> Result<(), CheckRefusal> {
+        for key in keys {
+            let Some(nominal) = self.units.nominal_node(key) else {
+                continue;
+            };
+            let kind = match &nominal.form {
+                NominalUnitForm::Dimension { .. } => QuantityKind::Dimension,
+                NominalUnitForm::Unit { .. } => QuantityKind::Unit,
+            };
+            let name = nominal.declaration.qualified_declaration.join(".");
+            let location = type_declaration(&quantity_origin(kind, &name));
+            self.unit_nodes(key.clone(), &location)?;
+        }
+        Ok(())
+    }
+
     /// The `ModelOwner` of the dimension or unit node `key` an admitted
     /// domain package declares: the package's identity and the node's IR
     /// node identity.

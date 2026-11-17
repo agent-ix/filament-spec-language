@@ -2946,6 +2946,15 @@ pub enum CheckCause {
         /// keep `CheckCause`, and so `CheckRefusal`, small.
         limit: Option<Box<fsl_foundation::diagnostic::LimitExceeded>>,
     },
+    /// FR-910 / FSpec FR-746: the package has no declaration that produces a
+    /// node in the checked graph. The package and all admitted source owners
+    /// are retained for the check refusal's diagnostic.
+    EmptyPackage {
+        /// The manifest's package name.
+        package_name: String,
+        /// Every source unit in the admitted package, in canonical order.
+        sources: Vec<fsl_foundation::source::provenance::RawSourceRef>,
+    },
     /// `refused { code: ill_typed }` with its FR-272 cause.
     IllTyped(IllTypedCause),
     /// An undeclared case of a declared variant type, still classified as
@@ -3663,6 +3672,7 @@ impl CheckCause {
             Self::ModelConformance(failure) => failure.code,
             Self::ModelIncomplete(_) => Code::ResourceExhausted,
             Self::TypeAdmission { code, .. } => *code,
+            Self::EmptyPackage { .. } => Code::MissingDeclaration,
             Self::TypeCheckAllocation(_) | Self::TypeCheckCapacity(_) => Code::ResourceExhausted,
             Self::IllTyped(_)
             | Self::UndeclaredVariantCase { .. }
@@ -3747,6 +3757,7 @@ impl CheckCause {
             // charge is an insufficient next charge, never a stage limit.
             Self::ModelIncomplete(_) => Some("insufficient-next-charge"),
             Self::TypeAdmission { cause, .. } => Some(cause),
+            Self::EmptyPackage { .. } => Some("empty-package"),
             Self::TypeCheckAllocation(_) => Some("allocation-failed"),
             Self::TypeCheckCapacity(_) => Some("reservation-size-overflow"),
             Self::IllTyped(cause) => cause.tag(),
