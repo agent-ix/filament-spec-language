@@ -74,6 +74,12 @@ struct IntervalSend<'a, 'p> {
     next_delivery: u64,
 }
 
+/// The first index for a pending interval send after any queued duplicate
+/// reserved a later index while the send was blocked.
+fn resume_delivery_index(pending_next: u64, reserved_next: Option<u64>) -> u64 {
+    pending_next.max(reserved_next.unwrap_or(0))
+}
+
 impl<M: MemoryModel> ProtocolSystem<'_, M> {
     fn message_occurrence(
         &self,
@@ -178,12 +184,9 @@ impl<M: MemoryModel> ProtocolSystem<'_, M> {
             let payload = pending.payload.clone();
             let remaining = pending.remaining;
             let message_occurrence = pending.message.clone();
-            let next_delivery = pending.next_delivery.max(
-                instance
-                    .next_deliveries
-                    .get(&message_occurrence)
-                    .copied()
-                    .unwrap_or(0),
+            let next_delivery = resume_delivery_index(
+                pending.next_delivery,
+                instance.next_deliveries.get(&message_occurrence).copied(),
             );
             let key = match self.queue_key(message.channel, &payload, &state.model, node)? {
                 Ok(key) => key,
@@ -936,6 +939,28 @@ impl<M: MemoryModel> ProtocolSystem<'_, M> {
             }
         }
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod delivery_index_tests {
+    use super::resume_delivery_index;
+    use crate::simulation::protocol::{DeliveryIdentity, MessageOccurrence, ThreadPath};
+    use fsl_semantics::check::ProtocolNodeId;
+
+    #[test]
+    fn a_pending_interval_resumes_after_a_duplicate_reserved_an_index() {
+        let message = MessageOccurrence::new(4, ProtocolNodeId(12), ThreadPath::root(4), 0);
+        let partial_entries = 2_u64;
+        let pending_next = partial_entries;
+        let duplicate = DeliveryIdentity::new(message.clone(), pending_next);
+        let reserved_next = duplicate.index() + 1;
+
+        let resumed = resume_delivery_index(pending_next, Some(reserved_next));
+        let resumed_delivery = DeliveryIdentity::new(message, resumed);
+        assert_eq!(duplicate.index(), 2);
+        assert_eq!(resumed_delivery.index(), 3);
+        assert_ne!(duplicate, resumed_delivery);
     }
 }
 
