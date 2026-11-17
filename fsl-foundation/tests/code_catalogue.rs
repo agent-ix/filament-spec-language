@@ -39,6 +39,75 @@ fn every_code_round_trips_through_the_catalogue() {
     }
 }
 
+/// FR-301/FR-285: exit class is a function of the stable code. This table
+/// covers the complete diagnostic refusal corpus, including unsupported,
+/// incomplete and internal-failure codes.
+#[test]
+fn every_code_maps_to_its_exit_class() {
+    let cases = [
+        (Code::IoError, 20),
+        (Code::InvalidRequest, 20),
+        (Code::InvalidIdentifier, 20),
+        (Code::OutputFailure, 20),
+        (Code::UnsupportedProjection, 21),
+        (Code::InvalidProjectionCorrespondence, 20),
+        (Code::ExtractionRequiresRun, 20),
+        (Code::ExtractionPackageConflict, 20),
+        (Code::ExtractionClauseCount, 20),
+        (Code::InvalidQuireContext, 20),
+        (Code::InvalidSourceIdentity, 20),
+        (Code::InvalidSourceMap, 20),
+        (Code::InvalidUtf8, 20),
+        (Code::InvalidSyntax, 20),
+        (Code::UnsupportedConstruct, 21),
+        (Code::UnrepresentableConstraint, 20),
+        (Code::UnknownLanguage, 20),
+        (Code::UnknownEdition, 20),
+        (Code::UnknownProfile, 20),
+        (Code::InvalidPackage, 20),
+        (Code::UnknownWire, 20),
+        (Code::UnknownRequiredFeature, 21),
+        (Code::ResourceExhausted, 22),
+        (Code::MissingImport, 20),
+        (Code::StaleDependency, 20),
+        (Code::AmbiguousDeclaration, 20),
+        (Code::MissingDeclaration, 20),
+        (Code::ConflictingDeclaration, 20),
+        (Code::InvalidModelBinding, 20),
+        (Code::InvalidRuntimeInput, 20),
+        (Code::WrongSnapshot, 20),
+        (Code::IllTyped, 20),
+        (Code::UndefinedExpression, 20),
+        (Code::DanglingReference, 20),
+        (Code::IncompletePopulation, 22),
+        (Code::UnavailableObservation, 22),
+        (Code::PopulationDeltaMismatch, 20),
+        (Code::FrameViolation, 20),
+        (Code::Cancelled, 22),
+        (Code::RuntimeInvariant, 30),
+        (Code::AmbiguousDispatch, 20),
+        (Code::ForeignReference, 20),
+        (Code::CardinalityOutOfBound, 20),
+        (Code::DuplicateSelection, 20),
+        (Code::StageLimitExceeded, 22),
+        (Code::NoncanonicalWire, 20),
+        (Code::UnimplementedCapability, 21),
+        (Code::InvalidProbabilisticModel, 20),
+        (Code::InvalidTimedModel, 20),
+    ];
+
+    assert_eq!(cases.len(), Code::all().len(), "table covers every code");
+    for (code, exit_code) in cases {
+        assert!(Code::all().contains(&code), "{code} is in the catalogue");
+        assert_eq!(
+            code.category().exit_code(),
+            exit_code,
+            "{} must map to exit {exit_code}",
+            code.as_str()
+        );
+    }
+}
+
 /// FR-010-AC-8: every typed complete-source cause has a case in the
 /// diagnostic mapping test, including each syntax cause used by recovery.
 #[test]

@@ -417,7 +417,8 @@ fn parse_with_declaration_recovery(
                         },
                         |token| token.span,
                     );
-                    let declaration_form = engine.starts_unknown_declaration(failure.position);
+                    let declaration_form = engine.starts_unknown_declaration(failure.position)
+                        && !empty_unknown_declaration_body(&tokens, failure.position);
                     let (code, cause) = if declaration_form {
                         (
                             CompleteCode::UnsupportedConstruct,
@@ -1794,6 +1795,20 @@ fn derived_form(tokens: &[Significant], failure: &Failure) -> Option<&'static st
         ),
         _ => None,
     }
+}
+
+/// An empty unknown declaration body is malformed syntax, while a non-empty
+/// unselected extension-shaped form retains the unsupported cause. Keep the
+/// refusal located at the declaration word in either case.
+fn empty_unknown_declaration_body(tokens: &[Significant], position: usize) -> bool {
+    tokens.get(position).is_some_and(Significant::names)
+        && tokens.get(position + 1).is_some_and(Significant::names)
+        && tokens
+            .get(position + 2)
+            .is_some_and(|token| token.spelling.as_ref() == "{")
+        && tokens
+            .get(position + 3)
+            .is_some_and(|token| token.spelling.as_ref() == "}")
 }
 
 #[ix_trace_rs::string_edge]
