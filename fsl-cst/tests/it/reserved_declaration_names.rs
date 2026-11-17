@@ -126,3 +126,26 @@ fn lowercase_tuple_still_refuses_as_a_record_name() {
     assert_eq!(refusal.code, CompleteCode::InvalidSyntax);
     assert_eq!(refusal.cause, CompleteCause::UnexpectedToken);
 }
+
+#[trace("TC-113", "FR-035-AC-7")]
+#[test]
+fn collection_constructor_words_are_refused_as_parameter_names() {
+    for name in ["set", "bag", "orderedSet"] {
+        let text = unit(
+            "{P}function f using v(@: Integer): Boolean pure { true }",
+            name,
+        );
+        let parsed = parse(&text);
+        assert!(!parsed.is_admissible(), "{text}");
+        let [refusal] = parsed.diagnostics() else {
+            panic!("one refusal for {text}: {:?}", parsed.diagnostics());
+        };
+        assert_eq!(refusal.code, CompleteCode::InvalidSyntax, "{text}");
+        assert_eq!(refusal.cause, CompleteCause::UnexpectedToken, "{text}");
+        assert_eq!(
+            refusal.byte_span().expect("located").start,
+            text.find(name).expect("parameter name"),
+            "{text}"
+        );
+    }
+}
