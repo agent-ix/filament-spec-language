@@ -845,6 +845,7 @@ fn measure_type_form(out: &mut DeclarationMeter, root: &fsl_forms::TypeForm) {
                 BuiltinType::Float64 => "Float64",
                 BuiltinType::Text => "Text",
                 BuiltinType::Option => "Option",
+                BuiltinType::Map => "Map",
                 BuiltinType::Reference => "Reference",
                 BuiltinType::Quantity => "Quantity",
                 BuiltinType::Clock => "Clock",

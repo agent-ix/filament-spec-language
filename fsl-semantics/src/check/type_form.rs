@@ -962,7 +962,10 @@ mod tests {
         };
         assert_eq!(
             resolved.key(),
-            &ValueType::Int(IntegerInterval::new(0.into(), 3.into()).expect("ordered bounds"))
+            &ValueType::Int(
+                IntegerInterval::new(Integer::from(0_i64), Integer::from(3_i64))
+                    .expect("ordered bounds"),
+            )
         );
         assert_eq!(resolved.values(), &ValueType::Integer);
         assert_eq!(

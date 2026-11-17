@@ -966,6 +966,7 @@ pub(super) fn type_fault_class(fault: &super::type_form::TypeFormFault) -> (Code
         }
         F::AmbiguousName(_) => (Code::AmbiguousDeclaration, "ambiguous-name"),
         F::UnitArithmetic(_) => (Code::IllTyped, "operator-ineligible"),
+        F::IneligibleMapKey => (Code::IllTyped, "operator-ineligible"),
         F::UnitIdentity(IdentityRefusal::InputBytes { .. }) => (
             Code::StageLimitExceeded,
             Setting::IdentityInputBytes.kind().catalog_cause(),
