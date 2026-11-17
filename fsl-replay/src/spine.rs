@@ -41,8 +41,9 @@ use fsl_package::{ImportViewRefusal, LinkRefusal, OmittedNode};
 use fsl_semantics::check::AssemblyLimits;
 use fsl_semantics::check::{
     AccessClass, AssemblyCause, AssemblyRefusal, CheckCause, CheckRefusal, ClockSelectionFault,
-    ExtensionCause, ProbabilisticCause, ProfileRefusal, ProtocolAnchorCause, RefinementCause,
-    RowClass, ShadowedDeclaration, SourceObjectFault, TemporalCause, TimeUnitCause,
+    ExtensionCause, Obligation, ProbabilisticCause, ProfileRefusal, ProtocolAnchorCause,
+    ProvedInterval, RefinementCause, RowClass, ShadowedDeclaration, SourceObjectFault,
+    TemporalCause, TimeUnitCause,
     TopologyRetained,
 };
 use fsl_semantics::library::LibraryName;
@@ -1219,6 +1220,19 @@ fn assembly_message(refusal: &AssemblyRefusal) -> String {
     with_more(message, refusal.errors.len())
 }
 
+/// Render a proved interval for a checker diagnostic.
+fn interval_source(interval: &ProvedInterval) -> String {
+    let lower = interval
+        .lower
+        .as_ref()
+        .map_or_else(|| "-inf".to_owned(), ToString::to_string);
+    let upper = interval
+        .upper
+        .as_ref()
+        .map_or_else(|| "+inf".to_owned(), ToString::to_string);
+    format!("[{lower}, {upper}]")
+}
+
 /// A readable account of every checker refusal, in check order.
 fn check_message(refusals: &[CheckRefusal]) -> String {
     if refusals.is_empty() {
@@ -1666,6 +1680,18 @@ fn check_message_one(first: &CheckRefusal) -> String {
                     "{message}: `requires temporal {temporal}` reaches `protocol {protocol}` again"
                 ),
             };
+        }
+        CheckCause::Unproved(Obligation::Range {
+            required,
+            proved,
+            operand,
+        }) if operand.text().is_some() => {
+            message = format!(
+                "{message}: `{}` must lie in {} but is proved only in {}",
+                operand.text().unwrap_or_default(),
+                interval_source(required),
+                interval_source(proved)
+            );
         }
         CheckCause::Extension(cause) => {
             message = match cause.as_ref() {
