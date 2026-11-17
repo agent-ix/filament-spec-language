@@ -180,20 +180,22 @@ fn reachable() -> fsl_eval::simulation::protocol::Reachable<Sc> {
 /// establishes the single effect occurrence.
 fn duplicate_then_effect(
     graph: &fsl_eval::simulation::protocol::Reachable<Sc>,
-) -> Option<(Vec<DeliveryIdentity>, Vec<u64>)> {
+) -> Option<(Vec<DeliveryIdentity>, Vec<DeliveryIdentity>, Vec<u64>)> {
     let mut queue = VecDeque::from([(
         0_usize,
         None::<fsl_eval::simulation::protocol::MessageOccurrence>,
+        Vec::<DeliveryIdentity>::new(),
         Vec::<DeliveryIdentity>::new(),
         Vec::<u64>::new(),
         false,
     )]);
     let mut seen = std::collections::BTreeSet::new();
-    while let Some((state, message, deliveries, effects, duplicated)) = queue.pop_front() {
+    while let Some((state, message, copies, receives, effects, duplicated)) = queue.pop_front() {
         let signature = (
             state,
             message.clone(),
-            deliveries.clone(),
+            copies.clone(),
+            receives.clone(),
             effects.clone(),
             duplicated,
         );
@@ -202,7 +204,8 @@ fn duplicate_then_effect(
         }
         for (transition, next) in &graph.states[state].steps {
             let mut message = message.clone();
-            let mut deliveries = deliveries.clone();
+            let mut copies = copies.clone();
+            let mut receives = receives.clone();
             let mut effects = effects.clone();
             let mut duplicated = duplicated;
             match transition.kind() {
@@ -212,7 +215,7 @@ fn duplicate_then_effect(
                     if Some(delivery.message()) != message.as_ref() || delivery.index() != 1 {
                         continue;
                     }
-                    deliveries.push(delivery);
+                    copies.push(delivery);
                     duplicated = true;
                 }
                 StepKind::Receive => {
@@ -222,20 +225,20 @@ fn duplicate_then_effect(
                     if Some(delivery.message()) != message.as_ref() {
                         continue;
                     }
-                    deliveries.push(delivery);
+                    receives.push(delivery);
                 }
                 StepKind::Event if transition.business_effect().is_some() => {
                     effects.push(transition.business_effect()?.ordinal());
                     if duplicated
-                        && deliveries.iter().any(|delivery| delivery.index() == 0)
-                        && deliveries.iter().any(|delivery| delivery.index() == 1)
+                        && receives.iter().any(|delivery| delivery.index() == 0)
+                        && receives.iter().any(|delivery| delivery.index() == 1)
                     {
-                        return Some((deliveries, effects));
+                        return Some((copies, receives, effects));
                     }
                 }
                 _ => {}
             }
-            queue.push_back((*next, message, deliveries, effects, duplicated));
+            queue.push_back((*next, message, copies, receives, effects, duplicated));
         }
     }
     None
@@ -245,15 +248,22 @@ fn duplicate_then_effect(
 #[trace("TC-2528", "FR-894-AC-1")]
 fn a_duplicate_delivery_is_distinct_but_establishes_one_effect_occurrence() {
     let graph = reachable();
-    let (deliveries, effects) = duplicate_then_effect(&graph)
+    let (copies, receives, effects) = duplicate_then_effect(&graph)
         .expect("the channel can duplicate one send before both receives");
-    assert_eq!(deliveries.len(), 3, "one duplicate and two receives");
-    let duplicated = &deliveries[0];
-    assert_eq!(duplicated.index(), 1);
-    assert!(deliveries.iter().any(|delivery| delivery.index() == 0));
+    assert_eq!(copies.len(), 1, "one duplicated copy");
+    assert_eq!(copies[0].index(), 1);
+    assert_eq!(receives.len(), 2, "both copies were received once");
     assert_eq!(
-        deliveries
+        receives
             .iter()
+            .map(DeliveryIdentity::index)
+            .collect::<Vec<_>>(),
+        [0, 1],
+    );
+    assert_eq!(
+        copies
+            .iter()
+            .chain(&receives)
             .map(|delivery| delivery.message().clone())
             .collect::<std::collections::BTreeSet<_>>()
             .len(),
