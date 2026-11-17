@@ -1767,11 +1767,25 @@ fn check_message_one(first: &CheckRefusal) -> String {
                 } => format!(
                     "{message}: reward `{reward}` on `{operation}` reads state or an ambient value"
                 ),
-                ProbabilisticCause::QualitativeThreshold { claim, .. } => format!(
-                    "{message}: a threshold of claim `{claim}` is not strictly between 0 and 1; a \
-                     threshold of 0 or 1 is a qualitative claim, stated as an ADR-018 TP-2 claim \
-                     or as a possible property"
-                ),
+                ProbabilisticCause::QualitativeThreshold {
+                    claim,
+                    qualitative_form,
+                    ..
+                } => {
+                    let form = match qualitative_form {
+                        Some(fsl_semantics::check::QualitativeForm::Possible) => {
+                            "; a threshold of 0 is equivalent to a `possible` property"
+                        }
+                        Some(fsl_semantics::check::QualitativeForm::Always) => {
+                            "; a threshold of 1 is equivalent to an `always` claim"
+                        }
+                        None => "",
+                    };
+                    format!(
+                        "{message}: the probability threshold or level of claim `{claim}` must be \
+                         strictly between 0 and 1 (for example, `0.99`, not `99`){form}"
+                    )
+                }
                 ProbabilisticCause::PartialConfidence { claim, fault, .. } => format!(
                     "{message}: the confidence of claim `{claim}` must state alpha, beta and \
                      indifference once each ({fault:?})"
@@ -3539,30 +3553,62 @@ mod tests {
         assert_eq!(&unit[start..end], "Reading");
     }
 
-    /// FR-186-AC-2 (TC-621 step 2), at the CLI's compile: a threshold of 1
-    /// is refused `qualitative-threshold`, and the diagnostic names the
-    /// qualitative form: an ADR-018 TP-2 claim or a possible property.
+    /// FR-186-AC-2 (TC-621 step 2), at the CLI's compile: probability
+    /// thresholds must be strictly between 0 and 1, and the endpoints have
+    /// their equivalent qualitative forms.
     #[trace("TC-621", "FR-186-AC-2")]
     #[test]
-    fn a_qualitative_threshold_names_the_qualitative_form() {
-        let unit = "language \"ix:native\" edition \"1-draft\";\n\
-            profile ev = \"filament.temporal.event-position.false-extension/v1\";\n\
-            probabilistic C using ev on Service under Steady on origin \
-            { probability >= 1 [ holds(true) ] }\n";
-        let refusal = compose(
-            SourceIdentity::new("a", "u"),
-            "unit.native",
-            unit.as_bytes(),
-            &BTreeMap::new(),
-            &DependencyInput::default(),
-            SpineLimits::default(),
-        )
-        .expect_err("a threshold of 1 is refused");
-        assert_eq!(refusal.code(), Code::InvalidProbabilisticModel);
-        let message = refusal.to_string();
-        assert!(message.contains("qualitative-threshold"), "{message}");
-        assert!(message.contains("ADR-018 TP-2 claim"), "{message}");
-        assert!(message.contains("possible property"), "{message}");
+    fn qualitative_threshold_diagnostics_explain_ranges_and_endpoints() {
+        let refusal_for = |threshold: &str| {
+            let unit = format!(
+                "language \"ix:native\" edition \"1-draft\";\n\
+                 profile ev = \"filament.temporal.event-position.false-extension/v1\";\n\
+                 probabilistic C using ev on Service under Steady on origin \
+                 {{ probability >= {threshold} [ holds(true) ] }}\n"
+            );
+            compose(
+                SourceIdentity::new("a", "u"),
+                "unit.native",
+                unit.as_bytes(),
+                &BTreeMap::new(),
+                &DependencyInput::default(),
+                SpineLimits::default(),
+            )
+            .expect_err("an out-of-range probability threshold is refused")
+        };
+
+        let invalid_99 = refusal_for("99");
+        assert_eq!(invalid_99.code(), Code::InvalidProbabilisticModel);
+        let message_99 = invalid_99.to_string();
+        assert!(
+            message_99.contains("invalid_probabilistic_model (qualitative-threshold)"),
+            "{message_99}"
+        );
+        assert!(message_99.contains("strictly between 0 and 1"), "{message_99}");
+        assert!(message_99.contains("`0.99`, not `99`"), "{message_99}");
+        assert!(!message_99.contains("possible property"), "{message_99}");
+        assert!(!message_99.contains("`always` claim"), "{message_99}");
+        assert!(!contains_adr_number(&message_99), "{message_99}");
+
+        let zero = refusal_for("0");
+        assert_eq!(zero.code(), Code::InvalidProbabilisticModel);
+        let message_zero = zero.to_string();
+        assert!(message_zero.contains("`possible` property"), "{message_zero}");
+        assert!(!message_zero.contains("`always` claim"), "{message_zero}");
+        assert!(!contains_adr_number(&message_zero), "{message_zero}");
+
+        let one = refusal_for("1");
+        assert_eq!(one.code(), Code::InvalidProbabilisticModel);
+        let message_one = one.to_string();
+        assert!(message_one.contains("`always` claim"), "{message_one}");
+        assert!(!message_one.contains("`possible` property"), "{message_one}");
+        assert!(!contains_adr_number(&message_one), "{message_one}");
+    }
+
+    fn contains_adr_number(message: &str) -> bool {
+        message.as_bytes().windows(5).any(|window| {
+            window[..4] == *b"ADR-" && window[4].is_ascii_digit()
+        })
     }
 
     /// FR-186-AC-3 (TC-621 step 3): the diagnostics of an unbounded event and

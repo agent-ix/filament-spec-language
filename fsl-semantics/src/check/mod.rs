@@ -179,8 +179,8 @@ pub use probabilistic::{
     CheckedTemporalFormula, ClaimActivation, ClaimNormalForm, Confidence, ConfidenceFault, Delay,
     DelayDistribution, DelayFault, Event, FractionMeasure, ModelSubjectRef, OverBinding,
     PreconditionSite, ProbForm, ProbScheduler, ProbabilisticCause, ProbabilisticDeclaration,
-    ProbabilisticFeature, ProbabilisticOperation, RandomParameter, ReachTarget, Reward,
-    SupportValue, WeightOwner, Workload,
+    ProbabilisticFeature, ProbabilisticOperation, QualitativeForm, RandomParameter, ReachTarget,
+    Reward, SupportValue, WeightOwner, Workload,
 };
 pub use state_model::StateModelRefusal;
 pub use sum_case::{mint_union_member_key, ExhaustivenessObligation, SumCaseCause};
