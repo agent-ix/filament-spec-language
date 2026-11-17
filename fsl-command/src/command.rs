@@ -230,6 +230,10 @@ pub struct FunctionRunInput {
 }
 
 impl PreparedFunctionRun {
+    pub(in crate::command) fn requirements(&self) -> Option<&requirements::Requirements> {
+        self.data.requirements.as_ref()
+    }
+
     /// Transfer the prepared typed values without executing a stage.
     pub fn into_input(self) -> FunctionRunInput {
         let data = *self.data;

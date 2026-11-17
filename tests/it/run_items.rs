@@ -1007,6 +1007,79 @@ fn value_invariants_admits_a_current_snapshot() {
     assert_ne!(document["category"], "refusal", "{document}");
 }
 
+/// FR-651-AC-1 and FR-652-AC-3: calls and value invariants use the same
+/// admitted program compilation in one mixed request.
+#[test]
+#[trace("TC-1708", "FR-651-AC-1", "FR-652-AC-3")]
+fn mixed_call_and_value_invariants_share_one_items_request() {
+    let directory = tempfile::tempdir().unwrap();
+    write_cases(directory.path());
+    extend_unit(
+        directory.path(),
+        "function scalarItem using v(): Boolean pure { true }\n",
+    );
+    let output = request(
+        directory.path(),
+        "items",
+        json!({"observations": observations(), "selections": [
+            {"call": {"function": "scalarItem", "arguments": []}},
+            {"value_invariants": {"snapshot": "current"}}
+        ]}),
+    );
+    assert_eq!(output.status.code(), Some(10), "{output:?}");
+    let document = items_document(&output);
+    assert_eq!(document["items"].as_array().unwrap().len(), 3, "{document}");
+    assert_eq!(
+        document["items"][0]["result"]["format"],
+        "spine-run-result/1"
+    );
+    assert_eq!(
+        document["items"][0]["result"]["outcome"]["kind"],
+        "completed"
+    );
+    assert_eq!(document["items"][1]["selection"], 1);
+    assert_eq!(document["items"][2]["selection"], 1);
+    let mut categories = Vec::new();
+    for item in document["items"].as_array().unwrap().iter().skip(1) {
+        assert_eq!(item["result"]["format"], "native-run-result/2", "{item}");
+        categories.push(item["result"]["disposition"]["category"].as_str().unwrap());
+    }
+    assert_eq!(categories, ["success", "violation"]);
+    assert_eq!(document["category"], "violation");
+}
+
+/// FR-960-AC-1: a call item retains and settles its requirements selection
+/// after the shared compilation used by the items request.
+#[test]
+#[trace("TC-2700", "FR-960-AC-1")]
+fn call_item_settles_requirements_from_its_shared_compilation() {
+    let directory = tempfile::tempdir().unwrap();
+    write_cases(directory.path());
+    extend_unit(
+        directory.path(),
+        "function sq using v(x: Int[0, 9]): Integer pure { (x + 1) * (x + 1) }\n",
+    );
+    let output = request(
+        directory.path(),
+        "items",
+        json!({"observations": observations(), "selections": [
+            {"call": {"function": "sq", "arguments": [
+                {"parameter": "x", "value": 3}
+            ], "requirements": {}}}
+        ]}),
+    );
+    assert_eq!(output.status.code(), Some(0), "{output:?}");
+    let document = items_document(&output);
+    let result = &document["items"][0]["result"];
+    assert_eq!(result["outcome"]["kind"], "completed", "{result}");
+    assert_eq!(
+        result["requirements"].as_array().unwrap().len(),
+        3,
+        "{result}"
+    );
+    assert!(result["registry"].is_array(), "{result}");
+}
+
 /// FSpec FR-550-AC-3: items settle independently and the overall category
 /// is the most severe.
 #[test]
