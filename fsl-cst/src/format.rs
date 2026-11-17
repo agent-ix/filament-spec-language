@@ -303,7 +303,7 @@ fn needs_space(
         return false;
     }
     if current.spelling() == b"(" {
-        return matches!(previous.spelling(), b"over" | b"as" | b"when" | b"each");
+        return !is_call_parenthesis(previous);
     }
     if current.spelling() == b"@" || previous.spelling() == b"@" {
         return true;
@@ -316,6 +316,46 @@ fn needs_space(
 
 fn is_word(token: &CstToken) -> bool {
     matches!(token.kind(), TokenKind::Grammar | TokenKind::Identifier)
+}
+
+fn is_call_parenthesis(previous: &CstToken) -> bool {
+    if previous.kind() == TokenKind::Identifier {
+        return true;
+    }
+    matches!(
+        previous.spelling(),
+        b"present"
+            | b"value"
+            | b"deref"
+            | b"ref"
+            | b"pre"
+            | b"size"
+            | b"contains"
+            | b"forall"
+            | b"exists"
+            | b"filter"
+            | b"map"
+            | b"collect"
+            | b"flatMap"
+            | b"flatten"
+            | b"dropFirst"
+            | b"removeOne"
+            | b"fold"
+            | b"reduce"
+            | b"count"
+            | b"sum"
+            | b"only"
+            | b"seq"
+            | b"holds"
+            | b"reaches"
+            | b"rational"
+            | b"decimal"
+            | b"float32"
+            | b"float64"
+            | b"Text"
+            | b"Some"
+            | b"decreases"
+    )
 }
 
 fn generic_angles(tokens: &[&CstToken]) -> Vec<bool> {
