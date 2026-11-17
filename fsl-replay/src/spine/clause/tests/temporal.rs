@@ -700,7 +700,7 @@ pub(in crate::spine::clause::tests) fn lasso(
     )
 }
 
-pub(in crate::spine::clause::tests) fn report(request: ClauseRunRequest) -> ClauseRunReport {
+pub(in crate::spine::clause::tests) fn report(mut request: ClauseRunRequest) -> ClauseRunReport {
     let temporal_selections = match &request.source {
         ClauseRunSource::Program {
             identity,
