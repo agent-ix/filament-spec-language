@@ -435,6 +435,24 @@ fn output_limit(bound: u64, actual: u128) -> fsl_foundation::diagnostic::LimitEx
     )
 }
 
+/// Give an emission-size refusal the first checked source occurrence. The
+/// byte ceiling is charged while the canonical artifact is written, so the
+/// encoder itself has no source offset to report; the package's first
+/// occurrence is the closest available source locus.
+fn locate_output_limit(refusal: EmitRefusal, graph: &CheckedGraph) -> EmitRefusal {
+    let EmitRefusal::OutputLimit(limit) = refusal else {
+        return refusal;
+    };
+    if limit.locus().is_some() {
+        return EmitRefusal::OutputLimit(limit);
+    }
+    let locus = graph
+        .occurrences()
+        .next()
+        .map(|(_, _, location)| fsl_foundation::diagnostic::Locus::Occurrence(location.clone()));
+    EmitRefusal::OutputLimit(limit.at(locus))
+}
+
 impl EmitRefusal {
     /// The catalog code (FR-010).
     pub fn code(&self) -> Code {
@@ -4580,19 +4598,23 @@ fn require_protocol_results_for_refusals(package: &CheckedPackage) -> Result<(),
 pub fn emit_checked(package: &CheckedPackage, limits: EmitLimits) -> Result<Emission, EmitRefusal> {
     require_protocol_results_for_refusals(package)?;
     if let Some(emission) = package.remembered_emission() {
-        return remembered_within(emission, limits);
+        return remembered_within(emission, limits, package.graph());
     }
     emit_checked_with_cancel(package, &Cancel::new(), limits)
 }
 
 /// A remembered `emission`, when its canonical bytes fit `limits`.
-fn remembered_within(emission: &Emission, limits: EmitLimits) -> Result<Emission, EmitRefusal> {
+fn remembered_within(
+    emission: &Emission,
+    limits: EmitLimits,
+    graph: &CheckedGraph,
+) -> Result<Emission, EmitRefusal> {
     let actual = u64::try_from(emission.package().bytes().len()).unwrap_or(u64::MAX);
     if actual > limits.output_bytes {
-        return Err(EmitRefusal::OutputLimit(output_limit(
-            limits.output_bytes,
-            u128::from(actual),
-        )));
+        return Err(locate_output_limit(
+            EmitRefusal::OutputLimit(output_limit(limits.output_bytes, u128::from(actual))),
+            graph,
+        ));
     }
     Ok(emission.clone())
 }
@@ -4615,6 +4637,7 @@ fn emit_checked_uncached(
         &[],
         limits,
     )
+    .map_err(|refusal| locate_output_limit(refusal, graph))
 }
 
 /// Emit checked protocols independently and retain each protocol's result
@@ -4649,7 +4672,9 @@ pub fn emit_checked_with_protocol_results_and_temporal_selections_and_cancel(
         &ir_decodes,
         selections,
         limits,
-    ) {
+    )
+    .map_err(|refusal| locate_output_limit(refusal, graph))
+    {
         Ok(emission) => Some(emission),
         Err(EmitRefusal::NothingToEmit { .. }) if !graph.protocol_refusals().is_empty() => None,
         Err(refusal) => return Err(refusal),
@@ -4792,6 +4817,7 @@ pub fn emit_checked_with_temporal_selections_and_cancel(
         selections,
         limits,
     )
+    .map_err(|refusal| locate_output_limit(refusal, graph))
 }
 
 /// [`emit_checked_with_temporal_selections_and_cancel`] for a library unit a
@@ -5867,6 +5893,7 @@ pub fn emit_package(
     limits: EmitLimits,
 ) -> Result<Emission, EmitRefusal> {
     require_protocol_results_for_refusals(package)?;
+    let graph = package.graph();
     emit_package_inner(
         package,
         regions,
@@ -5876,6 +5903,7 @@ pub fn emit_package(
         &[],
         limits,
     )
+    .map_err(|refusal| locate_output_limit(refusal, graph))
 }
 
 /// Emit a checked package with caller-placed source regions and explicit
@@ -5888,6 +5916,7 @@ pub fn emit_package_with_temporal_selections(
     limits: EmitLimits,
 ) -> Result<Emission, EmitRefusal> {
     require_protocol_results_for_refusals(package)?;
+    let graph = package.graph();
     emit_package_inner(
         package,
         regions,
@@ -5897,6 +5926,7 @@ pub fn emit_package_with_temporal_selections(
         selections,
         limits,
     )
+    .map_err(|refusal| locate_output_limit(refusal, graph))
 }
 
 /// As [`emit_package`], but lets a caller force a specific node's wire
