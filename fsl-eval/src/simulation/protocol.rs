@@ -706,20 +706,22 @@ fn check_attempt_types(
     }
     match ClaimExtent::from_domains(domains) {
         ClaimExtent::Bounded => Ok(()),
-        ClaimExtent::Unbounded(domains) => {
-            Err(NotSimulated::RequiresBound(RequiresBound { domains }))
-        }
+        ClaimExtent::Unbounded(domains) => Err(NotSimulated::RequiresBound(RequiresBound {
+            domains,
+            capacities: Vec::new(),
+        })),
     }
 }
 
 /// FR-215 (ADR-027 TS-5): FR-101's requires-bound pre-check over the roots
 /// of `model` and of `protocol`, with no state explored. A capacity name
-/// `capacities` leaves unbound is an unbounded root too (FSpec FR-785), and
-/// is reported once the other roots are bounded.
+/// `capacities` leaves unbound is an unbounded root too (FSpec FR-785): it
+/// is reported with the other unbounded roots in one requires-bound.
 ///
 /// # Errors
 ///
-/// [`NotSimulated::RequiresBound`] when a root is unbounded;
+/// [`NotSimulated::RequiresBound`] when a root is unbounded, naming every
+/// unbound capacity name with it;
 /// [`NotSimulated::UnboundCapacity`] when only capacity names are;
 /// [`NotSimulated::Extent`] when classification stops.
 pub fn check_protocol_bounds(
@@ -730,8 +732,16 @@ pub fn check_protocol_bounds(
     position_limit: u64,
 ) -> Result<(), NotSimulated> {
     let domains = subject_domains(model, protocol, graph);
-    check_requires_bound(&roots(&domains), model.types(), position_limit)?;
-    check_attempt_types(model, protocol, graph)?;
+    let with_capacities = |refusal| match refusal {
+        NotSimulated::RequiresBound(mut bound) => {
+            bound.capacities = capacities.unbound().to_vec();
+            NotSimulated::RequiresBound(bound)
+        }
+        other => other,
+    };
+    check_requires_bound(&roots(&domains), model.types(), position_limit)
+        .map_err(with_capacities)?;
+    check_attempt_types(model, protocol, graph).map_err(with_capacities)?;
     if capacities.unbound().is_empty() {
         Ok(())
     } else {

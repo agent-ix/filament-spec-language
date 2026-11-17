@@ -76,7 +76,7 @@ pub struct UnboundCapacity {
 
 /// The admitted capacity binding of one protocol clause: every entry names a
 /// capacity of the clause, once.
-#[derive(Clone, Debug, Default, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct Capacities {
     bound: BTreeMap<String, u64>,
     unbound: Vec<UnboundCapacity>,

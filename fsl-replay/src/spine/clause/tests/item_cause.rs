@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //! QSL-2201: item causes share the `kind` and `code` wire members.
 
-use super::temporal::{finite, item_json, lasso, report, Unit};
+use super::temporal::{Unit, finite, item_json, lasso, report};
 use super::*;
 use crate::{OutcomeItem, RequestIndex};
 

@@ -2,7 +2,7 @@
 //! QSL-2201: malformed traces carry useful item messages, while nonempty
 //! lassos remain admitted.
 
-use super::temporal::{finite, item_json, lasso, report, Unit};
+use super::temporal::{Unit, finite, item_json, lasso, report};
 use super::*;
 use crate::proof_result::SettlementBasis;
 use crate::spine::ClauseRunReport;
@@ -39,9 +39,11 @@ fn timed_clause_over_snapshots_has_a_specific_item_message() {
     };
     let item = item_json("Timed", &report);
 
-    assert!(item["cause"]["message"]
-        .as_str()
-        .is_some_and(|message| message.contains("timed clause over snapshots is not checked yet")));
+    assert!(
+        item["cause"]["message"].as_str().is_some_and(
+            |message| message.contains("timed clause over snapshots is not checked yet")
+        )
+    );
 }
 
 #[trace("FR-286-AC-9")]
@@ -51,14 +53,18 @@ fn empty_loop_and_finite_trace_have_explanatory_messages_and_nonempty_lasso_is_a
         "Reaches",
         &report(lasso(Unit::Infinite, "Reaches", 3, &[0, 1, 2])),
     );
-    assert!(empty_loop["cause"]["message"]
-        .as_str()
-        .is_some_and(|message| message.contains("loop")));
+    assert!(
+        empty_loop["cause"]["message"]
+            .as_str()
+            .is_some_and(|message| message.contains("loop"))
+    );
 
     let empty_finite = item_json("Reaches", &report(finite(Unit::Infinite, "Reaches", &[])));
-    assert!(empty_finite["cause"]["message"]
-        .as_str()
-        .is_some_and(|message| message.contains("trace")));
+    assert!(
+        empty_finite["cause"]["message"]
+            .as_str()
+            .is_some_and(|message| message.contains("trace"))
+    );
 
     let nonempty_lasso = item_json(
         "Reaches",

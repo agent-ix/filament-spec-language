@@ -14,11 +14,11 @@ use fsl_eval::simulation::model::{
     ExpansionLimits, ModelFinding, ModelSimState, ModelSystem, TerminalClass,
 };
 use fsl_eval::simulation::protocol::{
-    capacity_value, explore_protocol, over_reference, Access, BlockedThread, CapacityRefusal,
-    Chosen, Disposition, FootprintStep, GatedStep, MemoryBranch, MemoryModel, MemoryStep,
-    ProtocolFairness, ProtocolRefusal, ProtocolState, ProtocolSystem, ProtocolTransition,
-    ReadChoice, RestKind, RestPoint, Sc, ScComponent, SendOutcome, SharedCell, StepKind,
-    ThreadPath, UnboundCapacity, WaitCause, Written,
+    capacity_value, explore_protocol, Access, BlockedThread, CapacityRefusal, Chosen, Disposition,
+    FootprintStep, GatedStep, MemoryBranch, MemoryModel, MemoryStep, ProtocolFairness,
+    ProtocolRefusal, ProtocolState, ProtocolSystem, ProtocolTransition, ReadChoice, RestKind,
+    RestPoint, Sc, ScComponent, SendOutcome, SharedCell, StepKind, ThreadPath, UnboundCapacity,
+    WaitCause, Written,
 };
 use fsl_eval::simulation::{
     Footprint, Limits, Location, NotSimulated, Outcome, SubjectSystem, TransitionSystem,
@@ -1775,10 +1775,31 @@ fn capacity_case(capacity: &str, second: bool) -> Case {
     )
 }
 
+/// Every reachable state key with the transition identity of each step out
+/// of it, so two systems with equal edges step alike.
+fn edges(system: &ProtocolSystem<'_, Sc>) -> BTreeSet<(Vec<u8>, Vec<u8>)> {
+    let mut seen = BTreeSet::new();
+    let mut edges = BTreeSet::new();
+    let mut queue = system.initial();
+    while let Some(state) = queue.pop() {
+        let (key, _) = system.state_key(&state).expect("a key");
+        if !seen.insert(key.clone()) {
+            continue;
+        }
+        edges.insert((key.clone(), Vec::new()));
+        for (transition, next) in system.successors(&state).expect("expands").successors {
+            let identity = system.transition_key(&transition).expect("an identity");
+            edges.insert((key.clone(), identity));
+            queue.push(next);
+        }
+    }
+    edges
+}
+
 /// FSpec FR-785-AC-1 (TC-1911 step 1): a bound symbolic capacity steps as
 /// the literal of its value. At 1 the second send waits, `full-queue` naming
-/// `P::ch`; at 2 the run finishes; the reachable state keys equal those of
-/// the literal clause at each value, and a second channel naming the same
+/// `P::ch`; at 2 the run finishes; the reachable state keys and transition
+/// identities equal those of the literal clause at each value, and a second channel naming the same
 /// capacity takes the same value.
 #[trace("FSpec-TC-1911", "FSpec-FR-785-AC-1", "FSpec-FR-170-AC-3")]
 #[test]
@@ -1803,8 +1824,8 @@ fn a_bound_symbolic_capacity_steps_as_the_literal_of_its_value() {
         let symbolic = capacity_case("symbolic(Bound)", second).bound(&[("Bound", value)]);
         let literal = capacity_case(&value.to_string(), second);
         assert_eq!(
-            keys(&sc_system(&symbolic.subject("P"))),
-            keys(&sc_system(&literal.subject("P"))),
+            edges(&sc_system(&symbolic.subject("P"))),
+            edges(&sc_system(&literal.subject("P"))),
             "capacity {value}, second channel {second}"
         );
     }
@@ -1820,7 +1841,7 @@ fn a_bound_symbolic_capacity_steps_as_the_literal_of_its_value() {
 /// FSpec FR-785-AC-2 (TC-1911 step 2): an unbound symbolic capacity returns
 /// requires-bound before any state is explored, naming the capacity and
 /// each channel whose queue names it, never `unsupported`; two unbound
-/// names are both named.
+/// names are both named, and so is a name beside another unbounded root.
 #[trace("FSpec-TC-1911", "FSpec-FR-785-AC-2", "FSpec-FR-171-AC-3")]
 #[test]
 fn an_unbound_symbolic_capacity_requires_a_bound() {
@@ -1866,6 +1887,23 @@ fn an_unbound_symbolic_capacity_requires_a_bound() {
     };
     let named: Vec<_> = names.iter().map(|name| name.name.as_str()).collect();
     assert_eq!(named, ["Bound", "Other"]);
+    // With another root unbounded too, one requires-bound names both.
+    let unbounded_root = Case::new(
+        &capacity_case("symbolic(Bound)", false)
+            .body
+            .replace("(d: Boolean)", "(d: Integer)"),
+        &[0],
+    );
+    let ModelCheckRefusal::RequiresBound(bound) = refusal(&unbounded_root) else {
+        panic!("requires-bound");
+    };
+    assert_eq!(
+        bound.capacities,
+        [UnboundCapacity {
+            name: "Bound".to_owned(),
+            channels: vec!["P::ch".to_owned()],
+        }]
+    );
     assert!(NotSimulated::UnboundCapacity(names)
         .catalog_code()
         .is_none());
@@ -1914,6 +1952,12 @@ fn a_capacity_binding_defect_refuses_before_root_classification() {
     let twice =
         refused(&capacity_case("symbolic(Bound)", false).bound(&[("Bound", 1), ("Bound", 2)]));
     assert_eq!(
+        twice,
+        ProtocolRefusal::Capacity(CapacityRefusal::Duplicate {
+            name: "Bound".to_owned()
+        })
+    );
+    assert_eq!(
         (twice.code(), twice.cause()),
         (Code::InvalidRuntimeInput, "duplicate-member")
     );
@@ -1937,19 +1981,94 @@ fn a_capacity_binding_defect_refuses_before_root_classification() {
     ));
 }
 
-/// FSpec FR-785-AC-4 and AC-5 (TC-1911 steps 4 and 5): deadlock freedom is
-/// refuted at 1 and proved at 2. The counterexample at 1 carries its
-/// subject's binding as `subject.capacities` `{"Bound": "1"}` and replays;
-/// replayed at 2 its last state enables a step, so it settles `replay-parity`;
-/// a replay whose subject has no binding refuses `missing-member`, and one
-/// that binds a capacity a clause without a symbolic capacity does not name
-/// refuses `unknown-member`.
-#[trace(
-    "FSpec-TC-1911",
-    "FSpec-FR-785-AC-4",
-    "FSpec-FR-785-AC-5",
-    "FSpec-FR-433-AC-5"
-)]
+/// The deadlock-freedom item of `case`'s clause `P` through `analyze`'s
+/// item route (FR-281): its terminal records and spelled counterexamples.
+fn analyzed(
+    case: &Case,
+) -> (
+    Vec<fsl_replay::TerminalRecord>,
+    Vec<fsl_analyze::analyze::ItemCounterexample>,
+) {
+    use crate::derived_request::items_of_kind;
+    use fsl_analyze::analyze::ProtocolItem;
+    use fsl_analyze::analyze::{analyze_items, derived_protocol_item, split_records, Engines};
+
+    let protocol = case.checked.graph().protocol("P").expect("P");
+    let occurrence = protocol_anchor(&case.checked, "P").1;
+    let subject = case.subject("P");
+    let items = [ProtocolTemporalItem {
+        occurrence: &occurrence,
+        subject: &subject.protocol,
+        protocol,
+        models: &[],
+        non_atomic_access: false,
+    }];
+    let written = protocol_request(&items);
+    let [(derived, obligation)] = &items_of_kind(&written, ItemKind::DeadlockFreedom)[..] else {
+        panic!("one deadlock-freedom item");
+    };
+    let item = ProtocolItem {
+        request: ProtocolCheckRequest {
+            temporal_clock_selections: &[],
+            subject: case.subject("P"),
+            item: ModelCheckItem::DeadlockFreedom,
+            max_depth: None,
+            max_store_buffer: None,
+            max_messages: None,
+            max_live_instances: None,
+            limits: ModelCheckLimits::default(),
+            ignore_memory_constraints: false,
+        },
+        certificate: ProtocolCertificateRequest {
+            temporal_clock_selections: &[],
+            subject: case.subject("P"),
+            item: ModelCheckItem::DeadlockFreedom,
+            max_store_buffer: None,
+            max_messages: None,
+            max_live_instances: None,
+        },
+        replay: Box::new(|payload| case.replay("P", payload.clone())),
+    };
+    let records = analyze_items(
+        &Engines::fsl().expect("the layer-A manifests register"),
+        vec![derived_protocol_item(derived, obligation, item).expect("the run")],
+        &Cancel::new(),
+    );
+    split_records(records, &case.checked)
+}
+
+/// FSpec FR-785-AC-3 on `analyze`'s item route: a refused capacity binding
+/// settles with the request's own `invalid_runtime_input` diagnostic naming
+/// its cause, never a broken invariant.
+#[trace("FSpec-TC-1911", "FSpec-FR-785-AC-3")]
+#[test]
+fn a_refused_capacity_binding_is_invalid_input_on_the_item_route() {
+    for (capacities, cause) in [
+        (&[("Other", 1)][..], "unknown-member"),
+        (&[("Bound", 1), ("Bound", 2)][..], "duplicate-member"),
+    ] {
+        let case = capacity_case("symbolic(Bound)", false).bound(capacities);
+        let (terminals, found) = analyzed(&case);
+        assert!(found.is_empty());
+        let diagnostic = terminals[0].diagnostic().expect("a diagnostic");
+        assert_eq!(
+            (diagnostic.code(), diagnostic.cause()),
+            ("invalid_runtime_input", cause)
+        );
+    }
+}
+
+/// FSpec FR-785-AC-5 (TC-1911 steps 4 and 5): deadlock freedom is refuted
+/// at 1 and proved at 2. Through `analyze`, the counterexample at 1 carries
+/// its subject's binding as `subject.capacities` `{"Bound": "1"}`, and a
+/// clause with no symbolic capacity spells no `capacities`. It replays at
+/// 1; settled at 2 its last state enables a step, so it is `inconclusive`,
+/// `replay-parity`. A replay whose subject has no binding refuses
+/// `missing-member`, and one that binds a capacity a clause without a
+/// symbolic capacity does not name refuses `unknown-member`. FSL's
+/// obligation identity reads the model subject only, roles included, so
+/// FR-785-AC-4's identity clause is not claimed here.
+#[trace("FSpec-TC-1911", "FSpec-FR-785-AC-5", "FSpec-FR-433-AC-5")]
 #[test]
 fn a_result_holds_at_the_bound_value_and_its_counterexample_replays_there() {
     let at_one = capacity_case("symbolic(Bound)", false).bound(&[("Bound", 1)]);
@@ -1967,41 +2086,22 @@ fn a_result_holds_at_the_bound_value_and_its_counterexample_replays_there() {
         ),
         "{proved:?}"
     );
-    assert_eq!(
-        at_two.subject("P").capacities,
-        [CapacityBinding {
-            name: "Bound".to_owned(),
-            value: 2
-        }]
-    );
+    let (terminals, found) = analyzed(&at_one);
+    assert_eq!(terminals[0].value(), &TerminalValue::Refuted);
+    let [found] = found.as_slice() else {
+        panic!("one counterexample: {found:?}");
+    };
+    let wire = found.wire.as_ref().expect("a deadlock is spelled");
+    assert_eq!(wire["subject"]["capacities"], json!({"Bound": "1"}));
+    let (_, literal_found) = analyzed(&capacity_case("1", false));
+    let [literal_found] = literal_found.as_slice() else {
+        panic!("one counterexample: {literal_found:?}");
+    };
+    assert!(literal_found.wire.as_ref().expect("spelled")["subject"]
+        .get("capacities")
+        .is_none());
 
     let payload = violated(&refuted).clone();
-    let over = over_reference(
-        at_one.subject("P").model.simulation,
-        "P",
-        &at_one.subject("P").over,
-    )
-    .expect("the over parameter is bound");
-    let spelled = |capacities: Vec<(String, u64)>| {
-        fsl_replay::protocol_temporal_wire(
-            &payload,
-            &fsl_replay::ProtocolWire {
-                protocol: "P".to_owned(),
-                over: over.clone(),
-                roles: Vec::new(),
-                capacities,
-                max_live_instances: None,
-            },
-            None,
-        )
-        .expect("the counterexample is spelled")
-    };
-    assert_eq!(
-        spelled(vec![("Bound".to_owned(), 1)])["subject"]["capacities"],
-        json!({"Bound": "1"})
-    );
-    assert!(spelled(Vec::new())["subject"].get("capacities").is_none());
-
     assert!(matches!(
         at_one.replay("P", payload.clone()),
         Ok(ModelTraceReplayResult {
@@ -2009,13 +2109,23 @@ fn a_result_holds_at_the_bound_value_and_its_counterexample_replays_there() {
             ..
         })
     ));
-    assert!(matches!(
-        at_two.replay("P", payload.clone()),
-        Ok(ModelTraceReplayResult {
-            settlement: ModelTraceSettlement::Inconclusive(_),
-            ..
-        })
-    ));
+    let ModelCheckOutcome::Violated { stats, .. } = &refuted else {
+        panic!("a violation");
+    };
+    let parity = at_two.settle(
+        "P",
+        &ModelCheckOutcome::Violated {
+            counterexample: Box::new(payload.clone()),
+            stats: *stats,
+        },
+    );
+    assert!(
+        matches!(
+            parity.value,
+            TerminalValue::Inconclusive(InconclusiveCause::ReplayParity(_))
+        ),
+        "{parity:?}"
+    );
     let unbound = capacity_case("symbolic(Bound)", false);
     let Err(ReplayRefusal::ModelTrace(refusal)) = unbound.replay("P", payload.clone()) else {
         panic!("a replay with no binding refuses");

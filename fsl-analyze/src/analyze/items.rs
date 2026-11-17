@@ -7,7 +7,7 @@
 use filament_semantic_value::catalog::CatalogCode;
 use fsl_eval::model_subject::ModelInstance;
 use fsl_eval::simulation::model::{ClauseOutcome, ModelSystem, DEFAULT_MAX_CLOCKS};
-use fsl_eval::simulation::protocol::ProtocolTransition;
+use fsl_eval::simulation::protocol::{ProtocolRefusal, ProtocolTransition};
 use fsl_foundation::source::provenance::OccurrenceKey;
 use fsl_foundation::RequestIndex;
 use fsl_package::CheckedPackage;
@@ -1013,6 +1013,11 @@ pub(super) fn model_refusal(refusal: &ModelCheckRefusal) -> Refusal {
         | ModelCheckRefusal::Hyper(
             HyperRefusal::UnknownOperation { .. } | HyperRefusal::SubjectCount { .. },
         ) => Refusal::Failed(INVALID_VALUE),
+        // FSpec FR-785-AC-3: a refused capacity binding is the request's own
+        // `invalid_runtime_input`, naming its cause.
+        ModelCheckRefusal::Protocol(ProtocolRefusal::Capacity(refusal)) => {
+            Refusal::Failed(CatalogCode::new(refusal.code().as_str(), refusal.cause()))
+        }
         // Engine defects, and refusals whose types name no catalog code
         // (a spec point for STD-444's follow-up): `failed` with the
         // broken-invariant diagnostic.

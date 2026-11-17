@@ -92,13 +92,7 @@ fn obligations(item: &Value) -> &Vec<Value> {
 /// QSL-2209 AC-1; FR-896-AC-1, FR-990-AC-1: role implementations that run
 /// the protocol settle `proved`, every obligation `satisfied`, closure
 /// `closed` by the engine, and complete global success.
-#[trace(
-    "TC-2532",
-    "TC-2800",
-    "FR-896-AC-1",
-    "FR-990-AC-1",
-    "FSpec-FR-059-AC-1"
-)]
+#[trace("TC-2532", "TC-2800", "FR-896-AC-1", "FR-990-AC-1", "FSpec-FR-059-AC-1")]
 #[test]
 #[ignore = "QSL-2209: global-conformance settles unsupported; no per-obligation, closure or global result is reported"]
 fn matching_implementations_conform_globally() {
@@ -138,13 +132,7 @@ fn matching_implementations_conform_globally() {
 /// QSL-2209 AC-2; FR-896-AC-3, FR-991-AC-4: over a recording, a send on
 /// `Tell` where the protocol enables none refutes conformance with an
 /// `unexpected` enabledness violation, and the counterexample replays.
-#[trace(
-    "TC-2532",
-    "TC-2803",
-    "FR-896-AC-3",
-    "FR-991-AC-4",
-    "FSpec-FR-059-AC-2"
-)]
+#[trace("TC-2532", "TC-2803", "FR-896-AC-3", "FR-991-AC-4", "FSpec-FR-059-AC-2")]
 #[test]
 #[ignore = "QSL-2209: no replay-mode global-conformance engine reports or replays an unexpected send"]
 fn an_out_of_protocol_send_refutes_conformance() {
@@ -221,10 +209,7 @@ fn a_limited_run_leaves_obligations_pending_and_closure_incomplete() {
     assert_eq!(global["label"], "incomplete", "{item}");
     assert_eq!(global["cause"], "limit-reached");
     assert_eq!(global["basis"], "unavailable");
-    assert!(
-        item.to_string().contains("max_states"),
-        "names the limit: {item}"
-    );
+    assert!(item.to_string().contains("max_states"), "names the limit: {item}");
     assert!(obligations(&item)
         .iter()
         .any(|entry| entry["verdict"] == "pending"));

@@ -24,6 +24,9 @@ pub const BOUND_POSITIONS: u64 = 1 << 20;
 pub struct RequiresBound {
     /// The request's unbounded domains.
     pub domains: UnboundedDomains,
+    /// FSpec FR-785: the capacity names a protocol subject's binding leaves
+    /// unbound, reported with the domains; empty for any other subject.
+    pub capacities: Vec<UnboundCapacity>,
 }
 
 /// Why `explore_request` or `sample_request` returned before exploring or
@@ -174,9 +177,10 @@ pub(crate) fn check_requires_bound<R: Root>(
         .collect();
     match classify_extent_at(&rooted, types, position_limit) {
         Ok(ClaimExtent::Bounded) => Ok(()),
-        Ok(ClaimExtent::Unbounded(domains)) => {
-            Err(NotSimulated::RequiresBound(RequiresBound { domains }))
-        }
+        Ok(ClaimExtent::Unbounded(domains)) => Err(NotSimulated::RequiresBound(RequiresBound {
+            domains,
+            capacities: Vec::new(),
+        })),
         Err(failure) => Err(NotSimulated::Extent(failure)),
     }
 }

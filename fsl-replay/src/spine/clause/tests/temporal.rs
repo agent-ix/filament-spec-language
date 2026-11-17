@@ -4328,10 +4328,7 @@ fn incomplete_unsupported_and_declined_rows_carry_their_labels_and_causes() {
         .as_str()
         .is_some_and(|message| message.contains("trace")));
 
-    let nonempty_lasso = item_json(
-        "Reaches",
-        &report(lasso(Unit::Infinite, "Reaches", 0, &[0, 1, 2])),
-    );
+    let nonempty_lasso = item_json("Reaches", &report(lasso(Unit::Infinite, "Reaches", 0, &[0, 1, 2])));
     assert_ne!(nonempty_lasso["result"], "declined");
 
     let ghost = item_json("Reaches", &report(ghost()));

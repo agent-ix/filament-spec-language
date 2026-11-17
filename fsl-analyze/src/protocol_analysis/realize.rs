@@ -490,19 +490,20 @@ fn admit<'a>(
     request: RealizabilityRequest<'a>,
 ) -> Result<Admitted<'a>, RealizabilityRefusal> {
     let mut premises = ProtocolPremises::from_view(package, &request.protocol)?;
-    // An unknown protocol admits no binding here; `ProtocolSystem::new`
-    // refuses it below.
-    let capacities = request
+    let protocol = request
         .subject
         .model
         .simulation
         .package
         .graph()
         .protocol(&request.subject.protocol)
-        .map(|protocol| Capacities::admit(protocol, &request.subject.capacities))
-        .transpose()
-        .map_err(|refusal| RealizabilityRefusal::Protocol(ProtocolRefusal::Capacity(refusal)))?
-        .unwrap_or_default();
+        .ok_or_else(|| {
+            RealizabilityRefusal::Protocol(ProtocolRefusal::UnknownProtocol {
+                protocol: request.subject.protocol.clone(),
+            })
+        })?;
+    let capacities = Capacities::admit(protocol, &request.subject.capacities)
+        .map_err(|refusal| RealizabilityRefusal::Protocol(ProtocolRefusal::Capacity(refusal)))?;
     premises.state_capacities(|name| capacities.value(name));
     let open_range = premises.channels.iter().any(|channel| {
         matches!(
