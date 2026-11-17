@@ -923,10 +923,6 @@ fn construction_refusal(
             cause: MemoryCause::WeakAccessShape(shape),
             stats: RunStats::default(),
         }),
-        ProtocolRefusal::RecoveryView { predicate } => Ok(ModelCheckOutcome::RecoveryView {
-            predicate,
-            stats: RunStats::default(),
-        }),
         ProtocolRefusal::InitialStop(stop) => expansion_stopped(stop, meter, max_candidates)
             .map(|(cause, limit)| ModelCheckOutcome::Stopped {
                 cause,

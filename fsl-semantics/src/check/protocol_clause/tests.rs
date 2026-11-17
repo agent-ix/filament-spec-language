@@ -22,6 +22,7 @@ use attempt_fixture::{m_actor_model, HEADER};
 mod anchors;
 mod attempts;
 mod binders;
+mod controls;
 mod coverage;
 mod graph;
 mod rules;

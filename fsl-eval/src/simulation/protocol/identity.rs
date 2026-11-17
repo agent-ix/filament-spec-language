@@ -361,10 +361,12 @@ enum Members {
         template: String,
         registration: RegistrationKey,
     },
-    /// A `cend`'s `template` and `registration`.
+    /// A `cend`'s `template`, `registration`, and recovery `record` when its
+    /// predicate reads the recovery binder.
     CEnd {
         template: String,
         registration: RegistrationKey,
+        record: Option<Enc>,
     },
     /// A `spawn` or `retire`: the `role`, the `object`'s reference and the
     /// `instance` ordinal of the protocol instance that owns the role
@@ -959,9 +961,17 @@ impl ProtocolTransition {
         }
     }
 
-    /// `cend` by the compensation thread `thread` of `registration`
-    /// (ADR-027 ST-12, TS-2).
-    pub(crate) fn cend(thread: ThreadPath, registration: RegistrationKey) -> Self {
+    /// `cend` by the compensation thread `thread` of `registration`, binding
+    /// `record` when the recovery predicate reads its recovery binder
+    /// (ADR-027 ST-12, FSpec FR-730).
+    pub(crate) fn cend(
+        thread: ThreadPath,
+        registration: RegistrationKey,
+        record: Option<(Enc, filament_exact::Value)>,
+    ) -> Self {
+        let (record_enc, binder_record) = record
+            .map(|(encoded, value)| (Some(encoded), Some(value)))
+            .unwrap_or((None, None));
         Self {
             kind: StepKind::CEnd,
             thread: Some(thread),
@@ -969,8 +979,9 @@ impl ProtocolTransition {
             members: Members::CEnd {
                 template: registration.template.clone(),
                 registration,
+                record: record_enc,
             },
-            binder_record: None,
+            binder_record,
             removed: None,
             send_record: None,
             memory: None,
@@ -1259,10 +1270,10 @@ impl ProtocolTransition {
         }
     }
 
-    /// FR-148 (FR-147 node rows): the typed binder record carried by an
-    /// `event`, `send`, `receive` or `finish` transition. Refinement rows
-    /// compare their expressions with these admitted binder values; they do
-    /// not infer a record from the transition's display identity.
+    /// The typed binder record carried by an `event`, `send`, `receive`,
+    /// `finish` or recovery-view `cend` transition. Refinement rows compare
+    /// their expressions with these admitted binder values; they do not
+    /// infer a record from the transition's display identity.
     pub fn binder_record(&self) -> Option<&filament_exact::Value> {
         self.binder_record.as_ref()
     }
@@ -1366,9 +1377,13 @@ impl ProtocolTransition {
             Members::CEnd {
                 template,
                 registration,
+                record,
             } => {
                 members.push(("template", Enc::text(template.clone())));
                 members.push(("registration", registration.enc()));
+                if let Some(record) = record {
+                    members.push(("record", record.clone()));
+                }
             }
             Members::Role {
                 role,

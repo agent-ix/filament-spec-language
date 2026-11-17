@@ -167,6 +167,10 @@ pub(super) struct Template<'a> {
     pub(super) keeps_attempt: bool,
     pub(super) retry: &'a CheckedBody,
     pub(super) commit: Option<ProtocolNodeId>,
+    /// The recovery binder's finite record type.
+    pub(super) recovery_type: ValueType,
+    /// Whether the predicate reads its recovery binder.
+    pub(super) reads_recovery: bool,
     pub(super) recover: &'a CheckedBody,
     /// The replicated role (an index into [`Program::replicated`]) that
     /// owns the template's compensation attempt, if it is replicated.
@@ -375,9 +379,7 @@ fn refuse_unsupported(
     Ok(())
 }
 
-/// Each `compensate` template of `protocol` (FR-381), or the refusal of a
-/// recovery predicate that reads its recovery binder, whose recovery view no
-/// rule derives from a model state.
+/// Each `compensate` template of `protocol` (FR-427).
 fn templates<'p>(
     protocol: &'p CheckedProtocol,
     replicated: &[(usize, Replicated<'p>)],
@@ -399,9 +401,6 @@ fn templates<'p>(
     for template in &obligations.compensations {
         let relation = &template.retry.relation;
         let name = format!("{}::{}", protocol.name, template.name);
-        if template.recover.predicate.reads_local(0) {
-            return Err(ProtocolRefusal::RecoveryView { predicate: name });
-        }
         templates.push(Template {
             name,
             effect: template.effect,
@@ -419,6 +418,8 @@ fn templates<'p>(
                 CheckedCommit::Never => None,
                 CheckedCommit::Node(node) => Some(node),
             },
+            recovery_type: template.recover.binder.value_type.clone(),
+            reads_recovery: template.recover.predicate.reads_local(0),
             recover: &template.recover.predicate,
             role: replicated
                 .iter()
@@ -1084,7 +1085,7 @@ impl<'a> Program<'a> {
     pub(super) fn reaches_any(&self, rest: Rest, targets: &[ProtocolNodeId]) -> bool {
         let (at, start) = match rest {
             Rest::Finish | Rest::End | Rest::Check(_) | Rest::Compensate(_) | Rest::Retry(_) => {
-                return false
+                return false;
             }
             Rest::Node(node) | Rest::Fork(node) | Rest::Await(node) => {
                 match self.spans.get(&node) {
@@ -1168,6 +1169,8 @@ impl<'a> Program<'a> {
                         | ControlStep::Event
                         | ControlStep::Fence
                         | ControlStep::Await
+                        | ControlStep::Finish
+                        | ControlStep::CompensateTemplate
                         | ControlStep::Unstepped(_) => {}
                     }
                 }
@@ -1223,8 +1226,10 @@ impl<'a> Program<'a> {
                         | ControlStep::Receive
                         | ControlStep::Event
                         | ControlStep::Fence
+                        | ControlStep::Finish
+                        | ControlStep::CompensateTemplate
                         | ControlStep::Unstepped(_) => {
-                            return Err(ProtocolRefusal::fault("a-parent-holds-controls"))
+                            return Err(ProtocolRefusal::fault("a-parent-holds-controls"));
                         }
                     }
                 }
@@ -1284,6 +1289,8 @@ impl<'a> Program<'a> {
                 | ControlStep::Receive
                 | ControlStep::Event
                 | ControlStep::Fence
+                | ControlStep::Finish
+                | ControlStep::CompensateTemplate
                 | ControlStep::Unstepped(_) => true,
             };
             if !escapes {
