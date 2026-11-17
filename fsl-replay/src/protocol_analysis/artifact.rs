@@ -3,15 +3,15 @@
 //! decisive counterexample carries, and the counterexample replay walk
 //! (PA-20, ADR-018 SM-7).
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use filament_contract_model::CheckedNodeId;
 use filament_exact::ObjectReference;
 use fsl_package::protocol_view::PortRef;
 
 use super::{
-    node_text, Action, BranchMerge, ChoiceBasis, GlobalStructure, MissingMember,
-    ProtocolAnalysisKey,
+    Action, BranchMerge, ChoiceBasis, GlobalStructure, MissingMember, ProtocolAnalysisKey,
+    node_text,
 };
 use crate::identity::TracePosition;
 use crate::result::{DecidingElement, SeparatingWitnessRecord};
@@ -77,6 +77,15 @@ pub enum LocalEventKind {
         /// The trigger binder that identifies the instance.
         trigger: CheckedNodeId,
     },
+    /// A role-owned non-communication protocol step.
+    ControlAction {
+        /// The control operation.
+        operation: fsl_package::protocol_view::ControlOperation,
+        /// A repeat's authored bound, when present.
+        maximum: Option<u64>,
+        /// A timed await's closed window and clock, when present.
+        window: Option<(u64, u64, String)>,
+    },
     /// The exit of a `parallel` region, with its join semantics.
     ParallelJoin {
         /// The policy that decides when the join fires.
@@ -111,9 +120,15 @@ pub struct LocalGraph {
     pub alternatives: Vec<(LocalEventId, LocalEventId)>,
 }
 
-/// The total map from each global event of the role to its local event.
+/// The map from each local global event to its local event and the set of
+/// global-only controls whose order is retained without a local action.
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub struct Correspondence(pub BTreeMap<PortRef, LocalEventId>);
+pub struct Correspondence(
+    /// Global events represented by a local event.
+    pub BTreeMap<PortRef, LocalEventId>,
+    /// Global-only events, such as `check` and `fence`.
+    pub BTreeSet<PortRef>,
+);
 
 /// How the role stands at one choice, and what merged there (PA-25).
 #[derive(Clone, Debug, Eq, PartialEq)]

@@ -910,6 +910,118 @@ fn compensation_and_timed_await_answer_unsupported() {
     assert_eq!(cause.node, named(&waiting, "Wait"));
 }
 
+/// FR-890-AC-2: a repeat projects onto a role in its body with its authored bound.
+#[trace("FR-890-AC-2", "TC-2521")]
+#[test]
+fn repeat_projects() {
+    let package = flow(
+        "sequence Main { repeat Loop by Buyer visible () max 2 while { true } \
+         sequence Body { send O via Order as (o: Ack) { true }; } \
+         exhausted sequence Spent { } }",
+    );
+    let mut asked = request(&package, "Seller");
+    asked.profile = Some("bounded".to_owned());
+    let graph = witness(project(&package, asked).unwrap()).local_graph;
+    assert!(graph.events.iter().any(|event| matches!(
+        event.kind,
+        LocalEventKind::ControlAction {
+            operation: fsl_package::protocol_view::ControlOperation::Repeat,
+            maximum: Some(2),
+            ..
+        }
+    )));
+}
+
+/// FR-890-AC-3: a timed await projects with its closed window and clock.
+#[trace("FR-890-AC-3", "TC-2521")]
+#[test]
+fn a_timed_await_projects() {
+    use crate::fill::{contracts, protocol};
+
+    let touch = crate::protocol_system::touch;
+    let package = admitted_source(
+        &(contracts("self.v = 0")
+            + &protocol(
+                "P",
+                "",
+                &format!(
+                    "sequence Main {{ {} await Wait after Start using t0 clock \"c\" within [0,1] match event Seen by w as (seen: Boolean) {{ true }}; then {} timeout {} }}",
+                    touch("Start"),
+                    touch("Fine"),
+                    touch("Late"),
+                ),
+                "d",
+            )),
+    );
+    let mut asked = request(&package, "w");
+    asked.profile = Some("bounded".to_owned());
+    let graph = witness(project(&package, asked).unwrap()).local_graph;
+    assert!(graph.events.iter().any(|event| matches!(
+        event.kind,
+        LocalEventKind::ControlAction {
+            operation: fsl_package::protocol_view::ControlOperation::Await,
+            window: Some((0, 1, ref clock)),
+            ..
+        } if clock == "c"
+    )));
+}
+
+/// FR-890-AC-6: a compensation template projects to its owning role.
+#[trace("FR-890-AC-6", "TC-2522")]
+#[test]
+fn compensation_projects() {
+    let package = admitted_source(&crate::protocol_compensation::pay("false"));
+    let mut asked = request(&package, "w");
+    asked.profile = Some("bounded".to_owned());
+    let graph = witness(project(&package, asked).unwrap()).local_graph;
+    assert!(graph.events.iter().any(|event| matches!(
+        event.kind,
+        LocalEventKind::ControlAction {
+            operation: fsl_package::protocol_view::ControlOperation::Compensate,
+            ..
+        }
+    )));
+}
+
+/// FR-890-AC-1: the remaining step controls are admitted under `bounded`.
+#[trace("FR-890-AC-1", "TC-2520")]
+#[test]
+fn each_remaining_control_projects() {
+    let source = crate::protocol_compensation::pay("false").replace(
+        crate::protocol_compensation::FAIL,
+        &format!(
+            "{} commit Cm by w as (cm: Boolean) {{ true }}; \
+             fence F ordering seq_cst; check Gate using v {{ true }};",
+            crate::protocol_compensation::FAIL
+        ),
+    );
+    let package = admitted_source(&source);
+    let mut asked = request(&package, "w");
+    asked.profile = Some("bounded".to_owned());
+    let projected = witness(project(&package, asked).unwrap());
+    let graph = projected.local_graph;
+    for operation in [
+        fsl_package::protocol_view::ControlOperation::Attempt,
+        fsl_package::protocol_view::ControlOperation::Effect,
+        fsl_package::protocol_view::ControlOperation::Event,
+        fsl_package::protocol_view::ControlOperation::Commit,
+    ] {
+        assert!(
+            graph.events.iter().any(|event| matches!(
+                event.kind,
+                LocalEventKind::ControlAction { operation: found, .. } if found == operation
+            )),
+            "missing local action for {operation:?}"
+        );
+    }
+    for control in ["F", "Gate"] {
+        assert!(projected.correspondence.1.iter().any(|event| {
+            event.node == named(&package, control)
+                && event.port == fsl_package::protocol_view::Port::Enter
+        }));
+    }
+}
+
 /// FR-575-AC-1: an `outstanding` policy under `join all` is admitted by the
 /// checker and answers `unsupported-join`.
 #[trace("TC-1415", "FR-575-AC-1")]
@@ -1038,12 +1150,10 @@ fn bounded(package: &CheckedPackageV2, role: &str) -> ProjectionOutcome {
     project(package, asked).expect("the bounded profile is admitted")
 }
 
-/// FR-890-AC-1, FR-575-AC-5 (TC-2520): under `bounded`, each construct the
-/// fragment answers `unsupported` projects onto every role, with no
-/// `unsupported` outcome.
+/// FR-890-AC-1, FR-575-AC-5 (TC-2520): under `bounded`, constructs outside the
+/// bounded-static fragment project onto every role without `unsupported`.
 #[trace("TC-2520", "FR-890-AC-1", "FR-575-AC-5", "FSpec-FR-735-AC-1")]
 #[test]
-#[ignore = "QSL-2212: the bounded profile is refused and every construct outside the fragment answers unsupported"]
 fn the_bounded_profile_projects_every_construct() {
     let runs = [
         "sequence Main { parallel Par { branch a sequence Ay { } branch b sequence Bee { } } \

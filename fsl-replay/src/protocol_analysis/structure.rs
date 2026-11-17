@@ -4,9 +4,10 @@
 //! arm ask of it (FR-570).
 //!
 //! The structure is the causal relation's reachability among the protocol's
-//! events: every `send`, `receive` and `choice` control, and the entry and
-//! exit of every `parallel`. It is built once and never enumerates an
-//! interleaving; the order of two events is a path in the relation or it is
+//! events: every `send`, `receive`, `choice`, loop, await and role-owned
+//! protocol step, and the entry and exit of every `parallel`. It is built
+//! once and never enumerates an interleaving; the order of two events is a
+//! path in the relation or it is
 //! absent. The reader that fills it from a package lives in `spine`
 //! (ADR-032 CK-3); this module holds no checked-package type.
 
@@ -95,6 +96,17 @@ pub enum GlobalEventKind {
         /// How branches outside the winning set are handled.
         outstanding: Option<OutstandingPolicy>,
     },
+    /// A role-owned protocol control that does not communicate or branch.
+    Control {
+        /// The control operation.
+        operation: fsl_package::protocol_view::ControlOperation,
+        /// Its owning role, when the control has one.
+        owner: Option<CheckedNodeId>,
+        /// A repeat's authored bound, when present.
+        maximum: Option<u64>,
+        /// A timed await's closed window and clock, when present.
+        window: Option<(u64, u64, String)>,
+    },
 }
 
 /// One event of the global structure.
@@ -120,6 +132,7 @@ impl GlobalEvent {
             GlobalEventKind::Send(comm) => Some(&comm.sender),
             GlobalEventKind::Receive(comm) => Some(&comm.receiver),
             GlobalEventKind::Choice { owner, .. } => Some(owner),
+            GlobalEventKind::Control { owner, .. } => owner.as_ref(),
             GlobalEventKind::Region { .. } | GlobalEventKind::Join { .. } => None,
         }
     }
@@ -248,7 +261,7 @@ impl GlobalStructure {
         }
         for event in &events {
             let (entry, exit) = (port(&event.at), port(&event.out));
-            if entry != exit && event.is_communication() {
+            if entry != exit {
                 arcs.insert((entry, exit));
             }
         }
@@ -945,9 +958,10 @@ impl GlobalStructure {
     }
 
     /// The events `role` performs and the choices it takes part in, for a
-    /// local graph: communications it performs, choices it owns or is
-    /// told the outcome of, and the entry and exit of every `parallel` whose
-    /// branches hold at least two of those.
+    /// local graph: communications and role-owned control actions, choices it
+    /// owns or is told the outcome of, repeated regions that contain its
+    /// actions, and the entry and exit of every `parallel` whose branches hold
+    /// at least two of those.
     #[must_use]
     pub fn role_events(&self, role: &CheckedNodeId) -> Vec<&GlobalEvent> {
         let mut kept: Vec<&GlobalEvent> = self
@@ -965,6 +979,20 @@ impl GlobalStructure {
                             | ChoiceBasis::ReceiveDistinguished { .. }
                     )
                 ),
+                GlobalEventKind::Control {
+                    operation: fsl_package::protocol_view::ControlOperation::Repeat,
+                    owner,
+                    ..
+                } => {
+                    owner.as_ref() == Some(role)
+                        || self.events.iter().any(|nested| {
+                            nested.at != event.at
+                                && nested.within.contains(&event.at.node)
+                                && (self.action_of(&nested.at, role).is_some()
+                                    || nested.performer() == Some(role))
+                        })
+                }
+                GlobalEventKind::Control { owner, .. } => owner.as_ref() == Some(role),
                 GlobalEventKind::Region { .. } | GlobalEventKind::Join { .. } => false,
             })
             .collect();

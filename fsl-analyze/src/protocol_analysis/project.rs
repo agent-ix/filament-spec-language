@@ -5,20 +5,21 @@ use std::collections::BTreeMap;
 
 use filament_contract_model::{CheckedNodeId, CheckedPackageV2};
 use fsl_package::protocol_view::{
-    clause_activation_trigger, protocol_view, role_replication_maximum, PortRef, ViewRefusal,
+    PortRef, ViewRefusal, clause_activation_trigger, protocol_view, role_replication_maximum,
 };
+use fsl_replay::ModelCheckLimit;
 use fsl_replay::protocol_analysis::{
-    node_text, replay_projection_counterexample, Action, AnalysisOutcome, AssessedRoot,
-    AssessedRootDraft, BranchMerge, ChoiceBasis, Correspondence, DecisionOwner, GlobalEventKind,
-    GlobalStructure, InconclusiveCause, LocalEvent, LocalEventId, LocalEventKind, LocalGraph,
-    MergeEvidence, MissingMember, PremiseRefusal, ProjectionBoundsDraft, ProjectionCounterexample,
+    Action, AnalysisOutcome, AssessedRoot, AssessedRootDraft, BranchMerge, ChoiceBasis,
+    Correspondence, DecisionOwner, GlobalEventKind, GlobalStructure, InconclusiveCause, JoinPolicy,
+    LocalEvent, LocalEventId, LocalEventKind, LocalGraph, MergeEvidence, MissingMember,
+    OutstandingPolicy, PremiseRefusal, ProjectionBoundsDraft, ProjectionCounterexample,
     ProjectionDecision, ProjectionKeyDraft, ProjectionWitness, ProtocolAnalysisKey,
-    ProtocolAnalysisResult, ProtocolPremises, RunBudget, RunLimit,
+    ProtocolAnalysisResult, ProtocolPremises, RunBudget, RunLimit, node_text,
+    replay_projection_counterexample,
 };
 use fsl_replay::spine::StructureError;
-use fsl_replay::ModelCheckLimit;
 
-use super::profile::{unsupported_construct_for_profile, Profile};
+use super::profile::{Profile, unsupported_construct_for_profile};
 
 /// A projection request (PA-5). Key members are optional so that the key
 /// builder names the first absent one (PA-13); premises (a) and (b) are
@@ -48,7 +49,9 @@ pub enum ProjectionRefusal {
     #[error(transparent)]
     Missing(#[from] MissingMember),
     /// The profile word is not a supported profile.
-    #[error("invalid_runtime_input/invalid-value: the member `profile` is `{0}`, not `bounded` or `bounded-static`")]
+    #[error(
+        "invalid_runtime_input/invalid-value: the member `profile` is `{0}`, not `bounded` or `bounded-static`"
+    )]
     InvalidProfile(String),
     /// The role is not a role of the clause.
     #[error("invalid_runtime_input/invalid-value: the member `role` names no role of the clause")]
@@ -422,6 +425,16 @@ fn witness(
                 joined: joined.clone(),
                 outstanding: *outstanding,
             },
+            GlobalEventKind::Control {
+                operation,
+                maximum,
+                window,
+                ..
+            } => LocalEventKind::ControlAction {
+                operation: *operation,
+                maximum: *maximum,
+                window: window.clone(),
+            },
         };
         correspondence.insert(event.at.clone(), id);
         events.push(LocalEvent { id, kind });
@@ -486,6 +499,22 @@ fn witness(
             },
         );
     }
+    let global_only = structure
+        .events()
+        .iter()
+        .filter_map(|event| match &event.kind {
+            GlobalEventKind::Control { operation, .. }
+                if matches!(
+                    operation,
+                    fsl_package::protocol_view::ControlOperation::Check
+                        | fsl_package::protocol_view::ControlOperation::Fence
+                ) =>
+            {
+                Some(event.at.clone())
+            }
+            _ => None,
+        })
+        .collect();
     Ok(ProjectionWitness {
         key,
         local_graph: LocalGraph {
@@ -493,7 +522,7 @@ fn witness(
             edges,
             alternatives,
         },
-        correspondence: Correspondence(correspondence),
+        correspondence: Correspondence(correspondence, global_only),
         merge_evidence,
     })
 }

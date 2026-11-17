@@ -3,9 +3,9 @@
 
 use filament_contract_model::{CheckedNodeId, CheckedPackageV2, CheckedSemanticNodeV2};
 use fsl_package::protocol_view::{
-    clause_activation, control_body, control_operation, protocol_view, queue_capacity,
-    role_is_replicated, ClauseActivation, ControlBody, ControlOperation, ParallelJoinPolicy,
-    QueueCapacity, ViewRefusal,
+    ClauseActivation, ControlBody, ControlOperation, ParallelJoinPolicy, QueueCapacity,
+    ViewRefusal, clause_activation, control_body, control_operation, protocol_view, queue_capacity,
+    role_is_replicated,
 };
 use fsl_replay::protocol_analysis::{UnsupportedCause, UnsupportedSlug};
 
@@ -111,8 +111,10 @@ pub fn unsupported_construct_for_profile(
             }
         }
     }
-    if let Some(template) = view.compensations().first() {
-        return Ok(Some(cause(UnsupportedSlug::Compensation, template, None)));
+    if profile == Profile::BoundedStatic {
+        if let Some(template) = view.compensations().first() {
+            return Ok(Some(cause(UnsupportedSlug::Compensation, template, None)));
+        }
     }
     // The specific causes first, in layout order; a control the profile's
     // list does not include is reported only when nothing more specific is.
@@ -120,15 +122,23 @@ pub fn unsupported_construct_for_profile(
     for id in view.controls() {
         let control = node(package, id)?;
         let found = match control_operation(control)? {
-            ControlOperation::Repeat => Some(cause(UnsupportedSlug::Repeat, id, None)),
-            ControlOperation::Await => Some(cause(UnsupportedSlug::TimedAwait, id, None)),
-            ControlOperation::Compensate => Some(cause(UnsupportedSlug::Compensation, id, None)),
+            ControlOperation::Repeat if profile == Profile::BoundedStatic => {
+                Some(cause(UnsupportedSlug::Repeat, id, None))
+            }
+            ControlOperation::Await if profile == Profile::BoundedStatic => {
+                Some(cause(UnsupportedSlug::TimedAwait, id, None))
+            }
+            ControlOperation::Compensate if profile == Profile::BoundedStatic => {
+                Some(cause(UnsupportedSlug::Compensation, id, None))
+            }
             ControlOperation::Check
             | ControlOperation::Attempt
             | ControlOperation::Effect
             | ControlOperation::Event
             | ControlOperation::Commit
-            | ControlOperation::Fence => {
+            | ControlOperation::Fence
+                if profile == Profile::BoundedStatic =>
+            {
                 other.get_or_insert_with(|| cause(UnsupportedSlug::UnsupportedControl, id, None));
                 None
             }
