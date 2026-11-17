@@ -18,9 +18,11 @@
 //! activation can still read. A `Timestamped` trace's letters take their
 //! canonical order once progress covers them.
 //!
-//! Snapshot positions, whose decisive record reads the snapshot, are held by
-//! value, counted in [`ClauseState::retained`], so a monitor's
-//! `retained_positions` still bounds them.
+//! Snapshot positions are admitted once and read into letters as well
+//! (`snapshot`): the state keeps a snapshot's bytes only where a decisive
+//! record can still read it, counted in [`ClauseState::retained`].
+
+mod snapshot;
 
 use std::cell::RefCell;
 use std::collections::{BTreeMap, BTreeSet};
@@ -181,6 +183,9 @@ enum Reading {
     /// FR-820's streaming evaluation of an infinite-trace clause over a
     /// `Finite` trace of record samples.
     Streamed,
+    /// FR-820: snapshot positions (`over` names a model object), each
+    /// admitted once and read into its letter.
+    Snapshot,
     /// Every position held by value.
     Values,
 }
@@ -191,6 +196,7 @@ impl Reading {
             Self::Subject => "subject",
             Self::Observed => "observed",
             Self::Streamed => "streamed",
+            Self::Snapshot => "snapshot",
             Self::Values => "values",
         }
     }
@@ -271,6 +277,11 @@ pub struct ClauseState<'a> {
     /// The snapshot document the latest advance added, which a restore
     /// removes again.
     fresh_snapshot: Option<DocumentRef>,
+    /// What a snapshot state read of its positions besides the tape.
+    objects: snapshot::SnapshotRead,
+    /// The decisive atom of a snapshot state's activation violated for
+    /// good, once its descent found it.
+    snapshot_cache: RefCell<Option<(u64, Option<fsl_eval::temporal::DecisiveAtom>)>>,
 }
 
 /// FR-820 "No partial state": what [`ClauseState::restore`] puts back, the
@@ -302,6 +313,8 @@ pub struct ClauseMark {
     tail: Option<(usize, Vec<Seen>, Vec<TapeEntry>)>,
     window: CarriedWindow,
     open_window: CarriedWindow,
+    objects: snapshot::SnapshotRead,
+    snapshot_cache: Option<(u64, Option<fsl_eval::temporal::DecisiveAtom>)>,
 }
 
 /// The `pending` report of a clause no evaluation has read yet.
@@ -405,6 +418,24 @@ impl<'a> ClauseState<'a> {
             .iter()
             .any(|node| matches!(node, FormulaNode::Aggregate { .. }));
         let reading = match (sampled, request.kind, clause.clause().profile()) {
+            // A `Finite` snapshot trace's report is the stream's, for the
+            // profiles the stream reads; FR-330 refuses a ledger there before
+            // it admits a snapshot. A clause whose `over` is not a reference is
+            // refused before admission too.
+            (false, kind, profile)
+                if request.over.is_some()
+                    && matches!(clause.clause().over().1, ValueType::Reference(_))
+                    && (kind != ClauseTraceKind::Finite
+                        || (request.ledger.is_none()
+                            && matches!(
+                                profile,
+                                TemporalProfile::InfiniteTrace
+                                    | TemporalProfile::EventPositionFalseExtension
+                                    | TemporalProfile::FixedSampleFalseExtension
+                            ))) =>
+            {
+                Reading::Snapshot
+            }
             (false, ..) => Reading::Values,
             (true, ClauseTraceKind::Finite, TemporalProfile::EventPositionFalseExtension) => {
                 Reading::Subject
@@ -431,7 +462,22 @@ impl<'a> ClauseState<'a> {
                     Err(_) => return Err(fault("infinite-trace-clause-streams")),
                 }
             }
-            Reading::Observed | Reading::Values => None,
+            // A snapshot stream carries the report of a `Finite` trace and
+            // the descent floor of every trace with a decisive record; a
+            // profile it does not read is refused by the run before any
+            // position is read.
+            Reading::Snapshot if request.kind != ClauseTraceKind::Timestamped => {
+                let mut meter = Meter::new(request.limits.accounting);
+                match ClauseStream::open(clause.clause(), &mut meter) {
+                    Ok(Ok(stream)) => Some(stream),
+                    Ok(Err(StreamStop::Incomplete(incomplete))) => {
+                        exhausted = Some(incomplete);
+                        None
+                    }
+                    Err(_) => None,
+                }
+            }
+            Reading::Observed | Reading::Values | Reading::Snapshot => None,
         };
         Ok(Self {
             stream,
@@ -458,6 +504,8 @@ impl<'a> ClauseState<'a> {
             fresh_snapshot: None,
             window: RefCell::new(CarriedWindow::default()),
             open_window: RefCell::new(CarriedWindow::default()),
+            objects: snapshot::SnapshotRead::default(),
+            snapshot_cache: RefCell::new(None),
         })
     }
 
@@ -484,20 +532,22 @@ impl<'a> ClauseState<'a> {
             first_undefined: self.first_undefined.clone(),
             texts: self.texts.clone(),
             tail: (self.open.kind == ClauseTraceKind::Timestamped
-                && self.reading == Reading::Observed)
-                .then(|| {
-                    let from = self
-                        .evaluated
-                        .map_or(0, |(seen, _)| seen)
-                        .min(self.seen.len());
-                    (
-                        from,
-                        self.seen.get(from..).unwrap_or(&[]).to_vec(),
-                        self.tape.entries().get(from..).unwrap_or(&[]).to_vec(),
-                    )
-                }),
+                && matches!(self.reading, Reading::Observed | Reading::Snapshot))
+            .then(|| {
+                let from = self
+                    .evaluated
+                    .map_or(0, |(seen, _)| seen)
+                    .min(self.seen.len());
+                (
+                    from,
+                    self.seen.get(from..).unwrap_or(&[]).to_vec(),
+                    self.tape.entries().get(from..).unwrap_or(&[]).to_vec(),
+                )
+            }),
             window: self.window.borrow().clone(),
             open_window: self.open_window.borrow().clone(),
+            objects: self.objects.clone(),
+            snapshot_cache: *self.snapshot_cache.borrow(),
         }
     }
 
@@ -536,6 +586,8 @@ impl<'a> ClauseState<'a> {
         self.texts = mark.texts;
         self.window.replace(mark.window);
         self.open_window.replace(mark.open_window);
+        self.objects = mark.objects;
+        self.snapshot_cache.replace(mark.snapshot_cache);
     }
 
     /// The ledger each later run starts from: a monitor carries one ledger
@@ -575,6 +627,7 @@ impl<'a> ClauseState<'a> {
         let mark = self.mark();
         let mut meter = Meter::new(self.open.limits.accounting).with_cancel(cancel.clone());
         self.fresh_snapshot = match &position.value {
+            AdmittedValue::Snapshot(_) if self.reading == Reading::Snapshot => None,
             AdmittedValue::Snapshot(bytes) => {
                 let fresh = !self.snapshots.contains_key(&position.reference);
                 self.snapshots
@@ -583,14 +636,24 @@ impl<'a> ClauseState<'a> {
             }
             AdmittedValue::Sample(_) => None,
         };
+        let document = position.reference.clone();
         let reference = self.cite(index, position.reference);
         self.seen.push(Seen {
             reference,
             stamp: position.stamp,
             order_key: position.order_key,
         });
-        if let AdmittedValue::Sample(sample) = position.value {
-            self.read(index, sample, &mut meter);
+        match position.value {
+            AdmittedValue::Sample(sample) => self.read(index, sample, &mut meter),
+            AdmittedValue::Snapshot(bytes) if self.reading == Reading::Snapshot => {
+                self.push_snapshot(index, &document, bytes);
+                // A `Timestamped` trace's positions are read once progress
+                // covers them, in canonical order (`order_covered`).
+                if self.open.kind != ClauseTraceKind::Timestamped {
+                    self.read_pending(index, &mut meter);
+                }
+            }
+            AdmittedValue::Snapshot(_) => {}
         }
         let evaluated =
             cancelled(cancel).and_then(|()| self.evaluate(self.progress, &mut meter, cancel));
@@ -608,7 +671,7 @@ impl<'a> ClauseState<'a> {
         match self.reading {
             Reading::Subject => true,
             Reading::Streamed => self.node.clause().profile() == TemporalProfile::InfiniteTrace,
-            Reading::Observed | Reading::Values => false,
+            Reading::Observed | Reading::Values | Reading::Snapshot => false,
         }
     }
 
@@ -760,7 +823,7 @@ impl<'a> ClauseState<'a> {
     fn read(&mut self, index: u64, sample: Value, step: &mut Meter) {
         let mut meter = Meter::new(self.open.limits.accounting);
         match self.reading {
-            Reading::Values | Reading::Streamed => {}
+            Reading::Values | Reading::Streamed | Reading::Snapshot => {}
             Reading::Observed => {
                 let entry = read_sample_letter(self.package, self.node, &sample, &mut meter);
                 self.tape.push(entry);
@@ -1006,9 +1069,29 @@ impl<'a> ClauseState<'a> {
                 .map(PackageAuthentication::temporal),
             cancel,
         };
+        let window = if open {
+            &self.open_window
+        } else {
+            &self.window
+        };
+        if self.reading == Reading::Snapshot {
+            return self.with_snapshot_tape(|snapshot| {
+                run_package_temporal_over(
+                    &request,
+                    Some(TapeInput {
+                        tape: &self.tape,
+                        values: &self.values,
+                        captures: &self.captures,
+                        open_aggregates: open,
+                        window: Some(window),
+                        snapshot: Some(snapshot),
+                    }),
+                )
+            });
+        }
         let shorter;
         let tape = match self.reading {
-            Reading::Values => None,
+            Reading::Values | Reading::Snapshot => None,
             Reading::Streamed if !(open && self.lettered()) => None,
             Reading::Subject | Reading::Observed | Reading::Streamed => {
                 let tape = if seen < self.tape.len() {
@@ -1026,11 +1109,8 @@ impl<'a> ClauseState<'a> {
                     values: &self.values,
                     captures: &self.captures,
                     open_aggregates: open,
-                    window: Some(if open {
-                        &self.open_window
-                    } else {
-                        &self.window
-                    }),
+                    window: Some(window),
+                    snapshot: None,
                 })
             }
         };
@@ -1051,11 +1131,14 @@ impl<'a> ClauseState<'a> {
                 decided: None,
             });
         }
-        self.order_covered();
+        self.order_covered(meter);
         let seen = self.seen.len();
         let report = match self.reading {
             Reading::Subject => self.subject_stream_report(meter),
-            Reading::Observed | Reading::Streamed | Reading::Values => {
+            Reading::Snapshot if self.open.kind == ClauseTraceKind::Finite => {
+                self.snapshot_finite_report(meter)
+            }
+            Reading::Observed | Reading::Streamed | Reading::Values | Reading::Snapshot => {
                 let trace = self.trace_of(seen, assertion.unwrap_or_else(Self::open_assertion));
                 self.run(&trace, seen, false, cancel)
             }
@@ -1066,6 +1149,10 @@ impl<'a> ClauseState<'a> {
         }
         let report = Arc::new(report);
         let decided = self.decided(&report, assertion, cancel)?;
+        if self.reading == Reading::Snapshot && self.objects.failed.is_empty() {
+            // The report found the decisive atom of a violation for good.
+            self.drop_unread_bytes();
+        }
         self.report = Arc::clone(&report);
         self.evaluated = Some((seen, assertion));
         Ok(Advance { report, decided })
@@ -1076,8 +1163,10 @@ impl<'a> ClauseState<'a> {
     /// order on the tape and in the positions seen, so the carried evaluation
     /// reads them at the positions the batch run gives them. Every earlier
     /// position is stamped below them (FR-643 "Order").
-    fn order_covered(&mut self) {
-        if self.open.kind != ClauseTraceKind::Timestamped || self.reading != Reading::Observed {
+    fn order_covered(&mut self, meter: &mut Meter) {
+        if self.open.kind != ClauseTraceKind::Timestamped
+            || !matches!(self.reading, Reading::Observed | Reading::Snapshot)
+        {
             return;
         }
         let from = self
@@ -1092,16 +1181,42 @@ impl<'a> ClauseState<'a> {
             (Some(left), Some(right)) => canonical_order(left, right),
             _ => std::cmp::Ordering::Equal,
         });
-        if order.iter().enumerate().all(|(at, index)| at == *index) {
-            return;
+        let first = u64::try_from(from).unwrap_or(u64::MAX);
+        if order.iter().enumerate().any(|(at, index)| at != *index) {
+            let reordered: Vec<Seen> = order
+                .iter()
+                .filter_map(|index| tail.get(*index).cloned())
+                .collect();
+            self.seen.truncate(from);
+            self.seen.extend(reordered);
+            self.tape.reorder_tail(from, &order);
+            // A snapshot's bytes and failed admission move with its position.
+            let moved = |position: u64| -> u64 {
+                let offset = usize::try_from(position.saturating_sub(first)).ok();
+                offset
+                    .and_then(|offset| order.iter().position(|index| *index == offset))
+                    .and_then(|at| u64::try_from(at).ok())
+                    .map_or(position, |at| first.saturating_add(at))
+            };
+            let remap = |position: u64| {
+                if position >= first {
+                    moved(position)
+                } else {
+                    position
+                }
+            };
+            self.objects.bytes = std::mem::take(&mut self.objects.bytes)
+                .into_iter()
+                .map(|(position, bytes)| (remap(position), bytes))
+                .collect();
+            self.objects.failed = std::mem::take(&mut self.objects.failed)
+                .into_iter()
+                .map(|(position, failure)| (remap(position), failure))
+                .collect();
         }
-        let reordered: Vec<Seen> = order
-            .iter()
-            .filter_map(|index| tail.get(*index).cloned())
-            .collect();
-        self.seen.truncate(from);
-        self.seen.extend(reordered);
-        self.tape.reorder_tail(from, &order);
+        if self.reading == Reading::Snapshot {
+            self.read_pending(first, meter);
+        }
     }
 
     /// The definite verdict of the clause's profile over the positions seen.
@@ -1201,6 +1316,7 @@ impl<'a> ClauseState<'a> {
         match self.reading {
             Reading::Values => u64::try_from(self.seen.len()).unwrap_or(u64::MAX),
             Reading::Observed => self.tape.held(),
+            Reading::Snapshot => self.objects.retained(),
             Reading::Streamed => u64::from(self.stop.is_some()).saturating_add(self.tape.held()),
             Reading::Subject => u64::try_from(self.values.len()).unwrap_or(u64::MAX),
         }
@@ -1227,7 +1343,13 @@ impl<'a> ClauseState<'a> {
             .map(|(index, position)| {
                 let letter = match self.tape.entries().get(index) {
                     Some(TapeEntry::Read(letter)) => letter_json(letter),
-                    Some(TapeEntry::Held(_)) | None => Json::Null,
+                    Some(TapeEntry::Held(_) | TapeEntry::Object(_)) | None => Json::Null,
+                };
+                let document = match self.reading {
+                    Reading::Snapshot => u64::try_from(index)
+                        .ok()
+                        .and_then(|index| self.objects.bytes.get(&index)),
+                    _ => self.snapshots.get(&position.reference),
                 };
                 json!({
                     "authority": position.reference.authority,
@@ -1236,7 +1358,7 @@ impl<'a> ClauseState<'a> {
                     "order_key": position.order_key.as_ref().map(|key|
                         json!({"authority": key.authority, "key": key.key})),
                     "letter": letter,
-                    "document": self.snapshots.get(&position.reference)
+                    "document": document
                         .map(|bytes| String::from_utf8_lossy(bytes).into_owned()),
                 })
             })
@@ -1261,7 +1383,7 @@ impl<'a> ClauseState<'a> {
             "texts": self.texts.iter().map(|(index, text)| json!([index, text])).collect::<Vec<_>>(),
             "stream": stream,
             "exhausted": self.exhausted.as_ref().map(incomplete_json),
-            "stop": self.stop.as_ref().map(|(index, _)| *index),
+            "stop": self.stop.as_ref().map(|(index, _)| *index).or(self.objects.stop),
             "pinned": self.pinned.iter().collect::<Vec<_>>(),
             "atoms": self.atom_values.iter().map(|((atom, position), value)|
                 json!([atom, position, value])).collect::<Vec<_>>(),
@@ -1355,7 +1477,14 @@ impl<'a> ClauseState<'a> {
                     key: key["key"].as_i64().ok_or_else(mismatch)?,
                 }),
             };
-            if let Some(document) = text("document") {
+            if state.reading == Reading::Snapshot {
+                state.restore_snapshot_position(
+                    seen,
+                    &reference,
+                    text("document"),
+                    &position["letter"],
+                )?;
+            } else if let Some(document) = text("document") {
                 state
                     .snapshots
                     .insert(reference.clone(), document.into_bytes());
@@ -1447,6 +1576,18 @@ impl<'a> ClauseState<'a> {
                     &mut meter,
                 );
                 state.first_undefined = read.first_undefined;
+            }
+        }
+        if state.reading == Reading::Snapshot {
+            let mut meter = Meter::new(request.limits.accounting).with_cancel(cancel.clone());
+            state.restore_snapshot(&object["stream"], object["stop"].as_u64(), &mut meter)?;
+            if request.kind == ClauseTraceKind::Finite {
+                if !state.seen.is_empty() {
+                    state.report = Arc::new(state.snapshot_finite_report(&mut meter));
+                    state.evaluated = Some((state.seen.len(), None));
+                }
+                cancelled(cancel)?;
+                return Ok(state);
             }
         }
         if state.reading == Reading::Streamed {

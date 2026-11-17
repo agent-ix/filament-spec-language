@@ -495,6 +495,94 @@ pub(crate) struct TapeInput<'a> {
     /// place of evaluating every position of a `Progressed` or `Timestamped`
     /// trace again.
     pub(crate) window: Option<&'a std::cell::RefCell<fsl_eval::temporal::CarriedWindow>>,
+    /// FR-820: a snapshot trace's tape (`over` names a model object). Its
+    /// letters stand in for the object environments, each snapshot having
+    /// been admitted once when it arrived.
+    pub(crate) snapshot: Option<SnapshotTape<'a>>,
+}
+
+/// The decisive descent of a snapshot tape: the violated activation, the
+/// trace's length and its first silent sample.
+pub(crate) type SnapshotDescend<'a> =
+    &'a dyn Fn(u64, u64, Option<u64>, &mut Meter) -> Option<fsl_eval::temporal::ObservedRun>;
+
+/// The decisive record of an atom of a snapshot tape.
+pub(crate) type SnapshotRecord<'a> =
+    &'a dyn Fn(
+        &CompiledRun<'_>,
+        DecisiveAtom,
+        &mut Meter,
+    ) -> Result<Option<crate::TemporalDecisive>, Box<ClauseDisposition>>;
+
+/// FR-820: what a carried snapshot state read of its trace once, in place of
+/// admitting every snapshot again.
+#[derive(Clone, Copy)]
+pub(crate) struct SnapshotTape<'a> {
+    /// The first snapshot whose admission failed, in trace order.
+    pub(crate) failure: Option<&'a AdmissionFailure>,
+    /// The object `over` names, resolved in the observation at position 0.
+    pub(crate) over: Result<&'a filament_exact::ObjectReference, &'a OverMiss>,
+    /// The descent to a violation's decisive atom.
+    pub(crate) descend: SnapshotDescend<'a>,
+    /// The decisive record of the atom the descent found.
+    pub(crate) record: SnapshotRecord<'a>,
+}
+
+/// Why `over` did not resolve in the observation at position 0.
+#[derive(Clone, Debug)]
+pub(crate) enum OverMiss {
+    /// The population universe of the `over` type did not resolve.
+    Universe(AdmissionFailure),
+    /// The observation holds no object of that key.
+    Missing,
+    /// The clause's `over` parameter is not of a reference type.
+    NotReference,
+}
+
+impl OverMiss {
+    /// The disposition FR-330 reports for the miss of `over`.
+    pub(crate) fn disposition(&self, over: &OverObject) -> ClauseDisposition {
+        match self {
+            Self::Universe(failure) => ClauseDisposition::Admit(failure.clone()),
+            Self::NotReference => ClauseDisposition::EvaluateFault(
+                filament_semantic_value::catalog::InternalFault::new(
+                    "temporal",
+                    "over-is-a-reference",
+                ),
+            ),
+            Self::Missing => refused(
+                "wrong-role-mapping",
+                BTreeMap::from([
+                    ("population", over.population.clone()),
+                    ("object", over.key.clone()),
+                ]),
+            ),
+        }
+    }
+}
+
+/// FR-330 Inputs: `over`, the object of the reference type `over_type`,
+/// resolved in `environment`, the observation at position 0.
+pub(crate) fn resolve_over(
+    run: &CompiledRun<'_>,
+    over_type: &ValueType,
+    over: &OverObject,
+    environment: Option<&ObjectEnvironment>,
+) -> Result<filament_exact::ObjectReference, OverMiss> {
+    let ValueType::Reference(type_identity) = over_type else {
+        return Err(OverMiss::NotReference);
+    };
+    let universe = population_universe_for(
+        run.package.graph().model_inputs(),
+        run.packages,
+        run.model_limits,
+        type_identity.clone(),
+    )
+    .map_err(OverMiss::Universe)?;
+    environment
+        .and_then(|environment| environment.objects().find(universe, &over.key))
+        .cloned()
+        .ok_or(OverMiss::Missing)
 }
 
 /// The emitted package a clock-bearing trace is authenticated against.
@@ -1096,7 +1184,20 @@ pub(super) fn run_temporal(run: &CompiledRun<'_>, request: &TemporalRun<'_>) -> 
             }
         }
     }
-    for document in trace.documents().filter(|_| !sampled) {
+    // FR-820: a carried snapshot state admitted each snapshot once; the
+    // first that failed is the report, as the batch admission's.
+    if let Some(failure) = tape
+        .and_then(|tape| tape.snapshot)
+        .and_then(|tape| tape.failure)
+    {
+        return report(
+            ClauseDisposition::Admit(failure.clone()),
+            ClauseRunUsage::default(),
+            authenticated_temporal_selection.clone(),
+        );
+    }
+    let carried_snapshots = tape.is_some_and(|tape| tape.snapshot.is_some());
+    for document in trace.documents().filter(|_| !sampled && !carried_snapshots) {
         match admit_trace_snapshot(
             graph.model_inputs(),
             graph.scope().types(),
@@ -1140,44 +1241,33 @@ pub(super) fn run_temporal(run: &CompiledRun<'_>, request: &TemporalRun<'_>) -> 
     };
 
     // `over` resolves in the observation at position 0 (FR-330 Inputs).
-    let observing = match over {
-        None => match tape {
-            Some(tape) => ObservedPositions::Tape(tape.tape),
-            None => ObservedPositions::Samples(&samples),
+    let resolved_over;
+    let observing = match (over, tape) {
+        (None, Some(tape)) => ObservedPositions::Tape(tape.tape),
+        (None, None) => ObservedPositions::Samples(&samples),
+        (
+            Some(over),
+            Some(TapeInput {
+                tape,
+                snapshot: Some(snapshot),
+                ..
+            }),
+        ) => match snapshot.over {
+            Ok(reference) => ObservedPositions::ObjectTape {
+                tape,
+                over: reference,
+                from: 0,
+            },
+            Err(miss) => return late(miss.disposition(over)),
         },
-        Some(over) => {
-            let ValueType::Reference(type_identity) = over_type else {
-                return late(ClauseDisposition::EvaluateFault(
-                    filament_semantic_value::catalog::InternalFault::new(
-                        "temporal",
-                        "over-is-a-reference",
-                    ),
-                ));
-            };
-            let universe = match population_universe_for(
-                graph.model_inputs(),
-                run.packages,
-                run.model_limits,
-                type_identity.clone(),
-            ) {
-                Ok(universe) => universe,
-                Err(failure) => return late(ClauseDisposition::Admit(failure)),
-            };
-            let resolved = environments
-                .first()
-                .and_then(|environment| environment.objects().find(universe, &over.key));
-            let Some(reference) = resolved else {
-                return late(refused(
-                    "wrong-role-mapping",
-                    BTreeMap::from([
-                        ("population", over.population.clone()),
-                        ("object", over.key.clone()),
-                    ]),
-                ));
+        (Some(over), _) => {
+            resolved_over = match resolve_over(run, over_type, over, environments.first()) {
+                Ok(reference) => reference,
+                Err(miss) => return late(miss.disposition(over)),
             };
             ObservedPositions::Objects {
                 environments: &environments,
-                over: reference,
+                over: &resolved_over,
             }
         }
     };
@@ -1185,8 +1275,11 @@ pub(super) fn run_temporal(run: &CompiledRun<'_>, request: &TemporalRun<'_>) -> 
     // record sample has neither.
     let objects = match observing {
         ObservedPositions::Objects { environments, over } => Some((environments, over)),
-        ObservedPositions::Samples(_) | ObservedPositions::Tape(_) => None,
+        ObservedPositions::Samples(_)
+        | ObservedPositions::Tape(_)
+        | ObservedPositions::ObjectTape { .. } => None,
     };
+    let snapshot = tape.and_then(|tape| tape.snapshot);
 
     // FR-757 "Cross-evaluation": a valuation run reads every atom and
     // activation of the admitted closed finite trace through the one clause
@@ -1356,7 +1449,26 @@ pub(super) fn run_temporal(run: &CompiledRun<'_>, request: &TemporalRun<'_>) -> 
                     &mut meter,
                 )
             }
-            None => (disposition, counterexample, None),
+            None => match (snapshot, &disposition) {
+                (Some(snapshot), ClauseDisposition::Temporal(TemporalVerdict::Violated { at })) => {
+                    let len = match shape {
+                        TemporalTrace::Finite { len } => len,
+                        TemporalTrace::Lasso { prefix, loop_len } => {
+                            prefix.saturating_add(loop_len)
+                        }
+                    };
+                    let seeking = (snapshot.descend)(*at, len, silent_from, &mut meter)
+                        .map(progressed_search);
+                    with_decisive_by(
+                        seeking,
+                        disposition,
+                        counterexample,
+                        |atom, meter| (snapshot.record)(run, atom, meter),
+                        &mut meter,
+                    )
+                }
+                _ => (disposition, counterexample, None),
+            },
         };
         let accepted = !matches!(
             disposition.category(),
@@ -1426,16 +1538,16 @@ pub(super) fn run_temporal(run: &CompiledRun<'_>, request: &TemporalRun<'_>) -> 
             None,
             &mut meter,
         ),
-        positions @ (ObservedPositions::Samples(_) | ObservedPositions::Tape(_)) => {
-            fsl_eval::temporal::evaluate_positions(
-                run.package,
-                node,
-                positions,
-                shape,
-                None,
-                &mut meter,
-            )
-        }
+        positions @ (ObservedPositions::Samples(_)
+        | ObservedPositions::Tape(_)
+        | ObservedPositions::ObjectTape { .. }) => fsl_eval::temporal::evaluate_positions(
+            run.package,
+            node,
+            positions,
+            shape,
+            None,
+            &mut meter,
+        ),
     };
     let (disposition, refused_at) = observed_disposition(
         observed.stopped,
@@ -1674,7 +1786,9 @@ fn run_window(
                 meter,
             )
         }
-        positions @ (ObservedPositions::Samples(_) | ObservedPositions::Tape(_)) => match carried {
+        positions @ (ObservedPositions::Samples(_)
+        | ObservedPositions::Tape(_)
+        | ObservedPositions::ObjectTape { .. }) => match carried {
             Some(carried) => carried.borrow_mut().evaluate(
                 run.package,
                 node,
@@ -1839,6 +1953,32 @@ fn with_decisive(
     Option<crate::ObservedTemporalCounterexample>,
     Option<crate::TemporalDecisive>,
 ) {
+    with_decisive_by(
+        search,
+        disposition,
+        counterexample,
+        |atom, meter| decisive_record(source, atom, meter),
+        meter,
+    )
+}
+
+/// [`with_decisive`] reading the decisive record of the atom the search
+/// found through `record` (FR-820: a carried snapshot state reads it from the
+/// snapshot it holds).
+pub(crate) fn with_decisive_by(
+    search: Option<DecisiveSearch>,
+    disposition: ClauseDisposition,
+    counterexample: Option<crate::ObservedTemporalCounterexample>,
+    record: impl FnOnce(
+        DecisiveAtom,
+        &mut Meter,
+    ) -> Result<Option<crate::TemporalDecisive>, Box<ClauseDisposition>>,
+    meter: &mut Meter,
+) -> (
+    ClauseDisposition,
+    Option<crate::ObservedTemporalCounterexample>,
+    Option<crate::TemporalDecisive>,
+) {
     let stopped = |disposition| (disposition, None, None);
     let atom = match search {
         None | Some(Ok(None)) => return (disposition, counterexample, None),
@@ -1852,7 +1992,7 @@ fn with_decisive(
             return stopped(ClauseDisposition::EvaluateFault(fault))
         }
     };
-    match decisive_record(source, atom, meter) {
+    match record(atom, meter) {
         Ok(decisive) => (disposition, counterexample, decisive),
         Err(failure) => stopped(*failure),
     }

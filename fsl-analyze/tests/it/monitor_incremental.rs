@@ -2357,3 +2357,289 @@ fn a_carried_window_reads_only_the_open_activations() {
     let late = decided[decided.len() - 10..].iter().max().copied();
     assert!(late <= bound.map(|bound| bound * 2), "{decided:?}");
 }
+
+/// FR-820-AC-1 (TC-2320) over snapshots: `Bounded`, `Reaches` and
+/// `always holds(c.value <= 1)` over `c.value` 0, 1, 2, 1, 0. Each snapshot is
+/// admitted once; the report after each `advance` is FR-330's over the prefix,
+/// member for member (the violation's decisive record included), a state
+/// read back from its bytes continues the same, and the state keeps only the
+/// snapshots a decisive record can still read. Over 120 positions of an
+/// `always` clause that holds, it keeps one snapshot and each step's work is
+/// flat.
+#[test]
+#[trace("TC-2320", "FR-820-AC-1")]
+fn each_snapshot_advance_reports_the_batch_report_over_the_prefix() {
+    use crate::counter::{document, mixed_package_with_clauses, Documents};
+    use fsl_replay::spine::OverObject;
+    let document = document(false);
+    let (package, source) = mixed_package_with_clauses(
+        &document,
+        &[("Bounded", "", "eventually[0,1] holds(c.value = 2)")],
+        &[
+            ("Reaches", "", "eventually holds(c.value = 2)"),
+            ("Small", "", "always holds(c.value <= 1)"),
+        ],
+    );
+    let mut documents = Documents::new(document);
+    let mut values = vec![0, 1, 2, 1, 0];
+    values.extend((0..115).map(|index| index % 2));
+    let refs: Vec<_> = values
+        .iter()
+        .enumerate()
+        .map(|(index, value)| documents.start(&format!("s-{index}"), &[("c1", *value)]))
+        .collect();
+    let provision: DocumentProvision = documents
+        .snapshot_bytes()
+        .map(|(reference, bytes)| (reference.clone(), bytes.clone()))
+        .collect();
+    let bytes: Vec<&[u8]> = refs
+        .iter()
+        .map(|reference| provision.get(reference).expect("provisioned").as_slice())
+        .collect();
+    let over = OverObject {
+        population: "ix://test/counter/counters".to_owned(),
+        key: "c1".to_owned(),
+    };
+    let sources = [source];
+    let request = ClauseOpen {
+        kind: ClauseTraceKind::Finite,
+        lower_boundary: ProgressLowerBoundary::AuthoritativeOrigin,
+        binding: None,
+        cover: None,
+        ledger: None,
+        sources: &sources,
+        authentication: None,
+        packages: &documents.packages,
+        over: Some(over.clone()),
+        limits: ClauseLimits {
+            model: ModelNormalizationLimits::default(),
+            observation: ObservationLimits::default(),
+            accounting: UNLIMITED,
+            max_window_values: fsl_eval::temporal::DEFAULT_MAX_WINDOW_VALUES,
+        },
+    };
+    let node = |name: &str| {
+        package
+            .graph()
+            .temporal_clauses()
+            .iter()
+            .find(|node| node.clause().name() == name)
+            .expect("declared")
+    };
+    let batch = |name: &str, upto: usize| {
+        run_package_temporal(&PackageTemporalRequest {
+            package: &package,
+            packages: &documents.packages,
+            model_limits: ModelNormalizationLimits::default(),
+            snapshots: &provision,
+            observation_limits: ObservationLimits::default(),
+            accounting: UNLIMITED,
+            name,
+            trace: &TraceInput::Finite(refs[..upto].to_vec()),
+            over: Some(&over),
+            ledger: None,
+            sources: &sources,
+            authentication: None,
+            cancel: &Cancel::new(),
+        })
+    };
+    let position = |index: usize| AdmittedPosition {
+        reference: refs[index].clone(),
+        stamp: index as u64,
+        order_key: None,
+        value: AdmittedValue::Snapshot(bytes[index]),
+    };
+    let cancel = Cancel::new();
+    for name in ["Bounded", "Reaches", "Small"] {
+        let mut state = ClauseState::open(&package, node(name), &request).expect("opens");
+        for index in 0..5 {
+            if index == 3 {
+                // Read back from its bytes, the state continues as the
+                // original does.
+                let saved = state.to_bytes().expect("writes");
+                state = ClauseState::from_bytes(&package, node(name), &request, &saved, &cancel)
+                    .expect("reads back");
+            }
+            let advance = state.advance(position(index), &cancel).expect("advances");
+            assert_eq!(
+                members(&advance.report),
+                members(&batch(name, index + 1)),
+                "{name} after position {index}"
+            );
+            assert!(
+                state.retained() <= 2,
+                "{name} keeps {} snapshots after position {index}",
+                state.retained()
+            );
+        }
+    }
+    // The violation of `always holds(c.value <= 1)` at position 2 carries its
+    // decisive record, read from the one snapshot the state kept for it.
+    let mut small = ClauseState::open(&package, node("Small"), &request).expect("opens");
+    for index in 0..3 {
+        small.advance(position(index), &cancel).expect("advances");
+    }
+    assert_eq!(
+        small.report().decisive.as_ref().map(|_| ()),
+        Some(()),
+        "{:?}",
+        small.report()
+    );
+    // `always holds(c.value <= 1)` from position 5 on holds over 0 and 1: no
+    // snapshot but position 0 is kept, and each step does the same work.
+    let mut held = ClauseState::open(&package, node("Small"), &request).expect("opens");
+    let mut steps = Vec::new();
+    for index in 5..values.len() {
+        let advance = held.advance(position(index), &cancel).expect("advances");
+        steps.push(work(&advance.report.usage));
+        if index % 40 == 0 || index + 1 == values.len() {
+            let batch = run_package_temporal(&PackageTemporalRequest {
+                package: &package,
+                packages: &documents.packages,
+                model_limits: ModelNormalizationLimits::default(),
+                snapshots: &provision,
+                observation_limits: ObservationLimits::default(),
+                accounting: UNLIMITED,
+                name: "Small",
+                trace: &TraceInput::Finite(refs[5..=index].to_vec()),
+                over: Some(&over),
+                ledger: None,
+                sources: &sources,
+                authentication: None,
+                cancel: &Cancel::new(),
+            });
+            assert_eq!(members(&advance.report), members(&batch), "at {index}");
+        }
+        assert_eq!(held.retained(), 1, "at {index}");
+    }
+    let late = &steps[steps.len() - 20..];
+    assert!(
+        late.iter().all(|step| *step <= steps[10]),
+        "per-step work stays flat: {steps:?}"
+    );
+}
+
+/// FR-820-AC-1 (TC-2320) over a `Progressed` snapshot trace: the
+/// event-position clauses `eventually[0,1] holds(c.value = 2)` and
+/// `always[0,9] holds(c.value <= 1)` over `c.value` 0, 1, 2, 1, 0, each position
+/// followed by progress through it. Each report is FR-330's over the prefix
+/// under that progress, member for member, the violation's decisive record
+/// included, also after a state read back from its bytes; the state keeps at
+/// most two snapshots.
+#[test]
+#[trace("TC-2320", "FR-820-AC-1")]
+fn a_progressed_snapshot_state_reports_the_batch_report() {
+    use crate::counter::{document, mixed_package_with_clauses, Documents};
+    use fsl_replay::spine::OverObject;
+    let document = document(false);
+    let (package, source) = mixed_package_with_clauses(
+        &document,
+        &[
+            ("Bounded", "", "eventually[0,1] holds(c.value = 2)"),
+            ("Small", "", "always[0,9] holds(c.value <= 1)"),
+        ],
+        &[],
+    );
+    let mut documents = Documents::new(document);
+    let values = [0, 1, 2, 1, 0];
+    let refs: Vec<_> = values
+        .iter()
+        .enumerate()
+        .map(|(index, value)| documents.start(&format!("s-{index}"), &[("c1", *value)]))
+        .collect();
+    let provision: DocumentProvision = documents
+        .snapshot_bytes()
+        .map(|(reference, bytes)| (reference.clone(), bytes.clone()))
+        .collect();
+    let over = OverObject {
+        population: "ix://test/counter/counters".to_owned(),
+        key: "c1".to_owned(),
+    };
+    let binding = TraceBinding {
+        profile: EVENTS.to_owned(),
+        clock_name: "model-steps".to_owned(),
+        parameters: ClockConfiguration::EventPosition {
+            sequence_authority: "model-steps".into(),
+        },
+    };
+    let sources = [source];
+    let request = ClauseOpen {
+        kind: ClauseTraceKind::Progressed,
+        lower_boundary: ProgressLowerBoundary::AuthoritativeOrigin,
+        binding: Some(binding.clone()),
+        cover: None,
+        ledger: None,
+        sources: &sources,
+        authentication: None,
+        packages: &documents.packages,
+        over: Some(over.clone()),
+        limits: ClauseLimits {
+            model: ModelNormalizationLimits::default(),
+            observation: ObservationLimits::default(),
+            accounting: UNLIMITED,
+            max_window_values: fsl_eval::temporal::DEFAULT_MAX_WINDOW_VALUES,
+        },
+    };
+    let cancel = Cancel::new();
+    for name in ["Bounded", "Small"] {
+        let node = package
+            .graph()
+            .temporal_clauses()
+            .iter()
+            .find(|node| node.clause().name() == name)
+            .expect("declared");
+        let mut state = ClauseState::open(&package, node, &request).expect("opens");
+        for index in 0..values.len() {
+            if index == 3 {
+                let saved = state.to_bytes().expect("writes");
+                state = ClauseState::from_bytes(&package, node, &request, &saved, &cancel)
+                    .expect("reads back");
+            }
+            state
+                .advance(
+                    AdmittedPosition {
+                        reference: refs[index].clone(),
+                        stamp: index as u64,
+                        order_key: None,
+                        value: AdmittedValue::Snapshot(
+                            provision.get(&refs[index]).expect("provisioned"),
+                        ),
+                    },
+                    &cancel,
+                )
+                .expect("advances");
+            let advance = state
+                .assert_progress(&progress(index as u64), &cancel)
+                .expect("progresses");
+            let batch = run_package_temporal(&PackageTemporalRequest {
+                package: &package,
+                packages: &documents.packages,
+                model_limits: ModelNormalizationLimits::default(),
+                snapshots: &provision,
+                observation_limits: ObservationLimits::default(),
+                accounting: UNLIMITED,
+                name,
+                trace: &TraceInput::Progressed {
+                    trace: refs[..=index].to_vec(),
+                    progress: progress(index as u64),
+                    lower_boundary: ProgressLowerBoundary::AuthoritativeOrigin,
+                    binding: binding.clone(),
+                },
+                over: Some(&over),
+                ledger: None,
+                sources: &sources,
+                authentication: None,
+                cancel: &Cancel::new(),
+            });
+            assert_eq!(
+                members(&advance.report),
+                members(&batch),
+                "{name} after position {index}"
+            );
+            assert!(state.retained() <= 2, "{name} at {index}");
+        }
+        if name == "Small" {
+            assert!(state.report().decisive.is_some(), "{:?}", state.report());
+        }
+    }
+}

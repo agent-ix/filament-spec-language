@@ -949,6 +949,37 @@ impl ClauseStream {
         self.violated
     }
 
+    /// Whether an activation is still open: once one is false for good, an
+    /// open one is an earlier activation a longer trace may still violate.
+    pub fn has_open(&self) -> bool {
+        !self.opens.is_empty()
+    }
+
+    /// FR-820: the first position the decisive descent of a violation over
+    /// this trace, or any longer one, can read. A violation is at the least
+    /// open activation or the least one false for good, and its descent reads
+    /// no further back than the formula's past reach; a past window open to
+    /// the origin reads back to position 0. With no activation yet, the next
+    /// one is at the trace's end.
+    pub fn descent_floor(&self) -> u64 {
+        let to_origin = self.plan.nodes.iter().any(|node| {
+            matches!(node, Node::Scan(scan)
+                if scan.base.direction() == Direction::Past
+                    && matches!(scan.window, Window::From { .. }))
+        });
+        if to_origin {
+            return 0;
+        }
+        let least = self
+            .opens
+            .iter()
+            .map(|open| open.first)
+            .chain(self.violated)
+            .min()
+            .unwrap_or(self.len);
+        least.saturating_sub(self.tail)
+    }
+
     /// Read the position at which the reading stopped again from `source`,
     /// which holds it at `at`, and restore what that reading recorded: its
     /// undefined reading or the condition refused there. A stream whose

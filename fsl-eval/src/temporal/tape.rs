@@ -6,9 +6,10 @@
 //! the state holds a position by value only where a reading did not reduce to
 //! a letter ([`TapeEntry::Held`]).
 
-use filament_exact::{Meter, Value};
+use filament_exact::{Meter, ObjectReference, Value};
 use fsl_package::CheckedPackage;
 use fsl_semantics::check::{FormulaNode, TemporalClauseNode};
+use fsl_semantics::model::object_environment::ObjectEnvironment;
 
 use super::letters::{AtomReading, CaptureReading, TemporalLetters, UndefinedCause};
 use super::observed::{ObservedLetters, ObservedPositions};
@@ -106,6 +107,9 @@ pub enum TapeEntry {
     /// letter (an undefined atom, a refused condition or a failed read), so an
     /// evaluation reads the value again exactly as the batch run does.
     Held(Value),
+    /// A snapshot position held by value: the object environment its snapshot
+    /// admitted, read again as the batch run reads it.
+    Object(Box<ObjectEnvironment>),
 }
 
 /// FR-820: the letters of the positions a carried clause state has seen, in
@@ -126,7 +130,7 @@ impl LetterTape {
 
     /// Append the next position.
     pub fn push(&mut self, entry: TapeEntry) {
-        if matches!(entry, TapeEntry::Held(_)) {
+        if !matches!(entry, TapeEntry::Read(_)) {
             self.held = self.held.saturating_add(1);
         }
         self.entries.push(entry);
@@ -135,7 +139,7 @@ impl LetterTape {
     /// Keep the first `len` positions, undoing the advances after them.
     pub fn truncate(&mut self, len: usize) {
         while self.entries.len() > len {
-            if let Some(TapeEntry::Held(_)) = self.entries.pop() {
+            if let Some(TapeEntry::Held(_) | TapeEntry::Object(_)) = self.entries.pop() {
                 self.held = self.held.saturating_sub(1);
             }
         }
@@ -161,6 +165,23 @@ impl LetterTape {
     /// Every entry, in trace order.
     pub fn entries(&self) -> &[TapeEntry] {
         &self.entries
+    }
+
+    /// Put `entry` at `index` in place of the entry there (FR-820: a snapshot
+    /// position read into its letter after it was held). An index past the
+    /// tape changes nothing.
+    pub fn replace(&mut self, index: usize, entry: TapeEntry) {
+        let Some(slot) = self.entries.get_mut(index) else {
+            return;
+        };
+        let was_held = !matches!(slot, TapeEntry::Read(_));
+        let held = !matches!(entry, TapeEntry::Read(_));
+        *slot = entry;
+        match (was_held, held) {
+            (true, false) => self.held = self.held.saturating_sub(1),
+            (false, true) => self.held = self.held.saturating_add(1),
+            _ => {}
+        }
     }
 
     /// The number of positions held by value.
@@ -200,14 +221,49 @@ pub fn read_sample_letter(
     sample: &Value,
     meter: &mut Meter,
 ) -> TapeEntry {
-    let held = || TapeEntry::Held(sample.clone());
     let samples = std::slice::from_ref(sample);
-    let mut letters = ObservedLetters::over(
+    match read_letter(package, clause, ObservedPositions::Samples(samples), meter) {
+        Some(letter) => TapeEntry::Read(letter),
+        None => TapeEntry::Held(sample.clone()),
+    }
+}
+
+/// FR-820: [`read_sample_letter`] for a snapshot position: the letter of the
+/// object environment `environment` admitted, with the clause's `over`
+/// parameter bound to `over`. A reading that does not reduce keeps the
+/// environment ([`TapeEntry::Object`]).
+pub fn read_object_letter(
+    package: &CheckedPackage,
+    clause: &TemporalClauseNode,
+    environment: ObjectEnvironment,
+    over: &ObjectReference,
+    meter: &mut Meter,
+) -> TapeEntry {
+    let read = read_letter(
         package,
         clause,
-        ObservedPositions::Samples(samples),
-        TemporalTrace::Finite { len: 1 },
+        ObservedPositions::Objects {
+            environments: std::slice::from_ref(&environment),
+            over,
+        },
+        meter,
     );
+    match read {
+        Some(letter) => TapeEntry::Read(letter),
+        None => TapeEntry::Object(Box::new(environment)),
+    }
+}
+
+/// The letter of the one position `positions` holds, or `None` when a reading
+/// there does not reduce to one.
+fn read_letter(
+    package: &CheckedPackage,
+    clause: &TemporalClauseNode,
+    positions: ObservedPositions<'_>,
+    meter: &mut Meter,
+) -> Option<TapeLetter> {
+    let mut letters =
+        ObservedLetters::over(package, clause, positions, TemporalTrace::Finite { len: 1 });
     let at = TemporalPosition::new(0);
     let checked = clause.clause();
     let formula = checked.formula();
@@ -215,19 +271,11 @@ pub fn read_sample_letter(
     for (index, node) in formula.nodes().iter().enumerate() {
         match node {
             FormulaNode::Holds { .. } => {
-                let Some(id) = formula.node_id(index) else {
-                    return held();
-                };
-                let Ok(reading) = letters.atom(id, at, meter) else {
-                    return held();
-                };
-                let Some(letter) = TapeReading::of(&reading) else {
-                    return held();
-                };
-                atoms.push((index, letter));
+                let id = formula.node_id(index)?;
+                let reading = letters.atom(id, at, meter).ok()?;
+                atoms.push((index, TapeReading::of(&reading)?));
             }
-            // An aggregate reads a window of values, not one sample.
-            FormulaNode::Aggregate { .. } => return held(),
+            FormulaNode::Aggregate { .. } => return None,
             _ => {}
         }
     }
@@ -236,7 +284,7 @@ pub fn read_sample_letter(
             match letters.activation(at, meter) {
                 Ok(AtomReading::True) => Some(true),
                 Ok(AtomReading::False) => Some(false),
-                _ => return held(),
+                _ => return None,
             }
         }
         _ => None,
@@ -246,8 +294,8 @@ pub fn read_sample_letter(
     } else {
         match letters.captures(at, meter) {
             Ok(CaptureReading::Fixed) => true,
-            _ => return held(),
+            _ => return None,
         }
     };
-    TapeEntry::Read(TapeLetter::new(atoms, activation, captures))
+    Some(TapeLetter::new(atoms, activation, captures))
 }

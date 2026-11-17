@@ -173,6 +173,19 @@ pub enum ObservedPositions<'a> {
     /// represented position. A letter is read from the tape; a position the
     /// tape holds by value is read as a sample.
     Tape(&'a super::tape::LetterTape),
+    /// FR-820: snapshot positions read once into a letter tape. A letter is
+    /// read from the tape; a position the tape holds as its object environment
+    /// is read there with the `over` parameter bound to `over`. Position `p`
+    /// of the run is the tape's entry `from + p`, so a run can read a slice
+    /// of the tape.
+    ObjectTape {
+        /// The tape.
+        tape: &'a super::tape::LetterTape,
+        /// The object bound to `over`.
+        over: &'a ObjectReference,
+        /// The tape entry of the run's position 0.
+        from: u64,
+    },
 }
 
 /// [`evaluate_sampled`] over any represented positions: the run FR-330 makes
@@ -373,7 +386,9 @@ fn evaluate_window_over(
         ObservedPositions::Tape(_) => {
             crate::temporal::facts::ClauseFacts::of_checked_letters(clause.clause())
         }
-        ObservedPositions::Objects { .. } | ObservedPositions::Samples(_) => {
+        ObservedPositions::Objects { .. }
+        | ObservedPositions::ObjectTape { .. }
+        | ObservedPositions::Samples(_) => {
             crate::temporal::facts::ClauseFacts::of_checked(clause.clause())
         }
     };
@@ -431,7 +446,9 @@ impl CarriedWindow {
             ObservedPositions::Tape(_) => {
                 crate::temporal::facts::ClauseFacts::of_checked_letters(clause.clause())
             }
-            ObservedPositions::Objects { .. } | ObservedPositions::Samples(_) => {
+            ObservedPositions::Objects { .. }
+            | ObservedPositions::ObjectTape { .. }
+            | ObservedPositions::Samples(_) => {
                 crate::temporal::facts::ClauseFacts::of_checked(clause.clause())
             }
         };
@@ -581,8 +598,10 @@ impl<'a> ObservedLetters<'a> {
     /// The letter the tape read at `position`, when the positions are a tape
     /// that holds a letter there.
     fn taped(&self, position: TemporalPosition) -> Option<&'a TapeLetter> {
-        let ObservedPositions::Tape(tape) = self.positions else {
-            return None;
+        let (tape, from) = match self.positions {
+            ObservedPositions::Tape(tape) => (tape, 0),
+            ObservedPositions::ObjectTape { tape, from, .. } => (tape, from),
+            ObservedPositions::Objects { .. } | ObservedPositions::Samples(_) => return None,
         };
         let index = match self.trace {
             TemporalTrace::Finite { .. } => position.index(),
@@ -596,9 +615,9 @@ impl<'a> ObservedLetters<'a> {
                 }
             }
         };
-        match tape.entry(index)? {
+        match tape.entry(index.checked_add(from)?)? {
             TapeEntry::Read(letter) => Some(letter),
-            TapeEntry::Held(_) => None,
+            TapeEntry::Held(_) | TapeEntry::Object(_) => None,
         }
     }
 }
@@ -665,7 +684,16 @@ impl ObservedLetters<'_> {
                 .and_then(|slot| tape.entries().get(slot))
                 .and_then(|entry| match entry {
                     TapeEntry::Held(sample) => Some((&self.empty, sample.clone())),
-                    TapeEntry::Read(_) => None,
+                    TapeEntry::Read(_) | TapeEntry::Object(_) => None,
+                }),
+            ObservedPositions::ObjectTape { tape, over, from } => slot
+                .and_then(|slot| u64::try_from(slot).ok()?.checked_add(from))
+                .and_then(|slot| tape.entry(slot))
+                .and_then(|entry| match entry {
+                    TapeEntry::Object(environment) => {
+                        Some((&**environment, Value::Reference(over.clone())))
+                    }
+                    TapeEntry::Read(_) | TapeEntry::Held(_) => None,
                 }),
         };
         found.ok_or_else(|| {
@@ -959,13 +987,54 @@ pub fn push_sample(
     sample: &Value,
     meter: &mut Meter,
 ) -> Result<SampleStop, super::StreamStop> {
-    let index = stream.len();
-    let mut letters = ObservedLetters::over(
+    push_position(
         package,
         clause,
+        stream,
         ObservedPositions::Samples(std::slice::from_ref(sample)),
-        TemporalTrace::Finite { len: 1 },
-    );
+        meter,
+    )
+}
+
+/// FR-820: read the snapshot position whose object environment is
+/// `environment` as the next position of `stream`, with the clause's `over`
+/// parameter bound to `over`: the streaming form of [`evaluate_observed`] over
+/// a `Finite` trace.
+///
+/// # Errors
+///
+/// [`StreamStop`](super::StreamStop) when `meter` runs out; the stream is
+/// unchanged.
+pub fn push_object(
+    package: &CheckedPackage,
+    clause: &TemporalClauseNode,
+    stream: &mut super::ClauseStream,
+    (environment, over): (&ObjectEnvironment, &ObjectReference),
+    meter: &mut Meter,
+) -> Result<SampleStop, super::StreamStop> {
+    push_position(
+        package,
+        clause,
+        stream,
+        ObservedPositions::Objects {
+            environments: std::slice::from_ref(environment),
+            over,
+        },
+        meter,
+    )
+}
+
+/// Read the one position `positions` holds as the next position of `stream`.
+fn push_position(
+    package: &CheckedPackage,
+    clause: &TemporalClauseNode,
+    stream: &mut super::ClauseStream,
+    positions: ObservedPositions<'_>,
+    meter: &mut Meter,
+) -> Result<SampleStop, super::StreamStop> {
+    let index = stream.len();
+    let mut letters =
+        ObservedLetters::over(package, clause, positions, TemporalTrace::Finite { len: 1 });
     stream.push(
         clause.clause(),
         &mut letters,
@@ -984,12 +1053,45 @@ pub fn read_sample_stop(
     index: u64,
     meter: &mut Meter,
 ) -> SampleStop {
-    let mut letters = ObservedLetters::over(
+    read_position_stop(
         package,
         clause,
         ObservedPositions::Samples(std::slice::from_ref(sample)),
-        TemporalTrace::Finite { len: 1 },
-    );
+        index,
+        meter,
+    )
+}
+
+/// FR-820: read the snapshot position `index`, whose object environment is
+/// `environment`, again for the stop it meets, as [`push_object`] read it.
+pub fn read_object_stop(
+    package: &CheckedPackage,
+    clause: &TemporalClauseNode,
+    (environment, over): (&ObjectEnvironment, &ObjectReference),
+    index: u64,
+    meter: &mut Meter,
+) -> SampleStop {
+    read_position_stop(
+        package,
+        clause,
+        ObservedPositions::Objects {
+            environments: std::slice::from_ref(environment),
+            over,
+        },
+        index,
+        meter,
+    )
+}
+
+fn read_position_stop(
+    package: &CheckedPackage,
+    clause: &TemporalClauseNode,
+    positions: ObservedPositions<'_>,
+    index: u64,
+    meter: &mut Meter,
+) -> SampleStop {
+    let mut letters =
+        ObservedLetters::over(package, clause, positions, TemporalTrace::Finite { len: 1 });
     let checked = clause.clause();
     let plan = match super::plan::Plan::new(checked.formula()) {
         Ok(plan) => plan,
@@ -1005,7 +1107,7 @@ pub fn read_sample_stop(
         captured: checked.capture_site(),
     };
     // The reading only recovers what the letters noted; its letter was read
-    // when the sample was pushed.
+    // when the position was pushed.
     let _ = reader.read(
         &mut letters,
         TemporalPosition::new(0),
@@ -1013,6 +1115,61 @@ pub fn read_sample_stop(
         meter,
     );
     SampleStop::of(letters, index)
+}
+
+/// The snapshot tape a decisive descent reads: the tape, the object bound to
+/// the clause's `over` parameter, and the tape entry the descent starts at.
+#[derive(Clone, Copy, Debug)]
+pub struct DescentSlice<'a> {
+    /// The tape.
+    pub tape: &'a super::tape::LetterTape,
+    /// The object bound to `over`.
+    pub over: &'a ObjectReference,
+    /// The first tape entry the descent reads.
+    pub from: u64,
+}
+
+/// FR-330 "The decisive atom", FR-820: the descent to the decisive atom of
+/// the violated activation `at` over `slice`, to the end of a trace of `len`
+/// positions whose positions from `silent_from` on are silent samples
+/// (FR-504). `slice.from` is at most `at` less the formula's past reach
+/// ([`ClauseStream::descent_floor`](super::ClauseStream::descent_floor)), so
+/// the descent reads every value the batch descent reads. The atom's position
+/// is the trace's; the run's other members read the slice. `None` when `at`
+/// lies before the slice.
+pub fn descend_positions(
+    package: &CheckedPackage,
+    clause: &TemporalClauseNode,
+    slice: DescentSlice<'_>,
+    (len, at, silent_from): (u64, u64, Option<u64>),
+    meter: &mut Meter,
+) -> Option<ObservedRun> {
+    let DescentSlice { tape, over, from } = slice;
+    let relative = at.checked_sub(from)?;
+    let run = evaluate_observed_goal(
+        package,
+        clause,
+        ObservedPositions::ObjectTape { tape, over, from },
+        TemporalTrace::Finite {
+            len: len.checked_sub(from)?,
+        },
+        (
+            super::engine::Goal::At(TemporalPosition::new(relative)),
+            true,
+            silent_from.map(|first| first.saturating_sub(from)),
+        ),
+        meter,
+    );
+    let shift = |atom: super::engine::DecisiveAtom| super::engine::DecisiveAtom {
+        position: TemporalPosition::new(atom.position.index().saturating_add(from)),
+        ..atom
+    };
+    Some(ObservedRun {
+        decisive: run
+            .decisive
+            .map(|search| search.map(|found| found.map(shift))),
+        ..run
+    })
 }
 
 #[cfg(test)]
