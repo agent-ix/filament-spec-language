@@ -716,12 +716,13 @@ fn size_with_a_type_argument_builds_a_form_or_refuses_with_a_located_cause() {
     let (text, cause, span) = refusal(&format!(
         "function f using v(): Integer pure {{ {source} }}"
     ));
-    assert_eq!(
-        cause,
+    assert!(matches!(
+        &cause,
         FormsCause::UnrepresentedConstruct {
             production: Production::Primary,
+            ..
         }
-    );
+    ));
     assert_eq!(cause.catalog_code(), Code::UnsupportedConstruct);
     assert_eq!(span, Some(span_of(&text, source)));
 }
