@@ -88,6 +88,31 @@ fn function(form: &DeclarationForm) -> &FunctionDeclaration {
     }
 }
 
+/// FR-980-AC-1: S2 preserves a `let` annotation as a syntactic type form and
+/// leaves the unannotated form unchanged.
+#[trace("TC-2770", "FR-980-AC-1")]
+#[test]
+fn let_annotations_build_as_type_forms() {
+    let (_, annotated) = body("let x: Int[0,3] = y + 1 in x");
+    let ExprNode::Let {
+        annotation: Some(annotation),
+        ..
+    } = annotated.body.root_node()
+    else {
+        panic!("an annotated let must keep its declared type");
+    };
+    assert_eq!(annotation.head, TypeFormHead::Builtin(BuiltinType::Int));
+    assert_eq!(annotation.bounds, ["0", "3"]);
+
+    let (_, unannotated) = body("let x = y + 1 in x");
+    let ExprNode::Let {
+        annotation: None, ..
+    } = unannotated.body.root_node()
+    else {
+        panic!("an unannotated let must have no declared type");
+    };
+}
+
 /// The body of `function f using v(): Boolean pure { <body> }`.
 fn body(body: &str) -> (String, FunctionDeclaration) {
     let (text, unit) = build(&format!("function f using v(): Boolean pure {{ {body} }}"));
@@ -99,6 +124,42 @@ fn refusal(declarations: &str) -> (String, FormsCause, Option<Span>) {
     match build_unit(&parsed) {
         Err(refusal) => (text, refusal.cause, refusal.span),
         other => panic!("{declarations}: a refusal, not {other:?}"),
+    }
+}
+
+/// Provenance: QSL-2006.
+#[trace("TC-113", "FR-035-AC-7")]
+#[test]
+fn collection_constructor_names_never_reach_an_invalid_forms_shape() {
+    for name in ["set", "bag", "orderedSet"] {
+        for declaration in [
+            format!("function f using v({name}: Integer): Boolean pure {{ true }}"),
+            format!("function f using v(x: Integer): Boolean pure {{ let {name} = x in true }}"),
+        ] {
+            let (text, parsed) = parse(&declaration);
+            assert!(!parsed.is_admissible(), "{text}");
+            let [diagnostic] = parsed.diagnostics() else {
+                panic!("one refusal for {text}: {:?}", parsed.diagnostics());
+            };
+            assert_eq!(
+                diagnostic.code,
+                fsl_cst::CompleteCode::InvalidSyntax,
+                "{text}"
+            );
+            assert!(diagnostic.message.contains(name), "{text}: {diagnostic:?}");
+            assert!(
+                build_unit(&parsed).is_err(),
+                "a refused source must not produce a forms tree: {text}"
+            );
+        }
+    }
+
+    for declaration in [
+        "function f using v(n: Integer, setting: Integer): Boolean pure { let ok = n in set[ok, setting] }",
+        "record R { values: Set<Integer>; }",
+    ] {
+        let (_, unit) = build(declaration);
+        assert!(!unit.forms().is_empty(), "{declaration}");
     }
 }
 
@@ -130,6 +191,7 @@ fn show(expression: ExprRef<'_>) -> String {
     let head = match expression.node() {
         ExprNode::Boolean(value) => format!("{value}"),
         ExprNode::Absent => "absent".into(),
+        ExprNode::Null => "null".into(),
         ExprNode::Integer(value) => format!("{value}"),
         ExprNode::Float32(bits) => format!("float32({bits:08x})"),
         ExprNode::Float64(bits) => format!("float64({bits:016x})"),
@@ -197,7 +259,7 @@ fn show(expression: ExprRef<'_>) -> String {
             ..
         } => format!("Population[{form:?},{binder},{population}]"),
         ExprNode::Seq { binder, .. } => format!("Seq[{binder}]"),
-        ExprNode::Size(_) => "Size".into(),
+        ExprNode::Size { .. } => "Size".into(),
         ExprNode::Contains { .. } => "Contains".into(),
         ExprNode::AllInstances { target, .. } => match &target.head {
             TypeFormHead::Name(name) => format!("AllInstances[Name({:?})]", name.name),
@@ -587,7 +649,6 @@ fn a_construct_no_variant_represents_refuses_the_unit() {
             Production::Primary,
             "size<Int[0, 1]>(c)",
         ),
-        ("null", Production::Primary, "null"),
     ];
     for (source, production, construct) in cases {
         let (text, cause, span) = refusal(&format!(
@@ -604,6 +665,16 @@ fn a_construct_no_variant_represents_refuses_the_unit() {
         assert_eq!(cause.catalog_code(), Code::UnsupportedConstruct);
         assert_eq!(span, Some(span_of(&text, construct)), "{source}");
     }
+}
+
+#[trace("TC-2214", "FSpec-FR-143-AC-20", "FSpec-FR-986-AC-1")]
+#[test]
+fn null_expression_builds_as_its_own_form() {
+    let (_, unit) = build("function f using v(): Boolean pure { null }");
+    assert!(matches!(
+        function(unit.forms()[0].form()).body.root_node(),
+        ExprNode::Null
+    ));
 }
 
 /// FR-397-AC-20: bit-pattern literals retain their exact width and bits.

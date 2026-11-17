@@ -1316,6 +1316,16 @@ fn check_message_one(first: &CheckRefusal) -> String {
                 message = format!("{message}: `{owner}` has no field `{field}`");
             }
         }
+        CheckCause::Hyper(cause)
+            if matches!(
+                cause.as_ref(),
+                fsl_semantics::check::HyperCause::OutsideHyperClause
+            ) =>
+        {
+            message = format!(
+                "{message}: indexed reads using `@` are admitted only inside a `hyper` clause"
+            );
+        }
         // FR-104-AC-2: name the clause kind and, when the clause names one,
         // the operation `result` was written under.
         CheckCause::UnanchoredResult { clause, operation } => {

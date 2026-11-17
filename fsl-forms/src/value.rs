@@ -801,6 +801,7 @@ struct Pending {
 enum Shape {
     Boolean(bool),
     Absent,
+    Null,
     Integer(Integer),
     Float32(u32),
     Float64(u64),
@@ -809,7 +810,10 @@ enum Shape {
     Quantity(QuantityForm),
     String(StringLiteral),
     Name(NameForm),
-    Let(String),
+    Let {
+        name: String,
+        annotation: Option<TypeForm>,
+    },
     If,
     Case(Vec<ArmSyntax>, Span),
     Binary(BinaryOperator),
@@ -855,7 +859,7 @@ enum Shape {
     },
     /// `seq(i in lo .. hi: e)`: the binder.
     Seq(String),
-    Size,
+    Size(Option<TypeForm>),
     Contains,
     /// `self` (FR-102, ADR-012 §15.2, `ProtocolClause`).
     SelfRef,
@@ -910,6 +914,10 @@ impl Shape {
                 arity(0)?;
                 ExprNode::Absent
             }
+            Self::Null => {
+                arity(0)?;
+                ExprNode::Null
+            }
             Self::Integer(value) => {
                 arity(0)?;
                 ExprNode::Integer(value)
@@ -946,10 +954,11 @@ impl Shape {
                 arity(0)?;
                 ExprNode::Name(name)
             }
-            Self::Let(name) => {
+            Self::Let { name, annotation } => {
                 arity(2)?;
                 ExprNode::Let {
                     name,
+                    annotation,
                     value: operands.next()?,
                     body: operands.next()?,
                 }
@@ -1055,9 +1064,12 @@ impl Shape {
                     item: operands.next()?,
                 }
             }
-            Self::Size => {
+            Self::Size(type_argument) => {
                 arity(1)?;
-                ExprNode::Size(operands.next()?)
+                ExprNode::Size {
+                    operand: operands.next()?,
+                    type_argument,
+                }
             }
             Self::Call(name) => ExprNode::Call {
                 name,
@@ -1602,10 +1614,22 @@ impl<'c> Mapping<'c> {
                     .first()
                     .copied()
                     .ok_or_else(|| unexpected(node))?;
+                let annotation = match nodes_of(items, Production::TypeReference).as_slice() {
+                    [] => None,
+                    [annotation] => Some(type_form(self.cst, annotation)?),
+                    _ => return Err(unexpected(node)),
+                };
                 if operands.len() != 2 {
                     return Err(unexpected(node));
                 }
-                self.with_children(Shape::Let(text(name, node)?), &task, operands)
+                self.with_children(
+                    Shape::Let {
+                        name: text(name, node)?,
+                        annotation,
+                    },
+                    &task,
+                    operands,
+                )
             }
             Some(Item::Token(token)) if token.spelling() == b"if" => {
                 if operands.len() != 3 {
@@ -1965,12 +1989,7 @@ impl<'c> Mapping<'c> {
             b"true" => self.leaf(Shape::Boolean(true), &task),
             b"false" => self.leaf(Shape::Boolean(false), &task),
             b"absent" | b"none" => self.leaf(Shape::Absent, &task),
-            b"null" => Err(unrepresented(
-                self.cst,
-                Production::Primary,
-                node.span(),
-                ConstructKind::NullValue,
-            )),
+            b"null" => self.leaf(Shape::Null, &task),
             b"self" => self.leaf(Shape::SelfRef, &task),
             b"result" => self.leaf(Shape::Result, &task),
             b"protocol" => {
@@ -2031,15 +2050,11 @@ impl<'c> Mapping<'c> {
                 self.with_children(Shape::Lookup(target, absence), &task, operands)
             }
             b"size" => {
-                if !nodes_of(items, Production::TypeReference).is_empty() {
-                    return Err(unrepresented(
-                        self.cst,
-                        Production::Primary,
-                        node.span(),
-                        ConstructKind::SizeOfType,
-                    ));
-                }
-                self.with_children(Shape::Size, &task, one(&operands)?)
+                let type_argument = nodes_of(items, Production::TypeReference)
+                    .first()
+                    .map(|node| type_form(self.cst, node))
+                    .transpose()?;
+                self.with_children(Shape::Size(type_argument), &task, one(&operands)?)
             }
             b"contains" | b"removeOne" => {
                 if operands.len() != 2 {

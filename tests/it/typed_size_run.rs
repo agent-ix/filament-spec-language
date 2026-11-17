@@ -42,7 +42,6 @@ fn run_three(body: &str) -> Output {
 
 #[trace("TC-2775", "FR-981-AC-4", "FSpec-TC-1900", "FSpec-FR-783-AC-3")]
 #[test]
-#[ignore = "QSL-1966: S2 refuses size<T>(..); running it is not implemented yet"]
 fn a_typed_size_runs_to_the_untyped_length() {
     let output = run_three(
         "let q: Sequence<Integer>[0, 5] = sequence[7, 8, 7] in \
@@ -53,7 +52,6 @@ fn a_typed_size_runs_to_the_untyped_length() {
 
 #[trace("TC-2775", "FR-981-AC-4", "FSpec-TC-189", "FSpec-FR-144-AC-10")]
 #[test]
-#[ignore = "QSL-1966: S2 refuses size<T>(..) before the literal is typed; not implemented yet"]
 fn a_bare_literal_size_argument_is_an_ambiguous_literal() {
     let output = run_three("size<Int[0, 4]>(sequence[7, 8, 7]) = 3");
     assert_ne!(output.status.code(), Some(0), "{output:?}");

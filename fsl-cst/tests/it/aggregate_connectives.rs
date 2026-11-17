@@ -56,7 +56,6 @@ fn refused_at(text: &str, at: usize) {
 /// connectives; an arithmetic threshold stays whole.
 #[trace("TC-2776", "FR-982-AC-1")]
 #[test]
-#[ignore = "QSL-2160: the aggregate threshold is a full expression; ending it at a temporal connective is not implemented yet"]
 fn every_connective_after_the_threshold_is_temporal() {
     for (connective, production) in [
         ("and", Production::TemporalConjunction),
@@ -90,7 +89,6 @@ fn every_connective_after_the_threshold_is_temporal() {
 /// first token.
 #[trace("TC-2776", "FR-982-AC-2")]
 #[test]
-#[ignore = "QSL-2160: a value operand after the threshold's connective is read into the threshold; the refusal is not implemented yet"]
 fn a_value_operand_after_a_connective_refuses() {
     for connective in ["and", "or", "implies"] {
         let text = clause(&format!("{ATOM} >= s.k {connective} s.ok"));
@@ -103,7 +101,6 @@ fn a_value_operand_after_a_connective_refuses() {
 /// the refusal of `count where` inside `holds(...)`.
 #[trace("TC-2777", "FR-982-AC-3")]
 #[test]
-#[ignore = "QSL-2160: aggregate atom positions under the sum threshold are not implemented yet"]
 fn an_aggregate_atom_stands_in_any_temporal_position() {
     let text = clause(&format!("{ATOM} >= (s.k and s.ok)"));
     let parsed = parse(&text);

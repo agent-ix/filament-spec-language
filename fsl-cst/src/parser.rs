@@ -551,6 +551,9 @@ fn parse_with_declaration_recovery(
                             &Failure::expected(failure.position, expected.clone()),
                         )
                         .map_or_else(
+                            // Explain query type arguments at the parser's
+                            // failure point before falling back to grammar details.
+                            // `count<T>` and `sum<T>` accept declared names.
                             || {
                                 format_expected(
                                     &tokens,
@@ -605,7 +608,19 @@ fn parse_with_declaration_recovery(
                         &tokens,
                         &Failure::expected(failure.position, expected.clone()),
                     )
-                    .map_or_else(
+                        .or_else(|| {
+                            reserved_collection_name_hint(
+                                &tokens,
+                                &Failure::expected(failure.position, expected.clone()),
+                            )
+                        })
+                        .or_else(|| {
+                            declared_type_name_hint(
+                                &tokens,
+                                &Failure::expected(failure.position, expected.clone()),
+                            )
+                        })
+                        .map_or_else(
                         || {
                             format_expected(
                                 &tokens,
@@ -1793,6 +1808,53 @@ fn derived_form(tokens: &[Significant], failure: &Failure) -> Option<&'static st
              `(p until[a,b] q) or always[a,b] p`, and under the infinite-trace profile \
              `(p until q) or always p`",
         ),
+        _ => None,
+    }
+}
+
+/// Explain that query type arguments take declared names, not inline types,
+/// when parsing stops at the type argument.
+fn declared_type_name_hint(tokens: &[Significant], failure: &Failure) -> Option<&'static str> {
+    let position = failure.position;
+    let is_query = |at: usize| {
+        tokens
+            .get(at)
+            .is_some_and(|token| {
+                matches!(
+                    token.spelling.as_ref(),
+                    "count" | "sum" | "fold" | "reduce"
+                )
+            })
+    };
+    let type_argument_start = if tokens
+        .get(position.checked_sub(1)?)
+        .is_some_and(|token| token.spelling.as_ref() == "<")
+    {
+        position.checked_sub(2)?
+    } else if tokens.get(position).is_some_and(|token| token.spelling.as_ref() == "[")
+        && tokens
+            .get(position.checked_sub(2)?)
+            .is_some_and(|token| token.spelling.as_ref() == "<")
+    {
+        position.checked_sub(3)?
+    } else {
+        return None;
+    };
+    is_query(type_argument_start).then_some(
+        "`count`, `sum`, `fold`, and `reduce` require a declared type name here; declare an alias such as `type Total = Integer;` and use the declared alias as the type argument",
+    )
+}
+
+/// Name a collection constructor when it is refused in an identifier slot.
+fn reserved_collection_name_hint(
+    tokens: &[Significant],
+    failure: &Failure,
+) -> Option<&'static str> {
+    let spelling = tokens.get(failure.position)?.spelling.as_ref();
+    match spelling {
+        "set" => Some("reserved word `set` cannot be used as a name"),
+        "bag" => Some("reserved word `bag` cannot be used as a name"),
+        "orderedSet" => Some("reserved word `orderedSet` cannot be used as a name"),
         _ => None,
     }
 }

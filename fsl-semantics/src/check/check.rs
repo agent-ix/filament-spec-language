@@ -3267,7 +3267,9 @@ impl<'a> Typer<'a> {
                         return true;
                     }
                 }
-                ExprNode::Let { name, value, body } => {
+                ExprNode::Let {
+                    name, value, body, ..
+                } => {
                     let (value, body) = (expression.at(*value), expression.at(*body));
                     let alias =
                         self.resolves_to_captured_alias(value, boundary, &mut bindings, scope);
@@ -3337,7 +3339,9 @@ impl<'a> Typer<'a> {
                             alias.unwrap_or_else(|| self.captured_before(&name.name, boundary)),
                         );
                     }
-                    ExprNode::Let { name, value, body } => {
+                    ExprNode::Let {
+                        name, value, body, ..
+                    } => {
                         pending.push(AliasStep::Bind(name, operand.at(*body), scope));
                         pending.push(AliasStep::Operand(operand.at(*value), scope));
                     }
