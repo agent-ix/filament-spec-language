@@ -6,6 +6,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use filament_semantic_value::catalog::CatalogCode;
+use fsl_forms::ChannelDelivery;
 use fsl_semantics::check::CheckedProtocol;
 use fsl_semantics::check::ProtocolNodeId;
 use serde::{Deserialize, Serialize};
@@ -110,11 +111,90 @@ pub struct RecordingAssessment {
     pub obligations: Vec<RecordingObligation>,
     /// The closure record copied from the recording.
     pub closure: RecordingClosure,
+    /// Attempt, recovery and duplicate-effect facts retained from the run.
+    pub facts: Vec<RecordingFact>,
     /// The global result computed from the obligation results and closure.
     pub global: RecordingGlobalResult,
     /// The observation index of the first violating observation, if any.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub trace_position: Option<usize>,
+}
+
+/// A fact reported alongside the per-obligation assessment.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+#[serde(tag = "kind", rename_all = "kebab-case")]
+pub enum RecordingFact {
+    /// One observed operation or compensation attempt and its reported outcome.
+    AttemptOutcome {
+        /// The attempt's runtime identity.
+        attempt: serde_json::Value,
+        /// The registration when this is a compensation attempt.
+        #[serde(skip_serializing_if = "Option::is_none")]
+        registration: Option<serde_json::Value>,
+        /// The predecessor attempt for a retry, when reported.
+        #[serde(skip_serializing_if = "Option::is_none")]
+        retry_of: Option<serde_json::Value>,
+        /// The reported attempt outcome.
+        outcome: String,
+        /// The source observation index.
+        observation: usize,
+    },
+    /// One recovery outcome associated with a registration.
+    Recovery {
+        /// The registration's runtime identity.
+        registration: serde_json::Value,
+        /// The reported recovery outcome.
+        outcome: String,
+        /// The source observation index.
+        observation: usize,
+    },
+    /// Two distinct business-effect keys bound to one effect occurrence.
+    DuplicateBusinessEffect {
+        /// The registration created by the effect, when one exists.
+        #[serde(skip_serializing_if = "Option::is_none")]
+        registration: Option<serde_json::Value>,
+        /// The shared effect occurrence identity.
+        occurrence: RecordingEffectOccurrence,
+        /// The first and newly observed business-effect keys.
+        business_effect_keys: Vec<serde_json::Value>,
+        /// FR-236's aggregate fact value.
+        value: String,
+    },
+    /// One complete observation key repeated with equal binding facts.
+    ReplayedObservation {
+        /// The kind of runtime subject that was replayed.
+        subject_kind: String,
+        /// The repeated business-effect identity.
+        identity: serde_json::Value,
+        /// The occurrence the subject is bound to.
+        occurrence: RecordingEffectOccurrence,
+        /// How many equal observations were retained as one subject.
+        observations: usize,
+    },
+    /// Two distinct deliveries of one protocol message were received.
+    DuplicateDelivery {
+        /// The channel that carries the message.
+        channel: String,
+        /// The exact message identity.
+        message: serde_json::Value,
+        /// The distinct delivery identities observed for this message.
+        delivery_keys: Vec<serde_json::Value>,
+        /// FR-236's aggregate fact value.
+        value: String,
+    },
+}
+
+/// The FR-894 identity of an effect occurrence in a recording.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+pub struct RecordingEffectOccurrence {
+    /// The protocol instance that established this effect.
+    pub instance: String,
+    /// The qualified effect node.
+    pub node: String,
+    /// The thread path at the effect occurrence.
+    pub path: serde_json::Value,
+    /// The occurrence ordinal of this effect node on the path.
+    pub ordinal: u64,
 }
 
 /// Why a recording could not be read against the checked protocol.
@@ -234,6 +314,15 @@ struct Observation {
     outcome: Option<String>,
     #[serde(default)]
     clocks: BTreeMap<String, serde_json::Value>,
+    #[serde(default)]
+    occurrence: Option<EffectOccurrenceDocument>,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+struct EffectOccurrenceDocument {
+    path: serde_json::Value,
+    ordinal: u64,
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -355,6 +444,7 @@ pub fn assess_recording(
     };
     Ok(RecordingAssessment {
         obligations,
+        facts: recording_facts(protocol, &document),
         closure: RecordingClosure {
             state: document.closure.state,
             premises: document.closure.premises,
@@ -368,6 +458,213 @@ pub fn assess_recording(
         },
         trace_position,
     })
+}
+
+fn recording_facts(protocol: &CheckedProtocol, document: &RecordingDocument) -> Vec<RecordingFact> {
+    let mut facts = Vec::new();
+    let mut effects = BTreeMap::<
+        String,
+        (
+            RecordingEffectOccurrence,
+            Option<serde_json::Value>,
+            BTreeMap<String, (serde_json::Value, usize)>,
+        ),
+    >::new();
+
+    for (position, observation) in document.observations.iter().enumerate() {
+        match observation.kind {
+            ObservationKind::Attempt => {
+                if let (Some(attempt), Some(outcome)) = (
+                    observation.keys.get("attempt"),
+                    observation.outcome.as_ref(),
+                ) {
+                    facts.push(RecordingFact::AttemptOutcome {
+                        attempt: attempt.clone(),
+                        registration: None,
+                        retry_of: observation.keys.get("retry_of").cloned(),
+                        outcome: outcome.clone(),
+                        observation: position,
+                    });
+                }
+            }
+            ObservationKind::CompensationAttempt => {
+                if let (Some(attempt), Some(outcome)) = (
+                    observation.keys.get("compensation_attempt"),
+                    observation.outcome.as_ref(),
+                ) {
+                    facts.push(RecordingFact::AttemptOutcome {
+                        attempt: attempt.clone(),
+                        registration: observation.keys.get("registration").cloned(),
+                        retry_of: observation.keys.get("retry_of").cloned(),
+                        outcome: outcome.clone(),
+                        observation: position,
+                    });
+                }
+            }
+            ObservationKind::Recovery => {
+                if let (Some(registration), Some(outcome)) = (
+                    observation.keys.get("registration"),
+                    observation.outcome.as_ref(),
+                ) {
+                    facts.push(RecordingFact::Recovery {
+                        registration: registration.clone(),
+                        outcome: outcome.clone(),
+                        observation: position,
+                    });
+                }
+            }
+            ObservationKind::Effect => {
+                let (Some(instance), Some(occurrence), Some(effect_key)) = (
+                    observation.instance.as_ref(),
+                    observation.occurrence.as_ref(),
+                    observation.keys.get("business_effect"),
+                ) else {
+                    continue;
+                };
+                let effect_occurrence = RecordingEffectOccurrence {
+                    instance: instance.clone(),
+                    node: observation.node.clone(),
+                    path: occurrence.path.clone(),
+                    ordinal: occurrence.ordinal,
+                };
+                let registration = observation.keys.get("registration").cloned();
+                let occurrence_key = serde_json::json!({
+                    "instance": effect_occurrence.instance,
+                    "node": effect_occurrence.node,
+                    "path": effect_occurrence.path,
+                    "ordinal": effect_occurrence.ordinal,
+                    "registration": registration,
+                })
+                .to_string();
+                let entry = effects
+                    .entry(occurrence_key)
+                    .or_insert_with(|| (effect_occurrence, registration, BTreeMap::new()));
+                let (_, count) = entry
+                    .2
+                    .entry(effect_key.to_string())
+                    .or_insert_with(|| (effect_key.clone(), 0));
+                *count += 1;
+            }
+            _ => {}
+        }
+    }
+
+    for (_, (occurrence, registration, keys)) in effects {
+        let mut keys = keys.into_values();
+        let Some((first, first_count)) = keys.next() else {
+            continue;
+        };
+        let second = keys.next();
+        if second.is_none() && first_count > 1 {
+            facts.push(RecordingFact::ReplayedObservation {
+                subject_kind: "business-effect".to_owned(),
+                identity: first,
+                occurrence,
+                observations: first_count,
+            });
+            continue;
+        }
+        for (second, _) in second.into_iter().chain(keys) {
+            facts.push(RecordingFact::DuplicateBusinessEffect {
+                registration: registration.clone(),
+                occurrence: occurrence.clone(),
+                business_effect_keys: vec![first.clone(), second],
+                value: "duplicate".to_owned(),
+            });
+        }
+    }
+
+    for duplicate in duplicate_deliveries(protocol, document) {
+        facts.push(RecordingFact::DuplicateDelivery {
+            channel: duplicate.channel,
+            message: duplicate.message,
+            delivery_keys: duplicate.delivery_keys,
+            value: "duplicate".to_owned(),
+        });
+    }
+
+    facts
+}
+
+struct DuplicateDeliveryEvidence {
+    channel: String,
+    message: serde_json::Value,
+    delivery_keys: Vec<serde_json::Value>,
+    receive_positions: Vec<usize>,
+    policy: ChannelDelivery,
+}
+
+fn duplicate_deliveries(
+    protocol: &CheckedProtocol,
+    document: &RecordingDocument,
+) -> Vec<DuplicateDeliveryEvidence> {
+    let mut received = BTreeMap::<
+        (String, String),
+        (
+            serde_json::Value,
+            BTreeMap<String, (serde_json::Value, Vec<usize>)>,
+        ),
+    >::new();
+    for pair in &document.correlations {
+        let send = &document.observations[pair.send];
+        let receive = &document.observations[pair.receive];
+        let (Some(message), Some(received_message), Some(delivery)) = (
+            send.keys.get("message"),
+            receive.keys.get("message"),
+            receive.keys.get("delivery"),
+        ) else {
+            continue;
+        };
+        if message != received_message {
+            continue;
+        }
+        let Some(channel) = channel_for_send(protocol, send) else {
+            continue;
+        };
+        let deliveries = received
+            .entry((channel.to_owned(), message.to_string()))
+            .or_insert_with(|| (message.clone(), BTreeMap::new()));
+        deliveries
+            .1
+            .entry(delivery.to_string())
+            .or_insert_with(|| (delivery.clone(), Vec::new()))
+            .1
+            .push(pair.receive);
+    }
+
+    received
+        .into_iter()
+        .filter_map(|((channel_name, _), (message, deliveries))| {
+            if deliveries.len() < 2 {
+                return None;
+            }
+            let channel = protocol
+                .channels
+                .iter()
+                .find(|entry| entry.name == channel_name)?;
+            Some(DuplicateDeliveryEvidence {
+                channel: channel_name,
+                message,
+                delivery_keys: deliveries
+                    .values()
+                    .map(|(identity, _)| identity.clone())
+                    .collect(),
+                receive_positions: deliveries
+                    .values()
+                    .flat_map(|(_, positions)| positions.iter().copied())
+                    .collect(),
+                policy: channel.delivery,
+            })
+        })
+        .collect()
+}
+
+fn channel_for_send<'a>(protocol: &'a CheckedProtocol, send: &Observation) -> Option<&'a str> {
+    let via = protocol.vias.iter().find(|via| {
+        send.node
+            .ends_with(&protocol_node_name(protocol, via.node.0))
+    })?;
+    Some(via.channel.as_str())
 }
 
 fn protocol_node_kinds(protocol: &CheckedProtocol) -> BTreeMap<String, String> {
@@ -476,17 +773,7 @@ fn validate_correlations(document: &RecordingDocument) -> Result<(), RecordingRe
 }
 
 fn validate_identities(document: &RecordingDocument) -> Result<(), RecordingRefusal> {
-    let mut facts = BTreeMap::<
-        (String, String),
-        (
-            String,
-            String,
-            String,
-            Option<serde_json::Value>,
-            Option<String>,
-            BTreeMap<String, serde_json::Value>,
-        ),
-    >::new();
+    let mut facts = BTreeMap::<(String, String), serde_json::Value>::new();
     let mut messages = BTreeMap::<String, (Option<String>, Option<serde_json::Value>)>::new();
     let mut deliveries = BTreeMap::<String, (String, Option<String>)>::new();
     for (position, observation) in document.observations.iter().enumerate() {
@@ -536,10 +823,15 @@ fn validate_identities(document: &RecordingDocument) -> Result<(), RecordingRefu
                     Some(position),
                 ));
             }
-            ObservationKind::Effect if !observation.keys.contains_key("business_effect") => {
+            ObservationKind::Effect
+                if !observation.keys.contains_key("business_effect")
+                    || !observation.keys.contains_key("attempt")
+                    || observation.instance.is_none()
+                    || observation.occurrence.is_none() =>
+            {
                 return Err(RecordingRefusal::new(
                     "invalid-value",
-                    "effect observation requires a business-effect key",
+                    "effect observation requires instance, occurrence, attempt and business-effect identities",
                     Some(position),
                 ));
             }
@@ -555,30 +847,37 @@ fn validate_identities(document: &RecordingDocument) -> Result<(), RecordingRefu
             }
             _ => {}
         }
-        for key_name in ["attempt", "business_effect", "compensation_attempt"] {
-            let Some(key) = observation.keys.get(key_name) else {
-                continue;
-            };
-            let identity = key.to_string();
-            let signature = (
-                observation.node.clone(),
-                observation.role.clone(),
-                observation.instance.clone().unwrap_or_default(),
-                observation.record.clone(),
-                observation.outcome.clone(),
-                observation.clocks.clone(),
-            );
-            let map_key = (key_name.to_owned(), identity);
-            if let Some(previous) = facts.get(&map_key) {
-                if previous != &signature {
-                    return Err(RecordingRefusal::new(
-                        "invalid-value",
-                        format!("runtime key `{key_name}` has conflicting facts"),
-                        Some(position),
-                    ));
+        let identity_kind = match observation.kind {
+            ObservationKind::Attempt => Some("attempt"),
+            ObservationKind::Effect => Some("business_effect"),
+            ObservationKind::CompensationAttempt => Some("compensation_attempt"),
+            _ => None,
+        };
+        if let Some(key_name) = identity_kind {
+            if let Some(key) = observation.keys.get(key_name) {
+                let identity = key.to_string();
+                let signature = serde_json::json!({
+                    "node": observation.node,
+                    "role": observation.role,
+                    "instance": observation.instance,
+                    "record": observation.record,
+                    "outcome": observation.outcome,
+                    "clocks": observation.clocks,
+                    "keys": observation.keys,
+                    "occurrence": observation.occurrence,
+                });
+                let map_key = (key_name.to_owned(), identity);
+                if let Some(previous) = facts.get(&map_key) {
+                    if previous != &signature {
+                        return Err(RecordingRefusal::new(
+                            "invalid-value",
+                            format!("runtime key `{key_name}` has conflicting facts"),
+                            Some(position),
+                        ));
+                    }
+                } else {
+                    facts.insert(map_key, signature);
                 }
-            } else {
-                facts.insert(map_key, signature);
             }
         }
     }
@@ -687,19 +986,42 @@ fn assess_obligations(
                         .ends_with(&protocol_node_name(protocol, via.node.0))
             }) || receive.node.contains(&channel.name)
         });
+        let duplicate_delivery = duplicate_deliveries(protocol, document)
+            .into_iter()
+            .filter(|duplicate| duplicate.channel == channel.name)
+            .collect::<Vec<_>>();
+        let duplicate_positions = duplicate_delivery
+            .iter()
+            .flat_map(|duplicate| duplicate.receive_positions.iter().copied())
+            .collect::<Vec<_>>();
+        let duplicate_policy = duplicate_delivery.first().map(|duplicate| duplicate.policy);
+        let (verdict, cause, witness) = match duplicate_policy {
+            Some(ChannelDelivery::AtLeastOnce)
+            | Some(ChannelDelivery::Between {
+                upper: 2..=u64::MAX,
+                ..
+            }) => (RecordingVerdict::Satisfied, None, duplicate_positions),
+            Some(ChannelDelivery::AtMostOnce | ChannelDelivery::ExactlyOncePremise)
+            | Some(ChannelDelivery::Between { upper: 0..=1, .. }) => (
+                RecordingVerdict::Violated,
+                Some(RecordingCause::Duplicated),
+                duplicate_positions,
+            ),
+            Some(ChannelDelivery::Unknown) => (RecordingVerdict::Pending, None, Vec::new()),
+            None if correlated || document.correlations.is_empty() => {
+                (RecordingVerdict::Satisfied, None, Vec::new())
+            }
+            None => (RecordingVerdict::Pending, None, Vec::new()),
+        };
         obligations.push(RecordingObligation {
             obligation: RecordingObligationId {
                 kind: "channel-premise".to_owned(),
                 node: Some(channel.name.clone()),
                 instance: None,
             },
-            verdict: if correlated || document.correlations.is_empty() {
-                RecordingVerdict::Satisfied
-            } else {
-                RecordingVerdict::Pending
-            },
-            cause: None,
-            witness: Vec::new(),
+            verdict,
+            cause,
+            witness,
         });
     }
 
