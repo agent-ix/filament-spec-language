@@ -112,15 +112,13 @@ fn a_temporal_clause_without_clock_parses() {
     }
 }
 
-/// FSpec FR-501-AC-7: a two-segment operation name is the source-object form
-/// and parses; a one-segment name refuses at the `{`.
+/// FSpec FR-501-AC-7: an operation name has its model, type and member
+/// segments; a shorter name refuses at the body opener.
 #[trace("FSpec-TC-1008", "FSpec-FR-501-AC-7")]
 #[test]
 fn operation_names_are_a_type_name_and_a_member() {
-    for clause in [
-        "pre P using v on M::T::op { true }",
-        "pre P using v on T::op { true }",
-    ] {
+    let clause = "pre P using v on M::T::op { true }";
+    {
         let text = unit(clause);
         let parsed = parse(&text);
         assert!(
@@ -130,15 +128,18 @@ fn operation_names_are_a_type_name_and_a_member() {
         );
         assert_eq!(texts(&text, &parsed, Production::OperationName).len(), 1);
     }
-    let text = unit("pre P using v on T { true }");
-    assert_eq!(
-        refusal(&parse(&text)),
-        (
-            CompleteCode::InvalidSyntax,
-            CompleteCause::UnexpectedToken,
-            text.find("{ true").expect("the block")
-        )
-    );
+    for clause in ["pre P using v on M::T { true }", "post P using v on M::T { true }"] {
+        let text = unit(clause);
+        assert_eq!(
+            refusal(&parse(&text)),
+            (
+                CompleteCode::InvalidSyntax,
+                CompleteCause::UnexpectedToken,
+                text.find("{ true").expect("the block")
+            ),
+            "{clause}"
+        );
+    }
 }
 
 /// FSpec FR-501-AC-8: a `join` list names every branch and is never empty.

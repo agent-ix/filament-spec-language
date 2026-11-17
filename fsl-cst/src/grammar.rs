@@ -415,12 +415,7 @@ fn source_and_types(g: &mut Grammar) {
     g.insert(P::PopulationName, name_or_model_name());
     g.insert(
         P::OperationName,
-        s(vec![
-            ident(),
-            x("::"),
-            member(),
-            opt(s(vec![x("::"), member()])),
-        ]),
+        s(vec![ident(), x("::"), member(), x("::"), member()]),
     );
     g.insert(P::SignedInteger, s(vec![opt(x("-")), uint()]));
     g.insert(
