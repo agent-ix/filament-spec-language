@@ -155,4 +155,4 @@ Tag each test with the criteria it asserts and `TC-1408`, for example
 - Step 8: V1 true, V2 true, V3 true, V4 true, V5 `7`, V6 `frame_violation`/
   `unauthorized-change` naming `o2.total` (FR-154), each with equal
   outcomes and equal ordered charge logs over S and D.
-- Step 9: S, S-R, S-P and S-M each emit: the source declaration keys `{owner_effective_type: null, original: {package: I, node: "ix://I/<Type>"}}` for `Order`, `Sub` and `Shape`, the source identity rows of `identities.json`, the source clock-place join and the source `operation_bodies` rows (FSpec FR-788 to FR-790), and the handoff directory, with no `SourceObjectEmission` refusal; a refusal arises only for a case FR-995 or FR-996 names. D emits as before.
+- Step 9: S, S-R, S-P and S-M each emit: the source declaration keys `{package: I, node: "ix://I/<Type>"}` for `Order`, `Sub` and `Shape`, the source identity rows of `identities.json`, the source clock-place join and the source `operation_bodies` rows (FSpec FR-788 to FR-790), and the handoff directory, with no `SourceObjectEmission` refusal; a refusal arises only for a case FR-995 or FR-996 names. D emits as before.
