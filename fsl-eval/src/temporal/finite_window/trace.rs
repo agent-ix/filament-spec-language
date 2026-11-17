@@ -172,10 +172,10 @@ pub struct Lateness {
 
 /// A non-empty timestamped trace in canonical order (FR-501 Inputs, "Canonical
 /// order").
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct TimestampedTrace {
     pub(super) positions: Vec<TimestampedObservation>,
-    origin: Vec<usize>,
+    pub(super) origin: Vec<usize>,
     pub(super) progress: WindowProgress,
     /// The progress the request asserted, which the report and the result
     /// identity name. It is `progress` itself for a timestamped trace; a
@@ -186,6 +186,11 @@ pub struct TimestampedTrace {
     pub(super) observed: usize,
     pub(super) clock: WindowClock,
     pub(super) clause_identity: String,
+    /// The absolute index of `positions[0]`: 0 for a whole trace, the first
+    /// position a carried state still holds otherwise (FR-820).
+    pub(super) base: usize,
+    /// The stamp of the trace's position 0, which a cutoff's history reads.
+    pub(super) first: u64,
     /// Each position's interval stamp, in canonical order (FR-501 "Bounded
     /// cover and interval stamps").
     pub(super) intervals: Vec<Option<StampInterval>>,
@@ -253,6 +258,19 @@ impl TimestampedTrace {
         if positions.is_empty() {
             return Err(TemporalRefusal::EmptyTrace);
         }
+        // Without an interval stamp the canonical order is the stamp order
+        // FR-820's carried trace keeps, so the trace is the one it grows.
+        if positions.iter().all(|(_, interval)| interval.is_none()) {
+            let mut trace = Self::open(clause_identity, clock, progress);
+            trace.extend(
+                positions
+                    .into_iter()
+                    .map(|(position, _)| position)
+                    .collect(),
+                progress,
+            );
+            return Ok(trace);
+        }
         let extent = |(position, interval): &(TimestampedObservation, Option<StampInterval>)| {
             interval.map_or_else(|| clock.cover.extent(position.stamp), Extent::of_interval)
         };
@@ -283,17 +301,113 @@ impl TimestampedTrace {
                 .iter()
                 .filter_map(|index| positions.get(*index).cloned())
                 .unzip();
-        Ok(Self {
+        let mut trace = Self {
             intervals,
             lateness: Lateness::default(),
             observed: admitted.len(),
             positions: admitted,
             origin: order,
+            base: 0,
+            first: 0,
             progress,
             asserted: progress,
             clock,
             clause_identity: clause_identity.into(),
-        })
+        };
+        trace.first = trace.positions.first().map_or(0, |position| position.stamp);
+        Ok(trace)
+    }
+
+    /// FR-820: a trace with no position yet, which [`Self::extend`] grows
+    /// as a carried state admits its positions. It is no admitted trace
+    /// until it holds one.
+    pub fn open(
+        clause_identity: impl Into<String>,
+        clock: WindowClock,
+        progress: WindowProgress,
+    ) -> Self {
+        Self {
+            observed: 0,
+            base: 0,
+            first: 0,
+            positions: Vec::new(),
+            origin: Vec::new(),
+            intervals: Vec::new(),
+            lateness: Lateness::default(),
+            progress,
+            asserted: progress,
+            clock,
+            clause_identity: clause_identity.into(),
+        }
+    }
+
+    /// FR-820: admit `positions`, listed after every position admitted
+    /// already, under the `progress` now asserted. The result equals
+    /// [`Self::admit`] over the whole listing. Positions that sort after the
+    /// trace's last one in canonical order (FR-643 "Order" keeps a carried
+    /// trace's later positions there) are appended, at work proportional to
+    /// them; otherwise the whole listing is put in canonical order again.
+    pub fn extend(&mut self, positions: Vec<TimestampedObservation>, progress: WindowProgress) {
+        let offset = self.positions.len();
+        let mut order: Vec<usize> = (0..positions.len()).collect();
+        order.sort_by(
+            |left, right| match (positions.get(*left), positions.get(*right)) {
+                (Some(left), Some(right)) => canonical(left, right),
+                _ => std::cmp::Ordering::Equal,
+            },
+        );
+        let after = match (
+            self.positions.last(),
+            order.first().and_then(|at| positions.get(*at)),
+        ) {
+            (Some(last), Some(next)) => canonical(last, next) != std::cmp::Ordering::Greater,
+            (None, _) | (_, None) => true,
+        };
+        if after {
+            for index in order {
+                if let Some(position) = positions.get(index) {
+                    self.positions.push(position.clone());
+                    self.origin.push(offset.saturating_add(index));
+                }
+            }
+        } else {
+            let mut listing: Vec<Option<TimestampedObservation>> = vec![None; offset];
+            for (position, origin) in self.positions.drain(..).zip(self.origin.drain(..)) {
+                if let Some(slot) = listing.get_mut(origin) {
+                    *slot = Some(position);
+                }
+            }
+            listing.extend(positions.into_iter().map(Some));
+            let listing: Vec<TimestampedObservation> = listing.into_iter().flatten().collect();
+            let mut order: Vec<usize> = (0..listing.len()).collect();
+            order.sort_by(
+                |left, right| match (listing.get(*left), listing.get(*right)) {
+                    (Some(left), Some(right)) => canonical(left, right),
+                    _ => std::cmp::Ordering::Equal,
+                },
+            );
+            self.positions = order
+                .iter()
+                .filter_map(|index| listing.get(*index).cloned())
+                .collect();
+            self.origin = order;
+        }
+        self.first = self.positions.first().map_or(0, |position| position.stamp);
+        self.observed = self.positions.len();
+        self.progress = progress;
+        self.asserted = progress;
+    }
+
+    /// FR-820: keep only the first `len` positions in canonical order, as a
+    /// carried state undoing a call keeps the positions it had; a progressed
+    /// trace's silent samples go with them. The trace is read again only
+    /// once [`Self::extend`] or [`Self::extend_progressed`] has set its
+    /// progress.
+    pub fn truncate(&mut self, len: usize) {
+        self.positions.truncate(len);
+        self.origin.truncate(len);
+        self.intervals.truncate(len);
+        self.observed = self.observed.min(len);
     }
 
     /// This trace read under the late-data inputs `lateness` (FR-501
@@ -380,4 +494,33 @@ impl TimestampedTrace {
     pub fn clock(&self) -> &WindowClock {
         &self.clock
     }
+
+    /// The progress the request asserted, which the report names.
+    pub fn asserted(&self) -> &WindowProgress {
+        &self.asserted
+    }
+
+    /// The identity of the clause the trace is read for.
+    pub fn clause_identity(&self) -> &str {
+        &self.clause_identity
+    }
+}
+
+/// FR-501 "Canonical order": ascending stamp, then ascending order-authority
+/// identity (an observation without an order key after every keyed one),
+/// then ascending key within the authority, then ascending observation
+/// identity.
+pub(super) fn canonical(
+    left: &TimestampedObservation,
+    right: &TimestampedObservation,
+) -> std::cmp::Ordering {
+    left.stamp
+        .cmp(&right.stamp)
+        .then_with(|| match (&left.order_key, &right.order_key) {
+            (Some(left), Some(right)) => left.cmp(right),
+            (Some(_), None) => std::cmp::Ordering::Less,
+            (None, Some(_)) => std::cmp::Ordering::Greater,
+            (None, None) => std::cmp::Ordering::Equal,
+        })
+        .then_with(|| left.observation.cmp(&right.observation))
 }

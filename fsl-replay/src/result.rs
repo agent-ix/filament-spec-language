@@ -33,7 +33,10 @@ use crate::identity::TracePosition;
 use filament_semantic_value::catalog::Category;
 use fsl_foundation::source::provenance::SourceRegion;
 pub use wire::CauseCodecError;
-pub(crate) use wire::{validate_state_element, DecisiveWire, ProtocolWitnessWire, RecordWire};
+pub(crate) use wire::{
+    decode_state_value, encode_state_value, validate_state_element, DecisiveWire,
+    ProtocolWitnessWire, RecordWire,
+};
 
 /// Serialize FR-207's canonical runtime value path for command result
 /// adapters that emit FR-366 value-invariant items.

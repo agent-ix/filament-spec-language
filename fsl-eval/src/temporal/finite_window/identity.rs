@@ -1,6 +1,18 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //! The result identity (FR-501 "Result report"; FR-043-AC-13): a SHA-256
-//! content identity over the RFC 8785 form of everything an evaluation read.
+//! content identity over the RFC 8785 forms of everything an evaluation read.
+//!
+//! Each position contributes one block, in canonical order: its stamp, order
+//! key and observation identity, and the valuations read there. The blocks
+//! are chained: link `i` is the digest of `[link i-1, block i]`, from an
+//! empty link. The identity is the digest of the clause, profile and clock,
+//! the last link and the block count, the progress and the meter ceilings.
+//! A block is chained once no later evaluation can read another valuation
+//! at its position, so [`IdentityStream`] carries the chain and a report
+//! chains only the blocks still open: the batch run and the carried run
+//! (FR-820) chain the same blocks in the same order and give one identity by
+//! construction. Every form is encoded and hashed through `quire-canonical`
+//! (ADR-013 §2).
 
 use filament_exact::ScalarLimits;
 use filament_semantic_value::catalog::InternalFault;
@@ -9,29 +21,26 @@ use quire_canonical::{Encode, Error, Limits, Sink, Writer};
 use super::cover::{ClockCover, StampInterval};
 use super::lift::Cell;
 use super::outcome::ResultIdentity;
-use super::trace::{LateCutoff, Lateness, LowerBoundary, TimestampedTrace};
+use super::trace::{
+    LateCutoff, Lateness, LowerBoundary, TimestampedObservation, WindowClock, WindowProgress,
+};
 use crate::temporal::ledger::{ProgressClosure, ProgressCompleteness};
 use crate::temporal::plan::fault;
-
-/// What one evaluation read, in a fixed order.
-pub(super) struct Preimage<'a> {
-    pub(super) trace: &'a TimestampedTrace,
-    pub(super) profile: &'static str,
-    /// The atoms read, as `(position, atom node, valuation)`, sorted.
-    pub(super) readings: &'a [(usize, usize, Cell)],
-    pub(super) ceilings: &'a ScalarLimits,
-}
 
 /// A decimal string: an integer past 2^53 has no RFC 8785 number form.
 fn count<S: Sink + ?Sized>(writer: &mut Writer<'_, S>, value: u128) -> Result<(), Error> {
     writer.string(&value.to_string())
 }
 
-fn closure(value: ProgressClosure) -> &'static str {
-    match value {
-        ProgressClosure::Closed => "closed",
-        ProgressClosure::Open => "open",
-    }
+/// One position's block: its stamp, order key and observation identity, and
+/// the `(atom class, valuation)` pairs read there, in class order.
+pub(super) struct Block<'a> {
+    pub(super) observation: &'a TimestampedObservation,
+    /// The position's interval stamp, when it carries one (FR-501).
+    pub(super) interval: Option<StampInterval>,
+    /// The position's arrival watermark, when it states one (FR-966).
+    pub(super) arrival: Option<u64>,
+    pub(super) readings: &'a [(usize, Cell)],
 }
 
 fn tag(cell: Cell) -> &'static str {
@@ -97,15 +106,83 @@ fn lateness_members<S: Sink + ?Sized>(
     writer.end_array()
 }
 
-impl Encode for Preimage<'_> {
+impl Encode for Block<'_> {
     fn encode_into<S: Sink + ?Sized>(&self, writer: &mut Writer<'_, S>) -> Result<(), Error> {
-        let trace = self.trace;
+        let position = self.observation;
         writer.begin_array()?;
-        writer.string("filament.fsl.finite-window-result/v1")?;
-        writer.string(&trace.clause_identity)?;
+        count(writer, u128::from(position.stamp))?;
+        // FR-966 "Identity": an interval stamp and an arrival watermark are
+        // members of the position only when it carries them.
+        if let Some(interval) = self.interval {
+            interval_members(writer, interval)?;
+        }
+        if let Some(arrival) = self.arrival {
+            writer.string("arrival")?;
+            count(writer, u128::from(arrival))?;
+        }
+        match &position.order_key {
+            Some(key) => {
+                writer.string(&key.authority)?;
+                writer.integer(i128::from(key.key))?;
+            }
+            None => writer.null()?,
+        }
+        writer.string(&position.observation)?;
+        writer.begin_array()?;
+        for (class, cell) in self.readings {
+            writer.begin_array()?;
+            count(writer, *class as u128)?;
+            writer.string(tag(*cell))?;
+            writer.end_array()?;
+        }
+        writer.end_array()?;
+        writer.end_array()
+    }
+}
+
+/// One link of the chain: the previous link and the next block.
+struct Link<'a> {
+    previous: &'a str,
+    block: &'a Block<'a>,
+}
+
+impl Encode for Link<'_> {
+    fn encode_into<S: Sink + ?Sized>(&self, writer: &mut Writer<'_, S>) -> Result<(), Error> {
+        writer.begin_array()?;
+        writer.string(self.previous)?;
+        self.block.encode_into(writer)?;
+        writer.end_array()
+    }
+}
+
+/// The closing preimage: the header, the chain and the progress and
+/// ceilings.
+struct Head<'a> {
+    clause_identity: &'a str,
+    profile: &'a str,
+    clock: &'a WindowClock,
+    link: &'a str,
+    blocks: u64,
+    progress: &'a WindowProgress,
+    lateness: &'a Lateness,
+    ceilings: &'a ScalarLimits,
+}
+
+fn closure(value: ProgressClosure) -> &'static str {
+    match value {
+        ProgressClosure::Closed => "closed",
+        ProgressClosure::Open => "open",
+    }
+}
+
+impl Encode for Head<'_> {
+    fn encode_into<S: Sink + ?Sized>(&self, writer: &mut Writer<'_, S>) -> Result<(), Error> {
+        writer.begin_array()?;
+        writer.string("filament.fsl.finite-window-result/v2")?;
+        writer.string(self.clause_identity)?;
         writer.string(self.profile)?;
-        writer.string(&trace.clock.unit)?;
-        match trace.clock.cover {
+        writer.string(&self.clock.unit)?;
+        match self.clock.cover {
             ClockCover::Exact => writer.string("exact")?,
             ClockCover::Counter { uncertainty } => {
                 writer.string("counter")?;
@@ -116,40 +193,9 @@ impl Encode for Preimage<'_> {
                 count(writer, u128::from(uncertainty))?;
             }
         }
-        writer.begin_array()?;
-        for (index, position) in trace.positions.iter().enumerate() {
-            writer.begin_array()?;
-            count(writer, u128::from(position.stamp))?;
-            // FR-966 "Identity": an interval stamp and an arrival watermark
-            // are members of the position only when it carries them.
-            if let Some(interval) = trace.intervals.get(index).copied().flatten() {
-                interval_members(writer, interval)?;
-            }
-            if let Some(arrival) = trace.lateness.arrivals.get(index).copied().flatten() {
-                writer.string("arrival")?;
-                count(writer, u128::from(arrival))?;
-            }
-            match &position.order_key {
-                Some(key) => {
-                    writer.string(&key.authority)?;
-                    writer.integer(i128::from(key.key))?;
-                }
-                None => writer.null()?,
-            }
-            writer.string(&position.observation)?;
-            writer.end_array()?;
-        }
-        writer.end_array()?;
-        writer.begin_array()?;
-        for (position, node, cell) in self.readings {
-            writer.begin_array()?;
-            count(writer, *position as u128)?;
-            count(writer, *node as u128)?;
-            writer.string(tag(*cell))?;
-            writer.end_array()?;
-        }
-        writer.end_array()?;
-        let progress = &trace.asserted;
+        writer.string(self.link)?;
+        count(writer, u128::from(self.blocks))?;
+        let progress = self.progress;
         writer.integer(progress.watermark.inclusive())?;
         match progress.completeness {
             ProgressCompleteness::Complete { through } => {
@@ -164,7 +210,7 @@ impl Encode for Preimage<'_> {
             LowerBoundary::AuthoritativeOrigin => "authoritative-origin",
             LowerBoundary::HistoryCutoff => "history-cutoff",
         })?;
-        lateness_members(writer, &trace.lateness)?;
+        lateness_members(writer, self.lateness)?;
         let ceilings = self.ceilings;
         writer.begin_array()?;
         for ceiling in [
@@ -186,16 +232,63 @@ impl Encode for Preimage<'_> {
     }
 }
 
-impl Preimage<'_> {
-    /// The identity of this preimage.
-    pub(super) fn identity(&self) -> Result<ResultIdentity, InternalFault> {
-        let digest = quire_canonical::sha256(self, Limits::new(u64::MAX))
-            .map_err(|_| fault("result-identity-encodes"))?;
-        let mut text = String::from("sha256:");
-        for byte in digest.as_bytes() {
-            text.push_str(&format!("{byte:02x}"));
+/// The `sha256:` text of the digest of `value`.
+fn digest(value: &impl Encode) -> Result<String, InternalFault> {
+    let digest = quire_canonical::sha256(value, Limits::new(u64::MAX))
+        .map_err(|_| fault("result-identity-encodes"))?;
+    let mut text = String::from("sha256:");
+    for byte in digest.as_bytes() {
+        text.push_str(&format!("{byte:02x}"));
+    }
+    Ok(text)
+}
+
+/// The chain of the blocks frozen so far.
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub(super) struct IdentityStream {
+    link: String,
+    blocks: u64,
+}
+
+impl IdentityStream {
+    /// Chain `block`, the next position's, which no later evaluation reads
+    /// again.
+    pub(super) fn freeze(&mut self, block: &Block<'_>) -> Result<(), InternalFault> {
+        self.link = digest(&Link {
+            previous: &self.link,
+            block,
+        })?;
+        self.blocks = self.blocks.saturating_add(1);
+        Ok(())
+    }
+
+    /// The identity of the evaluation of the clause `clause_identity` under
+    /// `profile` and `clock`, with the `open` blocks chained after the frozen
+    /// ones, the asserted `progress` and late-data inputs, and `ceilings`.
+    pub(super) fn identity(
+        &self,
+        clause_identity: &str,
+        profile: &str,
+        clock: &WindowClock,
+        open: &[Block<'_>],
+        (progress, lateness): (&WindowProgress, &Lateness),
+        ceilings: &ScalarLimits,
+    ) -> Result<ResultIdentity, InternalFault> {
+        let mut chain = self.clone();
+        for block in open {
+            chain.freeze(block)?;
         }
-        Ok(ResultIdentity(text))
+        digest(&Head {
+            clause_identity,
+            profile,
+            clock,
+            link: &chain.link,
+            blocks: chain.blocks,
+            progress,
+            lateness,
+            ceilings,
+        })
+        .map(ResultIdentity)
     }
 }
 

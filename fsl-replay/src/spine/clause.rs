@@ -28,6 +28,7 @@ use fsl_semantics::model::observation::{
     ObservationLimits, OperationFacts, Provisions,
 };
 
+mod clause_state;
 mod correction;
 mod late_data;
 mod ledger_wire;
@@ -37,6 +38,11 @@ mod progress;
 mod temporal;
 mod trace_refusal;
 mod trace_subject;
+pub use clause_state::{
+    assertion_json, assertion_of, incomplete_json, incomplete_of, pending_report, AdmittedPosition,
+    AdmittedValue, Advance, ClauseLimits, ClauseMark, ClauseOpen, ClauseRefusal, ClauseState,
+    ClauseTraceKind, CLAUSE_STATE_FORMAT,
+};
 pub(crate) use correction::run_correction;
 pub use correction::{
     read_evidence_ledger, settle_correction, settle_run_correction, CorrectionRecord,
@@ -53,13 +59,14 @@ pub use progress::{
     ProgressLimitReached, ProgressLowerBoundary, ProgressValue,
 };
 use temporal::TemporalRun;
+pub(crate) use temporal::SAMPLE_AUTHORITY;
 pub use temporal::{
     admit_progress, authenticate_package_trace, clause_trace_binding, name_clause_atom,
-    run_package_temporal, sample_position, AdmittedLate, FiniteWindowAssessment,
-    FiniteWindowPremises, FiniteWindowReport, FiniteWindowSupport, LateEntry, LateInputs,
-    OverObject, PackageTemporalRequest, ProgressRefusal, TemporalAuthentication, TimestampedCover,
-    TimestampedMissingValuation, TimestampedObservation, TimestampedOrderKey, TimestampedWindow,
-    TraceBinding, TraceInput, DEFAULT_MODEL_MAX_CANDIDATES,
+    run_package_temporal, run_package_temporal_bounded, sample_position, AdmittedLate,
+    FiniteWindowAssessment, FiniteWindowPremises, FiniteWindowReport, FiniteWindowSupport,
+    LateEntry, LateInputs, OverObject, PackageTemporalRequest, ProgressRefusal,
+    TemporalAuthentication, TimestampedCover, TimestampedMissingValuation, TimestampedObservation,
+    TimestampedOrderKey, TimestampedWindow, TraceBinding, TraceInput, DEFAULT_MODEL_MAX_CANDIDATES,
 };
 pub use trace_refusal::{TraceRefusal, REASONS as TRACE_REFUSAL_REASONS};
 pub use trace_subject::{
@@ -925,6 +932,14 @@ pub struct ClauseRunUsage {
     pub evaluation_admissions: u64,
     /// `temporal.visit` charges made by finite-window temporal evaluation.
     pub temporal_visits: u64,
+    /// FR-820: the trace positions the run admitted into its finite-window
+    /// trace: every position for a batch run, the new ones for a carried
+    /// clause state.
+    pub trace_positions: u64,
+    /// FR-820: the trace positions the run checked and added to the progress
+    /// ledger: every position for a batch run, the new ones for a carried
+    /// clause state.
+    pub ledger_positions: u64,
     /// The evaluation meter's consumed total, one pair per `LimitKind::ALL`.
     pub evaluation_consumed: Vec<(filament_exact::LimitKind, u64)>,
 }
@@ -1017,6 +1032,8 @@ impl ClauseRunUsage {
             admission_consumed,
             evaluation_admissions: meter.admission_count(),
             temporal_visits: 0,
+            trace_positions: 0,
+            ledger_positions: 0,
             evaluation_consumed: filament_exact::LimitKind::ALL
                 .iter()
                 .map(|kind| (*kind, meter.consumed(*kind)))
@@ -1185,7 +1202,7 @@ impl ClauseRunReport {
 /// for a `success` or `violation` at stage `evaluate` (a `Function` run's
 /// result is decided by the whole call, a `Frame` run's witness is
 /// FR-115's), `unavailable` for every other disposition.
-fn undecided_basis(disposition: &ClauseDisposition) -> SettlementBasis {
+pub(super) fn undecided_basis(disposition: &ClauseDisposition) -> SettlementBasis {
     use filament_semantic_value::catalog::Category;
     match (disposition.stage(), disposition.category()) {
         (ClauseRunStage::Evaluate, Category::Success | Category::Violation) => {
@@ -1504,6 +1521,7 @@ fn run_clause_reading(
                     }),
                     cancel: None,
                     valuation,
+                    tape: None,
                 },
             ))
         }
@@ -1534,6 +1552,7 @@ fn run_clause_reading(
                     }),
                     cancel: None,
                     valuation,
+                    tape: None,
                 },
             ))
         }
@@ -2114,6 +2133,7 @@ fn run_compiled_clause_selection(
                     }),
                     cancel: None,
                     valuation: false,
+                    tape: None,
                 },
             )
         }
@@ -2144,6 +2164,7 @@ fn run_compiled_clause_selection(
                     }),
                     cancel: None,
                     valuation: false,
+                    tape: None,
                 },
             )
         }

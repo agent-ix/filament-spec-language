@@ -63,15 +63,17 @@ enum Mode {
 }
 
 /// Kleene's three values, ordered `False < Unknown < True`.
-#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
-enum Tri {
+#[derive(
+    Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd, serde::Deserialize, serde::Serialize,
+)]
+pub(super) enum Tri {
     False,
     Unknown,
     True,
 }
 
 impl Tri {
-    fn of(value: bool) -> Self {
+    pub(super) fn of(value: bool) -> Self {
         if value {
             Self::True
         } else {
@@ -79,7 +81,7 @@ impl Tri {
         }
     }
 
-    fn negate(self) -> Self {
+    pub(super) fn negate(self) -> Self {
         match self {
             Self::False => Self::True,
             Self::Unknown => Self::Unknown,
@@ -87,11 +89,11 @@ impl Tri {
         }
     }
 
-    fn and(self, other: Self) -> Self {
+    pub(super) fn and(self, other: Self) -> Self {
         self.min(other)
     }
 
-    fn or(self, other: Self) -> Self {
+    pub(super) fn or(self, other: Self) -> Self {
         self.max(other)
     }
 
@@ -105,7 +107,7 @@ impl Tri {
 }
 
 /// Why evaluation stopped before a value.
-enum Stop {
+pub(super) enum Stop {
     Incomplete(Incomplete),
     /// A condition the clause reads was refused at this position.
     ConditionRefused(TemporalPosition),
@@ -598,6 +600,147 @@ impl LettersRead {
     }
 }
 
+/// Why the reading of one position stopped (ADR-018 UE-1, FR-327 "Refused
+/// condition").
+#[derive(Clone, Debug)]
+pub(super) enum PositionStop {
+    /// An atom, the guard or a capture read undefined there.
+    Undefined(UndefinedEvaluation),
+    /// A condition was refused there.
+    Refused(TemporalPosition),
+}
+
+/// The clause's letter at one position.
+#[derive(Clone, Debug, Default)]
+pub(super) struct PositionLetter {
+    /// The `when` condition's truth, for a guarded clause.
+    pub(super) when: Option<bool>,
+    /// Each atom read, by formula node, in clause-node order; a reading that
+    /// stopped holds the atoms read before it.
+    pub(super) atoms: Vec<(usize, Tri)>,
+    /// Whether some atom there held too little data.
+    pub(super) short: bool,
+    /// The first atom there short of data.
+    pub(super) insufficient: Option<InsufficientDataEvaluation>,
+    /// Why the reading stopped there.
+    pub(super) stop: Option<PositionStop>,
+}
+
+/// What reading one position needs of the clause: its formula, the plan's
+/// atoms, whether its activation has a guard and where its captures are
+/// fixed.
+#[derive(Clone, Copy)]
+pub(super) struct PositionReader<'a> {
+    pub(super) formula: &'a CheckedFormula,
+    pub(super) atoms: &'a [usize],
+    pub(super) guarded: bool,
+    pub(super) captured: CaptureSite,
+}
+
+impl PositionReader<'_> {
+    /// Read the clause's letter at `index` from `source`, which holds it at
+    /// `at`: the `when` condition when the activation has one, the captures
+    /// at an activation, then each atom in clause-node order, one work unit
+    /// each. The reading stops at the first undefined guard or capture, at a
+    /// refused condition, and after the position's atoms when one of them is
+    /// undefined; an atom undefined earlier in clause-node order at the same
+    /// position is returned in place of a refused one.
+    pub(super) fn read<L: TemporalLetters>(
+        &self,
+        source: &mut L,
+        at: TemporalPosition,
+        index: TemporalPosition,
+        meter: &mut Meter,
+    ) -> Result<PositionLetter, Stop> {
+        let undefined = |cause| PositionStop::Undefined(UndefinedEvaluation { at: index, cause });
+        let mut letter = PositionLetter::default();
+        let mut activates = true;
+        if self.guarded {
+            let reading = match source.activation(at, meter) {
+                Err(LetterStop::Refused) => {
+                    letter.stop = Some(PositionStop::Refused(index));
+                    return Ok(letter);
+                }
+                other => other?,
+            };
+            match reading {
+                AtomReading::True => letter.when = Some(true),
+                AtomReading::False => {
+                    letter.when = Some(false);
+                    activates = false;
+                }
+                AtomReading::Undefined(cause) => {
+                    letter.stop = Some(undefined(cause));
+                    return Ok(letter);
+                }
+            }
+        }
+        // FR-337 "Capture observation": the captures are fixed once, at an
+        // activation: position 0 of an `on origin` clause, each position an
+        // `on each` clause's guard admits.
+        let activation_position = match self.captured {
+            CaptureSite::Never => false,
+            CaptureSite::Origin => index.index() == 0,
+            CaptureSite::Activations => true,
+        };
+        if activates && activation_position {
+            let reading = match source.captures(at, meter) {
+                Err(LetterStop::Refused) => {
+                    letter.stop = Some(PositionStop::Refused(index));
+                    return Ok(letter);
+                }
+                other => other?,
+            };
+            if let CaptureReading::Undefined { cause, .. } = reading {
+                letter.stop = Some(undefined(cause));
+                return Ok(letter);
+            }
+        }
+        let mut undefined_here = None;
+        for &node in self.atoms {
+            meter.charge(Charge::new(VISIT))?;
+            let id = self
+                .formula
+                .node_id(node)
+                .ok_or_else(|| fault("atom-has-node-id"))?;
+            let reading = match source.atom(id, at, meter) {
+                Err(LetterStop::Refused) => {
+                    letter.stop = Some(match undefined_here {
+                        Some(cause) => undefined(cause),
+                        None => PositionStop::Refused(index),
+                    });
+                    return Ok(letter);
+                }
+                other => other?,
+            };
+            match reading {
+                AtomReading::True => letter.atoms.push((node, Tri::True)),
+                AtomReading::False => letter.atoms.push((node, Tri::False)),
+                AtomReading::Undefined(UndefinedCause::InsufficientData(data)) => {
+                    letter.short = true;
+                    letter.atoms.push((node, Tri::Unknown));
+                    if letter.insufficient.is_none() {
+                        letter.insufficient = Some(InsufficientDataEvaluation {
+                            at: index,
+                            atom: id,
+                            data,
+                        });
+                    }
+                }
+                AtomReading::Undefined(cause) => {
+                    if undefined_here.is_none() {
+                        undefined_here = Some(cause);
+                    }
+                }
+            }
+        }
+        if let Some(cause) = undefined_here {
+            letter.stop = Some(undefined(cause));
+        }
+        Ok(letter)
+    }
+}
+
 struct Evaluator<'a> {
     formula: &'a CheckedFormula,
     plan: Plan,
@@ -677,19 +820,9 @@ impl<'a> Evaluator<'a> {
         Ok(())
     }
 
-    fn undefined(at: u64, cause: UndefinedCause) -> UndefinedEvaluation {
-        UndefinedEvaluation {
-            at: TemporalPosition::new(at),
-            cause,
-        }
-    }
-
-    /// Read the clause's letter at positions `0..read` (ADR-018 UE-1): the
-    /// `when` condition when the activation has one, then each atom in
-    /// clause-node order. Stops at the first position with an undefined
-    /// atom, and at the first condition the letter reports refused (FR-327
-    /// "Refused condition"): an atom undefined earlier in clause-node order
-    /// at the same position is returned instead.
+    /// Read the clause's letter at positions `0..read` (ADR-018 UE-1), one
+    /// position at a time through [`read_position`], stopping at the first
+    /// position whose reading stopped.
     fn read_letters<L: TemporalLetters>(
         &mut self,
         source: &mut L,
@@ -699,96 +832,35 @@ impl<'a> Evaluator<'a> {
         whens: &mut HashMap<u64, bool>,
     ) -> Result<LettersRead, Stop> {
         let mut insufficient = None;
+        let reader = PositionReader {
+            formula: self.formula,
+            atoms: &self.plan.atoms,
+            guarded,
+            captured,
+        };
         for position in 0..read {
             let at = TemporalPosition::new(position);
-            let mut activates = true;
-            if guarded {
-                let reading = match source.activation(at, &mut *self.meter) {
-                    Err(LetterStop::Refused) => return Ok(LettersRead::refused(at, insufficient)),
-                    other => other?,
-                };
-                match reading {
-                    AtomReading::True => {
-                        whens.insert(position, true);
-                    }
-                    AtomReading::False => {
-                        whens.insert(position, false);
-                        activates = false;
-                    }
-                    AtomReading::Undefined(cause) => {
-                        return Ok(LettersRead::undefined(
-                            Self::undefined(position, cause),
-                            insufficient,
-                        ))
-                    }
-                }
+            let letter = reader.read(source, at, at, &mut *self.meter)?;
+            if let Some(when) = letter.when {
+                whens.insert(position, when);
             }
-            // FR-337 "Capture observation": the captures are fixed once, at
-            // an activation: position 0 of an `on origin` clause, each
-            // position an `on each` clause's guard admits.
-            let activation_position = match captured {
-                CaptureSite::Never => false,
-                CaptureSite::Origin => position == 0,
-                CaptureSite::Activations => true,
-            };
-            if activates && activation_position {
-                let reading = match source.captures(at, &mut *self.meter) {
-                    Err(LetterStop::Refused) => return Ok(LettersRead::refused(at, insufficient)),
-                    other => other?,
-                };
-                if let CaptureReading::Undefined { cause, .. } = reading {
-                    return Ok(LettersRead::undefined(
-                        Self::undefined(position, cause),
-                        insufficient,
-                    ));
-                }
+            for (node, value) in letter.atoms {
+                self.letters.insert((node, position), value);
             }
-            let mut undefined_at_position = None;
-            for index in 0..self.plan.atoms.len() {
-                let node = slot(&self.plan.atoms, index)?;
-                self.charge()?;
-                let id = self
-                    .formula
-                    .node_id(node)
-                    .ok_or_else(|| fault("atom-has-node-id"))?;
-                let reading = match source.atom(id, at, &mut *self.meter) {
-                    Err(LetterStop::Refused) => {
-                        return Ok(match undefined_at_position {
-                            Some(cause) => LettersRead::undefined(
-                                Self::undefined(position, cause),
-                                insufficient,
-                            ),
-                            None => LettersRead::refused(at, insufficient),
-                        })
-                    }
-                    other => other?,
-                };
-                match reading {
-                    AtomReading::True => {
-                        self.letters.insert((node, position), Tri::True);
-                    }
-                    AtomReading::False => {
-                        self.letters.insert((node, position), Tri::False);
-                    }
-                    AtomReading::Undefined(UndefinedCause::InsufficientData(data)) => {
-                        self.insufficient_positions.insert(position);
-                        self.letters.insert((node, position), Tri::Unknown);
-                        if insufficient.is_none() {
-                            insufficient = Some(InsufficientDataEvaluation { at, atom: id, data });
-                        }
-                    }
-                    AtomReading::Undefined(cause) => {
-                        if undefined_at_position.is_none() {
-                            undefined_at_position = Some(cause);
-                        }
-                    }
-                }
+            if letter.short {
+                self.insufficient_positions.insert(position);
             }
-            if let Some(cause) = undefined_at_position {
-                return Ok(LettersRead::undefined(
-                    Self::undefined(position, cause),
-                    insufficient,
-                ));
+            if insufficient.is_none() {
+                insufficient = letter.insufficient;
+            }
+            match letter.stop {
+                None => {}
+                Some(PositionStop::Undefined(undefined)) => {
+                    return Ok(LettersRead::undefined(undefined, insufficient))
+                }
+                Some(PositionStop::Refused(at)) => {
+                    return Ok(LettersRead::refused(at, insufficient))
+                }
             }
         }
         Ok(LettersRead {

@@ -88,34 +88,34 @@ use filament_exact::Cancel;
 use filament_semantic_value::catalog::InternalFault;
 use filament_semantic_value::semantic_node::IdentityRefusal;
 use fsl_cst::Limits as SourceLimits;
-use fsl_forms::{FormsRefusal, ParsedUnit, parse_clause_text};
-use fsl_foundation::Setting;
-use fsl_foundation::SyntaxLimit;
+use fsl_forms::{parse_clause_text, FormsRefusal, ParsedUnit};
 use fsl_foundation::diagnostic::{LimitExceeded, Locus, StageFailure, StageWork, Staged};
 use fsl_foundation::selection::ImportSelection;
-use fsl_foundation::source::Source;
 use fsl_foundation::source::provenance::{RawSourceRef, SourceRegion};
+use fsl_foundation::source::Source;
+use fsl_foundation::Setting;
+use fsl_foundation::SyntaxLimit;
 use fsl_foundation::{Code, SourceIdentity};
 use fsl_package as pkg;
-use fsl_package::{AdmittedPackages, Emission, Import, ImportViewRefusal, read_import_view};
+use fsl_package::{read_import_view, AdmittedPackages, Emission, Import, ImportViewRefusal};
 use fsl_semantics::check::{
-    AdmittedImport, AssemblyCause, AssemblyError, CheckCause, CheckRefusal, CorrespondenceConflict,
-    KeyFault, PackageDeclarations, resolve_profiles,
+    resolve_profiles, AdmittedImport, AssemblyCause, AssemblyError, CheckCause, CheckRefusal,
+    CorrespondenceConflict, KeyFault, PackageDeclarations,
 };
 use fsl_semantics::library::extension::{CoreVocabulary, HeldExtensions};
 use fsl_semantics::library::{ImportView, LibraryName};
 use fsl_semantics::model::accounting::ModelNormalizationLimits;
 use fsl_semantics::model::intake::{
-    SelectedModel, SelectedModels, UnitIntakeCause, admit_unit_with_cancel, admit_units_with_cancel,
+    admit_unit_with_cancel, admit_units_with_cancel, SelectedModel, SelectedModels, UnitIntakeCause,
 };
 use fsl_semantics::value::identity_limit;
 
 use super::subject::StaticSubjectInput;
-use super::{BuildProvenance, StaticSubject, SubjectUnavailable};
 use super::{
-    CompileRefusal, DependencyInput, ImportRefusal, SpineLimits, SuppliedLibrary, UnitListRefusal,
-    region,
+    region, CompileRefusal, DependencyInput, ImportRefusal, SpineLimits, SuppliedLibrary,
+    UnitListRefusal,
 };
+use super::{BuildProvenance, StaticSubject, SubjectUnavailable};
 
 /// What a front-end operation returns when it produces no output: the
 /// stage's refusal, a reached limit, a cancellation or a fault.
