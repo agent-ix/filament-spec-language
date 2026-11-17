@@ -432,8 +432,8 @@ fn emit_and_read_back(body: &str, law: Option<&AdmittedIntegerDivision>) -> serd
     }
 }
 
-/// The wire's node of `form` and `tag` whose semantic type's key ends with
-/// `max` followed by `maximum`.
+/// How many emitted `bounded_domain` nodes have an identity path ending in
+/// `maximum`, the interval maximum an `if`'s checked hull would carry.
 fn bounded_domains_ending(wire: &serde_json::Value, maximum: &str) -> usize {
     wire["semantic_graph"]["nodes"]
         .as_array()
@@ -449,6 +449,61 @@ fn bounded_domains_ending(wire: &serde_json::Value, maximum: &str) -> usize {
         .count()
 }
 
+/// The equality of `wire` has one decision, and the decision at the position
+/// of its integer division operand names the builtin `Integer` node as that
+/// operand's source type, which is also the division application's own type.
+fn assert_division_operand_compared_at_integer(body: &str, wire: &serde_json::Value) {
+    let mut wire = wire.clone();
+    fsl_semantics::check::wire_id::resolve_operand_slots(&mut wire)
+        .expect("every operand slot names a row entry");
+    let nodes = wire["semantic_graph"]["nodes"].as_array().unwrap();
+    let integer = nodes
+        .iter()
+        .find(|node| node["node_tag"] == "scalar_type" && node["semantic_form"] == "integer")
+        .map(|node| node["node_id"].clone())
+        .expect("the builtin Integer node");
+    let equality = nodes
+        .iter()
+        .find(|node| {
+            node["body"]["operation"]["identity"]
+                .as_str()
+                .is_some_and(|id| id.ends_with(".eq") || id.ends_with(".ne"))
+        })
+        .expect("the emitted equality application");
+    let position = equality["body"]["arguments"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .position(|argument| {
+            nodes.iter().any(|node| {
+                node["node_id"] == argument["target"]
+                    && node["body"]["operation"]["identity"]
+                        .as_str()
+                        .is_some_and(|id| {
+                            ["mod", "div", "rem"]
+                                .iter()
+                                .any(|op| id == format!("filament.op.integer.{op}"))
+                        })
+            })
+        })
+        .unwrap_or_else(|| panic!("{body}: a division operand of the equality"));
+    let division = nodes
+        .iter()
+        .find(|node| node["node_id"] == equality["body"]["arguments"][position]["target"])
+        .unwrap();
+    assert_eq!(division["semantic_type"], integer, "{body}: division type");
+    let decisions = wire["checked_term_data"]["equality_decisions"]
+        .as_array()
+        .expect("equality decisions");
+    assert_eq!(decisions.len(), 1, "{body}");
+    let side = if position == 0 { "left" } else { "right" };
+    assert_eq!(decisions[0][side]["operand"], position, "{body}");
+    assert_eq!(
+        decisions[0][side]["source_type"], integer,
+        "{body}: source type of the division operand"
+    );
+}
+
 /// QSL-2361 A: an equality over a `mod` application emits and reads back.
 /// The `mod` application lowers at `Integer`, so the equality decision names
 /// the builtin `Integer` node as that operand's source type, never the
@@ -462,37 +517,16 @@ fn an_equality_over_a_mod_application_emits_and_reads_back() {
         "invariant Unequal using v on Config::ConfigVersion at current { self.versionNumber mod 2 != 1 }",
         "function f1 using v(n: Int[0, 100]): Boolean pure { n mod 2 = 0 }",
         "function f2 using v(n: Integer, a: Int[1, 3]): Boolean pure { n mod a = 0 }",
-        "function f3 using v(n: Int[0, 100], a: Int[1, 3]): Boolean pure { (n mod a) + 1 = 1 }",
+        "function f3 using v(n: Int[0, 100], a: Int[1, 3]): Boolean pure { n mod a = 1 }",
     ] {
-        let wire = emit_and_read_back(body, None);
-        let decisions = wire["checked_term_data"]["equality_decisions"]
-            .as_array()
-            .expect("equality decisions");
-        assert_eq!(decisions.len(), 1, "{body}");
-        let mod_type = wire["semantic_graph"]["nodes"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .find(|node| node["body"]["operation"]["identity"] == "filament.op.integer.mod")
-            .map(|node| node["semantic_type"].clone())
-            .expect("the emitted mod application");
-        if !body.contains(") + 1") {
-            let sources: Vec<_> = ["left", "right"]
-                .iter()
-                .map(|side| decisions[0][side]["source_type"].clone())
-                .collect();
-            assert!(
-                sources.contains(&mod_type),
-                "{body}: an operand's source type is the mod application's own type"
-            );
-        }
+        assert_division_operand_compared_at_integer(body, &emit_and_read_back(body, None));
     }
     let law = selection(DefinitionRole::IntegerDivisionEuclidean);
     for body in [
         "function d using v(n: Int[0, 100], a: Int[1, 3]): Boolean pure { n div a = 0 }",
         "function r using v(n: Int[0, 100], a: Int[1, 3]): Boolean pure { n rem a = 0 }",
     ] {
-        emit_and_read_back(body, Some(&law));
+        assert_division_operand_compared_at_integer(body, &emit_and_read_back(body, Some(&law)));
     }
 }
 

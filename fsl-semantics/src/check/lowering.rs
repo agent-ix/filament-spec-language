@@ -4373,7 +4373,7 @@ impl<'a> Lowering<'a> {
             // that interval, for its requirement bound; any other node
             // (an `if`, a `case`, a read of a division-bound local) must not
             // build an interval type node nothing names, for no occurrence
-            // places it (FR-495-AC-24).
+            // places it (FR-495-AC-25).
             if matches!(node.kind(), NodeKind::IntegerDivision { .. })
                 && matches!(node.value_type(), ValueType::Int(_))
             {
