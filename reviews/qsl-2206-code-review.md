@@ -37,3 +37,16 @@ Disposition round 1 at `b89a5fc7bd3452a7752a1538dd66ab1003ac4f22`:
 ## Verdict
 
 Not mergeable under the review findings: FND-001 remains open. It is a traceability issue rather than a runtime defect.
+
+Disposition round 2 at `6d89a77dfa1a1fd9da8c5487e40340c7bfff8d11`:
+
+| FND | outcome | reason |
+| --- | --- | --- |
+| FND-001 | fixed | The erroneous trace tag was removed from the negative unbound-name test; the positive recovery evaluation test retains the criterion tags. |
+
+After excerpt:
+
+```rust
+#[test]
+fn a_recovery_predicate_over_an_unbound_name_refuses() {
+```

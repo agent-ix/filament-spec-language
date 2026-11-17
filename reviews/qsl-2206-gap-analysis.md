@@ -47,3 +47,69 @@ Disposition round 1 at `b89a5fc7bd3452a7752a1538dd66ab1003ac4f22`:
 ## Verdict
 
 Not mergeable under the gap findings. FND-001 through FND-003 describe unasserted acceptance behaviors, not merely test style. Targeted test execution cannot establish those missing assertions.
+
+Disposition round 2 at `6d89a77dfa1a1fd9da8c5487e40340c7bfff8d11`:
+
+| FND | outcome | reason |
+| --- | --- | --- |
+| FND-001 | fixed | The test now asserts that the all-recovered claim is false and that its counterexample cend carries `bal` 1. |
+| FND-002 | fixed | The new no-read test checks one cend per registration, no bound record, and verdict parity with the baseline. |
+| FND-003 | fixed | The test replays the carried `bal` 1 counterexample to `unrecovered`, then changes the record to `bal` 0 and verifies `recovered`. |
+
+After excerpt for FND-001:
+
+```rust
+let path = recovery_counterexample_path(&reachable)
+    .expect("bal 1 gives a counterexample to every finish being recovered");
+assert!(!recovery_claim_holds(&reachable));
+let cend = path.last().expect("the counterexample ends at cend");
+assert_eq!(cend["step"], "cend");
+assert_eq!(
+    scalar_text(named_member(&cend["record"], "bal").expect("cend carries its record")),
+    Some("1"),
+    "the counterexample carries the unrecovered bal 1 record"
+);
+```
+
+After excerpt for FND-002:
+
+```rust
+for (transition, _) in cends {
+    cend_count += 1;
+    assert!(
+        transition.binder_record().is_none(),
+        "a no-read cend binds no recovery record"
+    );
+}
+assert!(cend_count > 0, "the fixture reaches cend");
+assert_eq!(
+    recovery_claim_holds(&reachable),
+    baseline_verdict,
+    "adding an unread recovery binder preserves the claim verdict"
+);
+```
+
+After excerpt for FND-003:
+
+```rust
+let mut changed = path;
+assert!(replace_named_scalar(
+    &mut changed.last_mut().expect("cend is the final transition")["record"],
+    "bal",
+    "1",
+    "0"
+));
+let changed_state = replay_transition_path(&replay_system, &changed)
+    .expect("the cend transition with bal 0 replays");
+assert_eq!(
+    registration_status(&changed_state, &registration),
+    Some("recovered"),
+    "changing the carried record to bal 0 no longer reproduces the counterexample"
+);
+```
+
+The additionally reported ignored analyzer fixture remains outside QSL-2206's scope: this ticket's acceptance is for protocol evaluator stepping/refusal behavior, whereas that `fsl-analyze` fixture remains explicitly ignored for analyzer settlement. Its failure is tracked separately and does not block this ticket's evaluator acceptance.
+
+## Round 2 verdict
+
+All findings from both review methods are fixed at the exact final head. The ignored analyzer fixture is out of scope for this ticket. Mergeable on the scoped targeted evidence reported for this head.
