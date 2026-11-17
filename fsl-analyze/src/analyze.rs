@@ -579,6 +579,8 @@ pub enum Counterexample {
     /// FSpec FR-393 refuting evidence when refuted and its witnesses when
     /// proved by one.
     StateGraph(Box<GraphReport>),
+    /// A global-conformance recording prefix, already replayed in process.
+    GlobalConformance(Box<serde_json::Value>),
 }
 
 /// What a state-graph engine run reports for one item (FR-628): the record of
@@ -740,9 +742,10 @@ fn analyze_document_routed_with_conformance(
         .iter()
         .map(|record| {
             let item = analyze_item(record, counterexamples)?;
-            Ok(conformance.get(&record.request_index()).map_or(item.clone(), |output| {
-                item.with_protocol_conformance(output.clone())
-            }))
+            Ok::<_, OutcomeItemError>(match conformance.get(&record.request_index()) {
+                Some(output) => item.with_protocol_conformance(output.clone()),
+                None => item,
+            })
         })
         .collect::<Result<Vec<_>, _>>()?;
     // FR-286: a cancelled request names no stage.
@@ -1402,6 +1405,8 @@ pub struct AnalyzeRecord {
     pub protocol_analysis: Option<Box<crate::protocol_analysis::ProtocolAnalysisArtifact>>,
     /// The FR-990 per-obligation, closure and global conformance result.
     pub protocol_conformance: Option<fsl_replay::ProtocolConformanceOutput>,
+    /// FR-991's replayed protocol or recording counterexample spelling.
+    pub protocol_conformance_counterexample: Option<serde_json::Value>,
     /// The state-graph engine's report (FR-628).
     pub state_graph: Option<Box<GraphReport>>,
     /// The number of steps of a supplied trace a `finite-replay` item
@@ -1437,6 +1442,7 @@ impl AnalyzeRecord {
             replayed_steps: None,
             protocol_analysis: None,
             protocol_conformance: None,
+            protocol_conformance_counterexample: None,
             state_graph: None,
         }
     }
@@ -1469,6 +1475,9 @@ impl AnalyzeRecord {
                 Some(subject) => fsl_replay::protocol_temporal_wire(found, subject, claim),
                 None => Err(CounterexampleWireError::Unspelled("protocol subject")),
             });
+        }
+        if let Some(found) = &self.protocol_conformance_counterexample {
+            return Some(Ok(found.clone()));
         }
         if let Some(found) = &self.value_check {
             let scope = package.graph().scope();
@@ -1504,6 +1513,9 @@ impl AnalyzeRecord {
                 counterexample: Box::new(found),
                 over: self.over_reference.take(),
             });
+        }
+        if let Some(found) = self.protocol_conformance_counterexample.take() {
+            return Some(Counterexample::GlobalConformance(Box::new(found)));
         }
         if let Some(found) = self
             .protocol_check
@@ -1578,7 +1590,11 @@ impl AnalyzeRecord {
         let wire = self.spell(package).transpose();
         Some(
             wire.map_err(OutcomeItemError::from)
-                .and_then(|wire| OutcomeItem::from_analyze(terminal, wire, undefined)),
+                .and_then(|wire| OutcomeItem::from_analyze(terminal, wire, undefined))
+                .map(|item| match &self.protocol_conformance {
+                    Some(output) => item.with_protocol_conformance(output.clone()),
+                    None => item,
+                }),
         )
     }
 }
@@ -2053,6 +2069,7 @@ fn settle(
         }
         EngineReport::GlobalConformance(report) => AnalyzeRecord {
             protocol_conformance: Some(report.output),
+            protocol_conformance_counterexample: report.counterexample,
             ..record(terminal(report.terminal), None)
         },
         EngineReport::Exact(exact) => {

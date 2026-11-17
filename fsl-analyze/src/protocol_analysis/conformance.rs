@@ -10,7 +10,9 @@ use fsl_eval::simulation::protocol::{
 };
 use fsl_eval::simulation::{SubjectSystem, TransitionSystem};
 use fsl_replay::TemporalCounterexample;
-use fsl_replay::{CounterexampleKind, ProtocolConformanceOutput, ReplayLimits, TerminalRecord};
+use fsl_replay::{
+    CounterexampleKind, FamilyPayload, ProtocolConformanceOutput, ReplayLimits, TerminalRecord,
+};
 
 /// The independently settled global-conformance record and its FR-990 output.
 ///
@@ -19,6 +21,7 @@ use fsl_replay::{CounterexampleKind, ProtocolConformanceOutput, ReplayLimits, Te
 pub(crate) struct ConformanceReport {
     pub(crate) terminal: TerminalRecord,
     pub(crate) output: ProtocolConformanceOutput,
+    pub(crate) counterexample: Option<serde_json::Value>,
 }
 
 /// A global-conformance counterexample that can be replayed from a checked subject.
@@ -64,6 +67,15 @@ impl ConformanceReplayRefusal {
             cause: "invalid-value".to_owned(),
             position,
             detail: detail.into(),
+        }
+    }
+
+    fn recording(refusal: super::recording::RecordingRefusal) -> Self {
+        Self {
+            code: refusal.code(),
+            cause: refusal.cause().to_owned(),
+            position: refusal.position(),
+            detail: refusal.to_string(),
         }
     }
 
@@ -144,9 +156,136 @@ pub fn replay_counterexample(
                 }
             }
         }
-        ConformanceCounterexample::Recording { .. } => Ok(ConformanceReplay::ReplayParity {
-            detail: "recording replay is provided by the recording assessment module".to_owned(),
-        }),
+        ConformanceCounterexample::Recording {
+            recording,
+            trace_position,
+        } => {
+            let protocol = subject
+                .model
+                .simulation
+                .package
+                .graph()
+                .protocols()
+                .iter()
+                .find(|protocol| protocol.name == subject.protocol)
+                .ok_or_else(|| {
+                    ConformanceReplayRefusal::invalid(
+                        format!("checked protocol `{}` is absent", subject.protocol),
+                        None,
+                    )
+                })?;
+            fsl_replay::BoundExceeded::check(recording.len(), limits)
+                .map_err(|error| ConformanceReplayRefusal::invalid(error.to_string(), None))?;
+            let assessment = super::recording::assess_recording(protocol, recording)
+                .map_err(ConformanceReplayRefusal::recording)?;
+            if assessment.global.label == "refuted"
+                && assessment.trace_position == Some(*trace_position)
+            {
+                Ok(ConformanceReplay::Reproduced)
+            } else {
+                Ok(ConformanceReplay::ReplayParity {
+                    detail: format!(
+                        "recording assessment was {} at {:?}, expected refuted at {}",
+                        assessment.global.label, assessment.trace_position, trace_position
+                    ),
+                })
+            }
+        }
+    }
+}
+
+/// Convert a recording assessment to the shared FR-990 item representation.
+pub(crate) fn recording_output(
+    assessment: super::recording::RecordingAssessment,
+) -> ProtocolConformanceOutput {
+    use fsl_replay::{
+        ConformanceClosureOutput, ConformanceGlobalOutput, ConformanceObligationOutput,
+    };
+
+    ProtocolConformanceOutput {
+        obligations: assessment
+            .obligations
+            .into_iter()
+            .map(|obligation| ConformanceObligationOutput {
+                obligation: serde_json::to_value(obligation.obligation)
+                    .expect("recording obligation IDs serialize"),
+                verdict: match obligation.verdict {
+                    super::recording::RecordingVerdict::Satisfied => "satisfied",
+                    super::recording::RecordingVerdict::Violated => "violated",
+                    super::recording::RecordingVerdict::Pending => "pending",
+                }
+                .to_owned(),
+                cause: obligation
+                    .cause
+                    .map(|cause| serde_json::to_value(cause).expect("recording causes serialize"))
+                    .and_then(|cause| cause.as_str().map(str::to_owned)),
+                basis: "recording".to_owned(),
+                witness: (!obligation.witness.is_empty())
+                    .then(|| serde_json::json!(obligation.witness)),
+            })
+            .collect(),
+        closure: ConformanceClosureOutput {
+            state: assessment.closure.state,
+            premises: assessment
+                .closure
+                .premises
+                .into_iter()
+                .map(|premise| serde_json::to_value(premise).expect("premises serialize"))
+                .collect(),
+            producer: assessment.closure.producer.to_owned(),
+        },
+        global: ConformanceGlobalOutput {
+            label: assessment.global.label,
+            basis: assessment.global.basis,
+            complete: assessment.global.complete,
+            cause: assessment.global.cause,
+        },
+        projections: None,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use ix_trace_rs::trace;
+
+    use super::*;
+
+    #[trace("TC-2805", "FR-990-AC-1")]
+    #[test]
+    fn recording_assessment_maps_to_the_shared_conformance_output() {
+        let output = recording_output(super::super::recording::RecordingAssessment {
+            obligations: vec![super::super::recording::RecordingObligation {
+                obligation: super::super::recording::RecordingObligationId {
+                    kind: "enabledness".to_owned(),
+                    node: Some("Flow::Main::Ship".to_owned()),
+                    instance: Some("w-1".to_owned()),
+                },
+                verdict: super::super::recording::RecordingVerdict::Violated,
+                cause: Some(super::super::recording::RecordingCause::Unexpected),
+                witness: vec![3],
+            }],
+            closure: super::super::recording::RecordingClosure {
+                state: "open".to_owned(),
+                premises: Vec::new(),
+                producer: "recording",
+            },
+            global: super::super::recording::RecordingGlobalResult {
+                label: "refuted".to_owned(),
+                basis: "violation".to_owned(),
+                complete: false,
+                cause: Some("violation".to_owned()),
+            },
+            trace_position: Some(3),
+        });
+
+        assert_eq!(output.obligations[0].verdict, "violated");
+        assert_eq!(output.obligations[0].cause.as_deref(), Some("unexpected"));
+        assert_eq!(output.obligations[0].witness, Some(serde_json::json!([3])));
+        assert_eq!(output.closure.state, "open");
+        assert_eq!(output.closure.producer, "recording");
+        assert_eq!(output.global.label, "refuted");
+        assert!(!output.global.complete);
+        assert!(output.projections.is_none());
     }
 }
 
@@ -171,9 +310,9 @@ fn replay_protocol<M: fsl_eval::simulation::protocol::MemoryModel>(
                 Some(position),
             ));
         }
-        let expansion = system.successors(&state).map_err(|error| {
-            ConformanceReplayRefusal::invalid(error.to_string(), Some(position))
-        })?;
+        let expansion = system
+            .successors(&state)
+            .map_err(|error| ConformanceReplayRefusal::invalid(format!("{error:?}"), Some(position)))?;
         let mut matched_identity = false;
         let mut next = None;
         for (transition, candidate) in expansion.successors {
@@ -203,7 +342,7 @@ fn replay_protocol<M: fsl_eval::simulation::protocol::MemoryModel>(
             .successors(&state)
             .map_err(|error| {
                 ConformanceReplayRefusal::invalid(
-                    error.to_string(),
+                format!("{error:?}"),
                     Some(counterexample.prefix.len()),
                 )
             })?

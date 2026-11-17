@@ -167,6 +167,27 @@ fn read<'d>(
             ));
         }
     }
+    for (position, recording) in request
+        .items
+        .iter()
+        .flatten()
+        .enumerate()
+        .filter_map(|(position, item)| {
+            item.recording
+                .as_ref()
+                .map(|recording| (position, recording))
+        })
+    {
+        if !documents.contains_key(&recording.reference()) {
+            return Err(invalid(
+                "items",
+                format!(
+                    "items[{position}].recording {{{}, {}}} names no provisioned document",
+                    recording.authority, recording.identity
+                ),
+            ));
+        }
+    }
     let mut limits = AnalyzeLimits::unbounded();
     let mut accounting = fsl_replay::AccountingLimits(limits.accounting);
     for (setting, bound) in request.limits.accounting.entries() {

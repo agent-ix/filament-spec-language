@@ -95,6 +95,8 @@ pub struct ItemOptions {
     pub max_cases: Option<std::num::NonZeroU64>,
     /// The provisioned document a `finite-replay` item replays.
     pub trace: Option<fsl_semantics::model::observation::DocumentRef>,
+    /// The provisioned FR-737 execution assessed by `global-conformance`.
+    pub recording: Option<fsl_semantics::model::observation::DocumentRef>,
     /// The named backend's options (FSpec FR-196, FR-331 `options`),
     /// each one the backend publishes (FR-967); empty when none are given.
     pub backend_options: std::collections::BTreeMap<String, String>,
@@ -707,6 +709,9 @@ fn work<'a>(
         _ => absent(),
     };
     let expected = match &item.form {
+        _ if item.kind == Capability::GlobalConformance => {
+            Some(crate::protocol_analysis::manifest::BACKEND_ID)
+        }
         Some(ItemForm::Temporal(_)) if super::document::is_state_graph(package, &item.claim) => {
             Some(crate::model_check::manifest::BACKEND_ID)
         }
