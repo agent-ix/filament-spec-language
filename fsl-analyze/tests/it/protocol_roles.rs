@@ -2296,15 +2296,15 @@ fn an_attempt_binder_is_bound() {
     }));
 }
 
-/// FR-882-AC-4: S3 refuses an attempt result binder whose type differs from
-/// the operation result, and one supplied for an operation with no result.
+/// FR-882-AC-4: S3 refuses even an unused attempt result binder whose type
+/// differs from the operation result, or whose operation has no result.
 #[trace("TC-2506", "FR-882-AC-4")]
 #[test]
 fn attempt_result_binders_must_match_the_operation_result_at_s3() {
     fn refusal_for(operation: &str, contracts: &str, binder_type: &str) -> (CheckCause, String) {
         let run = format!(
             "sequence Main {{ attempt T by w on M::Cell::{operation} contracts [{contracts}] \
-             as (t: {binder_type}) {{ true }}; check Gate using v {{ t = t }}; }}"
+             as (t: {binder_type}) {{ true }}; }}"
         );
         let refusals = check_refusals(&unit(ORIGIN, "", "", &run));
         let [(refusal, Some(at))] = refusals.as_slice() else {

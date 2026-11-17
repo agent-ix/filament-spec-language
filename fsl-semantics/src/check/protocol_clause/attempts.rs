@@ -45,11 +45,7 @@ pub(super) fn bind_attempts(
     for (index, attempt_decl) in attempts.iter().enumerate() {
         let form = &protocol.attempts[index];
         if let Some(binder) = super::record_binder(protocol, attempt_decl.declaration) {
-            if binder.kind == BinderKind::RecordBinder
-                && protocol.bodies.iter().any(|body| {
-                    expression_reads_name(&body.expression.expression, &binder.name.name)
-                })
-            {
+            if binder.kind == BinderKind::RecordBinder {
                 if let Ok(actual_result) =
                     crate::check::type_form::resolve_form(type_names, &binder.value_type)
                 {
@@ -144,18 +140,4 @@ pub(super) fn bind_attempts(
         });
     }
     (bound, refusals)
-}
-
-/// Whether `expression` reads the name `name` as a protocol-local value.
-fn expression_reads_name(expression: &fsl_forms::Expression, name: &str) -> bool {
-    let mut pending = vec![expression.root()];
-    while let Some(node) = pending.pop() {
-        if let fsl_forms::ExprNode::Name(found) = node.node() {
-            if found.name == name {
-                return true;
-            }
-        }
-        pending.extend(node.children());
-    }
-    false
 }
