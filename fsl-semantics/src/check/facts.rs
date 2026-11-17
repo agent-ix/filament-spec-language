@@ -292,6 +292,50 @@ impl Interval {
     }
 }
 
+/// FR-146's tight positive rational result interval. For positive addition and
+/// multiplication, reduction can shrink the numerator to one but cannot
+/// introduce zero. This local rule is planned for removal under QSL-2371 when
+/// the shared exact-kernel contract is extended.
+pub(super) fn rational_result_of(
+    left: &RationalDomain,
+    operator: ArithmeticOperator,
+    right: &RationalDomain,
+) -> RationalDomain {
+    if !matches!(
+        operator,
+        ArithmeticOperator::Add | ArithmeticOperator::Multiply
+    ) || left.numerator().lower() <= &Integer::zero()
+        || right.numerator().lower() <= &Integer::zero()
+    {
+        return left.result_of(operator, right);
+    }
+
+    let raw_numerator = match operator {
+        ArithmeticOperator::Multiply => {
+            Interval::of_domain(left.numerator()).mul(&Interval::of_domain(right.numerator()))
+        }
+        ArithmeticOperator::Add => Interval::of_domain(left.numerator())
+            .mul(&Interval::of_domain(right.denominator()))
+            .add(
+                &Interval::of_domain(right.numerator())
+                    .mul(&Interval::of_domain(left.denominator())),
+            ),
+        ArithmeticOperator::Subtract | ArithmeticOperator::Divide => {
+            return left.result_of(operator, right);
+        }
+    };
+    let End::Finite(raw_upper) = raw_numerator.upper else {
+        return left.result_of(operator, right);
+    };
+    let raw_denominator_upper = left.denominator().upper().mul(right.denominator().upper());
+    let numerator = IntegerInterval::new(Integer::one(), raw_upper);
+    let denominator = IntegerInterval::new(Integer::one(), raw_denominator_upper);
+    let (Ok(numerator), Ok(denominator)) = (numerator, denominator) else {
+        return left.result_of(operator, right);
+    };
+    RationalDomain::new(numerator, denominator).unwrap_or_else(|_| left.result_of(operator, right))
+}
+
 fn declared(value_type: &ValueType) -> Interval {
     match value_type {
         ValueType::Int(domain) => Interval::of_domain(domain),
