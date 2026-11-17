@@ -465,7 +465,7 @@ fn run_error_exposes_admitted_sources_for_text_rendering() {
         b"rule value = true;\n",
         128,
     )
-    .expect("fixture source is admitted");
+    .unwrap_or_else(|_| panic!("fixture source is admitted"));
     let error = command::RunError {
         cause: command::RunCause::SpineRun(Box::new(spine::RunRefusal::Cancelled(
             filament_exact::CancelCause::Requested,
