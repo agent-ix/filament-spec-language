@@ -62,7 +62,7 @@ fn a_population_query_type_argument_names_the_declared_type_requirement() {
             parsed.diagnostics()
         );
         let formatted = fsl_cst::format::format(&parsed).expect("accepted query formats");
-        let reparsed = parse(&formatted).expect("formatted source is valid UTF-8");
+        let reparsed = parse(formatted.as_bytes()).expect("formatted source is valid UTF-8");
         assert!(
             reparsed.is_admissible(),
             "{expression}: {:?}",
