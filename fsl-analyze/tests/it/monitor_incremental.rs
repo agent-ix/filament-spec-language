@@ -1953,6 +1953,24 @@ fn a_long_stream_keeps_only_the_values_its_clauses_read() {
         }
         if k < 9 {
             assert!(!step.statuses[2].1.is_settled(), "Recent at step {}", k + 1);
+            // FR-643-AC-9: `Recent`'s state holds `min(k, 4)` values after
+            // step `k`, the window of its newest position.
+            let state: serde_json::Value =
+                serde_json::from_slice(session.checkpoint().expect("checkpoints").as_bytes())
+                    .expect("JSON");
+            let recent: serde_json::Value = serde_json::from_str(
+                state["clauses"][2]["state"]
+                    .as_str()
+                    .expect("Recent's unsettled state"),
+            )
+            .expect("a clause state");
+            assert_eq!(recent["clause"], "Recent");
+            assert_eq!(
+                recent["values"].as_array().map(Vec::len),
+                usize::try_from((k + 1).min(4)).ok(),
+                "Recent at step {}",
+                k + 1
+            );
         }
         last = Some(step);
     }
@@ -2843,5 +2861,243 @@ fn a_progressed_snapshot_state_reports_the_batch_report() {
         if name == "Small" {
             assert!(state.report().decisive.is_some(), "{:?}", state.report());
         }
+    }
+}
+
+/// How many sample values `bytes` (or a report's debug form) spell: each
+/// sample's canonical text names its `level` member.
+fn spelled_samples(text: &str) -> usize {
+    text.matches(r#"\"level\""#).count()
+}
+
+/// FR-330-AC-18, FR-643 Decision, FR-820 "Identities" (TC-2320): every
+/// reading of a record-sample trace cites each position by its index, never
+/// by its value. Over equal samples at many positions, each state's bytes
+/// name every position by its index, spell no more sample values than
+/// `retained()` counts, and every report, its ledger and finite-window
+/// record included, spells none, while each report still equals FR-330's
+/// over the prefix. The readings: the trace-subject (`Past`), the
+/// infinite-trace streamed (`Below`), the fixed-sample streamed (`Sampled`),
+/// and, opened from a ledger, the refused infinite-trace reading (`Below`)
+/// and the `Finite` observed fixed-sample reading (`Sampled`), and the observed
+/// `Progressed` (`Past`) and `Timestamped` (`Window`) readings.
+#[test]
+#[trace("TC-2320", "FR-820-AC-1", "FR-643-AC-9", "FR-330-AC-18")]
+fn every_reading_cites_its_samples_by_index() {
+    let world = world();
+    let cancel = Cancel::new();
+    let count: u64 = 30;
+    let level = |index: u64| i64::try_from(index % 3).expect("a level");
+    let check = |name: &str, state: &ClauseState<'_>, report: &ClauseRunReport, at: u64| {
+        let bytes = String::from_utf8(state.to_bytes().expect("bytes")).expect("UTF-8");
+        let carried: serde_json::Value = serde_json::from_str(&bytes).expect("JSON");
+        for (index, position) in carried["positions"]
+            .as_array()
+            .expect("positions")
+            .iter()
+            .enumerate()
+        {
+            assert_eq!(
+                position["identity"],
+                index.to_string(),
+                "{name} at {at}: {position}"
+            );
+        }
+        let retained = usize::try_from(state.retained()).expect("a count");
+        assert!(
+            spelled_samples(&bytes) <= retained,
+            "{name} at {at}: {} spelled, {retained} retained: {bytes}",
+            spelled_samples(&bytes)
+        );
+        let debug = format!("{report:?}");
+        assert_eq!(spelled_samples(&debug), 0, "{name} at {at}: {debug}");
+    };
+
+    for (name, ledgered) in [
+        ("Past", false),
+        ("Below", false),
+        ("Sampled", false),
+        ("Below", true),
+        ("Sampled", true),
+    ] {
+        let ledger = ledgered.then(spine::ProgressLedger::new);
+        let mut state = ledger_state(&world, name, ledger.clone());
+        let mut documents = Vec::new();
+        for index in 0..count {
+            let observed = text(level(index));
+            documents.push(spine::sample_position(&observed));
+            let advance = state
+                .advance(admitted(&world, name, &observed, index), &cancel)
+                .expect("advances");
+            check(name, &state, &advance.report, index);
+            if let Some(decided) = &advance.decided {
+                check(name, &state, decided, index);
+            }
+            let trace = TraceInput::Finite(documents.clone());
+            assert_eq!(
+                members(&advance.report),
+                members(&batch_from(&world, name, &trace, ledger.as_ref())),
+                "{name} (ledger {ledgered}) at {index}"
+            );
+        }
+    }
+
+    // Observed `Progressed`: the ledger names each position by its index.
+    let mut state = ClauseState::open(
+        world.unit.package(),
+        clause_node(&world, "Past"),
+        &clause_open(
+            &world,
+            ClauseTraceKind::Progressed,
+            Some(events_binding()),
+            ProgressLowerBoundary::AuthoritativeOrigin,
+        ),
+    )
+    .expect("opens");
+    let mut documents = Vec::new();
+    for index in 0..count {
+        let observed = text(level(index));
+        state
+            .advance(admitted(&world, "Past", &observed, index), &cancel)
+            .expect("advances");
+        documents.push(spine::sample_position(&observed));
+        let advance = state
+            .assert_progress(&progress(index), &cancel)
+            .expect("progress");
+        check("Past (progressed)", &state, &advance.report, index);
+        let ledger = advance.report.ledger.as_ref().expect("a ledger");
+        let identities: Vec<String> = ledger
+            .entries()
+            .flat_map(|(_, entry)| entry.covered().map(|position| position.identity))
+            .collect();
+        assert_eq!(identities.len(), documents.len(), "{identities:?}");
+        let trace = TraceInput::Progressed {
+            trace: documents.clone(),
+            progress: progress(index),
+            lower_boundary: ProgressLowerBoundary::AuthoritativeOrigin,
+            binding: events_binding(),
+        };
+        assert_eq!(
+            members(&advance.report),
+            members(&batch_over(&world, "Past", &trace)),
+            "Past (progressed) at {index}"
+        );
+    }
+
+    // Observed `Timestamped`: equal samples share a stamp; a sample is named
+    // by its text only until progress covers it, counted in `retained()`.
+    let mut state = ClauseState::open(
+        world.unit.package(),
+        clause_node(&world, "Window"),
+        &clause_open(
+            &world,
+            ClauseTraceKind::Timestamped,
+            Some(stamped_binding()),
+            ProgressLowerBoundary::AuthoritativeOrigin,
+        ),
+    )
+    .expect("opens");
+    let mut observations = Vec::new();
+    for index in 0..count {
+        let stamp = index / 3;
+        let observed = text(level(index / 3));
+        let mut position = admitted(&world, "Window", &observed, stamp);
+        position.stamp = stamp;
+        state.advance(position, &cancel).expect("advances");
+        observations.push(TimestampedObservation {
+            document: spine::sample_position(&observed),
+            stamp,
+            order_key: None,
+        });
+        if index % 3 != 2 {
+            assert_eq!(state.retained(), index % 3 + 1, "Window at {index}");
+            continue;
+        }
+        let advance = state
+            .assert_progress(&progress(stamp), &cancel)
+            .expect("progress");
+        assert_eq!(state.retained(), 0, "Window at {index}");
+        check("Window", &state, &advance.report, index);
+        let trace = TraceInput::Timestamped {
+            observations: observations.clone(),
+            progress: progress(stamp),
+            window: Box::new(TimestampedWindow {
+                binding: Some(stamped_binding()),
+                authoritative_origin: true,
+                cover: None,
+                missing_valuations: Vec::new(),
+            }),
+        };
+        assert_eq!(
+            members(&advance.report),
+            members(&batch_over(&world, "Window", &trace)),
+            "Window at {index}"
+        );
+    }
+}
+
+/// A `Finite` state of `name` opened from `ledger`.
+fn ledger_state<'a>(
+    world: &'a World,
+    name: &str,
+    ledger: Option<spine::ProgressLedger>,
+) -> ClauseState<'a> {
+    let mut open = clause_open(
+        world,
+        ClauseTraceKind::Finite,
+        None,
+        ProgressLowerBoundary::AuthoritativeOrigin,
+    );
+    open.ledger = ledger;
+    ClauseState::open(world.unit.package(), clause_node(world, name), &open).expect("opens")
+}
+
+/// FR-820 "Summarized positions" (TC-2320): the `Finite` states the observed
+/// reading carried before, those opened from a ledger, do flat work per step.
+/// FR-330 refuses a ledger over a `Finite` trace before it reads a position;
+/// the infinite-trace state (`Below`) runs that refusal over one position and
+/// holds none, and the fixed-sample state (`Sampled`) carries its `decided`
+/// open-scope reading. Over 200 positions the last steps' work is at most
+/// twice the first steps', and each report equals FR-330's over the prefix.
+#[test]
+#[trace("TC-2320", "FR-820-AC-1", "FR-820-AC-2")]
+fn a_finite_observed_state_does_flat_work_per_step() {
+    let world = world();
+    let cancel = Cancel::new();
+    let count: u64 = 200;
+    let ledger = spine::ProgressLedger::new();
+    for name in ["Below", "Sampled"] {
+        let mut state = ledger_state(&world, name, Some(ledger.clone()));
+        let mut documents = Vec::new();
+        let mut steps = Vec::new();
+        for index in 0..count {
+            let value = i64::try_from(index % 7).expect("a level");
+            let observed = text(value);
+            documents.push(spine::sample_position(&observed));
+            let advance = state
+                .advance(admitted(&world, name, &observed, index), &cancel)
+                .expect("advances");
+            let decided = advance.decided.as_ref().map_or(0, |decided| {
+                decided.usage.temporal_visits + work(&decided.usage)
+            });
+            steps.push(
+                advance.report.usage.temporal_visits
+                    + advance.report.usage.trace_positions
+                    + work(&advance.report.usage)
+                    + decided,
+            );
+            assert_eq!(state.retained(), 0, "{name} at {index}");
+            if index % 50 == 0 || index == count - 1 {
+                let trace = TraceInput::Finite(documents.clone());
+                assert_eq!(
+                    members(&advance.report),
+                    members(&batch_from(&world, name, &trace, Some(&ledger))),
+                    "{name} at {index}"
+                );
+            }
+        }
+        let early = steps[1..11].iter().max().copied().unwrap_or(0);
+        let late = steps[steps.len() - 10..].iter().max().copied().unwrap_or(0);
+        assert!(late <= early.max(1) * 2, "{name}: {steps:?}");
     }
 }

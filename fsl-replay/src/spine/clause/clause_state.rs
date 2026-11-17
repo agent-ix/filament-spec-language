@@ -188,6 +188,12 @@ enum Reading {
     Snapshot,
     /// Every position held by value.
     Values,
+    /// FR-330 refuses the run before it reads a position: an infinite-trace
+    /// clause over a `Finite` trace of record samples with a window aggregate
+    /// or a ledger, or a profile that does not read a `Finite` trace. The
+    /// refusal names no position, so one position stands for the prefix and
+    /// no position is held.
+    Refused,
 }
 
 impl Reading {
@@ -198,6 +204,7 @@ impl Reading {
             Self::Streamed => "streamed",
             Self::Snapshot => "snapshot",
             Self::Values => "values",
+            Self::Refused => "refused",
         }
     }
 }
@@ -457,6 +464,13 @@ impl<'a> ClauseState<'a> {
                 ClauseTraceKind::Finite,
                 TemporalProfile::InfiniteTrace | TemporalProfile::FixedSampleFalseExtension,
             ) if !aggregates && request.ledger.is_none() => Reading::Streamed,
+            (
+                true,
+                ClauseTraceKind::Finite,
+                TemporalProfile::InfiniteTrace
+                | TemporalProfile::TimestampedEventFiniteWindow
+                | TemporalProfile::Timed,
+            ) => Reading::Refused,
             (true, ..) => Reading::Observed,
         };
         let mut exhausted = None;
@@ -487,7 +501,7 @@ impl<'a> ClauseState<'a> {
                     Err(_) => None,
                 }
             }
-            Reading::Observed | Reading::Values | Reading::Snapshot => None,
+            Reading::Observed | Reading::Values | Reading::Snapshot | Reading::Refused => None,
         };
         Ok(Self {
             stream,
@@ -684,14 +698,18 @@ impl<'a> ClauseState<'a> {
     }
 
     /// FR-330-AC-18, FR-643 "Retained state": whether the state cites each
-    /// record sample by its index, holding a sample's text only while it holds
-    /// the sample by value. A reading that runs the batch evaluation again
-    /// reads each sample from its position's identity.
+    /// record sample by its index as it arrives, holding a sample's text only
+    /// while it holds the sample by value. A `Timestamped` observed state
+    /// names a sample by its text until progress covers it, because the
+    /// sample's value orders it among the positions of its stamp (FR-501
+    /// "Canonical order"); [`Self::order_covered`] then cites it by index.
+    /// A snapshot is cited by its labels, and the values reading holds every
+    /// position by value.
     fn indexed(&self) -> bool {
         match self.reading {
-            Reading::Subject => true,
-            Reading::Streamed => self.node.clause().profile() == TemporalProfile::InfiniteTrace,
-            Reading::Observed | Reading::Values | Reading::Snapshot => false,
+            Reading::Subject | Reading::Streamed | Reading::Refused => true,
+            Reading::Observed => self.open.kind != ClauseTraceKind::Timestamped,
+            Reading::Values | Reading::Snapshot => false,
         }
     }
 
@@ -707,10 +725,13 @@ impl<'a> ClauseState<'a> {
     /// `reference`: its index, keeping the sample's text while it is held, for
     /// an indexed state.
     fn cite(&mut self, index: u64, reference: DocumentRef) -> DocumentRef {
-        if !self.indexed() {
+        if !self.indexed() || reference.authority != super::temporal::SAMPLE_AUTHORITY {
             return reference;
         }
-        self.texts.insert(index, reference.identity);
+        // A refused run reads no sample, so its text is never needed.
+        if self.reading != Reading::Refused {
+            self.texts.insert(index, reference.identity);
+        }
         index_reference(index)
     }
 
@@ -748,14 +769,15 @@ impl<'a> ClauseState<'a> {
                 }
             }
         }
+        let mut held_text = None;
         if self.lettered() {
             let mut letter_meter = Meter::new(self.open.limits.accounting);
-            self.tape.push(read_sample_letter(
-                self.package,
-                self.node,
-                &sample,
-                &mut letter_meter,
-            ));
+            let entry = read_sample_letter(self.package, self.node, &sample, &mut letter_meter);
+            // A sample the letter did not reduce is held, and its text with it.
+            if matches!(entry, TapeEntry::Held(_)) {
+                held_text = Some(position.reference.identity.clone());
+            }
+            self.tape.push(entry);
         }
         let reference = if self.indexed() {
             index_reference(index)
@@ -789,6 +811,9 @@ impl<'a> ClauseState<'a> {
         self.stop = stop;
         if let (Some((at, _)), Some(text)) = (self.stop.as_ref(), stop_text) {
             self.texts.insert(*at, text);
+        }
+        if let Some(text) = held_text {
+            self.texts.insert(index, text);
         }
         self.exhausted = exhausted;
         self.report = Arc::clone(&report);
@@ -843,9 +868,13 @@ impl<'a> ClauseState<'a> {
     fn read(&mut self, index: u64, sample: Value, step: &mut Meter) {
         let mut meter = Meter::new(self.open.limits.accounting);
         match self.reading {
-            Reading::Values | Reading::Streamed | Reading::Snapshot => {}
+            Reading::Values | Reading::Streamed | Reading::Snapshot | Reading::Refused => {}
             Reading::Observed => {
                 let entry = read_sample_letter(self.package, self.node, &sample, &mut meter);
+                // A sample read into its letter is not held, nor its text.
+                if matches!(entry, TapeEntry::Read(_)) {
+                    self.texts.remove(&index);
+                }
                 self.tape.push(entry);
             }
             Reading::Subject => {
@@ -1200,7 +1229,7 @@ impl<'a> ClauseState<'a> {
         let tape = match self.reading {
             Reading::Values | Reading::Snapshot => None,
             Reading::Streamed if !(open && self.lettered()) => None,
-            Reading::Subject | Reading::Observed | Reading::Streamed => {
+            Reading::Subject | Reading::Observed | Reading::Streamed | Reading::Refused => {
                 let tape = if seen < self.tape.len() {
                     let mut prefix = LetterTape::new();
                     for entry in &self.tape.entries()[..seen] {
@@ -1246,6 +1275,7 @@ impl<'a> ClauseState<'a> {
             Reading::Snapshot if self.open.kind == ClauseTraceKind::Finite => {
                 self.snapshot_finite_report(meter)
             }
+            Reading::Refused => self.refused_report(cancel)?,
             Reading::Observed | Reading::Streamed | Reading::Values | Reading::Snapshot => {
                 let trace = self.trace_of(seen, assertion.unwrap_or_else(Self::open_assertion))?;
                 self.run(&trace, seen, false, cancel)
@@ -1266,6 +1296,19 @@ impl<'a> ClauseState<'a> {
         Ok(Advance { report, decided })
     }
 
+    /// FR-330's report of a refused reading. The run refuses before it reads
+    /// a position, and the refusal names none, so the run over the first
+    /// position is the run over every prefix: each step does the same bounded
+    /// work and holds no position.
+    fn refused_report(&self, cancel: &Cancel) -> Result<ClauseRunReport, ClauseRefusal> {
+        let trace = TraceInput::Finite(vec![index_reference(0)]);
+        let report = self.run(&trace, 1, false, cancel);
+        if report.category() != filament_semantic_value::catalog::Category::Refusal {
+            return Err(fault("finite-sample-reading-is-refused"));
+        }
+        Ok(report)
+    }
+
     /// FR-501 "Canonical order": a `Timestamped` trace's positions since the
     /// last evaluation, which the progress now covers, take their canonical
     /// order on the tape and in the positions seen, so the carried evaluation
@@ -1284,12 +1327,34 @@ impl<'a> ClauseState<'a> {
         let Some(tail) = self.seen.get(from..) else {
             return;
         };
+        let mut tail = tail.to_vec();
         let mut order: Vec<usize> = (0..tail.len()).collect();
         order.sort_by(|left, right| match (tail.get(*left), tail.get(*right)) {
             (Some(left), Some(right)) => canonical_order(left, right),
             _ => std::cmp::Ordering::Equal,
         });
         let first = u64::try_from(from).unwrap_or(u64::MAX);
+        // FR-330-AC-18: an observed sample is cited by its canonical index from
+        // here on, as the batch run names it, and its text is dropped. The
+        // evaluator orders index identities as the indices
+        // (`observation_identity`), so the order stays.
+        let mut texts = vec![None; tail.len()];
+        if self.reading == Reading::Observed {
+            for (at, index) in order.iter().enumerate() {
+                let Some(position) = tail.get_mut(*index) else {
+                    continue;
+                };
+                if position.reference.authority == super::temporal::SAMPLE_AUTHORITY {
+                    let place = first.saturating_add(u64::try_from(at).unwrap_or(u64::MAX));
+                    let named = std::mem::replace(&mut position.reference, index_reference(place));
+                    if let Some(text) = texts.get_mut(*index) {
+                        *text = Some(named.identity);
+                    }
+                }
+            }
+            self.seen.truncate(from);
+            self.seen.extend(tail.iter().cloned());
+        }
         if order.iter().enumerate().any(|(at, index)| at != *index) {
             let reordered: Vec<Seen> = order
                 .iter()
@@ -1326,6 +1391,17 @@ impl<'a> ClauseState<'a> {
                 .into_iter()
                 .map(|(position, failure)| (remap(position), failure))
                 .collect();
+        }
+        // A sample still held by value keeps its text, at its new place.
+        for (at, index) in order.iter().enumerate() {
+            let place = first.saturating_add(u64::try_from(at).unwrap_or(u64::MAX));
+            let held = usize::try_from(place)
+                .ok()
+                .and_then(|place| self.tape.entries().get(place))
+                .is_some_and(|entry| matches!(entry, TapeEntry::Held(_)));
+            if let (true, Some(Some(text))) = (held, texts.get_mut(*index).map(Option::take)) {
+                self.texts.insert(place, text);
+            }
         }
         if self.reading == Reading::Snapshot {
             self.read_pending(first, meter);
@@ -1432,11 +1508,33 @@ impl<'a> ClauseState<'a> {
     pub fn retained(&self) -> u64 {
         match self.reading {
             Reading::Values => u64::try_from(self.seen.len()).unwrap_or(u64::MAX),
-            Reading::Observed => self.tape.held(),
+            Reading::Observed => self.tape.held().saturating_add(self.uncovered_texts()),
+            Reading::Refused => 0,
             Reading::Snapshot => self.objects.retained(),
             Reading::Streamed => u64::from(self.stop.is_some()).saturating_add(self.tape.held()),
             Reading::Subject => u64::try_from(self.values.len()).unwrap_or(u64::MAX),
         }
+    }
+
+    /// The `Timestamped` positions progress does not cover yet whose sample
+    /// is read into its letter but still named by its text, which orders it
+    /// (FR-501 "Canonical order"): each holds that value.
+    fn uncovered_texts(&self) -> u64 {
+        if self.open.kind != ClauseTraceKind::Timestamped {
+            return 0;
+        }
+        let from = self.evaluated.map_or(0, |(seen, _)| seen);
+        let count = self
+            .seen
+            .iter()
+            .zip(self.tape.entries())
+            .skip(from)
+            .filter(|(position, entry)| {
+                position.reference.authority == super::temporal::SAMPLE_AUTHORITY
+                    && matches!(entry, TapeEntry::Read(_))
+            })
+            .count();
+        u64::try_from(count).unwrap_or(u64::MAX)
     }
 
     /// FR-820: the number of position identities the state keeps for the
@@ -1771,6 +1869,8 @@ impl<'a> ClauseState<'a> {
             state.report = Arc::new(if state.reading == Reading::Subject {
                 let mut meter = Meter::new(request.limits.accounting).with_cancel(cancel.clone());
                 state.subject_stream_report(&mut meter)
+            } else if state.reading == Reading::Refused {
+                state.refused_report(cancel)?
             } else {
                 let trace = state.trace_of(seen, assertion.unwrap_or_else(Self::open_assertion))?;
                 state.run(&trace, seen, false, cancel)

@@ -269,6 +269,93 @@ pub fn sample_position(canonical: &str) -> DocumentRef {
     }
 }
 
+/// FR-330-AC-18, FR-643 Decision: the record sample at `index` of a trace,
+/// cited by its index, never by its value.
+pub(crate) fn sample_index(index: usize) -> DocumentRef {
+    DocumentRef {
+        authority: SAMPLE_AUTHORITY.to_owned(),
+        identity: index.to_string(),
+    }
+}
+
+/// FR-330-AC-18, FR-643 Decision: a progress-carrying trace of record samples
+/// as the run reads it past admission, each sample named by its index in the
+/// trace, so the ledger and the finite-window trace hold no sample's value. A
+/// `Timestamped` sample's index is its place in FR-501's canonical order,
+/// which its value decides among positions of one stamp and order key, so the
+/// listing order still decides nothing. `None` for a trace that needs no
+/// renaming.
+fn indexed_samples(trace: &TraceInput) -> Option<TraceInput> {
+    let sample = |document: &DocumentRef| document.authority == SAMPLE_AUTHORITY;
+    match trace {
+        TraceInput::Progressed {
+            trace: documents,
+            progress,
+            lower_boundary,
+            binding,
+        } if documents.iter().any(sample) => Some(TraceInput::Progressed {
+            trace: documents
+                .iter()
+                .enumerate()
+                .map(|(index, document)| {
+                    if sample(document) {
+                        sample_index(index)
+                    } else {
+                        document.clone()
+                    }
+                })
+                .collect(),
+            progress: *progress,
+            lower_boundary: *lower_boundary,
+            binding: binding.clone(),
+        }),
+        TraceInput::Timestamped {
+            observations,
+            progress,
+            window,
+        } if observations.iter().any(|o| sample(&o.document)) => {
+            let view = Timestamped {
+                observations,
+                progress: *progress,
+                window,
+            };
+            // The canonical place of each listed observation, by its offset
+            // in the listing.
+            let base = observations.as_ptr() as usize;
+            let width = std::mem::size_of::<TimestampedObservation>().max(1);
+            let mut canonical = vec![None; observations.len()];
+            for (place, observation) in ordered_timestamped_positions(&view).iter().enumerate() {
+                let listed =
+                    (std::ptr::from_ref(*observation) as usize).saturating_sub(base) / width;
+                if let Some(slot) = canonical.get_mut(listed) {
+                    *slot = Some(place);
+                }
+            }
+            let renamed = observations
+                .iter()
+                .zip(canonical)
+                .map(|(observation, canonical)| match canonical {
+                    Some(index) if sample(&observation.document) => TimestampedObservation {
+                        document: sample_index(index),
+                        ..observation.clone()
+                    },
+                    _ => observation.clone(),
+                })
+                .collect();
+            Some(TraceInput::Timestamped {
+                observations: renamed,
+                progress: *progress,
+                window: window.clone(),
+            })
+        }
+        TraceInput::Finite(_)
+        | TraceInput::Progressed { .. }
+        | TraceInput::Timestamped { .. }
+        | TraceInput::Lasso { .. }
+        | TraceInput::Model { .. } => None,
+    }
+}
+
 fn document_identity(document: &DocumentRef) -> String {
     format!(
         "{}:{}{}:{}",
@@ -352,7 +439,17 @@ pub struct TimestampedObservation {
 
 /// The identity of an observation's document for ordering (FR-106): its two
 /// labels joined by NUL, which orders as the labels do field by field.
+/// A record sample named by its index (FR-330-AC-18) spells the index after
+/// its two-digit length, so the identities order as the indices do.
 pub(super) fn observation_identity(document: &DocumentRef) -> String {
+    if document.authority == SAMPLE_AUTHORITY && document.identity.parse::<u64>().is_ok() {
+        return format!(
+            "{}\0{:02}:{}",
+            document.authority,
+            document.identity.len(),
+            document.identity
+        );
+    }
     format!("{}\0{}", document.authority, document.identity)
 }
 
@@ -378,7 +475,9 @@ fn ordered_timestamped_positions<'a>(input: &Timestamped<'a>) -> Vec<&'a Timesta
                 (None, Some(_)) => std::cmp::Ordering::Greater,
                 (None, None) => std::cmp::Ordering::Equal,
             })
-            .then_with(|| left.document.cmp(&right.document))
+            .then_with(|| {
+                observation_identity(&left.document).cmp(&observation_identity(&right.document))
+            })
     });
     positions
 }
@@ -1196,6 +1295,14 @@ pub(super) fn run_temporal(run: &CompiledRun<'_>, request: &TemporalRun<'_>) -> 
         Ok(selection) => selection,
         Err(disposition) => return early(*disposition),
     };
+    // FR-330-AC-18: past admission a record sample is its index. A carried
+    // state names its samples by index already.
+    let listed = trace;
+    let renamed =
+        (tape.is_none() && over.is_none() && matches!(clause.over().1, ValueType::Composite(_)))
+            .then(|| indexed_samples(trace))
+            .flatten();
+    let trace = renamed.as_ref().unwrap_or(listed);
 
     if let TraceInput::Timestamped {
         observations,
@@ -1387,7 +1494,7 @@ pub(super) fn run_temporal(run: &CompiledRun<'_>, request: &TemporalRun<'_>) -> 
         ));
     }
     if let (true, ValueType::Composite(record), None) = (sampled, over_type, tape) {
-        for (index, document) in trace.documents().enumerate() {
+        for (index, document) in listed.documents().enumerate() {
             match fsl_semantics::model::observation::admit_record_sample(
                 graph.scope().types(),
                 record,
