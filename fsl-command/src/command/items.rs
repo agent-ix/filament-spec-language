@@ -622,7 +622,7 @@ pub(super) fn run_bytes(
                     {
                         return Err(cause);
                     }
-                    let error = RunError { cause };
+                    let error = RunError { cause, sources: crate::Sources::default() };
                     let value = error.value().map_err(RunCause::Output)?;
                     (value, error.category().exit_code())
                 }
@@ -641,7 +641,7 @@ pub(super) fn run_bytes(
                     {
                         return Err(cause);
                     }
-                    let error = RunError { cause };
+                    let error = RunError { cause, sources: crate::Sources::default() };
                     let value = error.value().map_err(RunCause::Output)?;
                     (value, error.category().exit_code())
                 }

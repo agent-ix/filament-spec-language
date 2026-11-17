@@ -171,7 +171,7 @@ pub struct RunResult {
     /// FR-963: the settled requirement items of a call that carried
     /// `requirements`; `None` exactly when it carried none.
     pub requirements: Option<RequirementResults>,
-    sources: crate::Sources,
+    pub(crate) sources: crate::Sources,
 }
 
 impl RunResult {
@@ -274,7 +274,7 @@ pub fn check_outcome(source_path: &Path, inputs: &CheckInputs) -> CheckOutcome {
     match result {
         Ok((document, sources)) => CheckOutcome { document, sources },
         Err((cause, sources)) => {
-            let document = RunError { cause }.outcome_document(fsl_replay::Operation::Check);
+            let document = RunError { cause, sources: sources.clone() }.outcome_document(fsl_replay::Operation::Check);
             CheckOutcome { document, sources }
         }
     }
@@ -606,6 +606,19 @@ pub enum PreparedRun {
     /// FR-931: a `tl_lowering` request: the clause's valuation run, the
     /// lowering it asks for, and the program text its atoms are named in.
     TlLowering(Box<PreparedLowering>),
+}
+
+impl PreparedRun {
+    fn admitted_sources(&self) -> crate::Sources {
+        match self {
+            Self::Function(prepared) => crate::Sources::from_sources(
+                std::iter::once(prepared.data.source.source().clone())
+                    .chain(prepared.data.models.iter().map(|source| source.source().clone()))
+                    .chain(prepared.data.libraries.iter().map(|source| source.source().clone())),
+            ),
+            Self::Clause(_) | Self::TlLowering(_) => crate::Sources::default(),
+        }
+    }
 }
 
 /// Original intake failure, without recovering typed data from display messages.
@@ -977,9 +990,15 @@ pub struct RunError {
     /// Original typed failure.
     #[source]
     pub cause: RunCause,
+    /// Sources admitted while producing this failure (FR-865).
+    sources: crate::Sources,
 }
 
 impl RunError {
+    /// Sources admitted while producing this failure (FR-865).
+    pub fn sources(&self) -> &crate::Sources {
+        &self.sources
+    }
     /// The cause's ADR-013 O-16 category (FR-285).
     pub fn category(&self) -> filament_semantic_value::catalog::Category {
         self.cause.category()
@@ -1428,7 +1447,7 @@ fn run_configured(
     // FR-961 step 2: the registry is fixed before any stage runs, so a
     // provider that cannot register refuses the request first.
     let engines =
-        analyze::engines_with(providers, options).map_err(|cause| Box::new(RunError { cause }))?;
+        analyze::engines_with(providers, options).map_err(|cause| Box::new(RunError { cause, sources: crate::Sources::default() }))?;
     let settle = Settle {
         negotiate,
         engines: &engines,
@@ -1456,7 +1475,8 @@ fn run_configured(
         return Ok(result);
     }
     let prepared = prepare_run_with_overrides(path, limits, overrides)?;
-    execute_prepared(prepared, &settle).map_err(|cause| Box::new(RunError { cause }))
+    let sources = prepared.admitted_sources();
+    execute_prepared(prepared, &settle).map_err(|cause| Box::new(RunError { cause, sources }))
 }
 
 /// FR-661: handle the driver's in-process `version` invocation used by the
@@ -2558,10 +2578,10 @@ fn with_request_limits<T>(
             }),
             cause => cause,
         };
-        Box::new(RunError { cause })
+        Box::new(RunError { cause, sources: crate::Sources::default() })
     })?;
     action(path.parent().unwrap_or(Path::new(".")), &bytes)
-        .map_err(|cause| Box::new(RunError { cause }))
+        .map_err(|cause| Box::new(RunError { cause, sources: crate::Sources::default() }))
 }
 
 /// Request settings a caller supplies beside the request file rather than
@@ -2916,7 +2936,7 @@ pub struct PreparedLowering {
 pub fn execute_tl_lowering(
     prepared: PreparedLowering,
 ) -> std::result::Result<RunResult, Box<RunError>> {
-    execute_lowering(prepared).map_err(|cause| Box::new(RunError { cause }))
+    execute_lowering(prepared).map_err(|cause| Box::new(RunError { cause, sources: crate::Sources::default() }))
 }
 
 fn execute_lowering(prepared: PreparedLowering) -> Result<RunResult> {
@@ -3155,6 +3175,7 @@ mod tests {
             cause: RunCause::SpineRun(Box::new(fsl_replay::spine::RunRefusal::Fault(
                 InternalFault::new(stage, invariant),
             ))),
+            sources: crate::Sources::default(),
         }
     }
 

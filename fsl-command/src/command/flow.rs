@@ -39,6 +39,7 @@ fn invalid_report(reason: impl Into<String>) -> FlowAnalyzeError {
             member: "flow-report".to_owned(),
             reason: reason.into(),
         },
+        sources: super::Sources::default(),
     }))
 }
 

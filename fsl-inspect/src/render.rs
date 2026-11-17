@@ -353,9 +353,16 @@ fn outcome_text(
             return Err(fault("outcome loci do not align with its diagnostics"));
         }
     }
-    if document.diagnostics().is_empty() {
-        writer.unit(|| format!("Outcome: {}\n", document.category().as_str()))?;
-    }
+    let wire: serde_json::Value = serde_json::from_slice(
+        &document
+            .to_bytes()
+            .map_err(|_| fault("outcome JSON serialization failed"))?,
+    )
+    .map_err(|_| fault("outcome JSON is not valid"))?;
+    let operation = wire.get("operation").and_then(serde_json::Value::as_str)
+        .ok_or_else(|| fault("outcome document has no operation"))?;
+    let last_stage = wire.get("last_stage").and_then(serde_json::Value::as_str);
+    writer.unit(|| format!("{operation}: {} (exit {}){}\n", document.category().as_str(), document.category().exit_code(), last_stage.map_or_else(String::new, |stage| format!(" at {stage}"))))?;
     for (index, diagnostic) in document.diagnostics().iter().enumerate() {
         let region = view
             .and_then(|view| view.loci.get(index))
@@ -396,23 +403,51 @@ fn outcome_text(
                 diagnostic.message()
             )
         })?;
+        if let Some(cause) = diagnostic.cause() {
+            writer.unit(|| format!("  cause: {cause}\n"))?;
+        }
+        if let Some(label) = wire.get("diagnostics").and_then(|items| items.get(index)).and_then(|item| item.get("label")).and_then(serde_json::Value::as_str) {
+            writer.unit(|| format!("  label: {label}\n"))?;
+        }
     }
-    for item in document.items() {
+    for (index, item) in document.items().iter().enumerate() {
         writer.try_unit(|| {
-            let mut line = format!(
-                "Item {}: {}",
-                item.request_index().get(),
-                wire_label(&item.result())?
-            );
+            let item_wire = wire.get("items").and_then(|items| items.get(index)).ok_or_else(|| fault("outcome item serialization failed"))?;
+            let category = item_wire.get("category").and_then(serde_json::Value::as_str).ok_or_else(|| fault("outcome item has no category"))?;
+            let mut line = format!("item {}: {} ({category})", item.request_index().get(), wire_label(&item.result())?);
+            if let Some(clause) = item.clause() { line.push_str(&format!(" clause {clause}")); }
             if let Some(certification) = item.certification() {
-                line.push(' ');
-                line.push_str(&wire_label(&certification)?);
+                line.push_str(&format!(" {}", wire_label(&certification)?));
             }
             line.push('\n');
             Ok(line)
         })?;
+        let item_wire = wire.get("items").and_then(|items| items.get(index)).ok_or_else(|| fault("outcome item serialization failed"))?;
+        if let Some(cause) = item_wire.get("cause").filter(|cause| !cause.is_null()) {
+            let kind = cause.get("kind").and_then(serde_json::Value::as_str).unwrap_or("cause");
+            let detail = cause.get("reason").or_else(|| cause.get("cause")).and_then(serde_json::Value::as_str);
+            let rendered = detail.map_or_else(|| kind.to_owned(), |detail| format!("{kind} ({detail})"));
+            writer.unit(|| format!("  cause: {rendered}\n"))?;
+        }
+        for key in ["counterexample", "trace"] {
+            if let Some(value) = item_wire.get(key).filter(|value| !value.is_null()) {
+                writer.unit(|| format!("  {key}: {}\n", canonical_json(value)))?;
+            }
+        }
+    }
+    if let Some(result) = wire.get("result").filter(|result| !result.is_null()) {
+        let kind = result.get("kind").and_then(serde_json::Value::as_str).ok_or_else(|| fault("outcome result has no kind"))?;
+        let mut members = result.as_object().cloned().ok_or_else(|| fault("outcome result is not an object"))?;
+        members.remove("kind");
+        let suffix = if members.is_empty() { String::new() } else { format!(" {}", canonical_json(&serde_json::Value::Object(members))) };
+        writer.unit(|| format!("result: {kind}{suffix}\n"))?;
     }
     Ok(())
+}
+
+fn canonical_json(value: &serde_json::Value) -> String {
+    // serde_json's map representation orders keys, yielding stable compact JSON.
+    value.to_string()
 }
 
 // ---- JSON ---------------------------------------------------------------
@@ -1468,9 +1503,8 @@ mod tests {
         );
         // The region's end exactly at the source's length still resolves.
         let at_end = refusal_over(&region, u64::try_from(text_source.len()).unwrap(), "edge");
-        assert!(
-            text_of(&at_end, &RenderSources::from_sources([input])).starts_with("src/inv.fsl:2:2:")
-        );
+        assert!(text_of(&at_end, &RenderSources::from_sources([input]))
+            .contains("src/inv.fsl:2:2: ill_typed: edge"));
     }
 
     #[trace("TC-783", "FR-298-AC-11")]
@@ -2147,7 +2181,6 @@ mod tests {
     /// each diagnostic with a cause is followed by its `cause` line.
     #[test]
     #[trace("TC-2455", "FR-865-AC-1")]
-    #[ignore = "QSL-1973: the complete text outcome is not implemented yet"]
     fn text_outcome_names_operation_category_exit_stage_and_cause() {
         let refusal = OutcomeDocument::new(
             fsl_replay::Operation::Check,
