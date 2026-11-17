@@ -195,8 +195,8 @@ read as a domain, `forall(o in M::counters : o.v < 2)`, means the same.
   representation. A population form over `M::P` lowers as the same form over
   the `all_instances` application above: `count`, `sum`, `exists` and `all` to
   the FR-093 collection rows `count`, `sum`, `exists` and `forall` with the
-  condition as a `filter` of the domain, and `only` to the collection `only`
-  row; `seq(i in lo .. hi: e)` lowers to the FR-093 sequence construction over
+  condition as a `filter` of the domain, and `only` to the FR-093 `Query{visit: Only}` row, the catalogued
+  `filament.op.collection.only` (FR-998); `seq(i in lo .. hi: e)` lowers to the FR-093 sequence construction over
   the integer range `lo .. hi` with `e` as its element term. A refinement
   row's read of a history field lowers as that history field's read under
   FR-139 and FSpec FR-322. A checked form that lowering cannot place is an

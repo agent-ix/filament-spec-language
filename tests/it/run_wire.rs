@@ -1676,3 +1676,115 @@ fn a_watermark_assertion_alone_settles_a_fixed_sample_deadline() {
         }
     }
 }
+
+/// FR-641-AC-10, FR-993-AC-2 (TC-2811): through `command::run`, a
+/// `progressed` record-sample run over levels 1, 2 with `Complete { through:
+/// 1 }` writes a ledger whose covered entries carry the index `identity`,
+/// `stamp` and a `sha256:` fingerprint, and no sample text or value; a run
+/// carrying that ledger file refuses levels 1, 5, 3 `Completeness` and
+/// accepts levels 1, 2, 3; the ledger file round-trips its bytes; a
+/// record-sample entry without its fingerprint and another entry with one
+/// each refuse `invalid-request` at stage `request` naming `ledger`.
+#[test]
+#[trace("TC-2811", "FR-641-AC-10", "FR-993-AC-2", "FR-502-AC-10")]
+fn a_record_sample_ledger_file_carries_each_covered_fingerprint() {
+    let directory = tempfile::tempdir().unwrap();
+    let request = |levels: &[i64], through: u64, ledger: Option<&str>| {
+        let mut temporal = json!({"name": "E", "trace": {"progressed": {
+            "positions": samples(levels), "progress": progress(through),
+            "lower_boundary": "authoritative-origin", "binding": binding(EVENTS, "events")}}});
+        if let Some(ledger) = ledger {
+            temporal["ledger"] = json!(ledger);
+        }
+        trace_request(temporal)
+    };
+    let first = result(&run_file(&write_trace(
+        directory.path(),
+        "first.json",
+        &request(&[1, 2], 1, None),
+    )));
+    let ledger = first["ledger"].clone();
+    let covered = ledger["entries"][0]["covered"]
+        .as_array()
+        .expect("covered entries")
+        .clone();
+    assert_eq!(covered.len(), 2, "{ledger}");
+    for (index, entry) in covered.iter().enumerate() {
+        let members: Vec<&str> = entry
+            .as_object()
+            .expect("an entry")
+            .keys()
+            .map(String::as_str)
+            .collect();
+        assert_eq!(members, ["fingerprint", "identity", "stamp"], "{entry}");
+        assert_eq!(
+            entry["identity"],
+            format!("13:record-sample{}:{index}", index.to_string().len()),
+            "{entry}"
+        );
+        let fingerprint = entry["fingerprint"].as_str().expect("a fingerprint");
+        let digits = fingerprint.strip_prefix("sha256:").expect("sha256:");
+        assert_eq!(digits.len(), 64, "{entry}");
+        assert!(
+            digits
+                .bytes()
+                .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte)),
+            "{entry}"
+        );
+    }
+    assert!(!ledger.to_string().contains("\"level\""), "{ledger}");
+    let bytes = serde_json::to_vec(&ledger).unwrap();
+    std::fs::write(directory.path().join("ledger.json"), &bytes).unwrap();
+
+    let changed = result(&run_file(&write_trace(
+        directory.path(),
+        "changed.json",
+        &request(&[1, 5, 3], 2, Some("ledger.json")),
+    )));
+    assert_eq!(changed["disposition"]["category"], "refusal", "{changed}");
+    assert_eq!(
+        find(&changed, "contradicted_dimension"),
+        Some(&json!("Completeness")),
+        "{changed}"
+    );
+    assert_eq!(serde_json::to_vec(&changed["ledger"]).unwrap(), bytes);
+    let same = result(&run_file(&write_trace(
+        directory.path(),
+        "same.json",
+        &request(&[1, 2, 3], 2, Some("ledger.json")),
+    )));
+    assert_ne!(same["disposition"]["category"], "refusal", "{same}");
+    assert!(!same["ledger"].to_string().contains("\"level\""), "{same}");
+
+    let unfingerprinted = {
+        let mut edited = ledger.clone();
+        edited["entries"][0]["covered"][0]
+            .as_object_mut()
+            .unwrap()
+            .remove("fingerprint");
+        edited
+    };
+    let foreign = {
+        let mut edited = ledger.clone();
+        edited["entries"][0]["covered"][0]["identity"] = json!("8:ix://doc3:s-0");
+        edited
+    };
+    for (index, edited) in [unfingerprinted, foreign].into_iter().enumerate() {
+        let name = format!("edited-{index}.json");
+        std::fs::write(
+            directory.path().join(&name),
+            serde_json::to_vec(&edited).unwrap(),
+        )
+        .unwrap();
+        let output = run_file(&write_trace(
+            directory.path(),
+            &format!("edited-run-{index}.json"),
+            &request(&[1, 2], 1, Some(&name)),
+        ));
+        assert_eq!(output.status.code(), Some(20));
+        let envelope = refusal(&output);
+        assert_eq!(envelope["stage"], "request", "{envelope}");
+        assert_eq!(envelope["code"], "invalid-request", "{envelope}");
+        assert!(envelope.to_string().contains("ledger"), "{envelope}");
+    }
+}

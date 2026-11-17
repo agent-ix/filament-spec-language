@@ -80,6 +80,49 @@ impl TimestampedTrace {
         progress: SampleProgress,
         meter: &mut Meter,
     ) -> Result<Result<Self, ProgressedRefusal>, TemporalRefusal> {
+        let mut trace = Self::open_progressed(clause);
+        Ok(trace
+            .extend_progressed(clause, observations, progress, meter)?
+            .map(|()| trace))
+    }
+
+    /// FR-820: a progressed trace of `clause` with no observation yet, which
+    /// [`Self::extend_progressed`] grows as a carried state admits its
+    /// positions. It is no admitted trace until it holds one.
+    pub fn open_progressed(clause: &ClauseFacts) -> Self {
+        Self::open(
+            clause.name(),
+            WindowClock {
+                unit: clause.clock().to_owned(),
+                cover: ClockCover::Exact,
+            },
+            WindowProgress {
+                watermark: Watermark::Inclusive(0),
+                completeness: ProgressCompleteness::Incomplete,
+                scope: ProgressClosure::Open,
+                execution: ProgressClosure::Open,
+                lower_boundary: LowerBoundary::AuthoritativeOrigin,
+            },
+        )
+    }
+
+    /// FR-504, FR-820: admit the `observations` that follow the trace's own,
+    /// in order, with the `progress` the whole trace now asserts. The result
+    /// equals [`Self::admit_progressed`] over every observation: the checks,
+    /// the seen horizon and the silent samples read only the last position
+    /// and the assertion, so the work is proportional to the new observations
+    /// and the silent samples. A refusal leaves the trace unchanged.
+    ///
+    /// # Errors
+    ///
+    /// As [`Self::admit_progressed`].
+    pub fn extend_progressed(
+        &mut self,
+        clause: &ClauseFacts,
+        observations: Vec<String>,
+        progress: SampleProgress,
+        meter: &mut Meter,
+    ) -> Result<Result<(), ProgressedRefusal>, TemporalRefusal> {
         let profile = clause.profile();
         let fixed = match profile {
             TemporalProfile::FixedSampleFalseExtension => true,
@@ -90,7 +133,11 @@ impl TimestampedTrace {
                 return Ok(Err(ProgressedRefusal::NotSampleProfile { profile }))
             }
         };
-        let Some(last) = observations.len().checked_sub(1) else {
+        let observed = self
+            .observed
+            .checked_add(observations.len())
+            .ok_or(TemporalRefusal::TraceTooLong)?;
+        let Some(last) = observed.checked_sub(1) else {
             return Err(TemporalRefusal::EmptyTrace);
         };
         let last = u64::try_from(last).map_err(|_| TemporalRefusal::TraceTooLong)?;
@@ -144,28 +191,34 @@ impl TimestampedTrace {
         } else {
             0
         };
-        let observed = observations.len();
-        let mut positions: Vec<TimestampedObservation> = Vec::new();
-        for (index, observation) in observations.into_iter().enumerate() {
-            positions.push(TimestampedObservation {
-                stamp: u64::try_from(index).map_err(|_| TemporalRefusal::TraceTooLong)?,
-                order_key: None,
-                observation,
-            });
-        }
+        let mut stamps = Vec::new();
         for offset in 1..=silent {
             if let Err(incomplete) = meter.charge(Charge::new(ChargePoint::TemporalVisit)) {
                 return Ok(Err(ProgressedRefusal::Incomplete(incomplete)));
             }
-            let stamp = last
-                .checked_add(offset)
+            stamps.push(
+                last.checked_add(offset)
+                    .ok_or(TemporalRefusal::TraceTooLong)?,
+            );
+        }
+        let mut positions = Vec::with_capacity(observations.len().saturating_add(stamps.len()));
+        for (index, observation) in observations.into_iter().enumerate() {
+            let index = self
+                .observed
+                .checked_add(index)
+                .and_then(|index| u64::try_from(index).ok())
                 .ok_or(TemporalRefusal::TraceTooLong)?;
             positions.push(TimestampedObservation {
-                stamp,
+                stamp: index,
                 order_key: None,
-                observation: format!("silent:{stamp}"),
+                observation,
             });
         }
+        positions.extend(stamps.into_iter().map(|stamp| TimestampedObservation {
+            stamp,
+            order_key: None,
+            observation: format!("silent:{stamp}"),
+        }));
         let asserted = WindowProgress {
             watermark: Watermark::Inclusive(progress.watermark),
             completeness: progress.completeness,
@@ -173,21 +226,18 @@ impl TimestampedTrace {
             execution: progress.execution,
             lower_boundary: progress.lower_boundary,
         };
-        let mut trace = Self::admit(
-            clause.name(),
-            WindowClock {
-                unit: clause.clock().to_owned(),
-                cover: ClockCover::Exact,
-            },
+        // The earlier silent samples are read again from this assertion.
+        self.truncate(self.observed);
+        self.extend(
             positions,
             WindowProgress {
                 watermark: Watermark::Inclusive(watermark),
                 completeness,
                 ..asserted
             },
-        )?;
-        trace.asserted = asserted;
-        trace.observed = observed;
-        Ok(Ok(trace))
+        );
+        self.asserted = asserted;
+        self.observed = observed;
+        Ok(Ok(()))
     }
 }
