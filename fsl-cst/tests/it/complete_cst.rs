@@ -436,7 +436,8 @@ fn a_single_error_keeps_its_one_diagnostic() {
         assert_eq!(
             found,
             [(CompleteCode::InvalidSyntax, Some(at))],
-            "{expression}"
+            "{expression}: {:#?}",
+            parsed.diagnostics()
         );
     }
 }
@@ -490,7 +491,6 @@ fn recover_under(body: &str, limits: Limits) -> Result<fsl_cst::ParsedSource, St
 #[trace("TC-2187", "FR-762-AC-8")]
 #[trace("FSpec-TC-1649", "FSpec-FR-272-AC-30")]
 #[test]
-#[ignore = "QSL-2195: the work-budget cut of the recovery report not implemented yet"]
 fn recovery_stops_at_the_work_budget() {
     let records_first_error = |work: usize| {
         recover_under(THREE_RECORDS, Limits::default().with_work_units(work)).is_ok_and(|parsed| {
@@ -538,7 +538,6 @@ fn recovery_stops_at_the_work_budget() {
 
 #[trace("TC-2187", "FR-762-AC-9")]
 #[test]
-#[ignore = "QSL-2195: header recovery not implemented yet"]
 fn header_recovery_resumes_at_the_next_declaration() {
     let body = "profile v = ;\nrecord A { x: Integer y: Integer; }\n";
     let (text, parsed) = recover(body);
@@ -549,7 +548,9 @@ fn header_recovery_resumes_at_the_next_declaration() {
         .collect();
     assert_eq!(
         starts,
-        [byte_at(&text, "= ;") + 2, byte_at(&text, "y: Integer;")]
+        [byte_at(&text, "= ;") + 2, byte_at(&text, "y: Integer;")],
+        "{:#?}",
+        parsed.diagnostics()
     );
     let start = byte_at(&text, "record A");
     assert!(
@@ -557,7 +558,14 @@ fn header_recovery_resumes_at_the_next_declaration() {
             .cst()
             .nodes()
             .iter()
-            .any(|node| node.production() == Production::Declaration && node.span().start == start)
+            .any(|node| node.production() == Production::Declaration && node.span().start == start),
+        "{:?}",
+        parsed
+            .cst()
+            .nodes()
+            .iter()
+            .map(|node| (node.production(), node.span()))
+            .collect::<Vec<_>>()
     );
 }
 

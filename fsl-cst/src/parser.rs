@@ -43,6 +43,8 @@ type Scan = (
     Vec<Recovery>,
 );
 
+const SYNTAX_DIAGNOSTIC_BOUND: usize = 100;
+
 #[derive(Clone, Debug)]
 struct Failure {
     position: usize,
@@ -79,22 +81,44 @@ pub(super) fn parse(
     let compounds = grammar::complete_compound_spellings(&grammar);
     let (tokens, significant, mut diagnostics, mut recoveries) =
         scan(&source, limits, &compounds, cancel)?;
+    if diagnostics.len() > SYNTAX_DIAGNOSTIC_BOUND {
+        let cut_span = diagnostics[SYNTAX_DIAGNOSTIC_BOUND]
+            .byte_span()
+            .unwrap_or(Span {
+                start: source.text().len(),
+                end: source.text().len(),
+            });
+        diagnostics.truncate(SYNTAX_DIAGNOSTIC_BOUND);
+        diagnostics.push(*super::diagnostic::error(
+            &source,
+            CompleteCode::InvalidSyntax,
+            CompleteCause::DiagnosticListCut,
+            Phase::Parse,
+            cut_span.start,
+            cut_span.end,
+            format!(
+                "the diagnostic list was cut after {SYNTAX_DIAGNOSTIC_BOUND} syntax errors; raise s1.diagnostics to see the rest"
+            ),
+        ));
+    }
     let prelude_nodes = selection_prelude_nodes(&source, &grammar, &significant, limits, cancel);
     let (matched, parse_significant, mut parser_diagnostics, parser_recoveries) =
         parse_with_declaration_recovery(
             &source,
             &grammar,
-            significant,
+            significant.clone(),
             &diagnostics,
             limits,
             cancel,
         )?;
+    let parser_failed = !parser_diagnostics.is_empty();
     diagnostics.append(&mut parser_diagnostics);
     recoveries.extend(parser_recoveries);
     diagnostics
         .sort_by_key(|diagnostic| diagnostic.byte_span().map_or(usize::MAX, |span| span.start));
 
-    let (nodes, root) = if let Some(forest) = matched {
+    let has_forest = matched.is_some();
+    let (mut nodes, root) = if let Some(forest) = matched {
         lower_tree(&source, &parse_significant, &forest)
     } else {
         (
@@ -109,15 +133,42 @@ pub(super) fn parse(
             0,
         )
     };
-    let selection_nodes = if nodes.iter().any(|node| {
+    if !has_forest {
+        let starts = declaration_starts(&grammar);
+        let recovered_declarations: Vec<_> = recoveries
+            .iter()
+            .filter(|recovery| recovery.expected == "next declaration")
+            .filter(|recovery| {
+                significant.iter().any(|token| {
+                    token.span.start == recovery.span.start
+                        && starts.contains(token.spelling.as_ref())
+                })
+            })
+            .map(|recovery| recovery.span)
+            .collect();
+        for span in recovered_declarations {
+            let child = nodes.len();
+            nodes.push(RawNode {
+                production: Production::Declaration,
+                span,
+                children: Vec::new(),
+            });
+            if let Some(unit) = nodes.get_mut(root) {
+                unit.children.push(CstElement::Node(child));
+            }
+        }
+    }
+    let selection_nodes: &[RawNode] = if nodes.iter().any(|node| {
         matches!(
             node.production,
             Production::Profile | Production::ImportDeclaration | Production::Model
         )
     }) {
         &nodes
-    } else {
+    } else if !parser_failed {
         &prelude_nodes
+    } else {
+        &[]
     };
     let selections = extract_selections(
         &source,
@@ -157,8 +208,6 @@ fn parse_with_declaration_recovery(
     ),
     Box<CompleteDiagnostic>,
 > {
-    const DIAGNOSTIC_BOUND: usize = 100;
-
     let lexical_spans: Vec<_> = scanned
         .iter()
         .filter(|diagnostic| diagnostic.phase == Phase::Lex)
@@ -176,6 +225,13 @@ fn parse_with_declaration_recovery(
     let mut recoveries = Vec::new();
     let mut recovered_any = false;
 
+    if scanned
+        .iter()
+        .any(|diagnostic| diagnostic.cause == CompleteCause::DiagnosticListCut)
+    {
+        return Ok((None, tokens, diagnostics, recoveries));
+    }
+
     loop {
         let mut engine = Engine::new(grammar, &tokens, limits, cancel);
         match engine.production(Production::CompleteUnit, 0) {
@@ -190,6 +246,21 @@ fn parse_with_declaration_recovery(
                     },
                     |token| token.span,
                 );
+                if recovered_any || !scanned.is_empty() {
+                    let reported = scanned.len().saturating_add(diagnostics.len());
+                    diagnostics.push(*super::diagnostic::error(
+                        source,
+                        CompleteCode::InvalidSyntax,
+                        CompleteCause::DiagnosticListCut,
+                        Phase::Parse,
+                        span.start,
+                        span.end,
+                        format!(
+                            "the diagnostic list was cut after {reported} syntax errors because s1.work_units was reached; raise s1.work_units to see the rest"
+                        ),
+                    ));
+                    return Ok((None, tokens, diagnostics, recoveries));
+                }
                 return Err(super::diagnostic::resource_exhausted(
                     source,
                     Phase::Parse,
@@ -226,7 +297,14 @@ fn parse_with_declaration_recovery(
                     ));
                 }
 
-                let declaration_start = if engine.starts_unknown_declaration(failure.position) {
+                let header_start = if recovered_any {
+                    None
+                } else {
+                    header_start_for_failure(grammar, &tokens, failure.position)
+                };
+                let declaration_start = if header_start.is_some() {
+                    header_start
+                } else if engine.starts_unknown_declaration(failure.position) {
                     None
                 } else {
                     engine
@@ -312,11 +390,17 @@ fn parse_with_declaration_recovery(
                     return Ok((None, tokens, diagnostics, recoveries));
                 };
 
-                let next = next_declaration_start(
-                    grammar,
-                    &tokens,
-                    failure.position.max(start.saturating_add(1)),
-                );
+                let next = if is_header_start(&tokens[start]) {
+                    next_header_resumption(grammar, &tokens, start, failure.position)
+                } else {
+                    next_declaration_start(
+                        grammar,
+                        source,
+                        &tokens,
+                        failure.position.max(start.saturating_add(1)),
+                        start,
+                    )
+                };
                 let end = next.unwrap_or(tokens.len());
                 let region = if start < end {
                     Span {
@@ -335,8 +419,52 @@ fn parse_with_declaration_recovery(
                 let has_lexical_error = lexical_spans
                     .iter()
                     .any(|span| span.start < region.end && region.start < span.end);
+                if next.is_none() && !has_lexical_error && failure.expected.contains(";") {
+                    let insertion_span = failure_span(source, &tokens, failure.position);
+                    let mut inserted = tokens.clone();
+                    inserted.insert(
+                        failure.position.min(inserted.len()),
+                        Significant {
+                            kind: None,
+                            span: Span {
+                                start: insertion_span.start,
+                                end: insertion_span.start,
+                            },
+                            spelling: ";".into(),
+                        },
+                    );
+                    let mut retry = Engine::new(grammar, &inserted, limits, cancel);
+                    if let Outcome::Match(_) = retry.production(Production::CompleteUnit, 0) {
+                        let span = failure_span(source, &tokens, failure.position);
+                        let expected = failure
+                            .expected
+                            .into_iter()
+                            .collect::<Vec<_>>()
+                            .join(" or ");
+                        let message = derived_form(
+                            &tokens,
+                            &Failure::expected(failure.position, expected.clone()),
+                        )
+                        .map_or_else(|| format!("expected {expected}"), str::to_owned);
+                        diagnostics.push(*super::diagnostic::error(
+                            source,
+                            CompleteCode::InvalidSyntax,
+                            CompleteCause::UnexpectedToken,
+                            Phase::Parse,
+                            span.start,
+                            span.end,
+                            message,
+                        ));
+                        recoveries.push(Recovery {
+                            kind: RecoveryKind::Insert,
+                            span,
+                            expected,
+                        });
+                        return Ok((retry.into_forest(), inserted, diagnostics, recoveries));
+                    }
+                }
                 if !has_lexical_error {
-                    if scanned.len().saturating_add(diagnostics.len()) >= DIAGNOSTIC_BOUND {
+                    if scanned.len().saturating_add(diagnostics.len()) >= SYNTAX_DIAGNOSTIC_BOUND {
                         diagnostics.push(*super::diagnostic::error(
                             source,
                             CompleteCode::InvalidSyntax,
@@ -345,7 +473,7 @@ fn parse_with_declaration_recovery(
                             failure_span(source, &tokens, failure.position).start,
                             failure_span(source, &tokens, failure.position).end,
                             format!(
-                                "diagnostic list cut at the s1.diagnostics bound of {DIAGNOSTIC_BOUND}"
+                                "the diagnostic list was cut after {SYNTAX_DIAGNOSTIC_BOUND} syntax errors; raise s1.diagnostics to see the rest"
                             ),
                         ));
                         return Ok((None, tokens, diagnostics, recoveries));
@@ -400,13 +528,109 @@ fn failure_span(source: &Source, tokens: &[Significant], position: usize) -> Spa
     )
 }
 
-fn next_declaration_start(grammar: &Grammar, tokens: &[Significant], from: usize) -> Option<usize> {
-    let starts = declaration_starts(grammar);
-    tokens
+fn is_header_start(token: &Significant) -> bool {
+    matches!(
+        token.spelling.as_ref(),
+        "language" | "profile" | "import" | "model"
+    )
+}
+
+fn header_start_for_failure(
+    grammar: &Grammar,
+    tokens: &[Significant],
+    position: usize,
+) -> Option<usize> {
+    let header = tokens
         .iter()
         .enumerate()
-        .skip(from)
-        .find_map(|(position, token)| starts.contains(token.spelling.as_ref()).then_some(position))
+        .take(position.saturating_add(1))
+        .filter_map(|(index, token)| is_header_start(token).then_some(index))
+        .next_back()?;
+    let declaration_words = declaration_starts(grammar);
+    let declaration_after_header = tokens
+        .iter()
+        .enumerate()
+        .take(position.saturating_add(1))
+        .skip(header.saturating_add(1))
+        .any(|(_, token)| declaration_words.contains(token.spelling.as_ref()));
+    (!declaration_after_header).then_some(header)
+}
+
+fn next_header_resumption(
+    grammar: &Grammar,
+    tokens: &[Significant],
+    start: usize,
+    failure: usize,
+) -> Option<usize> {
+    let starts = declaration_starts(grammar);
+    let mut delimiters = Vec::new();
+    for (position, token) in tokens.iter().enumerate().skip(start) {
+        match token.spelling.as_ref() {
+            "(" | "[" | "{" => delimiters.push(token.spelling.as_ref()),
+            ")" if delimiters.last() == Some(&"(") => {
+                delimiters.pop();
+            }
+            "]" if delimiters.last() == Some(&"[") => {
+                delimiters.pop();
+            }
+            "}" if delimiters.last() == Some(&"{") => {
+                delimiters.pop();
+            }
+            ";" if position >= failure && delimiters.is_empty() => {
+                return tokens.get(position + 1).map(|_| position + 1);
+            }
+            _ => {}
+        }
+        if position > failure
+            && delimiters.is_empty()
+            && (starts.contains(token.spelling.as_ref()) || is_header_start(token))
+        {
+            return Some(position);
+        }
+    }
+    None
+}
+
+fn next_declaration_start(
+    grammar: &Grammar,
+    source: &Source,
+    tokens: &[Significant],
+    from: usize,
+    declaration: usize,
+) -> Option<usize> {
+    let starts = declaration_starts(grammar);
+    let mut delimiters = Vec::new();
+    let mut previous_end = tokens.get(declaration).map_or(0, |token| token.span.start);
+    for (position, token) in tokens.iter().enumerate().skip(declaration) {
+        let line_start = source.text()[previous_end..token.span.start]
+            .bytes()
+            .any(|byte| matches!(byte, b'\n' | b'\r'));
+        if position >= from && delimiters.is_empty() && starts.contains(token.spelling.as_ref()) {
+            return Some(position);
+        }
+        if position >= from
+            && !delimiters.is_empty()
+            && line_start
+            && starts.contains(token.spelling.as_ref())
+        {
+            return Some(position);
+        }
+        match token.spelling.as_ref() {
+            "(" | "[" | "{" => delimiters.push(token.spelling.as_ref()),
+            ")" if delimiters.last() == Some(&"(") => {
+                delimiters.pop();
+            }
+            "]" if delimiters.last() == Some(&"[") => {
+                delimiters.pop();
+            }
+            "}" if delimiters.last() == Some(&"{") => {
+                delimiters.pop();
+            }
+            _ => {}
+        }
+        previous_end = token.span.end;
+    }
+    None
 }
 
 fn declaration_starts(grammar: &Grammar) -> BTreeSet<String> {
