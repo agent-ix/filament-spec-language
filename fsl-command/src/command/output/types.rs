@@ -11,6 +11,7 @@ pub(super) use fsl_foundation::wire_format::WireFormat as Format;
 pub(super) enum Stage {
     File,
     Request,
+    QuireContext,
     Output,
     Envelope,
     Intake,
@@ -27,6 +28,7 @@ impl Serialize for Stage {
         serializer.serialize_str(match self {
             Self::File => "file",
             Self::Request => "request",
+            Self::QuireContext => "quire-context",
             Self::Output => "output",
             Self::Envelope => "envelope",
             Self::Intake => "intake",

@@ -207,10 +207,27 @@ pub(super) fn error(error: &RunError, artifact: bool) -> Result<Value, serde_jso
         RunCause::ClauseRequest { .. }
         | RunCause::ClocksGivenTwice
         | RunCause::OutputGivenTwice
-        | RunCause::OutputExists { .. } => (types::Stage::Request, types::Details::None),
+        | RunCause::OutputExists { .. }
+        | RunCause::ExtractionRequiresRun => (types::Stage::Request, types::Details::None),
         RunCause::ExtensionCatalog(_) => (
             types::Stage::Spine(fsl_replay::spine::SpineStage::Forms),
             types::Details::None,
+        ),
+        RunCause::ExtractionPackageConflict => (types::Stage::Request, types::Details::None),
+        RunCause::ExtractionClauseCount { actual } => (
+            types::Stage::Request,
+            types::Details::Object(serde_json::Map::from_iter([(
+                "actual".to_owned(),
+                serde_json::json!(actual),
+            )])),
+        ),
+        #[cfg(feature = "quire-extraction")]
+        RunCause::InvalidQuireContext { diagnostics } => (
+            types::Stage::QuireContext,
+            types::Details::Object(serde_json::Map::from_iter([(
+                "diagnostics".to_owned(),
+                serde_json::json!(diagnostics),
+            )])),
         ),
         RunCause::ClauseOutput(_) => (types::Stage::Output, types::Details::None),
         RunCause::Identifier { diagnostic, .. } => (
@@ -228,7 +245,6 @@ pub(super) fn error(error: &RunError, artifact: bool) -> Result<Value, serde_jso
         RunCause::CompleteSelection(_)
         | RunCause::Libraries(_)
         | RunCause::CompleteRunSelection(_)
-        | RunCause::ExtractionRequiresRun
         | RunCause::EmptyCompileProgram
         | RunCause::AnalyzeRequest { .. }
         | RunCause::AnalyzeUniverse(_)
