@@ -319,11 +319,10 @@ fn check_outcome_inner(
             .collect::<Vec<_>>();
         validate_extension_entries(&extensions)?;
 
-        let source = intake.source(&check_source_file(
-            source_path,
-            "check-source",
-            "CheckSource",
-        ))?;
+        let source = intake.source(
+            &check_source_file(source_path, "check-source", "CheckSource"),
+            "source",
+        )?;
         let extension_catalog = extension_catalog(&extensions, &mut intake)?;
         let cancel = filament_exact::Cancel::new();
         let parsed = match fsl_replay::spine::parse_selecting_extensions(
@@ -374,7 +373,7 @@ fn check_outcome_inner(
             .collect::<Result<Vec<_>>>()?;
         let model_documents = models
             .iter()
-            .map(|model| intake.source(&model.source))
+            .map(|model| intake.source(&model.source, "models"))
             .collect::<Result<Vec<_>>>()?;
         let packages = fsl_semantics::model::intake::package_input(
             model_documents
@@ -398,7 +397,10 @@ fn check_outcome_inner(
             .libraries
             .iter()
             .map(|(identity, path)| {
-                let source = intake.source(&check_source_file(path, identity, "CheckLibrary"))?;
+                let source = intake.source(
+                    &check_source_file(path, identity, "CheckLibrary"),
+                    "libraries",
+                )?;
                 Ok(fsl_replay::spine::SuppliedLibrary {
                     identity: identity.clone(),
                     source: source.source().identity().clone(),
@@ -1195,6 +1197,42 @@ impl Intake<'_> {
             return Ok(bytes);
         }
         self.bounded_file(path, ceiling)
+    }
+
+    fn observation_file(&mut self, path: &str, ceiling: usize) -> Result<Vec<u8>> {
+        if let Some(bytes) = self.prefetched_observations.remove(path) {
+            if bytes.len() > ceiling {
+                return Err(RunCause::Limit(LimitKind::ObservationDocumentBytes {
+                    maximum: ceiling,
+                }));
+            }
+            return Ok(bytes);
+        }
+        let remaining = self.remaining;
+        let bytes =
+            read_file(&self.directory.join(path), ceiling.min(remaining)).map_err(|cause| {
+                match cause {
+                    RunCause::Limit(LimitKind::FileBytes) if ceiling <= remaining => {
+                        RunCause::Limit(LimitKind::ObservationDocumentBytes { maximum: ceiling })
+                    }
+                    RunCause::Limit(LimitKind::FileBytes) => match self.dependent_limit {
+                        Some(DependentLimit::CallerConfigured) => {
+                            RunCause::Limit(LimitKind::DependentBytes {
+                                maximum: self.maximum,
+                            })
+                        }
+                        Some(DependentLimit::Fixed) => {
+                            RunCause::Limit(LimitKind::FixedDependentBytes {
+                                maximum: self.maximum,
+                            })
+                        }
+                        None => RunCause::Limit(LimitKind::FileBytes),
+                    },
+                    cause => cause,
+                }
+            })?;
+        self.remaining -= bytes.len();
+        Ok(bytes)
     }
 
     fn bounded_file(&mut self, path: &str, ceiling: usize) -> Result<Vec<u8>> {

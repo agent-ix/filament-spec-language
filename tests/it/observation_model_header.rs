@@ -79,7 +79,7 @@ fn run_with_raw_model(directory: &Path, model: &str) -> Output {
 }
 
 fn run_with_invocation_model(directory: &Path) -> Output {
-    spine::write(directory, Case::Healthy).unwrap();
+    spine::write(directory, Case::Unchanged).unwrap();
     let path = directory.join("spine-invocation.json");
     let mut invocation: Value = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
     invocation["model"]["version"] = json!("1");
