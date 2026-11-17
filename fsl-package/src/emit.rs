@@ -17,17 +17,18 @@ use filament_contract_model::{
     CheckedAbstractionPopulation, CheckedArtifactRef, CheckedCapability,
     CheckedCapabilityDisposition, CheckedComponentClause, CheckedCompositionComponent,
     CheckedCompositionPremise, CheckedDeclaration, CheckedDependencySelection,
-    CheckedDiagnosticsV2, CheckedDimensionOperand, CheckedEnvironmentEntry,
+    CheckedDiagnosticsV2, CheckedDimensionOperand, CheckedEffectiveId, CheckedEnvironmentEntry,
     CheckedEnvironmentSupplies, CheckedFairnessGranularity, CheckedFairnessKind,
     CheckedFairnessSupply, CheckedFieldScope, CheckedFrameModification, CheckedGuaranteeMeasure,
-    CheckedGuaranteeProgress, CheckedNodeId, CheckedNodeKind, CheckedNodeOwner, CheckedNodeTag,
-    CheckedOccurrence, CheckedOccurrenceRole, CheckedOperandEntry, CheckedOperationAnchorBody,
-    CheckedPackageEvidence, CheckedPackageLockV2, CheckedPackageSidecarsRef,
-    CheckedPackageSourceCorrespondenceRef, CheckedPackageV2, CheckedRational,
-    CheckedRefinementStepRowRegion, CheckedScopedDeletion, CheckedSelection, CheckedSelectionRole,
-    CheckedSemanticGraphV2, CheckedSemanticNodeV2, CheckedSourceMapEntry, CheckedSourceRef,
-    CheckedSourceRegion, CheckedTerm, DimensionTerm, LiteralKind, NominalBody, OperationBody,
-    OperationBodyRow, ProtocolForm, ScalarTypeForm, StateForm, ValueForm,
+    CheckedGuaranteeProgress, CheckedJson, CheckedNodeId, CheckedNodeKind, CheckedNodeOwner,
+    CheckedNodeTag, CheckedOccurrence, CheckedOccurrenceRole, CheckedOperandEntry,
+    CheckedOperationAnchorBody, CheckedOriginalDeclarationId, CheckedPackageEvidence,
+    CheckedPackageLockV2, CheckedPackageSidecarsRef, CheckedPackageSourceCorrespondenceRef,
+    CheckedPackageV2, CheckedRational, CheckedRefinementStepRowRegion, CheckedScopedDeletion,
+    CheckedSelection, CheckedSelectionRole, CheckedSemanticGraphV2, CheckedSemanticNodeV2,
+    CheckedSourceMapEntry, CheckedSourceRef, CheckedSourceRegion, CheckedTerm, DimensionTerm,
+    LiteralKind, NominalBody, OperationBody, OperationBodyRow, ProtocolForm, ScalarTypeForm,
+    StateForm, ValueForm,
 };
 use serde::Deserialize;
 
@@ -3944,18 +3945,118 @@ fn checked_equality_term_data(
 /// traversing the checked graph.
 fn checked_effective_id(
     identity: &filament_exact::EffectiveId,
-) -> filament_contract_model::CheckedEffectiveId {
+    source_keys: &BTreeMap<String, String>,
+) -> Result<CheckedEffectiveId, EmitRefusal> {
     let mut current = None;
     for original in identity.owner_chain() {
-        current = Some(filament_contract_model::CheckedEffectiveId {
+        let (package, node) =
+            emitted_source_declaration_key(original.package(), original.node(), source_keys)?;
+        current = Some(CheckedEffectiveId {
             owner_effective_type: current.map(Box::new),
-            original: filament_contract_model::CheckedOriginalDeclarationId {
-                package: original.package().into(),
-                node: original.node().into(),
+            original: CheckedOriginalDeclarationId {
+                package: package.into(),
+                node: node.into(),
             },
         });
     }
-    current.expect("EffectiveId always has an original declaration")
+    current.ok_or(EmitRefusal::SourceMapInvariant)
+}
+
+/// Map the source model's private package identities to the identities that
+/// its emitted SourceOwner nodes carry. The source package keys remain useful
+/// during checking, but they are not available to a package reader.
+fn source_declaration_key_rewrites(
+    graph: &CheckedGraph,
+) -> Result<BTreeMap<String, String>, EmitRefusal> {
+    let mut rewrites = BTreeMap::new();
+    for node in graph.semantic_graph().nodes() {
+        let Some(Owner::Source(owner)) = node.owner() else {
+            continue;
+        };
+        let Some(declaration) = graph.resolve_declaration(node.key()) else {
+            continue;
+        };
+        if !graph
+            .source_packages()
+            .iter()
+            .any(|package| package.model_selection.identity == declaration.package)
+        {
+            continue;
+        }
+        match rewrites.entry(declaration.package.clone()) {
+            std::collections::btree_map::Entry::Vacant(entry) => {
+                entry.insert(owner.identity().to_owned());
+            }
+            std::collections::btree_map::Entry::Occupied(entry)
+                if entry.get() == owner.identity() => {}
+            std::collections::btree_map::Entry::Occupied(_) => {
+                return Err(EmitRefusal::SourceMapInvariant);
+            }
+        }
+    }
+    Ok(rewrites)
+}
+
+/// Apply the source owner's declaration-key spelling to a key retained by S3.
+fn emitted_source_declaration_key(
+    package: &str,
+    node: &str,
+    source_keys: &BTreeMap<String, String>,
+) -> Result<(String, String), EmitRefusal> {
+    let Some(identity) = source_keys.get(package) else {
+        return Ok((package.to_owned(), node.to_owned()));
+    };
+    let prefix = format!("ix://{package}/");
+    let declaration = node
+        .strip_prefix(&prefix)
+        .ok_or(EmitRefusal::SourceMapInvariant)?;
+    Ok((identity.clone(), format!("ix://{identity}/{declaration}")))
+}
+
+/// Rewrite source declaration keys in the typed literals of an emitted clock
+/// place. Those keys are producer-local S3 strings; the package names the
+/// same declarations from their SourceOwner identities.
+fn rewrite_source_keys_in_clock_place(
+    node: &mut CheckedSemanticNodeV2,
+    source_keys: &BTreeMap<String, String>,
+) -> Result<(), EmitRefusal> {
+    fn rewrite_term(
+        term: &mut CheckedTerm,
+        source_keys: &BTreeMap<String, String>,
+    ) -> Result<(), EmitRefusal> {
+        match term {
+            CheckedTerm::Literal {
+                value_kind: LiteralKind::Text,
+                value,
+                ..
+            } => {
+                if let Some(text) = value.as_str() {
+                    for (package, identity) in source_keys {
+                        let prefix = format!("ix://{package}/");
+                        if let Some(declaration) = text.strip_prefix(&prefix) {
+                            let rewritten = format!("ix://{identity}/{declaration}");
+                            *value = CheckedJson::from_serializable(&rewritten)
+                                .map_err(|_| EmitRefusal::SourceMapInvariant)?;
+                            break;
+                        }
+                    }
+                }
+            }
+            CheckedTerm::Aggregate { members } => {
+                for member in members {
+                    rewrite_term(member, source_keys)?;
+                }
+            }
+            CheckedTerm::Binding { value, .. } => rewrite_term(value, source_keys)?,
+            _ => {}
+        }
+        Ok(())
+    }
+
+    if node.semantic_form.as_ref() == "clock_place" {
+        rewrite_term(&mut node.body, source_keys)?;
+    }
+    Ok(())
 }
 
 /// Emit exact dispatch decisions retained while lowering each typed dispatch
@@ -3965,6 +4066,7 @@ fn checked_dispatch_tables(
     graph: &CheckedGraph,
     emitted_node_ids: &HashMap<NodeKey, CheckedNodeId>,
     source_map: &[CheckedSourceMapEntry],
+    source_keys: &BTreeMap<String, String>,
 ) -> Result<Vec<filament_contract_model::CheckedDispatchCandidateTable>, EmitRefusal> {
     let mut rows = Vec::with_capacity(graph.dispatch_producer_decisions().len());
     for ((application, location), decision) in graph.dispatch_producer_decisions() {
@@ -4030,7 +4132,7 @@ fn checked_dispatch_tables(
                 .transpose()?;
             candidates.push(filament_contract_model::CheckedDispatchCandidate {
                 selected_operation: operation.clone(),
-                selection_key: checked_effective_id(selection_key),
+                selection_key: checked_effective_id(selection_key, source_keys)?,
                 operation_body,
                 effective_precondition,
             });
@@ -4066,6 +4168,7 @@ fn checked_term_data(
     )],
     equality_rows: &[EqualityProducerEmissionRow],
     source_map: &[CheckedSourceMapEntry],
+    source_keys: &BTreeMap<String, String>,
 ) -> Result<Option<filament_contract_model::CheckedTermDataV2>, EmitRefusal> {
     let mut term_data = checked_equality_term_data(
         graph,
@@ -4074,7 +4177,8 @@ fn checked_term_data(
         equality_rows,
     )?
     .unwrap_or_default();
-    term_data.dispatch_tables = checked_dispatch_tables(graph, emitted_node_ids, source_map)?;
+    term_data.dispatch_tables =
+        checked_dispatch_tables(graph, emitted_node_ids, source_map, source_keys)?;
     term_data.protocol_locations =
         protocol_locations::checked_protocol_locations(graph, emitted_node_ids)?;
     term_data.probabilistic_claims = checked_probabilistic_claims(graph, emitted_node_ids)?;
@@ -6290,6 +6394,7 @@ fn emit_package_inner(
         return Err(refusal);
     }
     let graph = package.graph();
+    let source_keys = source_declaration_key_rewrites(graph)?;
     // FSpec FR-490, FR-491: each guarantee and composition declaration is a
     // `correspondence` node beside the graph's own.
     let declared_forms: Vec<(SemanticNode, Location)> = graph
@@ -6454,6 +6559,9 @@ fn emit_package_inner(
         )
         .collect::<Result<Vec<_>, _>>()?;
     let mut nodes = wire_nodes;
+    for node in &mut nodes {
+        rewrite_source_keys_in_clock_place(node, &source_keys)?;
+    }
     let mut emitted_refinements = Vec::new();
     let mut step_rows = Vec::new();
     for refinement in graph.refinements() {
@@ -6858,6 +6966,7 @@ fn emit_package_inner(
         &selected_model_enum_member_rows,
         &equality_producer_identity_rows,
         &source_map,
+        &source_keys,
     )?;
     let selected_operation_member_rows = selected_operation_member_rows
         .into_iter()

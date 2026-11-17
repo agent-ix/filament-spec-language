@@ -5,7 +5,8 @@
 
 use super::*;
 use filament_contract_model::{
-    CheckedPackageReadLimits, CheckedPackageV2, CheckedPackageV2ReadResult,
+    CheckedJson, CheckedNodeId, CheckedPackageReadLimits, CheckedPackageV2,
+    CheckedPackageV2ReadResult, CheckedSemanticNodeV2, CheckedTerm, LiteralKind,
 };
 use filament_semantic_value::checking::CheckMode;
 
@@ -686,6 +687,68 @@ fn owner_identity(wire: &Value, name: &str) -> String {
         .to_owned()
 }
 
+#[trace("FR-995-AC-1", "TC-2816")]
+#[test]
+fn source_owner_key_uses_its_identity_qualified_ix_spelling() {
+    let source_keys = BTreeMap::from([("source/unit".to_owned(), "source-owner".to_owned())]);
+    let identity = filament_exact::EffectiveId::new(
+        None,
+        filament_exact::OriginalDeclarationKey::new("source/unit", "ix://source/unit/Order"),
+    );
+
+    let emitted = super::super::checked_effective_id(&identity, &source_keys)
+        .expect("a source-owned declaration key is emitted");
+
+    assert_eq!(
+        serde_json::to_value(emitted).expect("the typed identity serializes"),
+        json!({
+            "owner_effective_type": null,
+            "original": {
+                "package": "source-owner",
+                "node": "ix://source-owner/Order"
+            }
+        })
+    );
+}
+
+#[trace("FR-996-AC-1", "TC-2818")]
+#[test]
+fn source_clock_place_keys_use_the_source_owner_identity() {
+    let source_keys = BTreeMap::from([("source/unit".to_owned(), "source-owner".to_owned())]);
+    let node_id = CheckedNodeId {
+        package: "source/unit".into(),
+        path: Vec::new(),
+        ordinal: 0,
+    };
+    let source_key = "ix://source/unit/O/d";
+    let mut node = CheckedSemanticNodeV2 {
+        node_id: node_id.clone(),
+        schema_version: GRAPH_V2.into(),
+        node_tag: "expression".into(),
+        semantic_form: "clock_place".into(),
+        semantic_type: node_id.clone(),
+        dependencies: Vec::new(),
+        occurrences: Vec::new(),
+        recursion_group: None,
+        declaration: None,
+        owner: None,
+        owner_model: None,
+        body: CheckedTerm::Literal {
+            type_id: node_id,
+            value_kind: LiteralKind::Text,
+            value: CheckedJson::from_serializable(&source_key).expect("a text literal"),
+        },
+    };
+
+    super::super::rewrite_source_keys_in_clock_place(&mut node, &source_keys)
+        .expect("the source clock-place key is emitted");
+
+    assert_eq!(
+        serde_json::to_value(node).expect("the clock place serializes")["body"]["value"],
+        "ix://source-owner/O/d"
+    );
+}
+
 /// The candidates of the one dispatch table whose context is `Order`'s node.
 fn order_candidates(wire: &Value) -> Vec<Value> {
     let order = nodes(wire)[source_object_node(wire, "Order")]["node_id"].clone();
@@ -710,7 +773,7 @@ fn order_candidates(wire: &Value) -> Vec<Value> {
     "FSpec-TC-1915"
 )]
 #[test]
-#[ignore = "QSL-2347: source selection keys are spelled from the SourceOwner identity; not implemented yet"]
+#[ignore = "QSL-2347: source object emission remains blocked by SourceObjectEmission"]
 fn source_selection_keys_are_spelled_from_the_source_owner() {
     let emission = emit_checked(&fixture_s_package()).expect("S4 emits fixture S");
     let wire = wire(&emission);
@@ -836,7 +899,7 @@ fn places(wire: &Value) -> Vec<usize> {
 
 #[trace("FR-996-AC-1", "TC-2818", "FSpec-FR-789-AC-1", "FSpec-TC-1917")]
 #[test]
-#[ignore = "QSL-2347: a timed source model is emitted with source clock-place rows; not implemented yet"]
+#[ignore = "QSL-2347: timed source fixture currently lacks its required temporal profile"]
 fn a_timed_source_model_emits_its_clock_places_with_source_rows() {
     let emission = emit_checked(&timed_source_package()).expect("S4 emits the timed source model");
     let wire = wire(&emission);
