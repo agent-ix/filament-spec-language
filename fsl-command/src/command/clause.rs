@@ -40,7 +40,8 @@ pub(super) fn read(
     let documents = request
         .models
         .iter()
-        .map(|model| intake.source(&model.source))
+        .enumerate()
+        .map(|(index, model)| intake.source(&model.source, &format!("models[{index}].source")))
         .collect::<Result<Vec<_>>>()?;
     let packages = fsl_semantics::model::intake::package_input(
         documents
@@ -51,7 +52,13 @@ pub(super) fn read(
     let libraries = request
         .libraries
         .iter()
-        .map(|library| Ok((library, intake.source(&library.source)?)))
+        .enumerate()
+        .map(|(index, library)| {
+            Ok((
+                library,
+                intake.source(&library.source, &format!("libraries[{index}].source"))?,
+            ))
+        })
         .collect::<Result<Vec<_>>>()?;
     let dependencies =
         DependencyInput::new(libraries.iter().map(|(library, read)| SuppliedLibrary {

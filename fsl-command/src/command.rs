@@ -305,8 +305,13 @@ pub enum RunCause {
     #[error("{0} limit exceeded")]
     Limit(LimitKind),
     /// Existing IR identifier validation failed.
-    #[error("invalid request identifier: {0:?}")]
-    Identifier(ir::Diagnostic),
+    #[error("{message}")]
+    Identifier {
+        /// The shared diagnostic retained in the structured JSON details.
+        diagnostic: ir::Diagnostic,
+        /// Plain request-facing sentence, without Rust's `Debug` rendering.
+        message: String,
+    },
     /// Existing source/parser/profile failure with no linking or checking context.
     #[error("{0}")]
     Native(#[from] Box<Diagnostic>),
@@ -495,7 +500,15 @@ pub struct SpineFailure {
 
 impl From<ir::Diagnostic> for RunCause {
     fn from(value: ir::Diagnostic) -> Self {
-        Self::Identifier(value)
+        let message = if value.path.ends_with(".formal_revision") {
+            value.message.clone()
+        } else {
+            format!("invalid request identifier: {}", value.message)
+        };
+        Self::Identifier {
+            message,
+            diagnostic: value,
+        }
     }
 }
 
@@ -512,7 +525,7 @@ impl RunCause {
             Self::Output(_) | Self::ClauseOutput(_) => Code::OutputFailure,
             Self::Format => Code::UnknownWire,
             Self::Limit(_) => Code::ResourceExhausted,
-            Self::Identifier(_) => Code::InvalidIdentifier,
+            Self::Identifier { .. } => Code::InvalidIdentifier,
             Self::Native(error) => error.code,
             Self::Source(error) => error.diagnostic.code,
             Self::CompleteSelection(_)
@@ -687,7 +700,7 @@ impl RunError {
             | RunCause::ClauseOutput(_)
             | RunCause::Format
             | RunCause::Limit(_)
-            | RunCause::Identifier(_)
+            | RunCause::Identifier { .. }
             | RunCause::CompleteSelection(_)
             | RunCause::ExtractionRequiresRun
             | RunCause::EmptyCompileProgram
@@ -836,8 +849,12 @@ impl Intake<'_> {
         Ok(bytes)
     }
 
-    fn source(&mut self, selected: &wire::SourceFile) -> Result<FormalSource> {
-        let identity = selected.identity.bind()?;
+    fn source(
+        &mut self,
+        selected: &wire::SourceFile,
+        request_member: &str,
+    ) -> Result<FormalSource> {
+        let identity = selected.identity.bind(request_member)?;
         let bytes = self.file(&selected.file, self.remaining)?;
         let source = Source::read_typed(identity.native, &selected.file, &bytes, self.maximum)
             .map_err(|refusal| {
@@ -1102,7 +1119,7 @@ pub fn read_clause_run_request(
             },
         )?;
         reject_current_parameters_before_sources(&mut intake, request.clause.as_ref())?;
-        let source = intake.source(&request.program.source)?;
+        let source = intake.source(&request.program.source, "program.source")?;
         require_complete_edition(source.source())?;
         clause::read(&mut intake, &request, clause, source)
     })
@@ -1175,8 +1192,8 @@ pub fn compile_outcome_with_overrides(
         // selecting a native rule model for it refuses whatever state the
         // model files are in.
         let mut sources = Vec::with_capacity(request.program.sources.len());
-        for selection in &request.program.sources {
-            let source = intake.source(selection)?;
+        for (index, selection) in request.program.sources.iter().enumerate() {
+            let source = intake.source(selection, &format!("program.sources[{index}].source"))?;
             require_complete_edition(source.source())?;
             sources.push(source);
         }
@@ -1517,7 +1534,8 @@ fn check_sources<T>(
     let documents = request
         .models
         .iter()
-        .map(|model| intake.source(&model.source))
+        .enumerate()
+        .map(|(index, model)| intake.source(&model.source, &format!("models[{index}].source")))
         .collect::<Result<Vec<_>>>()?;
     let packages = fsl_semantics::model::intake::package_input(
         documents
@@ -1732,7 +1750,13 @@ fn library_sources<'r>(
     request
         .libraries
         .iter()
-        .map(|library| Ok((library, intake.source(&library.source)?)))
+        .enumerate()
+        .map(|(index, library)| {
+            Ok((
+                library,
+                intake.source(&library.source, &format!("libraries[{index}].source"))?,
+            ))
+        })
         .collect()
 }
 
@@ -1944,7 +1968,7 @@ fn prepare_run_bytes(
     reject_current_parameters_before_sources(&mut intake, request.clause.as_ref())?;
     // The program source is read exactly once; its declared edition decides
     // the runner before any model or library source is read (FR-100).
-    let source = intake.source(&request.program.source)?;
+    let source = intake.source(&request.program.source, "program.source")?;
     require_complete_edition(source.source())?;
     prepare_complete_run(&mut intake, &request, source)
 }
@@ -2019,7 +2043,8 @@ fn prepare_complete_run(
     let documents = request
         .models
         .iter()
-        .map(|model| intake.source(&model.source))
+        .enumerate()
+        .map(|(index, model)| intake.source(&model.source, &format!("models[{index}].source")))
         .collect::<Result<Vec<_>>>()?;
     let packages = fsl_semantics::model::intake::package_input(
         documents
@@ -2033,7 +2058,13 @@ fn prepare_complete_run(
     let libraries = request
         .libraries
         .iter()
-        .map(|library| Ok((library, intake.source(&library.source)?)))
+        .enumerate()
+        .map(|(index, library)| {
+            Ok((
+                library,
+                intake.source(&library.source, &format!("libraries[{index}].source"))?,
+            ))
+        })
         .collect::<Result<Vec<(&wire::Library, FormalSource)>>>()?;
     let dependencies =
         fsl_replay::spine::DependencyInput::new(libraries.iter().map(|(library, read)| {

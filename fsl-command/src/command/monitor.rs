@@ -467,7 +467,7 @@ fn drive(
         },
         dependent_bytes,
     )?;
-    let program = intake.source(&request.program.source)?;
+    let program = intake.source(&request.program.source, "program.source")?;
     require_complete_edition(program.source())?;
     let records: Box<dyn Iterator<Item = Result<Vec<u8>>> + '_> = match source {
         Records::Batch => Box::new(file_lines(&mut intake, records_file.as_deref())?.into_iter()),

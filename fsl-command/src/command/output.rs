@@ -192,7 +192,10 @@ pub(super) fn error(error: &RunError, artifact: bool) -> Result<Value, serde_jso
         | RunCause::OutputGivenTwice
         | RunCause::OutputExists { .. } => (types::Stage::Request, types::Details::None),
         RunCause::ClauseOutput(_) => (types::Stage::Output, types::Details::None),
-        RunCause::Identifier(error) => (types::Stage::Request, types::Details::Identifier(error)),
+        RunCause::Identifier { diagnostic, .. } => (
+            types::Stage::Request,
+            types::Details::Identifier(diagnostic),
+        ),
         RunCause::Native(error) => (
             types::Stage::Native(error.phase),
             types::Details::Native(diagnostic(error)),
