@@ -980,7 +980,7 @@ fn one_occurrence_forms_fix_their_arity_in_the_grammar() {
 #[test]
 fn tuple_position_reads_and_map_types_parse() {
     let tuple_read = source(
-        "tuple Pair(Boolean, Integer);\nfunction first using Complete (p: Pair): Boolean pure { p[0] }",
+        "tuple Pair(Boolean, Integer);\nfunction f using Complete (p: Pair): Boolean pure { p[0] }",
     );
     let tuple_parsed = parse("tuple-position", &tuple_read);
     assert!(
@@ -995,7 +995,7 @@ fn tuple_position_reads_and_map_types_parse() {
     assert!(parse("map-type", &map_type).is_admissible());
 
     let tuple_dot = source(
-        "function first using Complete (p: Pair): Boolean pure { p.0 }\ntuple Pair(Boolean, Integer);",
+        "tuple Pair(Boolean, Integer);\nfunction f using Complete (p: Pair): Boolean pure { p.0 }",
     );
     assert_eq!(
         first_diagnostic("tuple-dot", tuple_dot.as_bytes()),
