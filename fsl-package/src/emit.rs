@@ -3638,6 +3638,35 @@ fn checked_equality_term_data(
         let mut operands = Vec::with_capacity(2);
         let mut compared_type_keys = Vec::with_capacity(2);
         let mut quantity_type_keys = Vec::with_capacity(4);
+        let checked_compared_type_keys = if matches!(
+            row.producer_data.schedule(),
+            filament_semantic_value::declaration::EqualitySchedule::Text
+                | filament_semantic_value::declaration::EqualitySchedule::Plan
+        ) {
+            let identity_types = row.producer_identity.text_plan_type_nodes();
+            if identity_types.len() != 2
+                || identity_types
+                    .iter()
+                    .enumerate()
+                    .any(|(position, (ordinal, key))| {
+                        *ordinal != position
+                            || !graph_nodes.contains_key(key)
+                            || !emitted_node_ids.contains_key(key)
+                    })
+            {
+                return Err(EmitRefusal::MissingEqualityIdentityContext {
+                    application: row.application.clone(),
+                });
+            }
+            Some(
+                identity_types
+                    .iter()
+                    .map(|(_, key)| key.clone())
+                    .collect::<Vec<_>>(),
+            )
+        } else {
+            None
+        };
         for (position, authored) in row.producer_data.authored_operands().iter().enumerate() {
             let Some(fsl_semantics::check::MemberTerm::Leaf(operand)) =
                 application_body.arguments.get(position)
@@ -3646,7 +3675,7 @@ fn checked_equality_term_data(
                     application: row.application().clone(),
                 });
             };
-            let (operand_node, compared_type_key) = match operand {
+            let (operand_node, lowered_compared_type_key) = match operand {
                 fsl_semantics::check::LeafTerm::Reference { target } => {
                     let Some(operand_node) = target.admitted().and_then(|key| graph_nodes.get(key))
                     else {
@@ -3675,6 +3704,11 @@ fn checked_equality_term_data(
                     });
                 }
             };
+            let compared_type_key = checked_compared_type_keys
+                .as_ref()
+                .and_then(|keys| keys.get(position))
+                .cloned()
+                .unwrap_or(lowered_compared_type_key);
             compared_type_keys.push(compared_type_key.clone());
             let conversion_target_key = compared_type_key.clone();
             let mut source_type = compared_type_key.clone();
