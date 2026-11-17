@@ -1848,8 +1848,50 @@ impl<'g> Candidate<'g> {
         declared == self.node.declaration().is_some()
     }
 
+    /// FR-952: the mode a `function` node records, the one its function was
+    /// checked under: the declaration index comes from the node's own
+    /// `declaration` or `generated` occurrence, which `check` locates at the
+    /// function's body. `None` for every other node.
+    fn function_check_mode(
+        &self,
+        function_modes: &dyn Fn(usize) -> Option<filament_semantic_value::checking::CheckMode>,
+    ) -> Result<Option<filament_contract_model::CheckMode>, EmitRefusal> {
+        use filament_semantic_value::checking::CheckMode as Checked;
+        use filament_semantic_value::location::ExpressionOwner;
+        if self.node.node_tag() != NodeTag::Function {
+            return Ok(None);
+        }
+        let index = self
+            .occurrences
+            .iter()
+            .filter(|(occurrence, _)| {
+                matches!(
+                    occurrence.role,
+                    CheckedOccurrenceRole::Declaration | CheckedOccurrenceRole::Generated
+                )
+            })
+            .find_map(|(_, location)| match location {
+                RecordedLocation::Expression(location) => match &location.origin {
+                    ExpressionOwner::Body { index, .. } => Some(*index),
+                    _ => None,
+                },
+                RecordedLocation::Parameter(_) => None,
+            });
+        let mode = index
+            .and_then(function_modes)
+            .ok_or_else(|| encoding("a function node has no recorded check mode"))?;
+        Ok(Some(match mode {
+            Checked::Linked => filament_contract_model::CheckMode::Linked,
+            Checked::Kernel => filament_contract_model::CheckMode::Kernel,
+        }))
+    }
+
     /// The node as FR-322 writes it.
-    fn wire_node(&self, ids: &StructuralIds) -> Result<CheckedSemanticNodeV2, EmitRefusal> {
+    fn wire_node(
+        &self,
+        ids: &StructuralIds,
+        function_modes: &dyn Fn(usize) -> Option<filament_semantic_value::checking::CheckMode>,
+    ) -> Result<CheckedSemanticNodeV2, EmitRefusal> {
         let node = self.node;
         Ok(CheckedSemanticNodeV2 {
             node_id: self.id.clone(),
@@ -1881,6 +1923,7 @@ impl<'g> Candidate<'g> {
             }),
             owner: node.owner().map(wire_owner),
             owner_model: node.owner_model().map(|key| node_id(ids, key)),
+            check_mode: self.function_check_mode(function_modes)?,
             body: checked_body(ids, node, self.tag)?,
         })
     }
@@ -4529,6 +4572,7 @@ fn refinement_node(
     Ok((
         CheckedSemanticNodeV2 {
             owner_model: None,
+            check_mode: None,
             node_id: id,
             schema_version: GRAPH_V2.into(),
             node_tag: CheckedNodeTag::Relation.as_wire().into(),
@@ -5072,6 +5116,7 @@ fn append_schedulability_claims(
             .ok_or(EmitRefusal::SourceMapInvariant)?;
         let node = CheckedSemanticNodeV2 {
             owner_model: None,
+            check_mode: None,
             node_id: id.clone(),
             schema_version: GRAPH_V2.into(),
             node_tag: CheckedNodeTag::ScalarType.as_wire().into(),
@@ -5181,6 +5226,7 @@ fn append_schedulability_claims(
         }
         let node = CheckedSemanticNodeV2 {
             owner_model: None,
+            check_mode: None,
             node_id: id.clone(),
             schema_version: GRAPH_V2.into(),
             node_tag: CheckedNodeTag::Claim.as_wire().into(),
@@ -5440,6 +5486,7 @@ fn push_scalar_type(
     });
     nodes.push(CheckedSemanticNodeV2 {
         owner_model: None,
+        check_mode: None,
         node_id: id.clone(),
         schema_version: GRAPH_V2.into(),
         node_tag: CheckedNodeTag::ScalarType.as_wire().into(),
@@ -5659,6 +5706,7 @@ fn model_root_node(
     let id = node_id(ids, key);
     CheckedSemanticNodeV2 {
         owner_model: None,
+        check_mode: None,
         node_id: id.clone(),
         schema_version: GRAPH_V2.into(),
         node_tag: CheckedNodeTag::Model.as_wire().into(),
@@ -6401,7 +6449,7 @@ fn emit_package_inner(
         .map(
             |candidate| match denied().or_else(|| fault(&candidate.id)) {
                 Some(refusal) => Err(refusal),
-                None => candidate.wire_node(ids),
+                None => candidate.wire_node(ids, &|index| graph.function_check_mode(index)),
             },
         )
         .collect::<Result<Vec<_>, _>>()?;
@@ -7985,6 +8033,7 @@ fn write_time_nominal(
     });
     nodes.push(CheckedSemanticNodeV2 {
         owner_model: None,
+        check_mode: None,
         node_id: id.clone(),
         schema_version: GRAPH_V2.into(),
         node_tag: CheckedNodeTag::ScalarType.as_wire().into(),

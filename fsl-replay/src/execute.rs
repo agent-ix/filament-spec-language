@@ -1835,6 +1835,8 @@ pub(crate) fn recompile_with_temporal_selections(
         clocks,
         limits.spine,
         request.refinement_internals(),
+        request.package().check_mode(),
+        &request.package().function_modes(),
     )
     .map_err(|failure| locate_refinement_internals(request, failure))?;
     // Rule 6: every entry names a selection of the recompiled closure.
@@ -1848,6 +1850,7 @@ pub(crate) fn recompile_with_temporal_selections(
             ));
         }
     }
+    check_recorded_modes(request.package().bytes(), compiled.emitted.package().bytes())?;
     request
         .package()
         .admit(&evidence, limits.spine.imports.for_ir())?;
@@ -2038,6 +2041,8 @@ fn run_spine_units(
     clocks: RecompileClocks<'_>,
     limits: SpineLimits,
     refinement_internals: Option<&[filament_contract_model::CheckedRefinementInternal]>,
+    check_mode: filament_semantic_value::checking::CheckMode,
+    function_modes: &std::collections::BTreeMap<String, filament_semantic_value::checking::CheckMode>,
 ) -> Result<(Recompiled, filament_contract_model::CheckedPackageEvidence), ReplayRefusal> {
     #[cfg(test)]
     SPINE_RUNS.with(|runs| runs.set(runs.get() + 1));
@@ -2107,6 +2112,8 @@ fn run_spine_units(
                 .map(internals_value)
                 .transpose()?
                 .as_ref(),
+            check_mode: Some(check_mode),
+            function_modes: Some(function_modes),
             extension_catalog: None,
         },
         limits,
@@ -2745,4 +2752,29 @@ mod carried_quantity_tests {
             }))
         ));
     }
+}
+
+/// FR-098-AC-34: every function the proving package records is rechecked
+/// under exactly the mode it records; a function whose recompile records
+/// another mode, or none, is refused at its node.
+fn check_recorded_modes(recorded: &[u8], recompiled: &[u8]) -> Result<(), ReplayRefusal> {
+    let recompiled_modes: std::collections::BTreeMap<String, Option<String>> =
+        crate::ReplayPackage::function_records(recompiled)
+            .into_iter()
+            .map(|record| (record.node_id, record.mode))
+            .collect();
+    for record in crate::ReplayPackage::function_records(recorded) {
+        if recompiled_modes.get(&record.node_id) != Some(&record.mode) {
+            return Err(ReplayRefusal::Request(
+                crate::ReplayRequestRefusal::PackageMember {
+                    pointer: format!(
+                        "/package/semantic_graph/nodes/{}/check_mode",
+                        record.position
+                    ),
+                    cause: crate::PackageMemberCause::CheckModeMismatch,
+                },
+            ));
+        }
+    }
+    Ok(())
 }

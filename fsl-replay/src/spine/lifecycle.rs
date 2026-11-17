@@ -1841,6 +1841,12 @@ pub(crate) struct UnitCheckOptions<'a> {
     pub(crate) clocks: Option<&'a super::RequestClocks>,
     pub(crate) continue_protocol_refusals: bool,
     pub(crate) refinement_internals: Option<&'a serde_json::Value>,
+    /// FR-098-AC-34: the mode every function body is checked under; `None`
+    /// is `Linked`. A replay passes the mode its proving package records.
+    pub(crate) check_mode: Option<CheckMode>,
+    /// FR-098-AC-34: each named function body's recorded mode, which the
+    /// recompile of the root unit checks that body under.
+    pub(crate) function_modes: Option<&'a BTreeMap<String, CheckMode>>,
     pub(crate) extension_catalog: Option<ProfileCatalogInput<'a>>,
 }
 
@@ -1887,6 +1893,8 @@ pub(crate) fn check_units_with_options(
             temporal_selections: options.temporal_selections,
             clocks: options.clocks,
             integer_division: options.integer_division,
+            check_mode: options.check_mode.unwrap_or(CheckMode::Linked),
+            function_modes: options.function_modes,
             extension_catalog: options.extension_catalog,
             active: Vec::new(),
             compiled: BTreeMap::new(),
@@ -2224,6 +2232,8 @@ fn check_with_context_and_temporal_selections(
             clocks,
             integer_division,
             extension_catalog,
+            check_mode: CheckMode::Linked,
+            function_modes: None,
             active: Vec::new(),
             compiled: BTreeMap::new(),
             import_edges: 0,
@@ -3363,6 +3373,31 @@ pub(crate) fn compose(
     dependencies: &DependencyInput,
     limits: SpineLimits,
 ) -> Result<ComposedUnit, Box<CompileRefusal>> {
+    compose_in_mode(
+        source,
+        path,
+        bytes,
+        packages,
+        dependencies,
+        limits,
+        None,
+        &BTreeMap::new(),
+    )
+}
+
+/// [`compose`] with every function body checked under `check_mode` (`None`
+/// is `Linked`), the way a `Kernel` package is produced.
+#[cfg(test)]
+pub(crate) fn compose_in_mode(
+    source: SourceIdentity,
+    path: &str,
+    bytes: &[u8],
+    packages: &fsl_semantics::model::intake::PackageInput,
+    dependencies: &DependencyInput,
+    limits: SpineLimits,
+    check_mode: Option<CheckMode>,
+    function_modes: &BTreeMap<String, CheckMode>,
+) -> Result<ComposedUnit, Box<CompileRefusal>> {
     let cancel = Cancel::new();
     let refusal = |failure| match refusal_or_fault(failure) {
         Ok(refusal) => refusal,
@@ -3382,16 +3417,42 @@ pub(crate) fn compose(
     let models = select(&parsed, packages, limits.model, &cancel)
         .map_err(refusal)?
         .into_value();
-    let checked = check(
-        &parsed,
-        "fixture".to_owned(),
-        &models,
-        dependencies,
-        limits,
-        &cancel,
-    )
-    .map_err(refusal)?
-    .into_value();
+    let checked = if let Some(check_mode) = check_mode {
+        let admitted = admit_parsed_unit_list(vec![parsed], dependencies)
+            ?;
+        let models = select_units(&admitted, packages, limits.model, limits.source, &cancel)
+            .map_err(refusal)?
+            .into_value();
+        check_units_with_options(
+            &admitted,
+            "fixture".to_owned(),
+            &models,
+            dependencies,
+            UnitCheckOptions {
+                check_mode: Some(check_mode),
+                function_modes: Some(function_modes),
+                ..UnitCheckOptions::default()
+            },
+            limits,
+            &cancel,
+        )
+        .map_err(refusal)?
+        .into_value()
+        .into_iter()
+        .next()
+        .expect("one admitted unit checks to one unit")
+    } else {
+        check(
+            &parsed,
+            "fixture".to_owned(),
+            &models,
+            dependencies,
+            limits,
+            &cancel,
+        )
+        .map_err(refusal)?
+        .into_value()
+    };
     let emitted = package(&checked, limits.package, &cancel)
         .map_err(refusal)?
         .into_value();
@@ -3496,6 +3557,8 @@ struct Resolution<'a> {
     dependencies: &'a DependencyInput,
     packages: &'a fsl_semantics::model::intake::PackageInput,
     continuation_source: RawSourceRef,
+    check_mode: CheckMode,
+    function_modes: Option<&'a BTreeMap<String, CheckMode>>,
     limits: SpineLimits,
     cancel: &'a Cancel,
     temporal_selections: &'a [fsl_package::TemporalClockSelection],
@@ -3909,6 +3972,11 @@ impl<'a> Resolution<'a> {
             })?;
         }
         declarations.integer_division = selected;
+        if frame.raw == self.continuation_source {
+            if let Some(modes) = self.function_modes {
+                declarations.function_modes = modes.clone();
+            }
+        }
         // FR-354: the extensions the package's units were parsed against are
         // the ones S3 checks their forms with.
         declarations = declarations.with_extensions(HeldExtensions::union(
@@ -3959,12 +4027,12 @@ impl<'a> Resolution<'a> {
         let graph = charged(cancel, &mut self.work.s3, || {
             if frame.raw == self.continuation_source {
                 declarations.check_with_protocol_continuation_and_cancel(
-                    CheckMode::Linked,
+                    self.check_mode,
                     limits.checking,
                     cancel,
                 )
             } else {
-                declarations.check_with_cancel(CheckMode::Linked, limits.checking, cancel)
+                declarations.check_with_cancel(self.check_mode, limits.checking, cancel)
             }
         })
         .map_err(|refusals| {
