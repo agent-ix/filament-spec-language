@@ -73,23 +73,23 @@ use filament_semantic_value::catalog::InternalFault;
 use filament_semantic_value::fairness::{FairnessConstraint, PropertyForm};
 use filament_semantic_value::model_transition::ModelTransition;
 use fsl_eval::automaton::{
-    bounded_shape, translate, translate_counted, Atom, AutomatonError, AutomatonKind, BoundedState,
-    BoundedTranslation, Gba, GbaBuilder, Guard, KeyRefusal, Letter, Monitor, SafetyAutomaton,
-    SafetyState, StateId,
+    Atom, AutomatonError, AutomatonKind, BoundedState, BoundedTranslation, Gba, GbaBuilder, Guard,
+    KeyRefusal, Letter, Monitor, SafetyAutomaton, SafetyState, StateId, bounded_shape, translate,
+    translate_counted,
 };
 use fsl_eval::fairness::{EdgeLabel, Vertex};
 use fsl_eval::model_subject::{
     AtomStop, ModelInstance, ModelLetters, ModelSubject, ProtocolSubject,
 };
+use fsl_eval::simulation::StateKey;
 use fsl_eval::simulation::model::{
-    check_model_bounds, ClauseOutcome, ModelFinding, ModelSimState, ModelSystem, TerminalClass,
+    ClauseOutcome, ModelFinding, ModelSimState, ModelSystem, TerminalClass, check_model_bounds,
 };
 use fsl_eval::simulation::protocol::{
     activates_on_each, check_protocol_bounds, live_instance_bound, Capacities, DataRace,
     MemoryModel, ProtocolFairnessError, ProtocolRefusal, ProtocolSystem, ProtocolTransition, Sc,
     SubjectMemory, UnboundCapacity, WeakAccessShape,
 };
-use fsl_eval::simulation::StateKey;
 use fsl_eval::simulation::{
     ConstraintValue, Cut, EncodingRefusal, Expansion, ExpansionLimit, ExpansionStop, FairLoop,
     Location, NotSimulated, Permutation, RequiresBound, SubjectSystem, SubjectTransition,
@@ -230,7 +230,9 @@ pub enum ModelCheckRefusal {
     /// A liveness clause over a protocol subject with an `ra` `parallel`,
     /// whose visibility fairness (FR-228) the liveness engine does not read
     /// yet (`unsupported_construct`/`not-yet-implemented`).
-    #[error("unsupported_construct/not-yet-implemented: EN-1 does not decide a liveness clause over an `ra` `parallel` yet")]
+    #[error(
+        "unsupported_construct/not-yet-implemented: EN-1 does not decide a liveness clause over an `ra` `parallel` yet"
+    )]
     WeakLiveness,
     /// A liveness clause with a state constraint selected: the liveness
     /// engine runs reduced under symmetry and partial-order reduction only.
@@ -244,7 +246,9 @@ pub enum ModelCheckRefusal {
     /// A refinement whose abstract side is a protocol clause: the engine
     /// decides no abstract protocol step yet (FR-148)
     /// (`unsupported_construct/not-yet-implemented`).
-    #[error("unsupported_construct/not-yet-implemented: EN-1 does not decide a refinement over an abstract protocol subject yet")]
+    #[error(
+        "unsupported_construct/not-yet-implemented: EN-1 does not decide a refinement over an abstract protocol subject yet"
+    )]
     ProtocolAbstractSide,
     /// An invariant of the engine or the subject broke.
     #[error("model check broke invariant {0:?}")]
@@ -679,9 +683,8 @@ pub struct ProtocolCheckRequest<'a> {
 /// # Errors
 ///
 /// [`ModelCheckRefusal`] as [`check_model`] returns it,
-/// [`ModelCheckRefusal::WeakLiveness`] for a liveness clause over an `ra`
-/// `parallel`, and [`ModelCheckRefusal::Protocol`] when the protocol system
-/// does not build.
+/// and [`ModelCheckRefusal::Protocol`] when the protocol system does not
+/// build.
 pub fn check_protocol(
     request: ProtocolCheckRequest<'_>,
     cancel: &Cancel,
@@ -1235,20 +1238,20 @@ fn check_reduced(
                 return Ok(ModelCheckOutcome::Undecided {
                     cause,
                     stats: total,
-                })
+                });
             }
             Err(Halt::Finish(Finish::Stopped(cause, limit))) => {
                 return Ok(ModelCheckOutcome::Stopped {
                     cause,
                     limit,
                     stats: total,
-                })
+                });
             }
             Err(Halt::Finish(Finish::Memory(cause))) => {
                 return Ok(ModelCheckOutcome::Memory {
                     cause,
                     stats: total,
-                })
+                });
             }
             Err(Halt::Finish(Finish::Violated(violation))) => {
                 let Violation { kind, at, binding } = *violation;
@@ -1479,7 +1482,7 @@ fn prepare(
         // share an automaton.
         let derived = match (item, counting) {
             (ModelCheckItem::RaceFreedom, Counting::Every) => {
-                return Err(ModelCheckRefusal::RaceOverModel)
+                return Err(ModelCheckRefusal::RaceOverModel);
             }
             (ModelCheckItem::RaceFreedom, Counting::ByKind) => Item::Race,
             _ => Item::Deadlock,
@@ -1491,7 +1494,7 @@ fn prepare(
         Some(PropertyForm::ReachableInvariant | PropertyForm::Safety) => false,
         Some(PropertyForm::BoundedMltl) => true,
         Some(PropertyForm::Liveness | PropertyForm::Refinement { .. }) | None => {
-            return Err(ModelCheckRefusal::FormNotDecided { form })
+            return Err(ModelCheckRefusal::FormNotDecided { form });
         }
     };
     let automaton = match counting {
@@ -1569,7 +1572,7 @@ trait Reducer<State> {
     ) -> Result<(State, Permutation), ExpansionStop>;
 
     fn constraint_value(&self, state: &State, name: &str)
-        -> Result<ConstraintValue, ExpansionStop>;
+    -> Result<ConstraintValue, ExpansionStop>;
 }
 
 impl Reducer<ModelSimState> for ModelSystem<'_> {
@@ -1756,7 +1759,7 @@ impl<S: SubjectSystem> Run<'_, S> {
                 // The producer refuses liveness clauses before instancing; only
                 // the closure checker builds this variant.
                 Translation::Liveness(_) => {
-                    return Err(fault("a-producer-run-has-no-liveness-translation"))
+                    return Err(fault("a-producer-run-has-no-liveness-translation"));
                 }
                 Translation::Bounded(translation) => {
                     for (node, canonical) in self.nodes.iter().zip(&self.canonical) {
@@ -2863,7 +2866,7 @@ impl<S: SubjectSystem> Run<'_, S> {
                 .into());
             }
             TerminalClass::Undecided { .. } => {
-                return Err(Finish::Undecided(UndecidedCause::UndecidedSuccessor).into())
+                return Err(Finish::Undecided(UndecidedCause::UndecidedSuccessor).into());
             }
         };
         let letter = if deadlocked {

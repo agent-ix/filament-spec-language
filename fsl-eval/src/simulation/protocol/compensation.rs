@@ -344,6 +344,7 @@ impl<M: MemoryModel> ProtocolSystem<'_, M> {
                     rest: Rest::Compensate(index),
                     disposition: Disposition::Running,
                     owner: None,
+                    pending_access: None,
                 },
             );
             instance.compensating.insert(

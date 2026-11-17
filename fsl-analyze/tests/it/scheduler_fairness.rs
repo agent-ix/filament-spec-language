@@ -17,25 +17,25 @@ use filament_exact::{Cancel, Meter};
 use filament_semantic_value::checking::CheckingLimits;
 use filament_semantic_value::fairness::{FairnessGranularity, FairnessKind};
 use fsl_analyze::model_check::ProtocolCheckRequest;
-use fsl_analyze::model_check::{check_protocol, ModelCheckRefusal};
+use fsl_analyze::model_check::{ModelCheckRefusal, check_protocol};
 use fsl_eval::model_subject::{ModelInstance, ModelLetters, ProtocolSubject};
+use fsl_eval::simulation::TransitionSystem;
 use fsl_eval::simulation::model::{ExpansionLimits, ModelSimState};
 use fsl_eval::simulation::protocol::{
     FairnessOrigin, MemorySelection, ProtocolClass, ProtocolFairness, ProtocolTarget,
     ProtocolTransition, ResolvedMemory, StepKind, ThreadPath,
 };
-use fsl_eval::simulation::TransitionSystem;
 use fsl_eval::temporal::AtomReading;
-use fsl_foundation::diagnostic::Code;
-use fsl_foundation::source::provenance::OccurrenceKey;
 use fsl_foundation::MemoryModelName;
 use fsl_foundation::SourceIdentity;
+use fsl_foundation::diagnostic::Code;
+use fsl_foundation::source::provenance::OccurrenceKey;
 use fsl_package::{CheckedPackage, ClockConfiguration, TemporalClockSelection};
 use fsl_replay::{
-    replay_protocol_trace, settle_protocol_check, ModelCheckItem, ModelCheckLimits,
-    ModelCheckOutcome, ModelCheckRecord, ModelTraceRefusal, ModelTraceReplayResult,
-    ModelTraceSettlement, ModelTraceSubject, ProofCertificate, ProtocolCertificateRequest,
-    ProtocolTraceSubject, ReplayLimits, ReplayRefusal, ResultLabel, TemporalCounterexample,
+    ModelCheckItem, ModelCheckLimits, ModelCheckOutcome, ModelCheckRecord, ModelTraceRefusal,
+    ModelTraceReplayResult, ModelTraceSettlement, ModelTraceSubject, ProofCertificate,
+    ProtocolCertificateRequest, ProtocolTraceSubject, ReplayLimits, ReplayRefusal, ResultLabel,
+    TemporalCounterexample, replay_protocol_trace, settle_protocol_check,
 };
 use fsl_semantics::check::{
     CheckCause, CheckRefusal, CheckedProtocolTarget, PackageDeclarations, ProtocolAnchorCause,
@@ -49,9 +49,9 @@ use ix_trace_rs::trace;
 use serde_json::Value;
 
 use crate::fill::{
-    attempt, contracts, document, fill_unit, instance, package_over, package_with,
+    Documents, attempt, contracts, document, fill_unit, instance, package_over, package_with,
     package_with_name, protocol, reachable, sc_system, single_object_document, subject,
-    tcb_01_event_position_selection, unit_text, universe, v, Documents,
+    tcb_01_event_position_selection, unit_text, universe, v,
 };
 use crate::model_settle::{envelope_at, request};
 
@@ -457,9 +457,11 @@ fn scheduling_adversarial_admits_the_lasso_that_starves_a_branch() {
                 && transition.node() == Some("Both/s/Sender/Done")
         }));
     }
-    assert!(cycle
-        .iter()
-        .all(|step| step.transition.node() != Some("Both/s/Sender/Done")));
+    assert!(
+        cycle
+            .iter()
+            .all(|step| step.transition.node() != Some("Both/s/Sender/Done"))
+    );
 
     let record = adversarial.settle(&outcome);
     assert_eq!(record.label, ResultLabel::Refuted, "{record:?}");
@@ -857,14 +859,18 @@ fn a_compensation_uses_its_finite_temporal_profile() {
     let nodes = wire["semantic_graph"]["nodes"]
         .as_array()
         .expect("emitted semantic graph");
-    assert!(nodes
-        .iter()
-        .any(|node| node["semantic_form"] == "compensation"));
+    assert!(
+        nodes
+            .iter()
+            .any(|node| node["semantic_form"] == "compensation")
+    );
     let reached = reachable(&system);
-    assert!(reached.iter().any(|state| state
-        .steps
-        .iter()
-        .any(|(step, _)| { matches!(step.kind(), StepKind::CAttempt | StepKind::CEnd) })));
+    assert!(reached.iter().any(|state| {
+        state
+            .steps
+            .iter()
+            .any(|(step, _)| matches!(step.kind(), StepKind::CAttempt | StepKind::CEnd))
+    }));
 }
 
 /// Every object below `value` whose `kind` is `kind`.

@@ -287,7 +287,46 @@ struct Thread {
     rest: Rest,
     disposition: Disposition,
     owner: Option<(ParallelKey, String)>,
+    pending_access: Option<PendingAccess>,
 }
+
+/// The values and memory choices accumulated by the load steps of a
+/// multi-location weak-memory access (FR-902).
+#[derive(Clone, Debug)]
+struct PendingAccess {
+    transition: filament_semantic_value::model_transition::ModelTransition,
+    receiver: Enc,
+    arguments: Vec<Enc>,
+    locations: Vec<Location>,
+    reads: BTreeMap<Location, PendingRead>,
+}
+
+#[derive(Clone, Debug)]
+struct PendingRead {
+    value: Option<Value>,
+    key: Option<String>,
+    choice: memory::ReadChoice,
+}
+
+impl PartialEq for PendingRead {
+    fn eq(&self, other: &Self) -> bool {
+        self.key == other.key && self.choice == other.choice
+    }
+}
+
+impl Eq for PendingRead {}
+
+impl PartialEq for PendingAccess {
+    fn eq(&self, other: &Self) -> bool {
+        self.transition == other.transition
+            && self.receiver == other.receiver
+            && self.arguments == other.arguments
+            && self.locations == other.locations
+            && self.reads == other.reads
+    }
+}
+
+impl Eq for PendingAccess {}
 
 /// A parallel instance's key (ADR-027 PS-4).
 #[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]
@@ -1508,6 +1547,92 @@ impl<'a, M: MemoryModel> ProtocolSystem<'a, M> {
                     ("rest", rest),
                     ("disposition", Enc::text(thread.disposition.text())),
                 ];
+                if let Some(pending) = &thread.pending_access {
+                    let transition = &pending.transition;
+                    let reads = pending
+                        .locations
+                        .iter()
+                        .filter_map(|location| {
+                            let read = pending.reads.get(location)?;
+                            Some(Enc::tagged(
+                                "pending-access-read",
+                                vec![
+                                    (
+                                        "location",
+                                        access::location_enc(
+                                            location,
+                                            self.potential.cell(location),
+                                        ),
+                                    ),
+                                    (
+                                        "value",
+                                        read.value.as_ref().map_or(Enc::Null, |value| {
+                                            value_enc(value, self.model.typing())
+                                        }),
+                                    ),
+                                    ("read_depth", Enc::text(read.choice.depth.to_string())),
+                                ],
+                            ))
+                        })
+                        .collect();
+                    members.push((
+                        "pending_access",
+                        Enc::tagged(
+                            "pending-access",
+                            vec![
+                                (
+                                    "transition",
+                                    Enc::tagged(
+                                        "model-transition",
+                                        vec![
+                                            (
+                                                "operation",
+                                                Enc::text(transition.operation().to_owned()),
+                                            ),
+                                            (
+                                                "receiver",
+                                                transition
+                                                    .receiver()
+                                                    .map_or(Enc::Null, |receiver| {
+                                                        Enc::text(receiver.to_owned())
+                                                    }),
+                                            ),
+                                            (
+                                                "arguments",
+                                                Enc::Array(
+                                                    transition
+                                                        .arguments()
+                                                        .iter()
+                                                        .cloned()
+                                                        .map(Enc::text)
+                                                        .collect(),
+                                                ),
+                                            ),
+                                        ],
+                                    ),
+                                ),
+                                ("receiver", pending.receiver.clone()),
+                                ("arguments", Enc::Array(pending.arguments.clone())),
+                                (
+                                    "locations",
+                                    Enc::Array(
+                                        pending
+                                            .locations
+                                            .iter()
+                                            .map(|location| {
+                                                access::location_enc(
+                                                    location,
+                                                    self.potential.cell(location),
+                                                )
+                                            })
+                                            .collect(),
+                                    ),
+                                ),
+                                ("reads", Enc::Array(reads)),
+                            ],
+                        ),
+                    ));
+                }
                 // A compensation thread's registration decides its steps,
                 // so its thread state names it (see `key_members`).
                 if let Some(compensating) = instance.compensating.get(path) {

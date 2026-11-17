@@ -867,8 +867,8 @@ pub struct ProtocolTransition {
     send_record: Option<SendRecord>,
     memory: Option<CarriedComponent>,
     actor: Option<Actor>,
-    visibility_read: Option<VisibilityRead>,
-    access: Option<AccessRecord>,
+    visibility_reads: Vec<VisibilityRead>,
+    accesses: Vec<AccessRecord>,
     race: Option<DataRace>,
     children: Vec<ThreadPath>,
     flow: Option<QueueFlow>,
@@ -911,8 +911,8 @@ impl ProtocolTransition {
             send_record: None,
             memory: None,
             actor: None,
-            visibility_read: None,
-            access: None,
+            visibility_reads: Vec::new(),
+            accesses: Vec::new(),
             race: None,
             children: Vec::new(),
             flow: None,
@@ -935,8 +935,8 @@ impl ProtocolTransition {
             send_record: None,
             memory: None,
             actor: None,
-            visibility_read: None,
-            access: None,
+            visibility_reads: Vec::new(),
+            accesses: Vec::new(),
             race: None,
             children: Vec::new(),
             flow: None,
@@ -969,8 +969,8 @@ impl ProtocolTransition {
             send_record: None,
             memory: None,
             actor: None,
-            visibility_read: None,
-            access: None,
+            visibility_reads: Vec::new(),
+            accesses: Vec::new(),
             race: None,
             children: Vec::new(),
             flow: None,
@@ -989,19 +989,19 @@ impl ProtocolTransition {
     }
 
     pub(crate) fn observing_visibility(mut self, read: VisibilityRead) -> Self {
-        self.visibility_read = Some(read);
+        self.visibility_reads.push(read);
         self
     }
 
-    pub(crate) fn visibility_read(&self) -> Option<&VisibilityRead> {
-        self.visibility_read.as_ref()
+    pub(crate) fn visibility_reads(&self) -> &[VisibilityRead] {
+        &self.visibility_reads
     }
 
     /// This attempt, having accessed a shared location of a weak `parallel`
     /// (ADR-025 DR-3). Like the memory component, it is no part of the
     /// identity.
     pub(crate) fn accessing(mut self, access: AccessRecord) -> Self {
-        self.access = Some(access);
+        self.accesses.push(access);
         self
     }
 
@@ -1081,7 +1081,13 @@ impl ProtocolTransition {
     /// thread, location, direction and `ordering`. `None` for every other
     /// step.
     pub fn access(&self) -> Option<&AccessRecord> {
-        self.access.as_ref()
+        self.accesses.first()
+    }
+
+    /// The shared-location accesses an attempt takes in one multi-location
+    /// apply step; empty for every other transition.
+    pub fn accesses(&self) -> &[AccessRecord] {
+        &self.accesses
     }
 
     /// The data race this step completes (ADR-025 DR-4); `None` for an
@@ -1113,8 +1119,8 @@ impl ProtocolTransition {
             send_record: None,
             memory: None,
             actor: None,
-            visibility_read: None,
-            access: None,
+            visibility_reads: Vec::new(),
+            accesses: Vec::new(),
             race: None,
             children: Vec::new(),
             flow: None,
@@ -1161,8 +1167,8 @@ impl ProtocolTransition {
             send_record: None,
             memory: None,
             actor: None,
-            visibility_read: None,
-            access: None,
+            visibility_reads: Vec::new(),
+            accesses: Vec::new(),
             race: None,
             children: Vec::new(),
             flow: None,
@@ -1201,8 +1207,8 @@ impl ProtocolTransition {
             send_record: None,
             memory: None,
             actor: None,
-            visibility_read: None,
-            access: None,
+            visibility_reads: Vec::new(),
+            accesses: Vec::new(),
             race: None,
             children: Vec::new(),
             flow: None,
@@ -1237,8 +1243,8 @@ impl ProtocolTransition {
             send_record: None,
             memory: None,
             actor: None,
-            visibility_read: None,
-            access: None,
+            visibility_reads: Vec::new(),
+            accesses: Vec::new(),
             race: None,
             children: Vec::new(),
             flow: None,
@@ -1322,8 +1328,8 @@ impl ProtocolTransition {
             send_record: None,
             memory: None,
             actor: None,
-            visibility_read: None,
-            access: None,
+            visibility_reads: Vec::new(),
+            accesses: Vec::new(),
             race: None,
             children: Vec::new(),
             flow: None,
@@ -1349,8 +1355,8 @@ impl ProtocolTransition {
             send_record: None,
             memory: None,
             actor: None,
-            visibility_read: None,
-            access: None,
+            visibility_reads: Vec::new(),
+            accesses: Vec::new(),
             race: None,
             children: Vec::new(),
             flow: None,
@@ -1382,8 +1388,8 @@ impl ProtocolTransition {
             send_record: None,
             memory: None,
             actor: None,
-            visibility_read: None,
-            access: None,
+            visibility_reads: Vec::new(),
+            accesses: Vec::new(),
             race: None,
             children: Vec::new(),
             flow: None,

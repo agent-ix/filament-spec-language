@@ -7,11 +7,11 @@
 //! text mode is tested in the driver repository.
 
 use ix_trace_rs::trace;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
 use crate::analyze_cli_support::{
-    analyze, below_three, bounded, clause, counter_request, label, litmus_request, order_protocol,
-    Workspace,
+    Workspace, analyze, below_three, bounded, clause, counter_request, label, litmus_request,
+    order_protocol,
 };
 
 const DONE: &str = "terminal Done using v on M when { self.value = 3 };\n";
