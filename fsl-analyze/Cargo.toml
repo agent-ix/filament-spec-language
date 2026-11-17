@@ -19,7 +19,6 @@ description = "ADR-011 §6.1 layer A: in-process analysis engines, including ret
 fsl-eval = { path = "../fsl-eval" }
 fsl-forms = { path = "../fsl-forms" }
 fsl-foundation = { path = "../fsl-foundation" }
-fsl-forms = { path = "../fsl-forms" }
 fsl-package = { path = "../fsl-package" }
 fsl-replay = { path = "../fsl-replay" }
 # EN-1 reads the checked temporal clause and the subject's admission
