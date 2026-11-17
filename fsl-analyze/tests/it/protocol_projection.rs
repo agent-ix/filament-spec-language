@@ -958,17 +958,15 @@ fn a_role_without_repeat_actions_has_no_local_loop() {
 fn a_timed_await_projects() {
     use crate::fill::{contracts, protocol};
 
-    let touch = crate::protocol_system::touch;
     let package = admitted_source(
         &(contracts("self.v = 0")
             + &protocol(
                 "P",
                 "",
                 &format!(
-                    "sequence Main {{ {} await Wait after Start using t0 clock \"c\" within [0,1] match event Seen by w as (seen: Boolean) {{ true }}; then {} timeout {} }}",
-                    touch("Start"),
-                    touch("Fine"),
-                    touch("Late"),
+                    "sequence Main {{ event Start by w as (start: Boolean) {{ true }}; await Wait after Start using t0 clock \"c\" within [0,1] match event Seen by w as (seen: Boolean) {{ true }}; then {} timeout {} }}",
+                    "sequence Fine { }",
+                    "sequence Late { }",
                 ),
                 "d",
             )),
