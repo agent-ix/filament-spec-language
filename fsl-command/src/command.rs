@@ -632,7 +632,31 @@ impl PreparedRun {
                             .map(|source| source.source().clone()),
                     ),
             ),
-            Self::Clause(_) | Self::TlLowering(_) => crate::Sources::default(),
+            Self::Clause(request) => {
+                crate::Sources::from_sources(source_from_clause(&request.source))
+            }
+            Self::TlLowering(prepared) => prepared.sources.clone(),
+        }
+    }
+}
+
+fn source_from_clause(source: &fsl_replay::spine::ClauseRunSource) -> Option<Source> {
+    match source {
+        fsl_replay::spine::ClauseRunSource::Program {
+            identity,
+            path,
+            bytes,
+        } => Source::read_typed(identity.clone(), path, bytes, bytes.len()).ok(),
+        #[cfg(feature = "quire-extraction")]
+        fsl_replay::spine::ClauseRunSource::Extracted(extracted) => {
+            let body = extracted.map().body();
+            Source::read_typed(
+                body.identity().clone(),
+                body.path(),
+                body.text().as_bytes(),
+                body.text().len(),
+            )
+            .ok()
         }
     }
 }
@@ -2801,10 +2825,12 @@ fn prepare_lowering(
     let clause: wire::ClauseRun = serde_json::from_value(tl::selection(&lowering))?;
     let text = source.source().text().to_owned();
     let run = clause::read(intake, request, &clause, source)?;
+    let sources = crate::Sources::from_sources(intake.sources.iter().cloned());
     Ok(PreparedRun::TlLowering(Box::new(PreparedLowering {
         request: run,
         lowering,
         source: text,
+        sources,
     })))
 }
 
@@ -2953,6 +2979,7 @@ pub struct PreparedLowering {
     request: fsl_replay::spine::ClauseRunRequest,
     lowering: tl::TlLowering,
     source: String,
+    sources: crate::Sources,
 }
 
 /// Execute a prepared FR-931 TL lowering and retain the standard run error
@@ -2965,12 +2992,8 @@ pub struct PreparedLowering {
 pub fn execute_tl_lowering(
     prepared: PreparedLowering,
 ) -> std::result::Result<RunResult, Box<RunError>> {
-    execute_lowering(prepared).map_err(|cause| {
-        Box::new(RunError {
-            cause,
-            sources: crate::Sources::default(),
-        })
-    })
+    let sources = prepared.sources.clone();
+    execute_lowering(prepared).map_err(|cause| Box::new(RunError { cause, sources }))
 }
 
 fn execute_lowering(prepared: PreparedLowering) -> Result<RunResult> {
@@ -2978,6 +3001,7 @@ fn execute_lowering(prepared: PreparedLowering) -> Result<RunResult> {
         request,
         lowering,
         source,
+        sources,
     } = prepared;
     let selection = request.selection.clone();
     let report = fsl_replay::spine::run_temporal_valuation(request).map_err(|error| {
@@ -2999,7 +3023,7 @@ fn execute_lowering(prepared: PreparedLowering) -> Result<RunResult> {
         value: NativeResult::lowering_document(tl::document(record.record)),
         outcome: None,
         requirements: None,
-        sources: crate::Sources::default(),
+        sources,
     })
 }
 
@@ -3203,6 +3227,23 @@ mod tests {
     use super::*;
     use filament_semantic_value::catalog::InternalFault;
     use ix_trace_rs::trace;
+
+    #[test]
+    #[trace("TC-2455", "FR-865-AC-5")]
+    fn prepared_clause_source_is_available_to_outcome_rendering() {
+        let source = fsl_replay::spine::ClauseRunSource::Program {
+            identity: fsl_foundation::SourceIdentity::new("tests", "prepared-clause"),
+            path: "src/clause.fsl".to_owned(),
+            bytes: b"language \"ix:native\" edition \"1-draft\";\n".to_vec(),
+        };
+        let admitted =
+            source_from_clause(&source).unwrap_or_else(|| panic!("prepared source is admitted"));
+        assert_eq!(admitted.path(), "src/clause.fsl");
+        assert_eq!(
+            admitted.text(),
+            "language \"ix:native\" edition \"1-draft\";\n"
+        );
+    }
 
     fn fault_error(stage: &'static str, invariant: &'static str) -> RunError {
         RunError {

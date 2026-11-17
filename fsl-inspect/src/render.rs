@@ -2297,4 +2297,53 @@ mod tests {
             "{text}"
         );
     }
+
+    #[test]
+    #[trace("TC-2455", "FR-865-AC-2")]
+    fn text_outcome_renders_execute_results_and_indeterminate_exit_code() {
+        use fsl_replay::spine::{CallIncomplete, CallOutcome, CallValue};
+
+        let completed = OutcomeDocument::from_call(&CallOutcome::Completed(CallValue::Written(
+            serde_json::json!({"integer": "7"}),
+        )));
+        let undefined = OutcomeDocument::from_call(&CallOutcome::Undefined {
+            reason: "sum-out-of-domain",
+        });
+        let incomplete = OutcomeDocument::from_call(&CallOutcome::Incomplete(CallIncomplete {
+            record: filament_exact::Incomplete {
+                limit_kind: filament_exact::LimitKind::WorkUnits,
+                limit: 0,
+                consumed: 0,
+                next_charge: filament_exact::Integer::from(1_u64),
+                charge_point: filament_exact::ChargePoint::FunctionCall,
+            },
+            location: None,
+        }));
+        let render =
+            |document: &OutcomeDocument| text_of(document, &RenderSources::from_sources([]));
+
+        assert!(
+            render(&completed).ends_with("result: completed {\"value\":{\"integer\":\"7\"}}\n")
+        );
+        assert!(
+            render(&undefined).ends_with("result: undefined {\"reason\":\"sum-out-of-domain\"}\n")
+        );
+        let incomplete_text = render(&incomplete);
+        assert!(incomplete_text.starts_with("execute: incomplete (exit 22) at S6a\n"));
+        assert!(
+            incomplete_text.contains("result: incomplete "),
+            "{incomplete_text}"
+        );
+        assert!(
+            incomplete_text.contains("accounting.work_units"),
+            "{incomplete_text}"
+        );
+
+        let indeterminate = OutcomeDocument::new(
+            fsl_replay::Operation::Analyze,
+            None,
+            Category::Indeterminate,
+        );
+        assert!(render(&indeterminate).starts_with("analyze: indeterminate (exit 11)\n"));
+    }
 }
