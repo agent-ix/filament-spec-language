@@ -54,6 +54,17 @@ pub(crate) fn admitted(
     domain: &str,
     document: &[u8],
 ) -> Box<CheckedPackageV2> {
+    match checked_dispatch(checked, domain, document) {
+        CheckedPackageDispatchResult::AdmittedV2(admitted) => admitted,
+        other => panic!("IR admits the package: {other:?}"),
+    }
+}
+
+fn checked_dispatch(
+    checked: &fsl_package::CheckedPackage,
+    domain: &str,
+    document: &[u8],
+) -> CheckedPackageDispatchResult {
     let graph = checked.graph();
     let clock = fsl_package::ClockConfiguration::EventPosition {
         sequence_authority: "protocol-projection-events".into(),
@@ -131,14 +142,11 @@ pub(crate) fn admitted(
     evidence
         .insert_domain_package_document(domain, document)
         .expect("fresh domain evidence");
-    match filament_contract_model::read_checked_package(
+    filament_contract_model::read_checked_package(
         emission.package().bytes(),
         CheckedPackageReadLimits::bounded(),
         &evidence,
-    ) {
-        CheckedPackageDispatchResult::AdmittedV2(admitted) => admitted,
-        other => panic!("IR admits the package: {other:?}"),
-    }
+    )
 }
 
 fn flow(run: &str) -> Box<CheckedPackageV2> {
@@ -944,8 +952,7 @@ fn a_divergence_before_the_horizon_is_found_though_later_events_are_cut() {
 /// existing protocol fixtures (`protocol_compensation`, `protocol_system`).
 #[trace("TC-1415", "FR-575-AC-1")]
 #[test]
-fn compensation_and_timed_await_answer_unsupported() {
-    use crate::fill::{contracts, protocol};
+fn compensation_answers_unsupported() {
     let compensating = admitted_source(&crate::protocol_compensation::pay("false"));
     let cause = unsupported_construct(&compensating, &clause(&compensating))
         .unwrap()
@@ -957,7 +964,15 @@ fn compensation_and_timed_await_answer_unsupported() {
         outcome.outcome,
         AnalysisOutcome::Unsupported(ref found) if found.slug == UnsupportedSlug::Compensation
     ));
+}
 
+/// The positive timed-await assertions remain here for when the Contract IR
+/// supports an await control as a temporal-binding declaration.
+#[trace("TC-1415", "FR-575-AC-1")]
+#[test]
+#[ignore = "Blocked by QSL-1964: Contract IR refuses await temporal bindings with InvalidPackage/TimedNodeReference."]
+fn a_timed_await_answers_unsupported_when_its_package_is_admitted() {
+    use crate::fill::{contracts, protocol};
     let touch = crate::protocol_system::touch;
     let waiting = admitted_source(
         &(contracts("self.v = 0")
@@ -979,6 +994,42 @@ fn compensation_and_timed_await_answer_unsupported() {
         .expect("a timed await is outside the profile");
     assert_eq!(cause.slug, UnsupportedSlug::TimedAwait);
     assert_eq!(cause.node, named(&waiting, "Wait"));
+}
+
+/// Until QSL-1964 adds a valid await binding target, the focused admission
+/// check records Contract IR's typed refusal for the emitted temporal row.
+#[trace("FR-892-AC-3", "TC-2525")]
+#[test]
+fn a_timed_await_package_is_refused_at_its_binding_row() {
+    use crate::fill::{contracts, protocol};
+    let waiting = package(
+        &(contracts("self.v = 0")
+            + &protocol(
+                "P",
+                "",
+                &format!(
+                    "sequence Main {{ event Start by w as (start: Boolean) {{ true }}; await Wait after Start using t0 clock \"c\" within [0,1] match event Seen by w as (seen: Boolean) {{ true }}; then {} timeout {} }}",
+                    "sequence Fine { }",
+                    "sequence Late { }",
+                ),
+                "d",
+            )),
+    );
+    let refusal = match checked_dispatch(&waiting, PACKAGE, &document()) {
+        CheckedPackageDispatchResult::Refused(refusal) => refusal,
+        other => panic!("await temporal binding must be refused: {other:?}"),
+    };
+    assert_eq!(
+        (refusal.code, refusal.cause),
+        (
+            filament_contract_model::CheckedPackageRefusalCode::InvalidPackage,
+            Some(filament_contract_model::CheckedPackageRefusalCause::TimedNodeReference),
+        )
+    );
+    assert_eq!(
+        refusal.loci[0].path.as_ref().map(|path| path.as_str()),
+        Some("/temporal_bindings/0/declaration")
+    );
 }
 
 /// FR-890-AC-2: a repeat projects onto a role in its body with its authored bound.
@@ -1040,6 +1091,7 @@ fn a_role_without_repeat_actions_has_no_local_loop() {
 /// FR-890-AC-3: a timed await projects with its closed window and clock.
 #[trace("FR-890-AC-3", "FR-892-AC-3", "TC-2521", "TC-2525")]
 #[test]
+#[ignore = "Blocked by QSL-1964: Contract IR refuses await temporal bindings with InvalidPackage/TimedNodeReference."]
 fn a_timed_await_projects_through_the_clock() {
     use crate::fill::{contracts, protocol};
 
