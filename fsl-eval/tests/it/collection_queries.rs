@@ -247,6 +247,7 @@ struct Run {
     outcome: Outcome<Value>,
     work: u64,
     results: u64,
+    visits: u64,
 }
 
 fn run(
@@ -297,6 +298,13 @@ fn evaluate_checked(
         outcome,
         work: meter.consumed(LimitKind::WorkUnits),
         results: meter.consumed(LimitKind::ResultUnits),
+        visits: meter
+            .admitted_charges()
+            .iter()
+            .filter(|charge| charge.point == ChargePoint::CollectionVisit)
+            .count()
+            .try_into()
+            .expect("the test visit log fits in u64"),
     }
 }
 
@@ -1254,26 +1262,66 @@ fn unbounded(kind: CollectionKind, element: ValueType) -> ValueType {
 
 #[trace("FSpec-FR-335-AC-6", "FSpec-FR-346")]
 #[test]
-fn forall_over_an_unbounded_collection_does_not_enumerate() {
-    // An unbounded type does not mean an infinite runtime value: FR-335-AC-6
-    // evaluates a concrete value occurrence by occurrence. FR-346 applies to
-    // deciding a claim's unbounded extent, outside this per-input evaluator.
+fn forall_over_an_unbounded_collection_visits_only_its_concrete_value() {
     let package = plain();
-    let unbounded_type = unbounded(CollectionKind::Sequence, ValueType::Boolean);
-    let expression = query(BinderQuery::Forall, "values", name("x"));
-    let values = vec![Value::Boolean(true); 5];
-    let result = run(
+    let source_type = unbounded(CollectionKind::Set, int_type(0, 9_999));
+    let forall = query(
+        BinderQuery::Forall,
+        "values",
+        binary(BinaryOperator::Less, name("x"), literal(500)),
+    );
+    let counterexample = run(
         &package,
-        &[("values", unbounded_type.clone())],
-        &expression,
-        vec![collection(&unbounded_type, values.clone())],
+        &[("values", source_type.clone())],
+        &forall,
+        vec![collection(&source_type, (0..1_000).map(int).collect())],
         UNLIMITED,
     );
+    assert!(!boolean_of(completed(&counterexample)));
     assert_eq!(
-        format!("{:?}", completed(&result)),
-        format!("{:?}", Value::Boolean(true))
+        counterexample.visits, 501,
+        "stop at the first counterexample"
     );
-    assert_eq!(result.work, 6, "the concrete occurrences are visited");
+
+    let all_true = run(
+        &package,
+        &[("values", source_type.clone())],
+        &forall,
+        vec![collection(&source_type, (0..100).map(int).collect())],
+        UNLIMITED,
+    );
+    assert!(boolean_of(completed(&all_true)));
+    assert_eq!(all_true.visits, 100);
+
+    let exists = query(
+        BinderQuery::Exists,
+        "values",
+        binary(BinaryOperator::Equal, name("x"), literal(7)),
+    );
+    let witness = run(
+        &package,
+        &[("values", source_type.clone())],
+        &exists,
+        vec![collection(&source_type, (0..100).map(int).collect())],
+        UNLIMITED,
+    );
+    assert!(boolean_of(completed(&witness)));
+    assert_eq!(witness.visits, 8, "stop after the first witness");
+
+    let limited = run(
+        &package,
+        &[("values", source_type.clone())],
+        &forall,
+        vec![collection(&source_type, (0..100).map(int).collect())],
+        work_limit(0),
+    );
+    assert!(matches!(
+        limited.outcome,
+        Outcome::Incomplete(Incomplete {
+            charge_point: ChargePoint::CollectionVisit,
+            ..
+        })
+    ));
 }
 
 #[trace("FSpec-FR-335-AC-6")]
