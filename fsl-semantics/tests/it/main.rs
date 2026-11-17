@@ -13,6 +13,8 @@
 // identities in individual fixtures remain independent of the source package.
 const TEST_PACKAGE_NAME: &str = "fsl-semantics-integration-tests";
 
+mod aggregate_threshold;
+mod annotated_let;
 mod bare_native_members;
 #[cfg(feature = "test-support")]
 mod business_meanings;
@@ -76,6 +78,7 @@ mod named_population;
 mod native_literals;
 mod native_scalar_equality;
 mod native_snapshot_values;
+mod null_value;
 mod observation_composites;
 mod operation_bodies;
 mod operation_clauses;
@@ -106,6 +109,7 @@ mod relationship_reachability;
 #[cfg(feature = "test-support")]
 mod relationship_snapshots;
 mod reserved_declaration_names;
+mod some_constructor;
 #[cfg(feature = "test-support")]
 mod source_objects;
 mod state_clauses;
@@ -139,6 +143,7 @@ mod timed_model;
 mod type_decisions;
 #[cfg(feature = "test-support")]
 mod type_environment_model;
+mod typed_size;
 mod unit_typed_members;
 mod variant_fields;
 mod variant_type;

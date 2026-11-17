@@ -13,6 +13,7 @@ mod format_outcome_facade;
 mod hyper_identity;
 mod hyper_query;
 mod hyper_smt_settle;
+mod indexed_read_stage;
 mod integer_division_check;
 mod outcome_facade;
 mod parse_outcome_facade;

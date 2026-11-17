@@ -980,3 +980,39 @@ fn a_rational_literal_takes_signed_constants_and_never_a_runtime_expression() {
         }
     }
 }
+
+/// FR-003-AC-14: every corpus unit formats idempotently, with an equal
+/// significant token sequence and an equal production tree.
+#[trace("TC-2784", "FR-003-AC-14")]
+#[test]
+#[ignore = "QSL-1974: formatting the whole complete-grammar corpus is not covered yet"]
+fn every_corpus_unit_formats_idempotently_with_its_tokens_and_tree() {
+    let shape = |parsed: &ParsedSource| {
+        let tokens: Vec<Vec<u8>> = parsed
+            .cst()
+            .tokens()
+            .iter()
+            .filter(|token| token.class() == fsl_cst::TokenClass::Token)
+            .map(|token| token.spelling().to_vec())
+            .collect();
+        let productions: Vec<Production> = parsed
+            .cst()
+            .nodes()
+            .iter()
+            .map(|node| node.production())
+            .collect();
+        (tokens, productions)
+    };
+    for (id, text) in corpus() {
+        let parsed = parse(id, &text);
+        let formatted = fsl_cst::format::format(&parsed)
+            .unwrap_or_else(|refusal| panic!("{id} formats: {refusal:?}"));
+        let reparsed = parse(id, &formatted);
+        assert_eq!(shape(&parsed), shape(&reparsed), "{id}");
+        assert_eq!(
+            fsl_cst::format::format(&reparsed).expect("formats again"),
+            formatted,
+            "{id}"
+        );
+    }
+}

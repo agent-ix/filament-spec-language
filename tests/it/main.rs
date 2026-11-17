@@ -152,6 +152,7 @@ mod temporal_v1_retired;
 mod text_enum_identity;
 mod text_size_v2;
 mod timed_clock_unit;
+mod typed_size_run;
 mod unbounded_declarations;
 mod union_nodes;
 mod value_invariants_run;
