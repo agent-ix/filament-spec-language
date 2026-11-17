@@ -1691,10 +1691,11 @@ pub fn compile(path: &Path) -> std::result::Result<Vec<u8>, Box<RunError>> {
 
 /// Compile once, retaining the actual core outcome document and package bytes.
 pub fn compile_outcome(path: &Path) -> std::result::Result<CompileOutcome, Box<RunError>> {
-    compile_outcome_with_limits_and_overrides(
+    compile_outcome_inner(
         path,
         RunLimits::default(),
         &RequestOverrides::default(),
+        false,
     )
 }
 
@@ -1712,7 +1713,7 @@ pub fn compile_outcome_with_overrides(
     path: &Path,
     overrides: &RequestOverrides<'_>,
 ) -> std::result::Result<CompileOutcome, Box<RunError>> {
-    compile_outcome_with_limits_and_overrides(path, RunLimits::default(), overrides)
+    compile_outcome_inner(path, RunLimits::default(), overrides, false)
 }
 
 /// Compile with caller-configured request/dependent byte ceilings and request
@@ -1722,7 +1723,16 @@ pub fn compile_outcome_with_limits_and_overrides(
     run_limits: RunLimits,
     overrides: &RequestOverrides<'_>,
 ) -> std::result::Result<CompileOutcome, Box<RunError>> {
-    with_request_limits(path, run_limits.request_bytes, |directory, bytes| {
+    compile_outcome_inner(path, run_limits, overrides, true)
+}
+
+fn compile_outcome_inner(
+    path: &Path,
+    run_limits: RunLimits,
+    overrides: &RequestOverrides<'_>,
+    request_limit_is_configured: bool,
+) -> std::result::Result<CompileOutcome, Box<RunError>> {
+    let result = with_request_limits(path, run_limits.request_bytes, |directory, bytes| {
         let request: wire::CompileRequest = request_with_overrides(bytes, overrides)?;
         validate_extension_entries(&request.extensions)?;
         if let Some(handoff) = &request.handoff {
@@ -1795,7 +1805,17 @@ pub fn compile_outcome_with_limits_and_overrides(
             output_file::write_new_file(&output, &outcome.package_bytes)?;
         }
         Ok(outcome)
-    })
+    });
+    if request_limit_is_configured {
+        result
+    } else {
+        result.map_err(|mut error| {
+            if let RunCause::Limit(LimitKind::RequestBytes { maximum }) = &error.cause {
+                error.cause = RunCause::Limit(LimitKind::FixedRequestBytes { maximum: *maximum });
+            }
+            error
+        })
+    }
 }
 
 /// Reject malformed FR-665 handoff selections before opening selected inputs.
