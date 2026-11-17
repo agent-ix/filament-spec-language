@@ -21,6 +21,8 @@ relationships:
     type: depends_on
   - target: ix://agent-ix/filament-spec-language/FR-499
     type: references
+  - target: ix://agent-ix/filament-spec-language/FR-975
+    type: references
 ---
 # FR-526: Chain a temporal evidence result to its direct predecessor and refuse a relation that names another obligation or changes nothing
 
@@ -66,8 +68,10 @@ FR-502 keeps progress in the `ProgressLedger`. The ledger's `results` table hold
 for each obligation instance (the package identity, the clause, the clause
 occurrence and the trigger identity), one flat entry for the latest result: its `result_identity`, its
 `input_identity` (FR-522: the identity over the evidence members only, which excludes the relation and the ledger), its correspondence
-identity and its lineage. Entries hold no recursive chain and no result bytes.
-Only the evaluator writes an entry.
+identity, its lineage and its `superseded` list, the `result_identity` of each
+earlier result of its chain, oldest first, whose length equals the lineage.
+Entries hold no recursive chain and no result bytes: the `superseded` list is
+flat and holds identities only. Only the evaluator writes an entry.
 
 ## Inputs
 
@@ -104,12 +108,22 @@ no truth), not an error (FR-523).
   evaluator SHALL retain that kind in the result.
 - When a request carries `Superseding` or `Invalidating` without a `ledger`, the
   evaluator SHALL refuse it with cause `no-ledger`.
-- The evaluator SHALL look up the ledger's entry for the request's package, clause,
-  occurrence and trigger identity.
+- The evaluator SHALL look up the ledger's entry by the request's whole
+  obligation-instance key: its package identity, clause, occurrence and trigger
+  identity. No part of the key is optional, so a clause name alone never
+  selects an entry.
 - When the ledger holds no entry for that key, the evaluator SHALL refuse the
   relation with cause `predecessor-unknown`.
-- When `prev` is not the `result_identity` of that entry, the evaluator SHALL refuse
-  the relation with cause `predecessor-not-latest`.
+- When `prev` is the `result_identity` of a result the entry's `superseded`
+  list holds, the evaluator SHALL refuse the relation with cause
+  `predecessor-not-latest`: the ledger holds the predecessor, and a later
+  correction has superseded it.
+- When `prev` is neither the entry's `result_identity` nor in its
+  `superseded` list, the evaluator SHALL refuse the relation with cause
+  `predecessor-unknown`: the ledger does not hold the predecessor.
+- An `Original` result SHALL record its entry with an empty `superseded` list,
+  and a `Superseding` or `Invalidating` result SHALL record the predecessor
+  entry's list followed by the predecessor's `result_identity`.
 - When the request's `input_identity` equals the entry's, the evaluator SHALL
   refuse the relation with cause `unchanged-input`.
 - When the request's correspondence differs from the entry's, the evaluator SHALL
@@ -157,7 +171,10 @@ no truth), not an error (FR-523).
   ledger is its `evidence_ledger` member, the relative path of the ledger file
   a prior run wrote. The run result writes `result_identity`, `relation`,
   `lineage` and the updated ledger as its `evidence_ledger` member, in the same
-  file form, so a correction chain is reachable through `command::run`.
+  file form, so a correction chain is reachable through `command::run`. That
+  file form is FR-975's `filament.finite-window-evidence-ledger/1`, keyed by
+  the whole obligation-instance key, and the run looks a predecessor up in it
+  by that key as an in-process call does.
   A relation refusal through `command::run` refuses the run as FR-966 "A
   refused correction through a run" states: stage `evaluate`,
   `invalid_runtime_input`/`invalid-value`, its `cause`, member `relation`, and
@@ -252,7 +269,7 @@ no truth), not an error (FR-523).
 | FR-526-AC-5 | The truth, settlement and support of the AC-4 result equal those of a `Superseding(r1)` request with the same inputs. | Test (TC-1321) |
 | FR-526-AC-6 | A `Superseding(r1)` request and an `Invalidating(r1)` request with `r1`'s `input_identity` each return `Err(CallFailure::Admission)` with cause `unchanged-input` and an empty charge log. | Test (TC-1321) |
 | FR-526-AC-7 | A `Superseding` request without a `ledger` returns `Err(CallFailure::Admission)` with cause `no-ledger`. | Test (TC-1321) |
-| FR-526-AC-8 | With a ledger holding `r1` and `r2` (`r2` superseding `r1`), a `Superseding(r1)` request returns `Err(CallFailure::Admission)` with cause `predecessor-not-latest`, and a `Superseding(r2)` request is accepted. | Test (TC-1321) |
+| FR-526-AC-8 | With a ledger holding `r1` and `r2` (`r2` superseding `r1`), a `Superseding(r1)` request returns `Err(CallFailure::Admission)` with cause `predecessor-not-latest`, because the entry holds `r1` in its `superseded` list; a `Superseding` request naming an identity that is neither the entry's `result_identity` nor in its `superseded` list returns cause `predecessor-unknown`; and a `Superseding(r2)` request is accepted. | Test (TC-1321) |
 | FR-526-AC-9 | A request for another clause of the same package naming `r1`, and a request for the same clause in another package naming `r1`, each return `Err(CallFailure::Admission)` with cause `predecessor-unknown`. | Test (TC-1321) |
 | FR-526-AC-10 | A request whose trigger identity differs from `r1`'s in one byte, naming `r1`, returns `Err(CallFailure::Admission)` with cause `predecessor-unknown`. | Test (TC-1321) |
 | FR-526-AC-11 | A request whose `correspondence` differs from `r1`'s, naming `r1`, returns `Err(CallFailure::Admission)` with cause `correspondence-changed`. | Test (TC-1321) |
@@ -268,7 +285,7 @@ no truth), not an error (FR-523).
 | FR-526-AC-21 | Over the twin package of FR-516-AC-32 (one node, occurrences 7 and 3), two calls with equal positions, valuations and correspondence, each with the `binding` of its own occurrence's clock row, selecting occurrences 3 and 7 return results whose `subject` agrees in `package_identity`, `package_version` and `clause` and differs in `occurrence`. | Test (TC-1321) |
 | FR-526-AC-22 | In a unit the test authors under the event-position profile (**R** holds no such clause), over the clause `on origin eventually[0,1] (holds(a) and holds(b))` with `a` and `b` true at position 0 and false at position 1, `Complete { through: 1 }` and `Closed` scope, the result is `True` and `support` is exactly the two entries (position 0, atom of `a`) and (position 0, atom of `b`), each naming position 0's `observation` byte for byte; a reading that merges entries by position, or by observation, gives one entry and fails this criterion. | Test (TC-1321) |
 | FR-526-AC-23 | Over AC-22's clause with `b`'s valuation at position 0 withdrawn, and over a fixed-sample clause whose decision support holds a pair at a silent sample (FR-516-AC-44), no `support` entry names a pair the request admitted no valuation for, and every entry of every result of TC-1321 names a request position and an atom with an admitted valuation there. | Test (TC-1321) |
-| FR-526-AC-24 | With `r1` from one request and `r1'` from a request that differs from it in one valuation so that their truths differ, a `Superseding(r1)` request carrying the ledger returned by `r1'`'s call returns `Err(CallFailure::Admission)` with cause `predecessor-not-latest`, and a `Superseding(r1')` request with changed inputs carrying that ledger is accepted. | Test (TC-1321) |
+| FR-526-AC-24 | With `r1` from one request and `r1'` from a request that differs from it in one valuation so that their truths differ, a `Superseding(r1)` request carrying the ledger returned by `r1'`'s `Original` call made without a ledger returns `Err(CallFailure::Admission)` with cause `predecessor-unknown`, because that ledger does not hold `r1`, and a `Superseding(r1')` request with changed inputs carrying that ledger is accepted. | Test (TC-1321) |
 | FR-526-AC-25 | Over the twins of AC-21, with `r3` the result for occurrence 3, a `Superseding(r3)` request selecting occurrence 7 with `r3`'s ledger and changed inputs returns `Err(CallFailure::Admission)` with cause `predecessor-unknown`, and `r3` and its ledger are unchanged. | Test (TC-1321) |
 | FR-526-AC-26 | A `Superseding(r1)` request carrying a clone of `r1`'s returned ledger, and one carrying that ledger moved out of `r1`, each return a result equal to the request carrying the ledger itself; a compile-fail test that sets an entry's `result_identity`, `input_identity`, correspondence or lineage outside the evaluator fails to compile. | Test (TC-1321) |
 | FR-526-AC-27 | A `Superseding(r1)` request with changed inputs completes with the `lineage` ceiling 1, and with the ceiling 0 returns an `Ok` `Incomplete` result with `LimitReached` naming `lineage`, `value` 0 and setting `temporal_evidence.lineage`, result `lineage` 1, relation `Superseding` naming `r1.result_identity`, `activation = Unavailable`, no truth, `usage.instances` 0 and `usage.positions` 0, and a `ledger` equal (`==`) to the request's. | Test (TC-1321) |

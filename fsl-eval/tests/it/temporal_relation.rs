@@ -185,6 +185,30 @@ fn a_relation_that_changes_nothing_or_has_no_ledger_is_refused_uncharged() {
     expect_refusal(run(&env, &bare), "no-ledger");
 }
 
+/// FR-526-AC-8 (TC-1321 row 8): with the ledger of `r2` superseding `r1`, a
+/// correction naming an identity that is neither the latest result nor in
+/// the entry's superseded list is refused `predecessor-unknown`, while one
+/// naming the superseded `r1` is refused `predecessor-not-latest`.
+#[trace("FR-526-AC-8", "TC-1321")]
+#[test]
+#[ignore = "QSL-2339: superseded list and predecessor-unknown for an identity the ledger does not hold not implemented yet"]
+fn a_predecessor_the_ledger_does_not_hold_is_unknown_not_stale() {
+    let (env, p) = setup();
+    let r1 = run(&env, &asking(&env, p, Valuation::True)).expect("a result");
+    let r2 = run(
+        &env,
+        &correct(&env, p, Valuation::False, &r1, Relation::Superseding),
+    )
+    .expect("a result");
+    let unrelated = run(&env, &asking(&env, p, Valuation::Missing)).expect("a result");
+    let mut stranger = correct(&env, p, Valuation::True, &unrelated, Relation::Superseding);
+    stranger.ledger = Some(r2.ledger.clone());
+    expect_refusal(run(&env, &stranger), "predecessor-unknown");
+    let mut stale = correct(&env, p, Valuation::Missing, &r1, Relation::Superseding);
+    stale.ledger = Some(r2.ledger.clone());
+    expect_refusal(run(&env, &stale), "predecessor-not-latest");
+}
+
 #[trace("FR-052-AC-12", "FR-526-AC-8", "FR-526-AC-15", "TC-1321")]
 #[test]
 fn only_the_latest_result_can_be_corrected_and_an_original_restarts_the_chain() {
@@ -327,11 +351,13 @@ fn two_occurrences_of_one_body_keep_separate_instances_results_and_progress() {
 
 /// FR-526-AC-24 (TC-1321 row 24): a result `r1` and a result `r1'` of a
 /// request that differs in one valuation, so that their truths differ. A
-/// `Superseding(r1)` request carrying the ledger `r1'`'s call returned is
-/// refused `predecessor-not-latest`; a `Superseding(r1')` request with
-/// changed inputs carrying that ledger is accepted.
+/// `Superseding(r1)` request carrying the ledger `r1'`'s `Original` call
+/// returned is refused `predecessor-unknown`, because that ledger does not
+/// hold `r1`; a `Superseding(r1')` request with changed inputs carrying that
+/// ledger is accepted.
 #[trace("FR-526-AC-24", "TC-1321")]
 #[test]
+#[ignore = "QSL-2339: predecessor-unknown for a predecessor the ledger does not hold not implemented yet"]
 fn only_the_ledger_entry_the_evaluator_wrote_for_the_predecessor_grants_authority() {
     let (env, p) = setup();
     let r1 = run(&env, &asking(&env, p, Valuation::True)).expect("a result");
@@ -339,7 +365,7 @@ fn only_the_ledger_entry_the_evaluator_wrote_for_the_predecessor_grants_authorit
     assert_ne!(r1.truth, other.truth);
     let mut stale = correct(&env, p, Valuation::Missing, &r1, Relation::Superseding);
     stale.ledger = Some(other.ledger.clone());
-    expect_refusal(run(&env, &stale), "predecessor-not-latest");
+    expect_refusal(run(&env, &stale), "predecessor-unknown");
     let mut latest = correct(&env, p, Valuation::Missing, &other, Relation::Superseding);
     latest.ledger = Some(other.ledger.clone());
     let accepted = run(&env, &latest).expect("a result");
