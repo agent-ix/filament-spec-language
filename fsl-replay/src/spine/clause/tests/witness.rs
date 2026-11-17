@@ -297,7 +297,7 @@ fn outcome_documents_keep_state_clause_witnesses_for_invariant_pre_and_post() {
     assert_eq!(pre_item["category"], "violation");
     assert_outcome_witness_names_history(&pre_item);
 
-    let post = super::witness_member::run_post_invocation(&[0, 1], &[0, 600, 700]);
+    let post = super::witness_member::run_post_invocation(&[0, 600, 700], &[0, 600, 700]);
     let post_payload = post
         .state_clause_counterexample
         .as_ref()
