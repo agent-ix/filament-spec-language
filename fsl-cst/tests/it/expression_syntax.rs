@@ -53,19 +53,44 @@ fn a_population_query_type_argument_names_the_declared_type_requirement() {
         assert!(diagnostic.message.contains("type Total = Integer;"));
     }
 
-    for expression in [
-        "sum<M::Total>(x in a: x)",
-        "fold<M::Integer>(0, x in a: x)",
-    ] {
-        let parsed = parse(document(expression).as_bytes())
-            .expect("valid UTF-8 within the source ceiling");
-        assert!(parsed.is_admissible(), "{expression}: {:?}", parsed.diagnostics());
+    for expression in ["sum<M::Total>(x in a: x)", "fold<M::Integer>(0, x in a: x)"] {
+        let text = document(expression);
+        let parsed = parse(text.as_bytes()).expect("valid UTF-8 within the source ceiling");
+        assert!(
+            parsed.is_admissible(),
+            "{expression}: {:?}",
+            parsed.diagnostics()
+        );
+        let formatted = fsl_cst::format::format(&parsed).expect("accepted query formats");
+        let reparsed = parse(&formatted).expect("formatted source is valid UTF-8");
+        assert!(
+            reparsed.is_admissible(),
+            "{expression}: {:?}",
+            reparsed.diagnostics()
+        );
+        let significant = |source: &ParsedSource| {
+            source
+                .cst()
+                .tokens()
+                .iter()
+                .filter(|token| {
+                    !matches!(
+                        token.kind(),
+                        fsl_cst::TokenKind::Whitespace | fsl_cst::TokenKind::Comment
+                    )
+                })
+                .map(|token| token.spelling().to_vec())
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(significant(&parsed), significant(&reparsed), "{expression}");
+        assert_eq!(
+            fsl_cst::format::format(&reparsed).expect("idempotent formatting"),
+            formatted,
+            "{expression}"
+        );
     }
 
-    for (expression, offending) in [
-        ("sum<>(x in a: x)", ">"),
-        ("sum<123>(x in a: x)", "123"),
-    ] {
+    for (expression, offending) in [("sum<>(x in a: x)", ">"), ("sum<123>(x in a: x)", "123")] {
         let text = document(expression);
         let parsed = parse(text.as_bytes()).expect("valid UTF-8 within the source ceiling");
         assert!(!parsed.is_admissible(), "{expression}");
