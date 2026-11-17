@@ -427,8 +427,13 @@ fn request_item_wire(
         "extent": extent,
         "candidates": candidates,
     });
-    if let (Some(named), Some(members)) = (named, wire.as_object_mut()) {
-        members.insert("backend".to_owned(), serde_json::json!(named.as_str()));
+    if let Some(members) = wire.as_object_mut() {
+        if let Some(named) = named {
+            members.insert("backend".to_owned(), serde_json::json!(named.as_str()));
+        }
+        if !item.options().is_empty() {
+            members.insert("options".to_owned(), serde_json::json!(item.options()));
+        }
     }
     Ok(wire)
 }

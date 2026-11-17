@@ -482,7 +482,6 @@ fn source_unit_path(wire: &Value, name: &str) -> Value {
 #[trace("TC-2720", "FR-965-AC-1")]
 #[trace("TC-2720", "FR-965-AC-3")]
 #[test]
-#[ignore = "QSL-2138: a source-declared time unit is not admitted as the clock unit node yet"]
 fn a_source_declared_time_unit_is_the_clock_unit() {
     let text = timestamped("always[0,3] (quantile 0.5 of e over past[0 ms, 300 s] <= 5 ms)");
     for (clock, lower, upper) in [("ms", "0", "300000"), ("s", "0", "300")] {
@@ -532,7 +531,6 @@ fn a_source_declared_time_unit_is_the_clock_unit() {
 /// `clock-unit-dimension`, naming the clock and the unit, with no package.
 #[trace("TC-2720", "FR-965-AC-2")]
 #[test]
-#[ignore = "QSL-2138: the clock unit node rule of FR-965 is not implemented yet"]
 fn a_timestamp_unit_naming_no_time_unit_refuses() {
     let formula = "always[0,3] (quantile 0.5 of e over past[0 ms, 300 s] <= 5 ms)";
     let length = timestamped(formula).replace(
@@ -546,9 +544,26 @@ fn a_timestamp_unit_naming_no_time_unit_refuses() {
         let refused = match emit_with_clock(&text, clock) {
             Ok(Ok(_)) => panic!("{clock}: no clock unit node, no package"),
             Ok(Err(refusal)) => format!("{refusal:?}"),
-            Err(refusals) => format!("{refusals:?}"),
+            // The refusal's FR-933 cause tag, the clock it names and the
+            // unit its fault carries.
+            Err(refusals) => refusals
+                .iter()
+                .map(|refusal| match &refusal.cause {
+                    fsl_semantics::check::CheckCause::Temporal(temporal) => match &**temporal {
+                        fsl_semantics::check::TemporalCause::ClockSelection {
+                            fault,
+                            clock,
+                            ..
+                        } => format!("{} {clock} {fault:?}", fault.tag()),
+                        other => format!("{other:?}"),
+                    },
+                    other => format!("{other:?}"),
+                })
+                .collect::<Vec<_>>()
+                .join("; "),
         };
         assert!(refused.contains(cause), "{clock}: {refused}");
+        assert!(refused.contains("events"), "names the clock: {refused}");
         assert!(refused.contains(clock), "{clock}: {refused}");
     }
 }

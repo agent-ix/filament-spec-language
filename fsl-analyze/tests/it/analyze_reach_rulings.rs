@@ -364,7 +364,6 @@ fn the_linked_registrations_include_en7() {
 /// least unpublished name, and leaves the other item as it is alone.
 #[trace("TC-2724", "FR-967-AC-1")]
 #[test]
-#[ignore = "QSL-2192: an unpublished option does not settle invalid_capability/unknown-option yet"]
 fn an_unpublished_option_settles_unknown_option() {
     let ws = Workspace::new("rulings-unknown-option");
     let run = analyze(&counter_request(
@@ -377,9 +376,15 @@ fn an_unpublished_option_settles_unknown_option() {
     ));
     let refused = run.item(0);
     let text = refused.to_string();
-    for needle in ["invalid-request", "invalid_capability", "unknown-option"] {
+    for needle in ["invalid_capability", "unknown-option"] {
         assert!(text.contains(needle), "{needle}: {refused}");
     }
+    // An `invalid-request` disposition record carries no `result` and is
+    // settled by the disposition (FR-621, FSpec FR-331); its item exits 20.
+    assert!(refused["record"].get("result").is_none(), "{refused}");
+    assert_eq!(refused["record"]["settled_by"], "disposition", "{refused}");
+    assert_eq!(refused["category"], "refusal", "{refused}");
+    assert_eq!(run.exit, 20, "{refused}");
     assert!(!text.contains("invalid_runtime_input"), "{refused}");
     assert_eq!(find(&refused, "option"), Some(&json!("alpha")), "{refused}");
     assert_eq!(
@@ -402,7 +407,6 @@ fn an_unpublished_option_settles_unknown_option() {
 /// adds.
 #[trace("TC-2724", "FR-967-AC-2")]
 #[test]
-#[ignore = "QSL-2192: an unpublished option does not settle invalid_capability/unknown-option yet"]
 fn an_unknown_backend_wins_and_a_published_option_reaches_the_provider() {
     let ws = Workspace::new("rulings-unknown-backend-option");
     let run = analyze(&counter_request(

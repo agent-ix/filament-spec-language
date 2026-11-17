@@ -42,6 +42,7 @@ use super::refusal::{CheckCause, CheckRefusal, PredicateRole, StateGraphCause};
 use super::state_clause::{check_clause, ClauseDeclarations, ClauseView, PopulationDomain};
 use super::Capability;
 use crate::family::{CheckContext, CheckOutcome, ClaimExtent, FamilyContract, Requirements};
+use crate::value::layer::HeaderLayer;
 
 /// A state-graph claim as the assembler hands it to the check: its form, its
 /// `using` alias resolved to one of the unit's profile selections and its
@@ -672,10 +673,11 @@ fn check_claim<'a>(
     cx: &mut CheckContext<'a, ClauseDeclarations<'a>>,
 ) -> Result<CheckedStateGraphClaim, StageFailure<CheckRefusal>> {
     let form = &declaration.form;
-    // FR-165-AC-7: the alias precedes every predicate and constraint, so a
-    // temporal profile is the claim's first refusal.
-    if super::profile::TemporalProfile::from_identity(&declaration.selection.identity).is_some() {
-        return Err(refuse(StateGraphCause::TemporalProfile {
+    // FR-165-AC-7: the alias precedes every predicate and constraint, so an
+    // identity outside the state-bearing header layers is the claim's first
+    // refusal.
+    if HeaderLayer::from_identity(&declaration.selection.identity).is_none() {
+        return Err(refuse(StateGraphCause::NotStateLayer {
             alias: form.profile.alias.clone(),
             identity: declaration.selection.identity.clone(),
             span: form.profile.span,

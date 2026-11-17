@@ -371,6 +371,11 @@ pub enum RunCause {
         /// The claim as the request spells it.
         claim: serde_json::Value,
     },
+    /// FR-526, FR-966: a timestamped run's correction relation or
+    /// admitted late observations are refused at stage `evaluate`, and no
+    /// result document or ledger is written.
+    #[error("invalid_runtime_input: the run's correction is refused: {0}")]
+    TemporalCorrection(fsl_replay::spine::CorrectionRefusal),
     /// FR-100: the spine run entry refused, at its own stage and cause code.
     #[error("{0}")]
     SpineRun(Box<fsl_replay::spine::RunRefusal>),
@@ -524,6 +529,7 @@ impl RunCause {
             Self::Spine(failure) => failure.refusal.code(),
             Self::SpineRun(refusal) => refusal.code(),
             Self::UnknownRequirementClaim { .. } => Code::MissingDeclaration,
+            Self::TemporalCorrection(_) => Code::InvalidRuntimeInput,
             Self::AnalyzeRequest { .. } => Code::InvalidRequest,
             Self::AnalyzePackage { code, .. } => *code,
             Self::AnalyzeNotYetImplemented { .. } => Code::UnsupportedConstruct,
@@ -687,6 +693,7 @@ impl RunError {
             | RunCause::ReplayRequest(_)
             | RunCause::ReplayBytes { .. }
             | RunCause::UnknownRequirementClaim { .. }
+            | RunCause::TemporalCorrection(_)
             | RunCause::ReplayOutput(_)
             | RunCause::ItemsFault => OutcomeDocument::new(operation, None, self.category())
                 .with_diagnostics(vec![OutcomeDiagnostic::new(
@@ -2112,7 +2119,7 @@ fn execute_lowering(prepared: PreparedLowering) -> Result<RunResult> {
         fsl_replay::spine::ClauseDisposition::MissingName { name } => {
             return Err(RunCause::TlClause { name: name.clone() })
         }
-        _ => return output::clause_report(&report, &selection),
+        _ => return output::clause_report(report, &selection),
     };
     let record = tl::lower(valuation, &source, &lowering).map_err(RunCause::TlFault)?;
     Ok(RunResult {
@@ -2135,7 +2142,7 @@ fn execute_prepared(prepared: PreparedRun, settle: &settle::Settle<'_>) -> Resul
                     reason: error.to_string(),
                 }
             })?;
-            return output::clause_report(&report, &selection);
+            return output::clause_report(report, &selection);
         }
     };
     let prepared = *prepared.data;

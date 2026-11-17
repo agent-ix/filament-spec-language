@@ -9,7 +9,10 @@
 //! widened by the uncertainty `u` to `[k-u, k+1+u)`, so the difference of the
 //! covers of two different readings is an open interval whose endpoints are
 //! integers, and a comparison against a bound is decided only when every pair
-//! of instants in the two covers agrees.
+//! of instants in the two covers agrees. Under [`ClockCover::Bounded`] a stamp
+//! `t` covers the closed interval `[t-u, t+u]`, and an observation's own
+//! [`StampInterval`] overrides the cover for it (FR-501 "Bounded cover and
+//! interval stamps"): every comparison reads the two observations' extents.
 
 /// What a clock binding declares a stamp to cover (FR-501 Inputs).
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
@@ -56,24 +59,32 @@ impl Containment {
     }
 }
 
-/// A difference of two covers: `lo < d < hi` for an interval whose ends are
-/// both open (a counter cover), `lo <= d <= hi` for a closed one (a bounded
-/// cover) or `d == lo == hi` for an exact difference.
+/// A difference of two extents: `lo .. hi` with each end open or closed, a
+/// single point when `lo == hi` and both ends are closed.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 struct Difference {
     lo: i128,
     hi: i128,
-    /// Whether the interval excludes its ends (a counter cover) or is the
-    /// single point `lo == hi` (an exact difference).
-    open: bool,
+    lo_open: bool,
+    hi_open: bool,
 }
 
 impl Difference {
+    /// The exact difference `value`.
+    const fn point(value: i128) -> Self {
+        Self {
+            lo: value,
+            hi: value,
+            lo_open: false,
+            hi_open: false,
+        }
+    }
+
     /// `d >= bound` for every `d`, for no `d`, or for some.
     fn at_least(self, bound: i128) -> Containment {
         if self.lo >= bound {
             Containment::True
-        } else if self.hi < bound || (self.hi == bound && self.open) {
+        } else if self.hi < bound || (self.hi == bound && self.hi_open) {
             Containment::False
         } else {
             Containment::Indeterminate
@@ -84,7 +95,7 @@ impl Difference {
     fn at_most(self, bound: i128) -> Containment {
         if self.hi <= bound {
             Containment::True
-        } else if self.lo > bound || (self.lo == bound && self.open) {
+        } else if self.lo > bound || (self.lo == bound && self.lo_open) {
             Containment::False
         } else {
             Containment::Indeterminate
@@ -105,82 +116,181 @@ impl ClockCover {
         }
     }
 
-    /// The difference `later - earlier` of the covers of two readings.
-    fn difference(self, earlier: i128, later: i128) -> Difference {
+    /// The instants the cover gives the reading `stamp`: `[t, t]` under
+    /// `Exact`, `[k-u, k+1+u)` under `Counter` and `[t-u, t+u]` under
+    /// `Bounded`.
+    pub(super) fn extent(self, stamp: u64) -> Extent {
+        let stamp = i128::from(stamp);
         match self {
-            Self::Exact => Difference {
-                lo: later - earlier,
-                hi: later - earlier,
-                open: false,
+            Self::Exact => Extent {
+                lo: stamp,
+                hi: stamp,
+                lo_open: false,
+                hi_open: false,
             },
-            Self::Counter { uncertainty } => {
-                let spread = 1 + 2 * i128::from(uncertainty);
-                Difference {
-                    lo: later - earlier - spread,
-                    hi: later - earlier + spread,
-                    open: true,
-                }
-            }
-            Self::Bounded { uncertainty } => {
-                let spread = 2 * i128::from(uncertainty);
-                Difference {
-                    lo: later - earlier - spread,
-                    hi: later - earlier + spread,
-                    open: false,
-                }
+            Self::Counter { uncertainty } => Extent {
+                lo: stamp - i128::from(uncertainty),
+                hi: stamp + 1 + i128::from(uncertainty),
+                lo_open: false,
+                hi_open: true,
+            },
+            Self::Bounded { uncertainty } => Extent {
+                lo: stamp - i128::from(uncertainty),
+                hi: stamp + i128::from(uncertainty),
+                lo_open: false,
+                hi_open: false,
+            },
+        }
+    }
+
+    /// FR-966 "The classified instant": the upper end of the uncertainty
+    /// of an observation with nominal stamp `stamp` and, when it has one,
+    /// `interval`: the interval's `latest` whatever its flag; otherwise `t +
+    /// u` under `Bounded`, `k + u` under `Counter` (the last whole tick of
+    /// its half-open cover) and `t` under `Exact`.
+    pub fn latest_instant(self, stamp: u64, interval: Option<StampInterval>) -> u64 {
+        if let Some(interval) = interval {
+            return interval.latest;
+        }
+        match self {
+            Self::Exact => stamp,
+            Self::Counter { uncertainty } | Self::Bounded { uncertainty } => {
+                stamp.saturating_add(uncertainty)
             }
         }
+    }
+
+    /// The earliest and the latest instant of an observation with nominal
+    /// stamp `stamp` and, when it has one, `interval`: what canonical order
+    /// sorts by before the stamp (FR-501 "Bounded cover and interval
+    /// stamps").
+    pub fn order_span(self, stamp: u64, interval: Option<StampInterval>) -> (i128, i128) {
+        let extent = interval.map_or_else(|| self.extent(stamp), Extent::of_interval);
+        (extent.lo, extent.hi)
     }
 
     /// FSpec FR-160's `within_bound`: whether `ack - request <= bound` holds
     /// for every pair of instants in the covers of the readings `request_tick`
     /// and `ack_tick`, for none, or for some.
     pub fn within_bound(self, bound: i64, request_tick: u64, ack_tick: u64) -> Containment {
-        self.difference(i128::from(request_tick), i128::from(ack_tick))
+        Extent::difference(self.extent(request_tick), self.extent(ack_tick))
             .at_most(i128::from(bound))
     }
 
     /// FSpec FR-160's `definitely_before`: whether every instant in the cover
     /// of the reading `a` lies below every instant in the cover of `b`.
     pub fn definitely_before(self, a: u64, b: u64) -> bool {
-        match self {
-            Self::Exact => a < b,
-            Self::Counter { uncertainty } => {
-                i128::from(a) + 1 + i128::from(uncertainty)
-                    <= i128::from(b) - i128::from(uncertainty)
-            }
-            Self::Bounded { uncertainty } => {
-                i128::from(a) + i128::from(uncertainty) < i128::from(b) - i128::from(uncertainty)
-            }
+        self.extent(a).before(self.extent(b))
+    }
+}
+
+/// FR-501 "Bounded cover and interval stamps": one observation's own
+/// uncertainty interval `[earliest, latest]`, with an open or closed flag at
+/// each end, which overrides the trace's cover for that observation.
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+pub struct StampInterval {
+    /// The earliest instant.
+    pub earliest: u64,
+    /// The latest instant.
+    pub latest: u64,
+    /// Whether `earliest` itself is excluded.
+    pub earliest_open: bool,
+    /// Whether `latest` itself is excluded.
+    pub latest_open: bool,
+}
+
+impl StampInterval {
+    /// FR-966 "Interval stamp admission": whether the interval is well
+    /// formed (`earliest <= latest`, and not a single instant with an open
+    /// end) and holds the nominal stamp `stamp`.
+    pub fn admits(self, stamp: u64) -> bool {
+        let formed = self.earliest < self.latest
+            || (self.earliest == self.latest && !self.earliest_open && !self.latest_open);
+        let above = if self.earliest_open {
+            stamp > self.earliest
+        } else {
+            stamp >= self.earliest
+        };
+        let below = if self.latest_open {
+            stamp < self.latest
+        } else {
+            stamp <= self.latest
+        };
+        formed && above && below
+    }
+}
+
+/// The instants one observation may lie at: its interval stamp, or the
+/// cover of its nominal stamp.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(super) struct Extent {
+    lo: i128,
+    hi: i128,
+    lo_open: bool,
+    hi_open: bool,
+}
+
+impl Extent {
+    /// The instants `interval` covers.
+    pub(super) fn of_interval(interval: StampInterval) -> Self {
+        Self {
+            lo: i128::from(interval.earliest),
+            hi: i128::from(interval.latest),
+            lo_open: interval.earliest_open,
+            hi_open: interval.latest_open,
         }
     }
 
-    /// Whether the reading at `candidate` lies at distance `[lower, upper]`
-    /// from the reading at `anchor`, forward when `forward` and backward
+    /// The least instant, which canonical order sorts by first.
+    pub(super) fn lo(self) -> i128 {
+        self.lo
+    }
+
+    /// The greatest instant, which canonical order sorts by second.
+    pub(super) fn hi(self) -> i128 {
+        self.hi
+    }
+
+    /// The difference `later - earlier` over every pair of instants of the
+    /// two extents (FSpec FR-160's difference interval).
+    fn difference(earlier: Self, later: Self) -> Difference {
+        Difference {
+            lo: later.lo - earlier.hi,
+            hi: later.hi - earlier.lo,
+            lo_open: later.lo_open || earlier.hi_open,
+            hi_open: later.hi_open || earlier.lo_open,
+        }
+    }
+
+    /// Whether every instant of `self` lies below every instant of `other`.
+    pub(super) fn before(self, other: Self) -> bool {
+        self.hi < other.lo || (self.hi == other.lo && (self.hi_open || other.lo_open))
+    }
+
+    /// Whether the two extents share an instant: neither lies wholly before
+    /// the other.
+    pub(super) fn overlaps(self, other: Self) -> bool {
+        !self.before(other) && !other.before(self)
+    }
+
+    /// Whether the reading `candidate` lies at distance `[lower, upper]`
+    /// from the reading `anchor`, forward when `forward` and backward
     /// otherwise: for every pair of instants, for none, or for some. A
     /// reading's distance to itself is exactly 0 (the same instant).
     pub(super) fn eligible(
-        self,
-        anchor: u64,
-        candidate: u64,
+        anchor: Self,
+        candidate: Self,
         same_position: bool,
         forward: bool,
         lower: u64,
         upper: u64,
     ) -> Containment {
-        let (earlier, later) = if forward {
-            (anchor, candidate)
-        } else {
-            (candidate, anchor)
-        };
         let difference = if same_position {
-            Difference {
-                lo: 0,
-                hi: 0,
-                open: false,
-            }
+            Difference::point(0)
+        } else if forward {
+            Self::difference(anchor, candidate)
         } else {
-            self.difference(i128::from(earlier), i128::from(later))
+            Self::difference(candidate, anchor)
         };
         difference
             .at_least(i128::from(lower))

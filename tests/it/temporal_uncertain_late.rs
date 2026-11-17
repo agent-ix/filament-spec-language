@@ -155,7 +155,6 @@ fn a_bounded_cover_widens_point_stamps_and_straddles_the_bound() {
 /// although the cover of 5 would straddle it).
 #[trace("TC-1546", "FR-501-AC-28", "FSpec-TC-1044", "FSpec-FR-160-AC-10")]
 #[test]
-#[ignore = "QSL-2146: per-observation interval stamps are not implemented yet"]
 fn interval_stamps_order_refuse_and_override_the_cover() {
     let interval = |stamp: u64, level: i64, earliest: u64, latest: u64, latest_open: bool| {
         let mut observed = observation(stamp, level);
@@ -239,7 +238,6 @@ fn late_trace(four: i64, three: i64, watermark: u64, cutoff: Option<Value>) -> V
 /// fixed instant 5 it is late and a stamp-6 arrival at 6 is on time.
 #[trace("TC-1547", "FR-501-AC-29", "FSpec-TC-1043", "FSpec-FR-094-AC-12")]
 #[test]
-#[ignore = "QSL-2146: the late-data cutoff is not implemented yet"]
 fn the_late_data_cutoff_delays_establishment_and_excludes_late_observations() {
     let lateness = || Some(json!({"allowed_lateness": 2}));
     assert_eq!(
@@ -277,7 +275,6 @@ fn the_late_data_cutoff_delays_establishment_and_excludes_late_observations() {
 /// member is written; adding the cutoff changes the result identity.
 #[trace("TC-1547", "FR-501-AC-30", "FSpec-TC-1043", "FSpec-FR-094-AC-13")]
 #[test]
-#[ignore = "QSL-2146: the late-data cutoff is not implemented yet"]
 fn without_a_cutoff_nothing_is_late_and_the_cutoff_enters_the_identity() {
     let without = run("Seen", late_trace(0, 2, 7, None));
     assert_eq!(kind(&without), "holds", "{without}");
@@ -297,7 +294,6 @@ fn without_a_cutoff_nothing_is_late_and_the_cutoff_enters_the_identity() {
 /// own trace as a superseding run refuses `unchanged-input`.
 #[trace("TC-1548", "FR-526-AC-31", "FSpec-TC-1043", "FSpec-FR-094-AC-13")]
 #[test]
-#[ignore = "QSL-2146: the late-data cutoff and the run-request relation are not implemented yet"]
 fn a_late_observation_is_admitted_only_by_a_superseding_result() {
     let directory = tempfile::tempdir().unwrap();
     let lateness = json!({"allowed_lateness": 2});
@@ -392,7 +388,6 @@ fn attempt(clause: &str, timestamped: Value) -> Value {
 /// input-order position 1; a stamp inside its interval is admitted.
 #[trace("TC-2721", "FR-966-AC-1")]
 #[test]
-#[ignore = "QSL-2146: per-observation interval stamps are not implemented yet"]
 fn a_malformed_or_foreign_interval_refuses_at_admission() {
     let interval = |earliest: u64, latest: u64, latest_open: bool| json!({"earliest": earliest, "latest": latest, "latest_open": latest_open});
     let second = |stamp: u64, interval: Value| {
@@ -413,7 +408,8 @@ fn a_malformed_or_foreign_interval_refuses_at_admission() {
         assert!(text.contains("invalid-value"), "{document}");
         assert!(text.contains("\"admit\""), "{document}");
         assert!(text.contains("\"interval\""), "{document}");
-        assert_eq!(find(&document, "position"), Some(&json!(1)), "{document}");
+        // An admission refusal record carries its fields as text (FR-645).
+        assert_eq!(find(&document, "position"), Some(&json!("1")), "{document}");
     }
     for (stamp, earliest, latest, open) in [(6, 4, 6, false), (5, 4, 6, true)] {
         run("Seen", second(stamp, interval(earliest, latest, open)));
@@ -424,7 +420,6 @@ fn a_malformed_or_foreign_interval_refuses_at_admission() {
 /// `Bounded { uncertainty: 5 }`, under which the point stamps straddle.
 #[trace("TC-2721", "FR-966-AC-2")]
 #[test]
-#[ignore = "QSL-2146: per-observation interval stamps are not implemented yet"]
 fn an_interval_stamp_overrides_the_bounded_cover() {
     let point = |interval: bool| {
         let at = |stamp: u64, level: i64, latest: u64| {
@@ -448,7 +443,6 @@ fn an_interval_stamp_overrides_the_bounded_cover() {
 /// uncertainty, and the `late` entry's `stamp` is that instant.
 #[trace("TC-2722", "FR-966-AC-3")]
 #[test]
-#[ignore = "QSL-2146: the late-data cutoff is not implemented yet"]
 fn the_cutoff_classifies_the_latest_possible_instant() {
     let late_stamps = |cover: Value, observed: Value| {
         let mut timestamped = trace(vec![stamped(0, 0, None, Some(0)), observed], 9);
@@ -482,7 +476,6 @@ fn the_cutoff_classifies_the_latest_possible_instant() {
 /// 5 both later observations are late; an all-late trace refuses at `admit`.
 #[trace("TC-2722", "FR-966-AC-4")]
 #[test]
-#[ignore = "QSL-2146: the late-data cutoff is not implemented yet"]
 fn late_observations_take_no_position() {
     let settled = run(
         "Seen",
@@ -518,7 +511,6 @@ fn late_observations_take_no_position() {
 /// late-data cutoff's rule and parameter each enter both identities.
 #[trace("TC-2723", "FR-966-AC-5")]
 #[test]
-#[ignore = "QSL-2146: the late-data cutoff is not implemented yet"]
 fn uncertainty_and_lateness_inputs_enter_both_identities() {
     let base = late_trace(2, 2, 7, Some(json!({"allowed_lateness": 2})));
     let identities = |timestamped: Value| {
@@ -570,7 +562,6 @@ fn once_unit() -> String {
 /// the stamp-3 observation, anchored at position 1.
 #[trace("TC-2722", "FR-966-AC-6")]
 #[test]
-#[ignore = "QSL-2146: the late-data cutoff is not implemented yet"]
 fn a_history_cutoff_and_a_late_data_cutoff_stay_independent() {
     let once = |cutoff: Option<Value>| {
         let mut timestamped = late_trace(2, 2, 7, cutoff);
@@ -606,7 +597,6 @@ fn a_history_cutoff_and_a_late_data_cutoff_stay_independent() {
 /// with member `relation` and its cause, and writes no result.
 #[trace("TC-2723", "FR-966-AC-7")]
 #[test]
-#[ignore = "QSL-2146: the late-data cutoff and the run-request relation are not implemented yet"]
 fn a_refused_correction_writes_no_result() {
     let directory = tempfile::tempdir().unwrap();
     let original_trace = late_trace(0, 2, 7, Some(json!({"allowed_lateness": 2})));
