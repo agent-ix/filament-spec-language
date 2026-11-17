@@ -1923,6 +1923,7 @@ mod tests {
             ExprNode::Case(_) => "Case",
             ExprNode::Boolean(_) => "Boolean",
             ExprNode::Absent => "Absent",
+            ExprNode::Null => "Null",
             ExprNode::Integer(_) => "Integer",
             ExprNode::Rational(..) => "Rational",
             ExprNode::DecimalValue { .. } => "DecimalValue",

@@ -2398,6 +2398,7 @@ fn check_match(
                 },
                 ExprNode::Boolean(_)
                 | ExprNode::Absent
+                | ExprNode::Null
                 | ExprNode::Integer(_)
                 | ExprNode::Float32(_)
                 | ExprNode::Float64(_)
@@ -2857,6 +2858,7 @@ fn is_opaque(node: &ExprNode) -> bool {
         | ExprNode::ProtocolReference { .. } => true,
         ExprNode::Boolean(_)
         | ExprNode::Absent
+        | ExprNode::Null
         | ExprNode::Integer(_)
         | ExprNode::Float32(_)
         | ExprNode::Float64(_)
@@ -3033,6 +3035,7 @@ fn leaf_payload(node: &ExprNode, swap: Swap<'_>) -> (Vec<u8>, Vec<u8>) {
         ExprNode::Name(name) => (b"name".to_vec(), text_segment(&name.name)),
         ExprNode::Boolean(value) => (b"bool".to_vec(), vec![u8::from(*value)]),
         ExprNode::Absent => (b"absent".to_vec(), Vec::new()),
+        ExprNode::Null => (b"null".to_vec(), Vec::new()),
         ExprNode::Integer(value) => (b"int".to_vec(), text_segment(&value.to_string())),
         ExprNode::Float32(bits) => (b"float32".to_vec(), text_segment(&format!("{bits:08x}"))),
         ExprNode::Float64(bits) => (b"float64".to_vec(), text_segment(&format!("{bits:016x}"))),

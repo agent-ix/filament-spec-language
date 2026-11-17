@@ -595,6 +595,9 @@ pub enum ExprNode {
     /// `absent`, the absent option: it takes its type from the `Option<T>`
     /// its context expects.
     Absent,
+    /// The source token `null`, kept distinct from an option's `absent` value
+    /// so S3 can refuse it as an ill-typed expression.
+    Null,
     /// An integer literal.
     Integer(Integer),
     /// The exact bits of `float32(bits: 0xHHHHHHHH)`.
@@ -950,6 +953,7 @@ impl ExprNode {
                 .collect(),
             Self::Boolean(_)
             | Self::Absent
+            | Self::Null
             | Self::Integer(_)
             | Self::Float32(_)
             | Self::Float64(_)
@@ -1065,6 +1069,7 @@ impl ExprNode {
             } => vec![accumulator, binder],
             Self::Boolean(_)
             | Self::Absent
+            | Self::Null
             | Self::Integer(_)
             | Self::Float32(_)
             | Self::Float64(_)
@@ -1146,6 +1151,7 @@ impl ExprNode {
             },
             Self::Boolean(_)
             | Self::Absent
+            | Self::Null
             | Self::Integer(_)
             | Self::Float32(_)
             | Self::Float64(_)
@@ -1204,6 +1210,7 @@ impl ExprNode {
             }
             Self::Boolean(_)
             | Self::Absent
+            | Self::Null
             | Self::Integer(_)
             | Self::Float32(_)
             | Self::Float64(_)

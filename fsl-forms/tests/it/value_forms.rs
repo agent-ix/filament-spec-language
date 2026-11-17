@@ -132,6 +132,7 @@ fn show(expression: ExprRef<'_>) -> String {
     let head = match expression.node() {
         ExprNode::Boolean(value) => format!("{value}"),
         ExprNode::Absent => "absent".into(),
+        ExprNode::Null => "null".into(),
         ExprNode::Integer(value) => format!("{value}"),
         ExprNode::Float32(bits) => format!("float32({bits:08x})"),
         ExprNode::Float64(bits) => format!("float64({bits:016x})"),
@@ -598,7 +599,6 @@ fn a_construct_no_variant_represents_refuses_the_unit() {
             Production::Primary,
             "size<Int[0, 1]>(c)",
         ),
-        ("null", Production::Primary, "null"),
     ];
     for (source, production, construct) in cases {
         let (text, cause, span) = refusal(&format!(
@@ -612,6 +612,16 @@ fn a_construct_no_variant_represents_refuses_the_unit() {
         assert_eq!(cause.catalog_code(), Code::UnsupportedConstruct);
         assert_eq!(span, Some(span_of(&text, construct)), "{source}");
     }
+}
+
+#[trace("TC-2214", "FSpec-FR-143-AC-20", "FSpec-FR-986-AC-1")]
+#[test]
+fn null_expression_builds_as_its_own_form() {
+    let (_, unit) = build("function f using v(): Boolean pure { null }");
+    assert!(matches!(
+        function(unit.forms()[0].form()).body.root_node(),
+        ExprNode::Null
+    ));
 }
 
 /// FR-397-AC-20: bit-pattern literals retain their exact width and bits.

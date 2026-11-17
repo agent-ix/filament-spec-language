@@ -770,6 +770,7 @@ struct Pending {
 enum Shape {
     Boolean(bool),
     Absent,
+    Null,
     Integer(Integer),
     Float32(u32),
     Float64(u64),
@@ -878,6 +879,10 @@ impl Shape {
             Self::Absent => {
                 arity(0)?;
                 ExprNode::Absent
+            }
+            Self::Null => {
+                arity(0)?;
+                ExprNode::Null
             }
             Self::Integer(value) => {
                 arity(0)?;
@@ -1931,7 +1936,7 @@ impl<'c> Mapping<'c> {
             b"true" => self.leaf(Shape::Boolean(true), &task),
             b"false" => self.leaf(Shape::Boolean(false), &task),
             b"absent" | b"none" => self.leaf(Shape::Absent, &task),
-            b"null" => Err(unrepresented(Production::Primary, node.span())),
+            b"null" => self.leaf(Shape::Null, &task),
             b"self" => self.leaf(Shape::SelfRef, &task),
             b"result" => self.leaf(Shape::Result, &task),
             b"protocol" => {

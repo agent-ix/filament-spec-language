@@ -370,6 +370,7 @@ pub(super) fn expression_form(node: &ExprNode, predicates: &BTreeSet<&str>) -> O
         | ExprNode::Accumulate { .. } => Some(LayerForm::ValueConstruct),
         ExprNode::Boolean(_)
         | ExprNode::Absent
+        | ExprNode::Null
         | ExprNode::Integer(_)
         | ExprNode::Rational(..)
         | ExprNode::DecimalValue { .. }
