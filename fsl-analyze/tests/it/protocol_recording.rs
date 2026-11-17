@@ -855,6 +855,94 @@ fn parallel_join_obligation_reads_branch_closure_premises() {
     );
 }
 
+/// Trace: FR-895 check control.
+#[trace("FR-895-AC-1")]
+#[test]
+fn check_control_evaluates_its_checked_body_against_prior_recorded_state() {
+    for (condition, expected) in [
+        ("true", RecordingVerdict::Satisfied),
+        ("false", RecordingVerdict::Violated),
+    ] {
+        let source = crate::protocol_compensation::pay("true").replace(
+            "event Fail by w as (failed: Boolean) { true };",
+            &format!("event Fail by w as (failed: Boolean) {{ true }}; check Gate using v {{ {condition} }};"),
+        );
+        let package = crate::fill::package(&source);
+        let run = json!({
+            "format":"filament.protocol-recording/1", "protocol":"Pay",
+            "observations":[{"kind":"event", "node":"Pay::Main::Fail", "role":"w", "instance":"w-1", "keys":{}, "record":true}],
+            "local_order":{"w":[0]}, "correlations":[],
+            "closure":{"state":"open", "premises":[]}
+        });
+        let assessed =
+            assess_recording(&package, run.to_string().as_bytes()).expect("readable run");
+        assert!(
+            assessed.obligations.iter().any(|entry| {
+                entry.obligation.kind == "control"
+                    && entry.obligation.node.as_deref() == Some("Pay::Main::Gate")
+                    && entry.verdict == expected
+            }),
+            "{condition}: {:#?}",
+            assessed.obligations
+        );
+    }
+}
+
+/// Trace: FR-895 join control.
+#[trace("FR-895-AC-1")]
+#[test]
+fn predicate_join_evaluates_the_checked_function_over_branch_premises() {
+    let source = crate::analyze_cli_support::order_protocol(false)
+        .replace(
+            "run sequence Main {",
+            "run sequence Main { parallel Both memory sc { branch left sequence Left { event L by Buyer as (l: Ack) { true }; } branch right sequence Right { event R by Seller as (r: Ack) { true }; } } join predicate(both) [left, right] outstanding cancel;",
+        );
+    let source = format!(
+        "function both using v(left: Boolean, right: Boolean): Boolean pure {{ left and right }}\n{source}"
+    );
+    let package = crate::litmus::package_called("analysis-unit", &source);
+    let run = json!({
+        "format":"filament.protocol-recording/1", "protocol":"Flow",
+        "observations":[
+            {"kind":"event", "node":"Flow::Main::Both::left::Left::L", "role":"Buyer", "instance":"w-1", "keys":{}, "record":{"ok":true}},
+            {"kind":"event", "node":"Flow::Main::Both::right::Right::R", "role":"Seller", "instance":"w-1", "keys":{}, "record":{"ok":true}}
+        ],
+        "local_order":{"Buyer":[0], "Seller":[1]}, "correlations":[],
+        "closure":{"state":"closed", "premises":[
+            {"kind":"branch", "identity":"w-1/Flow::Main::Both::left"},
+            {"kind":"branch", "identity":"w-1/Flow::Main::Both::right"}
+        ]}
+    });
+    let assessed = assess_recording(&package, run.to_string().as_bytes()).expect("readable run");
+    assert!(
+        assessed.obligations.iter().any(|entry| {
+            entry.obligation.kind == "join"
+                && entry.obligation.node.as_deref() == Some("Flow::Main::Both")
+                && entry.verdict == RecordingVerdict::Satisfied
+        }),
+        "{:#?}",
+        assessed.obligations
+    );
+
+    let mut incomplete = run;
+    incomplete["closure"]["premises"] = json!([
+        {"kind":"branch", "identity":"w-1/Flow::Main::Both::left"}
+    ]);
+    let assessed = assess_recording(&package, incomplete.to_string().as_bytes())
+        .expect("recording remains interpretable");
+    assert!(
+        assessed.obligations.iter().any(|entry| {
+            entry.obligation.kind == "join"
+                && entry.obligation.node.as_deref() == Some("Flow::Main::Both")
+                && entry.verdict == RecordingVerdict::Violated
+                && entry.cause
+                    == Some(fsl_analyze::protocol_analysis::recording::RecordingCause::Missing)
+        }),
+        "{:#?}",
+        assessed.obligations
+    );
+}
+
 /// Trace: FR-895 channel premises.
 #[trace("FR-895-AC-1")]
 #[test]

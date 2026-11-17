@@ -1148,6 +1148,72 @@ fn assess_obligations(
                 ),
             ))
         });
+        let check_verdict = if control.kind.label() == "check" {
+            let body = protocol
+                .slots
+                .bodies
+                .iter()
+                .find(|body| body.node == control.node);
+            let owner_role = protocol
+                .owners
+                .iter()
+                .find(|owner| owner.node == control.node)
+                .and_then(|owner| protocol.roles.get(owner.role))
+                .map(|role| role.name.as_str());
+            body.map(|body| {
+                let control_index = protocol
+                    .controls
+                    .controls
+                    .iter()
+                    .position(|candidate| candidate.node == control.node)
+                    .unwrap_or_default();
+                let prior_nodes = protocol
+                    .controls
+                    .controls
+                    .iter()
+                    .take(control_index)
+                    .map(|candidate| format!("{}::{}", protocol.name, candidate.path.join("::")))
+                    .collect::<BTreeSet<_>>();
+                let order = causal_topological_order(protocol, document);
+                let ranks = order
+                    .iter()
+                    .enumerate()
+                    .map(|(rank, position)| (*position, rank))
+                    .collect::<BTreeMap<_, _>>();
+                let instances = document
+                    .observations
+                    .iter()
+                    .filter_map(|observation| observation.instance.clone())
+                    .collect::<BTreeSet<_>>();
+                let instance = instances.iter().next();
+                let latest = document
+                    .observations
+                    .iter()
+                    .enumerate()
+                    .filter(|(_, observation)| {
+                        owner_role.is_none_or(|role| observation.role == role)
+                            && prior_nodes.contains(&observation.node)
+                            && observation.instance.as_deref() == instance.map(String::as_str)
+                    })
+                    .max_by_key(|(position, _)| ranks.get(position).copied());
+                match latest {
+                    Some((position, _)) => (
+                        Some(position),
+                        evaluate_body(
+                            package,
+                            protocol,
+                            document,
+                            &body.body,
+                            instance.map(String::as_str),
+                            position,
+                        ),
+                    ),
+                    None => (None, None),
+                }
+            })
+        } else {
+            None
+        };
         let repeat_verdict = if control.kind.label() == "repeat" {
             let repeat = protocol
                 .slots
@@ -1237,16 +1303,65 @@ fn assess_obligations(
                         })
                     })
                     .count();
-                let required = match parallel.policy {
-                    fsl_semantics::check::CheckedJoinPolicy::All => branch_names.len(),
-                    fsl_semantics::check::CheckedJoinPolicy::Any => 1,
-                    fsl_semantics::check::CheckedJoinPolicy::Quorum(count) => {
-                        usize::try_from(count).unwrap_or(usize::MAX)
+                let policy_holds = match &parallel.policy {
+                    fsl_semantics::check::CheckedJoinPolicy::All => {
+                        Some(closed_branches == branch_names.len())
                     }
-                    fsl_semantics::check::CheckedJoinPolicy::Predicate { .. } => usize::MAX,
+                    fsl_semantics::check::CheckedJoinPolicy::Any => Some(closed_branches >= 1),
+                    fsl_semantics::check::CheckedJoinPolicy::Quorum(count) => {
+                        usize::try_from(*count)
+                            .ok()
+                            .map(|required| closed_branches >= required)
+                    }
+                    fsl_semantics::check::CheckedJoinPolicy::Predicate { function } => {
+                        let mut labels = parallel.joined.clone();
+                        labels.sort();
+                        let arguments = labels
+                            .iter()
+                            .map(|label| {
+                                let branch = control
+                                    .children
+                                    .iter()
+                                    .filter_map(|child| protocol.controls.control(*child))
+                                    .find(|branch| branch.name == *label)?;
+                                let qualified =
+                                    format!("{}::{}", protocol.name, branch.path.join("::"));
+                                let completed = instance.is_some_and(|instance| {
+                                    document.closure.premises.iter().any(|premise| {
+                                        premise.kind == "branch"
+                                            && premise.identity == format!("{instance}/{qualified}")
+                                    })
+                                });
+                                Some(Value::Boolean(completed))
+                            })
+                            .collect::<Option<Vec<_>>>();
+                        arguments.and_then(|arguments| {
+                            fsl_eval::value::evaluate_join_predicate(
+                                package,
+                                function,
+                                arguments,
+                                &mut recording_meter(),
+                            )
+                            .ok()
+                            .and_then(|evaluation| {
+                                match evaluation.outcome {
+                                    FamilyOutcome::Evaluated(Outcome::Completed(
+                                        Value::Boolean(value),
+                                    )) => Some(value),
+                                    _ => None,
+                                }
+                            })
+                        })
+                    }
                 };
-                if closed_branches >= required && required != usize::MAX {
+                if policy_holds == Some(true) {
                     (RecordingVerdict::Satisfied, None, Vec::new())
+                } else if policy_holds == Some(false) && closure_closed {
+                    (
+                        RecordingVerdict::Violated,
+                        Some(RecordingCause::Missing),
+                        Vec::new(),
+                    )
                 } else if closure_closed {
                     (
                         RecordingVerdict::Violated,
@@ -1268,6 +1383,21 @@ fn assess_obligations(
                 vec![position],
             ),
             Some((position, None)) => (RecordingVerdict::Pending, None, vec![position]),
+            None if check_verdict.is_some() => match check_verdict.unwrap_or((None, None)) {
+                (Some(position), Some(true)) => (RecordingVerdict::Satisfied, None, vec![position]),
+                (Some(position), Some(false)) => (
+                    RecordingVerdict::Violated,
+                    Some(RecordingCause::Unexpected),
+                    vec![position],
+                ),
+                (Some(position), None) => (RecordingVerdict::Pending, None, vec![position]),
+                (None, _) if closure_closed => (
+                    RecordingVerdict::Violated,
+                    Some(RecordingCause::Missing),
+                    Vec::new(),
+                ),
+                (None, _) => (RecordingVerdict::Pending, None, Vec::new()),
+            },
             None if repeat_verdict.is_some() => {
                 repeat_verdict.unwrap_or((RecordingVerdict::Pending, None, Vec::new()))
             }
@@ -2161,6 +2291,21 @@ fn recording_value(
         }
         _ => None,
     }
+}
+
+fn recording_meter() -> Meter {
+    Meter::new(ScalarLimits {
+        integer_bits: u64::MAX,
+        decimal_digits: u64::MAX,
+        scale_expansion: u64::MAX,
+        text_input_bytes: u64::MAX,
+        text_scalars: u64::MAX,
+        normalized_scalars: u64::MAX,
+        unit_edges: u64::MAX,
+        value_occurrences: u64::MAX,
+        work_units: u64::MAX,
+        result_units: u64::MAX,
+    })
 }
 
 fn evaluate_body_value(
