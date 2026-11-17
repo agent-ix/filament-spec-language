@@ -80,3 +80,9 @@ FND-001 after excerpt:
 assert!(object_json.get("abstract").is_some());
 assert!(object_json.get("is_abstract").is_none());
 ```
+
+### Round 2
+
+| FND | Outcome | Reason |
+| --- | --- | --- |
+| FND-002 | still-open | The constructor now takes `Vec<Vec<crate::emit::SourceObjectMemberFacts>>`, but `emit` is a private module and its facts field is crate-private on `Emission`. External callers still cannot provide source-object member facts to this public constructor. |

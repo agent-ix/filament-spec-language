@@ -1355,6 +1355,13 @@ impl Emission {
         &self.selected_source_object_rows
     }
 
+    /// Full FR-531 checked member facts aligned with the selected source-object
+    /// rows and their members. These are needed when callers construct
+    /// [`crate::ReadIdentityRows`] directly.
+    pub fn source_object_member_facts(&self) -> &[Vec<SourceObjectMemberFacts>] {
+        &self.source_object_member_facts
+    }
+
     /// Source-owned operation rows carried by this emission.
     pub fn selected_source_operation_rows(
         &self,

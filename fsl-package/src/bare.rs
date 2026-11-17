@@ -1334,7 +1334,7 @@ impl ReadIdentityRows {
         source_unions: Vec<SelectedSourceUnionRow>,
         source_objects: Vec<SelectedSourceObjectRow>,
         source_operations: Vec<SelectedSourceOperationRow>,
-        source_object_member_facts: Vec<Vec<crate::emit::SourceObjectMemberFacts>>,
+        source_object_member_facts: Vec<Vec<crate::SourceObjectMemberFacts>>,
     ) -> Self {
         Self {
             package: package.name().to_owned(),

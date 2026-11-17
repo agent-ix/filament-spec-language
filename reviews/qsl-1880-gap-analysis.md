@@ -80,3 +80,15 @@ FND-002 after excerpt:
 #[test]
 fn source_object_node_identity_tracks_only_the_object_declaration_identity() {
 ```
+
+### Round 2
+
+| FND | Outcome | Reason |
+| --- | --- | --- |
+| FND-003 | fixed | The current test compares the source-owned node id with the selected model-owned node id, and both AC-7 tests now use the TC-1408 tag. |
+
+FND-003 after excerpt:
+
+```rust
+assert_ne!(source_node["node_id"], selected_model_node["node_id"]);
+```
