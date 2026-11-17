@@ -20,7 +20,7 @@ Catches a checker that decides fixed or created-object without a subject.
 
 1. Over TC-1076's `Counter` unit, check FR-1000-AC-2's invariant `R`, then
    the same with `M::Nothing#"a"`, `M::Level#"a"` and `M::Counter#""`.
-2. Check a protocol whose `choice` guard compares `c` to `M::Counter#"z"`.
+2. Check a protocol whose `choice` guard compares the received `got.target` to `M::Counter#"z"`.
 3. Emit `R`, and a unit with a second alias of the package and two
    occurrences of the literal.
 

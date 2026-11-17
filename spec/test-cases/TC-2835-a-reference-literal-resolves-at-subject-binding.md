@@ -22,7 +22,7 @@ footprint omits population membership.
 1. Analyze over the Counter subject with initial state `{a}` and universe
    `{a, b}` a clause reading `M::Counter#"a"`, then one reading
    `M::Counter#"zz"`.
-2. Analyze a protocol whose `choice` guard compares `c` to `M::Counter#"b"`,
+2. Analyze a protocol whose `choice` guard compares the received `got.target` to `M::Counter#"b"`,
    then to `M::Counter#"a"`.
 3. Analyze FR-1000-AC-5's two clauses.
 

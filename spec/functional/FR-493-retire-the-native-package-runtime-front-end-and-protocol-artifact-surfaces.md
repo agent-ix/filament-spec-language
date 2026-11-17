@@ -132,7 +132,7 @@ The slice that deletes the path changes the citation in the same change.
 
 | Retained | Cites | Change |
 | --- | --- | --- |
-| FR-100, FR-031, FR-026 | The run request `package` member and FR-028 (`extraction-package-conflict`, FR-100-AC-3's package-bearing refusal) | The member exists only to select a `native-linked-package/1`; it is removed with `NativePackage`, and a request that carries it refuses as any unknown member does. |
+| FR-100, FR-031, FR-026 | FR-028 and the run request `package` member's `native-linked-package/1` target | The `package` member stays live: it selects a `filament.checked-package/v2` artifact that FR-027's strict reader admits and FR-945 runs (FR-100 Inputs). Only its native-package target is removed. FR-031's `extraction-package-conflict` and FR-100-AC-3's package-bearing refusal stay, produced by the FR-312 request reader. |
 | FR-277, NFR-008, NFR-009 | NFR-006 as the historical native accounting contract | Delete the clause; NFR-009 and FR-255 are the accounting contract. |
 | NFR-003, IT-002, US-003, StR-001 | FR-007, FR-008 and FR-018 as obligations | Cite FR-106, FR-107 and NFR-009. |
 | FR-365 | FR-008-AC-16 | Cites FR-049-AC-7 (done in this change). |

@@ -519,11 +519,17 @@ fn a_reference_literal_checks_and_stays_pending_in_a_barred_slot() {
     checked(
         false,
         "profile p = \"filament.protocol.finite-global/v1\";\n\
+         record Pick { target: Reference<M::Counter>; }\n\
          protocol L using p over (c: M::Counter) on origin {\n\
-         role S on M::Counter;\n\
-         run sequence Main { choice Pick by S visible () { \
-         case yes when { c = M::Counter#\"z\" } sequence Yes { } \
-         case no when { not (c = M::Counter#\"z\") } sequence No { } } }\n\
+         role R on M::Counter;\nrole S on M::Counter;\n\
+         channel ch from R to S carries Pick ordering unordered delivery \
+         exactly-once-premise capacity 2 overflow reject;\n\
+         run sequence Main {\n\
+         send Go via ch as (go: Pick) { true };\n\
+         receive Got via ch of Go as (got: Pick) { true };\n\
+         choice Decide by S visible (got.target) { \
+         case yes when { got.target = M::Counter#\"z\" } sequence Yes { } \
+         case no when { not (got.target = M::Counter#\"z\") } sequence No { } } }\n\
          finish Done as (d: Boolean) { true };\n}",
     );
 }

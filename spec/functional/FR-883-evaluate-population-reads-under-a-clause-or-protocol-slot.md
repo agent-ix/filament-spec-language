@@ -59,7 +59,7 @@ this requirement leaves it unchanged.
 | ID | Criteria | Verification |
 |----|----------|--------------|
 | FR-883-AC-1 | A protocol capture `n: Integer = size(allInstances<M::Order>(M::orders))` over a state holding two orders binds 2, and a `send` constraint `size(allInstances<M::Order>(M::orders)) >= 1` is satisfied there. The same protocol over a state with no order binds 0 and the `send` is not enabled. | Test (TC-2507) |
-| FR-883-AC-2 | A capture `o: Option<M::Order> = lookup(M::orders, k)`, naming the domain package's `orders` population (FR-391), binds the order for a present key. For an absent key it gives the same absent-key result as the same `lookup` in a state clause body (FR-403): `none` under the `empty` policy and the undefined result under `undefined`. | Test (TC-2507) |
+| FR-883-AC-2 | A capture `o: Option<M::Order> = lookup<M::Order>(M::orders, k)`, naming the domain package's `orders` population (FR-391), binds the order for a present key. For an absent key it gives the same absent-key result as the same `lookup` in a state clause body (FR-403): `none` under the `empty` policy and the undefined result under `undefined`. | Test (TC-2507) |
 | FR-883-AC-3 | A state clause whose body is `size(allInstances<T>(p))` over a `Population` parameter returns the member count at `own`, and under `Pre(...)` the count at `pre`. A `pre` read with no pre side returns `WrongAnchor`. No `unsupported-feature` result is produced. | Test (TC-2507) |
 | FR-883-AC-4 | A `choice` guard and a `check` condition that call `allInstances<M::Order>(M::orders)` each refuse at S3 with `ill_typed`/`operator-ineligible` at the call, naming the slot. | Test (TC-2507) |
 
