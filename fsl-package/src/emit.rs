@@ -298,7 +298,11 @@ pub enum EmitRefusal {
     /// A temporal declaration whose selected profile requires a clock
     /// configuration has no exact producer selection.
     #[error(
-        "temporal declaration at {source_ref:?} bytes {span:?} has no selected clock configuration"
+        "temporal declaration at {}/{} bytes {}..{} has no selected clock configuration",
+        .source_ref.authority(),
+        .source_ref.identity(),
+        .span.start,
+        .span.end
     )]
     MissingTemporalClockSelection {
         /// The checked source document.
