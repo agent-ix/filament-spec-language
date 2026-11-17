@@ -11,7 +11,10 @@ use filament_checked::key::DeclarationKey;
 use filament_exact::{CardinalityBound, CollectionKind, CollectionType, ValueType};
 use filament_semantic_value::checking::{CheckMode, CheckingLimits};
 use fsl_foundation::diagnostic::Code;
-use fsl_semantics::check::{CheckRefusal, CheckedGraph};
+use fsl_semantics::check::{
+    ApplicationTerm, Binding, BindingValue, BodyTerm, CheckRefusal, CheckedGraph, LeafTerm,
+    MemberTerm, NodeRef, SemanticGraph,
+};
 use fsl_semantics::model::domain_package::{
     DomainPackage, DomainPackageRecord, DomainPackageRef, Multiplicity, RelationshipDirection,
     RelationshipEnd, RelationshipRecord,
@@ -376,8 +379,20 @@ fn population_forms_and_seq_in_a_state_clause_check_and_lower() {
 /// `filament.op.collection.filter` when `where` is written.
 #[trace("TC-2822", "FR-998-AC-1", "FSpec-TC-1921", "FSpec-FR-322-AC-455")]
 #[test]
-#[ignore = "QSL-2179: a population only lowers to filament.op.collection.only; not implemented yet"]
 fn a_population_only_lowers_to_collection_only() {
+    fn application_at<'g>(
+        graph: &'g SemanticGraph,
+        reference: &NodeRef,
+        identity: &str,
+    ) -> &'g ApplicationTerm {
+        let key = reference.admitted().expect("lowered reference is admitted");
+        let node = graph.node(key.clone()).expect("reference names a node");
+        let BodyTerm::Application(application) = node.body() else {
+            panic!("{identity} reference names an application: {node:?}");
+        };
+        assert_eq!(application.operation.identity(), identity);
+        application
+}
     for (domain, filtered) in [("M::counters where o.v = 2", true), ("M::counters", false)] {
         let declarations = format!(
             "bound B on M::counters [3]\ninvariant O using v on M::Counter at current \
@@ -385,6 +400,7 @@ fn a_population_only_lowers_to_collection_only() {
         );
         let checked = population_fixture::check(false, &declarations)
             .unwrap_or_else(|refusals| panic!("{domain}: {refusals:?}"));
+        let graph = checked.graph.semantic_graph();
         let identities: Vec<String> = checked
             .graph
             .semantic_graph()
@@ -411,6 +427,61 @@ fn a_population_only_lowers_to_collection_only() {
             count("filament.op.model.all_instances"),
             1,
             "{domain}: {identities:?}"
+        );
+        let only_nodes: Vec<_> = graph
+            .nodes()
+            .filter_map(|node| match node.body() {
+                BodyTerm::Application(application)
+                    if application.operation.identity() == "filament.op.collection.only" =>
+                {
+                    Some(application)
+                }
+                _ => None,
+            })
+            .collect();
+        let [only] = only_nodes.as_slice() else {
+            panic!("one collection.only node: {domain}: {identities:?}");
+        };
+        let result_type = only
+            .result_type
+            .admitted()
+            .expect("the only result type is resolved");
+        assert_eq!(
+            only.operation.member(),
+            Some(&fsl_semantics::value::Member::TypeArgument {
+                declaration: result_type.clone(),
+            }),
+            "the member names the selected value type"
+        );
+        let [MemberTerm::Leaf(LeafTerm::Reference { target: source }), MemberTerm::Binding(Binding {
+            name,
+            value: BindingValue::Leaf(LeafTerm::Reference { target: value }),
+        })] = only.arguments.as_slice()
+        else {
+            panic!("only has a collection source and one value binder: {domain}");
+        };
+        assert_eq!(name, "o");
+        let source_identity = if filtered {
+            "filament.op.collection.filter"
+        } else {
+            "filament.op.model.all_instances"
+        };
+        let source_application = application_at(graph, source, source_identity);
+        if filtered {
+            let [MemberTerm::Leaf(LeafTerm::Reference { target: population }), MemberTerm::Binding(Binding {
+                name: filter_binder,
+                value: BindingValue::Leaf(LeafTerm::Reference { target: _ }),
+            })] = source_application.arguments.as_slice()
+            else {
+                panic!("filter has a population source and a condition binder");
+            };
+            assert_eq!(filter_binder, "o");
+            application_at(graph, population, "filament.op.model.all_instances");
+        }
+        let value_application = application_at(graph, value, "filament.op.record.project");
+        assert_eq!(
+            value_application.result_type, only.result_type,
+            "the result type names the type of the selected expression"
         );
     }
 }

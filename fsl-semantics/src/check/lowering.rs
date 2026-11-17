@@ -5304,14 +5304,13 @@ impl<'a> Lowering<'a> {
                             ..plain("filament.op.collection.count")
                         },
                     ),
-                    Visit::Only => {
-                        return Err(refuse(
-                            node.location(),
-                            CheckCause::UnsupportedFeature {
-                                loci: vec![node.location().clone()],
-                            },
-                        ))
-                    }
+                    Visit::Only => (
+                        Operator::Collection,
+                        Operation {
+                            member: Some(self.type_argument(node.value_type(), node.location())?),
+                            ..plain("filament.op.collection.only")
+                        },
+                    ),
                     Visit::Sum => {
                         let member = Some(self.type_argument(node.value_type(), node.location())?);
                         // FR-093: the identity is the family of `N`; a float
