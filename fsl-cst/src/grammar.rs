@@ -2166,7 +2166,7 @@ fn protocol(g: &mut Grammar) {
             x("join"),
             r(P::JoinPolicy),
             x("["),
-            opt(list(ident)),
+            list(ident),
             x("]"),
             opt(s(vec![
                 x("outstanding"),
