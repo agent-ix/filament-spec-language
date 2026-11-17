@@ -2569,7 +2569,7 @@ impl OperandText {
         Self(Some(text.into()))
     }
 
-    /// The text supplied by a source-owning stage.
+    /// The stored diagnostic text, whether authored or synthesized.
     pub fn text(&self) -> Option<&str> {
         self.0.as_deref()
     }
