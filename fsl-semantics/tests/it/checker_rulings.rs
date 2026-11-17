@@ -13,7 +13,7 @@ use filament_semantic_value::checking::{CheckMode, CheckingLimits};
 use fsl_foundation::diagnostic::Code;
 use fsl_semantics::check::{
     ApplicationTerm, Binding, BindingValue, BodyTerm, CheckRefusal, CheckedGraph, LeafTerm,
-    MemberTerm, NodeRef, SemanticGraph,
+    MemberTerm, NodeRef, NodeTag, Owner, SemanticGraph,
 };
 use fsl_semantics::model::domain_package::{
     DomainPackage, DomainPackageRecord, DomainPackageRef, Multiplicity, RelationshipDirection,
@@ -392,7 +392,25 @@ fn a_population_only_lowers_to_collection_only() {
         };
         assert_eq!(application.operation.identity(), identity);
         application
-}
+    }
+
+    fn assert_counter_population(graph: &SemanticGraph, application: &ApplicationTerm) {
+        let [MemberTerm::Leaf(LeafTerm::Reference { target })] = application.arguments.as_slice()
+        else {
+            panic!("all_instances has one population reference");
+        };
+        let key = target.admitted().expect("population reference is resolved");
+        let population = graph
+            .node(key.clone())
+            .expect("population reference is admitted");
+        assert_eq!(population.node_tag(), NodeTag::Relation);
+        assert_eq!(population.semantic_form(), "population");
+        let Some(Owner::Model(owner)) = population.owner() else {
+            panic!("the population is owned by the selected model");
+        };
+        assert_eq!(owner.identity(), population_fixture::PACKAGE);
+        assert_eq!(owner.node(), population_fixture::ident("counters"));
+    }
     for (domain, filtered) in [("M::counters where o.v = 2", true), ("M::counters", false)] {
         let declarations = format!(
             "bound B on M::counters [3]\ninvariant O using v on M::Counter at current \
@@ -476,9 +494,19 @@ fn a_population_only_lowers_to_collection_only() {
                 panic!("filter has a population source and a condition binder");
             };
             assert_eq!(filter_binder, "o");
-            application_at(graph, population, "filament.op.model.all_instances");
+            let all_instances =
+                application_at(graph, population, "filament.op.model.all_instances");
+            assert_counter_population(graph, all_instances);
+        } else {
+            assert_counter_population(graph, source_application);
         }
         let value_application = application_at(graph, value, "filament.op.record.project");
+        let Some(fsl_semantics::value::Member::Field { name, .. }) =
+            value_application.operation.member()
+        else {
+            panic!("the selected expression projects a model field");
+        };
+        assert_eq!(name.as_str(), "v");
         assert_eq!(
             value_application.result_type, only.result_type,
             "the result type names the type of the selected expression"
