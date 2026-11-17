@@ -609,6 +609,12 @@ fn parse_with_declaration_recovery(
                         &Failure::expected(failure.position, expected.clone()),
                     )
                         .or_else(|| {
+                            reserved_collection_name_hint(
+                                &tokens,
+                                &Failure::expected(failure.position, expected.clone()),
+                            )
+                        })
+                        .or_else(|| {
                             declared_type_name_hint(
                                 &tokens,
                                 &Failure::expected(failure.position, expected.clone()),
@@ -1837,6 +1843,20 @@ fn declared_type_name_hint(tokens: &[Significant], failure: &Failure) -> Option<
     is_query(type_argument_start).then_some(
         "`count`, `sum`, `fold`, and `reduce` require a declared type name here; declare an alias such as `type Total = Integer;` and use the declared alias as the type argument",
     )
+}
+
+/// Name a collection constructor when it is refused in an identifier slot.
+fn reserved_collection_name_hint(
+    tokens: &[Significant],
+    failure: &Failure,
+) -> Option<&'static str> {
+    let spelling = tokens.get(failure.position)?.spelling.as_ref();
+    match spelling {
+        "set" => Some("reserved word `set` cannot be used as a name"),
+        "bag" => Some("reserved word `bag` cannot be used as a name"),
+        "orderedSet" => Some("reserved word `orderedSet` cannot be used as a name"),
+        _ => None,
+    }
 }
 
 /// An empty unknown declaration body is malformed syntax, while a non-empty
