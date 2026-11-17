@@ -109,8 +109,8 @@ impl<'p> Reader<'p> {
                 ..
             } => value.as_str()?.parse::<u64>().ok(),
             CheckedTerm::Aggregate { members } => members.iter().find_map(|member| match member {
-                CheckedTerm::Binding { name, value } if &**name == "value" => Self::integer(value),
-                _ => None,
+                CheckedTerm::Binding { value, .. } => Self::integer(value),
+                _ => Self::integer(member),
             }),
             _ => None,
         }
