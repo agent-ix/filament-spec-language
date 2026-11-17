@@ -1835,7 +1835,7 @@ fn declared_type_name_hint(tokens: &[Significant], failure: &Failure) -> Option<
         return None;
     };
     is_query(type_argument_start).then_some(
-        "`count`, `sum`, `fold`, and `reduce` require a declared type name here; declare an alias such as `type Total = Integer;` and write `count<Total>(...)` or `sum<Total>(...)`",
+        "`count`, `sum`, `fold`, and `reduce` require a declared type name here; declare an alias such as `type Total = Integer;` and use the declared alias as the type argument",
     )
 }
 
