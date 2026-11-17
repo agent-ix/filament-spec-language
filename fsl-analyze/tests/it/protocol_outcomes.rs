@@ -136,7 +136,13 @@ fn a_partially_recovered_saga_is_reported() {
     let first = refund("Main::Paid", "dec", 1, "false", "never", "true")
         .replace("compensate Refund", "compensate RefundA");
     let second = refund("Main::Paid", "touch", 1, "false", "never", "false")
-        .replace("compensate Refund", "compensate RefundB");
+        .replace("compensate Refund", "compensate RefundB")
+        .replace("(fwd:", "(fwdB:")
+        .replace("(f: Boolean)", "(fB: Boolean)")
+        .replace("when { f }", "when { fB }")
+        .replace("(e: M::Attempt", "(eB: M::Attempt")
+        .replace(", l: M::Attempt", ", lB: M::Attempt")
+        .replace("(r: M::Attempt", "(rB: M::Attempt");
     let template = format!("{first}\n{second}");
     let body = contracts("self.v = 0") + REFUND + &protocol("Pay", &template, &pay_run(""), "d");
     explore(&body, |system, explored| {
