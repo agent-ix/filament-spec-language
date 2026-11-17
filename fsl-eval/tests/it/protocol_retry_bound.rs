@@ -698,9 +698,11 @@ fn a_recovery_predicate_over_the_recovery_view_is_evaluated() {
     let replay_system = system(&replay_fixture);
     let replayed_state =
         replay_transition_path(&replay_system, &path).expect("the recorded cend path replays");
-    let registration = named_member(cend, "registration").expect("cend names its registration");
+    let registration = named_member(cend, "registration")
+        .cloned()
+        .expect("cend names its registration");
     assert_eq!(
-        registration_status(&replayed_state, registration),
+        registration_status(&replayed_state, &registration),
         Some("unrecovered"),
         "replay reproduces the unrecovered registration"
     );
@@ -715,7 +717,7 @@ fn a_recovery_predicate_over_the_recovery_view_is_evaluated() {
     let changed_state = replay_transition_path(&replay_system, &changed)
         .expect("the cend transition with bal 0 replays");
     assert_eq!(
-        registration_status(&changed_state, registration),
+        registration_status(&changed_state, &registration),
         Some("recovered"),
         "changing the carried record to bal 0 no longer reproduces the counterexample"
     );
