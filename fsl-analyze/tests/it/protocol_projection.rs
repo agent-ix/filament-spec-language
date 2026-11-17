@@ -967,9 +967,9 @@ fn a_role_without_repeat_actions_has_no_local_loop() {
 }
 
 /// FR-890-AC-3: a timed await projects with its closed window and clock.
-#[trace("FR-890-AC-3", "TC-2521")]
+#[trace("FR-890-AC-3", "FR-892-AC-3", "TC-2521", "TC-2525")]
 #[test]
-fn a_timed_await_projects() {
+fn a_timed_await_projects_through_the_clock() {
     use crate::fill::{contracts, protocol};
 
     let package = admitted_source(

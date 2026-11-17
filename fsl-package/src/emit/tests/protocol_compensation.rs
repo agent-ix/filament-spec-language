@@ -61,13 +61,6 @@ fn emitted_unit(
 }
 
 fn emitted_text(unit: &str) -> Result<(Emission, Value, Read), Vec<CheckRefusal>> {
-    emitted_text_with_await_selection(unit, true)
-}
-
-fn emitted_text_with_await_selection(
-    unit: &str,
-    select_await: bool,
-) -> Result<(Emission, Value, Read), Vec<CheckRefusal>> {
     let graph = checked_graph(unit)?;
     let clock = filament_contract_model::ClockConfiguration::EventPosition {
         sequence_authority: "compensation-events".into(),
@@ -85,19 +78,17 @@ fn emitted_text_with_await_selection(
             )
         })
         .collect::<Vec<_>>();
-    if select_await {
-        selections.extend(graph.protocols().iter().flat_map(|protocol| {
-            protocol.awaits.iter().filter_map(|awaited| {
-                awaited.profile.map(|_| {
-                    crate::emit::TemporalClockSelection::new(
-                        graph.source().clone(),
-                        awaited.span,
-                        clock.clone(),
-                    )
-                })
+    selections.extend(graph.protocols().iter().flat_map(|protocol| {
+        protocol.awaits.iter().filter_map(|awaited| {
+            awaited.profile.map(|_| {
+                crate::emit::TemporalClockSelection::new(
+                    graph.source().clone(),
+                    awaited.span,
+                    clock.clone(),
+                )
             })
-        }));
-    }
+        })
+    }));
     selections.extend(graph.temporal_clauses().iter().filter_map(|temporal| {
         matches!(
             temporal.clause().profile(),
@@ -183,13 +174,30 @@ fn a_compensation_and_a_timed_await_emit_together() {
     assert!(nodes
         .iter()
         .any(|node| node["semantic_form"] == "temporal_clause"));
+    let due = nodes
+        .iter()
+        .find(|node| node["semantic_form"] == "temporal_clause")
+        .expect("the required temporal clause");
+    let clause = nodes
+        .iter()
+        .find(|node| node["semantic_form"] == "protocol_clause")
+        .expect("the protocol clause");
+    let requirement = clause["body"]["arguments"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|argument| argument["name"] == "requirements")
+        .expect("the requirements member");
+    assert_eq!(
+        requirement["value"]["members"][0]["target"],
+        due["node_id"]
+    );
     let bindings = wire["temporal_bindings"]
         .as_array()
         .expect("clock bindings");
     assert_eq!(
-        bindings.len(),
-        3,
-        "template, await and required clause each bind clock c"
+        bindings.len(), 4,
+        "both templates, the await and required clause bind clock c"
     );
     assert_eq!(emission.omitted, []);
 }
@@ -231,6 +239,68 @@ fn a_timed_unit_without_clock_selection_is_refused_by_declaration_name() {
         "{message}"
     );
     assert!(!message.contains("temporal declaration"), "{message}");
+}
+
+/// FR-892-AC-4 (TC-2525): with the compensation and required clause selected,
+/// a missing await selection names the await itself.
+#[trace("TC-2525", "FR-892-AC-4")]
+#[test]
+fn a_missing_await_clock_names_the_await() {
+    let temporal =
+        "temporal Due using t over (c: M::Ledger) clock \"c\" on origin { always true }\n";
+    let mut unit = unit_text(temporal, "true", "false");
+    unit = unit.replace(
+        "role R on M::Ledger;\n",
+        "role R on M::Ledger;\nrequires temporal Due;\n",
+    );
+    unit = unit.replace(
+        "effect Applied of Update as (applied: M::Money) { true };\n",
+        "effect Applied of Update as (applied: M::Money) { true };\n\
+         event Started by R as (started: Boolean) { true };\n\
+         await Wait after Started using t clock \"c\" within [0, 120] \
+           match event Seen by R as (seen: Boolean) { true }; \
+           then sequence Continued { } timeout sequence TimedOut { }\n",
+    );
+    let graph = checked_graph(&unit).expect("the timed unit checks");
+    let clock = filament_contract_model::ClockConfiguration::EventPosition {
+        sequence_authority: "compensation-events".into(),
+    };
+    let mut selections = graph
+        .protocols()
+        .iter()
+        .flat_map(|protocol| &protocol.obligations.compensations)
+        .filter(|template| template.temporal_profile.is_some())
+        .map(|template| {
+            crate::emit::TemporalClockSelection::new(
+                graph.source().clone(),
+                template.span,
+                clock.clone(),
+            )
+        })
+        .collect::<Vec<_>>();
+    selections.extend(graph.temporal_clauses().iter().filter_map(|temporal| {
+        matches!(
+            temporal.clause().profile(),
+            fsl_semantics::check::TemporalProfile::EventPositionFalseExtension
+                | fsl_semantics::check::TemporalProfile::FixedSampleFalseExtension
+                | fsl_semantics::check::TemporalProfile::TimestampedEventFiniteWindow
+        )
+        .then(|| {
+            crate::emit::TemporalClockSelection::new(
+                graph.source().clone(),
+                temporal.clause().span(),
+                clock.clone(),
+            )
+        })
+    }));
+    let refusal = crate::emit::emit_checked_with_temporal_selections(
+        &CheckedPackage::link(graph),
+        &selections,
+        crate::EmitLimits::fixture(),
+    )
+    .expect_err("the await has no selected clock");
+    let message = refusal.to_string();
+    assert!(message.contains("await Flow::Wait"), "{message}");
 }
 
 /// FR-383-AC-20, TC-1063 row 8i: a compensation retains its temporal-profile
