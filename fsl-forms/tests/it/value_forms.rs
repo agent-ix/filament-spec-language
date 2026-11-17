@@ -709,6 +709,23 @@ fn null_expression_builds_as_its_own_form() {
     ));
 }
 
+#[trace("FSpec-FR-763-AC-1", "QSL-2174")]
+#[test]
+fn size_with_a_type_argument_builds_a_form_or_refuses_with_a_located_cause() {
+    let source = "size<Int[0, 1]>(c)";
+    let (text, cause, span) = refusal(&format!(
+        "function f using v(): Integer pure {{ {source} }}"
+    ));
+    assert_eq!(
+        cause,
+        FormsCause::UnrepresentedConstruct {
+            production: Production::Primary,
+        }
+    );
+    assert_eq!(cause.catalog_code(), Code::UnsupportedConstruct);
+    assert_eq!(span, Some(span_of(&text, source)));
+}
+
 /// FR-397-AC-20: bit-pattern literals retain their exact width and bits.
 #[trace("FR-397-AC-20", "TC-1091")]
 #[test]
