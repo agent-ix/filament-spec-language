@@ -6,6 +6,7 @@ use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::{Arc, OnceLock};
 
 use filament_exact::{Cancel, CancelCause};
+use filament_semantic_value::checking::CheckMode;
 use fsl_analyze::model_check::{check_refinement, RefinementCheckRequest};
 use fsl_eval::model_subject::ModelSubject;
 use fsl_eval::simulation::model::{operation_identity_text, ModelSimulationRequest};
@@ -528,14 +529,19 @@ fn a_cancellation_during_the_second_phase_stops_it() {
 #[trace("TC-548")]
 #[test]
 fn an_undecided_abstract_contract_leaves_the_liveness_half_undecided() {
-    let contracts = probe_contracts([NEVER, NEVER, NEVER, ""], ["", "", ""]).replace(
+    let contracts = format!(
+        "function unknown_at_one using v(n: Int[0, 1]): Boolean pure {{ 1 mod (1 - n) >= 0 }}\n{}",
+        probe_contracts([NEVER, NEVER, NEVER, ""], ["", "", ""])
+    )
+    .replace(
         "post SpecFlipB using v on Spec::Pair::flipB { self.b = 1 - pre(self.b) }",
-        "post SpecFlipB using v on Spec::Pair::flipB { 1 mod (1 - pre(self.b)) >= 0 and self.b = 1 - pre(self.b) }",
+        "post SpecFlipB using v on Spec::Pair::flipB { unknown_at_one(pre(self.b)) and self.b = 1 - pre(self.b) }",
     );
     let unit = Unit::probe_pair(contracts, &[(0, 1)]);
-    let outcome = check_aux(&unit.world(&probe_refinement(&[
-        "ensure fair weak whole Spec::Pair::flipB;",
-    ])));
+    let outcome = check_aux(&unit.world_with_mode(
+        &probe_refinement(&["ensure fair weak whole Spec::Pair::flipB;"]),
+        CheckMode::Kernel,
+    ));
     assert!(matches!(outcome.safety, SafetyOutcome::Holds { .. }));
     assert!(matches!(
         outcome.liveness,

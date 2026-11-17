@@ -9,6 +9,7 @@ use std::collections::BTreeMap;
 use filament_exact::{
     Cancel, CancelCause, ChargePoint, Incomplete, Integer, LimitKind, ScalarLimits,
 };
+use filament_semantic_value::checking::CheckMode;
 use fsl_analyze::model_check::{check_refinement, RefinementCheckRequest};
 use fsl_eval::model_subject::ModelSubject;
 use fsl_eval::simulation::model::ClauseOutcome;
@@ -776,9 +777,11 @@ fn an_undetermined_contract_is_a_bad_state() {
         "ensure fair weak each Spec::Counter::inc;",
         "",
     );
-    let guarded = World::new(&format!(
-        "pre PeekDefined using v on Impl::Counter::peek {{ 6 mod (2 - self.value) >= 0 }}\n{text}"
-    ));
+    let source = format!(
+        "function peek_defined using v(n: Int[0, 2]): Boolean pure {{ 6 mod (2 - n) >= 0 }}\n\
+         pre PeekDefined using v on Impl::Counter::peek {{ peek_defined(self.value) }}\n{text}"
+    );
+    let guarded = World::with_mode(Variant::CAS, &source, CheckMode::Kernel);
     assert_eq!(
         rejected(check(&guarded, &certificate)).0,
         CertificateRule::BadState

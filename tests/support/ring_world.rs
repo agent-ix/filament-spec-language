@@ -351,6 +351,15 @@ fn packages(variant: Variant) -> fsl_semantics::model::intake::PackageInput {
 
 /// The checked graph of the unit with `refinement`, or its refusals.
 pub fn check(variant: Variant, refinement: &str) -> Result<CheckedGraph, String> {
+    check_with_mode(variant, refinement, CheckMode::Linked)
+}
+
+/// The checked graph of the unit with `refinement` under `mode`.
+pub fn check_with_mode(
+    variant: Variant,
+    refinement: &str,
+    mode: CheckMode,
+) -> Result<CheckedGraph, String> {
     let documents = packages(variant);
     let text = unit_text(&documents, refinement, variant);
     let parsed = fsl_cst::parse(
@@ -382,7 +391,7 @@ pub fn check(variant: Variant, refinement: &str) -> Result<CheckedGraph, String>
     .expect("the unit assembles");
     declarations
         .with_unwritten_refinements()
-        .check(CheckMode::Linked, CheckingLimits::default())
+        .check(mode, CheckingLimits::default())
         .map_err(|refusals| format!("{refusals:?}"))
 }
 
@@ -426,7 +435,12 @@ pub struct RingWorld {
 impl RingWorld {
     /// The world of the unit of `variant` with `refinement`.
     pub fn with(variant: Variant, refinement: &str) -> Self {
-        let graph = check(variant, refinement).unwrap_or_else(|refusals| {
+        Self::with_mode(variant, refinement, CheckMode::Linked)
+    }
+
+    /// The world of the unit checked under `mode`.
+    pub fn with_mode(variant: Variant, refinement: &str, mode: CheckMode) -> Self {
+        let graph = check_with_mode(variant, refinement, mode).unwrap_or_else(|refusals| {
             panic!("{refinement}: the unit checks: {refusals}");
         });
         let mut snapshots = BTreeMap::new();

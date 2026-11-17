@@ -5,6 +5,7 @@
 
 use filament_exact::Cancel;
 use filament_semantic_value::catalog::InternalFault;
+use filament_semantic_value::checking::CheckMode;
 use fsl_analyze::model_check::{check_refinement, RefinementCheckRequest};
 use fsl_eval::model_subject::ModelSubject;
 use fsl_eval::simulation::model::{operation_identity_text, ModelSimulationRequest, ModelSystem};
@@ -342,7 +343,7 @@ fn an_undefined_step_row_argument_settles_refuted_once_it_replays() {
         "function g using v(i: Int[0, 1]): Int[0, 1] pure {{ if 1 mod i = 0 then 0 else 1 }}\n{}",
         ring_is_queue(items).replace("enq(self.ring, x)", "enq(self.ring, g(self.index))")
     );
-    let world = RingWorld::with(RingVariant::default(), &refinement);
+    let world = RingWorld::with_mode(RingVariant::default(), &refinement, CheckMode::Kernel);
     let subject = ring(&world);
     let outcome = check(&subject);
     let record = settle(&subject, &outcome);

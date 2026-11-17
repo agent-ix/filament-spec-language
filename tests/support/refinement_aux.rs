@@ -518,6 +518,15 @@ impl Unit {
     ///
     /// Every refusal, each with the text at its region.
     pub fn check(&self, body: &str) -> Result<CheckedGraph, Vec<Refused>> {
+        self.check_with_mode(body, CheckMode::Linked)
+    }
+
+    /// The checked graph under `mode`, or the located refusals.
+    pub fn check_with_mode(
+        &self,
+        body: &str,
+        mode: CheckMode,
+    ) -> Result<CheckedGraph, Vec<Refused>> {
         let packages = self.packages();
         let text = self.text(&packages, body);
         let parsed = fsl_cst::parse(
@@ -550,7 +559,7 @@ impl Unit {
         .with_unwritten_refinements();
         let regions = declarations.regions();
         declarations
-            .check(CheckMode::Linked, CheckingLimits::default())
+            .check(mode, CheckingLimits::default())
             .map_err(|refusals| {
                 refusals
                     .into_iter()
@@ -582,6 +591,14 @@ impl Unit {
     /// The world of the unit with `body`, which must check.
     pub fn world(&self, body: &str) -> World<'_> {
         let graph = self.check(body).unwrap_or_else(|refusals| {
+            panic!("{body}: the unit checks: {refusals:?}");
+        });
+        World::new(self, graph)
+    }
+
+    /// The world checked under `mode`.
+    pub fn world_with_mode(&self, body: &str, mode: CheckMode) -> World<'_> {
+        let graph = self.check_with_mode(body, mode).unwrap_or_else(|refusals| {
             panic!("{body}: the unit checks: {refusals:?}");
         });
         World::new(self, graph)
