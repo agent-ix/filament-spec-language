@@ -252,9 +252,7 @@ pub(super) fn complete_reserved_words(
 ) -> std::collections::BTreeSet<&'static str> {
     fn collect(rule: &Rule, output: &mut std::collections::BTreeSet<&'static str>) {
         match rule {
-            Rule::Terminal(Terminal::Exact(value) | Terminal::Literal(value))
-                if crate::token::identifier_spelling(value) =>
-            {
+            Rule::Terminal(Terminal::Exact(value)) if crate::token::identifier_spelling(value) => {
                 output.insert(value);
             }
             Rule::Sequence(rules) | Rule::Choice(rules) => {
@@ -270,6 +268,12 @@ pub(super) fn complete_reserved_words(
     let mut output = std::collections::BTreeSet::new();
     for rule in grammar.values() {
         collect(rule, &mut output);
+    }
+    // These three collection constructors are `Literal` terminals so their
+    // spelling can be recognized in a value position, but they are reserved
+    // throughout the complete grammar just like the `Exact` keywords above.
+    for spelling in ["set", "bag", "orderedSet"] {
+        output.insert(spelling);
     }
     output
 }
