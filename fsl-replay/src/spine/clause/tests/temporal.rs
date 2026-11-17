@@ -729,7 +729,7 @@ pub(in crate::spine::clause::tests) fn report(mut request: ClauseRunRequest) -> 
                 );
             let mut modified = source.into_bytes();
             modified.extend_from_slice(
-                b"\nfunction temporal_mod_undefined using v(value: Integer): Boolean pure { 3 mod (2 - value) >= 0 }\n",
+                b"\nfunction temporal_mod_undefined using v(n: Integer): Boolean pure { 3 mod (2 - n) >= 0 }\n",
             );
             *bytes = modified;
         }
