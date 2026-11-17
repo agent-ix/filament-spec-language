@@ -160,6 +160,7 @@ fn size_clause(kind: DeclaredClauseKind) -> ModelClause {
     ModelClause {
         declaration: DeclarationKey::fixture("ix://test/orders/dispatch-calls.Receiver.size"),
         kind,
+        source_declaration: None,
     }
 }
 

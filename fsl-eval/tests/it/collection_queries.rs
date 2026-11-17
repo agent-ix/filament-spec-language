@@ -1262,7 +1262,7 @@ fn unbounded(kind: CollectionKind, element: ValueType) -> ValueType {
 
 #[trace("FSpec-FR-335-AC-6", "FSpec-FR-346")]
 #[test]
-fn forall_over_an_unbounded_collection_visits_only_its_concrete_value() {
+fn forall_over_a_concrete_unbounded_set_visits_it() {
     let package = plain();
     let source_type = unbounded(CollectionKind::Set, int_type(0, 9_999));
     let forall = query(
