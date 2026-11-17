@@ -188,15 +188,13 @@ fn a_compensation_and_a_timed_await_emit_together() {
         .iter()
         .find(|argument| argument["name"] == "requirements")
         .expect("the requirements member");
-    assert_eq!(
-        requirement["value"]["members"][0]["target"],
-        due["node_id"]
-    );
+    assert_eq!(requirement["value"]["members"][0]["target"], due["node_id"]);
     let bindings = wire["temporal_bindings"]
         .as_array()
         .expect("clock bindings");
     assert_eq!(
-        bindings.len(), 4,
+        bindings.len(),
+        4,
         "both templates, the await and required clause bind clock c"
     );
     assert_eq!(emission.omitted, []);

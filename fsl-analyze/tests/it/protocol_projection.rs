@@ -54,8 +54,79 @@ pub(crate) fn admitted(
     domain: &str,
     document: &[u8],
 ) -> Box<CheckedPackageV2> {
-    let emission = fsl_package::emit_checked(checked, fsl_package::EmitLimits::fixture())
-        .expect("the protocol package emits");
+    let graph = checked.graph();
+    let clock = fsl_package::ClockConfiguration::EventPosition {
+        sequence_authority: "protocol-projection-events".into(),
+    };
+    let mut selections = Vec::new();
+    for protocol in graph.protocols() {
+        for template in &protocol.obligations.compensations {
+            if matches!(
+                template.temporal_profile,
+                Some(
+                    fsl_semantics::check::TemporalProfile::EventPositionFalseExtension
+                        | fsl_semantics::check::TemporalProfile::FixedSampleFalseExtension
+                        | fsl_semantics::check::TemporalProfile::TimestampedEventFiniteWindow
+                )
+            ) {
+                selections.push(fsl_package::TemporalClockSelection::new(
+                    graph.source().clone(),
+                    template.span,
+                    clock.clone(),
+                ));
+            }
+        }
+        for awaited in &protocol.awaits {
+            if matches!(
+                awaited.profile,
+                Some(
+                    fsl_semantics::check::TemporalProfile::EventPositionFalseExtension
+                        | fsl_semantics::check::TemporalProfile::FixedSampleFalseExtension
+                        | fsl_semantics::check::TemporalProfile::TimestampedEventFiniteWindow
+                )
+            ) {
+                selections.push(fsl_package::TemporalClockSelection::new(
+                    graph.source().clone(),
+                    awaited.span,
+                    clock.clone(),
+                ));
+            }
+        }
+    }
+    for temporal in graph.temporal_clauses() {
+        if matches!(
+            temporal.clause().profile(),
+            fsl_semantics::check::TemporalProfile::EventPositionFalseExtension
+                | fsl_semantics::check::TemporalProfile::FixedSampleFalseExtension
+                | fsl_semantics::check::TemporalProfile::TimestampedEventFiniteWindow
+        ) {
+            selections.push(fsl_package::TemporalClockSelection::new(
+                graph.source().clone(),
+                temporal.clause().span(),
+                clock.clone(),
+            ));
+        }
+    }
+    for hyper in graph.hyper_clauses() {
+        if matches!(
+            hyper.profile(),
+            fsl_semantics::check::TemporalProfile::EventPositionFalseExtension
+                | fsl_semantics::check::TemporalProfile::FixedSampleFalseExtension
+                | fsl_semantics::check::TemporalProfile::TimestampedEventFiniteWindow
+        ) {
+            selections.push(fsl_package::TemporalClockSelection::new(
+                graph.source().clone(),
+                hyper.span(),
+                clock.clone(),
+            ));
+        }
+    }
+    let emission = fsl_package::emit_checked_with_temporal_selections(
+        checked,
+        &selections,
+        fsl_package::EmitLimits::fixture(),
+    )
+    .expect("the protocol package emits");
     let mut evidence = emission.evidence().clone();
     evidence
         .insert_domain_package_document(domain, document)

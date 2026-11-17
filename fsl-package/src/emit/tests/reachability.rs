@@ -222,6 +222,24 @@ pub(super) fn lower_package(
                     )
                 })
         }))
+        .chain(graph.protocols().iter().flat_map(|protocol| {
+            protocol
+                .awaits
+                .iter()
+                .filter(|awaited| {
+                    awaited.profile
+                        == Some(fsl_semantics::check::TemporalProfile::EventPositionFalseExtension)
+                })
+                .map(|awaited| {
+                    crate::emit::TemporalClockSelection::new(
+                        graph.source().clone(),
+                        awaited.span,
+                        filament_contract_model::ClockConfiguration::EventPosition {
+                            sequence_authority: "test-order-events".into(),
+                        },
+                    )
+                })
+        }))
         .collect::<Vec<_>>();
     let package = CheckedPackage::link(graph);
     let activation_rows = package.protocol_activation_relation();
