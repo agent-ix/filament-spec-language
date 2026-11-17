@@ -919,13 +919,12 @@ fn the_parsed_report_is_stable_and_reports_a_reached_bound() {
 /// locus.
 #[test]
 #[trace("TC-1746", "FR-663-AC-3")]
-#[ignore = "QSL-2191: refusal records do not carry a document locus yet"]
 fn snapshot_refusals_carry_a_document_locus() {
     let directory = tempfile::tempdir().unwrap();
     spine::write(directory.path(), Case::Healthy).unwrap();
     let snapshot_path = directory.path().join("spine-snapshot.json");
-    let mut snapshot: Value =
-        serde_json::from_slice(&std::fs::read(&snapshot_path).unwrap()).unwrap();
+    let healthy_snapshot = std::fs::read(&snapshot_path).unwrap();
+    let mut snapshot: Value = serde_json::from_slice(&healthy_snapshot).unwrap();
     for object in snapshot["populations"][0]["objects"]
         .as_array_mut()
         .unwrap()
@@ -946,9 +945,37 @@ fn snapshot_refusals_carry_a_document_locus() {
         Err(error) => error.value().unwrap().to_string(),
     };
     assert!(text.contains("missing-member"), "{text}");
-    for fragment in ["\"locus\"", "\"member\":\"parent\"", "\"key\":\"child\""] {
+    for fragment in [
+        "\"kind\":\"artifact\"",
+        "\"pointer\":\"/child\"",
+        "\"member\":\"parent\"",
+        "\"key\":\"child\"",
+    ] {
         assert!(text.contains(fragment), "{fragment}: {text}");
     }
+
+    let mut snapshot: Value = serde_json::from_slice(&healthy_snapshot).unwrap();
+    for object in snapshot["populations"][0]["objects"]
+        .as_array_mut()
+        .unwrap()
+    {
+        if object["key"] == "child" {
+            object["fields"]["unexpected"] = json!(true);
+        }
+    }
+    std::fs::write(&snapshot_path, snapshot.to_string()).unwrap();
+    let unknown = fsl_command::command::run(&path, &crate::negotiation::Fr290)
+        .expect_err("an unknown snapshot member refuses");
+    let text = unknown.value().unwrap().to_string();
+    for fragment in [
+        "unknown-member",
+        "\"kind\":\"artifact\"",
+        "\"pointer\":\"/child\"",
+        "\"member\":\"unexpected\"",
+    ] {
+        assert!(text.contains(fragment), "{fragment}: {text}");
+    }
+
     let absent = fsl_command::command::run(
         &directory.path().join("absent.json"),
         &crate::negotiation::Fr290,

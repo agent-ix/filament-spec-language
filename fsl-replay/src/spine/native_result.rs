@@ -2584,10 +2584,22 @@ impl Disposition {
             ClauseDisposition::Admit(failure) => match failure {
                 fsl_semantics::model::observation::AdmissionFailure::Refused(record)
                 | fsl_semantics::model::observation::AdmissionFailure::Incomplete(record) => {
-                    result.refusal = Some(
-                        RefusalWire::new(record.catalog.code(), Some(record.catalog.cause()))
-                            .fields(record.fields.clone()),
-                    );
+                    let mut refusal = RefusalWire::new(
+                        record.catalog.code(),
+                        Some(record.catalog.cause()),
+                    )
+                    .fields(record.fields.clone());
+                    if matches!(record.catalog.cause(), "missing-member" | "unknown-member")
+                        && record.fields.contains_key("document")
+                    {
+                        if let Some(object) = record.fields.get("key") {
+                            let pointer =
+                                format!("/{}", object.replace('~', "~0").replace('/', "~1"));
+                            refusal.locus =
+                                Some(crate::outcome::OutcomeLocus::Artifact { pointer });
+                        }
+                    }
+                    result.refusal = Some(refusal);
                 }
                 fsl_semantics::model::observation::AdmissionFailure::Fault(fault) => {
                     result.internal_fault = Some(InternalFaultWire {
