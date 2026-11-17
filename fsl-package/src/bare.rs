@@ -27,7 +27,9 @@ use crate::checked_v2::wire_graph;
 
 mod carried;
 mod observation;
+use crate::equality_file::OriginalValueType;
 use carried::{SourceRecordJson, SourceUnionJson};
+use filament_exact::Presence;
 
 /// The format of `identities.json` (FR-531 "The identity file").
 pub const IDENTITIES_FORMAT: &str = "filament.checked-handoff.identities/4";
@@ -179,7 +181,7 @@ impl<'p> BarePackage<'p> {
         ) {
             Ok(extended) => extended,
             Err(denial) if fsl_semantics::model::intake::is_native_budget_denial(&denial) => {
-                return Err(crate::NativeJoinFailure::from(denial).with_budget(budget))
+                return Err(crate::NativeJoinFailure::from(denial).with_budget(budget));
             }
             Err(_) => return Ok((Err(IdentityWitnessRefusal::Unknown), none)),
         };
@@ -235,7 +237,7 @@ impl<'p> BarePackage<'p> {
             }
             Err(IdentityJoinFailure::Witness(defect)) => Some(Err(defect)),
             Err(IdentityJoinFailure::Exhausted(denial)) => {
-                return Err(crate::NativeJoinFailure::from(*denial).with_budget(budget))
+                return Err(crate::NativeJoinFailure::from(*denial).with_budget(budget));
             }
         };
         self.supply = Some(supply);
@@ -486,6 +488,7 @@ pub struct ReadIdentityRows {
     source_records: Vec<SelectedSourceRecordRow>,
     source_unions: Vec<SelectedSourceUnionRow>,
     source_objects: Vec<SelectedSourceObjectRow>,
+    source_object_member_facts: Vec<Vec<crate::emit::SourceObjectMemberFacts>>,
     source_operations: Vec<SelectedSourceOperationRow>,
 }
 
@@ -587,7 +590,8 @@ struct SourceObjectJson {
     structural_node: CheckedNodeId,
     source_authority: String,
     source_identity: String,
-    is_abstract: bool,
+    #[serde(rename = "abstract")]
+    abstract_type: bool,
     supertypes: Vec<CheckedNodeId>,
     identity_fields: Vec<String>,
     members: Vec<SourceObjectMemberJson>,
@@ -597,9 +601,18 @@ struct SourceObjectJson {
 #[derive(Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 struct SourceObjectMemberJson {
-    name: String,
+    original_member_identity: String,
+    admitted_name: String,
+    presence: SourceObjectPresenceJson,
     type_node: CheckedNodeId,
-    optional: bool,
+    value_type: OriginalValueType,
+}
+
+#[derive(Deserialize, Serialize)]
+#[serde(rename_all = "snake_case")]
+enum SourceObjectPresenceJson {
+    Required,
+    Optional,
 }
 
 #[derive(Deserialize, Serialize)]
@@ -619,27 +632,51 @@ struct SourceOperationJson {
 }
 
 impl SourceObjectJson {
-    fn of(row: &SelectedSourceObjectRow) -> Self {
-        Self {
+    fn of(
+        row: &SelectedSourceObjectRow,
+        member_facts: &[crate::emit::SourceObjectMemberFacts],
+    ) -> Result<Self, IdentityFileRefusal> {
+        let malformed = || IdentityFileRefusal::Malformed {
+            member: IdentityMember::SourceObjects,
+        };
+        if row.members.len() != member_facts.len() {
+            return Err(malformed());
+        }
+        let members = row
+            .members
+            .iter()
+            .zip(member_facts)
+            .map(|(member, facts)| {
+                if member.name.as_ref() != facts.admitted_name.as_ref()
+                    || member.optional != (facts.presence == Presence::Optional)
+                {
+                    return Err(malformed());
+                }
+                Ok(SourceObjectMemberJson {
+                    original_member_identity: facts.original_member_identity.to_string(),
+                    admitted_name: facts.admitted_name.to_string(),
+                    presence: match facts.presence {
+                        Presence::Required => SourceObjectPresenceJson::Required,
+                        Presence::Optional => SourceObjectPresenceJson::Optional,
+                    },
+                    type_node: member.type_node.clone(),
+                    value_type: OriginalValueType::of(&facts.value_type)
+                        .map_err(|_| malformed())?,
+                })
+            })
+            .collect::<Result<_, _>>()?;
+        Ok(Self {
             structural_node: row.structural_node.clone(),
             source_authority: row.source_authority.to_string(),
             source_identity: row.source_identity.to_string(),
-            is_abstract: row.is_abstract,
+            abstract_type: row.is_abstract,
             supertypes: row.supertypes.clone(),
             identity_fields: row
                 .identity_fields
                 .iter()
                 .map(ToString::to_string)
                 .collect(),
-            members: row
-                .members
-                .iter()
-                .map(|member| SourceObjectMemberJson {
-                    name: member.name.to_string(),
-                    type_node: member.type_node.clone(),
-                    optional: member.optional,
-                })
-                .collect(),
+            members,
             populations: row
                 .populations
                 .iter()
@@ -648,39 +685,63 @@ impl SourceObjectJson {
                     symmetric: population.symmetric,
                 })
                 .collect(),
-        }
+        })
     }
 
-    fn row(self) -> SelectedSourceObjectRow {
-        SelectedSourceObjectRow {
-            structural_node: self.structural_node,
-            source_authority: self.source_authority.into(),
-            source_identity: self.source_identity.into(),
-            is_abstract: self.is_abstract,
-            supertypes: self.supertypes,
-            identity_fields: self.identity_fields.into_iter().map(Into::into).collect(),
-            members: self
-                .members
-                .into_iter()
-                .map(
-                    |member| filament_contract_model::SelectedSourceObjectMember {
-                        name: member.name.into(),
-                        type_node: member.type_node,
-                        optional: member.optional,
-                    },
-                )
-                .collect(),
-            populations: self
-                .populations
-                .into_iter()
-                .map(
-                    |population| filament_contract_model::SelectedSourcePopulation {
-                        name: population.name.into(),
-                        symmetric: population.symmetric,
-                    },
-                )
-                .collect(),
+    fn row(
+        self,
+    ) -> Result<
+        (
+            SelectedSourceObjectRow,
+            Vec<crate::emit::SourceObjectMemberFacts>,
+        ),
+        IdentityFileRefusal,
+    > {
+        let malformed = || IdentityFileRefusal::Malformed {
+            member: IdentityMember::SourceObjects,
+        };
+        let mut members = Vec::with_capacity(self.members.len());
+        let mut facts = Vec::with_capacity(self.members.len());
+        for member in self.members {
+            let presence = match member.presence {
+                SourceObjectPresenceJson::Required => Presence::Required,
+                SourceObjectPresenceJson::Optional => Presence::Optional,
+            };
+            let value_type = member.value_type.value().map_err(|_| malformed())?;
+            members.push(filament_contract_model::SelectedSourceObjectMember {
+                name: member.admitted_name.clone().into(),
+                type_node: member.type_node,
+                optional: presence == Presence::Optional,
+            });
+            facts.push(crate::emit::SourceObjectMemberFacts {
+                original_member_identity: member.original_member_identity.into(),
+                admitted_name: member.admitted_name.into(),
+                presence,
+                value_type,
+            });
         }
+        Ok((
+            SelectedSourceObjectRow {
+                structural_node: self.structural_node,
+                source_authority: self.source_authority.into(),
+                source_identity: self.source_identity.into(),
+                is_abstract: self.abstract_type,
+                supertypes: self.supertypes,
+                identity_fields: self.identity_fields.into_iter().map(Into::into).collect(),
+                members,
+                populations: self
+                    .populations
+                    .into_iter()
+                    .map(
+                        |population| filament_contract_model::SelectedSourcePopulation {
+                            name: population.name.into(),
+                            symmetric: population.symmetric,
+                        },
+                    )
+                    .collect(),
+            },
+            facts,
+        ))
     }
 }
 
@@ -1208,6 +1269,13 @@ impl ReadIdentityRows {
             .into_iter()
             .map(SourceRecordJson::row)
             .collect::<Result<Vec<_>, _>>()?;
+        let source_object_pairs = file
+            .source_objects
+            .into_iter()
+            .map(SourceObjectJson::row)
+            .collect::<Result<Vec<_>, _>>()?;
+        let (source_objects, source_object_member_facts): (Vec<_>, Vec<_>) =
+            source_object_pairs.into_iter().unzip();
         let rows = Self {
             package: package.name().to_owned(),
             declarations,
@@ -1218,11 +1286,8 @@ impl ReadIdentityRows {
                 .into_iter()
                 .map(SourceUnionJson::row)
                 .collect::<Result<_, _>>()?,
-            source_objects: file
-                .source_objects
-                .into_iter()
-                .map(SourceObjectJson::row)
-                .collect(),
+            source_objects,
+            source_object_member_facts,
             source_operations: file
                 .source_operations
                 .into_iter()
@@ -1266,6 +1331,30 @@ impl ReadIdentityRows {
         source_objects: Vec<SelectedSourceObjectRow>,
         source_operations: Vec<SelectedSourceOperationRow>,
     ) -> Self {
+        Self::of_rows_with_source_rows_and_object_facts(
+            package,
+            declarations,
+            fields,
+            source_records,
+            source_unions,
+            source_objects,
+            source_operations,
+            Vec::new(),
+        )
+    }
+
+    /// The rows of an in-process unit, including the source-object member
+    /// facts the reduced IR witness does not retain.
+    pub(crate) fn of_rows_with_source_rows_and_object_facts(
+        package: &CheckedPackageV2,
+        declarations: Vec<SelectedExactDeclarationRow>,
+        fields: Vec<SelectedExactFieldRow>,
+        source_records: Vec<SelectedSourceRecordRow>,
+        source_unions: Vec<SelectedSourceUnionRow>,
+        source_objects: Vec<SelectedSourceObjectRow>,
+        source_operations: Vec<SelectedSourceOperationRow>,
+        source_object_member_facts: Vec<Vec<crate::emit::SourceObjectMemberFacts>>,
+    ) -> Self {
         Self {
             package: package.name().to_owned(),
             declarations,
@@ -1273,6 +1362,7 @@ impl ReadIdentityRows {
             source_records,
             source_unions,
             source_objects,
+            source_object_member_facts,
             source_operations,
         }
     }
@@ -1375,6 +1465,15 @@ impl ReadIdentityRows {
                 },
             });
         }
+        if self.source_objects.len() != self.source_object_member_facts.len() {
+            return Err(malformed(IdentityMember::SourceObjects));
+        }
+        let source_objects = self
+            .source_objects
+            .iter()
+            .zip(&self.source_object_member_facts)
+            .map(|(row, facts)| SourceObjectJson::of(row, facts))
+            .collect::<Result<_, _>>()?;
         let file = File {
             format: IDENTITIES_FORMAT.to_owned(),
             declarations,
@@ -1389,11 +1488,7 @@ impl ReadIdentityRows {
                 .iter()
                 .map(SourceUnionJson::of)
                 .collect::<Result<_, _>>()?,
-            source_objects: self
-                .source_objects
-                .iter()
-                .map(SourceObjectJson::of)
-                .collect(),
+            source_objects,
             source_operations: self
                 .source_operations
                 .iter()

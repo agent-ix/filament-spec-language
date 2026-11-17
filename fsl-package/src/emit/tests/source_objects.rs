@@ -333,6 +333,48 @@ fn source_object_identity_rows_roundtrip_through_qc30_intake() {
         )
         .expect("source identity rows join");
     let bytes = rows.to_bytes(&package).expect("identity rows encode");
+    // Assert the normative wire shape directly: round-tripping through the
+    // local row decoder would allow a reduced encoder and decoder to agree
+    // on the same non-normative schema.
+    let identity_json: Value = serde_json::from_slice(&bytes).expect("identity JSON parses");
+    assert_eq!(
+        identity_json["format"],
+        "filament.checked-handoff.identities/4"
+    );
+    let object_json = &identity_json["source_objects"][0];
+    assert!(object_json.get("abstract").is_some());
+    assert!(object_json.get("is_abstract").is_none());
+    let members = object_json["members"].as_array().expect("member array");
+    assert_eq!(members.len(), 1);
+    let member = &members[0];
+    let member_keys = member
+        .as_object()
+        .expect("member object")
+        .keys()
+        .map(String::as_str)
+        .collect::<std::collections::BTreeSet<_>>();
+    assert_eq!(
+        member_keys,
+        [
+            "admitted_name",
+            "original_member_identity",
+            "presence",
+            "type_node",
+            "value_type",
+        ]
+        .into_iter()
+        .collect()
+    );
+    assert_eq!(member["admitted_name"], "point");
+    assert!(
+        member["original_member_identity"]
+            .as_str()
+            .is_some_and(|identity| !identity.is_empty())
+    );
+    assert_eq!(member["presence"], "required");
+    assert!(member["type_node"].is_object());
+    assert!(member["value_type"].is_object());
+
     let read = crate::ReadIdentityRows::read(
         &bytes,
         &package,
@@ -369,6 +411,36 @@ fn source_spelling_registry_changes_do_not_change_emitted_package_bytes() {
     let model_alias_bytes = emitted("M");
     let alternate_alias_bytes = emitted("N");
     assert_eq!(model_alias_bytes, alternate_alias_bytes);
+}
+
+#[trace("FR-569-AC-7", "TC-1407")]
+#[test]
+fn source_object_node_identity_tracks_only_the_object_declaration_identity() {
+    let node_id = |body: &str, name: &str| {
+        let text = format!("{HEADER}{body}");
+        let packages =
+            fsl_semantics::model::intake::package_input(std::iter::empty::<&[u8]>()).unwrap();
+        let declarations = assemble_with_models(text.as_bytes(), &packages)
+            .unwrap_or_else(|error| panic!("source assembles: {error:?}"));
+        let graph = declarations
+            .check(CheckMode::Linked, CheckingLimits::default())
+            .unwrap_or_else(|refusals| panic!("source checks: {refusals:?}"));
+        let emission = emit_checked(&CheckedPackage::link(graph)).expect("source emits");
+        let wire = wire(&emission);
+        nodes(&wire)[source_object_node(&wire, name)]["node_id"].clone()
+    };
+
+    let base = "object Order { total: Integer; operation size(): Integer; }\n";
+    let with_field = "object Order { total: Integer; note: Boolean; operation size(): Integer; }\n";
+    let renamed_operation = "object Order { total: Integer; operation count(): Integer; }\n";
+    let moved = "object Other {}\nobject Order { total: Integer; operation size(): Integer; }\n";
+    let renamed_object = "object Purchase { total: Integer; operation size(): Integer; }\n";
+    let base_id = node_id(base, "Order");
+
+    assert_eq!(node_id(with_field, "Order"), base_id);
+    assert_eq!(node_id(renamed_operation, "Order"), base_id);
+    assert_eq!(node_id(moved, "Order"), base_id);
+    assert_ne!(node_id(renamed_object, "Purchase"), base_id);
 }
 
 #[trace("FR-569-AC-14", "FSpec-FR-610-AC-4", "TC-1941", "FSpec-TC-1441")]

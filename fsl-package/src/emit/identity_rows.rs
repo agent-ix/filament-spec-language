@@ -150,6 +150,25 @@ impl Emission {
         let locus = package_locus("identity_object_output");
         charge::items(budget, locus, self.selected_source_object_rows.len())?;
         let mut objects = Vec::with_capacity(self.selected_source_object_rows.len());
+        let mut source_object_member_facts =
+            Vec::with_capacity(self.source_object_member_facts.len());
+        charge::items(budget, locus, self.source_object_member_facts.len())?;
+        for (index, facts) in self.source_object_member_facts.iter().enumerate() {
+            let locus = adapter_locus(index, "identity_object_member_output");
+            charge::items(budget, locus, facts.len())?;
+            source_object_member_facts.push(
+                facts
+                    .iter()
+                    .map(|fact| {
+                        charge::work(budget, locus, 1)?;
+                        charge::text(budget, locus, &fact.original_member_identity)?;
+                        charge::text(budget, locus, &fact.admitted_name)?;
+                        charge::value_type(budget, locus, &fact.value_type)?;
+                        Ok(fact.clone())
+                    })
+                    .collect::<Result<Vec<_>, NativeRowError>>()?,
+            );
+        }
         for (index, row) in self.selected_source_object_rows.iter().enumerate() {
             objects.push(copy_source_object(
                 row,
@@ -172,7 +191,7 @@ impl Emission {
             package_locus("identity_package_output"),
             package.name(),
         )?;
-        Ok(ReadIdentityRows::of_rows_with_source_rows(
+        Ok(ReadIdentityRows::of_rows_with_source_rows_and_object_facts(
             package,
             declarations,
             fields,
@@ -180,6 +199,7 @@ impl Emission {
             unions,
             objects,
             operations,
+            source_object_member_facts,
         ))
     }
 }

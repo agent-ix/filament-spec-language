@@ -12,33 +12,33 @@
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet, VecDeque};
 
 use filament_contract_model::{
-    encode_checked_package_v2, ApplicationOperator, CheckedAbstractionField,
-    CheckedAbstractionFrame, CheckedAbstractionObject, CheckedAbstractionParameter,
-    CheckedAbstractionPopulation, CheckedArtifactRef, CheckedCapability,
-    CheckedCapabilityDisposition, CheckedComponentClause, CheckedCompositionComponent,
-    CheckedCompositionPremise, CheckedDeclaration, CheckedDependencySelection,
-    CheckedDiagnosticsV2, CheckedDimensionOperand, CheckedEnvironmentEntry,
-    CheckedEnvironmentSupplies, CheckedFairnessGranularity, CheckedFairnessKind,
-    CheckedFairnessSupply, CheckedFieldScope, CheckedFrameModification, CheckedGuaranteeMeasure,
-    CheckedGuaranteeProgress, CheckedNodeId, CheckedNodeKind, CheckedNodeOwner, CheckedNodeTag,
-    CheckedOccurrence, CheckedOccurrenceRole, CheckedOperandEntry, CheckedOperationAnchorBody,
-    CheckedPackageEvidence, CheckedPackageLockV2, CheckedPackageSidecarsRef,
-    CheckedPackageSourceCorrespondenceRef, CheckedPackageV2, CheckedRational,
-    CheckedRefinementStepRowRegion, CheckedScopedDeletion, CheckedSelection, CheckedSelectionRole,
-    CheckedSemanticGraphV2, CheckedSemanticNodeV2, CheckedSourceMapEntry, CheckedSourceRef,
-    CheckedSourceRegion, CheckedTerm, DimensionTerm, LiteralKind, NominalBody, OperationBody,
-    OperationBodyRow, ProtocolForm, ScalarTypeForm, StateForm, ValueForm,
+    ApplicationOperator, CheckedAbstractionField, CheckedAbstractionFrame,
+    CheckedAbstractionObject, CheckedAbstractionParameter, CheckedAbstractionPopulation,
+    CheckedArtifactRef, CheckedCapability, CheckedCapabilityDisposition, CheckedComponentClause,
+    CheckedCompositionComponent, CheckedCompositionPremise, CheckedDeclaration,
+    CheckedDependencySelection, CheckedDiagnosticsV2, CheckedDimensionOperand,
+    CheckedEnvironmentEntry, CheckedEnvironmentSupplies, CheckedFairnessGranularity,
+    CheckedFairnessKind, CheckedFairnessSupply, CheckedFieldScope, CheckedFrameModification,
+    CheckedGuaranteeMeasure, CheckedGuaranteeProgress, CheckedNodeId, CheckedNodeKind,
+    CheckedNodeOwner, CheckedNodeTag, CheckedOccurrence, CheckedOccurrenceRole,
+    CheckedOperandEntry, CheckedOperationAnchorBody, CheckedPackageEvidence, CheckedPackageLockV2,
+    CheckedPackageSidecarsRef, CheckedPackageSourceCorrespondenceRef, CheckedPackageV2,
+    CheckedRational, CheckedRefinementStepRowRegion, CheckedScopedDeletion, CheckedSelection,
+    CheckedSelectionRole, CheckedSemanticGraphV2, CheckedSemanticNodeV2, CheckedSourceMapEntry,
+    CheckedSourceRef, CheckedSourceRegion, CheckedTerm, DimensionTerm, LiteralKind, NominalBody,
+    OperationBody, OperationBodyRow, ProtocolForm, ScalarTypeForm, StateForm, ValueForm,
+    encode_checked_package_v2,
 };
 use serde::Deserialize;
 
 use filament_exact::{Cancel, NodeKey, Origin, PathSegment, Role};
 use filament_semantic_value::catalog::Category;
 use filament_semantic_value::location::ExpressionLocation as Location;
-use fsl_foundation::source::node_table::{scoped, DebugTable, DebugWith, With};
+use fsl_foundation::Code;
+use fsl_foundation::source::node_table::{DebugTable, DebugWith, With, scoped};
 use fsl_foundation::source::provenance::{
     OccurrenceKey, PackageSourceMap, RawSourceRef, SourceRegion,
 };
-use fsl_foundation::Code;
 use fsl_semantics::check::wire_id::StructuralIds;
 use fsl_semantics::check::{
     AbstractionNodeRefusal, AbstractionNodes, Arrival, BindingValue, BodyTerm, CheckedGraph,
@@ -50,8 +50,8 @@ use fsl_semantics::check::{
 };
 use fsl_semantics::value::nominal_payload::NominalPayload;
 use fsl_semantics::value::{
-    native_diagnostics_catalog, DefinitionReference, DefinitionRole, HeaderLayer, Member,
-    ModelRole, NodeOwner, TemporalRole,
+    DefinitionReference, DefinitionRole, HeaderLayer, Member, ModelRole, NodeOwner, TemporalRole,
+    native_diagnostics_catalog,
 };
 use ix_trace_rs::string_edge;
 
@@ -172,7 +172,9 @@ pub enum EmitRefusal {
     /// The unit declares a source `object` type, which the checked-package/v2
     /// graph has no node shape for yet: the emitter refuses at the first
     /// declaration rather than write a package without it.
-    #[error("source object declarations cannot be written to a checked-package/v2 graph yet (SourceObjectEmission)")]
+    #[error(
+        "source object declarations cannot be written to a checked-package/v2 graph yet (SourceObjectEmission)"
+    )]
     SourceObjectEmission {
         /// The first `object` declaration's span.
         span: fsl_foundation::Span,
@@ -286,7 +288,9 @@ pub enum EmitRefusal {
     },
     /// An equality producer identity row has no unique emitted application
     /// occurrence to which it can be attached.
-    #[error("equality producer identity for application {application:?} has no unique emitted occurrence")]
+    #[error(
+        "equality producer identity for application {application:?} has no unique emitted occurrence"
+    )]
     MissingEqualityIdentityContext {
         /// The exact checked application key retained by FSL lowering.
         application: NodeKey,
@@ -323,7 +327,9 @@ pub enum EmitRefusal {
     },
     /// The selected configuration alternative does not match the checked
     /// declaration's selected temporal profile.
-    #[error("temporal clock configuration at {source_ref:?} bytes {span:?} does not match profile {profile}")]
+    #[error(
+        "temporal clock configuration at {source_ref:?} bytes {span:?} does not match profile {profile}"
+    )]
     TemporalClockProfileMismatch {
         /// The checked source document.
         source_ref: fsl_foundation::source::provenance::RawSourceRef,
@@ -345,7 +351,9 @@ pub enum EmitRefusal {
     },
     /// A dispatch producer decision has no unique emitted call occurrence or
     /// one of its exact model/function identities is not in the emitted graph.
-    #[error("dispatch producer decision for application {application:?} has no complete emitted identity context")]
+    #[error(
+        "dispatch producer decision for application {application:?} has no complete emitted identity context"
+    )]
     MissingDispatchIdentityContext {
         /// The exact checked application key retained by FSL lowering.
         application: NodeKey,
@@ -597,6 +605,16 @@ pub struct SelectedSourceRecordMemberRow {
     pub value_type: filament_exact::ValueType,
 }
 
+/// The FR-531 member facts retained for each source-object member while its
+/// IR witness is reduced to name, target node and optionality.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct SourceObjectMemberFacts {
+    pub(crate) original_member_identity: Box<str>,
+    pub(crate) admitted_name: Box<str>,
+    pub(crate) presence: filament_exact::Presence,
+    pub(crate) value_type: filament_exact::ValueType,
+}
+
 /// One model-owned enum (a variant type of a selected domain model)'s checked
 /// variant shape, joined to the final emitted declaration and case nodes
 /// (FR-092 "Model enum shape rows"). It carries the checker's
@@ -698,6 +716,9 @@ pub struct Emission {
     /// FSL-stage source-object witnesses joined to their emitted nodes
     /// (FR-569).
     pub(crate) selected_source_object_rows: Vec<filament_contract_model::SelectedSourceObjectRow>,
+    /// Full FR-531 source-record-shaped member witnesses aligned with source
+    /// object rows and their members.
+    pub(crate) source_object_member_facts: Vec<Vec<SourceObjectMemberFacts>>,
     /// FSL-stage source-operation witnesses joined to emitted anchors
     /// (FR-390).
     pub(crate) selected_source_operation_rows:
@@ -957,6 +978,7 @@ impl DebugWith for Emission {
             selected_source_union_rows,
             selected_source_record_rows,
             selected_source_object_rows,
+            source_object_member_facts,
             selected_source_operation_rows,
             selected_source_tuple_rows,
             selected_model_enum_shape_rows,
@@ -1001,6 +1023,7 @@ impl DebugWith for Emission {
             .field("selected_source_union_rows", selected_source_union_rows)
             .field("selected_source_record_rows", selected_source_record_rows)
             .field("selected_source_object_rows", selected_source_object_rows)
+            .field("source_object_member_facts", source_object_member_facts)
             .field(
                 "selected_source_operation_rows",
                 selected_source_operation_rows,
@@ -2234,7 +2257,7 @@ fn member_term(ids: &StructuralIds, member: &MemberTerm) -> Result<CheckedTerm, 
                 BindingValue::ExecutionPoint(_) => {
                     return Err(encoding(
                         "execution point appears outside operation-anchor body",
-                    ))
+                    ));
                 }
             };
             CheckedTerm::Binding {
@@ -4231,7 +4254,7 @@ fn equality_units(
                         application: application.clone(),
                     })?,
                 filament_semantic_value::quantity::QuantityUnit::Compound(_) => {
-                    return Err(EmitRefusal::SourceMapInvariant)
+                    return Err(EmitRefusal::SourceMapInvariant);
                 }
             },
         };
@@ -5507,7 +5530,7 @@ fn timed_body_operands(
         _ => {
             return Err(EmitRefusal::TimedModelWriterInvariant(
                 "timed body has a term outside the closed path grammar",
-            ))
+            ));
         }
     }
     Ok(())
@@ -5754,6 +5777,7 @@ pub fn emit_timed_models(
         selected_source_union_rows: Vec::new(),
         selected_source_record_rows: Vec::new(),
         selected_source_object_rows: Vec::new(),
+        source_object_member_facts: Vec::new(),
         selected_source_operation_rows: Vec::new(),
         selected_source_tuple_rows: Vec::new(),
         selected_model_enum_shape_rows: Vec::new(),
@@ -6759,7 +6783,8 @@ fn emit_package_inner(
     let selected_model_enum_shape_rows = model_enum_shape_rows(graph, &emitted_node_ids)?;
     let selected_source_union_rows = source_union_rows(graph, &emitted_node_ids)?;
     let selected_source_record_rows = source_record_rows(graph, &emitted_node_ids)?;
-    let selected_source_object_rows = source_object_rows(graph, &emitted_node_ids)?;
+    let (selected_source_object_rows, source_object_member_facts) =
+        source_object_rows(graph, &emitted_node_ids)?;
     let selected_source_operation_rows = source_operation_rows(graph, &emitted_node_ids)?;
     let selected_source_tuple_rows = source_tuple_rows(graph, &emitted_node_ids)?;
     let selected_source_collection_rows = source_collection_rows(graph, &emitted_node_ids)?;
@@ -6825,6 +6850,7 @@ fn emit_package_inner(
         selected_source_union_rows,
         selected_source_record_rows,
         selected_source_object_rows,
+        source_object_member_facts,
         selected_source_operation_rows,
         selected_source_tuple_rows,
         selected_model_enum_shape_rows,
@@ -7062,7 +7088,13 @@ fn source_record_rows_over<'d>(
 fn source_object_rows(
     graph: &CheckedGraph,
     emitted: &HashMap<NodeKey, CheckedNodeId>,
-) -> Result<Vec<filament_contract_model::SelectedSourceObjectRow>, EmitRefusal> {
+) -> Result<
+    (
+        Vec<filament_contract_model::SelectedSourceObjectRow>,
+        Vec<Vec<SourceObjectMemberFacts>>,
+    ),
+    EmitRefusal,
+> {
     use filament_contract_model::{SelectedSourceObjectMember, SelectedSourcePopulation};
 
     let semantic = graph.semantic_graph();
@@ -7098,21 +7130,67 @@ fn source_object_rows(
                     _ => None,
                 })
                 .ok_or(EmitRefusal::SourceMapInvariant)?;
-        let members = node
-            .source_object_member_nodes()
+        let object_type = graph
+            .scope()
+            .types()
+            .object_types()
+            .find(|object_type| graph.object_type_key(object_type.key()) == Some(declaration))
+            .ok_or(EmitRefusal::SourceMapInvariant)?;
+        let attributes = graph
+            .scope()
+            .types()
+            .attributes(object_type.key())
             .ok_or(EmitRefusal::SourceMapInvariant)?
-            .into_iter()
-            .map(|(name, target, optional)| {
-                Ok(SelectedSourceObjectMember {
-                    name: name.into(),
-                    type_node: emitted
-                        .get(&target)
-                        .cloned()
-                        .ok_or(EmitRefusal::SourceMapInvariant)?,
-                    optional,
+            .iter()
+            .collect::<Vec<_>>();
+        let source_members = node
+            .source_object_member_nodes()
+            .ok_or(EmitRefusal::SourceMapInvariant)?;
+        if source_members.len() != attributes.len() {
+            return Err(EmitRefusal::SourceMapInvariant);
+        }
+        let mut members = Vec::with_capacity(source_members.len());
+        let mut member_facts = Vec::with_capacity(source_members.len());
+        for ((name, target, optional), attribute) in source_members.into_iter().zip(attributes) {
+            let field = attribute.field();
+            if name != field.name()
+                || optional != (field.presence() == filament_exact::Presence::Optional)
+            {
+                return Err(EmitRefusal::SourceMapInvariant);
+            }
+            let field_owner = graph
+                .object_type_key(attribute.owner())
+                .ok_or(EmitRefusal::SourceMapInvariant)?;
+            let original_member_identity = graph
+                .source_packages()
+                .iter()
+                .flat_map(|package| &package.records)
+                .find_map(|record| match record {
+                    fsl_semantics::model::domain_package::DomainPackageRecord::FieldMember(
+                        field,
+                    ) if &field.owner == field_owner
+                        && field.key.node.rsplit('/').next() == Some(name) =>
+                    {
+                        Some(field.key.node.as_str())
+                    }
+                    _ => None,
                 })
-            })
-            .collect::<Result<Vec<_>, EmitRefusal>>()?;
+                .ok_or(EmitRefusal::SourceMapInvariant)?;
+            members.push(SelectedSourceObjectMember {
+                name: name.into(),
+                type_node: emitted
+                    .get(&target)
+                    .cloned()
+                    .ok_or(EmitRefusal::SourceMapInvariant)?,
+                optional,
+            });
+            member_facts.push(SourceObjectMemberFacts {
+                original_member_identity: original_member_identity.into(),
+                admitted_name: name.into(),
+                presence: field.presence(),
+                value_type: field.value_type().clone(),
+            });
+        }
         let supertypes = object
             .supertypes
             .iter()
@@ -7143,22 +7221,26 @@ fn source_object_rows(
                 _ => None,
             })
             .collect();
-        rows.push(filament_contract_model::SelectedSourceObjectRow {
-            structural_node: structural_node.clone(),
-            source_authority: owner.authority().into(),
-            source_identity: source_identity.as_str().into(),
-            is_abstract: object.abstract_type,
-            supertypes,
-            identity_fields: identity_fields
-                .iter()
-                .map(|field| field.as_str().into())
-                .collect(),
-            members,
-            populations,
-        });
+        rows.push((
+            filament_contract_model::SelectedSourceObjectRow {
+                structural_node: structural_node.clone(),
+                source_authority: owner.authority().into(),
+                source_identity: source_identity.as_str().into(),
+                is_abstract: object.abstract_type,
+                supertypes,
+                identity_fields: identity_fields
+                    .iter()
+                    .map(|field| field.as_str().into())
+                    .collect(),
+                members,
+                populations,
+            },
+            member_facts,
+        ));
     }
-    rows.sort_by(|left, right| left.structural_node.cmp(&right.structural_node));
-    Ok(rows)
+    rows.sort_by(|left, right| left.0.structural_node.cmp(&right.0.structural_node));
+    let (rows, member_facts) = rows.into_iter().unzip();
+    Ok((rows, member_facts))
 }
 
 fn source_node_for_declaration<'a>(
@@ -8585,12 +8667,12 @@ pub(crate) mod equality_reader;
 #[cfg(test)]
 mod extent_agreement;
 pub use clock_selection::{
-    clock_kind, is_model_binding_name, profile_clock_kind, ClockSelectionCause,
-    ClockSelectionDeclaration, ClockSelectionRefusal,
+    ClockSelectionCause, ClockSelectionDeclaration, ClockSelectionRefusal, clock_kind,
+    is_model_binding_name, profile_clock_kind,
 };
 mod identity_rows;
 mod monitor_plan;
 pub(crate) mod protocol_locations;
-pub use monitor_plan::{declaration_less_function_id, emit_monitor_plan_over, MonitorPlanWire};
+pub use monitor_plan::{MonitorPlanWire, declaration_less_function_id, emit_monitor_plan_over};
 mod timed_order;
 pub use timed_order::OrderFault as TimedOrderFault;

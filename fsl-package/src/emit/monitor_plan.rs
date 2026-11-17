@@ -16,13 +16,13 @@ use filament_contract_model::CheckedNodePathSegment as Segment;
 use filament_contract_model::{CheckedSemanticNodeV2, CheckedTerm};
 use filament_exact::Rational;
 
-use crate::wire_form::{has_form, has_tag, WireForm, WireTag};
+use crate::wire_form::{WireForm, WireTag, has_form, has_tag};
 
 use super::{
-    own_evidence, read_index_segments, write_index_segments, CheckedNodeId, CheckedOccurrence,
-    CheckedOccurrenceRole, CheckedPackageSidecarsRef, CheckedPackageSourceCorrespondenceRef,
-    CheckedPackageV2, CheckedSemanticGraphV2, CheckedSourceMapEntry, Emission, EmitRefusal,
-    EmittedPackage, ForeignNodes, OmittedNode, StructuralIds, GRAPH_V2,
+    CheckedNodeId, CheckedOccurrence, CheckedOccurrenceRole, CheckedPackageSidecarsRef,
+    CheckedPackageSourceCorrespondenceRef, CheckedPackageV2, CheckedSemanticGraphV2,
+    CheckedSourceMapEntry, Emission, EmitRefusal, EmittedPackage, ForeignNodes, GRAPH_V2,
+    OmittedNode, StructuralIds, own_evidence, read_index_segments, write_index_segments,
 };
 
 /// What the writer needs of one plan.
@@ -770,6 +770,7 @@ pub(super) struct RetainedRows {
     pub(super) selected_source_union_rows: Vec<filament_contract_model::SelectedSourceUnionRow>,
     pub(super) selected_source_record_rows: Vec<super::SelectedSourceRecordRow>,
     pub(super) selected_source_object_rows: Vec<filament_contract_model::SelectedSourceObjectRow>,
+    pub(super) source_object_member_facts: Vec<Vec<super::SourceObjectMemberFacts>>,
     pub(super) selected_source_operation_rows:
         Vec<filament_contract_model::SelectedSourceOperationRow>,
     pub(super) selected_source_tuple_rows: Vec<filament_contract_model::SelectedSourceTupleRow>,
@@ -1153,6 +1154,7 @@ pub(super) fn carry_rows(
         selected_source_union_rows: source_unions,
         selected_source_record_rows: source_records,
         selected_source_object_rows: source_objects,
+        source_object_member_facts: retained.source_object_member_facts.clone(),
         selected_source_operation_rows: source_operations,
         selected_source_tuple_rows: source_tuples,
         selected_model_enum_shape_rows: model_enum_shapes,
@@ -1377,6 +1379,7 @@ fn finish(
         selected_source_union_rows: rows.selected_source_union_rows,
         selected_source_record_rows: rows.selected_source_record_rows,
         selected_source_object_rows: rows.selected_source_object_rows,
+        source_object_member_facts: rows.source_object_member_facts,
         selected_source_operation_rows: rows.selected_source_operation_rows,
         selected_source_tuple_rows: rows.selected_source_tuple_rows,
         selected_model_enum_shape_rows: rows.selected_model_enum_shape_rows,
