@@ -308,13 +308,14 @@ pub enum EmitRefusal {
         .span.end
     )]
     MissingTemporalClockSelection {
+        /// The declaration's kind and qualified name.
+        declaration: String,
         /// The checked source document.
         source_ref: fsl_foundation::source::provenance::RawSourceRef,
         /// The exact declaration locus.
         span: fsl_foundation::Span,
         /// Plain-language construct name, such as `bounded temporal rule Foo`
         /// or `compensate template Refund`.
-        declaration: String,
     },
     /// A temporal clock selection does not name a configured declaration in
     /// the checked source.
@@ -8440,6 +8441,64 @@ fn temporal_binding_rows(
         rows.push(row);
     }
 
+    // FSpec FR-464: an `await` control reads a clock, so it gets one binding
+    // row at its own declaration locus, alongside temporal clauses and
+    // compensation templates.
+    for protocol in graph.protocols() {
+        let source = graph.source().clone();
+        let Some(keys) = graph.protocol_node_keys(&protocol.name) else {
+            continue;
+        };
+        for awaited in &protocol.awaits {
+            let Some(profile) = awaited.profile else {
+                continue;
+            };
+            if !matches!(
+                profile,
+                TemporalProfile::EventPositionFalseExtension
+                    | TemporalProfile::FixedSampleFalseExtension
+                    | TemporalProfile::TimestampedEventFiniteWindow
+            ) {
+                continue;
+            }
+            let span = awaited.span;
+            let key = (source.clone(), span.start, span.end);
+            let declaration_name = format!("await {}::{}", protocol.name, awaited.name);
+            let Some(selection) = selected.remove(&key) else {
+                missing.push((source.clone(), span, declaration_name));
+                continue;
+            };
+            check_selected_definition(&source, span, profile, selection)?;
+            let clock = &selection.clock;
+            validate_temporal_clock(&source, span, awaited.clock.as_str(), clock)?;
+            let node_key = keys
+                .nodes
+                .get(&awaited.node)
+                .ok_or(EmitRefusal::SourceMapInvariant)?;
+            let declaration = emitted_node_ids
+                .get(node_key)
+                .cloned()
+                .ok_or(EmitRefusal::SourceMapInvariant)?;
+            let node = nodes
+                .iter()
+                .find(|node| node.node_id == declaration)
+                .ok_or(EmitRefusal::SourceMapInvariant)?;
+            for ordinal in node
+                .occurrences
+                .iter()
+                .filter(|occurrence| occurrence.role == CheckedOccurrenceRole::Declaration)
+                .map(|occurrence| occurrence.ordinal)
+            {
+                rows.push(filament_contract_model::TemporalBinding {
+                    declaration: declaration.clone(),
+                    occurrence: ordinal,
+                    clock_name: awaited.clock.as_str().into(),
+                    clock: clock.clone(),
+                });
+            }
+        }
+    }
+
     // FSpec FR-322-AC-305: a `compensate` node reads a clock too, so it is
     // keyed by its own node identity, named by the template's clock text,
     // and shares the one array with the clause rows. Its profile is the one
@@ -8483,7 +8542,7 @@ fn temporal_binding_rows(
                 missing.push((
                     source.clone(),
                     span,
-                    format!("compensate template `{}`", template.name),
+                    format!("compensate template `{}::{}`", protocol.name, template.name),
                 ));
                 continue;
             };
@@ -8514,11 +8573,20 @@ fn temporal_binding_rows(
             span: fsl_foundation::Span { start, end },
         });
     }
+    missing.sort_by_key(|(_, _, declaration)| {
+        if declaration.starts_with("compensate template ") {
+            0
+        } else if declaration.starts_with("await ") {
+            1
+        } else {
+            2
+        }
+    });
     if let Some((source_ref, span, declaration)) = missing.into_iter().next() {
         return Err(EmitRefusal::MissingTemporalClockSelection {
+            declaration,
             source_ref,
             span,
-            declaration,
         });
     }
     rows.sort_by(|left, right| {

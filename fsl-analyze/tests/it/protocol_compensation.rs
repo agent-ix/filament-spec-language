@@ -838,6 +838,56 @@ pub(crate) fn settled(before: &str) -> String {
     )
 }
 
+/// FR-892's staged saga: two joined branches, with the payment branch's
+/// compensation and timed await both using clock `c`.
+fn timed_branching() -> String {
+    let run = format!(
+        "parallel Both {{ branch pay sequence Main {{ {CHARGE} {} {FAIL} \
+         await Wait after Fail using t0 clock \"c\" within [0, 120] \
+         match event Seen by w as (seen: Boolean) {{ true }}; \
+         then sequence Continued {{ }} timeout sequence TimedOut {{ }} }} \
+         branch shipment sequence Shipment {{ event Shipped by w as (shipped: Boolean) {{ true }}; }} }} \
+         join all [pay, shipment];",
+        paid("Both::pay::Main::C"),
+    );
+    let template = refund("Both::pay::Main::Paid", "dec", 1, "false", "never", "true");
+    let due = "temporal Due using t0 over (c: M::Cell) clock \"c\" on origin { always true }\n";
+    let members = format!("{template}\nrequires temporal Due;");
+    let body = contracts("self.v = 0") + REFUND + due + &protocol("Pay", &members, &run, "d");
+    body.replace("within [0, 10]", "within [0, 120]")
+}
+
+/// FR-892-AC-2 (TC-2525): the branching compensated choreography reaches a
+/// settled deadlock-freedom result, including timeout and recovery states.
+#[trace("TC-2525", "FR-892-AC-2")]
+#[test]
+fn a_branching_compensated_choreography_runs_end_to_end() {
+    let body = timed_branching();
+    explore(&body, |system, explored| {
+        assert!(explored.reached.iter().any(|state| {
+            state
+                .steps
+                .iter()
+                .any(|(step, _)| step.kind() == StepKind::Timeout)
+        }));
+        assert!(explored.reached.iter().any(|state| {
+            state.steps.iter().any(|(step, next)| {
+                step.kind() == StepKind::CEnd
+                    && statuses(&key_json(system, &explored.reached[*next])) == ["recovered"]
+            })
+        }));
+    });
+
+    let case = Case::new(&body, &[0]);
+    let outcome = case.deadlock("Pay");
+    assert!(
+        matches!(outcome, ModelCheckOutcome::Holds { .. }),
+        "{outcome:?}"
+    );
+    let settled = case.settle("Pay", &outcome);
+    assert_eq!(settled.label, ResultLabel::Proved, "{settled:?}");
+}
+
 /// Part of FR-211-AC-5 (TC-656, ADR-027 PD-4): §7.1's `Pay` with its
 /// template committing at `Committed` and its `run` a `parallel Both`
 /// joined `all` of branch `pay` (the charge, `Paid` and `Fail`) and branch

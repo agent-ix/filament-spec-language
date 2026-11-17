@@ -61,13 +61,18 @@ fn emitted_unit(
 }
 
 fn emitted_text(unit: &str) -> Result<(Emission, Value, Read), Vec<CheckRefusal>> {
-    let document =
-        crate::emit::tests::wire_bytes(&fixture::document()).expect("fixture serializes");
-    let packages = fsl_semantics::model::intake::package_input([document.as_slice()]).unwrap();
-    let graph = assemble_with_models(unit.as_bytes(), &packages)
-        .expect("unit assembles")
-        .check(CheckMode::Linked, CheckingLimits::default())?;
-    let selections = graph
+    emitted_text_with_await_selection(unit, true)
+}
+
+fn emitted_text_with_await_selection(
+    unit: &str,
+    select_await: bool,
+) -> Result<(Emission, Value, Read), Vec<CheckRefusal>> {
+    let graph = checked_graph(unit)?;
+    let clock = filament_contract_model::ClockConfiguration::EventPosition {
+        sequence_authority: "compensation-events".into(),
+    };
+    let mut selections = graph
         .protocols()
         .iter()
         .flat_map(|protocol| &protocol.obligations.compensations)
@@ -76,12 +81,38 @@ fn emitted_text(unit: &str) -> Result<(Emission, Value, Read), Vec<CheckRefusal>
             crate::emit::TemporalClockSelection::new(
                 graph.source().clone(),
                 template.span,
-                filament_contract_model::ClockConfiguration::EventPosition {
-                    sequence_authority: "compensation-events".into(),
-                },
+                clock.clone(),
             )
         })
         .collect::<Vec<_>>();
+    if select_await {
+        selections.extend(graph.protocols().iter().flat_map(|protocol| {
+            protocol.awaits.iter().filter_map(|awaited| {
+                awaited.profile.map(|_| {
+                    crate::emit::TemporalClockSelection::new(
+                        graph.source().clone(),
+                        awaited.span,
+                        clock.clone(),
+                    )
+                })
+            })
+        }));
+    }
+    selections.extend(graph.temporal_clauses().iter().filter_map(|temporal| {
+        matches!(
+            temporal.clause().profile(),
+            fsl_semantics::check::TemporalProfile::EventPositionFalseExtension
+                | fsl_semantics::check::TemporalProfile::FixedSampleFalseExtension
+                | fsl_semantics::check::TemporalProfile::TimestampedEventFiniteWindow
+        )
+        .then(|| {
+            crate::emit::TemporalClockSelection::new(
+                graph.source().clone(),
+                temporal.clause().span(),
+                clock.clone(),
+            )
+        })
+    }));
     let emission = crate::emit::emit_checked_with_temporal_selections(
         &CheckedPackage::link(graph),
         &selections,
@@ -94,6 +125,7 @@ fn emitted_text(unit: &str) -> Result<(Emission, Value, Read), Vec<CheckRefusal>
     for feature in wire["lock"]["required_features"].as_array().unwrap() {
         evidence.support_feature(feature.as_str().unwrap());
     }
+    let document = crate::emit::tests::wire_bytes(&fixture::document()).unwrap();
     evidence
         .insert_domain_package_document(package_identity(&document), document.as_slice())
         .expect("fresh evidence key");
@@ -104,6 +136,101 @@ fn emitted_text(unit: &str) -> Result<(Emission, Value, Read), Vec<CheckRefusal>
         &evidence,
     );
     Ok((emission, wire, read))
+}
+
+fn checked_graph(unit: &str) -> Result<fsl_semantics::check::CheckedGraph, Vec<CheckRefusal>> {
+    let document =
+        crate::emit::tests::wire_bytes(&fixture::document()).expect("fixture serializes");
+    let packages = fsl_semantics::model::intake::package_input([document.as_slice()]).unwrap();
+    assemble_with_models(unit.as_bytes(), &packages)
+        .expect("unit assembles")
+        .check(CheckMode::Linked, CheckingLimits::default())
+}
+
+/// FR-892-AC-1 (TC-2525): one package may bind a compensation template, an
+/// awaited event and a required temporal clause to clock configurations.
+#[trace("TC-2525", "FR-892-AC-1")]
+#[test]
+fn a_compensation_and_a_timed_await_emit_together() {
+    let temporal =
+        "temporal Due using t over (c: M::Ledger) clock \"c\" on origin { always true }\n";
+    let mut unit = unit_text(temporal, "true", "false");
+    unit = unit.replace(
+        "role R on M::Ledger;\n",
+        "role R on M::Ledger;\nrequires temporal Due;\n",
+    );
+    unit = unit.replace(
+        "effect Applied of Update as (applied: M::Money) { true };\n",
+        "effect Applied of Update as (applied: M::Money) { true };\n\
+         event Started by R as (started: Boolean) { true };\n\
+         await Wait after Started using t clock \"c\" within [0, 120] \
+           match event Seen by R as (seen: Boolean) { true }; \
+           then sequence Continued { } timeout sequence TimedOut { }\n",
+    );
+
+    let (emission, wire, read) = emitted_text(&unit).expect("the timed unit checks and emits");
+    assert!(
+        matches!(read, Read::Verified { .. }),
+        "I2 admits the package: {read:?}"
+    );
+    let nodes = wire["semantic_graph"]["nodes"]
+        .as_array()
+        .expect("semantic nodes");
+    assert!(nodes
+        .iter()
+        .any(|node| node["semantic_form"] == "compensation"));
+    assert!(nodes.iter().any(|node| node["semantic_form"] == "await"));
+    assert!(nodes
+        .iter()
+        .any(|node| node["semantic_form"] == "temporal_clause"));
+    let bindings = wire["temporal_bindings"]
+        .as_array()
+        .expect("clock bindings");
+    assert_eq!(
+        bindings.len(),
+        3,
+        "template, await and required clause each bind clock c"
+    );
+    assert_eq!(emission.omitted, []);
+}
+
+/// FR-892-AC-4 (TC-2525): omitting all clock selections still refuses a timed
+/// package and identifies the declaration that needs one.
+#[trace("TC-2525", "FR-892-AC-4")]
+#[test]
+fn a_timed_unit_without_clock_selection_is_refused_by_declaration_name() {
+    let temporal =
+        "temporal Due using t over (c: M::Ledger) clock \"c\" on origin { always true }\n";
+    let mut unit = unit_text(temporal, "true", "false");
+    unit = unit.replace(
+        "role R on M::Ledger;\n",
+        "role R on M::Ledger;\nrequires temporal Due;\n",
+    );
+    unit = unit.replace(
+        "effect Applied of Update as (applied: M::Money) { true };\n",
+        "effect Applied of Update as (applied: M::Money) { true };\n\
+         event Started by R as (started: Boolean) { true };\n\
+         await Wait after Started using t clock \"c\" within [0, 120] \
+           match event Seen by R as (seen: Boolean) { true }; \
+           then sequence Continued { } timeout sequence TimedOut { }\n",
+    );
+    let graph = checked_graph(&unit).expect("the timed unit checks");
+    let refusal = crate::emit::emit_checked_with_temporal_selections(
+        &CheckedPackage::link(graph),
+        &[],
+        crate::EmitLimits::fixture(),
+    )
+    .expect_err("a timed unit requires clock selections");
+    assert!(matches!(
+        refusal,
+        crate::emit::EmitRefusal::MissingTemporalClockSelection { .. }
+    ));
+    let message = refusal.to_string();
+    assert!(
+        message.contains("compensate template Flow::Full"),
+        "{message}"
+    );
+    assert!(!message.contains("temporal declaration"), "{message}");
 }
 
 /// FR-383-AC-20, TC-1063 row 8i: a compensation retains its temporal-profile
