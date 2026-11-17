@@ -13,7 +13,7 @@
 //! grow with nesting. S2 takes no limit of its own: it builds at most one
 //! node per CST node, so S1's node limit bounds it (FR-257).
 
-use super::dispatch::{Construct, FormsCause, FormsRefusal};
+use super::dispatch::{Construct, ConstructKind, FormsCause, FormsRefusal};
 use super::spans::{DeclarationSpans, ExpressionSpans};
 use super::syntax::{
     AbsenceMode, Accumulation, AliasForm, ArmForm, BinaryOperator, BinderQuery, BuiltinType,
@@ -120,8 +120,39 @@ pub(crate) fn unexpected(node: &CstNode) -> FormsRefusal {
 }
 
 /// The refusal for a construct no `Expression` variant represents.
-pub(crate) fn unrepresented(production: Production, span: Span) -> FormsRefusal {
-    FormsRefusal::at(FormsCause::UnrepresentedConstruct { production }, span)
+pub(crate) fn unrepresented(
+    cst: &LosslessCst,
+    production: Production,
+    span: Span,
+    construct: ConstructKind,
+) -> FormsRefusal {
+    let text = source_text(cst, span);
+    FormsRefusal::at(
+        FormsCause::UnrepresentedConstruct {
+            production,
+            construct,
+            text,
+            declaration: None,
+            profile: None,
+        },
+        span,
+    )
+}
+
+fn source_text(cst: &LosslessCst, span: Span) -> String {
+    let text = cst
+        .source()
+        .text()
+        .get(span.start..span.end)
+        .unwrap_or_default();
+    if text.len() <= 120 {
+        return text.to_owned();
+    }
+    let mut end = 120;
+    while !text.is_char_boundary(end) {
+        end -= 1;
+    }
+    format!("{}...", &text[..end])
 }
 
 /// A token's spelling as text.
@@ -1819,11 +1850,13 @@ impl<'c> Mapping<'c> {
                             })
                             .unwrap_or(node.span().end);
                         return Err(unrepresented(
+                            self.cst,
                             Production::Postfix,
                             Span {
                                 start: node.span().start,
                                 end,
                             },
+                            ConstructKind::IndexSelection,
                         ));
                     };
                     suffixes.push((Shape::Select, end, vec![selector]));
@@ -1931,7 +1964,12 @@ impl<'c> Mapping<'c> {
             b"true" => self.leaf(Shape::Boolean(true), &task),
             b"false" => self.leaf(Shape::Boolean(false), &task),
             b"absent" | b"none" => self.leaf(Shape::Absent, &task),
-            b"null" => Err(unrepresented(Production::Primary, node.span())),
+            b"null" => Err(unrepresented(
+                self.cst,
+                Production::Primary,
+                node.span(),
+                ConstructKind::NullValue,
+            )),
             b"self" => self.leaf(Shape::SelfRef, &task),
             b"result" => self.leaf(Shape::Result, &task),
             b"protocol" => {
@@ -1955,7 +1993,12 @@ impl<'c> Mapping<'c> {
                     // S1 parses the edge as a `QualifiedName`; a
                     // multi-segment spelling names a member of the
                     // operands' own type, which S3 resolves (FR-102-AC-3).
-                    return Err(unrepresented(Production::QualifiedName, edge_node.span()));
+                    return Err(unrepresented(
+                        self.cst,
+                        Production::QualifiedName,
+                        edge_node.span(),
+                        ConstructKind::QualifiedReachesEdge,
+                    ));
                 };
                 let edge = text(edge_token, node)?;
                 let edge_span = edge_token.span();
@@ -1988,7 +2031,12 @@ impl<'c> Mapping<'c> {
             }
             b"size" => {
                 if !nodes_of(items, Production::TypeReference).is_empty() {
-                    return Err(unrepresented(Production::Primary, node.span()));
+                    return Err(unrepresented(
+                        self.cst,
+                        Production::Primary,
+                        node.span(),
+                        ConstructKind::SizeOfType,
+                    ));
                 }
                 self.with_children(Shape::Size, &task, one(&operands)?)
             }

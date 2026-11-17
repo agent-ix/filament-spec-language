@@ -273,7 +273,9 @@ fn assembly_limit(cause: &AssemblyCause) -> Option<ReachedLimit> {
         | AssemblyCause::AmbiguousPopulation { .. }
         | AssemblyCause::UnsupportedLayerForm { .. }
         | AssemblyCause::UnselectedModelConstruct(_)
-        | AssemblyCause::TimedNotChecked(_) => None,
+        | AssemblyCause::TimedNotChecked(_)
+        | AssemblyCause::SynthesisNotChecked { .. }
+        | AssemblyCause::VerificationPlanNotChecked { .. } => None,
     }
 }
 

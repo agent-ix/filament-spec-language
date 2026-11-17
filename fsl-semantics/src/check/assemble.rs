@@ -639,6 +639,16 @@ pub enum AssemblyCause {
     /// and no S3 check reads yet (FR-230): `unsupported_construct`/
     /// `not-yet-implemented`, never compiled unchecked.
     TimedNotChecked(super::refusal::TimedConstruct),
+    /// A synthesis form whose FR-754 lowering is not installed yet.
+    SynthesisNotChecked {
+        /// The synthesis declaration's authored name.
+        name: String,
+    },
+    /// A verification plan form whose FR-753 lowering is not installed yet.
+    VerificationPlanNotChecked {
+        /// The verification plan's authored name.
+        name: String,
+    },
 }
 
 impl AssemblyCause {
@@ -719,7 +729,9 @@ impl AssemblyCause {
             Self::Handle(_) | Self::NominalAdmission(_) => Code::RuntimeInvariant,
             Self::UnsupportedLayerForm { .. }
             | Self::UnselectedModelConstruct(_)
-            | Self::TimedNotChecked(_) => Code::UnsupportedConstruct,
+            | Self::TimedNotChecked(_)
+            | Self::SynthesisNotChecked { .. }
+            | Self::VerificationPlanNotChecked { .. } => Code::UnsupportedConstruct,
         }
     }
 
@@ -832,7 +844,9 @@ impl AssemblyCause {
             Self::Handle(_) | Self::NominalAdmission(_) => "established-invariant-broken",
             Self::UnsupportedLayerForm { form, .. } => form.refusal_cause(),
             Self::UnselectedModelConstruct(refusal) => refusal.family.refusal_cause(),
-            Self::TimedNotChecked(_) => "not-yet-implemented",
+            Self::TimedNotChecked(_)
+            | Self::SynthesisNotChecked { .. }
+            | Self::VerificationPlanNotChecked { .. } => "not-yet-implemented",
         };
         CatalogCode::new(self.code().as_str(), cause)
     }
@@ -1234,6 +1248,7 @@ impl Unit {
                             span,
                         });
                 }
+                DeclarationForm::Synthesis(_) | DeclarationForm::VerificationPlan(_) => {}
             }
         }
         // The `Clock` type positions were listed first; FR-230's gate reads
@@ -4375,6 +4390,29 @@ impl PackageDeclarations {
         let mut model_selection_units = unit.model_selection_units().to_vec();
         let repeated_model_selection_units = unit.repeated_model_selection_units().to_vec();
         let import_selection_units = unit.import_selection_units().to_vec();
+        let mut errors: Vec<AssemblyError> = unit
+            .forms()
+            .iter()
+            .filter_map(|form| {
+                let cause = match form.form() {
+                    fsl_forms::DeclarationForm::Synthesis(synthesis) => {
+                        Some(AssemblyCause::SynthesisNotChecked {
+                            name: synthesis.name.name.clone(),
+                        })
+                    }
+                    fsl_forms::DeclarationForm::VerificationPlan(plan) => {
+                        Some(AssemblyCause::VerificationPlanNotChecked {
+                            name: plan.name.name.clone(),
+                        })
+                    }
+                    _ => None,
+                }?;
+                Some(AssemblyError {
+                    cause,
+                    span: form.span(),
+                })
+            })
+            .collect();
         let (mut selections, forms) = unit.into_parts();
         // The models and the one meter their admission counted on; checking
         // continues that meter into the conformance stage.
@@ -4402,7 +4440,6 @@ impl PackageDeclarations {
         let mut unit = Unit::new(forms, package_bearing);
         // FR-393: retain the parsed timed forms through S2. FR-230 checks
         // their meaning, including the facet gate, at S3.
-        let mut errors: Vec<AssemblyError> = Vec::new();
         let owner = SourceOwner::from(&source);
         let source_node_owners: BTreeMap<String, SourceOwner> = source_owners
             .iter()

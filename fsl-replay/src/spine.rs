@@ -30,9 +30,9 @@ pub use filament_semantic_value::checking::CheckingLimits;
 use filament_semantic_value::declaration::StorageUnit;
 use fsl_cst::{CompleteDiagnostic, HostCause};
 use fsl_forms::{ClauseTextRefusal, FormsCause, FormsRefusal};
-use fsl_foundation::diagnostic::{unit_spelling, LimitExceeded, Locus};
-use fsl_foundation::source::provenance::{RawSourceRef, SourceRegion};
 use fsl_foundation::Setting;
+use fsl_foundation::diagnostic::{LimitExceeded, Locus, unit_spelling};
+use fsl_foundation::source::provenance::{RawSourceRef, SourceRegion};
 use fsl_foundation::{Code, SourceIdentity, Span};
 pub use fsl_package::{
     ClockSelectionCause, ClockSelectionDeclaration, ClockSelectionRefusal, EmitRefusal,
@@ -58,36 +58,36 @@ pub use clocks::{InvalidClock, RequestClocks};
 /// FR-527's TL mapping table and the native valuation a TL cross-evaluation
 /// reads (FR-757, FR-931), for the command adapter's correspondence stage.
 pub use fsl_eval::temporal::{AtomReading, ObservedValuation, TemporalOutcome};
-pub use fsl_package::checked_views::{
-    support_of as tl_support_of, Closure as TlClosure, Support as TlSupport, Target as TlTarget,
-    Unmatched as TlUnmatched,
-};
 pub use fsl_package::TemporalClockSelection;
+pub use fsl_package::checked_views::{
+    Closure as TlClosure, Support as TlSupport, Target as TlTarget, Unmatched as TlUnmatched,
+    support_of as tl_support_of,
+};
 #[cfg(feature = "quire-extraction")]
 pub use native_fences::{
-    check_native_fences, CheckLimits, FenceCheckCause, NativeFenceDiagnostic, NativeFenceReport,
-    NativeFenceRequest, NativeFenceResult, NativeFenceUnit,
+    CheckLimits, FenceCheckCause, NativeFenceDiagnostic, NativeFenceReport, NativeFenceRequest,
+    NativeFenceResult, NativeFenceUnit, check_native_fences,
 };
 mod subject;
 pub use lifecycle::{
-    admit_parsed_unit_list, check, check_units, check_units_with_integer_division,
+    AdmittedModels, AdmittedUnitList, CheckedUnit, EmittedUnit, FrontEndFailure, ObligationState,
+    PackageLimits, ParseRequest, ParsedUnitSource, PendingObligation, ProfileCatalogInput,
+    ProfileCheckFailure, ProtocolCheckSite, SourceInputs, TypeDeclaration, TypeReport,
+    TypeRequirement, admit_parsed_unit_list, check, check_units, check_units_with_integer_division,
     check_units_with_refinement_internals, check_with_execution_points,
     check_with_execution_points_and_refinement_internals,
     check_with_execution_points_and_source_inputs, check_with_integer_division,
     check_with_profile_catalog, check_with_refinement_internals,
     check_with_temporal_selections_and_execution_points, core_vocabulary, extension_forms, package,
     package_with_temporal_selections, parse, parse_selecting_extensions, parse_with_extensions,
-    preflight_unit_list, refusal_or_fault, select, select_units, AdmittedModels, AdmittedUnitList,
-    CheckedUnit, EmittedUnit, FrontEndFailure, ObligationState, PackageLimits, ParseRequest,
-    ParsedUnitSource, PendingObligation, ProfileCatalogInput, ProfileCheckFailure,
-    ProtocolCheckSite, SourceInputs, TypeDeclaration, TypeReport, TypeRequirement,
+    preflight_unit_list, refusal_or_fault, select, select_units,
 };
 pub(crate) use lifecycle::{
-    check_for_continuation, check_units_with_options, parse_for_continuation, ContinuationInputs,
-    UnitCheckOptions,
+    ContinuationInputs, UnitCheckOptions, check_for_continuation, check_units_with_options,
+    parse_for_continuation,
 };
 pub use protocol_structure::{
-    arena_names, replay_protocol_analysis, ProtocolReplayRefusal, StructureError,
+    ProtocolReplayRefusal, StructureError, arena_names, replay_protocol_analysis,
 };
 pub use subject::{
     BuildProvenance, ComponentKind, DeclarationProfileComponent, DependencyComponent,
@@ -202,12 +202,12 @@ pub struct ProfileUseResult {
 #[cfg(test)]
 pub(crate) use lifecycle::composed_declaration;
 #[cfg(test)]
-pub(crate) use lifecycle::{compose, ComposedUnit};
+pub(crate) use lifecycle::{ComposedUnit, compose};
 
 mod bind;
 pub use bind::{
-    admission_evidence, bind_scalar_operands, BindIdentityCause, BindOutcome, BindRefusal,
-    BoundOperand, BoundScalarOperands, OperandSource, ScalarOccurrence,
+    BindIdentityCause, BindOutcome, BindRefusal, BoundOperand, BoundScalarOperands, OperandSource,
+    ScalarOccurrence, admission_evidence, bind_scalar_operands,
 };
 
 mod call;
@@ -223,52 +223,53 @@ pub use run_value::ArgumentDefect;
 
 pub(crate) mod clause;
 pub use clause::{
+    AdmittedLate, AuthenticatedTemporalSelection, AuthenticationFailure, ClauseArgument,
+    ClauseArgumentValue, ClauseDisposition, ClauseRunBatchOutcome, ClauseRunBatchRefusal,
+    ClauseRunRefusal, ClauseRunReport, ClauseRunRequest, ClauseRunSelection, ClauseRunSource,
+    ClauseRunStage, ClauseRunUsage, ConsequentEventRefusal, ConsequentSourceEvent,
+    ConsequentSourceEvents, ConsequentState, ContradictedDimension, CorrectionRecord,
+    CorrectionRefusal, DEFAULT_MODEL_MAX_CANDIDATES, EVIDENCE_LEDGER_FORMAT, EvidenceLedgerFile,
+    EvidenceLedgerReadError, FiniteWindowAssessment, FiniteWindowPremises, FiniteWindowReport,
+    FiniteWindowSupport, LateEntry, LateInputs, LedgerBinding, LedgerReadError, ObservedPosition,
+    OperationName, OverObject, PackageAuthentication, PackageTemporalRequest,
+    PackageTraceSubjectRequest, PackagesStage, ProgramBatchCallOutcome, ProgramBatchItemResult,
+    ProgramBatchOutcome, ProgramBatchRefusal, ProgramBatchSelection, ProgramCompilationRequest,
+    ProgressAssertion, ProgressClosure, ProgressCompleteness, ProgressContradiction,
+    ProgressLedger, ProgressLedgerEntry, ProgressLimitReached, ProgressLowerBoundary,
+    ProgressRefusal, ProgressValue, RunRelation, TemporalAuthentication,
+    TemporalIndeterminateReason, TemporalPositionRefusal, TemporalTraceRefusal,
+    TemporalUndefinedCause, TemporalValuation, TemporalVerdict, TemporalWindowRefusal,
+    TimestampedCover, TimestampedMissingValuation, TimestampedObservation, TimestampedOrderKey,
+    TimestampedWindow, TraceBinding, TraceInput, TraceRefusal, TraceSubjectClauseRequest,
+    ValueInvariantsBatchFailure, ValueInvariantsBatchOutcome, ValueInvariantsBatchRequest,
     admit_progress, authenticate_emission, authenticate_package_trace, clause_trace_binding,
     name_clause_atom, read_evidence_ledger, read_ledger, run_clause, run_clause_batch,
     run_clause_with_temporal_selections, run_package_temporal, run_package_trace_subject,
     run_program_batch, run_temporal_valuation, run_trace_subject_clause, sample_position,
     settle_correction, settle_run_correction, temporal_batch_exit_code, temporal_batch_outcome,
-    write_ledger, AdmittedLate, AuthenticatedTemporalSelection, AuthenticationFailure,
-    ClauseArgument, ClauseArgumentValue, ClauseDisposition, ClauseRunBatchOutcome,
-    ClauseRunBatchRefusal, ClauseRunRefusal, ClauseRunReport, ClauseRunRequest, ClauseRunSelection,
-    ClauseRunSource, ClauseRunStage, ClauseRunUsage, ConsequentEventRefusal, ConsequentSourceEvent,
-    ConsequentSourceEvents, ConsequentState, ContradictedDimension, CorrectionRecord,
-    CorrectionRefusal, EvidenceLedgerFile, EvidenceLedgerReadError, FiniteWindowAssessment,
-    FiniteWindowPremises, FiniteWindowReport, FiniteWindowSupport, LateEntry, LateInputs,
-    LedgerBinding, LedgerReadError, ObservedPosition, OperationName, OverObject,
-    PackageAuthentication, PackageTemporalRequest, PackageTraceSubjectRequest, PackagesStage,
-    ProgramBatchCallOutcome, ProgramBatchItemResult, ProgramBatchOutcome, ProgramBatchRefusal,
-    ProgramBatchSelection, ProgramCompilationRequest, ProgressAssertion, ProgressClosure,
-    ProgressCompleteness, ProgressContradiction, ProgressLedger, ProgressLedgerEntry,
-    ProgressLimitReached, ProgressLowerBoundary, ProgressRefusal, ProgressValue, RunRelation,
-    TemporalAuthentication, TemporalIndeterminateReason, TemporalPositionRefusal,
-    TemporalTraceRefusal, TemporalUndefinedCause, TemporalValuation, TemporalVerdict,
-    TemporalWindowRefusal, TimestampedCover, TimestampedMissingValuation, TimestampedObservation,
-    TimestampedOrderKey, TimestampedWindow, TraceBinding, TraceInput, TraceRefusal,
-    TraceSubjectClauseRequest, ValueInvariantsBatchFailure, ValueInvariantsBatchOutcome,
-    ValueInvariantsBatchRequest, DEFAULT_MODEL_MAX_CANDIDATES, EVIDENCE_LEDGER_FORMAT,
+    write_ledger,
 };
 mod refinement;
 pub use refinement::{
-    classify_clause_run, classify_compile, classify_refusal, Classification, ReachedLimit,
-    RefinementClass, RefusalCause, RunClassification,
+    Classification, ReachedLimit, RefinementClass, RefusalCause, RunClassification,
+    classify_clause_run, classify_compile, classify_refusal,
 };
 mod native_result;
 mod protocol_premises;
 mod protocol_proof;
 mod protocol_structure;
-pub(crate) use native_result::{item_record, ReasonWire};
 pub use native_result::{
-    read_native_run_result, read_native_run_result_bounded, write_clause_run_result,
-    write_clause_run_result_for, CallLocationRead, CallLocusRead, CallOriginRead, ClauseRunRecord,
-    ClosureRead, CommandErrorRecord, CounterexampleRead, DimensionRead, EffectiveIdRead,
+    CallLocationRead, CallLocusRead, CallOriginRead, ClauseRunRecord, ClosureRead,
+    CommandErrorRecord, CounterexampleRead, DimensionRead, EffectiveIdRead,
     FairnessGranularityRead, FairnessKindRead, FairnessOperationRead, FairnessRead, GuardRead,
     IndeterminateReasonRead, NativeRunLimits, NativeRunOutcome, NativeRunReadError,
     NativeRunResult, NativeRunResultError, PositionRead, ProgressValueRead, ProtocolAnalysisKind,
     ProtocolAnalysisRecord, ProtocolIncompleteCause, ProtocolInconclusiveCause, ProtocolProofBasis,
     ProtocolRecordError, ProtocolSettlementEntry, RefusalLocusRead, SourceRefRead, SpanRead,
-    TemporalRecord, UndefinedLocusRead, UnsupportedDiagnostic,
+    TemporalRecord, UndefinedLocusRead, UnsupportedDiagnostic, read_native_run_result,
+    read_native_run_result_bounded, write_clause_run_result, write_clause_run_result_for,
 };
+pub(crate) use native_result::{ReasonWire, item_record};
 pub use protocol_proof::{
     ProtocolProofCause, ProtocolProofCorrespondence, ProtocolProofDisposition,
     ProtocolProofRequest, ProtocolProofResult,
@@ -276,16 +277,15 @@ pub use protocol_proof::{
 pub mod query_proof;
 mod request;
 pub use request::{
-    read_clause_run_request, read_cover, read_lower_boundary, read_progress_assertion,
-    read_sample_text, read_trace_binding, AnchorWire, BindingWire, ClauseArgumentWire,
-    ClauseRequestParts, ClauseRequestReadError, ClauseRunSelectionWire, ClauseSelectionParts,
-    ClauseSelectionPartsKind, ClauseSelectionWire, CoverWire, FrameSelectionWire,
-    FunctionSelectionWire, LowerBoundaryWire, ObjectReferenceWire, ObservationLimitsWire,
-    OrderKeyWire, ProgressWire, RelationWire, SuppliedObservation, TemporalTraceParts,
-    TimestampedParts,
+    AnchorWire, BindingWire, ClauseArgumentWire, ClauseRequestParts, ClauseRequestReadError,
+    ClauseRunSelectionWire, ClauseSelectionParts, ClauseSelectionPartsKind, ClauseSelectionWire,
+    CoverWire, FrameSelectionWire, FunctionSelectionWire, LowerBoundaryWire, ObjectReferenceWire,
+    ObservationLimitsWire, OrderKeyWire, ProgressWire, RelationWire, SuppliedObservation,
+    TemporalTraceParts, TimestampedParts, read_clause_run_request, read_cover, read_lower_boundary,
+    read_progress_assertion, read_sample_text, read_trace_binding,
 };
 // FR-116: FR-115's frame run, shared with the frame replay (`crate::execute`).
-pub(crate) use clause::{check_clause_admitted, check_frame, ClauseCheck, CompiledRun, FrameCheck};
+pub(crate) use clause::{ClauseCheck, CompiledRun, FrameCheck, check_clause_admitted, check_frame};
 // FR-268: the separation check settles a stopped evaluation through
 // FR-100's outcome mapping.
 pub(crate) use call::{convert_outcome, kernel_undefined_reason};
@@ -303,7 +303,7 @@ pub enum CompileRefusal {
     #[error("{}", .0.message)]
     Source(Box<CompleteDiagnostic>),
     /// E2: the forms stage refused the unit.
-    #[error("the forms stage refused the unit: {}", forms_message(.failure))]
+    #[error("{}", forms_refusal_message(.failure))]
     Forms {
         /// The S2 refusal.
         failure: FormsRefusal,
@@ -456,6 +456,14 @@ impl CompileRefusal {
         match self {
             Self::UnitList(refusal) => refusal.cause(),
             Self::Source(diagnostic) => Some(diagnostic.cause.as_str()),
+            Self::Forms { failure, .. }
+                if matches!(
+                    &failure.cause,
+                    FormsCause::NoDispatchEntry { .. } | FormsCause::UnrepresentedConstruct { .. }
+                ) =>
+            {
+                Some("not-yet-implemented")
+            }
             Self::Check { refusals, .. } => refusals.first()?.cause.cause(),
             Self::Assembly { refusal, .. } => refusal
                 .errors
@@ -678,7 +686,9 @@ pub enum UnitListRefusal {
     #[error("invalid_package/invalid-value: a source-unit list must not be empty")]
     Empty,
     /// Two request positions name the same source owner.
-    #[error("invalid_package/conflicting-definition: source units at positions {first} and {second} share owner {authority}/{identity}")]
+    #[error(
+        "invalid_package/conflicting-definition: source units at positions {first} and {second} share owner {authority}/{identity}"
+    )]
     DuplicateOwner {
         /// Earlier request position.
         first: usize,
@@ -690,7 +700,9 @@ pub enum UnitListRefusal {
         identity: String,
     },
     /// A supplied library source has the owner of a source unit.
-    #[error("invalid_package/conflicting-definition: library {library} shares source owner {authority}/{identity} with unit {unit}")]
+    #[error(
+        "invalid_package/conflicting-definition: library {library} shares source owner {authority}/{identity} with unit {unit}"
+    )]
     LibraryOwner {
         /// Request position of the unit.
         unit: usize,
@@ -702,7 +714,9 @@ pub enum UnitListRefusal {
         identity: String,
     },
     /// Unit headers disagree on language, edition, or ordered profile identities.
-    #[error("invalid_package/conflicting-definition: headers of {first_unit:?} ({first_header:?}) and {second_unit:?} ({second_header:?}) differ")]
+    #[error(
+        "invalid_package/conflicting-definition: headers of {first_unit:?} ({first_header:?}) and {second_unit:?} ({second_header:?}) differ"
+    )]
     HeaderConflict {
         /// Identity of the first unit.
         first_unit: Box<SourceIdentity>,
@@ -716,7 +730,9 @@ pub enum UnitListRefusal {
         region: Option<SourceRegion>,
     },
     /// A native declaration name is repeated across distinct units.
-    #[error("ambiguous_declaration/ambiguous-name: `{name}` is declared at unit {first_unit:?} ({first_span:?}) and unit {second_unit:?} ({second_span:?})")]
+    #[error(
+        "ambiguous_declaration/ambiguous-name: `{name}` is declared at unit {first_unit:?} ({first_span:?}) and unit {second_unit:?} ({second_span:?})"
+    )]
     DuplicateName {
         /// The repeated declared spelling.
         name: String,
@@ -730,7 +746,9 @@ pub enum UnitListRefusal {
         second_span: Span,
     },
     /// An import names another supplied unit instead of a library.
-    #[error("missing_import/missing-selection: import `{identity}` at {region:?} names sibling unit {unit:?} but no library is supplied")]
+    #[error(
+        "missing_import/missing-selection: import `{identity}` at {region:?} names sibling unit {unit:?} but no library is supplied"
+    )]
     SiblingImport {
         /// The import identity that matches a sibling unit.
         identity: String,
@@ -830,13 +848,63 @@ fn forms_message(refusal: &FormsRefusal) -> String {
         FormsCause::DiagnosedSource(code) => {
             format!("the source carries a {} diagnostic", code.as_str())
         }
-        FormsCause::NoDispatchEntry { spelling } => {
-            format!("no form reads a `{spelling}` declaration")
+        FormsCause::NoDispatchEntry {
+            construct,
+            text,
+            declaration,
+            ..
         }
-        FormsCause::UnrepresentedConstruct { .. } => "no form represents this construct".to_owned(),
+        | FormsCause::UnrepresentedConstruct {
+            construct,
+            text,
+            declaration,
+            ..
+        } => {
+            let message = match construct {
+                fsl_forms::ConstructKind::NullValue => {
+                    "`null` is not supported as a value here yet".to_owned()
+                }
+                fsl_forms::ConstructKind::IndexSelection => {
+                    format!("the index selection `{text}` is not supported here yet")
+                }
+                fsl_forms::ConstructKind::SizeOfType => {
+                    let type_call = text.split_once('(').map_or(text.as_str(), |(head, _)| head);
+                    format!("`{type_call}` is not supported in expressions yet")
+                }
+                fsl_forms::ConstructKind::QualifiedReachesEdge => {
+                    format!("`reaches` over the qualified edge `{text}` is not supported yet")
+                }
+                fsl_forms::ConstructKind::HyperCondition => {
+                    "a hyper expression is not supported as a temporal condition yet".to_owned()
+                }
+                fsl_forms::ConstructKind::Declaration => {
+                    format!("`{text}` declarations are not supported yet")
+                }
+            };
+            if let Some(declaration) = declaration {
+                format!("{message} (declaration {declaration})")
+            } else {
+                message
+            }
+        }
         FormsCause::UnexpectedShape { .. } => {
             "a node does not have the shape of its grammar rule".to_owned()
         }
+    }
+}
+
+/// FR-763 messages lead with the source construct so the first words of the
+/// diagnostic identify what the author needs to change. Other forms failures
+/// retain the stage prefix.
+fn forms_refusal_message(refusal: &FormsRefusal) -> String {
+    let message = forms_message(refusal);
+    if matches!(
+        &refusal.cause,
+        FormsCause::NoDispatchEntry { .. } | FormsCause::UnrepresentedConstruct { .. }
+    ) {
+        message
+    } else {
+        format!("the forms stage refused the unit: {message}")
     }
 }
 
@@ -1089,6 +1157,12 @@ fn assembly_message(refusal: &AssemblyRefusal) -> String {
         ),
         AssemblyCause::TimedNotChecked(construct) => {
             format!("{} builds but is not checked yet", construct.description())
+        }
+        AssemblyCause::SynthesisNotChecked { name } => {
+            format!("synthesis `{name}` builds but is not checked yet")
+        }
+        AssemblyCause::VerificationPlanNotChecked { name } => {
+            format!("verification plan `{name}` builds but is not checked yet")
         }
     };
     with_more(message, refusal.errors.len())
@@ -1391,7 +1465,9 @@ fn check_message(refusals: &[CheckRefusal]) -> String {
                      (key {operator} {key_text})",
                     value_type_source(key_type)
                 ),
-                ProtocolAnchorCause::SlotClause { node, slot, cause, .. } => format!(
+                ProtocolAnchorCause::SlotClause {
+                    node, slot, cause, ..
+                } => format!(
                     "{message}: the {slot:?} of `{node}` does not check ({})",
                     cause.cause().unwrap_or_default()
                 ),
@@ -1471,7 +1547,9 @@ fn check_message(refusals: &[CheckRefusal]) -> String {
                     end.identifier()
                 ),
                 ProtocolAnchorCause::MissingRequirement { name, .. } => {
-                    format!("{message}: `requires temporal {name}` names no declaration of the unit")
+                    format!(
+                        "{message}: `requires temporal {name}` names no declaration of the unit"
+                    )
                 }
                 ProtocolAnchorCause::RequirementKind { name, kind, .. } => format!(
                     "{message}: `requires temporal {name}` names a {kind}, not a temporal clause"
@@ -1497,17 +1575,28 @@ fn check_message(refusals: &[CheckRefusal]) -> String {
                     format!("{message}: `{name}` names an extension form and another declaration")
                 }
                 ExtensionCause::Cycle { cycle, .. } => {
-                    format!("{message}: the forms {} reach themselves", cycle.join(" -> "))
+                    format!(
+                        "{message}: the forms {} reach themselves",
+                        cycle.join(" -> ")
+                    )
                 }
                 ExtensionCause::UnheldKeyword { keyword, .. } => {
-                    format!("{message}: `{keyword}` is the leading keyword of no selected extension")
+                    format!(
+                        "{message}: `{keyword}` is the leading keyword of no selected extension"
+                    )
                 }
                 ExtensionCause::ClauseOrder {
                     found, expected, ..
                 } => format!(
                     "{message}: found {}, expected {}",
-                    found.as_deref().map_or("no clause".to_owned(), |name| format!("clause `{name}`")),
-                    expected.as_deref().map_or("no further clause".to_owned(), |name| format!("clause `{name}`")),
+                    found
+                        .as_deref()
+                        .map_or("no clause".to_owned(), |name| format!("clause `{name}`")),
+                    expected
+                        .as_deref()
+                        .map_or("no further clause".to_owned(), |name| format!(
+                            "clause `{name}`"
+                        )),
                 ),
             };
         }
@@ -1624,7 +1713,9 @@ fn check_message(refusals: &[CheckRefusal]) -> String {
                     workload,
                     operation,
                     ..
-                } => format!("{message}: workload `{workload}` weights `{operation}`, which is not in its model"),
+                } => format!(
+                    "{message}: workload `{workload}` weights `{operation}`, which is not in its model"
+                ),
                 ProbabilisticCause::RewardType {
                     reward, operation, ..
                 } => format!(
@@ -1633,9 +1724,9 @@ fn check_message(refusals: &[CheckRefusal]) -> String {
                 ProbabilisticCause::DuplicateWorkload { workload, .. } => {
                     format!("{message}: a workload `{workload}` is already declared")
                 }
-                ProbabilisticCause::UnresolvedSubject { claim, subject, .. } => format!(
-                    "{message}: claim `{claim}` is over `{subject}`, which names no model"
-                ),
+                ProbabilisticCause::UnresolvedSubject { claim, subject, .. } => {
+                    format!("{message}: claim `{claim}` is over `{subject}`, which names no model")
+                }
                 ProbabilisticCause::TraceSubject { claim, subject, .. } => format!(
                     "{message}: claim `{claim}` is over the trace subject `{subject}`; a \
                      probabilistic claim has a model subject, and observed statistics of a trace \
@@ -1658,7 +1749,9 @@ fn check_message(refusals: &[CheckRefusal]) -> String {
                 ),
                 ProbabilisticCause::UnresolvedWorkload {
                     claim, workload, ..
-                } => format!("{message}: claim `{claim}` is under `{workload}`, which names no workload"),
+                } => format!(
+                    "{message}: claim `{claim}` is under `{workload}`, which names no workload"
+                ),
                 ProbabilisticCause::ForeignWorkload {
                     claim,
                     workload,
@@ -1758,9 +1851,7 @@ fn check_message(refusals: &[CheckRefusal]) -> String {
                 ),
                 TemporalCause::UnknownReleaseTaskSet {
                     name, operation, ..
-                } => format!(
-                    "{message}: the release on `{operation}` names no task set `{name}`"
-                ),
+                } => format!("{message}: the release on `{operation}` names no task set `{name}`"),
                 TemporalCause::UnknownReleaseTask { task_set, task, .. } => format!(
                     "{message}: the release names no task `{task}` of task set `{task_set}`"
                 ),
@@ -1797,7 +1888,9 @@ fn check_message(refusals: &[CheckRefusal]) -> String {
                     format!("{message}: the aggregate window has a > b")
                 }
                 TemporalCause::AggregateWindowKindMismatch { .. } => {
-                    format!("{message}: the aggregate window bound has the wrong kind for this profile")
+                    format!(
+                        "{message}: the aggregate window bound has the wrong kind for this profile"
+                    )
                 }
                 TemporalCause::AggregateProfileUnsupported { .. } => {
                     format!("{message}: this temporal profile admits no aggregate window")
@@ -1925,9 +2018,13 @@ fn check_message(refusals: &[CheckRefusal]) -> String {
                 ),
                 TemporalCause::TimedStateObject { ambiguous, .. } => {
                     if *ambiguous {
-                        format!("{message}: the timed model's populations range over several object types")
+                        format!(
+                            "{message}: the timed model's populations range over several object types"
+                        )
                     } else {
-                        format!("{message}: the timed model's populations range over no object type")
+                        format!(
+                            "{message}: the timed model's populations range over no object type"
+                        )
                     }
                 }
                 TemporalCause::ClockWithoutDenseTime { field, .. } => {
@@ -2021,9 +2118,9 @@ fn check_message(refusals: &[CheckRefusal]) -> String {
                 TemporalCause::InvalidTaskSet { task_set, .. } => {
                     format!("{message}: task set `{task_set}` breaks a rule of the task model")
                 }
-                TemporalCause::DuplicateTask { task_set, task, .. } => format!(
-                    "{message}: task set `{task_set}` already declares a task `{task}`"
-                ),
+                TemporalCause::DuplicateTask { task_set, task, .. } => {
+                    format!("{message}: task set `{task_set}` already declares a task `{task}`")
+                }
                 TemporalCause::DuplicateTaskSet { name, .. } => {
                     format!("{message}: the unit already declares a task set `{name}`")
                 }
@@ -2758,8 +2855,8 @@ pub(crate) fn effective_spelling(id: &filament_exact::EffectiveId) -> String {
 #[cfg(test)]
 mod tests {
     use super::{
-        check_message, compose, CompileRefusal, DependencyInput, ImportRefusal, SpineLimits,
-        SpineStage,
+        CompileRefusal, DependencyInput, ImportRefusal, SpineLimits, SpineStage, check_message,
+        compose,
     };
     use filament_exact::{Integer, IntegerInterval, ValueType};
     use filament_semantic_value::checking::CheckingLimits;
@@ -2933,9 +3030,11 @@ mod tests {
     fn native_join_storage_uses_its_named_setting_and_default() {
         let mut limits = SpineLimits::default();
         assert_eq!(limits.imports.storage, 16_777_216);
-        assert!(limits
-            .bounds()
-            .contains(&(Setting::I2NativeJoinStorage, 16_777_216)));
+        assert!(
+            limits
+                .bounds()
+                .contains(&(Setting::I2NativeJoinStorage, 16_777_216))
+        );
         assert!(limits.set_bound(Setting::I2NativeJoinStorage, 4096));
         assert_eq!(limits.imports.storage, 4096);
         assert_eq!(limits.imports.work, 1_000_000);
@@ -3072,7 +3171,8 @@ mod tests {
                 ProtocolAnchorCause::JoinFunctionType {
                     parallel: "Workers".to_owned(),
                     function: "done".to_owned(),
-                    expected_parameters: vec![ValueType::Boolean, ValueType::Boolean].into_boxed_slice(),
+                    expected_parameters: vec![ValueType::Boolean, ValueType::Boolean]
+                        .into_boxed_slice(),
                     actual_parameters: vec![ValueType::Int(
                         IntegerInterval::new(Integer::from(0_i64), Integer::from(3_i64)).unwrap(),
                     )]

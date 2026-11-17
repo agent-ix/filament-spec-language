@@ -25,8 +25,8 @@
 
 mod counterexample;
 pub use counterexample::{
-    assignments_wire, graph_evidence_wire, probabilistic_wire, protocol_temporal_wire,
-    temporal_wire, CounterexampleWireError, ProtocolWire,
+    CounterexampleWireError, ProtocolWire, assignments_wire, graph_evidence_wire,
+    probabilistic_wire, protocol_temporal_wire, temporal_wire,
 };
 
 use crate::hybrid::{BoundDimension, SolverHorizon};
@@ -42,6 +42,7 @@ use serde::ser::SerializeStruct;
 use serde::{Serialize, Serializer};
 use std::collections::{BTreeMap, BTreeSet};
 
+use crate::ReplayRefusal;
 use crate::certificate::{CertificateLocus, CertificateRule};
 use crate::model_check::state_graph::WitnessSource;
 use crate::proof_result::{
@@ -52,12 +53,11 @@ use crate::proof_result::{
 use crate::result::ReplayResult;
 use crate::spine::kernel_undefined_reason;
 use crate::spine::{
-    classify_clause_run, item_record, CallIncomplete, CallOutcome, CallRefusal, CheckedUnit,
-    ClauseDisposition, ClauseRunReport, CompileRefusal, EmittedUnit, FrontEndFailure,
-    ParsedUnitSource, ReasonWire, RunRefusal, SpineStage, TemporalUndefinedCause, TemporalVerdict,
+    CallIncomplete, CallOutcome, CallRefusal, CheckedUnit, ClauseDisposition, ClauseRunReport,
+    CompileRefusal, EmittedUnit, FrontEndFailure, ParsedUnitSource, ReasonWire, RunRefusal,
+    SpineStage, TemporalUndefinedCause, TemporalVerdict, classify_clause_run, item_record,
 };
 use crate::statistical::{self, Decision, StatisticalVerdict};
-use crate::ReplayRefusal;
 use filament_semantic_value::fairness::PropertyForm;
 use fsl_eval::temporal::UndefinedCause;
 
@@ -1311,7 +1311,7 @@ impl OutcomeItem {
             Category::Refusal => ItemLabel::Declined,
             Category::Undefined => ItemLabel::Undefined,
             Category::Inconclusive | Category::InternalFailure => {
-                return Err(ClauseRunNotAnItem::Category(category))
+                return Err(ClauseRunNotAnItem::Category(category));
             }
         };
         let record = item_record(report)?;
@@ -1562,6 +1562,14 @@ pub struct OutcomeDiagnostic {
     code: String,
     locus: Option<OutcomeLocus>,
     message: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    construct: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    text: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    declaration: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    profile: Option<String>,
     #[serde(
         skip_serializing_if = "Option::is_none",
         serialize_with = "serialize_source_label"
@@ -1593,6 +1601,10 @@ impl OutcomeDiagnostic {
             code: code.into(),
             locus,
             message: message.into(),
+            construct: None,
+            text: None,
+            declaration: None,
+            profile: None,
             label: None,
             details: None,
         }
@@ -1638,14 +1650,39 @@ impl OutcomeDiagnostic {
         if let CompileRefusal::Source(diagnostic) = refusal {
             return Self::project_source_diagnostic(diagnostic);
         }
-        Self::new(
+        let mut diagnostic = Self::new(
             refusal.cause(),
             refusal.code().as_str(),
             refusal
                 .region()
                 .map(|region| OutcomeLocus::from(&Locus::Region(region.clone()))),
             refusal.to_string(),
-        )
+        );
+        if let CompileRefusal::Forms { failure, .. } = refusal {
+            match &failure.cause {
+                fsl_forms::FormsCause::NoDispatchEntry {
+                    construct,
+                    text,
+                    declaration,
+                    profile,
+                    ..
+                }
+                | fsl_forms::FormsCause::UnrepresentedConstruct {
+                    construct,
+                    text,
+                    declaration,
+                    profile,
+                    ..
+                } => {
+                    diagnostic.construct = Some(construct.as_str().to_owned());
+                    diagnostic.text = Some(text.clone());
+                    diagnostic.declaration = declaration.clone();
+                    diagnostic.profile = profile.clone();
+                }
+                _ => {}
+            }
+        }
+        diagnostic
     }
 
     /// Project a compile refusal with only the limit-setting mechanism the
@@ -2419,7 +2456,7 @@ mod tests {
     use fsl_foundation::diagnostic::LimitExceeded;
     use fsl_foundation::Setting;
     use fsl_semantics::model::object_environment::ObjectEnvironment;
-    use serde_json::{json, Value};
+    use serde_json::{Value, json};
 
     use super::*;
     use crate::identity::QualifiedName;
@@ -2561,8 +2598,8 @@ mod tests {
     use crate::proof_result::{IncompleteCause, ProofRefusalCause, UnavailabilityCause};
     use crate::result::{DisagreementCause, EvaluatedValue, InputArmResult, Verdict, WitnessCheck};
     use crate::spine::{
-        check, default_accounting, package, parse, run, select, Call, CallLocus, DependencyInput,
-        PackageLimits, ParseRequest, SpineLimits,
+        Call, CallLocus, DependencyInput, PackageLimits, ParseRequest, SpineLimits, check,
+        default_accounting, package, parse, run, select,
     };
 
     const FIXTURE: &str = include_str!("../../tests/fixtures/spine-compile.native");
