@@ -719,11 +719,11 @@ pub(in crate::spine::clause::tests) fn report(mut request: ClauseRunRequest) -> 
             source.contains("3 mod (2 - c.value)") || source.contains("3 mod (2 - q.value)");
         if has_kernel_mod {
             let source = source
-                .replace("3 mod (2 - c.value)", "temporal_mod_undefined(c)")
-                .replace("3 mod (2 - q.value)", "temporal_mod_undefined(q)");
+                .replace("3 mod (2 - c.value)", "temporal_mod_undefined(c.value)")
+                .replace("3 mod (2 - q.value)", "temporal_mod_undefined(q.value)");
             let mut modified = source.into_bytes();
             modified.extend_from_slice(
-                b"\nfunction temporal_mod_undefined using v(c: Counters::Counter): Integer pure { 3 mod (2 - c.value) }\n",
+                b"\nfunction temporal_mod_undefined using v(value: Integer): Integer pure { 3 mod (2 - value) }\n",
             );
             *bytes = modified;
         }
@@ -736,8 +736,12 @@ pub(in crate::spine::clause::tests) fn report(mut request: ClauseRunRequest) -> 
             "temporal_mod_undefined".to_owned(),
             filament_semantic_value::checking::CheckMode::Kernel,
         )]);
-        return super::super::run_clause_with_function_modes(request, &temporal_selections, &modes)
-            .expect("a well-formed request always reports");
+        return super::super::run_clause_with_function_modes(
+            request,
+            &temporal_selections,
+            &modes,
+        )
+        .expect("a well-formed request always reports");
     }
     crate::spine::run_clause_with_temporal_selections(request, &temporal_selections)
         .expect("a well-formed request always reports")
