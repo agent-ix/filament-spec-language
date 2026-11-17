@@ -446,10 +446,9 @@ fn locate_output_limit(refusal: EmitRefusal, graph: &CheckedGraph) -> EmitRefusa
     if limit.locus().is_some() {
         return EmitRefusal::OutputLimit(limit);
     }
-    let locus = graph
-        .occurrences()
-        .next()
-        .map(|(_, _, location)| fsl_foundation::diagnostic::Locus::Occurrence(location.clone()));
+    let locus = graph.occurrences().next().map(|(node, origin, _)| {
+        fsl_foundation::diagnostic::Locus::Occurrence(filament_exact::Location::new(node, origin))
+    });
     EmitRefusal::OutputLimit(limit.at(locus))
 }
 
