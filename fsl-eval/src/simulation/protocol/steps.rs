@@ -884,12 +884,7 @@ impl<M: MemoryModel> ProtocolSystem<'_, M> {
                 .unwrap_or(0);
             (
                 occurrence,
-                super::BusinessEffectOccurrence::new(
-                    ordinal,
-                    text.clone(),
-                    path.clone(),
-                    occurrence,
-                ),
+                super::BusinessEffectOccurrence::new(ordinal, node, path.clone(), occurrence),
             )
         });
         // ST-2: an `effect` is enabled only while its attempt's binder is

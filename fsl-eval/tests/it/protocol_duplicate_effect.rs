@@ -59,13 +59,39 @@ protocol Purchase using P over (view: M::Node) on origin {
 }
 "#;
 
-fn fixture() -> (
+const INTERVAL_SOURCE: &str = r#"
+language "ix:native" edition "1-draft";
+profile P = "filament.protocol.finite-global/v1";
+model M = "test/orders";
+protocol Purchase using P over (view: M::Node) on origin {
+  role Buyer on M::Node;
+  role Seller on M::Node;
+  channel Charge from Buyer to Seller carries M::Flag
+      ordering unordered delivery [1,3] capacity 2 overflow block;
+  run sequence Main {
+    parallel par {
+      branch l sequence Sender {
+        send Sent via Charge as (sent: M::Flag) { true };
+      }
+      branch r sequence Receiver {
+        receive First via Charge of l::Sender::Sent as (first: M::Flag) { true };
+        receive Second via Charge of l::Sender::Sent as (second: M::Flag) { true };
+        receive Third via Charge of l::Sender::Sent as (third: M::Flag) { true };
+      }
+    } join all [l, r];
+  }
+  finish Closed as (closed: M::Receipt) { true };
+}
+"#;
+
+fn fixture(
+    source: &str,
+) -> (
     CheckedPackage,
     fsl_semantics::model::intake::PackageInput,
     DocumentProvision,
     DocumentRef,
 ) {
-    let source = SOURCE;
     let parsed = fsl_cst::parse(
         fsl_foundation::SourceIdentity::new("qsl-2208", "unit.native"),
         "unit.native",
@@ -122,8 +148,8 @@ fn fixture() -> (
     (package, packages, snapshots, identity)
 }
 
-fn reachable() -> fsl_eval::simulation::protocol::Reachable<Sc> {
-    let (package, packages, snapshots, initial) = fixture();
+fn reachable(source: &str) -> fsl_eval::simulation::protocol::Reachable<Sc> {
+    let (package, packages, snapshots, initial) = fixture(source);
     let population = filament_checked::key::DeclarationKey {
         package: tc1070::model::PACKAGE.to_owned(),
         node: tc1070::model::id("nodes"),
@@ -247,7 +273,7 @@ fn duplicate_then_effect(
 #[test]
 #[trace("TC-2528", "FR-894-AC-1")]
 fn a_duplicate_delivery_is_distinct_but_establishes_one_effect_occurrence() {
-    let graph = reachable();
+    let graph = reachable(SOURCE);
     let (copies, receives, effects) = duplicate_then_effect(&graph)
         .expect("the channel can duplicate one send before both receives");
     assert_eq!(copies.len(), 1, "one duplicated copy");
@@ -283,4 +309,53 @@ fn a_duplicate_delivery_is_distinct_but_establishes_one_effect_occurrence() {
             }
         }
     }
+}
+
+#[test]
+#[trace("FR-894-AC-1", "TC-2528")]
+fn a_duplicate_during_a_pending_interval_send_does_not_reuse_its_index() {
+    let graph = reachable(INTERVAL_SOURCE);
+    let mut queue = VecDeque::from([(0_usize, 0_u8)]);
+    let mut seen = std::collections::BTreeSet::new();
+    while let Some((state, phase)) = queue.pop_front() {
+        if !seen.insert((state, phase)) {
+            continue;
+        }
+        for (transition, next) in &graph.states[state].steps {
+            let next_phase = match phase {
+                0 if transition.send_record().is_some_and(|record| {
+                    record.count() == Some(3) && record.pending() == Some(1)
+                }) =>
+                {
+                    1
+                }
+                1 if transition.kind() == StepKind::Receive => 2,
+                2 if transition.kind() == StepKind::Duplicate
+                    && transition
+                        .delivery()
+                        .is_some_and(|delivery| delivery.index() == 2) =>
+                {
+                    3
+                }
+                3 if transition.kind() == StepKind::Receive => 4,
+                4 if transition.kind() == StepKind::Send
+                    && transition.send_record().is_some_and(|record| {
+                        record.count() == Some(1) && record.pending() == Some(0)
+                    }) =>
+                {
+                    5
+                }
+                5 if transition.kind() == StepKind::Receive
+                    && transition
+                        .delivery()
+                        .is_some_and(|delivery| delivery.index() == 3) =>
+                {
+                    return;
+                }
+                _ => phase,
+            };
+            queue.push_back((*next, next_phase));
+        }
+    }
+    panic!("pending send reused a duplicate's delivery index instead of advancing to 3");
 }

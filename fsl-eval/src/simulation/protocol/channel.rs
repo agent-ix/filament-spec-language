@@ -81,7 +81,6 @@ impl<M: MemoryModel> ProtocolSystem<'_, M> {
         instance: u64,
         path: &ThreadPath,
         node: ProtocolNodeId,
-        text: &str,
     ) -> Result<MessageOccurrence, ProtocolRefusal> {
         let ordinal = Self::instance(state, instance)?
             .message_ordinals
@@ -90,7 +89,7 @@ impl<M: MemoryModel> ProtocolSystem<'_, M> {
             .unwrap_or(0);
         Ok(MessageOccurrence::new(
             instance,
-            text.to_owned(),
+            node,
             path.clone(),
             ordinal,
         ))
@@ -179,7 +178,13 @@ impl<M: MemoryModel> ProtocolSystem<'_, M> {
             let payload = pending.payload.clone();
             let remaining = pending.remaining;
             let message_occurrence = pending.message.clone();
-            let next_delivery = pending.next_delivery;
+            let next_delivery = pending.next_delivery.max(
+                instance
+                    .next_deliveries
+                    .get(&message_occurrence)
+                    .copied()
+                    .unwrap_or(0),
+            );
             let key = match self.queue_key(message.channel, &payload, &state.model, node)? {
                 Ok(key) => key,
                 Err(finding) => {
@@ -206,7 +211,7 @@ impl<M: MemoryModel> ProtocolSystem<'_, M> {
             )?;
             return Ok(());
         }
-        let message_occurrence = self.message_occurrence(state, ordinal, path, node, &text)?;
+        let message_occurrence = self.message_occurrence(state, ordinal, path, node)?;
         let payloads = self
             .model
             .values_of(
@@ -355,7 +360,7 @@ impl<M: MemoryModel> ProtocolSystem<'_, M> {
                 payload,
             )
             .recording(record)
-            .identifying_message(message_occurrence)
+            .identifying_message(message_occurrence.clone())
             .flowing(QueueFlow {
                 key: fifo_key,
                 send_ordered: channel.send_ordered,
@@ -406,6 +411,8 @@ impl<M: MemoryModel> ProtocolSystem<'_, M> {
             payload,
             key,
             count,
+            message,
+            next_delivery,
         } = send;
         gathered.budget.charge()?;
         let instance = Self::instance(state, ordinal)?;
@@ -501,6 +508,9 @@ impl<M: MemoryModel> ProtocolSystem<'_, M> {
         if pending > 0 {
             let completed = count.checked_sub(pending).ok_or_else(broken)?;
             let next_delivery = next_delivery.checked_add(completed).ok_or_else(broken)?;
+            target
+                .next_deliveries
+                .insert(message.clone(), next_delivery);
             target.pending_sends.insert(
                 (path.clone(), node),
                 super::PendingSend {

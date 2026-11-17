@@ -9,7 +9,7 @@
 
 use filament_exact::ObjectReference;
 use filament_semantic_value::model_transition::ModelTransition;
-use fsl_semantics::check::AccessOrdering;
+use fsl_semantics::check::{AccessOrdering, ProtocolNodeId};
 use quire_canonical::{Encode, Error, Sink, Writer};
 
 use super::memory::{MemoryChoice, MemoryStepId};
@@ -181,13 +181,13 @@ impl ThreadPath {
 #[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub struct MessageOccurrence {
     instance: u64,
-    node: String,
+    node: ProtocolNodeId,
     path: ThreadPath,
     ordinal: u64,
 }
 
 impl MessageOccurrence {
-    pub(crate) fn new(instance: u64, node: String, path: ThreadPath, ordinal: u64) -> Self {
+    pub(crate) fn new(instance: u64, node: ProtocolNodeId, path: ThreadPath, ordinal: u64) -> Self {
         Self {
             instance,
             node,
@@ -202,8 +202,8 @@ impl MessageOccurrence {
     }
 
     /// The send node's static declaration path.
-    pub fn node(&self) -> &str {
-        &self.node
+    pub fn node(&self) -> ProtocolNodeId {
+        self.node
     }
 
     /// The sending thread's path.
@@ -221,7 +221,7 @@ impl MessageOccurrence {
             "message-occurrence",
             vec![
                 ("instance", Enc::text(self.instance.to_string())),
-                ("node", Enc::text(self.node.clone())),
+                ("node", Enc::text(self.node.0.to_string())),
                 ("path", self.path.enc()),
                 ("ordinal", Enc::text(self.ordinal.to_string())),
             ],
@@ -268,13 +268,13 @@ impl DeliveryIdentity {
 #[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub struct BusinessEffectOccurrence {
     instance: u64,
-    node: String,
+    node: ProtocolNodeId,
     path: ThreadPath,
     ordinal: u64,
 }
 
 impl BusinessEffectOccurrence {
-    pub(crate) fn new(instance: u64, node: String, path: ThreadPath, ordinal: u64) -> Self {
+    pub(crate) fn new(instance: u64, node: ProtocolNodeId, path: ThreadPath, ordinal: u64) -> Self {
         Self {
             instance,
             node,
@@ -289,8 +289,8 @@ impl BusinessEffectOccurrence {
     }
 
     /// The effect node's static declaration path.
-    pub fn node(&self) -> &str {
-        &self.node
+    pub fn node(&self) -> ProtocolNodeId {
+        self.node
     }
 
     /// The thread's path at the effect occurrence.
@@ -308,7 +308,7 @@ impl BusinessEffectOccurrence {
             "business-effect-occurrence",
             vec![
                 ("instance", Enc::text(self.instance.to_string())),
-                ("node", Enc::text(self.node.clone())),
+                ("node", Enc::text(self.node.0.to_string())),
                 ("path", self.path.enc()),
                 ("ordinal", Enc::text(self.ordinal.to_string())),
             ],
@@ -1915,6 +1915,26 @@ pub struct BlockedThread {
     pub rest_point: RestPoint,
     /// Why it waits.
     pub cause: WaitCause,
+}
+
+#[cfg(test)]
+mod occurrence_identity_tests {
+    use super::{BusinessEffectOccurrence, MessageOccurrence, ThreadPath};
+    use fsl_semantics::check::ProtocolNodeId;
+
+    #[test]
+    fn distinct_static_nodes_keep_distinct_occurrences() {
+        let path = ThreadPath::root(3);
+        let first_message = MessageOccurrence::new(3, ProtocolNodeId(10), path.clone(), 0);
+        let second_message = MessageOccurrence::new(3, ProtocolNodeId(11), path.clone(), 0);
+        assert_ne!(first_message, second_message);
+        assert_ne!(first_message.enc(), second_message.enc());
+
+        let first_effect = BusinessEffectOccurrence::new(3, ProtocolNodeId(10), path.clone(), 0);
+        let second_effect = BusinessEffectOccurrence::new(3, ProtocolNodeId(11), path, 0);
+        assert_ne!(first_effect, second_effect);
+        assert_ne!(first_effect.enc(), second_effect.enc());
+    }
 }
 
 #[cfg(test)]
