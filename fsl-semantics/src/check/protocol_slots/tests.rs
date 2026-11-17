@@ -650,6 +650,79 @@ fn a_choice_can_decide_on_a_listed_field_of_its_channel_receive() {
     checks(&repeat);
 }
 
+/// TC-1056 cases 31–32: fields read inside a composite `visible` expression
+/// are not individually listed decision facts.
+#[trace("TC-1056", "FR-218-AC-17")]
+#[test]
+fn a_composite_visible_entry_does_not_list_its_receive_field_operand() {
+    let text = decision("choice", "true and got.ready").replace("not got.ready", "true");
+    let (cause, pair, at) = only(&text);
+    assert_eq!(pair, ("wrong_snapshot", Some("wrong-observation")));
+    assert_eq!(at, "got.ready");
+    assert!(matches!(
+        cause,
+        ProtocolAnchorCause::WrongObservation {
+            owner,
+            reason: super::super::refusal::ObservationReason::Unlisted,
+            ..
+        } if owner == "w"
+    ));
+}
+
+/// TC-1056 case 32: neither receive field inside a two-receive composite
+/// entry is exposed to the decision.
+#[trace("TC-1056", "FR-218-AC-17")]
+#[test]
+fn a_composite_of_two_receive_fields_lists_neither_operand() {
+    let text = format!(
+        "{HEADER}protocol Decisions using p over (k: M::Node) on origin {{\n\
+         role sender on M::Node;\nrole receiver on M::Node;\n\
+         channel ch from sender to receiver carries M::Tick ordering unordered delivery unknown capacity 2 overflow block;\n\
+         run sequence Main {{\n\
+           send SentA via ch as (sentA: M::Tick) {{ true }};\n\
+           receive ReceivedA via ch of SentA as (firstReceived: M::Tick) {{ true }};\n\
+           send SentB via ch as (sentB: M::Tick) {{ true }};\n\
+           receive ReceivedB via ch of SentB as (secondReceived: M::Tick) {{ true }};\
+           choice Verdict by receiver visible (firstReceived.ready and secondReceived.ready) {{\n\
+             case yes when {{ firstReceived.ready }} sequence Yes {{}}\n\
+             case no when {{ not secondReceived.ready }} sequence No {{}}\n\
+           }}\n\
+         }}\nfinish Done as (f: M::Receipt) {{ true }};\n}}\n"
+    );
+    let refusals = check(&text).expect_err("neither operand is individually visible");
+    let mut reads = Vec::new();
+    for refusal in refusals {
+        let CheckCause::ProtocolAnchor(cause) = refusal.cause else {
+            panic!("protocol anchor refusal, got {refusal:?}");
+        };
+        let ProtocolAnchorCause::WrongObservation {
+            binder,
+            field,
+            reason,
+            ..
+        } = *cause
+        else {
+            panic!("wrong-observation refusal, got {cause:?}");
+        };
+        reads.push((binder, field, reason));
+    }
+    assert_eq!(
+        reads,
+        [
+            (
+                "firstReceived".to_owned(),
+                Some("ready".to_owned()),
+                super::super::refusal::ObservationReason::Unlisted,
+            ),
+            (
+                "secondReceived".to_owned(),
+                Some("ready".to_owned()),
+                super::super::refusal::ObservationReason::Unlisted,
+            ),
+        ]
+    );
+}
+
 /// FR-218 "Scopes" (TC-663): a `commit` written `by` a `scope` role is a node
 /// `by` that role, so with its `Work` inside `sequence S` and a `commit`
 /// after `S`, the region is `Main`, which holds the commit, not `S`.

@@ -702,8 +702,8 @@ impl Checker<'_, '_> {
 
     /// FR-218 "Choice and repeat decisions": every binder read of a
     /// `visible` entry reads an eligible binder of `owner`, and every guard
-    /// read of that role names a binder field listed in `visible`. Returns
-    /// whether every read is admitted.
+    /// read of that role names a binder field listed individually in
+    /// `visible`. Returns whether every read is admitted.
     fn facts(
         &mut self,
         node: usize,
@@ -714,8 +714,7 @@ impl Checker<'_, '_> {
         let before = self.refusals.len();
         let listed: BTreeSet<(String, Option<String>)> = visible
             .iter()
-            .flat_map(binder_reads)
-            .map(|(binder, field, _)| (binder, field))
+            .filter_map(|entry| decision_fact(entry.expression.root()))
             .collect();
         for entry in visible {
             for (binder, field, span) in binder_reads(entry) {
