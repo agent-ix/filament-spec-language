@@ -1548,6 +1548,44 @@ fn check_message_one(first: &CheckRefusal) -> String {
                     "{message}: `{node}` is written via `{name}`, which is no channel of the \
                      protocol"
                 ),
+                ProtocolAnchorCause::MissingChannelConnection { channel, name, .. } => format!(
+                    "{message}: channel `{channel}` is written via `{name}`, which names no \
+                     connection of the protocol"
+                ),
+                ProtocolAnchorCause::ChannelConnectionExport {
+                    channel,
+                    name,
+                    required,
+                    actual,
+                    ..
+                } => format!(
+                    "{message}: channel `{channel}` uses `{name}`, which is a `{actual}`, not a \
+                     `{required}`"
+                ),
+                ProtocolAnchorCause::ChannelPortRole { channel, role, .. } => format!(
+                    "{message}: endpoint role `{role}` of channel `{channel}` is not bound to a Port"
+                ),
+                ProtocolAnchorCause::ChannelConnectionEnds {
+                    channel,
+                    connection,
+                    expected,
+                    actual,
+                    ..
+                } => format!(
+                    "{message}: channel `{channel}` via connection `{connection}` resolves to \
+                     ports {actual:?}, but the connection's directed ends are {expected:?}"
+                ),
+                ProtocolAnchorCause::ChannelConnectionCarries {
+                    channel,
+                    expected,
+                    actual,
+                    ..
+                } => format!(
+                    "{message}: channel `{channel}` carries {}, but its connection source Port \
+                     requires {}",
+                    value_type_source(actual),
+                    value_type_source(expected)
+                ),
                 ProtocolAnchorCause::CarriesMismatch { channel, .. } => format!(
                     "{message}: the binder's type is not the type channel `{channel}` carries"
                 ),

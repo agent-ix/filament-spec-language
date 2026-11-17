@@ -66,10 +66,10 @@ pub enum ProtocolInconclusiveCause {
         /// The key's `max_depth`.
         depth: u64,
     },
-    /// A protocol activation was enabled when the live-instance bound was
-    /// reached.
+    /// Realizability only: an enabled protocol activation reached the
+    /// authored live-instance cap.
     InstanceBoundReached {
-        /// The `max_live_instances` value in force.
+        /// The authored `max_live_instances` request bound.
         max_live_instances: u64,
     },
     /// The counterexample did not replay.
@@ -84,11 +84,6 @@ pub enum ProtocolInconclusiveCause {
     CutCount {},
     /// Realizability only: an evaluation was left undecided.
     UndecidedEvaluation {},
-    /// Realizability only: exploration reached the authored instance cap.
-    InstanceBoundReached {
-        /// The `max_live_instances` request bound.
-        max_live_instances: u64,
-    },
 }
 
 impl ProtocolInconclusiveCause {
