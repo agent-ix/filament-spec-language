@@ -122,6 +122,17 @@ fn refused(profile: &str, body: &str) -> (String, TemporalCause) {
     }
 }
 
+/// FR-194-AC-4/7: an aggregate over a model subject stays an unsupported
+/// construct and therefore maps to the unsupported exit class (21).
+#[trace("TC-629", "FR-194-AC-4", "FR-194-AC-7")]
+#[test]
+fn a_window_aggregate_over_a_model_subject_exits_as_unsupported() {
+    let (text, cause) = refused(EVENT, "always[0,2] (count over past[0,3] >= 1)");
+    assert_eq!(cause.code(), Code::UnsupportedConstruct, "{text}");
+    assert_eq!(cause.tag(), "expression-form", "{text}");
+    assert_eq!(cause.code().category().exit_code(), 21, "{text}");
+}
+
 /// The span of the first occurrence of `needle` in `text`.
 fn first(text: &str, needle: &str) -> Span {
     let start = text.find(needle).expect("the needle is in the unit");

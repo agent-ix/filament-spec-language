@@ -185,7 +185,8 @@ impl ProfileRefusal {
                 self.supplied_by.as_deref().unwrap_or("header profile")
             ),
             ProfileCause::UnsupportedSelection | ProfileCause::WrongSelectionRole => format!(
-                "header profile `{}` does not resolve: {}/{}", self.alias,
+                "header profile `{}` selecting `{}` does not resolve: {}/{}", self.alias,
+                self.selected,
                 self.code().as_str(), self.cause()
             ),
         }
@@ -316,6 +317,36 @@ mod tests {
     use ix_trace_rs::trace;
 
     use super::*;
+
+    /// FR-110: an unsupported header identity is named alongside its binding,
+    /// while a known value-layer identity resolves without a refusal.
+    #[trace("FR-110-AC-1", "FR-110-AC-2")]
+    #[test]
+    fn unsupported_header_profile_message_names_binding_and_selection() {
+        let selection = |identity: &str| ProfileSelection {
+            alias: "v".to_owned(),
+            identity: identity.to_owned(),
+            span: Span { start: 0, end: 0 },
+            identity_span: Span { start: 0, end: 0 },
+        };
+        let unknown = selection("quire.value.complete/v1");
+        let refusals = resolve_profiles(&[unknown], &|_| None)
+            .expect_err("an unrecognized header profile refuses");
+        let refusal = &refusals[0];
+        assert_eq!(refusal.code(), Code::UnknownProfile);
+        assert_eq!(refusal.cause(), "unsupported-selection");
+        let message = refusal.message();
+        assert!(message.contains("`v`"), "message was: {message}");
+        assert!(
+            message.contains("`quire.value.complete/v1`"),
+            "message was: {message}"
+        );
+
+        assert!(
+            resolve_profiles(&[selection("filament.value.complete/v1")], &|_| None).is_ok(),
+            "a known filament profile resolves without a refusal"
+        );
+    }
 
     /// FR-110: a header profile naming the protocol clause family's profile
     /// resolves against that family's closed profile set, and selects it as the package's

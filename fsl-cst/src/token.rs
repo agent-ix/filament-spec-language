@@ -118,7 +118,7 @@ macro_rules! vocabulary {
             #[regex(r"helper|rec|cast|Tuple", priority = 3)]
             Unsupported,
             /// A hexadecimal bit-pattern literal, complete-V1-only.
-            #[regex(r"0x[0-9a-f]+", |lex| lex.slice().to_owned(), priority = 4)]
+            #[regex(r"0x[0-9A-Fa-f]+", |lex| lex.slice().to_owned(), priority = 4)]
             Hex(String),
             /// A `//`-prefixed line comment.
             #[regex(r"//[^\r\n]*", allow_greedy = true)]

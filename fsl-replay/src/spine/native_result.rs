@@ -2916,21 +2916,35 @@ pub(crate) struct ItemRecord {
 
 pub(crate) fn item_record(report: &ClauseRunReport) -> Result<ItemRecord, NativeRunResultError> {
     use super::{TemporalIndeterminateReason as Reason, TemporalUndefinedCause, TemporalVerdict};
+    let witness = match &report.disposition {
+        ClauseDisposition::FrameViolation(frame_witness) => {
+            let mut witness = serde_json::to_value(FrameWitnessWire::from(frame_witness.as_ref()))?;
+            if let Some((before, after)) = &report.frame_field_values {
+                witness["before"] = serde_json::Value::String(before.clone());
+                witness["after"] = serde_json::Value::String(after.clone());
+            }
+            Some(witness)
+        }
+        _ => report
+            .state_clause_counterexample
+            .as_ref()
+            .and_then(|counterexample| counterexample.witness.as_ref())
+            .or(report.witness.as_ref())
+            .map(|witness| RecordWire::of(witness).and_then(|wire| Ok(serde_json::to_value(wire)?)))
+            .transpose()?,
+    };
+    let base = ItemRecord {
+        witness,
+        ..ItemRecord::default()
+    };
     let ClauseDisposition::Temporal(verdict) = &report.disposition else {
-        return Ok(ItemRecord::default());
+        return Ok(base);
     };
     let counterexample = temporal::item_counterexample(verdict, report.counterexample.as_ref())?;
     Ok(match verdict {
         TemporalVerdict::Violated { at } => ItemRecord {
             position: Some(*at),
             counterexample,
-            witness: report
-                .witness
-                .as_ref()
-                .map(|witness| {
-                    RecordWire::of(witness).and_then(|wire| Ok(serde_json::to_value(wire)?))
-                })
-                .transpose()?,
             decisive: report
                 .decisive
                 .as_ref()
@@ -2939,7 +2953,7 @@ pub(crate) fn item_record(report: &ClauseRunReport) -> Result<ItemRecord, Native
                         .and_then(|wire| Ok(serde_json::to_value(wire)?))
                 })
                 .transpose()?,
-            ..ItemRecord::default()
+            ..base
         },
         TemporalVerdict::Undefined {
             at,
@@ -2951,12 +2965,12 @@ pub(crate) fn item_record(report: &ClauseRunReport) -> Result<ItemRecord, Native
             position: Some(*at),
             count: Some(*count),
             min_count: Some(*min_count),
-            ..ItemRecord::default()
+            ..base
         },
         TemporalVerdict::Undefined { at, .. } => ItemRecord {
             position: Some(*at),
             counterexample,
-            ..ItemRecord::default()
+            ..base
         },
         TemporalVerdict::Indeterminate {
             reason:
@@ -2965,7 +2979,7 @@ pub(crate) fn item_record(report: &ClauseRunReport) -> Result<ItemRecord, Native
             ..
         } => ItemRecord {
             position: Some(*position),
-            ..ItemRecord::default()
+            ..base
         },
         TemporalVerdict::Indeterminate {
             reason: Reason::IncompleteInput | Reason::MissingHistory | Reason::StraddlesBound,
@@ -2980,7 +2994,7 @@ pub(crate) fn item_record(report: &ClauseRunReport) -> Result<ItemRecord, Native
         | TemporalVerdict::ActivationIncomplete { .. }
         | TemporalVerdict::WindowLimitReached { .. }
         | TemporalVerdict::ProgressLimitReached(_)
-        | TemporalVerdict::ExpansionLimitReached(_) => ItemRecord::default(),
+        | TemporalVerdict::ExpansionLimitReached(_) => base,
     })
 }
 

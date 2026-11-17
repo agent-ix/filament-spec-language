@@ -15,13 +15,13 @@ mod tl;
 mod wire;
 
 pub use analyze::{
-    analyze, analyze_with_limits, analyze_with_providers, analyze_with_providers_and_limits,
-    prepare_analyze, AnalyzeInput, PreparedAnalyze,
+    AnalyzeInput, PreparedAnalyze, analyze, analyze_with_limits, analyze_with_providers,
+    analyze_with_providers_and_limits, prepare_analyze,
 };
-pub use flow::{analyze_flow_report, FlowAnalyzeError};
-pub use monitor::{monitor, MonitorEvent, MonitorSummary};
+pub use flow::{FlowAnalyzeError, analyze_flow_report};
+pub use monitor::{MonitorEvent, MonitorSummary, monitor};
 pub use output::NativeResult;
-pub use tl::{record as tl_record, AtomMapping, TlRecord};
+pub use tl::{AtomMapping, TlRecord, record as tl_record};
 
 use crate::formal_source::FormalSource;
 use filament_contract_model as ir;
@@ -116,11 +116,6 @@ pub enum LimitKind {
         /// The effective aggregate dependent byte ceiling.
         maximum: usize,
     },
-    /// One selected observation exceeded its document byte ceiling.
-    ObservationDocumentBytes {
-        /// Effective observation document byte ceiling.
-        maximum: usize,
-    },
     /// Total selected file count.
     SelectedFiles {
         /// Group that could not be charged.
@@ -141,7 +136,6 @@ impl LimitKind {
             Self::FileBytes => "file bytes",
             Self::RequestBytes { .. } | Self::FixedRequestBytes { .. } => "request_bytes",
             Self::DependentBytes { .. } | Self::FixedDependentBytes { .. } => "dependent_bytes",
-            Self::ObservationDocumentBytes { .. } => "observation.document_bytes",
             Self::SelectedFiles { .. } => "selected files",
         }
     }
@@ -278,11 +272,15 @@ pub enum RunCause {
     Json(#[from] serde_json::Error),
     /// FR-640: the request carries `clocks` and the caller also supplied a
     /// clocks override (the driver's `--clocks`).
-    #[error("invalid request: clocks is given both in the request and as a clocks override (--clocks); give it once")]
+    #[error(
+        "invalid request: clocks is given both in the request and as a clocks override (--clocks); give it once"
+    )]
     ClocksGivenTwice,
     /// FR-810: the request carries `output` and the caller also supplied an
     /// output override (the driver's `--output`).
-    #[error("invalid request: output is given both in the request and as an output override (--output); give it once")]
+    #[error(
+        "invalid request: output is given both in the request and as an output override (--output); give it once"
+    )]
     OutputGivenTwice,
     /// FR-810: a file or directory already exists at the output path.
     #[error("invalid request: output {path} already exists; a compile never overwrites it", path = path.display())]
@@ -311,8 +309,13 @@ pub enum RunCause {
     #[error("{0} limit exceeded")]
     Limit(LimitKind),
     /// Existing IR identifier validation failed.
-    #[error("invalid request identifier: {0:?}")]
-    Identifier(ir::Diagnostic),
+    #[error("{message}")]
+    Identifier {
+        /// The shared diagnostic retained in the structured JSON details.
+        diagnostic: ir::Diagnostic,
+        /// Plain request-facing sentence, without Rust's `Debug` rendering.
+        message: String,
+    },
     /// Existing source/parser/profile failure with no linking or checking context.
     #[error("{0}")]
     Native(#[from] Box<Diagnostic>),
@@ -330,7 +333,9 @@ pub enum RunCause {
     #[error("the compile program has no source units")]
     EmptyCompileProgram,
     /// FR-931: `tl_lowering.correspondence` names no TL correspondence.
-    #[error("unknown_profile/unsupported-selection: tl_lowering.correspondence {value:?} is none of mltl.closed-trace/v1, mltl.online-prefix/v1 and mltl.origin-complete-history/v1")]
+    #[error(
+        "unknown_profile/unsupported-selection: tl_lowering.correspondence {value:?} is none of mltl.closed-trace/v1, mltl.online-prefix/v1 and mltl.origin-complete-history/v1"
+    )]
     TlCorrespondence {
         /// The value given.
         value: String,
@@ -366,7 +371,9 @@ pub enum RunCause {
     /// FR-960: a `call.requirements.items` entry names a claim that is no
     /// item of the call; refused at stage `call` before any item is
     /// negotiated.
-    #[error("missing_declaration: call.requirements names the claim {claim}, which is no item of the call")]
+    #[error(
+        "missing_declaration: call.requirements names the claim {claim}, which is no item of the call"
+    )]
     UnknownRequirementClaim {
         /// The claim as the request spells it.
         claim: serde_json::Value,
@@ -411,7 +418,9 @@ pub enum RunCause {
     /// FR-620: a request member FSL admits but does not implement yet
     /// (`unsupported_construct`/`not-yet-implemented`, FR-763), such as a
     /// checked-package selection (QSL-2271).
-    #[error("unsupported_construct/not-yet-implemented: analyzing a {member} selection is not implemented yet")]
+    #[error(
+        "unsupported_construct/not-yet-implemented: analyzing a {member} selection is not implemented yet"
+    )]
     AnalyzeNotYetImplemented {
         /// The request member the gap is in.
         member: &'static str,
@@ -501,7 +510,15 @@ pub struct SpineFailure {
 
 impl From<ir::Diagnostic> for RunCause {
     fn from(value: ir::Diagnostic) -> Self {
-        Self::Identifier(value)
+        let message = if value.path.ends_with(".formal_revision") {
+            value.message.clone()
+        } else {
+            format!("invalid request identifier: {}", value.message)
+        };
+        Self::Identifier {
+            message,
+            diagnostic: value,
+        }
     }
 }
 
@@ -518,7 +535,7 @@ impl RunCause {
             Self::Output(_) | Self::ClauseOutput(_) => Code::OutputFailure,
             Self::Format => Code::UnknownWire,
             Self::Limit(_) => Code::ResourceExhausted,
-            Self::Identifier(_) => Code::InvalidIdentifier,
+            Self::Identifier { .. } => Code::InvalidIdentifier,
             Self::Native(error) => error.code,
             Self::Source(error) => error.diagnostic.code,
             Self::CompleteSelection(_)
@@ -625,9 +642,7 @@ impl RunError {
                 Some(failure.refusal.stage().into()),
                 self.category(),
             )
-            .with_diagnostics(vec![OutcomeDiagnostic::from_compile_refusal(
-                &failure.refusal,
-            )]),
+            .with_diagnostics(failure.refusal.outcome_diagnostics()),
             RunCause::SpineRun(refusal) => OutcomeDocument::from_run_refusal(operation, refusal),
             RunCause::AnalyzeRefused(refusal) => refusal.document(),
             RunCause::MonitorRefused(refusal) => refusal.document(),
@@ -693,7 +708,7 @@ impl RunError {
             | RunCause::ClauseOutput(_)
             | RunCause::Format
             | RunCause::Limit(_)
-            | RunCause::Identifier(_)
+            | RunCause::Identifier { .. }
             | RunCause::CompleteSelection(_)
             | RunCause::ExtractionRequiresRun
             | RunCause::EmptyCompileProgram
@@ -753,16 +768,15 @@ impl RunError {
             RunCause::Limit(LimitKind::FixedDependentBytes { maximum }) => {
                 format!("dependent_bytes limit {maximum} exceeded")
             }
-            RunCause::Limit(LimitKind::ObservationDocumentBytes { maximum }) => {
-                format!("observation.document_bytes limit {maximum} exceeded; raise --limit observation.document_bytes")
-            }
             RunCause::Limit(LimitKind::SelectedFiles {
                 category,
                 requested,
                 remaining,
                 maximum,
             }) => {
-                format!("selected files limit {maximum} exceeded: {category:?} requested {requested}, remaining {remaining}")
+                format!(
+                    "selected files limit {maximum} exceeded: {category:?} requested {requested}, remaining {remaining}"
+                )
             }
             _ => self.to_string(),
         }
@@ -816,24 +830,15 @@ enum DependentLimit {
 
 impl Intake<'_> {
     fn file(&mut self, path: &str, ceiling: usize) -> Result<Vec<u8>> {
-        self.bounded_file(path, ceiling, false)
-    }
-
-    fn observation_file(&mut self, path: &str, ceiling: usize) -> Result<Vec<u8>> {
         if let Some(bytes) = self.prefetched_observations.remove(path) {
             return Ok(bytes);
         }
-        self.bounded_file(path, ceiling, true)
+        self.bounded_file(path, ceiling)
     }
 
-    fn bounded_file(&mut self, path: &str, ceiling: usize, observation: bool) -> Result<Vec<u8>> {
+    fn bounded_file(&mut self, path: &str, ceiling: usize) -> Result<Vec<u8>> {
         let bytes = read_file(&self.directory.join(path), ceiling.min(self.remaining)).map_err(
             |cause| match cause {
-                RunCause::Limit(LimitKind::FileBytes)
-                    if observation && ceiling <= self.remaining =>
-                {
-                    RunCause::Limit(LimitKind::ObservationDocumentBytes { maximum: ceiling })
-                }
                 RunCause::Limit(LimitKind::FileBytes) => match self.dependent_limit {
                     Some(DependentLimit::CallerConfigured) => {
                         RunCause::Limit(LimitKind::DependentBytes {
@@ -854,8 +859,12 @@ impl Intake<'_> {
         Ok(bytes)
     }
 
-    fn source(&mut self, selected: &wire::SourceFile) -> Result<FormalSource> {
-        let identity = selected.identity.bind()?;
+    fn source(
+        &mut self,
+        selected: &wire::SourceFile,
+        request_member: &str,
+    ) -> Result<FormalSource> {
+        let identity = selected.identity.bind(request_member)?;
         let bytes = self.file(&selected.file, self.remaining)?;
         let source = Source::read_typed(identity.native, &selected.file, &bytes, self.maximum)
             .map_err(|refusal| {
@@ -886,7 +895,7 @@ fn reject_current_parameters_before_sources(
         return Ok(());
     };
     let clause = clause.expect("the selection comes from the clause");
-    let observation_limits =
+    let _observation_limits =
         fsl_replay::spine::ObservationLimitsWire::resolve(clause.observation_limits.as_ref())
             .map_err(|error| RunCause::ClauseRequest {
                 member: error.member,
@@ -899,10 +908,7 @@ fn reject_current_parameters_before_sources(
             member: selection.observation.clone(),
             reason: "observation key is not present".to_owned(),
         })?;
-    let bytes = intake.observation_file(
-        file,
-        usize::try_from(observation_limits.document_bytes).unwrap_or(usize::MAX),
-    )?;
+    let bytes = intake.file(file, intake.remaining)?;
     let document: serde_json::Value = serde_json::from_slice(&bytes).map_err(RunCause::Json)?;
     if document["format"] == "filament.state.snapshot/v1" && document["observation"] == "current" {
         return Err(RunCause::ClauseRequest {
@@ -1123,7 +1129,7 @@ pub fn read_clause_run_request(
             },
         )?;
         reject_current_parameters_before_sources(&mut intake, request.clause.as_ref())?;
-        let source = intake.source(&request.program.source)?;
+        let source = intake.source(&request.program.source, "program.source")?;
         require_complete_edition(source.source())?;
         clause::read(&mut intake, &request, clause, source)
     })
@@ -1196,8 +1202,8 @@ pub fn compile_outcome_with_overrides(
         // selecting a native rule model for it refuses whatever state the
         // model files are in.
         let mut sources = Vec::with_capacity(request.program.sources.len());
-        for selection in &request.program.sources {
-            let source = intake.source(selection)?;
+        for (index, selection) in request.program.sources.iter().enumerate() {
+            let source = intake.source(selection, &format!("program.sources[{index}].source"))?;
             require_complete_edition(source.source())?;
             sources.push(source);
         }
@@ -1368,7 +1374,7 @@ fn require_complete_edition(source: &Source) -> Result<()> {
                 declared.span.start,
                 declared.span.end,
                 format!(
-                    "{} declares edition {:?}; compile reads {:?}",
+                    "{} declares edition {:?}; this command reads {:?}",
                     source.path(),
                     declared.edition,
                     fsl_cst::EDITION
@@ -1538,7 +1544,8 @@ fn check_sources<T>(
     let documents = request
         .models
         .iter()
-        .map(|model| intake.source(&model.source))
+        .enumerate()
+        .map(|(index, model)| intake.source(&model.source, &format!("models[{index}].source")))
         .collect::<Result<Vec<_>>>()?;
     let packages = fsl_semantics::model::intake::package_input(
         documents
@@ -1753,7 +1760,13 @@ fn library_sources<'r>(
     request
         .libraries
         .iter()
-        .map(|library| Ok((library, intake.source(&library.source)?)))
+        .enumerate()
+        .map(|(index, library)| {
+            Ok((
+                library,
+                intake.source(&library.source, &format!("libraries[{index}].source"))?,
+            ))
+        })
         .collect()
 }
 
@@ -1965,7 +1978,7 @@ fn prepare_run_bytes(
     reject_current_parameters_before_sources(&mut intake, request.clause.as_ref())?;
     // The program source is read exactly once; its declared edition decides
     // the runner before any model or library source is read (FR-100).
-    let source = intake.source(&request.program.source)?;
+    let source = intake.source(&request.program.source, "program.source")?;
     require_complete_edition(source.source())?;
     prepare_complete_run(&mut intake, &request, source)
 }
@@ -2040,7 +2053,8 @@ fn prepare_complete_run(
     let documents = request
         .models
         .iter()
-        .map(|model| intake.source(&model.source))
+        .enumerate()
+        .map(|(index, model)| intake.source(&model.source, &format!("models[{index}].source")))
         .collect::<Result<Vec<_>>>()?;
     let packages = fsl_semantics::model::intake::package_input(
         documents
@@ -2054,7 +2068,13 @@ fn prepare_complete_run(
     let libraries = request
         .libraries
         .iter()
-        .map(|library| Ok((library, intake.source(&library.source)?)))
+        .enumerate()
+        .map(|(index, library)| {
+            Ok((
+                library,
+                intake.source(&library.source, &format!("libraries[{index}].source"))?,
+            ))
+        })
         .collect::<Result<Vec<(&wire::Library, FormalSource)>>>()?;
     let dependencies =
         fsl_replay::spine::DependencyInput::new(libraries.iter().map(|(library, read)| {
@@ -2106,10 +2126,7 @@ fn prepare_complete_run(
                 reason: error.reason,
             }
         })?;
-        let bytes = intake.observation_file(
-            file,
-            usize::try_from(limits.document_bytes).unwrap_or(usize::MAX),
-        )?;
+        let bytes = intake.file(file, intake.remaining)?;
         let observation = fsl_replay::spine::SuppliedObservation::from_document("snapshot", bytes)
             .map_err(|error| RunCause::ClauseRequest {
                 member: error.member,
@@ -2157,7 +2174,7 @@ fn execute_lowering(prepared: PreparedLowering) -> Result<RunResult> {
     let valuation = match &report.disposition {
         fsl_replay::spine::ClauseDisposition::TemporalValuation(valuation) => valuation,
         fsl_replay::spine::ClauseDisposition::MissingName { name } => {
-            return Err(RunCause::TlClause { name: name.clone() })
+            return Err(RunCause::TlClause { name: name.clone() });
         }
         _ => return output::clause_report(report, &selection),
     };

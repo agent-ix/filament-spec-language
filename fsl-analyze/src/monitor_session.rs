@@ -244,6 +244,8 @@ fn pending_report() -> ClauseRunReport {
         disposition: ClauseDisposition::Temporal(verdict),
         usage: ClauseRunUsage::default(),
         witness: None,
+        state_clause_counterexample: None,
+        frame_field_values: None,
         consequent_source_events: ConsequentSourceEvents::Unavailable,
         ledger: None,
         finite_window: None,

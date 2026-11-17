@@ -334,7 +334,9 @@ impl Source {
             return Err(refuse(
                 SourceReadCause::ByteBudget,
                 None,
-                &format!("source byte budget exhausted (limit {byte_limit})"),
+                &format!(
+                    "source byte budget exhausted (limit {byte_limit}); raise `s1.input_bytes` with `--limit s1.input_bytes=<n>`"
+                ),
             ));
         }
         // Every label is non-blank here, so the reference is minted unless

@@ -175,7 +175,7 @@ pub fn check_native_fences(
         } else if fence.count > 1 {
             result.actual = Some(fence.count);
             Some((
-                Code::InvalidModelBinding,
+                Code::ExtractionClauseCount,
                 "extraction-clause-count",
                 "clause heading owns multiple native fences",
             ))

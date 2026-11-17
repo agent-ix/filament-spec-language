@@ -469,13 +469,31 @@ fn configured_temporal_clause_without_selection_refuses_emission() {
         &declared("Bound", "eventually[0,1] holds(c.versionNumber = 2)"),
     );
     let source_len = source_text.len() as u64;
-    let package = CheckedPackage::link(check_graph(&source_text));
+    let graph = check_graph(&source_text);
+    let temporal = graph
+        .temporal_clauses()
+        .first()
+        .expect("one configured temporal clause");
+    let source_ref = graph.source();
+    let source_label = format!("{}/{}", source_ref.authority(), source_ref.identity());
+    let span = temporal.clause().span();
+    let package = CheckedPackage::link(graph);
     let refusal = emit_checked(&package)
         .expect_err("configured temporal clauses require explicit clock selection");
     assert!(matches!(
-        refusal,
+        &refusal,
         crate::emit::EmitRefusal::MissingTemporalClockSelection { .. }
     ));
+    let message = refusal.to_string();
+    assert!(!message.contains("RawSourceRef {"), "{message}");
+    assert!(!message.contains("Span {"), "{message}");
+    assert!(
+        message.contains(&format!(
+            "{source_label} bytes {}..{}",
+            span.start, span.end
+        )),
+        "{message}"
+    );
     let refusal = crate::emit::emit_checked_with_cancel(
         &package,
         &filament_exact::Cancel::new(),

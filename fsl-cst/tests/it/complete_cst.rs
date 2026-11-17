@@ -83,16 +83,20 @@ fn complete_source_builds_a_byte_exact_trivia_preserving_cst() {
         assert_eq!(resolved.production(), node.production());
         assert_eq!(resolved.identity(), node.identity());
     }
-    assert!(parsed
-        .cst()
-        .tokens()
-        .iter()
-        .any(|token| token.class() == TokenClass::Comment));
-    assert!(parsed
-        .cst()
-        .tokens()
-        .iter()
-        .any(|token| token.class() == TokenClass::Whitespace));
+    assert!(
+        parsed
+            .cst()
+            .tokens()
+            .iter()
+            .any(|token| token.class() == TokenClass::Comment)
+    );
+    assert!(
+        parsed
+            .cst()
+            .tokens()
+            .iter()
+            .any(|token| token.class() == TokenClass::Whitespace)
+    );
 
     let productions: BTreeSet<_> = parsed
         .cst()
@@ -320,7 +324,6 @@ const THREE_RECORDS: &str = concat!(
 
 #[trace("TC-2148", "FR-762-AC-1")]
 #[test]
-#[ignore = "QSL-2195: declaration-level recovery after a syntax error not implemented yet"]
 fn two_independent_syntax_errors_give_two_diagnostics() {
     let (text, parsed) = recover(THREE_RECORDS);
     assert!(!parsed.is_admissible());
@@ -354,7 +357,6 @@ fn two_independent_syntax_errors_give_two_diagnostics() {
 
 #[trace("TC-2149", "FR-762-AC-2")]
 #[test]
-#[ignore = "QSL-2195: the lexer continuing after an invalid token not implemented yet"]
 fn two_invalid_tokens_give_two_invalid_token_diagnostics() {
     let (text, parsed) =
         recover("record A { x: $; }\nrecord B { y: Integer; }\nrecord C { z: $; }\n");
@@ -381,7 +383,6 @@ fn two_invalid_tokens_give_two_invalid_token_diagnostics() {
 
 #[trace("TC-2150", "FR-762-AC-3")]
 #[test]
-#[ignore = "QSL-2195: declaration-level recovery after a syntax error not implemented yet"]
 fn a_valid_declaration_between_broken_ones_is_recovered() {
     let (text, parsed) = recover(THREE_RECORDS);
     let second = "record B { u: Integer; v: Integer; }";
@@ -399,16 +400,17 @@ fn a_valid_declaration_between_broken_ones_is_recovered() {
 
 #[trace("TC-2151", "FR-762-AC-4")]
 #[test]
-#[ignore = "QSL-2195: declaration-level recovery after a syntax error not implemented yet"]
 fn a_missing_semicolon_gives_one_diagnostic() {
     let (text, parsed) = recover("record A { x: Integer }\nrecord B { y: Integer; }\n");
     assert_eq!(parsed.diagnostics().len(), 1, "{:?}", parsed.diagnostics());
     let start = byte_at(&text, "record B");
-    assert!(parsed
-        .cst()
-        .nodes()
-        .iter()
-        .any(|node| node.production() == Production::Declaration && node.span().start == start));
+    assert!(
+        parsed
+            .cst()
+            .nodes()
+            .iter()
+            .any(|node| node.production() == Production::Declaration && node.span().start == start)
+    );
 }
 
 #[trace("TC-2152", "FR-762-AC-5")]
@@ -434,7 +436,8 @@ fn a_single_error_keeps_its_one_diagnostic() {
         assert_eq!(
             found,
             [(CompleteCode::InvalidSyntax, Some(at))],
-            "{expression}"
+            "{expression}: {:#?}",
+            parsed.diagnostics()
         );
     }
 }
@@ -442,7 +445,6 @@ fn a_single_error_keeps_its_one_diagnostic() {
 #[trace("TC-2153", "FR-762-AC-6")]
 #[trace("FSpec-TC-1649", "FSpec-FR-272-AC-30")]
 #[test]
-#[ignore = "QSL-2195: the s1.diagnostics bound and the diagnostic-list-cut diagnostic not implemented yet"]
 fn the_diagnostic_list_is_cut_at_its_bound() {
     let body: String = (0..150)
         .map(|n| format!("record R{n} {{ z: ; }}\n"))
@@ -450,9 +452,11 @@ fn the_diagnostic_list_is_cut_at_its_bound() {
     let (text, parsed) = recover(&body);
     let diagnostics = parsed.diagnostics();
     assert_eq!(diagnostics.len(), 101);
-    assert!(diagnostics[..100]
-        .iter()
-        .all(|diagnostic| diagnostic.cause == CompleteCause::UnexpectedToken));
+    assert!(
+        diagnostics[..100]
+            .iter()
+            .all(|diagnostic| diagnostic.cause == CompleteCause::UnexpectedToken)
+    );
     let cut = &diagnostics[100];
     assert_eq!(cut.code, CompleteCode::InvalidSyntax);
     assert_eq!(cut.cause.as_str(), "diagnostic-list-cut");
@@ -461,15 +465,24 @@ fn the_diagnostic_list_is_cut_at_its_bound() {
         cut.byte_span().expect("located").start,
         record + text[record..].find("; }").expect("the offending token")
     );
-    assert!(cut.message.contains("s1.diagnostics") && cut.message.contains("100"));
-    assert!(diagnostics
-        .iter()
-        .all(|diagnostic| diagnostic.limit().is_none()));
+    assert_eq!(
+        cut.message,
+        "50 additional syntax errors omitted after the fixed limit of 100"
+    );
+    assert!(
+        !cut.message.contains("raise")
+            && !cut.message.contains("s1.diagnostics")
+            && !cut.message.contains("i2.diagnostics")
+    );
+    assert!(
+        diagnostics
+            .iter()
+            .all(|diagnostic| diagnostic.limit().is_none())
+    );
 }
 
 #[trace("TC-2154", "FR-762-AC-7")]
 #[test]
-#[ignore = "QSL-2195: declaration-level recovery after a syntax error not implemented yet"]
 fn a_recovered_unit_is_never_admitted() {
     let (_, parsed) = recover(THREE_RECORDS);
     assert!(!parsed.is_admissible());
@@ -486,7 +499,6 @@ fn recover_under(body: &str, limits: Limits) -> Result<fsl_cst::ParsedSource, St
 #[trace("TC-2187", "FR-762-AC-8")]
 #[trace("FSpec-TC-1649", "FSpec-FR-272-AC-30")]
 #[test]
-#[ignore = "QSL-2195: the work-budget cut of the recovery report not implemented yet"]
 fn recovery_stops_at_the_work_budget() {
     let records_first_error = |work: usize| {
         recover_under(THREE_RECORDS, Limits::default().with_work_units(work)).is_ok_and(|parsed| {
@@ -515,22 +527,25 @@ fn recovery_stops_at_the_work_budget() {
     // The cut is located at the token at which the budget ran out: one whole
     // token of the unit, after the first recorded error.
     let span = last.byte_span().expect("the cut is located");
-    assert!(parsed
-        .cst()
-        .tokens()
-        .iter()
-        .any(|token| token.span().start == span.start && token.span().end == span.end));
+    assert!(
+        parsed
+            .cst()
+            .tokens()
+            .iter()
+            .any(|token| token.span().start == span.start && token.span().end == span.end)
+    );
     let first = parsed.diagnostics()[0].byte_span().expect("located");
     assert!(span.start > first.start, "{span:?} after {first:?}");
-    assert!(parsed
-        .diagnostics()
-        .iter()
-        .all(|diagnostic| diagnostic.limit().is_none()));
+    assert!(
+        parsed
+            .diagnostics()
+            .iter()
+            .all(|diagnostic| diagnostic.limit().is_none())
+    );
 }
 
 #[trace("TC-2187", "FR-762-AC-9")]
 #[test]
-#[ignore = "QSL-2195: header recovery not implemented yet"]
 fn header_recovery_resumes_at_the_next_declaration() {
     let body = "profile v = ;\nrecord A { x: Integer y: Integer; }\n";
     let (text, parsed) = recover(body);
@@ -541,19 +556,29 @@ fn header_recovery_resumes_at_the_next_declaration() {
         .collect();
     assert_eq!(
         starts,
-        [byte_at(&text, "= ;") + 2, byte_at(&text, "y: Integer;")]
+        [byte_at(&text, "= ;") + 2, byte_at(&text, "y: Integer;")],
+        "{:#?}",
+        parsed.diagnostics()
     );
     let start = byte_at(&text, "record A");
-    assert!(parsed
-        .cst()
-        .nodes()
-        .iter()
-        .any(|node| node.production() == Production::Declaration && node.span().start == start));
+    assert!(
+        parsed
+            .cst()
+            .nodes()
+            .iter()
+            .any(|node| node.production() == Production::Declaration && node.span().start == start),
+        "{:?}",
+        parsed
+            .cst()
+            .nodes()
+            .iter()
+            .map(|node| (node.production(), node.span()))
+            .collect::<Vec<_>>()
+    );
 }
 
 #[trace("TC-2187", "FR-762-AC-10")]
 #[test]
-#[ignore = "QSL-2195: declaration-level recovery after a syntax error not implemented yet"]
 fn an_error_with_no_resumption_point_is_last() {
     let (text, parsed) = recover("record A { x: Integer; }\nrecord B { z: ; }\n");
     let diagnostics = parsed.diagnostics();

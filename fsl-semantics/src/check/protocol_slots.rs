@@ -780,7 +780,7 @@ fn binder_reads(
         }
         match node.node() {
             ExprNode::Name(name) => reads.push((name.name.clone(), None, span(&path))),
-            ExprNode::Field { operand, field } => {
+            ExprNode::Field { operand, field, .. } => {
                 if let ExprNode::Name(name) = node.at(*operand).node() {
                     reads.push((name.name.clone(), Some(field.clone()), span(&path)));
                     continue;

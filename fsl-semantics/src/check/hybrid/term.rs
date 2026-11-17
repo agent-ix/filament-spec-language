@@ -177,7 +177,7 @@ pub(super) fn lower_at(
                     ExprNode::Pre(_) => {
                         values.push(pre(form, id, span, env, (outer, &bound), meter)?);
                     }
-                    ExprNode::Field { operand, field } => {
+                    ExprNode::Field { operand, field, .. } => {
                         values.push(field_read(form, *operand, field, span, env, meter)?);
                     }
                     ExprNode::Call { arguments, .. } => {

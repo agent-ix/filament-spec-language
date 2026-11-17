@@ -913,6 +913,66 @@ fn each_mistyped_use_of_a_variant_type_refuses_with_its_cause() {
     }
 }
 
+/// QSL-2009: absent fields are unknown names with an owner and a token-only
+/// source span; a real arithmetic mismatch retains its existing cause.
+#[test]
+fn unknown_record_and_model_fields_name_their_owner_and_keep_type_mismatches() {
+    let source = "function record_field using v(s: Config::Settings): Boolean pure { s.paid = 0 }\n\
+                  function model_field using v(a: Reference<Config::Account>): Integer pure { deref(a).paid }\n\
+                  function arithmetic using v(): Integer pure { 1 + \"a\" }\n";
+    let refusals = check_refusals(source);
+    let prefix = format!(
+        "language \"ix:native\" edition \"1-draft\";\n\
+         profile v = \"filament.model.complete/v1\";\n\
+         model Config = {:?};\n\
+         function keep using v(): Boolean pure {{ true }}\n",
+        fixture::PACKAGE,
+    );
+    let record_start = prefix.len() + source.find("s.paid").unwrap() + "s.".len();
+    let model_start = prefix.len() + source.find("deref(a).paid").unwrap() + "deref(a).".len();
+
+    let record = refusals
+        .iter()
+        .find(|refusal| matches!(&refusal.cause, CheckCause::UnknownField { owner, .. } if owner.ends_with("Settings")))
+        .expect("the absent record field is refused");
+    assert_eq!(
+        record.cause,
+        CheckCause::UnknownField {
+            owner: "Config::Settings".to_owned(),
+            field: "paid".to_owned(),
+            span: Some(fsl_foundation::Span {
+                start: record_start,
+                end: record_start + "paid".len(),
+            }),
+        }
+    );
+    assert_eq!(record.location.path(), [0]);
+
+    let object = refusals
+        .iter()
+        .find(|refusal| matches!(&refusal.cause, CheckCause::StateModel(cause) if matches!(cause.cause, CheckCause::UnknownField { .. })))
+        .unwrap_or_else(|| panic!("the absent model field is refused: {refusals:?}"));
+    assert!(matches!(
+        &object.cause,
+        CheckCause::StateModel(cause)
+            if matches!(&cause.cause, CheckCause::UnknownField { owner, field, span }
+                if owner == "Account" && field == "paid"
+                    && *span == Some(fsl_foundation::Span {
+                        start: model_start,
+                        end: model_start + "paid".len(),
+                    }))
+    ), "{object:?}");
+    assert!(object.location.path().is_empty());
+
+    assert!(
+        refusals.iter().any(|refusal| {
+            refusal.cause.code() == fsl_foundation::diagnostic::Code::IllTyped
+                && refusal.cause.cause() == Some("type-mismatch")
+        }),
+        "1 + \"a\" remains ill_typed/type-mismatch: {refusals:?}"
+    );
+}
+
 /// TC-1007 step 6 (FR-360-AC-5): a variant type name in a type position that
 /// resolves to no variant type refuses at the assembler as `missing-name`.
 #[trace("TC-1007", "FR-360-AC-5")]

@@ -5,10 +5,10 @@
 //! `fsl_cst::parse` and `build_unit` (TC-456, TC-457).
 
 use fsl_forms::{
-    build_unit, AnchorSite, BinderForm, BinderKind, BuiltinType, DeclarationForm, ExprNode,
-    ExprRef, ExpressionSpans, FormsCause, OperationBodyForm, ParsedUnit, ProtocolConstructKind,
+    AnchorSite, BinderForm, BinderKind, BuiltinType, DeclarationForm, ExprNode, ExprRef,
+    ExpressionSpans, FormsCause, OperationBodyForm, ParsedUnit, ProtocolConstructKind,
     ProtocolDeclarationForm, ProtocolNodeDeclaration, ProtocolNodeKind, ScopedAnchorForm, SpanId,
-    StateClauseForm, StateClauseKind, TypeFormHead,
+    StateClauseForm, StateClauseKind, TypeFormHead, build_unit,
 };
 use fsl_foundation::{SourceIdentity, Span};
 use ix_trace_rs::trace;
@@ -164,6 +164,8 @@ fn state_clause(form: &DeclarationForm) -> &StateClauseForm {
         | DeclarationForm::Probabilistic(_)
         | DeclarationForm::StateGraphClaim(_)
         | DeclarationForm::Hybrid(_)
+        | DeclarationForm::Synthesis(_)
+        | DeclarationForm::VerificationPlan(_)
         | DeclarationForm::Extension(_) => panic!("a state clause form, not {form:?}"),
     }
 }
@@ -207,6 +209,8 @@ fn operation_body(form: &DeclarationForm) -> &OperationBodyForm {
         | DeclarationForm::Probabilistic(_)
         | DeclarationForm::StateGraphClaim(_)
         | DeclarationForm::Hybrid(_)
+        | DeclarationForm::Synthesis(_)
+        | DeclarationForm::VerificationPlan(_)
         | DeclarationForm::Extension(_) => panic!("an operation body form, not {form:?}"),
     }
 }
@@ -250,6 +254,8 @@ fn protocol_form(form: &DeclarationForm) -> &ProtocolDeclarationForm {
         | DeclarationForm::Probabilistic(_)
         | DeclarationForm::StateGraphClaim(_)
         | DeclarationForm::Hybrid(_)
+        | DeclarationForm::Synthesis(_)
+        | DeclarationForm::VerificationPlan(_)
         | DeclarationForm::Extension(_) => panic!("a protocol form, not {form:?}"),
     }
 }
@@ -695,10 +701,11 @@ fn a_reference_in_a_nested_control_records_every_enclosing_named_control() {
     // `commit never;` builds no `compensate-commit` anchor.
     let (_, unit) = build(&recovery_flow("never", true, parallel));
     let form = protocol_form(unit.forms()[0].form());
-    assert!(form
-        .scoped_anchors
-        .iter()
-        .all(|anchor| anchor.site != AnchorSite::CompensateCommit));
+    assert!(
+        form.scoped_anchors
+            .iter()
+            .all(|anchor| anchor.site != AnchorSite::CompensateCommit)
+    );
 }
 
 #[trace("TC-510", "FR-112-AC-3")]
@@ -1142,12 +1149,13 @@ fn self_result_and_reaches_build_and_a_qualified_edge_refuses() {
         "invariant Q using v on Config::ConfigVersion at current \
          { reaches(self, self, Config::ConfigVersion::parent) }",
     );
-    assert_eq!(
-        cause,
+    assert!(matches!(
+        &cause,
         FormsCause::UnrepresentedConstruct {
-            production: fsl_cst::Production::QualifiedName
+            production: fsl_cst::Production::QualifiedName,
+            ..
         }
-    );
+    ));
     let needle = "Config::ConfigVersion::parent";
     let start = text.rfind(needle).expect("the edge is in the unit");
     assert_eq!(

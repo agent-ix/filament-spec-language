@@ -669,6 +669,8 @@ pub enum ExprNode {
         operand: ExprId,
         /// The field or attribute name.
         field: String,
+        /// Its source token when the expression was read from source.
+        member_span: Option<fsl_foundation::Span>,
     },
     /// `present(e)`.
     Present(ExprId),
@@ -1559,7 +1561,11 @@ impl Expression {
     /// `operand.field`.
     pub fn field(operand: Self, field: impl Into<String>) -> Self {
         let field = field.into();
-        Self::compose([operand], |[operand]| ExprNode::Field { operand, field })
+        Self::compose([operand], |[operand]| ExprNode::Field {
+            operand,
+            field,
+            member_span: None,
+        })
     }
 
     /// `present(operand)`.
@@ -5135,6 +5141,37 @@ pub enum DeclarationForm {
     /// A `hybrid` declaration (FR-447), boxed for the same reason as
     /// [`Self::Function`].
     Hybrid(Box<HybridForm>),
+    /// A bounded `synthesis` declaration (FR-754).
+    Synthesis(Box<SynthesisForm>),
+    /// A `verify` plan declaration (FR-753).
+    VerificationPlan(Box<VerificationPlanForm>),
+}
+
+/// The S2 source identity of a synthesis declaration while FR-754's detailed
+/// expression and domain forms are built by their owning implementation.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct SynthesisForm {
+    /// The authored declaration name.
+    pub name: DeclaredName,
+    /// The selected profile alias.
+    pub profile: UsingAlias,
+    /// The complete source spelling retained for later stages.
+    pub source: String,
+    /// The declaration's source span.
+    pub span: Span,
+}
+
+/// The S2 source identity of a verification plan (FR-753).
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct VerificationPlanForm {
+    /// The authored declaration name.
+    pub name: DeclaredName,
+    /// The selected profile alias.
+    pub profile: UsingAlias,
+    /// The complete source spelling retained for later stages.
+    pub source: String,
+    /// The declaration's source span.
+    pub span: Span,
 }
 
 /// The longest each explicit heap stack grew in this thread, by name, so a

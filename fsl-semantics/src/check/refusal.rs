@@ -9,7 +9,7 @@ use filament_exact::{Integer, TextProfile, ValueType};
 use filament_semantic_value::call::WrongSnapshotCause;
 use filament_semantic_value::location::ExpressionLocation as Location;
 use filament_semantic_value::semantic_node::IdentityRefusal;
-use fsl_forms::AccessOrdering;
+use fsl_forms::{AccessOrdering, BinaryOperator};
 use fsl_foundation::diagnostic::Code;
 use fsl_foundation::source::provenance::SourceRegion;
 use fsl_foundation::MemoryModelName;
@@ -2818,11 +2818,30 @@ pub enum CheckCause {
     },
     /// `refused { code: ill_typed }` with its FR-272 cause.
     IllTyped(IllTypedCause),
+    /// A binary operator whose two typed operands have incompatible types.
+    OperandTypeMismatch {
+        /// The source operator.
+        operator: BinaryOperator,
+        /// The left operand's checked type.
+        left_type: ValueType,
+        /// The right operand's checked type.
+        right_type: ValueType,
+    },
     /// `refused { code: wrong_snapshot }` with its FR-272 cause: `pre(...)`
     /// written outside its admitted clause, or over an ineligible operand.
     WrongSnapshot(WrongSnapshotCause),
     /// `missing_declaration` / `missing-name` for an unqualified source name.
     MissingName(String),
+    /// A field absent from a record or model object, with the owner needed to
+    /// explain which type does not declare it.
+    UnknownField {
+        /// The type whose declaration was searched.
+        owner: String,
+        /// The field name as written.
+        field: String,
+        /// The field token's source span when it was read from source.
+        span: Option<Span>,
+    },
     /// An accepted execution point is inapplicable to its authored state
     /// clause or names a different operation member (FR-104-AC-15).
     ExecutionPointBinding(ExecutionPointRefusal),
@@ -3508,6 +3527,7 @@ impl CheckCause {
             Self::TypeAdmission { code, .. } => *code,
             Self::TypeCheckAllocation(_) | Self::TypeCheckCapacity(_) => Code::ResourceExhausted,
             Self::IllTyped(_)
+            | Self::OperandTypeMismatch { .. }
             | Self::IdentityObservingForm(_)
             | Self::NonBooleanRoot
             | Self::UnitMismatch
@@ -3516,6 +3536,7 @@ impl CheckCause {
             | Self::TextLiteralOutsideBounds { .. } => Code::IllTyped,
             Self::WrongSnapshot(_) | Self::UnanchoredResult { .. } => Code::WrongSnapshot,
             Self::MissingName(_)
+            | Self::UnknownField { .. }
             | Self::MissingQualifiedName(_)
             | Self::UnresolvedUnitName { .. }
             | Self::MissingSegment { .. }
@@ -3590,6 +3611,7 @@ impl CheckCause {
             Self::TypeCheckAllocation(_) => Some("allocation-failed"),
             Self::TypeCheckCapacity(_) => Some("reservation-size-overflow"),
             Self::IllTyped(cause) => cause.tag(),
+            Self::OperandTypeMismatch { .. } => Some("type-mismatch"),
             Self::WrongSnapshot(cause) => Some(cause.as_str()),
             Self::NonBooleanRoot => Some("non-boolean-root"),
             Self::UnitMismatch => Some("unit-mismatch"),
@@ -3599,6 +3621,7 @@ impl CheckCause {
             | Self::TextLiteralOutsideBounds { .. } => Some("type-mismatch"),
             Self::UnanchoredResult { .. } => Some("wrong-anchor"),
             Self::MissingName(_)
+            | Self::UnknownField { .. }
             | Self::MissingQualifiedName(_)
             | Self::UnresolvedUnitName { .. }
             | Self::MissingSegment { .. }

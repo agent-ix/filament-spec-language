@@ -553,7 +553,13 @@ fn retired_and_unknown_editions_refuse_before_emitting_package_bytes() {
         let failure: Value = serde_json::from_slice(&output.stderr).unwrap();
         assert_eq!(failure["code"], "unknown_edition", "{failure}");
         assert_eq!(failure["stage"], "profile", "{failure}");
-        assert!(failure["message"].as_str().unwrap().contains(edition));
+        let message = failure["message"].as_str().unwrap();
+        assert!(message.contains(edition), "{failure}");
+        assert!(
+            message.contains("this command reads \"1-draft\""),
+            "{failure}"
+        );
+        assert!(!message.contains("compile reads"), "{failure}");
         let literal = program.find(&format!("\"{edition}\"")).unwrap();
         assert_eq!(failure["details"]["span"]["start"]["byte"], literal);
         assert_eq!(

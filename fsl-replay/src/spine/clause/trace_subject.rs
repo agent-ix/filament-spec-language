@@ -60,6 +60,8 @@ pub fn run_trace_subject_clause(
     let empty_report = |disposition| ClauseRunReport {
         basis: super::undecided_basis(&disposition),
         witness: None,
+        state_clause_counterexample: None,
+        frame_field_values: None,
         disposition,
         usage: ClauseRunUsage::default(),
         consequent_source_events: super::ConsequentSourceEvents::Unavailable,

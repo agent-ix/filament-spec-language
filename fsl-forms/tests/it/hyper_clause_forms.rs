@@ -73,7 +73,7 @@ fn indexed_reads(condition: &ExpressionForm) -> Vec<String> {
         .iter()
         .filter_map(|node| match node.node() {
             ExprNode::Indexed { read, trace } => {
-                let ExprNode::Field { operand, field } = node.at(*read).node() else {
+                let ExprNode::Field { operand, field, .. } = node.at(*read).node() else {
                     panic!("a field read: {:?}", node.at(*read).node());
                 };
                 let ExprNode::Name(object) = node.at(*operand).node() else {

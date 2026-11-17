@@ -88,34 +88,34 @@ use filament_exact::Cancel;
 use filament_semantic_value::catalog::InternalFault;
 use filament_semantic_value::semantic_node::IdentityRefusal;
 use fsl_cst::Limits as SourceLimits;
-use fsl_forms::{parse_clause_text, FormsRefusal, ParsedUnit};
-use fsl_foundation::diagnostic::{LimitExceeded, Locus, StageFailure, StageWork, Staged};
-use fsl_foundation::selection::ImportSelection;
-use fsl_foundation::source::provenance::{RawSourceRef, SourceRegion};
-use fsl_foundation::source::Source;
+use fsl_forms::{FormsRefusal, ParsedUnit, parse_clause_text};
 use fsl_foundation::Setting;
 use fsl_foundation::SyntaxLimit;
+use fsl_foundation::diagnostic::{LimitExceeded, Locus, StageFailure, StageWork, Staged};
+use fsl_foundation::selection::ImportSelection;
+use fsl_foundation::source::Source;
+use fsl_foundation::source::provenance::{RawSourceRef, SourceRegion};
 use fsl_foundation::{Code, SourceIdentity};
 use fsl_package as pkg;
-use fsl_package::{read_import_view, AdmittedPackages, Emission, Import, ImportViewRefusal};
+use fsl_package::{AdmittedPackages, Emission, Import, ImportViewRefusal, read_import_view};
 use fsl_semantics::check::{
-    resolve_profiles, AdmittedImport, AssemblyCause, AssemblyError, CheckCause, CheckRefusal,
-    CorrespondenceConflict, KeyFault, PackageDeclarations,
+    AdmittedImport, AssemblyCause, AssemblyError, CheckCause, CheckRefusal, CorrespondenceConflict,
+    KeyFault, PackageDeclarations, resolve_profiles,
 };
 use fsl_semantics::library::extension::{CoreVocabulary, HeldExtensions};
 use fsl_semantics::library::{ImportView, LibraryName};
 use fsl_semantics::model::accounting::ModelNormalizationLimits;
 use fsl_semantics::model::intake::{
-    admit_unit_with_cancel, admit_units_with_cancel, SelectedModel, SelectedModels, UnitIntakeCause,
+    SelectedModel, SelectedModels, UnitIntakeCause, admit_unit_with_cancel, admit_units_with_cancel,
 };
 use fsl_semantics::value::identity_limit;
 
 use super::subject::StaticSubjectInput;
-use super::{
-    region, CompileRefusal, DependencyInput, ImportRefusal, SpineLimits, SuppliedLibrary,
-    UnitListRefusal,
-};
 use super::{BuildProvenance, StaticSubject, SubjectUnavailable};
+use super::{
+    CompileRefusal, DependencyInput, ImportRefusal, SpineLimits, SuppliedLibrary, UnitListRefusal,
+    region,
+};
 
 /// What a front-end operation returns when it produces no output: the
 /// stage's refusal, a reached limit, a cancellation or a fault.
@@ -148,6 +148,7 @@ struct StageError {
 #[derive(Clone, Debug)]
 enum ProtocolFailure {
     Source(fsl_cst::CompleteDiagnostic),
+    SourceDiagnostics(Vec<fsl_cst::CompleteDiagnostic>),
     Forms {
         failure: FormsRefusal,
         region: Option<SourceRegion>,
@@ -156,14 +157,24 @@ enum ProtocolFailure {
         refusals: Vec<CheckRefusal>,
         region: Option<SourceRegion>,
     },
+    CheckDiagnostics {
+        refusals: Vec<CheckRefusal>,
+        regions: Vec<Option<SourceRegion>>,
+    },
 }
 
 impl ProtocolFailure {
     fn from_refusal(refusal: CompileRefusal) -> Self {
         match refusal {
             CompileRefusal::Source(diagnostic) => Self::Source(*diagnostic),
+            CompileRefusal::SourceDiagnostics { diagnostics } => {
+                Self::SourceDiagnostics(diagnostics)
+            }
             CompileRefusal::Forms { failure, region } => Self::Forms { failure, region },
             CompileRefusal::Check { refusals, region } => Self::Check { refusals, region },
+            CompileRefusal::CheckDiagnostics { refusals, regions } => {
+                Self::CheckDiagnostics { refusals, regions }
+            }
             other => Self::Check {
                 refusals: Vec::new(),
                 region: match other {
@@ -180,6 +191,9 @@ impl ProtocolFailure {
     fn to_refusal(&self) -> CompileRefusal {
         match self {
             Self::Source(diagnostic) => CompileRefusal::Source(Box::new(diagnostic.clone())),
+            Self::SourceDiagnostics(diagnostics) => CompileRefusal::SourceDiagnostics {
+                diagnostics: diagnostics.clone(),
+            },
             Self::Forms { failure, region } => CompileRefusal::Forms {
                 failure: failure.clone(),
                 region: region.clone(),
@@ -187,6 +201,10 @@ impl ProtocolFailure {
             Self::Check { refusals, region } => CompileRefusal::Check {
                 refusals: refusals.clone(),
                 region: region.clone(),
+            },
+            Self::CheckDiagnostics { refusals, regions } => CompileRefusal::CheckDiagnostics {
+                refusals: refusals.clone(),
+                regions: regions.clone(),
             },
         }
     }
@@ -343,6 +361,37 @@ fn limit_of(
                 locus,
             ))
         }
+        CompileRefusal::CheckDiagnostics { refusals, regions } => {
+            if let Some((index, bound, required)) =
+                refusals.iter().enumerate().find_map(|(index, refusal)| {
+                    match refusal.cause.unwrapped() {
+                        CheckCause::Identity(IdentityRefusal::InputBytes { bound, required }) => {
+                            Some((index, *bound, *required))
+                        }
+                        _ => None,
+                    }
+                })
+            {
+                return Some(at(
+                    identity_limit(bound, required),
+                    regions.get(index).and_then(Option::as_ref),
+                ));
+            }
+            let (index, cause) = refusals.iter().enumerate().find_map(|(index, refusal)| {
+                match refusal.cause.unwrapped() {
+                    CheckCause::ResourceExhausted(cause) => Some((index, cause)),
+                    _ => None,
+                }
+            })?;
+            let locus = cause
+                .region
+                .as_ref()
+                .or_else(|| regions.get(index).and_then(Option::as_ref));
+            Some(at(
+                LimitExceeded::new(cause.kind.setting(), cause.limit, cause.actual),
+                locus,
+            ))
+        }
         CompileRefusal::Assembly { refusal, .. } => {
             refusal.errors.iter().find_map(|error| match &error.cause {
                 AssemblyCause::TypeLimit(limit)
@@ -368,6 +417,7 @@ fn limit_of(
         },
         CompileRefusal::Limit(limit) => Some(limit.clone()),
         CompileRefusal::UnitList(_)
+        | CompileRefusal::SourceDiagnostics { .. }
         | CompileRefusal::Forms { .. }
         | CompileRefusal::OperationClause { .. }
         | CompileRefusal::TypeInvariant { .. }
@@ -385,38 +435,40 @@ fn limit_of(
 /// the input.
 fn fault_of(refusal: &CompileRefusal) -> Option<InternalFault> {
     match refusal {
-        CompileRefusal::Check { refusals, .. } => refusals.iter().find_map(|refusal| match refusal
-            .cause
-            .unwrapped()
-        {
-            CheckCause::InternalFault(fault) => {
-                let named = match fault.as_ref() {
-                    KeyFault::CorrespondenceConflict(conflict) => match conflict.as_ref() {
-                        CorrespondenceConflict::NodeRebound {
-                            node,
-                            recorded,
-                            offered,
-                        } => vec![
-                            ("node", format!("{node:?}")),
-                            ("recorded", format!("{recorded:?}")),
-                            ("offered", format!("{offered:?}")),
-                        ],
-                        CorrespondenceConflict::DeclarationRebound {
-                            declaration,
-                            recorded,
-                            offered,
-                        } => vec![
-                            ("declaration", format!("{declaration:?}")),
-                            ("recorded", format!("{recorded:?}")),
-                            ("offered", format!("{offered:?}")),
-                        ],
-                    },
-                    _ => Vec::new(),
-                };
-                Some(InternalFault::new("S3", fault.invariant()).with_named(named))
-            }
-            _ => None,
-        }),
+        CompileRefusal::Check { refusals, .. }
+        | CompileRefusal::CheckDiagnostics { refusals, .. } => {
+            refusals
+                .iter()
+                .find_map(|refusal| match refusal.cause.unwrapped() {
+                    CheckCause::InternalFault(fault) => {
+                        let named = match fault.as_ref() {
+                            KeyFault::CorrespondenceConflict(conflict) => match conflict.as_ref() {
+                                CorrespondenceConflict::NodeRebound {
+                                    node,
+                                    recorded,
+                                    offered,
+                                } => vec![
+                                    ("node", format!("{node:?}")),
+                                    ("recorded", format!("{recorded:?}")),
+                                    ("offered", format!("{offered:?}")),
+                                ],
+                                CorrespondenceConflict::DeclarationRebound {
+                                    declaration,
+                                    recorded,
+                                    offered,
+                                } => vec![
+                                    ("declaration", format!("{declaration:?}")),
+                                    ("recorded", format!("{recorded:?}")),
+                                    ("offered", format!("{offered:?}")),
+                                ],
+                            },
+                            _ => Vec::new(),
+                        };
+                        Some(InternalFault::new("S3", fault.invariant()).with_named(named))
+                    }
+                    _ => None,
+                })
+        }
         CompileRefusal::Intake { refusal, .. }
             if matches!(refusal.cause, UnitIntakeCause::Invariant) =>
         {
@@ -1420,11 +1472,7 @@ fn parse_operation(
                 )
             })
         {
-            let refusal = parsed
-                .syntax
-                .diagnostics()
-                .first()
-                .map(|diagnostic| Box::new(CompileRefusal::Source(Box::new(diagnostic.clone()))))
+            let refusal = source_diagnostics_refusal(parsed.syntax.diagnostics())
                 .or_else(|| {
                     parsed.protocol_forms_refusal.clone().map(|failure| {
                         Box::new(CompileRefusal::Forms {
@@ -2553,8 +2601,10 @@ fn parse_unit(
     let (unit, forms_refusals) = match fsl_forms::build_unit_with_protocol_results(&parsed) {
         Ok(built) => built,
         Err(failure) => {
-            if let Some(diagnostic) = parsed.diagnostics().first() {
-                let refusal = Box::new(CompileRefusal::Source(Box::new(diagnostic.clone())));
+            if !parsed.diagnostics().is_empty() {
+                let refusal = source_diagnostics_refusal(parsed.diagnostics())
+                    .expect("a non-empty diagnostic slice builds a refusal");
+                let diagnostic = &parsed.diagnostics()[0];
                 if let Some(results) =
                     bounded_protocol_results_around_nonprotocol_diagnostic(&parsed, diagnostic)
                 {
@@ -2582,6 +2632,20 @@ fn parse_unit(
         protocol_results,
         protocol_forms_refusal,
     })
+}
+
+fn source_diagnostics_refusal(
+    diagnostics: &[fsl_cst::CompleteDiagnostic],
+) -> Option<Box<CompileRefusal>> {
+    match diagnostics {
+        [] => None,
+        [diagnostic] => Some(Box::new(CompileRefusal::Source(Box::new(
+            diagnostic.clone(),
+        )))),
+        diagnostics => Some(Box::new(CompileRefusal::SourceDiagnostics {
+            diagnostics: diagnostics.to_vec(),
+        })),
+    }
 }
 
 /// Clean, brace-bounded protocol declarations on both sides of a
@@ -2964,15 +3028,29 @@ fn protocol_check_outcome(
         // fallback.
         let regions = graph.memoized_regions();
         let refusals = graph.unit_refusals().to_vec();
+        let mut refusal_regions: Vec<_> = refusals
+            .iter()
+            .map(|refusal| regions(&refusal.location))
+            .collect();
         let region = graph.unit_refusal_region().cloned().or_else(|| {
             refusals.first().and_then(|refusal| match &refusal.cause {
                 CheckCause::LayerEquality {
                     span: Some(span), ..
                 } => region(parsed.source().reference(), *span),
-                _ => regions(&refusal.location),
+                _ => refusal_regions.first().cloned().flatten(),
             })
         });
-        first_failure = Some(CompileRefusal::Check { refusals, region });
+        if let Some(first_region) = refusal_regions.first_mut() {
+            *first_region = region.clone();
+        }
+        first_failure = Some(if refusals.len() > 1 {
+            CompileRefusal::CheckDiagnostics {
+                refusals,
+                regions: refusal_regions,
+            }
+        } else {
+            CompileRefusal::Check { refusals, region }
+        });
     }
     if first_failure.is_none() {
         first_failure = protocol_failure_from_parsed(parsed);
@@ -3041,8 +3119,8 @@ fn attach_protocol_results(
 }
 
 fn protocol_failure_from_parsed(parsed: &ParsedUnitSource) -> Option<CompileRefusal> {
-    if let Some(diagnostic) = parsed.syntax.diagnostics().first() {
-        return Some(CompileRefusal::Source(Box::new(diagnostic.clone())));
+    if !parsed.syntax.diagnostics().is_empty() {
+        return source_diagnostics_refusal(parsed.syntax.diagnostics()).map(|refusal| *refusal);
     }
     parsed
         .protocol_forms_refusal
@@ -3178,6 +3256,35 @@ fn emit_refusal(
                 region,
             )
         }
+        fsl_package::EmitRefusal::MissingTemporalClockSelection {
+            source_ref,
+            span,
+            declaration,
+        } => {
+            let locus = region(&source_ref, span);
+            CompileRefusal::Emit(
+                fsl_package::EmitRefusal::MissingTemporalClockSelection {
+                    source_ref,
+                    span,
+                    declaration,
+                },
+                locus,
+            )
+        }
+        fsl_package::EmitRefusal::ProbabilisticModelNotEmitted {
+            declaration,
+            feature,
+            profile,
+            region,
+        } => CompileRefusal::Emit(
+            fsl_package::EmitRefusal::ProbabilisticModelNotEmitted {
+                declaration,
+                feature,
+                profile,
+                region: region.clone(),
+            },
+            Some(region),
+        ),
         other => CompileRefusal::Emit(other, None),
     })
 }
@@ -3824,11 +3931,21 @@ impl<'a> Resolution<'a> {
         })
         .map_err(|refusals| {
             let regions = declarations.regions();
-            Box::new(CompileRefusal::Check {
-                region: refusals
-                    .first()
-                    .and_then(|refusal| regions.refusal_region(refusal)),
-                refusals,
+            let mut refusal_regions: Vec<_> = refusals
+                .iter()
+                .map(|refusal| regions.refusal_region(refusal))
+                .collect();
+            let region = refusal_regions.first().cloned().flatten();
+            if let Some(first_region) = refusal_regions.first_mut() {
+                *first_region = region.clone();
+            }
+            Box::new(if refusals.len() > 1 {
+                CompileRefusal::CheckDiagnostics {
+                    refusals,
+                    regions: refusal_regions,
+                }
+            } else {
+                CompileRefusal::Check { refusals, region }
             })
         })?;
         let regions = declarations.regions();
@@ -3871,7 +3988,21 @@ impl<'a> Resolution<'a> {
                         _ => None,
                     })
             });
-            Box::new(CompileRefusal::Check { region, refusals })
+            let mut refusal_regions: Vec<_> = refusals
+                .iter()
+                .map(|refusal| regions.refusal_region(refusal))
+                .collect();
+            if let Some(first_region) = refusal_regions.first_mut() {
+                *first_region = region.clone();
+            }
+            Box::new(if refusals.len() > 1 {
+                CompileRefusal::CheckDiagnostics {
+                    refusals,
+                    regions: refusal_regions,
+                }
+            } else {
+                CompileRefusal::Check { refusals, region }
+            })
         })?;
         // The protocol continuation check keeps a refused state clause on the
         // graph instead of failing: report it the same way (FR-302).

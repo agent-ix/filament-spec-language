@@ -564,7 +564,7 @@ fn encode_expression(
                 out.write_str("not");
                 pending.push(expr.at(*operand));
             }
-            ExprNode::Field { operand, field } => {
+            ExprNode::Field { operand, field, .. } => {
                 out.write_str("field");
                 out.write_str(field);
                 pending.push(expr.at(*operand));

@@ -17,14 +17,9 @@ fn invalid(member: impl Into<String>, reason: impl Into<String>) -> RunCause {
     }
 }
 
-fn observation(
-    intake: &mut Intake<'_>,
-    key: &str,
-    file: &str,
-    document_bytes: u64,
-) -> Result<SuppliedObservation> {
-    let bytes =
-        intake.observation_file(file, usize::try_from(document_bytes).unwrap_or(usize::MAX))?;
+fn observation(intake: &mut Intake<'_>, key: &str, file: &str) -> Result<SuppliedObservation> {
+    let remaining = intake.remaining;
+    let bytes = intake.file(file, remaining)?;
     SuppliedObservation::from_document(key, bytes)
         .map_err(|error| invalid(error.member, error.reason))
 }
@@ -45,7 +40,8 @@ pub(super) fn read(
     let documents = request
         .models
         .iter()
-        .map(|model| intake.source(&model.source))
+        .enumerate()
+        .map(|(index, model)| intake.source(&model.source, &format!("models[{index}].source")))
         .collect::<Result<Vec<_>>>()?;
     let packages = fsl_semantics::model::intake::package_input(
         documents
@@ -56,7 +52,13 @@ pub(super) fn read(
     let libraries = request
         .libraries
         .iter()
-        .map(|library| Ok((library, intake.source(&library.source)?)))
+        .enumerate()
+        .map(|(index, library)| {
+            Ok((
+                library,
+                intake.source(&library.source, &format!("libraries[{index}].source"))?,
+            ))
+        })
         .collect::<Result<Vec<_>>>()?;
     let dependencies =
         DependencyInput::new(libraries.iter().map(|(library, read)| SuppliedLibrary {
@@ -75,7 +77,7 @@ pub(super) fn read(
         let observed = if let Some(existing) = by_file.get(file) {
             existing.clone()
         } else {
-            let observed = observation(intake, key, file, observation_limits.document_bytes)?;
+            let observed = observation(intake, key, file)?;
             by_file.insert(file.clone(), observed.clone());
             observed
         };

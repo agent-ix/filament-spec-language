@@ -159,6 +159,14 @@ fn a_frame_respecting_invocation_succeeds() {
     );
     assert_eq!(report.disposition.truth(), Some(true));
     assert_eq!(report.disposition.category().exit_code(), 0);
+    let item = crate::OutcomeItem::from_clause_run(
+        crate::RequestIndex::new(0),
+        "Config::ConfigVersion::attemptUpdate",
+        &report,
+    )
+    .expect("frame-conforming run is an outcome item");
+    let item = serde_json::to_value(item).expect("outcome item serializes");
+    assert!(item.get("witness").is_none());
 }
 
 /// TC-514 step 2 (FR-115-AC-2): forbidden-parent-change (post sets
@@ -216,6 +224,21 @@ fn a_change_outside_the_frame_is_a_violation_with_its_witness() {
     );
     assert_eq!(report.disposition.truth(), Some(false));
     assert_eq!(report.disposition.category().exit_code(), 10);
+
+    let item = crate::OutcomeItem::from_clause_run(
+        crate::RequestIndex::new(0),
+        "Config::ConfigVersion::attemptUpdate",
+        &report,
+    )
+    .expect("frame violation is an outcome item");
+    let item = serde_json::to_value(item).expect("outcome item serializes");
+    assert_eq!(item["cause"]["code"], "frame_violation");
+    assert_eq!(item["cause"]["kind"], "unauthorized-change");
+    assert_eq!(item["witness"]["change"]["kind"], "field_write");
+    assert_eq!(item["witness"]["change"]["object"], "child");
+    assert_eq!(item["witness"]["change"]["field"], "parent");
+    assert_eq!(item["witness"]["before"], "root");
+    assert_eq!(item["witness"]["after"], "absent");
 }
 
 /// FR-267-AC-11 and FR-115-AC-7: every frame change and its checked grant
@@ -477,6 +500,20 @@ fn a_link_finding_routes_to_a_violation_with_exit_ten() {
     );
     assert_eq!(report.disposition.truth(), Some(false));
     assert_eq!(report.disposition.category().exit_code(), 10);
+    let item = crate::OutcomeItem::from_clause_run(
+        crate::RequestIndex::new(0),
+        "Orders::Order::charge",
+        &report,
+    )
+    .expect("frame violation is an outcome item");
+    let item = serde_json::to_value(item).expect("outcome item serializes");
+    assert_eq!(item["witness"]["change"]["kind"], "link");
+    assert_eq!(
+        item["witness"]["change"]["relationship"]["node"],
+        "Pump-housing-Tank"
+    );
+    assert_eq!(item["witness"]["change"]["source"]["key"], "p1");
+    assert_eq!(item["witness"]["change"]["target"]["key"], "t1");
 }
 
 /// FR-267-AC-12 (TC-1037 row 13): a link finding writes the `link` change
@@ -641,6 +678,15 @@ fn a_creation_outside_the_frame_is_a_violation_naming_it() {
     assert_eq!(type_name.node, config_version_type());
     assert!(creates.is_empty(), "{creates:?}");
     assert_eq!(report.disposition.category().exit_code(), 10);
+    let item = crate::OutcomeItem::from_clause_run(
+        crate::RequestIndex::new(0),
+        "Config::ConfigVersion::attemptUpdate",
+        &report,
+    )
+    .expect("frame violation is an outcome item");
+    let item = serde_json::to_value(item).expect("outcome item serializes");
+    assert_eq!(item["witness"]["change"]["kind"], "created");
+    assert_eq!(item["witness"]["change"]["object"], "c2");
 }
 
 /// TC-514 step 2 (FR-115 Behavior, "the created or deleted object and its

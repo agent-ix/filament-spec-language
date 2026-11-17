@@ -157,8 +157,8 @@ pub enum EmitRefusal {
     /// has no node for: the emitter refuses rather than write a package
     /// without them, naming the first such declaration in source order.
     #[error(
-        "{} `{declaration}` cannot be written to a checked-package/v2 graph yet",
-        feature.name()
+        "{feature_name} `{declaration}` cannot be written to a checked-package/v2 graph yet",
+        feature_name = feature.display_name()
     )]
     ProbabilisticModelNotEmitted {
         /// The first such declaration's name: `operation(parameter)` for a
@@ -168,6 +168,8 @@ pub enum EmitRefusal {
         feature: fsl_semantics::check::ProbabilisticFeature,
         /// The unit's selected header profile identity, when it selects one.
         profile: Option<&'static str>,
+        /// The checked source locus of the first unsupported declaration.
+        region: fsl_foundation::source::provenance::SourceRegion,
     },
     /// The unit declares a source `object` type, which the checked-package/v2
     /// graph has no node shape for yet: the emitter refuses at the first
@@ -298,13 +300,20 @@ pub enum EmitRefusal {
     /// A temporal declaration whose selected profile requires a clock
     /// configuration has no exact producer selection.
     #[error(
-        "temporal declaration at {source_ref:?} bytes {span:?} has no selected clock configuration"
+        "{declaration} at {}/{} bytes {}..{} has no selected clock configuration",
+        .source_ref.authority(),
+        .source_ref.identity(),
+        .span.start,
+        .span.end
     )]
     MissingTemporalClockSelection {
         /// The checked source document.
         source_ref: fsl_foundation::source::provenance::RawSourceRef,
         /// The exact declaration locus.
         span: fsl_foundation::Span,
+        /// Plain-language construct name, such as `bounded temporal rule Foo`
+        /// or `compensate template Refund`.
+        declaration: String,
     },
     /// A temporal clock selection does not name a configured declaration in
     /// the checked source.
@@ -433,6 +442,23 @@ fn output_limit(bound: u64, actual: u128) -> fsl_foundation::diagnostic::LimitEx
         bound,
         actual,
     )
+}
+
+/// Give an emission-size refusal the first checked source occurrence. The
+/// byte ceiling is charged while the canonical artifact is written, so the
+/// encoder itself has no source offset to report; the package's first
+/// occurrence is the closest available source locus.
+fn locate_output_limit(refusal: EmitRefusal, graph: &CheckedGraph) -> EmitRefusal {
+    let EmitRefusal::OutputLimit(limit) = refusal else {
+        return refusal;
+    };
+    if limit.locus().is_some() {
+        return EmitRefusal::OutputLimit(limit);
+    }
+    let locus = graph.occurrences().next().map(|(node, origin, _)| {
+        fsl_foundation::diagnostic::Locus::Occurrence(filament_exact::Location::new(node, origin))
+    });
+    EmitRefusal::OutputLimit(limit.at(locus))
 }
 
 impl EmitRefusal {
@@ -4580,19 +4606,23 @@ fn require_protocol_results_for_refusals(package: &CheckedPackage) -> Result<(),
 pub fn emit_checked(package: &CheckedPackage, limits: EmitLimits) -> Result<Emission, EmitRefusal> {
     require_protocol_results_for_refusals(package)?;
     if let Some(emission) = package.remembered_emission() {
-        return remembered_within(emission, limits);
+        return remembered_within(emission, limits, package.graph());
     }
     emit_checked_with_cancel(package, &Cancel::new(), limits)
 }
 
 /// A remembered `emission`, when its canonical bytes fit `limits`.
-fn remembered_within(emission: &Emission, limits: EmitLimits) -> Result<Emission, EmitRefusal> {
+fn remembered_within(
+    emission: &Emission,
+    limits: EmitLimits,
+    graph: &CheckedGraph,
+) -> Result<Emission, EmitRefusal> {
     let actual = u64::try_from(emission.package().bytes().len()).unwrap_or(u64::MAX);
     if actual > limits.output_bytes {
-        return Err(EmitRefusal::OutputLimit(output_limit(
-            limits.output_bytes,
-            u128::from(actual),
-        )));
+        return Err(locate_output_limit(
+            EmitRefusal::OutputLimit(output_limit(limits.output_bytes, u128::from(actual))),
+            graph,
+        ));
     }
     Ok(emission.clone())
 }
@@ -4615,6 +4645,7 @@ fn emit_checked_uncached(
         &[],
         limits,
     )
+    .map_err(|refusal| locate_output_limit(refusal, graph))
 }
 
 /// Emit checked protocols independently and retain each protocol's result
@@ -4649,7 +4680,9 @@ pub fn emit_checked_with_protocol_results_and_temporal_selections_and_cancel(
         &ir_decodes,
         selections,
         limits,
-    ) {
+    )
+    .map_err(|refusal| locate_output_limit(refusal, graph))
+    {
         Ok(emission) => Some(emission),
         Err(EmitRefusal::NothingToEmit { .. }) if !graph.protocol_refusals().is_empty() => None,
         Err(refusal) => return Err(refusal),
@@ -4792,6 +4825,7 @@ pub fn emit_checked_with_temporal_selections_and_cancel(
         selections,
         limits,
     )
+    .map_err(|refusal| locate_output_limit(refusal, graph))
 }
 
 /// [`emit_checked_with_temporal_selections_and_cancel`] for a library unit a
@@ -5867,6 +5901,7 @@ pub fn emit_package(
     limits: EmitLimits,
 ) -> Result<Emission, EmitRefusal> {
     require_protocol_results_for_refusals(package)?;
+    let graph = package.graph();
     emit_package_inner(
         package,
         regions,
@@ -5876,6 +5911,7 @@ pub fn emit_package(
         &[],
         limits,
     )
+    .map_err(|refusal| locate_output_limit(refusal, graph))
 }
 
 /// Emit a checked package with caller-placed source regions and explicit
@@ -5888,6 +5924,7 @@ pub fn emit_package_with_temporal_selections(
     limits: EmitLimits,
 ) -> Result<Emission, EmitRefusal> {
     require_protocol_results_for_refusals(package)?;
+    let graph = package.graph();
     emit_package_inner(
         package,
         regions,
@@ -5897,6 +5934,7 @@ pub fn emit_package_with_temporal_selections(
         selections,
         limits,
     )
+    .map_err(|refusal| locate_output_limit(refusal, graph))
 }
 
 /// As [`emit_package`], but lets a caller force a specific node's wire
@@ -6225,13 +6263,24 @@ fn emit_package_inner(
         .map(|relation| graph.abstraction_nodes(relation))
         .transpose()
         .map_err(EmitRefusal::Abstraction)?;
+    if let Some((_, span)) = graph.first_source_object() {
+        return Err(EmitRefusal::SourceObjectEmission { span });
+    }
     if let Some((feature, declaration)) = graph.probabilistic_model().first_declaration() {
+        let location = graph
+            .probabilistic_model()
+            .first_declaration_location()
+            .ok_or(EmitRefusal::SourceMapInvariant)?;
+        let region = graph
+            .region(&location)
+            .ok_or(EmitRefusal::SourceMapInvariant)?;
         return Err(EmitRefusal::ProbabilisticModelNotEmitted {
             declaration,
             feature,
             // The header layers ascend; the widest is the profile the unit
             // selects its probabilistic declarations under.
             profile: graph.header_layers().last().map(|layer| layer.identity()),
+            region,
         });
     }
     let candidates = candidates_of(ids, &foreign, graph, abstraction.as_ref(), &declared_forms)?;
@@ -8064,7 +8113,11 @@ fn temporal_binding_rows(
         let span = clause.span();
         let key = (source.clone(), span.start, span.end);
         let Some(selection) = selected.remove(&key) else {
-            missing.push((source, span));
+            missing.push((
+                source,
+                span,
+                format!("bounded temporal rule `{}`", clause.name()),
+            ));
             continue;
         };
         check_selected_definition(&source, span, profile, selection)?;
@@ -8135,7 +8188,11 @@ fn temporal_binding_rows(
         let span = hyper.span();
         let key = (source.clone(), span.start, span.end);
         let Some(selection) = selected.remove(&key) else {
-            missing.push((source, span));
+            missing.push((
+                source,
+                span,
+                format!("bounded temporal rule `{}`", hyper.name()),
+            ));
             continue;
         };
         check_selected_definition(&source, span, profile, selection)?;
@@ -8210,7 +8267,11 @@ fn temporal_binding_rows(
             let span = template.span;
             let key = (source.clone(), span.start, span.end);
             let Some(selection) = selected.remove(&key) else {
-                missing.push((source.clone(), span));
+                missing.push((
+                    source.clone(),
+                    span,
+                    format!("compensate template `{}`", template.name),
+                ));
                 continue;
             };
             check_selected_definition(&source, span, profile, selection)?;
@@ -8240,8 +8301,12 @@ fn temporal_binding_rows(
             span: fsl_foundation::Span { start, end },
         });
     }
-    if let Some((source_ref, span)) = missing.into_iter().next() {
-        return Err(EmitRefusal::MissingTemporalClockSelection { source_ref, span });
+    if let Some((source_ref, span, declaration)) = missing.into_iter().next() {
+        return Err(EmitRefusal::MissingTemporalClockSelection {
+            source_ref,
+            span,
+            declaration,
+        });
     }
     rows.sort_by(|left, right| {
         (&left.declaration, left.occurrence).cmp(&(&right.declaration, right.occurrence))

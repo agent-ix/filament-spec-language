@@ -1906,7 +1906,7 @@ impl Clocks<'_> {
     /// `r.f.c`, `c` a clock case of the union field `f`, of some object
     /// type of the model.
     fn names_guarded(&self, form: &ExpressionForm, id: ExprId) -> bool {
-        let Some(ExprNode::Field { operand, field }) =
+        let Some(ExprNode::Field { operand, field, .. }) =
             form.expression.get(id).map(|node| node.node())
         else {
             return false;
@@ -1964,7 +1964,7 @@ impl Clocks<'_> {
         context: &EffectiveId,
         parents: &[Option<ExprId>],
     ) -> bool {
-        let Some(ExprNode::Field { operand, field }) = form.expression.get(id).map(|n| n.node())
+        let Some(ExprNode::Field { operand, field, .. }) = form.expression.get(id).map(|n| n.node())
         else {
             return false;
         };
@@ -2129,7 +2129,7 @@ fn self_path(form: &ExpressionForm, id: ExprId) -> Option<Vec<PlaceStep>> {
     let mut at = id;
     loop {
         match form.expression.get(at)?.node() {
-            ExprNode::Field { operand, field } => {
+            ExprNode::Field { operand, field, .. } => {
                 path.push(PlaceStep::Field(field.clone()));
                 at = *operand;
             }
@@ -2179,7 +2179,7 @@ fn element_path(
     let mut at = id;
     let name = loop {
         match form.expression.get(at)?.node() {
-            ExprNode::Field { operand, field } => {
+            ExprNode::Field { operand, field, .. } => {
                 steps.push(PlaceStep::Field(field.clone()));
                 at = *operand;
             }

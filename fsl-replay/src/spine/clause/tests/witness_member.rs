@@ -20,6 +20,8 @@ const CLAUSES: &str = "\
     present(self.maybeHistory) implies \
     forall(n in value(self.maybeHistory): n < 500) }\n\
     pre MemberPre using v on Config::ConfigVersion::attemptUpdate { \
+    forall(n in self.history: n < 500) }\n\
+    post MemberPost using v on Config::ConfigVersion::attemptUpdate { \
     forall(n in self.history: n < 500) }\n";
 
 /// `Config` with `ConfigVersion.history`, a required ordered member of up to
@@ -135,7 +137,7 @@ fn request(selection: ClauseSelection) -> ClauseRunRequest {
 }
 
 /// `clause`, an invariant, over a current snapshot holding `history`.
-fn run_current(clause: &str, history: &[i64]) -> super::super::ClauseRunReport {
+pub(super) fn run_current(clause: &str, history: &[i64]) -> super::super::ClauseRunReport {
     let (label, bytes) = document_ref_and_bytes("member-current", |label| {
         snapshot(label, "current", history)
     });
@@ -150,7 +152,7 @@ fn run_current(clause: &str, history: &[i64]) -> super::super::ClauseRunReport {
 
 /// `MemberPre` over a pre-call observation whose pre snapshot holds
 /// `history`.
-fn run_pre_call(history: &[i64]) -> super::super::ClauseRunReport {
+pub(super) fn run_pre_call(history: &[i64]) -> super::super::ClauseRunReport {
     let (label, bytes) =
         document_ref_and_bytes("member-pre", |label| snapshot(label, "pre", history));
     let mut request = request(ClauseSelection {
@@ -178,6 +180,31 @@ fn run_invocation(history: &[i64]) -> super::super::ClauseRunReport {
     });
     let mut request = request(config_version_invocation_selection(
         "MemberPre",
+        invocation_label.clone(),
+    ));
+    request.snapshots.insert(pre_label.clone(), pre_bytes);
+    request.snapshots.insert(post_label.clone(), post_bytes);
+    request
+        .invocations
+        .insert(invocation_label.clone(), invocation_bytes);
+    run_clause(request).expect("a well-formed request always reports")
+}
+
+/// `MemberPost` over an invocation with separately supplied pre and post
+/// history fields.
+pub(super) fn run_post_invocation(
+    pre_history: &[i64],
+    post_history: &[i64],
+) -> super::super::ClauseRunReport {
+    let (pre_label, pre_bytes) =
+        document_ref_and_bytes("member-pre", |label| snapshot(label, "pre", pre_history));
+    let (post_label, post_bytes) =
+        document_ref_and_bytes("member-post", |label| snapshot(label, "post", post_history));
+    let (invocation_label, invocation_bytes) = document_ref_and_bytes("member-call", |label| {
+        config_version_invocation_bytes(label, &pre_label, &post_label, "mid")
+    });
+    let mut request = request(config_version_invocation_selection(
+        "MemberPost",
         invocation_label.clone(),
     ));
     request.snapshots.insert(pre_label.clone(), pre_bytes);

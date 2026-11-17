@@ -293,14 +293,14 @@ fn tc_450_step_3_unknown_edition_refuses_at_profile() {
     let failure: Value = serde_json::from_slice(&output.stderr).unwrap();
     assert_eq!(failure["code"], "unknown_edition", "{failure}");
     assert_eq!(failure["stage"], "profile");
+    let message = failure["message"].as_str().unwrap();
+    assert!(message.contains("program.native"), "{failure}");
+    assert!(message.contains("7-draft"), "{failure}");
     assert!(
-        failure["message"]
-            .as_str()
-            .unwrap()
-            .contains("program.native")
-            && failure["message"].as_str().unwrap().contains("7-draft"),
+        message.contains("this command reads \"1-draft\""),
         "{failure}"
     );
+    assert!(!message.contains("compile reads"), "{failure}");
 }
 
 /// FR-100-AC-3 (TC-450 step 4): a `1-draft` request carrying each of the

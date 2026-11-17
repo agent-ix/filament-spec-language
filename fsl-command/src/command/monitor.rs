@@ -368,10 +368,8 @@ fn read_inputs(intake: &mut super::Intake<'_>, request: wire::MonitorRequest) ->
     );
     let mut snapshots = BTreeMap::new();
     for (key, file) in &request.observations {
-        snapshots.insert(
-            key.clone(),
-            intake.observation_file(file, intake.remaining)?,
-        );
+        let remaining = intake.remaining;
+        snapshots.insert(key.clone(), intake.file(file, remaining)?);
     }
     let ledger = request
         .ledger
@@ -469,7 +467,7 @@ fn drive(
         },
         dependent_bytes,
     )?;
-    let program = intake.source(&request.program.source)?;
+    let program = intake.source(&request.program.source, "program.source")?;
     require_complete_edition(program.source())?;
     let records: Box<dyn Iterator<Item = Result<Vec<u8>>> + '_> = match source {
         Records::Batch => Box::new(file_lines(&mut intake, records_file.as_deref())?.into_iter()),

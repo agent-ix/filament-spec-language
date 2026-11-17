@@ -1918,6 +1918,7 @@ fn body_refusal_at(
         if let ExprNode::Field {
             operand,
             field: name,
+            ..
         } = expression.at(id).node()
         {
             field = Some((id, *operand, name.as_str()));

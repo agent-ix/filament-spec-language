@@ -356,16 +356,23 @@ pub(super) struct Identity {
 }
 
 impl Identity {
-    pub fn bind(&self) -> Result<crate::formal_source::SourceIdentities, ir::Diagnostic> {
+    pub fn bind(
+        &self,
+        request_member: &str,
+    ) -> Result<crate::formal_source::SourceIdentities, ir::Diagnostic> {
+        let document = ir::SourceDocumentId::new(&self.document)?;
+        let revision =
+            ir::SourceRevision::new(self.formal_revision).map_err(|mut diagnostic| {
+                diagnostic.path = format!("{request_member}.formal_revision");
+                diagnostic.message = format!("{request_member}.formal_revision must be positive");
+                diagnostic
+            })?;
         Ok(crate::formal_source::SourceIdentities {
             native: fsl_foundation::SourceIdentity::new(
                 self.authority.clone(),
                 self.identity.clone(),
             ),
-            formal: ir::SourceIdentity::new(
-                ir::SourceDocumentId::new(&self.document)?,
-                ir::SourceRevision::new(self.formal_revision)?,
-            ),
+            formal: ir::SourceIdentity::new(document, revision),
         })
     }
 }
