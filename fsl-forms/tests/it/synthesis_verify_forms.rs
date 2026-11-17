@@ -4,7 +4,7 @@
 //! objective, into a `Synthesis` form, on real complete-V1 source through
 //! `fsl_cst::parse` and `build_unit`.
 
-use fsl_forms::build_unit;
+use fsl_forms::{build_unit, DeclarationForm};
 use fsl_foundation::SourceIdentity;
 use ix_trace_rs::trace;
 
@@ -26,7 +26,7 @@ const PICK_MIN: &str = "synthesis Pick using p grammar Digit domain Digit \
 
 /// The one declaration form S2 builds for `declaration`, rendered by its
 /// `Debug` form, or the S1/S2 refusal rendered the same way.
-fn built(declaration: &str) -> Result<String, String> {
+fn built(declaration: &str) -> Result<DeclarationForm, String> {
     let text = format!("{HEADER}{declaration}\n");
     let parsed = fsl_cst::parse(
         SourceIdentity::new("a", "u"),
@@ -42,7 +42,7 @@ fn built(declaration: &str) -> Result<String, String> {
     let [form] = unit.forms() else {
         return Err(format!("not one form: {:?}", unit.forms()));
     };
-    Ok(format!("{:?}", form.form()))
+    Ok(form.form().clone())
 }
 
 /// FR-753-AC-1: `Release` builds one `VerificationPlan` form holding its
@@ -50,23 +50,38 @@ fn built(declaration: &str) -> Result<String, String> {
 #[trace("TC-2103", "FR-753-AC-1")]
 #[trace("FSpec-TC-1601", "FSpec-FR-192-AC-8")]
 #[test]
-#[ignore = "QSL-2236: S2 VerificationPlan form for `verify` not implemented yet"]
 fn release_builds_a_verification_plan_form_with_three_steps() {
     let form = built(RELEASE).unwrap_or_else(|refusal| panic!("S2 builds `verify`: {refusal}"));
-    assert!(form.starts_with("VerificationPlan("), "{form}");
-    for word in [
-        "Release",
-        "safe",
-        "tested",
-        "timely",
-        "model_check",
-        "model_based_test",
-        "NoDoubleRefund",
-        "RefundWithin",
-        "500",
-    ] {
-        assert!(form.contains(word), "{word} in {form}");
-    }
+    let DeclarationForm::VerificationPlan(plan) = form else {
+        panic!("S2 returns a verification plan form: {form:?}");
+    };
+    assert_eq!(plan.name.name, "Release");
+    assert!(plan.name.span.start < plan.name.span.end);
+    assert_eq!(plan.profile.alias, "p");
+    assert!(plan.profile.span.start < plan.profile.span.end);
+    assert!(plan.span.start < plan.span.end);
+    assert_eq!(plan.steps.len(), 3);
+    assert_eq!(plan.steps[0].name.name, "safe");
+    assert!(plan.steps[0].name.span.start < plan.steps[0].name.span.end);
+    assert_eq!(plan.steps[0].claim.name, "Orders::NoDoubleRefund");
+    assert!(plan.steps[0].claim.span.start < plan.steps[0].claim.span.end);
+    assert_eq!(plan.steps[0].method.name, "model_check");
+    assert!(plan.steps[0].method.span.start < plan.steps[0].method.span.end);
+    assert_eq!(plan.steps[0].domain.name, "M::Order");
+    assert!(plan.steps[0].domain.span.start < plan.steps[0].domain.span.end);
+    assert!(plan.steps[0].span.start < plan.steps[0].span.end);
+    assert_eq!(plan.steps[0].bound.as_deref(), Some("20"));
+    assert!(plan.steps[0].bound_span.is_some());
+    assert_eq!(plan.steps[1].name.name, "tested");
+    assert_eq!(plan.steps[1].method.name, "model_based_test");
+    assert_eq!(plan.steps[1].bound.as_deref(), Some("500"));
+    assert!(plan.steps[1].bound_span.is_some());
+    assert_eq!(plan.steps[2].name.name, "timely");
+    assert_eq!(plan.steps[2].depends.len(), 1);
+    assert_eq!(plan.steps[2].depends[0].name, "safe");
+    assert!(plan.steps[2].depends[0].span.start < plan.steps[2].depends[0].span.end);
+    assert_eq!(plan.steps[2].bound, None);
+    assert!(plan.steps[2].bound_span.is_none());
 }
 
 /// FR-754-AC-1: `Pick` builds one `Synthesis` form with its names and block.
@@ -76,10 +91,7 @@ fn release_builds_a_verification_plan_form_with_three_steps() {
 #[ignore = "QSL-2235: S2 Synthesis form for `synthesis` not implemented yet"]
 fn pick_builds_a_synthesis_form() {
     let form = built(PICK).unwrap_or_else(|refusal| panic!("S2 builds `synthesis`: {refusal}"));
-    assert!(form.starts_with("Synthesis("), "{form}");
-    for word in ["Pick", "Digit"] {
-        assert!(form.contains(word), "{word} in {form}");
-    }
+    assert!(matches!(form, DeclarationForm::Synthesis(_)), "{form:?}");
 }
 
 /// FR-754-AC-1: `minimize Pick` parses at S1 and the `Synthesis` form holds
@@ -91,6 +103,5 @@ fn pick_builds_a_synthesis_form() {
 fn pick_with_minimize_builds_a_synthesis_form_holding_its_objective() {
     let form = built(PICK_MIN)
         .unwrap_or_else(|refusal| panic!("S1 and S2 build the objective: {refusal}"));
-    assert!(form.starts_with("Synthesis("), "{form}");
-    assert!(form.contains("Minimize"), "{form}");
+    assert!(matches!(form, DeclarationForm::Synthesis(_)), "{form:?}");
 }

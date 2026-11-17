@@ -118,8 +118,8 @@ pub use syntax::{
     TerminalDeclarationKind, TimeInvariantBoundForm, TimeInvariantForm, TimeSourceForm,
     TimeSourceSyntax, TimedIntervalForm, TimedUpper, TransitionForm, TreeRefusal, TupleForm,
     TypeForm, TypeFormHead, UnionForm, UnionMemberForm, UnitForm, UnitTermForm, UrgentForm,
-    UrgentTarget, UsingAlias, VerificationPlanForm, WeightedDelayForm, WeightedValueForm,
-    WeightingForm, WorkloadForm, WorkloadWeightForm,
+    UrgentTarget, UsingAlias, VerificationPlanForm, VerificationStepForm, WeightedDelayForm,
+    WeightedValueForm, WeightingForm, WorkloadForm, WorkloadWeightForm,
 };
 
 /// Each explicit heap stack S2 and the form traits keep grows by at most a

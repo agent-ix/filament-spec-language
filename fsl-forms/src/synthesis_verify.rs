@@ -7,8 +7,11 @@ use fsl_cst::TokenKind;
 use crate::dispatch::{Construct, FormsRefusal};
 use crate::syntax::{
     DeclarationForm, DeclaredName, SynthesisForm, UsingAlias, VerificationPlanForm,
+    VerificationStepForm,
 };
-use crate::value::{significant_tokens, text, unexpected};
+use crate::value::{
+    items, name_form, nodes_of, production_node, significant_tokens, text, tokens_of, unexpected,
+};
 
 /// Build the source-bearing S2 form for `synthesis` (FR-754).
 pub(crate) fn synthesis(construct: Construct<'_>) -> Result<DeclarationForm, FormsRefusal> {
@@ -23,14 +26,70 @@ pub(crate) fn synthesis(construct: Construct<'_>) -> Result<DeclarationForm, For
 /// Build the source-bearing S2 form for `verify` (FR-753).
 pub(crate) fn verification_plan(construct: Construct<'_>) -> Result<DeclarationForm, FormsRefusal> {
     let (name, profile, source, span) = identity(construct)?;
+    let node = production_node(construct)?;
+    let declaration_items = items(construct.cst, node);
+    let steps = nodes_of(&declaration_items, fsl_cst::Production::VerificationStep)
+        .into_iter()
+        .map(|step| verification_step(construct.cst, step))
+        .collect::<Result<_, _>>()?;
     Ok(DeclarationForm::VerificationPlan(Box::new(
         VerificationPlanForm {
             name,
             profile,
+            steps,
             source,
             span,
         },
     )))
+}
+
+fn verification_step(
+    cst: &fsl_cst::LosslessCst,
+    node: &fsl_cst::CstNode,
+) -> Result<VerificationStepForm, FormsRefusal> {
+    let step_items = items(cst, node);
+    let identifiers = tokens_of(&step_items, TokenKind::Identifier);
+    let [name, depends @ ..] = identifiers.as_slice() else {
+        return Err(unexpected(node));
+    };
+    let names = nodes_of(&step_items, fsl_cst::Production::QualifiedName);
+    let [claim, method, domain] = names.as_slice() else {
+        return Err(unexpected(node));
+    };
+    let tokens = significant_tokens(cst, node);
+    let bound = tokens
+        .windows(2)
+        .find(|pair| pair[0].spelling() == b"bound")
+        .map(|pair| {
+            let value = std::str::from_utf8(pair[1].spelling())
+                .ok()
+                .map(str::to_owned)
+                .ok_or_else(|| unexpected(node))?;
+            Ok((value, pair[1].span()))
+        })
+        .transpose()?;
+    let depends = depends
+        .iter()
+        .map(|token| {
+            Ok(DeclaredName {
+                name: text(token, node)?,
+                span: token.span(),
+            })
+        })
+        .collect::<Result<_, FormsRefusal>>()?;
+    Ok(VerificationStepForm {
+        name: DeclaredName {
+            name: text(name, node)?,
+            span: name.span(),
+        },
+        claim: name_form(cst, claim)?,
+        method: name_form(cst, method)?,
+        domain: name_form(cst, domain)?,
+        depends,
+        bound: bound.as_ref().map(|(value, _)| value.clone()),
+        bound_span: bound.map(|(_, span)| span),
+        span: node.span(),
+    })
 }
 
 fn identity(
