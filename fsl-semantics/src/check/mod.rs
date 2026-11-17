@@ -4306,6 +4306,9 @@ impl PackageDeclarations {
                     match protocol_controls::check(
                         protocol,
                         &self.alias_names,
+                        &checked.relationships,
+                        &checked.roles,
+                        &models,
                         &control_declarations,
                         &mut control_cx,
                     ) {

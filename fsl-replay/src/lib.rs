@@ -338,7 +338,9 @@ pub use outcome::{
     probabilistic_wire, protocol_temporal_wire, temporal_wire, ClauseRunNotAnItem,
     CounterexampleWireError, ExecuteResult, ItemCause, ItemLabel, Operation, OutcomeDiagnostic,
     OutcomeDocument, OutcomeItem, OutcomeItemError, OutcomeLocus, OutcomeStage, OutcomeWriteError,
-    ParityReason, ProtocolWire, ResultLimit, ResultValue, OUTCOME_FORMAT,
+    ParityReason, ProtocolConformanceOutput, ConformanceReplayOutput, ConformanceObligationOutput,
+    ConformanceClosureOutput, ConformanceGlobalOutput, ConformanceProjectionOutput, ProtocolWire,
+    ResultLimit, ResultValue, OUTCOME_FORMAT,
 };
 pub use planner::{
     read_premise_item, read_result_entry, read_settlement_request, Budget, PlannerDeclaration,

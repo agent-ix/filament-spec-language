@@ -738,6 +738,7 @@ impl ItemCause {
             }
             ReportedInconclusiveCause::Cause(
                 InconclusiveCause::UndecidedSuccessor
+                | InconclusiveCause::OpenHistory
                 | InconclusiveCause::NoInitialState
                 | InconclusiveCause::NoInstance
                 | InconclusiveCause::KaniVacuousProof
@@ -925,8 +926,89 @@ pub struct OutcomeItem {
     /// clause run; absent on every item not built from a clause run.
     #[serde(skip_serializing_if = "Option::is_none")]
     axes: Option<crate::OutcomeAxes>,
+    /// The FR-990 per-obligation, closure and global conformance result.
+    #[serde(flatten, skip_serializing_if = "Option::is_none")]
+    protocol_conformance: Option<ProtocolConformanceOutput>,
     #[serde(serialize_with = "category_str")]
     category: Category,
+}
+
+/// The extra FSpec FR-059 result members of a `global-conformance` item.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+pub struct ProtocolConformanceOutput {
+    /// One result per protocol obligation.
+    pub obligations: Vec<ConformanceObligationOutput>,
+    /// The complete-global-conformance closure record.
+    pub closure: ConformanceClosureOutput,
+    /// The result joined from the obligations and closure.
+    pub global: ConformanceGlobalOutput,
+    /// Per-role projection results, absent in recording mode.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub projections: Option<Vec<ConformanceProjectionOutput>>,
+    /// Whether the global counterexample replay reproduced its violation.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub replay: Option<ConformanceReplayOutput>,
+}
+
+/// The in-process replay result for a global-conformance counterexample.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+pub struct ConformanceReplayOutput {
+    /// Whether replay reproduced the claimed violation.
+    pub reproduced: bool,
+}
+
+/// One FR-990 verdict and its evidence.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+pub struct ConformanceObligationOutput {
+    /// The obligation's typed protocol identity.
+    pub obligation: serde_json::Value,
+    /// `satisfied`, `violated` or `pending`.
+    pub verdict: String,
+    /// The FSpec FR-059 cause of a violation, when one is reported.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub cause: Option<String>,
+    /// The basis for the decision.
+    pub basis: String,
+    /// The witness index or recording observations supporting a result.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub witness: Option<serde_json::Value>,
+}
+
+/// The independent FR-990 closure record.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+pub struct ConformanceClosureOutput {
+    /// `closed`, `open`, `incomplete` or `contradicted`.
+    pub state: String,
+    /// The complete set of closure premises.
+    pub premises: Vec<serde_json::Value>,
+    /// `engine` or `recording`.
+    pub producer: String,
+}
+
+/// The joined FR-990 global result.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+pub struct ConformanceGlobalOutput {
+    /// The FSpec FR-360 result label.
+    pub label: String,
+    /// The basis of the result.
+    pub basis: String,
+    /// Whether the global result is complete success.
+    pub complete: bool,
+    /// The cause for an inconclusive or incomplete result.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub cause: Option<String>,
+}
+
+/// One FR-890 projection result beside, and independent from, conformance.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+pub struct ConformanceProjectionOutput {
+    /// The role the projection is over.
+    pub role: String,
+    /// The projection's FSpec FR-360 result label.
+    pub label: String,
+    /// The projection's counterexample, when refuted.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub counterexample: Option<serde_json::Value>,
 }
 
 /// A reached state-graph limit on FR-331's accounting record.
@@ -1180,6 +1262,7 @@ impl OutcomeItem {
             min_count: None,
             clause: None,
             axes: None,
+            protocol_conformance: None,
             category: value.category(),
         }
     }
@@ -1211,6 +1294,13 @@ impl OutcomeItem {
                 Some(counterexample.ok_or(OutcomeItemError::MissingCounterexample)?);
         }
         Ok(item)
+    }
+
+    /// Attach the typed FR-990 result members to a global-conformance item.
+    #[must_use]
+    pub fn with_protocol_conformance(mut self, output: ProtocolConformanceOutput) -> Self {
+        self.protocol_conformance = Some(output);
+        self
     }
 
     /// The FR-331 item for one settled state-graph claim instance, including
@@ -1283,6 +1373,7 @@ impl OutcomeItem {
             min_count: None,
             clause: None,
             axes: None,
+            protocol_conformance: None,
             category: Category::Violation,
         }
     }
@@ -1349,6 +1440,7 @@ impl OutcomeItem {
             limit_reached: None,
             clause: Some(clause.to_owned()),
             axes: Some(report.axes()),
+            protocol_conformance: None,
             category,
         })
     }
@@ -2870,6 +2962,47 @@ mod tests {
 
     fn record(index: usize, value: TerminalValue) -> OutcomeItem {
         OutcomeItem::from_terminal(&TerminalRecord::from_value(RequestIndex::new(index), value))
+    }
+
+    /// FR-990 writes the structured result members on the settled item while
+    /// retaining its terminal label and category.
+    #[trace("TC-2800", "FR-990-AC-1")]
+    #[test]
+    fn protocol_conformance_members_serialize_at_item_level() {
+        let item =
+            record(0, TerminalValue::Tested).with_protocol_conformance(ProtocolConformanceOutput {
+                obligations: vec![ConformanceObligationOutput {
+                    obligation: json!({"kind": "closure"}),
+                    verdict: "satisfied".to_owned(),
+                    cause: None,
+                    basis: "explored".to_owned(),
+                    witness: None,
+                }],
+                closure: ConformanceClosureOutput {
+                    state: "closed".to_owned(),
+                    premises: vec![json!({"kind": "execution", "identity": "w-1"})],
+                    producer: "engine".to_owned(),
+                },
+                global: ConformanceGlobalOutput {
+                    label: "proved".to_owned(),
+                    basis: "closed-scope".to_owned(),
+                    complete: true,
+                    cause: None,
+                },
+                projections: Some(vec![ConformanceProjectionOutput {
+                    role: "Buyer".to_owned(),
+                    label: "proved".to_owned(),
+                    counterexample: None,
+                }]),
+                replay: Some(ConformanceReplayOutput { reproduced: true }),
+            });
+        let wire = serde_json::to_value(item).expect("serializes");
+        assert_eq!(wire["result"], "tested");
+        assert_eq!(wire["obligations"][0]["verdict"], "satisfied");
+        assert_eq!(wire["closure"]["state"], "closed");
+        assert_eq!(wire["global"]["complete"], true);
+        assert_eq!(wire["projections"][0]["role"], "Buyer");
+        assert_eq!(wire["replay"]["reproduced"], true);
     }
 
     /// FR-286-AC-1: `check` over the spine fixture is one whole document, at

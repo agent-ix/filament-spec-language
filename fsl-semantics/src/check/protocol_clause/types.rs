@@ -570,6 +570,10 @@ impl CheckedControl {
 pub struct CheckedAwait {
     /// The `await` control.
     pub node: ProtocolNodeId,
+    /// The declared control name.
+    pub name: String,
+    /// The whole `await` declaration, the exact locus a clock selection names.
+    pub span: fsl_foundation::Span,
     /// The `clock "<string>"` text: the clock role.
     pub clock: String,
     /// The `within [lower, upper]` window, `lower <= upper`.

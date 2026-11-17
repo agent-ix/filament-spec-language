@@ -1156,8 +1156,8 @@ fn tc134_timed_graph_with(
         .unwrap_or_else(|refusals| panic!("timed TC-134 checks: {refusals:?}"))
 }
 
-/// One clock selection per timed temporal declaration of `graph`, the
-/// `compensate` windows included (FSpec FR-322-AC-305).
+/// One clock selection per clock-reading declaration of `graph`, including
+/// temporal clauses, awaits and `compensate` windows.
 pub(in crate::emit::tests) fn tc134_selections(
     graph: &fsl_semantics::check::CheckedGraph,
 ) -> Vec<crate::emit::TemporalClockSelection> {
@@ -1194,6 +1194,22 @@ pub(in crate::emit::tests) fn tc134_selections(
                 continue;
             };
             selections.push((crate::emit::tests::node_id(key), template.span));
+        }
+        for awaited in &protocol.awaits {
+            if !matches!(
+                awaited.profile,
+                Some(
+                    fsl_semantics::check::TemporalProfile::EventPositionFalseExtension
+                        | fsl_semantics::check::TemporalProfile::FixedSampleFalseExtension
+                        | fsl_semantics::check::TemporalProfile::TimestampedEventFiniteWindow
+                )
+            ) {
+                continue;
+            }
+            let Some(key) = keys.nodes.get(&awaited.node) else {
+                continue;
+            };
+            selections.push((crate::emit::tests::node_id(key), awaited.span));
         }
     }
     selections.sort_by(|left, right| left.0.cmp(&right.0));

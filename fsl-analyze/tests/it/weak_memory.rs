@@ -12,7 +12,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::num::NonZeroUsize;
 
-use fsl_analyze::model_check::{check_protocol, ProtocolCheckRequest, SubjectContext};
+use fsl_analyze::model_check::{ProtocolCheckRequest, SubjectContext, check_protocol};
 use fsl_eval::model_subject::{AtomStop, ModelInstance, ModelLetters, ProtocolSubject};
 use fsl_eval::simulation::model::{ModelFinding, ModelSimState, ModelSystem};
 use ix_trace_rs::trace;
@@ -20,34 +20,34 @@ use ix_trace_rs::trace;
 use filament_exact::{Cancel, Meter};
 use filament_semantic_value::catalog::CatalogCode;
 use fsl_eval::simulation::protocol::{
-    classify_accesses, visible, CarriedComponent, ClaimReads, InstanceAccess, MemoryModel,
-    MemorySelection, MemorySelectionRefusal, PositionAnchor, ProtocolLocation, ProtocolRefusal,
-    ProtocolState, ProtocolSystem, ProtocolTransition, Ra, ReachRefusal, RestKind, Sc, StepKind,
-    ThreadPath, Tso, WaitCause, WeakAccesses,
+    CarriedComponent, ClaimReads, InstanceAccess, MemoryModel, MemorySelection,
+    MemorySelectionRefusal, PositionAnchor, ProtocolLocation, ProtocolRefusal, ProtocolState,
+    ProtocolSystem, ProtocolTransition, Ra, ReachRefusal, RestKind, Sc, StepKind, ThreadPath, Tso,
+    WaitCause, WeakAccesses, classify_accesses, visible,
 };
 use fsl_eval::simulation::{
-    independent, ExpansionLimit, Location, SubjectSystem, TransitionSystem,
+    ExpansionLimit, Location, SubjectSystem, TransitionSystem, independent,
 };
 use fsl_eval::temporal::AtomReading;
-use fsl_foundation::source::provenance::OccurrenceKey;
 use fsl_foundation::MemoryModelName;
+use fsl_foundation::source::provenance::OccurrenceKey;
 use fsl_package::CheckedPackage;
 use fsl_replay::{
-    replay_protocol_trace, settle_protocol_check, IncompleteCause, InconclusiveCause, MemoryBound,
-    MemoryBoundMember, MemoryCause, ModelCheckItem, ModelCheckLimit, ModelCheckLimits,
-    ModelCheckOutcome, ModelCheckRecord, ModelTraceRefusal, ModelTraceReplayResult,
-    ModelTraceSettlement, ModelTraceSubject, ProtocolCertificateRequest, ProtocolTraceSubject,
-    ReachedLimit, ReplayLimits, ReplayRefusal, ResultLabel, StatedMemoryBound,
-    TemporalCounterexample, TerminalValue, UndecidedCause,
+    IncompleteCause, InconclusiveCause, MemoryBound, MemoryBoundMember, MemoryCause,
+    ModelCheckItem, ModelCheckLimit, ModelCheckLimits, ModelCheckOutcome, ModelCheckRecord,
+    ModelTraceRefusal, ModelTraceReplayResult, ModelTraceSettlement, ModelTraceSubject,
+    ProtocolCertificateRequest, ProtocolTraceSubject, ReachedLimit, ReplayLimits, ReplayRefusal,
+    ResultLabel, StatedMemoryBound, TemporalCounterexample, TerminalValue, UndecidedCause,
+    replay_protocol_trace, settle_protocol_check,
 };
 use fsl_route::model_request::ModelRequest;
 use fsl_semantics::check::{AccessClass, FormulaNodeId};
-use serde_json::{json, Value as Json};
+use serde_json::{Value as Json, json};
 
-use crate::fill::{reachable, Explored, Reached};
+use crate::fill::{Explored, Reached, reachable};
 use crate::litmus::{
-    attempt, contracts, core, document, field, key, package, protocol, protocol_profiled_package,
-    protocol_with, sb_run, sb_unit, unit_text_with, Documents, NO_BOTH_ZERO, PROTOCOL_PROFILE,
+    Documents, NO_BOTH_ZERO, PROTOCOL_PROFILE, attempt, contracts, core, document, field, key,
+    package, protocol, protocol_profiled_package, protocol_with, sb_run, sb_unit, unit_text_with,
 };
 use crate::model_settle::{envelope_at, request};
 
@@ -840,7 +840,6 @@ fn explores(case: &Case, model: MemoryModelName) -> bool {
 #[trace("TC-664", "FR-219-AC-4")]
 #[trace("TC-665", "FR-220-AC-5")]
 #[test]
-#[ignore = "QSL-2218: a weak selection settles WeakAccessShape for a non-all join and a multi-location attempt instead of exploring"]
 fn a_weak_selection_explores_an_any_join_and_a_multi_location_attempt() {
     let any = Case::new(&any_join_unit());
     assert!(explores(&any, MemoryModelName::Tso));
@@ -870,7 +869,6 @@ fn a_weak_selection_explores_an_any_join_and_a_multi_location_attempt() {
 /// past the outer fork; no reachable state carries a weak-access finding.
 #[trace("TC-665", "FR-220-AC-5")]
 #[test]
-#[ignore = "QSL-2218: nested any joins under tso settle WeakAccessShape at the first reachable state instead of exploring"]
 fn nested_any_joins_explore_under_a_weak_selection() {
     let run = "parallel Both { \
         branch left sequence L { \
@@ -901,10 +899,12 @@ fn nested_any_joins_explore_under_a_weak_selection() {
         .successors(&forked)
         .expect("expands the forked state");
     assert!(!after.successors.is_empty());
-    assert!(!after
-        .findings
-        .iter()
-        .any(|finding| matches!(finding, ModelFinding::WeakAccessShape(_))));
+    assert!(
+        !after
+            .findings
+            .iter()
+            .any(|finding| matches!(finding, ModelFinding::WeakAccessShape(_)))
+    );
     assert!(explores(&case, MemoryModelName::Tso));
 }
 
@@ -915,7 +915,6 @@ fn nested_any_joins_explore_under_a_weak_selection() {
 /// each is admitted under `sc`, and a well-ordered RMW explores as before.
 #[trace("TC-665", "FR-220-AC-14")]
 #[test]
-#[ignore = "QSL-2218: a mismatched ordering settles WeakAccessShape instead of being restricted to its access kind"]
 fn each_mismatched_ordering_is_restricted_under_tso_and_ra() {
     let one_branch = |first: String, other: &str| {
         let run = format!(
@@ -963,7 +962,6 @@ fn each_mismatched_ordering_is_restricted_under_tso_and_ra() {
 /// beside a `release` load restricted to `relaxed`; the item explores.
 #[trace("TC-665", "FR-220-AC-14")]
 #[test]
-#[ignore = "QSL-2218: a multi-location attempt and a release load settle WeakAccessShape instead of exploring"]
 fn a_multi_location_attempt_beside_a_mismatched_load_explores() {
     let run = format!(
         "parallel Both {{ branch left sequence L {{ {} }} \
@@ -1034,10 +1032,12 @@ fn en1_classifies_two_relaxed_stores_to_one_shared_location() {
         for node in ["Both/left/L/S1", "Both/right/R/S2"] {
             assert!(classes(&accesses, node).contains(&(AccessClass::Store, name("x", "v"))));
         }
-        assert!(accesses
-            .shared()
-            .iter()
-            .any(|location| named(&accesses, location) == name("x", "v")));
+        assert!(
+            accesses
+                .shared()
+                .iter()
+                .any(|location| named(&accesses, location) == name("x", "v"))
+        );
     }
 }
 
@@ -1104,7 +1104,6 @@ fn sb_with_event(event: &str) -> String {
 /// admits, so its field is not part of any enabled attempt footprint.
 #[trace("TC-665", "FR-220-AC-15")]
 #[test]
-#[ignore = "QSL-2218: a node reader of a shared location settles WeakAccessShape instead of loading relaxed"]
 fn a_constraint_reading_a_shared_location_loads_it_relaxed() {
     const SEEN: &str = "event Seen by c as (s: Boolean) { s and k.v >= 0 };";
     let tso = [select("SB::Both", MemoryModelName::Tso)];
@@ -1149,10 +1148,12 @@ fn a_constraint_reading_a_shared_location_loads_it_relaxed() {
     // The actual `Cell` z that no selected attempt accesses is not shared
     // with the reader.
     let read_z = Case::over_cells(&object_unit("Cell", &sb_with_event(SEEN), "{ d }"), "z");
-    assert!(read_z
-        .accesses(&tso)
-        .node_reads("Both/right/R/Seen")
-        .is_empty());
+    assert!(
+        read_z
+            .accesses(&tso)
+            .node_reads("Both/right/R/Seen")
+            .is_empty()
+    );
     assert!(matches!(
         read_z.check(&tso, ModelCheckItem::DeadlockFreedom, None),
         ModelCheckOutcome::Holds { .. }
@@ -1266,7 +1267,6 @@ fn tso_reads(case: &Case, site: &str) -> Vec<(String, String)> {
 /// branch whose attempt stores it.
 #[trace("TC-665")]
 #[test]
-#[ignore = "QSL-2218: a node reader of a shared location settles WeakAccessShape instead of loading relaxed"]
 fn an_effect_commit_send_or_receive_constraint_reads_toward_sharing() {
     let store = attempt("Sx", "w", "Cell::set", "", "IsX, StoreOne");
     let channel = "channel ch from w to w carries Boolean ordering unordered \
@@ -1325,7 +1325,6 @@ fn an_effect_commit_send_or_receive_constraint_reads_toward_sharing() {
 /// FR-902: a multi-location attempt beside a reader, and a reader alone,
 /// each explore under `tso`; the reader reads `x.v`.
 #[test]
-#[ignore = "QSL-2218: a multi-location attempt and a node reader settle WeakAccessShape instead of exploring"]
 fn a_multi_location_attempt_and_a_reader_explore_under_tso() {
     const SEEN: &str = "event Seen by c as (s: Boolean) { s and k.v >= 0 };";
     let both = format!(
@@ -1615,10 +1614,12 @@ fn a_seq_cst_fence_waits_for_its_store_buffer_under_tso() {
                 None => {
                     assert!(buffered, "an unbuffered seq_cst fence is enabled");
                     let blocked = system.blocked(&state.state, &[]).expect("blocked");
-                    assert!(blocked
-                        .iter()
-                        .filter(|thread| thread.path == left)
-                        .all(|thread| thread.cause == WaitCause::Gate));
+                    assert!(
+                        blocked
+                            .iter()
+                            .filter(|thread| thread.path == left)
+                            .all(|thread| thread.cause == WaitCause::Gate)
+                    );
                     // `flush(left)` drains the one store, and the fence is
                     // then enabled.
                     let (_, flushed) = state
@@ -1631,12 +1632,14 @@ fn a_seq_cst_fence_waits_for_its_store_buffer_under_tso() {
                         })
                         .expect("a flush of left's buffer");
                     let after = &reached[*flushed];
-                    assert!(after
-                        .state
-                        .memory()
-                        .buffer(&left)
-                        .unwrap_or_default()
-                        .is_empty());
+                    assert!(
+                        after
+                            .state
+                            .memory()
+                            .buffer(&left)
+                            .unwrap_or_default()
+                            .is_empty()
+                    );
                     assert!(fence_step(after, &left).is_some());
                     waited += 1;
                 }
@@ -1836,12 +1839,14 @@ fn every_terminal_state_under_tso_has_empty_buffers() {
         .collect();
     assert!(!terminal.is_empty());
     for state in terminal {
-        assert!(state.state.memory().threads().all(|thread| state
-            .state
-            .memory()
-            .buffer(thread)
-            .unwrap_or_default()
-            .is_empty()));
+        assert!(state.state.memory().threads().all(|thread| {
+            state
+                .state
+                .memory()
+                .buffer(thread)
+                .unwrap_or_default()
+                .is_empty()
+        }));
     }
     assert!(matches!(
         case.check(&tso, ModelCheckItem::DeadlockFreedom, None),
@@ -2227,10 +2232,12 @@ fn a_tso_counterexample_replays_only_under_tso() {
     else {
         panic!("both loads read 0 under sc");
     };
-    assert!(under_sc
-        .prefix
-        .iter()
-        .all(|step| step.transition.memory_component().is_none()));
+    assert!(
+        under_sc
+            .prefix
+            .iter()
+            .all(|step| step.transition.memory_component().is_none())
+    );
     // An `sc` step that carries a component, its post-state key right,
     // is refused on the component alone.
     let mut forged_sc = under_sc.as_ref().clone();
@@ -2837,10 +2844,12 @@ fn a_send_waits_for_its_threads_buffer() {
                 .map(|(_, next)| *next)
                 .expect("a flush");
             let after = &reachable(&system)[flushed];
-            assert!(after
-                .steps
-                .iter()
-                .any(|(transition, _)| transition.kind() == StepKind::Send));
+            assert!(
+                after
+                    .steps
+                    .iter()
+                    .any(|(transition, _)| transition.kind() == StepKind::Send)
+            );
         }
     }
     assert!(waited > 0);
@@ -3224,11 +3233,12 @@ fn reachable_refuses_with_the_expansion_stop_on_any_worker_count() {
             CatalogCode::new("resource_exhausted", "insufficient-next-charge")
         );
     }
-    assert!(case
-        .system(&tso, Tso::default())
-        .expect("builds")
-        .reachable(four)
-        .is_ok());
+    assert!(
+        case.system(&tso, Tso::default())
+            .expect("builds")
+            .reachable(four)
+            .is_ok()
+    );
 }
 
 /// FR-902-AC-1, FR-902-AC-5 (TC-2542, TC-2544): under a `tso` selection, an
@@ -3238,7 +3248,6 @@ fn reachable_refuses_with_the_expansion_stop_on_any_worker_count() {
 #[trace("TC-2542", "FR-902-AC-1", "FSpec-FR-741-AC-1")]
 #[trace("TC-2544", "FR-902-AC-5", "FSpec-FR-741-AC-4")]
 #[test]
-#[ignore = "QSL-2218: multi-location accesses and non-all joins under a weak model settle WeakAccessShape instead of being stepped"]
 fn multi_location_accesses_and_any_joins_are_stepped_under_tso() {
     let tso = [select("SB::Both", MemoryModelName::Tso)];
     let any = Case::new(&any_join_unit());
@@ -3280,12 +3289,65 @@ fn multi_location_accesses_and_any_joins_are_stepped_under_tso() {
     }
 }
 
+/// FR-902-AC-2: a two-location operation that reads and writes shared
+/// fields is admitted as a locked transaction by both weak models.
+#[trace("TC-2542", "FR-902-AC-2")]
+#[test]
+fn multi_location_read_modify_write_is_locked_under_tso_and_ra() {
+    struct FieldsEqual;
+    impl ModelLetters for FieldsEqual {
+        crate::units::unguarded!();
+
+        fn reads(&self, _atom: FormulaNodeId) -> crate::units::Reads {
+            crate::units::unread()
+        }
+
+        fn atom(
+            &self,
+            _atom: FormulaNodeId,
+            instance: &ModelInstance,
+            state: &ModelSimState,
+            _meter: &mut Meter,
+        ) -> Result<AtomReading, AtomStop> {
+            Ok(
+                if field(state, "cells", &instance.key, "v")
+                    == field(state, "cells", &instance.key, "w")
+                {
+                    AtomReading::True
+                } else {
+                    AtomReading::False
+                },
+            )
+        }
+    }
+
+    static FIELDS_EQUAL: FieldsEqual = FieldsEqual;
+    let run = format!(
+        "parallel Both {{ branch left sequence L {{ {} }} \
+         branch right sequence R {{ {} {} }} }} join all [left, right];",
+        attempt("Bx", "w", "Cell::both", "", "BothX, XWZeroBoth, BothOne"),
+        attempt("Lx", "c", "Core::read2", "", "ReadsX2, Read2"),
+        attempt("Lw", "c", "Core::read3", "", "ReadsX3, ReadW"),
+    );
+    let body = contracts()
+        + &protocol("SB", &run)
+        + "temporal FieldsEqual using t0 over (c: M::Cell) clock \"model-steps\" \
+           on origin { always holds(c.v = c.w) }\n";
+    let case = Case::with_letters(&body, &FIELDS_EQUAL);
+    for model in [MemoryModelName::Tso, MemoryModelName::Ra] {
+        let outcome = case.claim(&[select("SB::Both", model)], None);
+        assert!(
+            matches!(outcome, ModelCheckOutcome::Holds { .. }),
+            "{model:?}: {outcome:?}"
+        );
+    }
+}
+
 /// FR-902-AC-3 (TC-2543): an `event` reader of a shared location under a
 /// `tso` selection reads it as a relaxed load in its own step, so the item
 /// explores instead of settling `WeakAccessShape`.
 #[trace("TC-2543", "FR-902-AC-3", "FSpec-FR-741-AC-3")]
 #[test]
-#[ignore = "QSL-2218: a node reader of a shared location settles WeakAccessShape instead of loading relaxed"]
 fn a_reader_of_a_shared_location_loads_relaxed_under_tso() {
     const SEEN: &str = "event Seen by c as (s: Boolean) { s and k.v >= 0 };";
     let read_x = Case::over_object(

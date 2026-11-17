@@ -11,8 +11,8 @@ use base64::Engine as _;
 use fsl_eval::model_subject::{ModelInstance, ModelSubject, ProtocolSubject, RoleBinding};
 use fsl_eval::simulation::model::{ExpansionLimits, ModelSimulationRequest, ModelSystem};
 use fsl_eval::simulation::protocol::{
-    live_instance_bound, send_record_json, transition_json, MemoryModel, ProtocolRefusal,
-    ProtocolSystem, ResolvedMemory, SubjectMemory,
+    MemoryModel, ProtocolRefusal, ProtocolSystem, ResolvedMemory, SubjectMemory,
+    live_instance_bound, send_record_json, transition_json,
 };
 use fsl_eval::simulation::{StateKey, TransitionSystem};
 use fsl_package::CheckedPackage;
@@ -329,7 +329,7 @@ pub(crate) struct ReplaySubject<'a, 'b> {
 }
 
 impl<'a> ReplaySubject<'a, '_> {
-    fn simulation(&self) -> ModelSimulationRequest<'a> {
+    pub(crate) fn simulation(&self) -> ModelSimulationRequest<'a> {
         ModelSimulationRequest {
             package: self.package,
             packages: self.binding.packages,
@@ -348,33 +348,43 @@ impl<'a> ReplaySubject<'a, '_> {
 
     /// The package identity each static role is played by: the model its
     /// `on` names, else the subject's one selected model.
-    fn roles(&self) -> Vec<RoleBinding> {
-        let selections = self.package.graph().model_selections();
-        let sole = match selections {
-            [only] => Some(only.identity.clone()),
-            _ => None,
-        };
+    pub(crate) fn roles(&self) -> Vec<RoleBinding> {
+        let selected: std::collections::BTreeSet<String> = self
+            .binding
+            .universes
+            .iter()
+            .map(|universe| universe.population.package.clone())
+            .collect();
+        let sole = (selected.len() == 1)
+            .then(|| selected.iter().next().cloned())
+            .flatten();
         self.protocol
             .roles
             .iter()
             .filter(|role| !role.replicated)
             .filter_map(|role| {
-                let named = role.model_selection.as_ref().and_then(|name| {
-                    selections
-                        .iter()
-                        .find(|selection| selection.identity == *name)
-                        .map(|selection| selection.identity.clone())
-                });
+                let named = role
+                    .model_selection
+                    .as_ref()
+                    .and_then(|name| self.package.graph().model_package_identity(name))
+                    .filter(|package| selected.contains(*package))
+                    .map(str::to_owned);
+                let contextual = role
+                    .context
+                    .as_ref()
+                    .map(|context| context.original().package())
+                    .filter(|package| selected.contains(*package))
+                    .map(str::to_owned);
                 Some(RoleBinding {
                     role: role.name.clone(),
-                    model: named.or_else(|| sole.clone())?,
+                    model: named.or(contextual).or_else(|| sole.clone())?,
                 })
             })
             .collect()
     }
 
     /// The subject with `over` bound to `instance`.
-    fn subject(&self, over: ModelInstance) -> Result<ProtocolSubject<'a>, ReplayFault> {
+    pub(crate) fn subject(&self, over: ModelInstance) -> Result<ProtocolSubject<'a>, ReplayFault> {
         let memory =
             ResolvedMemory::resolve(self.protocol, &[]).map_err(|_| ReplayFault::Broken)?;
         Ok(ProtocolSubject {
@@ -392,7 +402,7 @@ impl<'a> ReplaySubject<'a, '_> {
     }
 
     /// The instances the protocol's `over` input can be bound to.
-    fn instances(&self) -> Result<Vec<ModelInstance>, ReplayFault> {
+    pub(crate) fn instances(&self) -> Result<Vec<ModelInstance>, ReplayFault> {
         let input = self
             .protocol
             .slots
@@ -516,7 +526,7 @@ pub(crate) fn finite_replay_item<'a>(
                         cause: defect.cause(),
                         position: defect.position(),
                         path: Some(defect.path().to_owned()).filter(|path| !path.is_empty()),
-                    })
+                    });
                 }
             };
             let subject = ReplaySubject {

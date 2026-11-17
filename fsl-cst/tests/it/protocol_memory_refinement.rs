@@ -605,7 +605,6 @@ fn a_malformed_abstract_subject_is_refused_at_its_token() {
 /// travels over with `via` after its `to` role, and S1 admits it.
 #[trace("TC-2533", "FR-897-AC-1", "FSpec-FR-738-AC-1")]
 #[test]
-#[ignore = "QSL-2217: the channel production has no via clause, so a channel over a connection is a syntax error"]
 fn a_channel_names_its_connection_with_via() {
     let members = "role Inlet on M::Actor;\n\
         relationship Link = M::link;\n\

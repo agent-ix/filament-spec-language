@@ -8,10 +8,10 @@
 use super::admission_corpus::config_version_unit;
 use super::owner_model::targets;
 use super::population_bound::document;
-use super::protocol_graph::{argument, clause, member, target, PROFILES};
+use super::protocol_graph::{PROFILES, argument, clause, member, target};
 use super::protocol_reference::clause_argument;
 use super::protocol_terminal::argument as named_argument;
-use super::reachability::{lower_with, Lowered};
+use super::reachability::{Lowered, lower_with};
 use super::*;
 use crate::checked_v2::V2ReadRefusal;
 use filament_contract_model::{CheckedPackageRefusalCause, CheckedPackageRefusalCode};
@@ -19,6 +19,196 @@ use filament_semantic_value::checking::CheckMode;
 use filament_semantic_value::location::{
     ExpressionLocation as Location, ExpressionOwner as Origin,
 };
+
+fn channel_connection_model() -> fsl_semantics::model::intake::SelectedModel {
+    use filament_checked::key::DeclarationKey;
+    use fsl_foundation::Span;
+    use fsl_semantics::model::accounting::ModelNormalizationLimits;
+    use fsl_semantics::model::domain_package::{
+        ComponentRecord, DomainPackage, DomainPackageRecord, DomainPackageRef, EndpointRecord,
+        Multiplicity, ObjectTypeRecord, PortDirection, RelationshipDirection, RelationshipEnd,
+        RelationshipRecord,
+    };
+    use fsl_semantics::model::intake::SelectedModel;
+    use fsl_semantics::model::normalize::{NormalizeOutcome, normalize};
+
+    let key = |name: &str| DeclarationKey {
+        package: "example/channel-connection".to_owned(),
+        node: format!("ix://example/channel-connection/{name}"),
+    };
+    let one = Multiplicity {
+        lower: 1,
+        upper: Some(1),
+        ordered: false,
+        unique: true,
+    };
+    let package = DomainPackage::new(
+        DomainPackageRef {
+            identity: "example/channel-connection".to_owned(),
+        },
+        vec![
+            DomainPackageRecord::ObjectType(ObjectTypeRecord {
+                key: key("Sys"),
+                interface_features: None,
+                abstract_type: false,
+                supertypes: Vec::new(),
+            }),
+            DomainPackageRecord::ObjectType(ObjectTypeRecord {
+                key: key("Pump"),
+                interface_features: None,
+                abstract_type: false,
+                supertypes: Vec::new(),
+            }),
+            DomainPackageRecord::ObjectType(ObjectTypeRecord {
+                key: key("Tank"),
+                interface_features: None,
+                abstract_type: false,
+                supertypes: Vec::new(),
+            }),
+            DomainPackageRecord::ObjectType(ObjectTypeRecord {
+                key: key("Flow"),
+                interface_features: Some(Vec::new()),
+                abstract_type: false,
+                supertypes: Vec::new(),
+            }),
+            DomainPackageRecord::Component(ComponentRecord {
+                key: key("sys_pump"),
+                owning_type: key("Sys"),
+                value_type: key("Pump"),
+                multiplicity: one,
+                has_part_signature: true,
+            }),
+            DomainPackageRecord::Component(ComponentRecord {
+                key: key("sys_tank"),
+                owning_type: key("Sys"),
+                value_type: key("Tank"),
+                multiplicity: one,
+                has_part_signature: true,
+            }),
+            DomainPackageRecord::Endpoint(EndpointRecord {
+                key: key("pump_out"),
+                owning_component: key("sys_pump"),
+                value_type: key("Flow"),
+                direction: Some(PortDirection::Out),
+                multiplicity: one,
+            }),
+            DomainPackageRecord::Endpoint(EndpointRecord {
+                key: key("tank_in"),
+                owning_component: key("sys_tank"),
+                value_type: key("Flow"),
+                direction: Some(PortDirection::In),
+                multiplicity: one,
+            }),
+            DomainPackageRecord::Relationship(RelationshipRecord {
+                key: key("link"),
+                declared_at: None,
+                source: RelationshipEnd {
+                    type_identity: key("pump_out"),
+                    role: None,
+                    multiplicity: Some(one),
+                },
+                target: RelationshipEnd {
+                    type_identity: key("tank_in"),
+                    role: None,
+                    multiplicity: Some(one),
+                },
+                direction: RelationshipDirection::SourceToTarget,
+            }),
+        ],
+    );
+    let NormalizeOutcome::Completed(view) =
+        normalize(&package, ModelNormalizationLimits::UNLIMITED)
+    else {
+        panic!("the connection fixture normalizes");
+    };
+    SelectedModel {
+        alias: "M".to_owned(),
+        span: Span { start: 0, end: 0 },
+        view,
+        operation_clauses: Vec::new(),
+        type_invariants: Vec::new(),
+    }
+}
+
+/// FR-897-AC-1 (TC-2533): S4 emits the channel's `connection` reference to
+/// the exact model relationship node already included in the clause's
+/// `relationships` set, and the channel lists it as a dependency.
+#[ix_trace_rs::trace("FR-897-AC-1", "TC-2533")]
+#[test]
+fn a_channel_emits_only_its_declared_connection_reference() {
+    let text = "language \"ix:native\" edition \"1-draft\";\n\
+        profile p = \"filament.protocol.finite-global/v1\";\n\
+        model M = \"example/channel-connection\";\n\
+        protocol Pipeline using p over (input: M::Sys) on origin {\n\
+        role Outlet on M::pump_out;\n\
+        role Inlet on M::tank_in;\n\
+        relationship Link = M::link;\n\
+        channel Feed from Outlet to Inlet via Link carries M::Flow ordering unordered \
+        delivery exactly-once-premise capacity 2 overflow reject;\n\
+        run sequence Main { }\n\
+        finish Closed as (closed: Boolean) { true };\n\
+        }";
+    let parsed = fsl_cst::parse(
+        fsl_foundation::SourceIdentity::new("agent-ix", "test:protocol-connection"),
+        "protocol.native",
+        text.as_bytes(),
+        fsl_cst::Limits::default(),
+    )
+    .expect("S1 reads the source");
+    assert!(parsed.is_admissible(), "{:?}", parsed.diagnostics());
+    let unit = fsl_forms::build_unit(&parsed).expect("S2 builds the unit");
+    let graph = PackageDeclarations::assemble(
+        parsed.source().reference().clone(),
+        "fixture".to_owned(),
+        unit,
+        vec![channel_connection_model()],
+        Vec::new(),
+    )
+    .expect("I1 admits the model")
+    .check(CheckMode::Linked, CheckingLimits::default())
+    .unwrap_or_else(|refusals| panic!("{refusals:?}"));
+    let emission = emit_checked(&CheckedPackage::link(graph)).expect("the package emits");
+    assert_eq!(emission.omitted, []);
+    let wire = wire(&emission);
+    let channels = nodes(&wire)
+        .iter()
+        .filter(|node| node["semantic_form"] == "channel")
+        .collect::<Vec<_>>();
+    let [channel] = &channels[..] else {
+        panic!("one channel: {channels:?}");
+    };
+    let connection = argument(
+        channel,
+        &[
+            "from",
+            "to",
+            "carries",
+            "ordering",
+            "delivery",
+            "connection",
+        ],
+        "connection",
+    );
+    let relationship = target(&wire, connection);
+    let clause = clause(&wire);
+    let held = clause_argument(clause, "relationships")["members"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|term| target(&wire, term))
+        .any(|node| node["node_id"] == relationship["node_id"]);
+    assert!(
+        held,
+        "the channel connection is in the clause relationships set"
+    );
+    assert!(
+        channel["dependencies"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|dependency| dependency == &relationship["node_id"])
+    );
+}
 
 /// Read the complete envelope through FSL's I2 dispatch with its domain evidence.
 fn read_protocol(wire: &Value) -> Read {
@@ -279,7 +469,12 @@ fn a_misordered_or_repeated_role_is_refused_by_i2_at_its_normative_locus() {
 #[trace("FR-383-AC-20", "TC-1063")]
 #[test]
 fn a_missing_or_second_queue_is_refused_by_i2() {
-    let lowered = emitted(&flow_with(&format!("{MEMBERS}\nchannel Other from Seller to Buyer carries Boolean ordering unordered delivery unknown capacity 2 overflow block;"), RUN));
+    let lowered = emitted(&flow_with(
+        &format!(
+            "{MEMBERS}\nchannel Other from Seller to Buyer carries Boolean ordering unordered delivery unknown capacity 2 overflow block;"
+        ),
+        RUN,
+    ));
     let clause_at = position(&lowered.wire, clause(&lowered.wire));
     let queues = nodes(&lowered.wire)
         .iter()
@@ -361,7 +556,9 @@ fn a_record_type_as_a_role_model_is_refused_at_the_target() {
 #[trace("FR-383-AC-20", "TC-1063")]
 #[test]
 fn descending_choice_labels_are_refused_by_i2() {
-    let lowered = emitted(&flow("sequence Main { choice Pick by Buyer visible () { case a when { true } sequence A { } case z when { false } sequence Z { } } }"));
+    let lowered = emitted(&flow(
+        "sequence Main { choice Pick by Buyer visible () { case a when { true } sequence A { } case z when { false } sequence Z { } } }",
+    ));
     let at = position(&lowered.wire, run_control(&lowered.wire, "Pick"));
     let mut wire = lowered.wire.clone();
     wire["semantic_graph"]["nodes"][at]["body"]["arguments"][2]["value"]["members"]

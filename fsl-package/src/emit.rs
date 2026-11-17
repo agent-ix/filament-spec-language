@@ -298,6 +298,10 @@ pub enum EmitRefusal {
         /// The exact checked application key retained by FSL lowering.
         application: NodeKey,
     },
+    /// FR-148's top-level `numericEqual` schedule has no checked-package/v2
+    /// equality schedule in the pinned contract IR (QSL-2173).
+    #[error("float equality schedule is not supported by the pinned checked-package/v2 contract IR yet (QSL-2173)")]
+    FloatEqualityScheduleNotEmitted,
     /// A temporal declaration whose selected profile requires a clock
     /// configuration has no exact producer selection.
     #[error(
@@ -308,13 +312,12 @@ pub enum EmitRefusal {
         .span.end
     )]
     MissingTemporalClockSelection {
+        /// The declaration's kind and qualified name.
+        declaration: String,
         /// The checked source document.
         source_ref: fsl_foundation::source::provenance::RawSourceRef,
         /// The exact declaration locus.
         span: fsl_foundation::Span,
-        /// Plain-language construct name, such as `bounded temporal rule Foo`
-        /// or `compensate template Refund`.
-        declaration: String,
     },
     /// A temporal clock selection does not name a configured declaration in
     /// the checked source.
@@ -483,6 +486,7 @@ impl EmitRefusal {
             Self::ProbabilisticModelNotEmitted { .. }
             | Self::TimedModelNotEmitted { .. }
             | Self::SourceObjectEmission { .. } => Code::UnsupportedConstruct,
+            Self::FloatEqualityScheduleNotEmitted => Code::UnsupportedConstruct,
             Self::MonitorPlanAmbiguous { .. } => Code::InvalidProjectionCorrespondence,
             Self::MonitorBaseRefused(read) => read.code(),
             Self::ClockSelection(_) => Code::InvalidRequest,
@@ -541,6 +545,7 @@ impl EmitRefusal {
             | Self::UnresolvedNodeReference
             | Self::OperandNotInGraph { .. }
             | Self::MissingEqualityIdentityContext { .. } => None,
+            Self::FloatEqualityScheduleNotEmitted => Some("not-yet-implemented"),
             Self::MissingTemporalClockSelection { .. } => Some("missing-selection"),
             Self::SurplusTemporalClockSelection { .. }
             | Self::DuplicateTemporalClockSelection { .. }
@@ -3878,6 +3883,9 @@ fn checked_equality_term_data(
             }
         }
         let schedule = match row.producer_data.schedule() {
+            filament_semantic_value::declaration::EqualitySchedule::Float => {
+                return Err(EmitRefusal::FloatEqualityScheduleNotEmitted);
+            }
             filament_semantic_value::declaration::EqualitySchedule::Text => {
                 filament_contract_model::CheckedEqualitySchedule::Text
             }
@@ -4811,6 +4819,7 @@ fn require_protocol_results_for_refusals(package: &CheckedPackage) -> Result<(),
 /// with [`EmitRefusal::OutputLimit`] in place of being returned.
 pub fn emit_checked(package: &CheckedPackage, limits: EmitLimits) -> Result<Emission, EmitRefusal> {
     require_protocol_results_for_refusals(package)?;
+    refuse_ieee_numeric_equality(package.graph())?;
     if let Some(emission) = package.remembered_emission() {
         return remembered_within(emission, limits, package.graph());
     }
@@ -4842,6 +4851,7 @@ fn emit_checked_uncached(
     limits: EmitLimits,
 ) -> Result<Emission, EmitRefusal> {
     let graph = package.graph();
+    refuse_ieee_numeric_equality(graph)?;
     emit_package_inner(
         package,
         graph.memoized_regions(),
@@ -6085,6 +6095,24 @@ pub fn emit_timed_models(
     .with_identity_row_selection())
 }
 
+/// The current semantic-value lowering represents FR-148 float equality as a
+/// catalogued IEEE operation rather than an `EqualitySchedule` producer fact.
+/// Until checked-package/v2 has the matching schedule, fail closed at this
+/// boundary rather than serializing a representation the pinned reader cannot
+/// validate (QSL-2173).
+fn refuse_ieee_numeric_equality(graph: &CheckedGraph) -> Result<(), EmitRefusal> {
+    if graph.semantic_graph().nodes().any(|node| {
+        matches!(
+            node.body(),
+            BodyTerm::Application(application)
+                if application.operation.identity() == "filament.op.ieee.numeric_equal"
+        )
+    }) {
+        return Err(EmitRefusal::FloatEqualityScheduleNotEmitted);
+    }
+    Ok(())
+}
+
 /// [`emit_checked`] under the caller's [`Cancel`] handle, polled once at
 /// entry and at every node it writes (FR-276). A cancelled handle stops the
 /// emitter with [`EmitRefusal::Cancelled`] and writes no bytes. It always
@@ -6452,6 +6480,7 @@ fn emit_package_inner(
         return Err(refusal);
     }
     let graph = package.graph();
+    refuse_ieee_numeric_equality(graph)?;
     let source_keys = source_declaration_key_rewrites(graph)?;
     // FSpec FR-490, FR-491: each guarantee and composition declaration is a
     // `correspondence` node beside the graph's own.
@@ -8249,6 +8278,13 @@ fn temporal_binding_rows(
 ) -> Result<WrittenTemporalRows, EmitRefusal> {
     use fsl_semantics::check::TemporalProfile;
 
+    #[derive(Clone, Copy, Eq, Ord, PartialEq, PartialOrd)]
+    enum MissingClockKind {
+        CompensationTemplate,
+        Await,
+        Other,
+    }
+
     let mut selected = BTreeMap::new();
     for selection in selections {
         let key = (
@@ -8327,6 +8363,7 @@ fn temporal_binding_rows(
         let key = (source.clone(), span.start, span.end);
         let Some(selection) = selected.remove(&key) else {
             missing.push((
+                MissingClockKind::Other,
                 source,
                 span,
                 format!("bounded temporal rule `{}`", clause.name()),
@@ -8402,6 +8439,7 @@ fn temporal_binding_rows(
         let key = (source.clone(), span.start, span.end);
         let Some(selection) = selected.remove(&key) else {
             missing.push((
+                MissingClockKind::Other,
                 source,
                 span,
                 format!("bounded temporal rule `{}`", hyper.name()),
@@ -8438,6 +8476,69 @@ fn temporal_binding_rows(
         };
         keyed.rows.push((wrapper.clone(), row.clone()));
         rows.push(row);
+    }
+
+    // FSpec FR-464: an `await` control reads a clock, so it gets one binding
+    // row at its own declaration locus, alongside temporal clauses and
+    // compensation templates.
+    for protocol in graph.protocols() {
+        let source = graph.source().clone();
+        let Some(keys) = graph.protocol_node_keys(&protocol.name) else {
+            continue;
+        };
+        for awaited in &protocol.awaits {
+            let Some(profile) = awaited.profile else {
+                continue;
+            };
+            if !matches!(
+                profile,
+                TemporalProfile::EventPositionFalseExtension
+                    | TemporalProfile::FixedSampleFalseExtension
+                    | TemporalProfile::TimestampedEventFiniteWindow
+            ) {
+                continue;
+            }
+            let span = awaited.span;
+            let key = (source.clone(), span.start, span.end);
+            let declaration_name = format!("await {}::{}", protocol.name, awaited.name);
+            let Some(selection) = selected.remove(&key) else {
+                missing.push((
+                    MissingClockKind::Await,
+                    source.clone(),
+                    span,
+                    declaration_name,
+                ));
+                continue;
+            };
+            check_selected_definition(&source, span, profile, selection)?;
+            let clock = &selection.clock;
+            validate_temporal_clock(&source, span, awaited.clock.as_str(), clock)?;
+            let node_key = keys
+                .nodes
+                .get(&awaited.node)
+                .ok_or(EmitRefusal::SourceMapInvariant)?;
+            let declaration = emitted_node_ids
+                .get(node_key)
+                .cloned()
+                .ok_or(EmitRefusal::SourceMapInvariant)?;
+            let node = nodes
+                .iter()
+                .find(|node| node.node_id == declaration)
+                .ok_or(EmitRefusal::SourceMapInvariant)?;
+            for ordinal in node
+                .occurrences
+                .iter()
+                .filter(|occurrence| occurrence.role == CheckedOccurrenceRole::Declaration)
+                .map(|occurrence| occurrence.ordinal)
+            {
+                rows.push(filament_contract_model::TemporalBinding {
+                    declaration: declaration.clone(),
+                    occurrence: ordinal,
+                    clock_name: awaited.clock.as_str().into(),
+                    clock: clock.clone(),
+                });
+            }
+        }
     }
 
     // FSpec FR-322-AC-305: a `compensate` node reads a clock too, so it is
@@ -8481,9 +8582,10 @@ fn temporal_binding_rows(
             let key = (source.clone(), span.start, span.end);
             let Some(selection) = selected.remove(&key) else {
                 missing.push((
+                    MissingClockKind::CompensationTemplate,
                     source.clone(),
                     span,
-                    format!("compensate template `{}`", template.name),
+                    format!("compensate template `{}::{}`", protocol.name, template.name),
                 ));
                 continue;
             };
@@ -8514,11 +8616,12 @@ fn temporal_binding_rows(
             span: fsl_foundation::Span { start, end },
         });
     }
-    if let Some((source_ref, span, declaration)) = missing.into_iter().next() {
+    missing.sort_by_key(|(kind, _, _, _)| *kind);
+    if let Some((_, source_ref, span, declaration)) = missing.into_iter().next() {
         return Err(EmitRefusal::MissingTemporalClockSelection {
+            declaration,
             source_ref,
             span,
-            declaration,
         });
     }
     rows.sort_by(|left, right| {

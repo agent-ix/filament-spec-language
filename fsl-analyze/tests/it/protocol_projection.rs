@@ -9,12 +9,14 @@ use fsl_analyze::protocol_analysis::{
     project, unsupported_construct, ProjectionOutcome, ProjectionRefusal, ProjectionRequest,
 };
 use fsl_replay::protocol_analysis::{
-    replay_projection_counterexample, AnalysisOutcome, AssessedRootDraft, ChoiceBasis,
-    GlobalStructure, InconclusiveCause, LocalEventKind, ProjectionBoundsDraft,
-    ProjectionCounterexample, ProjectionWitness, ProtocolAnalysisEvidence, RunBudget,
-    UnsupportedSlug, WalkDisagreement,
+    replay_projection_counterexample, AnalysisOutcome, AssessedRootDraft, CapacityPremise,
+    ChoiceBasis, DecisionOwner, GlobalStructure, InconclusiveCause, JoinPolicy, LocalEventKind,
+    OutstandingPolicy, ProjectionBoundsDraft, ProjectionCounterexample, ProjectionDecision,
+    ProjectionWitness, ProtocolAnalysisEvidence, ProtocolAnalysisKey, RunBudget, UnsupportedSlug,
+    WalkDisagreement,
 };
 use fsl_replay::spine::replay_protocol_analysis;
+use fsl_package::protocol_view::clause_activation_trigger;
 use fsl_replay::{DecidingElement, ModelCheckLimit, ObservationIdentity, ReplaySource};
 use ix_trace_rs::trace;
 
@@ -52,20 +54,99 @@ pub(crate) fn admitted(
     domain: &str,
     document: &[u8],
 ) -> Box<CheckedPackageV2> {
-    let emission = fsl_package::emit_checked(checked, fsl_package::EmitLimits::fixture())
-        .expect("the protocol package emits");
+    match checked_dispatch(checked, domain, document) {
+        CheckedPackageDispatchResult::AdmittedV2(admitted) => admitted,
+        other => panic!("IR admits the package: {other:?}"),
+    }
+}
+
+fn checked_dispatch(
+    checked: &fsl_package::CheckedPackage,
+    domain: &str,
+    document: &[u8],
+) -> CheckedPackageDispatchResult {
+    let graph = checked.graph();
+    let clock = fsl_package::ClockConfiguration::EventPosition {
+        sequence_authority: "protocol-projection-events".into(),
+    };
+    let mut selections = Vec::new();
+    for protocol in graph.protocols() {
+        for template in &protocol.obligations.compensations {
+            if matches!(
+                template.temporal_profile,
+                Some(
+                    fsl_semantics::check::TemporalProfile::EventPositionFalseExtension
+                        | fsl_semantics::check::TemporalProfile::FixedSampleFalseExtension
+                        | fsl_semantics::check::TemporalProfile::TimestampedEventFiniteWindow
+                )
+            ) {
+                selections.push(fsl_package::TemporalClockSelection::new(
+                    graph.source().clone(),
+                    template.span,
+                    clock.clone(),
+                ));
+            }
+        }
+        for awaited in &protocol.awaits {
+            if matches!(
+                awaited.profile,
+                Some(
+                    fsl_semantics::check::TemporalProfile::EventPositionFalseExtension
+                        | fsl_semantics::check::TemporalProfile::FixedSampleFalseExtension
+                        | fsl_semantics::check::TemporalProfile::TimestampedEventFiniteWindow
+                )
+            ) {
+                selections.push(fsl_package::TemporalClockSelection::new(
+                    graph.source().clone(),
+                    awaited.span,
+                    clock.clone(),
+                ));
+            }
+        }
+    }
+    for temporal in graph.temporal_clauses() {
+        if matches!(
+            temporal.clause().profile(),
+            fsl_semantics::check::TemporalProfile::EventPositionFalseExtension
+                | fsl_semantics::check::TemporalProfile::FixedSampleFalseExtension
+                | fsl_semantics::check::TemporalProfile::TimestampedEventFiniteWindow
+        ) {
+            selections.push(fsl_package::TemporalClockSelection::new(
+                graph.source().clone(),
+                temporal.clause().span(),
+                clock.clone(),
+            ));
+        }
+    }
+    for hyper in graph.hyper_clauses() {
+        if matches!(
+            hyper.profile(),
+            fsl_semantics::check::TemporalProfile::EventPositionFalseExtension
+                | fsl_semantics::check::TemporalProfile::FixedSampleFalseExtension
+                | fsl_semantics::check::TemporalProfile::TimestampedEventFiniteWindow
+        ) {
+            selections.push(fsl_package::TemporalClockSelection::new(
+                graph.source().clone(),
+                hyper.span(),
+                clock.clone(),
+            ));
+        }
+    }
+    let emission = fsl_package::emit_checked_with_temporal_selections(
+        checked,
+        &selections,
+        fsl_package::EmitLimits::fixture(),
+    )
+    .expect("the protocol package emits");
     let mut evidence = emission.evidence().clone();
     evidence
         .insert_domain_package_document(domain, document)
         .expect("fresh domain evidence");
-    match filament_contract_model::read_checked_package(
+    filament_contract_model::read_checked_package(
         emission.package().bytes(),
         CheckedPackageReadLimits::bounded(),
         &evidence,
-    ) {
-        CheckedPackageDispatchResult::AdmittedV2(admitted) => admitted,
-        other => panic!("IR admits the package: {other:?}"),
-    }
+    )
 }
 
 fn flow(run: &str) -> Box<CheckedPackageV2> {
@@ -172,24 +253,25 @@ const CANCELLED: &str = "send Cn via Cancelled as (c: CancelMsg) { true };\n\
 fn the_worked_example_without_a_distinguishing_message_has_a_counterexample() {
     let package = worked(PICK, "", "");
     let found = counterexample(run(&package, "Warehouse"));
-    assert_eq!(found.owner, named(&package, "Seller"));
-    assert_eq!(found.choice, named(&package, "Decide"));
-    assert_eq!(found.role, named(&package, "Warehouse"));
-    let action = found.action_a.as_ref().expect("A is the receive");
-    assert_eq!(action.at.node, named(&package, "PickedUp"));
-    assert_eq!(found.action_b, None, "B is the end of the branch");
     assert_eq!(
-        found
-            .path_a
-            .iter()
-            .map(|at| at.node.clone())
-            .collect::<Vec<_>>(),
+        found.owner(),
+        Some(&DecisionOwner::Role(named(&package, "Seller")))
+    );
+    assert_eq!(found.choice(), Some(&named(&package, "Decide")));
+    assert_eq!(found.role, named(&package, "Warehouse"));
+    let (_, path_a, action_a) = found.choice_side(0).expect("choice decision");
+    let (_, path_b, action_b) = found.choice_side(1).expect("choice decision");
+    let action = action_a.expect("A is the receive");
+    assert_eq!(action.at.node, named(&package, "PickedUp"));
+    assert_eq!(action_b, None, "B is the end of the branch");
+    assert_eq!(
+        path_a.iter().map(|at| at.node.clone()).collect::<Vec<_>>(),
         [named(&package, "PickIt"), named(&package, "PickedUp")]
     );
-    assert!(found.path_b.is_empty());
+    assert!(path_b.is_empty());
     assert_eq!(found.length(), 2);
-    assert_eq!(found.case_a, named(&package, "Ship"));
-    assert_eq!(found.case_b, named(&package, "Cancel"));
+    assert_eq!(found.choice_side(0).unwrap().0, &named(&package, "Ship"));
+    assert_eq!(found.choice_side(1).unwrap().0, &named(&package, "Cancel"));
 }
 
 /// FR-570-AC-6 (step 3, second variant): distinct first-receive message
@@ -252,7 +334,7 @@ fn a_decision_message_no_fact_reads_does_not_distinguish_the_branches() {
         receive Dec2 via Decision of Dec as (dec2: Note) { true };\n";
     let package = worked(PICK, "", before);
     let found = counterexample(run(&package, "Warehouse"));
-    assert_eq!(found.action_b, None);
+    assert_eq!(found.choice_side(1).unwrap().2, None);
 }
 
 /// FR-570-AC-4: pairwise equal (direction, peer, message type) first events
@@ -278,10 +360,10 @@ fn equal_first_actions_merge_and_recurse_on_their_continuations() {
     let package = worked(&longer, other, "");
     let found = counterexample(run(&package, "Warehouse"));
     assert_eq!(
-        found.action_a.as_ref().map(|a| a.at.node.clone()),
+        found.choice_side(0).unwrap().2.map(|a| a.at.node.clone()),
         Some(named(&package, "Tail"))
     );
-    assert_eq!(found.action_b, None);
+    assert_eq!(found.choice_side(1).unwrap().2, None);
 }
 
 /// FR-570-AC-4: a send against a receive, and sends with differing message
@@ -337,8 +419,8 @@ fn the_counterexample_is_the_shortest_then_the_first_choice() {
         choice("Second", &receive("2"))
     ));
     assert_eq!(
-        counterexample(run(&package, "Warehouse")).choice,
-        named(&package, "First")
+        counterexample(run(&package, "Warehouse")).choice(),
+        Some(&named(&package, "First"))
     );
     // A shorter path in the later choice wins over the earlier choice.
     let package = flow(&format!(
@@ -347,7 +429,7 @@ fn the_counterexample_is_the_shortest_then_the_first_choice() {
         choice("Second", &send("2"))
     ));
     let found = counterexample(run(&package, "Warehouse"));
-    assert_eq!(found.choice, named(&package, "Second"));
+    assert_eq!(found.choice(), Some(&named(&package, "Second")));
     assert_eq!(found.length(), 1);
 }
 
@@ -701,7 +783,7 @@ fn the_trace_position_is_the_divergent_actions_index_in_path_a() {
     let package = worked(&long, "", "");
     let found = counterexample(run(&package, "Warehouse"));
     assert_eq!(
-        found.path_a.len(),
+        found.choice_side(0).unwrap().1.len(),
         4,
         "two events of other roles precede the divergence"
     );
@@ -715,10 +797,13 @@ fn the_trace_position_is_the_divergent_actions_index_in_path_a() {
     );
     // The first divergent action is the Decision receive, third event on.
     assert_eq!(
-        found.action_a.as_ref().unwrap().at.node,
+        found.choice_side(0).unwrap().2.unwrap().at.node,
         named(&package, "Early2")
     );
-    assert_eq!(found.path_a.last().unwrap().node, named(&package, "Early2"));
+    assert_eq!(
+        found.choice_side(0).unwrap().1.last().unwrap().node,
+        named(&package, "Early2")
+    );
 }
 
 /// PA-20, FR-573-AC-3: the replay arm re-walks the paths and ends in the
@@ -746,7 +831,9 @@ fn the_replay_arm_reproduces_a_counterexample_and_refuses_an_edited_one() {
     );
     // A step that is not an admitted successor.
     let mut skipped = found.clone();
-    skipped.path_a.remove(0);
+    if let ProjectionDecision::Choice { paths, .. } = &mut skipped.decision {
+        paths[0].remove(0);
+    }
     assert!(matches!(
         replay_projection_counterexample(&structure, &skipped, 64),
         Err(WalkDisagreement::StepNotSuccessor(_))
@@ -754,7 +841,9 @@ fn the_replay_arm_reproduces_a_counterexample_and_refuses_an_edited_one() {
     // A walk that does not end in the stated divergence: the end is swapped
     // for a path that stops early.
     let mut early = found.clone();
-    early.path_a.pop();
+    if let ProjectionDecision::Choice { paths, .. } = &mut early.decision {
+        paths[0].pop();
+    }
     assert_eq!(
         replay_projection_counterexample(&structure, &early, 64),
         Err(WalkDisagreement::ActionMismatch)
@@ -799,8 +888,8 @@ fn a_choice_nested_in_a_branch_counts_toward_the_outer_merge() {
     );
     let package = worked(&inner, "", "");
     let found = counterexample(run(&package, "Warehouse"));
-    assert_eq!(found.choice, named(&package, "Decide"));
-    assert_eq!(found.action_b, None);
+    assert_eq!(found.choice(), Some(&named(&package, "Decide")));
+    assert_eq!(found.choice_side(1).unwrap().2, None);
 }
 
 fn two_senders(second: &str, guard_reads: &str) -> Box<CheckedPackageV2> {
@@ -825,7 +914,7 @@ fn a_decision_reading_a_message_the_role_took_no_part_in_does_not_inform_it() {
     // `got` came from Warehouse, `got2` from Buyer, and the guards test `got2`.
     let package = two_senders("Order", "got2.ok");
     let found = counterexample(run(&package, "Warehouse"));
-    assert_eq!(found.choice, named(&package, "Decide"));
+    assert_eq!(found.choice(), Some(&named(&package, "Decide")));
     // Both messages are Warehouse's: the whole decision is known to it.
     let package = two_senders("Back", "got2.ok");
     let told = witness(run(&package, "Warehouse"));
@@ -854,7 +943,7 @@ fn a_divergence_before_the_horizon_is_found_though_later_events_are_cut() {
         other => panic!("expected the shallow counterexample: {other:?}"),
     };
     assert_eq!(
-        found.action_a.as_ref().unwrap().at.node,
+        found.choice_side(0).unwrap().2.unwrap().at.node,
         named(&package, "PickedUp")
     );
 }
@@ -863,8 +952,7 @@ fn a_divergence_before_the_horizon_is_found_though_later_events_are_cut() {
 /// existing protocol fixtures (`protocol_compensation`, `protocol_system`).
 #[trace("TC-1415", "FR-575-AC-1")]
 #[test]
-fn compensation_and_timed_await_answer_unsupported() {
-    use crate::fill::{contracts, protocol};
+fn compensation_answers_unsupported() {
     let compensating = admitted_source(&crate::protocol_compensation::pay("false"));
     let cause = unsupported_construct(&compensating, &clause(&compensating))
         .unwrap()
@@ -876,7 +964,15 @@ fn compensation_and_timed_await_answer_unsupported() {
         outcome.outcome,
         AnalysisOutcome::Unsupported(ref found) if found.slug == UnsupportedSlug::Compensation
     ));
+}
 
+/// The positive timed-await assertions remain here for when the Contract IR
+/// supports an await control as a temporal-binding declaration.
+#[trace("TC-1415", "FR-575-AC-1")]
+#[test]
+#[ignore = "Blocked by QSL-1964: Contract IR refuses await temporal bindings with InvalidPackage/TimedNodeReference."]
+fn a_timed_await_answers_unsupported_when_its_package_is_admitted() {
+    use crate::fill::{contracts, protocol};
     let touch = crate::protocol_system::touch;
     let waiting = admitted_source(
         &(contracts("self.v = 0")
@@ -898,6 +994,191 @@ fn compensation_and_timed_await_answer_unsupported() {
         .expect("a timed await is outside the profile");
     assert_eq!(cause.slug, UnsupportedSlug::TimedAwait);
     assert_eq!(cause.node, named(&waiting, "Wait"));
+}
+
+/// Until QSL-1964 adds a valid await binding target, the focused admission
+/// check records Contract IR's typed refusal for the emitted temporal row.
+#[trace("FR-892-AC-3", "TC-2525")]
+#[test]
+fn a_timed_await_package_is_refused_at_its_binding_row() {
+    use crate::fill::{contracts, protocol};
+    let waiting = package(
+        &(contracts("self.v = 0")
+            + &protocol(
+                "P",
+                "",
+                &format!(
+                    "sequence Main {{ event Start by w as (start: Boolean) {{ true }}; await Wait after Start using t0 clock \"c\" within [0,1] match event Seen by w as (seen: Boolean) {{ true }}; then {} timeout {} }}",
+                    "sequence Fine { }",
+                    "sequence Late { }",
+                ),
+                "d",
+            )),
+    );
+    let refusal = match checked_dispatch(&waiting, PACKAGE, &document()) {
+        CheckedPackageDispatchResult::Refused(refusal) => refusal,
+        other => panic!("await temporal binding must be refused: {other:?}"),
+    };
+    assert_eq!(
+        (refusal.code, refusal.cause),
+        (
+            filament_contract_model::CheckedPackageRefusalCode::InvalidPackage,
+            Some(filament_contract_model::CheckedPackageRefusalCause::TimedNodeReference),
+        )
+    );
+    assert_eq!(
+        refusal.loci[0].path.as_ref().map(|path| path.as_str()),
+        Some("/temporal_bindings/0/declaration")
+    );
+}
+
+/// FR-890-AC-2: a repeat projects onto a role in its body with its authored bound.
+#[trace("FR-890-AC-2", "TC-2521")]
+#[test]
+fn repeat_projects() {
+    let package = flow(
+        "sequence Main { repeat Loop by Buyer visible () max 2 while { true } \
+         sequence Body { send O via Order as (o: Ack) { true }; \
+         receive R via Order of O as (r: Ack) { true }; } \
+         exhausted sequence Spent { } }",
+    );
+    let mut asked = request(&package, "Seller");
+    asked.profile = Some("bounded".to_owned());
+    let graph = witness(project(&package, asked).unwrap()).local_graph;
+    let loop_id = graph
+        .events
+        .iter()
+        .find(|event| matches!(
+            event.kind,
+            LocalEventKind::ControlAction {
+                operation: fsl_package::protocol_view::ControlOperation::Repeat,
+                maximum: Some(2),
+                ..
+            }
+        ))
+        .expect("the loop action carries its maximum")
+        .id;
+    let send_id = graph
+        .events
+        .iter()
+        .find(|event| matches!(event.kind, LocalEventKind::Receive { .. }))
+        .expect("the body receive projects")
+        .id;
+    assert!(graph.edges.contains(&(loop_id, send_id)));
+}
+
+/// FR-890-AC-2: a role with no action in a repeat carries no local loop.
+#[trace("FR-890-AC-2", "TC-2521")]
+#[test]
+fn a_role_without_repeat_actions_has_no_local_loop() {
+    let package = flow(
+        "sequence Main { repeat Loop by Buyer visible () max 2 while { true } \
+         sequence Body { event Tick by Warehouse as (tick: Boolean) { true }; } \
+         exhausted sequence Spent { } }",
+    );
+    let mut asked = request(&package, "Buyer");
+    asked.profile = Some("bounded".to_owned());
+    let graph = witness(project(&package, asked).unwrap()).local_graph;
+    assert!(!graph.events.iter().any(|event| matches!(
+        event.kind,
+        LocalEventKind::ControlAction {
+            operation: fsl_package::protocol_view::ControlOperation::Repeat,
+            ..
+        }
+    )));
+}
+
+/// FR-890-AC-3: a timed await projects with its closed window and clock.
+#[trace("FR-890-AC-3", "FR-892-AC-3", "TC-2521", "TC-2525")]
+#[test]
+#[ignore = "Blocked by QSL-1964: Contract IR refuses await temporal bindings with InvalidPackage/TimedNodeReference."]
+fn a_timed_await_projects_through_the_clock() {
+    use crate::fill::{contracts, protocol};
+
+    let package = admitted_source(
+        &(contracts("self.v = 0")
+            + &protocol(
+                "P",
+                "",
+                &format!(
+                    "sequence Main {{ event Start by w as (start: Boolean) {{ true }}; await Wait after Start using t0 clock \"c\" within [0,1] match event Seen by w as (seen: Boolean) {{ true }}; then {} timeout {} }}",
+                    "sequence Fine { }",
+                    "sequence Late { }",
+                ),
+                "d",
+            )),
+    );
+    let mut asked = request(&package, "w");
+    asked.profile = Some("bounded".to_owned());
+    let graph = witness(project(&package, asked).unwrap()).local_graph;
+    assert!(graph.events.iter().any(|event| matches!(
+        event.kind,
+        LocalEventKind::ControlAction {
+            operation: fsl_package::protocol_view::ControlOperation::Await,
+            window: Some((0, 1, ref clock)),
+            ..
+        } if clock == "c"
+    )));
+}
+
+/// FR-890-AC-6: a compensation template projects to its owning role.
+#[trace("FR-890-AC-6", "TC-2522")]
+#[test]
+fn compensation_projects() {
+    let package = admitted_source(&crate::protocol_compensation::pay("false"));
+    let mut asked = request(&package, "w");
+    asked.profile = Some("bounded".to_owned());
+    let graph = witness(project(&package, asked).unwrap()).local_graph;
+    assert!(graph.events.iter().any(|event| matches!(
+        event.kind,
+        LocalEventKind::ControlAction {
+            operation: fsl_package::protocol_view::ControlOperation::Compensate,
+            ..
+        }
+    )));
+}
+
+/// FR-890-AC-1: the remaining step controls are admitted under `bounded`.
+#[trace("FR-890-AC-1", "TC-2520")]
+#[test]
+fn each_remaining_control_projects() {
+    let source = crate::protocol_compensation::pay("false").replace(
+        crate::protocol_compensation::FAIL,
+        &format!(
+            "{} commit Cm by w as (cm: Boolean) {{ true }}; \
+             fence F ordering seq_cst; check Gate using v {{ true }};",
+            crate::protocol_compensation::FAIL
+        ),
+    );
+    let package = admitted_source(&source);
+    let mut asked = request(&package, "w");
+    asked.profile = Some("bounded".to_owned());
+    let projected = witness(project(&package, asked).unwrap());
+    let graph = projected.local_graph;
+    for operation in [
+        fsl_package::protocol_view::ControlOperation::Attempt,
+        fsl_package::protocol_view::ControlOperation::Effect,
+        fsl_package::protocol_view::ControlOperation::Event,
+        fsl_package::protocol_view::ControlOperation::Commit,
+    ] {
+        assert!(
+            graph.events.iter().any(|event| matches!(
+                event.kind,
+                LocalEventKind::ControlAction {
+                    operation: found,
+                    record_type: Some(_),
+                    ..
+                } if found == operation
+            )),
+            "missing local action for {operation:?}"
+        );
+    }
+    for control in ["F", "Gate"] {
+        assert!(projected.correspondence.1.iter().any(|event| {
+            event.node == named(&package, control)
+                && event.port == fsl_package::protocol_view::Port::Enter
+        }));
+    }
 }
 
 /// FR-575-AC-1: an `outstanding` policy under `join all` is admitted by the
@@ -1028,12 +1309,10 @@ fn bounded(package: &CheckedPackageV2, role: &str) -> ProjectionOutcome {
     project(package, asked).expect("the bounded profile is admitted")
 }
 
-/// FR-890-AC-1, FR-575-AC-5 (TC-2520): under `bounded`, each construct the
-/// fragment answers `unsupported` projects onto every role, with no
-/// `unsupported` outcome.
+/// FR-890-AC-1, FR-575-AC-5 (TC-2520): under `bounded`, constructs outside the
+/// bounded-static fragment project onto every role without `unsupported`.
 #[trace("TC-2520", "FR-890-AC-1", "FR-575-AC-5", "FSpec-FR-735-AC-1")]
 #[test]
-#[ignore = "QSL-2212: the bounded profile is refused and every construct outside the fragment answers unsupported"]
 fn the_bounded_profile_projects_every_construct() {
     let runs = [
         "sequence Main { parallel Par { branch a sequence Ay { } branch b sequence Bee { } } \
@@ -1064,6 +1343,154 @@ fn the_bounded_profile_projects_every_construct() {
     ));
 }
 
+/// FR-890-AC-1 (QSL-2212): a replicated role has one local graph for its
+/// class, with the receive and later send in that graph.
+#[trace("TC-2522", "FR-890-AC-5")]
+#[test]
+fn a_replicated_role_projects() {
+    let members = "role Buyer on M::Cell;\nrole Pool each M::Cell from cells max 2 lifetime workflow;\n\
+        channel Job from Buyer to Pool carries Ack ordering unordered delivery exactly-once-premise capacity 4 overflow reject;\n\
+        channel Done from Pool to Buyer carries Ack ordering unordered delivery exactly-once-premise capacity 4 overflow reject;";
+    let package = admitted_source(&source(
+        members,
+        "sequence Main { send J via Job as (j: Ack) { true }; \
+         receive K via Job of J as (got_job: Ack) { true }; \
+         send D via Done as (d: Ack) { true }; \
+         receive R via Done of D as (r: Ack) { true }; }",
+    ));
+    let mut asked = request(&package, "Pool");
+    asked.profile = Some("bounded".to_owned());
+    let graph = witness(project(&package, asked).unwrap()).local_graph;
+    assert_eq!(
+        graph
+            .events
+            .iter()
+            .filter(|event| matches!(event.kind, LocalEventKind::Receive { .. }))
+            .count(),
+        1
+    );
+    assert_eq!(
+        graph
+            .events
+            .iter()
+            .filter(|event| matches!(event.kind, LocalEventKind::Send { .. }))
+            .count(),
+        1
+    );
+}
+
+/// FR-890-AC-1 (QSL-2212): activation on each is admitted by `bounded`.
+#[trace("TC-2520", "FR-890-AC-1")]
+#[test]
+fn on_each_projects() {
+    let package = admitted_source(
+        &source(MEMBERS, "sequence Main { send S via Order as (s: Ack) { true }; }\n")
+            .replace("on origin", "on each (t: M::Cell)"),
+    );
+    let mut asked = request(&package, "Seller");
+    asked.profile = Some("bounded".to_owned());
+    let outcome = project(&package, asked).unwrap();
+    let graph = match outcome.outcome {
+        AnalysisOutcome::Proved(witness) => witness.local_graph,
+        other => panic!("expected an on-each projection: {other:?}"),
+    };
+    let trigger = clause_activation_trigger(&package, &clause(&package))
+        .unwrap()
+        .expect("on each names a trigger");
+    assert!(matches!(
+        graph.events.first().map(|event| &event.kind),
+        Some(LocalEventKind::Activate { trigger: held }) if held == &trigger
+    ));
+}
+
+/// FR-890-AC-1 (QSL-2212): a symbolic capacity remains a channel premise,
+/// while projection builds the same local communication graph as a literal.
+#[trace("TC-2520", "FR-890-AC-1", "FR-890-AC-7")]
+#[test]
+fn a_symbolic_capacity_projects() {
+    let package = admitted_source(
+        &source(
+            MEMBERS,
+            "sequence Main { send S via Order as (s: Ack) { true }; \
+             receive R via Order of S as (r: Ack) { true }; }",
+        )
+        .replace("capacity 4", "capacity symbolic(Bound)"),
+    );
+    let mut asked = request(&package, "Seller");
+    asked.profile = Some("bounded".to_owned());
+    let outcome = project(&package, asked).unwrap();
+    assert!(matches!(outcome.outcome, AnalysisOutcome::Proved(_)));
+    let ProtocolAnalysisKey::Projection(key) = outcome.key else {
+        panic!("projection key");
+    };
+    assert!(key.channels.iter().any(|channel| matches!(
+        &channel.capacity,
+        CapacityPremise::Symbolic { name, .. } if name == "Bound"
+    )));
+}
+
+/// FR-890-AC-1 (QSL-2212): each supported join form stays visible in the
+/// projected role's local graph.
+#[trace("TC-2520", "FR-890-AC-1")]
+#[test]
+fn join_any_projects() {
+    join_projects(
+        "join any [a] outstanding cancel;",
+        JoinPolicy::Any,
+        Some(OutstandingPolicy::Cancel),
+        &["a"],
+    );
+}
+
+#[trace("TC-2520", "FR-890-AC-1")]
+#[test]
+fn join_quorum_projects() {
+    join_projects(
+        "join quorum(1) [a] outstanding continue;",
+        JoinPolicy::Quorum { count: 1 },
+        Some(OutstandingPolicy::Continue),
+        &["a"],
+    );
+}
+
+#[trace("TC-2520", "FR-890-AC-1")]
+#[test]
+fn outstanding_projects() {
+    join_projects(
+        "join all [a, b] outstanding continue;",
+        JoinPolicy::All,
+        Some(OutstandingPolicy::Continue),
+        &["a", "b"],
+    );
+}
+
+fn join_projects(
+    join: &str,
+    expected_policy: JoinPolicy,
+    expected_outstanding: Option<OutstandingPolicy>,
+    expected_joined: &[&str],
+) {
+    let run = format!(
+        "sequence Main {{ parallel Par {{ \
+         branch a sequence Ay {{ send AS via Pick as (asnd: PickMsg) {{ true }}; receive AR via Pick of AS as (ar: PickMsg) {{ true }}; }} \
+         branch b sequence Bee {{ send BS via Pick as (bsnd: PickMsg) {{ true }}; receive BR via Pick of BS as (br: PickMsg) {{ true }}; }} }} {join} }}"
+    );
+    let package = flow(&run);
+    let mut asked = request(&package, "Warehouse");
+    asked.profile = Some("bounded".to_owned());
+    let graph = witness(project(&package, asked).unwrap()).local_graph;
+    assert!(graph
+        .events
+        .iter()
+        .any(|event| matches!(
+            &event.kind,
+            LocalEventKind::ParallelJoin { policy, joined, outstanding }
+                if policy == &expected_policy
+                    && joined.iter().map(String::as_str).eq(expected_joined.iter().copied())
+                    && outstanding == &expected_outstanding
+        )));
+}
+
 /// FR-890-AC-2 (TC-2521): a `repeat` is a decision point owned by its `by`
 /// role. A loop whose continue and exit alternatives give `Seller` nothing
 /// to tell them apart is refuted, not answered `unsupported`.
@@ -1079,7 +1506,7 @@ fn an_unmerged_repeat_is_refuted_for_the_role_it_hides_from() {
          receive RY via Order of RX as (ry: Ack) { true }; } }",
     );
     let refuted = counterexample(bounded(&package, "Seller"));
-    assert_eq!(refuted.choice, named(&package, "Loop"));
+    assert_eq!(refuted.choice(), Some(&named(&package, "Loop")));
 }
 
 /// FR-890-AC-5 (TC-2522): a replicated role whose first event on a thread
@@ -1087,7 +1514,6 @@ fn an_unmerged_repeat_is_refuted_for_the_role_it_hides_from() {
 /// refuted, never `unsupported`.
 #[trace("TC-2522", "FR-890-AC-5", "FSpec-FR-735-AC-3")]
 #[test]
-#[ignore = "QSL-2205: a replicated role answers dynamic-role-population instead of an acting-instance counterexample"]
 fn a_replicated_role_that_sends_first_is_refuted() {
     let members = "role Buyer on M::Cell;\nrole Warehouse on M::Cell;\n\
         role Pool each M::Cell from cells max 2 lifetime workflow;\n\
@@ -1096,12 +1522,64 @@ fn a_replicated_role_that_sends_first_is_refuted() {
     let package = admitted_source(&source(
         members,
         "sequence Main { send J via Job as (j: Ack) { true }; \
-         receive K via Job of J as (k: Ack) { true }; }",
+          receive K via Job of J as (got_job: Ack) { true }; }",
     ));
-    let outcome = bounded(&package, "Pool");
+    let mut request = request(&package, "Pool");
+    request.profile = Some("bounded".to_owned());
+    let outcome = project(&package, request).unwrap();
     assert!(
         matches!(outcome.outcome, AnalysisOutcome::Refuted(_)),
         "{:?}",
         outcome.outcome
     );
+    let found = counterexample(outcome);
+    assert!(matches!(
+        &found.decision,
+        ProjectionDecision::ActingInstance {
+            event,
+            owner: DecisionOwner::Environment,
+            instances: [0, 1],
+            maximum: 2,
+        } if event.node == named(&package, "J")
+    ));
+    let structure =
+        GlobalStructure::from_package(&package, &clause(&package), RunBudget::default()).unwrap();
+    assert_eq!(
+        replay_projection_counterexample(&structure, &found, 64),
+        Ok(())
+    );
+}
+
+/// FR-890-AC-5: a bounded replicated role projects to one class graph whose
+/// first action is the receive that pins later sends to the acting instance.
+#[trace("TC-2522", "FR-890-AC-5")]
+#[test]
+fn a_bounded_spawn_projects_to_one_local_role_class() {
+    let members = "role Buyer on M::Cell;\nrole Pool each M::Cell from cells max 2 lifetime workflow;\n\
+        channel Job from Buyer to Pool carries Ack ordering unordered delivery exactly-once-premise capacity 4 overflow reject;\n\
+        channel Done from Pool to Buyer carries Ack ordering unordered delivery exactly-once-premise capacity 4 overflow reject;";
+    let package = admitted_source(&source(
+        members,
+        "sequence Main { send J via Job as (j: Ack) { true }; \
+          receive K via Job of J as (got_job: Ack) { true }; \
+         send D via Done as (d: Ack) { true }; \
+         receive R via Done of D as (r: Ack) { true }; }",
+    ));
+    let mut request = request(&package, "Pool");
+    request.profile = Some("bounded".to_owned());
+    let found = witness(project(&package, request).unwrap());
+    assert_eq!(found.local_graph.events.len(), 2);
+    let receive = found
+        .local_graph
+        .events
+        .iter()
+        .find(|event| matches!(&event.kind, LocalEventKind::Receive { .. }))
+        .expect("the pool class receives Job");
+    let send = found
+        .local_graph
+        .events
+        .iter()
+        .find(|event| matches!(&event.kind, LocalEventKind::Send { .. }))
+        .expect("the pool class sends Done");
+    assert!(found.local_graph.edges.contains(&(receive.id, send.id)));
 }

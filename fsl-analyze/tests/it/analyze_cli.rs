@@ -7,11 +7,11 @@
 //! text mode is tested in the driver repository.
 
 use ix_trace_rs::trace;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
 use crate::analyze_cli_support::{
-    analyze, below_three, bounded, clause, counter_request, label, litmus_request, order_protocol,
-    Workspace,
+    Workspace, analyze, below_three, bounded, clause, counter_request, label, litmus_request,
+    order_protocol,
 };
 
 const DONE: &str = "terminal Done using v on M when { self.value = 3 };\n";
@@ -283,7 +283,6 @@ fn possible_claims_prove_and_refute() {
 /// a terminal record, with a catalog code when it is not decided.
 #[trace("TC-1589", "FR-629-AC-4")]
 #[test]
-#[ignore = "QSL-2218: liveness over a release/acquire parallel is not reachable through fsl analyze yet"]
 fn liveness_over_a_ra_parallel_is_settled_by_name() {
     let body = crate::litmus::sb_unit(&crate::litmus::sb_run("memory ra", "release", "acquire"))
         + "temporal Live using t0 over (k: M::Core) clock \"model-steps\" on origin \

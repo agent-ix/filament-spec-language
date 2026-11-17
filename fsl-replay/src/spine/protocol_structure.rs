@@ -6,16 +6,18 @@
 
 use std::collections::BTreeMap;
 
-use filament_contract_model::{CheckedNodeId, CheckedPackageV2, CheckedSemanticNodeV2};
+use filament_contract_model::{
+    CheckedNodeId, CheckedPackageV2, CheckedSemanticNodeV2, CheckedTerm, LiteralKind,
+};
 use fsl_package::protocol_view::{
-    causal_relation, channel_endpoints, channel_ordering, control_body, decision_reads,
-    fifo_key_reads_message, protocol_view, ChannelOrdering, ControlBody, EdgeKind, Port, PortRef,
-    ViewRefusal,
+    ChannelOrdering, ControlBody, EdgeKind, Port, PortRef, ViewRefusal, causal_relation,
+    channel_endpoints, channel_ordering, control_body, control_operation, decision_reads,
+    fifo_key_reads_message, protocol_view, role_replication_maximum,
 };
 
 use crate::protocol_analysis::{
-    Comm, GlobalEvent, GlobalEventKind, GlobalStructure, RunBudget, RunLimit, StructureInput,
-    UniformFifo,
+    Comm, GlobalEvent, GlobalEventKind, GlobalStructure, JoinPolicy, OutstandingPolicy, RunBudget,
+    RunLimit, StructureInput, UniformFifo,
 };
 
 /// Why a structure was not built.
@@ -56,6 +58,141 @@ impl<'p> Reader<'p> {
             receiver: ends.receiver.clone(),
             message_type: ends.message_type.clone(),
         })
+    }
+
+    fn reference_member(node: &CheckedSemanticNodeV2, member: &str) -> Option<CheckedNodeId> {
+        let filament_contract_model::CheckedTerm::Application { arguments, .. } = &node.body else {
+            return None;
+        };
+        arguments.iter().find_map(|argument| match argument {
+            filament_contract_model::CheckedTerm::Binding { name, value } if &**name == member => {
+                match &**value {
+                    filament_contract_model::CheckedTerm::Reference { target } => {
+                        Some(target.clone())
+                    }
+                    _ => None,
+                }
+            }
+            _ => None,
+        })
+    }
+
+    fn term_member<'n>(node: &'n CheckedSemanticNodeV2, member: &str) -> Option<&'n CheckedTerm> {
+        let CheckedTerm::Application { arguments, .. } = &node.body else {
+            return None;
+        };
+        arguments.iter().find_map(|argument| match argument {
+            CheckedTerm::Binding { name, value } if &**name == member => Some(&**value),
+            _ => None,
+        })
+    }
+
+    fn optional_reference_member(
+        node: &CheckedSemanticNodeV2,
+        member: &str,
+    ) -> Option<CheckedNodeId> {
+        let CheckedTerm::Aggregate { members } = Self::term_member(node, member)? else {
+            return None;
+        };
+        match members.as_slice() {
+            [] => None,
+            [CheckedTerm::Reference { target }] => Some(target.clone()),
+            _ => None,
+        }
+    }
+
+    fn integer(term: &CheckedTerm) -> Option<u64> {
+        match term {
+            CheckedTerm::Literal {
+                value_kind: LiteralKind::Integer,
+                value,
+                ..
+            } => value.as_str()?.parse::<u64>().ok(),
+            CheckedTerm::Aggregate { members } => members.iter().find_map(|member| match member {
+                CheckedTerm::Binding { value, .. } => Self::integer(value),
+                _ => Self::integer(member),
+            }),
+            _ => None,
+        }
+    }
+
+    fn text(term: &CheckedTerm) -> Option<String> {
+        match term {
+            CheckedTerm::Literal {
+                value_kind: LiteralKind::Text,
+                value,
+                ..
+            } => Some(value.as_str()?.to_owned()),
+            _ => None,
+        }
+    }
+
+    fn projection_attributes(
+        node: &CheckedSemanticNodeV2,
+        operation: fsl_package::protocol_view::ControlOperation,
+    ) -> (Option<u64>, Option<(u64, u64, String)>) {
+        use fsl_package::protocol_view::ControlOperation as Op;
+        match operation {
+            Op::Repeat => (
+                Self::term_member(node, "maximum").and_then(Self::integer),
+                None,
+            ),
+            Op::Await => {
+                let window = Self::term_member(node, "within").and_then(|term| {
+                    let CheckedTerm::Aggregate { members } = term else {
+                        return None;
+                    };
+                    let bound = |name| {
+                        members.iter().find_map(|member| match member {
+                            CheckedTerm::Binding { name: held, value } if &**held == name => {
+                                Self::integer(value)
+                            }
+                            _ => None,
+                        })
+                    };
+                    Some((bound("lower")?, bound("upper")?))
+                });
+                let clock = Self::term_member(node, "clock").and_then(Self::text);
+                (
+                    None,
+                    window
+                        .zip(clock)
+                        .map(|((lower, upper), clock)| (lower, upper, clock)),
+                )
+            }
+            _ => (None, None),
+        }
+    }
+
+    fn owner_of(&self, node: &CheckedSemanticNodeV2) -> Option<CheckedNodeId> {
+        let operation = control_operation(node).ok()?;
+        match operation {
+            fsl_package::protocol_view::ControlOperation::Send
+            | fsl_package::protocol_view::ControlOperation::Receive => {
+                let channel = Self::reference_member(node, "channel")?;
+                let endpoints = channel_endpoints(self.node(&channel).ok()?).ok()?;
+                Some(match operation {
+                    fsl_package::protocol_view::ControlOperation::Send => endpoints.sender.clone(),
+                    _ => endpoints.receiver.clone(),
+                })
+            }
+            fsl_package::protocol_view::ControlOperation::Effect => {
+                let attempt = Self::reference_member(node, "of")?;
+                self.owner_of(self.node(&attempt).ok()?)
+            }
+            fsl_package::protocol_view::ControlOperation::Await => {
+                let event = Self::reference_member(node, "event")?;
+                self.owner_of(self.node(&event).ok()?)
+            }
+            _ => Self::reference_member(node, "owner")
+                .or_else(|| Self::reference_member(node, "by"))
+                .or_else(|| Self::reference_member(node, "role")),
+        }
+    }
+
+    fn record_type(&self, node: &CheckedSemanticNodeV2) -> Option<CheckedNodeId> {
+        let binder = Self::reference_member(node, "binder")?;
+        Some(self.node(&binder).ok()?.semantic_type.clone())
     }
 
     fn walk(
@@ -104,7 +241,7 @@ impl<'p> Reader<'p> {
                     self.walk(body, within)?;
                 }
             }
-            ControlBody::Parallel { branches, .. } => {
+            ControlBody::Parallel { branches, join } => {
                 let bodies: Vec<CheckedNodeId> =
                     branches.iter().map(|(_, body)| (*body).clone()).collect();
                 self.input.events.push(GlobalEvent {
@@ -118,7 +255,36 @@ impl<'p> Reader<'p> {
                 self.input.events.push(GlobalEvent {
                     at: exit.clone(),
                     out: exit,
-                    kind: GlobalEventKind::Join { branches: bodies },
+                    kind: GlobalEventKind::Join {
+                        branches: bodies,
+                        policy: match join.policy {
+                            fsl_package::protocol_view::ParallelJoinPolicy::All => JoinPolicy::All,
+                            fsl_package::protocol_view::ParallelJoinPolicy::Any => JoinPolicy::Any,
+                            fsl_package::protocol_view::ParallelJoinPolicy::Quorum => {
+                                JoinPolicy::Quorum {
+                                    count: join.quorum.expect("checked quorum has count"),
+                                }
+                            }
+                            fsl_package::protocol_view::ParallelJoinPolicy::Predicate => {
+                                JoinPolicy::Predicate {
+                                    function: join
+                                        .predicate
+                                        .expect("checked predicate join has function")
+                                        .clone(),
+                                }
+                            }
+                        },
+                        joined: join
+                            .joined
+                            .iter()
+                            .map(|label| (*label).to_owned())
+                            .collect(),
+                        outstanding: join.outstanding.map(|word| match word {
+                            "cancel" => OutstandingPolicy::Cancel,
+                            "continue" => OutstandingPolicy::Continue,
+                            _ => unreachable!("checked outstanding policy is cancel or continue"),
+                        }),
+                    },
                     within: within.clone(),
                 });
                 for (_, body) in branches {
@@ -144,7 +310,61 @@ impl<'p> Reader<'p> {
                     within: within.clone(),
                 });
             }
-            ControlBody::Other(_) => {}
+            ControlBody::Other(operation) => {
+                if matches!(
+                    operation,
+                    fsl_package::protocol_view::ControlOperation::Repeat
+                        | fsl_package::protocol_view::ControlOperation::Await
+                        | fsl_package::protocol_view::ControlOperation::Attempt
+                        | fsl_package::protocol_view::ControlOperation::Effect
+                        | fsl_package::protocol_view::ControlOperation::Event
+                        | fsl_package::protocol_view::ControlOperation::Commit
+                        | fsl_package::protocol_view::ControlOperation::Compensate
+                        | fsl_package::protocol_view::ControlOperation::Check
+                        | fsl_package::protocol_view::ControlOperation::Fence
+                ) {
+                    let (maximum, window) = Self::projection_attributes(node, operation);
+                    let record_type = self.record_type(node);
+                    let decision = matches!(
+                        operation,
+                        fsl_package::protocol_view::ControlOperation::Repeat
+                            | fsl_package::protocol_view::ControlOperation::Await
+                    );
+                    self.input.events.push(GlobalEvent {
+                        at: enter.clone(),
+                        out: if decision { enter.clone() } else { exit },
+                        kind: GlobalEventKind::Control {
+                            operation,
+                            owner: self.owner_of(node),
+                            maximum,
+                            window,
+                            record_type,
+                        },
+                        within: within.clone(),
+                    });
+                }
+                let children = match operation {
+                    fsl_package::protocol_view::ControlOperation::Repeat => {
+                        let mut children = Self::reference_member(node, "body")
+                            .into_iter()
+                            .collect::<Vec<_>>();
+                        children.extend(Self::optional_reference_member(node, "exhausted"));
+                        children
+                    }
+                    fsl_package::protocol_view::ControlOperation::Await => [
+                        Self::reference_member(node, "event"),
+                        Self::reference_member(node, "then"),
+                        Self::reference_member(node, "timeout"),
+                    ]
+                    .into_iter()
+                    .flatten()
+                    .collect(),
+                    _ => Vec::new(),
+                };
+                for child in children {
+                    self.walk(&child, within)?;
+                }
+            }
         }
         within.pop();
         Ok(())
@@ -154,7 +374,7 @@ impl<'p> Reader<'p> {
 impl GlobalStructure {
     /// The structure of the protocol clause `protocol`, from its FR-519
     /// view and causal relation (PA-3, PA-9). The caller has already
-    /// refused every construct outside the `bounded-static` profile.
+    /// refused constructs its selected profile does not admit.
     ///
     /// # Errors
     ///
@@ -199,7 +419,44 @@ impl GlobalStructure {
         }
         reader.input.uniform_fifo = fifo.into_values().collect();
         reader.walk(view.run(), &mut Vec::new())?;
-        GlobalStructure::build(reader.input, budget).map_err(StructureError::Limit)
+        for template in view.compensations() {
+            let node = reader.node(template)?;
+            let operation = control_operation(node)?;
+            if operation == fsl_package::protocol_view::ControlOperation::Compensate {
+                let (maximum, window) = Reader::projection_attributes(node, operation);
+                let owner = reader.owner_of(node);
+                let record_type = reader.record_type(node);
+                reader.input.events.push(GlobalEvent {
+                    at: PortRef {
+                        node: (*template).clone(),
+                        port: Port::Enter,
+                    },
+                    out: PortRef {
+                        node: (*template).clone(),
+                        port: Port::Exit,
+                    },
+                    kind: GlobalEventKind::Control {
+                        operation,
+                        owner,
+                        maximum,
+                        window,
+                        record_type,
+                    },
+                    within: vec![(*template).clone()],
+                });
+            }
+        }
+        let mut maxima = BTreeMap::new();
+        for role in view.roles() {
+            let maximum = role_replication_maximum(reader.node(role)?)?;
+            if let Some(maximum) = maximum {
+                maxima.insert((*role).clone(), maximum);
+            }
+        }
+        let mut structure =
+            GlobalStructure::build(reader.input, budget).map_err(StructureError::Limit)?;
+        structure.set_role_maxima(maxima);
+        Ok(structure)
     }
 }
 
@@ -207,7 +464,9 @@ impl GlobalStructure {
 #[derive(Debug, Eq, PartialEq, thiserror::Error)]
 pub enum ProtocolReplayRefusal {
     /// The source is no `ProtocolAnalysis` source.
-    #[error("invalid_runtime_input/invalid-value at /replay/source: protocol analysis replay requires a ProtocolAnalysis source")]
+    #[error(
+        "invalid_runtime_input/invalid-value at /replay/source: protocol analysis replay requires a ProtocolAnalysis source"
+    )]
     WrongSource,
     /// The evidence's key is not a projection key.
     #[error("invalid_runtime_input/invalid-value: the evidence key is not a projection key")]
@@ -233,8 +492,8 @@ pub fn replay_protocol_analysis(
     budget: RunBudget,
 ) -> Result<crate::result::ReplayResult, ProtocolReplayRefusal> {
     use crate::protocol_analysis::{
-        replay_projection_counterexample, ProtocolAnalysisKey, ProtocolReplayResult,
-        ProtocolReplaySettlement,
+        ProtocolAnalysisKey, ProtocolReplayResult, ProtocolReplaySettlement,
+        replay_projection_counterexample,
     };
     let crate::witness::ReplaySource::ProtocolAnalysis(evidence) = source else {
         return Err(ProtocolReplayRefusal::WrongSource);

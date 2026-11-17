@@ -17,25 +17,25 @@ use filament_exact::{Cancel, Meter};
 use filament_semantic_value::checking::CheckingLimits;
 use filament_semantic_value::fairness::{FairnessGranularity, FairnessKind};
 use fsl_analyze::model_check::ProtocolCheckRequest;
-use fsl_analyze::model_check::{check_protocol, ModelCheckRefusal};
+use fsl_analyze::model_check::{ModelCheckRefusal, check_protocol};
 use fsl_eval::model_subject::{ModelInstance, ModelLetters, ProtocolSubject};
+use fsl_eval::simulation::TransitionSystem;
 use fsl_eval::simulation::model::{ExpansionLimits, ModelSimState};
 use fsl_eval::simulation::protocol::{
     FairnessOrigin, MemorySelection, ProtocolClass, ProtocolFairness, ProtocolTarget,
     ProtocolTransition, ResolvedMemory, StepKind, ThreadPath,
 };
-use fsl_eval::simulation::TransitionSystem;
 use fsl_eval::temporal::AtomReading;
-use fsl_foundation::diagnostic::Code;
-use fsl_foundation::source::provenance::OccurrenceKey;
 use fsl_foundation::MemoryModelName;
 use fsl_foundation::SourceIdentity;
+use fsl_foundation::diagnostic::Code;
+use fsl_foundation::source::provenance::OccurrenceKey;
 use fsl_package::{CheckedPackage, ClockConfiguration, TemporalClockSelection};
 use fsl_replay::{
-    replay_protocol_trace, settle_protocol_check, ModelCheckItem, ModelCheckLimits,
-    ModelCheckOutcome, ModelCheckRecord, ModelTraceRefusal, ModelTraceReplayResult,
-    ModelTraceSettlement, ModelTraceSubject, ProofCertificate, ProtocolCertificateRequest,
-    ProtocolTraceSubject, ReplayLimits, ReplayRefusal, ResultLabel, TemporalCounterexample,
+    ModelCheckItem, ModelCheckLimits, ModelCheckOutcome, ModelCheckRecord, ModelTraceRefusal,
+    ModelTraceReplayResult, ModelTraceSettlement, ModelTraceSubject, ProofCertificate,
+    ProtocolCertificateRequest, ProtocolTraceSubject, ReplayLimits, ReplayRefusal, ResultLabel,
+    TemporalCounterexample, replay_protocol_trace, settle_protocol_check,
 };
 use fsl_semantics::check::{
     CheckCause, CheckRefusal, CheckedProtocolTarget, PackageDeclarations, ProtocolAnchorCause,
@@ -49,9 +49,9 @@ use ix_trace_rs::trace;
 use serde_json::Value;
 
 use crate::fill::{
-    attempt, contracts, document, fill_unit, instance, package_over, package_with,
+    Documents, attempt, contracts, document, fill_unit, instance, package_over, package_with,
     package_with_name, protocol, reachable, sc_system, single_object_document, subject,
-    tcb_01_event_position_selection, unit_text, universe, v, Documents,
+    tcb_01_event_position_selection, unit_text, universe, v,
 };
 use crate::model_settle::{envelope_at, request};
 
@@ -457,9 +457,11 @@ fn scheduling_adversarial_admits_the_lasso_that_starves_a_branch() {
                 && transition.node() == Some("Both/s/Sender/Done")
         }));
     }
-    assert!(cycle
-        .iter()
-        .all(|step| step.transition.node() != Some("Both/s/Sender/Done")));
+    assert!(
+        cycle
+            .iter()
+            .all(|step| step.transition.node() != Some("Both/s/Sender/Done"))
+    );
 
     let record = adversarial.settle(&outcome);
     assert_eq!(record.label, ResultLabel::Refuted, "{record:?}");
@@ -857,14 +859,18 @@ fn a_compensation_uses_its_finite_temporal_profile() {
     let nodes = wire["semantic_graph"]["nodes"]
         .as_array()
         .expect("emitted semantic graph");
-    assert!(nodes
-        .iter()
-        .any(|node| node["semantic_form"] == "compensation"));
+    assert!(
+        nodes
+            .iter()
+            .any(|node| node["semantic_form"] == "compensation")
+    );
     let reached = reachable(&system);
-    assert!(reached.iter().any(|state| state
-        .steps
-        .iter()
-        .any(|(step, _)| { matches!(step.kind(), StepKind::CAttempt | StepKind::CEnd) })));
+    assert!(reached.iter().any(|state| {
+        state
+            .steps
+            .iter()
+            .any(|(step, _)| matches!(step.kind(), StepKind::CAttempt | StepKind::CEnd))
+    }));
 }
 
 /// Every object below `value` whose `kind` is `kind`.
@@ -983,58 +989,21 @@ fn an_authored_operation_constraint_joins_the_scheduler_constraints() {
     assert!(keys.windows(2).all(|pair| pair[0] < pair[1]), "{keys:?}");
 }
 
-/// FR-228: a liveness clause over a protocol whose `Both` runs under `ra`
-/// refuses `unsupported_construct`/`not-yet-implemented`: the engine reads
-/// no visibility fairness, and a stale read would give a false
-/// counterexample.
-#[trace("TC-657")]
-#[test]
-fn liveness_over_an_ra_parallel_refuses() {
-    let chatter = Chatter::new("", EVENTUALLY, &IS_ONE);
-    let mut subject = chatter.subject();
-    let checked = chatter
-        .checked
-        .graph()
-        .protocol("Chatter")
-        .expect("the protocol");
-    subject.memory = ResolvedMemory::resolve(
-        checked,
-        &[MemorySelection {
-            parallel: "Chatter::Both".to_owned(),
-            model: MemoryModelName::Ra,
-        }],
-    )
-    .expect("the selection resolves");
-    let refusal = check_protocol(
-        ProtocolCheckRequest {
-            temporal_clock_selections: &[],
-            subject,
-            item: chatter.item(),
-            max_depth: None,
-            max_store_buffer: None,
-            max_messages: None,
-            max_live_instances: None,
-            limits: ModelCheckLimits::default(),
-            ignore_memory_constraints: false,
-        },
-        &Cancel::new(),
-    )
-    .expect_err("an ra liveness clause refuses");
-    assert!(
-        matches!(refusal, ModelCheckRefusal::WeakLiveness),
-        "{refusal:?}"
-    );
-}
-
 /// FR-228-AC-11: a liveness clause over `Chatter` with `Chatter::Both`
 /// resolved to `ra` is decided under visibility fairness, never refused as
 /// unsupported. This replaces the refusal `liveness_over_an_ra_parallel_refuses`
 /// asserts, which the decided behaviour retires.
 #[trace("TC-2025", "FR-228-AC-11", "FSpec-TC-1524", "FSpec-FR-437-AC-16")]
-#[ignore = "QSL-2218: liveness over an ra parallel is not implemented yet"]
 #[test]
 fn liveness_over_an_ra_parallel_is_decided_under_visibility_fairness() {
-    let chatter = Chatter::new("", EVENTUALLY, &IS_ONE);
+    let base = Chatter::new("", EVENTUALLY, &IS_ONE);
+    let chatter = Chatter::with_body(
+        "ra-liveness",
+        base.body
+            .replace("delivery unknown", "delivery exactly-once-premise"),
+        0,
+        &IS_ONE,
+    );
     let mut subject = chatter.subject();
     let checked = chatter
         .checked
@@ -1056,7 +1025,7 @@ fn liveness_over_an_ra_parallel_is_decided_under_visibility_fairness() {
             item: chatter.item(),
             max_depth: None,
             max_store_buffer: None,
-            max_messages: None,
+            max_messages: Some(2),
             max_live_instances: None,
             limits: ModelCheckLimits::default(),
             ignore_memory_constraints: false,

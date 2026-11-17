@@ -1227,11 +1227,12 @@ impl<'a> ModelSystem<'a> {
             let Some(node) = node else {
                 return;
             };
-            let bounded = if matches!(value_type, ValueType::Population(_))
-                || domain::enumerable(value_type)
+            let value_type = root_classification_type(value_type);
+            let bounded = if matches!(&value_type, ValueType::Population(_))
+                || domain::enumerable(&value_type)
             {
-                value_type.clone()
-            } else if domain::finite(value_type, self.types) {
+                value_type
+            } else if domain::finite(&value_type, self.types) {
                 // A finite enum, record or tuple (STD-508), its extent
                 // read whole.
                 ValueType::Boolean
@@ -1585,6 +1586,17 @@ impl<'a> ModelSystem<'a> {
         }
         creatable.sort();
         creatable
+    }
+}
+
+/// The classify_extent input for a rooted quantity: quantity domains are
+/// integral before the classifier decides whether the root is bounded.
+pub(crate) fn root_classification_type(value_type: &ValueType) -> ValueType {
+    match value_type {
+        ValueType::Quantity(_) | ValueType::BoundedQuantity(_) | ValueType::CarriedQuantity(_) => {
+            ValueType::Integer
+        }
+        other => other.clone(),
     }
 }
 
@@ -2024,6 +2036,49 @@ fn ranged(
 mod tests {
     use super::*;
     use ix_trace_rs::trace;
+
+    /// Quantity roots become integral before `classify_extent` decides
+    /// whether the root is bounded.
+    /// Provenance: QSL-2209.
+    #[trace("TC-660")]
+    #[test]
+    fn quantity_root_types_classify_as_integer() {
+        use filament_exact::{
+            BoundedQuantityType, CarriedQuantityType, Integer, IntegerInterval, QuantityCarrier,
+            RoundingMode, UnitId,
+        };
+
+        let unit = UnitId::declared(crate::test_ids::node_key("metre"));
+        let quantity = ValueType::Quantity(unit.clone());
+        let bounded = ValueType::BoundedQuantity(
+            BoundedQuantityType::new(unit.clone(), None, None)
+                .expect("empty bounds are admitted")
+                .into(),
+        );
+        let carried = ValueType::CarriedQuantity(
+            CarriedQuantityType::new(
+                unit,
+                QuantityCarrier::Integer {
+                    domain: IntegerInterval::new(Integer::from(0_i64), Integer::from(10_i64))
+                        .expect("ordered carrier bounds"),
+                    rounding: RoundingMode::Exact,
+                },
+            )
+            .into(),
+        );
+
+        for (kind, root) in [
+            ("quantity", quantity),
+            ("bounded", bounded),
+            ("carried", carried),
+        ] {
+            assert_eq!(
+                root_classification_type(&root),
+                ValueType::Integer,
+                "the {kind} root is classified as Integer",
+            );
+        }
+    }
 
     /// FR-120 "Post-states": the two stops a model expansion makes carry the
     /// catalog's codes.

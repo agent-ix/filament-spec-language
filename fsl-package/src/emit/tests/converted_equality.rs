@@ -148,6 +148,21 @@ fn nested_equalities_each_retain_producer_facts() {
     }));
 }
 
+/// QSL-2173: checked-package/v2 lacks FR-148's `numericEqual` schedule, so
+/// float equality fails closed with a typed unsupported-construct refusal.
+#[ix_trace_rs::trace("QSL-2173")]
+#[test]
+fn float_equality_schedule_is_a_typed_unsupported_construct() {
+    let graph = checked_graph(
+        "function float_equal using v(a: Float64[nearest-even], b: Float64[nearest-even]): Boolean pure { a = b }",
+    );
+    let refusal = emit_checked(&CheckedPackage::link(graph))
+        .expect_err("float equality is not representable yet");
+    assert_eq!(refusal.code(), fsl_foundation::Code::UnsupportedConstruct);
+    assert_eq!(refusal.cause(), Some("not-yet-implemented"));
+    assert!(refusal.to_string().contains("QSL-2173"));
+}
+
 /// FSpec FR-290: the equality expression's producer identity remains keyed by
 /// its expression occurrence when the Boolean function body also carries
 /// claim and declaration occurrences at the same node and location.

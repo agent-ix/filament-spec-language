@@ -1346,7 +1346,6 @@ fn a_declined_item_writes_no_protocol_analysis_record() {
 /// `activation-on-each`.
 #[trace("TC-2524", "FR-891-AC-3", "FSpec-FR-735-AC-1")]
 #[test]
-#[ignore = "QSL-2212: realizability under the bounded profile is refused and activation on each answers unsupported"]
 fn realizability_settles_over_activation_on_each() {
     let fixture = Fixture::activated(
         "on each (t: M::Cell)",
@@ -1366,12 +1365,10 @@ fn realizability_settles_over_activation_on_each() {
     );
 }
 
-/// FR-891-AC-1 (TC-2523): under `bounded`, a `repeat` is decided, never
-/// answered `repeat`.
-#[trace("TC-2523", "FR-891-AC-1")]
+/// FR-891-AC-1 (TC-2523): a repeat is decided under `bounded`.
+#[trace("TC-2523", "FR-891-AC-1", "FR-891-AC-4")]
 #[test]
-#[ignore = "QSL-2213: realizability over a repeat answers unsupported instead of settling"]
-fn realizability_settles_over_a_repeat() {
+fn realizability_settles_over_each_control() {
     let fixture = Fixture::new(
         "exactly-once-premise",
         "sequence Main { repeat Loop by Buyer visible () max 1 while { true } \

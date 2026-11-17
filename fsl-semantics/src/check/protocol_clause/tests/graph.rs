@@ -419,10 +419,14 @@ fn an_await_matches_an_event_in_a_closed_window_under_a_temporal_profile() {
     let source = awaiting("", "[2,5]", event);
     let graph = checks(&source);
     let protocol = graph.protocol("Flow").expect("the checked protocol");
+    let await_span = protocol.awaits[0].span;
+    assert!(source[await_span.start..await_span.end].starts_with("await Wait"));
     assert_eq!(
         protocol.awaits,
         [CheckedAwait {
             node: node(&source, "Wait", ProtocolNodeKind::Await),
+            name: "Wait".to_owned(),
+            span: await_span,
             clock: "wall".to_owned(),
             within: CheckedDeadline { lower: 2, upper: 5 },
             profile: Some(crate::check::TemporalProfile::EventPositionFalseExtension),
@@ -577,10 +581,14 @@ fn an_await_matches_a_receive_and_an_effect_as_it_matches_an_event() {
     for source in [received, applied] {
         let graph = checks(&source);
         let protocol = graph.protocol("Flow").expect("the checked protocol");
+        let await_span = protocol.awaits[0].span;
+        assert!(source[await_span.start..await_span.end].starts_with("await Wait"));
         assert_eq!(
             protocol.awaits,
             [CheckedAwait {
                 node: node(&source, "Wait", ProtocolNodeKind::Await),
+                name: "Wait".to_owned(),
+                span: await_span,
                 clock: "wall".to_owned(),
                 within: CheckedDeadline { lower: 2, upper: 5 },
                 profile: Some(crate::check::TemporalProfile::EventPositionFalseExtension),

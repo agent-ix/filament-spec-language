@@ -1441,11 +1441,13 @@ impl<'a> ExprRef<'a> {
 
     /// Whether this subtree and `other`, of any arena, are the same
     /// expression: equal node payloads, child for child. The nodes'
-    /// positions in their arenas play no part. Source locations on field
-    /// accesses do not affect expression identity; a payload that records
-    /// the span of a type it names (a conversion's target, an accumulation's
-    /// or a count's result type) still compares that span. Runs on an explicit
-    /// stack, so a deep tree compares in constant native stack.
+    /// positions in their arenas play no part; a payload that records the
+    /// span of a type it names (a conversion's target, an accumulation's or
+    /// a count's result type) compares that span as part of the payload.
+    /// Field-member source-token spans are diagnostic locations and do not
+    /// participate in expression equality.
+    /// Runs on an explicit stack, so a deep tree compares in constant
+    /// native stack.
     pub fn same_tree(self, other: ExprRef<'_>) -> bool {
         let mut pending = vec![(self, other)];
         while let Some((left, right)) = pending.pop() {

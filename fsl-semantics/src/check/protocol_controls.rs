@@ -71,6 +71,9 @@ pub struct CheckedChannel {
     pub from: String,
     /// The declared `to` role.
     pub to: String,
+    /// The systems connection this channel traverses, when authored as
+    /// `via Link` (FR-897).
+    pub connection: Option<filament_checked::key::DeclarationKey>,
     /// The `carries` type, resolved.
     pub carries: ValueType,
     /// The ordering premise.
@@ -111,6 +114,9 @@ struct Keys<'k, 'a, 'c> {
 pub(super) fn check(
     protocol: &ProtocolDeclarationForm,
     alias_names: &BTreeMap<String, AliasKind>,
+    relationships: &[super::protocol_relationship::CheckedRelationship],
+    checked_roles: &[super::protocol_clause::CheckedRole],
+    models: &[super::lowering::AdmittedModel],
     declarations: &ClauseDeclarations<'_>,
     cx: &mut CheckContext<'_, ClauseDeclarations<'_>>,
 ) -> Result<(Vec<CheckedChannel>, u64), Vec<CheckRefusal>> {
@@ -164,6 +170,9 @@ pub(super) fn check(
             &protocol.name.name,
             channel,
             &roles,
+            relationships,
+            checked_roles,
+            models,
             &mut keys,
             &mut refusals,
         ) {
@@ -194,6 +203,9 @@ fn check_channel(
     protocol: &str,
     channel: &ChannelForm,
     roles: &BTreeSet<&str>,
+    relationships: &[super::protocol_relationship::CheckedRelationship],
+    checked_roles: &[super::protocol_clause::CheckedRole],
+    models: &[super::lowering::AdmittedModel],
     keys: &mut Keys<'_, '_, '_>,
     refusals: &mut Vec<(Span, CheckRefusal)>,
 ) -> Option<CheckedChannel> {
@@ -229,6 +241,7 @@ fn check_channel(
         }
     }
     let carries = match resolve_form(&scope.for_declaration(protocol), &channel.carries) {
+        Ok(value @ ValueType::Reference(_)) if channel.via.is_some() => Some(value),
         Ok(ValueType::Reference(_) | ValueType::Population(_)) => {
             let name = match &channel.carries.head {
                 TypeFormHead::Name(name) => name.name.clone(),
@@ -260,6 +273,15 @@ fn check_channel(
             None
         }
     };
+    let connection = check_channel_connection(
+        protocol,
+        channel,
+        relationships,
+        checked_roles,
+        models,
+        carries.as_ref(),
+        refusals,
+    );
     let ordering = match &channel.ordering.value {
         ChannelOrdering::Unordered => Some(CheckedOrdering::Unordered),
         ChannelOrdering::Fifo {
@@ -284,6 +306,7 @@ fn check_channel(
         name: channel.name.name.clone(),
         from: channel.from.name.clone(),
         to: channel.to.name.clone(),
+        connection,
         carries: carries?,
         ordering: ordering?,
         delivery: channel.delivery.value,
@@ -291,6 +314,148 @@ fn check_channel(
         overflow: channel.overflow.value,
         span: channel.span,
     })
+}
+
+/// FR-897: resolve and check the optional connection carried by a channel.
+/// The source Port interface types are retained in the relationship facts;
+/// conformance is checked against the selected package's admitted model
+/// index.
+fn check_channel_connection(
+    _protocol: &str,
+    channel: &ChannelForm,
+    relationships: &[super::protocol_relationship::CheckedRelationship],
+    roles: &[super::protocol_clause::CheckedRole],
+    models: &[super::lowering::AdmittedModel],
+    carries: Option<&ValueType>,
+    refusals: &mut Vec<(Span, CheckRefusal)>,
+) -> Option<filament_checked::key::DeclarationKey> {
+    let via = channel.via.as_ref()?;
+    let Some(relationship) = relationships
+        .iter()
+        .find(|relationship| relationship.name == via.name)
+    else {
+        refusals.push((
+            via.span,
+            refusal(ProtocolAnchorCause::MissingChannelConnection {
+                channel: channel.name.name.clone(),
+                name: via.name.clone(),
+                span: via.span,
+            }),
+        ));
+        return None;
+    };
+    let Some(connection) = &relationship.connection else {
+        refusals.push((
+            via.span,
+            refusal(ProtocolAnchorCause::ChannelConnectionExport {
+                channel: channel.name.name.clone(),
+                name: via.name.clone(),
+                required: "connection",
+                actual: "relationship",
+                export: Box::new(relationship.key.clone()),
+                span: via.span,
+            }),
+        ));
+        return None;
+    };
+    let mut endpoint_role = |name: &str, span: Span| -> Option<&super::protocol_clause::CheckedRole> {
+        let role = roles.iter().find(|role| role.name == name)?;
+        if role.model_member.is_none() {
+            refusals.push((
+                span,
+                refusal(ProtocolAnchorCause::ChannelPortRole {
+                    channel: channel.name.name.clone(),
+                    role: name.to_owned(),
+                    span,
+                }),
+            ));
+            return None;
+        }
+        Some(role)
+    };
+    let Some(from) = endpoint_role(&channel.from.name, channel.from.span) else {
+        return None;
+    };
+    let Some(to) = endpoint_role(&channel.to.name, channel.to.span) else {
+        return None;
+    };
+    let (expected, source_interface) = match connection.direction {
+        crate::model::domain_package::RelationshipDirection::SourceToTarget => (
+            [connection.ports[0].clone(), connection.ports[1].clone()],
+            connection.interfaces[0].clone(),
+        ),
+        crate::model::domain_package::RelationshipDirection::TargetToSource => (
+            [connection.ports[1].clone(), connection.ports[0].clone()],
+            connection.interfaces[1].clone(),
+        ),
+        crate::model::domain_package::RelationshipDirection::Bidirectional => (
+            [connection.ports[0].clone(), connection.ports[1].clone()],
+            connection.interfaces[0].clone(),
+        ),
+        crate::model::domain_package::RelationshipDirection::Undirected => (
+            [connection.ports[0].clone(), connection.ports[1].clone()],
+            connection.interfaces[0].clone(),
+        ),
+    };
+    let Some(actual_from) = from.model_member.as_ref() else {
+        return None;
+    };
+    let Some(actual_to) = to.model_member.as_ref() else {
+        return None;
+    };
+    let actual = [actual_from.clone(), actual_to.clone()];
+    let forward = actual == expected;
+    let reverse = connection.direction
+        == crate::model::domain_package::RelationshipDirection::Bidirectional
+        && actual == [expected[1].clone(), expected[0].clone()];
+    let direction_supported =
+        connection.direction != crate::model::domain_package::RelationshipDirection::Undirected;
+    let same_model = from.model_selection.as_deref() == Some(connection.model_selection.as_str())
+        && to.model_selection.as_deref() == Some(connection.model_selection.as_str());
+    if !same_model || !direction_supported || (!forward && !reverse) {
+        refusals.push((
+            via.span,
+            refusal(ProtocolAnchorCause::ChannelConnectionEnds {
+                channel: channel.name.name.clone(),
+                connection: via.name.clone(),
+                expected: [Box::new(expected[0].clone()), Box::new(expected[1].clone())],
+                actual: [Box::new(actual[0].clone()), Box::new(actual[1].clone())],
+                span: via.span,
+            }),
+        ));
+        return None;
+    }
+    let model = models
+        .iter()
+        .find(|model| model.selection().identity == connection.model_selection);
+    let source_interface = if reverse {
+        connection.interfaces[1].clone()
+    } else {
+        source_interface
+    };
+    let expected_type = ValueType::Reference(source_interface.clone());
+    let conforms = match (model, carries) {
+        (Some(model), Some(ValueType::Reference(actual_type))) => model
+            .type_key(actual_type.clone())
+            .zip(model.type_key(source_interface.clone()))
+            .is_some_and(|(actual, expected)| {
+                model.model_index().conforms_admitted(actual, expected)
+            }),
+        _ => false,
+    };
+    if !conforms {
+        refusals.push((
+            channel.carries.span,
+            refusal(ProtocolAnchorCause::ChannelConnectionCarries {
+                channel: channel.name.name.clone(),
+                expected: Box::new(expected_type),
+                actual: Box::new(carries.cloned().unwrap_or(ValueType::Boolean)),
+                span: channel.carries.span,
+            }),
+        ));
+        return None;
+    }
+    Some(relationship.key.clone())
 }
 
 /// FR-218 "Channels": `ordering fifo by (m: T) { key }`. `T` resolves and

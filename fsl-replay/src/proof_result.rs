@@ -851,6 +851,9 @@ impl UnavailabilityCause {
 /// (ADR-013 C-09) and a second spelling of it must be unrepresentable.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum InconclusiveCause {
+    /// FR-059's recording assessment found an undecided obligation or an
+    /// open/contradicted closure premise without a run limit.
+    OpenHistory,
     /// The premises held for no assignment in a value-validity check arm
     /// (FSpec FR-483). This is an inconclusive terminal result, not a proof
     /// with zero Kani SUCCESS checks.
@@ -1148,6 +1151,7 @@ impl InconclusiveCause {
     /// The cause's FR-331 wire spelling.
     pub const fn as_str(&self) -> &'static str {
         match self {
+            Self::OpenHistory => "open-history",
             Self::KaniVacuousProof => KANI_VACUOUS_PROOF_KIND,
             Self::BoundReached { .. } => "bound-reached",
             Self::InductionNotClosed { .. } => "induction-not-closed",
@@ -1189,6 +1193,7 @@ impl InconclusiveCause {
     fn measured_bytes(&self) -> usize {
         match self {
             Self::KaniVacuousProof
+            | Self::OpenHistory
             | Self::BoundReached { .. }
             | Self::InductionNotClosed { .. }
             | Self::HypothesesNotEstablished { .. }

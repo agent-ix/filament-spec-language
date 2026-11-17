@@ -6,6 +6,7 @@
 use std::collections::BTreeMap;
 
 use filament_contract_model::CheckedNodeId;
+use filament_exact::ObjectReference;
 use fsl_eval::simulation::protocol::ProtocolTransition;
 
 use super::ProtocolAnalysisKey;
@@ -32,6 +33,13 @@ pub enum StrategyAction {
 /// One item of a role's local observation (PA-16).
 #[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]
 pub enum Observed {
+    /// The replicated role instance whose local graph is taking this step
+    /// (FR-890-AC-3). Instances share a strategy table but never share an
+    /// observation class merely because their messages match.
+    ActingInstance {
+        /// The acting object's typed reference.
+        object: ObjectReference,
+    },
     /// The protocol captures of one instance, which every role of it holds
     /// (FR-218), as bound when the instance starts: the RFC 8785 bytes of
     /// the capture names and FR-181 typed values. They lead an observation,

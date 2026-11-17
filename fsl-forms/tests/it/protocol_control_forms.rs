@@ -102,6 +102,7 @@ fn a_channel_builds_every_premise_as_written() {
     assert_eq!(slice(&text, channel.from.span), "R");
     assert_eq!(channel.from.name, "R");
     assert_eq!(channel.to.name, "S");
+    assert!(channel.via.is_none());
     assert_eq!(slice(&text, channel.carries.span), OBJECT);
     assert_eq!(channel.ordering.value, ChannelOrdering::Unordered);
     assert_eq!(slice(&text, channel.ordering.span), "unordered");
@@ -113,6 +114,23 @@ fn a_channel_builds_every_premise_as_written() {
     assert_eq!(slice(&text, channel.overflow.span), "block");
     assert!(slice(&text, channel.span).starts_with("channel Pay"));
     assert!(slice(&text, channel.span).ends_with(';'));
+}
+
+/// FR-897-AC-1: a channel's optional `via` relationship keeps its name and
+/// source span in the S2 form.
+#[trace("TC-2533", "FR-897-AC-1")]
+#[test]
+fn a_channel_form_retains_its_connection_name() {
+    let member = format!(
+        "channel Pay from R to S via Link carries {OBJECT} ordering unordered \
+         delivery at-least-once capacity 1 overflow reject;"
+    );
+    let text = source(&member, RUN);
+    let unit = build(&text);
+    let channel = only_channel(protocol(&unit));
+    let via = channel.via.as_ref().expect("via Link is retained");
+    assert_eq!(via.name, "Link");
+    assert_eq!(slice(&text, via.span), "Link");
 }
 
 /// The other delivery, capacity and ordering spellings build their own

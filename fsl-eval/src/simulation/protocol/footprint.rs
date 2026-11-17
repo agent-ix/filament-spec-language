@@ -529,7 +529,14 @@ impl<M: MemoryModel> ProtocolSystem<'_, M> {
         let path = step.thread().ok_or_else(unknown)?;
         let instance = state.instances.get(&path.instance).ok_or_else(unknown)?;
         let thread = instance.threads.get(path).ok_or_else(unknown)?;
-        if matches!(step.kind(), StepKind::CAttempt | StepKind::CEnd) {
+        if matches!(
+            step.kind(),
+            StepKind::CAttempt
+                | StepKind::CFail
+                | StepKind::CTimeout
+                | StepKind::CEnd
+                | StepKind::CExpire
+        ) {
             return self.compensation_footprint(state, instance, path, thread, step, accesses);
         }
         let (node, after) = self.stepped(thread, step)?;
@@ -627,6 +634,9 @@ impl<M: MemoryModel> ProtocolSystem<'_, M> {
                     | StepKind::Memory
                     | StepKind::CAttempt
                     | StepKind::CEnd
+                    | StepKind::CFail
+                    | StepKind::CTimeout
+                    | StepKind::CExpire
                     | StepKind::Activate
                     | StepKind::Spawn
                     | StepKind::Retire => None,
@@ -790,6 +800,9 @@ impl<M: MemoryModel> ProtocolSystem<'_, M> {
             | StepKind::Memory
             | StepKind::CAttempt
             | StepKind::CEnd
+            | StepKind::CFail
+            | StepKind::CTimeout
+            | StepKind::CExpire
             | StepKind::Activate
             | StepKind::Spawn
             | StepKind::Retire => return Err(unknown()),
@@ -926,7 +939,10 @@ impl<M: MemoryModel> ProtocolSystem<'_, M> {
         let own = control(path);
         built.enabling(own.clone());
         built.write(own);
-        if let (Some(index), StepKind::CAttempt) = (template.role, step.kind()) {
+        if matches!(step.kind(), StepKind::CAttempt | StepKind::CFail | StepKind::CTimeout) {
+            let Some(index) = template.role else {
+                return Err(unknown());
+            };
             built.enabling(self.role_location(path.instance, index)?);
         }
         self.scope_writes(&mut built, instance, path.instance)?;
@@ -958,6 +974,29 @@ impl<M: MemoryModel> ProtocolSystem<'_, M> {
                 for location in self.model.record_reads(template.attempt_type) {
                     built.enabling(location);
                 }
+            }
+            StepKind::CFail | StepKind::CTimeout => {
+                let application = step.application().ok_or_else(unknown)?;
+                let model = self.model.footprint_selecting(application, None)?;
+                built.footprint.reads.extend(model.reads);
+                built.footprint.enabling.extend(model.enabling);
+                let registration = protocol(ProtocolLocation::Registration {
+                    instance: path.instance,
+                    key,
+                });
+                built.read(registration.clone());
+                built.write(registration);
+                for location in self.model.record_reads(template.attempt_type) {
+                    built.enabling(location);
+                }
+            }
+            StepKind::CExpire => {
+                let registration = protocol(ProtocolLocation::Registration {
+                    instance: path.instance,
+                    key,
+                });
+                built.read(registration.clone());
+                built.write(registration);
             }
             StepKind::CEnd if retry => {
                 let registration = protocol(ProtocolLocation::Registration {
@@ -1168,6 +1207,9 @@ impl<M: MemoryModel> ProtocolSystem<'_, M> {
             | StepKind::Memory
             | StepKind::CAttempt
             | StepKind::CEnd
+            | StepKind::CFail
+            | StepKind::CTimeout
+            | StepKind::CExpire
             | StepKind::Activate
             | StepKind::Spawn
             | StepKind::Retire => false,

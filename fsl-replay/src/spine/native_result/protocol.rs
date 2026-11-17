@@ -14,15 +14,15 @@ use filament_contract_model::CheckedNodeId;
 use serde::{Deserialize, Serialize};
 use serde_json::value::RawValue;
 
-use super::{read_typed, NativeRunReadError};
+use super::{NativeRunReadError, read_typed};
 use crate::model_check::settle::{Execution, ResultLabel, Truth};
 use crate::proof_result::{
     Certification, IncompleteCause, InconclusiveCause, ProofBasis, SettlementBasis, TerminalValue,
     UnavailabilityCause,
 };
 use crate::protocol_analysis::{
-    self as analysis, node_text, read_node_text, NodeTextError, ProtocolAnalysisKey,
-    ProtocolAnalysisSettlement, UnsupportedSlug,
+    self as analysis, NodeTextError, ProtocolAnalysisKey, ProtocolAnalysisSettlement,
+    UnsupportedSlug, node_text, read_node_text,
 };
 use crate::result::{CauseCodecError, ProtocolWitnessWire, SeparatingWitnessRecord};
 
@@ -66,6 +66,12 @@ pub enum ProtocolInconclusiveCause {
         /// The key's `max_depth`.
         depth: u64,
     },
+    /// Realizability only: an enabled protocol activation reached the
+    /// authored live-instance cap.
+    InstanceBoundReached {
+        /// The authored `max_live_instances` request bound.
+        max_live_instances: u64,
+    },
     /// The counterexample did not replay.
     ReplayDisagreed {},
     /// Realizability only: a premise the claim does not state.
@@ -90,7 +96,8 @@ impl ProtocolInconclusiveCause {
             | Self::UnforcedRefutation {}
             | Self::StrategyReplayFailed {}
             | Self::CutCount {}
-            | Self::UndecidedEvaluation {} => kind == ProtocolAnalysisKind::Realizability,
+            | Self::UndecidedEvaluation {}
+            | Self::InstanceBoundReached { .. } => kind == ProtocolAnalysisKind::Realizability,
         }
     }
 
@@ -103,6 +110,11 @@ impl ProtocolInconclusiveCause {
             analysis::InconclusiveCause::StrategyReplayFailed => Self::StrategyReplayFailed {},
             analysis::InconclusiveCause::CutCount => Self::CutCount {},
             analysis::InconclusiveCause::Undecided => Self::UndecidedEvaluation {},
+            analysis::InconclusiveCause::InstanceBoundReached { max_live_instances } => {
+                Self::InstanceBoundReached {
+                    max_live_instances: *max_live_instances,
+                }
+            }
         }
     }
 }
@@ -483,7 +495,7 @@ impl ProtocolAnalysisRecord {
                 return Err(invalid(
                     "analysis.execution",
                     "an engine failure has no protocol-analysis record",
-                ))
+                ));
             }
             (L::Proved, E::Completed, T::Satisfied, B::ClosedScope)
             | (L::Refuted, E::Completed, T::Violated, B::DecisiveCounterexample)
@@ -494,7 +506,7 @@ impl ProtocolAnalysisRecord {
                 return Err(invalid(
                     "analysis.label",
                     "label, execution, truth and basis are not one FR-360 combination",
-                ))
+                ));
             }
         }
         if self.settlement.label() != self.label {
