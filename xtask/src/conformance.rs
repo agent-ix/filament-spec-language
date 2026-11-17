@@ -2,15 +2,13 @@
 //! The local FSpec vector gate. Path resolution and child environments live here,
 //! so Make never interprets checkout path bytes as source.
 
-use std::ffi::{OsStr, OsString};
-use std::path::{Path, PathBuf};
+use std::ffi::OsStr;
+use std::path::Path;
 use std::process::Command;
 
 use ix_trace_rs::string_edge;
 
 use crate::error::{Error, Result};
-
-const VECTOR: &str = "proposals/checked-package-v2/node-identity-vectors.json";
 
 struct Check {
     package: &'static str,
@@ -69,32 +67,6 @@ const CHECKS: &[Check] = &[
     Check { package: "fsl-semantics", target: Target::Test, selection: "complete_value_lock::conformance_admit_selection_matches_fspec_vectors", summaries: &[&["conformance: ", " accepted and ", " refused selection vectors"]], summary_mode: SummaryMode::Exact },
     Check { package: "fsl-package", target: Target::Lib, selection: "checked_v2::tests::protocol_corpus::conformance_protocol_vector_positive_packages_are_admitted", summaries: &[&["conformance: ", " protocol vector positive packages admitted"]], summary_mode: SummaryMode::Exact },
 ];
-
-fn resolve(input: Option<&OsStr>, workspace: &Path) -> Result<PathBuf> {
-    let raw = input
-        .filter(|value| !value.is_empty())
-        .ok_or_else(|| Error::ConformanceInput {
-            path: PathBuf::new(),
-            reason: "set FSPEC_DIR to a filament-specification checkout".to_owned(),
-        })?;
-    let path = Path::new(raw);
-    let candidate = if path.is_absolute() {
-        path.to_path_buf()
-    } else {
-        workspace.join(path)
-    };
-    let absolute = std::fs::canonicalize(candidate).map_err(|error| Error::ConformanceInput {
-        path: path.to_path_buf(),
-        reason: error.to_string(),
-    })?;
-    if !absolute.join(VECTOR).is_file() {
-        return Err(Error::ConformanceInput {
-            path: path.to_path_buf(),
-            reason: format!("missing {VECTOR}"),
-        });
-    }
-    Ok(absolute)
-}
 
 fn matches_summary(line: &str, pieces: &[&str], mode: SummaryMode) -> bool {
     let Some(mut remainder) = line.strip_prefix(pieces[0]) else {
@@ -165,13 +137,7 @@ fn check_output(check: &Check, output: &std::process::Output) -> Result<()> {
     Ok(())
 }
 
-fn run_with(
-    cargo: &Path,
-    workspace: &Path,
-    input: Option<&OsStr>,
-    child_env: &[(&str, &OsStr)],
-) -> Result<String> {
-    let checkout = resolve(input, workspace)?;
+fn run_with(cargo: &Path, workspace: &Path, child_env: &[(&str, &OsStr)]) -> Result<String> {
     for check in CHECKS {
         let mut command = Command::new(cargo);
         command.current_dir(workspace).args([
@@ -193,7 +159,6 @@ fn run_with(
                 "terse",
                 "--nocapture",
             ])
-            .env("FSPEC_DIR", &checkout)
             .envs(child_env.iter().copied())
             .output()
             .map_err(|source| Error::ConformanceSpawn {
@@ -205,33 +170,22 @@ fn run_with(
     Ok(String::new())
 }
 
-/// Validate the checkout before other local CI lanes begin.
-pub fn check_input(workspace: &Path) -> Result<String> {
-    let input = std::env::var_os("FSPEC_DIR");
-    resolve(input.as_deref(), workspace)?;
-    Ok(String::new())
-}
-
-/// Validate the checkout and run every required exact FSpec vector selection.
+/// Run every required exact FSpec vector selection against the pinned package.
 pub fn run(workspace: &Path) -> Result<String> {
-    let input: Option<OsString> = std::env::var_os("FSPEC_DIR");
-    run_with(Path::new("cargo"), workspace, input.as_deref(), &[])
+    run_with(Path::new("cargo"), workspace, &[])
 }
 
 fn run_ci_with(
     make: &Path,
     workspace: &Path,
-    input: Option<&OsStr>,
     args: &[&str],
     child_env: &[(&str, &OsStr)],
 ) -> Result<String> {
-    let checkout = resolve(input, workspace)?;
     let status = Command::new(make)
         .current_dir(workspace)
         .arg("--no-print-directory")
         .arg("ci-internal")
         .args(args)
-        .env("FSPEC_DIR", checkout)
         .env_remove("MAKEFLAGS")
         .env_remove("MFLAGS")
         .envs(child_env.iter().copied())
@@ -243,10 +197,9 @@ fn run_ci_with(
     Ok(String::new())
 }
 
-/// Launch the entire local CI graph with one validated absolute FSpec checkout.
+/// Launch the local CI graph; each vector reader uses the pinned package API.
 pub fn run_ci(workspace: &Path) -> Result<String> {
-    let input = std::env::var_os("FSPEC_DIR");
-    run_ci_with(Path::new("make"), workspace, input.as_deref(), &[], &[])
+    run_ci_with(Path::new("make"), workspace, &[], &[])
 }
 
 #[cfg(test)]

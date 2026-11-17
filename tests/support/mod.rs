@@ -32,3 +32,4 @@ pub(crate) fn slotted_package_bytes(wire: &serde_json::Value) -> Vec<u8> {
     fsl_semantics::check::wire_id::write_operand_rows(&mut wire);
     serde_json::to_vec(&wire).expect("the wire encodes")
 }
+pub(crate) mod published_fspec;

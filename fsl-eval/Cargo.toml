@@ -49,6 +49,7 @@ thiserror = "2.0.20"
 test-support = []
 
 [dev-dependencies]
+filament-specification = { workspace = true }
 # The evaluator's tests build `PackageDeclarations` from layer-2 parsed forms
 # (`Expression`, `FunctionDeclaration`, `TypeForm`): `check` takes forms as its
 # input and fsl-semantics exposes no builder of them. Layer 2 is below this

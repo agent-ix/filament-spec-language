@@ -336,9 +336,8 @@ fn counter_wraps_and_a_gap_fails_the_open_instance() {
 #[trace("TC-199", "FR-160-AC-7")]
 #[test]
 fn tick_cover_vectors_decide_by_the_endpoint_rule() {
-    let path = std::path::Path::new(&std::env::var("FSPEC_DIR").expect("FSPEC_DIR"))
-        .join("proposals/checked-package-v2/tick-cover-vectors.json");
-    let vectors: serde_json::Value = serde_json::from_slice(&std::fs::read(path).unwrap()).unwrap();
+    let vectors =
+        crate::published_fspec::json("proposals/checked-package-v2/tick-cover-vectors.json");
     for case in vectors["cases"].as_array().unwrap() {
         let u = ratio(case["uncertainty"].as_i64().unwrap(), 1);
         match case["kind"].as_str().unwrap() {

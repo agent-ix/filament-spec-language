@@ -23,7 +23,7 @@ use xtask::{
 const USAGE: &str = "usage: cargo xtask seam-probe\n       cargo xtask string-edge\n       \
                      cargo xtask route-lint\n       cargo xtask checked-input\n       \
                      cargo xtask test-suites <lane> [<cargo test args>]\n       \
-                     cargo xtask conformance-input\n       cargo xtask conformance\n       \
+                     cargo xtask conformance\n       \
                      cargo xtask ci\n       cargo xtask examples-check\n       cargo xtask refinement versioning <corpus>\n       \
                      cargo xtask pin-check [--manifest <Cargo.toml-or-directory>]\n       cargo xtask refinement layering <corpus>\n       \
                      cargo xtask refinement layering <corpus>\n       \
@@ -69,7 +69,6 @@ fn run(arguments: &[OsString]) -> Result<Outcome> {
         "canonical-types" => {
             canonical_types::run(workspace_operand.as_deref().unwrap_or(&workspace_root))
         }
-        "conformance-input" => conformance::check_input(&workspace_root),
         "conformance" => conformance::run(&workspace_root),
         "ci" => conformance::run_ci(&workspace_root),
         "examples-check" => examples_check::run(&workspace_root),

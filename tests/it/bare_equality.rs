@@ -621,15 +621,9 @@ fn related_calls_are_named_by_record_position() {
 #[test]
 fn the_published_pl_04_and_pl_05_vectors_carry_the_names_the_checker_builds() {
     use fsl_semantics::check::{protocol_site, ProtocolSite, RelatedSide};
-    let fspec = std::env::var_os("FSPEC_DIR")
-        .expect("FSPEC_DIR must name a filament-specification checkout");
-    let vectors: Value = serde_json::from_slice(
-        &std::fs::read(
-            Path::new(&fspec).join("proposals/checked-package-v2/checked-term-data-vectors.json"),
-        )
-        .expect("the published vectors"),
-    )
-    .expect("json");
+    let vectors: Value = crate::support::published_fspec::json(
+        "proposals/checked-package-v2/checked-term-data-vectors.json",
+    );
     let path = ["Main".to_owned(), "Pick".to_owned()];
     let got = ["Main".to_owned(), "Got".to_owned()];
     let want = [

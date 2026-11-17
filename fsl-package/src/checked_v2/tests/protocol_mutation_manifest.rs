@@ -11,7 +11,7 @@ use std::collections::BTreeSet;
 
 fn fixtures_directory() -> std::path::PathBuf {
     fspec_directory()
-        .expect("FSPEC_DIR must name a filament-specification checkout")
+        .expect("pinned FSpec publishes protocol fixtures")
         .join("proposals/checked-package-v2/fixtures")
 }
 

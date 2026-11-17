@@ -890,15 +890,8 @@ fn a_counter_cover_straddling_the_bound_is_indeterminate() {
 #[trace("TC-1295", "FR-501-AC-9")]
 #[test]
 fn the_comparison_functions_agree_with_the_tick_cover_vectors() {
-    // A required input: the conformance vectors are FSpec's, and a run
-    // without them proves nothing.
-    let fspec = std::env::var_os("FSPEC_DIR").expect(
-        "FSPEC_DIR names the filament-specification checkout the tick-cover vectors live in",
-    );
-    let path =
-        std::path::Path::new(&fspec).join("proposals/checked-package-v2/tick-cover-vectors.json");
-    let text = std::fs::read_to_string(&path).expect("the vectors file reads");
-    let document: serde_json::Value = serde_json::from_str(&text).expect("the vectors parse");
+    let document =
+        crate::published_fspec::json("proposals/checked-package-v2/tick-cover-vectors.json");
     let cases = document["cases"].as_array().expect("cases");
     assert_eq!(cases.len(), 15);
     for case in cases {
