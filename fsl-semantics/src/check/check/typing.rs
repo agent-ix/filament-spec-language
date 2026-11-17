@@ -3414,15 +3414,11 @@ impl<'a> Typer<'a> {
                     self.element_type(&operand)?;
                     ValueType::Integer
                 };
-                let sized = node(
-                    NodeKind::Size(self.push(operand)),
-                    value_type,
-                    &location,
-                );
-                match target {
+                let sized = node(NodeKind::Size(self.push(operand)), value_type, &location);
+                match target.as_ref() {
                     Some(ValueType::Int(target)) => Ok(node(
                         NodeKind::Coerce(self.push(sized), target.clone()),
-                        ValueType::Int(target),
+                        ValueType::Int(target.clone()),
                         &location,
                     )),
                     Some(ValueType::Integer) | None => Ok(sized),

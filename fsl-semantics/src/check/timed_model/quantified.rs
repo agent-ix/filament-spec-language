@@ -192,6 +192,7 @@ pub(super) fn read(
                     .fold(Expression::self_ref(), |operand, name| {
                         Expression::field(operand, name.clone())
                     }),
+                None,
             ),
             Expression::integer(count),
         );
