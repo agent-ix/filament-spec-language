@@ -1897,7 +1897,7 @@ fn actual_empty_admitted_identity_fault_propagates_from_package_into_replay_fail
         TypeForm::builtin(BuiltinType::Reference, span)
             .with_arguments(vec![TypeForm::name("M::A", span)]),
         Expression::name("population"),
-    ));
+    ), None);
     let mut declarations = PackageDeclarations::new(
         fsl_semantics::check::fixture_source(),
         "fixture",
