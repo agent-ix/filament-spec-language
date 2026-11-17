@@ -627,3 +627,279 @@ fn duplicate_delivery_is_classified_against_the_channel_premise() {
                 == Some(fsl_analyze::protocol_analysis::recording::RecordingCause::Duplicated)
     }));
 }
+
+/// Trace: FR-895-AC-1.
+#[trace("FR-895-AC-1")]
+#[test]
+fn a_closed_empty_recording_reports_static_causal_edges_as_missing() {
+    let package = protocol();
+    let run = json!({
+        "format": "filament.protocol-recording/1",
+        "protocol": "Flow",
+        "observations": [],
+        "local_order": {},
+        "correlations": [],
+        "closure": {"state": "closed", "premises": []}
+    });
+    let assessed = assess_recording(&package, run.to_string().as_bytes())
+        .expect("empty recording remains assessable");
+    assert!(
+        assessed.obligations.iter().any(|entry| {
+            entry.obligation.kind == "causal-edge"
+                && entry.verdict == RecordingVerdict::Violated
+                && entry.cause
+                    == Some(fsl_analyze::protocol_analysis::recording::RecordingCause::Missing)
+                && entry.witness.is_empty()
+        }),
+        "{:#?}",
+        assessed.obligations
+    );
+}
+
+/// Trace: FR-895-AC-6.
+#[trace("FR-895-AC-6")]
+#[test]
+fn compensation_windows_are_assessed_for_each_instance() {
+    let package = paid_protocol_window();
+    let mut first = compensation_attempt("comp-1", "successful", None);
+    first["instance"] = json!("instance-1");
+    first["clocks"] = json!({"c": 10});
+    let mut second = compensation_attempt("comp-2", "successful", None);
+    second["instance"] = json!("instance-2");
+    second["clocks"] = json!({"c": 130});
+    let run = paid_recording(json!([first, second]));
+    let assessed = assess_recording(&package, run.to_string().as_bytes()).expect("readable run");
+    let windows = assessed
+        .obligations
+        .iter()
+        .filter(|entry| entry.obligation.kind == "window")
+        .collect::<Vec<_>>();
+    assert!(
+        windows.iter().any(|entry| {
+            entry.obligation.instance.as_deref() == Some("instance-1")
+                && entry.verdict == RecordingVerdict::Satisfied
+        }),
+        "{windows:#?}"
+    );
+    assert!(
+        windows.iter().any(|entry| {
+            entry.obligation.instance.as_deref() == Some("instance-2")
+                && entry.verdict == RecordingVerdict::Violated
+        }),
+        "{windows:#?}"
+    );
+}
+
+/// Trace: FR-895-AC-2.
+#[trace("FR-895-AC-2")]
+#[test]
+fn compensation_order_uses_local_order_when_observation_array_is_reversed() {
+    let package = paid_protocol();
+    let run = json!({
+        "format": "filament.protocol-recording/1",
+        "protocol": "Pay",
+        "observations": [
+            recovery("successful"),
+            compensation_attempt("comp-1", "successful", None),
+            paid_effect("effect-1", "attempt-1")
+        ],
+        "local_order": {"w": [2, 1, 0]},
+        "correlations": [],
+        "closure": {"state": "open", "premises": []}
+    });
+    let assessed = assess_recording(&package, run.to_string().as_bytes()).expect("readable run");
+    assert!(
+        assessed.obligations.iter().any(|entry| {
+            entry.obligation.kind == "compensation"
+                && entry.verdict == RecordingVerdict::Satisfied
+                && entry.witness == [1, 0]
+        }),
+        "{:#?}",
+        assessed.obligations
+    );
+}
+
+/// Trace: FR-895-AC-1.
+#[trace("FR-895-AC-1")]
+#[test]
+fn channel_delivery_minimum_and_capacity_are_assessed() {
+    let base = crate::analyze_cli_support::order_protocol(true);
+    let package = crate::litmus::package_called("analysis-unit", &base);
+    let send_only = json!({
+        "format": "filament.protocol-recording/1",
+        "protocol": "Flow",
+        "observations": [{"kind":"send", "node":"Flow::Main::Placed", "role":"Buyer",
+            "instance":"w-1", "keys":{"message":"m-1", "delivery":"d-1"}, "record":{"ok":true}}],
+        "local_order": {"Buyer":[0]}, "correlations": [],
+        "closure": {"state":"closed", "premises":[]}
+    });
+    let assessed =
+        assess_recording(&package, send_only.to_string().as_bytes()).expect("readable run");
+    assert!(
+        assessed.obligations.iter().any(|entry| {
+            entry.obligation.kind == "channel-premise"
+                && entry.obligation.node.as_deref() == Some("Order")
+                && entry.verdict == RecordingVerdict::Violated
+                && entry.cause
+                    == Some(fsl_analyze::protocol_analysis::recording::RecordingCause::Missing)
+        }),
+        "{:#?}",
+        assessed.obligations
+    );
+
+    let zero_capacity = base.replace("capacity 4", "capacity 0");
+    let package = crate::litmus::package_called("analysis-unit", &zero_capacity);
+    let open = send_only.clone().to_string().replace("closed", "open");
+    let assessed = assess_recording(&package, open.as_bytes()).expect("readable run");
+    assert!(
+        assessed.obligations.iter().any(|entry| {
+            entry.obligation.kind == "channel-premise"
+                && entry.obligation.node.as_deref() == Some("Order")
+                && entry.verdict == RecordingVerdict::Violated
+                && entry.cause
+                    == Some(fsl_analyze::protocol_analysis::recording::RecordingCause::Unexpected)
+        }),
+        "{:#?}",
+        assessed.obligations
+    );
+
+    let loss_source = base
+        .replace("capacity 4", "capacity 1")
+        .replace("overflow reject", "overflow loss new");
+    let package = crate::litmus::package_called("analysis-unit", &loss_source);
+    let lossy = json!({
+        "format":"filament.protocol-recording/1", "protocol":"Flow",
+        "observations":[
+            {"kind":"send", "node":"Flow::Main::Placed", "role":"Buyer", "instance":"w-1", "keys":{"message":"m-1", "delivery":"d-1"}, "record":{"ok":true}},
+            {"kind":"send", "node":"Flow::Main::Placed", "role":"Buyer", "instance":"w-1", "keys":{"message":"m-2", "delivery":"d-2"}, "record":{"ok":true}},
+            {"kind":"receive", "node":"Flow::Main::Got", "role":"Seller", "instance":"w-1", "keys":{"message":"m-1", "delivery":"d-1"}, "record":{"ok":true}}
+        ],
+        "local_order":{"Buyer":[0,1], "Seller":[2]},
+        "correlations":[{"send":0,"receive":2}],
+        "closure":{"state":"closed", "premises":[]}
+    });
+    let assessed = assess_recording(&package, lossy.to_string().as_bytes()).expect("readable run");
+    assert!(
+        assessed.obligations.iter().any(|entry| {
+            entry.obligation.kind == "channel-premise"
+                && entry.obligation.node.as_deref() == Some("Order")
+                && entry.verdict == RecordingVerdict::Satisfied
+        }),
+        "{:#?}",
+        assessed.obligations
+    );
+}
+
+/// Trace: FR-895 control obligations.
+#[trace("FR-895-AC-1")]
+#[test]
+fn repeat_control_reports_a_run_over_its_checked_maximum() {
+    let package = crate::fill::package(&crate::protocol_compensation::twice());
+    let effect = |identity: &str, ordinal: u64| {
+        json!({
+            "kind":"effect", "node":"Pay::Main::Loop::Body::Paid", "role":"w",
+            "instance":"w-1", "keys":{"business_effect":identity, "attempt":identity, "registration":"reg-1"},
+            "occurrence":{"path":[], "ordinal":ordinal}
+        })
+    };
+    let run = json!({
+        "format":"filament.protocol-recording/1", "protocol":"Pay",
+        "observations":[effect("effect-0",0), effect("effect-1",1), effect("effect-2",2)],
+        "local_order":{"w":[0,1,2]}, "correlations":[],
+        "closure":{"state":"closed", "premises":[]}
+    });
+    let assessed = assess_recording(&package, run.to_string().as_bytes()).expect("readable run");
+    assert!(
+        assessed.obligations.iter().any(|entry| {
+            entry.obligation.kind == "control"
+                && entry.obligation.node.as_deref() == Some("Pay::Main::Loop")
+                && entry.verdict == RecordingVerdict::Violated
+                && entry.cause
+                    == Some(fsl_analyze::protocol_analysis::recording::RecordingCause::Duplicated)
+        }),
+        "{:#?}",
+        assessed.obligations
+    );
+}
+
+/// Trace: FR-895 control obligations.
+#[trace("FR-895-AC-1")]
+#[test]
+fn parallel_join_obligation_reads_branch_closure_premises() {
+    let source = crate::analyze_cli_support::order_protocol(false).replace(
+        "run sequence Main {",
+        "run sequence Main { parallel Both memory sc { branch left sequence Left { event L by Buyer as (l: Ack) { true }; } branch right sequence Right { event R by Seller as (r: Ack) { true }; } } join all [left, right];",
+    );
+    let package = crate::litmus::package_called("analysis-unit", &source);
+    let run = json!({
+        "format":"filament.protocol-recording/1", "protocol":"Flow",
+        "observations":[
+            {"kind":"event", "node":"Flow::Main::Both::left::Left::L", "role":"Buyer", "instance":"w-1", "keys":{}, "record":{"ok":true}},
+            {"kind":"event", "node":"Flow::Main::Both::right::Right::R", "role":"Seller", "instance":"w-1", "keys":{}, "record":{"ok":true}}
+        ],
+        "local_order":{"Buyer":[0], "Seller":[1]}, "correlations":[],
+        "closure":{"state":"closed", "premises":[
+            {"kind":"branch", "identity":"w-1/Flow::Main::Both::left"},
+            {"kind":"branch", "identity":"w-1/Flow::Main::Both::right"}
+        ]}
+    });
+    let assessed = assess_recording(&package, run.to_string().as_bytes()).expect("readable run");
+    assert!(
+        assessed.obligations.iter().any(|entry| {
+            entry.obligation.kind == "join"
+                && entry.obligation.node.as_deref() == Some("Flow::Main::Both")
+                && entry.verdict == RecordingVerdict::Satisfied
+        }),
+        "{:#?}",
+        assessed.obligations
+    );
+}
+
+/// Trace: FR-895 channel premises.
+#[trace("FR-895-AC-1")]
+#[test]
+fn fifo_channel_premise_detects_reversed_delivery_order() {
+    let source = crate::analyze_cli_support::order_protocol(true)
+        .replace("ordering unordered", "ordering fifo by (m: Ack) { m.ok }");
+    let package = crate::litmus::package_called("analysis-unit", &source);
+    let run = json!({
+        "format":"filament.protocol-recording/1", "protocol":"Flow",
+        "observations":[
+            {"kind":"send", "node":"Flow::Main::Placed", "role":"Buyer", "instance":"w-1", "keys":{"message":"m-1", "delivery":"d-1"}, "record":{"ok":true}},
+            {"kind":"send", "node":"Flow::Main::Placed", "role":"Buyer", "instance":"w-1", "keys":{"message":"m-2", "delivery":"d-2"}, "record":{"ok":true}},
+            {"kind":"receive", "node":"Flow::Main::Got", "role":"Seller", "instance":"w-1", "keys":{"message":"m-2", "delivery":"d-2"}, "record":{"ok":true}},
+            {"kind":"receive", "node":"Flow::Main::Got", "role":"Seller", "instance":"w-1", "keys":{"message":"m-1", "delivery":"d-1"}, "record":{"ok":true}}
+        ],
+        "local_order":{"Buyer":[0,1], "Seller":[2,3]},
+        "correlations":[{"send":0,"receive":3}, {"send":1,"receive":2}],
+        "closure":{"state":"open", "premises":[]}
+    });
+    let assessed = assess_recording(&package, run.to_string().as_bytes()).expect("readable run");
+    assert!(
+        assessed.obligations.iter().any(|entry| {
+            entry.obligation.kind == "channel-premise"
+                && entry.obligation.node.as_deref() == Some("Order")
+                && entry.verdict == RecordingVerdict::Violated
+                && entry.cause
+                    == Some(fsl_analyze::protocol_analysis::recording::RecordingCause::Misordered)
+        }),
+        "{:#?}",
+        assessed.obligations
+    );
+}
+
+/// Trace: FR-895 closure.
+#[trace("FR-895-AC-3")]
+#[test]
+fn closure_workflow_premise_is_retained_as_recorded_fact() {
+    let package = paid_protocol();
+    let run = json!({
+        "format":"filament.protocol-recording/1", "protocol":"Pay",
+        "observations":[], "local_order":{}, "correlations":[],
+        "closure":{"state":"open", "premises":[{"kind":"workflow", "identity":"workflow-key"}]}
+    });
+    let assessed = assess_recording(&package, run.to_string().as_bytes()).expect("readable run");
+    assert_eq!(assessed.closure.premises.len(), 1);
+    assert_eq!(assessed.closure.premises[0].kind, "workflow");
+    assert_eq!(assessed.closure.premises[0].identity, "workflow-key");
+}

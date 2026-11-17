@@ -929,6 +929,7 @@ fn assess_obligations(
     document: &RecordingDocument,
 ) -> Vec<RecordingObligation> {
     let mut obligations = Vec::new();
+    let closure_closed = document.closure.state == "closed";
     let mut observed_nodes = BTreeMap::<String, Vec<usize>>::new();
     for (position, observation) in document.observations.iter().enumerate() {
         observed_nodes
@@ -995,19 +996,24 @@ fn assess_obligations(
         }
         let source_name = protocol_node_name(protocol, edge.from.node.0);
         let target_name = protocol_node_name(protocol, edge.to.node.0);
-        let instances = document
+        let mut instances = document
             .observations
             .iter()
             .filter_map(|observation| observation.instance.clone())
             .collect::<BTreeSet<_>>();
+        if instances.is_empty() {
+            // A closed empty history still has a protocol-level obligation;
+            // absence of an instance key must not erase the static edge.
+            instances.insert(String::new());
+        }
         for instance in instances {
+            let instance_filter = (!instance.is_empty()).then_some(instance.as_str());
             let sources = document
                 .observations
                 .iter()
                 .enumerate()
                 .filter(|(_, entry)| {
-                    entry.node == source_name
-                        && entry.instance.as_deref() == Some(instance.as_str())
+                    entry.node == source_name && entry.instance.as_deref() == instance_filter
                 })
                 .collect::<Vec<_>>();
             let targets = document
@@ -1015,13 +1021,9 @@ fn assess_obligations(
                 .iter()
                 .enumerate()
                 .filter(|(_, entry)| {
-                    entry.node == target_name
-                        && entry.instance.as_deref() == Some(instance.as_str())
+                    entry.node == target_name && entry.instance.as_deref() == instance_filter
                 })
                 .collect::<Vec<_>>();
-            if sources.is_empty() && targets.is_empty() {
-                continue;
-            }
             let pairs = match edge.kind {
                 fsl_semantics::check::EdgeKind::Message => document
                     .correlations
@@ -1031,9 +1033,9 @@ fn assess_obligations(
                         let receive = document.observations.get(pair.receive)?;
                         (send.node == source_name
                             && receive.node == target_name
-                            && send.instance.as_deref() == Some(&instance)
-                            && receive.instance.as_deref() == Some(&instance))
-                        .then_some((pair.send, pair.receive))
+                            && send.instance.as_deref() == instance_filter
+                            && receive.instance.as_deref() == instance_filter)
+                            .then_some((pair.send, pair.receive))
                     })
                     .collect::<Vec<_>>(),
                 fsl_semantics::check::EdgeKind::Effect => targets
@@ -1064,7 +1066,7 @@ fn assess_obligations(
                     obligation: RecordingObligationId {
                         kind: "causal-edge".to_owned(),
                         node: Some(format!("{source_name} -> {target_name}")),
-                        instance: Some(instance),
+                        instance: (!instance.is_empty()).then_some(instance),
                     },
                     verdict,
                     cause,
@@ -1084,7 +1086,7 @@ fn assess_obligations(
                     obligation: RecordingObligationId {
                         kind: "causal-edge".to_owned(),
                         node: Some(format!("{source_name} -> {target_name}")),
-                        instance: Some(instance.clone()),
+                        instance: (!instance.is_empty()).then_some(instance.clone()),
                     },
                     verdict: if send_receive_mismatch || misordered {
                         RecordingVerdict::Violated
@@ -1146,6 +1148,118 @@ fn assess_obligations(
                 ),
             ))
         });
+        let repeat_verdict = if control.kind.label() == "repeat" {
+            let repeat = protocol
+                .slots
+                .repeats
+                .iter()
+                .find(|repeat| repeat.node == control.node);
+            repeat.map(|repeat| {
+                let descendants = protocol
+                    .controls
+                    .controls
+                    .iter()
+                    .filter(|child| {
+                        child.path.len() > control.path.len()
+                            && child.path.starts_with(&control.path)
+                    })
+                    .map(|child| format!("{}::{}", protocol.name, child.path.join("::")))
+                    .collect::<BTreeSet<_>>();
+                let mut by_instance =
+                    BTreeMap::<Option<String>, BTreeMap<String, Vec<usize>>>::new();
+                for (position, observation) in document.observations.iter().enumerate() {
+                    if descendants.contains(&observation.node) {
+                        by_instance
+                            .entry(observation.instance.clone())
+                            .or_default()
+                            .entry(observation.node.clone())
+                            .or_default()
+                            .push(position);
+                    }
+                }
+                let Some((instance, counts)) = by_instance.into_iter().next() else {
+                    return if closure_closed {
+                        (
+                            RecordingVerdict::Violated,
+                            Some(RecordingCause::Missing),
+                            Vec::new(),
+                        )
+                    } else {
+                        (RecordingVerdict::Pending, None, Vec::new())
+                    };
+                };
+                let iterations = counts.values().map(Vec::len).max().unwrap_or_default();
+                let witness = counts.into_values().flatten().collect::<Vec<_>>();
+                if iterations == 0 {
+                    (RecordingVerdict::Pending, None, witness)
+                } else if repeat.max.is_some_and(|maximum| {
+                    u64::try_from(iterations).is_ok_and(|count| count > maximum)
+                }) {
+                    (
+                        RecordingVerdict::Violated,
+                        Some(RecordingCause::Duplicated),
+                        witness,
+                    )
+                } else {
+                    let _ = instance;
+                    (RecordingVerdict::Satisfied, None, witness)
+                }
+            })
+        } else {
+            None
+        };
+        let parallel_verdict = if control.kind.label() == "parallel" {
+            let parallel = protocol
+                .parallels
+                .iter()
+                .find(|parallel| parallel.node == control.node);
+            parallel.map(|parallel| {
+                let branch_names = control
+                    .children
+                    .iter()
+                    .filter_map(|child| protocol.controls.control(*child))
+                    .map(|branch| format!("{}::{}", protocol.name, branch.path.join("::")))
+                    .collect::<Vec<_>>();
+                let instances = document
+                    .observations
+                    .iter()
+                    .filter_map(|observation| observation.instance.clone())
+                    .collect::<BTreeSet<_>>();
+                let instance = instances.iter().next();
+                let closed_branches = branch_names
+                    .iter()
+                    .filter(|branch| {
+                        instance.is_some_and(|instance| {
+                            document.closure.premises.iter().any(|premise| {
+                                premise.kind == "branch"
+                                    && premise.identity == format!("{instance}/{branch}")
+                            })
+                        })
+                    })
+                    .count();
+                let required = match parallel.policy {
+                    fsl_semantics::check::CheckedJoinPolicy::All => branch_names.len(),
+                    fsl_semantics::check::CheckedJoinPolicy::Any => 1,
+                    fsl_semantics::check::CheckedJoinPolicy::Quorum(count) => {
+                        usize::try_from(count).unwrap_or(usize::MAX)
+                    }
+                    fsl_semantics::check::CheckedJoinPolicy::Predicate { .. } => usize::MAX,
+                };
+                if closed_branches >= required && required != usize::MAX {
+                    (RecordingVerdict::Satisfied, None, Vec::new())
+                } else if closure_closed {
+                    (
+                        RecordingVerdict::Violated,
+                        Some(RecordingCause::Missing),
+                        Vec::new(),
+                    )
+                } else {
+                    (RecordingVerdict::Pending, None, Vec::new())
+                }
+            })
+        } else {
+            None
+        };
         let (verdict, cause, witness) = match choice_verdict {
             Some((position, Some(true))) => (RecordingVerdict::Satisfied, None, vec![position]),
             Some((position, Some(false))) => (
@@ -1154,6 +1268,12 @@ fn assess_obligations(
                 vec![position],
             ),
             Some((position, None)) => (RecordingVerdict::Pending, None, vec![position]),
+            None if repeat_verdict.is_some() => {
+                repeat_verdict.unwrap_or((RecordingVerdict::Pending, None, Vec::new()))
+            }
+            None if parallel_verdict.is_some() => {
+                parallel_verdict.unwrap_or((RecordingVerdict::Pending, None, Vec::new()))
+            }
             None if closure_closed => (
                 RecordingVerdict::Violated,
                 Some(RecordingCause::Missing),
@@ -1189,124 +1309,104 @@ fn assess_obligations(
                     && observation.node == effect_name
             })
             .collect();
-        let (verdict, cause, witness, instance) = match attempts.first() {
-            Some((position, observation)) => match observation
+        if attempts.is_empty() {
+            obligations.push(RecordingObligation {
+                obligation: RecordingObligationId {
+                    kind: "window".to_owned(),
+                    node: Some(effect_name.clone()),
+                    instance: None,
+                },
+                verdict: if closure_closed {
+                    RecordingVerdict::Violated
+                } else {
+                    RecordingVerdict::Pending
+                },
+                cause: closure_closed.then_some(RecordingCause::Missing),
+                witness: Vec::new(),
+            });
+        }
+        for (position, observation) in attempts {
+            let reading = observation
                 .clocks
                 .get(&template.clock)
-                .and_then(json_integer)
-            {
-                Some(reading)
-                    if reading >= template.within.lower && reading <= template.within.upper =>
-                {
-                    (
-                        RecordingVerdict::Satisfied,
-                        None,
-                        vec![*position],
-                        observation.instance.clone(),
-                    )
+                .and_then(json_integer);
+            let (verdict, cause) = match reading {
+                Some(value) if value >= template.within.lower && value <= template.within.upper => {
+                    (RecordingVerdict::Satisfied, None)
                 }
-                Some(_) => (
-                    RecordingVerdict::Violated,
-                    Some(RecordingCause::Unexpected),
-                    vec![*position],
-                    observation.instance.clone(),
-                ),
-                None if document.closure.state == "closed" => (
-                    RecordingVerdict::Violated,
-                    Some(RecordingCause::Missing),
-                    vec![*position],
-                    observation.instance.clone(),
-                ),
-                None => (
-                    RecordingVerdict::Pending,
-                    None,
-                    vec![*position],
-                    observation.instance.clone(),
-                ),
-            },
-            None if document.closure.state == "closed" => (
-                RecordingVerdict::Violated,
-                Some(RecordingCause::Missing),
-                Vec::new(),
-                None,
-            ),
-            None => (RecordingVerdict::Pending, None, Vec::new(), None),
-        };
-        obligations.push(RecordingObligation {
-            obligation: RecordingObligationId {
-                kind: "window".to_owned(),
-                node: Some(effect_name),
-                instance,
-            },
-            verdict,
-            cause,
-            witness,
-        });
+                Some(_) => (RecordingVerdict::Violated, Some(RecordingCause::Unexpected)),
+                None if closure_closed => {
+                    (RecordingVerdict::Violated, Some(RecordingCause::Missing))
+                }
+                None => (RecordingVerdict::Pending, None),
+            };
+            obligations.push(RecordingObligation {
+                obligation: RecordingObligationId {
+                    kind: "window".to_owned(),
+                    node: Some(effect_name.clone()),
+                    instance: observation.instance.clone(),
+                },
+                verdict,
+                cause,
+                witness: vec![position],
+            });
+        }
     }
 
     for await_clause in &protocol.awaits {
         let node = protocol_node_name(protocol, await_clause.node.0);
-        let observed = document
+        let observed: Vec<_> = document
             .observations
             .iter()
             .enumerate()
-            .find(|(_, observation)| {
+            .filter(|(_, observation)| {
                 observation.node == node || observation.node.starts_with(&format!("{node}::"))
+            })
+            .collect();
+        if observed.is_empty() {
+            obligations.push(RecordingObligation {
+                obligation: RecordingObligationId {
+                    kind: "window".to_owned(),
+                    node: Some(node.clone()),
+                    instance: None,
+                },
+                verdict: if closure_closed {
+                    RecordingVerdict::Violated
+                } else {
+                    RecordingVerdict::Pending
+                },
+                cause: closure_closed.then_some(RecordingCause::Missing),
+                witness: Vec::new(),
             });
-        let (verdict, cause, witness, instance) = match observed {
-            Some((position, observation)) => match observation
+        }
+        for (position, observation) in observed {
+            let reading = observation
                 .clocks
                 .get(&await_clause.clock)
-                .and_then(json_integer)
-            {
-                Some(reading)
-                    if reading >= await_clause.within.lower
-                        && reading <= await_clause.within.upper =>
+                .and_then(json_integer);
+            let (verdict, cause) = match reading {
+                Some(value)
+                    if value >= await_clause.within.lower && value <= await_clause.within.upper =>
                 {
-                    (
-                        RecordingVerdict::Satisfied,
-                        None,
-                        vec![position],
-                        observation.instance.clone(),
-                    )
+                    (RecordingVerdict::Satisfied, None)
                 }
-                Some(_) => (
-                    RecordingVerdict::Violated,
-                    Some(RecordingCause::Unexpected),
-                    vec![position],
-                    observation.instance.clone(),
-                ),
-                None if document.closure.state == "closed" => (
-                    RecordingVerdict::Violated,
-                    Some(RecordingCause::Missing),
-                    vec![position],
-                    observation.instance.clone(),
-                ),
-                None => (
-                    RecordingVerdict::Pending,
-                    None,
-                    vec![position],
-                    observation.instance.clone(),
-                ),
-            },
-            None if document.closure.state == "closed" => (
-                RecordingVerdict::Violated,
-                Some(RecordingCause::Missing),
-                Vec::new(),
-                None,
-            ),
-            None => (RecordingVerdict::Pending, None, Vec::new(), None),
-        };
-        obligations.push(RecordingObligation {
-            obligation: RecordingObligationId {
-                kind: "window".to_owned(),
-                node: Some(node),
-                instance,
-            },
-            verdict,
-            cause,
-            witness,
-        });
+                Some(_) => (RecordingVerdict::Violated, Some(RecordingCause::Unexpected)),
+                None if closure_closed => {
+                    (RecordingVerdict::Violated, Some(RecordingCause::Missing))
+                }
+                None => (RecordingVerdict::Pending, None),
+            };
+            obligations.push(RecordingObligation {
+                obligation: RecordingObligationId {
+                    kind: "window".to_owned(),
+                    node: Some(node.clone()),
+                    instance: observation.instance.clone(),
+                },
+                verdict,
+                cause,
+                witness: vec![position],
+            });
+        }
     }
 
     for template in &protocol.obligations.compensations {
@@ -1365,8 +1465,11 @@ fn assess_obligations(
                     Some("successful" | "failed" | "timed-out")
                 )
             });
-            let after_effect = effect_position
-                .is_some_and(|effect| attempts.iter().all(|attempt| *attempt > effect));
+            let after_effect = effect_position.is_some_and(|effect| {
+                attempts
+                    .iter()
+                    .all(|attempt| causally_after(protocol, document, *attempt, effect))
+            });
             let within_limit =
                 u64::try_from(attempts.len()).is_ok_and(|count| count <= template.maximum_attempts);
             let commit_position = match template.commit {
@@ -1385,8 +1488,11 @@ fn assess_obligations(
                         .map(|(position, _)| position)
                 }
             };
-            let before_commit = commit_position
-                .is_none_or(|commit| attempts.iter().all(|attempt| *attempt < commit));
+            let before_commit = commit_position.is_none_or(|commit| {
+                attempts
+                    .iter()
+                    .all(|attempt| causally_after(protocol, document, commit, *attempt))
+            });
             let recoveries = document
                 .observations
                 .iter()
@@ -1526,43 +1632,252 @@ fn assess_obligations(
     }
 
     for channel in &protocol.channels {
-        let correlated = document.correlations.iter().any(|pair| {
-            let send = &document.observations[pair.send];
-            let receive = &document.observations[pair.receive];
-            correlation_matches(protocol, send, receive)
-                && channel_for_send(protocol, send) == Some(channel.name.as_str())
-        });
+        let mut sends = document
+            .observations
+            .iter()
+            .enumerate()
+            .filter(|(_, observation)| {
+                observation.kind == ObservationKind::Send
+                    && channel_for_send(protocol, observation) == Some(channel.name.as_str())
+            })
+            .map(|(position, _)| position)
+            .collect::<Vec<_>>();
+        let mut receives = document
+            .observations
+            .iter()
+            .enumerate()
+            .filter(|(_, observation)| {
+                observation.kind == ObservationKind::Receive
+                    && channel_for_send(protocol, observation) == Some(channel.name.as_str())
+            })
+            .map(|(position, _)| position)
+            .collect::<Vec<_>>();
+        sends.sort_unstable();
+        receives.sort_unstable();
+        let mut delivered = BTreeMap::<usize, Vec<usize>>::new();
+        for pair in &document.correlations {
+            if sends.contains(&pair.send) && receives.contains(&pair.receive) {
+                delivered.entry(pair.send).or_default().push(pair.receive);
+            }
+        }
+        let mut violated = None;
+        let mut witness = Vec::new();
+        let mut undecided = false;
+        let (minimum, maximum) = match channel.delivery {
+            ChannelDelivery::Unknown => (None, None),
+            ChannelDelivery::AtMostOnce => (Some(0), Some(1)),
+            ChannelDelivery::AtLeastOnce => (Some(1), None),
+            ChannelDelivery::ExactlyOncePremise => (Some(1), Some(1)),
+            ChannelDelivery::Between { lower, upper } => (Some(lower), Some(upper)),
+        };
+        if violated.is_none() {
+            if let fsl_semantics::check::CheckedOrdering::Fifo { key, .. } = &channel.ordering {
+                let mut keyed_pairs = BTreeMap::<String, Vec<(usize, usize)>>::new();
+                for (send, delivered_receives) in &delivered {
+                    let value = evaluate_body_value(
+                        package,
+                        protocol,
+                        document,
+                        key,
+                        document.observations[*send].instance.as_deref(),
+                        *send,
+                    )
+                    .map(|value| format!("key:{value:?}"))
+                    .or_else(|| {
+                        // The key expression is pure. Identical recorded
+                        // payloads therefore prove equal keys even when a
+                        // channel binder is unavailable in this assessor's
+                        // protocol-slot frame; differing payloads stay
+                        // undecided rather than being grouped speculatively.
+                        undecided = true;
+                        document.observations[*send]
+                            .record
+                            .as_ref()
+                            .map(|record| format!("record:{record}"))
+                    });
+                    let Some(value) = value else { continue };
+                    for receive in delivered_receives {
+                        keyed_pairs
+                            .entry(value.clone())
+                            .or_default()
+                            .push((*send, *receive));
+                    }
+                }
+                'fifo: for pairs in keyed_pairs.values() {
+                    for (first_index, (first_send, first_receive)) in pairs.iter().enumerate() {
+                        for (second_send, second_receive) in pairs.iter().skip(first_index + 1) {
+                            if causally_after(protocol, document, *second_send, *first_send)
+                                && causally_after(
+                                    protocol,
+                                    document,
+                                    *first_receive,
+                                    *second_receive,
+                                )
+                            {
+                                violated = Some(RecordingCause::Misordered);
+                                witness.extend([*second_receive, *first_receive]);
+                                break 'fifo;
+                            }
+                            if causally_after(protocol, document, *first_send, *second_send)
+                                && causally_after(
+                                    protocol,
+                                    document,
+                                    *second_receive,
+                                    *first_receive,
+                                )
+                            {
+                                violated = Some(RecordingCause::Misordered);
+                                witness.extend([*first_receive, *second_receive]);
+                                break 'fifo;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        let mut dropped = BTreeSet::<usize>::new();
+        if violated.is_none() {
+            let order = causal_topological_order(protocol, document);
+            let mut queue = Vec::<usize>::new();
+            let mut max_occupancy = 0usize;
+            for position in order {
+                if sends.contains(&position) {
+                    let capacity = match channel.capacity {
+                        fsl_semantics::check::ChannelCapacity::Literal(value) => {
+                            usize::try_from(value).ok()
+                        }
+                        fsl_semantics::check::ChannelCapacity::Symbolic(_) => None,
+                    };
+                    if let Some(capacity) = capacity {
+                        if queue.len() >= capacity {
+                            match channel.overflow {
+                                fsl_semantics::check::ChannelOverflow::Reject
+                                | fsl_semantics::check::ChannelOverflow::Block => {
+                                    violated = Some(RecordingCause::Unexpected);
+                                    witness.push(position);
+                                    break;
+                                }
+                                fsl_semantics::check::ChannelOverflow::Loss(
+                                    fsl_semantics::check::LossSelector::Head,
+                                ) => {
+                                    if let Some(oldest) = queue.first().copied() {
+                                        dropped.insert(oldest);
+                                        queue.remove(0);
+                                    } else {
+                                        dropped.insert(position);
+                                        continue;
+                                    }
+                                }
+                                fsl_semantics::check::ChannelOverflow::Loss(
+                                    fsl_semantics::check::LossSelector::Tail,
+                                ) => {
+                                    if let Some(newest) = queue.pop() {
+                                        dropped.insert(newest);
+                                    }
+                                }
+                                fsl_semantics::check::ChannelOverflow::Loss(
+                                    fsl_semantics::check::LossSelector::New,
+                                ) => {
+                                    dropped.insert(position);
+                                    continue;
+                                }
+                            }
+                        }
+                    }
+                    queue.push(position);
+                    max_occupancy = max_occupancy.max(queue.len());
+                } else if receives.contains(&position) {
+                    let Some(send) = document
+                        .correlations
+                        .iter()
+                        .find(|pair| pair.receive == position && sends.contains(&pair.send))
+                        .map(|pair| pair.send)
+                    else {
+                        continue;
+                    };
+                    if dropped.contains(&send) {
+                        violated = Some(RecordingCause::WronglyCorrelated);
+                        witness.extend([send, position]);
+                        break;
+                    }
+                    if let Some(index) = queue.iter().position(|queued| *queued == send) {
+                        queue.remove(index);
+                    }
+                }
+            }
+            if violated.is_none()
+                && matches!(
+                    channel.capacity,
+                    fsl_semantics::check::ChannelCapacity::Symbolic(_)
+                )
+                && max_occupancy > 0
+            {
+                violated = None;
+            }
+        }
+        if violated.is_none() {
+            if let Some(minimum) = minimum {
+                for send in &sends {
+                    let count = delivered.get(send).map_or(0, |items| {
+                        items
+                            .iter()
+                            .filter_map(|position| {
+                                document.observations[*position].keys.get("delivery")
+                            })
+                            .map(serde_json::Value::to_string)
+                            .collect::<BTreeSet<_>>()
+                            .len()
+                    });
+                    let count = u64::try_from(count).unwrap_or(u64::MAX);
+                    if count < minimum && !dropped.contains(send) {
+                        if document.closure.state == "closed" {
+                            violated = Some(RecordingCause::Missing);
+                            witness.push(*send);
+                            break;
+                        }
+                        undecided = true;
+                    }
+                    if maximum.is_some_and(|maximum| count > maximum) {
+                        violated = Some(RecordingCause::Duplicated);
+                        witness.extend(delivered.get(send).into_iter().flatten().copied());
+                        break;
+                    }
+                }
+            }
+        }
         let duplicate_delivery = duplicate_deliveries(protocol, document)
             .into_iter()
             .filter(|duplicate| duplicate.channel == channel.name)
             .collect::<Vec<_>>();
-        let duplicate_positions = duplicate_delivery
-            .iter()
-            .flat_map(|duplicate| duplicate.receive_positions.iter().copied())
-            .collect::<Vec<_>>();
-        let duplicate_policy = duplicate_delivery.first().map(|duplicate| duplicate.policy);
-        let (verdict, cause, witness) = match duplicate_policy {
-            Some(ChannelDelivery::AtLeastOnce)
-            | Some(ChannelDelivery::Between {
-                upper: 2..=u64::MAX,
-                ..
-            }) => (RecordingVerdict::Satisfied, None, duplicate_positions),
-            Some(ChannelDelivery::AtMostOnce | ChannelDelivery::ExactlyOncePremise)
-            | Some(ChannelDelivery::Between { upper: 0..=1, .. }) => (
-                RecordingVerdict::Violated,
-                Some(RecordingCause::Duplicated),
-                duplicate_positions,
-            ),
-            Some(ChannelDelivery::Unknown) => (RecordingVerdict::Pending, None, Vec::new()),
-            None if !correlated && document.closure.state == "closed" => (
-                RecordingVerdict::Violated,
-                Some(RecordingCause::Missing),
-                Vec::new(),
-            ),
-            None if correlated || document.correlations.is_empty() => {
-                (RecordingVerdict::Satisfied, None, Vec::new())
-            }
-            None => (RecordingVerdict::Pending, None, Vec::new()),
+        if violated.is_none()
+            && duplicate_delivery.iter().any(|duplicate| {
+                matches!(
+                    duplicate.policy,
+                    ChannelDelivery::AtMostOnce
+                        | ChannelDelivery::ExactlyOncePremise
+                        | ChannelDelivery::Between { upper: 0..=1, .. }
+                )
+            })
+        {
+            violated = Some(RecordingCause::Duplicated);
+            witness.extend(
+                duplicate_delivery
+                    .iter()
+                    .flat_map(|duplicate| duplicate.receive_positions.iter().copied()),
+            );
+        }
+        let (verdict, cause) = if let Some(cause) = violated {
+            (RecordingVerdict::Violated, Some(cause))
+        } else if undecided
+            || channel.delivery == ChannelDelivery::Unknown
+            || matches!(
+                channel.capacity,
+                fsl_semantics::check::ChannelCapacity::Symbolic(_)
+            )
+        {
+            (RecordingVerdict::Pending, None)
+        } else {
+            (RecordingVerdict::Satisfied, None)
         };
         obligations.push(RecordingObligation {
             obligation: RecordingObligationId {
@@ -1848,14 +2163,14 @@ fn recording_value(
     }
 }
 
-fn evaluate_body(
+fn evaluate_body_value(
     package: &CheckedPackage,
     protocol: &CheckedProtocol,
     document: &RecordingDocument,
     body: &fsl_semantics::check::CheckedBody,
     instance: Option<&str>,
     before: usize,
-) -> Option<bool> {
+) -> Option<Value> {
     let types = package.graph().scope().types();
     let order = causal_topological_order(protocol, document);
     let ranks = order
@@ -1908,7 +2223,21 @@ fn evaluate_body(
     )
     .ok()?;
     match evaluation.outcome {
-        FamilyOutcome::Evaluated(Outcome::Completed(Value::Boolean(value))) => Some(value),
+        FamilyOutcome::Evaluated(Outcome::Completed(value)) => Some(value),
+        _ => None,
+    }
+}
+
+fn evaluate_body(
+    package: &CheckedPackage,
+    protocol: &CheckedProtocol,
+    document: &RecordingDocument,
+    body: &fsl_semantics::check::CheckedBody,
+    instance: Option<&str>,
+    before: usize,
+) -> Option<bool> {
+    match evaluate_body_value(package, protocol, document, body, instance, before)? {
+        Value::Boolean(value) => Some(value),
         _ => None,
     }
 }
