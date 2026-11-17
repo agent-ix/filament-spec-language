@@ -24,7 +24,9 @@ impl SelectionKind {
     /// The kind of `selection`.
     pub fn of(selection: &ClauseRunSelection) -> Self {
         match selection {
-            ClauseRunSelection::Clause(_) => Self::Clause,
+            ClauseRunSelection::Clause(_) | ClauseRunSelection::ClauseWithPath { .. } => {
+                Self::Clause
+            }
             ClauseRunSelection::Temporal { .. } | ClauseRunSelection::SampledTemporal { .. } => {
                 Self::Temporal
             }

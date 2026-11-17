@@ -1627,17 +1627,17 @@ pub(crate) fn run_spine_with_temporal_selections_and_execution_points(
     #[cfg(test)]
     SPINE_RUNS.with(|runs| runs.set(runs.get() + 1));
     let cancel = Cancel::new();
-    let refusal = |failure| match failure {
+    let refusal = |failure: spine::FrontEndFailure| match failure {
         fsl_foundation::diagnostic::StageFailure::RefusedWithPayload(refusal, protocol_results) => {
             ReplayRefusal::RecompileWithProtocolResults {
                 refusal: *refusal,
-                protocol_results,
+                protocol_results: protocol_results.protocol_results,
             }
         }
         fsl_foundation::diagnostic::StageFailure::LimitWithPayload(limit, protocol_results) => {
             ReplayRefusal::RecompileWithProtocolResults {
                 refusal: Box::new(CompileRefusal::Limit(limit)),
-                protocol_results,
+                protocol_results: protocol_results.protocol_results,
             }
         }
         failure => match spine::refusal_or_fault(failure) {
@@ -2047,17 +2047,17 @@ fn run_spine_units(
     #[cfg(test)]
     SPINE_RUNS.with(|runs| runs.set(runs.get() + 1));
     let cancel = Cancel::new();
-    let refusal = |failure| match failure {
+    let refusal = |failure: spine::FrontEndFailure| match failure {
         fsl_foundation::diagnostic::StageFailure::RefusedWithPayload(refusal, protocol_results) => {
             ReplayRefusal::RecompileWithProtocolResults {
                 refusal: *refusal,
-                protocol_results,
+                protocol_results: protocol_results.protocol_results,
             }
         }
         fsl_foundation::diagnostic::StageFailure::LimitWithPayload(limit, protocol_results) => {
             ReplayRefusal::RecompileWithProtocolResults {
                 refusal: Box::new(CompileRefusal::Limit(limit)),
-                protocol_results,
+                protocol_results: protocol_results.protocol_results,
             }
         }
         failure => match spine::refusal_or_fault(failure) {

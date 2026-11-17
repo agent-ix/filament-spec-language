@@ -226,6 +226,16 @@ pub enum MissingMember {
     SchemaShape(String),
 }
 
+impl std::fmt::Display for MissingMember {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::GrammarSchema => formatter.write_str("grammar_schema"),
+            Self::TypedNodeSchema => formatter.write_str("typed_node_schema"),
+            other => write!(formatter, "{other:?}"),
+        }
+    }
+}
+
 /// What a FR-467 rule 2 collision is over.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum ConflictKind {
@@ -328,7 +338,7 @@ pub enum ExtensionRefusal {
         second: DefinitionRef,
     },
     /// Rule 1: a member is missing.
-    #[error("extension {definition:?} is missing {member:?}")]
+    #[error("extension {definition:?} is missing {member}")]
     MissingMember {
         /// The definition.
         definition: DefinitionRef,

@@ -416,6 +416,7 @@ fn read_inputs(intake: &mut super::Intake<'_>, request: wire::MonitorRequest) ->
             },
             refinement_internals: None,
             libraries: request.libraries,
+            extensions: Vec::new(),
             clocks: request.clocks,
             output: None,
             handoff: None,
@@ -464,6 +465,7 @@ fn drive(
             programs: request.libraries.len().saturating_add(1),
             models: request.models.len(),
             observations: request.observations.len(),
+            extensions: 0,
         },
         dependent_bytes,
     )?;
@@ -480,6 +482,9 @@ fn drive(
         &mut intake,
         std::slice::from_ref(&program),
         false,
+        SpineLimits::default(),
+        None,
+        None,
         |checked, selections, _, packages, libraries, _, _, _, _| {
             let mut sources: Vec<Source> = vec![program.source().clone()];
             sources.extend(libraries.iter().map(|library| library.source().clone()));
@@ -725,6 +730,7 @@ pub(super) fn run_bytes(
         })),
         outcome: Some(summary.outcome),
         requirements: None,
+        sources: crate::Sources::default(),
     })
 }
 

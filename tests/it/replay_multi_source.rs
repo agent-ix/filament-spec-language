@@ -366,7 +366,7 @@ fn d10_replay(reverse: bool) -> (fsl_replay::StateClauseReplayResult, Vec<u8>) {
             "identity": snapshot_ref.identity,
         },
         "observation": "pre",
-        "model": {"identity": PACKAGE, "version": "1.0.0"},
+        "model": {"identity": PACKAGE},
         "populations": [{
             "population": HISTORY,
             "complete": true,

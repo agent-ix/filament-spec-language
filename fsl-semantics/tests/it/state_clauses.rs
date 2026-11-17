@@ -1377,10 +1377,7 @@ fn frame_label(identity: &str) -> fsl_semantics::model::observation::DocumentRef
 }
 
 fn frame_model_header() -> serde_json::Value {
-    json!({
-        "identity": "example/config-version",
-        "version": "1.0.0",
-    })
+    json!({"identity": "example/config-version"})
 }
 
 fn frame_identity_json(

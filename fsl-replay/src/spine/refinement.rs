@@ -575,6 +575,19 @@ fn classify_disposition(disposition: &ClauseDisposition) -> Classification {
             ),
             AdmissionFailure::Fault(_) => one(ToolFailure, Code::RuntimeInvariant, None),
         },
+        ClauseDisposition::SnapshotAdmission { failure, .. } => match failure {
+            AdmissionFailure::Refused(record) => one(
+                Refused,
+                Code::from_code(record.catalog.code()).unwrap_or(Code::RuntimeInvariant),
+                Some(record.catalog.cause()),
+            ),
+            AdmissionFailure::Incomplete(record) => one(
+                Incomplete,
+                Code::from_code(record.catalog.code()).unwrap_or(Code::RuntimeInvariant),
+                Some(record.catalog.cause()),
+            ),
+            AdmissionFailure::Fault(_) => one(ToolFailure, Code::RuntimeInvariant, None),
+        },
         ClauseDisposition::ArgumentRefusal(refusal) => one(Refused, refusal.code(), None),
         ClauseDisposition::Evaluate(outcome) => classify_outcome(outcome),
         ClauseDisposition::FrameViolation(witness) => {

@@ -319,6 +319,9 @@ pub fn replay_state_clause(
             (Category::Inconclusive, None)
         }
         ClauseDisposition::Admit(failure) => return Err(ReplayRefusal::Admission(failure)),
+        ClauseDisposition::SnapshotAdmission { failure, .. } => {
+            return Err(ReplayRefusal::Admission(failure))
+        }
         ClauseDisposition::EvaluateFault(fault) => return Err(ReplayRefusal::Fault(fault)),
         // FR-107's `UnknownClause`: the clause was resolved by name above,
         // so a clause the evaluation cannot name is a broken invariant.

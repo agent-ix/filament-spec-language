@@ -1058,9 +1058,7 @@ fn replay() -> Replay {
 fn replay_over(document: serde_json::Value) -> Replay {
     let bytes = serde_json::to_vec(&document).expect("the fixture serializes");
     let packages = package_input([bytes.as_slice()]).unwrap();
-    let model = json!({
-        "identity": fixture::PACKAGE, "version": "1",
-    });
+    let model = json!({"identity": fixture::PACKAGE});
     let declarations = declarations_of(&document, "Config", "").0;
     let graph = declarations_of(&document, "Config", "")
         .0

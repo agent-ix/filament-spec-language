@@ -31,6 +31,8 @@ use super::{
 pub struct SuppliedObservation {
     /// The document's identity labels.
     pub reference: DocumentRef,
+    /// The caller's path for this document, when the adapter retains it.
+    pub path: Option<String>,
     /// The declared document wire identifier.
     pub format: String,
     /// A snapshot's declared observation role, if any.
@@ -79,6 +81,7 @@ impl SuppliedObservation {
         });
         Ok(Self {
             reference,
+            path: None,
             format,
             role,
             bytes,
@@ -1510,10 +1513,20 @@ fn selection(
                 }
                 _ => return Err(invalid("observation", "unsupported observation role")),
             };
-            Ok(ClauseRunSelection::Clause(ClauseSelection {
+            let selection = ClauseSelection {
                 name: clause.name,
                 input,
-            }))
+            };
+            if matches!(&selection.input, ClauseSelectionInput::Current { .. })
+                && document.path.is_some()
+            {
+                Ok(ClauseRunSelection::ClauseWithPath {
+                    selection,
+                    snapshot_path: document.path.clone(),
+                })
+            } else {
+                Ok(ClauseRunSelection::Clause(selection))
+            }
         }
         ClauseSelectionPartsKind::Context {
             name,
@@ -1623,6 +1636,7 @@ fn selection(
                 name,
                 arguments,
                 snapshot: document.reference.clone(),
+                snapshot_path: document.path.clone(),
             })
         }
         ClauseSelectionPartsKind::Temporal { name, trace, over } => {
@@ -2126,6 +2140,7 @@ mod tests {
             "pre".to_owned(),
             SuppliedObservation {
                 reference,
+                path: None,
                 format: "filament.state.snapshot/v1".into(),
                 role: Some("pre".into()),
                 bytes: Vec::new(),

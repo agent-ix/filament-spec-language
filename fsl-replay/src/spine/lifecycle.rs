@@ -119,7 +119,49 @@ use super::{BuildProvenance, StaticSubject, SubjectUnavailable};
 
 /// What a front-end operation returns when it produces no output: the
 /// stage's refusal, a reached limit, a cancellation or a fault.
-pub type FrontEndFailure = StageFailure<Box<CompileRefusal>, Vec<super::ProtocolResult>>;
+pub type FrontEndFailure = StageFailure<Box<CompileRefusal>, FrontEndFailurePayload>;
+
+/// Additional stage results retained when the front end refuses.
+#[derive(Clone, Debug, Default)]
+pub struct FrontEndFailurePayload {
+    /// Independent protocol results reached before the refusing stage ended.
+    pub protocol_results: Vec<super::ProtocolResult>,
+    /// Parse report retained when S1 and S2 completed before an S2 refusal.
+    pub parsed: Option<ParseReport>,
+}
+
+/// FR-663's report of a completed S1 parse, including a later S2 refusal.
+#[derive(Clone, Debug)]
+pub struct ParseReport {
+    /// The source identity labels.
+    pub source: fsl_foundation::source::provenance::RawSourceRef,
+    /// The display path supplied to the parse operation.
+    pub path: String,
+    /// Source byte count.
+    pub bytes: usize,
+    /// Effective limits under which S1 ran.
+    pub limits: fsl_cst::Limits,
+    /// S1 token count.
+    pub tokens: usize,
+    /// S1 CST node count.
+    pub nodes: usize,
+    /// S1 work units charged.
+    pub work_units: u64,
+}
+
+impl ParseReport {
+    fn from_parsed(parsed: &fsl_cst::ParsedSource, work_units: u64) -> Self {
+        Self {
+            source: parsed.source().reference().clone(),
+            path: parsed.source().path().to_owned(),
+            bytes: parsed.source().text().len(),
+            limits: parsed.effective_limits(),
+            tokens: parsed.cst().tokens().len(),
+            nodes: parsed.cst().nodes().len(),
+            work_units,
+        }
+    }
+}
 
 /// A profile-aware check failure. Profile closure outcomes are retained even
 /// when closure or the subsequent ordinary S3 check refuses the unit.
@@ -143,6 +185,7 @@ pub enum ProfileCheckFailure {
 struct StageError {
     refusal: Box<CompileRefusal>,
     protocol_results: Option<Vec<super::ProtocolResult>>,
+    parsed: Option<ParseReport>,
 }
 
 #[derive(Clone, Debug)]
@@ -215,6 +258,7 @@ impl From<Box<CompileRefusal>> for StageError {
         Self {
             refusal,
             protocol_results: None,
+            parsed: None,
         }
     }
 }
@@ -227,7 +271,13 @@ impl StageError {
         Self {
             refusal,
             protocol_results: Some(protocol_results),
+            parsed: None,
         }
+    }
+
+    fn with_parsed_report(mut self, parsed: ParseReport) -> Self {
+        self.parsed = Some(parsed);
+        self
     }
 }
 
@@ -282,19 +332,27 @@ fn failure_of(
     let StageError {
         refusal,
         protocol_results,
+        parsed,
     } = error;
+    let has_payload = protocol_results.is_some() || parsed.is_some();
+    let payload = FrontEndFailurePayload {
+        protocol_results: protocol_results.unwrap_or_default(),
+        parsed,
+    };
     if let Some(limit) = limit_of(&refusal, source_len) {
-        return match protocol_results {
-            Some(results) => StageFailure::LimitWithPayload(limit, results),
-            None => StageFailure::Limit(limit),
+        return if has_payload {
+            StageFailure::LimitWithPayload(limit, payload)
+        } else {
+            StageFailure::Limit(limit)
         };
     }
     if let Some(fault) = fault_of(&refusal) {
         return StageFailure::Fault(fault);
     }
-    match protocol_results {
-        Some(results) => StageFailure::RefusedWithPayload(Box::new(refusal), results),
-        None => StageFailure::Refused(refusal),
+    if has_payload {
+        StageFailure::RefusedWithPayload(Box::new(refusal), payload)
+    } else {
+        StageFailure::Refused(refusal)
     }
 }
 
@@ -1390,15 +1448,25 @@ fn select_extensions(
     .map_err(|diagnostic| Box::new(CompileRefusal::Source(diagnostic)))?;
     let held_by_catalog = |identity: &str| held_extension_of(catalog, identity);
     let mut selections: Vec<fsl_foundation::selection::DefinitionRef> = Vec::new();
+    let mut profile_refusals = Vec::new();
     for profile in &header.selections().profiles {
-        // A profile that refuses is reported by E3 in its own place.
-        if let Ok(found) = resolve_profiles(std::slice::from_ref(profile), &held_by_catalog) {
-            for selection in found {
-                if !selections.contains(&selection) {
-                    selections.push(selection);
+        match resolve_profiles(std::slice::from_ref(profile), &held_by_catalog) {
+            Ok(found) => {
+                for selection in found {
+                    if !selections.contains(&selection) {
+                        selections.push(selection);
+                    }
                 }
             }
+            Err(mut refusals) => profile_refusals.append(&mut refusals),
         }
+    }
+    if !profile_refusals.is_empty() {
+        let span = profile_refusals[0].identity_span;
+        return Err(Box::new(CompileRefusal::Profile {
+            refusals: profile_refusals,
+            region: region(header.source().reference(), span),
+        }));
     }
     // Step 2, against the core vocabulary.
     catalog
@@ -1462,7 +1530,16 @@ fn parse_operation(
                 limits,
                 cancel,
             )
-        })?;
+        });
+        let parsed = match parsed {
+            Ok(parsed) => parsed,
+            Err(mut error) => {
+                if let Some(report) = &mut error.parsed {
+                    report.work_units = work.s1;
+                }
+                return Err(error);
+            }
+        };
         if !continue_protocol_refusals
             && parsed.protocol_results.iter().any(|result| {
                 matches!(
@@ -1666,6 +1743,30 @@ pub fn check_with_profile_catalog(
     limits: SpineLimits,
     cancel: &Cancel,
 ) -> Result<Staged<CheckedUnit>, ProfileCheckFailure> {
+    check_with_profile_catalog_and_inputs(
+        parsed,
+        package_name,
+        SourceInputs::default(),
+        models,
+        dependencies,
+        profile_catalog,
+        limits,
+        cancel,
+    )
+}
+
+/// S3 and S4 with the caller's exact profile-definition registry and
+/// per-source refinement and clock inputs.
+pub fn check_with_profile_catalog_and_inputs(
+    parsed: &ParsedUnitSource,
+    package_name: String,
+    inputs: SourceInputs<'_>,
+    models: &AdmittedModels,
+    dependencies: &DependencyInput,
+    profile_catalog: ProfileCatalogInput<'_>,
+    limits: SpineLimits,
+    cancel: &Cancel,
+) -> Result<Staged<CheckedUnit>, ProfileCheckFailure> {
     let profile_uses = resolve_protocol_profile_uses(parsed, profile_catalog);
     if profile_uses.iter().any(|profile_use| {
         !matches!(
@@ -1680,9 +1781,9 @@ pub fn check_with_profile_catalog(
         parsed,
         package_name,
         &BTreeMap::new(),
-        None,
-        &[],
-        None,
+        inputs.refinement_internals,
+        inputs.temporal_selections,
+        inputs.clocks,
         None,
         Some(profile_catalog),
         models,
@@ -2615,12 +2716,14 @@ fn parse_unit(
                 let refusal = source_diagnostics_refusal(parsed.diagnostics())
                     .expect("a non-empty diagnostic slice builds a refusal");
                 let diagnostic = &parsed.diagnostics()[0];
+                let report = ParseReport::from_parsed(&parsed, 0);
                 if let Some(results) =
                     bounded_protocol_results_around_nonprotocol_diagnostic(&parsed, diagnostic)
                 {
-                    return Err(StageError::with_protocol_results(refusal, results));
+                    return Err(StageError::with_protocol_results(refusal, results)
+                        .with_parsed_report(report));
                 }
-                return Err(refusal.into());
+                return Err(StageError::from(refusal).with_parsed_report(report));
             }
             return Err(Box::new(CompileRefusal::Forms {
                 region: failure.span.and_then(|span| region(&raw, span)),

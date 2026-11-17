@@ -311,6 +311,9 @@ pub fn replay_frame(
             (Category::Inconclusive, None, None)
         }
         ClauseDisposition::Admit(failure) => return Err(ReplayRefusal::Admission(failure)),
+        ClauseDisposition::SnapshotAdmission { failure, .. } => {
+            return Err(ReplayRefusal::Admission(failure))
+        }
         ClauseDisposition::EvaluateFault(fault) => return Err(ReplayRefusal::Fault(fault)),
         // `check_frame` reports only admission or evaluation: the compile,
         // selection and argument stages are behind it.

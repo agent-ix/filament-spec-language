@@ -243,6 +243,7 @@ fn runs_without_a_boolean_truth_report_unavailable_events() {
         name: "seven".to_owned(),
         arguments: Vec::new(),
         snapshot: label,
+        snapshot_path: None,
     };
     let function = run_clause(function).expect("reports");
     assert_eq!(

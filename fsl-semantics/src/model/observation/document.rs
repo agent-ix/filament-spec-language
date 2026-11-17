@@ -574,6 +574,12 @@ fn read_model(object: Object<'_>, has_domain: bool) -> Result<ModelHeader, Admis
         ));
     }
     let model = member.as_object().ok_or_else(|| wrong_kind("model"))?;
+    if let Some((unknown, _)) = model.iter().find(|(name, _)| *name != "identity") {
+        return Err(refuse(
+            admission_record(Code::InvalidRuntimeInput, "unknown-member")
+                .with("field", format!("model.{unknown}")),
+        ));
+    }
     let missing_member = |field: &'static str| {
         refuse(admission_record(Code::InvalidRuntimeInput, "missing-member").with("field", field))
     };
@@ -2979,11 +2985,25 @@ pub(super) fn admit_population_values<'t>(
                     return Err(refuse(
                         admission_record(Code::InvalidRuntimeInput, "missing-member")
                             .with("object", object.key.clone())
+                            .with("population", entry.population.clone())
+                            .with("member", name.to_owned())
                             .with("field", name.to_owned())
                             .with(
                                 "path",
                                 snapshot_field_path(population_index, object_index, name),
-                            ),
+                            )
+                            .at(vec![
+                                filament_semantic_value::admission::PathStep::Field(
+                                    "populations".to_owned(),
+                                ),
+                                filament_semantic_value::admission::PathStep::Index(
+                                    population_index,
+                                ),
+                                filament_semantic_value::admission::PathStep::Field(
+                                    "objects".to_owned(),
+                                ),
+                                filament_semantic_value::admission::PathStep::Index(object_index),
+                            ]),
                     ));
                 }
             }
@@ -3013,11 +3033,29 @@ pub(super) fn admit_population_values<'t>(
                     return Err(refuse(
                         admission_record(Code::InvalidRuntimeInput, "unknown-member")
                             .with("object", object.key.clone())
+                            .with("population", entry.population.clone())
+                            .with("member", name.clone())
                             .with("field", name.clone())
                             .with(
                                 "path",
                                 snapshot_field_path(population_index, object_index, name),
-                            ),
+                            )
+                            .at(vec![
+                                filament_semantic_value::admission::PathStep::Field(
+                                    "populations".to_owned(),
+                                ),
+                                filament_semantic_value::admission::PathStep::Index(
+                                    population_index,
+                                ),
+                                filament_semantic_value::admission::PathStep::Field(
+                                    "objects".to_owned(),
+                                ),
+                                filament_semantic_value::admission::PathStep::Index(object_index),
+                                filament_semantic_value::admission::PathStep::Field(
+                                    "fields".to_owned(),
+                                ),
+                                filament_semantic_value::admission::PathStep::Field(name.clone()),
+                            ]),
                     ));
                 }
             }

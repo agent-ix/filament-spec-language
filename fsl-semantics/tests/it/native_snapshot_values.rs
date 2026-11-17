@@ -181,9 +181,7 @@ fn replay_with(document: Value, base: Vec<(String, Value)>, declarations: &str) 
     let graph = assemble()
         .check(CheckMode::Linked, CheckingLimits::default())
         .unwrap_or_else(|refusals| panic!("the unit checks: {refusals:?}"));
-    let model = json!({
-        "identity": fixture::PACKAGE, "version": "1",
-    });
+    let model = json!({"identity": fixture::PACKAGE});
     let collections = base.iter().any(|(name, _)| name == "peers");
     Replay {
         declarations,

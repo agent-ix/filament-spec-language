@@ -1167,7 +1167,7 @@ fn snapshot_document(
         "format":"filament.state.snapshot/v1",
         "identity":{"authority":"fsl-flow","identity":"generated-snapshot"},
         "observation":"current",
-        "model":{"identity":PACKAGE,"version":"1.0.0"},
+        "model":{"identity":PACKAGE},
         "anchor":{"kind":"initialization","name":"flow"},
         "populations":populations,
         "relationships":relationship_extents
