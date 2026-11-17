@@ -15,6 +15,7 @@ pub mod manifest;
 mod profile;
 mod project;
 mod realize;
+pub mod recording;
 mod step_view;
 mod subject;
 

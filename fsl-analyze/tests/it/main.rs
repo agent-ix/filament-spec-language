@@ -94,6 +94,7 @@ mod protocol_footprints;
 mod protocol_projection;
 mod protocol_realizability;
 mod protocol_replay_mode;
+mod protocol_recording;
 mod protocol_roles;
 mod protocol_step_view;
 mod protocol_system;
