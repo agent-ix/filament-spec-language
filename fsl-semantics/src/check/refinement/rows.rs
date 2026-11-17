@@ -55,6 +55,16 @@ pub(crate) struct KeyedObjectRow {
     pub(crate) fields: Vec<(String, LeafTerm)>,
 }
 
+/// One history field, its initial typed value and operation updates.
+#[derive(Clone, Eq, PartialEq)]
+pub(crate) struct KeyedHistoryRow {
+    pub(crate) concrete_type: NodeKey,
+    pub(crate) name: String,
+    pub(crate) type_id: NodeKey,
+    pub(crate) initial: LeafTerm,
+    pub(crate) updates: Vec<(NodeKey, LeafTerm)>,
+}
+
 impl DebugWith for KeyedObjectRow {
     fn fmt_with(&self, f: &mut std::fmt::Formatter<'_>, table: &DebugTable) -> std::fmt::Result {
         let Self {
@@ -206,6 +216,7 @@ impl std::fmt::Debug for KeyedFairnessRow {
 pub(crate) struct KeyedRefinementRows {
     pub(crate) populations: Vec<KeyedPopulationRow>,
     pub(crate) objects: Vec<KeyedObjectRow>,
+    pub(crate) histories: Vec<KeyedHistoryRow>,
     pub(crate) steps: Vec<KeyedStepRow>,
     pub(crate) assume: Vec<KeyedFairnessRow>,
     pub(crate) ensure: Vec<KeyedFairnessRow>,
@@ -232,6 +243,14 @@ impl KeyedRefinementRows {
         for row in &self.objects {
             keys.extend([&row.abstract_type, &row.concrete_type]);
             for (_, expression) in &row.fields {
+                term(&mut keys, expression);
+            }
+        }
+        for row in &self.histories {
+            keys.extend([&row.concrete_type, &row.type_id]);
+            term(&mut keys, &row.initial);
+            for (operation, expression) in &row.updates {
+                keys.push(operation);
                 term(&mut keys, expression);
             }
         }

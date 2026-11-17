@@ -6,7 +6,7 @@
 //! placeholders before admission. Body terms retain typed semantic content;
 //! they no longer derive identities from canonical preimages or digests.
 
-use fsl_foundation::source::node_table::{standalone, DebugTable, DebugWith, NodeKeyDebug, With};
+use fsl_foundation::source::node_table::{DebugTable, DebugWith, NodeKeyDebug, With, standalone};
 use quire_canonical::FixedShape;
 use serde::Serialize;
 
@@ -1541,6 +1541,10 @@ fn map_member(
             population: population.map(|population| map_key(map, pending_member, population)),
         },
         Member::Operation { declaration, name } => Member::Operation {
+            declaration: map_key(map, pending_member, declaration),
+            name,
+        },
+        Member::History { declaration, name } => Member::History {
             declaration: map_key(map, pending_member, declaration),
             name,
         },

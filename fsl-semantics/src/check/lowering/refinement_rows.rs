@@ -9,19 +9,20 @@
 //! declaration located takes one `generated` occurrence at the refinement.
 
 use filament_checked::key::DeclarationKey;
-use filament_exact::NodeKey;
+use filament_exact::{NodeKey, Value};
 use filament_semantic_value::location::{
     ExpressionLocation as Location, ExpressionOwner as Origin,
 };
 
 use super::state::AnchorInput;
-use super::{fault, Binder, Binders, Lowering};
+use super::{Binder, Binders, Lowering, fault};
 use crate::check::claims::BinderSite;
 use crate::check::family::OccurrenceRole;
-use crate::check::node_key::LeafTerm;
+use crate::check::node_key::{LeafTerm, LiteralValue};
 use crate::check::refinement::{
-    CheckedRefinement, CheckedRow, KeyedCatalogClass, KeyedFairnessRow, KeyedObjectRow,
-    KeyedPopulationRow, KeyedRefinementRows, KeyedStepRow, KeyedStepTarget, StepClass, StepTarget,
+    CheckedRefinement, CheckedRow, KeyedCatalogClass, KeyedFairnessRow, KeyedHistoryRow,
+    KeyedObjectRow, KeyedPopulationRow, KeyedRefinementRows, KeyedStepRow, KeyedStepTarget,
+    StepClass, StepTarget,
 };
 use crate::check::refusal::{CheckRefusal, KeyFault};
 use filament_semantic_value::fairness::FairnessConstraint;
@@ -63,6 +64,37 @@ impl Lowering<'_> {
                 abstract_type,
                 concrete_type,
                 fields,
+            });
+        }
+        for row in refinement.history() {
+            let concrete_type =
+                self.located(location, |this| this.model_node(&row.object_type, location))?;
+            let type_id = self.type_node(&row.declared, location)?;
+            self.record(type_id.clone(), OccurrenceRole::Type, location.clone());
+            let initial = match &row.initial {
+                Value::Boolean(value) => LiteralValue::Boolean(*value),
+                Value::Integer(value) => LiteralValue::Integer(value.clone()),
+                Value::Rational(value) => LiteralValue::Rational(value.clone()),
+                Value::Decimal(value) => LiteralValue::decimal(value),
+                Value::Enum(value) => LiteralValue::Enum(value.case().to_owned()),
+                Value::Text(value) => LiteralValue::Text(value.retained().to_owned()),
+                Value::Option(value) if value.payload().is_none() => LiteralValue::None,
+                _ => return Err(fault(location, KeyFault::UnbuiltLiteral)),
+            };
+            let initial = LeafTerm::literal(type_id.clone(), initial);
+            let mut updates = Vec::with_capacity(row.updates.len());
+            for update in &row.updates {
+                updates.push((
+                    self.operation_anchor_of(&update.operation, location)?,
+                    self.row_term(&update.expression)?,
+                ));
+            }
+            rows.histories.push(KeyedHistoryRow {
+                concrete_type,
+                name: row.field.clone(),
+                type_id,
+                initial,
+                updates,
             });
         }
         for (source, row) in refinement.steps().iter().enumerate() {

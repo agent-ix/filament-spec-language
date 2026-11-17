@@ -69,8 +69,8 @@ pub(crate) use internal_list::{ImportedProtocolClasses, NodeClass, ParsedLists, 
 pub use protocol::{ChannelStepKind, MemoryStepKind, ProtocolStepKind, RoleStepKind};
 pub(crate) use protocol::{ProtocolClause, ProtocolRefinement, SelectedProtocol};
 pub(crate) use rows::{
-    KeyedFairnessRow, KeyedObjectRow, KeyedPopulationRow, KeyedRefinementRows, KeyedStepRow,
-    KeyedStepTarget,
+    KeyedFairnessRow, KeyedHistoryRow, KeyedObjectRow, KeyedPopulationRow, KeyedRefinementRows,
+    KeyedStepRow, KeyedStepTarget,
 };
 pub use step_label::{observation, LabelStep, RowObservation, StepLabel};
 
@@ -587,9 +587,10 @@ impl CheckedRefinement {
     /// semantic identity.
     pub fn v2_emission(&self) -> Result<RefinementV2Emission, RefinementV2EncodingError> {
         use filament_contract_model::{
-            RefinementAssume, RefinementEnsure, RefinementField, RefinementKey, RefinementObject,
-            RefinementOpen, RefinementPackageNodeKey, RefinementPopulation, RefinementStep,
-            RefinementStepArgument, RefinementStepTarget,
+            RefinementAssume, RefinementEnsure, RefinementField, RefinementHistory,
+            RefinementHistoryUpdate, RefinementKey, RefinementObject, RefinementOpen,
+            RefinementPackageNodeKey, RefinementPopulation, RefinementStep, RefinementStepArgument,
+            RefinementStepTarget,
         };
         let abstract_subject = self
             .abstract_subject_node
@@ -665,6 +666,34 @@ impl CheckedRefinement {
                     abstract_type: local(&row.abstract_type),
                     concrete_type: structural_id(&row.concrete_type),
                     fields,
+                })
+            })
+            .collect::<Result<Vec<_>, RefinementV2EncodingError>>()?;
+        let mut keyed_histories: Vec<&KeyedHistoryRow> = rows.histories.iter().collect();
+        keyed_histories.sort_by(|left, right| {
+            (&left.concrete_type, left.name.as_bytes())
+                .cmp(&(&right.concrete_type, right.name.as_bytes()))
+        });
+        let histories = keyed_histories
+            .into_iter()
+            .map(|row| {
+                let mut updates = row
+                    .updates
+                    .iter()
+                    .map(|(operation, expression)| {
+                        Ok(RefinementHistoryUpdate {
+                            operation: structural_id(operation),
+                            expression: term(expression)?,
+                        })
+                    })
+                    .collect::<Result<Vec<_>, RefinementV2EncodingError>>()?;
+                updates.sort_by(|left, right| left.operation.cmp(&right.operation));
+                Ok(RefinementHistory {
+                    concrete_type: structural_id(&row.concrete_type),
+                    name: row.name.as_str().into(),
+                    type_id: structural_id(&row.type_id),
+                    initial: term(&row.initial)?,
+                    updates,
                 })
             })
             .collect::<Result<Vec<_>, RefinementV2EncodingError>>()?;
@@ -751,7 +780,7 @@ impl CheckedRefinement {
             populations,
             objects,
             steps,
-            histories: Vec::new(),
+            histories,
             assume,
             ensure,
             protocol: self
@@ -860,9 +889,8 @@ impl CheckedRefinement {
     }
 
     /// Whether this declaration is in the current V2 emission slice: its
-    /// rows and its class catalog, when it has one, lowered to node keys, a
-    /// protocol subject's clause keyed, and no history row (whose fields
-    /// are not written yet).
+    /// rows and its class catalog, when it has one, lowered to node keys and
+    /// a protocol subject's clause keyed.
     pub fn v2_emittable(&self) -> bool {
         let subject = match &self.abstract_side {
             AbstractSide::Model => self.abstract_internal.is_empty(),
@@ -870,7 +898,6 @@ impl CheckedRefinement {
         };
         subject
             && self.row_keys.is_some()
-            && self.history.is_empty()
             && self.class_catalog.is_some() == self.class_catalog_keys.is_some()
             && self.abstract_subject_node.is_some()
             && self.concrete_subject_node.is_some()
@@ -1845,22 +1872,6 @@ impl CheckedRefinement {
             .iter()
             .flat_map(|history| history.updates.iter().map(|update| &update.expression));
         fields.chain(steps).chain(updates)
-    }
-
-    /// Whether every row expression has a node form: a whole population, a
-    /// history read and a `seq` have none yet (FR-139, FR-138; FR-093
-    /// gives no row for them), so a refinement with one is not emitted.
-    pub(crate) fn rows_have_nodes(&self) -> bool {
-        self.rows().all(|row| {
-            row.body().descendants().into_iter().all(|node| {
-                !matches!(
-                    node.kind(),
-                    NodeKind::PopulationObjects { .. }
-                        | NodeKind::History { .. }
-                        | NodeKind::Seq { .. }
-                )
-            })
-        })
     }
 
     /// The history rows, in source order (FR-138).
@@ -4359,13 +4370,6 @@ fn relaxed_conforms(types: &TypeEnvironment, actual: &ValueType, required: &Valu
 /// The refusal for a `refinement` declaration that checks but that no S4
 /// emission writes yet (FR-135): refused rather than compiled with an
 /// identity equal to the same package without it.
-pub(crate) fn not_emitted(name: String, span: Span) -> CheckRefusal {
-    CheckRefusal {
-        location: Location::root(Origin::Expression),
-        cause: CheckCause::RefinementNotEmitted { name, span },
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use filament_exact::{

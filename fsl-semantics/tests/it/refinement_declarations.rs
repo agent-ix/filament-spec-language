@@ -2042,11 +2042,10 @@ fn state_machine_rows_report_missing_duplicate_and_mixed_kinds() {
     );
 }
 
-/// A unit holding a `terminal` declaration and a refinement S4 cannot write
-/// yet refuses only the refinement: the `terminal` declaration is emitted.
+/// A unit holding a `terminal` declaration and a history refinement checks.
 #[trace("TC-540")]
 #[test]
-fn only_the_refinement_beside_a_terminal_is_refused() {
+fn history_refinement_beside_a_terminal_checks() {
     let (spec, cas) = counters();
     let body = format!(
         "terminal Halt using v on Spec any;\n{}",
@@ -2056,15 +2055,10 @@ fn only_the_refinement_beside_a_terminal_is_refused() {
         )
     );
     let (_, declarations) = assemble("", &[("Spec", SPEC, &spec), ("Impl", CAS, &cas)], &body);
-    let refusals = declarations
+    declarations
         .expect("the unit assembles")
         .check(CheckMode::Linked, CheckingLimits::default())
-        .expect_err("the refinement is not emitted yet");
-    assert!(
-        matches!(refusals[0].cause, CheckCause::RefinementNotEmitted { .. }),
-        "{refusals:?}"
-    );
-    assert_eq!(refusals.len(), 1, "{refusals:?}");
+        .expect("the refinement checks and emits");
 }
 
 pub(crate) const DIAMOND: &str = "example/diamond-counter";

@@ -25,7 +25,7 @@ use filament_exact::Rational;
 use filament_semantic_value::fairness::{FairnessGranularity, FairnessKind};
 use fsl_forms::StateClauseKind;
 use fsl_foundation::bound::TemporalInterval;
-use fsl_foundation::source::node_table::{standalone, DebugTable, DebugWith, NodeKeyDebug};
+use fsl_foundation::source::node_table::{DebugTable, DebugWith, NodeKeyDebug, standalone};
 
 /// The accepted `ClauseBinding.execution_point` (FSpec FR-322-AC-131) as the
 /// IR's closed four-variant [`ExecutionPoint`], which the IR owns: this
@@ -121,6 +121,13 @@ pub enum Member {
         /// The declaring type.
         declaration: NodeKey,
         /// The operation's own identifier.
+        name: Identifier,
+    },
+    /// A refinement-local history field.
+    History {
+        /// The concrete model type that owns the history field.
+        declaration: NodeKey,
+        /// The field's identifier within the refinement.
         name: Identifier,
     },
     /// A generic declaration's type argument (position-independent: a
@@ -268,6 +275,11 @@ impl DebugWith for Member {
                 .field("declaration", &NodeKeyDebug(declaration, table))
                 .field("name", &name)
                 .finish(),
+            Self::History { declaration, name } => f
+                .debug_struct("History")
+                .field("declaration", &NodeKeyDebug(declaration, table))
+                .field("name", &name)
+                .finish(),
             Self::TypeArgument { declaration } => f
                 .debug_struct("TypeArgument")
                 .field("declaration", &NodeKeyDebug(declaration, table))
@@ -348,6 +360,7 @@ impl Member {
             | Self::Element { declaration }
             | Self::RelationshipEnd { declaration, .. }
             | Self::Operation { declaration, .. }
+            | Self::History { declaration, .. }
             | Self::TypeArgument { declaration } => Some(declaration.clone()),
             Self::Fairness { target, .. } => target.node().cloned(),
             Self::ProfileOperator { .. }
@@ -377,6 +390,7 @@ impl Member {
             Self::Position { .. }
             | Self::Element { .. }
             | Self::Operation { .. }
+            | Self::History { .. }
             | Self::TypeArgument { .. }
             | Self::ProfileOperator { .. }
             | Self::StateClause { .. }

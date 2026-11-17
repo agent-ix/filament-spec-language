@@ -379,7 +379,6 @@ fn check_limit(cause: &CheckCause) -> Option<ReachedLimit> {
         | CheckCause::UntypedMember(_)
         | CheckCause::Abstraction(_)
         | CheckCause::Extension(_)
-        | CheckCause::RefinementNotEmitted { .. }
         | CheckCause::Probabilistic(_)
         | CheckCause::TimedNotChecked { .. }
         | CheckCause::Temporal(_)

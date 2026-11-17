@@ -33,12 +33,12 @@ use filament_checked::node::{
     Arithmetic, CaseArm, CheckedLiteral, Connective, IntegerDivisionOperator, NodeKind,
     OrderedKind, RecordField, RecordSlot, Visit,
 };
-use std::collections::{hash_map, BTreeMap, BTreeSet, HashMap, HashSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet, hash_map};
 use std::fmt;
 use std::ops::ControlFlow;
 
 use fsl_foundation::source::node_table::{
-    standalone, DebugTable, DebugWith, NodeKeyDebug, NodeList, With,
+    DebugTable, DebugWith, NodeKeyDebug, NodeList, With, standalone,
 };
 
 use filament_exact::{
@@ -94,40 +94,40 @@ mod timed_clause;
 
 pub(crate) use extension::ExtensionFormInput;
 pub(crate) use hybrid::{
-    hybrid_location, hybrid_site, HybridClaimInput, HybridModelInput, HybridSite,
+    HybridClaimInput, HybridModelInput, HybridSite, hybrid_location, hybrid_site,
 };
 pub(crate) use hyper::{
-    finish_step_relation, HyperClauseInput, LoweredStepRelation, StepRelationInput,
+    HyperClauseInput, LoweredStepRelation, StepRelationInput, finish_step_relation,
 };
 pub(crate) use model::ParentSlotFailure;
-pub(crate) use model::{
-    bound_origin, clock_type_identity, equivalence_origin, model_declaration_key, quantity_origin,
-    record_node_key, strictly_below, QuantityKind, SourceClockLayout, SourceClockPlace,
-};
 pub use model::{
-    collection_kind, model_root_key, AdmittedModel, CollectionShape, ForeignView, ModelClause,
-    PlaceRow, PlaceStep, SelectedModelEnumDeclaration, SelectedModelEnumMember,
-    SelectedOperationMember,
+    AdmittedModel, CollectionShape, ForeignView, ModelClause, PlaceRow, PlaceStep,
+    SelectedModelEnumDeclaration, SelectedModelEnumMember, SelectedOperationMember,
+    collection_kind, model_root_key,
+};
+pub(crate) use model::{
+    QuantityKind, SourceClockLayout, SourceClockPlace, bound_origin, clock_type_identity,
+    equivalence_origin, model_declaration_key, quantity_origin, record_node_key, strictly_below,
 };
 pub(crate) use model::{model_node_content, population_node_content};
 pub(crate) use protocol::{
-    compensation_origin, declaration_origin, protocol_location, AttemptNodes, CompensationNodes,
-    ProtocolInput,
+    AttemptNodes, CompensationNodes, ProtocolInput, compensation_origin, declaration_origin,
+    protocol_location,
 };
-pub use protocol::{protocol_site, ProtocolSite, RelatedSide};
+pub use protocol::{ProtocolSite, RelatedSide, protocol_site};
 pub(crate) use state::{
+    AnchorInput, AttemptInput, LoweredAttempt, LoweredClause, OperationBinding, StateClauseInput,
     protocol_attempt_operation_location, protocol_attempt_operation_site,
     state_clause_name_location, state_clause_name_site, state_operation_location,
-    state_operation_site, AnchorInput, AttemptInput, LoweredAttempt, LoweredClause,
-    OperationBinding, StateClauseInput,
+    state_operation_site,
 };
 pub(crate) use state_graph::StateGraphClaimInput;
 pub(crate) use state_transition::TransitionClause;
 pub(crate) use temporal::{
-    temporal_location, temporal_site, AggregatePart, LoweredTemporalClause, TemporalClauseInput,
-    TemporalSite,
+    AggregatePart, LoweredTemporalClause, TemporalClauseInput, TemporalSite, temporal_location,
+    temporal_site,
 };
-pub(crate) use terminal::{terminal_location, terminal_site, TerminalInput, TerminalSite};
+pub(crate) use terminal::{TerminalInput, TerminalSite, terminal_location, terminal_site};
 pub(crate) use timed_clause::TimedClauseInput;
 
 /// A node's place in its recursion group (FR-092 "Recursion groups"): the
@@ -1237,11 +1237,11 @@ fn carrier_rounding(carried: &filament_exact::CarriedQuantityType) -> filament_e
 #[ix_trace_rs::string_edge]
 fn variant_type_identity(path: &[filament_exact::PathSegment]) -> Option<&String> {
     match path {
-        [filament_exact::PathSegment::Text(kind), filament_exact::PathSegment::Text(form), filament_exact::PathSegment::Text(identity)]
-            if kind == "model" && form == "variant_type" =>
-        {
-            Some(identity)
-        }
+        [
+            filament_exact::PathSegment::Text(kind),
+            filament_exact::PathSegment::Text(form),
+            filament_exact::PathSegment::Text(identity),
+        ] if kind == "model" && form == "variant_type" => Some(identity),
         _ => None,
     }
 }
@@ -1496,11 +1496,18 @@ struct BinderFrame<'n> {
 struct SeqFrame<'n> {
     node: CheckedNode<'n>,
     slot: Slot,
+    low: CheckedNode<'n>,
     high: CheckedNode<'n>,
     body: CheckedNode<'n>,
-    low_term: Option<LeafTerm>,
-    high_term: Option<LeafTerm>,
-    bound: Option<(NodeRef, String)>,
+    stage: SeqStage,
+    terms: Vec<LeafTerm>,
+}
+
+enum SeqStage {
+    Low,
+    High,
+    Body { name: String },
+>>>>>>> a1792bcd9 (QSL-2244 emit each checked refinement)
 }
 
 /// A record value's members, one binding per declared field.
@@ -3270,7 +3277,7 @@ impl<'a> Lowering<'a> {
                 .get(at)
                 .map(|position| (position, Presence::Required)),
             CompositeShape::Union(members) => {
-                return self.advance_union(composite, members, location, frames)
+                return self.advance_union(composite, members, location, frames);
             }
         };
         let Some((value_type, presence)) = next else {
@@ -4536,7 +4543,7 @@ impl<'a> Lowering<'a> {
         let plain = Operation::plain;
         let (keyed, operands) = match node.kind() {
             NodeKind::Literal(CheckedLiteral(value)) => {
-                return self.literal(node, value).map(LowerStep::Lowered)
+                return self.literal(node, value).map(LowerStep::Lowered);
             }
             NodeKind::Local(slot) => {
                 let key = binders
@@ -4860,7 +4867,7 @@ impl<'a> Lowering<'a> {
                     // The checker lowers a float ordering to
                     // `IeeeTotalOrder` compositions, never to `Order`.
                     OrderedKind::Float => {
-                        return Err(fault(node.location(), KeyFault::UntypedIeeeOperand))
+                        return Err(fault(node.location(), KeyFault::UntypedIeeeOperand));
                     }
                 };
                 let mut operation = plain(&format!(
@@ -5017,6 +5024,29 @@ impl<'a> Lowering<'a> {
                     frames,
                 );
             }
+            NodeKind::History {
+                reference,
+                object_type,
+                field,
+            } => {
+                let declaration = self.model_node(object_type, node.location())?;
+                let name = Identifier::new(field.clone()).map_err(|_| {
+                    refuse(
+                        node.location(),
+                        CheckCause::NodePreimage(NodeKeyRefusal::EmptyBindingName),
+                    )
+                })?;
+                (
+                    Keyed::Application(
+                        Operator::Query,
+                        Operation {
+                            member: Some(Member::History { declaration, name }),
+                            ..plain("filament.op.refinement.history")
+                        },
+                    ),
+                    Operands::One(reference),
+                )
+            }
             // These checked forms have no S4 representation yet. In
             // particular, a clock-place reference is a descriptor, not a
             // clock value; the downstream term contract has no row for it.
@@ -5031,7 +5061,7 @@ impl<'a> Lowering<'a> {
                     CheckCause::UnsupportedFeature {
                         loci: vec![node.location().clone()],
                     },
-                ))
+                ));
             }
             NodeKind::Present(operand) => (
                 Keyed::Application(Operator::Present, plain("filament.op.option.present")),
@@ -5369,7 +5399,7 @@ impl<'a> Lowering<'a> {
                                     CheckCause::UnsupportedFeature {
                                         loci: vec![node.location().clone()],
                                     },
-                                ))
+                                ));
                             }
                         };
                         (
@@ -5505,7 +5535,7 @@ impl<'a> Lowering<'a> {
                     CollectionKind::Sequence => "filament.op.collection.sequence.drop_first",
                     CollectionKind::OrderedSet => "filament.op.collection.ordered_set.drop_first",
                     CollectionKind::Set | CollectionKind::Bag => {
-                        return Err(fault(node.location(), KeyFault::UnorderedFirstOccurrence))
+                        return Err(fault(node.location(), KeyFault::UnorderedFirstOccurrence));
                     }
                 };
                 (
@@ -5535,6 +5565,23 @@ impl<'a> Lowering<'a> {
                     Operands::Two(collection, item),
                 )
             }
+            NodeKind::PopulationObjects { population } => {
+                let population = self.population_reference_node(population, node.location())?;
+                let object = self.referenced_object(node.value_type(), node.location())?;
+                return self
+                    .application(
+                        node,
+                        Operator::Query,
+                        Operation {
+                            member: Some(Member::TypeArgument {
+                                declaration: object,
+                            }),
+                            ..plain("filament.op.model.all_instances")
+                        },
+                        vec![MemberTerm::Leaf(LeafTerm::reference(population))],
+                    )
+                    .map(LowerStep::Lowered);
+            }
             NodeKind::AllInstances { population } => {
                 let object = self.referenced_object(node.value_type(), node.location())?;
                 (
@@ -5549,6 +5596,23 @@ impl<'a> Lowering<'a> {
                     ),
                     Operands::One(population),
                 )
+            }
+            NodeKind::Seq {
+                slot,
+                low,
+                high,
+                body,
+            } => {
+                frames.push(LowerFrame::Seq(Box::new(SeqFrame {
+                    node,
+                    slot: *slot,
+                    low: node.at(*low),
+                    high: node.at(*high),
+                    body: node.at(*body),
+                    stage: SeqStage::Low,
+                    terms: Vec::with_capacity(2),
+                })));
+                return Ok(LowerStep::Descend(node.at(*low)));
             }
             NodeKind::Lookup {
                 population,
@@ -5753,7 +5817,7 @@ impl<'a> Lowering<'a> {
             NodeKind::ProtocolReference { protocol } => {
                 return self
                     .protocol_reference(node, *protocol)
-                    .map(LowerStep::Lowered)
+                    .map(LowerStep::Lowered);
             }
             // FR-063/S3 seam: no arm for `NodeKind::__SeamProbe`
             // under `--cfg seam_probe` alone -- this match (already
@@ -6326,56 +6390,74 @@ impl<'a> Lowering<'a> {
                     .map(LowerStep::Lowered)
                 }
             },
-            LowerFrame::Seq(mut frame) => {
-                if frame.low_term.is_none() {
-                    frame.low_term = Some(term);
+            LowerFrame::Seq(mut frame) => match frame.stage {
+                SeqStage::Low => {
+                    frame.terms.push(term);
+                    frame.stage = SeqStage::High;
                     let high = frame.high;
                     frames.push(LowerFrame::Seq(frame));
-                    return Ok(LowerStep::Descend(high));
+                    Ok(LowerStep::Descend(high))
                 }
-                if frame.high_term.is_none() {
-                    let location = frame.node.location();
-                    let low = frame
-                        .low_term
-                        .take()
-                        .ok_or_else(|| fault(location, KeyFault::UnresolvedDraft))?;
-                    let integer = self.scalar("integer", location)?;
-                    let range = self.bounded(
-                        "integer_range",
-                        integer.clone(),
-                        vec![("min", low), ("max", term.clone())],
-                        location,
-                    )?;
-                    let name = self.bind(binders, frame.slot, integer, location)?;
-                    frame.high_term = Some(term);
-                    frame.bound = Some((range, name));
+                SeqStage::High => {
+                    frame.terms.push(term);
+                    let low_range = super::ir::static_integer_range(
+                        (frame.low.kind(), frame.low.value_type()),
+                        &|id| Some((frame.node.at(id).kind(), frame.node.at(id).value_type())),
+                    );
+                    let high_range = super::ir::static_integer_range(
+                        (frame.high.kind(), frame.high.value_type()),
+                        &|id| Some((frame.node.at(id).kind(), frame.node.at(id).value_type())),
+                    );
+                    let Some((lower, _)) = low_range else {
+                        return Err(refuse(
+                            frame.node.location(),
+                            CheckCause::IllTyped(filament_exact::IllTypedCause::TypeMismatch),
+                        ));
+                    };
+                    let Some((_, upper)) = high_range else {
+                        return Err(refuse(
+                            frame.node.location(),
+                            CheckCause::IllTyped(filament_exact::IllTypedCause::TypeMismatch),
+                        ));
+                    };
+                    let binder_type = ValueType::Int(
+                        filament_exact::IntegerInterval::new(lower, upper).map_err(|_| {
+                            refuse(
+                                frame.node.location(),
+                                CheckCause::IllTyped(filament_exact::IllTypedCause::TypeMismatch),
+                            )
+                        })?,
+                    );
+                    let binder_type = self.type_ref(&binder_type, frame.node.location())?;
+                    let name =
+                        self.bind(binders, frame.slot, binder_type, frame.node.location())?;
+                    frame.stage = SeqStage::Body { name };
                     let body = frame.body;
                     frames.push(LowerFrame::Seq(frame));
-                    return Ok(LowerStep::Descend(body));
+                    Ok(LowerStep::Descend(body))
                 }
-                let (range, name) = frame
-                    .bound
-                    .take()
-                    .ok_or_else(|| fault(frame.node.location(), KeyFault::UnresolvedDraft))?;
-                binders.pop();
-                let leaves = self.leaves(
-                    LeafSource::ResultInner(frame.node.value_type()),
-                    frame.node.location(),
-                )?;
-                self.application(
-                    frame.node,
-                    Operator::Collection,
-                    Operation {
-                        leaves,
-                        ..plain("filament.op.collection.map")
-                    },
-                    vec![
-                        MemberTerm::reference_node(range),
-                        MemberTerm::bound(name, term),
-                    ],
-                )
-                .map(LowerStep::Lowered)
-            }
+                SeqStage::Body { name } => {
+                    binders.pop();
+                    let member =
+                        self.type_argument(frame.body.value_type(), frame.node.location())?;
+                    let mut terms = frame
+                        .terms
+                        .into_iter()
+                        .map(MemberTerm::Leaf)
+                        .collect::<Vec<_>>();
+                    terms.push(MemberTerm::bound(name, term));
+                    self.application(
+                        frame.node,
+                        Operator::Collection,
+                        Operation {
+                            member: Some(member),
+                            ..Operation::plain("filament.op.collection.seq")
+                        },
+                        terms,
+                    )
+                    .map(LowerStep::Lowered)
+                }
+            },
             LowerFrame::Attribute {
                 node,
                 object,
@@ -6787,7 +6869,7 @@ impl<'a> Lowering<'a> {
                 return Err(refuse(
                     location,
                     CheckCause::IllTyped(filament_exact::IllTypedCause::OperatorIneligible),
-                ))
+                ));
             }
             // FR-093 "Native scalar equality": no law, mode, member or
             // leaves, and no text-profile selection.
@@ -6807,7 +6889,7 @@ impl<'a> Lowering<'a> {
                 return Err(refuse(
                     location,
                     CheckCause::IllTyped(filament_exact::IllTypedCause::OperatorIneligible),
-                ))
+                ));
             }
             // FR-153: a population is never an equality operand; the
             // checker refuses one before lowering.

@@ -1965,7 +1965,6 @@ fn emit_checked_never_returns_incomplete_across_the_fixture_set() {
         RefinementSubjectNotEmitted,
         RefinementIdentityEncoding,
         LiteralEncoding,
-        RefinementNotEmitted,
         UnlocatedRefinementDeclaration,
         MissingTemporalClockSelection,
         SurplusTemporalClockSelection,
@@ -1995,7 +1994,6 @@ fn emit_checked_never_returns_incomplete_across_the_fixture_set() {
             Err(EmitRefusal::RefinementSubjectNotEmitted) => Seen::RefinementSubjectNotEmitted,
             Err(EmitRefusal::RefinementIdentityEncoding) => Seen::RefinementIdentityEncoding,
             Err(EmitRefusal::LiteralEncoding) => Seen::LiteralEncoding,
-            Err(EmitRefusal::RefinementNotEmitted) => Seen::RefinementNotEmitted,
             Err(EmitRefusal::UnlocatedRefinementDeclaration) => {
                 Seen::UnlocatedRefinementDeclaration
             }
