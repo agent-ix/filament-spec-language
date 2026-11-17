@@ -514,6 +514,24 @@ dependencies = [
 ]
 
 [[package]]
+name = "facade-contract-consumer"
+version = "0.1.0"
+dependencies = [
+ "filament-contract-model",
+ "filament-exact",
+ "filament-semantic-value",
+ "fsl-analyze",
+ "fsl-cst",
+ "fsl-forms",
+ "fsl-foundation",
+ "fsl-package",
+ "fsl-replay",
+ "fsl-semantics",
+ "ix-trace-rs",
+ "serde_json",
+]
+
+[[package]]
 name = "fancy-regex"
 version = "0.11.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
