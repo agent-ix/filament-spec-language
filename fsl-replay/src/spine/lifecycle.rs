@@ -3256,6 +3256,35 @@ fn emit_refusal(
                 region,
             )
         }
+        fsl_package::EmitRefusal::MissingTemporalClockSelection {
+            source_ref,
+            span,
+            declaration,
+        } => {
+            let locus = region(&source_ref, span);
+            CompileRefusal::Emit(
+                fsl_package::EmitRefusal::MissingTemporalClockSelection {
+                    source_ref,
+                    span,
+                    declaration,
+                },
+                locus,
+            )
+        }
+        fsl_package::EmitRefusal::ProbabilisticModelNotEmitted {
+            declaration,
+            feature,
+            profile,
+            region,
+        } => CompileRefusal::Emit(
+            fsl_package::EmitRefusal::ProbabilisticModelNotEmitted {
+                declaration,
+                feature,
+                profile,
+                region: region.clone(),
+            },
+            Some(region),
+        ),
         other => CompileRefusal::Emit(other, None),
     })
 }

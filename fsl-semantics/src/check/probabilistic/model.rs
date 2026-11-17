@@ -341,6 +341,18 @@ impl CheckedProbabilisticModel {
     /// `operation(parameter)`, a reward, a workload and a delay by their
     /// declared names.
     pub fn first_declaration(&self) -> Option<(ProbabilisticFeature, String)> {
+        self.first_declaration_details()
+            .map(|(_, feature, name)| (feature, name))
+    }
+
+    /// The source location of [`Self::first_declaration`], when its
+    /// declaration has a recorded source span.
+    pub fn first_declaration_location(&self) -> Option<Location> {
+        self.first_declaration_details()
+            .map(|(declared, _, _)| site_location(declared, Site::Declaration))
+    }
+
+    fn first_declaration_details(&self) -> Option<(usize, ProbabilisticFeature, String)> {
         let random = self.random_parameters.iter().map(|random| {
             (
                 random.declared,
@@ -374,7 +386,7 @@ impl CheckedProbabilisticModel {
             .chain(workloads)
             .chain(delays)
             .min_by_key(|(declared, _, _)| *declared)
-            .map(|(_, feature, name)| (feature, name))
+            .map(|(declared, feature, name)| (declared, feature, name))
     }
 }
 
@@ -397,6 +409,16 @@ impl ProbabilisticFeature {
     pub fn name(self) -> &'static str {
         match self {
             Self::RandomParameter => "random-parameter",
+            Self::Workload => "workload",
+            Self::Reward => "reward",
+            Self::Delay => "delay",
+        }
+    }
+
+    /// The feature name in a user-facing diagnostic sentence.
+    pub fn display_name(self) -> &'static str {
+        match self {
+            Self::RandomParameter => "random parameter",
             Self::Workload => "workload",
             Self::Reward => "reward",
             Self::Delay => "delay",
@@ -529,12 +551,14 @@ pub(crate) fn site_spans(
                     }
                 }
                 ProbabilisticDeclaration::Reward(form) => {
+                    sites.push((Site::Declaration, spanned(form.span)));
                     sites.push((Site::Reward, Some(form.expression.spans.clone())));
                 }
                 ProbabilisticDeclaration::Delay(form) => {
                     sites.push((Site::Declaration, spanned(form.span)));
                 }
                 ProbabilisticDeclaration::Workload(form) => {
+                    sites.push((Site::Declaration, spanned(form.span)));
                     for (weight, written) in form.weights.iter().enumerate() {
                         sites.push((Site::Weight(weight), spanned(written.weight.span)));
                     }

@@ -95,20 +95,20 @@ pub fn authenticate_emission(
     )
     .map_err(|refusal| match refusal {
         EmitRefusal::Cancelled { cause } => AuthenticationFailure::Cancelled(cause),
-        EmitRefusal::MissingTemporalClockSelection { source_ref, span } => {
-            AuthenticationFailure::MissingSelection {
-                clause: package
-                    .graph()
-                    .temporal_clauses()
-                    .iter()
-                    .find(|node| {
-                        node.clause().span() == span
-                            && super::temporal::clause_source_ref(package, node).as_ref()
-                                == Some(&source_ref)
-                    })
-                    .map(|node| node.clause().name().to_owned()),
-            }
-        }
+        EmitRefusal::MissingTemporalClockSelection {
+            source_ref, span, ..
+        } => AuthenticationFailure::MissingSelection {
+            clause: package
+                .graph()
+                .temporal_clauses()
+                .iter()
+                .find(|node| {
+                    node.clause().span() == span
+                        && super::temporal::clause_source_ref(package, node).as_ref()
+                            == Some(&source_ref)
+                })
+                .map(|node| node.clause().name().to_owned()),
+        },
         EmitRefusal::SurplusTemporalClockSelection { .. }
         | EmitRefusal::DuplicateTemporalClockSelection { .. }
         | EmitRefusal::TemporalClockProfileMismatch { .. }
