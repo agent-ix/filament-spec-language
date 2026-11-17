@@ -1346,7 +1346,6 @@ fn a_declined_item_writes_no_protocol_analysis_record() {
 /// `activation-on-each`.
 #[trace("TC-2524", "FR-891-AC-3", "FSpec-FR-735-AC-1")]
 #[test]
-#[ignore = "QSL-2212: realizability under the bounded profile is refused and activation on each answers unsupported"]
 fn realizability_settles_over_activation_on_each() {
     let fixture = Fixture::activated(
         "on each (t: M::Cell)",

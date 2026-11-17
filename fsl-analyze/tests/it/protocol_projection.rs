@@ -9,12 +9,14 @@ use fsl_analyze::protocol_analysis::{
     project, unsupported_construct, ProjectionOutcome, ProjectionRefusal, ProjectionRequest,
 };
 use fsl_replay::protocol_analysis::{
-    replay_projection_counterexample, AnalysisOutcome, AssessedRootDraft, ChoiceBasis,
-    DecisionOwner, GlobalStructure, InconclusiveCause, LocalEventKind, ProjectionBoundsDraft,
-    ProjectionCounterexample, ProjectionDecision, ProjectionWitness, ProtocolAnalysisEvidence,
-    RunBudget, UnsupportedSlug, WalkDisagreement,
+    replay_projection_counterexample, AnalysisOutcome, AssessedRootDraft, CapacityPremise,
+    ChoiceBasis, DecisionOwner, GlobalStructure, InconclusiveCause, JoinPolicy, LocalEventKind,
+    OutstandingPolicy, ProjectionBoundsDraft, ProjectionCounterexample, ProjectionDecision,
+    ProjectionWitness, ProtocolAnalysisEvidence, ProtocolAnalysisKey, RunBudget, UnsupportedSlug,
+    WalkDisagreement,
 };
 use fsl_replay::spine::replay_protocol_analysis;
+use fsl_package::protocol_view::clause_activation_trigger;
 use fsl_replay::{DecidingElement, ModelCheckLimit, ObservationIdentity, ReplaySource};
 use ix_trace_rs::trace;
 
@@ -1070,6 +1072,150 @@ fn the_bounded_profile_projects_every_construct() {
         bounded(&each, "Seller").outcome,
         AnalysisOutcome::Unsupported(_)
     ));
+}
+
+/// FR-890-AC-1 (QSL-2212): a replicated role has one local graph for its
+/// class, with the receive and later send in that graph.
+#[trace("TC-2522", "FR-890-AC-5")]
+#[test]
+fn a_replicated_role_projects() {
+    let members = "role Buyer on M::Cell;\nrole Pool each M::Cell from cells max 2 lifetime workflow;\n\
+        channel Job from Buyer to Pool carries Ack ordering unordered delivery exactly-once-premise capacity 4 overflow reject;\n\
+        channel Done from Pool to Buyer carries Ack ordering unordered delivery exactly-once-premise capacity 4 overflow reject;";
+    let package = admitted_source(&source(
+        members,
+        "sequence Main { send J via Job as (j: Ack) { true }; \
+         receive K via Job of J as (k: Ack) { true }; \
+         send D via Done as (d: Ack) { true }; \
+         receive R via Done of D as (r: Ack) { true }; }",
+    ));
+    let mut asked = request(&package, "Pool");
+    asked.profile = Some("bounded".to_owned());
+    let graph = witness(project(&package, asked).unwrap()).local_graph;
+    assert_eq!(
+        graph
+            .events
+            .iter()
+            .filter(|event| matches!(event.kind, LocalEventKind::Receive { .. }))
+            .count(),
+        1
+    );
+    assert_eq!(
+        graph
+            .events
+            .iter()
+            .filter(|event| matches!(event.kind, LocalEventKind::Send { .. }))
+            .count(),
+        1
+    );
+}
+
+/// FR-890-AC-1 (QSL-2212): activation on each is admitted by `bounded`.
+#[trace("TC-2520", "FR-890-AC-1")]
+#[test]
+fn on_each_projects() {
+    let package = admitted_source(
+        &source(MEMBERS, "sequence Main { send S via Order as (s: Ack) { true }; }\n")
+            .replace("on origin", "on each (t: M::Cell)"),
+    );
+    let mut asked = request(&package, "Seller");
+    asked.profile = Some("bounded".to_owned());
+    let outcome = project(&package, asked).unwrap();
+    let graph = match outcome.outcome {
+        AnalysisOutcome::Proved(witness) => witness.local_graph,
+        other => panic!("expected an on-each projection: {other:?}"),
+    };
+    let trigger = clause_activation_trigger(&package, &clause(&package))
+        .unwrap()
+        .expect("on each names a trigger");
+    assert!(matches!(
+        graph.events.first().map(|event| &event.kind),
+        Some(LocalEventKind::Activate { trigger: held }) if held == &trigger
+    ));
+}
+
+/// FR-890-AC-1 (QSL-2212): a symbolic capacity remains a channel premise,
+/// while projection builds the same local communication graph as a literal.
+#[trace("TC-2520", "FR-890-AC-1", "FR-890-AC-7")]
+#[test]
+fn a_symbolic_capacity_projects() {
+    let package = admitted_source(
+        &source(
+            MEMBERS,
+            "sequence Main { send S via Order as (s: Ack) { true }; \
+             receive R via Order of S as (r: Ack) { true }; }",
+        )
+        .replace("capacity 4", "capacity symbolic(Bound)"),
+    );
+    let mut asked = request(&package, "Seller");
+    asked.profile = Some("bounded".to_owned());
+    let outcome = project(&package, asked).unwrap();
+    assert!(matches!(outcome.outcome, AnalysisOutcome::Proved(_)));
+    let ProtocolAnalysisKey::Projection(key) = outcome.key else {
+        panic!("projection key");
+    };
+    assert!(key.channels.iter().any(|channel| matches!(
+        &channel.capacity,
+        CapacityPremise::Symbolic { name } if name == "Bound"
+    )));
+}
+
+/// FR-890-AC-1 (QSL-2212): each supported join form stays visible in the
+/// projected role's local graph.
+#[trace("TC-2520", "FR-890-AC-1")]
+#[test]
+fn join_any_projects() {
+    join_projects(
+        "join any [a] outstanding cancel;",
+        JoinPolicy::Any,
+        Some(OutstandingPolicy::Cancel),
+    );
+}
+
+#[trace("TC-2520", "FR-890-AC-1")]
+#[test]
+fn join_quorum_projects() {
+    join_projects(
+        "join quorum(1) [a] outstanding continue;",
+        JoinPolicy::Quorum { count: 1 },
+        Some(OutstandingPolicy::Continue),
+    );
+}
+
+#[trace("TC-2520", "FR-890-AC-1")]
+#[test]
+fn outstanding_projects() {
+    join_projects(
+        "join all [a, b] outstanding continue;",
+        JoinPolicy::All,
+        Some(OutstandingPolicy::Continue),
+    );
+}
+
+fn join_projects(
+    join: &str,
+    expected_policy: JoinPolicy,
+    expected_outstanding: Option<OutstandingPolicy>,
+) {
+    let run = format!(
+        "sequence Main {{ parallel Par {{ \
+         branch a sequence Ay {{ send AS via Pick as (asnd: PickMsg) {{ true }}; receive AR via Pick of AS as (ar: PickMsg) {{ true }}; }} \
+         branch b sequence Bee {{ send BS via Pick as (bsnd: PickMsg) {{ true }}; receive BR via Pick of BS as (br: PickMsg) {{ true }}; }} }} {join} }}"
+    );
+    let package = flow(&run);
+    let mut asked = request(&package, "Warehouse");
+    asked.profile = Some("bounded".to_owned());
+    let graph = witness(project(&package, asked).unwrap()).local_graph;
+    assert!(graph
+        .events
+        .iter()
+        .any(|event| matches!(
+            &event.kind,
+            LocalEventKind::ParallelJoin { policy, joined, outstanding }
+                if policy == &expected_policy
+                    && joined == &["a".to_owned()]
+                    && outstanding == &expected_outstanding
+        )));
 }
 
 /// FR-890-AC-2 (TC-2521): a `repeat` is a decision point owned by its `by`

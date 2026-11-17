@@ -78,9 +78,11 @@ pub fn unsupported_construct_for_profile(
     profile: Profile,
 ) -> Result<Option<UnsupportedCause>, ViewRefusal> {
     let view = protocol_view(package, protocol)?;
-    // `on each` starts an instance per trigger, and a role's steps in two
-    // instances would share one observation.
-    if clause_activation(node(package, view.clause())?)? == ClauseActivation::Each {
+    // `bounded` carries instance activation through the arena and partitions
+    // observations by instance; `bounded-static` has no instance dimension.
+    if profile == Profile::BoundedStatic
+        && clause_activation(node(package, view.clause())?)? == ClauseActivation::Each
+    {
         return Ok(Some(cause(
             UnsupportedSlug::ActivationOnEach,
             view.clause(),
@@ -98,13 +100,15 @@ pub fn unsupported_construct_for_profile(
             }
         }
     }
-    for queue in view.queues() {
-        if let QueueCapacity::Symbolic(name) = queue_capacity(node(package, queue)?)? {
-            return Ok(Some(cause(
-                UnsupportedSlug::SymbolicQueueCapacity,
-                queue,
-                Some(name),
-            )));
+    if profile == Profile::BoundedStatic {
+        for queue in view.queues() {
+            if let QueueCapacity::Symbolic(name) = queue_capacity(node(package, queue)?)? {
+                return Ok(Some(cause(
+                    UnsupportedSlug::SymbolicQueueCapacity,
+                    queue,
+                    Some(name),
+                )));
+            }
         }
     }
     if let Some(template) = view.compensations().first() {
@@ -129,18 +133,25 @@ pub fn unsupported_construct_for_profile(
                 None
             }
             _ => match control_body(control)? {
-                ControlBody::Parallel { join, .. } if join.policy != ParallelJoinPolicy::All => {
+                ControlBody::Parallel { join, .. }
+                    if profile == Profile::BoundedStatic
+                        && join.policy != ParallelJoinPolicy::All =>
+                {
                     Some(cause(
                         UnsupportedSlug::UnsupportedJoin,
                         id,
                         Some(join.policy.as_str()),
                     ))
                 }
-                ControlBody::Parallel { join, .. } if join.outstanding.is_some() => Some(cause(
-                    UnsupportedSlug::UnsupportedJoin,
-                    id,
-                    Some("outstanding"),
-                )),
+                ControlBody::Parallel { join, .. }
+                    if profile == Profile::BoundedStatic && join.outstanding.is_some() =>
+                {
+                    Some(cause(
+                        UnsupportedSlug::UnsupportedJoin,
+                        id,
+                        Some("outstanding"),
+                    ))
+                }
                 _ => None,
             },
         };

@@ -21,6 +21,28 @@ use crate::{ObservationIdentity, RuntimeValuePath, ValuePathSubject};
 #[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
 pub struct LocalEventId(pub u32);
 
+/// A join policy retained in a role's projected graph (FR-890-AC-4).
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum JoinPolicy {
+    /// Every joined branch must finish.
+    All,
+    /// One joined branch must finish.
+    Any,
+    /// At least `count` joined branches must finish.
+    Quorum { count: u64 },
+    /// The named predicate decides when the join fires.
+    Predicate { function: CheckedNodeId },
+}
+
+/// What happens to branches outside the join's winning disposition.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum OutstandingPolicy {
+    /// Cancel branches that did not contribute to the join.
+    Cancel,
+    /// Keep remaining branches concurrent with the continuation.
+    Continue,
+}
+
 /// What a local event is (PA-25).
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum LocalEventKind {
@@ -44,8 +66,20 @@ pub enum LocalEventKind {
     ExternalChoice,
     /// The entry of a `parallel` region.
     ParallelRegion,
-    /// The exit of a `parallel` region.
-    ParallelJoin,
+    /// The protocol instance's activation event (`on each`).
+    Activate {
+        /// The trigger binder that identifies the instance.
+        trigger: CheckedNodeId,
+    },
+    /// The exit of a `parallel` region, with its join semantics.
+    ParallelJoin {
+        /// The policy that decides when the join fires.
+        policy: JoinPolicy,
+        /// The labels the join waits on.
+        joined: Vec<String>,
+        /// How branches outside the winning set are handled.
+        outstanding: Option<OutstandingPolicy>,
+    },
 }
 
 /// One event of a local graph.

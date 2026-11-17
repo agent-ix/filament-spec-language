@@ -14,8 +14,8 @@ use fsl_package::protocol_view::{
 };
 
 use crate::protocol_analysis::{
-    Comm, GlobalEvent, GlobalEventKind, GlobalStructure, RunBudget, RunLimit, StructureInput,
-    UniformFifo,
+    Comm, GlobalEvent, GlobalEventKind, GlobalStructure, JoinPolicy, OutstandingPolicy, RunBudget,
+    RunLimit, StructureInput, UniformFifo,
 };
 
 /// Why a structure was not built.
@@ -104,7 +104,7 @@ impl<'p> Reader<'p> {
                     self.walk(body, within)?;
                 }
             }
-            ControlBody::Parallel { branches, .. } => {
+            ControlBody::Parallel { branches, join } => {
                 let bodies: Vec<CheckedNodeId> =
                     branches.iter().map(|(_, body)| (*body).clone()).collect();
                 self.input.events.push(GlobalEvent {
@@ -118,7 +118,32 @@ impl<'p> Reader<'p> {
                 self.input.events.push(GlobalEvent {
                     at: exit.clone(),
                     out: exit,
-                    kind: GlobalEventKind::Join { branches: bodies },
+                    kind: GlobalEventKind::Join {
+                        branches: bodies,
+                        policy: match join.policy {
+                            fsl_package::protocol_view::ParallelJoinPolicy::All => JoinPolicy::All,
+                            fsl_package::protocol_view::ParallelJoinPolicy::Any => JoinPolicy::Any,
+                            fsl_package::protocol_view::ParallelJoinPolicy::Quorum => {
+                                JoinPolicy::Quorum {
+                                    count: join.quorum.expect("checked quorum has count"),
+                                }
+                            }
+                            fsl_package::protocol_view::ParallelJoinPolicy::Predicate => {
+                                JoinPolicy::Predicate {
+                                    function: join
+                                        .predicate
+                                        .expect("checked predicate join has function")
+                                        .clone(),
+                                }
+                            }
+                        },
+                        joined: join.joined.iter().map(|label| (*label).to_owned()).collect(),
+                        outstanding: join.outstanding.map(|word| match word {
+                            "cancel" => OutstandingPolicy::Cancel,
+                            "continue" => OutstandingPolicy::Continue,
+                            _ => unreachable!("checked outstanding policy is cancel or continue"),
+                        }),
+                    },
                     within: within.clone(),
                 });
                 for (_, body) in branches {

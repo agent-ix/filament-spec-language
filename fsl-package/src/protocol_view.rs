@@ -1077,6 +1077,31 @@ pub fn clause_activation(clause: &CheckedSemanticNodeV2) -> Result<ClauseActivat
         .ok_or_else(|| malformed(&clause.node_id, "activation"))
 }
 
+/// The trigger binder of an `on each` protocol clause, or `None` for
+/// `on origin`.
+///
+/// # Errors
+///
+/// [`ViewRefusal`] when the clause is unknown or its checked activation is
+/// malformed.
+pub fn clause_activation_trigger(
+    package: &CheckedPackageV2,
+    clause: &CheckedNodeId,
+) -> Result<Option<CheckedNodeId>, ViewRefusal> {
+    let index = Index::new(package);
+    let clause_node = index.clause(clause)?;
+    let activation = required(clause_node, "activation")?;
+    match group_member(activation, "kind").and_then(text) {
+        Some("origin") => Ok(None),
+        Some("each") => group_member(activation, "trigger")
+            .and_then(reference)
+            .cloned()
+            .map(Some)
+            .ok_or_else(|| malformed(clause, "activation.trigger")),
+        _ => Err(malformed(clause, "activation")),
+    }
+}
+
 /// The key of a FIFO channel: the parameter that stands for a message and the
 /// `expression` node that reads the key over it.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -1297,6 +1322,10 @@ impl ParallelJoinPolicy {
 pub struct ParallelJoin<'n> {
     /// The join policy.
     pub policy: ParallelJoinPolicy,
+    /// The minimum number of finished branches for `quorum`.
+    pub quorum: Option<u64>,
+    /// The function used by `predicate`.
+    pub predicate: Option<&'n CheckedNodeId>,
     /// The branch labels the join awaits, in ascending label order.
     pub joined: Vec<&'n str>,
     /// The `outstanding` policy word when written.
@@ -1373,10 +1402,19 @@ pub fn control_body(node: &CheckedSemanticNodeV2) -> Result<ControlBody<'_>, Vie
                     Some(text(word).ok_or_else(|| malformed(&node.node_id, "outstanding"))?)
                 }
             };
+            let quorum = group_member(join, "count").and_then(integer);
+            let predicate = group_member(join, "predicate").and_then(reference);
+            if (policy == ParallelJoinPolicy::Quorum && quorum.is_none())
+                || (policy == ParallelJoinPolicy::Predicate && predicate.is_none())
+            {
+                return Err(malformed(&node.node_id, "join"));
+            }
             ControlBody::Parallel {
                 branches: records(node, "branches")?,
                 join: ParallelJoin {
                     policy,
+                    quorum,
+                    predicate,
                     joined: group_texts(node, "joined")?,
                     outstanding,
                 },

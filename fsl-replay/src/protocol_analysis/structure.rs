@@ -16,6 +16,7 @@ use filament_contract_model::CheckedNodeId;
 use fsl_package::protocol_view::{Port, PortRef};
 
 use super::RunLimit;
+use super::{JoinPolicy, OutstandingPolicy};
 use crate::ModelCheckLimit;
 
 /// The most runs a case may split into over its nested choices.
@@ -87,6 +88,12 @@ pub enum GlobalEventKind {
     Join {
         /// The branch bodies, ascending by label bytes.
         branches: Vec<CheckedNodeId>,
+        /// The policy that decides when the join fires.
+        policy: JoinPolicy,
+        /// The labels the join waits on.
+        joined: Vec<String>,
+        /// How branches outside the winning set are handled.
+        outstanding: Option<OutstandingPolicy>,
     },
 }
 

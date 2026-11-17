@@ -4,14 +4,17 @@
 use std::collections::BTreeMap;
 
 use filament_contract_model::{CheckedNodeId, CheckedPackageV2};
-use fsl_package::protocol_view::{protocol_view, role_replication_maximum, PortRef, ViewRefusal};
+use fsl_package::protocol_view::{
+    clause_activation_trigger, protocol_view, role_replication_maximum, PortRef, ViewRefusal,
+};
 use fsl_replay::protocol_analysis::{
     node_text, replay_projection_counterexample, Action, AnalysisOutcome, AssessedRoot,
     AssessedRootDraft, BranchMerge, ChoiceBasis, Correspondence, DecisionOwner, GlobalEventKind,
-    GlobalStructure, InconclusiveCause, LocalEvent, LocalEventId, LocalEventKind, LocalGraph,
-    MergeEvidence, MissingMember, PremiseRefusal, ProjectionBoundsDraft, ProjectionCounterexample,
-    ProjectionDecision, ProjectionKeyDraft, ProjectionWitness, ProtocolAnalysisKey,
-    ProtocolAnalysisResult, ProtocolPremises, RunBudget, RunLimit,
+    GlobalStructure, InconclusiveCause, JoinPolicy, LocalEvent, LocalEventId, LocalEventKind,
+    LocalGraph, MergeEvidence, MissingMember, OutstandingPolicy, PremiseRefusal,
+    ProjectionBoundsDraft, ProjectionCounterexample, ProjectionDecision, ProjectionKeyDraft,
+    ProjectionWitness, ProtocolAnalysisKey, ProtocolAnalysisResult, ProtocolPremises, RunBudget,
+    RunLimit,
 };
 use fsl_replay::spine::StructureError;
 use fsl_replay::ModelCheckLimit;
@@ -275,7 +278,15 @@ pub fn project(
             AnalysisOutcome::Inconclusive(InconclusiveCause::Horizon),
         ));
     }
-    match witness(&structure, key.clone(), role, request.budget, evidence) {
+    let activation = clause_activation_trigger(package, &request.protocol)?;
+    match witness(
+        &structure,
+        key.clone(),
+        role,
+        request.budget,
+        evidence,
+        activation,
+    ) {
         Ok(witness) => Ok(result(key, AnalysisOutcome::Proved(witness))),
         Err(limit) => Ok(result(key, AnalysisOutcome::Failed(limit))),
     }
@@ -365,6 +376,7 @@ fn witness(
     role: &CheckedNodeId,
     budget: RunBudget,
     merge_evidence: Vec<MergeEvidence>,
+    activation: Option<CheckedNodeId>,
 ) -> Result<ProjectionWitness, RunLimit> {
     let kept = structure.role_events(role);
     let mut correspondence = BTreeMap::new();
@@ -395,7 +407,16 @@ fn witness(
             }
             GlobalEventKind::Choice { .. } => LocalEventKind::ExternalChoice,
             GlobalEventKind::Region { .. } => LocalEventKind::ParallelRegion,
-            GlobalEventKind::Join { .. } => LocalEventKind::ParallelJoin,
+            GlobalEventKind::Join {
+                policy,
+                joined,
+                outstanding,
+                ..
+            } => LocalEventKind::ParallelJoin {
+                policy: policy.clone(),
+                joined: joined.clone(),
+                outstanding: *outstanding,
+            },
         };
         correspondence.insert(event.at.clone(), id);
         events.push(LocalEvent { id, kind });
@@ -421,6 +442,45 @@ fn witness(
         .collect();
     alternatives.sort();
     alternatives.dedup();
+    if let Some(trigger) = activation {
+        let shift = |id: &mut LocalEventId| id.0 = id.0.saturating_add(1);
+        for event in &mut events {
+            shift(&mut event.id);
+        }
+        for id in correspondence.0.values_mut() {
+            shift(id);
+        }
+        for (from, to) in &mut edges {
+            shift(from);
+            shift(to);
+        }
+        for (first, second) in &mut alternatives {
+            shift(first);
+            shift(second);
+        }
+        let mut incoming = vec![false; events.len()];
+        for (_, to) in &edges {
+            if let Some(marked) = incoming.get_mut(to.0.saturating_sub(1) as usize) {
+                *marked = true;
+            }
+        }
+        let mut activation_edges: Vec<_> = incoming
+            .iter()
+            .enumerate()
+            .filter_map(|(at, has_incoming)| {
+                (!has_incoming).then_some((LocalEventId(0), LocalEventId(at as u32 + 1)))
+            })
+            .collect();
+        edges.append(&mut activation_edges);
+        edges.sort();
+        events.insert(
+            0,
+            LocalEvent {
+                id: LocalEventId(0),
+                kind: LocalEventKind::Activate { trigger },
+            },
+        );
+    }
     Ok(ProjectionWitness {
         key,
         local_graph: LocalGraph {
