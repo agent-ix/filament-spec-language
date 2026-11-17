@@ -1039,7 +1039,11 @@ fn each_remaining_control_projects() {
         assert!(
             graph.events.iter().any(|event| matches!(
                 event.kind,
-                LocalEventKind::ControlAction { operation: found, .. } if found == operation
+                LocalEventKind::ControlAction {
+                    operation: found,
+                    record_type: Some(_),
+                    ..
+                } if found == operation
             )),
             "missing local action for {operation:?}"
         );
