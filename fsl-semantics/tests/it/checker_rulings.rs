@@ -92,7 +92,7 @@ const TWO_GROUPS: &str = "\
 /// `unknown_required_feature`.
 #[trace("TC-1900", "FR-092-AC-31")]
 #[test]
-fn two_recursion_groups_with_equal_bodies_key_apart() {
+fn recursion_group_nodes_are_keyed_apart() {
     let graph = checks(check_source(false, TWO_GROUPS), "two recursion groups");
     let grouped: Vec<_> = graph
         .semantic_graph()

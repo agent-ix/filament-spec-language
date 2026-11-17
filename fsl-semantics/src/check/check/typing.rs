@@ -1988,7 +1988,7 @@ impl<'a> Typer<'a> {
                 high,
                 body,
             } => {
-                if self.populations.is_none() {
+                if self.populations.is_none() && self.named.is_none() {
                     return Err(refuse(
                         &location,
                         CheckCause::PopulationFormOutsideRefinement,

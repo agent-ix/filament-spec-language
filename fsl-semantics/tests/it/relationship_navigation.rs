@@ -15,7 +15,7 @@ use filament_semantic_value::declaration::FieldRef;
 use fsl_foundation::diagnostic::Code;
 use fsl_semantics::check::{
     AmbiguousMember, CheckCause, CheckRefusal, CheckedGraph, CheckedNode, MemberCandidate,
-    NavigationBound, PackageDeclarations,
+    PackageDeclarations,
 };
 use fsl_semantics::family::FamilyKind;
 use fsl_semantics::model::accounting::ModelNormalizationLimits;
@@ -724,36 +724,69 @@ fn n09_a_traversal_against_the_direction_is_operator_ineligible() {
     );
 }
 
-/// FR-363-AC-4 (N10): an unbounded, an ordered and a multiplicity-less
-/// destination end each refuse `unsupported_construct`/`expression-form`.
-#[trace("TC-1031", "FR-363-AC-4")]
+/// FR-363-AC-7: an unbounded unordered unique destination is an unbounded
+/// `Set<Reference<Person>>`.
+#[trace("TC-1031", "FR-363-AC-7")]
 #[test]
-fn n10_an_unbounded_ordered_or_undeclared_end_is_unsupported() {
-    for (name, bound) in [
-        ("watchers", NavigationBound::Unbounded),
-        ("steps", NavigationBound::Ordered),
-        ("notes", NavigationBound::Undeclared),
-    ] {
-        let refusal = assert_refused(
-            &links(),
-            "Order",
-            &format!("size(self.{name}) >= 0"),
-            Code::UnsupportedConstruct,
-            "expression-form",
-            vec![0, 0],
-        );
-        let CheckCause::StateModel(model) = &refusal.cause else {
-            panic!("{name}: a StateModel refusal");
-        };
-        assert_eq!(
-            model.cause,
-            CheckCause::UnsupportedNavigation(bound),
-            "{name}"
-        );
-    }
+fn navigation_over_an_unbounded_end_follows_the_ruling() {
+    assert_navigates(
+        &links(),
+        "Order",
+        "size(self.watchers) >= 0",
+        |graph| {
+            (
+                ValueType::collection(CollectionType::new(
+                    CollectionKind::Set,
+                    reference(graph, "Person"),
+                    None,
+                )),
+                relationship_key("Order/watchers"),
+                "watchers",
+            )
+        },
+        1,
+    );
 }
 
-/// FR-363-AC-4 (N11): the direction refusal precedes the bound refusal.
+/// FR-363-AC-7: an ordered unique destination keeps its order and finite bound.
+#[trace("TC-1031", "FR-363-AC-7")]
+#[test]
+fn navigation_over_an_ordered_end_follows_the_ruling() {
+    assert_navigates(
+        &links(),
+        "Order",
+        "size(self.steps) >= 0",
+        |graph| {
+            (
+                ValueType::collection(CollectionType::new(
+                    CollectionKind::OrderedSet,
+                    reference(graph, "Step"),
+                    Some(CardinalityBound::new(0, 3).expect("bound")),
+                )),
+                relationship_key("Order/steps"),
+                "steps",
+            )
+        },
+        1,
+    );
+}
+
+/// FR-363: a destination without a declared multiplicity is a typed
+/// `ill_typed`/`operator-ineligible` refusal.
+#[trace("TC-1031", "FR-363-AC-4")]
+#[test]
+fn navigation_over_an_undeclared_multiplicity_refuses_with_exit_20() {
+    assert_refused(
+        &links(),
+        "Order",
+        "size(self.notes) >= 0",
+        Code::IllTyped,
+        "operator-ineligible",
+        vec![0, 0],
+    );
+}
+
+/// FR-363-AC-4 (N11): the direction refusal precedes multiplicity typing.
 #[trace("TC-1031", "FR-363-AC-4")]
 #[test]
 fn n11_the_direction_refusal_precedes_the_bound_refusal() {

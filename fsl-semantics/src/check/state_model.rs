@@ -15,9 +15,7 @@ use super::check::Scope;
 use super::check::UntypedKind;
 use super::ir::{Node, NodeId};
 use super::navigation::Navigable;
-use super::refusal::{
-    AmbiguousMember, CheckCause, CheckRefusal, KeyFault, MemberCandidate, NavigationBound,
-};
+use super::refusal::{AmbiguousMember, CheckCause, CheckRefusal, KeyFault, MemberCandidate};
 use crate::family::{CheckContext, CheckOutcome, FamilyContract, FamilyKind};
 
 /// A located refusal attributed to the model form that produced it.
@@ -144,29 +142,25 @@ fn navigation(
         return Err(CheckCause::IllTyped(IllTypedCause::OperatorIneligible));
     }
     let destination = end.destination();
-    let unsupported = |bound| CheckCause::UnsupportedNavigation(bound);
     let multiplicity = destination
         .multiplicity
-        .ok_or_else(|| unsupported(NavigationBound::Undeclared))?;
-    let upper = multiplicity
-        .upper
-        .ok_or_else(|| unsupported(NavigationBound::Unbounded))?;
-    if multiplicity.ordered {
-        return Err(unsupported(NavigationBound::Ordered));
-    }
+        .ok_or(CheckCause::IllTyped(IllTypedCause::OperatorIneligible))?;
     let element = ValueType::Reference(destination.object.clone());
-    let value_type = match (multiplicity.lower, upper) {
-        (0, 1) => ValueType::option(element),
-        (1, 1) => element,
+    let value_type = match (multiplicity.lower, multiplicity.upper) {
+        (0, Some(1)) => ValueType::option(element),
+        (1, Some(1)) => element,
         (lower, upper) => {
-            let bound = CardinalityBound::new(lower, upper)
+            let bound = upper
+                .map(|upper| CardinalityBound::new(lower, upper))
+                .transpose()
                 .map_err(|_| CheckCause::UnrepresentableBound)?;
-            let kind = if multiplicity.unique {
-                CollectionKind::Set
-            } else {
-                CollectionKind::Bag
+            let kind = match (multiplicity.ordered, multiplicity.unique) {
+                (false, false) => CollectionKind::Bag,
+                (false, true) => CollectionKind::Set,
+                (true, false) => CollectionKind::Sequence,
+                (true, true) => CollectionKind::OrderedSet,
             };
-            ValueType::collection(CollectionType::new(kind, element, Some(bound)))
+            ValueType::collection(CollectionType::new(kind, element, bound))
         }
     };
     let kind = NodeKind::Navigate {
@@ -197,10 +191,8 @@ fn member_candidates(
 
 /// FR-365 "Checking" 2 to 5 for `reaches(a, b, name)` over `end`: the second
 /// operand's object type `other` conforms to the near end's type (the first
-/// operand's does by the end's resolution), then direction, destination
-/// multiplicity and destination type, stopping at the first failure. A
-/// finite multi-valued destination end of the near end's own type is
-/// admitted as a single-valued one is.
+/// operand's does by the end's resolution), then direction and destination
+/// type. Destination multiplicity does not affect reachability.
 fn reaches_end(
     end: &Navigable<'_>,
     types: &filament_semantic_value::declaration::TypeEnvironment,
@@ -215,16 +207,6 @@ fn reaches_end(
         return Err(ineligible());
     }
     let destination = end.destination();
-    let unsupported = CheckCause::UnsupportedNavigation;
-    let multiplicity = destination
-        .multiplicity
-        .ok_or_else(|| unsupported(NavigationBound::Undeclared))?;
-    if multiplicity.upper.is_none() {
-        return Err(unsupported(NavigationBound::Unbounded));
-    }
-    if multiplicity.ordered {
-        return Err(unsupported(NavigationBound::Ordered));
-    }
     if destination.object != near {
         return Err(ineligible());
     }
