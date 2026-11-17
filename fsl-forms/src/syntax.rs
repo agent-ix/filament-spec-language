@@ -50,6 +50,8 @@ pub enum BuiltinType {
     Text,
     /// `Option<T>`.
     Option,
+    /// `Map<K, V>`.
+    Map,
     /// `Reference<T>`.
     Reference,
     /// `Quantity<u>` or `Quantity<u, C>` (FSpec FR-142): the first argument
@@ -595,6 +597,9 @@ pub enum ExprNode {
     /// `absent`, the absent option: it takes its type from the `Option<T>`
     /// its context expects.
     Absent,
+    /// The source token `null`, kept distinct from an option's `absent` value
+    /// so S3 can refuse it as an ill-typed expression.
+    Null,
     /// An integer literal.
     Integer(Integer),
     /// The exact bits of `float32(bits: 0xHHHHHHHH)`.
@@ -623,10 +628,12 @@ pub enum ExprNode {
     String(StringLiteral),
     /// A parameter, `let` or binder name, or a qualified enum member.
     Name(NameForm),
-    /// `let name = value in body`.
+    /// `let name [: type] = value in body`.
     Let {
         /// The bound name.
         name: String,
+        /// The declared binder type, when the source writes one.
+        annotation: Option<TypeForm>,
         /// The initializer, evaluated once.
         value: ExprId,
         /// The scope of the binding.
@@ -671,6 +678,13 @@ pub enum ExprNode {
         field: String,
         /// Its source token when the expression was read from source.
         member_span: Option<fsl_foundation::Span>,
+    },
+    /// `operand[index]`, a tuple position or keyed collection read.
+    Index {
+        /// The tuple or collection operand.
+        operand: ExprId,
+        /// The position or key expression.
+        index: ExprId,
     },
     /// `present(e)`.
     Present(ExprId),
@@ -811,8 +825,13 @@ pub enum ExprNode {
         /// The element expression.
         body: ExprId,
     },
-    /// `size(c)`.
-    Size(ExprId),
+    /// `size<N>(c)` or `size(c)`, where `N` is the optional result domain.
+    Size {
+        /// The collection or text whose size is queried.
+        operand: ExprId,
+        /// The result integer domain written by the caller, if any.
+        type_argument: Option<TypeForm>,
+    },
     /// `contains(c, v)`.
     Contains {
         /// The collection operand.
@@ -952,6 +971,7 @@ impl ExprNode {
                 .collect(),
             Self::Boolean(_)
             | Self::Absent
+            | Self::Null
             | Self::Integer(_)
             | Self::Float32(_)
             | Self::Float64(_)
@@ -980,7 +1000,7 @@ impl ExprNode {
             | Self::Ref(operand)
             | Self::Flatten(operand)
             | Self::DropFirst(operand)
-            | Self::Size(operand)
+            | Self::Size { operand, .. }
             | Self::Field { operand, .. }
             | Self::Convert { operand, .. }
             | Self::Indexed { read: operand, .. }
@@ -1022,6 +1042,7 @@ impl ExprNode {
                 vec![*collection, *item]
             }
             Self::Select { place, selector } => vec![*place, *selector],
+            Self::Index { operand, index } => vec![*operand, *index],
             Self::AllInstances { population, .. } => vec![*population],
             Self::Lookup {
                 population,
@@ -1067,6 +1088,7 @@ impl ExprNode {
             } => vec![accumulator, binder],
             Self::Boolean(_)
             | Self::Absent
+            | Self::Null
             | Self::Integer(_)
             | Self::Float32(_)
             | Self::Float64(_)
@@ -1088,8 +1110,9 @@ impl ExprNode {
             | Self::Ref(_)
             | Self::Flatten(_)
             | Self::DropFirst(_)
-            | Self::Size(_)
+            | Self::Size { .. }
             | Self::Field { .. }
+            | Self::Index { .. }
             | Self::Convert { .. }
             | Self::Pre(_)
             | Self::Call { .. }
@@ -1148,6 +1171,7 @@ impl ExprNode {
             },
             Self::Boolean(_)
             | Self::Absent
+            | Self::Null
             | Self::Integer(_)
             | Self::Float32(_)
             | Self::Float64(_)
@@ -1168,8 +1192,9 @@ impl ExprNode {
             | Self::Ref(_)
             | Self::Flatten(_)
             | Self::DropFirst(_)
-            | Self::Size(_)
+            | Self::Size { .. }
             | Self::Field { .. }
+            | Self::Index { .. }
             | Self::Convert { .. }
             | Self::Pre(_)
             | Self::Call { .. }
@@ -1206,6 +1231,7 @@ impl ExprNode {
             }
             Self::Boolean(_)
             | Self::Absent
+            | Self::Null
             | Self::Integer(_)
             | Self::Float32(_)
             | Self::Float64(_)
@@ -1227,7 +1253,7 @@ impl ExprNode {
             | Self::Ref(operand)
             | Self::Flatten(operand)
             | Self::DropFirst(operand)
-            | Self::Size(operand)
+            | Self::Size { operand, .. }
             | Self::Field { operand, .. }
             | Self::Convert { operand, .. }
             | Self::AllInstances {
@@ -1265,6 +1291,10 @@ impl ExprNode {
             | Self::Select {
                 place: first,
                 selector: second,
+            }
+            | Self::Index {
+                operand: first,
+                index: second,
             }
             | Self::Contains {
                 collection: first,
@@ -1414,6 +1444,8 @@ impl<'a> ExprRef<'a> {
     /// positions in their arenas play no part; a payload that records the
     /// span of a type it names (a conversion's target, an accumulation's or
     /// a count's result type) compares that span as part of the payload.
+    /// Field-member source-token spans are diagnostic locations and do not
+    /// participate in expression equality.
     /// Runs on an explicit stack, so a deep tree compares in constant
     /// native stack.
     pub fn same_tree(self, other: ExprRef<'_>) -> bool {
@@ -1422,6 +1454,12 @@ impl<'a> ExprRef<'a> {
             let (mut left_node, mut right_node) = (left.node.clone(), right.node.clone());
             left_node.shift_children(|_| ExprId(0));
             right_node.shift_children(|_| ExprId(0));
+            if let ExprNode::Field { member_span, .. } = &mut left_node {
+                *member_span = None;
+            }
+            if let ExprNode::Field { member_span, .. } = &mut right_node {
+                *member_span = None;
+            }
             if left_node != right_node {
                 return false;
             }
@@ -1517,6 +1555,23 @@ impl Expression {
         let name = name.into();
         Self::compose([value, body], |[value, body]| ExprNode::Let {
             name,
+            annotation: None,
+            value,
+            body,
+        })
+    }
+
+    /// `let name: annotation = value in body`.
+    pub fn let_in_annotated(
+        name: impl Into<String>,
+        annotation: TypeForm,
+        value: Self,
+        body: Self,
+    ) -> Self {
+        let name = name.into();
+        Self::compose([value, body], |[value, body]| ExprNode::Let {
+            name,
+            annotation: Some(annotation),
             value,
             body,
         })
@@ -1629,9 +1684,12 @@ impl Expression {
         })
     }
 
-    /// `size(operand)`.
-    pub fn size(operand: Self) -> Self {
-        Self::compose([operand], |[operand]| ExprNode::Size(operand))
+    /// `size<N>(operand)` or `size(operand)`.
+    pub fn size(operand: Self, type_argument: Option<TypeForm>) -> Self {
+        Self::compose([operand], |[operand]| ExprNode::Size {
+            operand,
+            type_argument,
+        })
     }
 
     /// `name(arguments)`.
@@ -1804,6 +1862,14 @@ impl Expression {
         Self::compose([place, selector], |[place, selector]| ExprNode::Select {
             place,
             selector,
+        })
+    }
+
+    /// `operand[index]`.
+    pub fn index(operand: Self, index: Self) -> Self {
+        Self::compose([operand, index], |[operand, index]| ExprNode::Index {
+            operand,
+            index,
         })
     }
 
@@ -5262,6 +5328,28 @@ mod tests {
         depths.last().copied().unwrap_or(0)
     }
 
+    #[test]
+    fn expression_tree_equality_ignores_field_token_locations() {
+        let field_read = |start| {
+            let member_span = Span {
+                start,
+                end: start + 2,
+            };
+            Expression::compose([Expression::name("got")], |[operand]| ExprNode::Field {
+                operand,
+                field: "ok".into(),
+                member_span: Some(member_span),
+            })
+        };
+
+        let listed = field_read(10);
+        let guard = field_read(40);
+        assert!(listed.root().same_tree(guard.root()));
+        assert!(!listed
+            .root()
+            .same_tree(Expression::field(Expression::name("got"), "ready").root()));
+    }
+
     /// A 100,000-deep tree, alternating single-, two- and many-operand
     /// forms, clones, compares equal to its clone, formats for debug and
     /// drops on a 512 KiB stack.
@@ -5282,6 +5370,7 @@ mod tests {
                     },
                     2 => ExprNode::Let {
                         name: "v".to_owned(),
+                        annotation: None,
                         value: leaf(),
                         body: inner,
                     },

@@ -313,6 +313,7 @@ fn system<'a>(fixture: &'a Fixture) -> ProtocolSystem<'a, Sc> {
             role: "Service".to_owned(),
             model: tc1070::model::PACKAGE.to_owned(),
         }],
+        capacities: Vec::new(),
         memory: ResolvedMemory::resolve(protocol, &[]).expect("sc memory selected"),
     };
     ProtocolSystem::new(model, &subject, Sc).expect("protocol subject built")

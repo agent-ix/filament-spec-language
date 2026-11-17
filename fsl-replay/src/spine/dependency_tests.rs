@@ -40,7 +40,7 @@ fn import(identity: &str, alias: &str) -> String {
 fn view_of(
     package: &fsl_package::CheckedPackage,
     identity: &str,
-) -> Result<fsl_semantics::library::ImportView, fsl_package::ImportViewRefusal> {
+) -> Result<fsl_semantics::library::ImportView, Box<fsl_package::ImportViewRefusal>> {
     let emission =
         emit_checked(package, fsl_package::EmitLimits::fixture()).expect("the package emits");
     read_import_view(
@@ -52,6 +52,7 @@ fn view_of(
         fsl_package::V2ReadLimits::fixture(),
         fsl_package::EmitLimits::fixture(),
     )
+    .map_err(Box::new)
 }
 
 /// A library supplied as `identity`, from source (`a`, `name`, `git`, `1`)

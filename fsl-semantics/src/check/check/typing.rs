@@ -33,7 +33,7 @@ use crate::check::family::Application;
 use crate::check::ir::{CheckedBody, IntegerRange, Node, NodeId, Slot};
 use crate::check::refusal::{
     CheckCause, CheckRefusal, CheckingLimitKind, CheckingStage, IdentityForm, IdentityNode,
-    KeyFault, StageLimitCause,
+    KeyFault, Obligation, StageLimitCause,
 };
 use crate::check::sum_case::{ArmHead, CaseBuilder, UnionMember, UnionRef};
 use crate::check::type_form::{IntegerOutsideI128, IntegerSite};
@@ -50,7 +50,7 @@ use filament_semantic_value::declaration::{EqualityOperand, EqualityOperator, Fi
 use filament_semantic_value::location::ExpressionLocation as Location;
 use fsl_forms::{
     Accumulation, BinaryOperator, BinderQuery, CaseForm, ClauseKind, ExprNode, ExprRef, Expression,
-    FieldInitializer, NameForm, PopulationForm,
+    FieldInitializer, NameForm, PopulationForm, TypeForm,
 };
 use fsl_foundation::Span;
 use ix_trace_rs::string_edge;
@@ -272,6 +272,12 @@ enum Frame<'e, 'r> {
     Unary(Box<UnaryFrame<'r>>),
     /// `e.f`: the field name and the form's location.
     Field(&'e str, Option<Span>, Location),
+    /// `operand[index]` after its source expression is typed.
+    Index(Box<IndexFrame<'e>>),
+    /// The key type of a map index after its key expression is typed.
+    IndexKey(Location),
+    /// The element-position obligation after the index has integer type.
+    IndexPosition(u64, ExprRef<'e>, Location),
     /// `present(r.f)` or `present(r.f.c)` of a guarded clock place: the
     /// field's name, the union case, and the `present` node's location;
     /// admits the typed owner `r` (FR-230 "Presence is derived").
@@ -326,12 +332,14 @@ enum IfStage<'e> {
     },
 }
 
-/// `let name = value in body`.
+/// `let name [: type] = value in body`.
 struct LetFrame<'e, 'r> {
     branches: Branches<'r>,
     name: &'e str,
     body: ExprRef<'e>,
     location: Location,
+    /// The resolved declared binder type, when annotated.
+    annotation: Option<ValueType>,
     /// The typed value and the slot it is bound to, once typed.
     value: Option<(Node, Slot)>,
 }
@@ -470,6 +478,12 @@ struct UnaryFrame<'r> {
     location: Location,
 }
 
+/// A bracket read waiting on its source expression.
+struct IndexFrame<'e> {
+    index: ExprRef<'e>,
+    location: Location,
+}
+
 enum Unary<'r> {
     Negate(Option<Want<'r>>),
     Power(Integer),
@@ -481,7 +495,7 @@ enum Unary<'r> {
     Pre,
     Flatten,
     DropFirst,
-    Size,
+    Size(Option<ValueType>),
     Convert(ValueType),
     AllInstances(ValueType),
 }
@@ -1016,14 +1030,20 @@ impl<'a> Typer<'a> {
                     frames,
                 ))
             }
-            ExprNode::Let { name, value, body } => {
+            ExprNode::Let {
+                name,
+                annotation,
+                value,
+                body,
+            } => {
                 self.enter(&location)?;
-                Ok(Self::binding(
+                self.binding(
                     Branches::Expected(expected),
+                    annotation.as_ref(),
                     (name, expression.at(*value), expression.at(*body)),
                     location,
                     frames,
-                ))
+                )
             }
             ExprNode::Case(case) => {
                 self.enter(&location)?;
@@ -1070,22 +1090,39 @@ impl<'a> Typer<'a> {
         ))
     }
 
-    /// Start `let name = value in body`.
+    /// Start `let name [: type] = value in body`.
     fn binding<'e, 'r>(
+        &mut self,
         branches: Branches<'r>,
+        annotation: Option<&TypeForm>,
         (name, value, body): (&'e str, ExprRef<'e>, ExprRef<'e>),
         location: Location,
         frames: &mut Vec<Frame<'e, 'r>>,
-    ) -> Step<'e, 'r> {
+    ) -> Result<Step<'e, 'r>, CheckRefusal> {
         let value_location = location.child(0);
+        let annotation = annotation
+            .map(|form| self.resolve_type(form, &location))
+            .transpose()?;
+        if let Some(annotation) = &annotation {
+            self.check_declared_type(annotation, &location)?;
+        }
+        let value_goal = match &annotation {
+            Some(annotation) => Goal::Expect(
+                value,
+                Expected::Checked(Cow::Owned(annotation.clone())),
+                value_location,
+            ),
+            None => Goal::Infer(value, None, value_location),
+        };
         frames.push(Frame::Let(Box::new(LetFrame {
             branches,
             name,
             body,
             location,
+            annotation,
             value: None,
         })));
-        Step::Descend(Goal::Infer(value, None, value_location))
+        Ok(Step::Descend(value_goal))
     }
 
     /// Start `case scrutinee { arms }` (FR-318): type the scrutinee first.
@@ -1229,6 +1266,12 @@ impl<'a> Typer<'a> {
                 coefficient, scale, ..
             } => self.decimal_literal(coefficient, *scale, hint.as_deref(), &location)?,
             ExprNode::Absent => self.absent_literal(hint.as_deref(), &location)?,
+            ExprNode::Null => {
+                return Err(CheckRefusal::ill_typed(
+                    &location,
+                    IllTypedCause::TypeMismatch,
+                ));
+            }
             // FR-185: a quantity literal is its magnitude, measured and
             // reduced as an exact value, in the unit its name declares.
             ExprNode::Quantity(quantity) => {
@@ -1377,13 +1420,19 @@ impl<'a> Typer<'a> {
                     frames,
                 ))
             }
-            ExprNode::Let { name, value, body } => {
-                return Ok(Self::binding(
+            ExprNode::Let {
+                name,
+                annotation,
+                value,
+                body,
+            } => {
+                return self.binding(
                     Branches::Inferred(hint),
+                    annotation.as_ref(),
                     (name, expression.at(*value), expression.at(*body)),
                     location,
                     frames,
-                ));
+                );
             }
             ExprNode::If {
                 condition,
@@ -1542,6 +1591,18 @@ impl<'a> Typer<'a> {
                 frames.push(Frame::Field(field, *member_span, location));
                 return Ok(Step::Descend(Goal::Infer(operand, None, operand_location)));
             }
+            ExprNode::Index { operand, index } => {
+                let operand_location = location.child(0);
+                frames.push(Frame::Index(Box::new(IndexFrame {
+                    index: expression.at(*index),
+                    location,
+                })));
+                return Ok(Step::Descend(Goal::Infer(
+                    expression.at(*operand),
+                    None,
+                    operand_location,
+                )));
+            }
             ExprNode::Present(operand) => {
                 // `present(r.f)` / `present(r.f.c)` of a guarded clock
                 // place: its owner `r` is typed, the place is no value.
@@ -1577,6 +1638,9 @@ impl<'a> Typer<'a> {
                     } else if let ExprNode::Select { place, selector } = base.node() {
                         path.push(RefStep::Select(base.at(*selector), at.child(1)));
                         base = base.at(*place);
+                    } else if let ExprNode::Index { operand, index } = base.node() {
+                        path.push(RefStep::Select(base.at(*index), at.child(1)));
+                        base = base.at(*operand);
                     } else {
                         break;
                     }
@@ -1924,7 +1988,7 @@ impl<'a> Typer<'a> {
                 high,
                 body,
             } => {
-                if self.populations.is_none() {
+                if self.populations.is_none() && self.named.is_none() {
                     return Err(refuse(
                         &location,
                         CheckCause::PopulationFormOutsideRefinement,
@@ -1944,9 +2008,22 @@ impl<'a> Typer<'a> {
                     low_location,
                 )));
             }
-            ExprNode::Size(operand) => {
+            ExprNode::Size {
+                operand,
+                type_argument,
+            } => {
+                let target = type_argument
+                    .as_ref()
+                    .map(|form| self.declared_target(form, &location))
+                    .transpose()?;
+                if target
+                    .as_ref()
+                    .is_some_and(|value_type| !is_integer(value_type))
+                {
+                    return Err(mismatch(&location));
+                }
                 let goal = Goal::Infer(expression.at(*operand), None, location.child(0));
-                return Ok(Self::unary(Unary::Size, goal, location, frames));
+                return Ok(Self::unary(Unary::Size(target), goal, location, frames));
             }
             ExprNode::DropFirst(operand) => {
                 let goal = Goal::Infer(expression.at(*operand), None, location.child(0));
@@ -2630,6 +2707,97 @@ impl<'a> Typer<'a> {
         }
     }
 
+    /// Type the index form's source and static selector constraints. The
+    /// checked IR currently has no tuple projection, map lookup, or collection
+    /// index node, so a proved read remains unsupported after its source-level
+    /// type checks.
+    fn accept_index<'e, 'r>(
+        &mut self,
+        frame: Box<IndexFrame<'e>>,
+        source: Node,
+        frames: &mut Vec<Frame<'e, 'r>>,
+    ) -> Result<Step<'e, 'r>, CheckRefusal>
+    where
+        'a: 'r,
+    {
+        let IndexFrame { index, location } = *frame;
+        match &source.value_type {
+            ValueType::Composite(declaration) => {
+                let positions =
+                    self.scope
+                        .types()
+                        .composite(declaration.clone())
+                        .and_then(|declaration| match declaration.shape() {
+                            filament_semantic_value::declaration::CompositeShape::Tuple(
+                                positions,
+                            ) => Some(positions),
+                            filament_semantic_value::declaration::CompositeShape::Record(_)
+                            | filament_semantic_value::declaration::CompositeShape::Union(_) => {
+                                None
+                            }
+                        });
+                let Some(positions) = positions else {
+                    return Err(CheckRefusal::ill_typed(
+                        &location,
+                        IllTypedCause::OperatorIneligible,
+                    ));
+                };
+                let ExprNode::Integer(position) = index.node() else {
+                    return Err(CheckRefusal::ill_typed(
+                        &location,
+                        IllTypedCause::OperatorIneligible,
+                    ));
+                };
+                let position = position
+                    .to_u64()
+                    .and_then(|position| usize::try_from(position).ok());
+                if position
+                    .and_then(|position| positions.get(position))
+                    .is_none()
+                {
+                    return Err(CheckRefusal::ill_typed(
+                        &location,
+                        IllTypedCause::OperatorIneligible,
+                    ));
+                }
+                Err(refuse(
+                    &location,
+                    CheckCause::UnsupportedFeature {
+                        loci: vec![location.clone()],
+                    },
+                ))
+            }
+            ValueType::Map(map_type) => {
+                let key_location = location.child(1);
+                frames.push(Frame::IndexKey(location));
+                Ok(Step::Descend(Goal::Expect(
+                    index,
+                    Expected::Checked(Cow::Owned(map_type.key().clone())),
+                    key_location,
+                )))
+            }
+            ValueType::Collection(collection)
+                if matches!(
+                    collection.kind(),
+                    CollectionKind::Sequence | CollectionKind::OrderedSet
+                ) =>
+            {
+                let minimum = collection.bound().map_or(0, |bound| bound.minimum());
+                let index_location = location.child(1);
+                frames.push(Frame::IndexPosition(minimum, index, location));
+                Ok(Step::Descend(Goal::Expect(
+                    index,
+                    Expected::Checked(Cow::Owned(ValueType::Integer)),
+                    index_location,
+                )))
+            }
+            _ => Err(CheckRefusal::ill_typed(
+                &location,
+                IllTypedCause::OperatorIneligible,
+            )),
+        }
+    }
+
     /// Hand the node `typed` to `frame`, which types its next operand or
     /// finishes its own node.
     fn accept<'e, 'r>(
@@ -2675,6 +2843,34 @@ impl<'a> Typer<'a> {
             Frame::Field(field, member_span, location) => self
                 .field(typed, field, member_span, &location)
                 .map(Step::Typed),
+            Frame::Index(frame) => self.accept_index(frame, typed, frames),
+            Frame::IndexKey(location) => Err(refuse(
+                &location,
+                CheckCause::UnsupportedFeature {
+                    loci: vec![location.clone()],
+                },
+            )),
+            Frame::IndexPosition(minimum, index, location) => {
+                let proved = match index.node() {
+                    ExprNode::Integer(position) => {
+                        position.to_u64().is_some_and(|position| position < minimum)
+                    }
+                    _ => false,
+                };
+                let index_location = location.child(1);
+                if !proved {
+                    return Err(refuse(
+                        &index_location,
+                        CheckCause::Unproved(Obligation::Presence),
+                    ));
+                }
+                Err(refuse(
+                    &index_location,
+                    CheckCause::UnsupportedFeature {
+                        loci: vec![index_location.clone()],
+                    },
+                ))
+            }
             Frame::SlotPresence(field, all, location) => self
                 .slot_presence(typed, field, all, &location)
                 .map(Step::Typed),
@@ -2901,7 +3097,11 @@ impl<'a> Typer<'a> {
             None => {
                 let slot = self.bind(
                     frame.name,
-                    typed.value_type.clone(),
+                    frame
+                        .annotation
+                        .as_ref()
+                        .unwrap_or(&typed.value_type)
+                        .clone(),
                     &frame.location,
                     LocalKind::Bound,
                 )?;
@@ -3359,12 +3559,30 @@ impl<'a> Typer<'a> {
                 ))
             }
             Unary::OptionSome(payload_hint) => {
-                if let Some(expected) = payload_hint {
-                    if &operand.value_type != expected.as_ref() {
+                let operand = if let Some(ref expected) = payload_hint {
+                    if &operand.value_type == expected.as_ref() {
+                        operand
+                    } else if let (
+                        NodeKind::Literal(CheckedLiteral(Value::Integer(value))),
+                        ValueType::Int(interval),
+                    ) = (&operand.kind, expected.as_ref())
+                    {
+                        if !interval.contains(value) {
+                            return Err(mismatch(&location));
+                        }
+                        self.coerce(operand, expected.as_ref())?
+                    } else {
                         return Err(mismatch(&location));
                     }
-                }
-                let value_type = ValueType::Option(Arc::new(operand.value_type.clone()));
+                } else {
+                    operand
+                };
+                let value_type = ValueType::Option(Arc::new(
+                    payload_hint
+                        .as_deref()
+                        .cloned()
+                        .unwrap_or_else(|| operand.value_type.clone()),
+                ));
                 Ok(node(
                     NodeKind::OptionSome(self.push(operand)),
                     value_type,
@@ -3382,7 +3600,7 @@ impl<'a> Typer<'a> {
             }
             Unary::Flatten => self.flatten(operand, &location),
             Unary::DropFirst => self.drop_first(operand, &location),
-            Unary::Size => {
+            Unary::Size(target) => {
                 // FR-093-AC-63: a Text operand's size is its profile length,
                 // bounded by the text type's own bounds.
                 let value_type = if let ValueType::Text(text) = &operand.value_type {
@@ -3395,11 +3613,16 @@ impl<'a> Typer<'a> {
                     self.element_type(&operand)?;
                     ValueType::Integer
                 };
-                Ok(node(
-                    NodeKind::Size(self.push(operand)),
-                    value_type,
-                    &location,
-                ))
+                let sized = node(NodeKind::Size(self.push(operand)), value_type, &location);
+                match target.as_ref() {
+                    Some(ValueType::Int(target)) => Ok(node(
+                        NodeKind::Coerce(self.push(sized), target.clone()),
+                        ValueType::Int(target.clone()),
+                        &location,
+                    )),
+                    Some(ValueType::Integer) | None => Ok(sized),
+                    Some(_) => Err(mismatch(&location)),
+                }
             }
             Unary::Convert(target) => self.convert(&target, operand, &location),
             Unary::AllInstances(target) => self.all_instances(&target, operand, &location),

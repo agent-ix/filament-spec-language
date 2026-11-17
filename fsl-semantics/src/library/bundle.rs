@@ -311,7 +311,53 @@ pub struct DefinitionCatalog {
     definitions: BTreeMap<String, Arc<Definition>>,
 }
 
+/// Exact bytes and graph edges of one extension definition read from a
+/// caller-selected file (FR-660).
+#[derive(Clone, Debug)]
+pub struct ExtensionDefinitionSource {
+    /// Definition authority from the request entry.
+    pub authority: String,
+    /// Definition identity from the request entry.
+    pub identity: String,
+    /// Exact bytes read from the selected document.
+    pub exact_bytes: Vec<u8>,
+    /// Dependency edges declared by the request entry.
+    pub dependencies: BTreeSet<DefinitionRef>,
+    /// Complete-V1 capabilities declared by the request entry.
+    pub capabilities: BTreeSet<CapabilityId>,
+}
+
 impl DefinitionCatalog {
+    /// Read exact extension-definition documents into a catalog.
+    ///
+    /// This is the production reader boundary for request-supplied extension
+    /// documents. It validates that each document is a JSON object and binds
+    /// the exact bytes, request identity, role, dependencies and capabilities
+    /// under the reader's authority. FR-354 performs extension-schema
+    /// validation when a selected extension is held for parsing.
+    pub fn read_extensions(sources: Vec<ExtensionDefinitionSource>) -> Result<Self, PackageError> {
+        let reader = ReaderAuthority { _private: () };
+        let definitions = sources
+            .into_iter()
+            .map(|source| {
+                match serde_json::from_slice::<serde_json::Value>(&source.exact_bytes) {
+                    Ok(serde_json::Value::Object(_)) => {}
+                    _ => return Err(PackageError::InvalidDefinitionArtifactBytes),
+                }
+                Definition::from_exact_bytes(
+                    &reader,
+                    source.authority,
+                    source.identity,
+                    DefinitionRole::Extension,
+                    source.dependencies,
+                    source.capabilities,
+                    &source.exact_bytes,
+                )
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        Self::new(definitions)
+    }
+
     /// Build a catalog and refuse a definition identity held twice.
     pub fn new(definitions: Vec<Definition>) -> Result<Self, PackageError> {
         Self::with_limits(definitions, PackageLimits::default())

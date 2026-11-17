@@ -9,9 +9,9 @@ use std::sync::atomic::{AtomicU64, Ordering};
 
 use filament_exact::Cancel;
 use serde::Deserialize;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
-use super::{analyze, RunResult};
+use super::{RunResult, analyze};
 use fsl_analyze::analyze::document::Negotiate;
 #[cfg(test)]
 use fsl_route::CandidateOutcome;
@@ -39,6 +39,7 @@ fn invalid_report(reason: impl Into<String>) -> FlowAnalyzeError {
             member: "flow-report".to_owned(),
             reason: reason.into(),
         },
+        sources: crate::Sources::default(),
     }))
 }
 
@@ -272,7 +273,8 @@ fn validate_report(report: &Report) -> Result<(), FlowAnalyzeError> {
                             .collect::<BTreeSet<_>>();
                         if values.iter().any(|value| !declared.contains(&fold(value))) {
                             return Err(invalid_report(format!(
-                                "rule {:?} selects a value outside the closed vocabulary for {:?}.{:?}", rule.name, archetype, condition.field
+                                "rule {:?} selects a value outside the closed vocabulary for {:?}.{:?}",
+                                rule.name, archetype, condition.field
                             )));
                         }
                     }
@@ -1167,7 +1169,7 @@ fn snapshot_document(
         "format":"filament.state.snapshot/v1",
         "identity":{"authority":"fsl-flow","identity":"generated-snapshot"},
         "observation":"current",
-        "model":{"identity":PACKAGE,"version":"1.0.0"},
+        "model":{"identity":PACKAGE},
         "anchor":{"kind":"initialization","name":"flow"},
         "populations":populations,
         "relationships":relationship_extents
@@ -1475,10 +1477,12 @@ mod tests {
         let items = result.value.as_value()["items"].as_array().unwrap();
         assert_eq!(items.len(), 2);
         assert_eq!(items[0]["record"]["result"], "incomplete");
-        assert!(items[0]["claim_name"]
-            .as_str()
-            .unwrap()
-            .contains("item_limit"));
+        assert!(
+            items[0]["claim_name"]
+                .as_str()
+                .unwrap()
+                .contains("item_limit")
+        );
         assert_ne!(items[1]["record"]["result"], "incomplete");
         assert!(items[1]["claim_name"].as_str().unwrap().contains("CONN_2"));
     }
@@ -1521,10 +1525,12 @@ mod tests {
         let items = result.value.as_value()["items"].as_array().unwrap();
         assert_eq!(items.len(), 3);
         assert_eq!(items[0]["record"]["result"], "unsupported");
-        assert!(items[0]["claim_name"]
-            .as_str()
-            .unwrap()
-            .contains("health_across_untrusted_boundary"));
+        assert!(
+            items[0]["claim_name"]
+                .as_str()
+                .unwrap()
+                .contains("health_across_untrusted_boundary")
+        );
         assert!(items[0]["record"]["diagnostic"].is_object());
         assert_ne!(items[1]["record"]["result"], "unsupported");
         assert_ne!(items[2]["record"]["result"], "unsupported");
@@ -1550,14 +1556,18 @@ mod tests {
             .expect("native implications");
         let items = &result.value.as_value()["items"];
         assert_eq!(items.as_array().expect("ordered items").len(), 6);
-        assert!(items[0]["claim_name"]
-            .as_str()
-            .unwrap()
-            .starts_with("FlowRule0_broad_"));
-        assert!(items[2]["claim_name"]
-            .as_str()
-            .unwrap()
-            .starts_with("FlowRule1_narrow_"));
+        assert!(
+            items[0]["claim_name"]
+                .as_str()
+                .unwrap()
+                .starts_with("FlowRule0_broad_")
+        );
+        assert!(
+            items[2]["claim_name"]
+                .as_str()
+                .unwrap()
+                .starts_with("FlowRule1_narrow_")
+        );
         assert_eq!(items[4]["record"]["result"], "refuted");
         assert_eq!(items[5]["record"]["result"], "proved");
     }

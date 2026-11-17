@@ -450,7 +450,7 @@ fn package_with_size_function(scenario: &Scenario, maximum: u64) -> CheckedPacka
             )],
             crate::support::type_form::type_form(&ValueType::Integer),
             None,
-            Expression::size(all_instances(target)),
+            Expression::size(all_instances(target), None),
         )];
         declarations
     }
@@ -488,7 +488,7 @@ fn package_with_collection_function(scenario: &Scenario) -> CheckedPackage {
             )],
             crate::support::type_form::type_form(&ValueType::Integer),
             None,
-            Expression::size(Expression::name("elements".to_owned())),
+            Expression::size(Expression::name("elements".to_owned()), None),
         )];
         declarations
     }
@@ -2479,10 +2479,10 @@ fn pre_anchor_does_not_leak_into_a_sibling_post_anchored_query() {
     //   size(allInstances(p)) != pre_count
     let expression = Expression::let_in(
         "pre_count".to_owned(),
-        Expression::size(pre(all_instances(target.clone()))),
+        Expression::size(pre(all_instances(target.clone())), None),
         Expression::binary(
             BinaryOperator::NotEqual,
-            Expression::size(all_instances(target)),
+            Expression::size(all_instances(target), None),
             Expression::name("pre_count".to_owned()),
         ),
     );
@@ -2579,7 +2579,7 @@ fn pre_refuses_a_let_bound_population_alias_capture_drift() {
         pre(Expression::size(Expression::all_instances(
             reference_type_form(&target),
             Expression::name("q".to_owned()),
-        ))),
+        ), None)),
     );
     let refusal = check_refusal_as_postcondition(&package, &parameters, &expression);
     assert_eq!(
@@ -2623,7 +2623,7 @@ fn pre_refuses_a_let_bound_alias_of_a_let_bound_population_alias() {
             Expression::size(Expression::all_instances(
                 reference_type_form(&target),
                 Expression::name("r".to_owned()),
-            )),
+            ), None),
         )),
     );
     let refusal = check_refusal_as_postcondition(&package, &parameters, &expression);
@@ -2672,7 +2672,7 @@ fn pre_refuses_a_let_expression_used_directly_as_the_all_instances_operand() {
                 Expression::name("q".to_owned()),
                 Expression::name("s".to_owned()),
             ),
-        ))),
+        ), None)),
     );
     let refusal = check_refusal_as_postcondition(&package, &parameters, &expression);
     assert_eq!(
@@ -2714,7 +2714,7 @@ fn pre_refuses_an_if_expression_used_directly_as_the_all_instances_operand() {
                 Expression::name("q".to_owned()),
                 Expression::name("q".to_owned()),
             ),
-        ))),
+        ), None)),
     );
     let refusal = check_refusal_as_postcondition(&package, &parameters, &expression);
     assert_eq!(
@@ -2763,7 +2763,7 @@ fn pre_refuses_a_let_bound_if_expression_alias_of_a_population_alias() {
             Expression::size(Expression::all_instances(
                 reference_type_form(&target),
                 Expression::name("r".to_owned()),
-            )),
+            ), None),
         )),
     );
     let refusal = check_refusal_as_postcondition(&package, &parameters, &expression);
@@ -2814,7 +2814,7 @@ fn pre_refuses_a_let_bound_nested_let_alias_of_a_population_alias() {
             Expression::size(Expression::all_instances(
                 reference_type_form(&target),
                 Expression::name("r".to_owned()),
-            )),
+            ), None),
         )),
     );
     let refusal = check_refusal_as_postcondition(&package, &parameters, &expression);
@@ -2854,10 +2854,10 @@ fn pre_of_a_captured_post_reference_retains_its_post_observation() {
     // let v = size(allInstances(p)) in pre(size(allInstances(p)) != v)
     let expression = Expression::let_in(
         "v".to_owned(),
-        Expression::size(all_instances(target.clone())),
+        Expression::size(all_instances(target.clone()), None),
         pre(Expression::binary(
             BinaryOperator::NotEqual,
-            Expression::size(all_instances(target)),
+            Expression::size(all_instances(target), None),
             Expression::name("v".to_owned()),
         )),
     );

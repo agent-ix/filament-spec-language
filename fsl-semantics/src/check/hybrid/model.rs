@@ -435,16 +435,16 @@ fn reset(
         match form.expression.at(id).node() {
             // `reset { true }` keeps every variable; `true` is no conjunct.
             ExprNode::Boolean(true) if top => {}
-            ExprNode::Let { name, value, body } => {
-                match lower_at(form, (*value, child(0)), &bound, env, meter) {
-                    Ok(lowered) => {
-                        bound.push((name.clone(), lowered));
-                        walk.push(Walk::Unbind);
-                        walk.push(Walk::Visit(*body, child(1), top));
-                    }
-                    Err(stop) => stops.push(stop),
+            ExprNode::Let {
+                name, value, body, ..
+            } => match lower_at(form, (*value, child(0)), &bound, env, meter) {
+                Ok(lowered) => {
+                    bound.push((name.clone(), lowered));
+                    walk.push(Walk::Unbind);
+                    walk.push(Walk::Visit(*body, child(1), top));
                 }
-            }
+                Err(stop) => stops.push(stop),
+            },
             ExprNode::Binary {
                 operator: BinaryOperator::And,
                 left,

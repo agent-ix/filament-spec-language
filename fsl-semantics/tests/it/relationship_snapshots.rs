@@ -378,7 +378,7 @@ fn snapshot(populations: &[Value], relationships: Option<Vec<Value>>) -> Value {
         "identity": labels(&label("current")),
         "observation": "current",
         "anchor": {"kind": "handler", "name": "validate"},
-        "model": {"identity": PACKAGE, "version": "1.0.0", "digest": "set at admission"},
+        "model": {"identity": PACKAGE},
         "populations": populations,
     });
     if let Some(relationships) = relationships {
@@ -661,6 +661,26 @@ fn a_snapshot_admits_its_relationships_as_extents_in_key_order() {
         swapped.sources(HOUSING, "t1"),
         admitted.sources(HOUSING, "t1")
     );
+}
+
+/// FR-868-AC-1: the observation's model header is closed at `identity`.
+#[trace("TC-2460", "FR-868-AC-1")]
+#[test]
+fn a_snapshot_model_header_refuses_version_and_digest_members() {
+    for (member, value) in [("version", json!("1")), ("digest", json!("0000"))] {
+        let mut document = base();
+        document["model"][member] = value;
+        let record = refusal(&Variant::orders(), document);
+        assert_refusal(&record, Code::InvalidRuntimeInput, "unknown-member");
+        assert_eq!(
+            field(&record, "field"),
+            Some(match member {
+                "version" => "model.version",
+                "digest" => "model.digest",
+                _ => unreachable!(),
+            })
+        );
+    }
 }
 
 /// TC-1035 rows 3 and 4: no `relationships` member lists none; an empty
@@ -1180,7 +1200,7 @@ impl Admission {
     fn documents(&self, pre: Value, post: Value, edit: impl FnOnce(&mut Value)) -> Documents {
         let model = |document: &mut Value| {
             document["model"] = json!({
-                "identity": PACKAGE, "version": "1.0.0",
+                "identity": PACKAGE,
             });
         };
         let call = label("call");

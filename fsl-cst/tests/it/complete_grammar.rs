@@ -2,7 +2,10 @@
 //! The complete-V1 `Production` inventory against the accepted EBNF grammar.
 use std::collections::BTreeMap;
 
-use fsl_cst::{CompleteCause, CompleteCode, HostCause, Limits, ParsedSource, Production};
+use fsl_cst::{
+    CompleteCause, CompleteCode, CstElement, HostCause, Limits, ParsedSource, Production,
+    TokenClass,
+};
 use fsl_foundation::{SourceIdentity, Span};
 use ix_trace_rs::trace;
 
@@ -259,6 +262,55 @@ fn parse(id: &str, text: &str) -> ParsedSource {
     .unwrap()
 }
 
+fn significant_tokens(parsed: &ParsedSource) -> Vec<Vec<u8>> {
+    parsed
+        .cst()
+        .tokens()
+        .iter()
+        .filter(|token| token.class() == TokenClass::Token)
+        .map(|token| token.spelling().to_vec())
+        .collect()
+}
+
+#[derive(Debug, Eq, PartialEq)]
+struct ProductionTree {
+    production: Production,
+    children: Vec<ProductionChild>,
+}
+
+#[derive(Debug, Eq, PartialEq)]
+enum ProductionChild {
+    Token,
+    Node(ProductionTree),
+}
+
+fn production_tree(parsed: &ParsedSource) -> ProductionTree {
+    fn visit(parsed: &ParsedSource, node: &fsl_cst::CstNode) -> ProductionTree {
+        let children = node
+            .children()
+            .iter()
+            .filter_map(|child| match child {
+                CstElement::Token(index)
+                    if parsed.cst().tokens()[*index].class() == TokenClass::Token =>
+                {
+                    Some(ProductionChild::Token)
+                }
+                CstElement::Token(_) => None,
+                CstElement::Node(index) => Some(ProductionChild::Node(visit(
+                    parsed,
+                    &parsed.cst().nodes()[*index],
+                ))),
+            })
+            .collect();
+        ProductionTree {
+            production: node.production(),
+            children,
+        }
+    }
+
+    visit(parsed, parsed.cst().root())
+}
+
 fn corpus() -> Vec<(&'static str, String)> {
     vec![
         // The last quoted string of the unit is a `ParameterBinding`'s, so its
@@ -311,7 +363,7 @@ fn corpus() -> Vec<(&'static str, String)> {
                     "temporal Watch using Complete over (sample: M::Sample) clock \"ticks\" on each (trigger: M::Trigger) when (true) {\n",
                     "fair weak each M::Thing::act;\n",
                     "capture remembered: Integer = 0;\n",
-                    "always[0,*] (holds(true) until[0,1] holds(false)) and eventually holds(true) and count where holds(true) over past[0,1] >= 1\n",
+                    "always[0,*] (holds(true) until[0,1] holds(false)) and count where holds(true) over past[0,1] >= 1 and eventually holds(true)\n",
                     "}",
                 ),
             ),
@@ -452,7 +504,12 @@ fn corpus() -> Vec<(&'static str, String)> {
     ]
 }
 
-#[trace("FSpec-TC-180", "FSpec-FR-339-AC-1", "FSpec-FR-339-AC-2")]
+#[trace(
+    "FSpec-TC-180",
+    "FSpec-FR-339-AC-1",
+    "FSpec-FR-339-AC-2",
+    "FR-003-AC-14"
+)]
 #[test]
 fn every_named_production_has_positive_boundary_and_located_negative_vectors() {
     assert_eq!(Production::all(), ACCEPTED_PRODUCTIONS);
@@ -463,6 +520,25 @@ fn every_named_production_has_positive_boundary_and_located_negative_vectors() {
             parsed.diagnostics().is_empty(),
             "{id}: {:?}",
             parsed.diagnostics()
+        );
+        let formatted = fsl_cst::format::format(&parsed)
+            .unwrap_or_else(|refusal| panic!("{id}: format refusal: {refusal}"));
+        let reparsed = parse(id, &formatted);
+        assert!(
+            reparsed.diagnostics().is_empty(),
+            "{id}: formatted parse: {:?}",
+            reparsed.diagnostics()
+        );
+        assert_eq!(
+            significant_tokens(&parsed),
+            significant_tokens(&reparsed),
+            "{id}"
+        );
+        assert_eq!(production_tree(&parsed), production_tree(&reparsed), "{id}");
+        assert_eq!(
+            fsl_cst::format::format(&reparsed).expect("idempotent format"),
+            formatted,
+            "{id}"
         );
         for node in parsed.cst().nodes() {
             let span = node.span();
@@ -896,6 +972,35 @@ fn one_occurrence_forms_fix_their_arity_in_the_grammar() {
             );
         }
     }
+}
+
+/// FR-680-AC-2 and AC-3 (TC-1821, TC-1822): tuple positions use bracket
+/// indexing, and maps are writable source type references with optional bounds.
+#[trace("FR-680-AC-2", "FR-680-AC-3", "TC-1821", "TC-1822")]
+#[test]
+fn tuple_position_reads_and_map_types_parse() {
+    let tuple_read = source(
+        "tuple Pair(Boolean, Integer);\nfunction f using Complete (p: Pair): Boolean pure { p[0] }",
+    );
+    let tuple_parsed = parse("tuple-position", &tuple_read);
+    assert!(
+        tuple_parsed.is_admissible(),
+        "{:?}",
+        tuple_parsed.diagnostics()
+    );
+
+    let map_type = source(
+        "function values using Complete (m: Map<Int[0, 3], Integer>[0, 4]): Integer pure { size(m) }",
+    );
+    assert!(parse("map-type", &map_type).is_admissible());
+
+    let tuple_dot = source(
+        "tuple Pair(Boolean, Integer);\nfunction f using Complete (p: Pair): Boolean pure { p.0 }",
+    );
+    assert_eq!(
+        first_diagnostic("tuple-dot", tuple_dot.as_bytes()),
+        (CompleteCode::InvalidSyntax, CompleteCause::UnexpectedToken)
+    );
 }
 
 /// FR-001-AC-6, AC-11: the complete reader carries `blank-label` with the

@@ -11,7 +11,7 @@
 
 use std::collections::BTreeSet;
 
-use filament_exact::Cancel;
+use filament_exact::{Cancel, FieldValue, Value};
 use fsl_analyze::model_check::{check_protocol, ModelCheckRefusal, ProtocolCheckRequest};
 use fsl_eval::simulation::protocol::{
     protocol_domains, visible, AnchorName, ClaimReads, PathStep, ProtocolLocation, ProtocolSystem,
@@ -68,6 +68,28 @@ fn refund_of(
     recover: &str,
 ) -> String {
     let attempt_type = attempts.rsplit(' ').next().expect("an attempt type");
+    refund_with_recovery_type(
+        effect,
+        operation,
+        attempts,
+        attempt_type,
+        retry,
+        commit,
+        recover,
+    )
+}
+
+/// [`refund_of`] with a recovery record type distinct from the attempt type.
+fn refund_with_recovery_type(
+    effect: &str,
+    operation: &str,
+    attempts: &str,
+    recovery_type: &str,
+    retry: &str,
+    commit: &str,
+    recover: &str,
+) -> String {
+    let attempt_type = attempts.rsplit(' ').next().expect("an attempt type");
     format!(
         "compensate Refund for {effect} as (fwd: M::Cell)\n\
          by w on M::Cell::{operation} using t0 clock \"c\" {{\n\
@@ -76,7 +98,7 @@ fn refund_of(
          attempts {attempts};\n\
          retry (e: {attempt_type}, l: {attempt_type}) {{ {retry} }};\n\
          commit {commit};\n\
-         recover (r: {attempt_type}) {{ {recover} }};\n\
+         recover (r: {recovery_type}) {{ {recover} }};\n\
          }}"
     )
 }
@@ -114,6 +136,22 @@ pub(crate) fn pay(recover: &str) -> String {
     )
 }
 
+/// [`pay`] with a recovery record type distinct from the attempt type.
+fn pay_with_recovery_type(recover: &str, recovery_type: &str) -> String {
+    unit(
+        &refund_with_recovery_type(
+            "Main::Paid",
+            "dec",
+            "1 of M::Attempt",
+            recovery_type,
+            "false",
+            "never",
+            recover,
+        ),
+        &pay_run(""),
+    )
+}
+
 /// A `Pay` whose effect and failure run twice, in a `repeat` of maximum 2,
 /// after one charge, with a refund of `touch`, which is always enabled.
 pub(crate) fn twice() -> String {
@@ -145,12 +183,12 @@ fn compensation(ordinal: u64) -> ThreadPath {
 }
 
 /// One explored case: its reachable states, explored under `Sc`.
-struct Explored {
-    reached: Vec<Reached>,
+pub(crate) struct Explored {
+    pub(crate) reached: Vec<Reached>,
 }
 
 /// The reachable states of `Pay` in `body`, and the system, handed to `check`.
-fn explore(body: &str, check: impl FnOnce(&ProtocolSystem<'_, Sc>, &Explored)) {
+pub(crate) fn explore(body: &str, check: impl FnOnce(&ProtocolSystem<'_, Sc>, &Explored)) {
     let case = Case::new(body, &[0]);
     let subject = case.subject("Pay");
     let system = sc_system(&subject);
@@ -161,7 +199,7 @@ fn explore(body: &str, check: impl FnOnce(&ProtocolSystem<'_, Sc>, &Explored)) {
 }
 
 /// The JSON of `state`'s key.
-fn key_json(system: &ProtocolSystem<'_, Sc>, state: &Reached) -> Json {
+pub(crate) fn key_json(system: &ProtocolSystem<'_, Sc>, state: &Reached) -> Json {
     let (bytes, _) = SubjectSystem::state_key(system, &state.state).expect("a key");
     json_of(&bytes)
 }
@@ -172,7 +210,7 @@ fn identity(system: &ProtocolSystem<'_, Sc>, transition: &ProtocolTransition) ->
 }
 
 /// Each entry of the map member `member` of `key`, as (key, value).
-fn entries(key: &Json, member: &str) -> Vec<(Json, Json)> {
+pub(crate) fn entries(key: &Json, member: &str) -> Vec<(Json, Json)> {
     key[member]["entries"]
         .as_array()
         .expect("a map")
@@ -182,7 +220,7 @@ fn entries(key: &Json, member: &str) -> Vec<(Json, Json)> {
 }
 
 /// The status of each registration of `key`.
-fn statuses(key: &Json) -> Vec<String> {
+pub(crate) fn statuses(key: &Json) -> Vec<String> {
     entries(key, "control")
         .into_iter()
         .filter(|(key, _)| key["type"] == "registration")
@@ -800,6 +838,56 @@ pub(crate) fn settled(before: &str) -> String {
     )
 }
 
+/// FR-892's staged saga: two joined branches, with the payment branch's
+/// compensation and timed await both using clock `c`.
+fn timed_branching() -> String {
+    let run = format!(
+        "parallel Both {{ branch pay sequence Main {{ {CHARGE} {} {FAIL} \
+         await Wait after Fail using t0 clock \"model-steps\" within [0, 120] \
+         match event Seen by w as (seen: Boolean) {{ true }}; \
+         then sequence Continued {{ }} timeout sequence TimedOut {{ }} }} \
+         branch shipment sequence Shipment {{ event Shipped by w as (shipped: Boolean) {{ true }}; }} }} \
+         join all [pay, shipment];",
+        paid("Both::pay::Main::C"),
+    );
+    let template = refund("Both::pay::Main::Paid", "dec", 1, "false", "never", "true");
+    let due = "temporal Due using t0 over (c: M::Cell) clock \"model-steps\" on origin { always[0,120] true }\n";
+    let members = format!("{template}\nrequires temporal Due;");
+    let body = contracts("self.v = 0") + REFUND + due + &protocol("Pay", &members, &run, "d");
+    body.replace("within [0, 10]", "within [0, 120]")
+}
+
+/// FR-892-AC-2 (TC-2525): the branching compensated choreography reaches a
+/// settled deadlock-freedom result, including timeout and recovery states.
+#[trace("TC-2525", "FR-892-AC-2")]
+#[test]
+fn a_branching_compensated_choreography_runs_end_to_end() {
+    let body = timed_branching();
+    explore(&body, |system, explored| {
+        assert!(explored.reached.iter().any(|state| {
+            state
+                .steps
+                .iter()
+                .any(|(step, _)| step.kind() == StepKind::Timeout)
+        }));
+        assert!(explored.reached.iter().any(|state| {
+            state.steps.iter().any(|(step, next)| {
+                step.kind() == StepKind::CEnd
+                    && statuses(&key_json(system, &explored.reached[*next])) == ["recovered"]
+            })
+        }));
+    });
+
+    let case = Case::new(&body, &[0]);
+    let outcome = case.deadlock("Pay");
+    assert!(
+        matches!(outcome, ModelCheckOutcome::Holds { .. }),
+        "{outcome:?}"
+    );
+    let settled = case.settle("Pay", &outcome);
+    assert_eq!(settled.label, ResultLabel::Proved, "{settled:?}");
+}
+
 /// Part of FR-211-AC-5 (TC-656, ADR-027 PD-4): §7.1's `Pay` with its
 /// template committing at `Committed` and its `run` a `parallel Both`
 /// joined `all` of branch `pay` (the charge, `Paid` and `Fail`) and branch
@@ -1230,33 +1318,50 @@ fn committed(reached: &[Reached], at: usize) -> usize {
 /// record, one successor per record, and nothing settles `unsupported`.
 #[trace("TC-652", "FR-207-AC-5", "FSpec-FR-730-AC-1")]
 #[test]
-#[ignore = "QSL-2206: a recovery predicate that reads its recovery binder settles unsupported instead of binding each recovery record at cend"]
 fn a_recovery_predicate_over_the_recovery_view_is_evaluated() {
-    explore(&pay("r.n = 0"), |system, explored| {
-        let reached = &explored.reached;
-        let t2 = after(
-            reached,
-            after(reached, 0, StepKind::Attempt),
-            StepKind::Event,
-        );
-        let (_, t4) = fail(system, reached, t2, true);
-        let t6 = after(reached, t4, StepKind::CAttempt);
-        let ends: Vec<usize> = reached[t6]
-            .steps
-            .iter()
-            .filter(|(step, _)| step.kind() == StepKind::CEnd)
-            .map(|(_, next)| *next)
-            .collect();
-        assert!(ends.len() >= 2, "one cend per recovery record: {ends:?}");
-        let found: BTreeSet<String> = ends
-            .iter()
-            .flat_map(|at| statuses(&key_json(system, &reached[*at])))
-            .collect();
-        assert_eq!(
-            found,
-            BTreeSet::from(["recovered".to_owned(), "unrecovered".to_owned()])
-        );
-    });
+    explore(
+        &pay_with_recovery_type("r.bal = 0", "M::Recovery"),
+        |system, explored| {
+            let reached = &explored.reached;
+            let t2 = after(
+                reached,
+                after(reached, 0, StepKind::Attempt),
+                StepKind::Event,
+            );
+            let (_, t4) = fail(system, reached, t2, true);
+            let t6 = after(reached, t4, StepKind::CAttempt);
+            let ends: Vec<usize> = reached[t6]
+                .steps
+                .iter()
+                .filter(|(step, _)| step.kind() == StepKind::CEnd)
+                .map(|(_, next)| *next)
+                .collect();
+            assert_eq!(ends.len(), 2, "one cend per recovery record: {ends:?}");
+            let outcomes: Vec<(String, String)> = reached[t6]
+                .steps
+                .iter()
+                .filter(|(step, _)| step.kind() == StepKind::CEnd)
+                .map(|(step, next)| {
+                    let Some(Value::Composite(record)) = step.binder_record() else {
+                        panic!("cend binds its recovery record: {step:?}");
+                    };
+                    let [FieldValue::Present(Value::Integer(balance))] = record.slots() else {
+                        panic!("recovery record contains its balance: {record:?}");
+                    };
+                    let status = statuses(&key_json(system, &reached[*next]));
+                    assert_eq!(status.len(), 1, "one registration status: {status:?}");
+                    (balance.to_string(), status[0].clone())
+                })
+                .collect();
+            assert_eq!(
+                outcomes,
+                [
+                    ("0".to_owned(), "recovered".to_owned()),
+                    ("1".to_owned(), "unrecovered".to_owned()),
+                ]
+            );
+        },
+    );
 }
 
 /// FR-207-AC-6 (TC-652): with `attempts 2 of M::RefundAttempt` and the retry

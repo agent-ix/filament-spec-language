@@ -392,7 +392,7 @@ pub struct ItemCause {
     /// A `timed-form-shape` cause's claim: its checked-package
     /// `{declaration, occurrence}` (FR-498).
     #[serde(skip_serializing_if = "Option::is_none")]
-    locus: Option<WireLocus>,
+    locus: Option<ItemLocus>,
     #[serde(skip_serializing_if = "Option::is_none")]
     code: Option<String>,
     /// A refusal's action-oriented explanation, when the source provides one.
@@ -504,6 +504,13 @@ pub struct ItemCause {
     /// own spelling; it supplies the cause's `kind`.
     #[serde(flatten)]
     reason: Option<ReasonWire>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+#[serde(untagged)]
+enum ItemLocus {
+    Claim(WireLocus),
+    Outcome(OutcomeLocus),
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
@@ -731,6 +738,7 @@ impl ItemCause {
             }
             ReportedInconclusiveCause::Cause(
                 InconclusiveCause::UndecidedSuccessor
+                | InconclusiveCause::OpenHistory
                 | InconclusiveCause::NoInitialState
                 | InconclusiveCause::NoInstance
                 | InconclusiveCause::KaniVacuousProof
@@ -918,8 +926,89 @@ pub struct OutcomeItem {
     /// clause run; absent on every item not built from a clause run.
     #[serde(skip_serializing_if = "Option::is_none")]
     axes: Option<crate::OutcomeAxes>,
+    /// The FR-990 per-obligation, closure and global conformance result.
+    #[serde(flatten, skip_serializing_if = "Option::is_none")]
+    protocol_conformance: Option<ProtocolConformanceOutput>,
     #[serde(serialize_with = "category_str")]
     category: Category,
+}
+
+/// The extra FSpec FR-059 result members of a `global-conformance` item.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+pub struct ProtocolConformanceOutput {
+    /// One result per protocol obligation.
+    pub obligations: Vec<ConformanceObligationOutput>,
+    /// The complete-global-conformance closure record.
+    pub closure: ConformanceClosureOutput,
+    /// The result joined from the obligations and closure.
+    pub global: ConformanceGlobalOutput,
+    /// Per-role projection results, absent in recording mode.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub projections: Option<Vec<ConformanceProjectionOutput>>,
+    /// Whether the global counterexample replay reproduced its violation.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub replay: Option<ConformanceReplayOutput>,
+}
+
+/// The in-process replay result for a global-conformance counterexample.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+pub struct ConformanceReplayOutput {
+    /// Whether replay reproduced the claimed violation.
+    pub reproduced: bool,
+}
+
+/// One FR-990 verdict and its evidence.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+pub struct ConformanceObligationOutput {
+    /// The obligation's typed protocol identity.
+    pub obligation: serde_json::Value,
+    /// `satisfied`, `violated` or `pending`.
+    pub verdict: String,
+    /// The FSpec FR-059 cause of a violation, when one is reported.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub cause: Option<String>,
+    /// The basis for the decision.
+    pub basis: String,
+    /// The witness index or recording observations supporting a result.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub witness: Option<serde_json::Value>,
+}
+
+/// The independent FR-990 closure record.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+pub struct ConformanceClosureOutput {
+    /// `closed`, `open`, `incomplete` or `contradicted`.
+    pub state: String,
+    /// The complete set of closure premises.
+    pub premises: Vec<serde_json::Value>,
+    /// `engine` or `recording`.
+    pub producer: String,
+}
+
+/// The joined FR-990 global result.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+pub struct ConformanceGlobalOutput {
+    /// The FSpec FR-360 result label.
+    pub label: String,
+    /// The basis of the result.
+    pub basis: String,
+    /// Whether the global result is complete success.
+    pub complete: bool,
+    /// The cause for an inconclusive or incomplete result.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub cause: Option<String>,
+}
+
+/// One FR-890 projection result beside, and independent from, conformance.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+pub struct ConformanceProjectionOutput {
+    /// The role the projection is over.
+    pub role: String,
+    /// The projection's FSpec FR-360 result label.
+    pub label: String,
+    /// The projection's counterexample, when refuted.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub counterexample: Option<serde_json::Value>,
 }
 
 /// A reached state-graph limit on FR-331's accounting record.
@@ -1024,7 +1113,7 @@ impl OutcomeItem {
                         item.states = Some(ItemCauseStates::Cycle(states.clone()));
                     }
                     UnavailabilityCause::TimedFormShape { span, claim } => match claim {
-                        Some(claim) => item.locus = Some(WireLocus::of(claim)),
+                        Some(claim) => item.locus = Some(ItemLocus::Claim(WireLocus::of(claim))),
                         None => item.at = Some(format!("{}..{}", span.start, span.end)),
                     },
                     UnavailabilityCause::ValueCheck { reason, .. } => {
@@ -1173,6 +1262,7 @@ impl OutcomeItem {
             min_count: None,
             clause: None,
             axes: None,
+            protocol_conformance: None,
             category: value.category(),
         }
     }
@@ -1204,6 +1294,13 @@ impl OutcomeItem {
                 Some(counterexample.ok_or(OutcomeItemError::MissingCounterexample)?);
         }
         Ok(item)
+    }
+
+    /// Attach the typed FR-990 result members to a global-conformance item.
+    #[must_use]
+    pub fn with_protocol_conformance(mut self, output: ProtocolConformanceOutput) -> Self {
+        self.protocol_conformance = Some(output);
+        self
     }
 
     /// The FR-331 item for one settled state-graph claim instance, including
@@ -1276,6 +1373,7 @@ impl OutcomeItem {
             min_count: None,
             clause: None,
             axes: None,
+            protocol_conformance: None,
             category: Category::Violation,
         }
     }
@@ -1342,6 +1440,7 @@ impl OutcomeItem {
             limit_reached: None,
             clause: Some(clause.to_owned()),
             axes: Some(report.axes()),
+            protocol_conformance: None,
             category,
         })
     }
@@ -1461,6 +1560,19 @@ fn clause_run_cause(report: &ClauseRunReport) -> Option<ItemCause> {
                 ..ItemCause::kind("input-bytes-exceeded")
             })
         }
+        ClauseDisposition::SnapshotAdmission {
+            failure:
+                fsl_semantics::model::observation::AdmissionFailure::Refused(record)
+                | fsl_semantics::model::observation::AdmissionFailure::Incomplete(record),
+            document,
+            path,
+        } => Some(ItemCause {
+            kind: Some(record.catalog.cause()),
+            code: Some(record.catalog.code().to_owned()),
+            locus: snapshot_admission_locus(record, document, path.as_deref())
+                .map(ItemLocus::Outcome),
+            ..ItemCause::kind("")
+        }),
         ClauseDisposition::Evaluate(CallOutcome::Undefined { reason }) => Some(ItemCause {
             code: Some((*reason).to_owned()),
             ..ItemCause::kind("undefined-evaluation")
@@ -1563,6 +1675,72 @@ pub enum OutcomeLocus {
         /// The RFC 6901 pointer into the artifact.
         pointer: String,
     },
+    /// A refusal located in a snapshot or invocation document.
+    Document {
+        /// The document's FR-001 labels.
+        document: Option<RawSourceRef>,
+        /// The caller's path for the document, when retained.
+        path: Option<String>,
+        /// The RFC 6901 pointer to the failing member or containing object.
+        pointer: String,
+        /// The population and key of the object, when the refusal names one.
+        object: Option<DocumentObjectLocus>,
+        /// The failing member, when the refusal names one.
+        member: Option<String>,
+    },
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+pub struct DocumentObjectLocus {
+    /// The model population.
+    pub population: String,
+    /// The snapshot object key.
+    pub key: String,
+}
+
+pub(crate) fn snapshot_admission_locus(
+    record: &fsl_semantics::model::observation::AdmissionRecord,
+    document: &fsl_semantics::model::observation::DocumentRef,
+    path: Option<&str>,
+) -> Option<OutcomeLocus> {
+    if !matches!(record.catalog.cause(), "missing-member" | "unknown-member") {
+        return None;
+    }
+    use filament_semantic_value::admission::PathStep;
+    let pointer = record.path.iter().fold(String::new(), |mut pointer, step| {
+        match step {
+            PathStep::Field(member) => {
+                pointer.push('/');
+                pointer.push_str(&member.replace('~', "~0").replace('/', "~1"));
+            }
+            PathStep::Index(index) => {
+                pointer.push('/');
+                pointer.push_str(&index.to_string());
+            }
+            PathStep::OptionValue => {}
+        }
+        pointer
+    });
+    let identity = fsl_foundation::source::provenance::RawSourceRef::new(
+        document.authority.clone(),
+        document.identity.clone(),
+    )
+    .ok();
+    let object = record
+        .fields
+        .get("object")
+        .zip(record.fields.get("population"))
+        .map(|(key, population)| DocumentObjectLocus {
+            population: population.clone(),
+            key: key.clone(),
+        });
+    Some(OutcomeLocus::Document {
+        document: identity,
+        path: path.map(str::to_owned),
+        pointer,
+        object,
+        member: record.fields.get("member").cloned(),
+    })
 }
 
 impl From<&Locus> for OutcomeLocus {
@@ -1816,6 +1994,63 @@ pub enum ExecuteResult {
     },
 }
 
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+#[serde(untagged)]
+enum OutcomeResult {
+    Execute(ExecuteResult),
+    Parsed(ParsedOutcome),
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+struct ParsedOutcome {
+    kind: &'static str,
+    source: fsl_foundation::source::provenance::RawSourceRef,
+    path: String,
+    bytes: String,
+    usage: Vec<ParseUsage>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+struct ParseUsage {
+    setting: &'static str,
+    bound: String,
+    used: String,
+}
+
+impl From<&crate::spine::ParseReport> for ParsedOutcome {
+    fn from(report: &crate::spine::ParseReport) -> Self {
+        let count = |value: usize| value.to_string();
+        Self {
+            kind: "parsed",
+            source: report.source.clone(),
+            path: report.path.clone(),
+            bytes: count(report.bytes),
+            usage: vec![
+                ParseUsage {
+                    setting: "s1.input_bytes",
+                    bound: count(report.limits.source_bytes),
+                    used: count(report.bytes),
+                },
+                ParseUsage {
+                    setting: "s1.tokens",
+                    bound: count(report.limits.tokens),
+                    used: count(report.tokens),
+                },
+                ParseUsage {
+                    setting: "s1.nodes",
+                    bound: count(report.limits.nodes),
+                    used: count(report.nodes),
+                },
+                ParseUsage {
+                    setting: "s1.work_units",
+                    bound: count(report.limits.work_units),
+                    used: report.work_units.to_string(),
+                },
+            ],
+        }
+    }
+}
+
 /// The exhausted limit of an incomplete `execute` result (FR-277): bound and
 /// counter (FR-277's counter at the failed charge) are
 /// ASCII decimal strings.
@@ -1857,7 +2092,7 @@ pub struct OutcomeDocument {
     category: Category,
     items: Vec<OutcomeItem>,
     diagnostics: Vec<OutcomeDiagnostic>,
-    result: Option<ExecuteResult>,
+    result: Option<OutcomeResult>,
     requirements: Option<Box<RequirementItems>>,
 }
 
@@ -2042,13 +2277,36 @@ impl OutcomeDocument {
         &self.diagnostics
     }
 
-    /// The document of a `parse` outcome: success at S2, with no items,
-    /// diagnostics, artifacts or evaluation result; a failure uses the
-    /// front-end's category, stage and diagnostic without running a stage.
+    /// The document of a `parse` outcome. Completed S1/S2 work carries its
+    /// parsed report, including when S2 later refuses recovered syntax.
     pub fn from_parse(result: &Result<Staged<ParsedUnitSource>, FrontEndFailure>) -> Self {
         match result {
-            Ok(_) => Self::new(Operation::Parse, Some(OutcomeStage::S2), Category::Success),
-            Err(failure) => Self::from_failure(Operation::Parse, failure),
+            Ok(staged) => {
+                let parsed = crate::spine::ParseReport {
+                    source: staged.value().source().reference().clone(),
+                    path: staged.value().source().path().to_owned(),
+                    bytes: staged.value().source().text().len(),
+                    limits: staged.value().syntax().effective_limits(),
+                    tokens: staged.value().syntax().cst().tokens().len(),
+                    nodes: staged.value().syntax().cst().nodes().len(),
+                    work_units: staged.work().s1,
+                };
+                let mut document =
+                    Self::new(Operation::Parse, Some(OutcomeStage::S2), Category::Success);
+                document.result = Some(OutcomeResult::Parsed(ParsedOutcome::from(&parsed)));
+                document
+            }
+            Err(failure) => {
+                let mut document = Self::from_failure(Operation::Parse, failure);
+                let parsed = match failure {
+                    StageFailure::RefusedWithPayload(_, payload)
+                    | StageFailure::LimitWithPayload(_, payload) => payload.parsed.as_ref(),
+                    _ => None,
+                };
+                document.result =
+                    parsed.map(|parsed| OutcomeResult::Parsed(ParsedOutcome::from(parsed)));
+                document
+            }
         }
     }
 
@@ -2266,17 +2524,17 @@ impl OutcomeDocument {
                 document.diagnostics = vec![OutcomeDiagnostic::from_call_refusal(refusal)];
             }
             CallOutcome::Completed(value) => {
-                document.result = Some(ExecuteResult::Completed {
+                document.result = Some(OutcomeResult::Execute(ExecuteResult::Completed {
                     value: ResultValue(value.form()),
-                });
+                }));
             }
             CallOutcome::Undefined { reason } => {
-                document.result = Some(ExecuteResult::Undefined { reason });
+                document.result = Some(OutcomeResult::Execute(ExecuteResult::Undefined { reason }));
             }
             CallOutcome::Incomplete(incomplete) => {
-                document.result = Some(ExecuteResult::Incomplete {
+                document.result = Some(OutcomeResult::Execute(ExecuteResult::Incomplete {
                     limit: ResultLimit::from(incomplete),
-                });
+                }));
             }
         }
         document
@@ -2704,6 +2962,47 @@ mod tests {
 
     fn record(index: usize, value: TerminalValue) -> OutcomeItem {
         OutcomeItem::from_terminal(&TerminalRecord::from_value(RequestIndex::new(index), value))
+    }
+
+    /// FR-990 writes the structured result members on the settled item while
+    /// retaining its terminal label and category.
+    #[trace("TC-2800", "FR-990-AC-1")]
+    #[test]
+    fn protocol_conformance_members_serialize_at_item_level() {
+        let item =
+            record(0, TerminalValue::Tested).with_protocol_conformance(ProtocolConformanceOutput {
+                obligations: vec![ConformanceObligationOutput {
+                    obligation: json!({"kind": "closure"}),
+                    verdict: "satisfied".to_owned(),
+                    cause: None,
+                    basis: "explored".to_owned(),
+                    witness: None,
+                }],
+                closure: ConformanceClosureOutput {
+                    state: "closed".to_owned(),
+                    premises: vec![json!({"kind": "execution", "identity": "w-1"})],
+                    producer: "engine".to_owned(),
+                },
+                global: ConformanceGlobalOutput {
+                    label: "proved".to_owned(),
+                    basis: "closed-scope".to_owned(),
+                    complete: true,
+                    cause: None,
+                },
+                projections: Some(vec![ConformanceProjectionOutput {
+                    role: "Buyer".to_owned(),
+                    label: "proved".to_owned(),
+                    counterexample: None,
+                }]),
+                replay: Some(ConformanceReplayOutput { reproduced: true }),
+            });
+        let wire = serde_json::to_value(item).expect("serializes");
+        assert_eq!(wire["result"], "tested");
+        assert_eq!(wire["obligations"][0]["verdict"], "satisfied");
+        assert_eq!(wire["closure"]["state"], "closed");
+        assert_eq!(wire["global"]["complete"], true);
+        assert_eq!(wire["projections"][0]["role"], "Buyer");
+        assert_eq!(wire["replay"]["reproduced"], true);
     }
 
     /// FR-286-AC-1: `check` over the spine fixture is one whole document, at

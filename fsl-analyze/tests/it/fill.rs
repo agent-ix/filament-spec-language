@@ -190,6 +190,7 @@ pub(crate) fn document() -> Vec<u8> {
         "types": [
             level(),
             bounded("Tally", "0"),
+            bounded("RecoveryBalance", "1"),
             wire_type(&cell, "object_type", json!({
                 "supertypes": [],
                 "fields": fields,
@@ -211,6 +212,7 @@ pub(crate) fn document() -> Vec<u8> {
             // One record, so a `cattempt` of `Attempt` has one choice of
             // record.
             record("Attempt", "n", &ident("Tally"), "required"),
+            record("Recovery", "bal", &ident("RecoveryBalance"), "required"),
             record("RefundAttempt", "ok", "ix://filament/native/Boolean", "required"),
             record("PeerAttempt", "p", &cell, "required"),
             // An optional field: three records, absent first.
@@ -694,6 +696,7 @@ pub(crate) fn subject<'a>(
             role: "w".to_owned(),
             model: PACKAGE.to_owned(),
         }],
+        capacities: Vec::new(),
         memory: source_memory(package, protocol),
     }
 }
@@ -842,6 +845,9 @@ pub(crate) fn projections(reached: &[Reached]) -> std::collections::BTreeSet<Vec
                 | StepKind::Memory
                 | StepKind::CAttempt
                 | StepKind::CEnd
+                | StepKind::CFail
+                | StepKind::CTimeout
+                | StepKind::CExpire
                 | StepKind::Activate
                 | StepKind::Spawn
                 | StepKind::Retire => None,

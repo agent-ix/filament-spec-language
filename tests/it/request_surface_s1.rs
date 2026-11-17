@@ -14,7 +14,7 @@ use fsl_replay::spine::{parse, ParseRequest};
 use fsl_replay::OutcomeDocument;
 use ix_trace_rs::trace;
 use serde_json::{json, Value};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 const HEADER: &str =
     "language \"ix:native\" edition \"1-draft\";\nprofile v = \"filament.value.complete/v1\";\n";
@@ -59,12 +59,76 @@ fn compile_refusal(path: &Path) -> (u8, Value) {
     (error.category().exit_code(), error.value().unwrap())
 }
 
+fn extension_source_and_request(directory: &Path) -> (PathBuf, PathBuf) {
+    retention_definition(directory, "retention.json", "retention");
+    std::fs::write(
+        directory.join("unit.native"),
+        format!(
+            "{HEADER}profile r = \"ext.retention\";\n{FORM}\nfunction seven using v(): Int[0, 9] pure {{ 7 }}\n"
+        ),
+    )
+    .unwrap();
+    let source = directory.join("unit.native");
+    let request = directory.join("run.json");
+    std::fs::write(
+        &request,
+        serde_json::to_vec(&json!({"format": "native-run/1", "request": {
+            "models": [],
+            "program": {"source": {"file": "unit.native", "authority": "agent-ix",
+                "identity": "test:extension-run", "document": "Ext", "formal_revision": 1}},
+            "extensions": [{"authority": "agent-ix", "identity": "ext.retention",
+                "file": "retention.json"}],
+            "call": {"function": "seven", "arguments": []}
+        }}))
+        .unwrap(),
+    )
+    .unwrap();
+    (source, request)
+}
+
+/// FR-660: native-run/1 reads its request-owned extension catalog before
+/// parsing the selected form and executes the request.
+#[test]
+#[trace("TC-1740", "FR-660-AC-1")]
+fn run_applies_request_extension_definitions() {
+    let directory = tempfile::tempdir().unwrap();
+    let (_, request) = extension_source_and_request(directory.path());
+    let result = fsl_command::command::run(&request, &crate::negotiation::Fr290)
+        .unwrap_or_else(|error| panic!("{}", error.value().unwrap()));
+    assert_eq!(result.exit_code, 0, "{}", result.value);
+    assert!(result.value.to_string().contains("\"integer\":\"7\""));
+}
+
+/// FR-660: source-only check admits the extension form supplied in its check
+/// inputs and reaches S4.
+#[test]
+#[trace("TC-1740", "FR-660-AC-1")]
+fn check_applies_request_extension_definitions() {
+    let directory = tempfile::tempdir().unwrap();
+    let (source, _) = extension_source_and_request(directory.path());
+    let outcome = fsl_command::command::check_outcome(
+        &source,
+        &fsl_command::command::CheckInputs {
+            extensions: vec![fsl_command::command::CheckExtensionInput {
+                authority: "agent-ix".to_owned(),
+                identity: "ext.retention".to_owned(),
+                file: directory.path().join("retention.json"),
+                depends_on: Vec::new(),
+                capabilities: Vec::new(),
+            }],
+            ..fsl_command::command::CheckInputs::default()
+        },
+    );
+    let document: Value = serde_json::from_slice(&outcome.document().to_bytes().unwrap()).unwrap();
+    assert_eq!(document["category"], "success", "{document}");
+    assert_eq!(document["last_stage"], "S4", "{document}");
+}
+
 /// FR-660-AC-2 (TC-1741): a header selecting an identity the request's
 /// `extensions` do not supply refuses `unknown_profile`, not an
 /// unknown-member request refusal.
 #[test]
 #[trace("TC-1741", "FR-660-AC-2")]
-#[ignore = "QSL-2189: the request `extensions` member is not implemented yet"]
 fn an_unsupplied_extension_selection_refuses_unknown_profile() {
     let directory = tempfile::tempdir().unwrap();
     retention_definition(directory.path(), "other.json", "other");
@@ -85,7 +149,6 @@ fn an_unsupplied_extension_selection_refuses_unknown_profile() {
 /// `typed_node_schema` refuses `invalid_package`/`missing-member` naming it.
 #[test]
 #[trace("TC-1741", "FR-660-AC-3")]
-#[ignore = "QSL-2189: the request `extensions` member is not implemented yet"]
 fn a_supplied_definition_missing_a_member_refuses() {
     let directory = tempfile::tempdir().unwrap();
     let definition = json!({"grammar_schema": {"productions": [
@@ -109,12 +172,61 @@ fn a_supplied_definition_missing_a_member_refuses() {
     assert!(text.contains("typed_node_schema"), "{value}");
 }
 
+/// FR-660-AC-3 (TC-1741): supplied extension definitions reject core keyword
+/// collisions and dependency cycles at compile time.
+#[test]
+#[trace("TC-1741", "FR-660-AC-3")]
+fn supplied_extension_conflicts_and_cycles_refuse() {
+    let directory = tempfile::tempdir().unwrap();
+    retention_definition(directory.path(), "function.json", "function");
+    let path = extension_request(
+        directory.path(),
+        json!([{"authority": "agent-ix", "identity": "ext.retention",
+            "file": "function.json"}]),
+    );
+    let (exit, value) = compile_refusal(&path);
+    assert_eq!(exit, 20, "{value}");
+    assert_eq!(value["code"], "invalid_package", "{value}");
+    assert!(
+        value.to_string().contains("conflicting-definition"),
+        "{value}"
+    );
+    assert!(value.to_string().contains("function"), "{value}");
+
+    let directory = tempfile::tempdir().unwrap();
+    retention_definition(directory.path(), "a.json", "retention");
+    retention_definition(directory.path(), "b.json", "audit_rule");
+    std::fs::write(
+        directory.path().join("unit.native"),
+        format!("{HEADER}profile a = \"ext.a\";\nprofile b = \"ext.b\";\n{FORM}\n"),
+    )
+    .unwrap();
+    let request = json!({"format": "native-compile/1", "request": {
+        "models": [],
+        "program": {"source": {"file": "unit.native", "authority": "agent-ix",
+            "identity": "test:extension-cycle", "document": "Ext", "formal_revision": 1}},
+        "extensions": [
+            {"authority": "agent-ix", "identity": "ext.a", "file": "a.json",
+                "depends_on": [{"authority": "agent-ix", "identity": "ext.b"}]},
+            {"authority": "agent-ix", "identity": "ext.b", "file": "b.json",
+                "depends_on": [{"authority": "agent-ix", "identity": "ext.a"}]}
+        ]
+    }});
+    let path = directory.path().join("compile.json");
+    std::fs::write(&path, serde_json::to_vec(&request).unwrap()).unwrap();
+    let (exit, value) = compile_refusal(&path);
+    assert_eq!(exit, 20, "{value}");
+    assert_eq!(value["code"], "invalid_package", "{value}");
+    assert!(value.to_string().contains("definition-cycle"), "{value}");
+    assert!(value.to_string().contains("ext.a"), "{value}");
+    assert!(value.to_string().contains("ext.b"), "{value}");
+}
+
 /// FR-660-AC-4 (TC-1741): malformed `extensions` members refuse
 /// `invalid-request` at stage `request` naming the member, and two entries
 /// with one identity refuse `conflicting-definition`.
 #[test]
 #[trace("TC-1741", "FR-660-AC-4")]
-#[ignore = "QSL-2189: the request `extensions` member is not implemented yet"]
 fn malformed_extension_entries_refuse_before_compile() {
     for (extensions, member) in [
         (json!(null), "extensions"),
@@ -126,6 +238,10 @@ fn malformed_extension_entries_refuse_before_compile() {
         (
             json!([{"authority": "agent-ix", "identity": "ext.retention"}]),
             "file",
+        ),
+        (
+            json!([{"authority": "agent-ix", "identity": " ", "file": "retention.json"}]),
+            "identity",
         ),
     ] {
         let directory = tempfile::tempdir().unwrap();
@@ -236,7 +352,6 @@ fn the_run_command_reaches_markdown_extraction_by_default() {
 /// `parsed` report of the labels, path, byte count and S1 usage.
 #[test]
 #[trace("TC-1745", "FR-663-AC-1")]
-#[ignore = "QSL-2191: the parse outcome's `parsed` result is not implemented yet"]
 fn the_parse_outcome_reports_the_parsed_unit() {
     const FIXTURE: &[u8] = include_bytes!("../fixtures/spine-compile.native");
     let identity = SourceIdentity::new("agent-ix", "test:parent");
@@ -259,6 +374,7 @@ fn the_parse_outcome_reports_the_parsed_unit() {
     );
     assert_eq!(report["path"], "tests/fixtures/spine-compile.native");
     assert_eq!(report["bytes"], FIXTURE.len().to_string());
+    assert_eq!(report["usage"].as_array().unwrap().len(), 4);
     let settings: Vec<&str> = report["usage"]
         .as_array()
         .expect("usage is an array")
@@ -270,6 +386,46 @@ fn the_parse_outcome_reports_the_parsed_unit() {
         ["s1.input_bytes", "s1.tokens", "s1.nodes", "s1.work_units"]
     );
     assert_eq!(report["usage"][0]["used"], FIXTURE.len().to_string());
+
+    let malformed = format!(
+        "{}\nfunction Broken using v(): Boolean pure {{ a < b < c }}\n",
+        std::str::from_utf8(FIXTURE).unwrap()
+    );
+    let malformed = parse(
+        &ParseRequest {
+            source: &identity,
+            path: "tests/fixtures/broken.native",
+            bytes: malformed.as_bytes(),
+        },
+        Limits::default(),
+        &Cancel::new(),
+    );
+    let document: Value =
+        serde_json::from_slice(&OutcomeDocument::from_parse(&malformed).to_bytes().unwrap())
+            .unwrap();
+    assert_eq!(document["result"]["kind"], "parsed", "{document}");
+    assert!(
+        document["diagnostics"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|diagnostic| { diagnostic["code"] == "invalid_syntax" }),
+        "{document}"
+    );
+
+    let blank = SourceIdentity::new("", "test:parent");
+    let refused = parse(
+        &ParseRequest {
+            source: &blank,
+            path: "tests/fixtures/spine-compile.native",
+            bytes: FIXTURE,
+        },
+        Limits::default(),
+        &Cancel::new(),
+    );
+    let document: Value =
+        serde_json::from_slice(&OutcomeDocument::from_parse(&refused).to_bytes().unwrap()).unwrap();
+    assert!(document["result"].is_null(), "{document}");
 }
 
 fn handoff_request(directory: &Path, handoff: Value) -> std::path::PathBuf {
@@ -460,7 +616,6 @@ fn driver_version(arguments: &[&str]) -> Output {
     "FSpec-FR-560-AC-3"
 )]
 #[trace("FSpec-TC-1244", "FSpec-FR-301-AC-5")]
-#[ignore = "QSL-2194: `version` does not emit the build inventory yet"]
 fn version_emits_the_build_inventory_and_kind_selects_one_list() {
     let lists = ["editions", "profiles", "families", "features", "consumers"];
     let output = driver_version(&["--format", "json"]);
@@ -527,7 +682,6 @@ fn stdout_json(output: &Output) -> Value {
 /// file charged against `dependent_bytes`.
 #[test]
 #[trace("TC-1741", "FR-660-AC-5")]
-#[ignore = "QSL-2189: the request `extensions` member is not implemented yet"]
 fn an_extension_document_is_charged_against_dependent_bytes() {
     let directory = tempfile::tempdir().unwrap();
     retention_definition(directory.path(), "retention.json", "retention");
@@ -576,7 +730,6 @@ fn an_extension_document_is_charged_against_dependent_bytes() {
 /// profiles, and none is spelled `quire.*`.
 #[test]
 #[trace("TC-1742", "FR-661-AC-2", "FSpec-TC-1240", "FSpec-FR-560-AC-2")]
-#[ignore = "QSL-2194: `version` does not emit the build inventory yet"]
 fn every_listed_profile_is_accepted_by_a_header() {
     let directory = tempfile::tempdir().unwrap();
     let inventory = stdout_json(&driver(
@@ -610,6 +763,51 @@ fn every_listed_profile_is_accepted_by_a_header() {
             assert_ne!(value["code"], "unknown_profile", "{identity}: {value}");
         }
     }
+}
+
+/// FR-661-AC-3: a registry provider appears in `consumers` without changing
+/// the compiler-owned lists.
+#[test]
+#[trace("TC-1742", "FR-661-AC-3")]
+fn version_includes_provider_backed_registry_consumers() {
+    use fsl_foundation::bound::DomainKind;
+    use fsl_foundation::BackendId;
+    use fsl_route::{Candidate, ManifestMembers, ProviderOrigin, Registry};
+
+    let base = Registry::new();
+    let before = fsl_replay::build_inventory(&base);
+    let mut with_provider = Registry::new();
+    let descriptor = fsl_route::descriptor_from_manifest(
+        Candidate::new(BackendId::new("inventory-provider")),
+        ProviderOrigin::Linked,
+        [(Some("value-validity"), Some("unbounded"))],
+        ManifestMembers {
+            domains: Some(&[DomainKind::Integer.to_wire()]),
+            ..ManifestMembers::default()
+        },
+    )
+    .expect("the provider descriptor is valid");
+    with_provider
+        .register(descriptor)
+        .expect("the provider registers");
+
+    let after = fsl_replay::build_inventory(&with_provider);
+    assert_eq!(before.editions, after.editions);
+    assert_eq!(before.profiles, after.profiles);
+    assert_eq!(before.families, after.families);
+    assert_eq!(before.features, after.features);
+    assert_eq!(after.consumers.len(), 1);
+    assert_eq!(after.consumers[0].identity, "inventory-provider");
+    assert_eq!(after.consumers[0].origin, "linked");
+    assert_eq!(after.consumers[0].advertises.len(), 1);
+    assert_eq!(after.consumers[0].advertises[0].kind, "value-validity");
+    assert_eq!(after.consumers[0].advertises[0].mode, "unbounded");
+    assert_eq!(
+        before.to_bytes().expect("inventory writes"),
+        fsl_replay::build_inventory(&base)
+            .to_bytes()
+            .expect("inventory writes")
+    );
 }
 
 const SPINE_FIXTURE: &str = "tests/fixtures/spine-compile.native";
@@ -725,7 +923,6 @@ fn check_without_markdown_reads_native_source() {
 /// equal to the count reached reports `used` equal to `bound`.
 #[test]
 #[trace("TC-1745", "FR-663-AC-2")]
-#[ignore = "QSL-2191: the parse outcome's `parsed` result is not implemented yet"]
 fn the_parsed_report_is_stable_and_reports_a_reached_bound() {
     let bytes = std::fs::read(SPINE_FIXTURE).unwrap();
     let identity = SourceIdentity::new("agent-ix", "test:parent");
@@ -761,13 +958,13 @@ fn the_parsed_report_is_stable_and_reports_a_reached_bound() {
 /// locus.
 #[test]
 #[trace("TC-1746", "FR-663-AC-3")]
-#[ignore = "QSL-2191: refusal records do not carry a document locus yet"]
 fn snapshot_refusals_carry_a_document_locus() {
     let directory = tempfile::tempdir().unwrap();
     spine::write(directory.path(), Case::Healthy).unwrap();
     let snapshot_path = directory.path().join("spine-snapshot.json");
-    let mut snapshot: Value =
-        serde_json::from_slice(&std::fs::read(&snapshot_path).unwrap()).unwrap();
+    let healthy_snapshot = std::fs::read(&snapshot_path).unwrap();
+    let mut snapshot: Value = serde_json::from_slice(&healthy_snapshot).unwrap();
+    let snapshot_labels = snapshot["identity"].clone();
     for object in snapshot["populations"][0]["objects"]
         .as_array_mut()
         .unwrap()
@@ -788,9 +985,57 @@ fn snapshot_refusals_carry_a_document_locus() {
         Err(error) => error.value().unwrap().to_string(),
     };
     assert!(text.contains("missing-member"), "{text}");
-    for fragment in ["\"locus\"", "\"member\":\"parent\"", "\"key\":\"child\""] {
-        assert!(text.contains(fragment), "{fragment}: {text}");
+    let result: Value = serde_json::from_str(&text).unwrap();
+    let locus = &result["disposition"]["refusal"]["locus"];
+    assert_eq!(locus["kind"], "document", "{result}");
+    assert_eq!(locus["document"], snapshot_labels, "{result}");
+    assert_eq!(locus["path"], "spine-snapshot.json", "{result}");
+    assert_eq!(
+        locus["object"]["population"], "ix://example/config-version/config_history",
+        "{result}"
+    );
+    assert_eq!(locus["object"]["key"], "child", "{result}");
+    assert_eq!(locus["member"], "parent", "{result}");
+    assert!(
+        locus["pointer"]
+            .as_str()
+            .unwrap()
+            .starts_with("/populations/"),
+        "{result}"
+    );
+    assert_ne!(locus["pointer"], "/child", "{result}");
+
+    let mut snapshot: Value = serde_json::from_slice(&healthy_snapshot).unwrap();
+    for object in snapshot["populations"][0]["objects"]
+        .as_array_mut()
+        .unwrap()
+    {
+        if object["key"] == "child" {
+            object["fields"]["unexpected"] = json!({"integer": "1"});
+        }
     }
+    std::fs::write(&snapshot_path, snapshot.to_string()).unwrap();
+    let text = match fsl_command::command::run(&path, &crate::negotiation::Fr290) {
+        Ok(result) => result.value.to_string(),
+        Err(error) => error.value().unwrap().to_string(),
+    };
+    assert!(text.contains("unknown-member"), "{text}");
+    let result: Value = serde_json::from_str(&text).unwrap();
+    let locus = &result["disposition"]["refusal"]["locus"];
+    assert_eq!(locus["kind"], "document", "{result}");
+    assert_eq!(locus["document"], snapshot_labels, "{result}");
+    assert_eq!(locus["path"], "spine-snapshot.json", "{result}");
+    assert_eq!(locus["object"]["key"], "child", "{result}");
+    assert_eq!(locus["member"], "unexpected", "{result}");
+    assert!(
+        locus["pointer"]
+            .as_str()
+            .unwrap()
+            .ends_with("/fields/unexpected"),
+        "{result}"
+    );
+    assert_ne!(locus["pointer"], "/child", "{result}");
+
     let absent = fsl_command::command::run(
         &directory.path().join("absent.json"),
         &crate::negotiation::Fr290,
@@ -1038,7 +1283,6 @@ fn extension_set(directory: &Path, entries: Value) {
 /// definition a unit selects.
 #[test]
 #[trace("FSpec-TC-1242", "FSpec-FR-562-AC-1")]
-#[ignore = "QSL-2189: `--extensions` is not implemented yet"]
 fn check_with_an_extension_set_admits_the_selected_form() {
     let directory = tempfile::tempdir().unwrap();
     retention_definition(directory.path(), "retention.json", "retention");
@@ -1080,7 +1324,6 @@ fn check_with_an_extension_set_admits_the_selected_form() {
     "FSpec-TC-1244",
     "FSpec-FR-301-AC-5"
 )]
-#[ignore = "QSL-2189: `--extensions` is not implemented yet"]
 fn malformed_extension_sets_refuse() {
     let entry =
         json!({"authority": "agent-ix", "identity": "ext.retention", "file": "retention.json"});

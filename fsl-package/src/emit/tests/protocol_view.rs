@@ -16,7 +16,8 @@ use super::protocol_requirements::fixture_w::{
 };
 use super::*;
 use crate::protocol_view::{
-    attempts_maximum, attempts_over, await_anchor, binder, causal_relation, channel_endpoints,
+    attempts_maximum, attempts_over, await_anchor, binder, causal_relation, channel_connection,
+    channel_endpoints,
     channel_ordering, choice_visibility, control_operation, declaration, delivery, dependency,
     fifo_key, locus, operation_identity, owner_model, protocol_view, queue_capacity, queue_channel,
     queue_overflow, relation_over, selection, source, temporal_binding, AwaitAnchor,
@@ -1779,6 +1780,7 @@ fn a_channels_ends_and_message_type_are_the_nodes_it_references() {
     for held in &fixture.protocol.channels {
         let channel = by_name(package, &held.name);
         let ends = channel_endpoints(channel).unwrap();
+        assert_eq!(channel_connection(channel).unwrap(), None);
         assert_eq!(name(package, ends.sender).last(), Some(&held.from));
         assert_eq!(name(package, ends.receiver).last(), Some(&held.to));
         assert_eq!(&*node(package, ends.sender).semantic_form, "role");

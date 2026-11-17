@@ -171,7 +171,7 @@ impl Snapshot {
                 "observation": "current",
                 "anchor": {"kind": "handler", "name": "validate"},
                 "model": {
-                    "identity": CONFIG_VERSION_PACKAGE_IDENTITY, "version": "1.0.0",
+                    "identity": CONFIG_VERSION_PACKAGE_IDENTITY,
                 },
                 "populations": [{
                     "population": config_version_population_identity(),
@@ -1534,7 +1534,7 @@ pub(super) fn parent_order_request(
             "observation": "current",
             "anchor": {"kind": "handler", "name": "validate"},
             "model": {
-                "identity": CONFIG_VERSION_PACKAGE_IDENTITY, "version": "1.0.0",
+                "identity": CONFIG_VERSION_PACKAGE_IDENTITY,
             },
             "populations": [{
                 "population": config_version_population_identity(),

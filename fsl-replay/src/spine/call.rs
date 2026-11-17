@@ -43,7 +43,8 @@ use fsl_semantics::value::environment_stage::membership_failure_code;
 use super::lifecycle as front_end;
 use super::run_value::{ArgumentDefect, Forms, ReadStop};
 use super::{
-    AdmittedModels, CheckedUnit, CompileRefusal, DependencyInput, EmittedUnit, SpineLimits,
+    AdmittedModels, CheckedUnit, CompileRefusal, DependencyInput, EmittedUnit, ProfileCatalogInput,
+    SpineLimits,
 };
 use fsl_foundation::SourceIdentity;
 
@@ -651,6 +652,71 @@ pub fn run(
     objects: &ObjectEnvironment,
     cancel: &Cancel,
 ) -> Result<CallOutcome, Box<RunRefusal>> {
+    run_with_optional_profile_catalog(
+        source,
+        package_name,
+        path,
+        bytes,
+        packages,
+        dependencies,
+        limits,
+        call,
+        objects,
+        None,
+        cancel,
+    )
+}
+
+/// Compile and run `bytes` with request-supplied extension definitions.
+#[allow(
+    clippy::too_many_arguments,
+    reason = "FR-100's run inputs plus the request-owned profile catalog are explicit"
+)]
+pub fn run_with_profile_catalog(
+    source: SourceIdentity,
+    package_name: String,
+    path: &str,
+    bytes: &[u8],
+    packages: &fsl_semantics::model::intake::PackageInput,
+    dependencies: &DependencyInput,
+    limits: SpineLimits,
+    call: &Call,
+    objects: &ObjectEnvironment,
+    profile_catalog: ProfileCatalogInput<'_>,
+    cancel: &Cancel,
+) -> Result<CallOutcome, Box<RunRefusal>> {
+    run_with_optional_profile_catalog(
+        source,
+        package_name,
+        path,
+        bytes,
+        packages,
+        dependencies,
+        limits,
+        call,
+        objects,
+        Some(profile_catalog),
+        cancel,
+    )
+}
+
+#[allow(
+    clippy::too_many_arguments,
+    reason = "the run inputs and optional request-owned catalog are explicit"
+)]
+fn run_with_optional_profile_catalog(
+    source: SourceIdentity,
+    package_name: String,
+    path: &str,
+    bytes: &[u8],
+    packages: &fsl_semantics::model::intake::PackageInput,
+    dependencies: &DependencyInput,
+    limits: SpineLimits,
+    call: &Call,
+    objects: &ObjectEnvironment,
+    profile_catalog: Option<ProfileCatalogInput<'_>>,
+    cancel: &Cancel,
+) -> Result<CallOutcome, Box<RunRefusal>> {
     run_reading(
         source,
         package_name,
@@ -663,6 +729,7 @@ pub fn run(
         objects,
         &SuppliedBackends::default(),
         &PrepareLimits::default(),
+        profile_catalog,
         cancel,
         |_, _, _| Ok(()),
     )
@@ -690,6 +757,7 @@ pub(crate) fn run_reading<T>(
     objects: &ObjectEnvironment,
     backends: &SuppliedBackends<'_>,
     prepare: &PrepareLimits,
+    profile_catalog: Option<ProfileCatalogInput<'_>>,
     cancel: &Cancel,
     read: impl FnOnce(&CheckedUnit, &EmittedUnit, &AdmittedModels) -> Result<T, Box<RunRefusal>>,
 ) -> Result<(CallOutcome, T), Box<RunRefusal>> {
@@ -705,15 +773,17 @@ pub(crate) fn run_reading<T>(
         },
     };
     let own_package = package_name.clone();
-    let parsed = front_end::parse(
-        &front_end::ParseRequest {
-            source: &source,
-            path,
-            bytes,
-        },
-        limits.source,
-        cancel,
-    )
+    let parse_request = front_end::ParseRequest {
+        source: &source,
+        path,
+        bytes,
+    };
+    let parsed = match profile_catalog {
+        Some(catalog) => {
+            front_end::parse_selecting_extensions(&parse_request, catalog, limits.source, cancel)
+        }
+        None => front_end::parse(&parse_request, limits.source, cancel),
+    }
     .map_err(refusal)?
     .into_value();
     let models = front_end::select(&parsed, packages, limits.model, cancel)

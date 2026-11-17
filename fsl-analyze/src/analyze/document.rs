@@ -28,7 +28,7 @@ use fsl_route::{CandidateOutcome, Registry};
 use fsl_semantics::check::Capability;
 use fsl_semantics::model::observation::{DocumentProvision, DocumentRef};
 use serde::Deserialize;
-use serde_json::{json, Map, Value};
+use serde_json::{Map, Value, json};
 
 use super::{
     AnalyzeLimits, ClaimItem, Diagnostic, Engines, ItemForm, ItemOptions, NegotiatedItem,
@@ -515,6 +515,9 @@ pub struct ItemSelection {
     /// A `finite-replay` item's supplied trace.
     #[serde(default)]
     pub trace: Option<DocumentSelection>,
+    /// A `global-conformance` item's supplied FR-737 recording.
+    #[serde(default)]
+    pub recording: Option<DocumentSelection>,
     /// A `simulation` item's settings.
     #[serde(default)]
     pub simulation: Option<Value>,
@@ -541,6 +544,8 @@ impl ItemSelection {
             || self.assessed_root.is_some()
             || (self.trace.is_some()
                 && self.kind.as_deref() != Some(Capability::FiniteReplay.to_wire()))
+            || (self.recording.is_some()
+                && self.kind.as_deref() != Some(Capability::GlobalConformance.to_wire()))
             || self.simulation.is_some()
             // An option is sent only to the backend the item names (FR-967).
             || (self.backend.is_none()
@@ -968,6 +973,7 @@ fn resolve_call_item(
             required: true,
             max_cases: None,
             trace: None,
+            recording: None,
             backend_options: call_item.options.clone(),
         },
         form: None,
@@ -1138,7 +1144,8 @@ fn resolve_one(
             return refused;
         }
     }
-    let form = (kind == Capability::TemporalSatisfaction).then(|| {
+    let form = (kind == Capability::TemporalSatisfaction || kind == Capability::GlobalConformance)
+        .then(|| {
         let mut form = temporal_item(package, &claim, &temporal);
         form.pending_reductions.clone_from(&selection.reductions);
         ItemForm::Temporal(form)
@@ -1154,6 +1161,10 @@ fn resolve_one(
             required: selection.required.unwrap_or(true),
             max_cases: selection.check.map(|check| check.limits.max_cases),
             trace: selection.trace.as_ref().map(DocumentSelection::reference),
+            recording: selection
+                .recording
+                .as_ref()
+                .map(DocumentSelection::reference),
             backend_options,
         },
         form,
@@ -1276,6 +1287,7 @@ fn resolve_derived(
         required: selection.required.unwrap_or(true),
         max_cases: None,
         trace: None,
+        recording: None,
         backend_options,
     };
     let mut form = temporal_item(package, &claim.item.claim, temporal);
@@ -1554,6 +1566,7 @@ fn derived_items(
                         required: true,
                         max_cases: None,
                         trace: None,
+                        recording: None,
                         backend_options: BTreeMap::new(),
                     },
                     form: Some(ItemForm::Temporal(TemporalItem {
@@ -1619,6 +1632,12 @@ impl ClaimItem {
             item.insert(
                 "trace".to_owned(),
                 json!({"authority": trace.authority, "identity": trace.identity}),
+            );
+        }
+        if let Some(recording) = &self.options.recording {
+            item.insert(
+                "recording".to_owned(),
+                json!({"authority": recording.authority, "identity": recording.identity}),
             );
         }
         if let Some(max_cases) = self.options.max_cases {
@@ -1954,8 +1973,15 @@ pub fn settle_run(
     let written: Vec<Value> = document["items"].as_array().cloned().unwrap_or_default();
     let mut items = Vec::with_capacity(records.len());
     let mut gaps = Vec::new();
-    for (record, written) in records.iter().zip(written) {
+    for (record, mut written) in records.iter().zip(written) {
         let index = record.request_index();
+        if let Some(output) = outcome.protocol_conformance.get(&index) {
+            if let (Some(record), Ok(Value::Object(members))) =
+                (written.as_object_mut(), serde_json::to_value(output))
+            {
+                record.extend(members);
+            }
+        }
         let detail = outcome
             .details
             .iter()
@@ -2145,7 +2171,8 @@ fn replay_target(found: &super::ItemCounterexample, name: &str) -> Value {
         | super::Counterexample::Protocol { .. }
         | super::Counterexample::Probabilistic(_)
         | super::Counterexample::Contract(_)
-        | super::Counterexample::StateGraph(_) => json!({"state_clause": qualified}),
+        | super::Counterexample::StateGraph(_)
+        | super::Counterexample::GlobalConformance(_) => json!({"state_clause": qualified}),
     }
 }
 
@@ -2195,6 +2222,11 @@ fn item_document(written: Value, members: ItemMembers) -> Value {
             );
         }
         item.insert("counterexample".to_owned(), counterexample);
+    }
+    for member in ["obligations", "closure", "global", "projections"] {
+        if let Some(value) = record.get(member) {
+            item.insert(member.to_owned(), value.clone());
+        }
     }
     if let Some(stats) = detail.and_then(|detail| detail.exploration) {
         item.insert(

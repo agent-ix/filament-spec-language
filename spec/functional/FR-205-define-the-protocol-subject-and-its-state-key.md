@@ -69,7 +69,7 @@ has already seen instead of a new one.
 
 - The subject builder SHALL build `ProtocolSubject` from the model subject,
   the protocol clause, the `over` binding, the static role bindings, the
-  replicated role universes and the resolved memory models, as FSpec FR-425
+  capacity binding, the replicated role universes and the resolved memory models, as FSpec FR-425
   states. The protocol clause's `terminal` member (FR-211) and its
   `scheduling` member (FR-212) are part of the checked package, so the
   subject's obligation identity (ADR-013 O-09) binds them. The identity
@@ -91,6 +91,14 @@ has already seen instead of a new one.
 - When the `over` object is not an object of its declared type's population
   universe, the subject builder SHALL refuse `invalid_runtime_input`/
   `invalid-value`, naming the parameter and the object.
+- The subject carries the capacity binding `capacities` of the clause's
+  `symbolic(<name>)` queue capacities (FSpec FR-785). An entry naming no
+  capacity of the clause refuses `invalid_runtime_input`/`unknown-member`
+  and a repeated name `duplicate-member`, before the requires-bound
+  pre-check; a name with no entry is an unbounded root, reported
+  requires-bound naming it and each of its channels. A system built without
+  that pre-check, such as a replay, refuses an unbound name
+  `invalid_runtime_input`/`missing-member`.
 
 ### State and key
 

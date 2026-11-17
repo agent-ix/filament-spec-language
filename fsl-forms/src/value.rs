@@ -758,6 +758,7 @@ fn type_head(cst: &LosslessCst, node: &CstNode) -> Result<TypeForm, FormsRefusal
         b"Quantity" => TypeFormHead::Builtin(BuiltinType::Quantity),
         b"Clock" => TypeFormHead::Builtin(BuiltinType::Clock),
         b"Population" => TypeFormHead::Population,
+        b"Map" => TypeFormHead::Builtin(BuiltinType::Map),
         b"Sequence" => TypeFormHead::Collection(CollectionKind::Sequence),
         b"Set" => TypeFormHead::Collection(CollectionKind::Set),
         b"Bag" => TypeFormHead::Collection(CollectionKind::Bag),
@@ -801,6 +802,7 @@ struct Pending {
 enum Shape {
     Boolean(bool),
     Absent,
+    Null,
     Integer(Integer),
     Float32(u32),
     Float64(u64),
@@ -809,7 +811,10 @@ enum Shape {
     Quantity(QuantityForm),
     String(StringLiteral),
     Name(NameForm),
-    Let(String),
+    Let {
+        name: String,
+        annotation: Option<TypeForm>,
+    },
     If,
     Case(Vec<ArmSyntax>, Span),
     Binary(BinaryOperator),
@@ -817,11 +822,11 @@ enum Shape {
     Power(Integer),
     Not,
     Field(String, Span),
+    Index,
     Present,
     Value,
     Deref,
     Ref,
-    Select,
     Pre,
     Call(NameForm),
     /// Field names in source order, each with whether its value is `null`.
@@ -855,7 +860,7 @@ enum Shape {
     },
     /// `seq(i in lo .. hi: e)`: the binder.
     Seq(String),
-    Size,
+    Size(Option<TypeForm>),
     Contains,
     /// `self` (FR-102, ADR-012 §15.2, `ProtocolClause`).
     SelfRef,
@@ -910,6 +915,10 @@ impl Shape {
                 arity(0)?;
                 ExprNode::Absent
             }
+            Self::Null => {
+                arity(0)?;
+                ExprNode::Null
+            }
             Self::Integer(value) => {
                 arity(0)?;
                 ExprNode::Integer(value)
@@ -946,10 +955,11 @@ impl Shape {
                 arity(0)?;
                 ExprNode::Name(name)
             }
-            Self::Let(name) => {
+            Self::Let { name, annotation } => {
                 arity(2)?;
                 ExprNode::Let {
                     name,
+                    annotation,
                     value: operands.next()?,
                     body: operands.next()?,
                 }
@@ -1013,6 +1023,13 @@ impl Shape {
                     member_span: Some(member_span),
                 }
             }
+            Self::Index => {
+                arity(2)?;
+                ExprNode::Index {
+                    operand: operands.next()?,
+                    index: operands.next()?,
+                }
+            }
             Self::Present => {
                 arity(1)?;
                 ExprNode::Present(operands.next()?)
@@ -1024,13 +1041,6 @@ impl Shape {
             Self::Deref => {
                 arity(1)?;
                 ExprNode::Deref(operands.next()?)
-            }
-            Self::Select => {
-                arity(2)?;
-                ExprNode::Select {
-                    place: operands.next()?,
-                    selector: operands.next()?,
-                }
             }
             Self::Ref => {
                 arity(1)?;
@@ -1055,9 +1065,12 @@ impl Shape {
                     item: operands.next()?,
                 }
             }
-            Self::Size => {
+            Self::Size(type_argument) => {
                 arity(1)?;
-                ExprNode::Size(operands.next()?)
+                ExprNode::Size {
+                    operand: operands.next()?,
+                    type_argument,
+                }
             }
             Self::Call(name) => ExprNode::Call {
                 name,
@@ -1602,10 +1615,22 @@ impl<'c> Mapping<'c> {
                     .first()
                     .copied()
                     .ok_or_else(|| unexpected(node))?;
+                let annotation = match nodes_of(items, Production::TypeReference).as_slice() {
+                    [] => None,
+                    [annotation] => Some(type_form(self.cst, annotation)?),
+                    _ => return Err(unexpected(node)),
+                };
                 if operands.len() != 2 {
                     return Err(unexpected(node));
                 }
-                self.with_children(Shape::Let(text(name, node)?), &task, operands)
+                self.with_children(
+                    Shape::Let {
+                        name: text(name, node)?,
+                        annotation,
+                    },
+                    &task,
+                    operands,
+                )
             }
             Some(Item::Token(token)) if token.spelling() == b"if" => {
                 if operands.len() != 3 {
@@ -1821,19 +1846,10 @@ impl<'c> Mapping<'c> {
                     suffixes.push((shape, end, arguments));
                 }
                 Item::Token(token) if token.spelling() == b"[" => {
-                    // FR-091 "Unrepresented constructs", FR-230 "Selection":
-                    // a selector directly after a field access or another
-                    // selector (`r.f[s]`) builds as a `Select`, and the
-                    // checker decides whether the whole is a clock place
-                    // expression; a selector after anything else (`xs[0]`,
-                    // `r.f()[s]`) is unrepresented.
                     let ahead = rest.clone();
-                    let selects_a_field =
-                        matches!(suffixes.last(), Some((Shape::Field(..) | Shape::Select, ..)));
                     let selector = match (rest.next(), rest.next()) {
                         (Some(Item::Node(selector)), Some(Item::Token(close)))
-                            if selects_a_field
-                                && selector.production() == Production::Expression
+                            if selector.production() == Production::Expression
                                 && close.spelling() == b"]" =>
                         {
                             Some((*selector, close.span().end))
@@ -1860,7 +1876,7 @@ impl<'c> Mapping<'c> {
                             ConstructKind::IndexSelection,
                         ));
                     };
-                    suffixes.push((Shape::Select, end, vec![selector]));
+                    suffixes.push((Shape::Index, end, vec![selector]));
                 }
                 Item::Token(_) | Item::Node(_) => return Err(unexpected(node)),
             }
@@ -1965,12 +1981,7 @@ impl<'c> Mapping<'c> {
             b"true" => self.leaf(Shape::Boolean(true), &task),
             b"false" => self.leaf(Shape::Boolean(false), &task),
             b"absent" | b"none" => self.leaf(Shape::Absent, &task),
-            b"null" => Err(unrepresented(
-                self.cst,
-                Production::Primary,
-                node.span(),
-                ConstructKind::NullValue,
-            )),
+            b"null" => self.leaf(Shape::Null, &task),
             b"self" => self.leaf(Shape::SelfRef, &task),
             b"result" => self.leaf(Shape::Result, &task),
             b"protocol" => {
@@ -2031,15 +2042,11 @@ impl<'c> Mapping<'c> {
                 self.with_children(Shape::Lookup(target, absence), &task, operands)
             }
             b"size" => {
-                if !nodes_of(items, Production::TypeReference).is_empty() {
-                    return Err(unrepresented(
-                        self.cst,
-                        Production::Primary,
-                        node.span(),
-                        ConstructKind::SizeOfType,
-                    ));
-                }
-                self.with_children(Shape::Size, &task, one(&operands)?)
+                let type_argument = nodes_of(items, Production::TypeReference)
+                    .first()
+                    .map(|node| type_form(self.cst, node))
+                    .transpose()?;
+                self.with_children(Shape::Size(type_argument), &task, one(&operands)?)
             }
             b"contains" | b"removeOne" => {
                 if operands.len() != 2 {

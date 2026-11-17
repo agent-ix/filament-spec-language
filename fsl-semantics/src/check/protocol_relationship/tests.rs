@@ -15,9 +15,9 @@ use crate::check::refusal::{
 };
 use crate::check::{CheckCause, CheckRefusal, CheckedGraph, PackageDeclarations};
 use crate::model::domain_package::{
-    DomainPackageRecord, FieldMemberRecord, Multiplicity, NativeValueType, ObjectTypeRecord,
-    RecordValueTypeRecord, RelationshipDirection, RelationshipEnd, RelationshipRecord,
-    ValueTypeRef,
+    ComponentRecord, DomainPackageRecord, EndpointRecord, FieldMemberRecord, Multiplicity,
+    NativeValueType, ObjectTypeRecord, PortDirection, RecordValueTypeRecord,
+    RelationshipDirection, RelationshipEnd, RelationshipRecord, ValueTypeRef,
 };
 use filament_checked::key::DeclarationKey;
 
@@ -94,6 +94,243 @@ fn extra() -> Vec<DomainPackageRecord> {
         relationship("pipe"),
         relationship("owns"),
     ]
+}
+
+fn connection_extra() -> Vec<DomainPackageRecord> {
+    let one = Multiplicity {
+        lower: 1,
+        upper: Some(1),
+        ordered: false,
+        unique: true,
+    };
+    let mut records = extra();
+    records.extend([
+        DomainPackageRecord::ObjectType(ObjectTypeRecord {
+            key: key("Sys"),
+            interface_features: None,
+            abstract_type: false,
+            supertypes: Vec::new(),
+        }),
+        DomainPackageRecord::ObjectType(ObjectTypeRecord {
+            key: key("Pump"),
+            interface_features: None,
+            abstract_type: false,
+            supertypes: Vec::new(),
+        }),
+        DomainPackageRecord::ObjectType(ObjectTypeRecord {
+            key: key("Tank"),
+            interface_features: None,
+            abstract_type: false,
+            supertypes: Vec::new(),
+        }),
+        DomainPackageRecord::ObjectType(ObjectTypeRecord {
+            key: key("Flow"),
+            interface_features: Some(Vec::new()),
+            abstract_type: false,
+            supertypes: Vec::new(),
+        }),
+        DomainPackageRecord::RecordValueType(RecordValueTypeRecord {
+            key: key("Note"),
+            identity_fields: Vec::new(),
+            supertypes: Vec::new(),
+        }),
+        DomainPackageRecord::Component(ComponentRecord {
+            key: key("sys_pump"),
+            owning_type: key("Sys"),
+            value_type: key("Pump"),
+            multiplicity: one,
+            has_part_signature: true,
+        }),
+        DomainPackageRecord::Component(ComponentRecord {
+            key: key("sys_tank"),
+            owning_type: key("Sys"),
+            value_type: key("Tank"),
+            multiplicity: one,
+            has_part_signature: true,
+        }),
+        DomainPackageRecord::Endpoint(EndpointRecord {
+            key: key("pump_out"),
+            owning_component: key("sys_pump"),
+            value_type: key("Flow"),
+            direction: Some(PortDirection::Out),
+            multiplicity: one,
+        }),
+        DomainPackageRecord::Endpoint(EndpointRecord {
+            key: key("tank_in"),
+            owning_component: key("sys_tank"),
+            value_type: key("Flow"),
+            direction: Some(PortDirection::In),
+            multiplicity: one,
+        }),
+        DomainPackageRecord::Relationship(RelationshipRecord {
+            key: key("link"),
+            declared_at: None,
+            source: RelationshipEnd {
+                type_identity: key("pump_out"),
+                role: None,
+                multiplicity: Some(one),
+            },
+            target: RelationshipEnd {
+                type_identity: key("tank_in"),
+                role: None,
+                multiplicity: Some(one),
+            },
+            direction: RelationshipDirection::SourceToTarget,
+        }),
+    ]);
+    records
+}
+
+fn connection_protocol(channel: &str) -> String {
+    format!(
+        "{HEADER}protocol Pipeline using p over (view: M::Node) on origin {{\n\
+         role Outlet on M::pump_out;\n\
+         role Inlet on M::tank_in;\n\
+         relationship Link = M::link;\n\
+         {channel}\n\
+         run sequence Main {{ }}\n\
+         finish Closed as (closed: M::Receipt) {{ true }};\n\
+         }}\n"
+    )
+}
+
+fn check_connection_protocol(text: &str) -> Result<CheckedGraph, Vec<CheckRefusal>> {
+    let parsed = fsl_cst::parse(
+        SourceIdentity::new("a", "u"),
+        "unit.native",
+        text.as_bytes(),
+        fsl_cst::Limits::default(),
+    )
+    .expect("S1 reads the unit");
+    assert!(parsed.is_admissible(), "{text}: {:?}", parsed.diagnostics());
+    let unit = build_unit(&parsed).expect("S2 builds the unit");
+    PackageDeclarations::assemble(
+        parsed.source().reference().clone(),
+        "fixture".to_owned(),
+        unit,
+        vec![obligation_model_with(connection_extra())],
+        Vec::new(),
+    )
+    .unwrap_or_else(|refusal| panic!("{text}: the assembler refuses: {refusal:?}"))
+    .check(CheckMode::Linked, CheckingLimits::default())
+}
+
+/// FR-897-AC-1 (TC-2533): a channel over an admitted systems Connection
+/// retains the selected model relationship key and checks the source-port
+/// interface type.
+#[trace("FR-897-AC-1", "TC-2533")]
+#[test]
+fn a_channel_binds_to_a_connection_between_port_roles() {
+    let text = connection_protocol(
+        "channel Feed from Outlet to Inlet via Link carries M::Flow ordering unordered \
+         delivery exactly-once-premise capacity 2 overflow reject;",
+    );
+    let graph = check_connection_protocol(&text)
+        .unwrap_or_else(|refusals| panic!("{text}: {refusals:?}"));
+    let channel = graph.protocol("Pipeline").unwrap().channels.first().unwrap();
+    assert_eq!(channel.connection.as_ref(), Some(&key("link")));
+}
+
+/// FR-897-AC-3/AC-4: reverse port order and a nonconforming payload refuse at
+/// the corresponding connection or carries name.
+#[trace("FR-897-AC-3", "FR-897-AC-4", "TC-2533")]
+#[test]
+fn a_channel_refuses_reversed_ports_and_incompatible_carries() {
+    let reversed = connection_protocol(
+        "channel Feed from Inlet to Outlet via Link carries M::Flow ordering unordered \
+         delivery exactly-once-premise capacity 2 overflow reject;",
+    );
+    let refusals = check_connection_protocol(&reversed).unwrap_err();
+    assert!(refusals.iter().any(|refusal| matches!(
+        &refusal.cause,
+        CheckCause::ProtocolAnchor(cause)
+            if matches!(cause.as_ref(), ProtocolAnchorCause::ChannelConnectionEnds { .. })
+    )));
+
+    let incompatible = connection_protocol(
+        "channel Feed from Outlet to Inlet via Link carries M::Note ordering unordered \
+         delivery exactly-once-premise capacity 2 overflow reject;",
+    );
+    let refusals = check_connection_protocol(&incompatible).unwrap_err();
+    assert!(refusals.iter().any(|refusal| matches!(
+        &refusal.cause,
+        CheckCause::ProtocolAnchor(cause)
+            if matches!(cause.as_ref(), ProtocolAnchorCause::ChannelConnectionCarries { .. })
+    )));
+}
+
+/// FR-897-AC-2/AC-3: `via` resolves only protocol relationship members, the
+/// relationship must be a Connection, and both channel roles must bind to
+/// Ports.
+#[trace("FR-897-AC-2", "FR-897-AC-3", "TC-2533")]
+#[test]
+fn a_channel_refuses_missing_connections_navigation_relationships_and_non_port_roles() {
+    let missing = connection_protocol(
+        "channel Feed from Outlet to Inlet via Missing carries M::Flow ordering unordered \
+         delivery exactly-once-premise capacity 2 overflow reject;",
+    );
+    let refusals = check_connection_protocol(&missing).unwrap_err();
+    assert!(refusals.iter().any(|refusal| matches!(
+        &refusal.cause,
+        CheckCause::ProtocolAnchor(cause)
+            if matches!(cause.as_ref(), ProtocolAnchorCause::MissingChannelConnection { .. })
+    )));
+
+    let navigation = connection_protocol(
+        "channel Feed from Outlet to Inlet via Pipe carries M::Flow ordering unordered \
+         delivery exactly-once-premise capacity 2 overflow reject;",
+    )
+    .replace(
+        "relationship Link = M::link;",
+        "relationship Link = M::link;\nrelationship Pipe = M::pipe;",
+    );
+    let refusals = check_connection_protocol(&navigation).unwrap_err();
+    assert!(refusals.iter().any(|refusal| matches!(
+        &refusal.cause,
+        CheckCause::ProtocolAnchor(cause)
+            if matches!(cause.as_ref(), ProtocolAnchorCause::ChannelConnectionExport { required: "connection", actual: "relationship", .. })
+    )));
+
+    let component_role = connection_protocol(
+        "channel Feed from Outlet to Inlet via Link carries M::Flow ordering unordered \
+         delivery exactly-once-premise capacity 2 overflow reject;",
+    )
+    .replace("role Outlet on M::pump_out;", "role Outlet on M::Sys;");
+    let refusals = check_connection_protocol(&component_role).unwrap_err();
+    assert!(refusals.iter().any(|refusal| matches!(
+        &refusal.cause,
+        CheckCause::ProtocolAnchor(cause)
+            if matches!(cause.as_ref(), ProtocolAnchorCause::ChannelPortRole { role, .. } if role == "Outlet")
+    )));
+}
+
+/// FR-897-AC-5: a Connection cannot be used by `related by`, and it does not
+/// become a role binding target.
+#[trace("FR-897-AC-5", "TC-2533")]
+#[test]
+fn a_connection_relates_no_values_and_cannot_bind_a_role() {
+    let related = connection_protocol(
+        "channel Feed from Outlet to Inlet via Link carries M::Flow ordering unordered \
+         delivery exactly-once-premise capacity 2 overflow reject;",
+    )
+    .replace(
+        "run sequence Main { }",
+        "run sequence Main { send Sent via Feed as (sent: M::Flow) { true }; \
+         receive Got via Feed of Main::Sent as (got: M::Flow) related by Link (sent, got) { true }; }",
+    );
+    let refusals = check_connection_protocol(&related).unwrap_err();
+    assert!(refusals.iter().any(|refusal| matches!(
+        &refusal.cause,
+        CheckCause::ProtocolAnchor(cause)
+            if matches!(cause.as_ref(), ProtocolAnchorCause::RelatedConnection { message, .. } if *message == "a connection relates ports, not values; bind it to a channel with via")
+    )));
+
+    let role_on_connection = connection_protocol(
+        "channel Feed from Outlet to Inlet via Link carries M::Flow ordering unordered \
+         delivery exactly-once-premise capacity 2 overflow reject;",
+    )
+    .replace("role Outlet on M::pump_out;", "role Outlet on M::link;");
+    assert!(check_connection_protocol(&role_on_connection).is_err());
 }
 
 /// TC-1056's base protocol `Pipeline` with the `members` written before

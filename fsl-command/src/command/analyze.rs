@@ -127,6 +127,7 @@ fn read<'d>(
             programs: request.libraries.len().saturating_add(1),
             models: request.models.len(),
             observations: request.documents.len(),
+            extensions: 0,
         },
         dependent_bytes,
     )?;
@@ -166,6 +167,27 @@ fn read<'d>(
             ));
         }
     }
+    for (position, recording) in request
+        .items
+        .iter()
+        .flatten()
+        .enumerate()
+        .filter_map(|(position, item)| {
+            item.recording
+                .as_ref()
+                .map(|recording| (position, recording))
+        })
+    {
+        if !documents.contains_key(&recording.reference()) {
+            return Err(invalid(
+                "items",
+                format!(
+                    "items[{position}].recording {{{}, {}}} names no provisioned document",
+                    recording.authority, recording.identity
+                ),
+            ));
+        }
+    }
     let mut limits = AnalyzeLimits::unbounded();
     let mut accounting = fsl_replay::AccountingLimits(limits.accounting);
     for (setting, bound) in request.limits.accounting.entries() {
@@ -197,6 +219,7 @@ fn read<'d>(
         },
         refinement_internals: request.refinement_internals,
         libraries: request.libraries,
+        extensions: Vec::new(),
         clocks: Default::default(),
         output: None,
         handoff: None,
@@ -298,7 +321,9 @@ pub fn analyze_with_providers_and_limits(
 ) -> std::result::Result<RunResult, Box<RunError>> {
     super::with_request_limits(path, limits.request_bytes, |directory, bytes| {
         let (input, mut intake) = read(directory, bytes, limits.dependent_bytes)?;
-        run_input(&mut intake, input, negotiate, providers, options, cancel)
+        let mut result = run_input(&mut intake, input, negotiate, providers, options, cancel)?;
+        result.sources = crate::Sources::from_sources(intake.sources.iter().cloned());
+        Ok(result)
     })
 }
 
@@ -348,6 +373,9 @@ fn run_input(
         intake,
         sources,
         false,
+        fsl_replay::spine::SpineLimits::default(),
+        None,
+        None,
         |checked, _, _, packages, libraries, _, _, _, _| {
             let package = checked.package();
             let mut provision = SourceProvision::default();
@@ -385,6 +413,7 @@ fn run_input(
                     value: NativeResult::analyze_document(document),
                     outcome: None,
                     requirements: None,
+                    sources: crate::Sources::default(),
                 }),
                 Err(AnalyzeDocumentError::Refused(refusal)) => {
                     Err(RunCause::AnalyzeRefused(Box::new(refusal)))
@@ -461,6 +490,7 @@ fn admit_package(
             programs: 1,
             models: request.models.len(),
             observations: request.documents.len(),
+            extensions: 0,
         },
         dependent_bytes,
     )?;

@@ -97,12 +97,22 @@ fn compile(
     declarations: &str,
     aliases: &[&str],
 ) -> Result<Emission, Vec<CheckRefusal>> {
+    compile_in_mode(CheckMode::Linked, document, declarations, aliases)
+}
+
+/// [`compile`] under the requested check `mode`.
+fn compile_in_mode(
+    mode: CheckMode,
+    document: &[u8],
+    declarations: &str,
+    aliases: &[&str],
+) -> Result<Emission, Vec<CheckRefusal>> {
     let packages = fsl_semantics::model::intake::package_input([document]).unwrap();
     let mut assembled = assemble_with_models(unit(declarations, aliases).as_bytes(), &packages)
         .expect("the unit assembles");
     let pending = assembled.link_dispatch(Default::default())?;
     let graph = assembled
-        .check(CheckMode::Linked, CheckingLimits::default())
+        .check(mode, CheckingLimits::default())
         .map_err(|refusals| pending.report(refusals))?;
     Ok(emit_checked(&CheckedPackage::link(graph)).expect("the package emits"))
 }
@@ -477,3 +487,50 @@ fn a_body_on_an_operation_without_a_result_refuses_type_mismatch() {
     ));
     function(body_of(&with_body, "ConfigVersion", "touch"));
 }
+
+/// FR-952-AC-1: under `Kernel` an operation's `body` clause function records
+/// `kernel`, the mode its body was checked under, on the wire.
+#[trace("TC-2662", "FR-952-AC-1")]
+#[test]
+fn under_kernel_an_operation_body_clause_records_kernel() {
+    let document = package(base_operations(), &[]);
+    let declarations = "body sizeA using v on Config::ConfigVersion::size() { 41 }\n";
+    let emission = compile_in_mode(CheckMode::Kernel, &document, declarations, &["Config"])
+        .unwrap_or_else(|refusals| panic!("the unit checks under Kernel: {refusals:?}"));
+    let id = function(body_of(&rows(&emission), "ConfigVersion", "size"));
+    assert_eq!(node_of(&wire(&emission), &id)["check_mode"], "kernel");
+}
+
+/// FR-952-AC-1, FR-094: under `Kernel` the declared `precondition` clause
+/// function of an operation is checked and recorded `linked`, while the
+/// operation's `body` clause function is `kernel`.
+#[trace("TC-2662", "FR-952-AC-1")]
+#[test]
+fn under_kernel_a_precondition_clause_function_is_linked_and_a_body_is_kernel() {
+    let document = package(base_operations(), &[]);
+    let declarations = format!(
+        "body sizeA using v on Config::ConfigVersion::size() {{ 41 }}\n\
+         pre ps using v on Config::ConfigVersion::size {{ true }}\n{CALLED}"
+    );
+    let packages = fsl_semantics::model::intake::package_input([document.as_slice()]).unwrap();
+    let mut assembled = assemble_with_models(unit(&declarations, &["Config"]).as_bytes(), &packages)
+        .expect("the unit assembles");
+    let pending = assembled.link_dispatch(Default::default()).expect("links");
+    let graph = assembled
+        .check(CheckMode::Kernel, CheckingLimits::default())
+        .unwrap_or_else(|refusals| panic!("{:?}", pending.report(refusals)));
+    let modes: Vec<_> = (0..)
+        .map_while(|index| graph.function_check_mode(index))
+        .collect();
+    assert!(modes.contains(&CheckMode::Kernel), "{modes:?}");
+    assert!(modes.contains(&CheckMode::Linked), "{modes:?}");
+    let emission = emit_checked(&CheckedPackage::link(graph)).expect("the package emits");
+    let modes: Vec<_> = nodes(&wire(&emission))
+        .iter()
+        .filter(|node| node["node_tag"] == "function")
+        .map(|node| node["check_mode"].clone())
+        .collect();
+    assert!(modes.contains(&json!("kernel")), "{modes:?}");
+    assert!(modes.contains(&json!("linked")), "{modes:?}");
+}
+

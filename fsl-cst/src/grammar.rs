@@ -269,6 +269,12 @@ pub(super) fn complete_reserved_words(
     for rule in grammar.values() {
         collect(rule, &mut output);
     }
+    // These three collection constructors are `Literal` terminals so their
+    // spelling can be recognized in a value position, but they are reserved
+    // throughout the complete grammar just like the `Exact` keywords above.
+    for spelling in ["set", "bag", "orderedSet"] {
+        output.insert(spelling);
+    }
     output
 }
 
@@ -501,6 +507,15 @@ fn source_and_types(g: &mut Grammar) {
             ]),
             s(vec![x("Option"), x("<"), r(P::TypeReference), x(">")]),
             s(vec![
+                x("Map"),
+                x("<"),
+                r(P::TypeReference),
+                x(","),
+                r(P::TypeReference),
+                x(">"),
+                opt(s(vec![x("["), uint(), x(","), uint(), x("]")])),
+            ]),
+            s(vec![
                 c(vec![x("Sequence"), x("Set"), x("Bag"), x("OrderedSet")]),
                 x("<"),
                 r(P::TypeReference),
@@ -721,9 +736,9 @@ fn source_and_types(g: &mut Grammar) {
             ]),
         ]),
     );
-    // `body <label> using <alias> on <qualified-name> ( <ident>, ... ) <block>`
+    // `body <label> using <alias> on <qualified-name> ( [ <ident>, ... ] ) <block>`
     // (FSpec Complete-V1 `operation-body`): the label and the receiver-less
-    // parameter names are plain identifiers.
+    // parameter names are plain identifiers; the parameter list may be empty.
     g.insert(
         P::OperationBody,
         s(vec![
@@ -870,6 +885,7 @@ fn expressions(g: &mut Grammar) {
             s(vec![
                 x("let"),
                 ident(),
+                opt(s(vec![x(":"), r(P::TypeReference)])),
                 x("="),
                 r(P::Expression),
                 x("in"),
@@ -1870,7 +1886,7 @@ fn temporal(g: &mut Grammar) {
         s(vec![
             r(P::AggregateTerm),
             c(vec![x("<"), x("<="), x("="), x(">="), x(">")]),
-            r(P::Expression),
+            r(P::Sum),
         ]),
     );
     g.insert(
@@ -2006,6 +2022,7 @@ fn protocol(g: &mut Grammar) {
             ident(),
             x("to"),
             ident(),
+            opt(s(vec![x("via"), ident()])),
             x("carries"),
             r(P::TypeReference),
             x("ordering"),
@@ -2166,7 +2183,7 @@ fn protocol(g: &mut Grammar) {
             x("join"),
             r(P::JoinPolicy),
             x("["),
-            opt(list(ident)),
+            list(ident),
             x("]"),
             opt(s(vec![
                 x("outstanding"),
@@ -2613,7 +2630,7 @@ fn analysis(g: &mut Grammar) {
             literal("align"),
             literal("skip"),
             x("{"),
-            opt(list(|| r(P::QualifiedName))),
+            list(|| r(P::QualifiedName)),
             x("}"),
         ]),
     );
@@ -2983,8 +3000,6 @@ fn probabilistic(g: &mut Grammar) {
                 bound_op(),
                 // Parse a full expression first: an exact-value prefix such
                 // as `5` must not steal a quantity expression such as `5 ms`.
-                // The exact-value alternative still admits bare decimal
-                // thresholds that are not general primaries yet.
                 c(vec![r(P::Expression), r(P::ExactValue)]),
             ]),
         ]),
@@ -3233,7 +3248,7 @@ mod tests {
     use ix_trace_rs::trace;
 
     use super::{complete_compound_spellings, complete_reserved_words, complete_v1};
-    use crate::{parse, Limits};
+    use crate::{Limits, parse};
     use fsl_foundation::SourceIdentity;
 
     #[trace("FSpec-TC-180", "FSpec-FR-339-AC-1", "FSpec-FR-302-AC-1")]

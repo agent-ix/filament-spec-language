@@ -975,6 +975,21 @@ pub fn channel_endpoints(
     })
 }
 
+/// The systems Connection a channel traverses, when its node carries the
+/// optional `connection` reference (FSpec FR-738, FSL FR-897).
+///
+/// # Errors
+///
+/// [`ViewRefusal::MalformedMember`] naming `connection` when that argument
+/// exists but is not a reference.
+pub fn channel_connection(
+    channel: &CheckedSemanticNodeV2,
+) -> Result<Option<&CheckedNodeId>, ViewRefusal> {
+    argument(channel, "connection")
+        .map(|term| reference(term).ok_or_else(|| malformed(&channel.node_id, "connection")))
+        .transpose()
+}
+
 /// A queue's capacity (FSpec FR-465 "Queue").
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum QueueCapacity<'n> {
@@ -1075,6 +1090,31 @@ pub fn clause_activation(clause: &CheckedSemanticNodeV2) -> Result<ClauseActivat
         .and_then(text)
         .and_then(ClauseActivation::from_wire)
         .ok_or_else(|| malformed(&clause.node_id, "activation"))
+}
+
+/// The trigger binder of an `on each` protocol clause, or `None` for
+/// `on origin`.
+///
+/// # Errors
+///
+/// [`ViewRefusal`] when the clause is unknown or its checked activation is
+/// malformed.
+pub fn clause_activation_trigger(
+    package: &CheckedPackageV2,
+    clause: &CheckedNodeId,
+) -> Result<Option<CheckedNodeId>, ViewRefusal> {
+    let index = Index::new(package);
+    let clause_node = index.clause(clause)?;
+    let activation = required(clause_node, "activation")?;
+    match group_member(activation, "kind").and_then(text) {
+        Some("origin") => Ok(None),
+        Some("each") => group_member(activation, "trigger")
+            .and_then(reference)
+            .cloned()
+            .map(Some)
+            .ok_or_else(|| malformed(clause, "activation.trigger")),
+        _ => Err(malformed(clause, "activation")),
+    }
 }
 
 /// The key of a FIFO channel: the parameter that stands for a message and the
@@ -1236,6 +1276,24 @@ pub fn role_is_replicated(role: &CheckedSemanticNodeV2) -> Result<bool, ViewRefu
     Ok(!members(role, "replication", replication)?.is_empty())
 }
 
+/// The authored maximum of a replicated role, or `None` for a static role.
+///
+/// # Errors
+///
+/// [`ViewRefusal::MissingMember`] naming `replication` when the node has
+/// none, [`ViewRefusal::MalformedMember`] when its replication shape or
+/// maximum is malformed.
+pub fn role_replication_maximum(role: &CheckedSemanticNodeV2) -> Result<Option<u64>, ViewRefusal> {
+    let group = required(role, "replication")?;
+    if members(role, "replication", group)?.is_empty() {
+        return Ok(None);
+    }
+    let maximum = group_member(group, "max")
+        .and_then(integer)
+        .ok_or_else(|| malformed(&role.node_id, "replication.max"))?;
+    Ok(Some(maximum))
+}
+
 /// A `parallel` control's join policy (FSpec FR-466 "parallel").
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum ParallelJoinPolicy {
@@ -1279,6 +1337,10 @@ impl ParallelJoinPolicy {
 pub struct ParallelJoin<'n> {
     /// The join policy.
     pub policy: ParallelJoinPolicy,
+    /// The minimum number of finished branches for `quorum`.
+    pub quorum: Option<u64>,
+    /// The function used by `predicate`.
+    pub predicate: Option<&'n CheckedNodeId>,
     /// The branch labels the join awaits, in ascending label order.
     pub joined: Vec<&'n str>,
     /// The `outstanding` policy word when written.
@@ -1355,10 +1417,19 @@ pub fn control_body(node: &CheckedSemanticNodeV2) -> Result<ControlBody<'_>, Vie
                     Some(text(word).ok_or_else(|| malformed(&node.node_id, "outstanding"))?)
                 }
             };
+            let quorum = group_member(join, "count").and_then(integer);
+            let predicate = group_member(join, "predicate").and_then(reference);
+            if (policy == ParallelJoinPolicy::Quorum && quorum.is_none())
+                || (policy == ParallelJoinPolicy::Predicate && predicate.is_none())
+            {
+                return Err(malformed(&node.node_id, "join"));
+            }
             ControlBody::Parallel {
                 branches: records(node, "branches")?,
                 join: ParallelJoin {
                     policy,
+                    quorum,
+                    predicate,
                     joined: group_texts(node, "joined")?,
                     outstanding,
                 },

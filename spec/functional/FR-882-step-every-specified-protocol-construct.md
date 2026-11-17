@@ -111,8 +111,9 @@ kind of construct elsewhere:
 - a footprint that cannot be derived is over-approximated by the frame, as
   FR-155 already does for frame enforcement.
 
-Apart from a channel whose capacity is given only by name, which is stepped
-by the symbolic-capacity rule of FR-218-AC-13, two stepper causes remain.
+A channel whose capacity is given by name steps at the protocol subject's
+bound value and, with no binding, requires a bound before any state is
+explored (FSpec FR-785); it is no stepper cause. Two stepper causes remain.
 Each one names a limit that a request or a model sets, not a missing design:
 
 - `UnenumerableRecord`: a binder type with no finite domain;
@@ -123,12 +124,12 @@ Each one names a limit that a request or a model sets, not a missing design:
 | ID | Criteria | Verification |
 |----|----------|--------------|
 | FR-882-AC-1 | Over a protocol whose last step is `finish` and which holds a compensation template activated under `on each`, the reachable states hold `finish` steps and one compensation thread per activation (ADR-027 §7.1's `Pay` under `on each` with triggers 0 and 1), and no checked control has an unstepped class. | Test (TC-2505) |
-| FR-882-AC-2 | A `choice` guard that divides by a protocol capture equal to 0 at the first state ends the deadlock-freedom check with `UndefinedEvaluation` at the `choice`, settled `refuted` with an empty-prefix counterexample under `origin` and an `activate`-only prefix under `each`, never `unsupported`. | Test (TC-2505) |
+| FR-882-AC-2 | A `choice` guard that calls a Kernel-checked function whose body divides by a protocol capture equal to 0 at the first state (a capture `c` bound to `0`, the guard calling `q(c)` for `function q using v(x: Integer): Integer pure { 6 mod x }`) ends the deadlock-freedom check with `UndefinedEvaluation` at the `choice`, settled `refuted` with an empty-prefix counterexample under `origin` and an `activate`-only prefix under `each`, never `unsupported`. The division sits in the function body because a bare `6 mod (1 - 1)` in a capture is refused `Unproved(Nonzero)` at S3 under Linked before stepping (FR-495-AC-3), so the body is Kernel-checked (FR-952) and its function node records `check_mode: kernel` (FR-098-AC-34). | Test (TC-2505) |
 | FR-882-AC-3 | A protocol `over (n: Int[0, 3]) on origin` has four initial instances, one per value. A `check` that reads `n > 1` is passed by two of them and blocks two, so deadlock freedom is refuted with the instance `n = 0` as the first counterexample. A protocol over `Boolean` has two initial instances. | Test (TC-2506) |
 | FR-882-AC-4 | An attempt binder of type `Boolean` over an operation that returns `Integer`, and one over an operation that returns nothing, each refuse at S3 with `ill_typed`/`type-mismatch` at the binder, retaining `expected` and `actual`. The same binder over an operation that returns `Boolean` checks and is bound by each `attempt` step. | Test (TC-2506) |
 | FR-882-AC-5 | Under a `tso` `parallel`, an attempt whose operation body defeats footprint derivation is classified over its frame and contract reads. The protocol explores, and the access class equals the one obtained from a hand-written footprint of the same locations. | Test (TC-2506) |
 | FR-882-AC-6 | A post-test `repeat` (FR-880-AC-8), a `terminal when` that reads `over` under `on each` (FR-880-AC-6) and a protocol over `Option<M::Order>` each explore to a settled deadlock-freedom result. The post-test `repeat`'s first body step is enabled at its entry with no guard read. | Test (TC-2506) |
-| FR-882-AC-7 | Over a corpus holding one minimal protocol for each construct FR-218 admits, every protocol explores to a result. Apart from symbolic capacity, the only stepper refusals in the corpus are `UnenumerableRecord`, for a unit whose binder type has a text field, and `WeakMemory`, for a unit whose resolved model the system does not implement. | Test (TC-2505) |
+| FR-882-AC-7 | Over a corpus holding one minimal protocol for each construct FR-218 admits, every protocol explores to a result. The only stepper refusals in the corpus are `UnenumerableRecord`, for a unit whose binder type has a text field, and `WeakMemory`, for a unit whose resolved model the system does not implement. | Test (TC-2505) |
 | FR-882-AC-8 | Where `Other`'s terminal obligation holds from its subject's initial states, `check Gate { protocol Other }` in `Flow` passes at every state and `Flow`'s deadlock freedom is proved; where it is refuted there, the `check` blocks at every state and deadlock freedom is refuted at `Gate`. Changing the model state `Flow` has reached before `Gate` does not change the value. A self-reference `while { protocol Flow }` settles `refuted` with `UndefinedEvaluation` at the guard, never `unsupported` and never a non-terminating run. A `send` constraint and a capture that hold `protocol Other` read the same value as the `check`. | Test (TC-2505) |
 
 ## Dependencies

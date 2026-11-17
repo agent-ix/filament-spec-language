@@ -10,6 +10,7 @@ use fsl_foundation::selection::DefinitionRef;
 use fsl_semantics::family::{classify_extent_at, ClaimExtent, ClassifyFailure, UnboundedDomains};
 
 use crate::simulation::key::EncodingRefusal;
+use crate::simulation::protocol::UnboundCapacity;
 
 /// The type positions the requires-bound pre-check visits at most, for every
 /// caller that classifies a subject's roots: the model check, the closure
@@ -23,6 +24,9 @@ pub const BOUND_POSITIONS: u64 = 1 << 20;
 pub struct RequiresBound {
     /// The request's unbounded domains.
     pub domains: UnboundedDomains,
+    /// FSpec FR-785: the capacity names a protocol subject's binding leaves
+    /// unbound, reported with the domains; empty for any other subject.
+    pub capacities: Vec<UnboundCapacity>,
 }
 
 /// Why `explore_request` or `sample_request` returned before exploring or
@@ -33,6 +37,11 @@ pub enum NotSimulated {
     /// method was called.
     #[error("the request has an unbounded domain and requires a proof bound")]
     RequiresBound(RequiresBound),
+    /// FSpec FR-785: a protocol subject's capacity binding leaves these
+    /// capacity names unbound, so the item requires a bound before any
+    /// state is explored. No `TransitionSystem` method was called.
+    #[error("the protocol subject leaves a symbolic capacity unbound and requires a bound")]
+    UnboundCapacity(Vec<UnboundCapacity>),
     /// `classify_extent` stopped: a node-count stage limit or an internal
     /// fault. Neither `RequiresBound` nor an exploration.
     #[error("the request's extent could not be classified: {0:?}")]
@@ -79,7 +88,7 @@ impl NotSimulated {
     /// inventing a third code for `Extent` itself.
     pub fn catalog_code(&self) -> Option<CatalogCode> {
         match self {
-            Self::RequiresBound(_) => None,
+            Self::RequiresBound(_) | Self::UnboundCapacity(_) => None,
             Self::EmptyInitial
             | Self::KeyEncoding(EncodingRefusal::NoEncoding(_))
             | Self::GeneratorMismatch { .. } => {
@@ -107,6 +116,7 @@ impl NotSimulated {
             Self::Extent(ClassifyFailure::Limit(exceeded))
             | Self::KeyEncoding(EncodingRefusal::Limit(exceeded)) => exceeded.catalog_fields(),
             Self::RequiresBound(_)
+            | Self::UnboundCapacity(_)
             | Self::EmptyInitial
             | Self::KeyEncoding(
                 EncodingRefusal::NoEncoding(_) | EncodingRefusal::Allocation { .. },
@@ -167,9 +177,10 @@ pub(crate) fn check_requires_bound<R: Root>(
         .collect();
     match classify_extent_at(&rooted, types, position_limit) {
         Ok(ClaimExtent::Bounded) => Ok(()),
-        Ok(ClaimExtent::Unbounded(domains)) => {
-            Err(NotSimulated::RequiresBound(RequiresBound { domains }))
-        }
+        Ok(ClaimExtent::Unbounded(domains)) => Err(NotSimulated::RequiresBound(RequiresBound {
+            domains,
+            capacities: Vec::new(),
+        })),
         Err(failure) => Err(NotSimulated::Extent(failure)),
     }
 }

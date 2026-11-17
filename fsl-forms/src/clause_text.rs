@@ -20,7 +20,7 @@ pub enum ClauseTextRefusal {
     /// S1 refused the text, or read it with a diagnostic.
     Source(Box<CompleteDiagnostic>),
     /// S2 refused the parsed text.
-    Forms(FormsRefusal),
+    Forms(Box<FormsRefusal>),
     /// The text closed the wrapping clause early and declared more, or
     /// declared nothing: it is not one expression.
     NotOneExpression,
@@ -41,7 +41,8 @@ pub fn parse_clause_text(text: &str, limits: Limits) -> Result<Expression, Claus
         limits,
     )
     .map_err(ClauseTextRefusal::Source)?;
-    let built = build_unit(&parsed).map_err(ClauseTextRefusal::Forms)?;
+    let built =
+        build_unit(&parsed).map_err(|refusal| ClauseTextRefusal::Forms(Box::new(refusal)))?;
     let (_, forms) = built.into_parts();
     let mut forms = forms.into_iter();
     match (forms.next(), forms.next()) {
@@ -70,7 +71,8 @@ pub fn parse_type_text(text: &str) -> Result<TypeForm, ClauseTextRefusal> {
         Limits::default(),
     )
     .map_err(ClauseTextRefusal::Source)?;
-    let built = build_unit(&parsed).map_err(ClauseTextRefusal::Forms)?;
+    let built =
+        build_unit(&parsed).map_err(|refusal| ClauseTextRefusal::Forms(Box::new(refusal)))?;
     let (_, forms) = built.into_parts();
     let mut forms = forms.into_iter();
     match (forms.next(), forms.next()) {

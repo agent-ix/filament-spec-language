@@ -393,6 +393,32 @@ fn source_refusals(declarations: &str) -> Result<(), Vec<(Code, Option<String>)>
         })
 }
 
+/// FR-700-AC-1: the interval rule derives `[1, 81; 1, 81]` for `a * a`
+/// when `a` has rational bounds `[1, 9; 1, 9]`.
+#[trace("FR-700-AC-1", "TC-1906")]
+#[test]
+fn squaring_a_rational_checks_in_the_derived_range() {
+    let declarations = "function square using v(a: Rational[1, 9; 1, 9]): \
+        Rational[1, 81; 1, 81] pure { a * a }";
+    assert_eq!(source_refusals(declarations), Ok(()));
+}
+
+/// FR-700-AC-2: the same product refuses when the required numerator bound
+/// excludes one endpoint of the derived interval.
+#[trace("FR-700-AC-2", "TC-1906")]
+#[test]
+fn a_rational_product_refuses_when_its_derived_range_does_not_fit() {
+    let declarations = "function square using v(a: Rational[1, 9; 1, 9]): \
+        Rational[1, 80; 1, 81] pure { a * a }";
+    assert_eq!(
+        source_refusals(declarations),
+        Err(vec![(
+            Code::UndefinedExpression,
+            Some("unproved-range".to_owned()),
+        )])
+    );
+}
+
 /// FR-505-AC-9 (TC-1300 row 20): a source `Rational[..]` whose numerator
 /// bounds are inverted or whose denominator may be zero, as a function
 /// parameter type and as the carrier of `Quantity<m, ..>`, refuses

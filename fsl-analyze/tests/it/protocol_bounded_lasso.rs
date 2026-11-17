@@ -86,6 +86,7 @@ fn replay(
             protocol: "P".to_owned(),
             over: instance("c"),
             roles: subject.roles,
+            capacities: Vec::new(),
             memory: subject.memory,
             max_store_buffer: None,
             max_messages: None,

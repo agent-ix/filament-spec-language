@@ -7,6 +7,7 @@
 use std::collections::BTreeMap;
 
 use filament_checked::key::DeclarationKey;
+use filament_checked::node::NodeKind;
 use filament_exact::{
     CardinalityBound, CollectionKind, CollectionType, IntegerInterval, ValueType,
 };
@@ -197,27 +198,35 @@ fn a_non_boolean_condition_refuses_at_the_condition() {
     );
 }
 
-/// FR-139-AC-2 (TC-544 step 2): a `seq` in an invariant of `R::Ring` refuses
-/// `unsupported_construct`/`expression-form`; the `count(s in R::slots where
-/// s.ring = self)` FR-139 once refused there FR-391 now admits.
+/// FR-391-AC-10: a state-clause sequence lowers over its integer range, and a
+/// population count in the same position is admitted.
 #[trace("TC-544", "FR-139-AC-2", "FSpec-TC-311", "FSpec-FR-376-AC-4")]
 #[test]
-fn a_seq_in_an_invariant_refuses_as_an_expression_form() {
-    let found = refused(
+fn population_calls_in_clause_bodies_follow_the_ruling() {
+    let sequence = checked(
         "invariant Total using v on R::Ring at current { \
          size(seq(i in 0 .. 1: i)) = 2 }",
     );
-    let [refusal] = &found[..] else {
-        panic!(
-            "one refusal: {:?}",
-            found.iter().map(|r| &r.refusal).collect::<Vec<_>>()
-        );
+    let body = sequence
+        .graph
+        .state_clause("Total")
+        .expect("clause checks")
+        .body();
+    let sequences: Vec<_> = crate::relationship_navigation::descendants(body)
+        .into_iter()
+        .filter(|node| matches!(node.kind(), NodeKind::Seq { .. }))
+        .collect();
+    let [sequence] = sequences.as_slice() else {
+        panic!("the clause body contains the sequence form");
     };
     assert_eq!(
-        (refusal.refusal.cause.code(), refusal.refusal.cause.cause()),
-        (Code::UnsupportedConstruct, Some("expression-form"))
+        sequence.value_type(),
+        &ValueType::collection(CollectionType::new(
+            CollectionKind::Sequence,
+            interval(0, 1),
+            Some(CardinalityBound::new(0, 2).expect("bound")),
+        ))
     );
-    assert_eq!(refusal.at, "seq(i in 0 .. 1: i)");
     // `s.ring = self` compares references, which needs the state-graph
     // layer that `filament.model.complete/v1` includes.
     checked(
@@ -330,25 +339,18 @@ fn a_sum_records_its_bound_and_is_checked_at_admission() {
     )));
 }
 
-/// FR-139 with FR-391: outside a refinement a population is no value in a
-/// state clause or a `holds` atom (`ill_typed`/`operator-ineligible`), names
-/// nothing in a function body (`missing_declaration`/`missing-name`), and
-/// `seq` refuses `unsupported_construct`/`expression-form` at its span.
+/// FR-139 with FR-391: a population is no value in a state clause or a
+/// `holds` atom (`ill_typed`/`operator-ineligible`), and names nothing in a
+/// function body (`missing_declaration`/`missing-name`).
 #[trace("TC-544", "FR-139-AC-2")]
 #[test]
-fn a_population_name_and_a_seq_outside_a_refinement_refuse() {
+fn a_population_name_outside_a_refinement_refuses() {
     for (declaration, at, code, cause) in [
         (
             "invariant Total using v on R::Ring at current { size(R::slots) = 2 }",
             "R::slots",
             Code::IllTyped,
             "operator-ineligible",
-        ),
-        (
-            "invariant Total using v on R::Ring at current { size(seq(i in 0 .. 1: i)) = 2 }",
-            "seq(i in 0 .. 1: i)",
-            Code::UnsupportedConstruct,
-            "expression-form",
         ),
         (
             "temporal W using inf over (r: R::Ring) clock \"model-steps\" on origin \
@@ -375,4 +377,20 @@ fn a_population_name_and_a_seq_outside_a_refinement_refuse() {
         );
         assert_eq!(refusal.at, at);
     }
+}
+
+/// FR-391-AC-10: `seq` outside a population position refuses the named
+/// `unsupported_construct`/`expression-form` outcome.
+#[trace("TC-544", "FR-391")]
+#[test]
+fn a_population_call_in_a_function_body_still_refuses_expression_form() {
+    let found = refused("function f using v(): Sequence<Integer> pure { seq(i in 0 .. 1: i) }");
+    let [refusal] = &found[..] else {
+        panic!("one refusal for the function population call");
+    };
+    assert_eq!(
+        (refusal.refusal.cause.code(), refusal.refusal.cause.cause()),
+        (Code::UnsupportedConstruct, Some("expression-form"))
+    );
+    assert_eq!(refusal.at, "seq(i in 0 .. 1: i)");
 }

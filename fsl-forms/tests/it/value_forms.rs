@@ -88,6 +88,31 @@ fn function(form: &DeclarationForm) -> &FunctionDeclaration {
     }
 }
 
+/// FR-980-AC-1: S2 preserves a `let` annotation as a syntactic type form and
+/// leaves the unannotated form unchanged.
+#[trace("TC-2770", "FR-980-AC-1")]
+#[test]
+fn let_annotations_build_as_type_forms() {
+    let (_, annotated) = body("let x: Int[0,3] = y + 1 in x");
+    let ExprNode::Let {
+        annotation: Some(annotation),
+        ..
+    } = annotated.body.root_node()
+    else {
+        panic!("an annotated let must keep its declared type");
+    };
+    assert_eq!(annotation.head, TypeFormHead::Builtin(BuiltinType::Int));
+    assert_eq!(annotation.bounds, ["0", "3"]);
+
+    let (_, unannotated) = body("let x = y + 1 in x");
+    let ExprNode::Let {
+        annotation: None, ..
+    } = unannotated.body.root_node()
+    else {
+        panic!("an unannotated let must have no declared type");
+    };
+}
+
 /// The body of `function f using v(): Boolean pure { <body> }`.
 fn body(body: &str) -> (String, FunctionDeclaration) {
     let (text, unit) = build(&format!("function f using v(): Boolean pure {{ {body} }}"));
@@ -99,6 +124,42 @@ fn refusal(declarations: &str) -> (String, FormsCause, Option<Span>) {
     match build_unit(&parsed) {
         Err(refusal) => (text, refusal.cause, refusal.span),
         other => panic!("{declarations}: a refusal, not {other:?}"),
+    }
+}
+
+/// Provenance: QSL-2006.
+#[trace("TC-113", "FR-035-AC-7")]
+#[test]
+fn collection_constructor_names_never_reach_an_invalid_forms_shape() {
+    for name in ["set", "bag", "orderedSet"] {
+        for declaration in [
+            format!("function f using v({name}: Integer): Boolean pure {{ true }}"),
+            format!("function f using v(x: Integer): Boolean pure {{ let {name} = x in true }}"),
+        ] {
+            let (text, parsed) = parse(&declaration);
+            assert!(!parsed.is_admissible(), "{text}");
+            let [diagnostic] = parsed.diagnostics() else {
+                panic!("one refusal for {text}: {:?}", parsed.diagnostics());
+            };
+            assert_eq!(
+                diagnostic.code,
+                fsl_cst::CompleteCode::InvalidSyntax,
+                "{text}"
+            );
+            assert!(diagnostic.message.contains(name), "{text}: {diagnostic:?}");
+            assert!(
+                build_unit(&parsed).is_err(),
+                "a refused source must not produce a forms tree: {text}"
+            );
+        }
+    }
+
+    for declaration in [
+        "function f using v(n: Integer, setting: Integer): Boolean pure { let ok = n in set[ok, setting] }",
+        "record R { values: Set<Integer>; }",
+    ] {
+        let (_, unit) = build(declaration);
+        assert!(!unit.forms().is_empty(), "{declaration}");
     }
 }
 
@@ -130,6 +191,7 @@ fn show(expression: ExprRef<'_>) -> String {
     let head = match expression.node() {
         ExprNode::Boolean(value) => format!("{value}"),
         ExprNode::Absent => "absent".into(),
+        ExprNode::Null => "null".into(),
         ExprNode::Integer(value) => format!("{value}"),
         ExprNode::Float32(bits) => format!("float32({bits:08x})"),
         ExprNode::Float64(bits) => format!("float64({bits:016x})"),
@@ -153,6 +215,7 @@ fn show(expression: ExprRef<'_>) -> String {
         ExprNode::Power { exponent, .. } => format!("Power[{exponent}]"),
         ExprNode::Not(_) => "Not".into(),
         ExprNode::Field { field, .. } => format!("Field[{field}]"),
+        ExprNode::Index { .. } => "Index".into(),
         ExprNode::Present(_) => "Present".into(),
         ExprNode::Value(_) => "Value".into(),
         ExprNode::Deref(_) => "Deref".into(),
@@ -197,7 +260,7 @@ fn show(expression: ExprRef<'_>) -> String {
             ..
         } => format!("Population[{form:?},{binder},{population}]"),
         ExprNode::Seq { binder, .. } => format!("Seq[{binder}]"),
-        ExprNode::Size(_) => "Size".into(),
+        ExprNode::Size { .. } => "Size".into(),
         ExprNode::Contains { .. } => "Contains".into(),
         ExprNode::AllInstances { target, .. } => match &target.head {
             TypeFormHead::Name(name) => format!("AllInstances[Name({:?})]", name.name),
@@ -220,6 +283,30 @@ fn show(expression: ExprRef<'_>) -> String {
         head
     } else {
         format!("{head}({})", children.join(", "))
+    }
+}
+
+#[trace("TC-1821", "FR-680-AC-2")]
+#[test]
+fn tuple_and_map_index_forms_preserve_operand_and_index() {
+    for expression in ["p[0]", "m[k]"] {
+        let (text, function) = body(&format!("{expression}"));
+        let root = function.body.root();
+        let ExprNode::Index { operand, index } = root.node() else {
+            panic!("{expression} did not build as an index: {:?}", root.node());
+        };
+        let ExprNode::Name(operand_name) = root.at(*operand).node() else {
+            panic!("{expression} operand is not a name");
+        };
+        assert_eq!(
+            operand_name.name,
+            if expression == "p[0]" { "p" } else { "m" }
+        );
+        assert!(matches!(
+            root.at(*index).node(),
+            ExprNode::Integer(_) | ExprNode::Name(_)
+        ));
+        assert!(text.contains(expression));
     }
 }
 
@@ -361,6 +448,13 @@ impl StartAnd for Span {
             end: self.start + length,
         }
     }
+}
+
+#[trace("TC-1820", "FR-680-AC-1")]
+#[test]
+fn a_bare_index_builds_a_form() {
+    let (_text, function) = body("s[0]");
+    assert_eq!(show(function.body.root()), "Index(s, 0)");
 }
 
 #[trace("FR-091-AC-3", "TC-394")]
@@ -587,7 +681,6 @@ fn a_construct_no_variant_represents_refuses_the_unit() {
             Production::Primary,
             "size<Int[0, 1]>(c)",
         ),
-        ("null", Production::Primary, "null"),
     ];
     for (source, production, construct) in cases {
         let (text, cause, span) = refusal(&format!(
@@ -604,6 +697,34 @@ fn a_construct_no_variant_represents_refuses_the_unit() {
         assert_eq!(cause.catalog_code(), Code::UnsupportedConstruct);
         assert_eq!(span, Some(span_of(&text, construct)), "{source}");
     }
+}
+
+#[trace("TC-2214", "FSpec-FR-143-AC-20", "FSpec-FR-986-AC-1")]
+#[test]
+fn null_expression_builds_as_its_own_form() {
+    let (_, unit) = build("function f using v(): Boolean pure { null }");
+    assert!(matches!(
+        function(unit.forms()[0].form()).body.root_node(),
+        ExprNode::Null
+    ));
+}
+
+#[trace("FSpec-FR-763-AC-1", "QSL-2174")]
+#[test]
+fn size_with_a_type_argument_builds_a_form_or_refuses_with_a_located_cause() {
+    let source = "size<Int[0, 1]>(c)";
+    let (text, cause, span) = refusal(&format!(
+        "function f using v(): Integer pure {{ {source} }}"
+    ));
+    assert!(matches!(
+        &cause,
+        FormsCause::UnrepresentedConstruct {
+            production: Production::Primary,
+            ..
+        }
+    ));
+    assert_eq!(cause.catalog_code(), Code::UnsupportedConstruct);
+    assert_eq!(span, Some(span_of(&text, source)));
 }
 
 /// FR-397-AC-20: bit-pattern literals retain their exact width and bits.
@@ -1734,10 +1855,9 @@ fn compound_quantity_type_products_remain_subject_to_the_existing_syntax_node_ce
     );
 }
 
-/// FR-091-AC-7 (second half) and FR-230 "Selection": the selectors of a clock
-/// place expression build as `Select` nodes, and the same unit with the
-/// function body `xs[0]` added refuses naming that `xs[0]` only.
-#[trace("FR-091-AC-7")]
+/// FR-091-AC-7 (second half), FR-230 "Selection", and FR-680: clock-place
+/// bracket selectors and ordinary indexed reads build as `Index` nodes.
+#[trace("FR-091-AC-7", "FR-680-AC-2")]
 #[test]
 fn a_selector_of_a_clock_place_expression_builds() {
     let clauses = "post A using v on M::Call::bump { self.ts[1].x = 0 ms }\n\
@@ -1746,7 +1866,7 @@ fn a_selector_of_a_clock_place_expression_builds() {
          pre D using v on M::Call::bump { ref(self.q[0]) = ref(self.q[1]) }\n";
     let (_, parsed) = admissible(clauses);
     let unit = build_unit(&parsed).expect("S2 builds the three place expressions");
-    let selects = unit
+    let indexes = unit
         .forms()
         .iter()
         .filter_map(|declaration| match declaration.form() {
@@ -1754,36 +1874,36 @@ fn a_selector_of_a_clock_place_expression_builds() {
             _ => None,
         })
         .flat_map(|clause| clause.body.iter().collect::<Vec<_>>())
-        .filter(|node| matches!(node.node(), ExprNode::Select { .. }))
+        .filter(|node| matches!(node.node(), ExprNode::Index { .. }))
         .count();
-    assert_eq!(selects, 5);
+    assert_eq!(indexes, 5);
 
     let with_function = format!("{clauses}function f using v(): Boolean pure {{ xs[0] }}\n");
-    let (text, cause, span) = refusal(&with_function);
+    let (_, built) = build(&with_function);
+    let indexed_function = built
+        .forms()
+        .iter()
+        .find_map(|form| match form.form() {
+            DeclarationForm::Function(function) => Some(function),
+            _ => None,
+        })
+        .expect("the function form builds");
     assert!(matches!(
-        &cause,
-        FormsCause::UnrepresentedConstruct {
-            production: Production::Postfix,
-            ..
-        }
+        indexed_function.body.root_node(),
+        ExprNode::Index { .. }
     ));
-    assert_eq!(span, Some(span_of(&text, "xs[0]")));
 }
 
-/// A selector builds only directly after a field access or another selector:
-/// after a call it is unrepresented, at the span through that selector.
-#[trace("FR-091-AC-7")]
+/// FR-680: indexing after a call also builds as an `Index` node.
+#[trace("FR-680-AC-2")]
 #[test]
-fn a_selector_after_a_call_is_refused_at_its_own_span() {
-    let (text, cause, span) = refusal("function f using v(): Boolean pure { self.ts[0].n()[1] }");
-    assert!(matches!(
-        &cause,
-        FormsCause::UnrepresentedConstruct {
-            production: Production::Postfix,
-            ..
-        }
-    ));
-    assert_eq!(span, Some(span_of(&text, "self.ts[0].n()[1]")));
+fn a_selector_after_a_call_builds_as_an_index() {
+    let (_, function) = body("self.ts[0].n()[1]");
+    let root = function.body.root();
+    let ExprNode::Index { operand, .. } = root.node() else {
+        panic!("index after a call builds as Index: {:?}", root.node());
+    };
+    assert!(matches!(root.at(*operand).node(), ExprNode::Dispatch { .. }));
 }
 
 /// FR-764-AC-2: a bare decimal literal builds the `DecimalValue` of the

@@ -9,12 +9,12 @@
 
 use filament_exact::ObjectReference;
 use filament_semantic_value::model_transition::ModelTransition;
-use fsl_semantics::check::AccessOrdering;
+use fsl_semantics::check::{AccessOrdering, ProtocolNodeId};
 use quire_canonical::{Encode, Error, Sink, Writer};
 
 use super::memory::{MemoryChoice, MemoryStepId};
 use super::race::{AccessRecord, DataRace};
-use crate::simulation::model::encode::{reference_enc, Enc};
+use crate::simulation::model::encode::{Enc, reference_enc};
 
 /// One step of a thread's path (FSpec FR-425): for a branch thread, the
 /// `parallel` that forked it, its branch label and the parallel instance's
@@ -174,6 +174,148 @@ impl ThreadPath {
     }
 }
 
+/// The occurrence that created one protocol message (FSpec FR-051 and FR-894).
+///
+/// Payload is deliberately absent: two sends of equal records remain distinct
+/// when they occur at different positions in a thread.
+#[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+pub struct MessageOccurrence {
+    instance: u64,
+    node: ProtocolNodeId,
+    path: ThreadPath,
+    ordinal: u64,
+}
+
+impl MessageOccurrence {
+    pub(crate) fn new(instance: u64, node: ProtocolNodeId, path: ThreadPath, ordinal: u64) -> Self {
+        Self {
+            instance,
+            node,
+            path,
+            ordinal,
+        }
+    }
+
+    /// The protocol instance that sent this message.
+    pub fn instance(&self) -> u64 {
+        self.instance
+    }
+
+    /// The send node's static declaration path.
+    pub fn node(&self) -> ProtocolNodeId {
+        self.node
+    }
+
+    /// The sending thread's path.
+    pub fn path(&self) -> &ThreadPath {
+        &self.path
+    }
+
+    /// This send node's occurrence ordinal on `path`.
+    pub fn ordinal(&self) -> u64 {
+        self.ordinal
+    }
+
+    pub(crate) fn enc(&self) -> Enc {
+        Enc::tagged(
+            "message-occurrence",
+            vec![
+                ("instance", Enc::text(self.instance.to_string())),
+                ("node", Enc::text(self.node.0.to_string())),
+                ("path", self.path.enc()),
+                ("ordinal", Enc::text(self.ordinal.to_string())),
+            ],
+        )
+    }
+}
+
+/// One copy of a message in a channel's delivery history (FSpec FR-058 and
+/// FR-894). A duplicate delivery has the same message and a fresh index.
+#[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+pub struct DeliveryIdentity {
+    message: MessageOccurrence,
+    index: u64,
+}
+
+impl DeliveryIdentity {
+    pub(crate) fn new(message: MessageOccurrence, index: u64) -> Self {
+        Self { message, index }
+    }
+
+    /// The message occurrence this delivery copies.
+    pub fn message(&self) -> &MessageOccurrence {
+        &self.message
+    }
+
+    /// The delivery index; the original is zero.
+    pub fn index(&self) -> u64 {
+        self.index
+    }
+
+    pub(crate) fn enc(&self) -> Enc {
+        Enc::tagged(
+            "delivery-identity",
+            vec![
+                ("message", self.message.enc()),
+                ("index", Enc::text(self.index.to_string())),
+            ],
+        )
+    }
+}
+
+/// The occurrence that established one business effect (FSpec FR-226 and
+/// FR-894). Payload values do not participate in this key.
+#[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+pub struct BusinessEffectOccurrence {
+    instance: u64,
+    node: ProtocolNodeId,
+    path: ThreadPath,
+    ordinal: u64,
+}
+
+impl BusinessEffectOccurrence {
+    pub(crate) fn new(instance: u64, node: ProtocolNodeId, path: ThreadPath, ordinal: u64) -> Self {
+        Self {
+            instance,
+            node,
+            path,
+            ordinal,
+        }
+    }
+
+    /// The protocol instance that established this effect.
+    pub fn instance(&self) -> u64 {
+        self.instance
+    }
+
+    /// The effect node's static declaration path.
+    pub fn node(&self) -> ProtocolNodeId {
+        self.node
+    }
+
+    /// The thread's path at the effect occurrence.
+    pub fn path(&self) -> &ThreadPath {
+        &self.path
+    }
+
+    /// This effect node's occurrence ordinal on `path`.
+    pub fn ordinal(&self) -> u64 {
+        self.ordinal
+    }
+
+    fn enc(&self) -> Enc {
+        Enc::tagged(
+            "business-effect-occurrence",
+            vec![
+                ("instance", Enc::text(self.instance.to_string())),
+                ("node", Enc::text(self.node.0.to_string())),
+                ("path", self.path.enc()),
+                ("ordinal", Enc::text(self.ordinal.to_string())),
+            ],
+        )
+    }
+}
+
 impl Encode for ThreadPath {
     fn encode_into<S: Sink + ?Sized>(&self, writer: &mut Writer<'_, S>) -> Result<(), Error> {
         self.enc().encode_into(writer)
@@ -261,6 +403,12 @@ pub enum StepKind {
     CAttempt,
     /// ST-12: the end of a compensation thread.
     CEnd,
+    /// ST-16: a compensation attempt that did not apply its operation.
+    CFail,
+    /// ST-17: a compensation attempt that timed out.
+    CTimeout,
+    /// ST-18: a compensation window expired.
+    CExpire,
     /// ST-13: the start of a protocol instance by a trigger record.
     Activate,
     /// ST-14: an object becomes an instance of a replicated role.
@@ -275,11 +423,14 @@ impl StepKind {
     /// (`event`, and `activate` for a trigger occurrence), a `send` or a
     /// `receive`. Every other step, `spawn`, `retire`, a `fence` and a memory
     /// step (a `flush` or a release/acquire choice) included, moves the
-    /// position and not the distance.
+    /// position and not the distance. Failed and timed-out compensation
+    /// attempts count as attempts too.
     pub const fn counts(self) -> bool {
         match self {
             Self::Attempt
             | Self::CAttempt
+            | Self::CFail
+            | Self::CTimeout
             | Self::Event
             | Self::Activate
             | Self::Send
@@ -293,6 +444,7 @@ impl StepKind {
             | Self::Memory
             | Self::Fence
             | Self::CEnd
+            | Self::CExpire
             | Self::Spawn
             | Self::Retire => false,
         }
@@ -314,6 +466,9 @@ impl StepKind {
             Self::Fence => "fence",
             Self::CAttempt => "cattempt",
             Self::CEnd => "cend",
+            Self::CFail => "cfail",
+            Self::CTimeout => "ctimeout",
+            Self::CExpire => "cexpire",
             Self::Activate => "activate",
             Self::Spawn => "spawn",
             Self::Retire => "retire",
@@ -337,7 +492,10 @@ enum Members {
     /// No further member.
     Control,
     /// `record`: the bound record or payload.
-    Record { record: Enc },
+    Record {
+        record: Enc,
+        recovery_summary: Option<String>,
+    },
     /// `channel` and `entry`, with the channel's qualified name and its
     /// protocol instance's ordinal that `channel` encodes.
     Channel {
@@ -367,6 +525,17 @@ enum Members {
         template: String,
         registration: RegistrationKey,
         record: Option<Enc>,
+    },
+    /// A failed or timed-out attempt, with its dispatched application and
+    /// bound attempt record.
+    COutcome {
+        application: ModelTransition,
+        operation: String,
+        receiver: Enc,
+        arguments: Vec<Enc>,
+        record: Enc,
+        template: String,
+        registration: RegistrationKey,
     },
     /// A `spawn` or `retire`: the `role`, the `object`'s reference and the
     /// `instance` ordinal of the protocol instance that owns the role
@@ -698,11 +867,14 @@ pub struct ProtocolTransition {
     send_record: Option<SendRecord>,
     memory: Option<CarriedComponent>,
     actor: Option<Actor>,
-    visibility_read: Option<VisibilityRead>,
-    access: Option<AccessRecord>,
+    visibility_reads: Vec<VisibilityRead>,
+    accesses: Vec<AccessRecord>,
     race: Option<DataRace>,
     children: Vec<ThreadPath>,
     flow: Option<QueueFlow>,
+    message: Option<MessageOccurrence>,
+    delivery: Option<DeliveryIdentity>,
+    business_effect: Option<BusinessEffectOccurrence>,
 }
 
 /// Resolver metadata for a shared RA load. It is deliberately outside the
@@ -739,11 +911,14 @@ impl ProtocolTransition {
             send_record: None,
             memory: None,
             actor: None,
-            visibility_read: None,
-            access: None,
+            visibility_reads: Vec::new(),
+            accesses: Vec::new(),
             race: None,
             children: Vec::new(),
             flow: None,
+            message: None,
+            delivery: None,
+            business_effect: None,
         }
     }
 
@@ -760,11 +935,14 @@ impl ProtocolTransition {
             send_record: None,
             memory: None,
             actor: None,
-            visibility_read: None,
-            access: None,
+            visibility_reads: Vec::new(),
+            accesses: Vec::new(),
             race: None,
             children: Vec::new(),
             flow: None,
+            message: None,
+            delivery: None,
+            business_effect: None,
         }
     }
 
@@ -791,11 +969,14 @@ impl ProtocolTransition {
             send_record: None,
             memory: None,
             actor: None,
-            visibility_read: None,
-            access: None,
+            visibility_reads: Vec::new(),
+            accesses: Vec::new(),
             race: None,
             children: Vec::new(),
             flow: None,
+            message: None,
+            delivery: None,
+            business_effect: None,
         }
     }
 
@@ -808,19 +989,19 @@ impl ProtocolTransition {
     }
 
     pub(crate) fn observing_visibility(mut self, read: VisibilityRead) -> Self {
-        self.visibility_read = Some(read);
+        self.visibility_reads.push(read);
         self
     }
 
-    pub(crate) fn visibility_read(&self) -> Option<&VisibilityRead> {
-        self.visibility_read.as_ref()
+    pub(crate) fn visibility_reads(&self) -> &[VisibilityRead] {
+        &self.visibility_reads
     }
 
     /// This attempt, having accessed a shared location of a weak `parallel`
     /// (ADR-025 DR-3). Like the memory component, it is no part of the
     /// identity.
     pub(crate) fn accessing(mut self, access: AccessRecord) -> Self {
-        self.access = Some(access);
+        self.accesses.push(access);
         self
     }
 
@@ -845,6 +1026,45 @@ impl ProtocolTransition {
         self
     }
 
+    pub(crate) fn identifying_message(mut self, message: MessageOccurrence) -> Self {
+        self.message = Some(message);
+        if matches!(&self.members, Members::Record { .. }) {
+            self.members = Members::Control;
+        }
+        self
+    }
+
+    pub(crate) fn identifying_delivery(mut self, delivery: DeliveryIdentity) -> Self {
+        self.delivery = Some(delivery);
+        if matches!(&self.members, Members::Record { .. }) {
+            self.members = Members::Control;
+        }
+        self
+    }
+
+    pub(crate) fn identifying_business_effect(mut self, effect: BusinessEffectOccurrence) -> Self {
+        self.business_effect = Some(effect);
+        if matches!(&self.members, Members::Record { .. }) {
+            self.members = Members::Control;
+        }
+        self
+    }
+
+    /// The occurrence identity of a `send` transition.
+    pub fn message(&self) -> Option<&MessageOccurrence> {
+        self.message.as_ref()
+    }
+
+    /// The delivery copied or received by this transition.
+    pub fn delivery(&self) -> Option<&DeliveryIdentity> {
+        self.delivery.as_ref()
+    }
+
+    /// The occurrence identity of an `effect` transition.
+    pub fn business_effect(&self) -> Option<&BusinessEffectOccurrence> {
+        self.business_effect.as_ref()
+    }
+
     /// The queued entries a `send`, `receive`, `duplicate` or `lose` moved;
     /// `None` for every other step.
     pub fn queue_flow(&self) -> Option<&QueueFlow> {
@@ -861,7 +1081,13 @@ impl ProtocolTransition {
     /// thread, location, direction and `ordering`. `None` for every other
     /// step.
     pub fn access(&self) -> Option<&AccessRecord> {
-        self.access.as_ref()
+        self.accesses.first()
+    }
+
+    /// The shared-location accesses an attempt takes in one multi-location
+    /// apply step; empty for every other transition.
+    pub fn accesses(&self) -> &[AccessRecord] {
+        &self.accesses
     }
 
     /// The data race this step completes (ADR-025 DR-4); `None` for an
@@ -884,18 +1110,43 @@ impl ProtocolTransition {
             kind,
             thread: Some(thread),
             node: Some(node),
-            members: Members::Record { record },
+            members: Members::Record {
+                record,
+                recovery_summary: None,
+            },
             binder_record: Some(value),
             removed: None,
             send_record: None,
             memory: None,
             actor: None,
-            visibility_read: None,
-            access: None,
+            visibility_reads: Vec::new(),
+            accesses: Vec::new(),
             race: None,
             children: Vec::new(),
             flow: None,
+            message: None,
+            delivery: None,
+            business_effect: None,
         }
+    }
+
+    /// The root `finish` step and the instance recovery summary it closes.
+    pub(crate) fn finish(
+        thread: ThreadPath,
+        node: String,
+        record: Enc,
+        value: filament_exact::Value,
+        recovery_summary: &str,
+    ) -> Self {
+        let mut transition = Self::record(StepKind::Finish, thread, node, record, value);
+        if let Members::Record {
+            recovery_summary: summary,
+            ..
+        } = &mut transition.members
+        {
+            *summary = Some(recovery_summary.to_owned());
+        }
+        transition
     }
 
     /// A channel step of `kind`, `duplicate` or `lose`, on the queue of the
@@ -916,11 +1167,14 @@ impl ProtocolTransition {
             send_record: None,
             memory: None,
             actor: None,
-            visibility_read: None,
-            access: None,
+            visibility_reads: Vec::new(),
+            accesses: Vec::new(),
             race: None,
             children: Vec::new(),
             flow: None,
+            message: None,
+            delivery: None,
+            business_effect: None,
         }
     }
 
@@ -953,11 +1207,14 @@ impl ProtocolTransition {
             send_record: None,
             memory: None,
             actor: None,
-            visibility_read: None,
-            access: None,
+            visibility_reads: Vec::new(),
+            accesses: Vec::new(),
             race: None,
             children: Vec::new(),
             flow: None,
+            message: None,
+            delivery: None,
+            business_effect: None,
         }
     }
 
@@ -986,11 +1243,83 @@ impl ProtocolTransition {
             send_record: None,
             memory: None,
             actor: None,
-            visibility_read: None,
-            access: None,
+            visibility_reads: Vec::new(),
+            accesses: Vec::new(),
             race: None,
             children: Vec::new(),
             flow: None,
+            message: None,
+            delivery: None,
+            business_effect: None,
+        }
+    }
+
+    /// `cexpire` removes the compensation thread and times out its
+    /// registration without evaluating recovery (ADR-027 ST-18).
+    pub(crate) fn c_expire(thread: ThreadPath, registration: RegistrationKey) -> Self {
+        Self {
+            kind: StepKind::CExpire,
+            thread: Some(thread),
+            node: None,
+            members: Members::CEnd {
+                template: registration.template.clone(),
+                registration,
+                record: None,
+            },
+            binder_record: None,
+            removed: None,
+            send_record: None,
+            memory: None,
+            actor: None,
+            visibility_reads: Vec::new(),
+            accesses: Vec::new(),
+            race: None,
+            children: Vec::new(),
+            flow: None,
+            message: None,
+            delivery: None,
+            business_effect: None,
+        }
+    }
+
+    /// A failed or timed-out compensation attempt, binding `record` but
+    /// leaving the model state unchanged (ADR-027 ST-16, ST-17).
+    pub(crate) fn c_outcome(
+        kind: StepKind,
+        thread: ThreadPath,
+        registration: RegistrationKey,
+        application: ModelTransition,
+        receiver: Enc,
+        arguments: Vec<Enc>,
+        record: (Enc, filament_exact::Value),
+    ) -> Self {
+        debug_assert!(matches!(kind, StepKind::CFail | StepKind::CTimeout));
+        Self {
+            kind,
+            thread: Some(thread),
+            node: None,
+            members: Members::COutcome {
+                operation: application.operation().to_owned(),
+                application,
+                receiver,
+                arguments,
+                record: record.0,
+                template: registration.template.clone(),
+                registration,
+            },
+            binder_record: Some(record.1),
+            removed: None,
+            send_record: None,
+            memory: None,
+            actor: None,
+            visibility_reads: Vec::new(),
+            accesses: Vec::new(),
+            race: None,
+            children: Vec::new(),
+            flow: None,
+            message: None,
+            delivery: None,
+            business_effect: None,
         }
     }
 
@@ -1005,11 +1334,14 @@ impl ProtocolTransition {
             send_record: None,
             memory: None,
             actor: None,
-            visibility_read: None,
-            access: None,
+            visibility_reads: Vec::new(),
+            accesses: Vec::new(),
             race: None,
             children: Vec::new(),
             flow: None,
+            message: None,
+            delivery: None,
+            business_effect: None,
         }
     }
 
@@ -1020,17 +1352,23 @@ impl ProtocolTransition {
             kind: StepKind::Activate,
             thread: None,
             node: None,
-            members: Members::Record { record },
+            members: Members::Record {
+                record,
+                recovery_summary: None,
+            },
             binder_record: None,
             removed: None,
             send_record: None,
             memory: None,
             actor: None,
-            visibility_read: None,
-            access: None,
+            visibility_reads: Vec::new(),
+            accesses: Vec::new(),
             race: None,
             children: Vec::new(),
             flow: None,
+            message: None,
+            delivery: None,
+            business_effect: None,
         }
     }
 
@@ -1056,11 +1394,14 @@ impl ProtocolTransition {
             send_record: None,
             memory: None,
             actor: None,
-            visibility_read: None,
-            access: None,
+            visibility_reads: Vec::new(),
+            accesses: Vec::new(),
             race: None,
             children: Vec::new(),
             flow: None,
+            message: None,
+            delivery: None,
+            business_effect: None,
         }
     }
 
@@ -1162,9 +1503,9 @@ impl ProtocolTransition {
     /// `memory` anchor naming it, and every other step's `protocol` anchor.
     pub fn anchor(&self) -> PositionAnchor<'_> {
         match &self.members {
-            Members::Attempt { operation, .. } | Members::CAttempt { operation, .. } => {
-                PositionAnchor::Operation(operation)
-            }
+            Members::Attempt { operation, .. }
+            | Members::CAttempt { operation, .. }
+            | Members::COutcome { operation, .. } => PositionAnchor::Operation(operation),
             Members::Memory { identity } => PositionAnchor::Memory(identity),
             Members::Channel { name, .. } => PositionAnchor::Protocol {
                 step: self.kind,
@@ -1191,6 +1532,18 @@ impl ProtocolTransition {
     /// The step's kind.
     pub fn kind(&self) -> StepKind {
         self.kind
+    }
+
+    /// The per-attempt compensation outcome named by this transition.
+    /// Aggregate recovery labels are carried by registration state and are
+    /// intentionally not inferred from a successful attempt.
+    pub fn compensation_outcome(&self) -> Option<&'static str> {
+        match self.kind {
+            StepKind::CAttempt => Some("successful"),
+            StepKind::CFail => Some("failed"),
+            StepKind::CTimeout => Some("timed-out"),
+            _ => None,
+        }
     }
 
     /// For a `fence`, its `ordering`.
@@ -1221,17 +1574,17 @@ impl ProtocolTransition {
         self.kind.counts()
     }
 
-    /// For a `cattempt` or `cend`, its template's qualified name.
+    /// For a compensation step, its template's qualified name.
     pub fn template(&self) -> Option<&str> {
         self.registration().map(|key| key.template.as_str())
     }
 
-    /// For a `cattempt` or `cend`, the registration its thread compensates.
+    /// For a compensation step, the registration its thread acts on.
     pub fn registration(&self) -> Option<&RegistrationKey> {
         match &self.members {
-            Members::CAttempt { registration, .. } | Members::CEnd { registration, .. } => {
-                Some(registration)
-            }
+            Members::CAttempt { registration, .. }
+            | Members::COutcome { registration, .. }
+            | Members::CEnd { registration, .. } => Some(registration),
             Members::Attempt { .. }
             | Members::Control
             | Members::Record { .. }
@@ -1248,18 +1601,18 @@ impl ProtocolTransition {
     }
 
     /// The node's static declaration path; `None` for a channel, memory,
-    /// `cattempt` or `cend` step.
+    /// compensation step.
     pub fn node(&self) -> Option<&str> {
         self.node.as_deref()
     }
 
-    /// For an `attempt` or a `cattempt`, the FR-120 transition identity of
-    /// the application it applied (ADR-027 TS-3).
+    /// For an `attempt`, `cattempt`, `cfail` or `ctimeout`, the FR-120
+    /// transition identity of the application it applied (ADR-027 TS-3).
     pub fn application(&self) -> Option<&ModelTransition> {
         match &self.members {
-            Members::Attempt { application, .. } | Members::CAttempt { application, .. } => {
-                Some(application)
-            }
+            Members::Attempt { application, .. }
+            | Members::CAttempt { application, .. }
+            | Members::COutcome { application, .. } => Some(application),
             Members::Control
             | Members::Record { .. }
             | Members::Channel { .. }
@@ -1270,8 +1623,8 @@ impl ProtocolTransition {
         }
     }
 
-    /// The typed binder record carried by an `event`, `send`, `receive`,
-    /// `finish` or recovery-view `cend` transition. Refinement rows compare
+    /// The typed binder record carried by an `event`, `send`, `receive`, a
+    /// compensation attempt, `finish` or recovery-view `cend` transition. Refinement rows compare
     /// their expressions with these admitted binder values; they do not
     /// infer a record from the transition's display identity.
     pub fn binder_record(&self) -> Option<&filament_exact::Value> {
@@ -1289,6 +1642,7 @@ impl ProtocolTransition {
             | Members::Fence { .. }
             | Members::Role { .. }
             | Members::CAttempt { .. }
+            | Members::COutcome { .. }
             | Members::CEnd { .. } => None,
         }
     }
@@ -1305,6 +1659,7 @@ impl ProtocolTransition {
             | Members::Fence { .. }
             | Members::Role { .. }
             | Members::CAttempt { .. }
+            | Members::COutcome { .. }
             | Members::CEnd { .. } => None,
         }
     }
@@ -1319,6 +1674,15 @@ impl ProtocolTransition {
         }
         if let Some(actor) = &self.actor {
             members.push(("actor", reference_enc(&actor.object)));
+        }
+        if let Some(message) = &self.message {
+            members.push(("message", message.enc()));
+        }
+        if let Some(delivery) = &self.delivery {
+            members.push(("delivery", delivery.enc()));
+        }
+        if let Some(effect) = &self.business_effect {
+            members.push(("business_effect", effect.enc()));
         }
         match &self.members {
             Members::Attempt {
@@ -1336,7 +1700,19 @@ impl ProtocolTransition {
                 }
             }
             Members::Control => {}
-            Members::Record { record } => members.push(("record", record.clone())),
+            Members::Record {
+                record,
+                recovery_summary,
+            } if self.message.is_none()
+                && self.delivery.is_none()
+                && self.business_effect.is_none() =>
+            {
+                members.push(("record", record.clone()));
+                if let Some(summary) = recovery_summary {
+                    members.push(("recovery_summary", Enc::text(summary.clone())));
+                }
+            }
+            Members::Record { .. } => {}
             Members::Channel {
                 name,
                 instance,
@@ -1359,6 +1735,22 @@ impl ProtocolTransition {
             }
             Members::Fence { ordering } => members.push(("ordering", Enc::text(ordering.label()))),
             Members::CAttempt {
+                operation,
+                receiver,
+                arguments,
+                record,
+                template,
+                registration,
+                ..
+            } => {
+                members.push(("operation", Enc::text(operation.clone())));
+                members.push(("receiver", receiver.clone()));
+                members.push(("arguments", Enc::Array(arguments.clone())));
+                members.push(("record", record.clone()));
+                members.push(("template", Enc::text(template.clone())));
+                members.push(("registration", registration.enc()));
+            }
+            Members::COutcome {
                 operation,
                 receiver,
                 arguments,
@@ -1406,6 +1798,9 @@ impl PartialEq for ProtocolTransition {
             && self.node == other.node
             && self.members == other.members
             && self.actor == other.actor
+            && self.message == other.message
+            && self.delivery == other.delivery
+            && self.business_effect == other.business_effect
     }
 }
 
@@ -1417,12 +1812,24 @@ impl Eq for ProtocolTransition {}
 /// of FR-101, which is the order of the identities' JCS bytes.
 impl Ord for ProtocolTransition {
     fn cmp(&self, other: &Self) -> std::cmp::Ordering {
-        (self.kind, &self.thread, &self.node, &self.members).cmp(&(
-            other.kind,
-            &other.thread,
-            &other.node,
-            &other.members,
-        ))
+        (
+            self.kind,
+            &self.thread,
+            &self.node,
+            &self.members,
+            &self.message,
+            &self.delivery,
+            &self.business_effect,
+        )
+            .cmp(&(
+                other.kind,
+                &other.thread,
+                &other.node,
+                &other.members,
+                &other.message,
+                &other.delivery,
+                &other.business_effect,
+            ))
     }
 }
 
@@ -1520,6 +1927,26 @@ pub struct BlockedThread {
     pub rest_point: RestPoint,
     /// Why it waits.
     pub cause: WaitCause,
+}
+
+#[cfg(test)]
+mod occurrence_identity_tests {
+    use super::{BusinessEffectOccurrence, MessageOccurrence, ThreadPath};
+    use fsl_semantics::check::ProtocolNodeId;
+
+    #[test]
+    fn distinct_static_nodes_keep_distinct_occurrences() {
+        let path = ThreadPath::root(3);
+        let first_message = MessageOccurrence::new(3, ProtocolNodeId(10), path.clone(), 0);
+        let second_message = MessageOccurrence::new(3, ProtocolNodeId(11), path.clone(), 0);
+        assert_ne!(first_message, second_message);
+        assert_ne!(first_message.enc(), second_message.enc());
+
+        let first_effect = BusinessEffectOccurrence::new(3, ProtocolNodeId(10), path.clone(), 0);
+        let second_effect = BusinessEffectOccurrence::new(3, ProtocolNodeId(11), path, 0);
+        assert_ne!(first_effect, second_effect);
+        assert_ne!(first_effect.enc(), second_effect.enc());
+    }
 }
 
 #[cfg(test)]

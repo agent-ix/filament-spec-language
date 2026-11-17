@@ -506,7 +506,7 @@ pub use refusal::{
     CheckingLimitKind, CheckingStage, ClockSelectionFault, DispatchFunctionRole, DispatchLinkCause,
     DispatchSubtypeFailure, ExcludedClauseForm, ExecutionPointRefusal, IdentityForm, IdentityNode,
     IdentityObserving, InvalidDispatchDeclaration, JoinFault, KeyFault, MeasureObligation,
-    MemberCandidate, NavigationBound, Obligation, ObservationReason, PredicateRole,
+    MemberCandidate, NavigationBound, Obligation, ObservationReason, OperandText, PredicateRole,
     ProtocolAnchorCause, ProtocolCheckRefusal, ProtocolConstruct, ProtocolReferenceCause,
     ProvedInterval, QualifiedCandidate, RefusedProtocolDependency, RelatedEnd, ShadowedDeclaration,
     SlotKind, StageLimitCause, StateGraphCause, TaskSetDefect, TaskTimeMember, TemporalCause,
@@ -801,6 +801,11 @@ pub struct CheckedGraph {
     /// FR-092/FR-093: every lowered, keyed node of this
     /// package's functions.
     semantic_graph: lowering::SemanticGraph,
+    /// FR-952: the mode each function (by declaration index) was checked
+    /// under (FR-495). A declared clause function (`invariant`,
+    /// `precondition`) is always checked under `Linked`; a function body,
+    /// an operation `body` clause function included, under the requested mode.
+    function_check_modes: BTreeMap<usize, CheckMode>,
     /// Producer-retained expression identities, owned by this graph rather
     /// than written into its borrowed checked bodies.
     checked_node_keys: BTreeMap<usize, lowering::CheckedNodeKeys>,
@@ -1072,6 +1077,7 @@ impl DebugWith for CheckedGraph {
             requirements,
             model_correspondence,
             type_nodes,
+            function_check_modes,
             semantic_graph,
             checked_node_keys: _,
             dependency_references,
@@ -1166,6 +1172,7 @@ impl DebugWith for CheckedGraph {
             .field("model_correspondence", &With(model_correspondence, table))
             .field("type_nodes", &NodeValueMap(type_nodes.iter(), table))
             .field("semantic_graph", &With(semantic_graph, table))
+            .field("function_check_modes", &function_check_modes)
             .field(
                 "dependency_references",
                 &dependency_references
@@ -1617,6 +1624,78 @@ impl CallableFunction<'_> {
 /// A family `check`'s stage limit as a checking refusal's cause (L6): `CheckingLimitKind::try_from(Setting)` is the named reverse of
 /// `CheckingLimitKind::setting`, and a setting no checking limit has is a
 /// fault in the family, not in the input.
+/// The unit precondition facts a clause may consume (FR-577). Context and
+/// operation identity both have to match, and operations in a redefinition
+/// family receive no transferred facts.
+fn clause_preconditions<'a>(
+    kind: fsl_forms::StateClauseKind,
+    context: &filament_exact::EffectiveId,
+    operation: Option<&filament_checked::key::DeclarationKey>,
+    redefinition_family: &BTreeSet<filament_checked::key::DeclarationKey>,
+    facts: &'a BTreeMap<
+        (
+            filament_exact::EffectiveId,
+            filament_checked::key::DeclarationKey,
+        ),
+        Vec<facts::CheckedFacts>,
+    >,
+) -> &'a [facts::CheckedFacts] {
+    match (kind, operation) {
+        (fsl_forms::StateClauseKind::Postcondition, Some(key))
+            if !redefinition_family.contains(key) =>
+        {
+            facts
+                .get(&(context.clone(), key.clone()))
+                .map_or(&[], Vec::as_slice)
+        }
+        _ => &[],
+    }
+}
+
+/// Every selected operation that either redefines another operation or is
+/// redefined by one, including the other end of each declared link.
+fn redefinition_family_keys(
+    models: &[crate::model::intake::SelectedModel],
+) -> BTreeSet<filament_checked::key::DeclarationKey> {
+    let mut family = BTreeSet::new();
+    for model in models {
+        for record in &model.view.domain_package().records {
+            if let crate::model::domain_package::DomainPackageRecord::OperationMember(operation) =
+                record
+            {
+                if let Some(redefined) = &operation.redefines {
+                    family.insert(operation.key.clone());
+                    family.insert(redefined.clone());
+                }
+            }
+        }
+    }
+    family
+}
+
+/// Restore refusal order after state clauses are checked with preconditions
+/// first. A stop preserves the source-order prefix that would have run.
+fn refusals_in_source_order<T>(
+    refusals: Vec<T>,
+    mut clause_refusals: Vec<(usize, std::ops::Range<usize>)>,
+    stopped_at: Option<usize>,
+) -> Vec<T> {
+    clause_refusals.sort_by_key(|(index, _)| *index);
+    let mut held: Vec<Option<T>> = refusals.into_iter().map(Some).collect();
+    let mut ordered = Vec::new();
+    for (index, range) in clause_refusals {
+        if stopped_at.is_some_and(|stopped| index > stopped) {
+            continue;
+        }
+        ordered.extend(range.filter_map(|at| held.get_mut(at).and_then(Option::take)));
+    }
+    ordered
+}
+
+fn stopped_at_or(stopped: Option<usize>, index: usize) -> Option<usize> {
+    Some(stopped.map_or(index, |at| at.min(index)))
+}
+
 fn limit_cause(limit: &fsl_foundation::diagnostic::LimitExceeded) -> CheckCause {
     match CheckingLimitKind::try_from(limit.setting()) {
         Ok(kind) => CheckCause::ResourceExhausted(Box::new(StageLimitCause {
@@ -3119,6 +3198,27 @@ impl PackageDeclarations {
                     .map(|function| function.body.clone())
                     .collect()
             };
+        // FR-952: a declared clause function is checked under `Linked`
+        // whatever the requested mode; a function body, an operation `body`
+        // clause function included, under the requested mode.
+        let function_check_modes: BTreeMap<usize, CheckMode> = (0..self.functions.len())
+            .map(|index| {
+                let declared_clause = model_clauses
+                    .get(&index)
+                    .is_some_and(|clause| clause.kind != fsl_forms::DeclaredClauseKind::Body);
+                (
+                    index,
+                    if declared_clause {
+                        CheckMode::Linked
+                    } else {
+                        self.function_modes
+                            .get(&self.functions[index].name)
+                            .copied()
+                            .unwrap_or(mode)
+                    },
+                )
+            })
+            .collect();
         for (index, function) in self.functions.into_iter().enumerate() {
             // FR-092 "Function nodes": the kind travels with the draft to
             // lowering, which keys a predicate's node `predicate`.
@@ -3138,7 +3238,10 @@ impl PackageDeclarations {
                     .function_selections
                     .get(&index)
                     .is_some_and(state_clause::is_complete_value),
-                mode,
+                mode: function_check_modes
+                    .get(&index)
+                    .copied()
+                    .unwrap_or(mode),
                 model_scope: model_function_bodies
                     .get(index)
                     .copied()
@@ -3247,97 +3350,165 @@ impl PackageDeclarations {
         // clause body may call a function), against the same package-wide
         // node total and contract meter.
         let mut state_clause_forms = self.state_clauses;
-        let mut typed_clauses = Vec::with_capacity(state_clause_forms.len());
+        let mut typed_clauses: Vec<(usize, state_clause::TypedStateClause)> =
+            Vec::with_capacity(state_clause_forms.len());
         // FR-185: every read of an operation parameter by a checked
         // precondition, so a read of a random parameter refuses.
         let mut precondition_reads = Vec::new();
-        for (index, clause) in state_clause_forms.iter().enumerate() {
-            let location = clause_location(index, &clause.name);
-            let declarations = state_clause::ClauseDeclarations {
-                unit: self.source_owners.get(&format!("state_clause:{index}")),
-                scope: &scope,
-                signatures: &signatures,
-                dispatch_tables: &dispatch_tables,
-                models: &models,
-                checking_limits: limits,
-                location: &location,
-                nodes_used,
-                cancel: Some(cancel),
-                staged: pending_types.as_ref(),
-            };
-            let mut contract_cx = crate::family::CheckContext::new(
-                &declarations,
-                contract_limits,
-                &mut contract_meter,
-                &mut contract_diagnostics,
-                &mut contract_scopes,
-            );
-            match state_clause::ProtocolClauseFamily::check(clause, &mut contract_cx) {
-                Ok(staged) => {
-                    let checked = staged.into_value();
-                    nodes_used = checked.nodes_used;
-                    if let Some(refusal) = layer::typed_equalities(
-                        &checked.body,
-                        Some(&clause.selection),
-                        scope.types(),
-                        Some(&clause.spans.body),
-                    ) {
+        let clause_order: Vec<usize> = (0..state_clause_forms.len())
+            .filter(|index| {
+                state_clause_forms[*index].kind == fsl_forms::StateClauseKind::Precondition
+            })
+            .chain((0..state_clause_forms.len()).filter(|index| {
+                state_clause_forms[*index].kind != fsl_forms::StateClauseKind::Precondition
+            }))
+            .collect();
+        let mut clause_refusals: Vec<(usize, std::ops::Range<usize>)> = Vec::new();
+        let loop_start = refusals.len();
+        let mut stopped_at: Option<usize> = None;
+        let redefinition_family = model_inputs
+            .as_ref()
+            .map_or_else(BTreeSet::new, |(selected, _)| {
+                redefinition_family_keys(selected)
+            });
+        let mut operation_precondition_facts: BTreeMap<
+            (
+                filament_exact::EffectiveId,
+                filament_checked::key::DeclarationKey,
+            ),
+            Vec<facts::CheckedFacts>,
+        > = BTreeMap::new();
+        for index in clause_order {
+            if stopped_at.is_some_and(|stopped| index > stopped) {
+                continue;
+            }
+            if stopped_at.is_some() && cancel.tripped().is_some() {
+                continue;
+            }
+            let clause = &state_clause_forms[index];
+            let refusals_before = refusals.len();
+            'clause: {
+                let location = clause_location(index, &clause.name);
+                let preconditions = clause_preconditions(
+                    clause.kind,
+                    &clause.context,
+                    clause.operation_key.as_ref(),
+                    &redefinition_family,
+                    &operation_precondition_facts,
+                );
+                let declarations = state_clause::ClauseDeclarations {
+                    unit: self.source_owners.get(&format!("state_clause:{index}")),
+                    scope: &scope,
+                    signatures: &signatures,
+                    dispatch_tables: &dispatch_tables,
+                    models: &models,
+                    checking_limits: limits,
+                    location: &location,
+                    nodes_used,
+                    cancel: Some(cancel),
+                    staged: pending_types.as_ref(),
+                    preconditions,
+                };
+                let mut contract_cx = crate::family::CheckContext::new(
+                    &declarations,
+                    contract_limits,
+                    &mut contract_meter,
+                    &mut contract_diagnostics,
+                    &mut contract_scopes,
+                );
+                match state_clause::ProtocolClauseFamily::check(clause, &mut contract_cx) {
+                    Ok(staged) => {
+                        let checked = staged.into_value();
+                        nodes_used = checked.nodes_used;
+                        if let Some(refusal) = layer::typed_equalities(
+                            &checked.body,
+                            Some(&clause.selection),
+                            scope.types(),
+                            Some(&clause.spans.body),
+                        ) {
+                            refusals.push(refusal);
+                            break 'clause;
+                        }
+                        if let (fsl_forms::StateClauseKind::Precondition, Some(operation)) =
+                            (clause.kind, &clause.operation)
+                        {
+                            precondition_reads.extend(probabilistic::precondition_reads(
+                                operation,
+                                &checked.parameters,
+                                checked.body.root(),
+                                &probabilistic::PreconditionSite::Clause(clause.name.clone()),
+                            ));
+                        }
+                        if let (fsl_forms::StateClauseKind::Precondition, Some(operation_key)) =
+                            (clause.kind, &clause.operation_key)
+                        {
+                            operation_precondition_facts
+                                .entry((clause.context.clone(), operation_key.clone()))
+                                .or_default()
+                                .push(checked.facts.clone());
+                        }
+                        typed_clauses.push((index, checked));
+                    }
+                    Err(StageFailure::Limit(limit)) => {
+                        refusals.push(CheckRefusal {
+                            location,
+                            cause: limit_cause(&limit),
+                        });
+                        if cancel.tripped().is_some() {
+                            stopped_at = stopped_at_or(stopped_at, index);
+                        }
+                    }
+                    Err(StageFailure::LimitWithPayload(limit, _)) => {
+                        refusals.push(CheckRefusal {
+                            location,
+                            cause: limit_cause(&limit),
+                        });
+                        if cancel.tripped().is_some() {
+                            stopped_at = stopped_at_or(stopped_at, index);
+                        }
+                    }
+                    Err(StageFailure::Cancelled(_)) => {
+                        stopped_at.get_or_insert(index);
+                    }
+                    Err(StageFailure::Fault(fault)) => {
+                        refusals.push(CheckRefusal {
+                            location: location.clone(),
+                            cause: CheckCause::InternalFault(Box::new(KeyFault::StageFault(fault))),
+                        });
+                        stopped_at = stopped_at_or(stopped_at, index);
+                    }
+                    Err(StageFailure::Refused(refusal)) => {
+                        let exhausted = matches!(refusal.cause, CheckCause::ResourceExhausted(_));
                         refusals.push(refusal);
-                        continue;
+                        if exhausted {
+                            stopped_at = stopped_at_or(stopped_at, index);
+                        }
                     }
-                    if let (fsl_forms::StateClauseKind::Precondition, Some(operation)) =
-                        (clause.kind, &clause.operation)
-                    {
-                        precondition_reads.extend(probabilistic::precondition_reads(
-                            operation,
-                            &checked.parameters,
-                            checked.body.root(),
-                            &probabilistic::PreconditionSite::Clause(clause.name.clone()),
-                        ));
-                    }
-                    typed_clauses.push(checked);
-                }
-                Err(StageFailure::Limit(limit)) => {
-                    refusals.push(CheckRefusal {
-                        location,
-                        cause: limit_cause(&limit),
-                    });
-                    if cancel.tripped().is_some() {
-                        return Err(refusals);
-                    }
-                }
-                Err(StageFailure::LimitWithPayload(limit, _)) => {
-                    refusals.push(CheckRefusal {
-                        location,
-                        cause: limit_cause(&limit),
-                    });
-                    if cancel.tripped().is_some() {
-                        return Err(refusals);
-                    }
-                }
-                Err(StageFailure::Cancelled(_)) => return Err(refusals),
-                Err(StageFailure::Fault(fault)) => {
-                    refusals.push(CheckRefusal {
-                        location: location.clone(),
-                        cause: CheckCause::InternalFault(Box::new(KeyFault::StageFault(fault))),
-                    });
-                    return Err(refusals);
-                }
-                Err(StageFailure::Refused(refusal)) => {
-                    let exhausted = matches!(refusal.cause, CheckCause::ResourceExhausted(_));
-                    refusals.push(refusal);
-                    if exhausted {
-                        return Err(refusals);
-                    }
-                }
-                Err(StageFailure::RefusedWithPayload(refusal, _)) => {
-                    let exhausted = matches!(refusal.cause, CheckCause::ResourceExhausted(_));
-                    refusals.push(*refusal);
-                    if exhausted {
-                        return Err(refusals);
+                    Err(StageFailure::RefusedWithPayload(refusal, _)) => {
+                        let exhausted = matches!(refusal.cause, CheckCause::ResourceExhausted(_));
+                        refusals.push(*refusal);
+                        if exhausted {
+                            stopped_at = stopped_at_or(stopped_at, index);
+                        }
                     }
                 }
             }
+            clause_refusals.push((
+                index,
+                refusals_before - loop_start..refusals.len() - loop_start,
+            ));
+        }
+        typed_clauses.sort_by_key(|(index, _)| *index);
+        let mut typed_clauses: Vec<state_clause::TypedStateClause> =
+            typed_clauses.into_iter().map(|(_, typed)| typed).collect();
+        let clause_stage = refusals.split_off(loop_start);
+        refusals.extend(refusals_in_source_order(
+            clause_stage,
+            clause_refusals,
+            stopped_at,
+        ));
+        if stopped_at.is_some() {
+            return Err(refusals);
         }
         // FR-103: each kept operation `requires`/`ensures`, checked as a
         // Boolean under the clause kind its position gives. A kept clause
@@ -3357,6 +3528,7 @@ impl PackageDeclarations {
                 nodes_used,
                 cancel: Some(cancel),
                 staged: None,
+                preconditions: &[],
             };
             let mut contract_cx = crate::family::CheckContext::new(
                 &declarations,
@@ -3411,6 +3583,7 @@ impl PackageDeclarations {
                 nodes_used,
                 cancel: Some(cancel),
                 staged: None,
+                preconditions: &[],
             };
             let mut contract_cx = crate::family::CheckContext::new(
                 &declarations,
@@ -3489,6 +3662,7 @@ impl PackageDeclarations {
                 nodes_used,
                 cancel: Some(cancel),
                 staged: None,
+                preconditions: &[],
             };
             let mut contract_cx = crate::family::CheckContext::new(
                 &declarations,
@@ -3546,6 +3720,7 @@ impl PackageDeclarations {
                 nodes_used,
                 cancel: Some(cancel),
                 staged: None,
+                preconditions: &[],
             };
             let mut contract_cx = crate::family::CheckContext::new(
                 &declarations,
@@ -3640,6 +3815,7 @@ impl PackageDeclarations {
                     nodes_used,
                     cancel: Some(cancel),
                     staged: None,
+                    preconditions: &[],
                 };
                 let mut contract_cx = crate::family::CheckContext::new(
                     &declarations,
@@ -4001,6 +4177,7 @@ impl PackageDeclarations {
                 nodes_used,
                 cancel: Some(cancel),
                 staged: None,
+                preconditions: &[],
             };
             let mut obligation_cx = crate::family::CheckContext::new(
                 &obligation_declarations,
@@ -4129,6 +4306,9 @@ impl PackageDeclarations {
                     match protocol_controls::check(
                         protocol,
                         &self.alias_names,
+                        &checked.relationships,
+                        &checked.roles,
+                        &models,
                         &control_declarations,
                         &mut control_cx,
                     ) {
@@ -4323,6 +4503,7 @@ impl PackageDeclarations {
                 nodes_used,
                 cancel: Some(cancel),
                 staged: None,
+                preconditions: &[],
             };
             let mut contract_cx = crate::family::CheckContext::new(
                 &declarations,
@@ -4362,6 +4543,7 @@ impl PackageDeclarations {
                 nodes_used,
                 cancel: Some(cancel),
                 staged: None,
+                preconditions: &[],
             };
             for (checked, selected) in refinement_slots.iter_mut().zip(&selected_protocols) {
                 let Some(checked) = checked.as_mut().filter(|_| selected.is_none()) else {
@@ -4462,6 +4644,7 @@ impl PackageDeclarations {
                     nodes_used,
                     cancel: Some(cancel),
                     staged: None,
+                    preconditions: &[],
                 };
                 let mut condition_cx = crate::family::CheckContext::new(
                     &condition_declarations,
@@ -4499,6 +4682,7 @@ impl PackageDeclarations {
                         nodes_used,
                         cancel: Some(cancel),
                         staged: None,
+                        preconditions: &[],
                     };
                     let mut condition_cx = crate::family::CheckContext::new(
                         &condition_declarations,
@@ -4638,6 +4822,7 @@ impl PackageDeclarations {
                 nodes_used,
                 cancel: Some(cancel),
                 staged: pending_types.as_ref(),
+                preconditions: &[],
             };
             let mut contract_cx = crate::family::CheckContext::new(
                 &declarations,
@@ -7473,6 +7658,7 @@ impl PackageDeclarations {
             type_nodes: key_order::sorted_by_key(type_nodes, |(node, _)| node)
                 .into_iter()
                 .collect(),
+            function_check_modes,
             semantic_graph,
             checked_node_keys,
             dependency_references,
@@ -8586,6 +8772,11 @@ impl CheckedGraph {
     /// FR-092/FR-093: every lowered, keyed node of this package's functions.
     pub fn semantic_graph(&self) -> &SemanticGraph {
         &self.semantic_graph
+    }
+
+    /// FR-952: the mode the function at declaration `index` was checked under.
+    pub fn function_check_mode(&self, index: usize) -> Option<CheckMode> {
+        self.function_check_modes.get(&index).copied()
     }
 
     /// The producer-assigned graph identity of this checked expression.

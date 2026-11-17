@@ -169,6 +169,12 @@ fn rows(realizable: bool) -> Vec<(Outcome, Value, &'static str, [&'static str; 3
             ),
             inconclusive(Cause::CutCount, json!({"type": "cut-count"})),
             inconclusive(Cause::Undecided, json!({"type": "undecided-evaluation"})),
+            inconclusive(
+                Cause::InstanceBoundReached {
+                    max_live_instances: 2,
+                },
+                json!({"type": "instance-bound-reached", "max_live_instances": 2}),
+            ),
         ]);
     }
     rows

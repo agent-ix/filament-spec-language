@@ -161,10 +161,14 @@ pub enum CapacityPremise {
         /// The capacity.
         value: u64,
     },
-    /// A symbolic capacity, by name.
+    /// A symbolic capacity, by name, with the value the protocol subject's
+    /// capacity binding gives it (FSpec FR-785). `None` records the value
+    /// as not stated: the premise is present in the key either way.
     Symbolic {
         /// The capacity's name.
         name: String,
+        /// The bound value, or `None` when the binding states none.
+        value: Option<u64>,
     },
 }
 
@@ -245,6 +249,34 @@ pub struct ProtocolPremises {
     pub role_knowledge: Option<BTreeSet<String>>,
     /// Group (d): the admitted external events and channel outcomes.
     pub environment: Option<BTreeSet<String>>,
+}
+
+impl ProtocolPremises {
+    /// Record in group (a) the value `value` gives each symbolic capacity's
+    /// name, the protocol subject's capacity binding (FSpec FR-785). A name
+    /// `value` gives none stays recorded as not stated.
+    pub fn state_capacities(&mut self, value: impl Fn(&str) -> Option<u64>) {
+        for channel in &mut self.channels {
+            if let CapacityPremise::Symbolic {
+                name,
+                value: stated,
+            } = &mut channel.capacity
+            {
+                *stated = value(name);
+            }
+        }
+    }
+
+    /// Whether some symbolic capacity of group (a) has no stated value.
+    #[must_use]
+    pub fn capacity_not_stated(&self) -> bool {
+        self.channels.iter().any(|channel| {
+            matches!(
+                channel.capacity,
+                CapacityPremise::Symbolic { value: None, .. }
+            )
+        })
+    }
 }
 
 /// Why premises (a) and (b) were not built from a package.
@@ -396,6 +428,7 @@ fn channel_premise(
             QueueCapacity::Literal(value) => CapacityPremise::Literal { value },
             QueueCapacity::Symbolic(name) => CapacityPremise::Symbolic {
                 name: name.to_owned(),
+                value: None,
             },
         },
         overflow: match queue_overflow(queue)? {
@@ -764,7 +797,8 @@ pub enum InconclusiveCause {
     Horizon,
     /// A realizability premise the claim did not state (PA-8).
     PremiseNotStated {
-        /// `role_knowledge` or `environment`.
+        /// `role_knowledge`, `environment`, or `capacities` for a symbolic
+        /// capacity the subject's binding gives no value (FSpec FR-785).
         member: &'static str,
     },
     /// The counterexample's replay disagreed with the checked graph
@@ -783,6 +817,12 @@ pub enum InconclusiveCause {
     /// undecided: an undetermined clause or protocol expression, or a
     /// terminal predicate undefined or refused at a terminal state.
     Undecided,
+    /// Realizability reached the configured live-instance bound while an
+    /// activation remained enabled.
+    InstanceBoundReached {
+        /// The `max_live_instances` value in force.
+        max_live_instances: u64,
+    },
 }
 
 impl InconclusiveCause {
@@ -797,6 +837,7 @@ impl InconclusiveCause {
             Self::StrategyReplayFailed => "strategy-replay-failed",
             Self::CutCount => "cut-count",
             Self::Undecided => "undecided-evaluation",
+            Self::InstanceBoundReached { .. } => "instance-bound-reached",
         }
     }
 }

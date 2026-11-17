@@ -18,9 +18,9 @@ pub fn settle_product_refusal(
 ) -> Result<ExactProbBuildRecord, ProductRefusal> {
     let issue = match refusal {
         request @ ProductRefusal::Admission(_) => return Err(request),
-        request @ ProductRefusal::NotSimulated(NotSimulated::RequiresBound(_)) => {
-            return Err(request)
-        }
+        request @ ProductRefusal::NotSimulated(
+            NotSimulated::RequiresBound(_) | NotSimulated::UnboundCapacity(_),
+        ) => return Err(request),
         // FR-204's digital product exposes these recognized unsupported
         // forms as typed EN-5 terminal causes.
         ProductRefusal::StrictClockConstraint { span } => {

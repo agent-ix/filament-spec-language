@@ -48,6 +48,7 @@ mod application;
 mod axes;
 pub mod backends;
 mod bounds;
+mod build_inventory;
 mod call_replay_context;
 mod call_requirements;
 mod call_site;
@@ -102,10 +103,14 @@ pub use application::{
     NominalDeclarationMember, NominalDeclarationRefusal, SelectionRefusal,
 };
 pub use bounds::{BoundExceeded, ReplayLimits, DEFAULT_REPLAY_INPUT_BYTES};
+pub use build_inventory::{
+    build_inventory, Advertisement, Application, BuildInventory, Consumer, Family, Profile,
+};
 pub use call_replay_context::{run_with_replay_context, CallReplayContext, RunWithReplayContext};
 pub use call_requirements::{
-    call_requirements_for, run_with_requirements, run_with_requirements_reading, CallRequirement,
-    CallRequirements, RequirementsRun, RunWithRequirements,
+    call_requirements_for, run_with_requirements, run_with_requirements_reading,
+    run_with_requirements_reading_and_profile_catalog, CallRequirement, CallRequirements,
+    RequirementsRun, RunWithRequirements,
 };
 pub use call_site::{
     call_site, CallSite, CallSiteRefusal, CallSiteSelection, ClauseName, ClauseSite, FieldName,
@@ -333,7 +338,9 @@ pub use outcome::{
     probabilistic_wire, protocol_temporal_wire, temporal_wire, ClauseRunNotAnItem,
     CounterexampleWireError, ExecuteResult, ItemCause, ItemLabel, Operation, OutcomeDiagnostic,
     OutcomeDocument, OutcomeItem, OutcomeItemError, OutcomeLocus, OutcomeStage, OutcomeWriteError,
-    ParityReason, ProtocolWire, ResultLimit, ResultValue, OUTCOME_FORMAT,
+    ParityReason, ProtocolConformanceOutput, ConformanceReplayOutput, ConformanceObligationOutput,
+    ConformanceClosureOutput, ConformanceGlobalOutput, ConformanceProjectionOutput, ProtocolWire,
+    ResultLimit, ResultValue, OUTCOME_FORMAT,
 };
 pub use planner::{
     read_premise_item, read_result_entry, read_settlement_request, Budget, PlannerDeclaration,

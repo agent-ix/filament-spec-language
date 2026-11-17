@@ -2,8 +2,8 @@
 //! The protocol analysis engine's FR-331 provider manifest (ADR-036 PA-4).
 //!
 //! The engine advertises `local-projection` and `realizability`, each in
-//! the `unbounded` mode, and `finite-replay` in the `bounded` mode, since a
-//! supplied trace is finite and is replayed step by step. A `bounded-static` protocol has static roles,
+//! the `unbounded` mode, and `finite-replay` and `global-conformance` in the
+//! `bounded` mode. A supplied finite trace is replayed step by step. A `bounded-static` protocol has static roles,
 //! literal capacities and no loop, so the engine decides it without
 //! substituting a bound for any domain, and the horizon `max_depth` is a key
 //! member whose cut settles `inconclusive`, never a domain bound. It names
@@ -27,7 +27,7 @@ pub const BACKEND_ID: &str = "protocol-analysis";
 pub const DOMAINS: [&str; 1] = [DomainKind::Population.to_wire()];
 
 /// The (kind, mode) pairs the engine advertises.
-pub const ADVERTISED: [(Option<&str>, Option<&str>); 3] = [
+pub const ADVERTISED: [(Option<&str>, Option<&str>); 4] = [
     (
         Some(Capability::FiniteReplay.to_wire()),
         Some(Mode::Bounded.to_wire()),
@@ -39,6 +39,10 @@ pub const ADVERTISED: [(Option<&str>, Option<&str>); 3] = [
     (
         Some(Capability::Realizability.to_wire()),
         Some(Mode::Unbounded.to_wire()),
+    ),
+    (
+        Some(Capability::GlobalConformance.to_wire()),
+        Some(Mode::Bounded.to_wire()),
     ),
 ];
 

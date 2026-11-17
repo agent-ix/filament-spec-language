@@ -17,11 +17,18 @@ fn invalid(member: impl Into<String>, reason: impl Into<String>) -> RunCause {
     }
 }
 
-fn observation(intake: &mut Intake<'_>, key: &str, file: &str) -> Result<SuppliedObservation> {
-    let remaining = intake.remaining;
-    let bytes = intake.file(file, remaining)?;
-    SuppliedObservation::from_document(key, bytes)
-        .map_err(|error| invalid(error.member, error.reason))
+fn observation(
+    intake: &mut Intake<'_>,
+    key: &str,
+    file: &str,
+    document_bytes: u64,
+) -> Result<SuppliedObservation> {
+    let bytes =
+        intake.observation_file(file, usize::try_from(document_bytes).unwrap_or(usize::MAX))?;
+    let mut observation = SuppliedObservation::from_document(key, bytes)
+        .map_err(|error| invalid(error.member, error.reason))?;
+    observation.path = Some(file.to_owned());
+    Ok(observation)
 }
 
 pub(super) fn read(
@@ -77,7 +84,7 @@ pub(super) fn read(
         let observed = if let Some(existing) = by_file.get(file) {
             existing.clone()
         } else {
-            let observed = observation(intake, key, file)?;
+            let observed = observation(intake, key, file, observation_limits.document_bytes)?;
             by_file.insert(file.clone(), observed.clone());
             observed
         };

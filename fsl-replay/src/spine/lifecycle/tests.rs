@@ -317,7 +317,7 @@ fn parse_carries_protocol_results_for_a_confined_syntax_refusal() {
     };
     assert_eq!(refusal.code(), Code::InvalidSyntax);
     assert!(matches!(
-        results.as_slice(),
+        results.protocol_results.as_slice(),
         [
             crate::spine::ProtocolResult::Cleared { declaration: w, stage: SpineStage::Forms },
             crate::spine::ProtocolResult::Refused { declaration: x, source_index: 1, .. },
@@ -375,7 +375,7 @@ fn bounded_nonprotocol_error_after_single_protocol_keeps_it_cleared() {
         .payload()
         .expect("the bounded protocol retains its reached-stage result");
     assert!(matches!(
-        results.as_slice(),
+        results.protocol_results.as_slice(),
         [crate::spine::ProtocolResult::Cleared {
             declaration,
             stage: SpineStage::Forms
@@ -403,7 +403,7 @@ fn protocol_expression_is_not_counted_as_a_declaration() {
         .payload()
         .expect("W remains the only actual protocol declaration");
     assert!(matches!(
-        results.as_slice(),
+        results.protocol_results.as_slice(),
         [crate::spine::ProtocolResult::Cleared {
             declaration,
             stage: SpineStage::Forms
@@ -448,7 +448,7 @@ fn non_protocol_unterminated_state_clause_has_no_protocol_results() {
         .payload()
         .expect("bounded protocols retain their reached-stage results");
     assert!(matches!(
-        results.as_slice(),
+        results.protocol_results.as_slice(),
         [
             crate::spine::ProtocolResult::Cleared { declaration: w, stage: SpineStage::Forms },
             crate::spine::ProtocolResult::Cleared { declaration: z, stage: SpineStage::Forms },
@@ -2262,6 +2262,7 @@ fn a_continued_protocol_refusal_has_no_subject_or_partial_reference_rows() {
         &parsed,
         super::ContinuationInputs {
             integer_division: None,
+            function_modes: None,
             package_name: "fixture".to_owned(),
             execution_points: &BTreeMap::new(),
             temporal_selections: &[],
@@ -2327,6 +2328,8 @@ fn check_units_continues_past_a_protocol_refusal_only_when_asked() {
                 clocks: None,
                 continue_protocol_refusals,
                 refinement_internals: None,
+                check_mode: None,
+                function_modes: None,
                 extension_catalog: None,
             },
             SpineLimits::default(),
@@ -2388,7 +2391,7 @@ fn check_retains_the_owning_protocol_locus() {
     let with_payload_category = with_payload_code.category();
     let with_payload_exit = with_payload_category.exit_code();
     assert!(matches!(
-        results.as_slice(),
+        results.protocol_results.as_slice(),
         [
             ProtocolResult::Cleared {
                 declaration: w,
@@ -2458,7 +2461,7 @@ fn check_limit_retains_completed_and_incomplete_protocol_results() {
     };
     assert_eq!(limit.setting(), Setting::S3WorkUnits);
     assert!(matches!(
-        results.as_slice(),
+        results.protocol_results.as_slice(),
         [
             ProtocolResult::Cleared { declaration: first, stage: SpineStage::Check },
             ProtocolResult::Incomplete { declaration: second, limit: second_limit },
@@ -2516,7 +2519,7 @@ fn state_clause_refusal_keeps_protocol_result_cleared() {
     assert_eq!(with_payload_category, Category::Refusal);
     assert_eq!(with_payload_exit, 20);
     assert!(matches!(
-        results.as_slice(),
+        results.protocol_results.as_slice(),
         [ProtocolResult::Cleared { declaration, stage: SpineStage::Check }]
             if declaration == "W"
     ));
@@ -4714,5 +4717,62 @@ fn type_report_resolves_a_deep_body_without_rewalking_each_ancestry() {
     assert!(
         elapsed < std::time::Duration::from_secs(10),
         "the type report took {elapsed:?}"
+    );
+}
+
+/// FR-098-AC-34: the recompile checks under the mode it is given. A function
+/// whose divisor may be zero is refused `unproved-nonzero` under `Linked`
+/// and checks under `Kernel`, and the emitted package records `kernel` on it.
+#[trace("TC-1784", "FR-098-AC-34")]
+#[test]
+fn the_recompile_checks_under_the_given_check_mode() {
+    use filament_semantic_value::checking::CheckMode;
+    let unit = format!("{HEADER}function r using v(x: Int[0, 9]): Integer pure {{ 10 mod x }}\n");
+    let cancel = Cancel::new();
+    let dependencies = DependencyInput::default();
+    let packages = fsl_semantics::model::intake::package_input([]).expect("no model packages");
+    let run = |check_mode| {
+        let parsed = super::parse_for_continuation(
+            &request(unit.as_bytes()),
+            SourceLimits::default(),
+            &cancel,
+        )
+        .expect("the unit parses")
+        .into_value();
+        let admitted =
+            admit_parsed_unit_list(vec![parsed], &dependencies).expect("the unit is admitted");
+        let models = super::select_units(
+            &admitted,
+            &packages,
+            ModelNormalizationLimits::default(),
+            SourceLimits::default(),
+            &cancel,
+        )
+        .expect("no model is selected")
+        .into_value();
+        check_units_with_options(
+            &admitted,
+            "fixture".to_owned(),
+            &models,
+            &dependencies,
+            UnitCheckOptions {
+                check_mode,
+                ..UnitCheckOptions::default()
+            },
+            SpineLimits::default(),
+            &cancel,
+        )
+    };
+    assert!(run(None).is_err(), "Linked refuses the unproved divisor");
+    assert!(
+        run(Some(CheckMode::Linked)).is_err(),
+        "an explicit Linked is the default"
+    );
+    let checked = run(Some(CheckMode::Kernel))
+        .expect("Kernel leaves the divisor to run time")
+        .into_value();
+    assert_eq!(
+        checked[0].package().graph().function_check_mode(0),
+        Some(CheckMode::Kernel)
     );
 }

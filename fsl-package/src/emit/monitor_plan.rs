@@ -537,6 +537,7 @@ fn emit_monitor_plan(
             });
             nodes.push(CheckedSemanticNodeV2 {
                 owner_model: None,
+                check_mode: None,
                 node_id: id.clone(),
                 schema_version: GRAPH_V2.into(),
                 node_tag: "scalar_type".into(),
@@ -695,6 +696,7 @@ fn emit_monitor_plan(
     });
     nodes.push(CheckedSemanticNodeV2 {
         owner_model: None,
+        check_mode: None,
         node_id: root_id,
         schema_version: GRAPH_V2.into(),
         node_tag: "temporal".into(),
@@ -1433,6 +1435,7 @@ mod tests {
         };
         CheckedSemanticNodeV2 {
             owner_model: None,
+            check_mode: None,
             node_id: id.clone(),
             schema_version: GRAPH_V2.into(),
             node_tag: "scalar_type".into(),

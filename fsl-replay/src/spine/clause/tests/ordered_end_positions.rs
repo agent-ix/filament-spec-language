@@ -144,7 +144,7 @@ fn snapshot(label: &DocumentRef, positions: [Option<serde_json::Value>; 3]) -> V
         "identity": document_identity_json(label),
         "observation": "current",
         "anchor": {"kind": "handler", "name": "validate"},
-        "model": {"identity": PACKAGE, "version": "1.0.0"},
+        "model": {"identity": PACKAGE},
         "populations": [{"population": identity("Q"), "complete": true, "objects": objects}],
         "relationships": [{
             "relationship": identity(PARTS), "complete": true, "instances": instances,

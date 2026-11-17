@@ -4,9 +4,10 @@
 //! arm ask of it (FR-570).
 //!
 //! The structure is the causal relation's reachability among the protocol's
-//! events: every `send`, `receive` and `choice` control, and the entry and
-//! exit of every `parallel`. It is built once and never enumerates an
-//! interleaving; the order of two events is a path in the relation or it is
+//! events: every `send`, `receive`, `choice`, loop, await and role-owned
+//! protocol step, and the entry and exit of every `parallel`. It is built
+//! once and never enumerates an interleaving; the order of two events is a
+//! path in the relation or it is
 //! absent. The reader that fills it from a package lives in `spine`
 //! (ADR-032 CK-3); this module holds no checked-package type.
 
@@ -16,6 +17,7 @@ use filament_contract_model::CheckedNodeId;
 use fsl_package::protocol_view::{Port, PortRef};
 
 use super::RunLimit;
+use super::{JoinPolicy, OutstandingPolicy};
 use crate::ModelCheckLimit;
 
 /// The most runs a case may split into over its nested choices.
@@ -87,6 +89,25 @@ pub enum GlobalEventKind {
     Join {
         /// The branch bodies, ascending by label bytes.
         branches: Vec<CheckedNodeId>,
+        /// The policy that decides when the join fires.
+        policy: JoinPolicy,
+        /// The labels the join waits on.
+        joined: Vec<String>,
+        /// How branches outside the winning set are handled.
+        outstanding: Option<OutstandingPolicy>,
+    },
+    /// A role-owned protocol control that does not communicate or branch.
+    Control {
+        /// The control operation.
+        operation: fsl_package::protocol_view::ControlOperation,
+        /// Its owning role, when the control has one.
+        owner: Option<CheckedNodeId>,
+        /// A repeat's authored bound, when present.
+        maximum: Option<u64>,
+        /// A timed await's closed window and clock, when present.
+        window: Option<(u64, u64, String)>,
+        /// The type of a step's bound result record, when present.
+        record_type: Option<CheckedNodeId>,
     },
 }
 
@@ -113,6 +134,7 @@ impl GlobalEvent {
             GlobalEventKind::Send(comm) => Some(&comm.sender),
             GlobalEventKind::Receive(comm) => Some(&comm.receiver),
             GlobalEventKind::Choice { owner, .. } => Some(owner),
+            GlobalEventKind::Control { owner, .. } => owner.as_ref(),
             GlobalEventKind::Region { .. } | GlobalEventKind::Join { .. } => None,
         }
     }
@@ -187,6 +209,7 @@ pub struct GlobalStructure {
     covers: Vec<Vec<usize>>,
     back: Vec<Vec<usize>>,
     depth: Vec<u64>,
+    role_maxima: BTreeMap<CheckedNodeId, u64>,
 }
 
 fn reachable(adjacency: &[Vec<usize>], from: usize) -> Vec<bool> {
@@ -240,7 +263,7 @@ impl GlobalStructure {
         }
         for event in &events {
             let (entry, exit) = (port(&event.at), port(&event.out));
-            if entry != exit && event.is_communication() {
+            if entry != exit {
                 arcs.insert((entry, exit));
             }
         }
@@ -359,7 +382,19 @@ impl GlobalStructure {
             covers,
             back,
             depth,
+            role_maxima: BTreeMap::new(),
         })
+    }
+
+    /// Store authored replication maxima from the checked protocol view.
+    pub(crate) fn set_role_maxima(&mut self, maxima: BTreeMap<CheckedNodeId, u64>) {
+        self.role_maxima = maxima;
+    }
+
+    /// The authored replication maximum of `role`, if replicated.
+    #[must_use]
+    pub fn role_maximum(&self, role: &CheckedNodeId) -> Option<u64> {
+        self.role_maxima.get(role).copied()
     }
 
     /// The events, ascending by entry port.
@@ -925,9 +960,10 @@ impl GlobalStructure {
     }
 
     /// The events `role` performs and the choices it takes part in, for a
-    /// local graph: communications it performs, choices it owns or is
-    /// told the outcome of, and the entry and exit of every `parallel` whose
-    /// branches hold at least two of those.
+    /// local graph: communications and role-owned control actions, choices it
+    /// owns or is told the outcome of, repeated regions that contain its
+    /// actions, and the entry and exit of every `parallel` whose branches hold
+    /// at least two of those.
     #[must_use]
     pub fn role_events(&self, role: &CheckedNodeId) -> Vec<&GlobalEvent> {
         let mut kept: Vec<&GlobalEvent> = self
@@ -945,6 +981,18 @@ impl GlobalStructure {
                             | ChoiceBasis::ReceiveDistinguished { .. }
                     )
                 ),
+                GlobalEventKind::Control {
+                    operation: fsl_package::protocol_view::ControlOperation::Repeat,
+                    ..
+                } => {
+                    self.events.iter().any(|nested| {
+                        nested.at != event.at
+                            && nested.within.contains(&event.at.node)
+                            && (self.action_of(&nested.at, role).is_some()
+                                || nested.performer() == Some(role))
+                    })
+                }
+                GlobalEventKind::Control { owner, .. } => owner.as_ref() == Some(role),
                 GlobalEventKind::Region { .. } | GlobalEventKind::Join { .. } => false,
             })
             .collect();

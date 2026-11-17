@@ -491,6 +491,10 @@ pub struct PackageDeclarations {
     /// source declaration. `check::checked_dispatch` fills it for the
     /// clause functions it synthesizes.
     pub model_clauses: std::collections::BTreeMap<usize, super::lowering::ModelClause>,
+    /// FR-098-AC-34: the mode a replay recompile checks a named function body
+    /// under, by function name, overriding the requested mode. A declared
+    /// clause function is checked `Linked` whatever this holds.
+    pub function_modes: std::collections::BTreeMap<String, filament_semantic_value::checking::CheckMode>,
     /// Resolved signatures standing in for some `functions` entries' own
     /// type forms; see [`ResolvedSignatures`].
     pub resolved_signatures: ResolvedSignatures,
@@ -836,6 +840,7 @@ impl PackageDeclarations {
             dispatch_tables: Vec::new(),
             models: Vec::new(),
             model_clauses: std::collections::BTreeMap::new(),
+            function_modes: std::collections::BTreeMap::new(),
             resolved_signatures: ResolvedSignatures::default(),
             declared_type_spans: BTreeMap::new(),
             declared_site_spans: BTreeMap::new(),
@@ -3262,7 +3267,9 @@ impl<'a> Typer<'a> {
                         return true;
                     }
                 }
-                ExprNode::Let { name, value, body } => {
+                ExprNode::Let {
+                    name, value, body, ..
+                } => {
                     let (value, body) = (expression.at(*value), expression.at(*body));
                     let alias =
                         self.resolves_to_captured_alias(value, boundary, &mut bindings, scope);
@@ -3332,7 +3339,9 @@ impl<'a> Typer<'a> {
                             alias.unwrap_or_else(|| self.captured_before(&name.name, boundary)),
                         );
                     }
-                    ExprNode::Let { name, value, body } => {
+                    ExprNode::Let {
+                        name, value, body, ..
+                    } => {
                         pending.push(AliasStep::Bind(name, operand.at(*body), scope));
                         pending.push(AliasStep::Operand(operand.at(*value), scope));
                     }
@@ -4143,7 +4152,7 @@ impl<'a> Typer<'a> {
             (ValueType::Rational(l), ValueType::Rational(r), _) => {
                 let domain = match hint {
                     Some(ValueType::Rational(expected)) => expected.clone(),
-                    _ => l.result_of(operator, r),
+                    _ => super::facts::rational_result_of(l, operator, r),
                 };
                 (
                     NodeKind::Rational {

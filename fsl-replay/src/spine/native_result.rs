@@ -368,7 +368,7 @@ impl ClauseRunRecord {
     /// The typed expression location of a refused S6a outcome, when assigned.
     pub fn outcome_location(&self) -> Option<&CallLocationRead> {
         match self.0.disposition.outcome.as_ref() {
-            Some(OutcomeRead::Refused { location, .. }) => location.as_ref(),
+            Some(OutcomeRead::Refused { location, .. }) => location.as_deref(),
             _ => None,
         }
     }
@@ -421,7 +421,7 @@ impl ClauseRunRecord {
                     cause,
                     fields: fields.as_ref(),
                     locus: locus.as_ref(),
-                    location: location.as_ref(),
+                    location: location.as_deref(),
                 },
                 OutcomeRead::Undefined { reason } => NativeRunOutcome::Undefined(reason),
                 OutcomeRead::Incomplete { limit } => NativeRunOutcome::Incomplete(limit),
@@ -625,7 +625,7 @@ enum OutcomeRead {
         #[serde(default, deserialize_with = "present")]
         locus: Option<CallLocusRead>,
         #[serde(default, deserialize_with = "present")]
-        location: Option<CallLocationRead>,
+        location: Option<Box<CallLocationRead>>,
     },
     Undefined {
         reason: String,
@@ -2575,19 +2575,56 @@ impl Disposition {
                         .fields(BTreeMap::from([("name", name.clone())])),
                 );
             }
-            ClauseDisposition::NotAPredicate { name } => {
-                result.refusal = Some(
-                    RefusalWire::new(Code::IllTyped.as_str(), Some("type-mismatch"))
-                        .fields(BTreeMap::from([("name", name.clone())])),
-                );
+            ClauseDisposition::NotAPredicate {
+                name,
+                actual,
+                result_type_locus,
+            } => {
+                let mut refusal = RefusalWire::new(Code::IllTyped.as_str(), Some("type-mismatch"))
+                    .fields(BTreeMap::from([
+                        ("function", name.clone()),
+                        ("expected", "Boolean".to_owned()),
+                        ("actual", actual.clone()),
+                    ]));
+                refusal.message = Some(format!(
+                    "function `{name}` returns `{actual}`; a claim selection needs a function whose result is `Boolean`"
+                ));
+                refusal.locus = result_type_locus.as_ref().map(|(file, span)| {
+                    crate::outcome::OutcomeLocus::Located {
+                        file: file.clone(),
+                        span: *span,
+                    }
+                });
+                result.refusal = Some(refusal);
             }
             ClauseDisposition::Admit(failure) => match failure {
                 fsl_semantics::model::observation::AdmissionFailure::Refused(record)
                 | fsl_semantics::model::observation::AdmissionFailure::Incomplete(record) => {
-                    result.refusal = Some(
+                    let refusal =
                         RefusalWire::new(record.catalog.code(), Some(record.catalog.cause()))
-                            .fields(record.fields.clone()),
-                    );
+                            .fields(record.fields.clone());
+                    result.refusal = Some(refusal);
+                }
+                fsl_semantics::model::observation::AdmissionFailure::Fault(fault) => {
+                    result.internal_fault = Some(InternalFaultWire {
+                        stage: fault.stage(),
+                        invariant: fault.invariant(),
+                    });
+                }
+            },
+            ClauseDisposition::SnapshotAdmission {
+                failure,
+                document,
+                path,
+            } => match failure {
+                fsl_semantics::model::observation::AdmissionFailure::Refused(record)
+                | fsl_semantics::model::observation::AdmissionFailure::Incomplete(record) => {
+                    let mut refusal =
+                        RefusalWire::new(record.catalog.code(), Some(record.catalog.cause()))
+                            .fields(record.fields.clone());
+                    refusal.locus =
+                        crate::outcome::snapshot_admission_locus(record, document, path.as_deref());
+                    result.refusal = Some(refusal);
                 }
                 fsl_semantics::model::observation::AdmissionFailure::Fault(fault) => {
                     result.internal_fault = Some(InternalFaultWire {

@@ -53,6 +53,10 @@ pub enum InstanceAccess {
     Shape {
         /// The shared locations.
         locations: Vec<Location>,
+        /// The shared locations the application reads.
+        reads: Vec<Location>,
+        /// The shared locations the application writes.
+        writes: Vec<Location>,
     },
 }
 
@@ -157,71 +161,6 @@ pub struct WeakAccessShape {
 }
 
 impl WeakAccessShape {
-    pub(crate) fn join_policy(site: String) -> Self {
-        Self::single(
-            site,
-            None,
-            AccessShape::JoinPolicy,
-            Enc::tagged("join-policy", Vec::new()),
-        )
-    }
-
-    fn ordering_mismatch(
-        site: String,
-        transition: ModelTransition,
-        access: AccessClass,
-        ordering: Option<AccessOrdering>,
-    ) -> Self {
-        let access_text = match access {
-            AccessClass::Load => "load",
-            AccessClass::Store => "store",
-            AccessClass::Rmw => "rmw",
-            AccessClass::Local => "local",
-        };
-        let ordering_text = ordering.map_or(Enc::Null, |ordering| {
-            Enc::text(match ordering {
-                AccessOrdering::Relaxed => "relaxed",
-                AccessOrdering::Acquire => "acquire",
-                AccessOrdering::Release => "release",
-                AccessOrdering::AcqRel => "acq_rel",
-                AccessOrdering::SeqCst => "seq_cst",
-            })
-        });
-        Self::single(
-            site,
-            Some(transition),
-            AccessShape::OrderingMismatch { access, ordering },
-            Enc::tagged(
-                "ordering-mismatch",
-                vec![
-                    ("access", Enc::text(access_text)),
-                    ("ordering", ordering_text),
-                ],
-            ),
-        )
-    }
-
-    fn single(
-        site: String,
-        transition: Option<ModelTransition>,
-        shape: AccessShape,
-        wire: Enc,
-    ) -> Self {
-        let failure = WeakAccessFailure {
-            site: site.clone(),
-            transition: transition.clone(),
-            shape: shape.clone(),
-            wire: wire.clone(),
-        };
-        Self {
-            site,
-            transition,
-            shape,
-            failures: vec![failure],
-            wire,
-        }
-    }
-
     /// Build the canonical aggregate shape from ordered or unordered failures.
     ///
     /// The failures are sorted by their protocol transition identity before
@@ -424,6 +363,14 @@ impl StateWeakAccesses {
         &self.shared
     }
 
+    /// The shared locations read by the live node at `node`.
+    pub(crate) fn reader_locations(&self, node: &str) -> BTreeSet<Location> {
+        self.readers
+            .iter()
+            .find(|(candidate, _)| candidate == node)
+            .map_or_else(BTreeSet::new, |(_, locations)| locations.clone())
+    }
+
     pub(crate) fn has_non_atomic_access(&self) -> bool {
         self.attempts.values().any(|attempt| {
             attempt.ordering.is_none()
@@ -439,82 +386,8 @@ impl StateWeakAccesses {
         })
     }
 
-    pub(crate) fn deferred_local_orderings(&self) -> Vec<(Vec<Location>, WeakAccessShape)> {
-        let mut candidates = Vec::new();
-        for attempt in self.attempts.values() {
-            let Some(ordering) = attempt.ordering else {
-                continue;
-            };
-            for instance in &attempt.instances {
-                if !matches!(
-                    instance.access,
-                    InstanceAccess::Access {
-                        class: AccessClass::Local,
-                        ..
-                    }
-                ) {
-                    continue;
-                }
-                candidates.push((
-                    instance.local.clone(),
-                    WeakAccessShape::ordering_mismatch(
-                        attempt.node.clone(),
-                        instance.transition.clone(),
-                        AccessClass::Local,
-                        Some(ordering),
-                    ),
-                ));
-            }
-        }
-        candidates
-    }
-
     pub(crate) fn cell(&self, location: &Location) -> Option<&Cell> {
         self.cells.get(location)
-    }
-
-    pub(crate) fn first_shape(&self) -> Result<Option<WeakAccessShape>, ProtocolRefusal> {
-        let mut failures = Vec::new();
-        for attempt in self.attempts.values() {
-            for instance in &attempt.instances {
-                match &instance.access {
-                    InstanceAccess::Shape { locations } => failures.push(multi_location(
-                        attempt.node.clone(),
-                        Some(instance.transition.clone()),
-                        locations,
-                        &self.cells,
-                    )),
-                    InstanceAccess::Access { class, .. }
-                        if *class != AccessClass::Local
-                            && ordering_mismatch(*class, attempt.ordering) =>
-                    {
-                        failures.push(WeakAccessShape::ordering_mismatch(
-                            attempt.node.clone(),
-                            instance.transition.clone(),
-                            *class,
-                            attempt.ordering,
-                        ));
-                    }
-                    InstanceAccess::Access { .. } => {}
-                }
-            }
-        }
-        for (node, locations) in &self.readers {
-            if !locations.is_empty() {
-                failures.push(multi_location(
-                    node.clone(),
-                    None,
-                    &locations.iter().cloned().collect::<Vec<_>>(),
-                    &self.cells,
-                ));
-            }
-        }
-        WeakAccessShape::from_failures(
-            failures
-                .into_iter()
-                .flat_map(|shape| shape.failures)
-                .collect(),
-        )
     }
 }
 
@@ -579,48 +452,6 @@ impl WeakAccesses {
                 _ => None,
             })
             .collect()
-    }
-}
-
-fn multi_location(
-    site: String,
-    transition: Option<ModelTransition>,
-    locations: &[Location],
-    cells: &BTreeMap<Location, Cell>,
-) -> WeakAccessShape {
-    WeakAccessShape::single(
-        site,
-        transition,
-        AccessShape::MultiLocation {
-            locations: locations.to_vec(),
-        },
-        Enc::tagged(
-            "multi-location",
-            vec![(
-                "locations",
-                Enc::Array(
-                    locations
-                        .iter()
-                        .map(|location| location_enc(location, cells.get(location)))
-                        .collect(),
-                ),
-            )],
-        ),
-    )
-}
-
-fn ordering_mismatch(class: AccessClass, ordering: Option<AccessOrdering>) -> bool {
-    match class {
-        AccessClass::Load => matches!(
-            ordering,
-            Some(AccessOrdering::Release | AccessOrdering::AcqRel)
-        ),
-        AccessClass::Store => matches!(
-            ordering,
-            Some(AccessOrdering::Acquire | AccessOrdering::AcqRel)
-        ),
-        AccessClass::Rmw => ordering.is_none(),
-        AccessClass::Local => ordering.is_some(),
     }
 }
 
@@ -969,7 +800,7 @@ pub(crate) fn classify(
                                 .or_default()
                                 .insert(candidate.transition.clone());
                         }
-                        InstanceAccess::Shape { locations } => {
+                        InstanceAccess::Shape { locations, .. } => {
                             for location in locations {
                                 by_location
                                     .entry(location.clone())
@@ -1220,9 +1051,24 @@ fn classify_instance(instance: Footprinted, shared: &BTreeSet<Location>) -> Atte
                 location: Some((*location).clone()),
             }
         }
-        _ => InstanceAccess::Shape {
-            locations: on.into_iter().cloned().collect(),
-        },
+        _ => {
+            let locations: Vec<_> = on.into_iter().cloned().collect();
+            let reads = locations
+                .iter()
+                .filter(|location| instance.reads.contains(*location))
+                .cloned()
+                .collect();
+            let writes = locations
+                .iter()
+                .filter(|location| instance.writes.contains(*location))
+                .cloned()
+                .collect();
+            InstanceAccess::Shape {
+                locations,
+                reads,
+                writes,
+            }
+        }
     };
     AttemptInstance {
         transition: instance.transition,

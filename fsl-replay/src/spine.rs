@@ -41,8 +41,9 @@ use fsl_package::{ImportViewRefusal, LinkRefusal, OmittedNode};
 use fsl_semantics::check::AssemblyLimits;
 use fsl_semantics::check::{
     AccessClass, AssemblyCause, AssemblyRefusal, CheckCause, CheckRefusal, ClockSelectionFault,
-    ExtensionCause, ProbabilisticCause, ProfileRefusal, ProtocolAnchorCause, RefinementCause,
-    RowClass, ShadowedDeclaration, SourceObjectFault, TemporalCause, TimeUnitCause,
+    ExtensionCause, Obligation, ProbabilisticCause, ProfileRefusal, ProtocolAnchorCause,
+    ProvedInterval, RefinementCause, RowClass, ShadowedDeclaration, SourceObjectFault,
+    TemporalCause, TimeUnitCause,
     TopologyRetained,
 };
 use fsl_semantics::library::LibraryName;
@@ -75,13 +76,14 @@ pub use lifecycle::{
     check_units_with_refinement_internals, check_with_execution_points,
     check_with_execution_points_and_refinement_internals,
     check_with_execution_points_and_source_inputs, check_with_integer_division,
-    check_with_profile_catalog, check_with_refinement_internals,
+    check_with_profile_catalog, check_with_profile_catalog_and_inputs, check_with_refinement_internals,
     check_with_temporal_selections_and_execution_points, core_vocabulary, extension_forms, package,
     package_with_temporal_selections, parse, parse_selecting_extensions, parse_with_extensions,
     preflight_unit_list, refusal_or_fault, select, select_units, AdmittedModels, AdmittedUnitList,
     CheckedUnit, EmittedUnit, FrontEndFailure, ObligationState, PackageLimits, ParseRequest,
     ParsedUnitSource, PendingObligation, ProfileCatalogInput, ProfileCheckFailure,
     ProtocolCheckSite, SourceInputs, TypeDeclaration, TypeReport, TypeRequirement,
+    FrontEndFailurePayload, ParseReport,
 };
 pub(crate) use lifecycle::{
     check_for_continuation, check_units_with_options, parse_for_continuation, ContinuationInputs,
@@ -203,7 +205,7 @@ pub struct ProfileUseResult {
 #[cfg(test)]
 pub(crate) use lifecycle::composed_declaration;
 #[cfg(test)]
-pub(crate) use lifecycle::{compose, ComposedUnit};
+pub(crate) use lifecycle::{compose, compose_in_mode, ComposedUnit};
 
 mod bind;
 pub use bind::{
@@ -216,8 +218,9 @@ mod identity_form;
 mod run_value;
 pub(crate) use call::run_reading;
 pub use call::{
-    default_accounting, run, Call, CallArgument, CallIncomplete, CallLocus, CallOutcome,
-    CallRefusal, CallSnapshot, CallValue, RunRefusal, WireArgument, DEFAULT_WORK_UNITS,
+    default_accounting, run, run_with_profile_catalog, Call, CallArgument, CallIncomplete,
+    CallLocus, CallOutcome, CallRefusal, CallSnapshot, CallValue, RunRefusal, WireArgument,
+    DEFAULT_WORK_UNITS,
 };
 pub use identity_form::{effective_form, node_key_form, universe_form};
 pub use run_value::ArgumentDefect;
@@ -1217,6 +1220,19 @@ fn assembly_message(refusal: &AssemblyRefusal) -> String {
     with_more(message, refusal.errors.len())
 }
 
+/// Render a proved interval for a checker diagnostic.
+fn interval_source(interval: &ProvedInterval) -> String {
+    let lower = interval
+        .lower
+        .as_ref()
+        .map_or_else(|| "-inf".to_owned(), ToString::to_string);
+    let upper = interval
+        .upper
+        .as_ref()
+        .map_or_else(|| "+inf".to_owned(), ToString::to_string);
+    format!("[{lower}, {upper}]")
+}
+
 /// A readable account of every checker refusal, in check order.
 fn check_message(refusals: &[CheckRefusal]) -> String {
     if refusals.is_empty() {
@@ -1315,6 +1331,16 @@ fn check_message_one(first: &CheckRefusal) -> String {
             if let CheckCause::UnknownField { owner, field, .. } = &refusal.cause {
                 message = format!("{message}: `{owner}` has no field `{field}`");
             }
+        }
+        CheckCause::Hyper(cause)
+            if matches!(
+                cause.as_ref(),
+                fsl_semantics::check::HyperCause::OutsideHyperClause
+            ) =>
+        {
+            message = format!(
+                "{message}: indexed reads using `@` are admitted only inside a `hyper` clause"
+            );
         }
         // FR-104-AC-2: name the clause kind and, when the clause names one,
         // the operation `result` was written under.
@@ -1522,6 +1548,44 @@ fn check_message_one(first: &CheckRefusal) -> String {
                     "{message}: `{node}` is written via `{name}`, which is no channel of the \
                      protocol"
                 ),
+                ProtocolAnchorCause::MissingChannelConnection { channel, name, .. } => format!(
+                    "{message}: channel `{channel}` is written via `{name}`, which names no \
+                     connection of the protocol"
+                ),
+                ProtocolAnchorCause::ChannelConnectionExport {
+                    channel,
+                    name,
+                    required,
+                    actual,
+                    ..
+                } => format!(
+                    "{message}: channel `{channel}` uses `{name}`, which is a `{actual}`, not a \
+                     `{required}`"
+                ),
+                ProtocolAnchorCause::ChannelPortRole { channel, role, .. } => format!(
+                    "{message}: endpoint role `{role}` of channel `{channel}` is not bound to a Port"
+                ),
+                ProtocolAnchorCause::ChannelConnectionEnds {
+                    channel,
+                    connection,
+                    expected,
+                    actual,
+                    ..
+                } => format!(
+                    "{message}: channel `{channel}` via connection `{connection}` resolves to \
+                     ports {actual:?}, but the connection's directed ends are {expected:?}"
+                ),
+                ProtocolAnchorCause::ChannelConnectionCarries {
+                    channel,
+                    expected,
+                    actual,
+                    ..
+                } => format!(
+                    "{message}: channel `{channel}` carries {}, but its connection source Port \
+                     requires {}",
+                    value_type_source(actual),
+                    value_type_source(expected)
+                ),
                 ProtocolAnchorCause::CarriesMismatch { channel, .. } => format!(
                     "{message}: the binder's type is not the type channel `{channel}` carries"
                 ),
@@ -1633,6 +1697,14 @@ fn check_message_one(first: &CheckRefusal) -> String {
                     "{message}: `{node}` is related by `{name}`, which is no relationship of the \
                      protocol"
                 ),
+                ProtocolAnchorCause::RelatedConnection {
+                    name,
+                    message: detail,
+                    ..
+                } => format!(
+                    "{message}: `{name}` names a Connection, which cannot be used in `related by`; \
+                     {detail}"
+                ),
                 ProtocolAnchorCause::RelatedEnd {
                     relationship, end, ..
                 } => format!(
@@ -1654,6 +1726,18 @@ fn check_message_one(first: &CheckRefusal) -> String {
                     "{message}: `requires temporal {temporal}` reaches `protocol {protocol}` again"
                 ),
             };
+        }
+        CheckCause::Unproved(Obligation::Range {
+            required,
+            proved,
+            operand,
+        }) if operand.text().is_some() => {
+            message = format!(
+                "{message}: `{}` must lie in {} but is proved only in {}",
+                operand.text().unwrap_or_default(),
+                interval_source(required),
+                interval_source(proved)
+            );
         }
         CheckCause::Extension(cause) => {
             message = match cause.as_ref() {

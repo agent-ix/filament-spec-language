@@ -49,10 +49,23 @@ pub struct ProtocolSubject<'a> {
     pub over: ModelInstance,
     /// A binding for each static role.
     pub roles: Vec<RoleBinding>,
+    /// FSpec FR-785: a binding for each `symbolic(<name>)` queue capacity of
+    /// the clause, part of the subject like the role bindings.
+    pub capacities: Vec<CapacityBinding>,
     /// The resolved memory model of each outermost `parallel` (FR-219,
     /// ADR-027 SE-4): part of the subject, and so of the obligation
     /// identity.
     pub memory: ResolvedMemory,
+}
+
+/// One symbolic capacity's binding (FSpec FR-785): the name a queue's
+/// `symbolic(<name>)` capacity uses and its value.
+#[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]
+pub struct CapacityBinding {
+    /// The capacity name.
+    pub name: String,
+    /// The bound value: the queue holds at most this many entries.
+    pub value: u64,
 }
 
 /// One static role's binding (ADR-027 PS-1): the role and the identity of

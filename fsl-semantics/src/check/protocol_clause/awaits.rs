@@ -98,6 +98,8 @@ pub(super) fn check(
         if let Some(within) = within {
             checked.push(CheckedAwait {
                 node: ProtocolNodeId(form.declaration),
+                name: form.name.name.clone(),
+                span: form.span,
                 clock: form.clock.text.clone(),
                 within,
                 profile: selections

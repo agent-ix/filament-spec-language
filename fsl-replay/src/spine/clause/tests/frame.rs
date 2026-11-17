@@ -50,7 +50,7 @@ pub(super) fn snapshot(
         "identity": document_identity_json(label),
         "observation": observation,
         "model": {
-            "identity": CONFIG_VERSION_PACKAGE_IDENTITY, "version": "1.0.0",
+            "identity": CONFIG_VERSION_PACKAGE_IDENTITY,
         },
         "populations": [{
             "population": config_version_population_identity(), "complete": true,

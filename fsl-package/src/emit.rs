@@ -17,17 +17,18 @@ use filament_contract_model::{
     CheckedAbstractionPopulation, CheckedArtifactRef, CheckedCapability,
     CheckedCapabilityDisposition, CheckedComponentClause, CheckedCompositionComponent,
     CheckedCompositionPremise, CheckedDeclaration, CheckedDependencySelection,
-    CheckedDiagnosticsV2, CheckedDimensionOperand, CheckedEnvironmentEntry,
+    CheckedDiagnosticsV2, CheckedDimensionOperand, CheckedEffectiveId, CheckedEnvironmentEntry,
     CheckedEnvironmentSupplies, CheckedFairnessGranularity, CheckedFairnessKind,
     CheckedFairnessSupply, CheckedFieldScope, CheckedFrameModification, CheckedGuaranteeMeasure,
-    CheckedGuaranteeProgress, CheckedNodeId, CheckedNodeKind, CheckedNodeOwner, CheckedNodeTag,
-    CheckedOccurrence, CheckedOccurrenceRole, CheckedOperandEntry, CheckedOperationAnchorBody,
-    CheckedPackageEvidence, CheckedPackageLockV2, CheckedPackageSidecarsRef,
-    CheckedPackageSourceCorrespondenceRef, CheckedPackageV2, CheckedRational,
-    CheckedRefinementStepRowRegion, CheckedScopedDeletion, CheckedSelection, CheckedSelectionRole,
-    CheckedSemanticGraphV2, CheckedSemanticNodeV2, CheckedSourceMapEntry, CheckedSourceRef,
-    CheckedSourceRegion, CheckedTerm, DimensionTerm, LiteralKind, NominalBody, OperationBody,
-    OperationBodyRow, ProtocolForm, ScalarTypeForm, StateForm, ValueForm,
+    CheckedGuaranteeProgress, CheckedJson, CheckedNodeId, CheckedNodeKind, CheckedNodeOwner,
+    CheckedNodeTag, CheckedOccurrence, CheckedOccurrenceRole, CheckedOperandEntry,
+    CheckedOperationAnchorBody, CheckedOriginalDeclarationId, CheckedPackageEvidence,
+    CheckedPackageLockV2, CheckedPackageSidecarsRef, CheckedPackageSourceCorrespondenceRef,
+    CheckedPackageV2, CheckedRational, CheckedRefinementStepRowRegion, CheckedScopedDeletion,
+    CheckedSelection, CheckedSelectionRole, CheckedSemanticGraphV2, CheckedSemanticNodeV2,
+    CheckedSourceMapEntry, CheckedSourceRef, CheckedSourceRegion, CheckedTerm, DimensionTerm,
+    LiteralKind, NominalBody, OperationBody, OperationBodyRow, ProtocolForm, ScalarTypeForm,
+    StateForm, ValueForm,
 };
 use serde::Deserialize;
 
@@ -297,6 +298,10 @@ pub enum EmitRefusal {
         /// The exact checked application key retained by FSL lowering.
         application: NodeKey,
     },
+    /// FR-148's top-level `numericEqual` schedule has no checked-package/v2
+    /// equality schedule in the pinned contract IR (QSL-2173).
+    #[error("float equality schedule is not supported by the pinned checked-package/v2 contract IR yet (QSL-2173)")]
+    FloatEqualityScheduleNotEmitted,
     /// A temporal declaration whose selected profile requires a clock
     /// configuration has no exact producer selection.
     #[error(
@@ -307,13 +312,12 @@ pub enum EmitRefusal {
         .span.end
     )]
     MissingTemporalClockSelection {
+        /// The declaration's kind and qualified name.
+        declaration: String,
         /// The checked source document.
         source_ref: fsl_foundation::source::provenance::RawSourceRef,
         /// The exact declaration locus.
         span: fsl_foundation::Span,
-        /// Plain-language construct name, such as `bounded temporal rule Foo`
-        /// or `compensate template Refund`.
-        declaration: String,
     },
     /// A temporal clock selection does not name a configured declaration in
     /// the checked source.
@@ -482,6 +486,7 @@ impl EmitRefusal {
             Self::ProbabilisticModelNotEmitted { .. }
             | Self::TimedModelNotEmitted { .. }
             | Self::SourceObjectEmission { .. } => Code::UnsupportedConstruct,
+            Self::FloatEqualityScheduleNotEmitted => Code::UnsupportedConstruct,
             Self::MonitorPlanAmbiguous { .. } => Code::InvalidProjectionCorrespondence,
             Self::MonitorBaseRefused(read) => read.code(),
             Self::ClockSelection(_) => Code::InvalidRequest,
@@ -540,6 +545,7 @@ impl EmitRefusal {
             | Self::UnresolvedNodeReference
             | Self::OperandNotInGraph { .. }
             | Self::MissingEqualityIdentityContext { .. } => None,
+            Self::FloatEqualityScheduleNotEmitted => Some("not-yet-implemented"),
             Self::MissingTemporalClockSelection { .. } => Some("missing-selection"),
             Self::SurplusTemporalClockSelection { .. }
             | Self::DuplicateTemporalClockSelection { .. }
@@ -1848,8 +1854,50 @@ impl<'g> Candidate<'g> {
         declared == self.node.declaration().is_some()
     }
 
+    /// FR-952: the mode a `function` node records, the one its function was
+    /// checked under: the declaration index comes from the node's own
+    /// `declaration` or `generated` occurrence, which `check` locates at the
+    /// function's body. `None` for every other node.
+    fn function_check_mode(
+        &self,
+        function_modes: &dyn Fn(usize) -> Option<filament_semantic_value::checking::CheckMode>,
+    ) -> Result<Option<filament_contract_model::CheckMode>, EmitRefusal> {
+        use filament_semantic_value::checking::CheckMode as Checked;
+        use filament_semantic_value::location::ExpressionOwner;
+        if self.node.node_tag() != NodeTag::Function {
+            return Ok(None);
+        }
+        let index = self
+            .occurrences
+            .iter()
+            .filter(|(occurrence, _)| {
+                matches!(
+                    occurrence.role,
+                    CheckedOccurrenceRole::Declaration | CheckedOccurrenceRole::Generated
+                )
+            })
+            .find_map(|(_, location)| match location {
+                RecordedLocation::Expression(location) => match &location.origin {
+                    ExpressionOwner::Body { index, .. } => Some(*index),
+                    _ => None,
+                },
+                RecordedLocation::Parameter(_) => None,
+            });
+        let mode = index
+            .and_then(function_modes)
+            .ok_or_else(|| encoding("a function node has no recorded check mode"))?;
+        Ok(Some(match mode {
+            Checked::Linked => filament_contract_model::CheckMode::Linked,
+            Checked::Kernel => filament_contract_model::CheckMode::Kernel,
+        }))
+    }
+
     /// The node as FR-322 writes it.
-    fn wire_node(&self, ids: &StructuralIds) -> Result<CheckedSemanticNodeV2, EmitRefusal> {
+    fn wire_node(
+        &self,
+        ids: &StructuralIds,
+        function_modes: &dyn Fn(usize) -> Option<filament_semantic_value::checking::CheckMode>,
+    ) -> Result<CheckedSemanticNodeV2, EmitRefusal> {
         let node = self.node;
         Ok(CheckedSemanticNodeV2 {
             node_id: self.id.clone(),
@@ -1881,6 +1929,7 @@ impl<'g> Candidate<'g> {
             }),
             owner: node.owner().map(wire_owner),
             owner_model: node.owner_model().map(|key| node_id(ids, key)),
+            check_mode: self.function_check_mode(function_modes)?,
             body: checked_body(ids, node, self.tag)?,
         })
     }
@@ -3834,6 +3883,9 @@ fn checked_equality_term_data(
             }
         }
         let schedule = match row.producer_data.schedule() {
+            filament_semantic_value::declaration::EqualitySchedule::Float => {
+                return Err(EmitRefusal::FloatEqualityScheduleNotEmitted);
+            }
             filament_semantic_value::declaration::EqualitySchedule::Text => {
                 filament_contract_model::CheckedEqualitySchedule::Text
             }
@@ -3899,20 +3951,178 @@ fn checked_equality_term_data(
 
 /// Convert the retained FR-150 identity without looking up a display name or
 /// traversing the checked graph.
+#[derive(Default)]
+struct SourceDeclarationKeys {
+    packages: BTreeMap<String, String>,
+    checked_nodes: BTreeMap<String, String>,
+}
+
 fn checked_effective_id(
     identity: &filament_exact::EffectiveId,
-) -> filament_contract_model::CheckedEffectiveId {
+    source_keys: &SourceDeclarationKeys,
+) -> Result<CheckedEffectiveId, EmitRefusal> {
     let mut current = None;
     for original in identity.owner_chain() {
-        current = Some(filament_contract_model::CheckedEffectiveId {
+        let (package, node) =
+            emitted_source_declaration_key(original.package(), original.node(), source_keys)?;
+        current = Some(CheckedEffectiveId {
             owner_effective_type: current.map(Box::new),
-            original: filament_contract_model::CheckedOriginalDeclarationId {
-                package: original.package().into(),
-                node: original.node().into(),
+            original: CheckedOriginalDeclarationId {
+                package: package.into(),
+                node: node.into(),
             },
         });
     }
-    current.expect("EffectiveId always has an original declaration")
+    current.ok_or(EmitRefusal::SourceMapInvariant)
+}
+
+/// Map the source model's private package identities to the identities that
+/// its emitted SourceOwner nodes carry. The source package keys remain useful
+/// during checking, but they are not available to a package reader.
+fn source_declaration_key_rewrites(
+    graph: &CheckedGraph,
+) -> Result<SourceDeclarationKeys, EmitRefusal> {
+    let mut rewrites = SourceDeclarationKeys::default();
+    for node in graph.semantic_graph().nodes() {
+        let Some(Owner::Source(owner)) = node.owner() else {
+            continue;
+        };
+        let Some(name) = node.declaration() else {
+            continue;
+        };
+        if let Some(declaration) = graph.resolve_declaration(node.key()) {
+            match rewrites.packages.entry(declaration.package.clone()) {
+                std::collections::btree_map::Entry::Vacant(entry) => {
+                    entry.insert(owner.identity().to_owned());
+                }
+                std::collections::btree_map::Entry::Occupied(entry)
+                    if entry.get() == owner.identity() => {}
+                std::collections::btree_map::Entry::Occupied(_) => {
+                    return Err(EmitRefusal::SourceMapInvariant);
+                }
+            }
+        }
+        rewrites.checked_nodes.insert(
+            node.key().to_string(),
+            source_declaration_identity(owner, name),
+        );
+    }
+    for declaration in graph.scope().types().composites() {
+        let Some(node_key) = graph.semantic_graph().composite_node(&declaration.key()) else {
+            continue;
+        };
+        let Some(node) = graph.semantic_graph().node(node_key.clone()) else {
+            return Err(EmitRefusal::SourceMapInvariant);
+        };
+        let (Some(Owner::Source(owner)), Some(name)) = (node.owner(), node.declaration()) else {
+            continue;
+        };
+        rewrites.checked_nodes.insert(
+            node_key.to_string(),
+            source_declaration_identity(owner, name),
+        );
+    }
+    Ok(rewrites)
+}
+
+fn source_declaration_identity(
+    owner: &fsl_semantics::check::SourceOwner,
+    name: &[filament_exact::Identifier],
+) -> String {
+    format!(
+        "ix://{}/{}",
+        owner.identity(),
+        name.iter()
+            .map(|segment| segment.as_str())
+            .collect::<Vec<_>>()
+            .join("/")
+    )
+}
+
+/// Apply the source owner's declaration-key spelling to a key retained by S3.
+fn emitted_source_declaration_key(
+    package: &str,
+    node: &str,
+    source_keys: &SourceDeclarationKeys,
+) -> Result<(String, String), EmitRefusal> {
+    let Some(identity) = source_keys.packages.get(package) else {
+        return Ok((package.to_owned(), node.to_owned()));
+    };
+    let prefix = format!("ix://{package}/");
+    let declaration = node
+        .strip_prefix(&prefix)
+        .ok_or(EmitRefusal::SourceMapInvariant)?;
+    Ok((identity.clone(), format!("ix://{identity}/{declaration}")))
+}
+
+/// Rewrite source declaration keys in the typed literals of an emitted clock
+/// place. Those keys are producer-local S3 strings; the package names the
+/// same declarations from their SourceOwner identities.
+fn rewrite_source_keys_in_clock_place(
+    node: &mut CheckedSemanticNodeV2,
+    source_keys: &SourceDeclarationKeys,
+) -> Result<(), EmitRefusal> {
+    fn rewrite_term(
+        term: &mut CheckedTerm,
+        source_keys: &SourceDeclarationKeys,
+    ) -> Result<(), EmitRefusal> {
+        match term {
+            CheckedTerm::Literal {
+                value_kind: LiteralKind::Text,
+                value,
+                ..
+            } => {
+                if let Some(text) = value.as_str() {
+                    let mut rewritten = text.to_owned();
+                    if let Some(source_node) = source_keys.checked_nodes.get(text) {
+                        rewritten = source_node.clone();
+                    } else {
+                        for (checked_node, source_node) in &source_keys.checked_nodes {
+                            if rewritten.contains(checked_node) {
+                                rewritten = rewritten.replace(checked_node, source_node);
+                            }
+                        }
+                        for (package, identity) in &source_keys.packages {
+                            let prefix = format!("ix://{package}/");
+                            if let Some(declaration) = rewritten.strip_prefix(&prefix) {
+                                rewritten = format!("ix://{identity}/{declaration}");
+                                break;
+                            }
+                        }
+                        if !rewritten.starts_with("ix://") {
+                            for source_type in source_keys.checked_nodes.values() {
+                                let Some((_, type_name)) = source_type.rsplit_once('/') else {
+                                    continue;
+                                };
+                                let prefix = format!("{type_name}/");
+                                if let Some(member) = rewritten.strip_prefix(&prefix) {
+                                    rewritten = format!("{source_type}/{member}");
+                                    break;
+                                }
+                            }
+                        }
+                    }
+                    if rewritten != text {
+                        *value = CheckedJson::from_serializable(&rewritten)
+                            .map_err(|_| EmitRefusal::SourceMapInvariant)?;
+                    }
+                }
+            }
+            CheckedTerm::Aggregate { members } => {
+                for member in members {
+                    rewrite_term(member, source_keys)?;
+                }
+            }
+            CheckedTerm::Binding { value, .. } => rewrite_term(value, source_keys)?,
+            _ => {}
+        }
+        Ok(())
+    }
+
+    if node.semantic_form.as_ref() == "clock_place" {
+        rewrite_term(&mut node.body, source_keys)?;
+    }
+    Ok(())
 }
 
 /// Emit exact dispatch decisions retained while lowering each typed dispatch
@@ -3922,6 +4132,7 @@ fn checked_dispatch_tables(
     graph: &CheckedGraph,
     emitted_node_ids: &HashMap<NodeKey, CheckedNodeId>,
     source_map: &[CheckedSourceMapEntry],
+    source_keys: &SourceDeclarationKeys,
 ) -> Result<Vec<filament_contract_model::CheckedDispatchCandidateTable>, EmitRefusal> {
     let mut rows = Vec::with_capacity(graph.dispatch_producer_decisions().len());
     for ((application, location), decision) in graph.dispatch_producer_decisions() {
@@ -3987,7 +4198,7 @@ fn checked_dispatch_tables(
                 .transpose()?;
             candidates.push(filament_contract_model::CheckedDispatchCandidate {
                 selected_operation: operation.clone(),
-                selection_key: checked_effective_id(selection_key),
+                selection_key: checked_effective_id(selection_key, source_keys)?,
                 operation_body,
                 effective_precondition,
             });
@@ -4023,6 +4234,7 @@ fn checked_term_data(
     )],
     equality_rows: &[EqualityProducerEmissionRow],
     source_map: &[CheckedSourceMapEntry],
+    source_keys: &SourceDeclarationKeys,
 ) -> Result<Option<filament_contract_model::CheckedTermDataV2>, EmitRefusal> {
     let mut term_data = checked_equality_term_data(
         graph,
@@ -4031,7 +4243,8 @@ fn checked_term_data(
         equality_rows,
     )?
     .unwrap_or_default();
-    term_data.dispatch_tables = checked_dispatch_tables(graph, emitted_node_ids, source_map)?;
+    term_data.dispatch_tables =
+        checked_dispatch_tables(graph, emitted_node_ids, source_map, source_keys)?;
     term_data.protocol_locations =
         protocol_locations::checked_protocol_locations(graph, emitted_node_ids)?;
     term_data.probabilistic_claims = checked_probabilistic_claims(graph, emitted_node_ids)?;
@@ -4529,6 +4742,7 @@ fn refinement_node(
     Ok((
         CheckedSemanticNodeV2 {
             owner_model: None,
+            check_mode: None,
             node_id: id,
             schema_version: GRAPH_V2.into(),
             node_tag: CheckedNodeTag::Relation.as_wire().into(),
@@ -4605,6 +4819,7 @@ fn require_protocol_results_for_refusals(package: &CheckedPackage) -> Result<(),
 /// with [`EmitRefusal::OutputLimit`] in place of being returned.
 pub fn emit_checked(package: &CheckedPackage, limits: EmitLimits) -> Result<Emission, EmitRefusal> {
     require_protocol_results_for_refusals(package)?;
+    refuse_ieee_numeric_equality(package.graph())?;
     if let Some(emission) = package.remembered_emission() {
         return remembered_within(emission, limits, package.graph());
     }
@@ -4636,6 +4851,7 @@ fn emit_checked_uncached(
     limits: EmitLimits,
 ) -> Result<Emission, EmitRefusal> {
     let graph = package.graph();
+    refuse_ieee_numeric_equality(graph)?;
     emit_package_inner(
         package,
         graph.memoized_regions(),
@@ -5072,6 +5288,7 @@ fn append_schedulability_claims(
             .ok_or(EmitRefusal::SourceMapInvariant)?;
         let node = CheckedSemanticNodeV2 {
             owner_model: None,
+            check_mode: None,
             node_id: id.clone(),
             schema_version: GRAPH_V2.into(),
             node_tag: CheckedNodeTag::ScalarType.as_wire().into(),
@@ -5181,6 +5398,7 @@ fn append_schedulability_claims(
         }
         let node = CheckedSemanticNodeV2 {
             owner_model: None,
+            check_mode: None,
             node_id: id.clone(),
             schema_version: GRAPH_V2.into(),
             node_tag: CheckedNodeTag::Claim.as_wire().into(),
@@ -5440,6 +5658,7 @@ fn push_scalar_type(
     });
     nodes.push(CheckedSemanticNodeV2 {
         owner_model: None,
+        check_mode: None,
         node_id: id.clone(),
         schema_version: GRAPH_V2.into(),
         node_tag: CheckedNodeTag::ScalarType.as_wire().into(),
@@ -5659,6 +5878,7 @@ fn model_root_node(
     let id = node_id(ids, key);
     CheckedSemanticNodeV2 {
         owner_model: None,
+        check_mode: None,
         node_id: id.clone(),
         schema_version: GRAPH_V2.into(),
         node_tag: CheckedNodeTag::Model.as_wire().into(),
@@ -5873,6 +6093,24 @@ pub fn emit_timed_models(
         temporal_rows: TemporalRows::default(),
     }
     .with_identity_row_selection())
+}
+
+/// The current semantic-value lowering represents FR-148 float equality as a
+/// catalogued IEEE operation rather than an `EqualitySchedule` producer fact.
+/// Until checked-package/v2 has the matching schedule, fail closed at this
+/// boundary rather than serializing a representation the pinned reader cannot
+/// validate (QSL-2173).
+fn refuse_ieee_numeric_equality(graph: &CheckedGraph) -> Result<(), EmitRefusal> {
+    if graph.semantic_graph().nodes().any(|node| {
+        matches!(
+            node.body(),
+            BodyTerm::Application(application)
+                if application.operation.identity() == "filament.op.ieee.numeric_equal"
+        )
+    }) {
+        return Err(EmitRefusal::FloatEqualityScheduleNotEmitted);
+    }
+    Ok(())
 }
 
 /// [`emit_checked`] under the caller's [`Cancel`] handle, polled once at
@@ -6242,6 +6480,8 @@ fn emit_package_inner(
         return Err(refusal);
     }
     let graph = package.graph();
+    refuse_ieee_numeric_equality(graph)?;
+    let source_keys = source_declaration_key_rewrites(graph)?;
     // FSpec FR-490, FR-491: each guarantee and composition declaration is a
     // `correspondence` node beside the graph's own.
     let declared_forms: Vec<(SemanticNode, Location)> = graph
@@ -6263,9 +6503,6 @@ fn emit_package_inner(
         .map(|relation| graph.abstraction_nodes(relation))
         .transpose()
         .map_err(EmitRefusal::Abstraction)?;
-    if let Some((_, span)) = graph.first_source_object() {
-        return Err(EmitRefusal::SourceObjectEmission { span });
-    }
     if let Some((feature, declaration)) = graph.probabilistic_model().first_declaration() {
         let location = graph
             .probabilistic_model()
@@ -6401,11 +6638,14 @@ fn emit_package_inner(
         .map(
             |candidate| match denied().or_else(|| fault(&candidate.id)) {
                 Some(refusal) => Err(refusal),
-                None => candidate.wire_node(ids),
+                None => candidate.wire_node(ids, &|index| graph.function_check_mode(index)),
             },
         )
         .collect::<Result<Vec<_>, _>>()?;
     let mut nodes = wire_nodes;
+    for node in &mut nodes {
+        rewrite_source_keys_in_clock_place(node, &source_keys)?;
+    }
     let mut emitted_refinements = Vec::new();
     let mut step_rows = Vec::new();
     for refinement in graph.refinements() {
@@ -6810,6 +7050,7 @@ fn emit_package_inner(
         &selected_model_enum_member_rows,
         &equality_producer_identity_rows,
         &source_map,
+        &source_keys,
     )?;
     let selected_operation_member_rows = selected_operation_member_rows
         .into_iter()
@@ -7985,6 +8226,7 @@ fn write_time_nominal(
     });
     nodes.push(CheckedSemanticNodeV2 {
         owner_model: None,
+        check_mode: None,
         node_id: id.clone(),
         schema_version: GRAPH_V2.into(),
         node_tag: CheckedNodeTag::ScalarType.as_wire().into(),
@@ -8035,6 +8277,13 @@ fn temporal_binding_rows(
     selections: &[TemporalClockSelection],
 ) -> Result<WrittenTemporalRows, EmitRefusal> {
     use fsl_semantics::check::TemporalProfile;
+
+    #[derive(Clone, Copy, Eq, Ord, PartialEq, PartialOrd)]
+    enum MissingClockKind {
+        CompensationTemplate,
+        Await,
+        Other,
+    }
 
     let mut selected = BTreeMap::new();
     for selection in selections {
@@ -8114,6 +8363,7 @@ fn temporal_binding_rows(
         let key = (source.clone(), span.start, span.end);
         let Some(selection) = selected.remove(&key) else {
             missing.push((
+                MissingClockKind::Other,
                 source,
                 span,
                 format!("bounded temporal rule `{}`", clause.name()),
@@ -8189,6 +8439,7 @@ fn temporal_binding_rows(
         let key = (source.clone(), span.start, span.end);
         let Some(selection) = selected.remove(&key) else {
             missing.push((
+                MissingClockKind::Other,
                 source,
                 span,
                 format!("bounded temporal rule `{}`", hyper.name()),
@@ -8225,6 +8476,69 @@ fn temporal_binding_rows(
         };
         keyed.rows.push((wrapper.clone(), row.clone()));
         rows.push(row);
+    }
+
+    // FSpec FR-464: an `await` control reads a clock, so it gets one binding
+    // row at its own declaration locus, alongside temporal clauses and
+    // compensation templates.
+    for protocol in graph.protocols() {
+        let source = graph.source().clone();
+        let Some(keys) = graph.protocol_node_keys(&protocol.name) else {
+            continue;
+        };
+        for awaited in &protocol.awaits {
+            let Some(profile) = awaited.profile else {
+                continue;
+            };
+            if !matches!(
+                profile,
+                TemporalProfile::EventPositionFalseExtension
+                    | TemporalProfile::FixedSampleFalseExtension
+                    | TemporalProfile::TimestampedEventFiniteWindow
+            ) {
+                continue;
+            }
+            let span = awaited.span;
+            let key = (source.clone(), span.start, span.end);
+            let declaration_name = format!("await {}::{}", protocol.name, awaited.name);
+            let Some(selection) = selected.remove(&key) else {
+                missing.push((
+                    MissingClockKind::Await,
+                    source.clone(),
+                    span,
+                    declaration_name,
+                ));
+                continue;
+            };
+            check_selected_definition(&source, span, profile, selection)?;
+            let clock = &selection.clock;
+            validate_temporal_clock(&source, span, awaited.clock.as_str(), clock)?;
+            let node_key = keys
+                .nodes
+                .get(&awaited.node)
+                .ok_or(EmitRefusal::SourceMapInvariant)?;
+            let declaration = emitted_node_ids
+                .get(node_key)
+                .cloned()
+                .ok_or(EmitRefusal::SourceMapInvariant)?;
+            let node = nodes
+                .iter()
+                .find(|node| node.node_id == declaration)
+                .ok_or(EmitRefusal::SourceMapInvariant)?;
+            for ordinal in node
+                .occurrences
+                .iter()
+                .filter(|occurrence| occurrence.role == CheckedOccurrenceRole::Declaration)
+                .map(|occurrence| occurrence.ordinal)
+            {
+                rows.push(filament_contract_model::TemporalBinding {
+                    declaration: declaration.clone(),
+                    occurrence: ordinal,
+                    clock_name: awaited.clock.as_str().into(),
+                    clock: clock.clone(),
+                });
+            }
+        }
     }
 
     // FSpec FR-322-AC-305: a `compensate` node reads a clock too, so it is
@@ -8268,9 +8582,10 @@ fn temporal_binding_rows(
             let key = (source.clone(), span.start, span.end);
             let Some(selection) = selected.remove(&key) else {
                 missing.push((
+                    MissingClockKind::CompensationTemplate,
                     source.clone(),
                     span,
-                    format!("compensate template `{}`", template.name),
+                    format!("compensate template `{}::{}`", protocol.name, template.name),
                 ));
                 continue;
             };
@@ -8301,11 +8616,12 @@ fn temporal_binding_rows(
             span: fsl_foundation::Span { start, end },
         });
     }
-    if let Some((source_ref, span, declaration)) = missing.into_iter().next() {
+    missing.sort_by_key(|(kind, _, _, _)| *kind);
+    if let Some((_, source_ref, span, declaration)) = missing.into_iter().next() {
         return Err(EmitRefusal::MissingTemporalClockSelection {
+            declaration,
             source_ref,
             span,
-            declaration,
         });
     }
     rows.sort_by(|left, right| {

@@ -7,6 +7,7 @@
 
 use filament_contract_model::CheckedPackageV2;
 use filament_semantic_value::catalog::CatalogCode;
+use fsl_eval::simulation::protocol::ProtocolRefusal;
 use fsl_foundation::{BackendId, Code, RequestIndex};
 use fsl_replay::protocol_analysis::{AnalysisOutcome, ProtocolAnalysisSettlement};
 use fsl_replay::spine::{ProtocolAnalysisRecord, ProtocolRecordError};
@@ -147,6 +148,10 @@ pub fn realizability_item<'a>(
             Err(RealizabilityRefusal::Missing(_)) => invalid("missing-member"),
             Err(RealizabilityRefusal::InvalidProfile(_) | RealizabilityRefusal::PremiseFact(_)) => {
                 invalid("invalid-value")
+            }
+            // FSpec FR-785-AC-3: a refused capacity binding.
+            Err(RealizabilityRefusal::Protocol(ProtocolRefusal::Capacity(refusal))) => {
+                invalid(refusal.cause())
             }
             Err(
                 RealizabilityRefusal::View(_)

@@ -24,6 +24,7 @@
 //! `unsupported_construct`/`not-yet-implemented` naming it.
 
 mod access;
+mod capacity;
 mod channel;
 mod compensation;
 mod fairness;
@@ -56,17 +57,17 @@ use fsl_semantics::family::ClaimExtent;
 use quire_canonical::{Encode, Error, Sink, Writer};
 
 use crate::fairness::{Constraint, Identity};
-use crate::model_subject::{ModelInstance, ProtocolSubject};
+use crate::model_subject::{CapacityBinding, ModelInstance, ProtocolSubject};
 use crate::simulation::expansion::{Expansion, ExpansionLimit, ExpansionStop};
 use crate::simulation::explore::TransitionSystem;
 use crate::simulation::footprint::Location;
 use crate::simulation::key::{self, EncodingRefusal};
-use crate::simulation::model::encode::{map_enc, reference_enc, Canonicalizer, Enc};
+use crate::simulation::model::encode::{Canonicalizer, Enc, map_enc, reference_enc, value_enc};
 use crate::simulation::model::{
-    verdict, ClauseOutcome, ModelFinding, ModelSimState, ModelSystem, Observed, TerminalClass,
-    Verdict, BROKEN,
+    BROKEN, ClauseOutcome, ModelFinding, ModelSimState, ModelSystem, Observed, TerminalClass,
+    Verdict, verdict,
 };
-use crate::simulation::not_simulated::{check_requires_bound, NotSimulated, RequiresBound};
+use crate::simulation::not_simulated::{NotSimulated, RequiresBound, check_requires_bound};
 use crate::simulation::progress::ZeroProgressError;
 use crate::simulation::subject::ConstraintError;
 use crate::simulation::subject::{Bounded, Cut, SubjectSystem};
@@ -78,17 +79,18 @@ pub use access::{
     AccessShape, AttemptInstance, InstanceAccess, LoadBufferingShape, WeakAccessFailure,
     WeakAccessShape, WeakAccesses, WeakAttempt,
 };
+pub use capacity::{capacity_value, Capacities, CapacityRefusal, UnboundCapacity};
 pub use fairness::{
-    protocol_constraints, FairnessOrigin, ProtocolClass, ProtocolFairness, ProtocolFairnessError,
-    ProtocolTarget,
+    FairnessOrigin, ProtocolClass, ProtocolFairness, ProtocolFairnessError, ProtocolTarget,
+    protocol_constraints,
 };
 pub use footprint::{
-    visible, AnchorName, ClaimReads, ParallelInstance, ProtocolFootprintError, ProtocolLocation,
+    AnchorName, ClaimReads, ParallelInstance, ProtocolFootprintError, ProtocolLocation, visible,
 };
 pub use identity::{
-    Actor, BlockedThread, CarriedComponent, PathStep, PositionAnchor, ProtocolTransition,
-    QueueFlow, RegistrationKey, RestKind, RestPoint, SendOutcome, SendRecord, StepKind, ThreadPath,
-    WaitCause,
+    Actor, BlockedThread, BusinessEffectOccurrence, CarriedComponent, DeliveryIdentity,
+    MessageOccurrence, PathStep, PositionAnchor, ProtocolTransition, QueueFlow, RegistrationKey,
+    RestKind, RestPoint, SendOutcome, SendRecord, StepKind, ThreadPath, WaitCause,
 };
 pub use memory::{
     Access, CarriedKey, Chosen, FootprintStep, GatedStep, MemoryBranch, MemoryChoice, MemoryModel,
@@ -101,7 +103,7 @@ pub use reach::{ReachRefusal, Reachable, ReachedState};
 pub use selection::{
     MemorySelection, MemorySelectionRefusal, ResolvedMemory, ResolvedParallel, SubjectMemory,
 };
-pub use tso::{Buffered, Tso, TsoComponent, DEFAULT_MEMORY_BOUND};
+pub use tso::{Buffered, DEFAULT_MEMORY_BOUND, Tso, TsoComponent};
 pub use wire::{
     blocked_json, fairness_json, location_json, over_reference, send_record_json, transition_json,
 };
@@ -117,8 +119,6 @@ pub enum Unsupported {
     /// An attempt of a weak `parallel` whose application has no footprint
     /// to classify its access by (FR-220).
     AccessFootprint,
-    /// A channel whose capacity is `symbolic(..)`, with no bound to read.
-    SymbolicCapacity,
     /// A protocol capture, `choice` guard, `repeat` guard or `check`
     /// undecided at an initial state, before any position a finding can name.
     UndecidedInitialGuard,
@@ -139,7 +139,6 @@ impl Unsupported {
             Self::Control(keyword) => keyword,
             Self::WeakMemory => "memory",
             Self::AccessFootprint => "attempt footprint under a weak memory model",
-            Self::SymbolicCapacity => "symbolic channel capacity",
             Self::UndecidedInitialGuard => "undecided guard at an initial state",
             Self::OverNotAnObject => "over input of no object type",
             Self::UnboundAttemptBinder => "read of an unbound attempt binder",
@@ -165,6 +164,10 @@ pub enum ProtocolRefusal {
         /// The role.
         role: String,
     },
+    /// The subject's capacity binding is refused (FSpec FR-785
+    /// "Admission"), or a capacity the clause uses has none.
+    #[error(transparent)]
+    Capacity(CapacityRefusal),
     /// The `over` object is not an object of its declared type's population
     /// universe (`invalid_runtime_input`/`invalid-value`).
     #[error("invalid_runtime_input/invalid-value: {parameter} bound to {object}")]
@@ -228,6 +231,7 @@ impl ProtocolRefusal {
             | Self::OverBinding { .. }
             | Self::RolePopulation { .. }
             | Self::Memory(_) => Code::InvalidRuntimeInput,
+            Self::Capacity(refusal) => refusal.code(),
             Self::Unsupported(_) | Self::NodeFootprint { .. } | Self::WeakAccessShape(_) => {
                 Code::UnsupportedConstruct
             }
@@ -246,6 +250,7 @@ impl ProtocolRefusal {
             | Self::RolePopulation { .. }
             | Self::Memory(_) => "invalid-value",
             Self::RoleMapping { .. } => "wrong-role-mapping",
+            Self::Capacity(refusal) => refusal.cause(),
             Self::Unsupported(_) | Self::NodeFootprint { .. } => "not-yet-implemented",
             Self::WeakAccessShape(_) => "weak-access-shape",
             Self::InitialStop(stop) => stop.cause.cause(),
@@ -282,7 +287,46 @@ struct Thread {
     rest: Rest,
     disposition: Disposition,
     owner: Option<(ParallelKey, String)>,
+    pending_access: Option<PendingAccess>,
 }
+
+/// The values and memory choices accumulated by the load steps of a
+/// multi-location weak-memory access (FR-902).
+#[derive(Clone, Debug)]
+struct PendingAccess {
+    transition: filament_semantic_value::model_transition::ModelTransition,
+    receiver: Enc,
+    arguments: Vec<Enc>,
+    locations: Vec<Location>,
+    reads: BTreeMap<Location, PendingRead>,
+}
+
+#[derive(Clone, Debug)]
+struct PendingRead {
+    value: Option<Value>,
+    key: Option<String>,
+    choice: memory::ReadChoice,
+}
+
+impl PartialEq for PendingRead {
+    fn eq(&self, other: &Self) -> bool {
+        self.key == other.key && self.choice == other.choice
+    }
+}
+
+impl Eq for PendingRead {}
+
+impl PartialEq for PendingAccess {
+    fn eq(&self, other: &Self) -> bool {
+        self.transition == other.transition
+            && self.receiver == other.receiver
+            && self.arguments == other.arguments
+            && self.locations == other.locations
+            && self.reads == other.reads
+    }
+}
+
+impl Eq for PendingAccess {}
 
 /// A parallel instance's key (ADR-027 PS-4).
 #[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]
@@ -349,6 +393,8 @@ struct QueueKey {
 #[derive(Clone, Debug)]
 struct Entry {
     send: fsl_semantics::check::ProtocolNodeId,
+    message: MessageOccurrence,
+    delivery: u64,
     payload: Value,
     enc: Enc,
     bytes: Vec<u8>,
@@ -366,6 +412,7 @@ enum Status {
     Closed,
     Recovered,
     Unrecovered,
+    TimedOut,
 }
 
 impl Status {
@@ -376,6 +423,7 @@ impl Status {
             Self::Closed => "closed",
             Self::Recovered => "recovered",
             Self::Unrecovered => "unrecovered",
+            Self::TimedOut => "timed-out",
         }
     }
 
@@ -402,6 +450,16 @@ struct Registered {
 struct Registration {
     status: Status,
     captures: Vec<Bound>,
+    attempts: Vec<AttemptFact>,
+}
+
+/// One retained compensation attempt (FR-893): its own record and outcome,
+/// and the predecessor index when this is a retry.
+#[derive(Clone, Debug)]
+pub(super) struct AttemptFact {
+    pub(super) record: Enc,
+    pub(super) outcome: &'static str,
+    pub(super) retry_of: Option<u64>,
 }
 
 /// One compensation thread (ADR-027 CP-3): the registration it compensates,
@@ -422,6 +480,8 @@ struct PendingSend {
     payload: Value,
     enc: Enc,
     remaining: u64,
+    message: MessageOccurrence,
+    next_delivery: u64,
 }
 
 /// A role instance's status (ADR-027 RR-3).
@@ -461,6 +521,13 @@ struct Instance {
     environments: BTreeMap<ThreadPath, BTreeMap<fsl_semantics::check::ProtocolNodeId, Bound>>,
     /// Each `repeat` counter, by (repeat node, thread) (ADR-027 PS-6).
     counters: BTreeMap<(fsl_semantics::check::ProtocolNodeId, ThreadPath), u64>,
+    /// The next occurrence ordinal of each send node on each thread path.
+    message_ordinals: BTreeMap<(fsl_semantics::check::ProtocolNodeId, ThreadPath), u64>,
+    /// The next occurrence ordinal of each effect node on each thread path.
+    effect_ordinals: BTreeMap<(fsl_semantics::check::ProtocolNodeId, ThreadPath), u64>,
+    /// The next delivery index of each message, retained after a copy leaves
+    /// the queue so a later duplicate never reuses an index.
+    next_deliveries: BTreeMap<MessageOccurrence, u64>,
     /// Each non-empty queue, a `fifo` one in delivery order and an
     /// `unordered` one in ascending JCS bytes of its entries (PS-7).
     queues: BTreeMap<QueueKey, Vec<Entry>>,
@@ -476,6 +543,32 @@ struct Instance {
 }
 
 impl Instance {
+    /// FR-736's instance recovery summary over this instance's registrations.
+    pub(super) fn recovery_summary(&self) -> &'static str {
+        let mut successful = false;
+        let mut unsuccessful = false;
+        let mut pending = false;
+        for registration in self.registrations.values() {
+            match registration.status {
+                Status::Activated => pending = true,
+                Status::Recovered => successful = true,
+                Status::Unrecovered | Status::TimedOut => unsuccessful = true,
+                Status::Registered | Status::Closed => {}
+            }
+        }
+        if pending {
+            "pending"
+        } else if successful && unsuccessful {
+            "partially-recovered"
+        } else if successful {
+            "recovered"
+        } else if unsuccessful {
+            "unrecovered"
+        } else {
+            "untriggered"
+        }
+    }
+
     /// The live instances of the replicated role `index` (ADR-027 RR-3), in
     /// object order.
     fn live_of(&self, index: usize) -> impl Iterator<Item = &ObjectReference> {
@@ -656,7 +749,10 @@ pub fn protocol_domains(
                 .binders
                 .iter()
                 .find(|key| key.introducing == Some(introducing) && key.name == binder.name)?;
-            Some((key.node.clone(), binder.value_type.clone()))
+            Some((
+                key.node.clone(),
+                super::model::root_classification_type(&binder.value_type),
+            ))
         });
     // A `cattempt` takes one record of its template's attempt type (ST-11).
     let attempts = protocol
@@ -666,7 +762,10 @@ pub fn protocol_domains(
         .enumerate()
         .filter_map(|(index, template)| {
             let node = keys.compensations.get(&index)?;
-            Some((node.clone(), template.attempt_type.clone()))
+            Some((
+                node.clone(),
+                super::model::root_classification_type(&template.attempt_type),
+            ))
         });
     binders.chain(attempts).collect()
 }
@@ -701,28 +800,47 @@ fn check_attempt_types(
     }
     match ClaimExtent::from_domains(domains) {
         ClaimExtent::Bounded => Ok(()),
-        ClaimExtent::Unbounded(domains) => {
-            Err(NotSimulated::RequiresBound(RequiresBound { domains }))
-        }
+        ClaimExtent::Unbounded(domains) => Err(NotSimulated::RequiresBound(RequiresBound {
+            domains,
+            capacities: Vec::new(),
+        })),
     }
 }
 
 /// FR-215 (ADR-027 TS-5): FR-101's requires-bound pre-check over the roots
-/// of `model` and of `protocol`, with no state explored.
+/// of `model` and of `protocol`, with no state explored. A capacity name
+/// `capacities` leaves unbound is an unbounded root too (FSpec FR-785): it
+/// is reported with the other unbounded roots in one requires-bound.
 ///
 /// # Errors
 ///
-/// [`NotSimulated::RequiresBound`] when a root is unbounded;
+/// [`NotSimulated::RequiresBound`] when a root is unbounded, naming every
+/// unbound capacity name with it;
+/// [`NotSimulated::UnboundCapacity`] when only capacity names are;
 /// [`NotSimulated::Extent`] when classification stops.
 pub fn check_protocol_bounds(
     model: &ModelSystem<'_>,
     protocol: &CheckedProtocol,
+    capacities: &Capacities,
     graph: &CheckedGraph,
     position_limit: u64,
 ) -> Result<(), NotSimulated> {
     let domains = subject_domains(model, protocol, graph);
-    check_requires_bound(&roots(&domains), model.types(), position_limit)?;
-    check_attempt_types(model, protocol, graph)
+    let with_capacities = |refusal| match refusal {
+        NotSimulated::RequiresBound(mut bound) => {
+            bound.capacities = capacities.unbound().to_vec();
+            NotSimulated::RequiresBound(bound)
+        }
+        other => other,
+    };
+    check_requires_bound(&roots(&domains), model.types(), position_limit)
+        .map_err(with_capacities)?;
+    check_attempt_types(model, protocol, graph).map_err(with_capacities)?;
+    if capacities.unbound().is_empty() {
+        Ok(())
+    } else {
+        Err(NotSimulated::UnboundCapacity(capacities.unbound().to_vec()))
+    }
 }
 
 /// The roots of `model` and of `protocol`.
@@ -825,11 +943,13 @@ pub fn classify_accesses(
     protocol: &CheckedProtocol,
     memory: &ResolvedMemory,
     over: &ModelInstance,
+    capacities: &[CapacityBinding],
 ) -> Result<WeakAccesses, ProtocolRefusal> {
     let governing = memory
         .governing(protocol)
         .map_err(ProtocolRefusal::Memory)?;
-    let program = Program::new(model, protocol)?;
+    let capacities = Capacities::admit(protocol, capacities).map_err(ProtocolRefusal::Capacity)?;
+    let program = Program::new(model, protocol, &capacities)?;
     let over = over_value(model, protocol, over)?;
     access::classify(
         model,
@@ -855,6 +975,7 @@ pub fn load_buffering_shapes(
     protocol: &CheckedProtocol,
     memory: &ResolvedMemory,
     over: &ModelInstance,
+    capacities: &[CapacityBinding],
 ) -> Result<Vec<LoadBufferingShape>, ProtocolRefusal> {
     let governing = memory
         .governing(protocol)
@@ -865,8 +986,9 @@ pub fn load_buffering_shapes(
     {
         return Ok(Vec::new());
     }
-    let program = Program::new(model, protocol)?;
-    let accesses = classify_accesses(model, protocol, memory, over)?;
+    let admitted = Capacities::admit(protocol, capacities).map_err(ProtocolRefusal::Capacity)?;
+    let program = Program::new(model, protocol, &admitted)?;
+    let accesses = classify_accesses(model, protocol, memory, over, capacities)?;
     Ok(
         access::load_buffering_shapes(&program, &governing, &accesses)?
             .into_iter()
@@ -1019,7 +1141,9 @@ impl<'a, M: MemoryModel> ProtocolSystem<'a, M> {
         {
             return Err(ProtocolRefusal::Unsupported(Unsupported::WeakMemory));
         }
-        let program = Program::new(&model, protocol)?;
+        let capacities =
+            Capacities::admit(protocol, &subject.capacities).map_err(ProtocolRefusal::Capacity)?;
+        let program = Program::new(&model, protocol, &capacities)?;
         let enabled = access::classify(
             &model,
             protocol,
@@ -1098,6 +1222,28 @@ impl<'a, M: MemoryModel> ProtocolSystem<'a, M> {
     pub fn with_max_live_instances(mut self, bound: u64) -> Self {
         self.max_live_instances = bound;
         self
+    }
+
+    /// Whether any live instance holds an undelivered message on an
+    /// exactly-once-premise channel.
+    ///
+    /// Global conformance uses this at `finish`: the protocol simulator
+    /// retires an instance there, while FR-896 still owes the channel's
+    /// exactly-once premise over the completed execution.
+    pub fn has_pending_exactly_once_delivery(&self, state: &ProtocolState<M>) -> bool {
+        state.instances.values().any(|instance| {
+            instance.queues.iter().any(|(queue, entries)| {
+                !entries.is_empty()
+                    && self
+                        .program
+                        .channels
+                        .get(queue.channel)
+                        .is_some_and(|channel| {
+                            channel.delivery
+                                == fsl_semantics::check::ChannelDelivery::ExactlyOncePremise
+                        })
+            })
+        })
     }
 
     /// The objects of each replicated role's population (ADR-027 RR-1): the
@@ -1385,7 +1531,13 @@ impl<'a, M: MemoryModel> ProtocolSystem<'a, M> {
                     "protocol-instance",
                     vec![("ordinal", Enc::text(ordinal.to_string()))],
                 ),
-                Enc::tagged("instance-state", vec![("finished", Enc::Bool(false))]),
+                Enc::tagged(
+                    "instance-state",
+                    vec![
+                        ("finished", Enc::Bool(false)),
+                        ("recovery_summary", Enc::text(instance.recovery_summary())),
+                    ],
+                ),
             ));
             for (path, thread) in &instance.threads {
                 let rest = self
@@ -1395,6 +1547,92 @@ impl<'a, M: MemoryModel> ProtocolSystem<'a, M> {
                     ("rest", rest),
                     ("disposition", Enc::text(thread.disposition.text())),
                 ];
+                if let Some(pending) = &thread.pending_access {
+                    let transition = &pending.transition;
+                    let reads = pending
+                        .locations
+                        .iter()
+                        .filter_map(|location| {
+                            let read = pending.reads.get(location)?;
+                            Some(Enc::tagged(
+                                "pending-access-read",
+                                vec![
+                                    (
+                                        "location",
+                                        access::location_enc(
+                                            location,
+                                            self.potential.cell(location),
+                                        ),
+                                    ),
+                                    (
+                                        "value",
+                                        read.value.as_ref().map_or(Enc::Null, |value| {
+                                            value_enc(value, self.model.typing())
+                                        }),
+                                    ),
+                                    ("read_depth", Enc::text(read.choice.depth.to_string())),
+                                ],
+                            ))
+                        })
+                        .collect();
+                    members.push((
+                        "pending_access",
+                        Enc::tagged(
+                            "pending-access",
+                            vec![
+                                (
+                                    "transition",
+                                    Enc::tagged(
+                                        "model-transition",
+                                        vec![
+                                            (
+                                                "operation",
+                                                Enc::text(transition.operation().to_owned()),
+                                            ),
+                                            (
+                                                "receiver",
+                                                transition
+                                                    .receiver()
+                                                    .map_or(Enc::Null, |receiver| {
+                                                        Enc::text(receiver.to_owned())
+                                                    }),
+                                            ),
+                                            (
+                                                "arguments",
+                                                Enc::Array(
+                                                    transition
+                                                        .arguments()
+                                                        .iter()
+                                                        .cloned()
+                                                        .map(Enc::text)
+                                                        .collect(),
+                                                ),
+                                            ),
+                                        ],
+                                    ),
+                                ),
+                                ("receiver", pending.receiver.clone()),
+                                ("arguments", Enc::Array(pending.arguments.clone())),
+                                (
+                                    "locations",
+                                    Enc::Array(
+                                        pending
+                                            .locations
+                                            .iter()
+                                            .map(|location| {
+                                                access::location_enc(
+                                                    location,
+                                                    self.potential.cell(location),
+                                                )
+                                            })
+                                            .collect(),
+                                    ),
+                                ),
+                                ("reads", Enc::Array(reads)),
+                            ],
+                        ),
+                    ));
+                }
                 // A compensation thread's registration decides its steps,
                 // so its thread state names it (see `key_members`).
                 if let Some(compensating) = instance.compensating.get(path) {
@@ -1425,6 +1663,11 @@ impl<'a, M: MemoryModel> ProtocolSystem<'a, M> {
                         vec![
                             ("remaining", Enc::text(pending.remaining.to_string())),
                             ("payload", pending.enc.clone()),
+                            ("message", pending.message.enc()),
+                            (
+                                "next_delivery",
+                                Enc::text(pending.next_delivery.to_string()),
+                            ),
                         ],
                     ),
                 ));
@@ -1495,6 +1738,38 @@ impl<'a, M: MemoryModel> ProtocolSystem<'a, M> {
                     Enc::tagged("integer", vec![("value", Enc::text(counter.to_string()))]),
                 ));
             }
+            for ((node, thread), counter) in &instance.message_ordinals {
+                let node = self
+                    .program
+                    .text(*node)
+                    .map_or(Enc::Unencodable("a send node"), Enc::text);
+                bounds.push((
+                    Enc::tagged(
+                        "message-ordinal",
+                        vec![("node", node), ("thread", thread.enc())],
+                    ),
+                    Enc::tagged("integer", vec![("value", Enc::text(counter.to_string()))]),
+                ));
+            }
+            for ((node, thread), counter) in &instance.effect_ordinals {
+                let node = self
+                    .program
+                    .text(*node)
+                    .map_or(Enc::Unencodable("an effect node"), Enc::text);
+                bounds.push((
+                    Enc::tagged(
+                        "business-effect-ordinal",
+                        vec![("node", node), ("thread", thread.enc())],
+                    ),
+                    Enc::tagged("integer", vec![("value", Enc::text(counter.to_string()))]),
+                ));
+            }
+            for (message, next) in &instance.next_deliveries {
+                bounds.push((
+                    Enc::tagged("next-delivery", vec![("message", message.enc())]),
+                    Enc::tagged("integer", vec![("value", Enc::text(next.to_string()))]),
+                ));
+            }
             for (capture, bound) in self.program.captures.iter().zip(&instance.captures) {
                 observations.push((
                     Enc::tagged(
@@ -1533,15 +1808,38 @@ impl<'a, M: MemoryModel> ProtocolSystem<'a, M> {
                     .zip(&registration.captures)
                     .map(|(name, bound)| (text(name), bound.enc.clone()))
                     .collect();
+                let attempts = registration
+                    .attempts
+                    .iter()
+                    .map(|attempt| {
+                        let mut members = vec![
+                            ("record", attempt.record.clone()),
+                            ("outcome", Enc::text(attempt.outcome)),
+                        ];
+                        if let Some(retry_of) = attempt.retry_of {
+                            members.push(("retry_of", Enc::text(retry_of.to_string())));
+                        }
+                        Enc::tagged("compensation-attempt", members)
+                    })
+                    .collect();
+                let mut registration_members = vec![
+                    ("status", Enc::text(registration.status.text())),
+                    ("captures", map_enc(captures)),
+                    ("attempts", Enc::Array(attempts)),
+                ];
+                let recovery = match registration.status {
+                    Status::Activated => Some("pending"),
+                    Status::Recovered => Some("successful"),
+                    Status::Unrecovered => Some("failed"),
+                    Status::TimedOut => Some("timed-out"),
+                    Status::Registered | Status::Closed => None,
+                };
+                if let Some(recovery) = recovery {
+                    registration_members.push(("recovery", Enc::text(recovery)));
+                }
                 control.push((
                     named.enc(),
-                    Enc::tagged(
-                        "registration-state",
-                        vec![
-                            ("status", Enc::text(registration.status.text())),
-                            ("captures", map_enc(captures)),
-                        ],
-                    ),
+                    Enc::tagged("registration-state", registration_members),
                 ));
             }
             for node in &instance.committed {

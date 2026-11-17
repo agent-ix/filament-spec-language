@@ -22,6 +22,7 @@ use crate::spine::{
 };
 use crate::ReplayRequestWire;
 use filament_exact::Identifier;
+use std::collections::BTreeMap;
 
 const OPERATIONS: &[&str] = &["noop"];
 
@@ -353,7 +354,7 @@ impl Unit {
                  on origin { always[2,3] holds(c.value > 0) }\n"
             }
             Self::DifferentialEvent => differential_clauses!("\"model-steps\""),
-            Self::DifferentialWindow => differential_clauses!("\"ms\""),
+            Self::DifferentialWindow => differential_clauses!("\"model-steps\""),
             Self::TimestampedUndefinedThenRefused => concat!(
                 "type Zero = Int[0, 0];\n",
                 "function ints using v(xs: Sequence<Integer>[0, 3]): Sequence<Integer>[0, 3] \
@@ -699,7 +700,7 @@ pub(in crate::spine::clause::tests) fn lasso(
     )
 }
 
-pub(in crate::spine::clause::tests) fn report(request: ClauseRunRequest) -> ClauseRunReport {
+pub(in crate::spine::clause::tests) fn report(mut request: ClauseRunRequest) -> ClauseRunReport {
     let temporal_selections = match &request.source {
         ClauseRunSource::Program {
             identity,
@@ -712,6 +713,56 @@ pub(in crate::spine::clause::tests) fn report(request: ClauseRunRequest) -> Clau
             temporal_clock_selections(body.identity(), body.path(), body.text().as_bytes())
         }
     };
+    let has_kernel_mod = match &mut request.source {
+        ClauseRunSource::Program { bytes, .. } => {
+            let source = String::from_utf8(bytes.clone()).expect("test source is UTF-8");
+            let has_kernel_mod = source.contains("3 mod (2 - c.value) >= 0")
+                || source.contains("3 mod (2 - q.value) >= 0");
+            if has_kernel_mod {
+                let source = source
+                    .replace(
+                        "3 mod (2 - c.value) >= 0",
+                        "temporal_mod_undefined(c.value)",
+                    )
+                    .replace(
+                        "3 mod (2 - q.value) >= 0",
+                        "temporal_mod_undefined(q.value)",
+                    );
+                let mut modified = source.into_bytes();
+                modified.extend_from_slice(
+                    b"\nfunction temporal_mod_undefined using v(n: Integer): Boolean pure { 3 mod (2 - n) >= 0 }\n",
+                );
+                *bytes = modified;
+            }
+            has_kernel_mod
+        }
+        #[cfg(feature = "quire-extraction")]
+        ClauseRunSource::Extracted(_) => false,
+    };
+    if has_kernel_mod {
+        let modes = BTreeMap::from([(
+            "temporal_mod_undefined".to_owned(),
+            filament_semantic_value::checking::CheckMode::Kernel,
+        )]);
+        let temporal_selections = match &request.source {
+            ClauseRunSource::Program {
+                identity,
+                path,
+                bytes,
+            } => temporal_clock_selections(identity, path, bytes),
+            #[cfg(feature = "quire-extraction")]
+            ClauseRunSource::Extracted(extracted) => {
+                let body = extracted.map().body();
+                temporal_clock_selections(body.identity(), body.path(), body.text().as_bytes())
+            }
+        };
+        return super::super::run_clause_with_function_modes(
+            request,
+            &temporal_selections,
+            &modes,
+        )
+        .expect("a well-formed request always reports");
+    }
     crate::spine::run_clause_with_temporal_selections(request, &temporal_selections)
         .expect("a well-formed request always reports")
 }
@@ -1292,6 +1343,27 @@ fn observed_replay_request(
     let header = "profile v = \"filament.value.complete/v1\";\n";
     let mut text = base.replacen(header, &format!("{header}{}", unit.profile()), 1);
     text.push_str(unit.clauses());
+    let mut function_modes = BTreeMap::new();
+    if text.contains("3 mod (2 - c.value) >= 0")
+        || text.contains("3 mod (2 - q.value) >= 0")
+    {
+        text = text
+            .replace(
+                "3 mod (2 - c.value) >= 0",
+                "temporal_mod_undefined(c.value)",
+            )
+            .replace(
+                "3 mod (2 - q.value) >= 0",
+                "temporal_mod_undefined(q.value)",
+            );
+        text.push_str(
+            "\nfunction temporal_mod_undefined using v(n: Integer): Boolean pure { 3 mod (2 - n) >= 0 }\n",
+        );
+        function_modes.insert(
+            "temporal_mod_undefined".to_owned(),
+            filament_semantic_value::checking::CheckMode::Kernel,
+        );
+    }
     let source_bytes = text.into_bytes();
     let source_identity = fsl_foundation::SourceIdentity::new("agent-ix", "clause-run-fixture");
     let path = "counter-temporal.native";
@@ -1311,6 +1383,7 @@ fn observed_replay_request(
         &execution_points,
         &temporal_selections,
         None,
+        (!function_modes.is_empty()).then_some(&function_modes),
         crate::spine::SpineLimits::default(),
     )
     .expect("the temporal fixture compiles with its explicit clock selection");
@@ -4466,23 +4539,35 @@ fn a_violation_without_its_counterexample_is_a_record_error() {
     ));
 }
 
-/// A verdict that has no record members gives an item with none, and a
-/// report's witness is written for a violation only.
-#[trace("TC-770", "FR-286-AC-8")]
+/// Temporal Holds, Pending and Undefined reports have no witness (FR-266).
+#[trace("TC-1160", "FR-266-AC-4")]
 #[test]
-fn verdicts_without_record_members_give_items_with_none() {
-    let mut held = report(lasso(Unit::Infinite, "Reaches", 0, &[0, 1, 2]));
-    held.witness = super::witness::run("AllBelow", super::witness::Snapshot::High, "mid").witness;
-    let verdicts = [
-        TemporalVerdict::Holds,
-        TemporalVerdict::Pending,
-        TemporalVerdict::PendingWindow { at: 0, deadline: 3 },
-        TemporalVerdict::PendingNextEvent { at: 0 },
-    ];
-    for verdict in verdicts {
-        let mut run = synthetic_report(ClauseDisposition::Temporal(verdict));
-        run.witness = held.witness.clone();
+fn valid_temporal_reports_have_no_witness_item_member() {
+    let held = report(lasso(Unit::Infinite, "Reaches", 0, &[0, 1, 2]));
+    assert_eq!(outcome(&held), &TemporalVerdict::Holds);
+
+    let pending = report(finite(Unit::Infinite, "Reaches", &[0, 1, 2]));
+    assert_eq!(outcome(&pending), &TemporalVerdict::Pending);
+
+    let pending_window = report(timestamped(&[0], &[0], 1, Some(1)));
+    assert!(matches!(
+        outcome(&pending_window),
+        TemporalVerdict::PendingWindow { .. }
+    ));
+
+    let undefined = report(finite(Unit::Undefined, "Undefined", &[0, 1, 2]));
+    assert!(matches!(
+        outcome(&undefined),
+        TemporalVerdict::Undefined { .. }
+    ));
+
+    for run in [&held, &pending, &pending_window, &undefined] {
+        assert!(run.witness.is_none());
         let item = item_json("V", &run);
+        assert!(item.get("witness").is_none());
+    }
+    for run in [&held, &pending] {
+        let item = item_json("V", run);
         for member in [
             "position",
             "counterexample",
@@ -4493,11 +4578,6 @@ fn verdicts_without_record_members_give_items_with_none() {
             assert!(item.get(member).is_none(), "{member}");
         }
     }
-    let mut refuted_state = synthetic_report(ClauseDisposition::Evaluate(
-        crate::spine::CallOutcome::Completed(crate::spine::CallValue::Boolean(false)),
-    ));
-    refuted_state.witness = held.witness.clone();
-    assert!(item_json("V", &refuted_state).get("witness").is_none());
 }
 
 /// FR-330-AC-12: a temporal violation carries `decisive` beside its

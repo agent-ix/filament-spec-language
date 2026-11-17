@@ -696,6 +696,7 @@ impl Documents {
                     model: PACKAGE.to_owned(),
                 })
                 .collect(),
+            capacities: Vec::new(),
             memory: ResolvedMemory::resolve(checked, selection).expect("the selection resolves"),
         }
     }

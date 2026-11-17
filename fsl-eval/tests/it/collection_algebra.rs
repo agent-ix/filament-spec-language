@@ -956,7 +956,7 @@ mod checked {
         assert_eq!(sequence.collection_type().kind(), CollectionKind::Sequence);
         assert_eq!(format!("{:?}", sequence.elements()), ordered);
         assert_eq!(
-            format!("{:?}", run(Expression::size(name("hs")))),
+            format!("{:?}", run(Expression::size(name("hs"), None))),
             format!("{:?}", int(2))
         );
         for expression in [
@@ -1111,7 +1111,7 @@ mod checked {
                 &Expression::let_in(
                     "z".to_owned(),
                     literal_collection(CollectionKind::Set, &[1]),
-                    Expression::size(name("z"))
+                    Expression::size(name("z"), None)
                 ),
             ),
             IllTypedCause::AmbiguousLiteral

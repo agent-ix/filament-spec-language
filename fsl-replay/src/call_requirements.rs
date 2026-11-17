@@ -18,8 +18,8 @@ use fsl_semantics::library::LibraryName;
 use fsl_semantics::model::object_environment::ObjectEnvironment;
 
 use crate::spine::{
-    default_accounting, run_reading, Call, CallArgument, CallOutcome, DependencyInput, RunRefusal,
-    SpineLimits,
+    default_accounting, run_reading, Call, CallArgument, CallOutcome, DependencyInput,
+    ProfileCatalogInput, RunRefusal, SpineLimits,
 };
 
 /// One requirement item of the selected call: the record's occurrence key and
@@ -224,6 +224,16 @@ pub fn run_with_requirements_reading<T>(
     run: &RequirementsRun<'_>,
     read: impl FnOnce(&crate::spine::CheckedUnit, &CallRequirements) -> T,
 ) -> Result<(RunWithRequirements, T), Box<RunRefusal>> {
+    run_with_requirements_reading_and_profile_catalog(run, None, read)
+}
+
+/// [`run_with_requirements_reading`] with the request's optional extension
+/// catalog available while the program is parsed and checked.
+pub fn run_with_requirements_reading_and_profile_catalog<T>(
+    run: &RequirementsRun<'_>,
+    profile_catalog: Option<ProfileCatalogInput<'_>>,
+    read: impl FnOnce(&crate::spine::CheckedUnit, &CallRequirements) -> T,
+) -> Result<(RunWithRequirements, T), Box<RunRefusal>> {
     let library_name = package_name_of(&run.package_name)?;
     let (outcome, (requirements, read)) = run_reading(
         run.source.clone(),
@@ -237,6 +247,7 @@ pub fn run_with_requirements_reading<T>(
         run.objects,
         &fsl_eval::execution::SuppliedBackends::default(),
         &fsl_eval::execution::PrepareLimits::default(),
+        profile_catalog,
         run.cancel,
         |checked, _, _| {
             let graph = checked.package().graph();

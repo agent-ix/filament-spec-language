@@ -1,11 +1,10 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-//! FR-569-AC-11: a unit that declares a source object type
-//! is refused at emission, once, at its first `object`, whichever other
-//! declarations it holds.
+//! Source-owned object declarations and their FR-995/996 identity keys.
 
 use super::*;
 use filament_contract_model::{
-    CheckedPackageReadLimits, CheckedPackageV2, CheckedPackageV2ReadResult,
+    CheckedJson, CheckedNodeId, CheckedPackageReadLimits, CheckedPackageV2,
+    CheckedPackageV2ReadResult, CheckedSemanticNodeV2, CheckedTerm, LiteralKind,
 };
 use filament_semantic_value::checking::CheckMode;
 
@@ -18,23 +17,23 @@ object Order identity (total) {
   total: Int[0, 9];
   note: Text[0, 8; nfc]?;
   population orders;
-  operation size(): Integer;
-  operation count(): Integer;
+  operation measure(n: Integer): Integer;
+  operation tally(): Integer;
   operation scaled(n: Integer): Integer;
   operation bump(): Boolean modifies self.total;
 }
 object Sub extends Order {
-  operation size(): Integer redefines Order::size;
+  operation measure(m: Integer): Integer redefines Order::measure;
   operation scaled(m: Integer): Integer redefines Order::scaled;
 }
 abstract object Shape { population shapes; }
 invariant I using P on Order at current { self.total >= 0 }
 pre Q using P on Order::bump { self.total < 9 }
 post R using P on Order::bump { self.total > pre(self.total) }
-body B using P on Sub::size() { 7 }
-body C using P on Order::size() { 1 }
-pre Qs using P on Order::size { self.total >= 0 }
-invariant Sized using P on Order at current { self.size() >= 0 }
+body B using P on Sub::measure(m) { m }
+body C using P on Order::measure(n) { n }
+pre Qs using P on Order::measure { self.total >= 0 }
+invariant Sized using P on Order at current { self.measure(0) >= 0 }
 ";
 
 /// S, S-R and S-P emit the source-owned object declarations.
@@ -45,7 +44,7 @@ fn fixtures_s_s_r_and_s_p_emit_source_objects() {
         ("S", String::new()),
         (
             "S-R",
-            "pre Qs2 using P on Sub::size { self.total >= 1 }\n".to_owned(),
+            "pre Qs2 using P on Sub::measure { self.total >= 1 }\n".to_owned(),
         ),
         (
             "S-P",
@@ -283,21 +282,21 @@ fn fixture_s_emits_source_object_and_operation_rows_and_bodies() {
         "source_declaration_operation_frame"
     );
 
-    let size_body = wire["operation_bodies"]
+    let measure_body = wire["operation_bodies"]
         .as_array()
         .unwrap()
         .iter()
-        .find(|row| row["document"] == "test:spine-model" && row["operation"] == "size")
-        .expect("source size operation-body row");
-    assert_eq!(size_body["body"]["kind"], "function");
+        .find(|row| row["document"] == "test:spine-model" && row["operation"] == "measure")
+        .expect("source measure operation-body row");
+    assert_eq!(measure_body["body"]["kind"], "function");
     let source_body = nodes(&wire)
         .iter()
-        .find(|node| node["node_id"] == size_body["body"]["node"])
-        .expect("size body function node");
+        .find(|node| node["node_id"] == measure_body["body"]["node"])
+        .expect("measure body function node");
     assert_eq!(source_body["owner"]["kind"], "source");
     assert_eq!(
         source_body["declaration"]["qualified_name"],
-        json!(["Order", "size", "body"])
+        json!(["Order", "measure", "body"])
     );
 }
 
@@ -444,11 +443,12 @@ fn source_object_node_identity_tracks_only_the_object_declaration_identity() {
         nodes(&wire)[source_object_node(&wire, name)]["node_id"].clone()
     };
 
-    let base = "object Order { total: Integer; operation size(): Integer; }\n";
-    let with_field = "object Order { total: Integer; note: Boolean; operation size(): Integer; }\n";
-    let renamed_operation = "object Order { total: Integer; operation count(): Integer; }\n";
-    let moved = "object Other {}\nobject Order { total: Integer; operation size(): Integer; }\n";
-    let renamed_object = "object Purchase { total: Integer; operation size(): Integer; }\n";
+    let base = "object Order { total: Integer; operation measure(): Integer; }\n";
+    let with_field =
+        "object Order { total: Integer; note: Boolean; operation measure(): Integer; }\n";
+    let renamed_operation = "object Order { total: Integer; operation tally(): Integer; }\n";
+    let moved = "object Other {}\nobject Order { total: Integer; operation measure(): Integer; }\n";
+    let renamed_object = "object Purchase { total: Integer; operation measure(): Integer; }\n";
     let base_id = node_id(base, "Order");
 
     assert_eq!(node_id(with_field, "Order"), base_id);
@@ -652,7 +652,8 @@ fn source_operation_effects_and_clause_functions_carry_the_source_forms() {
     let precondition = nodes(&wire)
         .iter()
         .find(|node| {
-            node["declaration"]["qualified_name"] == json!(["Order", "size", "precondition", "Qs"])
+            node["declaration"]["qualified_name"]
+                == json!(["Order", "measure", "precondition", "Qs"])
         })
         .expect("Qs lowers to a source clause function");
     assert_eq!(precondition["owner"]["kind"], "source");
@@ -680,10 +681,84 @@ fn refused(wire: &Value) -> (Value, Option<Value>, Option<String>) {
 
 /// The `SourceOwner` `identity` of the source-declared node `name`.
 fn owner_identity(wire: &Value, name: &str) -> String {
-    nodes(wire)[source_object_node(wire, name)]["owner"]["identity"]
+    let owner = &nodes(wire)[source_object_node(wire, name)]["owner"];
+    assert_eq!(owner["kind"], "source");
+    owner["identity"]
         .as_str()
         .expect("a source owner identity")
         .to_owned()
+}
+
+#[trace("FR-995-AC-1", "TC-2816")]
+#[test]
+fn source_owner_key_uses_its_identity_qualified_ix_spelling() {
+    let source_keys = super::super::SourceDeclarationKeys {
+        packages: BTreeMap::from([("source/unit".to_owned(), "source-owner".to_owned())]),
+        checked_nodes: BTreeMap::new(),
+    };
+    let identity = filament_exact::EffectiveId::new(
+        None,
+        filament_exact::OriginalDeclarationKey::new("source/unit", "ix://source/unit/Order"),
+    );
+
+    let emitted = super::super::checked_effective_id(&identity, &source_keys)
+        .expect("a source-owned declaration key is emitted");
+
+    assert_eq!(
+        serde_json::to_value(emitted).expect("the typed identity serializes"),
+        json!({
+            "owner_effective_type": null,
+            "original": {
+                "package": "source-owner",
+                "node": "ix://source-owner/Order"
+            }
+        })
+    );
+}
+
+#[trace("FR-996-AC-1", "TC-2818")]
+#[test]
+fn source_clock_place_keys_use_the_source_owner_identity() {
+    let source_keys = super::super::SourceDeclarationKeys {
+        packages: BTreeMap::from([("source/unit".to_owned(), "source-owner".to_owned())]),
+        checked_nodes: BTreeMap::from([(
+            "pkg:[\"W\",]:0".to_owned(),
+            "ix://source-owner/W".to_owned(),
+        )]),
+    };
+    let node_id = CheckedNodeId {
+        package: "source/unit".into(),
+        path: Vec::new(),
+        ordinal: 0,
+    };
+    let source_key = "W/c";
+    let mut node = CheckedSemanticNodeV2 {
+        node_id: node_id.clone(),
+        schema_version: GRAPH_V2.into(),
+        node_tag: "expression".into(),
+        semantic_form: "clock_place".into(),
+        semantic_type: node_id.clone(),
+        dependencies: Vec::new(),
+        occurrences: Vec::new(),
+        recursion_group: None,
+        declaration: None,
+        owner: None,
+        owner_model: None,
+        check_mode: None,
+        body: CheckedTerm::Literal {
+            type_id: node_id,
+            value_kind: LiteralKind::Text,
+            value: CheckedJson::from_serializable(&source_key).expect("a text literal"),
+        },
+    };
+
+    super::super::rewrite_source_keys_in_clock_place(&mut node, &source_keys)
+        .expect("the source clock-place key is emitted");
+
+    assert_eq!(
+        serde_json::to_value(node).expect("the clock place serializes")["body"]["value"],
+        "ix://source-owner/W/c"
+    );
 }
 
 /// The candidates of the one dispatch table whose context is `Order`'s node.
@@ -710,11 +785,23 @@ fn order_candidates(wire: &Value) -> Vec<Value> {
     "FSpec-TC-1915"
 )]
 #[test]
-#[ignore = "QSL-2347: source selection keys are spelled from the SourceOwner identity; not implemented yet"]
 fn source_selection_keys_are_spelled_from_the_source_owner() {
     let emission = emit_checked(&fixture_s_package()).expect("S4 emits fixture S");
     let wire = wire(&emission);
     let identity = owner_identity(&wire, "Order");
+    let order = &nodes(&wire)[source_object_node(&wire, "Order")];
+    assert_eq!(order["node_tag"], "model");
+    assert_eq!(order["semantic_form"], "object_type");
+    assert_eq!(order["declaration"]["qualified_name"], json!(["Order"]));
+    assert_eq!(
+        order["owner"],
+        json!({
+            "kind": "source",
+            "authority": "agent-ix",
+            "identity": identity,
+        })
+    );
+    assert_eq!(order["semantic_type"], order["node_id"]);
     let keys: Vec<Value> = order_candidates(&wire)
         .iter()
         .map(|candidate| candidate["selection_key"].clone())
@@ -778,6 +865,7 @@ fn a_source_selection_key_reads_back_and_a_foreign_spelling_refuses() {
 
 /// FR-230-AC-65's timed source model over a source object `O`.
 const TIMED: &str = "\
+profile T = \"filament.temporal.complete/v1\";\n\
 dimension Time;
 unit ms : Time = rational(1, 1);
 record W { c: Clock; }
@@ -800,9 +888,10 @@ fn timed_source_package() -> CheckedPackage {
 /// The `(declaring_type, member_identity, member_type)` text of each
 /// `resolved_path` row of the clock place at graph index `place`.
 fn place_rows(wire: &Value, place: usize) -> Vec<[String; 3]> {
-    let rows = &nodes(wire)[place]["body"]["members"][2]["value"]["members"];
-    rows.as_array()
-        .expect("resolved_path rows")
+    let rows = super::clock_places::member(&nodes(wire)[place]["body"], "resolved_path");
+    rows["members"]
+        .as_array()
+        .unwrap_or_else(|| panic!("resolved_path rows: {rows}"))
         .iter()
         .map(|row| {
             let text = |name: &str| {
@@ -836,16 +925,20 @@ fn places(wire: &Value) -> Vec<usize> {
 
 #[trace("FR-996-AC-1", "TC-2818", "FSpec-FR-789-AC-1", "FSpec-TC-1917")]
 #[test]
-#[ignore = "QSL-2347: a timed source model is emitted with source clock-place rows; not implemented yet"]
 fn a_timed_source_model_emits_its_clock_places_with_source_rows() {
-    let emission = emit_checked(&timed_source_package()).expect("S4 emits the timed source model");
+    let package = timed_source_package();
+    let emission = emit_checked(&package).expect("S4 emits the timed source model");
     let wire = wire(&emission);
     let o = nodes(&wire)[source_object_node(&wire, "O")]["node_id"].clone();
     let root = nodes(&wire)
         .iter()
         .find(|node| node["semantic_form"] == "timed_model")
         .expect("a timed root");
-    assert_eq!(root["body"]["members"][0]["value"]["node"], o, "{root}");
+    assert_eq!(
+        super::clock_places::member(&root["body"], "model")["target"],
+        o,
+        "{root}"
+    );
     let i = owner_identity(&wire, "O");
     let clock = "ix://filament/native/Clock".to_owned();
     let mut rows: Vec<Vec<[String; 3]>> = places(&wire)
@@ -954,7 +1047,6 @@ fn source_body_rows(wire: &Value) -> Vec<(String, String, String, Value)> {
 
 #[trace("FR-997-AC-1", "TC-2820", "FSpec-FR-790-AC-1", "FSpec-TC-1919")]
 #[test]
-#[ignore = "QSL-2347: operation_bodies carries rows for source-declared operations; not implemented yet"]
 fn source_operations_carry_operation_body_rows() {
     let emission = emit_checked(&fixture_s_package()).expect("S4 emits fixture S");
     let wire = wire(&emission);
@@ -967,16 +1059,21 @@ fn source_operations_carry_operation_body_rows() {
         rows,
         vec![
             row("Order", "bump", "no_body", Value::Null),
-            row("Order", "count", "no_body", Value::Null),
-            row("Order", "scaled", "no_body", Value::Null),
             row(
                 "Order",
-                "size",
+                "measure",
                 "function",
-                json!(["Order", "size", "body"])
+                json!(["Order", "measure", "body"])
+            ),
+            row("Order", "scaled", "no_body", Value::Null),
+            row("Order", "tally", "no_body", Value::Null),
+            row(
+                "Sub",
+                "measure",
+                "function",
+                json!(["Sub", "measure", "body"])
             ),
             row("Sub", "scaled", "no_body", Value::Null),
-            row("Sub", "size", "function", json!(["Sub", "size", "body"])),
         ]
     );
     let identity = owner_identity(&wire, "Order");
@@ -1002,13 +1099,14 @@ fn a_forged_source_operation_body_row_refuses() {
             .position(|(declaring, name, _, _)| declaring == ty && name == operation)
             .expect("the row")
     };
-    let size = at("Order", "size");
+    let size = at("Order", "measure");
     let bump = at("Order", "bump");
-    let sub_size = at("Sub", "size");
+    let sub_size = at("Sub", "measure");
     let precondition = nodes(&wire)
         .iter()
         .find(|node| {
-            node["declaration"]["qualified_name"] == json!(["Order", "size", "precondition", "Qs"])
+            node["declaration"]["qualified_name"]
+                == json!(["Order", "measure", "precondition", "Qs"])
         })
         .expect("Qs's clause function")["node_id"]
         .clone();

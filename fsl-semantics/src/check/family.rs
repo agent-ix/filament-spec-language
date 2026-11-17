@@ -474,6 +474,7 @@ fn encode_expression(
                 out.write_bool(*value);
             }
             ExprNode::Absent => out.write_str("absent"),
+            ExprNode::Null => out.write_str("null"),
             ExprNode::Integer(value) => {
                 out.write_str("integer");
                 out.write_str(&value.to_string());
@@ -529,9 +530,18 @@ fn encode_expression(
                     pending.push(expr.at(arm.body));
                 }
             }
-            ExprNode::Let { name, value, body } => {
+            ExprNode::Let {
+                name,
+                annotation,
+                value,
+                body,
+            } => {
                 out.write_str("let");
                 out.write_str(name);
+                out.write_bool(annotation.is_some());
+                if let Some(annotation) = annotation {
+                    measure_type_form(out, annotation);
+                }
                 pending.extend([expr.at(*value), expr.at(*body)]);
             }
             ExprNode::If {
@@ -585,6 +595,11 @@ fn encode_expression(
                 out.write_str("select");
                 pending.push(expr.at(*selector));
                 pending.push(expr.at(*place));
+            }
+            ExprNode::Index { operand, index } => {
+                out.write_str("index");
+                pending.push(expr.at(*index));
+                pending.push(expr.at(*operand));
             }
             ExprNode::Ref(operand) => {
                 out.write_str("ref");
@@ -706,8 +721,18 @@ fn encode_expression(
                 out.write_str(binder);
                 pending.extend([expr.at(*low), expr.at(*high), expr.at(*body)]);
             }
-            ExprNode::Size(operand) => {
+            ExprNode::Size {
+                operand,
+                type_argument,
+            } => {
                 out.write_str("size");
+                match type_argument {
+                    Some(type_argument) => {
+                        out.write_str("typed");
+                        measure_type_form(out, type_argument);
+                    }
+                    None => out.write_str("untyped"),
+                }
                 pending.push(expr.at(*operand));
             }
             ExprNode::Contains { collection, item } => {
@@ -724,7 +749,7 @@ fn encode_expression(
             }
             ExprNode::AllInstances { target, population } => {
                 out.write_str("all-instances");
-                measure_model_target(out, target);
+                measure_type_form(out, target);
                 pending.push(expr.at(*population));
             }
             ExprNode::Lookup {
@@ -734,7 +759,7 @@ fn encode_expression(
                 absence,
             } => {
                 out.write_str("lookup");
-                measure_model_target(out, target);
+                measure_type_form(out, target);
                 out.write_str(absence_mode_tag(*absence));
                 pending.extend([expr.at(*population), expr.at(*reference)]);
             }
@@ -806,7 +831,7 @@ fn encode_expression(
 }
 
 /// Measure authored model targets without resolving their S3 question.
-fn measure_model_target(out: &mut DeclarationMeter, root: &fsl_forms::TypeForm) {
+fn measure_type_form(out: &mut DeclarationMeter, root: &fsl_forms::TypeForm) {
     use fsl_forms::{BuiltinType, TypeFormHead};
     let mut pending = vec![root];
     while let Some(form) = pending.pop() {
@@ -825,6 +850,7 @@ fn measure_model_target(out: &mut DeclarationMeter, root: &fsl_forms::TypeForm) 
                 BuiltinType::Float64 => "Float64",
                 BuiltinType::Text => "Text",
                 BuiltinType::Option => "Option",
+                BuiltinType::Map => "Map",
                 BuiltinType::Reference => "Reference",
                 BuiltinType::Quantity => "Quantity",
                 BuiltinType::Clock => "Clock",
@@ -4080,10 +4106,15 @@ mod locus_tests {
 
     /// [`UNIT`] through S1, S2 and the assembler.
     fn unit() -> PackageDeclarations {
+        unit_from_text(UNIT)
+    }
+
+    /// `text` through S1, S2 and the assembler.
+    fn unit_from_text(text: &str) -> PackageDeclarations {
         let parsed = fsl_cst::parse(
             SourceIdentity::new("a", "u"),
             "unit.native",
-            UNIT.as_bytes(),
+            text.as_bytes(),
             fsl_cst::Limits::default(),
         )
         .expect("S1 reads the unit");
@@ -4427,6 +4458,43 @@ mod locus_tests {
         );
         assert_eq!(work.kind, CheckingLimitKind::WorkBudget);
         assert_eq!(unit_text(region), declaration);
+    }
+
+    /// The optional type form of `size<N>` is included in both the declaration
+    /// input-byte limit and its work budget before the declaration is typed.
+    #[trace("TC-427", "FR-096-AC-4", "FR-096-AC-5")]
+    #[test]
+    fn typed_size_type_argument_counts_toward_declaration_limits() {
+        let source = |body: &str| {
+            format!(
+                "language \"ix:native\" edition \"1-draft\";\n\
+                 profile v = \"filament.value.complete/v1\";\n\
+                 function f using v(c: Sequence<Integer>[0, 4]): Int[0, 4] pure {{ {body} }}\n"
+            )
+        };
+        let untyped = unit_from_text(&source("size(c)"));
+        let typed_text = source("size<Int[0, 4]>(c)");
+        let typed = unit_from_text(&typed_text);
+        let untyped_metrics = measure_resolved(&empty_scope(), &untyped.functions[0]);
+        let typed_metrics = measure_resolved(&empty_scope(), &typed.functions[0]);
+        assert!(typed_metrics.input_bytes > untyped_metrics.input_bytes);
+        assert!(typed_metrics.work_budget > untyped_metrics.work_budget);
+
+        let (input, input_region) = package_limit(
+            unit_from_text(&typed_text),
+            CheckingLimits::default().with_input_bytes(untyped_metrics.input_bytes),
+        );
+        assert_eq!(input.kind, CheckingLimitKind::InputBytes);
+        assert_eq!(input.actual, u128::from(typed_metrics.input_bytes));
+        assert!(input_region.is_some(), "the refusal is at the declaration");
+
+        let (work, work_region) = package_limit(
+            unit_from_text(&typed_text),
+            CheckingLimits::default().with_work_budget(untyped_metrics.work_budget),
+        );
+        assert_eq!(work.kind, CheckingLimitKind::WorkBudget);
+        assert_eq!(work.actual, u128::from(typed_metrics.work_budget));
+        assert!(work_region.is_some(), "the refusal is at the declaration");
     }
 
     /// FR-096 through package checking: a function with no form spans (one

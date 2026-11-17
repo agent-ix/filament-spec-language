@@ -207,8 +207,6 @@ fn unlike_operand_types_refuse_type_mismatch_at_the_comparison() {
         ("a: String, b: UUID", "a = b"),
         ("a: UUID, b: Timestamp", "a = b"),
         ("a: String, b: Timestamp", "a != b"),
-        ("a: String, b: Text[0, 8; nfc]", "a = b"),
-        ("a: Text[0, 8; nfc], b: String", "a = b"),
         ("a: Timestamp, b: Integer", "a = b"),
         ("a: UUID, b: Integer", "a != b"),
     ] {
@@ -216,6 +214,22 @@ fn unlike_operand_types_refuse_type_mismatch_at_the_comparison() {
             &format!("function bad using v({parameters}): Boolean pure {{ {body} }}"),
             "bad",
             IllTypedCause::TypeMismatch,
+        );
+    }
+}
+
+/// FSpec FR-149-AC-22: unlike `String` and `Text` operands are operator-ineligible.
+#[trace("FSpec-TC-194", "FSpec-FR-149-AC-22")]
+#[test]
+fn string_equals_text_refuses_with_the_specified_cause() {
+    for (parameters, body) in [
+        ("a: String, b: Text[0, 8; nfc]", "a = b"),
+        ("a: Text[0, 8; nfc], b: String", "a = b"),
+    ] {
+        refused_at_comparison(
+            &format!("function bad using v({parameters}): Boolean pure {{ {body} }}"),
+            "bad",
+            IllTypedCause::OperatorIneligible,
         );
     }
 }

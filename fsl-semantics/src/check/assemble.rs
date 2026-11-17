@@ -814,7 +814,9 @@ impl AssemblyCause {
                 TopologyFault::TwoRoots => "conflicting-definition",
                 TopologyFault::TargetCycle => "definition-cycle",
             },
-            Self::IllFormedBounds(TypeFormFault::UnitArithmetic(_)) => "operator-ineligible",
+            Self::IllFormedBounds(
+                TypeFormFault::UnitArithmetic(_) | TypeFormFault::IneligibleMapKey,
+            ) => "operator-ineligible",
             Self::IllFormedBounds(_) | Self::OverNotObjectType { .. } => "type-mismatch",
             Self::ImportedTypeName { .. } => "operator-ineligible",
             Self::FloatingType { .. } | Self::UnsupportedModelMember { .. } => {
@@ -3200,6 +3202,7 @@ fn expression_type_forms<'e>(roots: impl IntoIterator<Item = &'e Expression>) ->
                 } => forms.push(TypeForm::name(name.clone(), *span)),
                 ExprNode::Boolean(_)
                 | ExprNode::Absent
+                | ExprNode::Null
                 | ExprNode::Integer(_)
                 | ExprNode::Float32(_)
                 | ExprNode::Float64(_)
@@ -3220,6 +3223,7 @@ fn expression_type_forms<'e>(roots: impl IntoIterator<Item = &'e Expression>) ->
                 | ExprNode::Deref(_)
                 | ExprNode::Ref(_)
                 | ExprNode::Select { .. }
+                | ExprNode::Index { .. }
                 | ExprNode::Call { .. }
                 | ExprNode::Record { .. }
                 | ExprNode::Collection { .. }
@@ -3228,7 +3232,7 @@ fn expression_type_forms<'e>(roots: impl IntoIterator<Item = &'e Expression>) ->
                 | ExprNode::Seq { .. }
                 | ExprNode::Power { .. }
                 | ExprNode::Flatten(_)
-                | ExprNode::Size(_)
+                | ExprNode::Size { .. }
                 | ExprNode::Contains { .. }
                 | ExprNode::DropFirst(_)
                 | ExprNode::RemoveOne { .. }
@@ -3358,7 +3362,8 @@ fn check_names(
                 | BuiltinType::Rational
                 | BuiltinType::Decimal
                 | BuiltinType::Text
-                | BuiltinType::Option,
+                | BuiltinType::Option
+                | BuiltinType::Map,
             )
             | TypeFormHead::Collection(_)
             | TypeFormHead::Population
@@ -3406,7 +3411,8 @@ fn resolution_error(unit: &Unit, error: TypeFormError) -> AssemblyError {
         | TypeFormFault::MalformedDecimal
         | TypeFormFault::EmptyTextBounds
         | TypeFormFault::EmptyCardinality
-        | TypeFormFault::UnitArithmetic(_)) => AssemblyCause::IllFormedBounds(fault),
+        | TypeFormFault::UnitArithmetic(_)
+        | TypeFormFault::IneligibleMapKey) => AssemblyCause::IllFormedBounds(fault),
         TypeFormFault::UnitIdentity(cause) => {
             AssemblyCause::handle(NodeKeyRefusal::Identity(cause))
         }

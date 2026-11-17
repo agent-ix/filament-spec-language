@@ -438,6 +438,7 @@ fn admit(read: CheckedPackageDispatchResult) -> Result<Box<CheckedPackageV2>, Er
 pub struct CompiledHandoff {
     compiled: Compiled,
     admitted: Box<CheckedPackageV2>,
+    sources: fsl_analyze::analyze::SourceProvision,
 }
 
 impl CompiledHandoff {
@@ -455,6 +456,12 @@ impl CompiledHandoff {
     /// the identity each declares.
     pub fn packages(&self) -> &fsl_semantics::model::intake::PackageInput {
         &self.compiled.packages
+    }
+
+    /// The source bytes used for the in-process compilation, keyed by the
+    /// checked package's declared source identities.
+    pub fn sources(&self) -> &fsl_analyze::analyze::SourceProvision {
+        &self.sources
     }
 
     /// The ceiling on each package emission the compile made
@@ -495,7 +502,27 @@ pub fn compile(directory: &Path) -> Result<CompiledHandoff, Error> {
     selection
         .check(&admitted)
         .map_err(Error::SelectionMismatch)?;
-    Ok(CompiledHandoff { compiled, admitted })
+    let mut sources = fsl_analyze::analyze::SourceProvision::default();
+    let unit_source = compiled.checked.source().identity();
+    let unit_ref = fsl_foundation::source::provenance::RawSourceRef::new(
+        unit_source.authority.clone(),
+        unit_source.identity.clone(),
+    )
+    .expect("a checked source identity is valid");
+    sources.insert(&unit_ref, compiled.source.clone());
+    for library in &compiled.libraries {
+        let source = fsl_foundation::source::provenance::RawSourceRef::new(
+            library.source.authority.clone(),
+            library.source.identity.clone(),
+        )
+        .expect("a checked library source identity is valid");
+        sources.insert(&source, library.bytes.clone());
+    }
+    Ok(CompiledHandoff {
+        compiled,
+        admitted,
+        sources,
+    })
 }
 
 /// Verify a handoff directory by compiling its named inputs and checking the

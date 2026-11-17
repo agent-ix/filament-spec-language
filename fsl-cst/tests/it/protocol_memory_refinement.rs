@@ -198,6 +198,36 @@ fn a_parallel_parses_its_memory_clause() {
     assert_eq!(texts(&text, &parsed, Production::Parallel).len(), 4);
 }
 
+/// `join all` needs at least one branch identifier.
+/// Provenance: QSL-2164.
+#[test]
+fn an_empty_join_list_is_refused_at_its_closing_bracket() {
+    let run = "sequence Main { parallel Plain { branch a sequence A { } branch b sequence B { } } join all []; }";
+    let text = source(&protocol("on origin", "", run));
+    let parsed = parse(&text);
+    assert!(!parsed.is_admissible(), "{text}");
+    let diagnostic = &parsed.diagnostics()[0];
+    assert_eq!(diagnostic.code, CompleteCode::InvalidSyntax, "{text}");
+    assert_eq!(
+        diagnostic.cause,
+        fsl_cst::CompleteCause::UnexpectedToken,
+        "{text}"
+    );
+    assert_eq!(
+        diagnostic.byte_span().expect("located").start,
+        text.find("];").expect("the closing bracket"),
+        "{text}: {:?}",
+        parsed.diagnostics()
+    );
+
+    let run = "sequence Main { parallel Plain { branch a sequence A { } branch b sequence B { } } join all [a]; }";
+    assert!(
+        parse_admitted(&protocol("on origin", "", run))
+            .1
+            .is_admissible()
+    );
+}
+
 /// Verifies the parse only and claims no criterion.
 /// A memory model other than `sc`, `tso` and `ra` is refused at
 /// the model word.
@@ -575,7 +605,6 @@ fn a_malformed_abstract_subject_is_refused_at_its_token() {
 /// travels over with `via` after its `to` role, and S1 admits it.
 #[trace("TC-2533", "FR-897-AC-1", "FSpec-FR-738-AC-1")]
 #[test]
-#[ignore = "QSL-2217: the channel production has no via clause, so a channel over a connection is a syntax error"]
 fn a_channel_names_its_connection_with_via() {
     let members = "role Inlet on M::Actor;\n\
         relationship Link = M::link;\n\

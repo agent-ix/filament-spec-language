@@ -562,6 +562,9 @@ pub struct ClauseDeclarations<'a> {
     /// The unit that declares the clause, for a unit-level state clause: a
     /// source population is named in its own unit only.
     pub(crate) unit: Option<&'a fsl_foundation::source::provenance::RawSourceRef>,
+    /// FR-577 facts of the matching unit preconditions for a postcondition;
+    /// empty for every other clause.
+    pub(crate) preconditions: &'a [CheckedFacts],
 }
 
 impl<'a> ClauseDeclarations<'a> {
@@ -579,6 +582,7 @@ impl<'a> ClauseDeclarations<'a> {
             cancel: self.cancel,
             staged: self.staged,
             unit: self.unit,
+            preconditions: self.preconditions,
         }
     }
 }
@@ -1034,6 +1038,7 @@ fn check_clause_typed(
         &input.scope.dispatch_operations,
     )
     .with_observations(&observations)
+    .with_preconditions(input.preconditions, usize::from(has_result))
     .check_and_retain(body.root())?;
 
     // The populations the clause ranges over: its context's, already

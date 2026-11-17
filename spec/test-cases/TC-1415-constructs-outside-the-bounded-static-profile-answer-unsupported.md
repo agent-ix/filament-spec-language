@@ -26,8 +26,8 @@ Scope: FR-575-AC-1 to FR-575-AC-4; FSpec FR-174-AC-3.
 3. Request a protocol using only profile constructs with profile
    `bounded-static`, then with the profile word `open`.
 4. Negotiate each kind with no candidate; list `NegotiationCause`'s
-   variants; check a symbolic-capacity protocol that `fsl-eval` also
-   refuses.
+   variants; check a symbolic-capacity protocol, with its capacity bound
+   and unbound.
 
 Tag the tests `#[trace("TC-1415", "FR-575-AC-n")]`.
 

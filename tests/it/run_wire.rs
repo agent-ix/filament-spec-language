@@ -8,7 +8,7 @@
 
 use crate::command_harness::{compile_file, run_file};
 use ix_trace_rs::trace;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use std::path::{Path, PathBuf};
 
 const VALUE: &str = "filament.value.complete/v1";
@@ -387,7 +387,7 @@ fn a_timestamped_trace_runs_from_a_request_file_and_returns_the_ledger() {
         let stamped: Vec<(u64, i64)> = [0_u64, 2, 5].into_iter().zip(levels).collect();
         typed.selection = typed_timestamped(&stamped, &missing);
         let selection = typed.selection.clone();
-        let report = fsl_replay::spine::run_clause(*typed).expect("a report");
+        let report = fsl_replay::spine::run_clause(*typed.into_request()).expect("a report");
         let typed_bytes = fsl_replay::spine::write_clause_run_result_for(&report, Some(&selection))
             .expect("the report writes");
         let typed_document: Value = serde_json::from_slice(&typed_bytes).unwrap();
@@ -1044,7 +1044,7 @@ fn an_in_process_trace_refusal_carries_no_request_pointer() {
     let fsl_command::command::PreparedRun::Clause(request) = prepared else {
         panic!("a clause run");
     };
-    let report = fsl_replay::spine::run_clause(*request).expect("a report");
+    let report = fsl_replay::spine::run_clause(*request.into_request()).expect("a report");
     let text = format!("{report:?}");
     assert!(text.contains("empty-lasso-loop"), "{text}");
     assert!(!text.contains("request_pointer"), "{text}");
@@ -1390,7 +1390,7 @@ fn a_timed_trace_answers_a_timed_clause() {
 #[test]
 #[trace("TC-1668", "FR-644-AC-1", "TC-1669", "FR-644-AC-4")]
 fn command_monitor_streams_events_to_its_sink() {
-    use fsl_command::command::{monitor, MonitorEvent, RunLimits};
+    use fsl_command::command::{MonitorEvent, RunLimits, monitor};
 
     let directory = tempfile::tempdir().unwrap();
     let request = monitor_request(
@@ -1469,7 +1469,7 @@ fn cancelled_monitor(
     Vec<fsl_command::command::MonitorEvent>,
     fsl_command::command::MonitorSummary,
 ) {
-    use fsl_command::command::{monitor, RunLimits};
+    use fsl_command::command::{RunLimits, monitor};
 
     let directory = tempfile::tempdir().unwrap();
     let request = monitor_request(clauses, json!({"kind": "finite"}));
