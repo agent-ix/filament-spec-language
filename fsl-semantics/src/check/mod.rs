@@ -6412,13 +6412,10 @@ impl PackageDeclarations {
         }
         // FR-375: each refinement's rows, keyed once its catalog is, each
         // row expression located at its own site. A refinement whose
-        // catalog names a node not written yet, or a row a form with no
-        // node, is not emitted, so its rows are not keyed.
+        // catalog names a node not written yet, its rows cannot be keyed.
         let mut refinement_booleans = std::collections::BTreeMap::new();
         for checked in &mut refinements {
-            if (checked.class_catalog.is_some() && checked.class_catalog_keys.is_none())
-                || !checked.rows_have_nodes()
-            {
+            if checked.class_catalog.is_some() && checked.class_catalog_keys.is_none() {
                 continue;
             }
             for row in checked.rows() {
@@ -7428,14 +7425,8 @@ impl PackageDeclarations {
                         ))),
                     });
                 };
-                (!checked.v2_emittable()).then(|| {
-                    refinement::not_emitted(
-                        declaration.form.name.name.clone(),
-                        declaration.form.span,
-                    )
-                })
-                // `None` means this checked declaration is included by the
-                // current V2 emission slice.
+                let _ = checked;
+                None
             }));
         }
         if !self.emit_unwritten_timed_members {

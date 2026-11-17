@@ -257,9 +257,6 @@ pub enum EmitRefusal {
     /// A literal's value could not be built as a checked JSON value.
     #[error("a literal value could not be encoded as checked JSON")]
     LiteralEncoding,
-    /// A checked refinement is not supported by the current emission slice.
-    #[error("the checked refinement body is not supported by the current V2 emission slice")]
-    RefinementNotEmitted,
     /// A checked refinement's declaration occurrence has no original source region.
     #[error("the checked refinement declaration has no source region")]
     UnlocatedRefinementDeclaration,
@@ -498,7 +495,6 @@ impl EmitRefusal {
             | Self::MonitorPlanInvariant(_)
             | Self::RefinementSubjectNotEmitted => Code::RuntimeInvariant,
             Self::RefinementIdentityEncoding | Self::LiteralEncoding => Code::OutputFailure,
-            Self::RefinementNotEmitted => Code::UnsupportedConstruct,
             Self::UnlocatedRefinementDeclaration => Code::UnsupportedProjection,
             Self::SourceMapInvariant
             | Self::UnresolvedNodeReference
@@ -523,7 +519,6 @@ impl EmitRefusal {
             Self::ProbabilisticModelNotEmitted { .. }
             | Self::TimedModelNotEmitted { .. }
             | Self::SourceObjectEmission { .. } => Some("not-yet-implemented"),
-            Self::RefinementNotEmitted => Some("not-yet-implemented"),
             Self::NothingToEmit { .. }
             | Self::ProtocolResultsRequired
             | Self::UnlocatedOccurrence { .. }
@@ -6649,9 +6644,6 @@ fn emit_package_inner(
     let mut emitted_refinements = Vec::new();
     let mut step_rows = Vec::new();
     for refinement in graph.refinements() {
-        if !refinement.v2_emittable() {
-            return Err(EmitRefusal::RefinementNotEmitted);
-        }
         let region = graph
             .refinement_declaration_region(refinement)
             .filter(|region| region.start() < region.end())

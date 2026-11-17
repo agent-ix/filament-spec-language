@@ -1787,9 +1787,6 @@ fn check_message_one(first: &CheckRefusal) -> String {
         CheckCause::TerminalWithoutObjectType { name, .. } => {
             message = format!("{message}: `terminal {name}` is on a model with no object type");
         }
-        CheckCause::RefinementNotEmitted { name, .. } => {
-            message = format!("{message}: `refinement {name}` checks but is not emitted yet");
-        }
         CheckCause::Refinement(refusal) => {
             let detail = match &refusal.cause {
                 RefinementCause::Unresolved { name, .. } => {

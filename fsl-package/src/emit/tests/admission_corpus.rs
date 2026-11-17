@@ -27,7 +27,7 @@ use fsl_forms::TypeFormHead;
 use super::super::extent_agreement::{package_declaring, records};
 use super::variant_types::fixture as variant_fixture;
 use super::*;
-use crate::checked_v2::{read_checked_package_v2, V2Read, V2ReadRefusal};
+use crate::checked_v2::{V2Read, V2ReadRefusal, read_checked_package_v2};
 use fsl_foundation::diagnostic::{StageFailure, Staged};
 
 /// FR-108's ConfigVersion unit text and domain package (TC-469), the datum
@@ -158,8 +158,7 @@ impl Fixture {
 /// Quantifiers over a set, a bag and an ordered set, a predicate, a decimal
 /// comparison, and record and tuple values: families no other emit fixture
 /// writes.
-const FORMS_UNIT: &str =
-    "function qs using v(s: Set<Int[0, 9]>[0, 5]): Boolean pure { forall(x in s: x < 5) }\n\
+const FORMS_UNIT: &str = "function qs using v(s: Set<Int[0, 9]>[0, 5]): Boolean pure { forall(x in s: x < 5) }\n\
      function qb using v(s: Bag<Int[0, 9]>[0, 5]): Boolean pure { exists(x in s: x < 5) }\n\
      function qo using v(s: OrderedSet<Int[0, 9]>[0, 5]): Boolean pure { exists(x in s: x < 5) }\n\
      predicate Positive using v(x: Int[0, 9]): Boolean { x > 0 }\n\
@@ -178,8 +177,7 @@ const NATIVE_SCALARS: &str = "function eqs using v(a: String, b: String): Boolea
 
 /// TC-827: a union, a construction of one of its members and a `case` over
 /// it, the families FR-320 emits.
-const UNION_NODES: &str =
-    "union Shape { Empty, Circle(Integer), Rect(Integer, Integer) }\n\
+const UNION_NODES: &str = "union Shape { Empty, Circle(Integer), Rect(Integer, Integer) }\n\
      function area using v(s: Shape): Integer pure { case s { Empty: 0; Circle(r): r; Rect(w, h): w * h; } }\n\
      function rect using v(): Shape pure { Shape::Rect(2, 3) }\n";
 
@@ -723,8 +721,7 @@ fn rows() -> Vec<Row> {
 /// Every IR node kind neither FSL's emitter nor typed timed-model writer writes.
 const NOT_EMITTED_BY_QSL: &[(CheckedNodeKind, &str)] = {
     use CheckedNodeKind as K;
-    const NO_RECORD_FORM: &str =
-        "lowering's record_form maps only object types, systems interfaces, record value types and variant types to model nodes";
+    const NO_RECORD_FORM: &str = "lowering's record_form maps only object types, systems interfaces, record value types and variant types to model nodes";
     const NO_TAG: &str = "lowering builds no node of this tag";
     &[
         (
@@ -1424,9 +1421,11 @@ fn a_clause_over_a_third_model_contributes_no_class() {
     let emission = emit_checked(&package).expect("the refinement emits");
     let node = refinement_node(&emission);
     assert!(node["body"].get("class_catalog").is_none(), "{node}");
-    assert!(nodes(&wire(&emission))
-        .iter()
-        .any(|node| node["semantic_form"] == "protocol_clause"));
+    assert!(
+        nodes(&wire(&emission))
+            .iter()
+            .any(|node| node["semantic_form"] == "protocol_clause")
+    );
 }
 
 /// [`catalog_refinement`] with the clause `Local` over the abstract model and
@@ -1715,11 +1714,13 @@ fn a_protocol_refinement_selects_a_dependency_protocol_by_identity() {
             .expect("dependency checks"),
     ));
     let dependency_emission = emit_checked(&dependency).expect("dependency emits");
-    assert!(dependency
-        .graph()
-        .protocol_node_keys("Twice")
-        .and_then(|keys| keys.clause.as_ref())
-        .is_some());
+    assert!(
+        dependency
+            .graph()
+            .protocol_node_keys("Twice")
+            .and_then(|keys| keys.clause.as_ref())
+            .is_some()
+    );
     let library = fsl_semantics::library::LibraryName::new("test/protocol-dependency")
         .expect("library identity");
     let mut admitted = crate::checked_v2::AdmittedPackages::default();
@@ -2604,7 +2605,10 @@ fn quantity_literals(wire: &Value) -> (Vec<(String, Value)>, BTreeMap<String, Va
 fn quantity_literals_lower_to_shared_quantity_literal_nodes_the_strict_reader_admits() {
     // (functions beside f, expected (value, unit) literals in order)
     let cases: [(&str, &[(&str, &str)]); 7] = [
-        ("function h using v(): Boolean pure { f(3 ms) }", &[("3", "ms")]),
+        (
+            "function h using v(): Boolean pure { f(3 ms) }",
+            &[("3", "ms")],
+        ),
         // `h`, `h2`, `h3` and `h4` together: `h4` shares `h`'s node, and
         // `0.5` and `rational(2, 4)` share one `1/2` node.
         (
@@ -2631,7 +2635,10 @@ fn quantity_literals_lower_to_shared_quantity_literal_nodes_the_strict_reader_ad
             "function a using v(d: Quantity<s>, e: Quantity<ms>): Boolean pure { d = 3 s and e = 3 ms }",
             &[("3", "ms"), ("3", "s")],
         ),
-        ("function z using v(): Boolean pure { f(0 ms) }", &[("0", "ms")]),
+        (
+            "function z using v(): Boolean pure { f(0 ms) }",
+            &[("0", "ms")],
+        ),
     ];
     for (functions, expected) in cases {
         let (_, package) = package_from_text(&format!("{QUANTITY_TIME}{functions}\n"));
@@ -2909,9 +2916,11 @@ fn population_and_object_rows_read_back() {
         node["occurrences"],
         json!([{"role": "declaration", "ordinal": 0}, {"role": "generated", "ordinal": 0}])
     );
-    assert!(wire(&emitted.emission)
-        .get("refinement_step_rows")
-        .is_none());
+    assert!(
+        wire(&emitted.emission)
+            .get("refinement_step_rows")
+            .is_none()
+    );
     let admitted = read(&emitted);
     assert!(admitted.is_ok(), "the rows read back: {admitted:?}");
 }
@@ -2998,13 +3007,10 @@ fn refused_rows(rows: &str, operations: &[&str]) -> Vec<fsl_semantics::check::Ch
         .collect()
 }
 
-/// A row whose expression reads a whole concrete population or builds a
-/// `seq` has no node form (STD-493), like a `history` row: the
-/// refinement refuses `RefinementNotEmitted` naming it, never a fault or a
-/// malformed package.
+/// Whole-population and `seq` row forms are admitted into the refinement.
 #[trace("FR-375-AC-21", "TC-310")]
 #[test]
-fn whole_population_and_seq_rows_are_not_emitted() {
+fn whole_population_and_seq_rows_are_emitted() {
     for field in [
         "versionNumber = count(s in C::config_history where s.versionNumber = 1);",
         "versionNumber = if size(seq(i in 0 .. 1: i)) = 2 then self.versionNumber \
@@ -3014,14 +3020,8 @@ fn whole_population_and_seq_rows_are_not_emitted() {
             "population A::config_history from C::config_history;\n\
              object A::ConfigVersion from C::ConfigVersion {{ {field} }}"
         );
-        let refusals = refused_rows(&rows, &[]);
-        assert!(
-            matches!(
-                &refusals[..],
-                [fsl_semantics::check::CheckCause::RefinementNotEmitted { name, .. }] if name == "R"
-            ),
-            "{field}: {refusals:?}"
-        );
+        let (emitted, _) = emit_rows(&rows, &[]);
+        assert!(!emitted.emission.package().bytes().is_empty(), "{field}");
     }
 }
 
@@ -3533,11 +3533,9 @@ fn an_out_of_order_row_refuses_at_its_first_offending_entry() {
 
 /// FR-901-AC-1 (TC-2540): every row form FSpec FR-322 "Refinement row
 /// expressions" defines is written, so a refinement with a `history` row,
-/// a whole-population row or a `seq` row checks and emits; none refuses
-/// `RefinementNotEmitted`.
+/// a whole-population row or a `seq` row checks and emits.
 #[trace("TC-2540", "FR-901-AC-1")]
 #[test]
-#[ignore = "QSL-2244: history, whole-population and seq rows refuse RefinementNotEmitted instead of emitting"]
 fn history_population_and_seq_rows_emit() {
     let step = "step C::ConfigVersion::attemptUpdate -> A::ConfigVersion::attemptUpdate(self);";
     let object = |field: &str| {
@@ -3550,7 +3548,7 @@ fn history_population_and_seq_rows_emit() {
         (
             format!(
                 "{MAPS}\n{step}\nhistory C::ConfigVersion.last : Int[0, 1] = 0 \
-                 {{ on C::ConfigVersion::attemptUpdate : 0; }}"
+                 {{ on C::ConfigVersion::attemptUpdate : pre(self.last); }}"
             ),
             vec!["attemptUpdate"],
         ),
@@ -3572,5 +3570,6 @@ fn history_population_and_seq_rows_emit() {
             !emitted.emission.package().bytes().is_empty(),
             "{rows}: the refinement is written"
         );
+        read(&emitted).unwrap_or_else(|error| panic!("{rows}: readback: {error:?}"));
     }
 }

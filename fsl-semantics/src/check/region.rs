@@ -388,9 +388,6 @@ impl DeclarationRegions {
             | CheckCause::TimedNotChecked { span, .. } => {
                 region(&self.source, self.embedding.as_deref(), *span)
             }
-            CheckCause::RefinementNotEmitted { span, .. } => {
-                region(&self.source, self.embedding.as_deref(), *span)
-            }
             CheckCause::Extension(cause) => {
                 region(&self.source, self.embedding.as_deref(), cause.span())
             }

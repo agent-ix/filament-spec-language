@@ -35,66 +35,6 @@ fn spelled(unit: &str, start: usize, end: usize) -> &str {
     &unit[start..end]
 }
 
-/// A row whose expression has no node form (a `history` row and its read,
-/// a whole concrete population, a `seq`) keeps the refinement out of the
-/// emission: it refuses `unsupported_construct`/`not-yet-implemented` once,
-/// naming the refinement and located at its whole declaration (FR-135).
-#[trace("FR-375-AC-14", "FR-375-AC-21", "TC-310")]
-#[test]
-fn rows_without_a_node_form_refuse_the_refinement_at_its_declaration() {
-    let step = "step C::ConfigVersion::attemptUpdate -> A::ConfigVersion::attemptUpdate(self);";
-    let object = |field: &str| {
-        format!(
-            "population A::config_history from C::config_history;\n\
-             object A::ConfigVersion from C::ConfigVersion {{ {field} }}"
-        )
-    };
-    let cases = [
-        (
-            "history",
-            format!(
-                "{MAPS}\n{step}\nhistory C::ConfigVersion.last : Int[0, 1] = 0 \
-                 {{ on C::ConfigVersion::attemptUpdate : 0; }}"
-            ),
-            vec!["attemptUpdate"],
-        ),
-        (
-            "whole population",
-            object("versionNumber = count(s in C::config_history where s.versionNumber = 1);"),
-            Vec::new(),
-        ),
-        (
-            "seq",
-            object(
-                "versionNumber = if size(seq(i in 0 .. 1: i)) = 2 then self.versionNumber \
-                 else self.versionNumber;",
-            ),
-            Vec::new(),
-        ),
-    ];
-    for (case, rows, operations) in cases {
-        let (unit, documents) = rows_refinement(&rows, &operations);
-        let found = refusals(&unit, &documents);
-        let [refusal] = &found[..] else {
-            panic!("{case}: one refusal: {found:?}");
-        };
-        assert_eq!(
-            (refusal.cause.code(), refusal.cause.cause()),
-            (Code::UnsupportedConstruct, Some("not-yet-implemented")),
-            "{case}"
-        );
-        let CheckCause::RefinementNotEmitted { name, span } = &refusal.cause else {
-            panic!("{case}: {refusal:?}");
-        };
-        assert_eq!(name, "R", "{case}");
-        let declaration = spelled(&unit, span.start, span.end);
-        assert!(
-            declaration.starts_with("refinement R using") && declaration.ends_with('}'),
-            "{case}: {declaration}"
-        );
-    }
-}
-
 /// A concrete protocol clause that holds a construct with no node form
 /// leaves the refinement's class catalog unkeyed: the clause refuses
 /// `unsupported_construct`/`not-yet-implemented` at its declaration naming
