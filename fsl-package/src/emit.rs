@@ -314,8 +314,6 @@ pub enum EmitRefusal {
         source_ref: fsl_foundation::source::provenance::RawSourceRef,
         /// The exact declaration locus.
         span: fsl_foundation::Span,
-        /// Plain-language construct name, such as `bounded temporal rule Foo`
-        /// or `compensate template Refund`.
     },
     /// A temporal clock selection does not name a configured declaration in
     /// the checked source.
