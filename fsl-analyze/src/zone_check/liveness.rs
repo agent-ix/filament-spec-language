@@ -1269,6 +1269,9 @@ impl Run<'_, '_, '_> {
                     elapses,
                     target: self.timed(self.timed.invariants(&post))?,
                     before: self.cell_zone(&mut live.cells, &source.state, &source.cell)?,
+                    after: None,
+                    auxiliary_carries: Vec::new(),
+                    auxiliary_resets: Vec::new(),
                     piece: if edge.to == edge.from {
                         // An undefined position's own: its cell is not
                         // known.
@@ -1288,6 +1291,9 @@ impl Run<'_, '_, '_> {
                 elapses,
                 target: invariants,
                 before: None,
+                after: None,
+                auxiliary_carries: Vec::new(),
+                auxiliary_resets: Vec::new(),
                 piece: self.cell_zone(&mut live.cells, &target.state, &target.cell)?,
                 step: None,
                 position: Vec::new(),
@@ -1470,12 +1476,17 @@ impl Run<'_, '_, '_> {
                 .as_ref()
                 .map(|(step, _)| step.carries().to_vec())
                 .unwrap_or_default();
+            resets.extend(stage.auxiliary_resets.iter().cloned());
             resets.extend(
                 stage
                     .position_resets
                     .iter()
                     .map(|&clock| (clock, Rational::from_integer(Integer::zero()))),
             );
+            let carries = carries
+                .into_iter()
+                .chain(stage.auxiliary_carries.iter().copied())
+                .collect();
             loop_stages.push(LoopStage {
                 elapses: stage.elapses,
                 invariants: stage.invariants,
@@ -1520,6 +1531,15 @@ impl Run<'_, '_, '_> {
         for (stage, delay) in loop_stages.iter().zip(&delays) {
             for value in values.iter_mut().flatten() {
                 *value = value.add(delay);
+            }
+            let before = values.clone();
+            for &(target, source) in &stage.carries {
+                if let (Some(value), Some(source_value)) = (
+                    values.get_mut(target).and_then(Option::as_mut),
+                    before.get(source).and_then(Option::as_ref),
+                ) {
+                    value.clone_from(source_value);
+                }
             }
             for (place, value) in &stage.resets {
                 if let Some(slot) = values.get_mut(*place) {

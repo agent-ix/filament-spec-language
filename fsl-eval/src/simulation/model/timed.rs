@@ -442,8 +442,11 @@ pub const DEFAULT_MAX_CLOCKS: std::num::NonZeroU64 = std::num::NonZeroU64::MIN.s
 /// FR-231's timed subject over one model system.
 pub struct TimedSystem<'s, 'a> {
     system: &'s ModelSystem<'a>,
-    model: &'s TimedModel,
-    source: &'s ModelTimeSource,
+    model: Option<&'s TimedModel>,
+    source: Option<&'s ModelTimeSource>,
+    /// This subject has no concrete clock placements and admits any
+    /// nonnegative delay between its discrete steps (FSpec FR-900-AC-5).
+    free_delay: bool,
     places: Vec<ClockPlace>,
     /// The object references each predicate's `self` type ranges over.
     objects: std::collections::BTreeMap<EffectiveId, Vec<ObjectReference>>,
@@ -646,14 +649,42 @@ impl<'s, 'a> TimedSystem<'s, 'a> {
         };
         Ok(Self {
             system,
-            model: timed,
-            source,
+            model: Some(timed),
+            source: Some(source),
+            free_delay: false,
             places,
             objects,
             urgent_operations,
             tick,
             max_clocks,
             holders,
+        })
+    }
+
+    /// An untimed concrete subject whose discrete steps may be separated
+    /// by any nonnegative delay. The returned source has zero concrete
+    /// clock placements; auxiliary timed models supply their own clocks.
+    ///
+    /// # Errors
+    ///
+    /// [`TimedSubjectRefusal`] when the model exceeds the standard
+    /// expansion bounds.
+    pub fn free_delay(
+        system: &'s ModelSystem<'a>,
+        max_clocks: std::num::NonZeroU64,
+    ) -> Result<Self, TimedSubjectRefusal> {
+        super::check_model_bounds(system, crate::simulation::BOUND_POSITIONS)?;
+        Ok(Self {
+            system,
+            model: None,
+            source: None,
+            free_delay: true,
+            places: Vec::new(),
+            objects: std::collections::BTreeMap::new(),
+            urgent_operations: Vec::new(),
+            tick: None,
+            max_clocks,
+            holders: Vec::new(),
         })
     }
 
@@ -667,10 +698,13 @@ impl<'s, 'a> TimedSystem<'s, 'a> {
     /// clock outside collections, and below a collection one for each
     /// element it holds, whether or not the element has a listed place.
     pub fn live_clocks(&self, state: &ModelSimState) -> u64 {
+        if self.free_delay {
+            return 0;
+        }
         let typing = self.system.typing();
         let mut live = 0_u64;
         for holder in &self.holders {
-            let Some(field) = self.model.clock(holder.clock) else {
+            let Some(field) = self.model.and_then(|model| model.clock(holder.clock)) else {
                 continue;
             };
             let Some(stored) = holder.stored(state) else {
@@ -780,11 +814,14 @@ impl<'s, 'a> TimedSystem<'s, 'a> {
     /// wherever they land (FR-120-AC-26). The refinement zone checker has
     /// not yet mapped these carried clock places.
     pub fn carries_clocks(&self) -> bool {
-        self.model
+        let Some(model) = self.model else {
+            return false;
+        };
+        model
             .resets()
             .iter()
             .any(|resets| !resets.writes().is_empty())
-            || self.model.clocks().iter().any(|clock| match clock.path() {
+            || model.clocks().iter().any(|clock| match clock.path() {
                 // A collection of bare clocks: its slots hold no data, so
                 // they keep their clocks by position.
                 [PlaceStep::Field(_), PlaceStep::Slot(_)] => false,
@@ -800,13 +837,35 @@ impl<'s, 'a> TimedSystem<'s, 'a> {
     }
 
     /// The checked timed model.
+    ///
+    /// # Panics
+    ///
+    /// For a free-delay source, which has no timed model. Use
+    /// [`Self::timed_model`] to check whether one is present.
     pub fn model(&self) -> &'s TimedModel {
+        self.model.expect("free-delay subjects have no timed model")
+    }
+
+    /// The checked timed model, absent for an explicitly free-delay source.
+    pub fn timed_model(&self) -> Option<&'s TimedModel> {
         self.model
     }
 
     /// The time source.
+    ///
+    /// # Panics
+    ///
+    /// For a free-delay source, which has no concrete time-source
+    /// declaration.
     pub fn source(&self) -> &'s ModelTimeSource {
         self.source
+            .expect("free-delay subjects have no time source")
+    }
+
+    /// Whether this source represents arbitrary free delays and has no
+    /// concrete clock placements.
+    pub fn is_free_delay(&self) -> bool {
+        self.free_delay
     }
 
     /// The clock places: for each clock field in the timed model's order,
@@ -858,7 +917,7 @@ impl<'s, 'a> TimedSystem<'s, 'a> {
         post: &ModelSimState,
     ) -> bool {
         let clauses: Vec<_> = self
-            .model
+            .model()
             .resets()
             .iter()
             .filter(|resets| {
@@ -907,13 +966,16 @@ impl<'s, 'a> TimedSystem<'s, 'a> {
             // An element of a `Sequence<Option<Clock>>` follows once the
             // step's resets are known ([`Self::slot_bits_follow`]).
             let guarded = place.slots.is_empty()
-                && self.model.clock(place.clock).is_some_and(|field| {
-                    field.presence_bit()
-                        || field
-                            .path()
-                            .iter()
-                            .any(|step| matches!(step, PlaceStep::Union(_)))
-                });
+                && self
+                    .model
+                    .and_then(|model| model.clock(place.clock))
+                    .is_some_and(|field| {
+                        field.presence_bit()
+                            || field
+                                .path()
+                                .iter()
+                                .any(|step| matches!(step, PlaceStep::Union(_)))
+                    });
             if !guarded {
                 return true;
             }
@@ -931,7 +993,7 @@ impl<'s, 'a> TimedSystem<'s, 'a> {
             // written; a union value may leave its case, dropping the case's
             // clock, but never enters a clock case unwritten.
             let union = self
-                .model
+                .model()
                 .clock(place.clock)
                 .is_some_and(|field| !field.presence_bit());
             if union {
@@ -952,7 +1014,7 @@ impl<'s, 'a> TimedSystem<'s, 'a> {
         let mut slots = std::collections::BTreeMap::new();
         for holder in &self.holders {
             let Some(field) = self
-                .model
+                .model()
                 .clock(holder.clock)
                 .filter(|field| field.presence_bit())
             else {
@@ -980,7 +1042,7 @@ impl<'s, 'a> TimedSystem<'s, 'a> {
             .iter()
             .filter(|place| place.slots.is_empty())
             .filter_map(|place| {
-                let field = self.model.clock(place.clock)?;
+                let field = self.model?.clock(place.clock)?;
                 let (name, case) = match field.path() {
                     [PlaceStep::Field(name)] if field.presence_bit() => (name, None),
                     [PlaceStep::Field(name), PlaceStep::Union(case)] => (name, Some(case.clone())),
@@ -1017,7 +1079,7 @@ impl<'s, 'a> TimedSystem<'s, 'a> {
         };
         self.places.iter().enumerate().all(|(at, place)| {
             let Some(field) = self
-                .model
+                .model()
                 .clock(place.clock)
                 .filter(|field| field.presence_bit())
             else {
@@ -1096,7 +1158,7 @@ impl<'s, 'a> TimedSystem<'s, 'a> {
         let Some(stored) = place.stored_in(state) else {
             return false;
         };
-        let Some(field) = self.model.clock(place.clock) else {
+        let Some(field) = self.model.and_then(|model| model.clock(place.clock)) else {
             return false;
         };
         // An `Option<Clock>` place is live while its presence bit is set
@@ -1167,6 +1229,15 @@ impl<'s, 'a> TimedSystem<'s, 'a> {
 
     /// The initial timed states: each initial model state with every clock 0.
     pub fn initial(&self) -> Vec<TimedState> {
+        if self.free_delay {
+            return self
+                .system
+                .initial
+                .iter()
+                .cloned()
+                .map(|discrete| TimedState::new(discrete, ClockValuation::new(Vec::new())))
+                .collect();
+        }
         // A slot the initial state does not hold is not live; its value is
         // reset when the slot becomes live.
         let zero = ClockValuation(vec![zero(); self.places.len()]);
@@ -1195,6 +1266,9 @@ impl<'s, 'a> TimedSystem<'s, 'a> {
     /// clock, so every distribution of one `k` is within the bound or none
     /// is.
     fn unbounded_counts(&self, state: &ModelSimState) -> Vec<(u64, ModelSimState)> {
+        if self.free_delay {
+            return vec![(0, state.clone())];
+        }
         let holders: Vec<(DeclarationKey, String, DeclarationKey, u64)> = self
             .system
             .clock_counts
@@ -1328,8 +1402,11 @@ impl<'s, 'a> TimedSystem<'s, 'a> {
     /// [`TimedStop`] when the state cannot be observed or a predicate has no
     /// truth value.
     pub fn invariants(&self, state: &ModelSimState) -> Result<Vec<PlaceConstraint>, TimedStop> {
+        if self.free_delay {
+            return Ok(Vec::new());
+        }
         let mut bounds = Vec::new();
-        for invariant in self.model.invariants() {
+        for invariant in self.model.into_iter().flat_map(|model| model.invariants()) {
             let holding = self.applying(
                 state,
                 invariant.alternatives(),
@@ -1354,7 +1431,10 @@ impl<'s, 'a> TimedSystem<'s, 'a> {
     ///
     /// As [`Self::invariants`].
     pub fn broken_invariant(&self, state: &TimedState) -> Result<Option<String>, TimedStop> {
-        for invariant in self.model.invariants() {
+        if self.free_delay {
+            return Ok(None);
+        }
+        for invariant in self.model.into_iter().flat_map(|model| model.invariants()) {
             let holding = self.applying(
                 &state.discrete,
                 invariant.alternatives(),
@@ -1475,7 +1555,10 @@ impl<'s, 'a> TimedSystem<'s, 'a> {
     /// [`TimedStop`] when the state cannot be expanded or a predicate has no
     /// truth value.
     pub fn is_urgent(&self, state: &ModelSimState) -> Result<bool, TimedStop> {
-        for urgency in self.model.urgency() {
+        if self.free_delay {
+            return Ok(false);
+        }
+        for urgency in self.model.into_iter().flat_map(|model| model.urgency()) {
             if let Urgency::When {
                 name,
                 context,
@@ -1523,6 +1606,9 @@ impl<'s, 'a> TimedSystem<'s, 'a> {
     /// predicate has no truth value.
     pub fn guarded_steps(&self, state: &ModelSimState) -> Result<Vec<GuardedStep>, TimedStop> {
         self.within_max_clocks(state)?;
+        if self.free_delay {
+            return self.free_delay_steps(state);
+        }
         // A postcondition's `present(self.v)` reads the candidate's presence
         // bits (FSpec FR-322 `CW-05`).
         let post_presence = |candidate: &ModelState| self.place_presences(candidate);
@@ -1546,7 +1632,7 @@ impl<'s, 'a> TimedSystem<'s, 'a> {
                         .ok_or_else(|| stop(BROKEN))?;
                     let mut parts = vec![Vec::new()];
                     let mut guards = Vec::new();
-                    for guard in self.model.guards() {
+                    for guard in self.model.into_iter().flat_map(|model| model.guards()) {
                         let operation = guard.operation();
                         if operation.declaring != vector.declaring
                             || operation.declaration.name() != vector.name
@@ -1618,7 +1704,7 @@ impl<'s, 'a> TimedSystem<'s, 'a> {
                         resets.len()
                     });
                     for (clause, reset) in self
-                        .model
+                        .model()
                         .resets()
                         .iter()
                         .filter(|resets| {
@@ -1747,6 +1833,47 @@ impl<'s, 'a> TimedSystem<'s, 'a> {
         Ok(steps)
     }
 
+    /// Data-enabled steps of an untimed subject: no concrete clock guards,
+    /// resets, carries or placements.
+    fn free_delay_steps(&self, state: &ModelSimState) -> Result<Vec<GuardedStep>, TimedStop> {
+        let (expansion, enabled) = expand_enabled(self.system, state, None)?;
+        let mut steps = Vec::new();
+        for vector in enabled {
+            for position in vector.successors.clone() {
+                let Some((transition, post)) = expansion.successors.get(position) else {
+                    continue;
+                };
+                for instance in self.instances(&vector, state) {
+                    let Some(transition) = self.instance_transition(transition, &instance) else {
+                        return Err(TimedStop::Expansion(stop(BROKEN)));
+                    };
+                    steps.push(GuardedStep {
+                        transition,
+                        receiver: vector.receiver.clone(),
+                        operation: vector.operation.clone(),
+                        post: post.clone(),
+                        parts: vec![Vec::new()],
+                        resets: Vec::new(),
+                        carries: Vec::new(),
+                        guards: Vec::new(),
+                    });
+                }
+            }
+        }
+        let mut keyed = steps
+            .into_iter()
+            .map(|step| {
+                let key = self
+                    .system
+                    .transition_key(&step.transition)
+                    .map_err(|_| stop(BROKEN))?;
+                Ok((key, step))
+            })
+            .collect::<Result<Vec<_>, ExpansionStop>>()?;
+        keyed.sort_by(|left, right| left.0.cmp(&right.0));
+        Ok(keyed.into_iter().map(|(_, step)| step).collect())
+    }
+
     /// Each binding of `vector`'s operation's `Clock` parameters to places
     /// live at `state`, by parameter position and place index (FR-230
     /// "Operation parameters"): a parameter ranges over the places of the
@@ -1771,19 +1898,27 @@ impl<'s, 'a> TimedSystem<'s, 'a> {
         };
         let mut instances: Vec<Vec<(usize, usize)>> = vec![Vec::new()];
         for (position, _) in declaration.clock_parameters() {
-            let reset = self.model.resets().iter().any(|resets| {
-                resets.operation().declaring == vector.declaring
-                    && resets.operation().declaration.name() == vector.name
-                    && resets
-                        .resets()
-                        .iter()
-                        .any(|reset| reset.parameter() == Some(*position))
-            });
-            let range = self.model.clock_parameters().iter().find(|listed| {
-                listed.position() == *position
-                    && listed.operation().declaring == vector.declaring
-                    && listed.operation().declaration.name() == vector.name
-            });
+            let reset = self
+                .model
+                .into_iter()
+                .flat_map(|model| model.resets())
+                .any(|resets| {
+                    resets.operation().declaring == vector.declaring
+                        && resets.operation().declaration.name() == vector.name
+                        && resets
+                            .resets()
+                            .iter()
+                            .any(|reset| reset.parameter() == Some(*position))
+                });
+            let range = self
+                .model
+                .into_iter()
+                .flat_map(|model| model.clock_parameters())
+                .find(|listed| {
+                    listed.position() == *position
+                        && listed.operation().declaring == vector.declaring
+                        && listed.operation().declaration.name() == vector.name
+                });
             let places: Vec<usize> = self
                 .places
                 .iter()
@@ -1798,7 +1933,7 @@ impl<'s, 'a> TimedSystem<'s, 'a> {
                             && place.slots.is_empty()
                             && self
                                 .model
-                                .clock(place.clock)
+                                .and_then(|model| model.clock(place.clock))
                                 .is_some_and(|field| field.presence_bit())))
                 })
                 .map(|(index, _)| index)
@@ -1853,7 +1988,7 @@ impl<'s, 'a> TimedSystem<'s, 'a> {
     /// The place at index `place` as an opaque `clock_place` document.
     fn place_enc(&self, place: usize) -> Option<super::encode::Enc> {
         let place = self.places.get(place)?;
-        let field = self.model.clock(place.clock)?;
+        let field = self.model?.clock(place.clock)?;
         let mut slots = place.slots.iter();
         Some(super::encode::Enc::tagged(
             "clock_place",
@@ -2008,7 +2143,7 @@ impl<'s, 'a> TimedSystem<'s, 'a> {
             if place.slots.is_empty() || !self.live(place, post) {
                 continue;
             }
-            let Some(field) = self.model.clock(place.clock) else {
+            let Some(field) = self.model.and_then(|model| model.clock(place.clock)) else {
                 continue;
             };
             if place.holds(receiver)
@@ -2044,7 +2179,7 @@ impl<'s, 'a> TimedSystem<'s, 'a> {
         state: &ModelSimState,
         post: &ModelSimState,
     ) -> Option<Option<Vec<usize>>> {
-        let field = self.model.clock(place.clock)?;
+        let field = self.model?.clock(place.clock)?;
         let path = field.path();
         let through = path
             .iter()
@@ -2148,7 +2283,8 @@ impl<'s, 'a> TimedSystem<'s, 'a> {
     /// The clock of the collection `from` at the path below its slot that
     /// `clock`, a clock of the collection `to`, has below its own.
     fn carried_clock(&self, clock: ClockId, to: &str, from: &str) -> Option<ClockId> {
-        let path = self.model.clock(clock)?.path();
+        let model = self.model?;
+        let path = model.clock(clock)?.path();
         let [PlaceStep::Field(head), PlaceStep::Slot(_), below @ ..] = path else {
             return None;
         };
@@ -2158,7 +2294,7 @@ impl<'s, 'a> TimedSystem<'s, 'a> {
         if to == from {
             return Some(clock);
         }
-        self.model.clock_fields().find_map(|(candidate, field)| {
+        model.clock_fields().find_map(|(candidate, field)| {
             let [PlaceStep::Field(head), PlaceStep::Slot(_), rest @ ..] = field.path() else {
                 return None;
             };
@@ -2530,22 +2666,25 @@ impl<'s, 'a> TimedSystem<'s, 'a> {
             .zip(state.clocks.values())
             .filter(|(place, _)| self.live(place, &state.discrete))
             .map(|(place, value)| {
-                let (field, path) = self.model.clock(place.clock).map_or(
-                    (super::encode::Enc::Null, super::encode::Enc::Null),
-                    |field| {
-                        let mut slots = place.slots.iter();
-                        (
-                            super::encode::declaration_enc(field.field()),
-                            super::encode::Enc::Array(
-                                field
-                                    .path()
-                                    .iter()
-                                    .map(|step| place_step_enc(step, &mut slots))
-                                    .collect(),
-                            ),
-                        )
-                    },
-                );
+                let (field, path) = self
+                    .model
+                    .and_then(|model| model.clock(place.clock))
+                    .map_or(
+                        (super::encode::Enc::Null, super::encode::Enc::Null),
+                        |field| {
+                            let mut slots = place.slots.iter();
+                            (
+                                super::encode::declaration_enc(field.field()),
+                                super::encode::Enc::Array(
+                                    field
+                                        .path()
+                                        .iter()
+                                        .map(|step| place_step_enc(step, &mut slots))
+                                        .collect(),
+                                ),
+                            )
+                        },
+                    );
                 super::encode::Enc::tagged(
                     "clock",
                     vec![

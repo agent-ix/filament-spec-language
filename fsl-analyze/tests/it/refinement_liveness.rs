@@ -296,9 +296,8 @@ fn operation_of(outcome: RefinementOutcome) -> String {
 /// with the proved safety half beside it; a weak `F_A` holds as before. With
 /// the safety half violated, the liveness half is not run.
 #[trace("TC-548", "FR-143-AC-6")]
-#[trace("TC-2537", "FR-899-AC-3")]
+#[trace("TC-2537", "FR-899-AC-3", "FR-899-AC-4")]
 #[test]
-#[ignore = "QSL-2243: a strong abstract fairness constraint settles Unsupported instead of refuting the loop"]
 fn a_strong_abstract_fairness_constraint_refutes_a_loop_that_never_takes_it() {
     let unit = probe(
         ["", "self.a = 0", "", ""],
@@ -306,16 +305,31 @@ fn a_strong_abstract_fairness_constraint_refutes_a_loop_that_never_takes_it() {
         &[(0, 0)],
     );
     let flip_a = "assume fair weak each Impl::Pair::flipA;";
+    let concrete_strong = "assume fair strong each Impl::Pair::flipB;";
     let weak = "ensure fair weak whole Spec::Pair::flipB;";
     let strong = "ensure fair strong whole Spec::Pair::flipB;";
     holds(&check_aux(&unit.world(&probe_refinement(&[flip_a, weak]))));
+    holds(&check_aux(&unit.world(&probe_refinement(&[
+        flip_a,
+        concrete_strong,
+        strong,
+    ]))));
     for rows in [
         vec![flip_a, strong],
         vec![flip_a, weak, strong],
         vec![flip_a, strong, weak],
     ] {
         let outcome = check_aux(&unit.world(&probe_refinement(&rows)));
-        assert_eq!(operation_of(outcome), "flipB", "{rows:?}");
+        let counterexample = lasso(outcome);
+        let Some(RefinementFailure::AbstractUnfair { constraint }) =
+            counterexample.refinement.as_ref()
+        else {
+            panic!(
+                "the strong constraint is abstract-unfair: {:?}",
+                counterexample.refinement
+            );
+        };
+        assert_eq!(constraint.operation().name(), "flipB", "{rows:?}");
     }
     let violated = probe_refinement(&[flip_a, strong]).replace(
         "step Impl::Pair::flipA -> Spec::Pair::flipA(self);",

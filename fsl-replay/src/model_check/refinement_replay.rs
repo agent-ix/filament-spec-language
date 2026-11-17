@@ -16,9 +16,9 @@
 //! prefix and one pass of its loop. Its loop must close in the product, with
 //! the history values and candidates it entered with, and be fair under
 //! `F_C` as FR-128 reads fairness from the concrete system. The recorded
-//! `F_A` constraint must then be enabled at the mapped state of every loop
-//! state and taken by no loop step, and the loop is `Divergence` when every
-//! step is a `stutter`, `AbstractUnfair` otherwise.
+//! `F_A` constraint must then satisfy its weak or strong enabledness rule and
+//! be taken by no loop step, and the loop is `Divergence` when every step is
+//! a `stutter`, `AbstractUnfair` otherwise.
 //!
 //! What this does not do yet: the facade around it that recompiles the
 //! packages and resolves the refinement node by its identity. The recompile is
@@ -29,7 +29,7 @@
 use filament_semantic_value::catalog::Category;
 use filament_semantic_value::fairness::FairnessKind;
 use filament_semantic_value::model_transition::ModelTransition;
-use fsl_eval::simulation::model::{ModelFinding, TimedSystem};
+use fsl_eval::simulation::model::{ClockValuation, ModelFinding, TimedSystem};
 use fsl_eval::simulation::{Limits, TransitionSystem};
 use fsl_semantics::model::state::ModelState;
 
@@ -758,14 +758,65 @@ pub fn replay_timed_refinement_trace(
     payload: &TemporalCounterexample,
     exploration: &Limits,
 ) -> Result<RefinementTraceSettlement, ReplayRefusal> {
+    let timed = TimedSystem::new(&systems.concrete, refinement.concrete_model())
+        .map_err(|refusal| refused(ModelTraceRefusal::TimedSubject(refusal)))?;
+    replay_refinement_trace_with_time_source(refinement, systems, payload, exploration, &timed)
+}
+
+/// FR-900-AC-5: replay a refinement counterexample over an untimed concrete
+/// model, whose arbitrary delays are shared with the abstract model's
+/// derived clocks. The concrete time source has zero clock placements.
+pub fn replay_free_delay_refinement_trace(
+    refinement: &CheckedRefinement,
+    systems: &RefinementSystems<'_>,
+    payload: &TemporalCounterexample,
+    exploration: &Limits,
+) -> Result<RefinementTraceSettlement, ReplayRefusal> {
+    let timed = TimedSystem::free_delay(
+        &systems.concrete,
+        fsl_eval::simulation::model::DEFAULT_MAX_CLOCKS,
+    )
+    .map_err(|refusal| refused(ModelTraceRefusal::TimedSubject(refusal)))?;
+    replay_refinement_trace_with_time_source(refinement, systems, payload, exploration, &timed)
+}
+
+fn replay_refinement_trace_with_time_source(
+    refinement: &CheckedRefinement,
+    systems: &RefinementSystems<'_>,
+    payload: &TemporalCounterexample,
+    exploration: &Limits,
+    timed: &TimedSystem<'_, '_>,
+) -> Result<RefinementTraceSettlement, ReplayRefusal> {
     let Some(recorded) = payload.refinement.as_ref() else {
         return Err(refused(ModelTraceRefusal::NoRefinementFailure));
     };
-    let timed = TimedSystem::new(&systems.concrete, refinement.concrete_model())
-        .map_err(|refusal| refused(ModelTraceRefusal::TimedSubject(refusal)))?;
-    let Some((positions, states)) = timed_prefix(&timed, payload)? else {
+    let Some((positions, states)) = timed_prefix(timed, payload)? else {
         return Ok(RefinementTraceSettlement::Inconclusive(no_value_cause()));
     };
+    if let Some((failure, mapped)) =
+        replay_abstract_timed_failure(refinement, systems, payload, &positions, timed)?
+    {
+        if &failure != recorded {
+            return Ok(RefinementTraceSettlement::Inconclusive(disagreement(
+                Category::Success,
+            )));
+        }
+        let Some(index) = failure
+            .position()
+            .and_then(|position| usize::try_from(position).ok())
+        else {
+            return Ok(RefinementTraceSettlement::Inconclusive(disagreement(
+                Category::Success,
+            )));
+        };
+        let Some(post) = states.get(index) else {
+            return Err(fault("a-failing-step-has-a-post-state"));
+        };
+        return Ok(match explore(timed, post, exploration) {
+            Ok(Closure::Divergent) => RefinementTraceSettlement::Reproduced { failure, mapped },
+            _ => RefinementTraceSettlement::Inconclusive(disagreement(Category::Success)),
+        });
+    }
     let settlement = settle_positions(refinement, systems, payload, recorded, &positions)?;
     let RefinementTraceSettlement::Reproduced { failure, .. } = &settlement else {
         return Ok(settlement);
@@ -781,7 +832,7 @@ pub fn replay_timed_refinement_trace(
     let Some(point) = states.get(post) else {
         return Err(fault("a-failing-step-has-a-post-state"));
     };
-    Ok(match explore(&timed, point, exploration) {
+    Ok(match explore(timed, point, exploration) {
         Ok(Closure::Divergent) => settlement,
         Ok(Closure::Locked) => {
             RefinementTraceSettlement::Inconclusive(disagreement(Category::Success))
@@ -799,6 +850,200 @@ pub fn replay_timed_refinement_trace(
         }),
         Err(_) => RefinementTraceSettlement::Inconclusive(no_value_cause()),
     })
+}
+
+/// Replay FR-900's derived abstract clocks along the mapped discrete path.
+fn replay_abstract_timed_failure(
+    refinement: &CheckedRefinement,
+    systems: &RefinementSystems<'_>,
+    payload: &TemporalCounterexample,
+    positions: &[Position],
+    concrete_timed: &TimedSystem<'_, '_>,
+) -> Result<Option<(RefinementFailure, Vec<ModelState>)>, ReplayRefusal> {
+    if systems
+        .abstract_system
+        .package()
+        .graph()
+        .timed_model(refinement.abstract_model())
+        .is_none()
+    {
+        return Ok(None);
+    }
+    let timed = TimedSystem::new(&systems.abstract_system, refinement.abstract_model())
+        .map_err(|refusal| refused(ModelTraceRefusal::TimedSubject(refusal)))?;
+    let zero = filament_exact::Rational::from_integer(filament_exact::Integer::zero());
+    let mut clocks = ClockValuation::new(vec![zero; timed.places().len()]);
+    let Some(first) = positions.first() else {
+        return Ok(None);
+    };
+    let mut mapped = Vec::new();
+    let mut prior = match systems.abstract_protocol.as_ref() {
+        Some(protocol) => match check_protocol_initial(
+            refinement,
+            &systems.concrete,
+            &systems.abstract_system,
+            protocol,
+            payload.initial_state,
+            first.state.state(),
+        )
+        .verdict
+        {
+            StepVerdict::Passes { post, .. } => *post,
+            _ => return Ok(None),
+        },
+        None => match check_initial(
+            refinement,
+            &systems.concrete,
+            &systems.abstract_system,
+            payload.initial_state,
+            first.state.state(),
+        ) {
+            StepVerdict::Passes { post, .. } => *post,
+            _ => return Ok(None),
+        },
+    };
+    mapped.extend(prior.abstract_states.first().cloned());
+    for candidate in &prior.abstract_states {
+        let state = systems
+            .abstract_system
+            .pre_state(candidate.clone(), systems.abstract_system.declared_anchor());
+        if timed
+            .invariants(&state)
+            .map_err(|_| fault("timed-abstract-invariant"))?
+            .iter()
+            .any(|constraint| !constraint.holds(&clocks))
+        {
+            return Ok(Some((
+                RefinementFailure::AbstractTimeInvariant {
+                    position: 0,
+                    model: refinement.abstract_model().to_owned(),
+                },
+                mapped,
+            )));
+        }
+    }
+    for (index, concrete_step) in payload.prefix.iter().enumerate() {
+        let Some(delay) = concrete_step.delay.as_ref() else {
+            return Ok(None);
+        };
+        clocks = clocks.delayed(delay);
+        for candidate in &prior.abstract_states {
+            let state = systems
+                .abstract_system
+                .pre_state(candidate.clone(), systems.abstract_system.declared_anchor());
+            if timed
+                .invariants(&state)
+                .map_err(|_| fault("timed-abstract-invariant"))?
+                .iter()
+                .any(|constraint| !constraint.holds(&clocks))
+            {
+                return Ok(Some((
+                    RefinementFailure::AbstractTimeInvariant {
+                        position: u64::try_from(index + 1).unwrap_or(u64::MAX),
+                        model: refinement.abstract_model().to_owned(),
+                    },
+                    mapped,
+                )));
+            }
+        }
+        let Some(post_state) = positions.get(index + 1) else {
+            return Ok(None);
+        };
+        let step = ConcreteStep {
+            position: u64::try_from(index + 1).unwrap_or(u64::MAX),
+            transition: Some(&concrete_step.transition),
+            post: &post_state.state,
+        };
+        let verdict = match systems.abstract_protocol.as_ref() {
+            Some(protocol) => {
+                check_protocol_step(
+                    refinement,
+                    &systems.concrete,
+                    &systems.abstract_system,
+                    protocol,
+                    &prior,
+                    &step,
+                )
+                .verdict
+            }
+            None => {
+                check_step(
+                    refinement,
+                    &systems.concrete,
+                    &systems.abstract_system,
+                    &prior,
+                    &step,
+                )
+                .verdict
+            }
+        };
+        let StepVerdict::Passes { post, taken } = verdict else {
+            return Ok(None);
+        };
+        if let Taken::Abstract(transitions) = *taken {
+            let mut selected = None;
+            'candidates: for candidate in &prior.abstract_states {
+                let state = systems
+                    .abstract_system
+                    .pre_state(candidate.clone(), systems.abstract_system.declared_anchor());
+                for abstract_step in timed
+                    .guarded_steps(&state)
+                    .map_err(|_| fault("timed-abstract-guard"))?
+                {
+                    if transitions.contains(abstract_step.transition()) {
+                        selected = Some(abstract_step);
+                        break 'candidates;
+                    }
+                }
+            }
+            let Some(selected) = selected else {
+                return Ok(Some((
+                    RefinementFailure::AbstractClockGuard {
+                        position: u64::try_from(index + 1).unwrap_or(u64::MAX),
+                        operation: "mapped-operation".to_owned(),
+                    },
+                    mapped,
+                )));
+            };
+            if !selected
+                .parts()
+                .iter()
+                .any(|part| part.iter().all(|constraint| constraint.holds(&clocks)))
+            {
+                return Ok(Some((
+                    RefinementFailure::AbstractClockGuard {
+                        position: u64::try_from(index + 1).unwrap_or(u64::MAX),
+                        operation: selected.operation().to_owned(),
+                    },
+                    mapped,
+                )));
+            }
+            clocks = selected.reset(&clocks);
+        }
+        prior = *post;
+        mapped.extend(prior.abstract_states.first().cloned());
+        for candidate in &prior.abstract_states {
+            let state = systems
+                .abstract_system
+                .pre_state(candidate.clone(), systems.abstract_system.declared_anchor());
+            if timed
+                .invariants(&state)
+                .map_err(|_| fault("timed-abstract-invariant"))?
+                .iter()
+                .any(|constraint| !constraint.holds(&clocks))
+            {
+                return Ok(Some((
+                    RefinementFailure::AbstractTimeInvariant {
+                        position: u64::try_from(index + 1).unwrap_or(u64::MAX),
+                        model: refinement.abstract_model().to_owned(),
+                    },
+                    mapped,
+                )));
+            }
+        }
+    }
+    let _ = concrete_timed;
+    Ok(None)
 }
 
 /// The settlement of `payload` along its re-executed `positions`: the
@@ -1080,7 +1325,7 @@ fn protocol_relation_edges(
                 return Ok(Err(Found::Undefined(evaluation)));
             }
             StepVerdict::Undetermined(_) | StepVerdict::ProtocolContractUndetermined { .. } => {
-                return Ok(Err(Found::Undetermined))
+                return Ok(Err(Found::Undetermined));
             }
             StepVerdict::Stopped(reached) => return Ok(Err(Found::Stopped(reached))),
             StepVerdict::Fault(_) => return Err(fault("protocol-replay-step")),
@@ -1122,10 +1367,10 @@ fn replay_lasso(
         Found::Failed(_) | Found::Undefined(_) => {
             return Ok(RefinementTraceSettlement::Inconclusive(disagreement(
                 Category::Violation,
-            )))
+            )));
         }
         Found::Undetermined => {
-            return Ok(RefinementTraceSettlement::Inconclusive(no_value_cause()))
+            return Ok(RefinementTraceSettlement::Inconclusive(no_value_cause()));
         }
         Found::Stopped(reached) => return Ok(RefinementTraceSettlement::Stopped(reached)),
     }
@@ -1161,7 +1406,7 @@ fn replay_lasso(
                 walk.taken_by.push(*taken);
             }
             StepVerdict::Stopped(reached) => {
-                return Ok(RefinementTraceSettlement::Stopped(reached))
+                return Ok(RefinementTraceSettlement::Stopped(reached));
             }
             StepVerdict::Fault(_) => return Err(fault("refinement-step")),
             StepVerdict::Fails(_)
@@ -1170,7 +1415,7 @@ fn replay_lasso(
             | StepVerdict::ProtocolContractUndetermined { .. } => {
                 return Ok(RefinementTraceSettlement::Inconclusive(disagreement(
                     Category::Violation,
-                )))
+                )));
             }
         }
     }
@@ -1197,13 +1442,9 @@ fn replay_lasso(
     )? {
         return Err(ReplayRefusal::UnfairLasso { constraint });
     }
-    // A strong constraint is outside the weak reading the engine writes
-    // lassos by, so no lasso of one is replayed as a reproduction.
     let Some(index) = refinement
         .abstract_operation_fairness()
-        .position(|abstract_constraint| {
-            abstract_constraint == constraint && abstract_constraint.kind() == FairnessKind::Weak
-        })
+        .position(|abstract_constraint| abstract_constraint == constraint)
     else {
         return Ok(RefinementTraceSettlement::Inconclusive(disagreement(
             Category::Success,
@@ -1222,10 +1463,10 @@ fn replay_lasso(
         match abstract_enabled(systems, position)? {
             Enabledness::Enabled(here) => enabled.push(here),
             Enabledness::Undecided => {
-                return Ok(RefinementTraceSettlement::Inconclusive(no_value_cause()))
+                return Ok(RefinementTraceSettlement::Inconclusive(no_value_cause()));
             }
             Enabledness::Stopped(reached) => {
-                return Ok(RefinementTraceSettlement::Stopped(reached))
+                return Ok(RefinementTraceSettlement::Stopped(reached));
             }
         }
     }
@@ -1244,14 +1485,33 @@ fn replay_lasso(
     let classes = abstract_classes(&systems.abstract_system, &abstract_fairness, &identities)
         .map_err(ReplayRefusal::Fault)?;
     let violated = classes.iter().any(|class| {
-        class.constraint() == index
-            && enabled.iter().all(|here| class.is_enabled_in(here))
-            && !loop_taken.iter().any(|taken| class.is_taken_by(taken))
+        if class.constraint() != index || loop_taken.iter().any(|taken| class.is_taken_by(taken)) {
+            return false;
+        }
+        let Some(constraint) = abstract_fairness.get(index) else {
+            return false;
+        };
+        match constraint.kind() {
+            FairnessKind::Weak => enabled.iter().all(|here| class.is_enabled_in(here)),
+            FairnessKind::Strong => enabled.iter().any(|here| class.is_enabled_in(here)),
+        }
     });
     let divergent = loop_taken.iter().all(|taken| *taken == Taken::Stutter);
     Ok(match (payload.refinement.as_ref(), violated, divergent) {
         (Some(RefinementFailure::Divergence { .. }), true, true)
-        | (Some(RefinementFailure::AbstractUnfair { .. }), true, false) => {
+            if constraint.kind() == FairnessKind::Weak =>
+        {
+            RefinementTraceSettlement::Reproduced {
+                failure: payload
+                    .refinement
+                    .clone()
+                    .ok_or_else(|| fault("a-lasso-names-a-failure"))?,
+                mapped,
+            }
+        }
+        (Some(RefinementFailure::AbstractUnfair { .. }), true, unfair_loop)
+            if !unfair_loop || constraint.kind() == FairnessKind::Strong =>
+        {
             RefinementTraceSettlement::Reproduced {
                 failure: payload
                     .refinement
@@ -1347,7 +1607,7 @@ fn replay_protocol_divergence(
                 }
             }
             StepVerdict::Stopped(reached) => {
-                return Ok(RefinementTraceSettlement::Stopped(reached))
+                return Ok(RefinementTraceSettlement::Stopped(reached));
             }
             StepVerdict::Fails(_)
             | StepVerdict::Undefined(_)
@@ -1355,7 +1615,7 @@ fn replay_protocol_divergence(
             | StepVerdict::ProtocolContractUndetermined { .. } => {
                 return Ok(RefinementTraceSettlement::Inconclusive(disagreement(
                     Category::Violation,
-                )))
+                )));
             }
             StepVerdict::Fault(_) => return Err(fault("protocol-divergence-replay-step")),
         }
@@ -1382,7 +1642,7 @@ fn replay_protocol_divergence(
                 taken_by.push(*taken);
             }
             StepVerdict::Stopped(reached) => {
-                return Ok(RefinementTraceSettlement::Stopped(reached))
+                return Ok(RefinementTraceSettlement::Stopped(reached));
             }
             StepVerdict::Fault(_) => return Err(fault("protocol-terminal-stutter-replay")),
             StepVerdict::Fails(_)
@@ -1391,7 +1651,7 @@ fn replay_protocol_divergence(
             | StepVerdict::ProtocolContractUndetermined { .. } => {
                 return Ok(RefinementTraceSettlement::Inconclusive(disagreement(
                     Category::Violation,
-                )))
+                )));
             }
         }
     }
@@ -1499,7 +1759,7 @@ fn abstract_enabled(
                 return match stop_verdict(&systems.abstract_system, stop) {
                     StepVerdict::Stopped(reached) => Ok(Enabledness::Stopped(reached)),
                     _ => Err(fault("abstract-expansion")),
-                }
+                };
             }
         };
         if expansion
