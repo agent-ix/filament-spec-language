@@ -95,7 +95,6 @@ fn a_malformed_let_annotation_refuses_at_the_offending_token() {
 /// idempotent.
 #[trace("TC-2772", "FR-980-AC-5")]
 #[test]
-#[ignore = "QSL-1974 integration: the canonical formatter is not on this branch yet"]
 fn an_annotated_let_formats_and_keeps_its_tokens() {
     let text = unit("function f using v(y: Int[0,2]): Integer pure { let x:Int[0,3]=y+1 in x }");
     let parsed = parse(&text);

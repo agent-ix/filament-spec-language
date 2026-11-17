@@ -115,7 +115,6 @@ fn an_annotated_let_refuses_an_initializer_that_does_not_conform() {
 /// FR-980-AC-5: the formatted source checks as the original does.
 #[trace("TC-2772", "FR-980-AC-5")]
 #[test]
-#[ignore = "QSL-1974 integration: the canonical formatter is not on this branch yet"]
 fn a_formatted_annotated_let_checks_as_the_original() {
     let body = "function f using v(y: Int[0,2]): Integer pure { let x:Int[0,3]=y+1 in x }";
     let text = format!("language \"ix:native\" edition \"1-draft\";\n{V}{body}\n");
