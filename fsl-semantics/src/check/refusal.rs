@@ -407,13 +407,17 @@ pub enum ProtocolAnchorCause {
         /// The read.
         span: Span,
     },
-    /// FR-218 "Channels": a channel's FIFO key is of a type over which the
-    /// clause checker admits no `=` (FSpec FR-054: stable equality).
-    /// `ill_typed`/`operator-ineligible`, at the key, retaining the operator
-    /// and the type.
+    /// FR-881: a FIFO key is not FIFO-key-stable, including an IEEE float or
+    /// event leaf or a type over which the checker admits no `=`.
+    /// `ill_typed`/`operator-ineligible`, at the key, retaining channel and
+    /// checked key type.
     KeyEquality {
         /// The channel's declared name.
         channel: String,
+        /// The equality operator used to establish FIFO-key stability.
+        operator: String,
+        /// The key expression as written in source.
+        key_text: String,
         /// The key's type.
         key_type: Box<filament_exact::ValueType>,
         /// The key.

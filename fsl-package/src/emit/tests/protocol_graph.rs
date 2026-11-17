@@ -804,12 +804,11 @@ fn a_channel_carries_every_type_the_reader_admits() {
     }
 }
 
-/// FR-465 "Channel": a bounded scalar or collection lowers to a
-/// `bounded_domain`, which the reader does not admit as `carries`, so the
-/// protocol refuses typed (QSL-1137) and, with the gate open, writes no
-/// clause. A FIFO key typed by a quantity is refused by the reader, so the
-/// check refuses it typed (QSL-1142).
+/// Former producer/reader mismatch cases. FR-880 and FR-881 now require the
+/// bounded carries and stable quantity key to compile; the pinned reader has
+/// not adopted those forms yet.
 #[test]
+#[ignore = "superseded by FR-880/FR-881; reader 90b90fc7 still rejects the corrected cases"]
 fn a_bounded_carries_and_a_quantity_key_refuse_typed() {
     let bounded = [
         "Int[0, 5]",
@@ -905,12 +904,11 @@ fn a_fifo_key_the_reader_compares_is_admitted() {
     }
 }
 
-/// FR-465 "Channel": the reader refuses a FIFO key whose type is not
-/// equality-stable (a bounded domain, a quantity, a float or a model-owned
-/// type, reached through an option, a collection or a record field), so the
-/// check refuses it typed (QSL-1142) rather than emit a package the reader
-/// refuses, and with the gate open writes no clause.
+/// Former reader-rule mismatch cases, superseded by FR-881. Bounded and
+/// quantity forms are now FIFO-key-stable; the pinned reader still rejects
+/// them, so this legacy refusal test stays ignored until the reader catches up.
 #[test]
+#[ignore = "superseded by FR-881; reader 90b90fc7 still rejects FIFO-key-stable bounded and quantity forms"]
 fn a_fifo_key_the_reader_cannot_compare_refuses_typed() {
     let cases = [
         ("Quantity<m>", "m"),
@@ -935,11 +933,11 @@ fn a_fifo_key_the_reader_cannot_compare_refuses_typed() {
     }
 }
 
-/// The model-owned families, over the FR-360 variant document: `Tier` (a
-/// variant), `Odd` (a variant of non-identifier cases), `Settings` (a
-/// record), a field of one and a collection of one are refused as keys, and
-/// a variant is admitted as a carried type (unordered).
+/// Former model-owned-key refusal cases over the FR-360 variant document.
+/// FR-881 now admits equality-stable model-owned keys; the pinned reader has
+/// not adopted those forms yet.
 #[test]
+#[ignore = "superseded by FR-881; reader 90b90fc7 still rejects model-owned FIFO-key-stable forms"]
 fn a_model_owned_fifo_key_refuses_typed_and_a_variant_is_carried() {
     use super::variant_types::fixture;
     let document = || {
@@ -1957,7 +1955,7 @@ fn a_predicate_function_reading_its_protocol_is_admitted() {
 /// `carries`, and the package is admitted.
 #[test]
 #[trace("TC-2503", "FR-880-AC-10", "FSpec-FR-726-AC-1")]
-#[ignore = "QSL-1137: a channel that carries a bounded type is refused at S4 instead of written"]
+#[ignore = "blocked: locked filament-contract-ir reader 90b90fc7 rejects bounded_domain at channel carries"]
 fn a_channel_carrying_a_bounded_type_is_admitted() {
     for carries in [
         "Int[0, 5]",
@@ -1978,7 +1976,7 @@ fn a_channel_carrying_a_bounded_type_is_admitted() {
 /// (a bounded domain, a quantity, a composite of them) is written.
 #[test]
 #[trace("TC-2503", "FR-880-AC-10", "FSpec-FR-726-AC-2")]
-#[ignore = "QSL-1142: a FIFO key over a bounded domain or a quantity is refused at S4 instead of written"]
+#[ignore = "blocked: locked filament-contract-ir reader 90b90fc7 has not adopted FR-726 FIFO-key-stable types"]
 fn a_fifo_key_stable_key_is_written() {
     for (carries, key) in [
         ("Int[0, 99]", "m"),
@@ -2007,7 +2005,6 @@ fn a_fifo_key_stable_key_is_written() {
 /// `ill_typed`/`operator-ineligible`, never as an S4 construct.
 #[test]
 #[trace("TC-2504", "FR-881-AC-1")]
-#[ignore = "QSL-1997: an unstable FIFO key is not refused at S3 at the key yet"]
 fn an_unstable_fifo_key_refuses_at_the_key() {
     for carries in ["Float64[nearest-even]", "Option<Float32[nearest-even]>"] {
         let text = keyed_flow(carries, "m");

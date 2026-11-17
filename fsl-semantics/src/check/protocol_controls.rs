@@ -32,6 +32,7 @@ use fsl_forms::{
 };
 use fsl_foundation::Span;
 
+use super::check::holds_float;
 use super::ir::CheckedBody;
 use super::lowering::{protocol_location, ProtocolSite};
 use super::protocol_obligation::{
@@ -261,11 +262,16 @@ fn check_channel(
     };
     let ordering = match &channel.ordering.value {
         ChannelOrdering::Unordered => Some(CheckedOrdering::Unordered),
-        ChannelOrdering::Fifo { binder, key } => check_fifo(
+        ChannelOrdering::Fifo {
+            binder,
+            key,
+            key_text,
+        } => check_fifo(
             protocol,
             channel,
             binder,
             key,
+            key_text,
             carries.as_ref(),
             keys,
             refusals,
@@ -297,6 +303,7 @@ fn check_fifo(
     channel: &ChannelForm,
     binder: &ParameterForm,
     key: &ExpressionForm,
+    key_text: &str,
     carries: Option<&ValueType>,
     keys: &mut Keys<'_, '_, '_>,
     refusals: &mut Vec<(Span, CheckRefusal)>,
@@ -370,6 +377,20 @@ fn check_fifo(
         return None;
     }
     let key_type = body.root().value_type().clone();
+    if holds_float(&key_type) || keys.declarations.scope.reaches_event(&key_type) {
+        let span = span_of(key, &Location::root(Origin::Expression));
+        refusals.push((
+            span,
+            refusal(ProtocolAnchorCause::KeyEquality {
+                channel: name.to_owned(),
+                operator: "=".to_owned(),
+                key_text: key_text.to_owned(),
+                key_type: Box::new(key_type),
+                span,
+            }),
+        ));
+        return None;
+    }
     // `=` over two values of the key's type, as the clause checker types it.
     let equal = ExpressionForm {
         expression: Expression::binary(
@@ -392,6 +413,8 @@ fn check_fifo(
             span,
             refusal(ProtocolAnchorCause::KeyEquality {
                 channel: name.to_owned(),
+                operator: "=".to_owned(),
+                key_text: key_text.to_owned(),
                 key_type: Box::new(key_type),
                 span,
             }),

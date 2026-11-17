@@ -153,7 +153,6 @@ fn a_variant_without_a_well_founded_order_refuses_at_the_variant() {
 /// protocol declaration.
 #[trace("TC-2508", "FR-884-AC-2")]
 #[test]
-#[ignore = "QSL-2215: choice and duplicate-role refusals are located at the whole protocol"]
 fn a_nonexhaustive_choice_and_a_duplicate_role_refuse_at_their_subject() {
     let run = format!(
         "sequence Main {{ {TRIED} choice Pick by R visible () {{ \
@@ -190,7 +189,6 @@ fn a_nonexhaustive_choice_and_a_duplicate_role_refuse_at_their_subject() {
 /// each name; two different names check.
 #[trace("TC-2509", "FR-884-AC-4")]
 #[test]
-#[ignore = "QSL-2215: two protocols of one name in one unit are admitted"]
 fn two_protocols_of_one_name_refuse_at_each_name() {
     let run = format!("sequence Main {{ {TRIED} }}");
     let one = protocol("", "role R on M::Actor;", &run);

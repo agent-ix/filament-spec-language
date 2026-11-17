@@ -2022,7 +2022,10 @@ fn partition(
             .map(|case| case.name.name.clone())
             .collect(),
         failed,
-        span: choice.name.span,
+        span: Span {
+            start: choice.span.start,
+            end: choice.owner.span.end,
+        },
     }))
 }
 

@@ -1380,8 +1380,16 @@ fn check_message(refusals: &[CheckRefusal]) -> String {
                 ProtocolAnchorCause::KeyModelState { channel, .. } => {
                     format!("{message}: the FIFO key of channel `{channel}` reads model state")
                 }
-                ProtocolAnchorCause::KeyEquality { channel, .. } => format!(
-                    "{message}: the FIFO key of channel `{channel}` is of a type with no `=`"
+                ProtocolAnchorCause::KeyEquality {
+                    channel,
+                    operator,
+                    key_text,
+                    key_type,
+                    ..
+                } => format!(
+                    "{message}: key type {} of channel {channel} is not FIFO-key-stable \
+                     (key {operator} {key_text})",
+                    value_type_source(key_type)
                 ),
                 ProtocolAnchorCause::SlotClause { node, slot, cause, .. } => format!(
                     "{message}: the {slot:?} of `{node}` does not check ({})",
@@ -3108,6 +3116,29 @@ mod tests {
             message.ends_with(
                 "channel `Pay` delivers between 4 and 3, the lower count above the upper"
             ),
+            "{message}"
+        );
+    }
+
+    /// FR-881-AC-1 (TC-2504): the FIFO-key refusal uses the source spelling
+    /// of its checked type and names its channel.
+    #[trace("FR-881-AC-1", "TC-2504")]
+    #[test]
+    fn fifo_key_instability_message_names_the_type_and_channel() {
+        let refusal = CheckRefusal {
+            location: Location::root(Origin::Expression),
+            cause: CheckCause::ProtocolAnchor(Box::new(ProtocolAnchorCause::KeyEquality {
+                channel: "Q".to_owned(),
+                operator: "=".to_owned(),
+                key_text: "m.ready".to_owned(),
+                key_type: Box::new(ValueType::Integer),
+                span: Span { start: 0, end: 1 },
+            })),
+        };
+        let message = check_message(&[refusal]);
+        assert!(
+            message
+                .ends_with("key type Integer of channel Q is not FIFO-key-stable (key = m.ready)"),
             "{message}"
         );
     }

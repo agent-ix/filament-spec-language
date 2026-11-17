@@ -3938,8 +3938,30 @@ impl PackageDeclarations {
                 ))
             })
             .collect();
+        let mut declared_protocol_names =
+            std::collections::BTreeMap::<&str, Vec<fsl_foundation::Span>>::new();
+        let mut reported_protocol_names = std::collections::BTreeSet::new();
         for (index, protocol) in self.protocols.iter().enumerate() {
             let refusals_before = refusals.len();
+            let name = protocol.name.name.as_str();
+            let loci = declared_protocol_names.entry(name).or_default();
+            loci.push(protocol.name.span);
+            if loci.len() > 1 {
+                for &span in loci.iter() {
+                    if reported_protocol_names.insert((name, span.start, span.end)) {
+                        refusals.push(CheckRefusal {
+                            location: root(Origin::Expression),
+                            cause: CheckCause::ProtocolAnchor(Box::new(
+                                ProtocolAnchorCause::Ambiguous {
+                                    name: protocol.name.name.clone(),
+                                    loci: loci.clone(),
+                                    span,
+                                },
+                            )),
+                        });
+                    }
+                }
+            }
             let profile_refusals = protocol_clause::profile_uses(
                 protocol,
                 &self.alias_names,
