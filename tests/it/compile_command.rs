@@ -200,6 +200,7 @@ fn source_selection_and_dependent_byte_refusals_are_typed() {
     assert_eq!(value["code"], "resource_exhausted", "{value}");
     assert_eq!(value["details"]["limit"], "dependent_bytes", "{value}");
     assert_eq!(value["details"]["maximum"], 8_388_608, "{value}");
+    assert_eq!(value["details"]["option"], "--dependent-bytes", "{value}");
     assert!(value["details"].get("option").is_none(), "{value}");
     assert!(value.get("artifact").is_none(), "{value}");
 }
@@ -1216,11 +1217,11 @@ fn sixty_four_libraries_exceed_the_file_limit() {
     assert_eq!(failure["details"]["requested"], 65, "{failure}");
 }
 
-/// FR-027-AC-13 (TC-105 step 6): a supplied library source is charged to the
-/// compile request's fixed dependent-byte ceiling, with no limit override.
+/// FR-027-AC-13 / FR-869-AC-1 (TC-105 step 6, TC-2461): compile's dependent
+/// byte ceiling is caller-configurable through the public compile API.
 #[test]
-#[trace("TC-105", "FR-027-AC-13")]
-fn a_library_source_over_the_fixed_dependent_byte_ceiling_is_refused() {
+#[trace("TC-105", "FR-027-AC-13", "TC-2461", "FR-869-AC-1")]
+fn a_library_source_over_the_default_dependent_byte_ceiling_can_be_raised() {
     let program = format!(
         "{SPINE_HEADER}import \"test/geometry\" as g;\n\
          function u using v(x: Int[0, 9]): Boolean pure {{ g::f(x) }}\n"
@@ -1241,8 +1242,19 @@ fn a_library_source_over_the_fixed_dependent_byte_ceiling_is_refused() {
     assert_eq!(value["stage"], "intake", "{value}");
     assert_eq!(value["details"]["limit"], "dependent_bytes", "{value}");
     assert_eq!(value["details"]["maximum"], 8_388_608, "{value}");
-    assert!(value["details"].get("option").is_none(), "{value}");
     assert!(value.get("artifact").is_none(), "{value}");
+
+    let path = directory.path().join("compile.json");
+    let outcome = fsl_command::command::compile_outcome_with_limits_and_overrides(
+        &path,
+        fsl_command::command::RunLimits {
+            dependent_bytes: 8_388_609,
+            ..Default::default()
+        },
+        &fsl_command::command::RequestOverrides::default(),
+    )
+    .unwrap_or_else(|error| panic!("{}", error.value().unwrap()));
+    assert!(!outcome.package_bytes().is_empty());
 }
 
 /// FR-480-AC-19 (TC-2179): a compile request whose `program` is `[]` is a

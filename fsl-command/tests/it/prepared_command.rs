@@ -119,6 +119,15 @@ fn preparation_retains_owned_inputs_and_the_existing_run_outcomes() {
         let directory = tempfile::tempdir().unwrap();
         let path = run_request(directory.path(), work_units);
         let native = command::run(&path, &crate::negotiation::Fr290).unwrap();
+        assert_eq!(native.sources().len(), 3);
+        assert!(
+            native
+                .sources()
+                .as_slice()
+                .iter()
+                .any(|source| source.path() == "program.native"
+                    && source.text().as_bytes() == PROGRAM)
+        );
         let PreparedRun::Function(prepared) =
             command::prepare_run(&path, RunLimits::default()).unwrap()
         else {

@@ -568,7 +568,7 @@ fn admit_order_usage(
         "observation": "current",
         "anchor": {"kind": "handler", "name": "validate"},
         "model": {
-            "identity": fixture::PACKAGE, "version": "1",
+            "identity": fixture::PACKAGE,
         },
         "populations": [{
             "population": fixture::id("orders"),

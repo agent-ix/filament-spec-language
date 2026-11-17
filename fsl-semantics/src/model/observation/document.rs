@@ -574,6 +574,12 @@ fn read_model(object: Object<'_>, has_domain: bool) -> Result<ModelHeader, Admis
         ));
     }
     let model = member.as_object().ok_or_else(|| wrong_kind("model"))?;
+    if let Some((unknown, _)) = model.iter().find(|(name, _)| *name != "identity") {
+        return Err(refuse(
+            admission_record(Code::InvalidRuntimeInput, "unknown-member")
+                .with("field", format!("model.{unknown}")),
+        ));
+    }
     let missing_member = |field: &'static str| {
         refuse(admission_record(Code::InvalidRuntimeInput, "missing-member").with("field", field))
     };

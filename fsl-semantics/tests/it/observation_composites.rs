@@ -141,7 +141,7 @@ impl Case {
             operations: Default::default(),
             named_populations: checked.named_reads(),
         };
-        let model = json!({"identity": "example/config-version", "version": "1.0.0"});
+        let model = json!({"identity": "example/config-version"});
         let object = |key: &str| {
             json!({"key": key, "type": "ix://example/config-version/ConfigVersion",
             "fields": {"versionNumber": {"integer": "1"}, "parent": self.parent}})

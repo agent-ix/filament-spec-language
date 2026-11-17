@@ -1225,7 +1225,7 @@ fn run_clause_reports_the_document_order_first_unknown_member_not_the_alphabetic
             "format": "filament.state.snapshot/v1",
             "identity": {"authority": "test", "identity": "snap"},
             "observation": "current",
-            "model": {"identity": "test/nodes", "version": "1.0.0"},
+            "model": {"identity": "test/nodes"},
             "populations": [],
             "zzz_unknown": true,
             "aaa_unknown": true
@@ -1756,7 +1756,7 @@ fn config_version_snapshot(
         "observation": "current",
         "anchor": {"kind": "handler", "name": "validate"},
         "model": {
-            "identity": CONFIG_VERSION_PACKAGE_IDENTITY, "version": "1.0.0",
+            "identity": CONFIG_VERSION_PACKAGE_IDENTITY,
         },
         "populations": [{"population": population, "complete": true, "objects": objects}],
     });
@@ -1911,7 +1911,7 @@ fn run_clause_refuses_a_dangling_parent_reference() {
         "observation": "current",
         "anchor": {"kind": "handler", "name": "validate"},
         "model": {
-            "identity": CONFIG_VERSION_PACKAGE_IDENTITY, "version": "1.0.0",
+            "identity": CONFIG_VERSION_PACKAGE_IDENTITY,
         },
         "populations": [{
             "population": population,
@@ -1967,7 +1967,7 @@ fn run_clause_reports_incomplete_for_an_incomplete_population() {
         "observation": "current",
         "anchor": {"kind": "handler", "name": "validate"},
         "model": {
-            "identity": CONFIG_VERSION_PACKAGE_IDENTITY, "version": "1.0.0",
+            "identity": CONFIG_VERSION_PACKAGE_IDENTITY,
         },
         "populations": [{
             "population": population,
@@ -2493,7 +2493,7 @@ fn config_version_invocation_snapshot(
         "identity": document_identity_json(label),
         "observation": observation,
         "model": {
-            "identity": CONFIG_VERSION_PACKAGE_IDENTITY, "version": "1.0.0",
+            "identity": CONFIG_VERSION_PACKAGE_IDENTITY,
         },
         "populations": [{"population": population, "complete": true, "objects": objects}],
     });
@@ -2515,7 +2515,7 @@ fn config_version_invocation_bytes(
         "format": "filament.state.invocation/v1",
         "identity": document_identity_json(label),
         "model": {
-            "identity": CONFIG_VERSION_PACKAGE_IDENTITY, "version": "1.0.0",
+            "identity": CONFIG_VERSION_PACKAGE_IDENTITY,
         },
         "context": config_version_type(),
         "operation": "attemptUpdate",
@@ -2880,7 +2880,7 @@ fn config_version_step3_snapshot(
         "identity": document_identity_json(label),
         "observation": observation,
         "model": {
-            "identity": CONFIG_VERSION_PACKAGE_IDENTITY, "version": "1.0.0",
+            "identity": CONFIG_VERSION_PACKAGE_IDENTITY,
         },
         "populations": [
             {"population": population, "complete": true, "objects": objects},
@@ -2944,7 +2944,7 @@ fn config_version_probe_invocation_bytes(
         "format": "filament.state.invocation/v1",
         "identity": document_identity_json(label),
         "model": {
-            "identity": CONFIG_VERSION_PACKAGE_IDENTITY, "version": "1.0.0",
+            "identity": CONFIG_VERSION_PACKAGE_IDENTITY,
         },
         "context": config_version_type(),
         "operation": "probe",

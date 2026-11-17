@@ -60,7 +60,6 @@ fn text(output: &Output) -> String {
 #[test]
 #[trace("TC-2460", "FR-868-AC-1")]
 #[trace("TC-2460", "FR-868-AC-2")]
-#[ignore = "QSL-1999: refusing a version or digest in an observation's model header is not implemented yet"]
 fn a_model_header_version_or_digest_is_refused() {
     for (member, value) in [("version", json!("1")), ("digest", json!("0000"))] {
         let directory = tempfile::tempdir().unwrap();
@@ -68,9 +67,16 @@ fn a_model_header_version_or_digest_is_refused() {
         model[member] = value;
         let output = run_with_model(directory.path(), model);
         assert_eq!(output.status.code(), Some(20), "{member}: {output:?}");
-        let refusal = text(&output);
-        assert!(refusal.contains("unknown-member"), "{refusal}");
-        assert!(refusal.contains(&format!("model.{member}")), "{refusal}");
+        let report: Value = serde_json::from_slice(&output.stdout).unwrap();
+        assert_eq!(report["disposition"]["stage"], "admit", "{report}");
+        assert_eq!(
+            report["disposition"]["refusal"]["cause"], "unknown-member",
+            "{report}"
+        );
+        assert!(
+            report.to_string().contains(&format!("model.{member}")),
+            "{report}"
+        );
     }
 
     let directory = tempfile::tempdir().unwrap();

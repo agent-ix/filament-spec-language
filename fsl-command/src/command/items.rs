@@ -668,6 +668,7 @@ pub(super) fn run_bytes(
         value: document,
         outcome: None,
         requirements: None,
+        sources: crate::Sources::default(),
     }))
 }
 
@@ -1111,6 +1112,7 @@ mod tests {
             value: NativeResult::items_document(json!({"category": "internal-failure"})),
             outcome: None,
             requirements: None,
+            sources: crate::Sources::default(),
         };
         assert!(is_internal_item_failure(&result));
         let refusal = RunResult {
@@ -1118,6 +1120,7 @@ mod tests {
             value: NativeResult::items_document(json!({"category": "refusal"})),
             outcome: None,
             requirements: None,
+            sources: crate::Sources::default(),
         };
         assert!(!is_internal_item_failure(&refusal));
     }

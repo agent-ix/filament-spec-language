@@ -42,7 +42,7 @@ const REQUEST_BYTES: usize = 1_048_576;
 const TOTAL_BYTES: usize = 8_388_608;
 const FILES: usize = 64;
 
-/// Caller byte ceilings for one `run` invocation (FR-312).
+/// Caller byte ceilings for one `run` or `compile` invocation (FR-312, FR-869).
 #[derive(Clone, Copy, Debug)]
 pub struct RunLimits {
     /// Maximum bytes in the request file.
@@ -116,6 +116,11 @@ pub enum LimitKind {
         /// The effective aggregate dependent byte ceiling.
         maximum: usize,
     },
+    /// One selected observation exceeded its document byte ceiling.
+    ObservationDocumentBytes {
+        /// Effective observation document byte ceiling.
+        maximum: usize,
+    },
     /// Total selected file count.
     SelectedFiles {
         /// Group that could not be charged.
@@ -136,6 +141,7 @@ impl LimitKind {
             Self::FileBytes => "file bytes",
             Self::RequestBytes { .. } | Self::FixedRequestBytes { .. } => "request_bytes",
             Self::DependentBytes { .. } | Self::FixedDependentBytes { .. } => "dependent_bytes",
+            Self::ObservationDocumentBytes { .. } => "observation.document_bytes",
             Self::SelectedFiles { .. } => "selected files",
         }
     }
@@ -161,6 +167,14 @@ pub struct RunResult {
     /// FR-963: the settled requirement items of a call that carried
     /// `requirements`; `None` exactly when it carried none.
     pub requirements: Option<RequirementResults>,
+    sources: crate::Sources,
+}
+
+impl RunResult {
+    /// Sources admitted while producing this run outcome (FR-865).
+    pub fn sources(&self) -> &crate::Sources {
+        &self.sources
+    }
 }
 
 /// The settled requirement items of a run call (FR-963), one record per
@@ -182,6 +196,290 @@ pub struct CompileOutcome {
     document: fsl_replay::OutcomeDocument,
     handoff_compiled: Option<crate::emit_checked_v2::Compiled>,
     handoff_temporal_selections: Vec<crate::emit_checked_v2::ClockSelection>,
+    sources: crate::Sources,
+}
+
+/// Caller-selected model/library files and stage ceilings for `check` (FR-866).
+#[derive(Clone, Debug)]
+pub struct CheckInputs {
+    /// Model selections in command-line order.
+    pub models: Vec<(String, PathBuf)>,
+    /// Library selections in command-line order.
+    pub libraries: Vec<(String, PathBuf)>,
+    /// Optional caller-admitted integer-division law.
+    pub integer_division: Option<fsl_replay::AdmittedIntegerDivision>,
+    /// Check-stage limits.
+    pub limits: fsl_replay::spine::SpineLimits,
+    /// Aggregate ceiling for the selected model and library files.
+    pub dependent_bytes: usize,
+}
+
+impl Default for CheckInputs {
+    fn default() -> Self {
+        Self {
+            models: Vec::new(),
+            libraries: Vec::new(),
+            integer_division: None,
+            limits: fsl_replay::spine::SpineLimits::default(),
+            dependent_bytes: TOTAL_BYTES,
+        }
+    }
+}
+
+/// Check document and the source values admitted while producing it (FR-865, FR-866).
+#[derive(Debug)]
+pub struct CheckOutcome {
+    document: fsl_replay::OutcomeDocument,
+    sources: crate::Sources,
+}
+
+impl CheckOutcome {
+    /// The FR-286 check outcome document.
+    pub fn document(&self) -> &fsl_replay::OutcomeDocument {
+        &self.document
+    }
+
+    /// Sources admitted while producing this check outcome (FR-865).
+    pub fn sources(&self) -> &crate::Sources {
+        &self.sources
+    }
+}
+
+/// Check one source against the model and library files it selects (FR-866).
+/// All selected files pass through the same bounded admission used by compile.
+pub fn check_outcome(source_path: &Path, inputs: &CheckInputs) -> CheckOutcome {
+    let result = check_outcome_inner(source_path, inputs);
+    match result {
+        Ok((document, sources)) => CheckOutcome { document, sources },
+        Err((cause, sources)) => {
+            let document = RunError { cause }.outcome_document(fsl_replay::Operation::Check);
+            CheckOutcome { document, sources }
+        }
+    }
+}
+
+fn check_outcome_inner(
+    source_path: &Path,
+    inputs: &CheckInputs,
+) -> std::result::Result<(fsl_replay::OutcomeDocument, crate::Sources), (RunCause, crate::Sources)>
+{
+    let mut intake = intake_with_bytes(
+        Path::new("."),
+        FileCounts {
+            programs: inputs.libraries.len().saturating_add(1),
+            models: inputs.models.len(),
+            observations: 0,
+        },
+        inputs.dependent_bytes,
+    )
+    .map_err(|cause| (cause, crate::Sources::default()))?;
+    let run = (|| -> Result<fsl_replay::OutcomeDocument> {
+        validate_check_selections(&inputs.models, "--model")?;
+        validate_check_selections(&inputs.libraries, "--library")?;
+
+        let source = intake.source(&check_source_file(
+            source_path,
+            "check-source",
+            "CheckSource",
+        ))?;
+        let cancel = filament_exact::Cancel::new();
+        let parsed = match fsl_replay::spine::parse(
+            &fsl_replay::spine::ParseRequest {
+                source: source.source().identity(),
+                path: source.source().path(),
+                bytes: source.source().text().as_bytes(),
+            },
+            inputs.limits.source,
+            &cancel,
+        ) {
+            Ok(parsed) => parsed.into_value(),
+            Err(failure) => {
+                return Ok(fsl_replay::OutcomeDocument::from_check(&Err(failure)));
+            }
+        };
+
+        let declared_models: std::collections::BTreeSet<_> = parsed
+            .unit()
+            .selections()
+            .models
+            .iter()
+            .map(|selection| selection.identity.as_str())
+            .collect();
+        let declared_libraries: std::collections::BTreeSet<_> = parsed
+            .unit()
+            .selections()
+            .imports
+            .iter()
+            .map(|selection| selection.identity.as_str())
+            .collect();
+        reject_unselected_check_inputs(&inputs.models, "--model", &declared_models)?;
+        reject_unselected_check_inputs(&inputs.libraries, "--library", &declared_libraries)?;
+
+        let models = inputs
+            .models
+            .iter()
+            .map(|(identity, path)| {
+                Ok(wire::Model {
+                    format: DOMAIN_PACKAGE_PROFILE.to_owned(),
+                    source: check_source_file(path, identity, "CheckModel"),
+                })
+            })
+            .collect::<Result<Vec<_>>>()?;
+        let model_documents = models
+            .iter()
+            .map(|model| intake.source(&model.source))
+            .collect::<Result<Vec<_>>>()?;
+        let packages = fsl_semantics::model::intake::package_input(
+            model_documents
+                .iter()
+                .map(|document| document.source().text().as_bytes()),
+        )
+        .map_err(|refusal| RunCause::ClauseRequest {
+            member: "models".to_owned(),
+            reason: refusal.detail,
+        })?;
+        let admitted_models =
+            match fsl_replay::spine::select(&parsed, &packages, inputs.limits.model, &cancel) {
+                Ok(models) => models.into_value(),
+                Err(failure) => {
+                    let document = fsl_replay::OutcomeDocument::from_check(&Err(failure));
+                    return Ok(check_missing_model_help(document, &parsed, &inputs.models));
+                }
+            };
+
+        let libraries = inputs
+            .libraries
+            .iter()
+            .map(|(identity, path)| {
+                let source = intake.source(&check_source_file(path, identity, "CheckLibrary"))?;
+                Ok(fsl_replay::spine::SuppliedLibrary {
+                    identity: identity.clone(),
+                    source: source.source().identity().clone(),
+                    path: source.source().path().to_owned(),
+                    bytes: source.source().text().as_bytes().to_vec(),
+                })
+            })
+            .collect::<Result<Vec<_>>>()?;
+        let dependencies = match fsl_replay::spine::DependencyInput::new(libraries) {
+            Ok(dependencies) => dependencies,
+            Err(refusal) => {
+                let failure = fsl_replay::spine::FrontEndFailure::Refused(Box::new(
+                    fsl_replay::spine::CompileRefusal::DependencyInput(refusal),
+                ));
+                return Ok(fsl_replay::OutcomeDocument::from_check(&Err(failure)));
+            }
+        };
+        let checked = if let Some(integer_division) = &inputs.integer_division {
+            fsl_replay::spine::check_with_integer_division(
+                &parsed,
+                package_name(source.source().identity()),
+                &admitted_models,
+                &dependencies,
+                integer_division,
+                inputs.limits,
+                &cancel,
+            )
+        } else {
+            fsl_replay::spine::check(
+                &parsed,
+                package_name(source.source().identity()),
+                &admitted_models,
+                &dependencies,
+                inputs.limits,
+                &cancel,
+            )
+        };
+        Ok(fsl_replay::OutcomeDocument::from_check(&checked))
+    })();
+    let sources = crate::Sources::from_sources(intake.sources);
+    run.map(|document| (document, sources.clone()))
+        .map_err(|cause| (cause, sources))
+}
+
+fn check_missing_model_help(
+    document: fsl_replay::OutcomeDocument,
+    parsed: &fsl_replay::spine::ParsedUnitSource,
+    supplied: &[(String, PathBuf)],
+) -> fsl_replay::OutcomeDocument {
+    let Some(diagnostic) = document.diagnostics().first() else {
+        return document;
+    };
+    if diagnostic.code() != Code::MissingImport.as_str()
+        || diagnostic.cause() != Some("missing-selection")
+    {
+        return document;
+    }
+    let Some(missing) = parsed.unit().selections().models.iter().find(|model| {
+        !supplied
+            .iter()
+            .any(|(identity, _)| identity == &model.identity)
+    }) else {
+        return document;
+    };
+    let message = format!(
+        "{}; supply --model {}=<file> or the compile request's models member",
+        diagnostic.message(),
+        missing.identity
+    );
+    fsl_replay::OutcomeDocument::new(
+        fsl_replay::Operation::Check,
+        Some(fsl_replay::OutcomeStage::I1),
+        document.category(),
+    )
+    .with_diagnostics(vec![fsl_replay::OutcomeDiagnostic::new(
+        diagnostic.cause(),
+        diagnostic.code(),
+        diagnostic.locus().cloned(),
+        message,
+    )])
+}
+
+fn validate_check_selections(selections: &[(String, PathBuf)], option: &str) -> Result<()> {
+    let mut identities = std::collections::BTreeSet::new();
+    for (identity, path) in selections {
+        if identity.is_empty() || path.as_os_str().is_empty() {
+            return Err(RunCause::ClauseRequest {
+                member: option.to_owned(),
+                reason: format!("invalid selection {identity}={}", path.display()),
+            });
+        }
+        if !identities.insert(identity) {
+            return Err(RunCause::ClauseRequest {
+                member: option.to_owned(),
+                reason: format!("identity {identity} was selected more than once"),
+            });
+        }
+    }
+    Ok(())
+}
+
+fn reject_unselected_check_inputs(
+    selections: &[(String, PathBuf)],
+    option: &str,
+    declared: &std::collections::BTreeSet<&str>,
+) -> Result<()> {
+    if let Some((identity, _)) = selections
+        .iter()
+        .find(|(identity, _)| !declared.contains(identity.as_str()))
+    {
+        return Err(RunCause::ClauseRequest {
+            member: option.to_owned(),
+            reason: format!("{option} {identity} is not selected by the source"),
+        });
+    }
+    Ok(())
+}
+
+fn check_source_file(path: &Path, identity: &str, document: &str) -> wire::SourceFile {
+    wire::SourceFile {
+        file: path.to_string_lossy().into_owned(),
+        identity: wire::Identity {
+            authority: "fsl-command".to_owned(),
+            identity: identity.to_owned(),
+            document: document.to_owned(),
+            formal_revision: 1,
+        },
+    }
 }
 
 impl CompileOutcome {
@@ -194,6 +492,11 @@ impl CompileOutcome {
     pub fn document(&self) -> &fsl_replay::OutcomeDocument {
         &self.document
     }
+
+    /// Sources admitted while compiling this outcome (FR-865).
+    pub fn sources(&self) -> &crate::Sources {
+        &self.sources
+    }
 }
 
 /// Prepared function input retained with its native source correspondence.
@@ -203,6 +506,7 @@ pub struct PreparedFunctionRun {
 
 struct FunctionRunData {
     source: FormalSource,
+    models: Vec<FormalSource>,
     libraries: Vec<FormalSource>,
     packages: fsl_semantics::model::intake::PackageInput,
     dependencies: fsl_replay::spine::DependencyInput,
@@ -768,6 +1072,9 @@ impl RunError {
             RunCause::Limit(LimitKind::FixedDependentBytes { maximum }) => {
                 format!("dependent_bytes limit {maximum} exceeded")
             }
+            RunCause::Limit(LimitKind::ObservationDocumentBytes { maximum }) => {
+                format!("observation.document_bytes limit {maximum} exceeded; raise --limit observation.document_bytes")
+            }
             RunCause::Limit(LimitKind::SelectedFiles {
                 category,
                 requested,
@@ -820,11 +1127,11 @@ struct Intake<'a> {
     maximum: usize,
     dependent_limit: Option<DependentLimit>,
     prefetched_observations: std::collections::BTreeMap<String, Vec<u8>>,
+    sources: Vec<Source>,
 }
 
 #[derive(Clone, Copy)]
 enum DependentLimit {
-    Fixed,
     CallerConfigured,
 }
 
@@ -842,11 +1149,6 @@ impl Intake<'_> {
                 RunCause::Limit(LimitKind::FileBytes) => match self.dependent_limit {
                     Some(DependentLimit::CallerConfigured) => {
                         RunCause::Limit(LimitKind::DependentBytes {
-                            maximum: self.maximum,
-                        })
-                    }
-                    Some(DependentLimit::Fixed) => {
-                        RunCause::Limit(LimitKind::FixedDependentBytes {
                             maximum: self.maximum,
                         })
                     }
@@ -877,6 +1179,7 @@ impl Intake<'_> {
                     diagnostic: fsl_cst::diagnostic::source_refusal(*refusal, self.maximum),
                 }))
             })?;
+        self.sources.push(source.clone());
         Ok(FormalSource::new(source, identity.formal))
     }
 }
@@ -1140,6 +1443,9 @@ fn version_argv(bytes: &[u8]) -> Result<Option<RunResult>> {
     Ok(Some(RunResult {
         exit_code: 0,
         value: NativeResult::version_document(document),
+        outcome: None,
+        requirements: None,
+        sources: crate::Sources::default(),
     }))
 }
 
@@ -1233,7 +1539,11 @@ pub fn compile(path: &Path) -> std::result::Result<Vec<u8>, Box<RunError>> {
 
 /// Compile once, retaining the actual core outcome document and package bytes.
 pub fn compile_outcome(path: &Path) -> std::result::Result<CompileOutcome, Box<RunError>> {
-    compile_outcome_with_overrides(path, &RequestOverrides::default())
+    compile_outcome_with_limits_and_overrides(
+        path,
+        RunLimits::default(),
+        &RequestOverrides::default(),
+    )
 }
 
 /// Compile, taking request members supplied beside the request file (FR-640).
@@ -1250,7 +1560,17 @@ pub fn compile_outcome_with_overrides(
     path: &Path,
     overrides: &RequestOverrides<'_>,
 ) -> std::result::Result<CompileOutcome, Box<RunError>> {
-    with_request(path, |directory, bytes| {
+    compile_outcome_with_limits_and_overrides(path, RunLimits::default(), overrides)
+}
+
+/// Compile with caller-configured request/dependent byte ceilings and request
+/// overrides, including stage limits (FR-869).
+pub fn compile_outcome_with_limits_and_overrides(
+    path: &Path,
+    run_limits: RunLimits,
+    overrides: &RequestOverrides<'_>,
+) -> std::result::Result<CompileOutcome, Box<RunError>> {
+    with_request_limits(path, run_limits.request_bytes, |directory, bytes| {
         let request: wire::CompileRequest = request_with_overrides(bytes, overrides)?;
         if let Some(handoff) = &request.handoff {
             validate_handoff_request(handoff, request.program.sources.len())?;
@@ -1273,7 +1593,7 @@ pub fn compile_outcome_with_overrides(
         if request.program.sources.is_empty() {
             return Err(RunCause::EmptyCompileProgram);
         }
-        let mut intake = intake_with_fixed_bytes(
+        let mut intake = intake_with_bytes(
             directory,
             FileCounts {
                 // A library source is a program source a `1-draft` program
@@ -1285,7 +1605,7 @@ pub fn compile_outcome_with_overrides(
                 models: request.models.len(),
                 observations: 0,
             },
-            TOTAL_BYTES,
+            run_limits.dependent_bytes,
         )?;
         // Every unit's edition is decided before any model is read: a
         // `1-draft` program takes domain packages only, and a request
@@ -1297,7 +1617,8 @@ pub fn compile_outcome_with_overrides(
             require_complete_edition(source.source())?;
             sources.push(source);
         }
-        let mut outcome = complete(&request, &mut intake, &sources)?;
+        let mut outcome = complete(&request, &mut intake, &sources, overrides.limits)?;
+        outcome.sources = crate::Sources::from_sources(intake.sources.iter().cloned());
         if let Some(handoff) = &request.handoff {
             let compiled =
                 outcome
@@ -1488,19 +1809,22 @@ fn complete(
     request: &wire::CompileRequest,
     intake: &mut Intake<'_>,
     sources: &[FormalSource],
+    supplied_limits: Option<&fsl_replay::spine::SpineLimits>,
 ) -> Result<CompileOutcome> {
+    let limits = supplied_limits.copied().unwrap_or_default();
     if sources.len() == 1 {
-        return complete_single(request, intake, &sources[0]);
+        return complete_single(request, intake, &sources[0], limits);
     }
-    complete_units(request, intake, sources)
+    complete_units(request, intake, sources, limits)
 }
 
 fn complete_single(
     request: &wire::CompileRequest,
     intake: &mut Intake<'_>,
     source: &FormalSource,
+    limits: fsl_replay::spine::SpineLimits,
 ) -> Result<CompileOutcome> {
-    complete_sources(request, intake, std::slice::from_ref(source), false)
+    complete_sources(request, intake, std::slice::from_ref(source), false, limits)
 }
 
 /// Compile FR-480's ordered program-unit list as one checked package.
@@ -1508,8 +1832,9 @@ fn complete_units(
     request: &wire::CompileRequest,
     intake: &mut Intake<'_>,
     sources: &[FormalSource],
+    limits: fsl_replay::spine::SpineLimits,
 ) -> Result<CompileOutcome> {
-    complete_sources(request, intake, sources, true)
+    complete_sources(request, intake, sources, true, limits)
 }
 
 /// Shared request, dependency, parsing, and emission pipeline for one source
@@ -1520,15 +1845,16 @@ fn complete_sources(
     intake: &mut Intake<'_>,
     sources: &[FormalSource],
     unit_list: bool,
+    limits: fsl_replay::spine::SpineLimits,
 ) -> Result<CompileOutcome> {
     check_sources(
         request,
         intake,
         sources,
         unit_list,
+        limits,
         |checked, selections, points, packages, _, libraries, models, inventory, failure| {
             let cancel = filament_exact::Cancel::new();
-            let limits = fsl_replay::spine::SpineLimits::default();
             let result = fsl_replay::spine::package_with_temporal_selections(
                 &checked,
                 selections,
@@ -1564,6 +1890,7 @@ fn complete_sources(
                 document,
                 handoff_compiled,
                 handoff_temporal_selections,
+                sources: crate::Sources::default(),
             })
         },
     )
@@ -1611,6 +1938,7 @@ fn check_sources<T>(
     intake: &mut Intake<'_>,
     sources: &[FormalSource],
     unit_list: bool,
+    limits: fsl_replay::spine::SpineLimits,
     finish: impl FnOnce(
         fsl_replay::spine::CheckedUnit,
         &[fsl_replay::spine::TemporalClockSelection],
@@ -1725,7 +2053,6 @@ fn check_sources<T>(
             .map_err(|refusal| spine_failure(*refusal))?;
     }
     let cancel = filament_exact::Cancel::new();
-    let limits = fsl_replay::spine::SpineLimits::default();
     let failure = |failure| match fsl_replay::spine::refusal_or_fault(failure) {
         Ok(refusal) => spine_failure(*refusal),
         Err(fault) => RunCause::SpineRun(Box::new(fsl_replay::spine::RunRefusal::Fault(fault))),
@@ -1920,8 +2247,9 @@ fn with_request_limits<T>(
         .map_err(|cause| Box::new(RunError { cause }))
 }
 
-/// Request members a caller supplies beside the request file rather than inside
-/// it (FR-640). Each is read exactly as the request's own member would be.
+/// Request settings a caller supplies beside the request file rather than
+/// inside it. Each request member is read exactly as its in-file counterpart
+/// would be (FR-640); `limits` configures compile stages (FR-869).
 #[derive(Clone, Copy, Debug, Default)]
 pub struct RequestOverrides<'a> {
     /// The `clocks` object, as the driver's `--clocks` file carries it. A request
@@ -1931,6 +2259,9 @@ pub struct RequestOverrides<'a> {
     /// names it (FR-810). Only a compile reads it; a request that also carries
     /// `output` is refused `invalid-request` at stage `request`.
     pub output: Option<&'a Path>,
+    /// Compile-stage limits supplied by the caller (FR-869). `None` uses the
+    /// published defaults.
+    pub limits: Option<&'a fsl_replay::spine::SpineLimits>,
 }
 
 fn request_with_overrides<T: wire::ClocksRequest>(
@@ -1995,6 +2326,7 @@ fn intake(directory: &Path, counts: FileCounts) -> Result<Intake<'_>> {
         maximum: TOTAL_BYTES,
         dependent_limit: None,
         prefetched_observations: std::collections::BTreeMap::new(),
+        sources: Vec::new(),
     })
 }
 
@@ -2006,21 +2338,7 @@ fn intake_with_bytes(directory: &Path, counts: FileCounts, maximum: usize) -> Re
         maximum,
         dependent_limit: Some(DependentLimit::CallerConfigured),
         prefetched_observations: std::collections::BTreeMap::new(),
-    })
-}
-
-fn intake_with_fixed_bytes(
-    directory: &Path,
-    counts: FileCounts,
-    maximum: usize,
-) -> Result<Intake<'_>> {
-    check_file_count(counts)?;
-    Ok(Intake {
-        directory,
-        remaining: maximum,
-        maximum,
-        dependent_limit: Some(DependentLimit::Fixed),
-        prefetched_observations: std::collections::BTreeMap::new(),
+        sources: Vec::new(),
     })
 }
 
@@ -2231,6 +2549,7 @@ fn prepare_complete_run(
     Ok(PreparedRun::Function(PreparedFunctionRun {
         data: Box::new(FunctionRunData {
             source,
+            models: documents,
             libraries: libraries.into_iter().map(|(_, source)| source).collect(),
             packages,
             dependencies,
@@ -2274,6 +2593,7 @@ fn execute_lowering(prepared: PreparedLowering) -> Result<RunResult> {
         value: NativeResult::lowering_document(tl::document(record.record)),
         outcome: None,
         requirements: None,
+        sources: crate::Sources::default(),
     })
 }
 
@@ -2321,7 +2641,18 @@ fn execute_prepared(prepared: PreparedRun, settle: &settle::Settle<'_>) -> Resul
             &call_cancel,
         )
         .map_err(compile_failure)?;
-        return output::spine_run_result(source, &prepared.call.function, outcome, None);
+        let mut result = output::spine_run_result(source, &prepared.call.function, outcome, None)?;
+        result.sources = crate::Sources::from_sources(
+            std::iter::once(source.source().clone())
+                .chain(prepared.models.iter().map(|model| model.source().clone()))
+                .chain(
+                    prepared
+                        .libraries
+                        .iter()
+                        .map(|library| library.source().clone()),
+                ),
+        );
+        return Ok(result);
     };
     // FR-961 step 3 to 5: the call runs through FR-395's
     // `run_with_requirements`, and its items are settled on the same compile.
@@ -2344,7 +2675,19 @@ fn execute_prepared(prepared: PreparedRun, settle: &settle::Settle<'_>) -> Resul
     )
     .map_err(compile_failure)?;
     let (outcome, _) = ran.into_parts();
-    output::spine_run_result(source, &prepared.call.function, outcome, Some(settled?))
+    let mut result =
+        output::spine_run_result(source, &prepared.call.function, outcome, Some(settled?))?;
+    result.sources = crate::Sources::from_sources(
+        std::iter::once(source.source().clone())
+            .chain(prepared.models.iter().map(|model| model.source().clone()))
+            .chain(
+                prepared
+                    .libraries
+                    .iter()
+                    .map(|library| library.source().clone()),
+            ),
+    );
+    Ok(result)
 }
 
 /// The package name a program compiles under: its source identity's

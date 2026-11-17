@@ -178,6 +178,13 @@ pub(super) fn error(error: &RunError, artifact: bool) -> Result<Value, serde_jso
                     limit: kind.as_str(),
                     maximum: *maximum,
                 },
+                LimitKind::ObservationDocumentBytes { maximum } => {
+                    types::Details::ConfiguredBytes {
+                        limit: kind.as_str(),
+                        maximum: *maximum,
+                        option: "observation_limits.document_bytes",
+                    }
+                }
                 LimitKind::SelectedFiles {
                     category,
                     requested,
@@ -392,6 +399,7 @@ pub(super) fn clause_report(
         value: NativeResult(value),
         outcome: Some(outcome),
         requirements: None,
+        sources: crate::Sources::default(),
     })
 }
 
@@ -575,6 +583,7 @@ pub(super) fn spine_run_result_for_source(
         value: NativeResult(serde_json::to_value(document).map_err(RunCause::Output)?),
         outcome: Some(lifecycle),
         requirements: results,
+        sources: crate::Sources::from_sources([source.clone()]),
     })
 }
 

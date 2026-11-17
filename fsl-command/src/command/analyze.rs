@@ -298,7 +298,9 @@ pub fn analyze_with_providers_and_limits(
 ) -> std::result::Result<RunResult, Box<RunError>> {
     super::with_request_limits(path, limits.request_bytes, |directory, bytes| {
         let (input, mut intake) = read(directory, bytes, limits.dependent_bytes)?;
-        run_input(&mut intake, input, negotiate, providers, options, cancel)
+        let mut result = run_input(&mut intake, input, negotiate, providers, options, cancel)?;
+        result.sources = crate::Sources::from_sources(intake.sources.iter().cloned());
+        Ok(result)
     })
 }
 
@@ -348,6 +350,7 @@ fn run_input(
         intake,
         sources,
         false,
+        fsl_replay::spine::SpineLimits::default(),
         |checked, _, _, packages, libraries, _, _, _, _| {
             let package = checked.package();
             let mut provision = SourceProvision::default();
@@ -385,6 +388,7 @@ fn run_input(
                     value: NativeResult::analyze_document(document),
                     outcome: None,
                     requirements: None,
+                    sources: crate::Sources::default(),
                 }),
                 Err(AnalyzeDocumentError::Refused(refusal)) => {
                     Err(RunCause::AnalyzeRefused(Box::new(refusal)))

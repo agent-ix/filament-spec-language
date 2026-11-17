@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //! External consumers of the non-core request-file owner.
 
+mod compile_limits;
+mod check_imports;
 #[path = "../../../examples/config-version/spine_corpus.rs"]
 pub mod config_version_spine;
 mod integer_division_request;

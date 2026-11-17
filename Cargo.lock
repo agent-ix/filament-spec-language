@@ -847,6 +847,7 @@ dependencies = [
  "fsl-eval",
  "fsl-forms",
  "fsl-foundation",
+ "fsl-inspect",
  "fsl-package",
  "fsl-replay",
  "fsl-route",

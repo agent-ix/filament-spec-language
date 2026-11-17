@@ -480,6 +480,7 @@ fn drive(
         &mut intake,
         std::slice::from_ref(&program),
         false,
+        SpineLimits::default(),
         |checked, selections, _, packages, libraries, _, _, _, _| {
             let mut sources: Vec<Source> = vec![program.source().clone()];
             sources.extend(libraries.iter().map(|library| library.source().clone()));
@@ -725,6 +726,7 @@ pub(super) fn run_bytes(
         })),
         outcome: Some(summary.outcome),
         requirements: None,
+        sources: crate::Sources::default(),
     })
 }
 

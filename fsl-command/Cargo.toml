@@ -16,6 +16,7 @@ fsl-eval = { path = "../fsl-eval" }
 filament-eval = { workspace = true }
 fsl-semantics = { path = "../fsl-semantics" }
 fsl-analyze = { path = "../fsl-analyze" }
+fsl-inspect = { path = "../fsl-inspect" }
 fsl-route = { path = "../fsl-route" }
 fsl-forms = { path = "../fsl-forms" }
 fsl-package = { path = "../fsl-package" }

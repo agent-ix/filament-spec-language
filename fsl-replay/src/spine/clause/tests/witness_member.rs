@@ -100,7 +100,7 @@ fn snapshot(label: &DocumentRef, observation: &str, history: &[i64]) -> Vec<u8> 
         "observation": observation,
         "anchor": {"kind": "handler", "name": "validate"},
         "model": {
-            "identity": CONFIG_VERSION_PACKAGE_IDENTITY, "version": "1.0.0",
+            "identity": CONFIG_VERSION_PACKAGE_IDENTITY,
         },
         "populations": [{
             "population": config_version_population_identity(),
