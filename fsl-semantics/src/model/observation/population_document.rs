@@ -1,10 +1,15 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //! Retain population-admission input from a checked snapshot's actual fields.
 
+use std::cmp::Ordering;
+
 use filament_exact::{FieldValue, Value};
 use filament_semantic_value::declaration::{FieldRef, TypeEnvironment};
+use fsl_foundation::diagnostic::Code;
 
-use super::{allocation_failed, fault, AdmissionFailure};
+use super::{
+    admission_record, allocation_failed, fault, refuse, AdmissionFailure, AdmissionRecordExt,
+};
 use crate::model::domain_package::DomainPackageRecord;
 use crate::model::normalize::EffectiveView;
 use crate::model::object_environment::ObjectEnvironment;
@@ -187,6 +192,38 @@ fn references(slot: &FieldValue) -> Result<Vec<String>, AdmissionFailure> {
                     })?;
                 pending.extend(collection.elements().iter().rev());
             }
+            Value::Map(map) => {
+                let mut ordered = Vec::new();
+                ordered.try_reserve(map.entries().len()).map_err(|_| {
+                    allocation_failed(
+                        map.entries()
+                            .len()
+                            .saturating_mul(std::mem::size_of::<&(Value, Value)>()),
+                    )
+                })?;
+                ordered.extend(map.entries().iter());
+                let mut incomparable = false;
+                ordered.sort_unstable_by(|(left, _), (right, _)| {
+                    match map_key_order(left, right) {
+                        Some(ordering) => ordering,
+                        None => {
+                            incomparable = true;
+                            Ordering::Equal
+                        }
+                    }
+                });
+                if incomparable {
+                    return Err(unsupported_map());
+                }
+                pending.try_reserve(ordered.len()).map_err(|_| {
+                    allocation_failed(ordered.len().saturating_mul(std::mem::size_of::<&Value>()))
+                })?;
+                // FR-106's closure walk uses the canonical key order from
+                // FSpec FR-144.
+                for (_, value) in ordered.into_iter().rev() {
+                    pending.push(value);
+                }
+            }
             Value::Composite(composite) => {
                 pending.try_reserve(composite.slots().len()).map_err(|_| {
                     allocation_failed(
@@ -228,4 +265,99 @@ fn references(slot: &FieldValue) -> Result<Vec<String>, AdmissionFailure> {
         }
     }
     Ok(values)
+}
+
+fn map_key_order(left: &Value, right: &Value) -> Option<Ordering> {
+    filament_exact::compare_keys(left, right)
+}
+
+fn unsupported_map() -> AdmissionFailure {
+    refuse(admission_record(Code::UnsupportedConstruct, "not-yet-implemented").with("what", "map"))
+}
+
+#[cfg(test)]
+mod tests {
+    use filament_exact::{
+        from_admitted_map, Decimal, DecimalType, EffectiveId, Integer, MapType, NodeKey, ObjectId,
+        ObjectReference, OriginalDeclarationKey, PathSegment, RoundingMode, UniverseId, ValueType,
+    };
+    use ix_trace_rs::trace;
+
+    use super::references;
+    use filament_exact::{FieldValue, Value};
+
+    fn reference(name: &str, universe: &UniverseId, object_type: &EffectiveId) -> Value {
+        Value::Reference(ObjectReference::new(
+            universe.clone(),
+            object_type.clone(),
+            ObjectId::new(name).expect("nonempty identity"),
+        ))
+    }
+
+    /// FR-106-AC-8: nested map value references follow FSpec FR-144's
+    /// mathematical Int and Decimal key order (9 before 10).
+    #[test]
+    #[trace("FR-106-AC-8")]
+    fn map_references_follow_canonical_key_order() {
+        let node = NodeKey::new("fixture", vec![PathSegment::Text("Root".to_owned())], 0)
+            .expect("valid node key");
+        let universe = UniverseId::new(node);
+        let object_type = EffectiveId::new(None, OriginalDeclarationKey::new("fixture", "Type"));
+        let integer_map_type = MapType::new(
+            ValueType::Integer,
+            ValueType::Reference(object_type.clone()),
+            None,
+        )
+        .expect("integer map keys are leaves");
+        let integer_map = from_admitted_map(
+            integer_map_type,
+            vec![
+                (
+                    Value::Integer(filament_exact::Integer::from(10_i64)),
+                    reference("value-10", &universe, &object_type),
+                ),
+                (
+                    Value::Integer(filament_exact::Integer::from(9_i64)),
+                    reference("value-9", &universe, &object_type),
+                ),
+            ],
+        )
+        .expect("distinct integer keys admit");
+        let integer_references =
+            references(&FieldValue::Present(integer_map)).expect("walk integer map references");
+        assert_eq!(integer_references, ["value-9", "value-10"]);
+
+        let decimal_map_type = MapType::new(
+            ValueType::Decimal(
+                DecimalType::new(
+                    Integer::zero(),
+                    Integer::from(20_i64),
+                    0,
+                    0,
+                    RoundingMode::Exact,
+                )
+                .expect("decimal map key type is well formed"),
+            ),
+            ValueType::Reference(object_type.clone()),
+            None,
+        )
+        .expect("decimal map keys are leaves");
+        let decimal_map = from_admitted_map(
+            decimal_map_type,
+            vec![
+                (
+                    Value::Decimal(Decimal::new(Integer::from(10_i64), 0)),
+                    reference("value-10", &universe, &object_type),
+                ),
+                (
+                    Value::Decimal(Decimal::new(Integer::from(9_i64), 0)),
+                    reference("value-9", &universe, &object_type),
+                ),
+            ],
+        )
+        .expect("distinct decimal keys admit");
+        let decimal_references =
+            references(&FieldValue::Present(decimal_map)).expect("walk decimal map references");
+        assert_eq!(decimal_references, ["value-9", "value-10"]);
+    }
 }
