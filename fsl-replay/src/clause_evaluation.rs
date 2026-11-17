@@ -368,13 +368,39 @@ fn settle(disposition: ClauseDisposition) -> ClauseEvaluation {
                 )
             }
         }
+        ClauseDisposition::SnapshotAdmission {
+            failure: AdmissionFailure::Refused(record),
+            ..
+        } => {
+            if is_wrong_observation(&record) {
+                ClauseEvaluation::Refused(ClauseRefusal::WrongObservation)
+            } else {
+                coded(
+                    stage,
+                    category,
+                    record.catalog.code(),
+                    record.catalog.cause(),
+                )
+            }
+        }
         ClauseDisposition::Admit(AdmissionFailure::Incomplete(record)) => {
             ClauseEvaluation::Incomplete(ClauseIncomplete::Observation {
                 code: record.catalog.code(),
                 cause: record.catalog.cause(),
             })
         }
+        ClauseDisposition::SnapshotAdmission {
+            failure: AdmissionFailure::Incomplete(record),
+            ..
+        } => ClauseEvaluation::Incomplete(ClauseIncomplete::Observation {
+            code: record.catalog.code(),
+            cause: record.catalog.cause(),
+        }),
         ClauseDisposition::Admit(AdmissionFailure::Fault(fault))
+        | ClauseDisposition::SnapshotAdmission {
+            failure: AdmissionFailure::Fault(fault),
+            ..
+        }
         | ClauseDisposition::EvaluateFault(fault) => {
             ClauseEvaluation::Refused(ClauseRefusal::Fault {
                 stage: fault.stage(),

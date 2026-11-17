@@ -1071,7 +1071,7 @@ fn admit_invocation(
     let document = serde_json::to_vec(&fixture::document()).expect("the fixture serializes");
     let packages = package_input([document.as_slice()]).unwrap();
     let model = json!({
-        "identity": fixture::PACKAGE, "version": "1",
+        "identity": fixture::PACKAGE,
     });
     let snapshot = |label: &str, observation: &str| {
         let identity = DocumentRef {

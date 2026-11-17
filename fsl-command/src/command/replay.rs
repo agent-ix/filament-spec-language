@@ -84,6 +84,7 @@ pub(super) fn run_bytes(
                 value: NativeResult::replay_document(json!({ "results": [row] })),
                 outcome: Some(outcome),
                 requirements: None,
+                sources: crate::Sources::default(),
             })
         }
         Err(refusal) => Err(RunCause::Replay(Box::new(ReplayFailure {

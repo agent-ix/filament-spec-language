@@ -16,6 +16,16 @@ use serde_json::Value;
 pub struct NativeResult(Value);
 
 impl NativeResult {
+    /// The FR-661 build inventory emitted by `version`.
+    pub(super) fn version_document(document: Value) -> Self {
+        Self(document)
+    }
+
+    /// The in-process `check` command's native check outcome document.
+    pub(super) fn check_document(document: Value) -> Self {
+        Self(document)
+    }
+
     /// The FR-621 `analyze` document, written by `fsl-analyze`.
     pub(super) fn analyze_document(document: Value) -> Self {
         Self(document)
@@ -173,6 +183,13 @@ pub(super) fn error(error: &RunError, artifact: bool) -> Result<Value, serde_jso
                     limit: kind.as_str(),
                     maximum: *maximum,
                 },
+                LimitKind::ObservationDocumentBytes { maximum } => {
+                    types::Details::ConfiguredBytes {
+                        limit: kind.as_str(),
+                        maximum: *maximum,
+                        option: "observation_limits.document_bytes",
+                    }
+                }
                 LimitKind::SelectedFiles {
                     category,
                     requested,
@@ -191,6 +208,10 @@ pub(super) fn error(error: &RunError, artifact: bool) -> Result<Value, serde_jso
         | RunCause::ClocksGivenTwice
         | RunCause::OutputGivenTwice
         | RunCause::OutputExists { .. } => (types::Stage::Request, types::Details::None),
+        RunCause::ExtensionCatalog(_) => (
+            types::Stage::Spine(fsl_replay::spine::SpineStage::Forms),
+            types::Details::None,
+        ),
         RunCause::ClauseOutput(_) => (types::Stage::Output, types::Details::None),
         RunCause::Identifier { diagnostic, .. } => (
             types::Stage::Request,
@@ -387,6 +408,7 @@ pub(super) fn clause_report(
         value: NativeResult(value),
         outcome: Some(outcome),
         requirements: None,
+        sources: crate::Sources::default(),
     })
 }
 
@@ -570,6 +592,7 @@ pub(super) fn spine_run_result_for_source(
         value: NativeResult(serde_json::to_value(document).map_err(RunCause::Output)?),
         outcome: Some(lifecycle),
         requirements: results,
+        sources: crate::Sources::from_sources([source.clone()]),
     })
 }
 

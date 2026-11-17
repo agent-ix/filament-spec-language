@@ -167,6 +167,7 @@ pub fn run_with_replay_context(
         objects,
         &fsl_eval::execution::SuppliedBackends::default(),
         &fsl_eval::execution::PrepareLimits::default(),
+        None,
         cancel,
         |checked, emitted, models| {
             let graph = checked.package().graph();
