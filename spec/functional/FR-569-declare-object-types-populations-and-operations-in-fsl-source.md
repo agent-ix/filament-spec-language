@@ -104,9 +104,7 @@ author declares in a model unit (FR-710) and selects with `model`.
 - S4: the `model`/`object_type` nodes, the `state`/`operation_anchor` and
   `state`/`frame` nodes of its named operations, its clause functions, and one
   source-object identity row per emitted source-declared object type, its
-  `operation_effects` rows and dispatch-table rows (the target emission); or,
-  until ADR-013 QC-30 lands, the one typed `SourceObjectEmission` refusal and
-  no package.
+  `operation_effects` rows and dispatch-table rows (the target emission, with the source declaration keys, identity rows, clock-place join and `operation_bodies` rows of FR-995 and FR-996), or a located refusal for a case FR-995 or FR-996 names.
 - Or a located refusal and no checked package.
 
 ## Behavior
@@ -634,13 +632,7 @@ than the FR-352 witness kind:
   evaluation of state clauses, protocol slots, dispatched calls, frames,
   temporal claims and monitors, none of which reads an emitted wire) SHALL
   support every construct of this requirement.
-- S4 SHALL refuse to emit any unit that declares a source object type, with
-  one typed refusal, `unsupported_construct`/`not-yet-implemented` naming the
-  construct `SourceObjectEmission`, at the span of the unit's first `object`
-  declaration in source order. It SHALL write no package, no
-  `identities.json` and no handoff directory, and SHALL report no other
-  refusal for the unit's source object types, operations, populations,
-  protocols or rows.
+- S4 SHALL emit a unit that declares a source object type per FR-995 and FR-996 (source declaration keys, identity rows, the clock-place join and source `operation_bodies` rows, FSpec FR-788 to FR-790), and SHALL refuse it only for a case FR-995 or FR-996 names.
 - A unit that declares no source object type is emitted as before.
 
 Once QC-30 lands, S4 emits the target emission above; a protocol that reaches
@@ -662,7 +654,7 @@ lands, as FR-390 states.
 | FR-569-AC-8 | Waits on QC-30 (target emission). The emission over S carries one source-object row per type: `Order` with `abstract` false, no supertypes, `identity_fields` `["total"]`, members `total` then `note` (optional) and populations `[{name: "orders", symmetric: false}]`; `Sub` with `abstract` false, `supertypes` `[Order's node]`, `identity_fields` `["total"]` (inherited), members `total` then `note` and populations `[]`; `Shape` with `abstract` true, no member, `identity_fields` `[]` and populations `[{name: "shapes", symmetric: false}]`. D's emission has none. The rows are written to `identities.json` `source_objects` and read back equal. Over S: a supplier with the `Order` row removed gives `MissingIdentityWitness`; one whose `Order` row has `source_identity` `Ghost`, or `structural_node` a frame node, gives `UnknownIdentityWitness` only; one that supplies S's complete rows plus the `Order` row of an emission of S under another source authority gives `ForeignIdentityWitness` only; each at the `Package` locus with no view and no charge. | Test (TC-1408) |
 | FR-569-AC-9 | Passes now (source route). A snapshot of S naming population `orders` and objects of type `Order` and `Sub` admits. The same snapshot with an object of `orders` typed `ix://test/orders/Order` refuses `invalid_runtime_input`/`wrong-role-mapping`. An object of type `Shape` in population `shapes` refuses `invalid_runtime_input`/`abstract-instance`. S selects no domain package: a snapshot with no `model` member admits and one with a `model` member refuses `invalid_runtime_input`/`unknown-member` naming `model`. In variant S-M, S with `model M = "test/orders"` selecting D's package: a snapshot with `"population": "orders"`, `"type": "Order"` admits its objects as source `Order` objects, one with `"population": "ix://test/orders/orders"`, `"type": "ix://test/orders/Order"` admits them as model `M::Order` objects, `I` reads only the first, and one placing a `"type": "Order"` object in `ix://test/orders/orders` refuses `invalid_runtime_input`/`wrong-role-mapping`. | Test (TC-1408) |
 | FR-569-AC-10 | Passes now (source route). For each TC-1408 vector V1 to V6 (`I`, `Q`, a `post` on `bump` over a pre and post snapshot, `forall(o in orders : ...)`, `self.size()` dispatched to `Sub.size`, and the frame check of an invocation of `bump` that writes `total` of a second object), S and D give equal outcomes and equal ordered charge logs on the source route. | Test (TC-1408) |
-| FR-569-AC-11 | Passes now (interim). S4 over TC-1408 fixture S, over its variants S-R, S-P and S-M, and over TC-1407 fixture E-S refuses with exactly one refusal, `unsupported_construct`/`not-yet-implemented` naming `SourceObjectEmission` at the span of the unit's first `object` declaration (`object Order` in S and its variants, `object Node` in E-S), and writes no package, no `identities.json` and no handoff directory. The same units check, and the source route evaluates TC-1408 vectors V1 to V6 and TC-1407 vectors S1 to S3 over them. Fixture D and TC-1070's fixture E, which declare no source object type, emit as before | Test (TC-1408, TC-1407) |
+| FR-569-AC-11 | Passes now. S4 over TC-1408 fixture S, over its variants S-R, S-P and S-M, and over TC-1407 fixture E-S emits the unit's source objects per FR-995 and FR-996 and does not refuse the unit for declaring an `object`. The package holds each source declaration key `{owner_effective_type: null, original: {package: I, node: "ix://I/<Type>"}}` (`I` the unit's source identity, `<Type>` `Order`, `Sub` and `Shape` in S and its variants, `Node` in E-S); the source identity rows of `identities.json`; the source clock-place join and the source `operation_bodies` rows, as FSpec FR-788 to FR-790 state; and the handoff directory. S4 refuses only the cases FR-995 and FR-996 name, each with its own code, cause and locus. The same units check, and the source route evaluates TC-1408 vectors V1 to V6 and TC-1407 vectors S1 to S3 over them. Fixture D and TC-1070's fixture E, which declare no source object type, emit as before | Test (TC-1408, TC-1407) |
 | FR-569-AC-12 | Source route. For each member type, an `object` field of that type, and an operation parameter or result of that type, assembles and checks exactly when a source `record` field of that type does, and `self.f` in a state clause on the object has the type the record field has: a source `enum` (`Tier { Gold, Standard }`), a source `record` (`Point { x: Integer; }`), a `union` with a payload member, a `tuple`, a `type` alias, `Decimal[0, 100; 2, 2; exact]`, `Rational[0, 9; 1, 4]`, `Float64` under the IEEE profile, `Quantity<m>` over a declared `dimension L; unit m : L = 1;`, `Option<Sequence<Integer>[0, 3]>` and `Sequence<Set<Integer>[0, 2]>[0, 2]`; the enum and record cases also hold as an operation parameter and as an operation result. None is refused `unknown_required_feature`/`unsupported-feature`. | Test (TC-1940) |
 | FR-569-AC-13 | Source route. A field typed `Population<Order>[3]`, and a field typed by the name of a source function, are each refused at the type with the code and cause a source record field of the same type gets, and the unit yields no checked package. | Test (TC-1940) |
 | FR-569-AC-14 | Waits on QC-30 (target emission). Over fixture S, S4 emits a package that FSL's I2 reader admits, holding `Order` as a `model`/`object_type` node with `declaration` `["Order"]` and the unit's `SourceOwner`. With `Order`'s owner replaced by a `ModelOwner` naming fixture D's package and IR node of `Order`, the I2 reader refuses `malformed_wire` at the node's `owner`; with its `declaration` removed and its `SourceOwner` kept, it refuses `malformed_wire` at the node's `owner`. A member type of AC-12 emits a binding naming the type node a record field of that type is bound to. | Test (TC-1941) |
@@ -707,5 +699,4 @@ lands, as FR-390 states.
   not.
 - [ADR-013](../decisions/ADR-013-canonical-type-package-conversion-ownership.md)
   QC-30: the FSpec changes and the IR changes the target emission needs.
-  Until they land, S4 gives the single `SourceObjectEmission` refusal above;
-  the source route is complete now.
+  S4 emits source objects per FR-995 and FR-996; the source route is complete.

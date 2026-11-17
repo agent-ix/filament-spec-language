@@ -90,11 +90,7 @@ row is involved. A role on a source-declared object type (`role R on T`)
 writes that node as the role's `model` node in the same way. FSpec FR-464 and
 FR-465 must admit a source-declared `owner_model` and role `model`, and IR's
 protocol-body reader must join them through the `SourceOwner` (ADR-013 QC-30
-items (3) and (4)). Until QC-30 lands, S4 writes no package for any unit that
-declares a source object type: it gives FR-569's single
-`unsupported_construct`/`not-yet-implemented` refusal naming
-`SourceObjectEmission`, and S3 and the source route check and evaluate the
-protocol unchanged.
+items (3) and (4)). S4 emits a package for a unit that declares a source object type per FR-995 and FR-996, and S3 and the source route check and evaluate the protocol unchanged.
 
 ## Use case
 
@@ -680,7 +676,7 @@ refusal changes no other protocol's result (see "Per-protocol results").
 | FR-383-AC-64 | In the two-record variant of fixture L (TC-1063 row L4e), compiled once in each source order of its two `related by` clauses, the shared `identityRef(view)` call of the two `from` ends has its rows under `protocol Pipeline run Main Got related 0 from` and `... related 1 from`, the `to` end that is a call has its rows under `... related <k> to` with `k` the emitted position of its record, the record whose `to` end is the reference `view` has no `to` row, each record keeps one emitted position in both orders, and each origin holds rows of one end only. | Test (TC-1063) |
 | FR-383-AC-65 | In both compiles of FR-383-AC-64 the checked package holds no `Location` and the `protocol_locations` array holds no row under a `related <start> <end>` origin. | Test (TC-1063) |
 | FR-383-AC-66 | A compile of the two-record variant that writes its second `related by` clause twice emits the same nodes, the same `identityRef(view)` occurrences, the same source-map rows and the same `protocol_locations` rows as the compile without the repeat. | Test (TC-1063) |
-| FR-383-AC-67 | Passes now: over TC-1407 fixture E-S, whose `Refunds` is `over (view: Node)` with `Node` source-declared, S3 checks the protocol and the source route evaluates its slots, and S4 refuses `unsupported_construct`/`not-yet-implemented` naming `SourceObjectEmission` at `object Node`, writing no package. Waits on QC-30: the E-S clause carries `owner_model` the source-declared `Node` node, in its preimage and exact `dependencies`; in TC-1408 variant S-M the role `Seller on Order` writes the source-declared `Order` node as its `model`; IR's reader admits both | Test (TC-1407, TC-1408) |
+| FR-383-AC-67 | Passes now: over TC-1407 fixture E-S, whose `Refunds` is `over (view: Node)` with `Node` source-declared, S3 checks the protocol and the source route evaluates its slots, and S4 emits the package per FR-995 and FR-996, refusing only a case they name. The E-S clause carries `owner_model` the source-declared `Node` node, in its preimage and exact `dependencies`; in TC-1408 variant S-M the role `Seller on Order` writes the source-declared `Order` node as its `model`; IR's reader admits both | Test (TC-1407, TC-1408) |
 | FR-383-AC-68 | Compiling ADR-027 §7's `Fill` with `role w on M` through S4 gives no refusal and writes a package whose `role` node for `w` carries the text `identity` of the package `M` selects as its `model` argument, an empty `replication` Group and no `model` dependency, and FSL's I2 reader admits it; the same unit with `role w each M from cells max 2 lifetime workflow` writes no package and S3 refuses `invalid_model_binding`/`malformed-declaration` at `M`. | Test (TC-2020) |
 ## Dependencies
 

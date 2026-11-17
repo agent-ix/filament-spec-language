@@ -21,12 +21,10 @@ relationships:
 Verify that a unit's own source declares object types with fields, identity,
 supertypes, populations and operations; that they resolve, refuse
 collisions, check and evaluate on the source route as a domain package's
-object types do; that S4 refuses such a unit with the single
-`SourceObjectEmission` refusal until ADR-013 QC-30 lands; and, once it lands,
-that S4 emits the target emission (source-owned `model`/`object_type` nodes,
-clause functions, effects, dispatch tables and identity rows). Scope:
+object types do; that S4 emits such a unit per FR-995 and FR-996 (the target emission: source-owned `model`/`object_type` nodes,
+clause functions, effects, dispatch tables and identity rows, source declaration keys, the clock-place join and source operation_bodies rows). Scope:
 FR-569-AC-1 to FR-569-AC-11, FR-105-AC-18, FR-218-AC-39, FR-383-AC-67 and the
-fixture-S parts of FR-390-AC-70 and FR-390-AC-72. Steps 1 to 4, 7, 8 and 9 run
+fixture-S parts of FR-390-AC-70 and FR-390-AC-72. Steps 1 to 4 and 7 to 9 run
 and pass now; steps 5 and 6 wait on QC-30.
 
 Catches a source type that silently resolves to a model type of the same
@@ -157,7 +155,4 @@ Tag each test with the criteria it asserts and `TC-1408`, for example
 - Step 8: V1 true, V2 true, V3 true, V4 true, V5 `7`, V6 `frame_violation`/
   `unauthorized-change` naming `o2.total` (FR-154), each with equal
   outcomes and equal ordered charge logs over S and D.
-- Step 9: S, S-R, S-P and S-M are each refused with exactly one refusal,
-  `unsupported_construct`/`not-yet-implemented` naming
-  `SourceObjectEmission` at `object Order`, and none writes a package,
-  `identities.json` or handoff directory; D emits as before.
+- Step 9: S, S-R, S-P and S-M each emit: the source declaration keys `{owner_effective_type: null, original: {package: I, node: "ix://I/<Type>"}}` for `Order`, `Sub` and `Shape`, the source identity rows of `identities.json`, the source clock-place join and the source `operation_bodies` rows (FSpec FR-788 to FR-790), and the handoff directory, with no `SourceObjectEmission` refusal; a refusal arises only for a case FR-995 or FR-996 names. D emits as before.

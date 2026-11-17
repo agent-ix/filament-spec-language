@@ -83,7 +83,7 @@ partner has failed.
 
 ### Undefined and undetermined evaluation
 
-- A runtime `Undefined` from a division reaches this evaluation only through a function body checked under `CheckMode::Kernel` that the clause or guard calls, because declared clauses, guards and `match` bodies are always checked Linked (FSpec FR-952) and Linked refuses an unproved integer division `Unproved(Nonzero)` before evaluation (FR-495-AC-3).
+- A runtime `Undefined` from a division reaches this evaluation only through a function body checked under `CheckMode::Kernel` that the clause or guard calls, because declared clauses, guards and `match` bodies are always checked Linked (FR-952) and Linked refuses an unproved integer division `Unproved(Nonzero)` before evaluation (FR-495-AC-3).
 - The engine SHALL evaluate `μ_U`, `μ_E` and the safety automaton's letters
   through the one clause evaluator (FR-107) at every joint step and joint
   position it builds, for universal and existential components alike.

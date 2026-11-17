@@ -10,15 +10,15 @@ relationships:
 
 ## Description
 
-A traversal of a Map value, a closure walk or a first-reference search, uses the run form's entry array order.
+A traversal of a Map value, a closure walk or a first-reference search, uses FSpec FR-144 canonical key order, mathematical for Int and Decimal keys, which can differ from the run form array order.
 
-Scope: FR-650-AC-11.
+Scope: FR-650-AC-17.
 
 ## Test Procedure
 
-Supply a `Map` whose entries are given in input order `b` then `a`, each holding a different reference, and walk it for the first reference. Repeat with a key that holds a reference and a value that holds another.
+Supply a `Map<Integer, ...>` whose entries are given in input order key 10 then key 9, each holding a different reference, and walk it for the first reference. Repeat with a key that holds a reference and a value that holds another.
 
 ## Expected Results
 
-- The reference in the entry for `a` is visited before the reference in the entry for `b`.
+- The reference in the entry for key 9 is visited before the reference in the entry for key 10.
 - Within an entry, the key's reference is visited before the value's.

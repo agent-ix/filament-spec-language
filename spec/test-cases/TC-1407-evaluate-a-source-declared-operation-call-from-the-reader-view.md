@@ -23,12 +23,7 @@ FR-352 witness kind exists view creation reports the typed
 `MissingSelectedJoin`. Scope: FR-390-AC-70 to FR-390-AC-73 (QSL-1400),
 FR-383-AC-67 and the E-S part of FR-569-AC-11.
 
-Each step is marked **now** (runs and passes today: the source route and
-the S4 refusal) or **waits** (runs once ADR-013 QC-30 is adopted by FSpec and
-IR; step 2 also waits on IR's FR-352 witness kind). Until QC-30 lands, S4
-refuses every unit that declares a source object type, E-S and TC-1408's
-fixture S included, with the single `SourceObjectEmission` refusal and writes
-no package, so every waits step has no package to read.
+Each step is marked **now** (runs and passes today) or **waits** (step 2 only, which waits on IR's FR-352 witness kind). S4 emits every unit that declares a source object type, E-S and TC-1408's fixture S included, per FR-995 and FR-996, so the steps read its package.
 
 ## Test Procedure
 
@@ -62,7 +57,7 @@ Fixture E, with `Node` and `step` model-owned, is the control.
    source route, and run S4 over E-S and over TC-1408 fixture S. Emit
    fixture E and evaluate its slots on all three routes. (FR-383-AC-67,
    FR-569-AC-11, AC-70, AC-71, AC-73)
-1. **waits.** Emit E-S, S and E. Read the `source_operations` and
+1. Emit E-S, S and E. Read the `source_operations` and
    `source_objects` rows of each emission and of `identities.json`
    (`identities/4`). (AC-70)
 2. **waits** (also on FR-352). Vector S1: evaluate `Refund.retry` of E-S with
@@ -71,7 +66,7 @@ Fixture E, with `Node` and `step` model-owned, is the control.
    makes `target` `Unavailable`. Evaluate each on the in-process reader route
    and the bytes route and compare value and charge log with step 0's source
    route. (AC-71)
-3. **waits.** Vectors over E-S, and over S with `Order::bump` in place of
+3. Vectors over E-S, and over S with `Order::bump` in place of
    `Node::step`: R1 a supplier with the operation's row removed
    (E-S only: S's anchor is reached by no protocol); R2 the row with
    `source_identity` changed to `Node::halt` (`Order::halt`); R3 the package's
@@ -79,8 +74,8 @@ Fixture E, with `Node` and `step` model-owned, is the control.
    authority; R3b R3 with that foreign row's `source_identity` also changed to
    the `halt` name; R4 the row's `structural_node` set to a
    `state`/`state_clause` node. (AC-72)
-4. **waits.** With every row admitted and no IR witness kind in the lock,
-   create the view over E-S. **now**: create it over E, and evaluate a slot
+4. With every row admitted and no IR witness kind in the lock,
+   create the view over E-S. Also create it over E, and evaluate a slot
    of E and of E-S on the source route. (AC-73)
 
 Tag the tests with the criteria they assert among `FR-390-AC-70` to
@@ -91,9 +86,7 @@ Vectors reference TC-1070 and TC-1072 rows, never copy them.
 ## Expected Results
 
 - Step 0: E-S checks and S1 to S3 evaluate on the source route; S4 over E-S
-  refuses `unsupported_construct`/`not-yet-implemented` naming
-  `SourceObjectEmission` at `object Node`, and over S at `object Order`, each
-  the only refusal, with no package, identity file or handoff directory.
+  and over S emits a package, `identities.json` and handoff directory per FR-995 and FR-996, with no refusal except a case they name.
   Fixture E emits, carries no source-operation row, and its slots give the
   results they gave before on all three routes.
 - Step 1: E-S has one source-operation row (`Node::step`, the unit's

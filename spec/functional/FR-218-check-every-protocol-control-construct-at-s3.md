@@ -297,9 +297,9 @@ A one-segment `M` in `role w on M` resolves to the model alias `M` and never
 to a source-declared object type; a source object type cannot share a model
 alias's name (FR-569). S3 SHALL admit `role w on T` and `over (input: T)` for a
 source-declared object type `T` exactly as for a model object type, and the
-clause's model context is then `T` (FR-383 defines its `owner_model`). Until
-ADR-013 QC-30 lands, S4 emits no unit that declares a source object type
-(FR-569 `SourceObjectEmission`).
+clause's model context is then `T` (FR-383 defines its `owner_model`). S4
+emits a unit that declares a source object type per FR-995 and FR-996
+(FR-569-AC-11).
 
 A role on a whole model is static only (FSpec FR-465: a replicated role draws
 its instances from a population of a model type, so its `model` is a
