@@ -315,7 +315,7 @@ fn a_compile_handoff_member_writes_the_directory() {
         json!({"authority": "agent-ix", "identity": "test:spine"})
     );
     assert_eq!(
-        std::fs::read(handoff.join(&selection["package"]["unit"].as_str().unwrap())).unwrap(),
+        std::fs::read(handoff.join(selection["package"]["unit"].as_str().unwrap())).unwrap(),
         std::fs::read(directory.path().join("program.native")).unwrap()
     );
     fsl_command::checked_handoff::compile(&handoff)
