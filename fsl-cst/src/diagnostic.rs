@@ -483,6 +483,9 @@ mod tests {
             (CompleteCause::UnexpectedToken, CompleteCode::InvalidSyntax),
             (CompleteCause::UnexpectedEnd, CompleteCode::InvalidSyntax),
             (CompleteCause::InvalidToken, CompleteCode::InvalidSyntax),
+            // TC-2153 exercises this cut marker when the retained list reaches
+            // its bound; it remains an invalid-syntax diagnostic.
+            (CompleteCause::DiagnosticListCut, CompleteCode::InvalidSyntax),
             (CompleteCause::InvalidEscape, CompleteCode::InvalidSyntax),
             (
                 CompleteCause::DeclarationForm,
