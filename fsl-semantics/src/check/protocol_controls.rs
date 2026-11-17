@@ -358,7 +358,7 @@ fn check_channel_connection(
         ));
         return None;
     };
-    let endpoint_role = |name: &str, span: Span| -> Option<&super::protocol_clause::CheckedRole> {
+    let mut endpoint_role = |name: &str, span: Span| -> Option<&super::protocol_clause::CheckedRole> {
         let role = roles.iter().find(|role| role.name == name)?;
         if role.model_member.is_none() {
             refusals.push((
@@ -382,19 +382,19 @@ fn check_channel_connection(
     let (expected, source_interface) = match connection.direction {
         crate::model::domain_package::RelationshipDirection::SourceToTarget => (
             [connection.ports[0].clone(), connection.ports[1].clone()],
-            connection.interfaces[0],
+            connection.interfaces[0].clone(),
         ),
         crate::model::domain_package::RelationshipDirection::TargetToSource => (
             [connection.ports[1].clone(), connection.ports[0].clone()],
-            connection.interfaces[1],
+            connection.interfaces[1].clone(),
         ),
         crate::model::domain_package::RelationshipDirection::Bidirectional => (
             [connection.ports[0].clone(), connection.ports[1].clone()],
-            connection.interfaces[0],
+            connection.interfaces[0].clone(),
         ),
         crate::model::domain_package::RelationshipDirection::Undirected => (
             [connection.ports[0].clone(), connection.ports[1].clone()],
-            connection.interfaces[0],
+            connection.interfaces[0].clone(),
         ),
     };
     let Some(actual_from) = from.model_member.as_ref() else {
@@ -433,7 +433,7 @@ fn check_channel_connection(
     } else {
         source_interface
     };
-    let expected_type = ValueType::Reference(source_interface);
+    let expected_type = ValueType::Reference(source_interface.clone());
     let conforms = match (model, carries) {
         (Some(model), Some(ValueType::Reference(actual_type))) => model
             .type_key(actual_type.clone())
