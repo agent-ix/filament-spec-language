@@ -157,8 +157,8 @@ pub enum EmitRefusal {
     /// has no node for: the emitter refuses rather than write a package
     /// without them, naming the first such declaration in source order.
     #[error(
-        "{} `{declaration}` cannot be written to a checked-package/v2 graph yet",
-        feature.name()
+        "{feature_name} `{declaration}` cannot be written to a checked-package/v2 graph yet",
+        feature_name = feature.display_name()
     )]
     ProbabilisticModelNotEmitted {
         /// The first such declaration's name: `operation(parameter)` for a
@@ -168,6 +168,8 @@ pub enum EmitRefusal {
         feature: fsl_semantics::check::ProbabilisticFeature,
         /// The unit's selected header profile identity, when it selects one.
         profile: Option<&'static str>,
+        /// The checked source locus of the first unsupported declaration.
+        region: fsl_foundation::source::provenance::SourceRegion,
     },
     /// The unit declares a source `object` type, which the checked-package/v2
     /// graph has no node shape for yet: the emitter refuses at the first
@@ -293,14 +295,15 @@ pub enum EmitRefusal {
     },
     /// A temporal declaration whose selected profile requires a clock
     /// configuration has no exact producer selection.
-    #[error(
-        "temporal declaration at {source_ref:?} bytes {span:?} has no selected clock configuration"
-    )]
+    #[error("{declaration} has no selected clock configuration")]
     MissingTemporalClockSelection {
         /// The checked source document.
         source_ref: fsl_foundation::source::provenance::RawSourceRef,
         /// The exact declaration locus.
         span: fsl_foundation::Span,
+        /// Plain-language construct name, such as `bounded temporal rule Foo`
+        /// or `compensate template Refund`.
+        declaration: String,
     },
     /// A temporal clock selection does not name a configured declaration in
     /// the checked source.
@@ -6131,12 +6134,20 @@ fn emit_package_inner(
         return Err(EmitRefusal::SourceObjectEmission { span });
     }
     if let Some((feature, declaration)) = graph.probabilistic_model().first_declaration() {
+        let location = graph
+            .probabilistic_model()
+            .first_declaration_location()
+            .ok_or(EmitRefusal::SourceMapInvariant)?;
+        let region = graph
+            .region(&location)
+            .ok_or(EmitRefusal::SourceMapInvariant)?;
         return Err(EmitRefusal::ProbabilisticModelNotEmitted {
             declaration,
             feature,
             // The header layers ascend; the widest is the profile the unit
             // selects its probabilistic declarations under.
             profile: graph.header_layers().last().map(|layer| layer.identity()),
+            region,
         });
     }
     let candidates = candidates_of(ids, &foreign, graph, abstraction.as_ref(), &declared_forms)?;
@@ -7729,7 +7740,11 @@ fn temporal_binding_rows(
         let span = clause.span();
         let key = (source.clone(), span.start, span.end);
         let Some(selection) = selected.remove(&key) else {
-            missing.push((source, span));
+            missing.push((
+                source,
+                span,
+                format!("bounded temporal rule `{}`", clause.name()),
+            ));
             continue;
         };
         check_selected_definition(&source, span, profile, selection)?;
@@ -7800,7 +7815,11 @@ fn temporal_binding_rows(
         let span = hyper.span();
         let key = (source.clone(), span.start, span.end);
         let Some(selection) = selected.remove(&key) else {
-            missing.push((source, span));
+            missing.push((
+                source,
+                span,
+                format!("bounded temporal rule `{}`", hyper.name()),
+            ));
             continue;
         };
         check_selected_definition(&source, span, profile, selection)?;
@@ -7875,7 +7894,11 @@ fn temporal_binding_rows(
             let span = template.span;
             let key = (source.clone(), span.start, span.end);
             let Some(selection) = selected.remove(&key) else {
-                missing.push((source.clone(), span));
+                missing.push((
+                    source.clone(),
+                    span,
+                    format!("compensate template `{}`", template.name),
+                ));
                 continue;
             };
             check_selected_definition(&source, span, profile, selection)?;
@@ -7905,8 +7928,12 @@ fn temporal_binding_rows(
             span: fsl_foundation::Span { start, end },
         });
     }
-    if let Some((source_ref, span)) = missing.into_iter().next() {
-        return Err(EmitRefusal::MissingTemporalClockSelection { source_ref, span });
+    if let Some((source_ref, span, declaration)) = missing.into_iter().next() {
+        return Err(EmitRefusal::MissingTemporalClockSelection {
+            source_ref,
+            span,
+            declaration,
+        });
     }
     rows.sort_by(|left, right| {
         (&left.declaration, left.occurrence).cmp(&(&right.declaration, right.occurrence))
