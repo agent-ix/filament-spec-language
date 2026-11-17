@@ -70,7 +70,9 @@ check.
   under `Linked` (FR-098). The lifecycle fixes no mode of its own. A replay
   of a claim minted from a `Kernel` body therefore never refuses
   `ReplayRefused(UndefinedExpression)` because the body was rechecked under
-  `Linked`.
+  `Linked`. A function node whose recorded `check_mode` differs from the mode
+  its recompile records refuses `invalid_package`/`check-mode-mismatch` at
+  `/package/semantic_graph/nodes/{i}/check_mode`.
 - **Kernel world.** A world built with `CheckMode::Kernel` SHALL pass that
   mode to every function body it checks or evaluates, on every analysis
   path. Its declared clauses stay under `Linked`.

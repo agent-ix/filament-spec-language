@@ -791,3 +791,41 @@ fn tc_1784_a_forged_recorded_mode_is_refused() {
     let refusal = replay(wire, ReplayLimits::default()).expect_err("a forged mode is refused");
     assert!(format!("{refusal:?}").contains("Nonzero"), "{refusal:?}");
 }
+
+/// FR-098-AC-34: a function node whose recorded `check_mode` differs from its
+/// recompile's is refused `PackageMember` at that node's `check_mode`, cause
+/// `check-mode-mismatch`; matching records pass. The recorded bytes are a
+/// real package with `g`'s recorded `linked` edited to `kernel`, compared with
+/// the recompile's own bytes.
+#[trace("TC-1784", "FR-098-AC-34")]
+#[test]
+fn tc_1784_a_recorded_mode_that_differs_from_the_recompile_is_refused() {
+    use filament_semantic_value::checking::CheckMode;
+    let source = mixed_source();
+    let modes = BTreeMap::from([("g".to_owned(), CheckMode::Linked)]);
+    let compiled = kernel_spine(&source, &modes);
+    let original = compiled.emitted.bytes();
+    check_recorded_modes(original, original).expect("matching modes pass");
+    let edited = String::from_utf8(original.to_vec())
+        .expect("JSON")
+        .replacen(r#""check_mode":"linked""#, r#""check_mode":"kernel""#, 1);
+    let refusal = check_recorded_modes(edited.as_bytes(), original)
+        .expect_err("g records kernel but recompiles linked");
+    let ReplayRefusal::Request(crate::ReplayRequestRefusal::PackageMember { pointer, cause }) =
+        refusal
+    else {
+        panic!("a package-member refusal: {refusal:?}");
+    };
+    assert_eq!(cause, crate::PackageMemberCause::CheckModeMismatch);
+    let document: serde_json::Value = serde_json::from_slice(original).expect("JSON");
+    let linked = document["semantic_graph"]["nodes"]
+        .as_array()
+        .expect("nodes")
+        .iter()
+        .position(|node| node["check_mode"] == "linked")
+        .expect("g records linked");
+    assert_eq!(
+        pointer,
+        format!("/package/semantic_graph/nodes/{linked}/check_mode")
+    );
+}

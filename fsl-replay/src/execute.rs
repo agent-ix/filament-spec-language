@@ -1850,27 +1850,7 @@ pub(crate) fn recompile_with_temporal_selections(
             ));
         }
     }
-    // FR-098-AC-34: every function the proving package records is rechecked
-    // under exactly the mode it records; a function whose recompile records
-    // another mode, or none, is refused at its node.
-    let recompiled_modes: std::collections::BTreeMap<String, Option<String>> =
-        crate::ReplayPackage::function_records(compiled.emitted.package().bytes())
-            .into_iter()
-            .map(|record| (record.node_id, record.mode))
-            .collect();
-    for record in crate::ReplayPackage::function_records(request.package().bytes()) {
-        if recompiled_modes.get(&record.node_id) != Some(&record.mode) {
-            return Err(ReplayRefusal::Request(
-                crate::ReplayRequestRefusal::PackageMember {
-                    pointer: format!(
-                        "/package/semantic_graph/nodes/{}/check_mode",
-                        record.position
-                    ),
-                    cause: crate::PackageMemberCause::CheckModeMismatch,
-                },
-            ));
-        }
-    }
+    check_recorded_modes(request.package().bytes(), compiled.emitted.package().bytes())?;
     request
         .package()
         .admit(&evidence, limits.spine.imports.for_ir())?;
@@ -2772,4 +2752,29 @@ mod carried_quantity_tests {
             }))
         ));
     }
+}
+
+/// FR-098-AC-34: every function the proving package records is rechecked
+/// under exactly the mode it records; a function whose recompile records
+/// another mode, or none, is refused at its node.
+fn check_recorded_modes(recorded: &[u8], recompiled: &[u8]) -> Result<(), ReplayRefusal> {
+    let recompiled_modes: std::collections::BTreeMap<String, Option<String>> =
+        crate::ReplayPackage::function_records(recompiled)
+            .into_iter()
+            .map(|record| (record.node_id, record.mode))
+            .collect();
+    for record in crate::ReplayPackage::function_records(recorded) {
+        if recompiled_modes.get(&record.node_id) != Some(&record.mode) {
+            return Err(ReplayRefusal::Request(
+                crate::ReplayRequestRefusal::PackageMember {
+                    pointer: format!(
+                        "/package/semantic_graph/nodes/{}/check_mode",
+                        record.position
+                    ),
+                    cause: crate::PackageMemberCause::CheckModeMismatch,
+                },
+            ));
+        }
+    }
+    Ok(())
 }
