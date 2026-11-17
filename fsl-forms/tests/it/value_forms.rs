@@ -206,9 +206,6 @@ fn show(expression: ExprRef<'_>) -> String {
             )
         }
         ExprNode::String(literal) => format!("string({:?})", literal.text()),
-        ExprNode::ReferenceLiteral { type_name, key } => {
-            format!("ReferenceLiteral[{}#{}]", type_name.name, key.text())
-        }
         ExprNode::Name(spelling) => spelling.name.clone(),
         ExprNode::Let { name, .. } => format!("Let[{name}]"),
         ExprNode::If { .. } => "If".into(),
@@ -1369,23 +1366,6 @@ fn two_spellings_of_one_text_build_equal_forms_that_keep_their_spelling() {
     assert_eq!(string_parts(&raw), ("\u{e9}", "\"\u{e9}\""));
     assert_eq!(string_parts(&escaped), ("\u{e9}", r#""\u00e9""#));
     assert_ne!(raw, body_root(r#""e\u0301""#));
-}
-
-#[trace("TC-965", "FR-480-AC-1")]
-#[test]
-fn a_reference_literal_lowers_to_a_form_with_its_type_and_key() {
-    for (source, expected_type, expected_key, expected_spelling) in [
-        (r##"M::Server#"s1""##, "M::Server", "s1", r#""s1""#),
-        (r##"M::Server#"s\u0031""##, "M::Server", "s1", r#""s\u0031""#),
-    ] {
-        let form = body_root(source);
-        let ExprNode::ReferenceLiteral { type_name, key } = form else {
-            panic!("a reference literal form, not {form:?}");
-        };
-        assert_eq!(type_name.name, expected_type);
-        assert_eq!(key.text(), expected_key);
-        assert_eq!(key.spelling(), expected_spelling);
-    }
 }
 
 /// The decoded text and the quoted spelling of a `String` form.
