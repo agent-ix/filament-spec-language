@@ -141,7 +141,7 @@ productions! {
     #[doc = "`0x` followed by exactly 16 hexadecimal digits: the bit-exact `float64` literal payload in `float64(bits: <Hex64>)`."]
     Hex64,
     HexDigit,
-    EnumValue, CollectionValue, RecordValue, FieldValue, TupleValue,
+    EnumValue, CollectionValue, RecordValue, FieldValue, TupleValue, ReferenceLiteral,
     CollectionCall,
     #[doc = "`(count | exists | all) ( <population-binder> )`, `(sum | only) ( <population-binder> : <expression> )` or `seq ( <identifier> in <expression> .. <expression> : <expression> )`: a population-valued form of a refinement row (FR-139)."]
     PopulationCall,

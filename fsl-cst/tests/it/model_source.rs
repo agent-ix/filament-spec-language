@@ -51,6 +51,75 @@ fn model_forms_preserve_source_bytes_and_named_productions() {
     }
 }
 
+#[trace("TC-965", "FR-480-AC-1")]
+#[test]
+fn a_reference_literal_parses_as_one_node() {
+    let body = "M::Server#\"s1\" = M::Server#\"s2\"";
+    let text = source(body);
+    let parsed = parse(&text, Limits::default());
+    assert!(parsed.is_admissible(), "{:?}", parsed.diagnostics());
+    assert_eq!(parsed.cst().render(), text.as_bytes());
+
+    let formatted = fsl_cst::format::format(&parsed).expect("reference literal formats");
+    let reparsed = parse(&formatted, Limits::default());
+    assert!(reparsed.is_admissible(), "{:?}", reparsed.diagnostics());
+    let significant = |source: &ParsedSource| {
+        source
+            .cst()
+            .tokens()
+            .iter()
+            .filter(|token| {
+                !matches!(token.kind(), TokenKind::Whitespace | TokenKind::Comment)
+            })
+            .map(|token| token.spelling().to_vec())
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(significant(&parsed), significant(&reparsed));
+    assert_eq!(
+        fsl_cst::format::format(&reparsed).expect("idempotent formatting"),
+        formatted
+    );
+
+    let literals = parsed
+        .cst()
+        .nodes()
+        .iter()
+        .filter(|node| node.production() == Production::ReferenceLiteral)
+        .collect::<Vec<_>>();
+    assert_eq!(literals.len(), 2);
+    for (literal, key) in literals.into_iter().zip(["s1", "s2"]) {
+        let start = text.find(&format!("M::Server#\"{key}\"")).unwrap();
+        assert_eq!(literal.span().start, start);
+        assert!(literal.span().end > start);
+        assert!(parsed.cst().nodes().iter().any(|node| {
+            node.production() == Production::QualifiedName
+                && node.span().start == start
+                && node.span().end == start + "M::Server".len()
+        }));
+    }
+}
+
+#[trace("TC-965", "FR-480-AC-1")]
+#[test]
+fn malformed_reference_literals_are_located_syntax_refusals() {
+    for (body, offset) in [
+        ("M::Server#s1", "M::Server#".len()),
+        ("M::Server#", "M::Server#".len()),
+        ("#\"s1\"", 0),
+    ] {
+        let text = source(body);
+        let parsed = parse(&text, Limits::default());
+        assert!(!parsed.is_admissible(), "{body}");
+        let refusal = parsed.diagnostics().first().expect("located syntax refusal");
+        assert_eq!(refusal.code, CompleteCode::InvalidSyntax, "{body}");
+        assert_eq!(
+            refusal.byte_span().expect("located").start,
+            text.find(body).expect("reference literal") + offset,
+            "{body}"
+        );
+    }
+}
+
 #[trace("TC-790")]
 #[test]
 fn population_type_references_are_admitted_as_named_type_productions() {

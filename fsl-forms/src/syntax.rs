@@ -621,6 +621,15 @@ pub enum ExprNode {
     /// Unicode scalar sequence, kept exactly, with the source spelling it was
     /// decoded from. It is always a `String`.
     String(StringLiteral),
+    /// `M::T#"key"` (FR-480): a reference to one object by its written key.
+    /// The type name is resolved during checking; the key keeps decoded text
+    /// and its source spelling for provenance.
+    ReferenceLiteral {
+        /// The object type, as written.
+        type_name: NameForm,
+        /// The quoted object key.
+        key: StringLiteral,
+    },
     /// A parameter, `let` or binder name, or a qualified enum member.
     Name(NameForm),
     /// `let name = value in body`.
@@ -959,6 +968,7 @@ impl ExprNode {
             | Self::DecimalValue { .. }
             | Self::Quantity(_)
             | Self::String(_)
+            | Self::ReferenceLiteral { .. }
             | Self::Name(_)
             | Self::SelfRef
             | Self::Result
@@ -1074,6 +1084,7 @@ impl ExprNode {
             | Self::DecimalValue { .. }
             | Self::Quantity(_)
             | Self::String(_)
+            | Self::ReferenceLiteral { .. }
             | Self::Name(_)
             | Self::SelfRef
             | Self::Result
@@ -1155,6 +1166,7 @@ impl ExprNode {
             | Self::DecimalValue { .. }
             | Self::Quantity(_)
             | Self::String(_)
+            | Self::ReferenceLiteral { .. }
             | Self::SelfRef
             | Self::Result
             | Self::If { .. }

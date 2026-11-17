@@ -1013,6 +1013,10 @@ fn expressions(g: &mut Grammar) {
         ]),
     );
     g.insert(
+        P::ReferenceLiteral,
+        s(vec![r(P::QualifiedName), x("#"), text()]),
+    );
+    g.insert(
         P::CollectionValue,
         s(vec![
             c(vec![
@@ -1158,6 +1162,7 @@ fn expressions(g: &mut Grammar) {
             x("self"),
             x("result"),
             s(vec![x("protocol"), r(P::QualifiedName)]),
+            r(P::ReferenceLiteral),
             r(P::QuantityLiteral),
             decimal_literal(),
             uint(),
