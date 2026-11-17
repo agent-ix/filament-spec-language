@@ -916,7 +916,8 @@ fn compensation_and_timed_await_answer_unsupported() {
 fn repeat_projects() {
     let package = flow(
         "sequence Main { repeat Loop by Buyer visible () max 2 while { true } \
-         sequence Body { send O via Order as (o: Ack) { true }; } \
+         sequence Body { send O via Order as (o: Ack) { true }; \
+         receive R via Order of O as (r: Ack) { true }; } \
          exhausted sequence Spent { } }",
     );
     let mut asked = request(&package, "Seller");
@@ -938,8 +939,8 @@ fn repeat_projects() {
     let send_id = graph
         .events
         .iter()
-        .find(|event| matches!(event.kind, LocalEventKind::Send { .. }))
-        .expect("the body send projects")
+        .find(|event| matches!(event.kind, LocalEventKind::Receive { .. }))
+        .expect("the body receive projects")
         .id;
     assert!(graph.edges.contains(&(loop_id, send_id)));
 }
@@ -950,7 +951,8 @@ fn repeat_projects() {
 fn a_role_without_repeat_actions_has_no_local_loop() {
     let package = flow(
         "sequence Main { repeat Loop by Buyer visible () max 2 while { true } \
-         sequence Body { } exhausted sequence Spent { } }",
+         sequence Body { event Tick by Warehouse as (tick: Boolean) { true }; } \
+         exhausted sequence Spent { } }",
     );
     let mut asked = request(&package, "Buyer");
     asked.profile = Some("bounded".to_owned());
