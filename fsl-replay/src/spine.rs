@@ -3020,24 +3020,6 @@ mod tests {
     use ix_trace_rs::trace;
     use std::collections::BTreeMap;
 
-    #[trace("FR-360-AC-5")]
-    #[test]
-    fn undeclared_variant_case_message_names_its_owner_and_case() {
-        let refusal = CheckRefusal {
-            location: Location::root(Origin::Expression),
-            cause: CheckCause::UndeclaredVariantCase {
-                owner: "OrderStatus".to_owned(),
-                case: "Lost".to_owned(),
-            },
-        };
-
-        assert_eq!(refusal.cause.code(), Code::IllTyped);
-        assert_eq!(refusal.cause.cause(), Some("type-mismatch"));
-        let message = check_message(&[refusal]);
-        assert!(message.contains("`OrderStatus`"), "{message}");
-        assert!(message.contains("`Lost`"), "{message}");
-    }
-
     #[trace("FR-135-AC-2", "FR-136-AC-2")]
     #[test]
     fn refinement_missing_row_messages_name_the_missing_subject() {

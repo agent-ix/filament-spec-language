@@ -42,6 +42,7 @@ mod script_search;
 mod source_diagnostic_outcome;
 mod static_subject;
 mod tool_failure;
+mod undeclared_variant_case_message;
 mod value_family_end_to_end;
 mod vault_world;
 mod witness_entry_name;
