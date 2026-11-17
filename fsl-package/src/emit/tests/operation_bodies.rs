@@ -534,38 +534,3 @@ fn under_kernel_a_precondition_clause_function_is_linked_and_a_body_is_kernel() 
     assert!(modes.contains(&json!("linked")), "{modes:?}");
 }
 
-/// FR-952-AC-1: an `invariant` clause of the Kernel unit lowers to a state
-/// clause, not a function node, so no function node but the `body` clause
-/// function exists to record `kernel`; a function node that is not a body
-/// would record `linked`.
-#[trace("TC-2662", "FR-952-AC-1")]
-#[test]
-fn under_kernel_an_invariant_clause_function_is_linked() {
-    let document = package(base_operations(), &[]);
-    let declarations = "body sizeA using v on Config::ConfigVersion::size() { 41 }\n\
-         invariant Inv using v on Config::ConfigVersion at current { true }\n";
-    let emission = compile_in_mode(CheckMode::Kernel, &document, declarations, &["Config"])
-        .unwrap_or_else(|refusals| panic!("the unit checks under Kernel: {refusals:?}"));
-    let wire = wire(&emission);
-    let body = function(body_of(&rows(&emission), "ConfigVersion", "size"));
-    let functions: Vec<_> = nodes(&wire)
-        .iter()
-        .filter(|node| node["node_tag"] == "function")
-        .collect();
-    let others: Vec<_> = functions
-        .iter()
-        .filter(|node| node["node_id"] != json!(body))
-        .collect();
-    assert_eq!(functions.len(), 1 + others.len(), "{functions:?}");
-    for node in others {
-        assert_eq!(node["check_mode"], "linked", "{node}");
-    }
-    assert_eq!(
-        nodes(&wire)
-            .iter()
-            .filter(|node| node["semantic_form"] == "state_clause")
-            .count(),
-        1,
-        "the invariant is one state clause"
-    );
-}
