@@ -269,6 +269,12 @@ pub(super) fn complete_reserved_words(
     for rule in grammar.values() {
         collect(rule, &mut output);
     }
+    // These three collection constructors are `Literal` terminals so their
+    // spelling can be recognized in a value position, but they are reserved
+    // throughout the complete grammar just like the `Exact` keywords above.
+    for spelling in ["set", "bag", "orderedSet"] {
+        output.insert(spelling);
+    }
     output
 }
 
@@ -734,7 +740,7 @@ fn source_and_types(g: &mut Grammar) {
             x("on"),
             r(P::QualifiedName),
             x("("),
-            opt(list(ident)),
+            list(ident),
             x(")"),
             r(P::Block),
         ]),
@@ -870,6 +876,7 @@ fn expressions(g: &mut Grammar) {
             s(vec![
                 x("let"),
                 ident(),
+                opt(s(vec![x(":"), r(P::TypeReference)])),
                 x("="),
                 r(P::Expression),
                 x("in"),
@@ -1870,7 +1877,7 @@ fn temporal(g: &mut Grammar) {
         s(vec![
             r(P::AggregateTerm),
             c(vec![x("<"), x("<="), x("="), x(">="), x(">")]),
-            r(P::Expression),
+            r(P::Sum),
         ]),
     );
     g.insert(
@@ -2166,7 +2173,7 @@ fn protocol(g: &mut Grammar) {
             x("join"),
             r(P::JoinPolicy),
             x("["),
-            opt(list(ident)),
+            list(ident),
             x("]"),
             opt(s(vec![
                 x("outstanding"),
@@ -2613,7 +2620,7 @@ fn analysis(g: &mut Grammar) {
             literal("align"),
             literal("skip"),
             x("{"),
-            opt(list(|| r(P::QualifiedName))),
+            list(|| r(P::QualifiedName)),
             x("}"),
         ]),
     );
@@ -2983,8 +2990,6 @@ fn probabilistic(g: &mut Grammar) {
                 bound_op(),
                 // Parse a full expression first: an exact-value prefix such
                 // as `5` must not steal a quantity expression such as `5 ms`.
-                // The exact-value alternative still admits bare decimal
-                // thresholds that are not general primaries yet.
                 c(vec![r(P::Expression), r(P::ExactValue)]),
             ]),
         ]),

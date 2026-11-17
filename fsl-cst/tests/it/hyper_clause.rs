@@ -165,8 +165,15 @@ fn an_indexed_read_in_an_ordinary_temporal_clause_parses_for_the_checker_refusal
 /// FSpec FR-501-AC-8: an `align skip` list names at least one operation.
 #[trace("FSpec-TC-1008", "FSpec-FR-501-AC-8")]
 #[test]
-#[ignore = "QSL-2164: an empty align skip list is accepted; refusing it at the closing brace is not implemented yet"]
 fn an_empty_align_skip_list_is_a_syntax_error_at_its_closing_brace() {
+    let nonempty = source(
+        "hyper NI using inf over behaviours (v: V::Vault)\n\
+         forall trace a of V forall trace b of V\n\
+         align skip { M::T::op }\n\
+         { always holds(v.l @ a = v.l @ b) }",
+    );
+    assert!(parse(&nonempty).is_admissible(), "{nonempty}");
+
     let text = source(
         "hyper NI using inf over behaviours (v: V::Vault)\n\
          forall trace a of V forall trace b of V\n\

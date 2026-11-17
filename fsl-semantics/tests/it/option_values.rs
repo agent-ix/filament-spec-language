@@ -64,6 +64,42 @@ fn some_with_a_payload_outside_the_element_type_refuses_at_the_call() {
     );
 }
 
+/// FSpec FR-143-AC-20 and FR-986-AC-1..3: `null` reaches S3 as an expression
+/// and is refused as ill-typed, including when compared with an option value.
+#[trace(
+    "TC-2214",
+    "FSpec-FR-143-AC-20",
+    "FSpec-FR-986-AC-1",
+    "FSpec-FR-986-AC-2",
+    "FSpec-FR-986-AC-3"
+)]
+#[test]
+fn a_null_expression_is_ill_typed_at_s3() {
+    for declaration in [
+        "function bad using v(): Option<Integer> pure { null }",
+        "function bad using v(a: Option<Integer>): Boolean pure { a = null }",
+    ] {
+        let error = check(declaration).expect_err("null is not an option value");
+        let [refusal] = error.as_slice() else {
+            panic!("one typed refusal for {declaration}: {error:?}");
+        };
+        assert_eq!(refusal.cause.code(), Code::IllTyped, "{declaration}");
+        assert_eq!(
+            refusal.cause.cause(),
+            Some("type-mismatch"),
+            "{declaration}"
+        );
+        assert!(matches!(
+            &refusal.cause,
+            CheckCause::IllTyped(filament_exact::IllTypedCause::TypeMismatch)
+        ));
+        assert!(matches!(
+            &refusal.location.origin,
+            Origin::Body { function, index: 0, .. } if function == "bad"
+        ));
+    }
+}
+
 /// FR-091-AC-76 (TC-2214): `none` is a second spelling of `absent`, and
 /// `result` builds everywhere and is judged by check, not refused at S2.
 #[trace("TC-2214", "FR-091-AC-76")]

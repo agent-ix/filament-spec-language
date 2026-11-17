@@ -234,7 +234,6 @@ fn one(markdown: &str) -> Fence {
 /// `reject` code and cause.
 #[trace("TC-2242", "NFR-017-AC-6")]
 #[test]
-#[ignore = "QSL-2047: the doc fence check is not built yet"]
 fn reject_fences_refuse_with_the_named_code() {
     let body = "type Digit = Int[0, ;\n";
     let tagged = |info: &str| one(&format!("```{info}\n{body}```\n"));

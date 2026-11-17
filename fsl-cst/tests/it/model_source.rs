@@ -110,7 +110,7 @@ fn population_type_references_reject_malformed_maxima_at_the_offending_token() {
         (
             "Population<M::Order>[1e3]",
             "1e3",
-            CompleteCause::UnexpectedToken,
+            CompleteCause::InvalidToken,
         ),
         (
             "Population<M::Order>[*]",

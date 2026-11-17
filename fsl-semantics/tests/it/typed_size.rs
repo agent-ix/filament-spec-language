@@ -2,9 +2,12 @@
 //! FR-981 (TC-2774) and FSpec FR-783: `size<N>(c)` is typed `N` and its
 //! length interval must lie inside `N`'s domain.
 use filament_semantic_value::checking::{CheckMode, CheckingLimits};
+use filament_semantic_value::location::ExpressionOwner as Origin;
 use fsl_forms::build_unit;
 use fsl_foundation::{Code, SourceIdentity};
-use fsl_semantics::check::{CheckRefusal, CheckedGraph, PackageDeclarations};
+use fsl_semantics::check::{
+    CheckCause, CheckRefusal, CheckedGraph, Obligation, PackageDeclarations,
+};
 use fsl_semantics::model::intake::SelectedModels;
 use ix_trace_rs::trace;
 
@@ -78,13 +81,16 @@ fn sized(result: &str, body: &str) -> String {
 #[trace("TC-2774", "FR-981-AC-3", "FSpec-TC-1900", "FSpec-FR-783-AC-1")]
 #[trace("TC-2774", "FR-981-AC-5", "FSpec-TC-1900", "FSpec-FR-783-AC-2")]
 #[test]
-#[ignore = "QSL-1966: S2 refuses size<T>(..); typing it at its result domain is not implemented yet"]
 fn a_typed_size_is_typed_at_its_domain_and_proves_its_range() {
     assert_checks(&sized("Int[0, 4]", "size<Int[0, 4]>(c)"));
-    assert_refused(
+    let narrow = assert_refused(
         &sized("Int[0, 3]", "size<Int[0, 3]>(c)"),
         Code::UndefinedExpression,
         "unproved-range",
+    );
+    assert!(
+        matches!(narrow.cause, CheckCause::Unproved(Obligation::Range { .. })),
+        "{narrow:?}"
     );
     assert_checks(&sized(
         "Int[0, 3]",
@@ -103,5 +109,32 @@ fn a_typed_size_is_typed_at_its_domain_and_proves_its_range() {
     assert_checks(
         "type Count = Int[0, 1000];\n\
          function few using v(c: Sequence<Integer>[0, 4]): Boolean pure { size<Count>(c) >= 0 }",
+    );
+}
+
+/// FSpec FR-144-AC-10 and FR-981-AC-4: a typed size result domain does not infer an
+/// element type for a sequence literal without an expected collection type.
+#[trace("TC-2774", "FSpec-FR-144-AC-10", "FR-981-AC-4")]
+#[test]
+fn typed_size_does_not_infer_a_sequence_literal_element_type() {
+    let ambiguous = assert_refused(
+        "function f using v(): Boolean pure { size<Int[0, 4]>(sequence[7, 8, 7]) = 3 }",
+        Code::IllTyped,
+        "ambiguous-literal",
+    );
+    assert_eq!(
+        ambiguous.cause,
+        CheckCause::IllTyped(filament_exact::IllTypedCause::AmbiguousLiteral)
+    );
+    assert!(
+        matches!(&ambiguous.location.origin, Origin::Body { function, index: 0, .. } if function == "f"),
+        "the refusal belongs to f's body: {:?}",
+        ambiguous.location
+    );
+    assert_eq!(
+        ambiguous.location.path(),
+        [0, 0],
+        "the refusal points to the sequence literal under size: {:?}",
+        ambiguous.location
     );
 }
