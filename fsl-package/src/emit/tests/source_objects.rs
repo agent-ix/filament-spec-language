@@ -333,6 +333,22 @@ fn source_object_identity_rows_roundtrip_through_qc30_intake() {
         )
         .expect("source identity rows join");
     let bytes = rows.to_bytes(&package).expect("identity rows encode");
+    let constructed = crate::ReadIdentityRows::of_rows_with_source_rows(
+        &package,
+        rows.declarations().to_vec(),
+        rows.fields().to_vec(),
+        rows.source_records().to_vec(),
+        rows.source_unions().to_vec(),
+        rows.source_objects().to_vec(),
+        rows.source_operations().to_vec(),
+        emission.source_object_member_facts.clone(),
+    );
+    assert_eq!(
+        constructed
+            .to_bytes(&package)
+            .expect("public constructor encodes"),
+        bytes
+    );
     // Assert the normative wire shape directly: round-tripping through the
     // local row decoder would allow a reduced encoder and decoder to agree
     // on the same non-normative schema.
@@ -366,11 +382,9 @@ fn source_object_identity_rows_roundtrip_through_qc30_intake() {
         .collect()
     );
     assert_eq!(member["admitted_name"], "point");
-    assert!(
-        member["original_member_identity"]
-            .as_str()
-            .is_some_and(|identity| !identity.is_empty())
-    );
+    assert!(member["original_member_identity"]
+        .as_str()
+        .is_some_and(|identity| !identity.is_empty()));
     assert_eq!(member["presence"], "required");
     assert!(member["type_node"].is_object());
     assert!(member["value_type"].is_object());
@@ -413,7 +427,7 @@ fn source_spelling_registry_changes_do_not_change_emitted_package_bytes() {
     assert_eq!(model_alias_bytes, alternate_alias_bytes);
 }
 
-#[trace("FR-569-AC-7", "TC-1407")]
+#[trace("FR-569-AC-7", "TC-1408")]
 #[test]
 fn source_object_node_identity_tracks_only_the_object_declaration_identity() {
     let node_id = |body: &str, name: &str| {
@@ -441,6 +455,60 @@ fn source_object_node_identity_tracks_only_the_object_declaration_identity() {
     assert_eq!(node_id(renamed_operation, "Order"), base_id);
     assert_eq!(node_id(moved, "Order"), base_id);
     assert_ne!(node_id(renamed_object, "Purchase"), base_id);
+}
+
+#[trace("FR-569-AC-7", "TC-1408")]
+#[test]
+fn source_object_node_identity_differs_from_selected_model_node_identity() {
+    let emit_with_model = |text: String| {
+        let parsed = fsl_cst::parse(
+            fsl_foundation::SourceIdentity::new("agent-ix", "test:s-m-identity"),
+            "program.native",
+            text.as_bytes(),
+            fsl_cst::Limits::default(),
+        )
+        .expect("S1 admits the unit");
+        assert_eq!(parsed.diagnostics(), []);
+        let unit = fsl_forms::build_unit(&parsed).expect("S2 builds the unit");
+        let selected = fsl_semantics::model::intake::SelectedModels::fixture(
+            "M",
+            fsl_foundation::Span { start: 0, end: 1 },
+            orders_model::model_package(false),
+            fsl_semantics::model::accounting::ModelNormalizationLimits::UNLIMITED,
+        )
+        .expect("selected model admits");
+        let mut declarations = PackageDeclarations::assemble(
+            parsed.source().reference().clone(),
+            "pkg".to_owned(),
+            unit,
+            selected,
+            Vec::new(),
+        )
+        .expect("S-M assembles");
+        let pending = declarations
+            .link_dispatch(Default::default())
+            .unwrap_or_else(|refusals| panic!("{refusals:?}"));
+        let graph = declarations
+            .check(CheckMode::Linked, CheckingLimits::default())
+            .unwrap_or_else(|refusals| panic!("{:?}", pending.report(refusals)));
+        wire(&emit_checked(&CheckedPackage::link(graph)).expect("S-M emits"))
+    };
+
+    let source_wire = emit_with_model(format!("{HEADER}model M = \"test/orders\";\n{S}"));
+    let source_node = &nodes(&source_wire)[source_object_node(&source_wire, "Order")];
+    let selected_wire = emit_with_model(format!(
+        "{HEADER}model M = \"test/orders\";\nfunction f(x: M::Order): Boolean pure {{ true }}\n"
+    ));
+    let selected_model_node = nodes(&selected_wire)
+        .into_iter()
+        .find(|node| {
+            node["node_tag"] == "model"
+                && node["semantic_form"] == "object_type"
+                && node["owner"]["kind"] == "model"
+                && node["owner"]["node"] == "ix://test/orders/Order"
+        })
+        .expect("selected model's Order node");
+    assert_ne!(source_node["node_id"], selected_model_node["node_id"]);
 }
 
 #[trace("FR-569-AC-14", "FSpec-FR-610-AC-4", "TC-1941", "FSpec-TC-1441")]

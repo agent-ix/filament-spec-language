@@ -1317,35 +1317,16 @@ impl ReadIdentityRows {
             source_unions,
             Vec::new(),
             Vec::new(),
-        )
-    }
-
-    /// The rows of the in-process unit, including source-object and
-    /// source-operation witnesses.
-    pub fn of_rows_with_source_rows(
-        package: &CheckedPackageV2,
-        declarations: Vec<SelectedExactDeclarationRow>,
-        fields: Vec<SelectedExactFieldRow>,
-        source_records: Vec<SelectedSourceRecordRow>,
-        source_unions: Vec<SelectedSourceUnionRow>,
-        source_objects: Vec<SelectedSourceObjectRow>,
-        source_operations: Vec<SelectedSourceOperationRow>,
-    ) -> Self {
-        Self::of_rows_with_source_rows_and_object_facts(
-            package,
-            declarations,
-            fields,
-            source_records,
-            source_unions,
-            source_objects,
-            source_operations,
             Vec::new(),
         )
     }
 
-    /// The rows of an in-process unit, including the source-object member
-    /// facts the reduced IR witness does not retain.
-    pub(crate) fn of_rows_with_source_rows_and_object_facts(
+    /// The rows of the in-process unit, including source-object and
+    /// source-operation witnesses. `source_object_member_facts` must align
+    /// one-for-one with `source_objects` and with each object's members. These
+    /// checked facts supply the FR-531 original member identity and type data
+    /// that [`SelectedSourceObjectRow`] does not retain.
+    pub fn of_rows_with_source_rows(
         package: &CheckedPackageV2,
         declarations: Vec<SelectedExactDeclarationRow>,
         fields: Vec<SelectedExactFieldRow>,

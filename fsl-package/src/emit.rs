@@ -12,33 +12,33 @@
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet, VecDeque};
 
 use filament_contract_model::{
-    ApplicationOperator, CheckedAbstractionField, CheckedAbstractionFrame,
-    CheckedAbstractionObject, CheckedAbstractionParameter, CheckedAbstractionPopulation,
-    CheckedArtifactRef, CheckedCapability, CheckedCapabilityDisposition, CheckedComponentClause,
-    CheckedCompositionComponent, CheckedCompositionPremise, CheckedDeclaration,
-    CheckedDependencySelection, CheckedDiagnosticsV2, CheckedDimensionOperand,
-    CheckedEnvironmentEntry, CheckedEnvironmentSupplies, CheckedFairnessGranularity,
-    CheckedFairnessKind, CheckedFairnessSupply, CheckedFieldScope, CheckedFrameModification,
-    CheckedGuaranteeMeasure, CheckedGuaranteeProgress, CheckedNodeId, CheckedNodeKind,
-    CheckedNodeOwner, CheckedNodeTag, CheckedOccurrence, CheckedOccurrenceRole,
-    CheckedOperandEntry, CheckedOperationAnchorBody, CheckedPackageEvidence, CheckedPackageLockV2,
-    CheckedPackageSidecarsRef, CheckedPackageSourceCorrespondenceRef, CheckedPackageV2,
-    CheckedRational, CheckedRefinementStepRowRegion, CheckedScopedDeletion, CheckedSelection,
-    CheckedSelectionRole, CheckedSemanticGraphV2, CheckedSemanticNodeV2, CheckedSourceMapEntry,
-    CheckedSourceRef, CheckedSourceRegion, CheckedTerm, DimensionTerm, LiteralKind, NominalBody,
-    OperationBody, OperationBodyRow, ProtocolForm, ScalarTypeForm, StateForm, ValueForm,
-    encode_checked_package_v2,
+    encode_checked_package_v2, ApplicationOperator, CheckedAbstractionField,
+    CheckedAbstractionFrame, CheckedAbstractionObject, CheckedAbstractionParameter,
+    CheckedAbstractionPopulation, CheckedArtifactRef, CheckedCapability,
+    CheckedCapabilityDisposition, CheckedComponentClause, CheckedCompositionComponent,
+    CheckedCompositionPremise, CheckedDeclaration, CheckedDependencySelection,
+    CheckedDiagnosticsV2, CheckedDimensionOperand, CheckedEnvironmentEntry,
+    CheckedEnvironmentSupplies, CheckedFairnessGranularity, CheckedFairnessKind,
+    CheckedFairnessSupply, CheckedFieldScope, CheckedFrameModification, CheckedGuaranteeMeasure,
+    CheckedGuaranteeProgress, CheckedNodeId, CheckedNodeKind, CheckedNodeOwner, CheckedNodeTag,
+    CheckedOccurrence, CheckedOccurrenceRole, CheckedOperandEntry, CheckedOperationAnchorBody,
+    CheckedPackageEvidence, CheckedPackageLockV2, CheckedPackageSidecarsRef,
+    CheckedPackageSourceCorrespondenceRef, CheckedPackageV2, CheckedRational,
+    CheckedRefinementStepRowRegion, CheckedScopedDeletion, CheckedSelection, CheckedSelectionRole,
+    CheckedSemanticGraphV2, CheckedSemanticNodeV2, CheckedSourceMapEntry, CheckedSourceRef,
+    CheckedSourceRegion, CheckedTerm, DimensionTerm, LiteralKind, NominalBody, OperationBody,
+    OperationBodyRow, ProtocolForm, ScalarTypeForm, StateForm, ValueForm,
 };
 use serde::Deserialize;
 
 use filament_exact::{Cancel, NodeKey, Origin, PathSegment, Role};
 use filament_semantic_value::catalog::Category;
 use filament_semantic_value::location::ExpressionLocation as Location;
-use fsl_foundation::Code;
-use fsl_foundation::source::node_table::{DebugTable, DebugWith, With, scoped};
+use fsl_foundation::source::node_table::{scoped, DebugTable, DebugWith, With};
 use fsl_foundation::source::provenance::{
     OccurrenceKey, PackageSourceMap, RawSourceRef, SourceRegion,
 };
+use fsl_foundation::Code;
 use fsl_semantics::check::wire_id::StructuralIds;
 use fsl_semantics::check::{
     AbstractionNodeRefusal, AbstractionNodes, Arrival, BindingValue, BodyTerm, CheckedGraph,
@@ -50,8 +50,8 @@ use fsl_semantics::check::{
 };
 use fsl_semantics::value::nominal_payload::NominalPayload;
 use fsl_semantics::value::{
-    DefinitionReference, DefinitionRole, HeaderLayer, Member, ModelRole, NodeOwner, TemporalRole,
-    native_diagnostics_catalog,
+    native_diagnostics_catalog, DefinitionReference, DefinitionRole, HeaderLayer, Member,
+    ModelRole, NodeOwner, TemporalRole,
 };
 use ix_trace_rs::string_edge;
 
@@ -606,13 +606,19 @@ pub struct SelectedSourceRecordMemberRow {
 }
 
 /// The FR-531 member facts retained for each source-object member while its
-/// IR witness is reduced to name, target node and optionality.
+/// IR witness is reduced to name, target node and optionality. A source-object
+/// identity row constructor needs these exact checked facts to write
+/// `identities.json` without rebuilding member identity from display text.
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub(crate) struct SourceObjectMemberFacts {
-    pub(crate) original_member_identity: Box<str>,
-    pub(crate) admitted_name: Box<str>,
-    pub(crate) presence: filament_exact::Presence,
-    pub(crate) value_type: filament_exact::ValueType,
+pub struct SourceObjectMemberFacts {
+    /// The exact original declaration identity of the field.
+    pub original_member_identity: Box<str>,
+    /// The admitted member name.
+    pub admitted_name: Box<str>,
+    /// The field's checked required/optional presence.
+    pub presence: filament_exact::Presence,
+    /// The field's checked original value type.
+    pub value_type: filament_exact::ValueType,
 }
 
 /// One model-owned enum (a variant type of a selected domain model)'s checked
@@ -8667,12 +8673,12 @@ pub(crate) mod equality_reader;
 #[cfg(test)]
 mod extent_agreement;
 pub use clock_selection::{
-    ClockSelectionCause, ClockSelectionDeclaration, ClockSelectionRefusal, clock_kind,
-    is_model_binding_name, profile_clock_kind,
+    clock_kind, is_model_binding_name, profile_clock_kind, ClockSelectionCause,
+    ClockSelectionDeclaration, ClockSelectionRefusal,
 };
 mod identity_rows;
 mod monitor_plan;
 pub(crate) mod protocol_locations;
-pub use monitor_plan::{MonitorPlanWire, declaration_less_function_id, emit_monitor_plan_over};
+pub use monitor_plan::{declaration_less_function_id, emit_monitor_plan_over, MonitorPlanWire};
 mod timed_order;
 pub use timed_order::OrderFault as TimedOrderFault;

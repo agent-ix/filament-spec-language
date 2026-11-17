@@ -191,7 +191,7 @@ impl Emission {
             package_locus("identity_package_output"),
             package.name(),
         )?;
-        Ok(ReadIdentityRows::of_rows_with_source_rows_and_object_facts(
+        Ok(ReadIdentityRows::of_rows_with_source_rows(
             package,
             declarations,
             fields,
