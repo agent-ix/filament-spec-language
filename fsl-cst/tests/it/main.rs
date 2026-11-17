@@ -17,6 +17,7 @@ mod expression_syntax;
 mod formatter_style;
 mod guarantee_declaration;
 mod hyper_clause;
+mod limit_messages;
 mod limits;
 mod model_source;
 mod model_unit;

@@ -1595,6 +1595,21 @@ impl OutcomeDiagnostic {
         )
     }
 
+    /// Project a compile refusal with only the limit-setting mechanism the
+    /// named operation accepts. Replay also accepts request `stage_limits`.
+    fn from_compile_refusal_for_operation(operation: Operation, refusal: &CompileRefusal) -> Self {
+        let mut diagnostic = Self::from_compile_refusal(refusal);
+        if operation != Operation::Replay {
+            if let Some((message, _)) = diagnostic
+                .message
+                .split_once(" or the request's `stage_limits` entry ")
+            {
+                diagnostic.message = message.to_owned();
+            }
+        }
+        diagnostic
+    }
+
     /// The diagnostic of a refused call: its catalog code and cause, and
     /// the resolved region its record carries as locus.
     pub fn from_call_refusal(refusal: &CallRefusal) -> Self {
@@ -1955,13 +1970,17 @@ impl OutcomeDocument {
                 Some(refusal.stage().into()),
                 refusal.code().category(),
             )
-            .with_diagnostics(vec![OutcomeDiagnostic::from_compile_refusal(refusal)]),
+            .with_diagnostics(vec![
+                OutcomeDiagnostic::from_compile_refusal_for_operation(operation, refusal),
+            ]),
             StageFailure::RefusedWithPayload(refusal, _) => Self::new(
                 operation,
                 Some(refusal.stage().into()),
                 refusal.code().category(),
             )
-            .with_diagnostics(vec![OutcomeDiagnostic::from_compile_refusal(refusal)]),
+            .with_diagnostics(vec![
+                OutcomeDiagnostic::from_compile_refusal_for_operation(operation, refusal),
+            ]),
             StageFailure::Limit(limit) => {
                 let refusal = CompileRefusal::Limit(limit.clone());
                 Self::new(
@@ -1969,7 +1988,9 @@ impl OutcomeDocument {
                     Some(refusal.stage().into()),
                     Category::Incomplete,
                 )
-                .with_diagnostics(vec![OutcomeDiagnostic::from_compile_refusal(&refusal)])
+                .with_diagnostics(vec![
+                    OutcomeDiagnostic::from_compile_refusal_for_operation(operation, &refusal),
+                ])
             }
             StageFailure::LimitWithPayload(limit, _) => {
                 let refusal = CompileRefusal::Limit(limit.clone());
@@ -1978,7 +1999,9 @@ impl OutcomeDocument {
                     Some(refusal.stage().into()),
                     Category::Incomplete,
                 )
-                .with_diagnostics(vec![OutcomeDiagnostic::from_compile_refusal(&refusal)])
+                .with_diagnostics(vec![
+                    OutcomeDiagnostic::from_compile_refusal_for_operation(operation, &refusal),
+                ])
             }
             StageFailure::Cancelled(cause) => Self::cancelled(operation, *cause),
             StageFailure::Fault(fault) => Self::faulted(operation, fault),
@@ -1998,7 +2021,9 @@ impl OutcomeDocument {
                     Some(refusal.stage().into()),
                     Category::Incomplete,
                 )
-                .with_diagnostics(vec![OutcomeDiagnostic::from_compile_refusal(&refusal)])
+                .with_diagnostics(vec![
+                    OutcomeDiagnostic::from_compile_refusal_for_operation(operation, &refusal),
+                ])
             }
             Stopped::Cancelled(cause) => Self::cancelled(operation, cause),
             Stopped::Fault(fault) => Self::faulted(operation, &fault),
@@ -2146,7 +2171,9 @@ impl OutcomeDocument {
         match refusal {
             RunRefusal::Compile(compile) => {
                 Self::new(operation, Some(compile.stage().into()), refusal.category())
-                    .with_diagnostics(vec![OutcomeDiagnostic::from_compile_refusal(compile)])
+                    .with_diagnostics(vec![OutcomeDiagnostic::from_compile_refusal_for_operation(
+                        operation, compile,
+                    )])
             }
             RunRefusal::Cancelled(cause) => Self::cancelled(operation, *cause),
             RunRefusal::Fault(fault) => Self::faulted(operation, fault),
@@ -2336,11 +2363,35 @@ mod tests {
 
     use filament_exact::{Cancel, CancelCause, Identifier, ScalarLimits};
     use filament_semantic_value::catalog::{CatalogCode, InternalFault};
+    use fsl_foundation::diagnostic::LimitExceeded;
+    use fsl_foundation::Setting;
     use fsl_semantics::model::object_environment::ObjectEnvironment;
     use serde_json::{json, Value};
 
     use super::*;
     use crate::identity::QualifiedName;
+
+    /// Trace: FR-255-AC-3, the operation hint follows the entry point's accepted inputs.
+    #[trace("TC-931", "FR-255-AC-3")]
+    #[test]
+    fn run_limit_message_omits_stage_limits_while_replay_keeps_it() {
+        let run_refusal = RunRefusal::Compile(Box::new(CompileRefusal::Limit(LimitExceeded::new(
+            Setting::S1Tokens,
+            3,
+            4,
+        ))));
+        let run = OutcomeDocument::from_run_refusal(Operation::Execute, &run_refusal);
+        let run_message = run.diagnostics()[0].message();
+        assert!(run_message.contains("--limit s1.tokens"), "{run_message}");
+        assert!(!run_message.contains("stage_limits"), "{run_message}");
+
+        let replay_refusal = ReplayRefusal::Recompile(Box::new(CompileRefusal::Limit(
+            LimitExceeded::new(Setting::S1Tokens, 3, 4),
+        )));
+        let replay = OutcomeDocument::from_replay(&Err(replay_refusal));
+        let replay_message = replay.diagnostics()[0].message();
+        assert!(replay_message.contains("stage_limits"), "{replay_message}");
+    }
 
     #[test]
     fn timed_statistical_refusal_carries_typed_state_and_transition() {
