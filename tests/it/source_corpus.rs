@@ -729,7 +729,6 @@ const REQUIRED_VALUE_REQUESTS: &[&str] = &[
 ];
 
 const REQUIRED_FLIPS_BY_CASE: &[(&str, &str)] = &[
-    ("dec-numeral-1965", "QSL-1965"),
     ("let-annot-2008", "QSL-2008"),
     ("div-1989", "QSL-1989"),
     ("rem-1989", "QSL-1989"),
@@ -778,7 +777,6 @@ const EXPECTED_FLIP_COUNTS: &[(&str, usize)] = &[
     ("G-026", 2),
     ("G-027", 1),
     ("G-028", 5),
-    ("QSL-1965", 1),
     ("QSL-1986", 1),
     ("QSL-1989", 4),
     ("QSL-2004", 4),
