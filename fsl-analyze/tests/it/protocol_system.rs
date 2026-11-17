@@ -1891,7 +1891,7 @@ fn an_unbound_symbolic_capacity_requires_a_bound() {
     let unbounded_root = Case::new(
         &capacity_case("symbolic(Bound)", false)
             .body
-            .replace("(d: Boolean)", "(d: Integer)"),
+            .replace("(d: Boolean) { d }", "(d: Integer) { d = 0 }"),
         &[0],
     );
     let ModelCheckRefusal::RequiresBound(bound) = refusal(&unbounded_root) else {
