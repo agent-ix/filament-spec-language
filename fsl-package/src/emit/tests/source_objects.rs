@@ -742,6 +742,7 @@ fn source_clock_place_keys_use_the_source_owner_identity() {
         declaration: None,
         owner: None,
         owner_model: None,
+        check_mode: None,
         body: CheckedTerm::Literal {
             type_id: node_id,
             value_kind: LiteralKind::Text,
