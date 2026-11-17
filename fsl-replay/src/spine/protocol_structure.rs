@@ -87,6 +87,20 @@ impl<'p> Reader<'p> {
         })
     }
 
+    fn optional_reference_member(
+        node: &CheckedSemanticNodeV2,
+        member: &str,
+    ) -> Option<CheckedNodeId> {
+        let CheckedTerm::Aggregate { members } = Self::term_member(node, member)? else {
+            return None;
+        };
+        match members.as_slice() {
+            [] => None,
+            [CheckedTerm::Reference { target }] => Some(target.clone()),
+            _ => None,
+        }
+    }
+
     fn integer(term: &CheckedTerm) -> Option<u64> {
         match term {
             CheckedTerm::Literal {
@@ -316,6 +330,27 @@ impl<'p> Reader<'p> {
                         },
                         within: within.clone(),
                     });
+                }
+                let children = match operation {
+                    fsl_package::protocol_view::ControlOperation::Repeat => {
+                        let mut children = Self::reference_member(node, "body")
+                            .into_iter()
+                            .collect::<Vec<_>>();
+                        children.extend(Self::optional_reference_member(node, "exhausted"));
+                        children
+                    }
+                    fsl_package::protocol_view::ControlOperation::Await => [
+                        Self::reference_member(node, "event"),
+                        Self::reference_member(node, "then"),
+                        Self::reference_member(node, "timeout"),
+                    ]
+                    .into_iter()
+                    .flatten()
+                    .collect(),
+                    _ => Vec::new(),
+                };
+                for child in children {
+                    self.walk(&child, within)?;
                 }
             }
         }
