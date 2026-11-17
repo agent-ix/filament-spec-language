@@ -465,7 +465,15 @@ fn the_diagnostic_list_is_cut_at_its_bound() {
         cut.byte_span().expect("located").start,
         record + text[record..].find("; }").expect("the offending token")
     );
-    assert!(cut.message.contains("i2.diagnostics") && cut.message.contains("100"));
+    assert_eq!(
+        cut.message,
+        "50 additional syntax errors omitted after the fixed limit of 100"
+    );
+    assert!(
+        !cut.message.contains("raise")
+            && !cut.message.contains("s1.diagnostics")
+            && !cut.message.contains("i2.diagnostics")
+    );
     assert!(
         diagnostics
             .iter()

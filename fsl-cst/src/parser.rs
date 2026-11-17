@@ -15,7 +15,7 @@ use crate::lexer::Limits;
 use crate::token::{Kind, LexError};
 use filament_exact::Cancel;
 use fsl_foundation::selection::{
-    valid_selection_identity, ImportSelection, ModelSelection, ProfileSelection, SourceSelections,
+    ImportSelection, ModelSelection, ProfileSelection, SourceSelections, valid_selection_identity,
 };
 use fsl_foundation::{Phase, Source, Span, SyntaxLimit};
 
@@ -161,7 +161,7 @@ pub(super) fn parse(
             cut_span.start,
             cut_span.end,
             format!(
-                "{omitted} additional syntax errors omitted after the first {SYNTAX_DIAGNOSTIC_BOUND}; raise i2.diagnostics to see the rest"
+                "{omitted} additional syntax errors omitted after the fixed limit of {SYNTAX_DIAGNOSTIC_BOUND}"
             ),
         ));
     }
@@ -690,7 +690,7 @@ fn append_omitted_diagnostic(
         span.start,
         span.end,
         format!(
-            "{omitted_count} additional syntax errors omitted after the first {SYNTAX_DIAGNOSTIC_BOUND}; raise i2.diagnostics to see the rest"
+            "{omitted_count} additional syntax errors omitted after the fixed limit of {SYNTAX_DIAGNOSTIC_BOUND}"
         ),
     ));
 }
