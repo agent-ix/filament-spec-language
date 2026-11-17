@@ -1016,6 +1016,13 @@ pub(crate) const GUARDED: Vault = Vault::Custom(
      post Step using v on V::Vault::step { (i = self.h and self.l = 0) or (i != self.h and self.l = 1) }\n",
 );
 
+const KERNEL_GUARDED: Vault = Vault::Custom(
+    "pre Guard using v on V::Vault::step { q(1 - self.l + self.h) >= 0 }\n\
+     post Step using v on V::Vault::step { (i = self.h and self.l = 0) or (i != self.h and self.l = 1) }\n",
+);
+const KERNEL_DIV_FUNCTION: &str = "function q using v(x: Integer): Integer pure { 1 div x }\n";
+const KERNEL_MOD_FUNCTION: &str = "function q using v(x: Integer): Integer pure { 1 mod x }\n";
+
 /// `Opaque` over [`GUARDED`] with a `match` that confines `a` to `step(0)`.
 pub(crate) const GUARDED_CLAUSE: &str = "hyper Opaque using inf over behaviours (v: V::Vault) \
      forall trace a of V exists trace b of V \
@@ -1029,7 +1036,13 @@ pub(crate) const GUARDED_CLAUSE: &str = "hyper Opaque using inf over behaviours 
 /// `Undecided(UndecidedSuccessor)`, never `Holds`. `a` takes only `step(0)`, so
 /// it never reaches `(0, 1)`; its partner from `(0, 0)` takes `step(1)` there.
 fn assert_an_existential_member_with_an_undefined_contract_leaves_the_item_undecided() {
-    let world = World::new(GUARDED, false, &STARTS, GUARDED_CLAUSE);
+    let world = World::new_with_kernel_function(
+        KERNEL_GUARDED,
+        false,
+        &STARTS,
+        GUARDED_CLAUSE,
+        KERNEL_DIV_FUNCTION,
+    );
     let outcome = run(&world, ModelCheckLimits::default());
     let HyperOutcome::Undecided { cause, .. } = outcome else {
         panic!("expected no decision, got {outcome:?}");
@@ -1085,7 +1098,13 @@ fn assert_a_state_keeps_its_earliest_refused_finding() {
          match { (if present(a.step.Vault::step.i) then value(a.step.Vault::step.i) else 0) = 0 \
          and b.step.op != stutter } \
          { holds(v.h @ a != v.h @ b) and always holds(v.l @ a = v.l @ b) }";
-    let world = World::new(GUARDED, false, &STARTS, clause);
+    let world = World::new_with_kernel_function(
+        KERNEL_GUARDED,
+        false,
+        &STARTS,
+        clause,
+        KERNEL_DIV_FUNCTION,
+    );
     let matcher = RefuseThenHold {
         seams: world.seams(),
         calls: std::cell::Cell::new(0),
@@ -1104,12 +1123,11 @@ fn assert_a_state_keeps_its_earliest_refused_finding() {
     assert_eq!(cause, UndecidedCause::UndecidedSuccessor);
 }
 
-/// FR-177-AC-7: `Opaque` over the leaky vault whose `step` precondition has
-/// no value in the state `(0, 1)` returns `Undecided(UndecidedSuccessor)` and
-/// never `Holds`, and so does the same item with a `μ_U` evaluation refused on
-/// a joint step that enters position 2, the contract at position 1 coming
-/// first.
-#[trace("TC-602", "FR-177-AC-7")]
+/// FR-177-AC-7: the Linked precondition calls Kernel-checked `q`; its
+/// division is undefined in the state `(0, 1)`. The item remains
+/// `Undecided(UndecidedSuccessor)`, and the contract finding at position 1
+/// comes before a refused `μ_U` evaluation at position 2.
+#[trace("TC-602", "FR-177-AC-7", "FR-495-AC-3", "FR-952-AC-1")]
 #[test]
 fn an_undefined_contract_at_position_one_comes_before_a_refused_match_at_position_two() {
     assert_an_existential_member_with_an_undefined_contract_leaves_the_item_undecided();
@@ -1240,18 +1258,28 @@ fn refusal(result: Result<ModelTraceSettlement, ReplayRefusal>) -> ModelTraceRef
     }
 }
 
-/// The `Undefined` counterexample of an HP-3 clause (FR-177-AC-5), whose
-/// traces include the existential variable's path to the state where `μ_E`
-/// has no value, replays
-/// to the `UndefinedEvaluation` it carries; with the existential trace removed
-/// the reader refuses it as `invalid_runtime_input`/`invalid-value` before any
-/// replay.
-#[trace("TC-602", "FR-183-AC-6")]
+/// The `Undefined` counterexample of an HP-3 clause (FR-177-AC-5) calls
+/// Kernel-checked `q` from its Linked match body. Replay preserves `q`'s
+/// recorded mode; removing the existential path is refused before replay.
+#[trace(
+    "TC-602",
+    "FR-177-AC-5",
+    "FR-183-AC-6",
+    "FR-495-AC-3",
+    "FR-952-AC-1",
+    "FR-952-AC-2"
+)]
 #[test]
 fn an_undefined_existential_match_counterexample_replays_and_needs_its_existential_path() {
-    let divided = " and (if present(b.step.Vault::step.i) then 1 mod value(b.step.Vault::step.i) \
+    let divided = " and (if present(b.step.Vault::step.i) then q(value(b.step.Vault::step.i)) \
                    else 0) = 0";
-    let world = World::new(Vault::Secure, false, &STARTS, &opaque(divided));
+    let world = World::new_with_kernel_function(
+        Vault::Secure,
+        false,
+        &STARTS,
+        &opaque(divided),
+        KERNEL_MOD_FUNCTION,
+    );
     let counterexample = refuted(run(&world, ModelCheckLimits::default()));
     let HyperCounterexampleKind::Undefined(claimed) = counterexample.kind.clone() else {
         panic!("expected an undefined-evaluation counterexample");
