@@ -1511,22 +1511,18 @@ impl<M: MemoryModel> ProtocolSystem<'_, M> {
                 }
                 return Ok(());
             }
-            let locked: Vec<_> = probe_applications
-                .successors
-                .iter()
-                .filter(|applied| {
-                    accesses
-                        .attempt(&key)
-                        .and_then(|attempt| attempt.instance(&applied.transition))
-                        .is_some_and(|access| {
-                            matches!(
-                                access,
-                                InstanceAccess::Shape { reads, writes, .. }
-                                    if !reads.is_empty() && !writes.is_empty()
-                            )
-                        })
+            let locked: Vec<_> = accesses
+                .attempt(&key)
+                .into_iter()
+                .flat_map(|attempt| attempt.instances.iter())
+                .filter(|instance| {
+                    matches!(
+                        &instance.access,
+                        InstanceAccess::Shape { reads, writes, .. }
+                            if !reads.is_empty() && !writes.is_empty()
+                    )
                 })
-                .cloned()
+                .map(|instance| instance.transition.clone())
                 .collect();
             if !locked.is_empty() {
                 for candidate in locked {
@@ -1926,7 +1922,7 @@ impl<M: MemoryModel> ProtocolSystem<'_, M> {
         after: Cursor,
         text: &str,
         accesses: &StateWeakAccesses,
-        candidate: &Applied,
+        candidate: &ModelTransition,
         identities: &ObservedIdentities<'_>,
         gathered: &mut Gathered<M>,
     ) -> Result<(), ExpansionStop> {
@@ -1938,9 +1934,7 @@ impl<M: MemoryModel> ProtocolSystem<'_, M> {
         let Some(weak) = accesses.attempt(&key) else {
             return Ok(());
         };
-        let Some(InstanceAccess::Shape { reads, writes, .. }) =
-            weak.instance(&candidate.transition)
-        else {
+        let Some(InstanceAccess::Shape { reads, writes, .. }) = weak.instance(candidate) else {
             return Ok(());
         };
         let mut observation = self
@@ -1992,7 +1986,7 @@ impl<M: MemoryModel> ProtocolSystem<'_, M> {
         for applied in applications
             .successors
             .iter()
-            .filter(|applied| applied.transition == candidate.transition)
+            .filter(|applied| &applied.transition == candidate)
         {
             if let Some(constraint) = attempt.constraint {
                 let mut frame = self.frame(instance, path, node);
