@@ -1425,17 +1425,23 @@ impl<'a> ExprRef<'a> {
 
     /// Whether this subtree and `other`, of any arena, are the same
     /// expression: equal node payloads, child for child. The nodes'
-    /// positions in their arenas play no part; a payload that records the
-    /// span of a type it names (a conversion's target, an accumulation's or
-    /// a count's result type) compares that span as part of the payload.
-    /// Runs on an explicit stack, so a deep tree compares in constant
-    /// native stack.
+    /// positions in their arenas play no part. Source locations on field
+    /// accesses do not affect expression identity; a payload that records
+    /// the span of a type it names (a conversion's target, an accumulation's
+    /// or a count's result type) still compares that span. Runs on an explicit
+    /// stack, so a deep tree compares in constant native stack.
     pub fn same_tree(self, other: ExprRef<'_>) -> bool {
         let mut pending = vec![(self, other)];
         while let Some((left, right)) = pending.pop() {
             let (mut left_node, mut right_node) = (left.node.clone(), right.node.clone());
             left_node.shift_children(|_| ExprId(0));
             right_node.shift_children(|_| ExprId(0));
+            if let ExprNode::Field { member_span, .. } = &mut left_node {
+                *member_span = None;
+            }
+            if let ExprNode::Field { member_span, .. } = &mut right_node {
+                *member_span = None;
+            }
             if left_node != right_node {
                 return false;
             }
@@ -5294,6 +5300,28 @@ mod tests {
             depths.push(deepest + 1);
         }
         depths.last().copied().unwrap_or(0)
+    }
+
+    #[test]
+    fn expression_tree_equality_ignores_field_token_locations() {
+        let field_read = |start| {
+            let member_span = Span {
+                start,
+                end: start + 2,
+            };
+            Expression::compose([Expression::name("got")], |[operand]| ExprNode::Field {
+                operand,
+                field: "ok".into(),
+                member_span: Some(member_span),
+            })
+        };
+
+        let listed = field_read(10);
+        let guard = field_read(40);
+        assert!(listed.root().same_tree(guard.root()));
+        assert!(!listed
+            .root()
+            .same_tree(Expression::field(Expression::name("got"), "ready").root()));
     }
 
     /// A 100,000-deep tree, alternating single-, two- and many-operand

@@ -157,7 +157,7 @@ fn int(value: i128) -> WitnessValue {
 #[test]
 fn tc_444_the_occurrence_key_selects_the_predicate_or_the_application_claim() {
     let source = unit();
-    let compiled = spine(&source, &BTreeMap::new());
+    let compiled = kernel_spine(&source, &BTreeMap::new());
     let x = |function| parameter(&compiled, function, 0);
 
     let p_declaration = declaration(&compiled, "p");
@@ -277,7 +277,7 @@ fn tc_444_the_occurrence_key_selects_the_predicate_or_the_application_claim() {
 #[test]
 fn tc_444_each_occurrence_of_one_node_is_a_claim_of_its_own() {
     let source = unit();
-    let compiled = spine(&source, &BTreeMap::new());
+    let compiled = kernel_spine(&source, &BTreeMap::new());
     let x = parameter(&compiled, "s", 0);
     let then_branch = record(&compiled, &source, "s", "10 mod x", 0);
     let right_operand = record(&compiled, &source, "s", "10 mod x", 1);
@@ -314,7 +314,7 @@ fn tc_444_each_occurrence_of_one_node_is_a_claim_of_its_own() {
 #[test]
 fn tc_444_binder_bodies_are_observed_and_unread_parameters_are_filled() {
     let source = unit();
-    let compiled = spine(&source, &BTreeMap::new());
+    let compiled = kernel_spine(&source, &BTreeMap::new());
     let t = parameter(&compiled, "b", 0);
     let sequence = |elements: &[i128]| {
         WitnessValue::Sequence(elements.iter().map(|element| int(*element)).collect())
@@ -416,7 +416,7 @@ fn record_binder_node(compiled: &ComposedUnit, function: &str) -> NodeKey {
 #[test]
 fn tc_444_a_key_selecting_no_claim_of_the_function_refuses() {
     let source = unit();
-    let compiled = spine(&source, &BTreeMap::new());
+    let compiled = kernel_spine(&source, &BTreeMap::new());
     let x = |function| parameter(&compiled, function, 0);
     let r_application = record(&compiled, &source, "r", "10 mod x", 0);
     let no_node = OccurrenceKey::new(
@@ -509,7 +509,7 @@ fn tc_444_a_key_selecting_no_claim_of_the_function_refuses() {
 #[test]
 fn tc_444_claim_selection_comes_after_the_function_and_before_the_join() {
     let source = unit();
-    let compiled = spine(&source, &BTreeMap::new());
+    let compiled = kernel_spine(&source, &BTreeMap::new());
     let x = parameter(&compiled, "p", 0);
     let r_application = record(&compiled, &source, "r", "10 mod x", 0);
     let build = || {
@@ -555,7 +555,7 @@ fn tc_444_claim_selection_comes_after_the_function_and_before_the_join() {
 #[test]
 fn tc_444_unread_parameters_fill_by_type() {
     let source = unit();
-    let compiled = spine(&source, &BTreeMap::new());
+    let compiled = kernel_spine(&source, &BTreeMap::new());
     // Each body also reads the unread parameter so that only the correct
     // fill is undefined there: the claim site (`10 mod x`) is defined at
     // `x = 1`, and the later undefined step is another location, so only the
@@ -588,7 +588,7 @@ fn tc_444_unread_parameters_fill_by_type() {
 #[test]
 fn tc_444_a_stop_inside_a_recursive_call_is_not_the_outer_observation() {
     let source = unit();
-    let compiled = spine(&source, &BTreeMap::new());
+    let compiled = kernel_spine(&source, &BTreeMap::new());
     let x = parameter(&compiled, "f", 0);
     let key = record(&compiled, &source, "f", "10 mod x", 0);
     assert_eq!(
@@ -604,7 +604,7 @@ fn tc_444_a_stop_inside_a_recursive_call_is_not_the_outer_observation() {
 #[test]
 fn tc_444_a_stop_inside_a_mutually_recursive_call_is_not_the_outer_observation() {
     let source = unit();
-    let compiled = spine(&source, &BTreeMap::new());
+    let compiled = kernel_spine(&source, &BTreeMap::new());
     let x = parameter(&compiled, "g", 0);
     let key = record(&compiled, &source, "g", "10 mod x", 0);
     assert_eq!(
@@ -616,9 +616,7 @@ fn tc_444_a_stop_inside_a_mutually_recursive_call_is_not_the_outer_observation()
 /// FR-098-AC-34: replay keeps the check mode recorded with the package. The
 /// `Linked` half is asserted here: a possibly-zero `mod` yields no `Linked`
 /// package to replay, and a `Linked` claim recompiles and settles under
-/// `Linked`. The `Kernel` half (a `Kernel` package's claim recompiled under
-/// `Kernel` and reproduced) is asserted through AC-22 to AC-27 once a
-/// package records its mode.
+/// `Linked`. The recorded-`Kernel` half is covered by the TC-1784 tests below.
 #[trace("TC-1784", "FR-098-AC-34")]
 #[test]
 fn tc_1784_replay_never_rechecks_a_claim_under_another_mode() {
@@ -661,14 +659,14 @@ fn tc_1784_replay_never_rechecks_a_claim_under_another_mode() {
 /// `Location` is no observation.
 #[trace("TC-444", "FR-098-AC-27")]
 #[test]
-#[ignore = "QSL-2002: the unit must be checked and replayed under the recorded Kernel mode, and S6a reports no frame_depth yet"]
+#[ignore = "QSL-2002: S6a reports no frame_depth yet"]
 fn tc_444_a_recursive_site_reproduces_only_at_frame_depth_zero() {
     let source = format!(
         "language \"ix:native\" edition \"1-draft\";\n{PROFILE}\
          function d using v(n: Int[0, 9]): Integer pure decreases(n) \
          {{ if n = 0 then 0 else d(n - 1) + 10 mod (n - 1) }}\n"
     );
-    let compiled = spine(&source, &BTreeMap::new());
+    let compiled = kernel_spine(&source, &BTreeMap::new());
     let n = parameter(&compiled, "d", 0);
     let key = record(&compiled, &source, "d", "10 mod (n - 1)", 0);
     let at = |value| {
@@ -757,7 +755,13 @@ fn tc_1784_a_mixed_package_replays_each_body_under_its_own_mode() {
     let y = parameter(&compiled, "g", 1);
     let key = record(&compiled, &source, "g", "x mod y", 0);
     assert_eq!(
-        settled(run(&source, &compiled, "g", &key, &[(x, int(3)), (y, int(2))])),
+        settled(run(
+            &source,
+            &compiled,
+            "g",
+            &key,
+            &[(x, int(3)), (y, int(2))]
+        )),
         Settled::Verdicts(boolean(true))
     );
 }

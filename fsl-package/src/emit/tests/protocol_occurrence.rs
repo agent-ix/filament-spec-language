@@ -281,7 +281,7 @@ fn w_repeat_dimensions_are_an_iteration_and_an_exhaustion() {
 fn nested_repeats() -> String {
     let nested = W.replace(
         "      attempt Polled by Fulfillment on M::Shipment::poll contracts []\n        as (polled: M::ShipmentResult) { true };\n      exhausted check Limit using v { true };",
-        "      sequence Cycle {\n        attempt Probe by Fulfillment on M::Shipment::poll contracts []\n          as (probe: M::ShipmentResult) { true };\n        repeat Inner by Fulfillment visible (eastRes.ok) max 2 while { eastRes.ok }\n          attempt Polled by Fulfillment on M::Shipment::poll contracts []\n            as (polled: M::ShipmentResult) { true };\n          exhausted check InnerLimit using v { true };\n      }\n      exhausted check Limit using v { true };",
+        "      sequence Cycle {\n        attempt Probe by Fulfillment on M::Shipment::poll contracts []\n          as (probe: M::ShipmentResult) { true };\n        repeat Inner by Payments visible (got.ok) max 2 while { got.ok }\n          attempt Polled by Fulfillment on M::Shipment::poll contracts []\n            as (polled: M::ShipmentResult) { true };\n          exhausted check InnerLimit using v { true };\n      }\n      exhausted check Limit using v { true };",
     );
     assert_ne!(nested, W);
     nested
