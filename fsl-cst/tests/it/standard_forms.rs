@@ -144,7 +144,6 @@ fn operation_names_are_a_type_name_and_a_member() {
 /// FSpec FR-501-AC-8: a `join` list names every branch and is never empty.
 #[trace("FSpec-TC-1008", "FSpec-FR-501-AC-8")]
 #[test]
-#[ignore = "QSL-2164: an empty join list is accepted; refusing it at the closing bracket is not implemented yet"]
 fn an_empty_join_list_refuses_at_its_closing_bracket() {
     let protocol = |join: &str| {
         unit(&format!(

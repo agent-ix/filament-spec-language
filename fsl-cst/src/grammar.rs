@@ -734,7 +734,7 @@ fn source_and_types(g: &mut Grammar) {
             x("on"),
             r(P::QualifiedName),
             x("("),
-            opt(list(ident)),
+            list(ident),
             x(")"),
             r(P::Block),
         ]),
@@ -2618,7 +2618,7 @@ fn analysis(g: &mut Grammar) {
             literal("align"),
             literal("skip"),
             x("{"),
-            opt(list(|| r(P::QualifiedName))),
+            list(|| r(P::QualifiedName)),
             x("}"),
         ]),
     );
