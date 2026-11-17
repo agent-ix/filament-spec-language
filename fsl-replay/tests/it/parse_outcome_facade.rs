@@ -55,6 +55,7 @@ fn diagnostic(refusal: &CompileRefusal) -> Value {
         "cause": refusal.cause(),
         "code": refusal.code().as_str(),
         "locus": locus,
+        "details": null,
         "message": refusal.to_string()
     })
 }
@@ -246,6 +247,7 @@ fn a_driver_serializes_requested_and_deadline_parse_cancellation() {
                     "cause": wire_cause,
                     "code": "cancelled",
                     "locus": null,
+                    "details": null,
                     "message": "the operation was cancelled"
                 }])
             )
@@ -271,6 +273,7 @@ fn a_driver_serializes_a_constructed_parse_fault_at_no_stage() {
                 "cause": fault.catalog_code().cause(),
                 "code": fault.catalog_code().code(),
                 "locus": null,
+                "details": null,
                 "message": "internal invariant constructed-test-invariant broken in S2"
             }])
         )

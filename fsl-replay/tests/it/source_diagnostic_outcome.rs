@@ -69,6 +69,7 @@ fn pre_admission_blank_labels_retain_the_typed_label_without_a_locus() {
                     "cause": "blank-label",
                     "code": "invalid_source_identity",
                     "locus": null,
+                    "details": null,
                     "message": "exact preflight detail: λ",
                     "label": spelling
                 }),
@@ -156,6 +157,7 @@ fn other_source_causes_omit_label_and_preserve_the_original_region_and_detail() 
             "cause": tag,
             "code": code,
             "locus": expected_locus,
+            "details": null,
             "message": detail
         });
         assert_projections(&diagnostic, &expected);
@@ -163,7 +165,7 @@ fn other_source_causes_omit_label_and_preserve_the_original_region_and_detail() 
     let ordinary = OutcomeDiagnostic::new(None, "cancelled", None, "ordinary diagnostic");
     assert_eq!(
         diagnostic_value(&document(ordinary)),
-        json!({"cause": null, "code": "cancelled", "locus": null, "message": "ordinary diagnostic"})
+        json!({"cause": null, "code": "cancelled", "locus": null, "details": null, "message": "ordinary diagnostic"})
     );
 }
 

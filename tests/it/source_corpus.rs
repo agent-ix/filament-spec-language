@@ -1506,7 +1506,7 @@ fn corpus_runner_compares_lifecycle_members_of_every_command_kind() {
     .unwrap();
     assert_eq!(run_directory(directory.path()).unwrap(), "flips_with: none");
 
-    // An analyze run whose claim holds. FR-621 writes `last_stage` null.
+    // An analyze run whose claim holds. FR-621 names the in-process engine stage.
     let directory = tempfile::tempdir().unwrap();
     let unit = format!(
         "{}temporal Q using t0 over (c: M::Counter) clock \"model-steps\" on origin {{ always holds(c.value <= 3) }}\n",
@@ -1517,7 +1517,8 @@ fn corpus_runner_compares_lifecycle_members_of_every_command_kind() {
         directory.path(),
         "analyze",
         &unit,
-        &json!({"verb":"analyze","exit_code":0,"category":"success","last_stage":null}).to_string(),
+        &json!({"verb":"analyze","exit_code":0,"category":"success","last_stage":"S6c"})
+            .to_string(),
     );
     std::fs::write(
         directory.path().join("package.json"),

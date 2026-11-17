@@ -68,7 +68,7 @@ pub use trace_subject::{
 };
 
 use super::call::{
-    convert_call_failure, convert_outcome, run_compiled as run_call_compiled, select,
+    convert_call_failure, convert_outcome, run_compiled as run_call_compiled, select, CallSources,
 };
 pub use super::call::{CallOutcome, CallValue, RunRefusal};
 use super::lifecycle as front_end;
@@ -92,6 +92,8 @@ pub enum ClauseArgumentValue {
         /// The object's declared key.
         key: String,
     },
+    /// Any other FR-650 run value form, read against the parameter's type.
+    Form(serde_json::Value),
 }
 
 /// One `{parameter, value}` argument of a `Function` selection.
@@ -1381,6 +1383,7 @@ fn run_clause_reading(
         observation_limits: request.observation_limits,
         accounting: request.accounting,
         package,
+        package_name: &request.package_name,
         sources: &sources,
         progress_capacity: request.limits.progress.covered_positions,
     };
@@ -1773,6 +1776,11 @@ fn run_program_batch_with_compile(
                 let result = run_call_compiled(
                     &compiled.program.checked,
                     &compiled.program.models,
+                    CallSources {
+                        package_name: &compilation.package_name,
+                        packages: &compiled.packages,
+                        model_limits: compiled.model_limits,
+                    },
                     &call,
                     &fsl_semantics::model::object_environment::ObjectEnvironment::default(),
                     &fsl_eval::execution::SuppliedBackends::default(),
@@ -2013,6 +2021,7 @@ fn run_compiled_clause_selection(
         observation_limits: request.observation_limits,
         accounting: request.accounting,
         package,
+        package_name: &request.package_name,
         sources: &compiled.sources,
         progress_capacity: request.limits.progress.covered_positions,
     };
@@ -2121,6 +2130,9 @@ pub(crate) struct CompiledRun<'a> {
     pub(crate) accounting: ScalarLimits,
     /// The compiled package.
     pub(crate) package: &'a fsl_package::CheckedPackage,
+    /// The package name the program was compiled as: the owner of its
+    /// source-declared units (FR-650 "Unit names").
+    pub(crate) package_name: &'a str,
     /// The unit's and every resolved library's source, for loci.
     pub(crate) sources: &'a [Source],
     /// The covered-position capacity for temporal progress admission.
@@ -2567,6 +2579,7 @@ fn run_function(
     let observation_limits = run.observation_limits;
     let accounting = run.accounting;
     let package = run.package;
+    let package_name = run.package_name;
     let sources = run.sources;
     let report = |disposition: ClauseDisposition| ClauseRunReport {
         basis: undecided_basis(&disposition),
@@ -2692,6 +2705,39 @@ fn run_function(
                     ))));
                 };
                 Value::Reference(reference.clone())
+            }
+            (ClauseArgumentValue::Form(form), value_type) => {
+                let universe_of = |declared: &filament_exact::EffectiveId| {
+                    population_universe_for(
+                        package.graph().model_inputs(),
+                        packages,
+                        model_limits,
+                        declared.clone(),
+                    )
+                    .ok()
+                };
+                let world = super::run_value::World {
+                    objects: &environment,
+                    universe_of: &universe_of,
+                };
+                let forms = super::run_value::Forms::new(
+                    package.graph().scope().types(),
+                    package.graph().scope().enums(),
+                )
+                .in_world(package_name, Some(&world));
+                match forms.read(form, value_type) {
+                    Ok(value) => value,
+                    Err(super::run_value::ReadStop::Defect(defect)) => {
+                        return Ok(report(ClauseDisposition::ArgumentRefusal(Box::new(
+                            RunRefusal::Argument { position, defect },
+                        ))))
+                    }
+                    Err(_) => {
+                        return Ok(report(ClauseDisposition::ArgumentRefusal(Box::new(
+                            RunRefusal::UnsupportedParameter { position },
+                        ))))
+                    }
+                }
             }
             _ => {
                 return Ok(report(ClauseDisposition::ArgumentRefusal(Box::new(

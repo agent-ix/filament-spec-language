@@ -778,6 +778,7 @@ pub fn run_package_temporal(request: &PackageTemporalRequest<'_>) -> ClauseRunRe
         observation_limits: request.observation_limits,
         accounting: request.accounting,
         package: request.package,
+        package_name: request.package.emitted_package_name().unwrap_or_default(),
         sources: request.sources,
         // FR-516: the capacity is the system setting
         // `progress.covered_positions` (FR-255), not a request member, so the

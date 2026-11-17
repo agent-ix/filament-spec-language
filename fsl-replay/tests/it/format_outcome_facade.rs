@@ -60,6 +60,7 @@ fn diagnostic_json(diagnostic: &CompleteDiagnostic) -> Value {
         "cause": diagnostic.cause.as_str(),
         "code": diagnostic.code.as_str(),
         "locus": locus,
+        "details": null,
         "message": diagnostic.message
     })
 }

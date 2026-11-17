@@ -75,7 +75,6 @@ fn argument(value: Value) -> Value {
 
 #[test]
 #[trace("TC-2377", "FR-286-AC-17")]
-#[ignore = "QSL-2182: the outcome diagnostic `details` member not implemented yet"]
 fn argument_diagnostics_carry_position_and_path() {
     for (function, value, cause, details) in [
         (
@@ -102,7 +101,6 @@ fn argument_diagnostics_carry_position_and_path() {
 
 #[test]
 #[trace("TC-2378", "FR-286-AC-18")]
-#[ignore = "QSL-2182: the outcome diagnostic `details` member not implemented yet"]
 fn function_and_request_diagnostics_carry_details() {
     let (document, _) = refused(UNIT, "nope", json!([]));
     assert_eq!(
@@ -146,7 +144,6 @@ fn assert_closed(diagnostic: &Value) {
 
 #[test]
 #[trace("TC-2379", "FR-286-AC-19")]
-#[ignore = "QSL-2182: the outcome diagnostic `details` member not implemented yet"]
 fn source_and_compile_diagnostics_carry_null_details() {
     let bad = "language \"ix:native\" edition \"1-draft\";\n\
                profile v = \"filament.value.complete/v1\";\n\

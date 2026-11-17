@@ -287,6 +287,7 @@ pub fn write(directory: &Path, case: Case) -> io::Result<()> {
                     ClauseArgumentValue::Reference { population, key } => {
                         json!({"reference": {"population": population, "key": key}})
                     }
+                    ClauseArgumentValue::Form(form) => form.clone(),
                 },
             })).collect::<Vec<_>>(),
         }),

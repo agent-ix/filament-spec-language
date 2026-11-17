@@ -2895,6 +2895,9 @@ impl PackageDeclarations {
         // from its resolved type form (the checked type carries only `N`).
         let mut population_targets: Vec<Vec<Option<filament_exact::EffectiveId>>> =
             Vec::with_capacity(self.functions.len());
+        // The object type `T` of a `Population<T>[N]` result, likewise.
+        let mut result_population_targets: Vec<Option<filament_exact::EffectiveId>> =
+            Vec::with_capacity(self.functions.len());
         for (index, function) in self.functions.iter().enumerate() {
             let location = body_location(index, &function.name);
             let mut targets = Vec::with_capacity(function.parameters.len());
@@ -2909,6 +2912,17 @@ impl PackageDeclarations {
                 }
             }
             population_targets.push(targets);
+            match type_form::population_target(
+                &scope.for_declaration(&function.name),
+                &function.result,
+                &location,
+            ) {
+                Ok(target) => result_population_targets.push(target),
+                Err(refusal) => {
+                    refusals.push(refusal);
+                    result_population_targets.push(None);
+                }
+            }
         }
         if !refusals.is_empty() {
             return Err(refusals);
@@ -5060,6 +5074,10 @@ impl PackageDeclarations {
                             .get(index)
                             .map(Vec::as_slice)
                             .unwrap_or_default(),
+                        result_population_target: result_population_targets
+                            .get(index)
+                            .cloned()
+                            .flatten(),
                         clause: model_clauses.get(&index),
                     })
                 })

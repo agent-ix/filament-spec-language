@@ -142,6 +142,7 @@ fn call(function: &str, arguments: Vec<CallArgument>) -> Call {
     Call {
         clocks: Default::default(),
         wire_arguments: Vec::new(),
+        snapshot: None,
         function: function.to_owned(),
         arguments,
         accounting: default_accounting(1_000_000),

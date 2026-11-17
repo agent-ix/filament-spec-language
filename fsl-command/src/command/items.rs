@@ -13,7 +13,7 @@ const FORMAT: &str = "native-run-items/1";
 enum ItemExecution {
     Run(Result<RunResult>),
     Batch {
-        selection: Option<fsl_replay::spine::ProgramBatchSelection>,
+        selection: Option<Box<fsl_replay::spine::ProgramBatchSelection>>,
         call_output: Option<CallOutput>,
     },
     ValueInvariants(Result<(Vec<Value>, u8)>),
@@ -317,6 +317,17 @@ pub(super) fn run_bytes(
             if let Some(accounting) = accounting.clone() {
                 call.entry("accounting".to_owned()).or_insert(accounting);
             }
+            // FR-650-AC-15: a call selection's `snapshot` names an
+            // observation key of the items request; the run reads the
+            // snapshot file that key names.
+            if let Some(key) = call.get("snapshot").and_then(Value::as_str) {
+                let file = observations
+                    .get(key)
+                    .and_then(Value::as_str)
+                    .ok_or_else(|| refused(key, "observation key is not present"))?
+                    .to_owned();
+                call.insert("snapshot".to_owned(), Value::String(file));
+            }
             single_body.insert("call".to_owned(), Value::Object(call));
         } else {
             let mut clause = Map::new();
@@ -385,7 +396,7 @@ pub(super) fn run_bytes(
                         },
                     );
                     ItemExecution::Batch {
-                        selection: Some(selection),
+                        selection: Some(Box::new(selection)),
                         call_output: None,
                     }
                 }
@@ -403,8 +414,8 @@ pub(super) fn run_bytes(
                     let candidate = compilation_from_clause(&request)?;
                     set_compilation(&mut compilation, candidate)?;
                     ItemExecution::Batch {
-                        selection: Some(fsl_replay::spine::ProgramBatchSelection::Clause(
-                            Box::new(request),
+                        selection: Some(Box::new(
+                            fsl_replay::spine::ProgramBatchSelection::Clause(Box::new(request)),
                         )),
                         call_output: None,
                     }
@@ -421,10 +432,10 @@ pub(super) fn run_bytes(
                         packages: input.packages.clone(),
                     });
                     ItemExecution::Batch {
-                        selection: Some(fsl_replay::spine::ProgramBatchSelection::Call {
+                        selection: Some(Box::new(fsl_replay::spine::ProgramBatchSelection::Call {
                             call: input.call,
                             include_requirements: requirements.is_some(),
-                        }),
+                        })),
                         call_output,
                     }
                 }
@@ -465,14 +476,14 @@ pub(super) fn run_bytes(
                                 .map(|source| (source.source.clone(), source.path.clone()))
                         });
                 }
-                let clause_selection = match &batch_selection {
+                let clause_selection = match batch_selection.as_ref() {
                     fsl_replay::spine::ProgramBatchSelection::Clause(request) => {
                         Some(request.selection.clone())
                     }
                     _ => None,
                 };
                 batch_slots.push((slot, call_output.take(), clause_selection));
-                batch_selections.push(batch_selection);
+                batch_selections.push(*batch_selection);
             }
         }
     }

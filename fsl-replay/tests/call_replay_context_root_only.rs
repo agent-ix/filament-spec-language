@@ -39,6 +39,7 @@ fn a_consumer_runs_builds_and_settles_through_the_crate_root() {
     let call = Call {
         clocks: Default::default(),
         wire_arguments: Vec::new(),
+        snapshot: None,
         function: "inc".to_owned(),
         arguments: vec![CallArgument {
             parameter: "x".to_owned(),
