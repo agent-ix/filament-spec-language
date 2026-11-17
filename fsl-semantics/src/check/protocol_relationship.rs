@@ -168,23 +168,34 @@ pub(crate) fn check(
             continue;
         };
         let end = |key: &DeclarationKey| model.object_type_id(key).map(ValueType::Reference);
-        let connection = model.admitted_connection_ends(&record.key).and_then(|ends| {
-            let source_port = model.declaration_record(&record.source.type_identity)?;
-            let target_port = model.declaration_record(&record.target.type_identity)?;
-            let (
-                crate::model::domain_package::DomainPackageRecord::Endpoint(source_port),
-                crate::model::domain_package::DomainPackageRecord::Endpoint(target_port),
-            ) = (source_port, target_port) else { return None };
-            Some((ends, CheckedConnection {
-                ports: [record.source.type_identity.clone(), record.target.type_identity.clone()],
-                direction: record.direction,
-                model_selection: model.selection().identity.clone(),
-                interfaces: [
-                    model.object_type_id(&source_port.value_type)?,
-                    model.object_type_id(&target_port.value_type)?,
-                ],
-            }))
-        });
+        let connection = model
+            .admitted_connection_ends(&record.key)
+            .and_then(|ends| {
+                let source_port = model.declaration_record(&record.source.type_identity)?;
+                let target_port = model.declaration_record(&record.target.type_identity)?;
+                let (
+                    crate::model::domain_package::DomainPackageRecord::Endpoint(source_port),
+                    crate::model::domain_package::DomainPackageRecord::Endpoint(target_port),
+                ) = (source_port, target_port)
+                else {
+                    return None;
+                };
+                Some((
+                    ends,
+                    CheckedConnection {
+                        ports: [
+                            record.source.type_identity.clone(),
+                            record.target.type_identity.clone(),
+                        ],
+                        direction: record.direction,
+                        model_selection: model.selection().identity.clone(),
+                        interfaces: [
+                            model.object_type_id(&source_port.value_type)?,
+                            model.object_type_id(&target_port.value_type)?,
+                        ],
+                    },
+                ))
+            });
         let ends = match (
             end(&record.source.type_identity),
             end(&record.target.type_identity),

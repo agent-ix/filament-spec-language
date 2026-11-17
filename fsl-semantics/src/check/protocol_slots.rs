@@ -1240,6 +1240,7 @@ pub(crate) fn check(
             if checked_relationship.connection.is_some() {
                 checker.refuse(ProtocolAnchorCause::RelatedConnection {
                     name: name.name.clone(),
+                    message: "a connection relates ports, not values; bind it to a channel with via",
                     span: name.span,
                 });
                 continue;

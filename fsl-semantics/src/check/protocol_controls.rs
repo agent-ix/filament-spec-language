@@ -241,6 +241,7 @@ fn check_channel(
         }
     }
     let carries = match resolve_form(&scope.for_declaration(protocol), &channel.carries) {
+        Ok(value @ ValueType::Reference(_)) if channel.via.is_some() => Some(value),
         Ok(ValueType::Reference(_) | ValueType::Population(_)) => {
             let name = match &channel.carries.head {
                 TypeFormHead::Name(name) => name.name.clone(),
@@ -329,74 +330,129 @@ fn check_channel_connection(
     refusals: &mut Vec<(Span, CheckRefusal)>,
 ) -> Option<filament_checked::key::DeclarationKey> {
     let via = channel.via.as_ref()?;
-    let Some(relationship) = relationships.iter().find(|relationship| relationship.name == via.name)
+    let Some(relationship) = relationships
+        .iter()
+        .find(|relationship| relationship.name == via.name)
     else {
-        refusals.push((via.span, refusal(ProtocolAnchorCause::MissingChannelConnection {
-            channel: channel.name.name.clone(), name: via.name.clone(), span: via.span,
-        })));
+        refusals.push((
+            via.span,
+            refusal(ProtocolAnchorCause::MissingChannelConnection {
+                channel: channel.name.name.clone(),
+                name: via.name.clone(),
+                span: via.span,
+            }),
+        ));
         return None;
     };
     let Some(connection) = &relationship.connection else {
-        refusals.push((via.span, refusal(ProtocolAnchorCause::ChannelConnectionExport {
-            channel: channel.name.name.clone(), name: via.name.clone(), actual: "relationship",
-            export: Box::new(relationship.key.clone()), span: via.span,
-        })));
+        refusals.push((
+            via.span,
+            refusal(ProtocolAnchorCause::ChannelConnectionExport {
+                channel: channel.name.name.clone(),
+                name: via.name.clone(),
+                required: "connection",
+                actual: "relationship",
+                export: Box::new(relationship.key.clone()),
+                span: via.span,
+            }),
+        ));
         return None;
     };
     let endpoint_role = |name: &str, span: Span| -> Option<&super::protocol_clause::CheckedRole> {
         let role = roles.iter().find(|role| role.name == name)?;
         if role.model_member.is_none() {
-            refusals.push((span, refusal(ProtocolAnchorCause::ChannelPortRole {
-                channel: channel.name.name.clone(), role: name.to_owned(), span,
-            })));
+            refusals.push((
+                span,
+                refusal(ProtocolAnchorCause::ChannelPortRole {
+                    channel: channel.name.name.clone(),
+                    role: name.to_owned(),
+                    span,
+                }),
+            ));
             return None;
         }
         Some(role)
     };
-    let Some(from) = endpoint_role(&channel.from.name, channel.from.span) else { return None };
-    let Some(to) = endpoint_role(&channel.to.name, channel.to.span) else { return None };
-    let (expected, source_interface) = match connection.direction {
-        crate::model::domain_package::RelationshipDirection::SourceToTarget =>
-            ([connection.ports[0].clone(), connection.ports[1].clone()], connection.interfaces[0]),
-        crate::model::domain_package::RelationshipDirection::TargetToSource =>
-            ([connection.ports[1].clone(), connection.ports[0].clone()], connection.interfaces[1]),
-        crate::model::domain_package::RelationshipDirection::Bidirectional => {
-            ([connection.ports[0].clone(), connection.ports[1].clone()], connection.interfaces[0])
-        }
-        crate::model::domain_package::RelationshipDirection::Undirected => {
-            ([connection.ports[0].clone(), connection.ports[1].clone()], connection.interfaces[0])
-        }
+    let Some(from) = endpoint_role(&channel.from.name, channel.from.span) else {
+        return None;
     };
-    let Some(actual_from) = from.model_member.as_ref() else { return None };
-    let Some(actual_to) = to.model_member.as_ref() else { return None };
+    let Some(to) = endpoint_role(&channel.to.name, channel.to.span) else {
+        return None;
+    };
+    let (expected, source_interface) = match connection.direction {
+        crate::model::domain_package::RelationshipDirection::SourceToTarget => (
+            [connection.ports[0].clone(), connection.ports[1].clone()],
+            connection.interfaces[0],
+        ),
+        crate::model::domain_package::RelationshipDirection::TargetToSource => (
+            [connection.ports[1].clone(), connection.ports[0].clone()],
+            connection.interfaces[1],
+        ),
+        crate::model::domain_package::RelationshipDirection::Bidirectional => (
+            [connection.ports[0].clone(), connection.ports[1].clone()],
+            connection.interfaces[0],
+        ),
+        crate::model::domain_package::RelationshipDirection::Undirected => (
+            [connection.ports[0].clone(), connection.ports[1].clone()],
+            connection.interfaces[0],
+        ),
+    };
+    let Some(actual_from) = from.model_member.as_ref() else {
+        return None;
+    };
+    let Some(actual_to) = to.model_member.as_ref() else {
+        return None;
+    };
     let actual = [actual_from.clone(), actual_to.clone()];
     let forward = actual == expected;
-    let reverse = connection.direction == crate::model::domain_package::RelationshipDirection::Bidirectional
+    let reverse = connection.direction
+        == crate::model::domain_package::RelationshipDirection::Bidirectional
         && actual == [expected[1].clone(), expected[0].clone()];
+    let direction_supported =
+        connection.direction != crate::model::domain_package::RelationshipDirection::Undirected;
     let same_model = from.model_selection.as_deref() == Some(connection.model_selection.as_str())
         && to.model_selection.as_deref() == Some(connection.model_selection.as_str());
-    if !same_model || (!forward && !reverse) {
-        refusals.push((via.span, refusal(ProtocolAnchorCause::ChannelConnectionEnds {
-            channel: channel.name.name.clone(), connection: via.name.clone(),
-            expected: [Box::new(expected[0].clone()), Box::new(expected[1].clone())],
-            actual: [Box::new(actual[0].clone()), Box::new(actual[1].clone())], span: via.span,
-        })));
+    if !same_model || !direction_supported || (!forward && !reverse) {
+        refusals.push((
+            via.span,
+            refusal(ProtocolAnchorCause::ChannelConnectionEnds {
+                channel: channel.name.name.clone(),
+                connection: via.name.clone(),
+                expected: [Box::new(expected[0].clone()), Box::new(expected[1].clone())],
+                actual: [Box::new(actual[0].clone()), Box::new(actual[1].clone())],
+                span: via.span,
+            }),
+        ));
         return None;
     }
-    let model = models.iter().find(|model| model.selection().identity == connection.model_selection);
+    let model = models
+        .iter()
+        .find(|model| model.selection().identity == connection.model_selection);
+    let source_interface = if reverse {
+        connection.interfaces[1].clone()
+    } else {
+        source_interface
+    };
     let expected_type = ValueType::Reference(source_interface);
     let conforms = match (model, carries) {
-        (Some(model), Some(ValueType::Reference(actual_type))) => {
-            model.type_key(actual_type.clone()).zip(model.type_key(source_interface.clone()))
-                .is_some_and(|(actual, expected)| model.model_index().conforms_admitted(actual, expected))
-        }
+        (Some(model), Some(ValueType::Reference(actual_type))) => model
+            .type_key(actual_type.clone())
+            .zip(model.type_key(source_interface.clone()))
+            .is_some_and(|(actual, expected)| {
+                model.model_index().conforms_admitted(actual, expected)
+            }),
         _ => false,
     };
     if !conforms {
-        refusals.push((channel.carries.span, refusal(ProtocolAnchorCause::ChannelConnectionCarries {
-            channel: channel.name.name.clone(), expected: Box::new(expected_type),
-            actual: Box::new(carries.cloned().unwrap_or(ValueType::Boolean)), span: channel.carries.span,
-        })));
+        refusals.push((
+            channel.carries.span,
+            refusal(ProtocolAnchorCause::ChannelConnectionCarries {
+                channel: channel.name.name.clone(),
+                expected: Box::new(expected_type),
+                actual: Box::new(carries.cloned().unwrap_or(ValueType::Boolean)),
+                span: channel.carries.span,
+            }),
+        ));
         return None;
     }
     Some(relationship.key.clone())

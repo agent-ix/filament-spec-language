@@ -630,6 +630,8 @@ pub enum ProtocolAnchorCause {
         channel: String,
         /// The relationship name.
         name: String,
+        /// The required export kind, `connection`.
+        required: &'static str,
         /// The export's actual kind.
         actual: &'static str,
         /// The export key.
@@ -676,6 +678,8 @@ pub enum ProtocolAnchorCause {
     RelatedConnection {
         /// The connection name.
         name: String,
+        /// The diagnostic required by FR-897.
+        message: &'static str,
         /// The `related by` name span.
         span: Span,
     },

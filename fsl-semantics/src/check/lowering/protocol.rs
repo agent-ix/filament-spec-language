@@ -1995,7 +1995,12 @@ impl Lowering<'_> {
                 boolean.clone(),
                 declaration,
                 None,
-                BodyTerm::application(Operator::ProtocolControl, operations.channel.clone(), boolean.clone(), channel_members),
+                BodyTerm::application(
+                    Operator::ProtocolControl,
+                    operations.channel.clone(),
+                    boolean.clone(),
+                    channel_members,
+                ),
             )?;
             channels.push(key.clone());
             named.push((channel.name.clone(), key.clone()));

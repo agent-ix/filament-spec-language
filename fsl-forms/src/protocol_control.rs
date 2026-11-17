@@ -462,17 +462,23 @@ pub(crate) fn channel_form(
     let [name, from, to, ..] = identifiers.as_slice() else {
         return Err(unexpected(channel));
     };
-    let via = channel_items.iter().position(|item| matches!(item,
-        Item::Token(token) if token.spelling() == b"via"
-    )).map(|index| {
-        let Some(Item::Token(token)) = channel_items.get(index + 1) else {
-            return Err(unexpected(channel));
-        };
-        if token.kind() != TokenKind::Identifier {
-            return Err(unexpected(channel));
-        }
-        Ok(declared(token, channel)?)
-    }).transpose()?;
+    let via = channel_items
+        .iter()
+        .position(|item| {
+            matches!(item,
+                Item::Token(token) if token.spelling() == b"via"
+            )
+        })
+        .map(|index| {
+            let Some(Item::Token(token)) = channel_items.get(index + 1) else {
+                return Err(unexpected(channel));
+            };
+            if token.kind() != TokenKind::Identifier {
+                return Err(unexpected(channel));
+            }
+            Ok(declared(token, channel)?)
+        })
+        .transpose()?;
     let ordering = only(&channel_items, Production::Ordering, channel)?;
     let delivery = only(&channel_items, Production::DeliveryPolicy, channel)?;
     let capacity = only(&channel_items, Production::Capacity, channel)?;
