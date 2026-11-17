@@ -1223,6 +1223,7 @@ impl HyperCause {
                 Obligation::Nonzero => "unproved-nonzero",
                 Obligation::Presence => "unproved-presence",
                 Obligation::Range { .. }
+                | Obligation::EqualityRange { .. }
                 | Obligation::RationalRange
                 | Obligation::NonemptyReduction { .. } => "unproved-range",
             },
