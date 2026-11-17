@@ -48,9 +48,12 @@ construct (FR-882), explored to the bounds and to `max_live_instances`
   - for a replicated role instance, its own object reference.
   A replicated class has one table, and each live instance reads that table
   over its own observation.
-- **Symbolic capacity.** Each named capacity takes its value from premise
-  group (a). An absent value is `inconclusive`, cause `PremiseNotStated`
-  naming the capacity. A stated value is part of the key (FR-572).
+- **Symbolic capacity.** Each named capacity takes its value from the
+  protocol subject's capacity binding (FSpec FR-785), recorded in premise
+  group (a). An absent value is recorded as not stated, so the key member is
+  present, and the result is `inconclusive`, cause `PremiseNotStated` naming
+  the member `capacities`, never `requires-bound`. A stated value is part of
+  the key (FR-572).
 - **Instance bound.** A run that reaches `max_live_instances` without a
   counterexample settles `inconclusive`, cause `instance-bound-reached` naming
   `max_live_instances` and its value. A spawn past a role's authored `max n`
@@ -80,8 +83,9 @@ refutation that rests on an avoidable owner choice `inconclusive`.
 
 ## Inputs
 
-A realizability request (FR-571) with profile `bounded`, premise group (a)
-carrying a value for each symbolic capacity the protocol names, and the
+A realizability request (FR-571) with profile `bounded`, a protocol subject
+whose capacity binding gives each symbolic capacity the protocol names its
+value (FSpec FR-785), and the
 bounds including `max_live_instances`.
 
 ## Outputs
@@ -93,7 +97,7 @@ FR-571's outcomes and FR-573's settlement.
 | ID | Criteria | Verification |
 | --- | --- | --- |
 | FR-891-AC-1 | Under `bounded`, the FR-890-AC-1 protocols that project to `proved` each settle realizability `proved` with a table the in-engine walk accepts, or `inconclusive` with a named cause, never `unsupported`. A protocol whose only decision point is FR-890-AC-2's unmerged `repeat` settles `refuted` with `IndistinguishableHistories` for `Seller`, and its counterexample replays. | Test (TC-2523) |
-| FR-891-AC-2 | A channel of capacity `symbolic(Bound)` with no value in premise group (a) settles `inconclusive` naming `Bound`. With `Bound` = 1 and two sends before any receive under `overflow reject`, the result equals the result for literal capacity 1. Changing the value changes the key. | Test (TC-2523) |
+| FR-891-AC-2 | A channel of capacity `symbolic(Bound)` whose subject binds no value settles `inconclusive`, cause `PremiseNotStated` naming `capacities`. With `Bound` = 1 and two sends before any receive under `overflow reject`, the result equals the result for literal capacity 1. Changing the value changes the key. | Test (TC-2523) |
 | FR-891-AC-3 | A protocol `on each (t: M::Cell)` whose instances each send one `Order` from `Buyer` to `Seller` settles `proved` with `max_live_instances` 2 over two cells. `Seller`'s table distinguishes the two instances by ordinal. With `max_live_instances` 1 and two triggers admitted, the result is `inconclusive`, cause `instance-bound-reached` naming `max_live_instances` = 1. | Test (TC-2524) |
 | FR-891-AC-4 | A compensation whose template role can end its thread after a failed attempt, under a recovery claim that only a retry satisfies, settles `proved`, with a table whose committed action at the retry point is `cattempt`. The same protocol with `attempts 1` settles `refuted` by `EnvironmentDefeat`, and the defeating play replays. | Test (TC-2524) |
 | FR-891-AC-5 | A replicated role `Pool ... max 2` whose session instance receives `Job` and sends `Done` settles `proved` with one table for the class. A `spawn` beyond `max 2` never occurs in any explored play. | Test (TC-2524) |

@@ -255,6 +255,7 @@ impl Chatter {
                 protocol: "Chatter".to_owned(),
                 over: instance("c"),
                 roles: subject.roles.clone(),
+                capacities: Vec::new(),
                 memory: subject.memory.clone(),
                 max_store_buffer: None,
                 max_messages: None,

@@ -16,13 +16,13 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use filament_exact::{EffectiveId, NodeKey, ValueType};
 use fsl_semantics::check::{
-    AccessOrdering, CaptureOwner, ChannelCapacity, ChannelDelivery, ChannelOverflow,
-    CheckedActivation, CheckedBody, CheckedCommit, CheckedJoinPolicy, CheckedLifetime,
-    CheckedOrdering, CheckedOutstanding, CheckedProtocol, CheckedTerminalMember, ControlStep,
-    EdgeKind, LossSelector, Port, ProtocolNodeId,
+    AccessOrdering, CaptureOwner, ChannelDelivery, ChannelOverflow, CheckedActivation, CheckedBody,
+    CheckedCommit, CheckedJoinPolicy, CheckedLifetime, CheckedOrdering, CheckedOutstanding,
+    CheckedProtocol, CheckedTerminalMember, ControlStep, EdgeKind, LossSelector, Port,
+    ProtocolNodeId,
 };
 
-use super::{ProtocolRefusal, Unsupported};
+use super::{Capacities, ProtocolRefusal, Unsupported};
 use crate::simulation::model::ModelSystem;
 
 /// One control of the `run` tree.
@@ -349,7 +349,7 @@ fn unsupported(construct: Unsupported) -> ProtocolRefusal {
 /// The constructs this protocol system steps: `sequence`, `parallel` and its
 /// branches, `choice`, `repeat`, `check`, `await`, `attempt`, `send`,
 /// `receive`, `effect`, domain `event`, `commit`, `fence` and `finish`,
-/// channels with a literal capacity, `compensate` templates with their
+/// channels with a literal or bound capacity (FSpec FR-785), `compensate` templates with their
 /// captures, replicated roles and `activation on each` (ADR-027 §9
 /// sequencing steps 3 to 5). Which memory model each `parallel` runs under
 /// is the subject's resolved model, read when the system is built.
@@ -360,11 +360,6 @@ fn refuse_unsupported(
     for control in &protocol.controls.controls {
         if let ControlStep::Unstepped(construct) = control.step() {
             return Err(unsupported(Unsupported::Control(construct)));
-        }
-    }
-    for channel in &protocol.channels {
-        if matches!(channel.capacity, ChannelCapacity::Symbolic(_)) {
-            return Err(unsupported(Unsupported::SymbolicCapacity));
         }
     }
     // The pre-check (TS-5) has already refused an unbounded record type.
@@ -476,6 +471,7 @@ impl<'a> Program<'a> {
     pub(super) fn new(
         model: &ModelSystem<'_>,
         protocol: &'a CheckedProtocol,
+        capacities: &Capacities,
     ) -> Result<Self, ProtocolRefusal> {
         refuse_unsupported(model, protocol)?;
         let tree = &protocol.controls.controls;
@@ -743,9 +739,9 @@ impl<'a> Program<'a> {
 
         let mut channels = Vec::with_capacity(protocol.channels.len());
         for channel in &protocol.channels {
-            let ChannelCapacity::Literal(capacity) = channel.capacity else {
-                return Err(unsupported(Unsupported::SymbolicCapacity));
-            };
+            let capacity = capacities
+                .resolve(&channel.capacity)
+                .map_err(ProtocolRefusal::Capacity)?;
             channels.push(Channel {
                 name: format!("{}::{}", protocol.name, channel.name),
                 // A capacity past the address space admits every queue a run

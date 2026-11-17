@@ -120,6 +120,7 @@ fn subject<'a>(
             role: "w".to_owned(),
             model: PACKAGE.to_owned(),
         }],
+        capacities: Vec::new(),
         memory: source_memory(checked, "P"),
     }
 }
@@ -220,6 +221,7 @@ fn a_related_by_clause_enables_only_related_steps_and_refuses_an_unrelated_repla
             protocol: "P".to_owned(),
             over: instance("c"),
             roles: related_subject.roles.clone(),
+            capacities: Vec::new(),
             memory: related_subject.memory.clone(),
             max_store_buffer: None,
             max_messages: None,

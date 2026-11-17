@@ -10,6 +10,7 @@ use fsl_foundation::selection::DefinitionRef;
 use fsl_semantics::family::{classify_extent_at, ClaimExtent, ClassifyFailure, UnboundedDomains};
 
 use crate::simulation::key::EncodingRefusal;
+use crate::simulation::protocol::UnboundCapacity;
 
 /// The type positions the requires-bound pre-check visits at most, for every
 /// caller that classifies a subject's roots: the model check, the closure
@@ -33,6 +34,11 @@ pub enum NotSimulated {
     /// method was called.
     #[error("the request has an unbounded domain and requires a proof bound")]
     RequiresBound(RequiresBound),
+    /// FSpec FR-785: a protocol subject's capacity binding leaves these
+    /// capacity names unbound, so the item requires a bound before any
+    /// state is explored. No `TransitionSystem` method was called.
+    #[error("the protocol subject leaves a symbolic capacity unbound and requires a bound")]
+    UnboundCapacity(Vec<UnboundCapacity>),
     /// `classify_extent` stopped: a node-count stage limit or an internal
     /// fault. Neither `RequiresBound` nor an exploration.
     #[error("the request's extent could not be classified: {0:?}")]
@@ -79,7 +85,7 @@ impl NotSimulated {
     /// inventing a third code for `Extent` itself.
     pub fn catalog_code(&self) -> Option<CatalogCode> {
         match self {
-            Self::RequiresBound(_) => None,
+            Self::RequiresBound(_) | Self::UnboundCapacity(_) => None,
             Self::EmptyInitial
             | Self::KeyEncoding(EncodingRefusal::NoEncoding(_))
             | Self::GeneratorMismatch { .. } => {
@@ -107,6 +113,7 @@ impl NotSimulated {
             Self::Extent(ClassifyFailure::Limit(exceeded))
             | Self::KeyEncoding(EncodingRefusal::Limit(exceeded)) => exceeded.catalog_fields(),
             Self::RequiresBound(_)
+            | Self::UnboundCapacity(_)
             | Self::EmptyInitial
             | Self::KeyEncoding(
                 EncodingRefusal::NoEncoding(_) | EncodingRefusal::Allocation { .. },

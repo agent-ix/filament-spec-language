@@ -192,6 +192,7 @@ fn system<'a>(fixture: &'a Fixture) -> ProtocolSystem<'a, Sc> {
                 model: "acme/orders".to_owned(),
             },
         ],
+        capacities: Vec::new(),
         memory: ResolvedMemory::resolve(protocol, &[]).expect("default sc memory selected"),
     };
     ProtocolSystem::new(model, &subject, Sc).expect("protocol subject built")

@@ -280,6 +280,12 @@ fn run_protocol_item(
                 .iter()
                 .map(|binding| (binding.role.clone(), binding.model.clone()))
                 .collect();
+            let capacities: Vec<_> = request
+                .subject
+                .capacities
+                .iter()
+                .map(|binding| (binding.name.clone(), binding.value))
+                .collect();
             let over = request.subject.over.clone();
             let simulation = request.subject.model.simulation.clone();
             match check_protocol(request, cancel) {
@@ -304,6 +310,7 @@ fn run_protocol_item(
                             protocol,
                             over,
                             roles,
+                            capacities,
                             max_live_instances: on_each.then_some(max_live_instances),
                         });
                     EngineReport::Protocol(Box::new(record), subject)
@@ -962,7 +969,9 @@ fn symmetry() -> Refusal {
 pub(super) fn model_refusal(refusal: &ModelCheckRefusal) -> Refusal {
     match refusal {
         ModelCheckRefusal::Admission(failure) => admission(failure),
-        ModelCheckRefusal::RequiresBound(_) => Refusal::RequiresBound,
+        ModelCheckRefusal::RequiresBound(_) | ModelCheckRefusal::UnboundCapacity(_) => {
+            Refusal::RequiresBound
+        }
         ModelCheckRefusal::Symmetry(_) => symmetry(),
         ModelCheckRefusal::UnknownConstraint { .. } => Refusal::Failed(INVALID_VALUE),
         ModelCheckRefusal::Fault(fault) => Refusal::Failed(fault.catalog_code()),

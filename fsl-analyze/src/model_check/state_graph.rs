@@ -391,6 +391,7 @@ fn common_stabiliser(views: &[Vec<InstanceView<'_>>], declared: &SymmetryGroup) 
 fn bounds_refusal(refusal: NotSimulated) -> ModelCheckRefusal {
     match refusal {
         NotSimulated::RequiresBound(roots) => ModelCheckRefusal::RequiresBound(roots),
+        NotSimulated::UnboundCapacity(names) => ModelCheckRefusal::UnboundCapacity(names),
         NotSimulated::Extent(failure) => ModelCheckRefusal::Extent(Box::new(failure)),
         _ => fault("bounds-precheck-returns-only-requires-bound-or-extent"),
     }

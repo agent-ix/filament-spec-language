@@ -5,7 +5,9 @@
 //! back from a checked handoff directory) and the request's bindings.
 
 use filament_exact::ScalarLimits;
-use fsl_eval::model_subject::{ModelInstance, ModelSubject, ProtocolSubject, RoleBinding};
+use fsl_eval::model_subject::{
+    CapacityBinding, ModelInstance, ModelSubject, ProtocolSubject, RoleBinding,
+};
 use fsl_eval::simulation::model::{ExpansionLimits, ModelSimulationRequest, PopulationUniverse};
 use fsl_eval::simulation::protocol::{MemorySelection, MemorySelectionRefusal, ResolvedMemory};
 use fsl_package::{CheckedPackage, EmitLimits};
@@ -36,6 +38,8 @@ pub struct SubjectBindings {
     pub over: ModelInstance,
     /// A binding for each static role.
     pub roles: Vec<RoleBinding>,
+    /// A binding for each symbolic queue capacity (FSpec FR-785).
+    pub capacities: Vec<CapacityBinding>,
     /// The request's `memory` member; an outermost `parallel` it does not
     /// name keeps its source default (FR-219).
     pub memory: Vec<MemorySelection>,
@@ -83,6 +87,7 @@ pub fn protocol_subject(
         protocol,
         over,
         roles,
+        capacities,
         memory,
         initial,
         universes,
@@ -117,6 +122,7 @@ pub fn protocol_subject(
         protocol,
         over,
         roles,
+        capacities,
         memory,
     })
 }

@@ -23,5 +23,5 @@ Verify that `finish` and compensation templates are stepped, that an undefined v
 
 - Step 1: `finish` steps are reached; one compensation thread per activation; no unstepped control class.
 - Step 2: `UndefinedEvaluation` at the `choice`, `refuted`; the prefix is empty under `origin` and `activate` alone under `each`.
-- Step 3: every protocol settles; apart from symbolic capacity the only refusals are `UnenumerableRecord` for the text-field binder and `WeakMemory` for the unimplemented model.
+- Step 3: every protocol settles; the only refusals are `UnenumerableRecord` for the text-field binder and `WeakMemory` for the unimplemented model.
 - Step 4: proved, then refuted at `Gate`, the same at both reached states; the self-reference settles `refuted` with `UndefinedEvaluation` at the guard and terminates; the `send` and capture read the `check`'s value.

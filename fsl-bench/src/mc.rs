@@ -538,6 +538,7 @@ pub fn run_reach(world: &World, workers: NonZeroUsize) -> Result<Work, AxisError
             role: "w".to_owned(),
             model: "bench/protocol".to_owned(),
         }],
+        capacities: Vec::new(),
         memory,
     };
     let model = ModelSystem::new(subject.model.simulation.clone())

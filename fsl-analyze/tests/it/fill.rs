@@ -694,6 +694,7 @@ pub(crate) fn subject<'a>(
             role: "w".to_owned(),
             model: PACKAGE.to_owned(),
         }],
+        capacities: Vec::new(),
         memory: source_memory(package, protocol),
     }
 }

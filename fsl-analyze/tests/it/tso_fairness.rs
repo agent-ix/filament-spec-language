@@ -232,6 +232,7 @@ impl Unit {
                 protocol: "SB".to_owned(),
                 over: core(),
                 roles: subject.roles.clone(),
+                capacities: Vec::new(),
                 memory: subject.memory.clone(),
                 max_store_buffer: None,
                 max_messages: None,

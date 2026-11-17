@@ -396,12 +396,17 @@ fn load_buffering_warnings(
         .protocol(&subject.protocol)
         .ok_or(None)?;
     let model = ModelSystem::new(subject.model.simulation.clone()).map_err(|_| None)?;
-    let shapes = load_buffering_shapes(&model, protocol, &subject.memory, &subject.over).map_err(
-        |refusal| match refusal {
-            ProtocolRefusal::InitialStop(stop) if !stop.is_internal_failure() => Some(stop),
-            _ => None,
-        },
-    )?;
+    let shapes = load_buffering_shapes(
+        &model,
+        protocol,
+        &subject.memory,
+        &subject.over,
+        &subject.capacities,
+    )
+    .map_err(|refusal| match refusal {
+        ProtocolRefusal::InitialStop(stop) if !stop.is_internal_failure() => Some(stop),
+        _ => None,
+    })?;
     Ok(shapes
         .into_iter()
         .map(|shape| RecordWarning::LoadBufferingShape {

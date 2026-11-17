@@ -65,6 +65,7 @@ impl Cells {
                 role: "w".to_owned(),
                 model: PACKAGE.to_owned(),
             }],
+            capacities: Vec::new(),
             memory: source_memory(&self.checked, name),
         }
     }

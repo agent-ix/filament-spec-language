@@ -267,6 +267,7 @@ fn request<'a>(
                     model: PACKAGE.to_owned(),
                 })
                 .collect(),
+            capacities: Vec::new(),
             memory: Vec::new(),
             initial: vec![initial],
             universes: vec![PopulationUniverse {
@@ -380,6 +381,7 @@ fn refusal(
                 key: "c".to_owned(),
             },
             roles: Vec::new(),
+            capacities: Vec::new(),
             memory,
             initial: vec![initial],
             universes: Vec::new(),

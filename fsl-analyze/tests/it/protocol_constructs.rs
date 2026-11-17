@@ -1553,6 +1553,7 @@ fn a_send_step_is_written_with_its_send_record() {
                 protocol: subject.protocol.clone(),
                 over: over.clone(),
                 roles: Vec::new(),
+                capacities: Vec::new(),
                 max_live_instances,
             },
             None,

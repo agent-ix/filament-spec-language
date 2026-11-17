@@ -362,6 +362,9 @@ pub struct ProtocolWire {
     pub over: ObjectReference,
     /// Each static role and the domain package whose model plays it.
     pub roles: Vec<(String, String)>,
+    /// Each symbolic capacity name and its bound value (FSpec FR-785);
+    /// empty when the clause has no symbolic capacity.
+    pub capacities: Vec<(String, u64)>,
     /// For an `on each` subject, the instance budget the run used.
     pub max_live_instances: Option<u64>,
 }
@@ -388,6 +391,16 @@ pub fn protocol_temporal_wire(
         "over": reference(&subject.over)?,
         "roles": roles,
     });
+    // FSpec FR-433, FR-785: present exactly when the clause has a symbolic
+    // capacity, each value as canonical decimal text.
+    if !subject.capacities.is_empty() {
+        let capacities: serde_json::Map<String, Json> = subject
+            .capacities
+            .iter()
+            .map(|(name, value)| (name.clone(), json!(value.to_string())))
+            .collect();
+        written["subject"]["capacities"] = Json::Object(capacities);
+    }
     if let Some(bound) = subject.max_live_instances {
         written["max_live_instances"] = json!(bound);
     }
