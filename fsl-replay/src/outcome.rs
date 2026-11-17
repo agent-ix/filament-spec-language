@@ -394,9 +394,10 @@ pub struct ItemCause {
     #[serde(skip_serializing_if = "Option::is_none")]
     locus: Option<WireLocus>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    cause: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
     code: Option<String>,
+    /// A refusal's action-oriented explanation, when the source provides one.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    message: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     parity: Option<ParityReason>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -643,8 +644,8 @@ impl ItemCause {
             kind: Some(kind),
             at: None,
             locus: None,
-            cause: None,
             code: None,
+            message: None,
             parity: None,
             depth: None,
             horizon: None,
@@ -691,7 +692,7 @@ impl ItemCause {
     pub fn undefined_evaluation(at: impl Into<String>, cause: impl Into<String>) -> Self {
         Self {
             at: Some(at.into()),
-            cause: Some(cause.into()),
+            code: Some(cause.into()),
             ..Self::kind("undefined-evaluation")
         }
     }
@@ -1432,9 +1433,10 @@ fn clause_run_cause(report: &ClauseRunReport) -> Option<ItemCause> {
             let code = refusal.catalog_code();
             Some(catalog(code.code(), code.cause()))
         }
-        ClauseDisposition::TraceRefused(_) => {
-            Some(catalog("invalid_runtime_input", "invalid-value"))
-        }
+        ClauseDisposition::TraceRefused(refusal) => Some(ItemCause {
+            message: Some(refusal.message.clone()),
+            ..catalog("invalid_runtime_input", "invalid-value")
+        }),
         ClauseDisposition::ProgressContradiction(refusal) => {
             let code = &refusal.record.catalog;
             Some(catalog(code.code(), code.cause()))
@@ -1460,9 +1462,20 @@ fn clause_run_cause(report: &ClauseRunReport) -> Option<ItemCause> {
             })
         }
         ClauseDisposition::Evaluate(CallOutcome::Undefined { reason }) => Some(ItemCause {
-            cause: Some((*reason).to_owned()),
+            code: Some((*reason).to_owned()),
             ..ItemCause::kind("undefined-evaluation")
         }),
+        ClauseDisposition::Compile(refusal) if has_timed_trace_subject_refusal(refusal) => {
+            classify_clause_run(report)
+                .classification
+                .causes
+                .first()
+                .map(|cause| ItemCause {
+                    code: Some(cause.code.as_str().to_owned()),
+                    message: Some(refusal.to_string()),
+                    ..ItemCause::kind(cause.cause.unwrap_or_else(|| cause.code.as_str()))
+                })
+        }
         ClauseDisposition::Evaluate(CallOutcome::Incomplete(incomplete)) => {
             Some(accounting_limit_cause(
                 &incomplete.record,
@@ -1479,6 +1492,22 @@ fn clause_run_cause(report: &ClauseRunReport) -> Option<ItemCause> {
                 ..ItemCause::kind(cause.cause.unwrap_or_else(|| cause.code.as_str()))
             }),
     }
+}
+
+fn has_timed_trace_subject_refusal(refusal: &CompileRefusal) -> bool {
+    let CompileRefusal::Check { refusals, .. } = refusal else {
+        return false;
+    };
+    refusals.iter().any(|refusal| {
+        matches!(
+            &refusal.cause,
+            fsl_semantics::check::CheckCause::Temporal(cause)
+                if matches!(
+                    cause.as_ref(),
+                    fsl_semantics::check::TemporalCause::TimedTraceSubject { .. }
+                )
+        )
+    })
 }
 
 fn accounting_limit_cause(
@@ -3476,7 +3505,7 @@ mod tests {
                         "cause": {
                             "kind": "undefined-evaluation",
                             "where": "position 1",
-                            "cause": "division-by-zero",
+                            "code": "division-by-zero",
                         },
                         "category": "violation",
                     }],

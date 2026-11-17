@@ -2042,7 +2042,7 @@ fn check_message_one(first: &CheckRefusal) -> String {
                     profile.tick()
                 ),
                 TemporalCause::TimedTraceSubject { .. } => {
-                    format!("{message}: a timed clause over a trace subject is not checked yet")
+                    format!("{message}: a timed clause over snapshots is not checked yet")
                 }
                 TemporalCause::ModelTimeOnTraceSubject { .. } => format!(
                     "{message}: `model-time` over a record trace subject, which has no model \

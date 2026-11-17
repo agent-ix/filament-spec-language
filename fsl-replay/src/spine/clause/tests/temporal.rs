@@ -153,7 +153,7 @@ enum ObservedReplayExpectation {
 /// A unit holds one temporal profile, so the bounded and the infinite-trace
 /// clauses of the spec's `Counter` unit are two units.
 #[derive(Clone, Copy)]
-enum Unit {
+pub(in crate::spine::clause::tests) enum Unit {
     /// `Bounded`, under event-position false-extension.
     Bounded,
     /// `Bounded` and its same-body twin under a third name `Twin2`.
@@ -645,7 +645,11 @@ fn over(key: &str) -> OverObject {
 }
 
 /// `name` over a finite trace of `values`.
-fn finite(unit: Unit, name: &str, values: &[i64]) -> ClauseRunRequest {
+pub(in crate::spine::clause::tests) fn finite(
+    unit: Unit,
+    name: &str,
+    values: &[i64],
+) -> ClauseRunRequest {
     request(
         unit,
         |labels| ClauseRunSelection::Temporal {
@@ -674,7 +678,12 @@ fn ghost() -> ClauseRunRequest {
 
 /// `name` over a lasso whose prefix is the first `prefix` of `values` and
 /// whose loop is the rest.
-fn lasso(unit: Unit, name: &str, prefix: usize, values: &[i64]) -> ClauseRunRequest {
+pub(in crate::spine::clause::tests) fn lasso(
+    unit: Unit,
+    name: &str,
+    prefix: usize,
+    values: &[i64],
+) -> ClauseRunRequest {
     request(
         unit,
         |labels| ClauseRunSelection::Temporal {
@@ -690,7 +699,7 @@ fn lasso(unit: Unit, name: &str, prefix: usize, values: &[i64]) -> ClauseRunRequ
     )
 }
 
-fn report(request: ClauseRunRequest) -> ClauseRunReport {
+pub(in crate::spine::clause::tests) fn report(request: ClauseRunRequest) -> ClauseRunReport {
     let temporal_selections = match &request.source {
         ClauseRunSource::Program {
             identity,
@@ -4210,7 +4219,10 @@ fn synthetic_report(disposition: ClauseDisposition) -> ClauseRunReport {
     }
 }
 
-fn item_json(clause: &str, run: &ClauseRunReport) -> serde_json::Value {
+pub(in crate::spine::clause::tests) fn item_json(
+    clause: &str,
+    run: &ClauseRunReport,
+) -> serde_json::Value {
     monitor_json(&[(clause, run)]).1["items"][0].clone()
 }
 
@@ -4253,7 +4265,7 @@ fn violated_undefined_and_insufficient_data_items_carry_their_record_members() {
     assert_eq!(undefined["counterexample"]["trace_position"], 2);
     assert_eq!(undefined["cause"]["kind"], "undefined-evaluation");
     assert_eq!(undefined["cause"]["where"], "position 2");
-    assert_eq!(undefined["cause"]["cause"], "division-by-zero");
+    assert_eq!(undefined["cause"]["code"], "division-by-zero");
     assert!(undefined.get("witness").is_none());
 
     let insufficient = synthetic_report(ClauseDisposition::Temporal(TemporalVerdict::Undefined {
@@ -4306,6 +4318,18 @@ fn incomplete_unsupported_and_declined_rows_carry_their_labels_and_causes() {
     assert_eq!(empty_loop["category"], "refusal");
     assert_eq!(empty_loop["cause"]["kind"], "invalid-value");
     assert_eq!(empty_loop["cause"]["code"], "invalid_runtime_input");
+    assert!(empty_loop["cause"]["message"]
+        .as_str()
+        .is_some_and(|message| message.contains("loop")));
+
+    let empty_finite = item_json("Reaches", &report(finite(Unit::Infinite, "Reaches", &[])));
+    assert_eq!(empty_finite["result"], "declined");
+    assert!(empty_finite["cause"]["message"]
+        .as_str()
+        .is_some_and(|message| message.contains("trace")));
+
+    let nonempty_lasso = item_json("Reaches", &report(lasso(Unit::Infinite, "Reaches", 0, &[0, 1, 2])));
+    assert_ne!(nonempty_lasso["result"], "declined");
 
     let ghost = item_json("Reaches", &report(ghost()));
     assert_eq!(ghost["result"], "declined");
