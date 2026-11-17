@@ -54,7 +54,10 @@ fn a_population_query_type_argument_names_the_declared_type_requirement() {
         assert!(diagnostic.message.contains("type Total = Integer;"));
     }
 
-    for expression in ["sum<M::Total>(x in a: x)", "fold<M::Integer>(0, x in a: x)"] {
+    for expression in [
+        "sum<M::Total>(x in a: x)",
+        "fold<M::Integer>(acc, x in a: x)",
+    ] {
         let text = document(expression);
         let parsed = parse(text.as_bytes()).expect("valid UTF-8 within the source ceiling");
         assert!(
