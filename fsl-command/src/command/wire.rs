@@ -244,6 +244,10 @@ pub(super) struct Call {
     /// FR-100: the call's accounting limits by counter name; absent is `{}`.
     #[serde(default, deserialize_with = "from_object")]
     pub accounting: Accounting,
+    /// FR-650: the file of the one current snapshot the call's Reference and
+    /// Population arguments resolve against.
+    #[serde(default)]
+    pub snapshot: Option<String>,
     /// FR-960: the call's requirement settlement and the backends of its
     /// items, read by `requirements::read`; absent settles no item.
     #[serde(default, deserialize_with = "present_json_value")]

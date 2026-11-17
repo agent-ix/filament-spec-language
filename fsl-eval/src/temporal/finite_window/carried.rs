@@ -239,6 +239,10 @@ impl WindowState {
             clause_identity: self.clause_identity.clone(),
             base: self.base,
             first,
+            // A carried state reads no interval stamp and no late-data cutoff:
+            // those runs take the whole-trace evaluation.
+            intervals: Vec::new(),
+            lateness: super::trace::Lateness::default(),
         };
         let whole = anchors(clause, &trace, None);
         let range = match &self.stopped {

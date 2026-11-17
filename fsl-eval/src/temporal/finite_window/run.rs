@@ -420,7 +420,7 @@ impl<'a, L: TemporalLetters> Run<'a, L> {
                 .iter()
                 .map(|position| i128::from(position.stamp))
                 .collect(),
-            margin: trace.clock.cover.margin(),
+            margin: trace.margin(),
             watermark: trace.progress.watermark.inclusive(),
             letters,
             meter,
@@ -531,6 +531,67 @@ pub(super) fn reaches(plan: &Plan) -> Result<Vec<i128>, InternalFault> {
     Ok(reach)
 }
 
+/// How far an activation's window reaches from its anchor tick: the
+/// greatest sum of the upper bounds of the clause's past operators along a
+/// nesting path, and the same sum of its future operators (FR-501
+/// "Established window"). An activation anchored at tick `a` reads instants
+/// in `[a - past, a + future]`, which names the anchors a late observation
+/// falls in (FR-501 "Late-data cutoff").
+///
+/// # Errors
+///
+/// [`TemporalRefusal::Fault`] for a clause whose plan does not form.
+pub fn window_reach(clause: &ClauseFacts) -> Result<(u64, u64), TemporalRefusal> {
+    let plan = clause.formula().plan().map_err(TemporalRefusal::Fault)?;
+    let future = reaches(plan).map_err(TemporalRefusal::Fault)?;
+    let past = past_reaches(plan).map_err(TemporalRefusal::Fault)?;
+    let at_root = |reach: &[i128]| {
+        reach
+            .get(plan.root)
+            .and_then(|value| u64::try_from(*value).ok())
+            .ok_or_else(|| TemporalRefusal::Fault(fault("reach-in-u64")))
+    };
+    Ok((at_root(&past)?, at_root(&future)?))
+}
+
+/// The past reach of every node: [`reaches`] with the roles of past and
+/// future operators exchanged.
+fn past_reaches(plan: &Plan) -> Result<Vec<i128>, InternalFault> {
+    let mut reach = vec![0_i128; plan.nodes.len()];
+    for index in (0..plan.nodes.len()).rev() {
+        let node = slot(&plan.nodes, index)?;
+        let operands: [Option<usize>; 2] = match node {
+            Node::Constant(_) | Node::Atom => [None, None],
+            Node::Not(operand) => [Some(operand), None],
+            Node::And(left, right) | Node::Or(left, right) | Node::Implies(left, right) => {
+                [Some(left), Some(right)]
+            }
+            Node::Scan(scan) => [scan.guard, Some(scan.witness)],
+        };
+        let mut deepest = 0_i128;
+        for operand in operands.into_iter().flatten() {
+            deepest = deepest.max(slot(&reach, operand)?);
+        }
+        let own = match node {
+            Node::Scan(scan) => match (scan.base.direction(), scan.window) {
+                (Direction::Past, Window::Closed { upper, .. }) => i128::from(upper),
+                (Direction::Future, Window::Closed { .. }) => 0,
+                (_, Window::From { .. }) => return Err(fault("finite-window-interval-is-bounded")),
+            },
+            Node::Constant(_)
+            | Node::Atom
+            | Node::Not(_)
+            | Node::And(..)
+            | Node::Or(..)
+            | Node::Implies(..) => 0,
+        };
+        *reach
+            .get_mut(index)
+            .ok_or_else(|| fault("plan-index-in-arena"))? = deepest.saturating_add(own);
+    }
+    Ok(reach)
+}
+
 fn position_of(index: usize) -> Result<TemporalPosition, InternalFault> {
     u64::try_from(index)
         .map(TemporalPosition::new)
@@ -600,12 +661,21 @@ impl<L: TemporalLetters> Run<'_, L> {
         seed
     }
 
+    /// The instants the observation at `position` may lie at.
+    fn extent(&self, position: usize) -> Result<super::cover::Extent, InternalFault> {
+        position
+            .checked_sub(self.base)
+            .and_then(|index| self.trace.extent(index))
+            .ok_or_else(|| fault("position-in-trace"))
+    }
+
     /// Whether the window of an activation (or sub-instance) at `tick`
     /// reaching `reach` ticks ahead is established (FR-501 "Established
     /// window").
     fn established(&self, tick: i128, reach: i128) -> bool {
         let need = tick.saturating_add(reach).saturating_add(self.margin);
-        covers(self.trace.progress.completeness, need) && self.watermark >= need
+        covers(self.trace.progress.completeness, need)
+            && self.watermark >= self.trace.settling(need)
     }
 
     /// Every activation in position order. `done` receives each activation
@@ -855,7 +925,7 @@ impl<L: TemporalLetters> Run<'_, L> {
             (self.base..=position).rev().collect()
         };
         let anchor = self.stamp(position)?;
-        let cover = self.trace.clock.cover;
+        let anchor_extent = self.extent(position)?;
         let mut candidates: Vec<Candidate> = Vec::new();
         for candidate in order {
             self.charge(if candidate >= self.trace.observed {
@@ -863,11 +933,9 @@ impl<L: TemporalLetters> Run<'_, L> {
             } else {
                 WindowUnit::Scan
             })?;
-            let stamp = u64::try_from(self.stamp(candidate)?).map_err(|_| fault("stamp-in-u64"))?;
-            let anchor_stamp = u64::try_from(anchor).map_err(|_| fault("stamp-in-u64"))?;
-            let part = match cover.eligible(
-                anchor_stamp,
-                stamp,
+            let part = match super::cover::Extent::eligible(
+                anchor_extent,
+                self.extent(candidate)?,
                 candidate == position,
                 forward,
                 lower,
@@ -915,28 +983,60 @@ impl<L: TemporalLetters> Run<'_, L> {
     /// of one order authority. A key repeated within its authority orders
     /// nothing, and the observation identity never breaks the tie. The refusal
     /// names the later position.
+    ///
+    /// Under a bounded cover, and for an observation with its own interval
+    /// stamp, two observations whose intervals overlap are such a pair as
+    /// equal stamps are (FR-501 "Bounded cover and interval stamps").
     fn require_order(&self, candidates: &[Candidate]) -> Result<(), Stop> {
-        for pair in candidates.windows(2) {
-            let [before, after] = pair else { continue };
-            if self.stamp(before.position)? != self.stamp(after.position)? {
-                continue;
+        let bounded = matches!(
+            self.trace.clock.cover,
+            super::cover::ClockCover::Bounded { .. }
+        );
+        for (index, before) in candidates.iter().enumerate() {
+            for after in candidates.iter().skip(index + 1) {
+                self.require_pair_order(before, after, bounded)?;
             }
-            let key = |position: usize| {
-                position
-                    .checked_sub(self.base)
-                    .and_then(|index| self.trace.positions.get(index))
-                    .and_then(|p| p.order_key.as_ref())
-            };
-            let ordered = matches!(
-                (key(before.position), key(after.position)),
-                (Some(left), Some(right))
-                    if left.authority == right.authority && left.key != right.key
-            );
-            if !ordered {
-                return Err(Stop::Refused(TemporalRefusal::UnorderedTie {
-                    position: position_of(before.position.max(after.position))?,
-                }));
-            }
+        }
+        Ok(())
+    }
+
+    /// [`Self::require_order`] for one pair of candidates.
+    fn require_pair_order(
+        &self,
+        before: &Candidate,
+        after: &Candidate,
+        bounded: bool,
+    ) -> Result<(), Stop> {
+        let interval = |position: usize| {
+            position
+                .checked_sub(self.base)
+                .is_some_and(|index| self.trace.has_interval(index))
+        };
+        let uncertain = bounded || interval(before.position) || interval(after.position);
+        let tied = if uncertain {
+            self.extent(before.position)?
+                .overlaps(self.extent(after.position)?)
+        } else {
+            self.stamp(before.position)? == self.stamp(after.position)?
+        };
+        if !tied {
+            return Ok(());
+        }
+        let key = |position: usize| {
+            position
+                .checked_sub(self.base)
+                .and_then(|index| self.trace.positions.get(index))
+                .and_then(|p| p.order_key.as_ref())
+        };
+        let ordered = matches!(
+            (key(before.position), key(after.position)),
+            (Some(left), Some(right))
+                if left.authority == right.authority && left.key != right.key
+        );
+        if !ordered {
+            return Err(Stop::Refused(TemporalRefusal::UnorderedTie {
+                position: position_of(before.position.max(after.position))?,
+            }));
         }
         Ok(())
     }
@@ -960,7 +1060,17 @@ impl<L: TemporalLetters> Run<'_, L> {
         let tick = self.stamp(anchor)?;
         let reach = slot(&self.reach, self.plan.root)?;
         let established = self.established(tick, reach);
-        let result = if poss.can_true && !poss.can_false {
+        let settles = self
+            .trace
+            .settling(tick.saturating_add(reach).saturating_add(self.margin));
+        // FR-501 "Late-data cutoff": under a cutoff an observation may still
+        // arrive on time until `W` covers the window's deadline plus the
+        // lateness, so no verdict is reached before then.
+        let result = if self.trace.lateness.cutoff.is_some() && self.watermark < settles {
+            Ending::Pending {
+                deadline: u64::try_from(settles).map_err(|_| fault("deadline-in-u64"))?,
+            }
+        } else if poss.can_true && !poss.can_false {
             Ending::True
         } else if poss.can_false && !poss.can_true {
             Ending::False
@@ -968,15 +1078,12 @@ impl<L: TemporalLetters> Run<'_, L> {
             return Err(Stop::Refused(TemporalRefusal::Fault(fault(
                 "possibility-set-is-not-empty",
             ))));
-        } else {
-            let need = tick.saturating_add(reach).saturating_add(self.margin);
-            if self.watermark < need {
-                Ending::Pending {
-                    deadline: u64::try_from(need).map_err(|_| fault("deadline-in-u64"))?,
-                }
-            } else {
-                Ending::Indeterminate(self.reason(&closure, root)?)
+        } else if self.watermark < settles {
+            Ending::Pending {
+                deadline: u64::try_from(settles).map_err(|_| fault("deadline-in-u64"))?,
             }
+        } else {
+            Ending::Indeterminate(self.reason(&closure, root)?)
         };
         Ok(Finished {
             anchor,
@@ -1309,6 +1416,7 @@ impl<L: TemporalLetters> Run<'_, L> {
             &self.trace.clock,
             &blocks,
             &progress,
+            &self.trace.lateness,
             self.meter.limits(),
         )?;
         Ok(WindowEvaluation {
@@ -1352,12 +1460,18 @@ impl<L: TemporalLetters> Run<'_, L> {
     ) -> Result<Vec<Block<'r>>, InternalFault> {
         range
             .map(|position| {
-                let observation = position
+                let index = position
                     .checked_sub(self.base)
-                    .and_then(|index| self.trace.positions.get(index))
+                    .ok_or_else(|| fault("position-is-held"))?;
+                let observation = self
+                    .trace
+                    .positions
+                    .get(index)
                     .ok_or_else(|| fault("position-is-held"))?;
                 Ok(Block {
                     observation,
+                    interval: self.trace.intervals.get(index).copied().flatten(),
+                    arrival: self.trace.lateness.arrivals.get(index).copied().flatten(),
                     readings: readings.get(&position).map_or(&[], Vec::as_slice),
                 })
             })
@@ -1369,6 +1483,6 @@ impl<L: TemporalLetters> Run<'_, L> {
     /// (FR-820).
     pub(super) fn settled(&self, anchor: usize, ahead: i128) -> Result<bool, InternalFault> {
         let need = self.stamp(anchor)?.saturating_add(ahead);
-        Ok(covers(self.trace.progress.completeness, need) && self.watermark >= need)
+        Ok(covers(self.trace.progress.completeness, need) && self.watermark >= self.trace.settling(need))
     }
 }

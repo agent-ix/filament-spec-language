@@ -121,7 +121,7 @@ fn responses() -> Value {
 
 #[test]
 #[trace("TC-2387", "FR-194-AC-13")]
-#[ignore = "QSL-2138: a source-declared time unit is not admitted as the clock unit node (FR-965) yet"]
+#[ignore = "QSL-2138: filament-contract-model's strict reader does not admit a source-owned clock unit yet (FSpec FR-778, IR)"]
 fn a_quantile_aggregate_reaches_a_verdict_through_run() {
     let directory = tempfile::tempdir().unwrap();
     let clocks = json!({"plant-ms": {"kind": "timestamped_event", "timestamp_unit": "ms"}});

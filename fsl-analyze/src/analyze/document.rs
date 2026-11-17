@@ -542,10 +542,12 @@ impl ItemSelection {
             || (self.trace.is_some()
                 && self.kind.as_deref() != Some(Capability::FiniteReplay.to_wire()))
             || self.simulation.is_some()
-            || self
-                .options
-                .as_ref()
-                .is_some_and(|options| !options.is_empty())
+            // An option is sent only to the backend the item names (FR-967).
+            || (self.backend.is_none()
+                && self
+                    .options
+                    .as_ref()
+                    .is_some_and(|options| !options.is_empty()))
             || temporal.is_some_and(|temporal| {
                 temporal.abstract_subject.is_some()
                     || temporal.smt_encoding.is_some()
@@ -653,6 +655,36 @@ fn invalid_kind(index: RequestIndex, name: Option<&str>, cause: &'static str) ->
             Map::new(),
         )),
     }
+}
+
+/// FR-967, FSpec FR-779: an item naming a registered backend with an option
+/// that backend's manifest does not publish settles `invalid-request`
+/// `invalid_capability`/`unknown-option`, naming the least unpublished
+/// name. An item naming no backend, or one the registry does not hold
+/// (which settles `unknown-backend`), is not checked.
+fn unknown_option(
+    index: RequestIndex,
+    name: Option<&str>,
+    registry: &Registry,
+    named: Option<&BackendId>,
+    options: &BTreeMap<String, String>,
+) -> Option<ResolvedItem> {
+    let backend = named?;
+    let option = registry
+        .descriptor(backend)?
+        .unpublished_option(options.keys())?;
+    let mut detail = Map::new();
+    detail.insert("request_index".to_owned(), json!(index.get()));
+    detail.insert("backend".to_owned(), json!(backend.as_str()));
+    detail.insert("option".to_owned(), json!(option));
+    Some(ResolvedItem::Settled {
+        claim_name: name.map(str::to_owned),
+        record: Box::new(TerminalRecord::disposition_invalid_request(
+            index,
+            CatalogCode::new("invalid_capability", "unknown-option"),
+            detail,
+        )),
+    })
 }
 
 /// The checked declarations by their declared qualified name.
@@ -870,12 +902,11 @@ pub struct CallItem {
 /// Resolve the requirement items of a call of `function` (FR-960, FR-961
 /// step 4): each item's candidates are FR-075's for its named backend, an
 /// unnamed item's narrowed by FR-962's tie rule, and its request item
-/// carries the named backend. An option the named backend's manifest does
-/// not publish settles the item `invalid-request` naming the option; a
-/// registered descriptor publishes no option, so every option given to a
-/// registered backend refuses its item. A named backend the registry does
-/// not hold keeps FR-075's unknown-backend marker, which negotiation
-/// settles.
+/// carries the named backend and its options. An option the named
+/// backend's manifest does not publish settles the item
+/// `invalid_capability`/`unknown-option` (FR-967). A named backend the
+/// registry does not hold keeps FR-075's unknown-backend marker, which
+/// negotiation settles, and its options are not checked.
 pub fn resolve_call_items(
     package: &CheckedPackage,
     function: &str,
@@ -896,19 +927,10 @@ fn resolve_call_item(
 ) -> ResolvedItem {
     let index = call_item.request_index;
     let named = call_item.backend.as_ref();
-    let registered = named.is_none_or(|backend| registry.backends().any(|held| held == backend));
-    if let (true, Some(option)) = (registered, call_item.options.keys().next()) {
-        let mut detail = Map::new();
-        detail.insert("member".to_owned(), json!("options"));
-        detail.insert("option".to_owned(), json!(option));
-        return ResolvedItem::Settled {
-            claim_name: Some(function.to_owned()),
-            record: Box::new(TerminalRecord::disposition_invalid_request(
-                index,
-                CatalogCode::new("invalid_runtime_input", "invalid-value"),
-                detail,
-            )),
-        };
+    if let Some(refused) =
+        unknown_option(index, Some(function), registry, named, &call_item.options)
+    {
+        return refused;
     }
     let Some(record) = requirement_items(package, registry, named)
         .into_iter()
@@ -946,6 +968,7 @@ fn resolve_call_item(
             required: true,
             max_cases: None,
             trace: None,
+            backend_options: call_item.options.clone(),
         },
         form: None,
     };
@@ -1030,6 +1053,28 @@ fn resolve_one(
         }
     };
     let record = own.iter().find(|record| record.kind() == kind);
+    // FR-967: options are checked after kind admission and the
+    // inapplicable-kind rule, which `analyze` applies to an item whose kind
+    // does not apply to its claim's family, and before candidates.
+    let item_kind = selection
+        .temporal
+        .as_ref()
+        .and_then(|temporal| temporal.item_kind)
+        .map_or(ItemKind::Formula, |item_kind| item_kind.kind());
+    let applies = crate::claim_family::claim_family(package, item_kind, &claim)
+        .is_some_and(|family| kind.applies_to_declaration(family));
+    let backend_options = selection.options.clone().unwrap_or_default();
+    if applies {
+        if let Some(refused) = unknown_option(
+            index,
+            Some(name),
+            registry,
+            named.as_ref(),
+            &backend_options,
+        ) {
+            return refused;
+        }
+    }
     let extent = match record {
         Some(record) => record.extent(),
         None if kind == Capability::ValueValidity => {
@@ -1109,6 +1154,7 @@ fn resolve_one(
             required: selection.required.unwrap_or(true),
             max_cases: selection.check.map(|check| check.limits.max_cases),
             trace: selection.trace.as_ref().map(DocumentSelection::reference),
+            backend_options,
         },
         form,
     };
@@ -1210,6 +1256,16 @@ fn resolve_derived(
     let own_subject = temporal.subject.clone().unwrap_or_else(|| subject.clone());
     claim.item.request_index = index;
     let named = selection.backend.as_deref().map(BackendId::new);
+    let backend_options = selection.options.clone().unwrap_or_default();
+    if let Some(refused) = unknown_option(
+        index,
+        Some(name),
+        registry,
+        named.as_ref(),
+        &backend_options,
+    ) {
+        return Some(refused);
+    }
     claim.candidates = registry.restrict_to_timing(
         registry.candidates(claim.item.kind, named.as_ref()),
         timed(package),
@@ -1220,6 +1276,7 @@ fn resolve_derived(
         required: selection.required.unwrap_or(true),
         max_cases: None,
         trace: None,
+        backend_options,
     };
     let mut form = temporal_item(package, &claim.item.claim, temporal);
     form.pending_reductions.clone_from(&selection.reductions);
@@ -1497,6 +1554,7 @@ fn derived_items(
                         required: true,
                         max_cases: None,
                         trace: None,
+                        backend_options: BTreeMap::new(),
                     },
                     form: Some(ItemForm::Temporal(TemporalItem {
                         item_kind: item.item_kind().unwrap_or(ItemKind::Formula),
@@ -1736,6 +1794,9 @@ pub fn settle_run(
         limits,
     } = run;
     let mut negotiated = Vec::new();
+    // Items negotiation ran for but no route reads: settled by its
+    // `unsupported` disposition.
+    let mut unrouted_items: Vec<RequestIndex> = Vec::new();
     let mut settled: BTreeMap<RequestIndex, (Option<String>, TerminalRecord)> = BTreeMap::new();
     let mut echoes: BTreeMap<RequestIndex, Echo> = BTreeMap::new();
     for resolved in items {
@@ -1811,6 +1872,7 @@ pub fn settle_run(
                 {
                     let mut detail = Map::new();
                     detail.insert("kind".to_owned(), json!(item.kind.to_wire()));
+                    unrouted_items.push(item.request_index);
                     settled.insert(
                         item.request_index,
                         (
@@ -1862,7 +1924,31 @@ pub fn settle_run(
     let mut records: Vec<TerminalRecord> = outcome.records;
     records.extend(settled.values().map(|(_, record)| record.clone()));
     records.sort_by_key(TerminalRecord::request_index);
-    let base = super::analyze_document(&records, &outcome.counterexamples)
+    // FR-621 "Last stage": each negotiated item's route. An item negotiated
+    // to an FSL engine settles at S6c, one negotiated to an outside provider
+    // or settled by its negotiation's disposition at S6b.
+    let mut routes: BTreeMap<RequestIndex, super::ItemRoute> = negotiated
+        .iter()
+        .map(|item| {
+            let in_process = item.disposition.target().is_some_and(|target| {
+                engines
+                    .get(target.id())
+                    .is_some_and(|engine| engine.provider.is_none())
+            });
+            let route = if in_process {
+                super::ItemRoute::InProcess
+            } else {
+                super::ItemRoute::Negotiated
+            };
+            (item.item.request_index, route)
+        })
+        .collect();
+    routes.extend(
+        unrouted_items
+            .iter()
+            .map(|index| (*index, super::ItemRoute::Negotiated)),
+    );
+    let base = super::analyze_document_routed(&records, &outcome.counterexamples, &routes)
         .map_err(|_| AnalyzeDocumentError::Fault)?;
     let mut document = serde_json::to_value(&base).map_err(|_| AnalyzeDocumentError::Fault)?;
     let written: Vec<Value> = document["items"].as_array().cloned().unwrap_or_default();

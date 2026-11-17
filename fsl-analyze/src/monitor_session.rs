@@ -509,6 +509,7 @@ impl<'a> MonitorSession<'a> {
                     ),
                     cover: self.request.cover,
                     missing_valuations: Vec::new(),
+                    late: Default::default(),
                 }),
             },
             _ => TraceInput::Finite(Vec::new()),

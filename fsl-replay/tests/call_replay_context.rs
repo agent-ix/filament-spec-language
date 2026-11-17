@@ -56,6 +56,7 @@ fn call(function: &str, x: Value, work_units: u64) -> Call {
     Call {
         clocks: Default::default(),
         wire_arguments: Vec::new(),
+        snapshot: None,
         function: function.to_owned(),
         arguments: vec![CallArgument {
             parameter: "x".to_owned(),

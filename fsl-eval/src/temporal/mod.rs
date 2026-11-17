@@ -59,11 +59,11 @@ mod window;
 pub use covered::CoveredList;
 pub use engine::{unrolling, DecisiveAtom, DecisiveSearch, DecisiveStop, Unrolling};
 pub use finite_window::{
-    evaluate_finite_window, evaluate_finite_window_at, Assessment, Basis, ClockCover, Containment,
-    IndeterminateReason, LowerBoundary, OrderKey, Premises, ProgressedRefusal, ResultIdentity,
-    SampleProgress, SupportPair, TimestampedObservation, TimestampedTrace, Valuation, Watermark,
-    WindowCharge, WindowClock, WindowEvaluation, WindowProgress, WindowState, WindowUnit,
-    WindowVerdict,
+    correction_identity, evaluate_finite_window, evaluate_finite_window_at, window_reach,
+    Assessment, Basis, ClockCover, Containment, IndeterminateReason, LateCutoff, LateObservation,
+    Lateness, LowerBoundary, OrderKey, Premises, ProgressedRefusal, ResultIdentity, SampleProgress,
+    StampInterval, SupportPair, TimestampedObservation, TimestampedTrace, Valuation, Watermark,
+    WindowCharge, WindowClock, WindowEvaluation, WindowProgress, WindowState, WindowUnit, WindowVerdict,
 };
 pub use input::TemporalTrace;
 pub use ledger::{

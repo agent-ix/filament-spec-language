@@ -426,7 +426,7 @@ use filament_semantic_value::location::{
     ExpressionLocation as Location, ExpressionOwner as Origin,
 };
 pub use operation_body::OperationBodyDeclaration;
-pub use operation_clause::OperationClauseDeclaration;
+pub use operation_clause::{CheckedOperationClause, OperationClauseDeclaration};
 pub use region::DeclarationRegions;
 pub use settings::{
     checking_bounds, environment_bounds, set_checking_bound, set_environment_bound,
@@ -902,6 +902,9 @@ pub struct CheckedGraph {
     time_units: time_units::TimeUnits,
     /// FR-104: every checked state clause, in declaration order.
     state_clauses: Vec<CheckedStateClause>,
+    /// FR-103/FR-702: checked model operation contracts, retained for the
+    /// operation run that evaluates their invocation.
+    operation_clauses: Vec<operation_clause::CheckedOperationClause>,
     /// FR-366: every checked type-level invariant, in declaration order of
     /// the selected models and their clauses.
     type_invariants: Vec<CheckedTypeInvariant>,
@@ -1093,6 +1096,7 @@ impl DebugWith for CheckedGraph {
             time_sources,
             time_units,
             state_clauses,
+            operation_clauses,
             type_invariants,
             terminals,
             timed_models,
@@ -1213,6 +1217,7 @@ impl DebugWith for CheckedGraph {
             .field("time_sources", &Seq(time_sources, table))
             .field("time_units", &With(time_units, table))
             .field("state_clauses", &Seq(state_clauses, table))
+            .field("operation_clauses", &Seq(operation_clauses, table))
             .field("type_invariants", &With(type_invariants, table))
             .field("terminals", &terminals)
             .field("timed_models", &Seq(timed_models, table))
@@ -2895,6 +2900,9 @@ impl PackageDeclarations {
         // from its resolved type form (the checked type carries only `N`).
         let mut population_targets: Vec<Vec<Option<filament_exact::EffectiveId>>> =
             Vec::with_capacity(self.functions.len());
+        // The object type `T` of a `Population<T>[N]` result, likewise.
+        let mut result_population_targets: Vec<Option<filament_exact::EffectiveId>> =
+            Vec::with_capacity(self.functions.len());
         for (index, function) in self.functions.iter().enumerate() {
             let location = body_location(index, &function.name);
             let mut targets = Vec::with_capacity(function.parameters.len());
@@ -2909,6 +2917,17 @@ impl PackageDeclarations {
                 }
             }
             population_targets.push(targets);
+            match type_form::population_target(
+                &scope.for_declaration(&function.name),
+                &function.result,
+                &location,
+            ) {
+                Ok(target) => result_population_targets.push(target),
+                Err(refusal) => {
+                    refusals.push(refusal);
+                    result_population_targets.push(None);
+                }
+            }
         }
         if !refusals.is_empty() {
             return Err(refusals);
@@ -3310,6 +3329,7 @@ impl PackageDeclarations {
         // Boolean under the clause kind its position gives. A kept clause
         // adds no checked state clause, claim or requirement record: it
         // yields a refusal or nothing.
+        let mut operation_clauses = Vec::with_capacity(self.operation_clauses.len());
         for clause in &self.operation_clauses {
             let location = clause.location();
             let declarations = state_clause::ClauseDeclarations {
@@ -3344,6 +3364,9 @@ impl PackageDeclarations {
                             &probabilistic::PreconditionSite::Requires(clause.clause.position),
                         ));
                     }
+                    operation_clauses.push(operation_clause::CheckedOperationClause::new(
+                        clause, checked,
+                    ));
                 }
                 Err(refusal) => {
                     let exhausted = matches!(refusal.cause, CheckCause::ResourceExhausted(_));
@@ -5060,6 +5083,10 @@ impl PackageDeclarations {
                             .get(index)
                             .map(Vec::as_slice)
                             .unwrap_or_default(),
+                        result_population_target: result_population_targets
+                            .get(index)
+                            .cloned()
+                            .flatten(),
                         clause: model_clauses.get(&index),
                     })
                 })
@@ -7437,6 +7464,7 @@ impl PackageDeclarations {
             time_sources: self.time_sources,
             time_units: time_units.clone(),
             state_clauses,
+            operation_clauses,
             type_invariants,
             terminals,
             timed_models,
@@ -8754,6 +8782,12 @@ impl CheckedGraph {
     /// and response claims over them.
     pub fn task_sets(&self) -> &CheckedTaskSets {
         &self.task_sets
+    }
+
+    /// FR-103/FR-702: each checked model operation contract, in its source
+    /// order, retained for the corresponding operation invocation run.
+    pub fn operation_clauses(&self) -> &[operation_clause::CheckedOperationClause] {
+        &self.operation_clauses
     }
 
     /// FR-366: every checked type-level invariant.

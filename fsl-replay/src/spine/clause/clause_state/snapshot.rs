@@ -84,6 +84,7 @@ impl<'a> ClauseState<'a> {
             observation_limits: self.open.limits.observation,
             accounting: self.open.limits.accounting,
             package: self.package,
+            package_name: self.package.emitted_package_name().unwrap_or_default(),
             sources: self.open.sources,
             progress_capacity: fsl_eval::temporal::DEFAULT_COVERED_POSITIONS,
         }

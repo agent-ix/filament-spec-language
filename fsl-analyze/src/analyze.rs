@@ -62,7 +62,7 @@ use fsl_replay::{
 };
 use fsl_replay::{
     DeclineCode, IncompleteCause, ModelCheckRecord, Operation, OutcomeDiagnostic, OutcomeDocument,
-    OutcomeItem, ProofRefusalCause, TerminalRecord, TerminalValue,
+    OutcomeItem, OutcomeStage, ProofRefusalCause, TerminalRecord, TerminalValue,
 };
 use fsl_route::routing::Disposition;
 use fsl_route::{BackendDescriptor, Candidate, Mode, ProviderOrigin, RegistrationRefusal};
@@ -619,18 +619,18 @@ impl AnalyzeRefusal {
         match self {
             Self::Binding(failure) => {
                 refusal_document(Operation::Analyze, failure, failure.to_string())
+                    .with_last_stage(Some(OutcomeStage::S4))
             }
             Self::Provision(refusal) => {
                 let catalog = refusal.catalog_code();
                 let category = category_of(&catalog).unwrap_or(Category::Refusal);
-                OutcomeDocument::new(Operation::Analyze, None, category).with_diagnostics(vec![
-                    OutcomeDiagnostic::new(
+                OutcomeDocument::new(Operation::Analyze, Some(OutcomeStage::S4), category)
+                    .with_diagnostics(vec![OutcomeDiagnostic::new(
                         Some(catalog.cause()),
                         catalog.code(),
                         None,
                         refusal.to_string(),
-                    ),
-                ])
+                    )])
             }
         }
     }
@@ -687,11 +687,103 @@ pub fn analyze_document(
     records: &[TerminalRecord],
     counterexamples: &[ItemCounterexample],
 ) -> Result<OutcomeDocument, OutcomeItemError> {
+    analyze_document_routed(records, counterexamples, &std::collections::BTreeMap::new())
+}
+
+/// How negotiation routed one item, which FR-621 "Last stage" reads: an
+/// item with no route settled before negotiation.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum ItemRoute {
+    /// Negotiated to an FSL in-process engine (EN-1 to EN-7, the zone
+    /// search), which settles it at `S6c`.
+    InProcess,
+    /// Settled at negotiation, `S6b`: negotiated to a registered provider
+    /// outside FSL, or settled by its negotiation's own disposition.
+    Negotiated,
+}
+
+/// [`analyze_document`] with each negotiated item's [`ItemRoute`] by
+/// request index, so the document's `last_stage` (FR-621 "Last stage")
+/// reads where each item was settled.
+///
+/// # Errors
+///
+/// As [`analyze_document`].
+pub fn analyze_document_routed(
+    records: &[TerminalRecord],
+    counterexamples: &[ItemCounterexample],
+    routes: &std::collections::BTreeMap<RequestIndex, ItemRoute>,
+) -> Result<OutcomeDocument, OutcomeItemError> {
     let items = records
         .iter()
         .map(|record| analyze_item(record, counterexamples))
         .collect::<Result<Vec<_>, _>>()?;
-    Ok(OutcomeDocument::settled(Operation::Analyze, None, items))
+    // FR-286: a cancelled request names no stage.
+    let cancelled = records.iter().any(|record| {
+        matches!(
+            record.value(),
+            TerminalValue::Incomplete(IncompleteCause::Cancelled { .. })
+        )
+    });
+    let stage = records
+        .iter()
+        .map(|record| {
+            item_stage(
+                record,
+                counterexamples,
+                routes.get(&record.request_index()).copied(),
+            )
+        })
+        .max_by_key(|stage| stage_rank(*stage))
+        .unwrap_or(OutcomeStage::S4);
+    Ok(OutcomeDocument::settled(
+        Operation::Analyze,
+        (!cancelled).then_some(stage),
+        items,
+    ))
+}
+
+fn stage_rank(stage: OutcomeStage) -> u8 {
+    match stage {
+        OutcomeStage::S4 => 4,
+        OutcomeStage::S6b => 6,
+        OutcomeStage::S6c => 7,
+        OutcomeStage::S7 => 8,
+        _ => 9,
+    }
+}
+
+/// FR-621 "Last stage": the stage that settled `record`, negotiated by
+/// `route` (none when it settled before negotiation); the document takes the
+/// greatest of `S4` and its items'.
+fn item_stage(
+    record: &TerminalRecord,
+    counterexamples: &[ItemCounterexample],
+    route: Option<ItemRoute>,
+) -> OutcomeStage {
+    // A counterexample reaches the document only once its replay reproduced
+    // it; the state-graph one is built as a typed witness and not replayed.
+    if let Some(found) = counterexamples
+        .iter()
+        .find(|found| found.request_index == record.request_index())
+    {
+        return if matches!(found.counterexample, Counterexample::StateGraph(_)) {
+            OutcomeStage::S7
+        } else {
+            OutcomeStage::S8
+        };
+    }
+    match route {
+        // Negotiated to an outside provider, or settled by a disposition of
+        // its negotiation (FSpec FR-331 `settled_by` `disposition`).
+        Some(ItemRoute::Negotiated) => OutcomeStage::S6b,
+        Some(ItemRoute::InProcess) if record.settled_by_disposition() => OutcomeStage::S6b,
+        Some(ItemRoute::InProcess) => OutcomeStage::S6c,
+        // A disposition before negotiation: an unknown claim, an
+        // unregistered backend, a malformed member.
+        None if record.settled_by_disposition() => OutcomeStage::S4,
+        None => OutcomeStage::S6c,
+    }
 }
 
 /// The FR-286 item of `record`, with its counterexample from

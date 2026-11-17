@@ -1156,6 +1156,7 @@ impl<'a> ClauseState<'a> {
                     ),
                     cover: self.open.cover,
                     missing_valuations: Vec::new(),
+                    late: super::LateInputs::default(),
                 }),
             },
             _ => TraceInput::Finite(refs()),

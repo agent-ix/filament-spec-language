@@ -71,9 +71,8 @@ The committed bindings are:
 | `observation` | `fsl_package::checked_views` |
 
 Each fact's accessors are those the document lists. Among them, the following
-are required by this binding and supplied with it: `role_internality`
-returning a `RoleInternality` of `Internal` or `External` (FSpec FR-217, fact
-`CF-PR-04`); `SchedulabilityRoot::obligation_identity` (fact `CF-IR-04`);
+are required by this binding and supplied with it:
+`SchedulabilityRoot::obligation_identity` (fact `CF-IR-04`);
 `fsl_replay::check_closed_form`, the FR-248 facade entry (fact `CF-CG-04`);
 `fsl_analyze::monitor_root::admit_progress_view`, which builds the
 authenticated progress view and authority selections from a request or event
@@ -104,9 +103,9 @@ fact in the standard and the binding here in the same release (FSpec FR-661).
 
 | ID | Criteria | Verification |
 | --- | --- | --- |
-| FR-761-AC-1 | `cargo xtask consumer-facades` over the committed bindings exits 0 and its report lists every inventory fact id, `CF-PR-04` with `fsl_package::protocol_view::role_internality`, `CF-IR-04` with `fsl_package::SchedulabilityRoot::obligation_identity`, `CF-CG-04` with `fsl_replay::check_closed_form`, `CF-RT-02` with `fsl_analyze::monitor_root::admit_progress_view` and `CF-OB-01` with `fsl_package::checked_views::subject_kinds` among them. | Test (TC-2144) |
+| FR-761-AC-1 | `cargo xtask consumer-facades` over the committed bindings exits 0 and its report lists every inventory fact id, `CF-IR-04` with `fsl_package::SchedulabilityRoot::obligation_identity`, `CF-CG-04` with `fsl_replay::check_closed_form`, `CF-RT-02` with `fsl_analyze::monitor_root::admit_progress_view` and `CF-OB-01` with `fsl_package::checked_views::subject_kinds` among them. | Test (TC-2144) |
 | FR-761-AC-2 | With a bindings file whose `CF-PR-03` accessors are `["no_such_accessor"]`, the check exits 1 and names `CF-PR-03` and `fsl_package::protocol_view::no_such_accessor`; a crate-private item named as an accessor fails the same way. | Test (TC-2145) |
-| FR-761-AC-3 | With a bindings file that omits `CF-PR-04`, the check exits 1 and names `CF-PR-04` as unbound. | Test (TC-2146) |
+| FR-761-AC-3 | With a bindings file that omits `CF-PR-05`, the check exits 1 and names `CF-PR-05` as unbound. | Test (TC-2146) |
 | FR-761-AC-4 | With a bindings file that adds a binding for `CF-PR-99`, the check exits 1 and names `CF-PR-99` as a binding with no inventory fact. | Test (TC-2147) |
 
 ## Dependencies

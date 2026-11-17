@@ -51,6 +51,8 @@ use fsl_semantics::model::refusal::MemberPath;
 
 mod clocks;
 mod lifecycle;
+#[cfg(feature = "quire-extraction")]
+mod native_fences;
 pub(crate) use clocks::ClockLocator;
 pub use clocks::{InvalidClock, RequestClocks};
 /// FR-527's TL mapping table and the native valuation a TL cross-evaluation
@@ -61,18 +63,24 @@ pub use fsl_package::checked_views::{
     Unmatched as TlUnmatched,
 };
 pub use fsl_package::TemporalClockSelection;
+#[cfg(feature = "quire-extraction")]
+pub use native_fences::{
+    check_native_fences, CheckLimits, FenceCheckCause, NativeFenceDiagnostic, NativeFenceReport,
+    NativeFenceRequest, NativeFenceResult, NativeFenceUnit,
+};
 mod subject;
 pub use lifecycle::{
-    admit_parsed_unit_list, check, check_units, check_units_with_refinement_internals,
-    check_with_execution_points, check_with_execution_points_and_refinement_internals,
-    check_with_execution_points_and_source_inputs, check_with_profile_catalog,
-    check_with_refinement_internals, check_with_temporal_selections_and_execution_points,
-    core_vocabulary, extension_forms, package, package_with_temporal_selections, parse,
-    parse_selecting_extensions, parse_with_extensions, preflight_unit_list, refusal_or_fault,
-    select, select_units, AdmittedModels, AdmittedUnitList, CheckedUnit, EmittedUnit,
-    FrontEndFailure, ObligationState, PackageLimits, ParseRequest, ParsedUnitSource,
-    PendingObligation, ProfileCatalogInput, ProfileCheckFailure, ProtocolCheckSite, SourceInputs,
-    TypeDeclaration, TypeReport, TypeRequirement,
+    admit_parsed_unit_list, check, check_units, check_units_with_integer_division,
+    check_units_with_refinement_internals, check_with_execution_points,
+    check_with_execution_points_and_refinement_internals,
+    check_with_execution_points_and_source_inputs, check_with_integer_division,
+    check_with_profile_catalog, check_with_refinement_internals,
+    check_with_temporal_selections_and_execution_points, core_vocabulary, extension_forms, package,
+    package_with_temporal_selections, parse, parse_selecting_extensions, parse_with_extensions,
+    preflight_unit_list, refusal_or_fault, select, select_units, AdmittedModels, AdmittedUnitList,
+    CheckedUnit, EmittedUnit, FrontEndFailure, ObligationState, PackageLimits, ParseRequest,
+    ParsedUnitSource, PendingObligation, ProfileCatalogInput, ProfileCheckFailure,
+    ProtocolCheckSite, SourceInputs, TypeDeclaration, TypeReport, TypeRequirement,
 };
 pub(crate) use lifecycle::{
     check_for_continuation, check_units_with_options, parse_for_continuation, ContinuationInputs,
@@ -203,37 +211,42 @@ pub use bind::{
 };
 
 mod call;
+mod identity_form;
 mod run_value;
 pub(crate) use call::run_reading;
 pub use call::{
     default_accounting, run, Call, CallArgument, CallIncomplete, CallLocus, CallOutcome,
-    CallRefusal, CallValue, RunRefusal, WireArgument, DEFAULT_WORK_UNITS,
+    CallRefusal, CallSnapshot, CallValue, RunRefusal, WireArgument, DEFAULT_WORK_UNITS,
 };
+pub use identity_form::{effective_form, node_key_form, universe_form};
 pub use run_value::ArgumentDefect;
 
 pub(crate) mod clause;
 pub use clause::{
-    admit_progress, assertion_json, assertion_of, authenticate_emission,
-    authenticate_package_trace, clause_trace_binding, incomplete_json, incomplete_of,
-    name_clause_atom, pending_report, read_ledger, run_clause, run_clause_batch,
+    admit_progress, assertion_json, assertion_of, authenticate_emission, authenticate_package_trace, clause_trace_binding, incomplete_json, incomplete_of,
+    name_clause_atom, pending_report, read_evidence_ledger, read_ledger, run_clause, run_clause_batch,
     run_clause_with_temporal_selections, run_package_temporal, run_package_trace_subject,
-    run_temporal_valuation, run_trace_subject_clause, sample_position, temporal_batch_exit_code,
-    temporal_batch_outcome, write_ledger, AdmittedPosition, AdmittedValue, Advance,
-    AuthenticatedTemporalSelection, AuthenticationFailure, ClauseArgument, ClauseArgumentValue,
-    ClauseDisposition, ClauseLimits, ClauseMark, ClauseOpen, ClauseRefusal, ClauseRunBatchOutcome,
+    run_program_batch, run_temporal_valuation, run_trace_subject_clause, sample_position,
+    settle_correction, settle_run_correction, temporal_batch_exit_code, temporal_batch_outcome,
+    write_ledger, AdmittedLate, AdmittedPosition, AdmittedValue, Advance, AuthenticatedTemporalSelection, AuthenticationFailure,
+    ClauseArgument, ClauseArgumentValue, ClauseDisposition, ClauseLimits, ClauseMark, ClauseOpen, ClauseRefusal, ClauseRunBatchOutcome,
     ClauseRunBatchRefusal, ClauseRunRefusal, ClauseRunReport, ClauseRunRequest, ClauseRunSelection,
-    ClauseRunSource, ClauseRunStage, ClauseRunUsage, ClauseState, ClauseTraceKind,
-    ConsequentEventRefusal, ConsequentSourceEvent, ConsequentSourceEvents, ConsequentState,
-    ContradictedDimension, FiniteWindowAssessment, FiniteWindowPremises, FiniteWindowReport,
-    FiniteWindowSupport, LedgerBinding, LedgerReadError, ObservedPosition, OperationName,
-    OverObject, PackageAuthentication, PackageTemporalRequest, PackageTraceSubjectRequest,
-    PackagesStage, ProgressAssertion, ProgressClosure, ProgressCompleteness, ProgressContradiction,
-    ProgressLedger, ProgressLedgerEntry, ProgressLimitReached, ProgressLowerBoundary,
-    ProgressRefusal, ProgressValue, TemporalAuthentication, TemporalIndeterminateReason,
-    TemporalPositionRefusal, TemporalTraceRefusal, TemporalUndefinedCause, TemporalValuation,
-    TemporalVerdict, TemporalWindowRefusal, TimestampedCover, TimestampedMissingValuation,
-    TimestampedObservation, TimestampedOrderKey, TimestampedWindow, TraceBinding, TraceInput,
-    TraceRefusal, TraceSubjectClauseRequest, CLAUSE_STATE_FORMAT, DEFAULT_MODEL_MAX_CANDIDATES,
+    ClauseRunSource, ClauseRunStage, ClauseRunUsage, ClauseState, ClauseTraceKind, ConsequentEventRefusal, ConsequentSourceEvent,
+    ConsequentSourceEvents, ConsequentState, ContradictedDimension, CorrectionRecord,
+    CorrectionRefusal, EvidenceLedgerFile, EvidenceLedgerReadError, FiniteWindowAssessment,
+    FiniteWindowPremises, FiniteWindowReport, FiniteWindowSupport, LateEntry, LateInputs,
+    LedgerBinding, LedgerReadError, ObservedPosition, OperationName, OverObject,
+    PackageAuthentication, PackageTemporalRequest, PackageTraceSubjectRequest, PackagesStage,
+    ProgramBatchCallOutcome, ProgramBatchItemResult, ProgramBatchOutcome, ProgramBatchRefusal,
+    ProgramBatchSelection, ProgramCompilationRequest, ProgressAssertion, ProgressClosure,
+    ProgressCompleteness, ProgressContradiction, ProgressLedger, ProgressLedgerEntry,
+    ProgressLimitReached, ProgressLowerBoundary, ProgressRefusal, ProgressValue, RunRelation,
+    TemporalAuthentication, TemporalIndeterminateReason, TemporalPositionRefusal,
+    TemporalTraceRefusal, TemporalUndefinedCause, TemporalValuation, TemporalVerdict,
+    TemporalWindowRefusal, TimestampedCover, TimestampedMissingValuation, TimestampedObservation,
+    TimestampedOrderKey, TimestampedWindow, TraceBinding, TraceInput, TraceRefusal,
+    TraceSubjectClauseRequest, CLAUSE_STATE_FORMAT, ValueInvariantsBatchFailure, ValueInvariantsBatchOutcome,
+    ValueInvariantsBatchRequest, DEFAULT_MODEL_MAX_CANDIDATES, EVIDENCE_LEDGER_FORMAT,
 };
 mod refinement;
 pub use refinement::{
@@ -268,7 +281,8 @@ pub use request::{
     ClauseRequestParts, ClauseRequestReadError, ClauseRunSelectionWire, ClauseSelectionParts,
     ClauseSelectionPartsKind, ClauseSelectionWire, CoverWire, FrameSelectionWire,
     FunctionSelectionWire, LowerBoundaryWire, ObjectReferenceWire, ObservationLimitsWire,
-    OrderKeyWire, ProgressWire, SuppliedObservation,
+    OrderKeyWire, ProgressWire, RelationWire, SuppliedObservation, TemporalTraceParts,
+    TimestampedParts,
 };
 // FR-116: FR-115's frame run, shared with the frame replay (`crate::execute`).
 pub(crate) use clause::{check_clause_admitted, check_frame, ClauseCheck, CompiledRun, FrameCheck};
@@ -1098,13 +1112,13 @@ fn check_message(refusals: &[CheckRefusal]) -> String {
     }
     match &first.cause {
         CheckCause::StateGraph(cause) => {
-            if let fsl_semantics::check::StateGraphCause::TemporalProfile {
+            if let fsl_semantics::check::StateGraphCause::NotStateLayer {
                 alias, identity, ..
             } = &**cause
             {
                 message = format!(
-                    "{message}: `using {alias}` selects the temporal profile `{identity}`; a \
-                     state-graph claim checks under a state-bearing layer profile"
+                    "{message}: `using {alias}` selects `{identity}`, which is not a state-bearing \
+                     layer; a state-graph claim checks under a state-bearing layer profile"
                 );
             }
             if let fsl_semantics::check::StateGraphCause::Predicate { cause, .. } = &**cause {

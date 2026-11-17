@@ -2585,7 +2585,7 @@ mod relationships;
 mod tree;
 mod write;
 
-pub use document::{admit_record_sample, ObservationRole};
+pub use document::{admit_record_sample, unit_id_named, unit_name_of, ObservationRole};
 use document::{read_document, DocumentKind};
 pub use encode::ValueEncoder;
 pub use extents::{
@@ -3634,6 +3634,23 @@ pub struct AdmittedInvocation<'t> {
     context: EffectiveId,
     model_limits: ModelNormalizationLimits,
     documents: InvocationDocuments,
+    operation_contract: OperationContractObservations,
+}
+
+/// The operation bindings admitted with a frame invocation, ready for its
+/// checked `requires` and `ensures` clauses (FR-702).
+#[derive(Clone, Debug)]
+pub struct OperationContractObservations {
+    /// The invocation's pre-state.
+    pub pre: Observation,
+    /// The invocation's post-state.
+    pub post: Observation,
+    /// The receiver bound to `self`.
+    pub self_reference: ObjectReference,
+    /// The operation parameters in declaration order.
+    pub parameters: Vec<(String, Value)>,
+    /// The operation result, when it declares one.
+    pub result: Option<Value>,
 }
 
 impl std::fmt::Debug for AdmittedInvocation<'_> {
@@ -3776,6 +3793,12 @@ pub enum LinkDifference {
 }
 
 impl AdmittedInvocation<'_> {
+    /// The pre/post environments and invocation bindings used to evaluate
+    /// the operation's checked contract after its frame is checked (FR-702).
+    pub fn operation_contract_observations(&self) -> &OperationContractObservations {
+        &self.operation_contract
+    }
+
     /// FR-106 check 11 over this invocation with `effect`, the frame the
     /// caller resolved from the compiled package (FSpec FR-013-AC-3: the
     /// request carries no frame), in check 11's order, stopping at the
@@ -3854,8 +3877,26 @@ pub fn admit_frame_invocation<'a, 't>(
         limits,
         model_limits.ancestor_steps,
     )?;
+    let usage = admitted.usage();
+    let operation_contract = OperationContractObservations {
+        pre: Observation {
+            identity: admitted.documents.pre.identity.clone(),
+            environment: admitted.pre.environment,
+            populations: admitted.pre.completeness,
+            out_of_range: admitted.pre.out_of_range,
+        },
+        post: Observation {
+            identity: admitted.documents.post.identity.clone(),
+            environment: admitted.post.environment,
+            populations: admitted.post.completeness,
+            out_of_range: admitted.post.out_of_range,
+        },
+        self_reference: admitted.self_reference,
+        parameters: admitted.parameters,
+        result: admitted.result,
+    };
     Ok(AdmittedInvocation {
-        usage: admitted.usage(),
+        usage,
         frame: frame.frame.clone(),
         invocation: admitted.documents.invocation.identity.clone(),
         pre: admitted.documents.pre.identity.clone(),
@@ -3865,6 +3906,7 @@ pub fn admit_frame_invocation<'a, 't>(
         context: frame.context.clone(),
         model_limits,
         documents: admitted.documents,
+        operation_contract,
     })
 }
 

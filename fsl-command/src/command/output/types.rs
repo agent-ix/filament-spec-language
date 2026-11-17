@@ -61,6 +61,14 @@ pub(super) enum Details<'a> {
     Claim {
         claim: &'a serde_json::Value,
     },
+    /// FR-526, FR-966: a refused correction's FR-516 cause, the request
+    /// member at fault and, for `admitted-not-late`, the unmatched name.
+    Correction {
+        cause: &'static str,
+        member: &'static str,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        observation: Option<&'a str>,
+    },
     Io {
         path: Cow<'a, str>,
         os_code: Option<i32>,
@@ -109,75 +117,15 @@ pub(super) enum Details<'a> {
         path: &'a str,
         span: Option<LocatedSpan>,
     },
-    /// FR-100: a stage-`call` refusal naming the request's `function`
-    /// string (`missing_declaration`, `unsupported_construct`).
-    Function {
-        function: &'a str,
-    },
-    /// FR-100: a stage-`call` refusal naming the argument's `parameter`
-    /// string (`invalid_runtime_input`).
-    Parameter {
-        parameter: &'a str,
-    },
-    /// FR-100: a stage-`call` refusal naming the argument's zero-based
-    /// declared position (`invalid_runtime_input`, `WrongValueKind`).
-    Position {
-        position: usize,
-    },
-    /// FR-650: an argument refusal naming the declared position and the JSON
-    /// pointer of the defect inside the argument's `value`.
-    Argument {
-        position: usize,
-        path: &'a str,
-    },
-    /// FR-100 typed model admission's foreign-universe payload.
-    AdmissionForeignUniverse {
-        position: usize,
-        required: String,
-        supplied: String,
-    },
-    /// FR-100 typed model-selection admission details for a document offer.
-    AdmissionForeignModelDocument {
-        position: usize,
-        model_identity: String,
-        expected: AdmissionModelSelection,
-    },
-    /// FR-100 typed model-selection admission details for a population offer.
-    AdmissionForeignModelPopulation {
-        position: usize,
-        population: AdmissionDeclarationKey,
-        expected: AdmissionModelSelection,
-    },
-    /// FR-100 typed foreign-type admission details.
-    AdmissionForeignType {
-        position: usize,
-        member: String,
-        #[serde(rename = "type")]
-        type_name: AdmissionDeclarationKey,
-    },
+    /// FR-286 "Diagnostic details": a stage-`call` refusal's closed object,
+    /// member for member what the outcome diagnostic carries.
+    Object(serde_json::Map<String, serde_json::Value>),
     /// FR-049-AC-2: the call's entry refused the object environment,
     /// naming the object and, when one attribute is at fault, the attribute.
     ObjectEnvironment {
         object: Option<&'a str>,
         field: Option<&'a str>,
     },
-    /// FR-100 "Internal failure at S6a": the `InternalFault`'s own stable
-    /// stage and invariant identifiers (`runtime_invariant`, exit 30).
-    Invariant {
-        stage: &'static str,
-        invariant: &'static str,
-    },
-}
-
-#[derive(Serialize)]
-pub(super) struct AdmissionModelSelection {
-    pub identity: String,
-}
-
-#[derive(Serialize)]
-pub(super) struct AdmissionDeclarationKey {
-    pub package: String,
-    pub node: String,
 }
 
 /// FR-100: the program source as `spine-run-result/1` renders one -- its

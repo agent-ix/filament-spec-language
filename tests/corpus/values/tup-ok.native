@@ -1,0 +1,4 @@
+language "ix:native" edition "1-draft";
+profile v = "filament.value.complete/v1";
+tuple Pair(Int[0, 9], Int[0, 9]);
+function f using v(): Boolean pure { Pair(1, 2) = Pair(1, 2) }

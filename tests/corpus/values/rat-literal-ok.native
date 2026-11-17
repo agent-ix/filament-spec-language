@@ -1,0 +1,4 @@
+language "ix:native" edition "1-draft";
+profile v = "filament.value.complete/v1";
+type R = Rational[-10, 10; 1, 5];
+function f using v(): R pure { rational(1, 2) }

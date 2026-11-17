@@ -87,7 +87,6 @@ fn entries(document: &Value) -> Vec<Value> {
 #[trace("TC-2703", "FR-963-AC-3")]
 #[trace("TC-2703", "FR-963-AC-4")]
 #[test]
-#[ignore = "QSL-2192: invalid_capability/unknown-option not built yet (FR-967)"]
 fn a_run_call_names_the_backend_of_its_requirement_items() {
     let directory = tempfile::tempdir().unwrap();
     // Settlement asked for, no backend named: three items on value-checker.
@@ -274,6 +273,7 @@ struct ProviderRun {
     negotiations: usize,
     deadline_ms: u64,
     max_frame_bytes: u64,
+    options: Vec<Value>,
 }
 
 /// What the recording provider saw: its `settle` calls and the limits of
@@ -283,6 +283,8 @@ struct Seen {
     settle_calls: usize,
     deadline_ms: u64,
     max_frame_bytes: u64,
+    /// The FR-331 `options` of every request item the provider received.
+    options: Vec<Value>,
 }
 
 /// A process provider that records each request and answers every item
@@ -303,6 +305,14 @@ impl fsl_analyze::provider::ExternalProvider for Recording {
         seen.settle_calls += 1;
         seen.deadline_ms = request.deadline_ms();
         seen.max_frame_bytes = request.limits().max_frame_bytes;
+        let wire = serde_json::to_value(request).expect("the request serializes");
+        seen.options.extend(
+            wire["items"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .map(|item| item.get("options").cloned().unwrap_or(Value::Null)),
+        );
         vec![self.verdict.clone(); request.items().len()]
     }
 }
@@ -312,6 +322,15 @@ impl fsl_analyze::provider::ExternalProvider for Recording {
 fn recording_provider(
     seen: &Arc<Mutex<Seen>>,
     verdict: fsl_analyze::provider::ProviderVerdict,
+) -> fsl_analyze::analyze::Engine {
+    publishing_provider(seen, verdict, &[])
+}
+
+/// The recording provider whose manifest publishes the option `published`.
+fn publishing_provider(
+    seen: &Arc<Mutex<Seen>>,
+    verdict: fsl_analyze::provider::ProviderVerdict,
+    published: &[&str],
 ) -> fsl_analyze::analyze::Engine {
     use fsl_semantics::check::Capability;
     let descriptor = fsl_route::descriptor_from_manifest(
@@ -329,7 +348,8 @@ fn recording_provider(
             reductions: None,
         },
     )
-    .expect("the descriptor advertises the external value arm");
+    .expect("the descriptor advertises the external value arm")
+    .with_options(published.iter().map(|name| (*name).to_owned()));
     fsl_analyze::analyze::Engine::external(
         descriptor,
         fsl_analyze::analyze::BackendTool::new("test-provider", "1").expect("a tool"),
@@ -394,6 +414,11 @@ fn run_with_providers(request: &Path, scenario: Scenario) -> Option<ProviderRun>
             cancel.cancel(filament_exact::CancelCause::Requested);
             vec![recording_provider(&seen, ProviderVerdict::Proved)]
         }
+        Scenario::PublishesDepth => vec![publishing_provider(
+            &seen,
+            ProviderVerdict::Proved,
+            &["depth"],
+        )],
     };
     let negotiate = Counting {
         negotiations: AtomicUsize::new(0),
@@ -410,6 +435,7 @@ fn run_with_providers(request: &Path, scenario: Scenario) -> Option<ProviderRun>
         negotiations: negotiate.negotiations.load(Ordering::SeqCst),
         deadline_ms: seen.deadline_ms,
         max_frame_bytes: seen.max_frame_bytes,
+        options: seen.options.clone(),
     })
 }
 
@@ -426,6 +452,8 @@ enum Scenario {
     UnreproducedRefutation,
     /// The handle is cancelled before the run.
     Cancelled,
+    /// The provider's manifest publishes the option `depth`.
+    PublishesDepth,
 }
 
 /// FR-961-AC-1, FR-961-AC-3, FR-963-AC-2, FR-964-AC-1, FR-964-AC-2: the run
@@ -569,4 +597,58 @@ fn an_unnamed_run_item_with_two_value_validity_candidates_is_ambiguous() {
     for item in entries(&named.document) {
         assert_eq!(item["record"]["backend"], "value-checker", "{item}");
     }
+}
+
+/// FR-967-AC-2, its published-option half, through the run's requirement
+/// items: with the recording provider's manifest publishing `depth`, an
+/// item naming it with `{"depth": "3"}` reaches the provider with that
+/// option in its FSpec FR-331 request item, and `{"depth": "3", "width":
+/// "1"}` settles `invalid_capability`/`unknown-option` naming `width` and
+/// sends the provider no request.
+#[trace("TC-2724", "FR-967-AC-2")]
+#[test]
+fn a_published_option_reaches_the_provider_and_an_unpublished_one_settles() {
+    let directory = tempfile::tempdir().unwrap();
+    let even = |options: Value| {
+        write(
+            directory.path(),
+            "Even",
+            json!([{"parameter": "n", "value": 4}]),
+            Some(json!({"backend": PROVIDER, "options": options})),
+        )
+    };
+    let published = run_with_providers(&even(json!({"depth": "3"})), Scenario::PublishesDepth)
+        .expect("the run-side entry");
+    let items = entries(&published.document);
+    assert_eq!(published.settle_calls, 1, "{}", published.document);
+    assert_eq!(published.options.len(), items.len());
+    for options in &published.options {
+        assert_eq!(options, &json!({"depth": "3"}));
+    }
+    for item in &items {
+        assert_eq!(item["record"]["result"], "proved", "{item}");
+    }
+
+    let unpublished = run_with_providers(
+        &even(json!({"depth": "3", "width": "1"})),
+        Scenario::PublishesDepth,
+    )
+    .expect("the run-side entry");
+    assert_eq!(unpublished.settle_calls, 0, "no request is sent");
+    assert_eq!(unpublished.negotiations, 0, "no item is negotiated");
+    for item in entries(&unpublished.document) {
+        let text = item.to_string();
+        assert!(text.contains("invalid_capability"), "{item}");
+        assert!(text.contains("unknown-option"), "{item}");
+        assert!(text.contains("\"width\""), "{item}");
+        assert!(text.contains(PROVIDER), "{item}");
+        let detail = &item["record"]["diagnostic"]["detail"];
+        assert_eq!(detail["request_index"], item["request_index"], "{item}");
+        assert_eq!(detail["option"], "width", "{item}");
+    }
+    assert_eq!(
+        unpublished.document["outcome"],
+        json!({"kind": "completed", "value": {"boolean": true}}),
+        "the call's value is unchanged"
+    );
 }

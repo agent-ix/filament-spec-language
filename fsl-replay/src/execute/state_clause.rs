@@ -267,6 +267,7 @@ pub fn replay_state_clause(
         },
         accounting: request.accounting_limits(),
         package: compiled.checked.package(),
+        package_name: compiled.package.as_str(),
         sources: &sources,
         progress_capacity: fsl_eval::temporal::DEFAULT_COVERED_POSITIONS,
     };
@@ -334,6 +335,7 @@ pub fn replay_state_clause(
         | ClauseDisposition::TraceRefused(_)
         | ClauseDisposition::ProgressContradiction(_)
         | ClauseDisposition::FrameViolation(_)
+        | ClauseDisposition::OperationContractViolation(_)
         | ClauseDisposition::TemporalValuation(_) => {
             return fault("clause-check-reports-admission-or-evaluation")
         }

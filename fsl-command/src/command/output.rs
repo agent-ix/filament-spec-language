@@ -21,6 +21,69 @@ impl NativeResult {
         Self(document)
     }
 
+    /// Mark generated flow items whose bounded tuple expansion stopped
+    /// before analysis. The result remains the ordinary analyze document;
+    /// only those item records and their aggregate gaps change.
+    pub(super) fn mark_flow_items_incomplete(
+        &mut self,
+        claim_names: &std::collections::BTreeSet<String>,
+    ) {
+        let Some(items) = self.0.get_mut("items").and_then(Value::as_array_mut) else {
+            return;
+        };
+        let mut stopped = std::collections::BTreeSet::new();
+        for item in items {
+            if !item
+                .get("claim_name")
+                .and_then(Value::as_str)
+                .is_some_and(|name| claim_names.contains(name))
+            {
+                continue;
+            }
+            let Some(index) = item.get("request_index").and_then(Value::as_u64) else {
+                continue;
+            };
+            stopped.insert(index);
+            item["category"] = Value::String("incomplete".to_owned());
+            let Some(record) = item.get_mut("record").and_then(Value::as_object_mut) else {
+                continue;
+            };
+            let request_index = record.get("request_index").cloned();
+            record.clear();
+            if let Some(request_index) = request_index {
+                record.insert("request_index".to_owned(), request_index);
+            }
+            record.insert("result".to_owned(), Value::String("incomplete".to_owned()));
+            record.insert(
+                "cause".to_owned(),
+                serde_json::json!({"kind": "limit-reached"}),
+            );
+            record.insert(
+                "category".to_owned(),
+                Value::String("incomplete".to_owned()),
+            );
+        }
+        if stopped.is_empty() {
+            return;
+        }
+        if let Some(gaps) = self
+            .0
+            .pointer_mut("/aggregate/gaps")
+            .and_then(Value::as_array_mut)
+        {
+            for gap in gaps {
+                if gap
+                    .get("request_index")
+                    .and_then(Value::as_u64)
+                    .is_some_and(|i| stopped.contains(&i))
+                {
+                    gap["result"] = Value::String("incomplete".to_owned());
+                }
+            }
+        }
+        self.0["category"] = Value::String("incomplete".to_owned());
+    }
+
     /// The FR-644 `filament.monitor-run/1` document.
     pub(super) fn monitor_document(document: Value) -> Self {
         Self(document)
@@ -201,6 +264,14 @@ pub(super) fn error(error: &RunError, artifact: bool) -> Result<Value, serde_jso
             types::Stage::SpineRun("call"),
             types::Details::Claim { claim },
         ),
+        RunCause::TemporalCorrection(refusal) => (
+            types::Stage::SpineRun("evaluate"),
+            types::Details::Correction {
+                cause: refusal.cause,
+                member: refusal.member,
+                observation: refusal.observation.as_deref(),
+            },
+        ),
         RunCause::SpineRun(refusal) => (
             // A cancel has no stage (FR-286); the command never cancels its
             // own handle, so the envelope names the request that owns it.
@@ -208,120 +279,19 @@ pub(super) fn error(error: &RunError, artifact: bool) -> Result<Value, serde_jso
                 .stage()
                 .map_or(types::Stage::Request, types::Stage::SpineRun),
             match refusal.as_ref() {
-                fsl_replay::spine::RunRefusal::MissingDeclaration { function }
-                | fsl_replay::spine::RunRefusal::UnsupportedResult { function } => {
-                    types::Details::Function { function }
-                }
-                fsl_replay::spine::RunRefusal::UnknownParameter { parameter }
-                | fsl_replay::spine::RunRefusal::DuplicateArgument { parameter }
-                | fsl_replay::spine::RunRefusal::UnboundParameter { parameter } => {
-                    types::Details::Parameter { parameter }
-                }
-                fsl_replay::spine::RunRefusal::Argument { position, defect } => {
-                    types::Details::Argument {
-                        position: *position,
-                        path: &defect.path,
-                    }
-                }
-                fsl_replay::spine::RunRefusal::UnsupportedParameter { position } => {
-                    types::Details::Position {
-                        position: *position,
-                    }
-                }
-                fsl_replay::spine::RunRefusal::WrongValueKind { position } => {
-                    types::Details::Position {
-                        position: *position,
-                    }
-                }
-                fsl_replay::spine::RunRefusal::Admission { position, refusal } => {
-                    match &refusal.cause {
-                        fsl_semantics::model::normalize::ModelRefusalCause::ForeignUniverse {
-                            actual,
-                            expected,
-                        } => types::Details::AdmissionForeignUniverse {
-                            position: *position,
-                            required: expected.root_type().to_string(),
-                            supplied: actual.to_string(),
-                        },
-                        fsl_semantics::model::normalize::ModelRefusalCause::ForeignModelSelection {
-                            actual,
-                            expected,
-                        } => {
-                            let expected = types::AdmissionModelSelection {
-                                identity: expected.identity.clone(),
-                            };
-                            match actual {
-                                fsl_semantics::model::refusal::OfferedSelection::Document(
-                                    model_identity,
-                                ) => types::Details::AdmissionForeignModelDocument {
-                                    position: *position,
-                                    model_identity: model_identity.clone(),
-                                    expected,
-                                },
-                                fsl_semantics::model::refusal::OfferedSelection::Population(
-                                    population,
-                                ) => types::Details::AdmissionForeignModelPopulation {
-                                    position: *position,
-                                    population: types::AdmissionDeclarationKey {
-                                        package: population.package.clone(),
-                                        node: population.node.clone(),
-                                    },
-                                    expected,
-                                },
-                            }
-                        }
-                        fsl_semantics::model::normalize::ModelRefusalCause::ForeignType {
-                            member,
-                            type_name,
-                        } => types::Details::AdmissionForeignType {
-                            position: *position,
-                            member: member.clone(),
-                            type_name: types::AdmissionDeclarationKey {
-                                package: type_name.package.clone(),
-                                node: type_name.node.clone(),
-                            },
-                        },
-                        _ => types::Details::Position {
-                            position: *position,
-                        },
-                    }
-                }
-                fsl_replay::spine::RunRefusal::DanglingReference { position }
-                | fsl_replay::spine::RunRefusal::Storage { position, .. } => {
-                    types::Details::Position {
-                        position: *position,
-                    }
-                }
-                // The phase-marked pre-call stop names the argument it reached
-                // by position; its full record is the replay result's, and the
-                // command wire projection of it is a separate follow-on.
-                fsl_replay::spine::RunRefusal::Supplied(stop) => stop
-                    .context
-                    .parameter
-                    .map_or(types::Details::None, |position| types::Details::Position {
-                        position,
-                    }),
-                fsl_replay::spine::RunRefusal::UnsupportedHelper(stop) => stop
-                    .context
-                    .parameter
-                    .map_or(types::Details::None, |position| types::Details::Position {
-                        position,
-                    }),
+                // FR-049-AC-2: the object and the attribute the call's entry
+                // refused; no member of FR-286's closed `details` vocabulary.
                 fsl_replay::spine::RunRefusal::ObjectEnvironment(record) => {
                     types::Details::ObjectEnvironment {
                         object: record.fields.get("object").map(String::as_str),
                         field: record.fields.get("field").map(String::as_str),
                     }
                 }
-                fsl_replay::spine::RunRefusal::Compile(_)
-                | fsl_replay::spine::RunRefusal::SourceNotSupplied { .. }
-                | fsl_replay::spine::RunRefusal::Unsupported(_)
-                | fsl_replay::spine::RunRefusal::PrepareLimit(_)
-                | fsl_replay::spine::RunRefusal::Cancelled(_) => types::Details::None,
-                fsl_replay::spine::RunRefusal::Fault(fault) => types::Details::Invariant {
-                    stage: fault.stage(),
-                    invariant: fault.invariant(),
-                },
+                // FR-286 "Diagnostic details": the one closed object the
+                // outcome diagnostic carries too.
+                other => other
+                    .details()
+                    .map_or(types::Details::None, types::Details::Object),
             },
         ),
     };
@@ -340,11 +310,27 @@ pub(super) fn error(error: &RunError, artifact: bool) -> Result<Value, serde_jso
                     Some("unsupported-feature")
                 }
                 fsl_replay::spine::RunRefusal::Fault(_) => Some("established-invariant-broken"),
+                fsl_replay::spine::RunRefusal::Admission { refusal, .. } => match &refusal.cause {
+                    fsl_semantics::model::normalize::ModelRefusalCause::ForeignUniverse {
+                        ..
+                    } => Some("foreign-universe"),
+                    fsl_semantics::model::normalize::ModelRefusalCause::ForeignModelSelection {
+                        ..
+                    } => Some("foreign-model-selection"),
+                    fsl_semantics::model::normalize::ModelRefusalCause::ForeignType { .. } => {
+                        Some("foreign-type")
+                    }
+                    _ => None,
+                },
+                fsl_replay::spine::RunRefusal::DanglingReference { .. } => {
+                    Some("absent-target-in-complete-population")
+                }
                 fsl_replay::spine::RunRefusal::Storage { failure, .. } => {
                     fsl_semantics::value::environment_stage::membership_failure_cause(failure)
                 }
                 _ => None,
             },
+            RunCause::TemporalCorrection(_) => Some("invalid-value"),
             RunCause::TlCorrespondence { .. } => Some("unsupported-selection"),
             RunCause::TlClause { .. } => Some("missing-name"),
             RunCause::TlNotYetImplemented { .. } => Some("not-yet-implemented"),
@@ -387,9 +373,14 @@ pub(super) fn monitor_outcome<'a>(
 
 /// FR-267: expose the library's canonical clause report to the CLI adapter.
 pub(super) fn clause_report(
-    report: &fsl_replay::spine::ClauseRunReport,
+    mut report: fsl_replay::spine::ClauseRunReport,
     selection: &fsl_replay::spine::ClauseRunSelection,
 ) -> super::Result<RunResult> {
+    // FR-526: a timestamped run settles its correction relation before any
+    // result document is written; a refused relation writes none.
+    fsl_replay::spine::settle_run_correction(&mut report, selection)
+        .map_err(RunCause::TemporalCorrection)?;
+    let report = &report;
     let bytes = fsl_replay::spine::write_clause_run_result_for(report, Some(selection))
         .map_err(RunCause::ClauseOutput)?;
     let outcome = monitor_outcome(std::iter::once((&selection.clause_name()[..], report)));
@@ -479,6 +470,15 @@ pub(super) fn spine_run_result(
     outcome: fsl_replay::spine::CallOutcome,
     settled: Option<fsl_analyze::analyze::document::SettledRun>,
 ) -> super::Result<RunResult> {
+    spine_run_result_for_source(source.source(), function, outcome, settled)
+}
+
+pub(super) fn spine_run_result_for_source(
+    source: &fsl_foundation::Source,
+    function: &str,
+    outcome: fsl_replay::spine::CallOutcome,
+    settled: Option<fsl_analyze::analyze::document::SettledRun>,
+) -> super::Result<RunResult> {
     use fsl_replay::spine::{CallOutcome, CallRefusal};
     let call_category = outcome.category();
     let lifecycle = fsl_replay::OutcomeDocument::from_call(&outcome);
@@ -561,8 +561,8 @@ pub(super) fn spine_run_result(
     let document = types::SpineRunReport {
         format: types::Format::SpineRunResult,
         source: types::RunSource {
-            identity: source.source().identity(),
-            path: source.source().path(),
+            identity: source.identity(),
+            path: source.path(),
         },
         function,
         outcome,

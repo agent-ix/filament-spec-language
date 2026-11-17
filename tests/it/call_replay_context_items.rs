@@ -36,6 +36,7 @@ fn a_members_item_bounds_build_a_request_that_replays() {
     let call = Call {
         clocks: Default::default(),
         wire_arguments: Vec::new(),
+        snapshot: None,
         function: "q".to_owned(),
         arguments: vec![CallArgument {
             parameter: "x".to_owned(),

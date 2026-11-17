@@ -800,6 +800,7 @@ pub struct RequirementItem {
     candidates: CandidateOutcome,
     unsupported: Option<UnsupportedItem>,
     evidence: Option<EvidenceKind>,
+    options: BTreeMap<String, String>,
 }
 
 impl RequirementItem {
@@ -842,6 +843,7 @@ impl RequirementItem {
             candidates,
             unsupported: None,
             evidence: None,
+            options: BTreeMap::new(),
         }
     }
 
@@ -854,6 +856,20 @@ impl RequirementItem {
             index,
             ..self.clone()
         }
+    }
+
+    /// This item carrying `options`, the named backend's options (FSpec
+    /// FR-331 `options`), every other member unchanged.
+    #[must_use]
+    pub fn with_options(mut self, options: BTreeMap<String, String>) -> Self {
+        self.options = options;
+        self
+    }
+
+    /// The named backend's options this item carries; empty when it carries
+    /// none.
+    pub fn options(&self) -> &BTreeMap<String, String> {
+        &self.options
     }
 
     /// The reduction this item settles V-8 `unsupported-requested-capability`
@@ -1146,6 +1162,7 @@ pub fn items_with_reductions(
             },
             unsupported: requirements.unsupported().cloned(),
             evidence,
+            options: BTreeMap::new(),
         }
     };
     let own = |record: &RequirementRecord| match selection {

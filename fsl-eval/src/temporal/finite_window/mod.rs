@@ -18,6 +18,7 @@
 mod carried;
 mod cover;
 mod identity;
+pub use identity::correction_identity;
 mod lift;
 mod outcome;
 mod progressed;
@@ -25,14 +26,16 @@ mod run;
 mod trace;
 
 pub use carried::WindowState;
-pub use cover::{ClockCover, Containment};
+pub use cover::{ClockCover, Containment, StampInterval};
 pub use outcome::{
     Assessment, Basis, IndeterminateReason, Premises, ResultIdentity, SupportPair, Valuation,
     WindowEvaluation, WindowVerdict,
 };
 pub use progressed::{ProgressedRefusal, SampleProgress};
-pub use run::{evaluate_finite_window, evaluate_finite_window_at, WindowCharge, WindowUnit};
+pub use run::{
+    evaluate_finite_window, evaluate_finite_window_at, window_reach, WindowCharge, WindowUnit,
+};
 pub use trace::{
-    LowerBoundary, OrderKey, TimestampedObservation, TimestampedTrace, Watermark, WindowClock,
-    WindowProgress,
+    LateCutoff, LateObservation, Lateness, LowerBoundary, OrderKey, TimestampedObservation,
+    TimestampedTrace, Watermark, WindowClock, WindowProgress,
 };

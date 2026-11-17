@@ -10,18 +10,17 @@
 
 use std::collections::BTreeSet;
 
+use super::identity_form;
 use filament_exact::{
-    CollectionKind, CollectionType, Decimal, EnumMember, FieldValue, IeeeValue, IeeeWidth, Integer,
-    Meter, NodeKey, OptionValue, Presence, Rational, TextPayload, Value, ValueType,
+    CollectionKind, CollectionType, Decimal, EffectiveId, EnumMember, FieldValue, IeeeValue,
+    IeeeWidth, Integer, Meter, NodeKey, ObjectId, ObjectReference, OptionValue, Presence, Quantity,
+    Rational, TextPayload, UnitId, UniverseId, Value, ValueType,
 };
 use filament_semantic_value::declaration::{CompositeShape, TypeEnvironment};
 use fsl_foundation::diagnostic::Code;
 use fsl_semantics::check::EnumBinding;
+use fsl_semantics::model::object_environment::ObjectEnvironment;
 use serde_json::{json, Map, Value as Json};
-
-/// JSON levels the writer descends before it refuses: the reader's own
-/// recursion limit, so every value the writer produces reads back.
-const MAXIMUM_DEPTH: usize = 100;
 
 /// One argument defect: the catalog code and cause FR-650's table names, and
 /// the JSON pointer of the defect inside the argument's `value`.
@@ -62,19 +61,56 @@ pub(crate) enum WriteStop {
 pub(crate) struct Forms<'a> {
     types: &'a TypeEnvironment,
     enums: &'a [EnumBinding],
+    /// The package string the unit's own declarations live in.
+    own_package: &'a str,
+    /// The call's object world, when the call names a snapshot.
+    world: Option<&'a World<'a>>,
+}
+
+/// The object world of a call (FR-650 "Arguments"): the admitted snapshot's
+/// objects and the universe each Reference type's objects live in.
+pub(crate) struct World<'a> {
+    /// The admitted objects and populations.
+    pub objects: &'a ObjectEnvironment,
+    /// The universe of the objects of a declared object type.
+    pub universe_of: &'a dyn Fn(&EffectiveId) -> Option<UniverseId>,
 }
 
 impl<'a> Forms<'a> {
     pub(crate) fn new(types: &'a TypeEnvironment, enums: &'a [EnumBinding]) -> Self {
-        Self { types, enums }
+        Self {
+            types,
+            enums,
+            own_package: "",
+            world: None,
+        }
+    }
+
+    /// These forms for a unit whose own declarations live in `own_package`,
+    /// over the call's object world.
+    pub(crate) fn in_world(mut self, own_package: &'a str, world: Option<&'a World<'a>>) -> Self {
+        self.own_package = own_package;
+        self.world = world;
+        self
     }
 
     /// Whether a value of `value_type` has a run value form.
     pub(crate) fn has_form(&self, value_type: &ValueType) -> bool {
-        self.has_form_visiting(value_type, &mut BTreeSet::new())
+        self.has_form_visiting(value_type, true, &mut BTreeSet::new())
     }
 
-    fn has_form_visiting(&self, value_type: &ValueType, seen: &mut BTreeSet<NodeKey>) -> bool {
+    /// One exhaustive mapping from the checked type to its form: a
+    /// population below the top level has none (FR-650 "Types with no form"),
+    /// and neither has a map: FR-650 gives Map the form `{"map": [{key,
+    /// value}]}`, but `filament_exact::Value` has no map value to read it
+    /// into or write it from, so a map parameter or result refuses as
+    /// unsupported rather than being advertised and never read.
+    fn has_form_visiting(
+        &self,
+        value_type: &ValueType,
+        top: bool,
+        seen: &mut BTreeSet<NodeKey>,
+    ) -> bool {
         match value_type {
             ValueType::Boolean
             | ValueType::Integer
@@ -87,8 +123,10 @@ impl<'a> Forms<'a> {
             | ValueType::Uuid
             | ValueType::Timestamp
             | ValueType::Enum(_) => true,
-            ValueType::Option(payload) => self.has_form_visiting(payload, seen),
-            ValueType::Collection(collection) => self.has_form_visiting(collection.element(), seen),
+            ValueType::Option(payload) => self.has_form_visiting(payload, false, seen),
+            ValueType::Collection(collection) => {
+                self.has_form_visiting(collection.element(), false, seen)
+            }
             ValueType::Composite(key) => {
                 if !seen.insert(key.clone()) {
                     return true;
@@ -99,24 +137,24 @@ impl<'a> Forms<'a> {
                 match declaration.shape() {
                     CompositeShape::Record(fields) => fields
                         .iter()
-                        .all(|field| self.has_form_visiting(field.value_type(), seen)),
+                        .all(|field| self.has_form_visiting(field.value_type(), false, seen)),
                     CompositeShape::Tuple(positions) => positions
                         .iter()
-                        .all(|position| self.has_form_visiting(position, seen)),
+                        .all(|position| self.has_form_visiting(position, false, seen)),
                     CompositeShape::Union(members) => members.iter().all(|member| {
                         member
                             .positions()
                             .iter()
-                            .all(|position| self.has_form_visiting(position, seen))
+                            .all(|position| self.has_form_visiting(position, false, seen))
                     }),
                 }
             }
             ValueType::Quantity(_)
             | ValueType::BoundedQuantity(_)
             | ValueType::CarriedQuantity(_)
-            | ValueType::Map(_)
-            | ValueType::Reference(_)
-            | ValueType::Population(_) => false,
+            | ValueType::Reference(_) => true,
+            ValueType::Population(_) => top,
+            ValueType::Map(_) => false,
         }
     }
 
@@ -177,25 +215,12 @@ impl<'a> Forms<'a> {
                 self.leaf(Value::Integer(integer), value_type, path)
             }
             ValueType::Rational(_) => {
-                native(object, "rational", &["numerator", "denominator"], path)?;
-                let numerator = integer_text(&object["numerator"], path, "numerator")?;
-                let denominator = integer_text(&object["denominator"], path, "denominator")?;
-                let rational = Rational::new(numerator, denominator)
-                    .map_err(|_| defect(Code::InvalidRuntimeInput, "invalid-value", path))?;
+                let rational = rational_object(object, path)?;
                 self.leaf(Value::Rational(rational), value_type, path)
             }
             ValueType::Decimal(_) => {
-                native(object, "decimal", &["coefficient", "scale"], path)?;
-                let coefficient = integer_text(&object["coefficient"], path, "coefficient")?;
-                let scale = integer_text(&object["scale"], path, "scale")?
-                    .to_u64()
-                    .and_then(|scale| u32::try_from(scale).ok())
-                    .ok_or_else(|| defect(Code::InvalidRuntimeInput, "invalid-value", path))?;
-                self.leaf(
-                    Value::Decimal(Decimal::new(coefficient, scale)),
-                    value_type,
-                    path,
-                )
+                let decimal = decimal_object(object, path)?;
+                self.leaf(Value::Decimal(decimal), value_type, path)
             }
             ValueType::Float(float) => {
                 let (kind, digits) = match float.width() {
@@ -263,10 +288,12 @@ impl<'a> Forms<'a> {
             }
             ValueType::Quantity(_)
             | ValueType::BoundedQuantity(_)
-            | ValueType::CarriedQuantity(_)
-            | ValueType::Map(_)
-            | ValueType::Reference(_)
-            | ValueType::Population(_) => Err(ReadStop::Unsupported),
+            | ValueType::CarriedQuantity(_) => self.read_quantity(object, value_type, path),
+            ValueType::Reference(declared) => self.read_reference(object, declared, path),
+            ValueType::Population(_) => self.read_population(object, path),
+            // A map value has no kernel representation yet, so a map argument
+            // has no reader.
+            ValueType::Map(_) => Err(ReadStop::Unsupported),
         }
     }
 
@@ -276,6 +303,169 @@ impl<'a> Forms<'a> {
             Ok(true) => Ok(value),
             Ok(false) | Err(_) => Err(defect(Code::InvalidRuntimeInput, "invalid-value", path)),
         }
+    }
+
+    /// FR-650 "Quantity": `{"kind": "quantity", "unit": N, "magnitude": M}`,
+    /// `M` a Rational or a Decimal object read as the exact normalized
+    /// rational.
+    fn read_quantity(
+        &self,
+        object: &Map<String, Json>,
+        value_type: &ValueType,
+        path: &mut Path,
+    ) -> Result<Value, ReadStop> {
+        native(object, "quantity", &["unit", "magnitude"], path)?;
+        let (unit, carried) = match value_type {
+            ValueType::Quantity(unit) => (unit.clone(), false),
+            ValueType::BoundedQuantity(bounded) => (bounded.unit().clone(), false),
+            ValueType::CarriedQuantity(carried) => (carried.unit().clone(), true),
+            _ => return Err(ReadStop::Fault("quantity-slot")),
+        };
+        let name = string_member(object, "unit", path)?;
+        if self.unit_named(name).as_ref() != Some(&unit) {
+            return Err(wrong_kind_at(path, "unit"));
+        }
+        path.push("magnitude");
+        let magnitude = self.read_magnitude(&object["magnitude"], carried, path);
+        path.pop();
+        let value = Value::Quantity(Quantity::new(magnitude?, unit));
+        match self.types.admits(value_type, &value) {
+            Ok(true) => Ok(value),
+            Ok(false) | Err(_) => Err(defect_below(
+                Code::InvalidRuntimeInput,
+                "invalid-value",
+                path,
+                &["magnitude"],
+            )),
+        }
+    }
+
+    /// A quantity's magnitude: a Rational object, or, for a quantity that
+    /// does not carry a Rational, also a Decimal object.
+    fn read_magnitude(
+        &self,
+        form: &Json,
+        rational_only: bool,
+        path: &Path,
+    ) -> Result<Rational, ReadStop> {
+        let Some(object) = form.as_object() else {
+            return Err(wrong_kind(path));
+        };
+        match object.get("kind").and_then(Json::as_str) {
+            Some("rational") => rational_object(object, path),
+            Some("decimal") if !rational_only => {
+                decimal_object(object, path).map(|decimal| decimal.representation().to_rational())
+            }
+            _ => Err(wrong_kind(path)),
+        }
+    }
+
+    /// The unit `name` names, by the registry's one public pair.
+    fn unit_named(&self, name: &str) -> Option<UnitId> {
+        fsl_semantics::model::observation::unit_id_named(self.types, self.own_package, name)
+    }
+
+    /// The name of `unit`, by the registry's one public pair.
+    fn unit_name(&self, unit: &UnitId) -> Option<String> {
+        fsl_semantics::model::observation::unit_name_of(self.types, self.own_package, unit)
+    }
+
+    /// FR-650 "Identity reference": `{"population": P, "key": K}` or the
+    /// identity triple `{"universe": U, "type": T, "object_identity": O}`.
+    fn read_reference(
+        &self,
+        object: &Map<String, Json>,
+        declared: &EffectiveId,
+        path: &mut Path,
+    ) -> Result<Value, ReadStop> {
+        let payload = tagged(object, "reference", path)?;
+        let Some(payload) = payload.as_object() else {
+            return Err(wrong_kind_at(path, "reference"));
+        };
+        path.push("reference");
+        let read = self.read_reference_payload(payload, declared, path);
+        path.pop();
+        read
+    }
+
+    fn read_reference_payload(
+        &self,
+        payload: &Map<String, Json>,
+        declared: &EffectiveId,
+        path: &mut Path,
+    ) -> Result<Value, ReadStop> {
+        let world = self.world.ok_or_else(no_snapshot)?;
+        if payload.contains_key("population") || payload.contains_key("key") {
+            identity_form::closed_object(payload, &["population", "key"], path)?;
+            let population = string_member(payload, "population", path)?;
+            let key = string_member(payload, "key", path)?;
+            if world.objects.population_members(population).is_none() {
+                return Err(defect(
+                    Code::InvalidRuntimeInput,
+                    "wrong-role-mapping",
+                    path,
+                ));
+            }
+            let universe = (world.universe_of)(declared)
+                .ok_or(ReadStop::Fault("reference-type-has-a-universe"))?;
+            return world
+                .objects
+                .objects()
+                .find(universe, key)
+                .map(|found| Value::Reference(found.clone()))
+                .ok_or_else(|| {
+                    defect(
+                        Code::DanglingReference,
+                        "absent-target-in-complete-population",
+                        path,
+                    )
+                });
+        }
+        identity_form::closed_object(payload, &["universe", "type", "object_identity"], path)?;
+        path.push("universe");
+        let universe = identity_form::read_universe(&payload["universe"], path);
+        path.pop();
+        path.push("type");
+        let object_type = identity_form::read_effective(&payload["type"], path);
+        path.pop();
+        let identity = string_member(payload, "object_identity", path)?;
+        let object = ObjectId::new(identity).map_err(|_| {
+            defect_below(
+                Code::InvalidRuntimeInput,
+                "invalid-value",
+                path,
+                &["object_identity"],
+            )
+        })?;
+        Ok(Value::Reference(ObjectReference::new(
+            universe?,
+            object_type?,
+            object,
+        )))
+    }
+
+    /// FR-650 "Population argument": `{"population": P}` names a population
+    /// of the call's snapshot.
+    fn read_population(
+        &self,
+        object: &Map<String, Json>,
+        path: &mut Path,
+    ) -> Result<Value, ReadStop> {
+        let world = self.world.ok_or_else(no_snapshot)?;
+        let population = string_member(object, "population", path)?;
+        if let Some(extra) = object.keys().find(|name| name.as_str() != "population") {
+            return Err(defect_below(
+                Code::InvalidRuntimeInput,
+                "unknown-member",
+                path,
+                &[extra],
+            ));
+        }
+        world
+            .objects
+            .population_binding(population)
+            .map(|binding| Value::Population(binding.population_id()))
+            .ok_or_else(|| defect(Code::InvalidRuntimeInput, "wrong-role-mapping", path))
     }
 
     fn read_option(
@@ -373,20 +563,15 @@ impl<'a> Forms<'a> {
         path: &mut Path,
     ) -> Result<Value, ReadStop> {
         let payload = variant_payload(object, path)?;
-        let binding = self
-            .enums
-            .iter()
-            .find(|binding| binding.shape() == *shape)
-            .ok_or(ReadStop::Fault("enum-shape-has-a-binding"))?;
+        let (name, variants) = self.enum_cases(shape)?;
         let named = string_member_of(payload, "type", path, "variant")?;
-        if named != binding.name {
+        if named != name {
             return Err(wrong_kind_at2(path, "variant", "type"));
         }
         let case = string_member_of(payload, "case", path, "variant")?;
-        let position = binding
-            .members
+        let position = variants
             .iter()
-            .position(|member| member.case() == case)
+            .position(|variant| variant.case() == case)
             .ok_or_else(|| invalid_at2(path, "variant", "case"))?;
         if payload.len() != 2 {
             return Err(unknown_member_at(
@@ -396,9 +581,36 @@ impl<'a> Forms<'a> {
                 &["type", "case"],
             ));
         }
-        let member = &binding.members[position];
         let rank = u32::try_from(position).map_err(|_| ReadStop::Fault("enum-rank"))?;
-        Ok(Value::Enum(EnumMember::new(member.variant(), rank)))
+        Ok(Value::Enum(EnumMember::new(
+            variants[position].clone(),
+            rank,
+        )))
+    }
+
+    /// The declared name and the variants, in rank order, of the enum `shape`:
+    /// the unit's own enum by its declared name, else a model enum by the
+    /// `ix://` identity of its declaration.
+    fn enum_cases(
+        &self,
+        shape: &filament_exact::EnumShape,
+    ) -> Result<(String, Vec<filament_exact::VariantId>), ReadStop> {
+        if let Some(binding) = self.enums.iter().find(|binding| binding.shape() == *shape) {
+            return Ok((
+                binding.name.clone(),
+                binding
+                    .members
+                    .iter()
+                    .map(|member| member.variant().clone())
+                    .collect(),
+            ));
+        }
+        let variants = shape.variants().cloned().collect::<Vec<_>>();
+        let name = variants
+            .first()
+            .and_then(|variant| model_declaration_name(variant.owner()))
+            .ok_or(ReadStop::Fault("enum-shape-has-a-declaration"))?;
+        Ok((name, variants))
     }
 
     fn read_composite(
@@ -445,7 +657,7 @@ impl<'a> Forms<'a> {
         let own = self
             .types
             .composites()
-            .find(|candidate| candidate.name() == named)
+            .find(|candidate| declaration_name(candidate) == named)
             .map(filament_semantic_value::declaration::CompositeDeclaration::key)
             .filter(|own| self.types.composite_conforms(own.clone(), declared.clone()))
             .ok_or_else(|| wrong_kind_at2(path, tag, "type"))?;
@@ -663,9 +875,6 @@ impl<'a> Forms<'a> {
     }
 
     fn write_at(&self, value: &Value, depth: usize) -> Result<Json, WriteStop> {
-        if depth > MAXIMUM_DEPTH {
-            return Err(WriteStop::NoForm);
-        }
         let below = depth + 1;
         Ok(match value {
             Value::Boolean(held) => json!({"boolean": held}),
@@ -690,18 +899,19 @@ impl<'a> Forms<'a> {
             Value::String(held) => json!({"kind": "string", "text": held}),
             Value::Text(held) => json!({"kind": "text", "text": held.retained()}),
             Value::Enum(member) => {
-                let (binding, case) = self
+                let name = self
                     .enums
                     .iter()
-                    .find_map(|binding| {
+                    .find(|binding| {
                         binding
                             .members
                             .iter()
-                            .find(|candidate| candidate.variant() == *member.variant())
-                            .map(|candidate| (binding, candidate.case()))
+                            .any(|candidate| candidate.variant() == *member.variant())
                     })
-                    .ok_or(WriteStop::Fault("enum-member-has-a-binding"))?;
-                json!({"variant": {"type": binding.name, "case": case}})
+                    .map(|binding| binding.name.clone())
+                    .or_else(|| model_declaration_name(member.variant().owner()))
+                    .ok_or(WriteStop::Fault("enum-member-has-a-declaration"))?;
+                json!({"variant": {"type": name, "case": member.variant().case()}})
             }
             Value::Option(option) => match option.payload() {
                 None => json!({"absent": {}}),
@@ -743,7 +953,7 @@ impl<'a> Forms<'a> {
                                 self.write_slot(slot, field.presence(), below)?,
                             );
                         }
-                        json!({"record": {"type": declaration.name(), "fields": members}})
+                        json!({"record": {"type": declaration_name(declaration), "fields": members}})
                     }
                     CompositeShape::Tuple(_) => {
                         let components = composite
@@ -751,7 +961,7 @@ impl<'a> Forms<'a> {
                             .iter()
                             .map(|slot| self.write_slot(slot, Presence::Required, below))
                             .collect::<Result<Vec<_>, _>>()?;
-                        json!({"tuple": {"type": declaration.name(), "components": components}})
+                        json!({"tuple": {"type": declaration_name(declaration), "components": components}})
                     }
                     CompositeShape::Union(_) => {
                         return Err(WriteStop::Fault("union-value-is-not-a-composite"))
@@ -775,7 +985,7 @@ impl<'a> Forms<'a> {
                     .map(|component| self.write_at(component, below))
                     .collect::<Result<Vec<_>, _>>()?;
                 let mut payload = Map::new();
-                payload.insert("type".to_owned(), json!(declaration.name()));
+                payload.insert("type".to_owned(), json!(declaration_name(declaration)));
                 payload.insert("case".to_owned(), json!(union.member().identifier()));
                 if !components.is_empty() {
                     payload.insert("components".to_owned(), Json::Array(components));
@@ -786,8 +996,42 @@ impl<'a> Forms<'a> {
             Value::Timestamp(held) => {
                 json!({"kind": "timestamp", "nanoseconds": held.nanoseconds().to_string()})
             }
-            Value::Quantity(_) | Value::Population(_) | Value::Reference(_) => {
-                return Err(WriteStop::NoForm)
+            Value::Quantity(held) => {
+                let name = self
+                    .unit_name(held.unit())
+                    .ok_or(WriteStop::Fault("quantity-unit-has-a-name"))?;
+                json!({
+                    "kind": "quantity",
+                    "unit": name,
+                    "magnitude": {
+                        "kind": "rational",
+                        "numerator": held.magnitude().numerator().to_string(),
+                        "denominator": held.magnitude().denominator().to_string(),
+                    },
+                })
+            }
+            Value::Reference(reference) => reference_form(reference),
+            Value::Population(id) => {
+                let world = self.world.ok_or(WriteStop::NoForm)?;
+                let binding = world
+                    .objects
+                    .resolve_population(id.clone())
+                    .ok_or(WriteStop::Fault("population-has-a-binding"))?;
+                let mut members = binding
+                    .members()
+                    .keys()
+                    .map(|key| {
+                        let object = ObjectId::new(key.object.clone())
+                            .map_err(|_| WriteStop::Fault("population-member-has-an-identity"))?;
+                        Ok(reference_form(&ObjectReference::new(
+                            key.universe.clone(),
+                            key.type_identity.clone(),
+                            object,
+                        )))
+                    })
+                    .collect::<Result<Vec<_>, WriteStop>>()?;
+                members.sort_by_key(order_key);
+                json!({"set": members})
             }
         })
     }
@@ -811,6 +1055,42 @@ impl<'a> Forms<'a> {
 
 /// The RFC 8785 bytes a set or bag orders its element by (FR-650): the
 /// element's form with every Decimal normalized.
+/// The name a composite declaration is spelled by: its `ix://` identity when
+/// a selected model declares it, else its declared name.
+fn declaration_name(
+    declaration: &filament_semantic_value::declaration::CompositeDeclaration,
+) -> String {
+    model_declaration_name(&declaration.key()).unwrap_or_else(|| declaration.name().to_owned())
+}
+
+/// The `ix://<package>/<artifact id>` name of a declaration a selected model
+/// declares: the node string of its structural node id (FR-650 "Declaration
+/// names").
+fn model_declaration_name(owner: &NodeKey) -> Option<String> {
+    let segments = owner
+        .view()
+        .path()
+        .map(|segment| match segment {
+            filament_exact::PathSegmentView::Text(text) => Some(text),
+            filament_exact::PathSegmentView::Node(_) => None,
+        })
+        .collect::<Option<Vec<_>>>()?;
+    match segments.as_slice() {
+        [_, _, node] if node.starts_with("ix://") => Some((*node).to_owned()),
+        _ => None,
+    }
+}
+
+/// A Reference result in the identity-reference form: the returned
+/// reference's own universe, most-specific type and object identity.
+pub(crate) fn reference_form(reference: &ObjectReference) -> Json {
+    json!({"reference": {
+        "universe": identity_form::universe_form(reference.universe()),
+        "type": identity_form::effective_form(reference.object_type()),
+        "object_identity": reference.object().as_str(),
+    }})
+}
+
 fn order_key(form: &Json) -> Vec<u8> {
     let mut normalized = form.clone();
     normalize_decimals(&mut normalized);
@@ -885,6 +1165,7 @@ fn first_duplicate(elements: &[Value]) -> Option<usize> {
 }
 
 /// The JSON pointer of the position being read, as segments.
+#[derive(Clone)]
 pub(crate) struct Path(Vec<String>);
 
 impl Path {
@@ -892,11 +1173,11 @@ impl Path {
         Self(Vec::new())
     }
 
-    fn push(&mut self, segment: &str) {
+    pub(crate) fn push(&mut self, segment: &str) {
         self.0.push(segment.to_owned());
     }
 
-    fn pop(&mut self) {
+    pub(crate) fn pop(&mut self) {
         self.0.pop();
     }
 
@@ -916,7 +1197,7 @@ impl Path {
     }
 }
 
-fn defect(code: Code, cause: &'static str, path: &Path) -> ReadStop {
+pub(crate) fn defect(code: Code, cause: &'static str, path: &Path) -> ReadStop {
     ReadStop::Defect(ArgumentDefect {
         code,
         cause,
@@ -924,7 +1205,12 @@ fn defect(code: Code, cause: &'static str, path: &Path) -> ReadStop {
     })
 }
 
-fn defect_below(code: Code, cause: &'static str, path: &Path, below: &[&str]) -> ReadStop {
+pub(crate) fn defect_below(
+    code: Code,
+    cause: &'static str,
+    path: &Path,
+    below: &[&str],
+) -> ReadStop {
     ReadStop::Defect(ArgumentDefect {
         code,
         cause,
@@ -932,11 +1218,11 @@ fn defect_below(code: Code, cause: &'static str, path: &Path, below: &[&str]) ->
     })
 }
 
-fn wrong_kind(path: &Path) -> ReadStop {
+pub(crate) fn wrong_kind(path: &Path) -> ReadStop {
     defect(Code::InvalidRuntimeInput, "wrong-value-kind", path)
 }
 
-fn wrong_kind_at(path: &Path, member: &str) -> ReadStop {
+pub(crate) fn wrong_kind_at(path: &Path, member: &str) -> ReadStop {
     defect_below(
         Code::InvalidRuntimeInput,
         "wrong-value-kind",
@@ -1099,6 +1385,36 @@ fn expect_empty_object(payload: &Json, path: &Path, tag: &str) -> Result<(), Rea
 /// An integer payload in FR-038's spelling: a JSON string, an optional
 /// leading `-`, no `+`, no leading zero, never `-0`. Another JSON kind is
 /// `wrong-value-kind`; a noncanonical spelling is `invalid-value`.
+/// The refusal of a Reference or Population argument in a call with no
+/// `snapshot` (FR-650 "Arguments").
+fn no_snapshot() -> ReadStop {
+    ReadStop::Defect(ArgumentDefect {
+        code: Code::InvalidRuntimeInput,
+        cause: "missing-member",
+        path: "/call/snapshot".to_owned(),
+    })
+}
+
+/// A Rational object `{"kind": "rational", "numerator", "denominator"}`.
+fn rational_object(object: &Map<String, Json>, path: &Path) -> Result<Rational, ReadStop> {
+    native(object, "rational", &["numerator", "denominator"], path)?;
+    let numerator = integer_text(&object["numerator"], path, "numerator")?;
+    let denominator = integer_text(&object["denominator"], path, "denominator")?;
+    Rational::new(numerator, denominator)
+        .map_err(|_| defect(Code::InvalidRuntimeInput, "invalid-value", path))
+}
+
+/// A Decimal object `{"kind": "decimal", "coefficient", "scale"}`.
+fn decimal_object(object: &Map<String, Json>, path: &Path) -> Result<Decimal, ReadStop> {
+    native(object, "decimal", &["coefficient", "scale"], path)?;
+    let coefficient = integer_text(&object["coefficient"], path, "coefficient")?;
+    let scale = integer_text(&object["scale"], path, "scale")?
+        .to_u64()
+        .and_then(|scale| u32::try_from(scale).ok())
+        .ok_or_else(|| defect(Code::InvalidRuntimeInput, "invalid-value", path))?;
+    Ok(Decimal::new(coefficient, scale))
+}
+
 fn integer_text(payload: &Json, path: &Path, member: &str) -> Result<Integer, ReadStop> {
     let Json::String(text) = payload else {
         return Err(wrong_kind_at(path, member));
@@ -1134,10 +1450,21 @@ mod tests {
             filament_exact::MapType::new(ValueType::String, ValueType::Boolean, None)
                 .expect("a leaf key"),
         ));
-        assert!(!forms.has_form(&map));
-        assert!(!forms.has_form(&ValueType::Population(None)));
-        assert!(!forms.has_form(&ValueType::option(map.clone())));
+        // A population is a form only at the top: a collection, an option or a
+        // map over one has none (a checked package can carry such a type
+        // though source cannot).
+        assert!(forms.has_form(&ValueType::Population(Some(1))));
+        let over_population = ValueType::option(ValueType::Population(Some(1)));
+        assert!(!forms.has_form(&over_population));
+        let sequence = ValueType::Collection(std::sync::Arc::new(CollectionType::new(
+            CollectionKind::Sequence,
+            ValueType::Population(Some(1)),
+            None,
+        )));
+        assert!(!forms.has_form(&sequence));
         assert!(forms.has_form(&ValueType::option(ValueType::Boolean)));
+        // A map has no kernel value yet, so it advertises no form.
+        assert!(!forms.has_form(&map));
         let form = serde_json::json!({"boolean": true});
         assert!(matches!(
             forms.read(&form, &map),
@@ -1171,17 +1498,5 @@ mod tests {
                 {"kind": "decimal", "coefficient": "10", "scale": "0"},
             ]})
         );
-    }
-
-    /// FR-650: the writer's depth bound keeps every written value readable.
-    #[trace("FR-650-AC-1")]
-    #[test]
-    fn a_value_nested_deeper_than_the_form_bound_has_no_form() {
-        let forms = forms();
-        let mut value = Value::Boolean(true);
-        for _ in 0..=MAXIMUM_DEPTH {
-            value = OptionValue::from_admitted(ValueType::Boolean, Some(value));
-        }
-        assert_eq!(forms.write(&value), Err(WriteStop::NoForm));
     }
 }

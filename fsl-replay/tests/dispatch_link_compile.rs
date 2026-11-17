@@ -1466,6 +1466,7 @@ fn a_clause_function_is_a_known_owner_and_no_fault() {
     let call = fsl_replay::Call {
         clocks: Default::default(),
         wire_arguments: Vec::new(),
+        snapshot: None,
         function: "inc".to_owned(),
         arguments: vec![fsl_replay::CallArgument {
             parameter: "x".to_owned(),

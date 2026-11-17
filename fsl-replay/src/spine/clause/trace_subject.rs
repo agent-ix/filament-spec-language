@@ -139,6 +139,7 @@ pub fn run_trace_subject_clause(
         observation_limits: ObservationLimits::default(),
         accounting: request.accounting,
         package,
+        package_name: &request.package_name,
         sources: &sources,
         progress_capacity: request.limits.progress.covered_positions,
     };
@@ -191,6 +192,7 @@ pub fn run_package_trace_subject(request: &PackageTraceSubjectRequest<'_>) -> Cl
         observation_limits: ObservationLimits::default(),
         accounting: request.accounting,
         package: request.package,
+        package_name: request.package.emitted_package_name().unwrap_or_default(),
         sources: request.sources,
         progress_capacity: 0,
     };

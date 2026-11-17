@@ -397,6 +397,7 @@ fn settle(disposition: ClauseDisposition) -> ClauseEvaluation {
         ClauseDisposition::UnknownLanguage { .. }
         | ClauseDisposition::NotAPredicate { .. }
         | ClauseDisposition::FrameViolation(_)
+        | ClauseDisposition::OperationContractViolation(_)
         | ClauseDisposition::Temporal(_)
         | ClauseDisposition::TemporalRefusal(_)
         | ClauseDisposition::TraceRefused(_)

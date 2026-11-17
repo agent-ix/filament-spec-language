@@ -772,6 +772,7 @@ fn window(
                 position: 1,
                 atom: 1,
             }],
+            late: Default::default(),
         }),
     }
 }

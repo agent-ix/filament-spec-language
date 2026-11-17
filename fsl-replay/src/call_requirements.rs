@@ -171,6 +171,19 @@ pub fn run_with_requirements(
     run_with_requirements_reading(run, |_, _| ()).map(|(run, ())| run)
 }
 
+/// Read the selected call's requirement items from an already checked unit.
+/// This is the compile-reuse counterpart of `run_with_requirements` for a
+/// caller that has already executed the call against that checked package.
+pub fn call_requirements_for(
+    checked: &crate::spine::CheckedUnit,
+    call: &crate::spine::Call,
+) -> Result<CallRequirements, Box<RunRefusal>> {
+    let graph = checked.package().graph();
+    let members = associate(graph.requirements(), graph, &call.function)
+        .map_err(|fault| Box::new(RunRefusal::Fault(fault)))?;
+    Ok(CallRequirements::new(call, members))
+}
+
 /// The inputs of one [`run_with_requirements`] or
 /// [`run_with_requirements_reading`] run: `run`'s
 /// arguments (FR-100), the request's fields, the object context and the

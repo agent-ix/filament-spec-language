@@ -4069,6 +4069,63 @@ fn context_universe_key(
     .map_err(|_| fault("context-universe-unkeyed"))
 }
 
+/// FR-650 "Unit names": the name of `unit` in `types`, one half of the
+/// registry's public pair. A unit the unit's own source (`own_package`)
+/// declares is its declared name; a unit a selected model declares is
+/// `ix://<package>/unit/<name>`; a compound unit is FR-088's `u1^e1*u2^e2` in
+/// the factor order of its `UnitId`, every exponent written and each factor
+/// named by this rule.
+pub fn unit_name_of(
+    types: &TypeEnvironment,
+    own_package: &str,
+    unit: &filament_exact::UnitId,
+) -> Option<String> {
+    if let Some(key) = unit.declared_key() {
+        return declared_unit_name(types, own_package, key);
+    }
+    match types.units().get(unit.clone())? {
+        filament_semantic_value::quantity::QuantityUnit::Compound(compound) => {
+            let factors = compound
+                .terms()
+                .map(|(key, exponent)| {
+                    declared_unit_name(types, own_package, &key)
+                        .map(|name| format!("{name}^{exponent}"))
+                })
+                .collect::<Option<Vec<_>>>()?;
+            Some(factors.join("*"))
+        }
+        filament_semantic_value::quantity::QuantityUnit::Declared(_) => None,
+    }
+}
+
+fn declared_unit_name(
+    types: &TypeEnvironment,
+    own_package: &str,
+    key: &filament_exact::NodeKey,
+) -> Option<String> {
+    let node = types.units().nominal_node(key)?;
+    let name = node.declaration.qualified_declaration.join("::");
+    let package = key.view().package();
+    Some(if package == own_package {
+        name
+    } else {
+        format!("ix://{package}/unit/{name}")
+    })
+}
+
+/// FR-650 "Unit names": the unit named `name`, the other half of the
+/// registry's public pair; `None` for a name that reads to no unit.
+pub fn unit_id_named(
+    types: &TypeEnvironment,
+    own_package: &str,
+    name: &str,
+) -> Option<filament_exact::UnitId> {
+    types
+        .units()
+        .ids()
+        .find(|unit| unit_name_of(types, own_package, unit).as_deref() == Some(name))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

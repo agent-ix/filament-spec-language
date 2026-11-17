@@ -413,6 +413,15 @@ impl MonitorRefusal {
     /// refusal's category and one diagnostic with its catalog code and cause,
     /// and no item.
     pub fn document(&self) -> OutcomeDocument {
+        let stage = match self {
+            Self::TraceDocument { .. } => None,
+            Self::UnknownClause { .. } => Some(OutcomeStage::S4),
+            _ => Some(OutcomeStage::S6a),
+        };
+        self.unstaged_document().with_last_stage(stage)
+    }
+
+    fn unstaged_document(&self) -> OutcomeDocument {
         let refused = |catalog: CatalogCode, message: String| {
             let category =
                 fsl_foundation::diagnostic::category_of(&catalog).unwrap_or(Category::Refusal);

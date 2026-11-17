@@ -3,6 +3,7 @@
 
 mod analyze;
 mod clause;
+mod flow;
 mod items;
 mod monitor;
 mod output;
@@ -17,6 +18,7 @@ pub use analyze::{
     analyze, analyze_with_limits, analyze_with_providers, analyze_with_providers_and_limits,
     prepare_analyze, AnalyzeInput, PreparedAnalyze,
 };
+pub use flow::{analyze_flow_report, FlowAnalyzeError};
 pub use monitor::{monitor, MonitorEvent, MonitorSummary};
 pub use output::NativeResult;
 pub use tl::{record as tl_record, AtomMapping, TlRecord};
@@ -230,6 +232,10 @@ pub struct FunctionRunInput {
 }
 
 impl PreparedFunctionRun {
+    pub(in crate::command) fn requirements(&self) -> Option<&requirements::Requirements> {
+        self.data.requirements.as_ref()
+    }
+
     /// Transfer the prepared typed values without executing a stage.
     pub fn into_input(self) -> FunctionRunInput {
         let data = *self.data;
@@ -365,6 +371,11 @@ pub enum RunCause {
         /// The claim as the request spells it.
         claim: serde_json::Value,
     },
+    /// FR-526, FR-966: a timestamped run's correction relation or
+    /// admitted late observations are refused at stage `evaluate`, and no
+    /// result document or ledger is written.
+    #[error("invalid_runtime_input: the run's correction is refused: {0}")]
+    TemporalCorrection(fsl_replay::spine::CorrectionRefusal),
     /// FR-100: the spine run entry refused, at its own stage and cause code.
     #[error("{0}")]
     SpineRun(Box<fsl_replay::spine::RunRefusal>),
@@ -518,6 +529,7 @@ impl RunCause {
             Self::Spine(failure) => failure.refusal.code(),
             Self::SpineRun(refusal) => refusal.code(),
             Self::UnknownRequirementClaim { .. } => Code::MissingDeclaration,
+            Self::TemporalCorrection(_) => Code::InvalidRuntimeInput,
             Self::AnalyzeRequest { .. } => Code::InvalidRequest,
             Self::AnalyzePackage { code, .. } => *code,
             Self::AnalyzeNotYetImplemented { .. } => Code::UnsupportedConstruct,
@@ -653,6 +665,20 @@ impl RunError {
                 OutcomeDocument::new(operation, None, self.category())
                     .with_diagnostics(vec![projected])
             }
+            RunCause::ClauseRequest { member, .. } if member.starts_with("/call/arguments/") => {
+                OutcomeDocument::new(operation, None, self.category()).with_diagnostics(vec![
+                    OutcomeDiagnostic::new(
+                        None,
+                        self.cause.code().as_str(),
+                        None,
+                        self.outcome_message(),
+                    )
+                    .with_details(Some(serde_json::Map::from_iter([(
+                        "path".to_owned(),
+                        serde_json::Value::String(member.clone()),
+                    )]))),
+                ])
+            }
             RunCause::Io { .. }
             | RunCause::Json(_)
             | RunCause::ClauseRequest { .. }
@@ -681,6 +707,7 @@ impl RunError {
             | RunCause::ReplayRequest(_)
             | RunCause::ReplayBytes { .. }
             | RunCause::UnknownRequirementClaim { .. }
+            | RunCause::TemporalCorrection(_)
             | RunCause::ReplayOutput(_)
             | RunCause::ItemsFault => OutcomeDocument::new(operation, None, self.category())
                 .with_diagnostics(vec![OutcomeDiagnostic::new(
@@ -1926,7 +1953,12 @@ fn prepare_run_bytes(
                     .values()
                     .collect::<std::collections::BTreeSet<_>>()
                     .len()
-            }),
+            }) + usize::from(
+                request
+                    .call
+                    .as_ref()
+                    .is_some_and(|call| call.snapshot.is_some()),
+            ),
         },
         dependent_bytes,
     )?;
@@ -2067,6 +2099,27 @@ fn prepare_complete_run(
         request.limits.supplied.unwrap_or_default(),
     );
     spine_call.wire_arguments = wire_arguments;
+    if let Some(file) = &call.snapshot {
+        let limits = fsl_replay::spine::ObservationLimitsWire::resolve(None).map_err(|error| {
+            RunCause::ClauseRequest {
+                member: error.member,
+                reason: error.reason,
+            }
+        })?;
+        let bytes = intake.observation_file(
+            file,
+            usize::try_from(limits.document_bytes).unwrap_or(usize::MAX),
+        )?;
+        let observation = fsl_replay::spine::SuppliedObservation::from_document("snapshot", bytes)
+            .map_err(|error| RunCause::ClauseRequest {
+                member: error.member,
+                reason: error.reason,
+            })?;
+        spine_call.snapshot = Some(fsl_replay::spine::CallSnapshot {
+            observation,
+            limits,
+        });
+    }
     spine_call.clocks = request.clocks.clone();
     Ok(PreparedRun::Function(PreparedFunctionRun {
         data: Box::new(FunctionRunData {
@@ -2106,7 +2159,7 @@ fn execute_lowering(prepared: PreparedLowering) -> Result<RunResult> {
         fsl_replay::spine::ClauseDisposition::MissingName { name } => {
             return Err(RunCause::TlClause { name: name.clone() })
         }
-        _ => return output::clause_report(&report, &selection),
+        _ => return output::clause_report(report, &selection),
     };
     let record = tl::lower(valuation, &source, &lowering).map_err(RunCause::TlFault)?;
     Ok(RunResult {
@@ -2129,7 +2182,7 @@ fn execute_prepared(prepared: PreparedRun, settle: &settle::Settle<'_>) -> Resul
                     reason: error.to_string(),
                 }
             })?;
-            return output::clause_report(&report, &selection);
+            return output::clause_report(report, &selection);
         }
     };
     let prepared = *prepared.data;

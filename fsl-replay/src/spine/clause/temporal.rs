@@ -218,7 +218,7 @@ impl TraceInput {
                     window,
                 })
                 .into_iter()
-                .map(|observation| &observation.document),
+                .map(|(_, observation)| &observation.document),
             ),
             Self::Lasso { prefix, repeat } => Box::new(prefix.iter().chain(repeat)),
             Self::Model {
@@ -365,14 +365,11 @@ fn indexed_samples(trace: &TraceInput) -> Option<TraceInput> {
                 progress: *progress,
                 window,
             };
-            // The canonical place of each listed observation, by its offset
+            // The canonical place of each listed observation, by its index
             // in the listing.
-            let base = observations.as_ptr() as usize;
-            let width = std::mem::size_of::<TimestampedObservation>().max(1);
             let mut canonical = vec![None; observations.len()];
-            for (place, observation) in ordered_timestamped_positions(&view).iter().enumerate() {
-                let listed =
-                    (std::ptr::from_ref(*observation) as usize).saturating_sub(base) / width;
+            for (place, (listed, _)) in ordered_timestamped_positions(&view).iter().enumerate() {
+                let listed = *listed;
                 if let Some(slot) = canonical.get_mut(listed) {
                     *slot = Some(place);
                 }
@@ -408,7 +405,7 @@ fn indexed_samples(trace: &TraceInput) -> Option<TraceInput> {
 /// The ledger identity of a position's document. A record sample named by its
 /// index is its content identity (FR-502 "Behavior"): the covered set names
 /// what was observed, not where a request listed it.
-fn document_identity(document: &DocumentRef) -> String {
+pub(super) fn document_identity(document: &DocumentRef) -> String {
     let identity =
         indexed_sample(document).map_or(document.identity.as_str(), |(_, content)| content);
     format!(
@@ -470,6 +467,56 @@ pub struct TimestampedWindow {
     /// each is a position, by its index in `observations`, and the zero-based
     /// `holds` formula node of the checked clause.
     pub missing_valuations: Vec<TimestampedMissingValuation>,
+    /// The interval stamps, arrival watermarks and late-data cutoff, and
+    /// the late observations a repair admits (FR-501, FR-526, FR-966).
+    pub late: LateInputs,
+}
+
+/// FR-501 "Bounded cover and interval stamps" and "Late-data cutoff",
+/// FR-526: the per-observation uncertainty and arrival of a timestamped
+/// trace, each list by the observation's index in `observations` (an empty
+/// list gives no observation the member).
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub struct LateInputs {
+    /// Each observation's interval stamp, when it has one.
+    pub intervals: Vec<Option<fsl_eval::temporal::StampInterval>>,
+    /// Each observation's arrival watermark, when it states one.
+    pub arrivals: Vec<Option<u64>>,
+    /// The late-data cutoff, when one is selected.
+    pub cutoff: Option<fsl_eval::temporal::LateCutoff>,
+    /// The late observations a superseding repair admits, by observation
+    /// identity (FR-526).
+    pub admit_late: Vec<String>,
+    /// FR-526: the relation of the run's result to an earlier one.
+    pub relation: super::correction::RunRelation,
+    /// FR-526: the evidence ledger a prior run wrote, which a correction
+    /// reads.
+    pub evidence_ledger: Option<super::correction::EvidenceLedgerFile>,
+}
+
+/// One observation the late-data cutoff excluded, as the result's `late`
+/// list writes it (FR-501 "Request-file spelling").
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct LateEntry {
+    /// The observation's index in input order.
+    pub position: u64,
+    /// The observation's identity (FR-106), by which a repair admits it.
+    pub observation: String,
+    /// The classified event instant: the upper end of its uncertainty.
+    pub stamp: u64,
+    /// Its arrival watermark.
+    pub arrival: u64,
+    /// The canonical positions of the activations whose windows it falls in.
+    pub anchors: Vec<u64>,
+}
+
+/// One late observation a superseding repair admitted (FR-526).
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct AdmittedLate {
+    /// The observation's index in input order.
+    pub position: u64,
+    /// The observation's identity.
+    pub observation: String,
 }
 
 /// The finite-window input as the evaluator reads it.
@@ -513,22 +560,34 @@ pub(super) fn observation_identity(document: &DocumentRef) -> String {
     format!("{}\0{}", document.authority, document.identity)
 }
 
-/// FR-501 "Canonical order": ascending stamp, then ascending order-authority
-/// identity (an observation without an order key after every keyed one), then
-/// ascending key within the authority, then ascending observation identity.
-/// A total order over distinct observations: the listing order decides
-/// nothing.
-fn ordered_timestamped_positions<'a>(input: &Timestamped<'a>) -> Vec<&'a TimestampedObservation> {
-    let mut positions: Vec<_> = input.observations.iter().collect();
-    positions.sort_by(|left, right| {
-        fn order(position: &TimestampedObservation) -> Option<(&str, i64)> {
-            position
-                .order_key
-                .as_ref()
-                .map(|order| (order.authority.as_str(), order.key))
-        }
-        left.stamp
-            .cmp(&right.stamp)
+/// FR-501 "Canonical order": ascending earliest and then latest instant (an
+/// observation's interval stamp, or the cover of its stamp), then ascending
+/// stamp, then ascending order-authority identity (an observation without an
+/// order key after every keyed one), then ascending key within the
+/// authority, then ascending observation identity. A total order over
+/// distinct observations: the listing order decides nothing. Each entry is
+/// the observation's index in `observations` and the observation.
+fn ordered_timestamped_positions<'a>(
+    input: &Timestamped<'a>,
+) -> Vec<(usize, &'a TimestampedObservation)> {
+    fn order(position: &TimestampedObservation) -> Option<(&str, i64)> {
+        position
+            .order_key
+            .as_ref()
+            .map(|order| (order.authority.as_str(), order.key))
+    }
+    let cover = super::late_data::eval_cover(input.window.cover);
+    let span = |index: usize, position: &TimestampedObservation| {
+        cover.order_span(
+            position.stamp,
+            super::late_data::interval_at(&input.window.late, index),
+        )
+    };
+    let mut positions: Vec<_> = input.observations.iter().enumerate().collect();
+    positions.sort_by(|(left_index, left), (right_index, right)| {
+        span(*left_index, left)
+            .cmp(&span(*right_index, right))
+            .then_with(|| left.stamp.cmp(&right.stamp))
             .then_with(|| match (order(left), order(right)) {
                 (Some(left), Some(right)) => left.cmp(&right),
                 (Some(_), None) => std::cmp::Ordering::Less,
@@ -1178,6 +1237,7 @@ pub(crate) fn run_package_temporal_over(
         observation_limits: request.observation_limits,
         accounting: request.accounting,
         package: request.package,
+        package_name: request.package.emitted_package_name().unwrap_or_default(),
         sources: request.sources,
         // FR-516: the capacity is the system setting
         // `progress.covered_positions` (FR-255), not a request member, so the
@@ -1388,7 +1448,24 @@ pub(super) fn run_temporal(run: &CompiledRun<'_>, request: &TemporalRun<'_>) -> 
         }) {
             return early(refused("invalid-value", BTreeMap::new()));
         }
+        if let Err(refusal) = super::late_data::admit_intervals(observations, &window.late) {
+            return early(*refusal);
+        }
     }
+    // FR-501 "Late-data cutoff": the evaluator reads the on-time
+    // observations only.
+    let screened = match trace {
+        TraceInput::Timestamped {
+            observations,
+            progress,
+            window,
+        } => match super::late_data::screen(observations, *progress, window) {
+            Ok(screened) => screened,
+            Err(refusal) => return early(*refusal),
+        },
+        _ => None,
+    };
+    let trace = screened.as_ref().map_or(trace, |screened| &screened.trace);
 
     // A ledger retains progress; a trace that asserts none has nothing to
     // retain (FR-502 Behavior).
@@ -1930,6 +2007,7 @@ pub(super) fn run_temporal(run: &CompiledRun<'_>, request: &TemporalRun<'_>) -> 
             run,
             node,
             &view,
+            screened.as_ref(),
             observing,
             (
                 tape.and_then(|tape| tape.window),
@@ -2082,6 +2160,7 @@ fn run_finite_window(
     run: &CompiledRun<'_>,
     node: &fsl_semantics::check::TemporalClauseNode,
     input: &Timestamped<'_>,
+    screened: Option<&super::late_data::Screened>,
     observing: ObservedPositions<'_>,
     (carried, admission): (
         Option<&std::cell::RefCell<fsl_eval::temporal::CarriedWindow>>,
@@ -2138,7 +2217,13 @@ fn run_finite_window(
     // stamped after the ones before (FR-643 "Order"), and supplies no absent
     // valuation; its trace admits only the positions added since its last
     // run.
-    if let (Some(admission), true) = (admission, input.window.missing_valuations.is_empty()) {
+    // Interval stamps and a late-data cutoff take the whole-trace
+    // evaluation: a carried state supplies neither.
+    let plain = input.window.missing_valuations.is_empty()
+        && screened.is_none()
+        && input.window.late.intervals.iter().all(Option::is_none)
+        && input.window.late.arrivals.iter().all(Option::is_none);
+    if let (Some(admission), true) = (admission, plain) {
         let observations = input.observations;
         let mut held = admission.borrow_mut();
         let (trace, count) = held.continue_trace(
@@ -2173,30 +2258,40 @@ fn run_finite_window(
     }
     *trace_positions = input.observations.len();
     let ordered = ordered_timestamped_positions(input);
-    let trace = match TimestampedTrace::admit(
+    let late = &input.window.late;
+    let trace = match TimestampedTrace::admit_uncertain(
         clause.name(),
         clock,
         ordered
             .iter()
-            .map(|position| window_observation(position))
+            .map(|(index, position)| {
+                (
+                    window_observation(position),
+                    super::late_data::interval_at(late, *index),
+                )
+            })
             .collect(),
         progress,
     ) {
         Ok(trace) => trace,
         Err(_) => return fault("finite-window-trace-admits"),
     };
+    // FR-966 "Identity": each read observation's arrival watermark, in
+    // canonical order, and the late-data cutoff and classification.
+    let mut lateness = screened.map_or_else(Default::default, |screened| screened.lateness.clone());
+    lateness.arrivals = ordered
+        .iter()
+        .map(|(index, _)| late.arrivals.get(*index).copied().flatten())
+        .collect();
+    let trace = trace.with_lateness(lateness);
     // The valuation lists name positions by listing index; the evaluator reads
     // canonical positions.
     let canonical = |valuations: &[TimestampedMissingValuation]| -> Vec<(u64, u64)> {
         valuations
             .iter()
             .filter_map(|valuation| {
-                let original = input
-                    .observations
-                    .get(usize::try_from(valuation.position).ok()?)?;
-                let position = ordered
-                    .iter()
-                    .position(|candidate| std::ptr::eq(*candidate, original))?;
+                let listed = usize::try_from(valuation.position).ok()?;
+                let position = ordered.iter().position(|(index, _)| *index == listed)?;
                 Some((u64::try_from(position).ok()?, valuation.atom))
             })
             .collect()
@@ -2221,7 +2316,7 @@ fn run_finite_window(
             .collect()
     };
     let absent = same_atom(canonical(&input.window.missing_valuations));
-    run_window(
+    let mut window = run_window(
         run,
         node,
         &trace,
@@ -2229,7 +2324,37 @@ fn run_finite_window(
         observing,
         carried,
         meter,
-    )
+    );
+    if let (Some(screened), Some(report)) = (screened, window.report.as_mut()) {
+        let reach = match fsl_eval::temporal::window_reach(
+            &fsl_eval::temporal::evidence::ClauseFacts::of_checked(clause),
+        ) {
+            Ok(reach) => reach,
+            Err(_) => return fault("finite-window-reach-fits"),
+        };
+        let stamps: Vec<u64> = trace
+            .positions()
+            .iter()
+            .map(|position| position.stamp)
+            .collect();
+        report.late = screened.late.as_ref().map(|entries| {
+            entries
+                .iter()
+                .map(|entry| LateEntry {
+                    anchors: super::late_data::anchors(
+                        &clause.activation(),
+                        &stamps,
+                        reach,
+                        entry.stamp,
+                    ),
+                    ..entry.clone()
+                })
+                .collect()
+        });
+        report.admitted_late.clone_from(&screened.admitted);
+        report.unmatched_admissions.clone_from(&screened.unmatched);
+    }
+    window
 }
 
 /// FR-501, FR-504: evaluate `clause` over the admitted `trace` and report its
@@ -2842,6 +2967,10 @@ fn finite_window_report(
             unit: premises.unit,
         },
         identity: identity.0,
+        late: None,
+        admitted_late: Vec::new(),
+        unmatched_admissions: Vec::new(),
+        correction: None,
     })
 }
 
@@ -3062,6 +3191,17 @@ pub struct FiniteWindowReport {
     pub premises: FiniteWindowPremises,
     /// The result identity: a content identity over the inputs.
     pub identity: String,
+    /// FR-501 "Late-data cutoff": the observations the cutoff excluded, in
+    /// input order; `None` when no cutoff is selected.
+    pub late: Option<Vec<LateEntry>>,
+    /// FR-526: the late observations a superseding repair admitted.
+    pub admitted_late: Vec<AdmittedLate>,
+    /// The `admit_late` names that match no late observation, which the
+    /// run's correction refuses `admitted-not-late` (FR-526).
+    pub unmatched_admissions: Vec<String>,
+    /// FR-526: the run's place in a correction chain, once the run settles
+    /// its relation.
+    pub correction: Option<super::correction::CorrectionRecord>,
 }
 
 /// The spine's own form of the evaluator's outcome (FR-100-AC-8).

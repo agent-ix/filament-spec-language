@@ -18,7 +18,6 @@
         { "fact": "CF-PR-01", "accessors": ["protocol_view", "ProtocolView::roles", "ProtocolView::channels", "ProtocolView::queues", "ProtocolView::controls", "ProtocolView::compensations", "ProtocolView::run", "ProtocolView::finish"] },
         { "fact": "CF-PR-02", "accessors": ["causal_relation", "CausalRelation::edges"] },
         { "fact": "CF-PR-03", "accessors": ["channel_endpoints", "ChannelEndpoints::sender", "ChannelEndpoints::receiver", "ChannelEndpoints::message_type"] },
-        { "fact": "CF-PR-04", "accessors": ["role_internality", "RoleInternality"] },
         { "fact": "CF-PR-05", "accessors": ["await_anchor", "AwaitAnchor"] },
         { "fact": "CF-PR-06", "accessors": ["choice_visibility", "ChoiceVisibility"] },
         { "fact": "CF-PR-07", "accessors": ["attempts_maximum"] }
