@@ -4970,6 +4970,7 @@ fn a_refused_dependency_protocol_precedes_the_importing_units_s3_check() {
     assert_ne!(locus.source(), &importer_source);
 }
 
+mod accounting_boundaries;
 mod call_site;
 mod call_site_owners;
 mod clause_paths;

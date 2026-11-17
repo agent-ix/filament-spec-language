@@ -30,7 +30,7 @@ pub use counterexample::{
 };
 
 use crate::hybrid::{BoundDimension, SolverHorizon};
-use filament_exact::{CancelCause, NodeKey};
+use filament_exact::{CancelCause, Integer, NodeKey};
 use filament_semantic_value::catalog::Category;
 use fsl_cst::format::FormatRefusal;
 use fsl_foundation::diagnostic::{Code, Locus, StageFailure, Staged, Stopped};
@@ -431,6 +431,9 @@ pub struct ItemCause {
     defect: Option<&'static str>,
     #[serde(skip_serializing_if = "Option::is_none")]
     value: Option<u64>,
+    /// An accounting limit's attempted counter value, as a decimal string.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    counter: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     lower: Option<crate::proof_result::ExactRational>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -467,7 +470,10 @@ pub struct ItemCause {
     /// A `memory-bound-reached` or `instance-bound-reached` cause's request
     /// member (FSpec FR-439, FR-428).
     #[serde(skip_serializing_if = "Option::is_none")]
-    bound: Option<&'static str>,
+    bound: Option<String>,
+    /// An accounting limit's `filament.value.accounting/v1` field.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    field: Option<&'static str>,
     /// A `memory-bound-reached` or `instance-bound-reached` cause's count of
     /// limited states.
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -652,6 +658,7 @@ impl ItemCause {
             limit: None,
             defect: None,
             value: None,
+            counter: None,
             lower: None,
             upper: None,
             setting: None,
@@ -666,6 +673,7 @@ impl ItemCause {
             refusal: None,
             total: None,
             bound: None,
+            field: None,
             states: None,
             failures: None,
             predicate: None,
@@ -779,7 +787,7 @@ impl ItemCause {
                 bound,
                 states,
             }) => {
-                item.bound = Some(bound.member.as_str());
+                item.bound = Some(bound.member.as_str().to_owned());
                 item.value = Some(bound.value);
                 item.states = Some(ItemCauseStates::Count(*states));
             }
@@ -787,7 +795,7 @@ impl ItemCause {
                 bound,
                 states,
             }) => {
-                item.bound = Some(InstanceBound::MEMBER);
+                item.bound = Some(InstanceBound::MEMBER.to_owned());
                 item.value = Some(bound.value);
                 item.states = Some(ItemCauseStates::Count(*states));
             }
@@ -1399,11 +1407,9 @@ fn clause_run_cause(report: &ClauseRunReport) -> Option<ItemCause> {
                 "unsupported_projection",
                 "missing-fairness-premise",
             )),
-            TemporalVerdict::Incomplete(incomplete) => Some(limit(
-                incomplete.limit_kind.as_str(),
-                incomplete.limit,
-                incomplete.limit_kind.as_str(),
-            )),
+            TemporalVerdict::Incomplete(incomplete) => {
+                Some(accounting_limit_cause(incomplete, "limit-reached", None))
+            }
             TemporalVerdict::ActivationIncomplete { at, .. } => Some(ItemCause {
                 at: Some(format!("position {at}")),
                 ..ItemCause::kind("activation-incomplete")
@@ -1440,6 +1446,13 @@ fn clause_run_cause(report: &ClauseRunReport) -> Option<ItemCause> {
             cause: Some((*reason).to_owned()),
             ..ItemCause::kind("undefined-evaluation")
         }),
+        ClauseDisposition::Evaluate(CallOutcome::Incomplete(incomplete)) => {
+            Some(accounting_limit_cause(
+                &incomplete.record,
+                "resource_exhausted",
+                Some("resource_exhausted"),
+            ))
+        }
         _ => classify_clause_run(report)
             .classification
             .causes
@@ -1448,6 +1461,29 @@ fn clause_run_cause(report: &ClauseRunReport) -> Option<ItemCause> {
                 code: Some(cause.code.as_str().to_owned()),
                 ..ItemCause::kind(cause.cause.unwrap_or_else(|| cause.code.as_str()))
             }),
+    }
+}
+
+fn accounting_limit_cause(
+    incomplete: &filament_exact::Incomplete,
+    kind: &'static str,
+    code: Option<&'static str>,
+) -> ItemCause {
+    let counter = if incomplete.limit_kind.is_cumulative() {
+        Integer::from(incomplete.consumed).add(&incomplete.next_charge)
+    } else {
+        incomplete.next_charge.clone()
+    };
+    let setting = crate::limits::AccountingLimits::setting_of(incomplete.limit_kind).name();
+    ItemCause {
+        code: code.map(str::to_owned),
+        limit: Some(CauseLimit::Name(incomplete.limit_kind.as_str())),
+        value: Some(incomplete.limit),
+        counter: Some(counter.to_string()),
+        bound: Some(incomplete.limit.to_string()),
+        field: Some(incomplete.limit_kind.as_str()),
+        setting: Some(setting),
+        ..ItemCause::kind(kind)
     }
 }
 

@@ -4289,7 +4289,7 @@ fn incomplete_unsupported_and_declined_rows_carry_their_labels_and_causes() {
     assert_eq!(starved["category"], "incomplete");
     assert_eq!(starved["cause"]["kind"], "limit-reached");
     assert_eq!(starved["cause"]["limit"], "work_units");
-    assert_eq!(starved["cause"]["setting"], "work_units");
+    assert_eq!(starved["cause"]["setting"], "accounting.work_units");
 
     let fair = report(lasso(Unit::Infinite, "Fair", 0, &[0, 1, 2]));
     assert_eq!(fair.disposition.exit_code(), 21);
