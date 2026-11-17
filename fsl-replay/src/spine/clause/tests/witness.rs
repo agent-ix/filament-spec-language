@@ -235,6 +235,84 @@ pub(super) fn run(
         .expect("a well-formed request always reports")
 }
 
+fn outcome_item(clause: &str, report: &crate::spine::ClauseRunReport) -> serde_json::Value {
+    let document = crate::OutcomeDocument::from_clause_runs(None, [(clause, report)])
+        .expect("the completed clause run becomes an outcome item");
+    let bytes = document.to_bytes().expect("the outcome document encodes");
+    let value: serde_json::Value = serde_json::from_slice(&bytes).expect("outcome JSON");
+    value["items"][0].clone()
+}
+
+fn assert_outcome_witness_names_history(item: &serde_json::Value) {
+    let witness = item
+        .get("witness")
+        .expect("refuted state item has a witness");
+    assert_eq!(witness["deciding_element"]["integer"], "600", "{witness}");
+    assert!(witness.get("quantifier").is_some(), "{witness}");
+    assert_eq!(witness["index"], 1, "{witness}");
+    assert_eq!(
+        witness["value_path"]["root"]["subject"]["object_identity"], "mid",
+        "{witness}"
+    );
+    assert_eq!(
+        witness["value_path"]["steps"][0]["name"], "history",
+        "{witness}"
+    );
+    assert_eq!(witness["value_path"]["steps"][1]["index"], 1, "{witness}");
+}
+
+/// FR-286-AC-10: a state-clause outcome keeps the selected object and its
+/// field-backed deciding element through the existing separating-witness
+/// member, for current, pre-call and invocation observations.
+#[trace("TC-770", "FR-286-AC-10")]
+#[test]
+fn outcome_documents_keep_state_clause_witnesses_for_invariant_pre_and_post() {
+    let invariant = super::witness_member::run_current("MemberAll", &[0, 600, 700]);
+    let invariant_payload = invariant
+        .state_clause_counterexample
+        .as_ref()
+        .expect("a violated invariant carries its typed state-clause payload");
+    assert!(matches!(
+        &invariant_payload.observation,
+        fsl_semantics::model::observation::ClauseSelectionInput::Current { .. }
+    ));
+    let invariant_item = outcome_item("MemberAll", &invariant);
+    assert_eq!(invariant_item["category"], "violation");
+    assert_outcome_witness_names_history(&invariant_item);
+
+    let pre = super::witness_member::run_pre_call(&[0, 600, 700]);
+    let pre_payload = pre
+        .state_clause_counterexample
+        .as_ref()
+        .expect("a violated precondition carries its typed state-clause payload");
+    assert!(matches!(
+        &pre_payload.observation,
+        fsl_semantics::model::observation::ClauseSelectionInput::PreCall { .. }
+    ));
+    let pre_item = outcome_item("MemberPre", &pre);
+    assert_eq!(pre_item["category"], "violation");
+    assert_outcome_witness_names_history(&pre_item);
+
+    let post = super::witness_member::run_post_invocation(&[0, 1], &[0, 600, 700]);
+    let post_payload = post
+        .state_clause_counterexample
+        .as_ref()
+        .expect("a violated postcondition carries its typed state-clause payload");
+    assert!(matches!(
+        &post_payload.observation,
+        fsl_semantics::model::observation::ClauseSelectionInput::Invocation { .. }
+    ));
+    let post_item = outcome_item("MemberPost", &post);
+    assert_eq!(post_item["category"], "violation");
+    assert_outcome_witness_names_history(&post_item);
+
+    let holds = super::witness_member::run_current("MemberAll", &[0, 1]);
+    let holds_item = outcome_item("MemberAll", &holds);
+    assert_eq!(holds_item["category"], "success");
+    assert!(holds_item.get("witness").is_none(), "{holds_item}");
+    assert!(holds.state_clause_counterexample.is_none());
+}
+
 /// Run the witness unit after editing its current snapshot document.
 fn run_with_snapshot_edit(
     edit: impl FnOnce(&mut serde_json::Value),
@@ -325,8 +403,7 @@ fn snapshot_admission_refusal_witnesses_name_object_member_and_path() {
         "extra",
         "/populations/0/objects/0/fields/extra",
         |document| {
-            document["populations"][0]["objects"][0]["fields"]["extra"] =
-                json!({"boolean":true});
+            document["populations"][0]["objects"][0]["fields"]["extra"] = json!({"boolean":true});
         },
     );
     assert_snapshot_refusal(

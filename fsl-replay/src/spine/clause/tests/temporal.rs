@@ -4150,6 +4150,7 @@ fn the_undefined_label_is_written_only_for_the_undefined_category() {
     let synthetic = |disposition| ClauseRunReport {
         basis: SettlementBasis::Unavailable,
         witness: None,
+        state_clause_counterexample: None,
         disposition,
         usage: super::super::ClauseRunUsage::default(),
         consequent_source_events: crate::spine::ConsequentSourceEvents::Unavailable,
@@ -4194,6 +4195,7 @@ fn synthetic_report(disposition: ClauseDisposition) -> ClauseRunReport {
     ClauseRunReport {
         basis: SettlementBasis::Unavailable,
         witness: None,
+        state_clause_counterexample: None,
         disposition,
         usage: super::super::ClauseRunUsage::default(),
         consequent_source_events: crate::spine::ConsequentSourceEvents::Unavailable,
