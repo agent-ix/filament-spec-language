@@ -138,6 +138,12 @@ impl CompileRefusal {
                     )),
                 ]
             }
+            Self::SourceDiagnostics { diagnostics } => or_invariant(
+                diagnostics
+                    .iter()
+                    .map(|diagnostic| RefusalCause::new(diagnostic.code, None))
+                    .collect(),
+            ),
             Self::Forms { failure, .. } => {
                 vec![RefusalCause::new(failure.catalog_code(), None)]
             }
@@ -172,7 +178,7 @@ impl CompileRefusal {
                     })
                     .collect(),
             ),
-            Self::Check { refusals, .. } => or_invariant(
+            Self::Check { refusals, .. } | Self::CheckDiagnostics { refusals, .. } => or_invariant(
                 refusals
                     .iter()
                     .map(|refusal| {
@@ -204,11 +210,10 @@ impl CompileRefusal {
             Self::Dependency { refusal, .. } => refusal.causes(),
             Self::Link(refusal) => vec![RefusalCause::new(refusal.code(), refusal.cause())],
             Self::Emit(refusal, _) => vec![RefusalCause::new(refusal.code(), refusal.cause())],
-            Self::Limit(limit) => vec![RefusalCause::new(
-                Code::StageLimitExceeded,
-                Some(limit.kind().catalog_cause()),
-            )
-            .reaching(Some(ReachedLimit::of(limit)))],
+            Self::Limit(limit) => vec![
+                RefusalCause::new(Code::StageLimitExceeded, Some(limit.kind().catalog_cause()))
+                    .reaching(Some(ReachedLimit::of(limit))),
+            ],
             Self::Omitted(_) => vec![RefusalCause::new(Code::UnsupportedProjection, None)],
             Self::Extension(refusal) => vec![RefusalCause::new(
                 refusal.code(),
@@ -430,11 +435,13 @@ enum Group {
 fn group(refusal: &CompileRefusal) -> Group {
     match refusal {
         CompileRefusal::Source(_)
+        | CompileRefusal::SourceDiagnostics { .. }
         | CompileRefusal::Forms { .. }
         | CompileRefusal::OperationClause { .. }
         | CompileRefusal::TypeInvariant { .. }
         | CompileRefusal::Assembly { .. }
         | CompileRefusal::Check { .. } => Group::Content,
+        CompileRefusal::CheckDiagnostics { .. } => Group::Content,
         CompileRefusal::Intake { refusal, .. } => match refusal.cause {
             UnitIntakeCause::Limit(_) => Group::IntakeBudget,
             UnitIntakeCause::Refused(_) | UnitIntakeCause::Invariant => Group::Setup,
@@ -610,8 +617,10 @@ fn classify_outcome(outcome: &CallOutcome) -> Classification {
         ),
         CallOutcome::Incomplete(incomplete) => Classification::new(
             Incomplete,
-            vec![RefusalCause::new(Code::ResourceExhausted, None)
-                .reaching(Some(accounting_limit(incomplete)))],
+            vec![
+                RefusalCause::new(Code::ResourceExhausted, None)
+                    .reaching(Some(accounting_limit(incomplete))),
+            ],
         ),
     }
 }

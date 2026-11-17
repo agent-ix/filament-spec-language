@@ -25,8 +25,8 @@
 
 mod counterexample;
 pub use counterexample::{
-    assignments_wire, graph_evidence_wire, probabilistic_wire, protocol_temporal_wire,
-    temporal_wire, CounterexampleWireError, ProtocolWire,
+    CounterexampleWireError, ProtocolWire, assignments_wire, graph_evidence_wire,
+    probabilistic_wire, protocol_temporal_wire, temporal_wire,
 };
 
 use crate::hybrid::{BoundDimension, SolverHorizon};
@@ -42,6 +42,7 @@ use serde::ser::SerializeStruct;
 use serde::{Serialize, Serializer};
 use std::collections::{BTreeMap, BTreeSet};
 
+use crate::ReplayRefusal;
 use crate::certificate::{CertificateLocus, CertificateRule};
 use crate::model_check::state_graph::WitnessSource;
 use crate::proof_result::{
@@ -52,12 +53,11 @@ use crate::proof_result::{
 use crate::result::ReplayResult;
 use crate::spine::kernel_undefined_reason;
 use crate::spine::{
-    classify_clause_run, item_record, CallIncomplete, CallOutcome, CallRefusal, CheckedUnit,
-    ClauseDisposition, ClauseRunReport, CompileRefusal, EmittedUnit, FrontEndFailure,
-    ParsedUnitSource, ReasonWire, RunRefusal, SpineStage, TemporalUndefinedCause, TemporalVerdict,
+    CallIncomplete, CallOutcome, CallRefusal, CheckedUnit, ClauseDisposition, ClauseRunReport,
+    CompileRefusal, EmittedUnit, FrontEndFailure, ParsedUnitSource, ReasonWire, RunRefusal,
+    SpineStage, TemporalUndefinedCause, TemporalVerdict, classify_clause_run, item_record,
 };
 use crate::statistical::{self, Decision, StatisticalVerdict};
-use crate::ReplayRefusal;
 use filament_semantic_value::fairness::PropertyForm;
 use fsl_eval::temporal::UndefinedCause;
 
@@ -1303,7 +1303,7 @@ impl OutcomeItem {
             Category::Refusal => ItemLabel::Declined,
             Category::Undefined => ItemLabel::Undefined,
             Category::Inconclusive | Category::InternalFailure => {
-                return Err(ClauseRunNotAnItem::Category(category))
+                return Err(ClauseRunNotAnItem::Category(category));
             }
         };
         let record = item_record(report)?;
@@ -1926,8 +1926,8 @@ impl OutcomeDocument {
     }
 
     /// The document of a `check` outcome: success at S4, which mints no
-    /// identity, so no artifact; a failure names its category and one
-    /// diagnostic.
+    /// identity, so no artifact; a failure names its category and retains
+    /// every diagnostic the refused stage reported.
     pub fn from_check(result: &Result<Staged<CheckedUnit>, FrontEndFailure>) -> Self {
         match result {
             Ok(_) => Self::new(Operation::Check, Some(OutcomeStage::S4), Category::Success),
@@ -1955,13 +1955,13 @@ impl OutcomeDocument {
                 Some(refusal.stage().into()),
                 refusal.code().category(),
             )
-            .with_diagnostics(vec![OutcomeDiagnostic::from_compile_refusal(refusal)]),
+            .with_diagnostics(refusal.outcome_diagnostics()),
             StageFailure::RefusedWithPayload(refusal, _) => Self::new(
                 operation,
                 Some(refusal.stage().into()),
                 refusal.code().category(),
             )
-            .with_diagnostics(vec![OutcomeDiagnostic::from_compile_refusal(refusal)]),
+            .with_diagnostics(refusal.outcome_diagnostics()),
             StageFailure::Limit(limit) => {
                 let refusal = CompileRefusal::Limit(limit.clone());
                 Self::new(
@@ -2146,7 +2146,7 @@ impl OutcomeDocument {
         match refusal {
             RunRefusal::Compile(compile) => {
                 Self::new(operation, Some(compile.stage().into()), refusal.category())
-                    .with_diagnostics(vec![OutcomeDiagnostic::from_compile_refusal(compile)])
+                    .with_diagnostics(compile.outcome_diagnostics())
             }
             RunRefusal::Cancelled(cause) => Self::cancelled(operation, *cause),
             RunRefusal::Fault(fault) => Self::faulted(operation, fault),
@@ -2337,7 +2337,7 @@ mod tests {
     use filament_exact::{Cancel, CancelCause, Identifier, ScalarLimits};
     use filament_semantic_value::catalog::{CatalogCode, InternalFault};
     use fsl_semantics::model::object_environment::ObjectEnvironment;
-    use serde_json::{json, Value};
+    use serde_json::{Value, json};
 
     use super::*;
     use crate::identity::QualifiedName;
@@ -2457,8 +2457,8 @@ mod tests {
     use crate::proof_result::{IncompleteCause, ProofRefusalCause, UnavailabilityCause};
     use crate::result::{DisagreementCause, EvaluatedValue, InputArmResult, Verdict, WitnessCheck};
     use crate::spine::{
-        check, default_accounting, package, parse, run, select, Call, CallLocus, DependencyInput,
-        PackageLimits, ParseRequest, SpineLimits,
+        Call, CallLocus, DependencyInput, PackageLimits, ParseRequest, SpineLimits, check,
+        default_accounting, package, parse, run, select,
     };
 
     const FIXTURE: &str = include_str!("../../tests/fixtures/spine-compile.native");
