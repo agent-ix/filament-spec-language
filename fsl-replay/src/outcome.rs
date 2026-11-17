@@ -1442,6 +1442,23 @@ fn clause_run_cause(report: &ClauseRunReport) -> Option<ItemCause> {
         ClauseDisposition::FrameViolation(witness) => {
             Some(catalog(witness.code.as_str(), witness.cause))
         }
+        ClauseDisposition::Admit(
+            AdmissionFailure::Incomplete(record) | AdmissionFailure::Refused(record),
+        ) if record.fields.get("setting").map(String::as_str)
+            == Some("observation.input_bytes") =>
+        {
+            let bound = record.fields.get("bound")?;
+            let actual = record.fields.get("actual")?;
+            Some(ItemCause {
+                code: Some(record.catalog.code().to_owned()),
+                limit: Some(CauseLimit::Name("input-bytes-exceeded")),
+                value: bound.parse().ok(),
+                counter: Some(actual.clone()),
+                setting: Some("observation.input_bytes"),
+                bound: Some(bound.clone()),
+                ..ItemCause::kind("input-bytes-exceeded")
+            })
+        }
         ClauseDisposition::Evaluate(CallOutcome::Undefined { reason }) => Some(ItemCause {
             cause: Some((*reason).to_owned()),
             ..ItemCause::kind("undefined-evaluation")

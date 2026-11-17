@@ -116,11 +116,6 @@ pub enum LimitKind {
         /// The effective aggregate dependent byte ceiling.
         maximum: usize,
     },
-    /// One selected observation exceeded its document byte ceiling.
-    ObservationDocumentBytes {
-        /// Effective observation document byte ceiling.
-        maximum: usize,
-    },
     /// Total selected file count.
     SelectedFiles {
         /// Group that could not be charged.
@@ -141,7 +136,6 @@ impl LimitKind {
             Self::FileBytes => "file bytes",
             Self::RequestBytes { .. } | Self::FixedRequestBytes { .. } => "request_bytes",
             Self::DependentBytes { .. } | Self::FixedDependentBytes { .. } => "dependent_bytes",
-            Self::ObservationDocumentBytes { .. } => "observation.document_bytes",
             Self::SelectedFiles { .. } => "selected files",
         }
     }
@@ -753,9 +747,6 @@ impl RunError {
             RunCause::Limit(LimitKind::FixedDependentBytes { maximum }) => {
                 format!("dependent_bytes limit {maximum} exceeded")
             }
-            RunCause::Limit(LimitKind::ObservationDocumentBytes { maximum }) => {
-                format!("observation.document_bytes limit {maximum} exceeded; raise --limit observation.document_bytes")
-            }
             RunCause::Limit(LimitKind::SelectedFiles {
                 category,
                 requested,
@@ -816,24 +807,15 @@ enum DependentLimit {
 
 impl Intake<'_> {
     fn file(&mut self, path: &str, ceiling: usize) -> Result<Vec<u8>> {
-        self.bounded_file(path, ceiling, false)
-    }
-
-    fn observation_file(&mut self, path: &str, ceiling: usize) -> Result<Vec<u8>> {
         if let Some(bytes) = self.prefetched_observations.remove(path) {
             return Ok(bytes);
         }
-        self.bounded_file(path, ceiling, true)
+        self.bounded_file(path, ceiling)
     }
 
-    fn bounded_file(&mut self, path: &str, ceiling: usize, observation: bool) -> Result<Vec<u8>> {
+    fn bounded_file(&mut self, path: &str, ceiling: usize) -> Result<Vec<u8>> {
         let bytes = read_file(&self.directory.join(path), ceiling.min(self.remaining)).map_err(
             |cause| match cause {
-                RunCause::Limit(LimitKind::FileBytes)
-                    if observation && ceiling <= self.remaining =>
-                {
-                    RunCause::Limit(LimitKind::ObservationDocumentBytes { maximum: ceiling })
-                }
                 RunCause::Limit(LimitKind::FileBytes) => match self.dependent_limit {
                     Some(DependentLimit::CallerConfigured) => {
                         RunCause::Limit(LimitKind::DependentBytes {
@@ -886,7 +868,7 @@ fn reject_current_parameters_before_sources(
         return Ok(());
     };
     let clause = clause.expect("the selection comes from the clause");
-    let observation_limits =
+    let _observation_limits =
         fsl_replay::spine::ObservationLimitsWire::resolve(clause.observation_limits.as_ref())
             .map_err(|error| RunCause::ClauseRequest {
                 member: error.member,
@@ -899,10 +881,7 @@ fn reject_current_parameters_before_sources(
             member: selection.observation.clone(),
             reason: "observation key is not present".to_owned(),
         })?;
-    let bytes = intake.observation_file(
-        file,
-        usize::try_from(observation_limits.document_bytes).unwrap_or(usize::MAX),
-    )?;
+    let bytes = intake.file(file, intake.remaining)?;
     let document: serde_json::Value = serde_json::from_slice(&bytes).map_err(RunCause::Json)?;
     if document["format"] == "filament.state.snapshot/v1" && document["observation"] == "current" {
         return Err(RunCause::ClauseRequest {
@@ -2106,10 +2085,7 @@ fn prepare_complete_run(
                 reason: error.reason,
             }
         })?;
-        let bytes = intake.observation_file(
-            file,
-            usize::try_from(limits.document_bytes).unwrap_or(usize::MAX),
-        )?;
+        let bytes = intake.file(file, intake.remaining)?;
         let observation = fsl_replay::spine::SuppliedObservation::from_document("snapshot", bytes)
             .map_err(|error| RunCause::ClauseRequest {
                 member: error.member,

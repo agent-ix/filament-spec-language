@@ -173,13 +173,6 @@ pub(super) fn error(error: &RunError, artifact: bool) -> Result<Value, serde_jso
                     limit: kind.as_str(),
                     maximum: *maximum,
                 },
-                LimitKind::ObservationDocumentBytes { maximum } => {
-                    types::Details::ConfiguredBytes {
-                        limit: kind.as_str(),
-                        maximum: *maximum,
-                        option: "observation_limits.document_bytes",
-                    }
-                }
                 LimitKind::SelectedFiles {
                     category,
                     requested,

@@ -368,10 +368,8 @@ fn read_inputs(intake: &mut super::Intake<'_>, request: wire::MonitorRequest) ->
     );
     let mut snapshots = BTreeMap::new();
     for (key, file) in &request.observations {
-        snapshots.insert(
-            key.clone(),
-            intake.observation_file(file, intake.remaining)?,
-        );
+        let remaining = intake.remaining;
+        snapshots.insert(key.clone(), intake.file(file, remaining)?);
     }
     let ledger = request
         .ledger
