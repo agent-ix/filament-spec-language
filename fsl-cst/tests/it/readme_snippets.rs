@@ -20,13 +20,11 @@ fn parse(text: &str) -> ParsedSource {
 fn readme_protocol_excerpt_parses_and_native_fences_parse() {
     let mut protocol = Vec::new();
     let mut depth = 0isize;
-    let mut started = false;
     for line in README.lines().skip_while(|line| !line.contains("protocol Orders")) {
-        started = true;
         depth += line.matches('{').count() as isize;
         depth -= line.matches('}').count() as isize;
         protocol.push(line);
-        if started && depth == 0 {
+        if depth == 0 {
             break;
         }
     }

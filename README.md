@@ -67,8 +67,7 @@ post VersionUnchanged using v on Config::ConfigVersion::attemptUpdate {
 A rule can also sit in an `ix:native` fenced block in a Quire Markdown spec,
 under the prose it formalizes:
 
-The containing spec supplies the profile declaration and model import; both
-are elided from this rule excerpt.
+The containing spec supplies the profile declaration and model import.
 
 ````markdown
 ### ParentOrder
@@ -152,8 +151,8 @@ temporal Due using T over (view: M::Workflow) clock "events" on origin {
 
 **Protocols.** Choreographies between services: roles, channels with ordering
 and delivery bounds, sequences, choices, parallel branches, retries, timeouts
-and compensation. This excerpt elides the profile declaration and model
-import, which the containing spec supplies:
+and compensation. The profile declaration and model import come from the
+containing spec:
 
 ```
 protocol Orders using P over (view: M::WorkflowView) on each (started: M::StartView) when (started.ready) {
