@@ -639,6 +639,16 @@ pub enum AssemblyCause {
     /// and no S3 check reads yet (FR-230): `unsupported_construct`/
     /// `not-yet-implemented`, never compiled unchecked.
     TimedNotChecked(super::refusal::TimedConstruct),
+    /// A synthesis form whose FR-754 lowering is not installed yet.
+    SynthesisNotChecked {
+        /// The synthesis declaration's authored name.
+        name: String,
+    },
+    /// A verification plan form whose FR-753 lowering is not installed yet.
+    VerificationPlanNotChecked {
+        /// The verification plan's authored name.
+        name: String,
+    },
 }
 
 impl AssemblyCause {
@@ -719,7 +729,9 @@ impl AssemblyCause {
             Self::Handle(_) | Self::NominalAdmission(_) => Code::RuntimeInvariant,
             Self::UnsupportedLayerForm { .. }
             | Self::UnselectedModelConstruct(_)
-            | Self::TimedNotChecked(_) => Code::UnsupportedConstruct,
+            | Self::TimedNotChecked(_)
+            | Self::SynthesisNotChecked { .. }
+            | Self::VerificationPlanNotChecked { .. } => Code::UnsupportedConstruct,
         }
     }
 
@@ -832,7 +844,9 @@ impl AssemblyCause {
             Self::Handle(_) | Self::NominalAdmission(_) => "established-invariant-broken",
             Self::UnsupportedLayerForm { form, .. } => form.refusal_cause(),
             Self::UnselectedModelConstruct(refusal) => refusal.family.refusal_cause(),
-            Self::TimedNotChecked(_) => "not-yet-implemented",
+            Self::TimedNotChecked(_)
+            | Self::SynthesisNotChecked { .. }
+            | Self::VerificationPlanNotChecked { .. } => "not-yet-implemented",
         };
         CatalogCode::new(self.code().as_str(), cause)
     }
@@ -1234,6 +1248,7 @@ impl Unit {
                             span,
                         });
                 }
+                DeclarationForm::Synthesis(_) | DeclarationForm::VerificationPlan(_) => {}
             }
         }
         // The `Clock` type positions were listed first; FR-230's gate reads
@@ -1607,9 +1622,13 @@ fn source_model(
     identity: String,
     meter: &mut crate::model::accounting::Meter,
     errors: &mut Vec<AssemblyError>,
-) -> Option<(fsl_foundation::selection::ModelSelection, SelectedModel)> {
+) -> Option<(
+    fsl_foundation::selection::ModelSelection,
+    SelectedModel,
+    BTreeMap<DeclarationKey, Vec<String>>,
+)> {
     let first = objects.first()?;
-    let package = match super::source_model::build(
+    let (package, identity_fields) = match super::source_model::build(
         objects,
         &super::source_model::Context {
             identity: &identity,
@@ -1617,7 +1636,7 @@ fn source_model(
             foreign,
         },
     ) {
-        Ok(package) => package,
+        Ok(built) => built,
         Err(found) => {
             errors.extend(found);
             return None;
@@ -1657,6 +1676,7 @@ fn source_model(
             operation_clauses: Vec::new(),
             type_invariants: Vec::new(),
         },
+        identity_fields,
     ))
 }
 
@@ -4370,6 +4390,29 @@ impl PackageDeclarations {
         let mut model_selection_units = unit.model_selection_units().to_vec();
         let repeated_model_selection_units = unit.repeated_model_selection_units().to_vec();
         let import_selection_units = unit.import_selection_units().to_vec();
+        let mut errors: Vec<AssemblyError> = unit
+            .forms()
+            .iter()
+            .filter_map(|form| {
+                let cause = match form.form() {
+                    fsl_forms::DeclarationForm::Synthesis(synthesis) => {
+                        Some(AssemblyCause::SynthesisNotChecked {
+                            name: synthesis.name.name.clone(),
+                        })
+                    }
+                    fsl_forms::DeclarationForm::VerificationPlan(plan) => {
+                        Some(AssemblyCause::VerificationPlanNotChecked {
+                            name: plan.name.name.clone(),
+                        })
+                    }
+                    _ => None,
+                }?;
+                Some(AssemblyError {
+                    cause,
+                    span: form.span(),
+                })
+            })
+            .collect();
         let (mut selections, forms) = unit.into_parts();
         // The models and the one meter their admission counted on; checking
         // continues that meter into the conformance stage.
@@ -4397,7 +4440,6 @@ impl PackageDeclarations {
         let mut unit = Unit::new(forms, package_bearing);
         // FR-393: retain the parsed timed forms through S2. FR-230 checks
         // their meaning, including the facet gate, at S3.
-        let mut errors: Vec<AssemblyError> = Vec::new();
         let owner = SourceOwner::from(&source);
         let source_node_owners: BTreeMap<String, SourceOwner> = source_owners
             .iter()
@@ -4419,6 +4461,7 @@ impl PackageDeclarations {
         let domain_selections = selections.models.len();
         // FR-569: the unit's `object` declarations are one more selected
         // model, under the alias no `model` declaration can take.
+        let mut source_object_identity_fields = BTreeMap::new();
         if !unit.objects.is_empty() {
             source_name_collisions(&unit, &selections, &mut errors);
             if errors.is_empty() {
@@ -4463,7 +4506,7 @@ impl PackageDeclarations {
                     } else {
                         format!("source/{package_name}/{position}")
                     };
-                    if let Some((selection, model)) = source_model(
+                    if let Some((selection, model, identity_fields)) = source_model(
                         objects,
                         &declared_types,
                         &foreign,
@@ -4471,6 +4514,7 @@ impl PackageDeclarations {
                         &mut model_meter,
                         &mut errors,
                     ) {
+                        source_object_identity_fields.extend(identity_fields);
                         selections.models.push(selection);
                         model_selection_units.push(*declaring);
                         models.push(model);
@@ -5332,6 +5376,11 @@ impl PackageDeclarations {
             .iter()
             .map(|enumeration| (enumeration.name.name.clone(), enumeration.name.span))
             .collect();
+        declared_type_spans.extend(
+            unit.objects
+                .iter()
+                .map(|object| (object.name.name.clone(), object.name.span)),
+        );
         // A dimension's and a unit's declaration occurrence is located at its
         // name, under the namespace it is declared in (FR-094), so a record
         // named like a unit does not share its position.
@@ -5623,6 +5672,7 @@ impl PackageDeclarations {
         }
 
         let mut package = PackageDeclarations::new(source, package_name, limits.identity);
+        package.source_object_identity_fields = source_object_identity_fields;
         package.integer_division = super::resolve_integer_division(&selections.profiles, None)
             .map_err(|refusal| AssemblyRefusal {
                 errors: vec![AssemblyError {

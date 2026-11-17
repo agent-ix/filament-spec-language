@@ -113,6 +113,19 @@ fn invalid_syntax(declarations: &str, from: &str, token: &str, expected: &str) {
     );
 }
 
+/// Provenance: QSL-2197.
+#[test]
+fn an_unknown_empty_declaration_word_is_invalid_syntax_at_the_word() {
+    let declarations = "widget W {}";
+    let parsed = parse(&HeldExtensions::default(), declarations);
+    let diagnostic = only_diagnostic(&parsed);
+    assert_eq!(diagnostic.code, CompleteCode::InvalidSyntax);
+    assert_eq!(diagnostic.cause, CompleteCause::UnexpectedToken);
+    let (start, end) = refused_at(declarations, "widget", "widget");
+    let span = diagnostic.byte_span().unwrap();
+    assert_eq!((span.start, span.end), (start, end));
+}
+
 #[trace("TC-882", "FR-354-AC-1")]
 #[trace("FSpec-TC-949", "FSpec-FR-467-AC-1")]
 #[test]

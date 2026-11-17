@@ -149,6 +149,15 @@ pub struct OperationClauses {
     /// candidate (an operation without a body is never a candidate;
     /// `link_dispatch` already filters those out).
     pub own_body: BTreeMap<DeclarationKey, Expression>,
+    /// Exact source declaration paths for source-model clause functions.
+    /// The path is retained by assembly with the authored operation clause;
+    /// selected model functions leave these maps empty.
+    pub source_precondition_declarations: BTreeMap<DeclarationKey, Vec<String>>,
+    /// Exact source declaration paths for source-model operation bodies.
+    pub source_body_declarations: BTreeMap<DeclarationKey, Vec<String>>,
+    /// Exact source declaration paths for source-model effective
+    /// preconditions synthesized from inherited clauses.
+    pub source_effective_precondition_declarations: BTreeMap<DeclarationKey, Vec<String>>,
 }
 
 /// Which [`OperationClauses`] field [`DispatchBridgeRefusal::MissingClauseData`]
@@ -1078,6 +1087,10 @@ pub(crate) fn checked_dispatch_core(
             ModelClause {
                 declaration: member.clone(),
                 kind: DeclaredClauseKind::Precondition,
+                source_declaration: clauses
+                    .source_precondition_declarations
+                    .get(member)
+                    .cloned(),
             },
         );
         functions.push(FunctionDeclaration::clause(
@@ -1120,6 +1133,10 @@ pub(crate) fn checked_dispatch_core(
                     ModelClause {
                         declaration: candidate.clone(),
                         kind: DeclaredClauseKind::Precondition,
+                        source_declaration: clauses
+                            .source_effective_precondition_declarations
+                            .get(candidate)
+                            .cloned(),
                     },
                 );
                 functions.push(FunctionDeclaration::clause(
@@ -1155,6 +1172,7 @@ pub(crate) fn checked_dispatch_core(
             ModelClause {
                 declaration: candidate.clone(),
                 kind: DeclaredClauseKind::Body,
+                source_declaration: clauses.source_body_declarations.get(candidate).cloned(),
             },
         );
         functions.push(function);

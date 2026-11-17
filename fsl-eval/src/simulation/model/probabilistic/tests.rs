@@ -459,14 +459,15 @@ fn service_checks_and_refuses_emission_naming_its_first_random_parameter() {
     assert_eq!(model.workloads().len(), 1);
     let refusal = fsl_package::emit_checked(&world.package, fsl_package::EmitLimits::fixture())
         .expect_err("S4 refuses");
-    assert_eq!(
-        refusal,
+    assert!(matches!(
+        &refusal,
         fsl_package::EmitRefusal::ProbabilisticModelNotEmitted {
-            declaration: "attempt(d)".to_owned(),
+            declaration,
             feature: fsl_semantics::check::ProbabilisticFeature::RandomParameter,
             profile: Some("filament.model.complete/v1"),
-        }
-    );
+            region,
+        } if declaration == "attempt(d)" && region.start() < region.end()
+    ));
     assert_eq!(
         (refusal.code(), refusal.cause()),
         (Code::UnsupportedConstruct, Some("not-yet-implemented"))

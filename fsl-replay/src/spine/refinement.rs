@@ -138,6 +138,12 @@ impl CompileRefusal {
                     )),
                 ]
             }
+            Self::SourceDiagnostics { diagnostics } => or_invariant(
+                diagnostics
+                    .iter()
+                    .map(|diagnostic| RefusalCause::new(diagnostic.code, None))
+                    .collect(),
+            ),
             Self::Forms { failure, .. } => {
                 vec![RefusalCause::new(failure.catalog_code(), None)]
             }
@@ -172,7 +178,7 @@ impl CompileRefusal {
                     })
                     .collect(),
             ),
-            Self::Check { refusals, .. } => or_invariant(
+            Self::Check { refusals, .. } | Self::CheckDiagnostics { refusals, .. } => or_invariant(
                 refusals
                     .iter()
                     .map(|refusal| {
@@ -273,7 +279,9 @@ fn assembly_limit(cause: &AssemblyCause) -> Option<ReachedLimit> {
         | AssemblyCause::AmbiguousPopulation { .. }
         | AssemblyCause::UnsupportedLayerForm { .. }
         | AssemblyCause::UnselectedModelConstruct(_)
-        | AssemblyCause::TimedNotChecked(_) => None,
+        | AssemblyCause::TimedNotChecked(_)
+        | AssemblyCause::SynthesisNotChecked { .. }
+        | AssemblyCause::VerificationPlanNotChecked { .. } => None,
     }
 }
 
@@ -331,9 +339,11 @@ fn check_limit(cause: &CheckCause) -> Option<ReachedLimit> {
         | CheckCause::PopulationFormNotChecked { .. }
         | CheckCause::ModelConformance(_)
         | CheckCause::IllTyped(_)
+        | CheckCause::OperandTypeMismatch { .. }
         | CheckCause::IdentityObservingForm(_)
         | CheckCause::WrongSnapshot(_)
         | CheckCause::MissingName(_)
+        | CheckCause::UnknownField { .. }
         | CheckCause::ExecutionPointBinding(_)
         | CheckCause::MissingQualifiedName(_)
         | CheckCause::UnresolvedUnitName { .. }
@@ -430,11 +440,13 @@ enum Group {
 fn group(refusal: &CompileRefusal) -> Group {
     match refusal {
         CompileRefusal::Source(_)
+        | CompileRefusal::SourceDiagnostics { .. }
         | CompileRefusal::Forms { .. }
         | CompileRefusal::OperationClause { .. }
         | CompileRefusal::TypeInvariant { .. }
         | CompileRefusal::Assembly { .. }
         | CompileRefusal::Check { .. } => Group::Content,
+        CompileRefusal::CheckDiagnostics { .. } => Group::Content,
         CompileRefusal::Intake { refusal, .. } => match refusal.cause {
             UnitIntakeCause::Limit(_) => Group::IntakeBudget,
             UnitIntakeCause::Refused(_) | UnitIntakeCause::Invariant => Group::Setup,

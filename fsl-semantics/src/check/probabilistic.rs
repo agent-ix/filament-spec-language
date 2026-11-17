@@ -230,6 +230,8 @@ pub enum ProbabilisticCause {
     QualitativeThreshold {
         /// The claim.
         claim: String,
+        /// The qualitative form equivalent to the threshold, when it is 0 or 1.
+        qualitative_form: Option<QualitativeForm>,
         /// The threshold's span.
         span: Span,
     },
@@ -510,6 +512,15 @@ pub enum ProbabilisticCause {
         /// The operand's span.
         span: Span,
     },
+}
+
+/// The qualitative property equivalent to a probabilistic threshold of 0 or 1.
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+pub enum QualitativeForm {
+    /// A probability threshold of 0 asks whether a property is possible.
+    Possible,
+    /// A probability threshold of 1 asks whether a property always holds.
+    Always,
 }
 
 impl ProbabilisticCause {
@@ -879,6 +890,7 @@ fn claim(form: &ProbabilisticForm) -> Vec<ProbabilisticCause> {
             Magnitude::NonPositive | Magnitude::AtLeastOne => {
                 causes.push(ProbabilisticCause::QualitativeThreshold {
                     claim: claim.clone(),
+                    qualitative_form: qualitative_form(value),
                     span: value.span,
                 });
                 false
@@ -906,6 +918,17 @@ fn claim(form: &ProbabilisticForm) -> Vec<ProbabilisticCause> {
     let theta = theta.filter(|theta| qualitative(theta, &mut causes));
     confidence(form, theta, &mut causes);
     causes
+}
+
+fn qualitative_form(value: &ExactValueForm) -> Option<QualitativeForm> {
+    let (numerator, denominator) = ratio(value)?;
+    if numerator.is_zero() {
+        Some(QualitativeForm::Possible)
+    } else if numerator == denominator {
+        Some(QualitativeForm::Always)
+    } else {
+        None
+    }
 }
 
 /// A claim states `alpha`, `beta` and `indifference` each once, or none; when

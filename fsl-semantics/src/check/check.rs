@@ -51,6 +51,7 @@ use filament_checked::node::{
 use fsl_foundation::source::node_table::{
     standalone, DebugTable, DebugWith, NodeKeyDebug, NodeList,
 };
+use fsl_foundation::Span;
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::ops::ControlFlow;
 use std::sync::Arc;
@@ -418,6 +419,10 @@ pub struct PackageDeclarations {
     /// The span of the unit's first source `object` declaration, which the
     /// package emitter refuses until it can write source object types.
     pub first_source_object: Option<(RawSourceRef, fsl_foundation::Span)>,
+    /// Authored identity-field names for each checked source object type,
+    /// keyed by the source model's declaration key.
+    pub(crate) source_object_identity_fields:
+        BTreeMap<filament_checked::key::DeclarationKey, Vec<String>>,
     /// Record, tuple and model object-type declarations.
     pub types: TypeEnvironment,
     /// Where each record keeps the fields its ancestors name (FR-359).
@@ -810,6 +815,7 @@ impl PackageDeclarations {
             protocol_profile: None,
             header_layers: Vec::new(),
             first_source_object: None,
+            source_object_identity_fields: BTreeMap::new(),
             types: TypeEnvironment::default(),
             model_records: ModelRecords::default(),
             relationships: Relationships::default(),
@@ -4214,7 +4220,22 @@ impl<'a> Typer<'a> {
                     ValueType::Quantity(self.units.form(unit)),
                 )
             }
-            _ => return Err(mismatch(location)),
+            _ => {
+                let operator = match operator {
+                    ArithmeticOperator::Add => BinaryOperator::Add,
+                    ArithmeticOperator::Subtract => BinaryOperator::Subtract,
+                    ArithmeticOperator::Multiply => BinaryOperator::Multiply,
+                    ArithmeticOperator::Divide => BinaryOperator::Divide,
+                };
+                return Err(CheckRefusal {
+                    location: location.clone(),
+                    cause: CheckCause::OperandTypeMismatch {
+                        operator,
+                        left_type,
+                        right_type,
+                    },
+                });
+            }
         };
         Ok(node(kind, value_type, location))
     }
@@ -4383,6 +4404,7 @@ impl<'a> Typer<'a> {
         let fsl_forms::ExprNode::Field {
             operand: owner,
             field,
+            ..
         } = operand.node()
         else {
             return None;
@@ -4398,6 +4420,7 @@ impl<'a> Typer<'a> {
         let fsl_forms::ExprNode::Field {
             operand: object,
             field: union,
+            ..
         } = operand.at(*owner).node()
         else {
             return None;
@@ -4415,6 +4438,7 @@ impl<'a> Typer<'a> {
         let fsl_forms::ExprNode::Field {
             operand: trace,
             field,
+            ..
         } = operand.node()
         else {
             return false;
@@ -4474,7 +4498,7 @@ impl<'a> Typer<'a> {
     ) -> Option<(fsl_forms::ExprRef<'e>, &'e str, bool)> {
         let (all, source, _) = super::timed_model::slot_presence_query(query)?;
         let source = query.at(source);
-        let fsl_forms::ExprNode::Field { operand, field } = source.node() else {
+        let fsl_forms::ExprNode::Field { operand, field, .. } = source.node() else {
             return None;
         };
         self.presence_places
@@ -4562,12 +4586,13 @@ impl<'a> Typer<'a> {
                 self.attribute(
                     owner,
                     field,
+                    None,
                     &field_location.child(0),
                     &field_location,
                     false,
                 )?
             } else {
-                self.field(owner, field, &field_location)?
+                self.field(owner, field, None, &field_location)?
             };
             if !matches!(read.value_type, ValueType::Option(_)) {
                 return Err(mismatch(location));
@@ -4733,6 +4758,7 @@ impl<'a> Typer<'a> {
         &mut self,
         reference: Node,
         field: &str,
+        member_span: Option<Span>,
         operand_location: &Location,
         location: &Location,
         derefed: bool,
@@ -4770,6 +4796,7 @@ impl<'a> Typer<'a> {
                 reference,
                 value_type,
                 field: field.to_owned(),
+                member_span,
                 operand_location: operand_location.clone(),
                 derefed,
                 field_reads,
@@ -4944,23 +4971,31 @@ impl<'a> Typer<'a> {
         &mut self,
         operand: Node,
         field: &str,
+        member_span: Option<Span>,
         location: &Location,
     ) -> Result<Node, CheckRefusal> {
         let ValueType::Composite(key) = &operand.value_type else {
             return Err(mismatch(location));
         };
-        let Some(CompositeShape::Record(fields)) = self
-            .scope
-            .types
-            .composite(key.clone())
-            .map(|declaration| declaration.shape())
-        else {
+        let Some(declaration) = self.scope.types.composite(key.clone()) else {
+            return Err(mismatch(location));
+        };
+        let CompositeShape::Record(fields) = declaration.shape() else {
             return Err(mismatch(location));
         };
         let declared = fields
             .iter()
             .find(|declared| declared.name() == field)
-            .ok_or_else(|| mismatch(location))?;
+            .ok_or_else(|| {
+                refuse(
+                    location,
+                    CheckCause::UnknownField {
+                        owner: declaration.name().to_owned(),
+                        field: field.to_owned(),
+                        span: member_span,
+                    },
+                )
+            })?;
         let optional = declared.presence() == Presence::Optional;
         let value_type = if optional {
             ValueType::option(declared.value_type().clone())

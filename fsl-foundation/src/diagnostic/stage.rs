@@ -202,11 +202,18 @@ impl CatalogCoded for LimitExceeded {
 /// setting that raises the limit at each entry point.
 impl core::fmt::Display for LimitExceeded {
     fn fmt(&self, formatter: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        // `emit.output_bytes` names bytes the E4 emitter writes. Keep its
+        // catalog kind as input bytes (FR-264 Behavior 5), but render the
+        // caller-facing counter using the output setting's name.
+        let noun = match self.setting {
+            Setting::EmitOutputBytes => "output byte",
+            _ => self.kind().noun(),
+        };
         write!(
             formatter,
             "{} {} limit {} reached ({})",
             self.setting.stage(),
-            self.kind().noun(),
+            noun,
             self.configured_bound,
             self.actual
         )?;

@@ -41,8 +41,9 @@ use fsl_package::{ImportViewRefusal, LinkRefusal, OmittedNode};
 use fsl_semantics::check::AssemblyLimits;
 use fsl_semantics::check::{
     AccessClass, AssemblyCause, AssemblyRefusal, CheckCause, CheckRefusal, ClockSelectionFault,
-    ExtensionCause, ProbabilisticCause, ProfileRefusal, ProtocolAnchorCause, ShadowedDeclaration,
-    SourceObjectFault, TemporalCause, TimeUnitCause, TopologyRetained,
+    ExtensionCause, ProbabilisticCause, ProfileRefusal, ProtocolAnchorCause, RefinementCause,
+    RowClass, ShadowedDeclaration, SourceObjectFault, TemporalCause, TimeUnitCause,
+    TopologyRetained,
 };
 use fsl_semantics::library::LibraryName;
 use fsl_semantics::model::accounting::ModelNormalizationLimits;
@@ -306,8 +307,14 @@ pub enum CompileRefusal {
     /// recovery, which E2 does not admit. Holds the first diagnostic.
     #[error("{}", .0.message)]
     Source(Box<CompleteDiagnostic>),
+    /// E1: S1 produced several syntax diagnostics.
+    #[error("{}", source_diagnostics_message(.diagnostics))]
+    SourceDiagnostics {
+        /// Every retained syntax diagnostic, including a diagnostic-list-cut marker.
+        diagnostics: Vec<CompleteDiagnostic>,
+    },
     /// E2: the forms stage refused the unit.
-    #[error("the forms stage refused the unit: {}", forms_message(.failure))]
+    #[error("{}", forms_refusal_message(.failure))]
     Forms {
         /// The S2 refusal.
         failure: FormsRefusal,
@@ -359,7 +366,7 @@ pub enum CompileRefusal {
     #[error("{0}")]
     Extension(fsl_semantics::library::extension::ExtensionRefusal),
     /// E3: the FR-091 assembler refused the unit.
-    #[error("the assembler refused the unit: {}", assembly_message(.refusal))]
+    #[error("{}", assembly_message(.refusal))]
     Assembly {
         /// Every assembly error, never empty.
         refusal: AssemblyRefusal,
@@ -367,12 +374,20 @@ pub enum CompileRefusal {
         region: Option<SourceRegion>,
     },
     /// E3: the checker refused the package.
-    #[error("the checker refused the package: {}", check_message(.refusals))]
+    #[error("{}", check_message(.refusals))]
     Check {
         /// Every check refusal, never empty.
         refusals: Vec<CheckRefusal>,
         /// The region of the first refusal, when it names one.
         region: Option<SourceRegion>,
+    },
+    /// E3: the checker refused the package with one optional region per refusal.
+    #[error("the checker refused the package: {}", check_message(.refusals))]
+    CheckDiagnostics {
+        /// Every check refusal in deterministic source/check order.
+        refusals: Vec<CheckRefusal>,
+        /// Each refusal's first source region, aligned with `refusals`.
+        regions: Vec<Option<SourceRegion>>,
     },
     /// ADR-015 D-1: the dependency input refused. Closure-level: reported
     /// unwrapped, with no source region.
@@ -423,6 +438,9 @@ impl CompileRefusal {
         match self {
             Self::UnitList(refusal) => refusal.code(),
             Self::Source(diagnostic) => diagnostic.code,
+            Self::SourceDiagnostics { diagnostics } => diagnostics
+                .first()
+                .map_or(Code::RuntimeInvariant, |diagnostic| diagnostic.code),
             Self::Forms { failure, .. } => failure.catalog_code(),
             Self::Intake { refusal, .. } => refusal.cause.code(),
             Self::OperationClause { failure, .. } | Self::TypeInvariant { failure, .. } => {
@@ -440,7 +458,7 @@ impl CompileRefusal {
                 .errors
                 .first()
                 .map_or(Code::RuntimeInvariant, |error| error.cause.code()),
-            Self::Check { refusals, .. } => refusals
+            Self::Check { refusals, .. } | Self::CheckDiagnostics { refusals, .. } => refusals
                 .first()
                 .map_or(Code::RuntimeInvariant, |refusal| refusal.cause.code()),
             Self::DependencyInput(refusal) => refusal.code(),
@@ -460,7 +478,18 @@ impl CompileRefusal {
         match self {
             Self::UnitList(refusal) => refusal.cause(),
             Self::Source(diagnostic) => Some(diagnostic.cause.as_str()),
-            Self::Check { refusals, .. } => refusals.first()?.cause.cause(),
+            Self::Forms { failure, .. }
+                if matches!(
+                    &failure.cause,
+                    FormsCause::NoDispatchEntry { .. } | FormsCause::UnrepresentedConstruct { .. }
+                ) =>
+            {
+                Some("not-yet-implemented")
+            }
+            Self::SourceDiagnostics { diagnostics } => Some(diagnostics.first()?.cause.as_str()),
+            Self::Check { refusals, .. } | Self::CheckDiagnostics { refusals, .. } => {
+                refusals.first()?.cause.cause()
+            }
             Self::Assembly { refusal, .. } => refusal
                 .errors
                 .first()
@@ -495,7 +524,7 @@ impl CompileRefusal {
             Self::Dependency { refusal, .. } => refusal.fields(),
             // FR-302: a family that stopped on a caller-budget ceiling
             // reports its retained charge.
-            Self::Check { refusals, .. } => {
+            Self::Check { refusals, .. } | Self::CheckDiagnostics { refusals, .. } => {
                 let mut fields = refusals
                     .first()
                     .and_then(|refusal| refusal.cause.type_check_fields())
@@ -530,7 +559,7 @@ impl CompileRefusal {
     pub fn stage(&self) -> SpineStage {
         match self {
             Self::UnitList(_) => SpineStage::Intake,
-            Self::Source(_) => SpineStage::Source,
+            Self::Source(_) | Self::SourceDiagnostics { .. } => SpineStage::Source,
             Self::Forms { .. } => SpineStage::Forms,
             Self::Intake { .. }
             | Self::OperationClause { .. }
@@ -541,7 +570,7 @@ impl CompileRefusal {
             Self::Assembly { .. } | Self::Profile { .. } | Self::Extension(_) => {
                 SpineStage::Assembly
             }
-            Self::Check { .. } => SpineStage::Check,
+            Self::Check { .. } | Self::CheckDiagnostics { .. } => SpineStage::Check,
             Self::Link(_) | Self::Emit(..) | Self::Omitted(_) => SpineStage::Emit,
             Self::Limit(limit) => match limit.setting() {
                 // Formatting, rendering and backend prepare are never compile stages.
@@ -640,12 +669,16 @@ impl CompileRefusal {
         match self {
             Self::UnitList(refusal) => refusal.region(),
             Self::Source(diagnostic) => diagnostic.region.as_ref(),
+            Self::SourceDiagnostics { diagnostics } => diagnostics
+                .first()
+                .and_then(|diagnostic| diagnostic.region.as_ref()),
             Self::Forms { region, .. }
             | Self::Intake { region, .. }
             | Self::Assembly { region, .. }
             | Self::Profile { region, .. }
             | Self::Import { region, .. }
             | Self::Check { region, .. } => region.as_ref(),
+            Self::CheckDiagnostics { regions, .. } => regions.first().and_then(Option::as_ref),
             Self::Dependency { refusal, .. } => refusal.region(),
             Self::Emit(_, region) => region.as_ref(),
             Self::Limit(limit) => match limit.locus() {
@@ -658,6 +691,35 @@ impl CompileRefusal {
             | Self::Extension(_)
             | Self::Link(_)
             | Self::Omitted(_) => None,
+        }
+    }
+
+    /// Project every retained cause as an outcome diagnostic in source or
+    /// checker order.
+    pub fn outcome_diagnostics(&self) -> Vec<crate::outcome::OutcomeDiagnostic> {
+        use crate::outcome::{OutcomeDiagnostic, OutcomeLocus};
+
+        match self {
+            Self::SourceDiagnostics { diagnostics } => diagnostics
+                .iter()
+                .map(OutcomeDiagnostic::from_source_diagnostic)
+                .collect(),
+            Self::CheckDiagnostics { refusals, regions } => refusals
+                .iter()
+                .zip(regions)
+                .map(|(refusal, region)| {
+                    let locus = region
+                        .as_ref()
+                        .map(|region| OutcomeLocus::from(&Locus::Region(region.clone())));
+                    OutcomeDiagnostic::new(
+                        refusal.cause.cause(),
+                        refusal.cause.code().as_str(),
+                        locus,
+                        check_message_one(refusal),
+                    )
+                })
+                .collect(),
+            _ => vec![OutcomeDiagnostic::from_compile_refusal(self)],
         }
     }
 
@@ -682,7 +744,9 @@ pub enum UnitListRefusal {
     #[error("invalid_package/invalid-value: a source-unit list must not be empty")]
     Empty,
     /// Two request positions name the same source owner.
-    #[error("invalid_package/conflicting-definition: source units at positions {first} and {second} share owner {authority}/{identity}")]
+    #[error(
+        "invalid_package/conflicting-definition: source units at positions {first} and {second} share owner {authority}/{identity}"
+    )]
     DuplicateOwner {
         /// Earlier request position.
         first: usize,
@@ -694,7 +758,9 @@ pub enum UnitListRefusal {
         identity: String,
     },
     /// A supplied library source has the owner of a source unit.
-    #[error("invalid_package/conflicting-definition: library {library} shares source owner {authority}/{identity} with unit {unit}")]
+    #[error(
+        "invalid_package/conflicting-definition: library {library} shares source owner {authority}/{identity} with unit {unit}"
+    )]
     LibraryOwner {
         /// Request position of the unit.
         unit: usize,
@@ -706,7 +772,9 @@ pub enum UnitListRefusal {
         identity: String,
     },
     /// Unit headers disagree on language, edition, or ordered profile identities.
-    #[error("invalid_package/conflicting-definition: headers of {first_unit:?} ({first_header:?}) and {second_unit:?} ({second_header:?}) differ")]
+    #[error(
+        "invalid_package/conflicting-definition: headers of {first_unit:?} ({first_header:?}) and {second_unit:?} ({second_header:?}) differ"
+    )]
     HeaderConflict {
         /// Identity of the first unit.
         first_unit: Box<SourceIdentity>,
@@ -720,7 +788,9 @@ pub enum UnitListRefusal {
         region: Option<SourceRegion>,
     },
     /// A native declaration name is repeated across distinct units.
-    #[error("ambiguous_declaration/ambiguous-name: `{name}` is declared at unit {first_unit:?} ({first_span:?}) and unit {second_unit:?} ({second_span:?})")]
+    #[error(
+        "ambiguous_declaration/ambiguous-name: `{name}` is declared at unit {first_unit:?} ({first_span:?}) and unit {second_unit:?} ({second_span:?})"
+    )]
     DuplicateName {
         /// The repeated declared spelling.
         name: String,
@@ -734,7 +804,9 @@ pub enum UnitListRefusal {
         second_span: Span,
     },
     /// An import names another supplied unit instead of a library.
-    #[error("missing_import/missing-selection: import `{identity}` at {region:?} names sibling unit {unit:?} but no library is supplied")]
+    #[error(
+        "missing_import/missing-selection: import `{identity}` at {region:?} names sibling unit {unit:?} but no library is supplied"
+    )]
     SiblingImport {
         /// The import identity that matches a sibling unit.
         identity: String,
@@ -834,14 +906,55 @@ fn forms_message(refusal: &FormsRefusal) -> String {
         FormsCause::DiagnosedSource(code) => {
             format!("the source carries a {} diagnostic", code.as_str())
         }
-        FormsCause::NoDispatchEntry { spelling } => {
-            format!("no form reads a `{spelling}` declaration")
+        FormsCause::NoDispatchEntry {
+            construct,
+            text,
+            declaration,
+            ..
         }
-        FormsCause::UnrepresentedConstruct { .. } => "no form represents this construct".to_owned(),
+        | FormsCause::UnrepresentedConstruct {
+            construct,
+            text,
+            declaration,
+            ..
+        } => {
+            let message = match construct {
+                fsl_forms::ConstructKind::NullValue => {
+                    "`null` is not supported as a value here yet".to_owned()
+                }
+                fsl_forms::ConstructKind::IndexSelection => {
+                    format!("the index selection `{text}` is not supported here yet")
+                }
+                fsl_forms::ConstructKind::SizeOfType => {
+                    let type_call = text.split_once('(').map_or(text.as_str(), |(head, _)| head);
+                    format!("`{type_call}` is not supported in expressions yet")
+                }
+                fsl_forms::ConstructKind::QualifiedReachesEdge => {
+                    format!("`reaches` over the qualified edge `{text}` is not supported yet")
+                }
+                fsl_forms::ConstructKind::HyperCondition => {
+                    "a hyper expression is not supported as a temporal condition yet".to_owned()
+                }
+                fsl_forms::ConstructKind::Declaration => {
+                    format!("`{text}` declarations are not supported yet")
+                }
+            };
+            if let Some(declaration) = declaration {
+                format!("{message} (declaration {declaration})")
+            } else {
+                message
+            }
+        }
         FormsCause::UnexpectedShape { .. } => {
             "a node does not have the shape of its grammar rule".to_owned()
         }
     }
+}
+
+/// FR-763 messages lead with the source construct so the first words of the
+/// diagnostic identify what the author needs to change.
+fn forms_refusal_message(refusal: &FormsRefusal) -> String {
+    forms_message(refusal)
 }
 
 /// A readable account of an I1 refusal.
@@ -1094,15 +1207,29 @@ fn assembly_message(refusal: &AssemblyRefusal) -> String {
         AssemblyCause::TimedNotChecked(construct) => {
             format!("{} builds but is not checked yet", construct.description())
         }
+        AssemblyCause::SynthesisNotChecked { name } => {
+            format!("synthesis `{name}` builds but is not checked yet")
+        }
+        AssemblyCause::VerificationPlanNotChecked { name } => {
+            format!("verification plan `{name}` builds but is not checked yet")
+        }
     };
     with_more(message, refusal.errors.len())
 }
 
-/// A readable account of the checker's first refusal, and how many more.
+/// A readable account of every checker refusal, in check order.
 fn check_message(refusals: &[CheckRefusal]) -> String {
-    let Some(first) = refusals.first() else {
+    if refusals.is_empty() {
         return "no refusal recorded".to_owned();
-    };
+    }
+    refusals
+        .iter()
+        .map(check_message_one)
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+fn check_message_one(first: &CheckRefusal) -> String {
     let mut message = first.cause.code().as_str().to_owned();
     if let Some(cause) = first.cause.cause() {
         message = format!("{message} ({cause})");
@@ -1115,6 +1242,35 @@ fn check_message(refusals: &[CheckRefusal]) -> String {
         );
     }
     match &first.cause {
+        CheckCause::OperandTypeMismatch {
+            operator,
+            left_type,
+            right_type,
+        } => {
+            let operator = match operator {
+                fsl_forms::BinaryOperator::Add => "+",
+                fsl_forms::BinaryOperator::Subtract => "-",
+                fsl_forms::BinaryOperator::Multiply => "*",
+                fsl_forms::BinaryOperator::Divide => "/",
+                fsl_forms::BinaryOperator::IntegerDiv => "div",
+                fsl_forms::BinaryOperator::IntegerRem => "rem",
+                fsl_forms::BinaryOperator::IntegerMod => "mod",
+                fsl_forms::BinaryOperator::Equal => "=",
+                fsl_forms::BinaryOperator::NotEqual => "!=",
+                fsl_forms::BinaryOperator::Less => "<",
+                fsl_forms::BinaryOperator::LessOrEqual => "<=",
+                fsl_forms::BinaryOperator::Greater => ">",
+                fsl_forms::BinaryOperator::GreaterOrEqual => ">=",
+                fsl_forms::BinaryOperator::And => "and",
+                fsl_forms::BinaryOperator::Or => "or",
+                fsl_forms::BinaryOperator::Implies => "implies",
+            };
+            message = format!(
+                "{message}: operator `{operator}` has operands of types `{}` and `{}`",
+                value_type_source(left_type),
+                value_type_source(right_type)
+            );
+        }
         CheckCause::StateGraph(cause) => {
             if let fsl_semantics::check::StateGraphCause::NotStateLayer {
                 alias, identity, ..
@@ -1151,6 +1307,14 @@ fn check_message(refusals: &[CheckRefusal]) -> String {
         | CheckCause::AmbiguousName { name, .. }
         | CheckCause::ClockReadingCall(name) => {
             message = format!("{message}: `{name}`");
+        }
+        CheckCause::UnknownField { owner, field, .. } => {
+            message = format!("{message}: `{owner}` has no field `{field}`");
+        }
+        CheckCause::StateModel(refusal) => {
+            if let CheckCause::UnknownField { owner, field, .. } = &refusal.cause {
+                message = format!("{message}: `{owner}` has no field `{field}`");
+            }
         }
         // FR-104-AC-2: name the clause kind and, when the clause names one,
         // the operation `result` was written under.
@@ -1384,10 +1548,20 @@ fn check_message(refusals: &[CheckRefusal]) -> String {
                 ProtocolAnchorCause::KeyModelState { channel, .. } => {
                     format!("{message}: the FIFO key of channel `{channel}` reads model state")
                 }
-                ProtocolAnchorCause::KeyEquality { channel, .. } => format!(
-                    "{message}: the FIFO key of channel `{channel}` is of a type with no `=`"
+                ProtocolAnchorCause::KeyEquality {
+                    channel,
+                    operator,
+                    key_text,
+                    key_type,
+                    ..
+                } => format!(
+                    "{message}: key type {} of channel {channel} is not FIFO-key-stable \
+                     (key {operator} {key_text})",
+                    value_type_source(key_type)
                 ),
-                ProtocolAnchorCause::SlotClause { node, slot, cause, .. } => format!(
+                ProtocolAnchorCause::SlotClause {
+                    node, slot, cause, ..
+                } => format!(
                     "{message}: the {slot:?} of `{node}` does not check ({})",
                     cause.cause().unwrap_or_default()
                 ),
@@ -1467,7 +1641,9 @@ fn check_message(refusals: &[CheckRefusal]) -> String {
                     end.identifier()
                 ),
                 ProtocolAnchorCause::MissingRequirement { name, .. } => {
-                    format!("{message}: `requires temporal {name}` names no declaration of the unit")
+                    format!(
+                        "{message}: `requires temporal {name}` names no declaration of the unit"
+                    )
                 }
                 ProtocolAnchorCause::RequirementKind { name, kind, .. } => format!(
                     "{message}: `requires temporal {name}` names a {kind}, not a temporal clause"
@@ -1493,17 +1669,28 @@ fn check_message(refusals: &[CheckRefusal]) -> String {
                     format!("{message}: `{name}` names an extension form and another declaration")
                 }
                 ExtensionCause::Cycle { cycle, .. } => {
-                    format!("{message}: the forms {} reach themselves", cycle.join(" -> "))
+                    format!(
+                        "{message}: the forms {} reach themselves",
+                        cycle.join(" -> ")
+                    )
                 }
                 ExtensionCause::UnheldKeyword { keyword, .. } => {
-                    format!("{message}: `{keyword}` is the leading keyword of no selected extension")
+                    format!(
+                        "{message}: `{keyword}` is the leading keyword of no selected extension"
+                    )
                 }
                 ExtensionCause::ClauseOrder {
                     found, expected, ..
                 } => format!(
                     "{message}: found {}, expected {}",
-                    found.as_deref().map_or("no clause".to_owned(), |name| format!("clause `{name}`")),
-                    expected.as_deref().map_or("no further clause".to_owned(), |name| format!("clause `{name}`")),
+                    found
+                        .as_deref()
+                        .map_or("no clause".to_owned(), |name| format!("clause `{name}`")),
+                    expected
+                        .as_deref()
+                        .map_or("no further clause".to_owned(), |name| format!(
+                            "clause `{name}`"
+                        )),
                 ),
             };
         }
@@ -1520,7 +1707,21 @@ fn check_message(refusals: &[CheckRefusal]) -> String {
             message = format!("{message}: `refinement {name}` checks but is not emitted yet");
         }
         CheckCause::Refinement(refusal) => {
-            message = format!("{message}: in `refinement {}`", refusal.refinement);
+            let detail = match &refusal.cause {
+                RefinementCause::Unresolved { name, .. } => {
+                    format!("the refinement refers to unresolved name `{name}`")
+                }
+                RefinementCause::MissingRow {
+                    class: RowClass::Step,
+                    name,
+                } => format!("the refinement has no step row for `{name}`"),
+                RefinementCause::MissingRow {
+                    class: RowClass::Object,
+                    name,
+                } => format!("the refinement has no object row for `{name}`"),
+                _ => format!("in `refinement {}`", refusal.refinement),
+            };
+            message = format!("{message}: {detail}");
         }
         CheckCause::TimedNotChecked { construct, .. } => {
             message = format!("{message}: {} is not checked yet", construct.description());
@@ -1570,11 +1771,25 @@ fn check_message(refusals: &[CheckRefusal]) -> String {
                 } => format!(
                     "{message}: reward `{reward}` on `{operation}` reads state or an ambient value"
                 ),
-                ProbabilisticCause::QualitativeThreshold { claim, .. } => format!(
-                    "{message}: a threshold of claim `{claim}` is not strictly between 0 and 1; a \
-                     threshold of 0 or 1 is a qualitative claim, stated as an ADR-018 TP-2 claim \
-                     or as a possible property"
-                ),
+                ProbabilisticCause::QualitativeThreshold {
+                    claim,
+                    qualitative_form,
+                    ..
+                } => {
+                    let form = match qualitative_form {
+                        Some(fsl_semantics::check::QualitativeForm::Possible) => {
+                            "; a threshold of 0 is equivalent to a `possible` property"
+                        }
+                        Some(fsl_semantics::check::QualitativeForm::Always) => {
+                            "; a threshold of 1 is equivalent to an `always` claim"
+                        }
+                        None => "",
+                    };
+                    format!(
+                        "{message}: the probability threshold or level of claim `{claim}` must be \
+                         strictly between 0 and 1 (for example, `0.99`, not `99`){form}"
+                    )
+                }
                 ProbabilisticCause::PartialConfidence { claim, fault, .. } => format!(
                     "{message}: the confidence of claim `{claim}` must state alpha, beta and \
                      indifference once each ({fault:?})"
@@ -1620,7 +1835,9 @@ fn check_message(refusals: &[CheckRefusal]) -> String {
                     workload,
                     operation,
                     ..
-                } => format!("{message}: workload `{workload}` weights `{operation}`, which is not in its model"),
+                } => format!(
+                    "{message}: workload `{workload}` weights `{operation}`, which is not in its model"
+                ),
                 ProbabilisticCause::RewardType {
                     reward, operation, ..
                 } => format!(
@@ -1629,9 +1846,9 @@ fn check_message(refusals: &[CheckRefusal]) -> String {
                 ProbabilisticCause::DuplicateWorkload { workload, .. } => {
                     format!("{message}: a workload `{workload}` is already declared")
                 }
-                ProbabilisticCause::UnresolvedSubject { claim, subject, .. } => format!(
-                    "{message}: claim `{claim}` is over `{subject}`, which names no model"
-                ),
+                ProbabilisticCause::UnresolvedSubject { claim, subject, .. } => {
+                    format!("{message}: claim `{claim}` is over `{subject}`, which names no model")
+                }
                 ProbabilisticCause::TraceSubject { claim, subject, .. } => format!(
                     "{message}: claim `{claim}` is over the trace subject `{subject}`; a \
                      probabilistic claim has a model subject, and observed statistics of a trace \
@@ -1654,7 +1871,9 @@ fn check_message(refusals: &[CheckRefusal]) -> String {
                 ),
                 ProbabilisticCause::UnresolvedWorkload {
                     claim, workload, ..
-                } => format!("{message}: claim `{claim}` is under `{workload}`, which names no workload"),
+                } => format!(
+                    "{message}: claim `{claim}` is under `{workload}`, which names no workload"
+                ),
                 ProbabilisticCause::ForeignWorkload {
                     claim,
                     workload,
@@ -1754,9 +1973,7 @@ fn check_message(refusals: &[CheckRefusal]) -> String {
                 ),
                 TemporalCause::UnknownReleaseTaskSet {
                     name, operation, ..
-                } => format!(
-                    "{message}: the release on `{operation}` names no task set `{name}`"
-                ),
+                } => format!("{message}: the release on `{operation}` names no task set `{name}`"),
                 TemporalCause::UnknownReleaseTask { task_set, task, .. } => format!(
                     "{message}: the release names no task `{task}` of task set `{task_set}`"
                 ),
@@ -1793,7 +2010,9 @@ fn check_message(refusals: &[CheckRefusal]) -> String {
                     format!("{message}: the aggregate window has a > b")
                 }
                 TemporalCause::AggregateWindowKindMismatch { .. } => {
-                    format!("{message}: the aggregate window bound has the wrong kind for this profile")
+                    format!(
+                        "{message}: the aggregate window bound has the wrong kind for this profile"
+                    )
                 }
                 TemporalCause::AggregateProfileUnsupported { .. } => {
                     format!("{message}: this temporal profile admits no aggregate window")
@@ -1861,7 +2080,7 @@ fn check_message(refusals: &[CheckRefusal]) -> String {
                     profile.tick()
                 ),
                 TemporalCause::TimedTraceSubject { .. } => {
-                    format!("{message}: a timed clause over a trace subject is not checked yet")
+                    format!("{message}: a timed clause over snapshots is not checked yet")
                 }
                 TemporalCause::ModelTimeOnTraceSubject { .. } => format!(
                     "{message}: `model-time` over a record trace subject, which has no model \
@@ -1921,9 +2140,13 @@ fn check_message(refusals: &[CheckRefusal]) -> String {
                 ),
                 TemporalCause::TimedStateObject { ambiguous, .. } => {
                     if *ambiguous {
-                        format!("{message}: the timed model's populations range over several object types")
+                        format!(
+                            "{message}: the timed model's populations range over several object types"
+                        )
                     } else {
-                        format!("{message}: the timed model's populations range over no object type")
+                        format!(
+                            "{message}: the timed model's populations range over no object type"
+                        )
                     }
                 }
                 TemporalCause::ClockWithoutDenseTime { field, .. } => {
@@ -2017,9 +2240,9 @@ fn check_message(refusals: &[CheckRefusal]) -> String {
                 TemporalCause::InvalidTaskSet { task_set, .. } => {
                     format!("{message}: task set `{task_set}` breaks a rule of the task model")
                 }
-                TemporalCause::DuplicateTask { task_set, task, .. } => format!(
-                    "{message}: task set `{task_set}` already declares a task `{task}`"
-                ),
+                TemporalCause::DuplicateTask { task_set, task, .. } => {
+                    format!("{message}: task set `{task_set}` already declares a task `{task}`")
+                }
                 TemporalCause::DuplicateTaskSet { name, .. } => {
                     format!("{message}: the unit already declares a task set `{name}`")
                 }
@@ -2038,7 +2261,7 @@ fn check_message(refusals: &[CheckRefusal]) -> String {
         }
         _ => {}
     }
-    with_more(message, refusals.len())
+    message
 }
 
 /// `message`, noting the `total - 1` further errors it does not describe.
@@ -2047,6 +2270,17 @@ fn with_more(message: String, total: usize) -> String {
         0 => message,
         more => format!("{message}, and {more} more"),
     }
+}
+
+fn source_diagnostics_message(diagnostics: &[CompleteDiagnostic]) -> String {
+    if diagnostics.is_empty() {
+        return "no source diagnostic recorded".to_owned();
+    }
+    diagnostics
+        .iter()
+        .map(ToString::to_string)
+        .collect::<Vec<_>>()
+        .join("\n")
 }
 
 /// `span` as a region of `source`.
@@ -2764,11 +2998,59 @@ mod tests {
     };
     use fsl_foundation::{Code, Setting, SettingLimits, SourceIdentity, Span};
     use fsl_semantics::check::{
-        CheckCause, CheckRefusal, HybridCause, ProtocolAnchorCause, RefusedProtocolDependency,
+        CheckCause, CheckRefusal, HybridCause, ProtocolAnchorCause, RefinementCause,
+        RefinementRefusal, RefusedProtocolDependency, RowClass,
     };
     use fsl_semantics::value::DefinitionRole;
     use ix_trace_rs::trace;
     use std::collections::BTreeMap;
+
+    #[trace("FR-135-AC-2", "FR-136-AC-2")]
+    #[test]
+    fn refinement_missing_row_messages_name_the_missing_subject() {
+        let refusal = |cause| CheckRefusal {
+            location: Location::root(Origin::Expression),
+            cause: CheckCause::Refinement(Box::new(RefinementRefusal {
+                refinement: "ClientChargesOnce".to_owned(),
+                span: Span { start: 0, end: 1 },
+                cause,
+            })),
+        };
+        let refusals = [
+            refusal(RefinementCause::MissingRow {
+                class: RowClass::Step,
+                name: "Client::Payment::retry".to_owned(),
+            }),
+            refusal(RefinementCause::MissingRow {
+                class: RowClass::Object,
+                name: "Spec::Payment".to_owned(),
+            }),
+            refusal(RefinementCause::Unresolved {
+                name: "X".to_owned(),
+                held_by: None,
+            }),
+        ];
+        let expected = [
+            "the refinement has no step row for `Client::Payment::retry`",
+            "the refinement has no object row for `Spec::Payment`",
+            "the refinement refers to unresolved name `X`",
+        ];
+        let messages = refusals
+            .iter()
+            .map(|refusal| check_message(std::slice::from_ref(refusal)))
+            .collect::<Vec<_>>();
+
+        for (message, expected) in messages.iter().zip(expected) {
+            assert!(message.contains(expected), "{message}");
+            assert!(
+                !message.ends_with("in `refinement ClientChargesOnce`"),
+                "{message}"
+            );
+        }
+        assert_ne!(messages[0], messages[1]);
+        assert_ne!(messages[0], messages[2]);
+        assert_ne!(messages[1], messages[2]);
+    }
 
     #[trace("TC-1339", "FR-534-AC-3")]
     #[test]
@@ -3068,7 +3350,8 @@ mod tests {
                 ProtocolAnchorCause::JoinFunctionType {
                     parallel: "Workers".to_owned(),
                     function: "done".to_owned(),
-                    expected_parameters: vec![ValueType::Boolean, ValueType::Boolean].into_boxed_slice(),
+                    expected_parameters: vec![ValueType::Boolean, ValueType::Boolean]
+                        .into_boxed_slice(),
                     actual_parameters: vec![ValueType::Int(
                         IntegerInterval::new(Integer::from(0_i64), Integer::from(3_i64)).unwrap(),
                     )]
@@ -3112,6 +3395,29 @@ mod tests {
             message.ends_with(
                 "channel `Pay` delivers between 4 and 3, the lower count above the upper"
             ),
+            "{message}"
+        );
+    }
+
+    /// FR-881-AC-1 (TC-2504): the FIFO-key refusal uses the source spelling
+    /// of its checked type and names its channel.
+    #[trace("FR-881-AC-1", "TC-2504")]
+    #[test]
+    fn fifo_key_instability_message_names_the_type_and_channel() {
+        let refusal = CheckRefusal {
+            location: Location::root(Origin::Expression),
+            cause: CheckCause::ProtocolAnchor(Box::new(ProtocolAnchorCause::KeyEquality {
+                channel: "Q".to_owned(),
+                operator: "=".to_owned(),
+                key_text: "m.ready".to_owned(),
+                key_type: Box::new(ValueType::Integer),
+                span: Span { start: 0, end: 1 },
+            })),
+        };
+        let message = check_message(&[refusal]);
+        assert!(
+            message
+                .ends_with("key type Integer of channel Q is not FIFO-key-stable (key = m.ready)"),
             "{message}"
         );
     }
@@ -3252,30 +3558,72 @@ mod tests {
         assert_eq!(&unit[start..end], "Reading");
     }
 
-    /// FR-186-AC-2 (TC-621 step 2), at the CLI's compile: a threshold of 1
-    /// is refused `qualitative-threshold`, and the diagnostic names the
-    /// qualitative form: an ADR-018 TP-2 claim or a possible property.
+    /// FR-186-AC-2 (TC-621 step 2), at the CLI's compile: probability
+    /// thresholds must be strictly between 0 and 1, and the endpoints have
+    /// their equivalent qualitative forms.
     #[trace("TC-621", "FR-186-AC-2")]
     #[test]
-    fn a_qualitative_threshold_names_the_qualitative_form() {
-        let unit = "language \"ix:native\" edition \"1-draft\";\n\
-            profile ev = \"filament.temporal.event-position.false-extension/v1\";\n\
-            probabilistic C using ev on Service under Steady on origin \
-            { probability >= 1 [ holds(true) ] }\n";
-        let refusal = compose(
-            SourceIdentity::new("a", "u"),
-            "unit.native",
-            unit.as_bytes(),
-            &BTreeMap::new(),
-            &DependencyInput::default(),
-            SpineLimits::default(),
-        )
-        .expect_err("a threshold of 1 is refused");
-        assert_eq!(refusal.code(), Code::InvalidProbabilisticModel);
-        let message = refusal.to_string();
-        assert!(message.contains("qualitative-threshold"), "{message}");
-        assert!(message.contains("ADR-018 TP-2 claim"), "{message}");
-        assert!(message.contains("possible property"), "{message}");
+    fn qualitative_threshold_diagnostics_explain_ranges_and_endpoints() {
+        let refusal_for = |threshold: &str| {
+            let unit = format!(
+                "language \"ix:native\" edition \"1-draft\";\n\
+                 profile ev = \"filament.temporal.event-position.false-extension/v1\";\n\
+                 probabilistic C using ev on Service under Steady on origin \
+                 {{ probability >= {threshold} [ holds(true) ] }}\n"
+            );
+            compose(
+                SourceIdentity::new("a", "u"),
+                "unit.native",
+                unit.as_bytes(),
+                &BTreeMap::new(),
+                &DependencyInput::default(),
+                SpineLimits::default(),
+            )
+            .expect_err("an out-of-range probability threshold is refused")
+        };
+
+        let invalid_99 = refusal_for("99");
+        assert_eq!(invalid_99.code(), Code::InvalidProbabilisticModel);
+        let message_99 = invalid_99.to_string();
+        assert!(
+            message_99.contains("invalid_probabilistic_model (qualitative-threshold)"),
+            "{message_99}"
+        );
+        assert!(
+            message_99.contains("strictly between 0 and 1"),
+            "{message_99}"
+        );
+        assert!(message_99.contains("`0.99`, not `99`"), "{message_99}");
+        assert!(!message_99.contains("possible property"), "{message_99}");
+        assert!(!message_99.contains("`always` claim"), "{message_99}");
+        assert!(!contains_adr_number(&message_99), "{message_99}");
+
+        let zero = refusal_for("0");
+        assert_eq!(zero.code(), Code::InvalidProbabilisticModel);
+        let message_zero = zero.to_string();
+        assert!(
+            message_zero.contains("`possible` property"),
+            "{message_zero}"
+        );
+        assert!(!message_zero.contains("`always` claim"), "{message_zero}");
+        assert!(!contains_adr_number(&message_zero), "{message_zero}");
+
+        let one = refusal_for("1");
+        assert_eq!(one.code(), Code::InvalidProbabilisticModel);
+        let message_one = one.to_string();
+        assert!(message_one.contains("`always` claim"), "{message_one}");
+        assert!(
+            !message_one.contains("`possible` property"),
+            "{message_one}"
+        );
+        assert!(!contains_adr_number(&message_one), "{message_one}");
+    }
+
+    fn contains_adr_number(message: &str) -> bool {
+        message
+            .as_bytes()
+            .windows(5)
+            .any(|window| window[..4] == *b"ADR-" && window[4].is_ascii_digit())
     }
 
     /// FR-186-AC-3 (TC-621 step 3): the diagnostics of an unbounded event and

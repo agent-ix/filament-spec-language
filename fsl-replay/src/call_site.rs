@@ -391,7 +391,9 @@ pub enum CallSiteRefusal {
     /// population, ...), so it declares no operation (FR-121). Mirrors FSpec
     /// FR-323's refusal of such a `frame_operation.object`. Paired with the
     /// package, as [`Self::UnknownFunction`] is (FR-088-AC-6).
-    #[error("invalid_model_binding/malformed-declaration: package {package} declares {selection}'s owner as no object type, process or state machine")]
+    #[error(
+        "invalid_model_binding/malformed-declaration: package {package} declares {selection}'s owner as no object type, process or state machine"
+    )]
     NotAnOperationOwner {
         /// The operation `call_site` was given.
         selection: OperationName,
@@ -403,7 +405,9 @@ pub enum CallSiteRefusal {
     /// (FSpec FR-342). Decided before the operation's frame is looked for,
     /// so an ambiguous name is never an [`Self::UnknownOperation`]. Paired
     /// with the package, as [`Self::UnknownFunction`] is (FR-088-AC-6).
-    #[error("ambiguous_declaration/ambiguous-name: package {package} exposes operation {selection} through two supertypes")]
+    #[error(
+        "ambiguous_declaration/ambiguous-name: package {package} exposes operation {selection} through two supertypes"
+    )]
     AmbiguousOperation {
         /// The operation `call_site` was given.
         selection: OperationName,
@@ -471,7 +475,9 @@ pub enum CallSiteRefusal {
     /// `selection`'s function has a parameter or result type that is not
     /// package-independent, so ADR-015 D-5 refuses a use of it as an
     /// imported name. Paired with the library's package name.
-    #[error("ill_typed/operator-ineligible: package {package} function {selection} has a package-dependent signature")]
+    #[error(
+        "ill_typed/operator-ineligible: package {package} function {selection} has a package-dependent signature"
+    )]
     NotImportable {
         /// The imported function `call_site` was given.
         selection: ImportedFunctionName,
@@ -661,6 +667,7 @@ impl From<CompileRefusal> for CallSiteRefusal {
                 message: refusal.to_string(),
             },
             refusal @ (CompileRefusal::Source(_)
+            | CompileRefusal::SourceDiagnostics { .. }
             | CompileRefusal::Forms { .. }
             | CompileRefusal::OperationClause { .. }
             | CompileRefusal::TypeInvariant { .. }
@@ -668,6 +675,7 @@ impl From<CompileRefusal> for CallSiteRefusal {
             | CompileRefusal::Extension(_)
             | CompileRefusal::Assembly { .. }
             | CompileRefusal::Check { .. }
+            | CompileRefusal::CheckDiagnostics { .. }
             | CompileRefusal::Link(_)
             | CompileRefusal::Emit(..)
             | CompileRefusal::Limit(_)

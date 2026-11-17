@@ -235,6 +235,7 @@ impl PackageDeclarations {
             .collect();
         let mut refusals = Vec::new();
         let mut functions = Vec::new();
+        let mut source_declarations = BTreeMap::new();
         for view in self.selected_views.values() {
             let keys: Vec<(DeclarationKey, &super::OperationBodyDeclaration)> = view
                 .domain_package()
@@ -261,6 +262,9 @@ impl PackageDeclarations {
             for (key, body) in keys {
                 if !built.insert(key.clone()) {
                     continue;
+                }
+                if let Some(path) = clauses.source_body_declarations.get(&key) {
+                    source_declarations.insert(key.clone(), path.clone());
                 }
                 let spans = body.spans.clone();
                 if !clauses.result.contains_key(&key) {
@@ -305,8 +309,9 @@ impl PackageDeclarations {
             self.model_clauses.insert(
                 index,
                 ModelClause {
-                    declaration: key,
+                    declaration: key.clone(),
                     kind: DeclaredClauseKind::Body,
+                    source_declaration: source_declarations.get(&key).cloned(),
                 },
             );
             self.functions.push(function);
@@ -374,6 +379,10 @@ impl PackageDeclarations {
     /// be rewritten.
     fn view_clauses(&self, view: &EffectiveView) -> Option<OperationClauses> {
         let mut clauses = OperationClauses::default();
+        let source_model = self.models.iter().any(|model| {
+            model.alias() == Some("")
+                && model.selection().identity == view.domain_package().model_selection.identity
+        });
         for record in &view.domain_package().records {
             let DomainPackageRecord::OperationMember(operation) = record else {
                 continue;
@@ -385,6 +394,15 @@ impl PackageDeclarations {
             let Some(name) = member_identity_name(&operation.owner.node, &key.node) else {
                 continue;
             };
+            let source_path = source_model
+                .then(|| {
+                    let type_name = crate::model::intake::type_identity_segment(
+                        &operation.owner.package,
+                        &operation.owner.node,
+                    )?;
+                    Some((type_name.to_owned(), name.to_owned()))
+                })
+                .flatten();
             let Some(declaration) = self
                 .operations
                 .declared_by(owner.clone())
@@ -416,6 +434,12 @@ impl PackageDeclarations {
                     key.clone(),
                     rename_names(&receiver_as_parameter(&body.body)?, &rename),
                 );
+                if let Some((type_name, operation_name)) = &source_path {
+                    clauses.source_body_declarations.insert(
+                        key.clone(),
+                        vec![type_name.clone(), operation_name.clone(), "body".to_owned()],
+                    );
+                }
             }
             // `own(m)`: the member's own clauses conjoined in ascending clause
             // name (UTF-8 bytes) under FR-006's short-circuit, whatever their
@@ -426,6 +450,27 @@ impl PackageDeclarations {
                 .filter(|clause| clause.kind == StateClauseKind::Precondition)
                 .collect();
             own.sort_by(|left, right| left.name.cmp(&right.name));
+            if let (Some((type_name, operation_name)), [clause]) = (&source_path, own.as_slice()) {
+                clauses.source_precondition_declarations.insert(
+                    key.clone(),
+                    vec![
+                        type_name.clone(),
+                        operation_name.clone(),
+                        "precondition".to_owned(),
+                        clause.name.clone(),
+                    ],
+                );
+            }
+            if let Some((type_name, operation_name)) = &source_path {
+                clauses.source_effective_precondition_declarations.insert(
+                    key.clone(),
+                    vec![
+                        type_name.clone(),
+                        operation_name.clone(),
+                        "effective_precondition".to_owned(),
+                    ],
+                );
+            }
             let mut precondition: Option<Expression> = None;
             for clause in own {
                 let term = receiver_as_parameter(&clause.body)?;

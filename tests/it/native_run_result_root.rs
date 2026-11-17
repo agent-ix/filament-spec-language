@@ -16,6 +16,8 @@ fn report() -> ClauseRunReport {
         usage: Default::default(),
         basis: SettlementBasis::Unavailable,
         witness: None,
+        frame_field_values: None,
+        state_clause_counterexample: None,
         consequent_source_events: Default::default(),
         finite_window: None,
         counterexample: None,

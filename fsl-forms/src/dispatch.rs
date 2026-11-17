@@ -19,7 +19,9 @@
 //! function (TC-167), whose fixture CSTs carry shapes the real grammar
 //! cannot produce.
 
-use fsl_cst::{CstElement, CstNode, LosslessCst, ParsedSource, Production, Recovery, TokenClass};
+use fsl_cst::{
+    CstElement, CstNode, LosslessCst, ParsedSource, Production, Recovery, TokenClass, TokenKind,
+};
 use fsl_foundation::selection::SourceSelections;
 use fsl_foundation::{Code, Span};
 use std::collections::BTreeMap;
@@ -36,6 +38,7 @@ use super::protocol_clause;
 use super::refinement;
 use super::state_graph;
 use super::state_model;
+use super::synthesis_verify;
 use super::sum_case;
 use super::syntax::DeclarationForm;
 use super::task_set;
@@ -144,6 +147,8 @@ impl ParsedForm {
             F::Response(form) => Some(&form.name.name),
             F::Release(_) => None,
             F::Hybrid(form) => Some(&form.name.name),
+            F::Synthesis(form) => Some(&form.name.name),
+            F::VerificationPlan(form) => Some(&form.name.name),
         }
     }
 
@@ -409,6 +414,10 @@ pub enum LeadingTokenKind {
     /// `hybrid`: the hybrid declaration form, holding its optional initial
     /// clause, modes, equations and transitions (FR-447).
     Hybrid,
+    /// `synthesis`: a synthesis declaration (FR-754).
+    Synthesis,
+    /// `verify`: a verification plan declaration (FR-753).
+    Verify,
     /// A selected extension's leading keyword (FR-354): every selected
     /// extension's declaration forms are this one entry (ADR-012 §5.1 row
     /// S2), the production's own keyword and clauses being data.
@@ -423,6 +432,37 @@ pub enum LeadingTokenKind {
     /// hide the seams in the crates above it). Never constructed.
     #[cfg(seam_probe_forms)]
     __SeamProbe,
+}
+
+/// The closed source vocabulary for a construct that S2 does not build.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum ConstructKind {
+    /// `null` outside a record field value.
+    NullValue,
+    /// Indexing not attached directly to a field or selector.
+    IndexSelection,
+    /// `size<T>(e)` in an expression.
+    SizeOfType,
+    /// A multi-segment edge passed to `reaches`.
+    QualifiedReachesEdge,
+    /// A hyper expression in a temporal condition.
+    HyperCondition,
+    /// A declaration with no dispatch entry.
+    Declaration,
+}
+
+impl ConstructKind {
+    /// The stable source and wire spelling.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::NullValue => "null-value",
+            Self::IndexSelection => "index-selection",
+            Self::SizeOfType => "size-of-type",
+            Self::QualifiedReachesEdge => "qualified-reaches-edge",
+            Self::HyperCondition => "hyper-condition",
+            Self::Declaration => "declaration",
+        }
+    }
 }
 
 /// Why the forms stage refused to build a parsed unit.
@@ -440,12 +480,28 @@ pub enum FormsCause {
     NoDispatchEntry {
         /// The leading token's spelling.
         spelling: String,
+        /// The closed construct kind.
+        construct: ConstructKind,
+        /// The bounded source text that names the construct.
+        text: String,
+        /// The owning declaration, when it has a name.
+        declaration: Option<String>,
+        /// The selected profile identity, when present.
+        profile: Option<String>,
     },
     /// A construct no family's `Expression` variant represents (FR-091
     /// "Expression mapping").
     UnrepresentedConstruct {
         /// The construct's CST production.
         production: Production,
+        /// The closed construct kind.
+        construct: ConstructKind,
+        /// The bounded source text that names the construct.
+        text: String,
+        /// The owning declaration, when it has a name.
+        declaration: Option<String>,
+        /// The selected profile identity, when present.
+        profile: Option<String>,
     },
     /// The CST does not have the shape its production's grammar rule
     /// gives it: a broken invariant between `fsl-cst` and this stage, never
@@ -533,7 +589,7 @@ pub fn build_unit(parsed: &ParsedSource) -> Result<ParsedUnit, FormsRefusal> {
             recoveries: Vec::new(),
         });
     }
-    let forms = build_forms(parsed.cst())?;
+    let forms = build_forms(parsed.cst(), parsed.selections())?;
     Ok(ParsedUnit {
         edition: declared_edition(parsed.cst()),
         selections: parsed.selections().clone(),
@@ -635,11 +691,20 @@ pub fn build_unit_with_protocol_results(
         }
         let spelling = leading_token_spelling(cst, node).unwrap_or_default();
         let Some(kind) = leading_token_kind(cst, node, spelling) else {
-            let refusal = FormsRefusal::at(
-                FormsCause::NoDispatchEntry {
+            let refusal = with_declaration_context(
+                FormsRefusal::at(
+                    FormsCause::NoDispatchEntry {
                     spelling: String::from_utf8_lossy(spelling).into_owned(),
-                },
-                node.span(),
+                        construct: ConstructKind::Declaration,
+                    text: bounded_text(&String::from_utf8_lossy(spelling)),
+                        declaration: None,
+                        profile: None,
+                    },
+                    node.span(),
+                ),
+                cst,
+                node,
+                parsed.selections(),
             );
             if is_protocol {
                 rejected.push(ProtocolFormsRefusal {
@@ -651,7 +716,9 @@ pub fn build_unit_with_protocol_results(
             }
             return Err(refusal);
         };
-        match dispatch(kind, Construct { cst, node }) {
+        match dispatch(kind, Construct { cst, node })
+            .map_err(|refusal| with_declaration_context(refusal, cst, node, parsed.selections()))
+        {
             Ok(form) => forms.push(ParsedForm {
                 span: node.span(),
                 edition: edition.clone(),
@@ -717,7 +784,10 @@ fn recovering(cst: &LosslessCst) -> FormsRefusal {
 /// One parsed form per `Declaration` node under the CST root, in source
 /// order; the first declaration with no dispatch entry, or the first
 /// refusal a production gives, refuses the whole unit.
-fn build_forms(cst: &LosslessCst) -> Result<Vec<ParsedForm>, FormsRefusal> {
+fn build_forms(
+    cst: &LosslessCst,
+    selections: &SourceSelections,
+) -> Result<Vec<ParsedForm>, FormsRefusal> {
     if !cst.recoveries().is_empty() {
         return Err(recovering(cst));
     }
@@ -726,15 +796,25 @@ fn build_forms(cst: &LosslessCst) -> Result<Vec<ParsedForm>, FormsRefusal> {
     for node in declarations(cst) {
         let spelling = leading_token_spelling(cst, node).unwrap_or_default();
         let Some(kind) = leading_token_kind(cst, node, spelling) else {
-            return Err(FormsRefusal::at(
-                FormsCause::NoDispatchEntry {
-                    spelling: String::from_utf8_lossy(spelling).into_owned(),
-                },
-                node.span(),
+            return Err(with_declaration_context(
+                FormsRefusal::at(
+                    FormsCause::NoDispatchEntry {
+                        spelling: String::from_utf8_lossy(spelling).into_owned(),
+                        construct: ConstructKind::Declaration,
+                    text: bounded_text(&String::from_utf8_lossy(spelling)),
+                        declaration: None,
+                        profile: None,
+                    },
+                    node.span(),
+                ),
+                cst,
+                node,
+                selections,
             ));
         };
         let construct = Construct { cst, node };
-        let form = dispatch(kind, construct)?;
+        let form = dispatch(kind, construct)
+            .map_err(|refusal| with_declaration_context(refusal, cst, node, selections))?;
         forms.push(ParsedForm {
             span: node.span(),
             edition: edition.clone(),
@@ -743,6 +823,67 @@ fn build_forms(cst: &LosslessCst) -> Result<Vec<ParsedForm>, FormsRefusal> {
         });
     }
     Ok(forms)
+}
+
+fn with_declaration_context(
+    mut refusal: FormsRefusal,
+    cst: &LosslessCst,
+    node: &CstNode,
+    selections: &SourceSelections,
+) -> FormsRefusal {
+    let tokens = value::significant_tokens(cst, node);
+    let declaration = tokens
+        .iter()
+        // The declaration's first significant token is its leading keyword
+        // (`function`, `temporal`, and so on), not its declared name.
+        .skip(1)
+        .filter(|token| token.kind() == TokenKind::Identifier)
+        .filter_map(|token| std::str::from_utf8(token.spelling()).ok())
+        .next()
+        .map(str::to_owned);
+    let mut after_using = false;
+    let profile_alias = tokens.iter().find_map(|token| {
+        if after_using && token.kind() == TokenKind::Identifier {
+            return std::str::from_utf8(token.spelling()).ok();
+        }
+        after_using = token.spelling() == b"using";
+        None
+    });
+    let profile = profile_alias.and_then(|alias| {
+        selections
+            .profiles
+            .iter()
+            .find(|selection| selection.alias == alias)
+            .map(|selection| selection.identity.clone())
+    });
+    match &mut refusal.cause {
+        FormsCause::NoDispatchEntry {
+            declaration: owner,
+            profile: selected,
+            ..
+        }
+        | FormsCause::UnrepresentedConstruct {
+            declaration: owner,
+            profile: selected,
+            ..
+        } => {
+            *owner = declaration;
+            *selected = profile;
+        }
+        _ => {}
+    }
+    refusal
+}
+
+fn bounded_text(text: &str) -> String {
+    if text.len() <= 120 {
+        return text.to_owned();
+    }
+    let mut end = 120;
+    while !text.is_char_boundary(end) {
+        end -= 1;
+    }
+    format!("{}...", &text[..end])
 }
 
 /// The root's `Declaration` child nodes, in source order.
@@ -805,6 +946,8 @@ fn dispatch(
         LeadingTokenKind::Probabilistic => probabilistic::probabilistic_clause(construct),
         LeadingTokenKind::StateGraph => state_graph::state_graph_claim(construct),
         LeadingTokenKind::Hybrid => hybrid_declaration::hybrid_declaration(construct),
+        LeadingTokenKind::Synthesis => synthesis_verify::synthesis(construct),
+        LeadingTokenKind::Verify => synthesis_verify::verification_plan(construct),
         LeadingTokenKind::Extension => extension_declaration::extension_declaration(construct),
         #[cfg(test)]
         LeadingTokenKind::TestProbe => test_support::stub_production(construct),
@@ -887,6 +1030,8 @@ const LEADING_SPELLINGS: &[(&str, LeadingTokenKind)] = &[
     ("always", LeadingTokenKind::StateGraph),
     ("unique", LeadingTokenKind::StateGraph),
     ("hybrid", LeadingTokenKind::Hybrid),
+    ("synthesis", LeadingTokenKind::Synthesis),
+    ("verify", LeadingTokenKind::Verify),
 ];
 
 /// Maps a leading-token spelling to its dispatch-table entry, or `None`
@@ -1012,7 +1157,7 @@ mod tests {
     const HEADER: [&str; 4] = ["language", "\"ix:native\"", "edition", "\"1-draft\""];
 
     fn build(cst: &LosslessCst) -> Result<Vec<ParsedForm>, FormsRefusal> {
-        build_forms(cst)
+        build_forms(cst, &SourceSelections::default())
     }
 
     fn cause(refusal: FormsRefusal) -> FormsCause {
@@ -1224,13 +1369,11 @@ mod tests {
     #[trace("TC-457", "FR-102-AC-4")]
     #[test]
     fn no_dispatch_entry_refuses_a_clean_cst_with_no_matching_leading_token() {
-        let cst = LosslessCst::fixture(&HEADER, &["verify"], Vec::new());
-        let failure = build(&cst).expect_err("no entry matches \"verify\"");
-        assert_eq!(
+        let cst = LosslessCst::fixture(&HEADER, &["unclaimed"], Vec::new());
+        let failure = build(&cst).expect_err("no entry matches \"unclaimed\"");
+        assert!(matches!(
             cause(failure),
-            FormsCause::NoDispatchEntry {
-                spelling: "verify".into()
-            }
-        );
+            FormsCause::NoDispatchEntry { spelling, .. } if spelling == "unclaimed"
+        ));
     }
 }

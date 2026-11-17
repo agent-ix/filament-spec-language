@@ -1809,7 +1809,6 @@ fn w_wire_bytes_do_not_follow_unrelated_protocols() {
 /// template, never as a "temporal declaration".
 #[trace("TC-2525", "FR-892-AC-4")]
 #[test]
-#[ignore = "QSL-2225: the missing-selection refusal calls a compensate template a temporal declaration"]
 fn a_missing_template_clock_names_the_compensate_template() {
     let graph = tc134_timed_graph();
     let selections = tc134_selections(&graph);
@@ -1832,4 +1831,6 @@ fn a_missing_template_clock_names_the_compensate_template() {
     let message = refusal.to_string();
     assert!(message.contains("compensate template"), "{message}");
     assert!(!message.contains("temporal declaration"), "{message}");
+    assert!(!message.contains("RawSourceRef"), "{message}");
+    assert!(!message.contains("Span {"), "{message}");
 }

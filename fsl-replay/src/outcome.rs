@@ -30,7 +30,7 @@ pub use counterexample::{
 };
 
 use crate::hybrid::{BoundDimension, SolverHorizon};
-use filament_exact::{CancelCause, NodeKey};
+use filament_exact::{CancelCause, Integer, NodeKey};
 use filament_semantic_value::catalog::Category;
 use fsl_cst::format::FormatRefusal;
 use fsl_foundation::diagnostic::{Code, Locus, StageFailure, Staged, Stopped};
@@ -394,9 +394,10 @@ pub struct ItemCause {
     #[serde(skip_serializing_if = "Option::is_none")]
     locus: Option<WireLocus>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    cause: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
     code: Option<String>,
+    /// A refusal's action-oriented explanation, when the source provides one.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    message: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     parity: Option<ParityReason>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -431,6 +432,9 @@ pub struct ItemCause {
     defect: Option<&'static str>,
     #[serde(skip_serializing_if = "Option::is_none")]
     value: Option<u64>,
+    /// An accounting limit's attempted counter value, as a decimal string.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    counter: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     lower: Option<crate::proof_result::ExactRational>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -467,7 +471,10 @@ pub struct ItemCause {
     /// A `memory-bound-reached` or `instance-bound-reached` cause's request
     /// member (FSpec FR-439, FR-428).
     #[serde(skip_serializing_if = "Option::is_none")]
-    bound: Option<&'static str>,
+    bound: Option<String>,
+    /// An accounting limit's `filament.value.accounting/v1` field.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    field: Option<&'static str>,
     /// A `memory-bound-reached` or `instance-bound-reached` cause's count of
     /// limited states.
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -637,8 +644,8 @@ impl ItemCause {
             kind: Some(kind),
             at: None,
             locus: None,
-            cause: None,
             code: None,
+            message: None,
             parity: None,
             depth: None,
             horizon: None,
@@ -652,6 +659,7 @@ impl ItemCause {
             limit: None,
             defect: None,
             value: None,
+            counter: None,
             lower: None,
             upper: None,
             setting: None,
@@ -666,6 +674,7 @@ impl ItemCause {
             refusal: None,
             total: None,
             bound: None,
+            field: None,
             states: None,
             failures: None,
             predicate: None,
@@ -683,7 +692,7 @@ impl ItemCause {
     pub fn undefined_evaluation(at: impl Into<String>, cause: impl Into<String>) -> Self {
         Self {
             at: Some(at.into()),
-            cause: Some(cause.into()),
+            code: Some(cause.into()),
             ..Self::kind("undefined-evaluation")
         }
     }
@@ -779,7 +788,7 @@ impl ItemCause {
                 bound,
                 states,
             }) => {
-                item.bound = Some(bound.member.as_str());
+                item.bound = Some(bound.member.as_str().to_owned());
                 item.value = Some(bound.value);
                 item.states = Some(ItemCauseStates::Count(*states));
             }
@@ -787,7 +796,7 @@ impl ItemCause {
                 bound,
                 states,
             }) => {
-                item.bound = Some(InstanceBound::MEMBER);
+                item.bound = Some(InstanceBound::MEMBER.to_owned());
                 item.value = Some(bound.value);
                 item.states = Some(ItemCauseStates::Count(*states));
             }
@@ -1303,7 +1312,7 @@ impl OutcomeItem {
             Category::Refusal => ItemLabel::Declined,
             Category::Undefined => ItemLabel::Undefined,
             Category::Inconclusive | Category::InternalFailure => {
-                return Err(ClauseRunNotAnItem::Category(category))
+                return Err(ClauseRunNotAnItem::Category(category));
             }
         };
         let record = item_record(report)?;
@@ -1399,11 +1408,9 @@ fn clause_run_cause(report: &ClauseRunReport) -> Option<ItemCause> {
                 "unsupported_projection",
                 "missing-fairness-premise",
             )),
-            TemporalVerdict::Incomplete(incomplete) => Some(limit(
-                incomplete.limit_kind.as_str(),
-                incomplete.limit,
-                incomplete.limit_kind.as_str(),
-            )),
+            TemporalVerdict::Incomplete(incomplete) => {
+                Some(accounting_limit_cause(incomplete, "limit-reached", None))
+            }
             TemporalVerdict::ActivationIncomplete { at, .. } => Some(ItemCause {
                 at: Some(format!("position {at}")),
                 ..ItemCause::kind("activation-incomplete")
@@ -1426,9 +1433,10 @@ fn clause_run_cause(report: &ClauseRunReport) -> Option<ItemCause> {
             let code = refusal.catalog_code();
             Some(catalog(code.code(), code.cause()))
         }
-        ClauseDisposition::TraceRefused(_) => {
-            Some(catalog("invalid_runtime_input", "invalid-value"))
-        }
+        ClauseDisposition::TraceRefused(refusal) => Some(ItemCause {
+            message: Some(refusal.message.clone()),
+            ..catalog("invalid_runtime_input", "invalid-value")
+        }),
         ClauseDisposition::ProgressContradiction(refusal) => {
             let code = &refusal.record.catalog;
             Some(catalog(code.code(), code.cause()))
@@ -1436,10 +1444,45 @@ fn clause_run_cause(report: &ClauseRunReport) -> Option<ItemCause> {
         ClauseDisposition::FrameViolation(witness) => {
             Some(catalog(witness.code.as_str(), witness.cause))
         }
+        ClauseDisposition::Admit(
+            AdmissionFailure::Incomplete(record) | AdmissionFailure::Refused(record),
+        ) if record.fields.get("setting").map(String::as_str)
+            == Some("observation.input_bytes") =>
+        {
+            let bound = record.fields.get("bound")?;
+            let actual = record.fields.get("actual")?;
+            Some(ItemCause {
+                code: Some(record.catalog.code().to_owned()),
+                limit: Some(CauseLimit::Name("input-bytes-exceeded")),
+                value: bound.parse().ok(),
+                counter: Some(actual.clone()),
+                setting: Some("observation.input_bytes"),
+                bound: Some(bound.clone()),
+                ..ItemCause::kind("input-bytes-exceeded")
+            })
+        }
         ClauseDisposition::Evaluate(CallOutcome::Undefined { reason }) => Some(ItemCause {
-            cause: Some((*reason).to_owned()),
+            code: Some((*reason).to_owned()),
             ..ItemCause::kind("undefined-evaluation")
         }),
+        ClauseDisposition::Compile(refusal) if has_timed_trace_subject_refusal(refusal) => {
+            classify_clause_run(report)
+                .classification
+                .causes
+                .first()
+                .map(|cause| ItemCause {
+                    code: Some(cause.code.as_str().to_owned()),
+                    message: Some(refusal.to_string()),
+                    ..ItemCause::kind(cause.cause.unwrap_or_else(|| cause.code.as_str()))
+                })
+        }
+        ClauseDisposition::Evaluate(CallOutcome::Incomplete(incomplete)) => {
+            Some(accounting_limit_cause(
+                &incomplete.record,
+                "resource_exhausted",
+                Some("resource_exhausted"),
+            ))
+        }
         _ => classify_clause_run(report)
             .classification
             .causes
@@ -1448,6 +1491,45 @@ fn clause_run_cause(report: &ClauseRunReport) -> Option<ItemCause> {
                 code: Some(cause.code.as_str().to_owned()),
                 ..ItemCause::kind(cause.cause.unwrap_or_else(|| cause.code.as_str()))
             }),
+    }
+}
+
+fn has_timed_trace_subject_refusal(refusal: &CompileRefusal) -> bool {
+    let CompileRefusal::Check { refusals, .. } = refusal else {
+        return false;
+    };
+    refusals.iter().any(|refusal| {
+        matches!(
+            &refusal.cause,
+            fsl_semantics::check::CheckCause::Temporal(cause)
+                if matches!(
+                    cause.as_ref(),
+                    fsl_semantics::check::TemporalCause::TimedTraceSubject { .. }
+                )
+        )
+    })
+}
+
+fn accounting_limit_cause(
+    incomplete: &filament_exact::Incomplete,
+    kind: &'static str,
+    code: Option<&'static str>,
+) -> ItemCause {
+    let counter = if incomplete.limit_kind.is_cumulative() {
+        Integer::from(incomplete.consumed).add(&incomplete.next_charge)
+    } else {
+        incomplete.next_charge.clone()
+    };
+    let setting = crate::limits::AccountingLimits::setting_of(incomplete.limit_kind).name();
+    ItemCause {
+        code: code.map(str::to_owned),
+        limit: Some(CauseLimit::Name(incomplete.limit_kind.as_str())),
+        value: Some(incomplete.limit),
+        counter: Some(counter.to_string()),
+        bound: Some(incomplete.limit.to_string()),
+        field: Some(incomplete.limit_kind.as_str()),
+        setting: Some(setting),
+        ..ItemCause::kind(kind)
     }
 }
 
@@ -1509,6 +1591,14 @@ pub struct OutcomeDiagnostic {
     code: String,
     locus: Option<OutcomeLocus>,
     message: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    construct: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    text: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    declaration: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    profile: Option<String>,
     #[serde(
         skip_serializing_if = "Option::is_none",
         serialize_with = "serialize_source_label"
@@ -1540,6 +1630,10 @@ impl OutcomeDiagnostic {
             code: code.into(),
             locus,
             message: message.into(),
+            construct: None,
+            text: None,
+            declaration: None,
+            profile: None,
             label: None,
             details: None,
         }
@@ -1585,14 +1679,71 @@ impl OutcomeDiagnostic {
         if let CompileRefusal::Source(diagnostic) = refusal {
             return Self::project_source_diagnostic(diagnostic);
         }
-        Self::new(
+        let mut diagnostic = Self::new(
             refusal.cause(),
             refusal.code().as_str(),
             refusal
                 .region()
                 .map(|region| OutcomeLocus::from(&Locus::Region(region.clone()))),
             refusal.to_string(),
-        )
+        );
+        if let CompileRefusal::Forms { failure, .. } = refusal {
+            match &failure.cause {
+                fsl_forms::FormsCause::NoDispatchEntry {
+                    construct,
+                    text,
+                    declaration,
+                    profile,
+                    ..
+                }
+                | fsl_forms::FormsCause::UnrepresentedConstruct {
+                    construct,
+                    text,
+                    declaration,
+                    profile,
+                    ..
+                } => {
+                    diagnostic.construct = Some(construct.as_str().to_owned());
+                    diagnostic.text = Some(text.clone());
+                    diagnostic.declaration = declaration.clone();
+                    diagnostic.profile = profile.clone();
+                }
+                _ => {}
+            }
+        }
+        diagnostic
+    }
+
+    /// Project a compile refusal with only the limit-setting mechanism the
+    /// named operation accepts. Replay also accepts request `stage_limits`.
+    fn from_compile_refusal_for_operation(operation: Operation, refusal: &CompileRefusal) -> Self {
+        let diagnostic = Self::from_compile_refusal(refusal);
+        Self::for_operation(operation, diagnostic)
+    }
+
+    /// Project every retained compile diagnostic with only the limit-setting
+    /// mechanism the named operation accepts.
+    fn from_compile_refusal_diagnostics_for_operation(
+        operation: Operation,
+        refusal: &CompileRefusal,
+    ) -> Vec<Self> {
+        refusal
+            .outcome_diagnostics()
+            .into_iter()
+            .map(|diagnostic| Self::for_operation(operation, diagnostic))
+            .collect()
+    }
+
+    fn for_operation(operation: Operation, mut diagnostic: Self) -> Self {
+        if operation != Operation::Replay {
+            if let Some((message, _)) = diagnostic
+                .message
+                .split_once(" or the request's `stage_limits` entry ")
+            {
+                diagnostic.message = message.to_owned();
+            }
+        }
+        diagnostic
     }
 
     /// The diagnostic of a refused call: its catalog code and cause, and
@@ -1926,8 +2077,8 @@ impl OutcomeDocument {
     }
 
     /// The document of a `check` outcome: success at S4, which mints no
-    /// identity, so no artifact; a failure names its category and one
-    /// diagnostic.
+    /// identity, so no artifact; a failure names its category and retains
+    /// every diagnostic the refused stage reported.
     pub fn from_check(result: &Result<Staged<CheckedUnit>, FrontEndFailure>) -> Self {
         match result {
             Ok(_) => Self::new(Operation::Check, Some(OutcomeStage::S4), Category::Success),
@@ -1955,13 +2106,21 @@ impl OutcomeDocument {
                 Some(refusal.stage().into()),
                 refusal.code().category(),
             )
-            .with_diagnostics(vec![OutcomeDiagnostic::from_compile_refusal(refusal)]),
+            .with_diagnostics(
+                OutcomeDiagnostic::from_compile_refusal_diagnostics_for_operation(
+                    operation, refusal,
+                ),
+            ),
             StageFailure::RefusedWithPayload(refusal, _) => Self::new(
                 operation,
                 Some(refusal.stage().into()),
                 refusal.code().category(),
             )
-            .with_diagnostics(vec![OutcomeDiagnostic::from_compile_refusal(refusal)]),
+            .with_diagnostics(
+                OutcomeDiagnostic::from_compile_refusal_diagnostics_for_operation(
+                    operation, refusal,
+                ),
+            ),
             StageFailure::Limit(limit) => {
                 let refusal = CompileRefusal::Limit(limit.clone());
                 Self::new(
@@ -1969,7 +2128,9 @@ impl OutcomeDocument {
                     Some(refusal.stage().into()),
                     Category::Incomplete,
                 )
-                .with_diagnostics(vec![OutcomeDiagnostic::from_compile_refusal(&refusal)])
+                .with_diagnostics(vec![
+                    OutcomeDiagnostic::from_compile_refusal_for_operation(operation, &refusal),
+                ])
             }
             StageFailure::LimitWithPayload(limit, _) => {
                 let refusal = CompileRefusal::Limit(limit.clone());
@@ -1978,7 +2139,9 @@ impl OutcomeDocument {
                     Some(refusal.stage().into()),
                     Category::Incomplete,
                 )
-                .with_diagnostics(vec![OutcomeDiagnostic::from_compile_refusal(&refusal)])
+                .with_diagnostics(vec![
+                    OutcomeDiagnostic::from_compile_refusal_for_operation(operation, &refusal),
+                ])
             }
             StageFailure::Cancelled(cause) => Self::cancelled(operation, *cause),
             StageFailure::Fault(fault) => Self::faulted(operation, fault),
@@ -1998,7 +2161,9 @@ impl OutcomeDocument {
                     Some(refusal.stage().into()),
                     Category::Incomplete,
                 )
-                .with_diagnostics(vec![OutcomeDiagnostic::from_compile_refusal(&refusal)])
+                .with_diagnostics(vec![
+                    OutcomeDiagnostic::from_compile_refusal_for_operation(operation, &refusal),
+                ])
             }
             Stopped::Cancelled(cause) => Self::cancelled(operation, cause),
             Stopped::Fault(fault) => Self::faulted(operation, &fault),
@@ -2120,8 +2285,8 @@ impl OutcomeDocument {
     /// The document of a `run`: a call that ran is [`Self::from_call`]'s
     /// document; a refusal is an
     /// `execute` document at the stage it reached with the refusal's
-    /// category and one diagnostic; a cancel is incomplete; a fault is
-    /// internal failure with its catalog code.
+    /// category and every retained diagnostic; a cancel is incomplete; a
+    /// fault is internal failure with its catalog code.
     pub fn from_run(result: &Result<CallOutcome, Box<RunRefusal>>) -> Self {
         match result {
             Ok(outcome) => Self::from_call(outcome),
@@ -2146,7 +2311,11 @@ impl OutcomeDocument {
         match refusal {
             RunRefusal::Compile(compile) => {
                 Self::new(operation, Some(compile.stage().into()), refusal.category())
-                    .with_diagnostics(vec![OutcomeDiagnostic::from_compile_refusal(compile)])
+                    .with_diagnostics(
+                        OutcomeDiagnostic::from_compile_refusal_diagnostics_for_operation(
+                            operation, compile,
+                        ),
+                    )
             }
             RunRefusal::Cancelled(cause) => Self::cancelled(operation, *cause),
             RunRefusal::Fault(fault) => Self::faulted(operation, fault),
@@ -2336,11 +2505,35 @@ mod tests {
 
     use filament_exact::{Cancel, CancelCause, Identifier, ScalarLimits};
     use filament_semantic_value::catalog::{CatalogCode, InternalFault};
+    use fsl_foundation::diagnostic::LimitExceeded;
+    use fsl_foundation::Setting;
     use fsl_semantics::model::object_environment::ObjectEnvironment;
     use serde_json::{json, Value};
 
     use super::*;
     use crate::identity::QualifiedName;
+
+    /// Trace: FR-255-AC-3, the operation hint follows the entry point's accepted inputs.
+    #[trace("TC-931", "FR-255-AC-3")]
+    #[test]
+    fn run_limit_message_omits_stage_limits_while_replay_keeps_it() {
+        let run_refusal = RunRefusal::Compile(Box::new(CompileRefusal::Limit(LimitExceeded::new(
+            Setting::S1Tokens,
+            3,
+            4,
+        ))));
+        let run = OutcomeDocument::from_run_refusal(Operation::Execute, &run_refusal);
+        let run_message = run.diagnostics()[0].message();
+        assert!(run_message.contains("--limit s1.tokens"), "{run_message}");
+        assert!(!run_message.contains("stage_limits"), "{run_message}");
+
+        let replay_refusal = ReplayRefusal::Recompile(Box::new(CompileRefusal::Limit(
+            LimitExceeded::new(Setting::S1Tokens, 3, 4),
+        )));
+        let replay = OutcomeDocument::from_replay(&Err(replay_refusal));
+        let replay_message = replay.diagnostics()[0].message();
+        assert!(replay_message.contains("stage_limits"), "{replay_message}");
+    }
 
     #[test]
     fn timed_statistical_refusal_carries_typed_state_and_transition() {
@@ -3313,7 +3506,7 @@ mod tests {
                         "cause": {
                             "kind": "undefined-evaluation",
                             "where": "position 1",
-                            "cause": "division-by-zero",
+                            "code": "division-by-zero",
                         },
                         "category": "violation",
                     }],

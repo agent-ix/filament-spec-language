@@ -16,8 +16,9 @@ use std::collections::{BTreeMap, BTreeSet};
 use filament_contract_model::{
     CheckedNodeId, CheckedPackageV2, ExactTypeProjection, ExactTypeProjectionError,
     NativeJoinBudget, SelectedExactDeclarationForm, SelectedExactDeclarationRow,
-    SelectedExactFieldRow, SelectedExactIdentities, SelectedExactIdentity, SelectedSourceRecordRow,
-    SelectedSourceUnionRow,
+    SelectedExactFieldRow, SelectedExactIdentities, SelectedExactIdentity, SelectedSourceObjectRow,
+    SelectedSourceObjects, SelectedSourceOperationRow, SelectedSourceOperations,
+    SelectedSourceRecordRow, SelectedSourceUnionRow,
 };
 use filament_exact::{EffectiveId, MemberId, MemberOwner, NodeKey, OriginalDeclarationKey, UnitId};
 use serde::{Deserialize, Serialize};
@@ -26,10 +27,12 @@ use crate::checked_v2::wire_graph;
 
 mod carried;
 mod observation;
+use crate::equality_file::OriginalValueType;
 use carried::{SourceRecordJson, SourceUnionJson};
+use filament_exact::Presence;
 
 /// The format of `identities.json` (FR-531 "The identity file").
-pub const IDENTITIES_FORMAT: &str = "filament.checked-handoff.identities/3";
+pub const IDENTITIES_FORMAT: &str = "filament.checked-handoff.identities/4";
 
 /// A checked package as a bytes-only consumer holds it (FR-531).
 ///
@@ -178,7 +181,7 @@ impl<'p> BarePackage<'p> {
         ) {
             Ok(extended) => extended,
             Err(denial) if fsl_semantics::model::intake::is_native_budget_denial(&denial) => {
-                return Err(crate::NativeJoinFailure::from(denial).with_budget(budget))
+                return Err(crate::NativeJoinFailure::from(denial).with_budget(budget));
             }
             Err(_) => return Ok((Err(IdentityWitnessRefusal::Unknown), none)),
         };
@@ -234,7 +237,7 @@ impl<'p> BarePackage<'p> {
             }
             Err(IdentityJoinFailure::Witness(defect)) => Some(Err(defect)),
             Err(IdentityJoinFailure::Exhausted(denial)) => {
-                return Err(crate::NativeJoinFailure::from(*denial).with_budget(budget))
+                return Err(crate::NativeJoinFailure::from(*denial).with_budget(budget));
             }
         };
         self.supply = Some(supply);
@@ -484,6 +487,9 @@ pub struct ReadIdentityRows {
     fields: Vec<SelectedExactFieldRow>,
     source_records: Vec<SelectedSourceRecordRow>,
     source_unions: Vec<SelectedSourceUnionRow>,
+    source_objects: Vec<SelectedSourceObjectRow>,
+    source_object_member_facts: Vec<Vec<crate::emit::SourceObjectMemberFacts>>,
+    source_operations: Vec<SelectedSourceOperationRow>,
 }
 
 /// Why an identity file was not read: a closed set, naming what it found.
@@ -509,6 +515,12 @@ pub enum IdentityFileRefusal {
     /// IR refused the original producer rows at its typed structural locus.
     #[error("the identity file has an invalid native witness: {0:?}")]
     Native(Box<filament_contract_model::ExactTypeProjectionError>),
+    /// IR refused the source-object rows against the admitted graph.
+    #[error("the identity file has invalid source-object rows: {0}")]
+    SourceObject(#[from] filament_contract_model::SelectedSourceObjectError),
+    /// IR refused the source-operation rows against the admitted graph.
+    #[error("the identity file has invalid source-operation rows: {0}")]
+    SourceOperation(#[from] filament_contract_model::SelectedOperationMemberError),
     /// An allocation-free producer adapter denial with the original budget locus.
     #[error(transparent)]
     Rows(#[from] crate::NativeRowError),
@@ -538,6 +550,12 @@ pub enum IdentityMember {
     /// The required final-emission source-union rows.
     #[error("`source_unions`")]
     SourceUnions,
+    /// The required final-emission source-object rows.
+    #[error("`source_objects`")]
+    SourceObjects,
+    /// The required final-emission source-operation rows.
+    #[error("`source_operations`")]
+    SourceOperations,
     /// A declaration row's `form`.
     #[error("`form`")]
     Form,
@@ -562,6 +580,189 @@ struct File {
     fields: Vec<FieldJson>,
     source_records: Vec<SourceRecordJson>,
     source_unions: Vec<SourceUnionJson>,
+    source_objects: Vec<SourceObjectJson>,
+    source_operations: Vec<SourceOperationJson>,
+}
+
+#[derive(Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+struct SourceObjectJson {
+    structural_node: CheckedNodeId,
+    source_authority: String,
+    source_identity: String,
+    #[serde(rename = "abstract")]
+    abstract_type: bool,
+    supertypes: Vec<CheckedNodeId>,
+    identity_fields: Vec<String>,
+    members: Vec<SourceObjectMemberJson>,
+    populations: Vec<SourcePopulationJson>,
+}
+
+#[derive(Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+struct SourceObjectMemberJson {
+    original_member_identity: String,
+    admitted_name: String,
+    presence: SourceObjectPresenceJson,
+    type_node: CheckedNodeId,
+    value_type: OriginalValueType,
+}
+
+#[derive(Deserialize, Serialize)]
+#[serde(rename_all = "snake_case")]
+enum SourceObjectPresenceJson {
+    Required,
+    Optional,
+}
+
+#[derive(Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+struct SourcePopulationJson {
+    name: String,
+    symmetric: bool,
+}
+
+#[derive(Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+struct SourceOperationJson {
+    source_authority: String,
+    source_identity: String,
+    anchor_id: CheckedNodeId,
+    structural_node: CheckedNodeId,
+}
+
+impl SourceObjectJson {
+    fn of(
+        row: &SelectedSourceObjectRow,
+        member_facts: &[crate::emit::SourceObjectMemberFacts],
+    ) -> Result<Self, IdentityFileRefusal> {
+        let malformed = || IdentityFileRefusal::Malformed {
+            member: IdentityMember::SourceObjects,
+        };
+        if row.members.len() != member_facts.len() {
+            return Err(malformed());
+        }
+        let members = row
+            .members
+            .iter()
+            .zip(member_facts)
+            .map(|(member, facts)| {
+                if member.name.as_ref() != facts.admitted_name.as_ref()
+                    || member.optional != (facts.presence == Presence::Optional)
+                {
+                    return Err(malformed());
+                }
+                Ok(SourceObjectMemberJson {
+                    original_member_identity: facts.original_member_identity.to_string(),
+                    admitted_name: facts.admitted_name.to_string(),
+                    presence: match facts.presence {
+                        Presence::Required => SourceObjectPresenceJson::Required,
+                        Presence::Optional => SourceObjectPresenceJson::Optional,
+                    },
+                    type_node: member.type_node.clone(),
+                    value_type: OriginalValueType::of(&facts.value_type)
+                        .map_err(|_| malformed())?,
+                })
+            })
+            .collect::<Result<_, _>>()?;
+        Ok(Self {
+            structural_node: row.structural_node.clone(),
+            source_authority: row.source_authority.to_string(),
+            source_identity: row.source_identity.to_string(),
+            abstract_type: row.is_abstract,
+            supertypes: row.supertypes.clone(),
+            identity_fields: row
+                .identity_fields
+                .iter()
+                .map(ToString::to_string)
+                .collect(),
+            members,
+            populations: row
+                .populations
+                .iter()
+                .map(|population| SourcePopulationJson {
+                    name: population.name.to_string(),
+                    symmetric: population.symmetric,
+                })
+                .collect(),
+        })
+    }
+
+    fn row(
+        self,
+    ) -> Result<
+        (
+            SelectedSourceObjectRow,
+            Vec<crate::emit::SourceObjectMemberFacts>,
+        ),
+        IdentityFileRefusal,
+    > {
+        let malformed = || IdentityFileRefusal::Malformed {
+            member: IdentityMember::SourceObjects,
+        };
+        let mut members = Vec::with_capacity(self.members.len());
+        let mut facts = Vec::with_capacity(self.members.len());
+        for member in self.members {
+            let presence = match member.presence {
+                SourceObjectPresenceJson::Required => Presence::Required,
+                SourceObjectPresenceJson::Optional => Presence::Optional,
+            };
+            let value_type = member.value_type.value().map_err(|_| malformed())?;
+            members.push(filament_contract_model::SelectedSourceObjectMember {
+                name: member.admitted_name.clone().into(),
+                type_node: member.type_node,
+                optional: presence == Presence::Optional,
+            });
+            facts.push(crate::emit::SourceObjectMemberFacts {
+                original_member_identity: member.original_member_identity.into(),
+                admitted_name: member.admitted_name.into(),
+                presence,
+                value_type,
+            });
+        }
+        Ok((
+            SelectedSourceObjectRow {
+                structural_node: self.structural_node,
+                source_authority: self.source_authority.into(),
+                source_identity: self.source_identity.into(),
+                is_abstract: self.abstract_type,
+                supertypes: self.supertypes,
+                identity_fields: self.identity_fields.into_iter().map(Into::into).collect(),
+                members,
+                populations: self
+                    .populations
+                    .into_iter()
+                    .map(
+                        |population| filament_contract_model::SelectedSourcePopulation {
+                            name: population.name.into(),
+                            symmetric: population.symmetric,
+                        },
+                    )
+                    .collect(),
+            },
+            facts,
+        ))
+    }
+}
+
+impl SourceOperationJson {
+    fn of(row: &SelectedSourceOperationRow) -> Self {
+        Self {
+            source_authority: row.source_authority.to_string(),
+            source_identity: row.source_identity.to_string(),
+            anchor_id: row.anchor_id.clone(),
+            structural_node: row.structural_node.clone(),
+        }
+    }
+
+    fn row(self) -> SelectedSourceOperationRow {
+        SelectedSourceOperationRow {
+            source_authority: self.source_authority.into(),
+            source_identity: self.source_identity.into(),
+            anchor_id: self.anchor_id,
+            structural_node: self.structural_node,
+        }
+    }
 }
 
 #[derive(Deserialize, Serialize)]
@@ -653,6 +854,8 @@ impl<'de> serde::de::Visitor<'de> for TopVisitor<'_> {
         let mut fields: Option<Vec<FieldJson>> = None;
         let mut source_records: Option<Vec<SourceRecordJson>> = None;
         let mut source_unions: Option<Vec<SourceUnionJson>> = None;
+        let mut source_objects: Option<Vec<SourceObjectJson>> = None;
+        let mut source_operations: Option<Vec<SourceOperationJson>> = None;
         while let Some(key) = map.next_key::<String>()? {
             match key.as_str() {
                 "format" => {
@@ -699,28 +902,58 @@ impl<'de> serde::de::Visitor<'de> for TopVisitor<'_> {
                         self.problem.set(Some(IdentityMember::SourceUnions));
                     })?);
                 }
+                "source_objects" => {
+                    if source_objects.is_some() {
+                        return Err(self.fail(IdentityMember::Repeated("source_objects")));
+                    }
+                    source_objects = Some(map.next_value().inspect_err(|_: &A::Error| {
+                        self.problem.set(Some(IdentityMember::SourceObjects));
+                    })?);
+                }
+                "source_operations" => {
+                    if source_operations.is_some() {
+                        return Err(self.fail(IdentityMember::Repeated("source_operations")));
+                    }
+                    source_operations = Some(map.next_value().inspect_err(|_: &A::Error| {
+                        self.problem.set(Some(IdentityMember::SourceOperations));
+                    })?);
+                }
                 other => return Err(self.fail(IdentityMember::Unknown(other.to_owned()))),
             }
         }
-        match (format, declarations, fields, source_records, source_unions) {
+        match (
+            format,
+            declarations,
+            fields,
+            source_records,
+            source_unions,
+            source_objects,
+            source_operations,
+        ) {
             (
                 Some(format),
                 Some(declarations),
                 Some(fields),
                 Some(source_records),
                 Some(source_unions),
+                Some(source_objects),
+                Some(source_operations),
             ) => Ok(File {
                 format,
                 declarations,
                 fields,
                 source_records,
                 source_unions,
+                source_objects,
+                source_operations,
             }),
-            (None, _, _, _, _) => Err(self.fail(IdentityMember::Format)),
-            (_, None, _, _, _) => Err(self.fail(IdentityMember::Declarations)),
-            (_, _, None, _, _) => Err(self.fail(IdentityMember::Fields)),
-            (_, _, _, None, _) => Err(self.fail(IdentityMember::SourceRecords)),
-            (_, _, _, _, None) => Err(self.fail(IdentityMember::SourceUnions)),
+            (None, _, _, _, _, _, _) => Err(self.fail(IdentityMember::Format)),
+            (_, None, _, _, _, _, _) => Err(self.fail(IdentityMember::Declarations)),
+            (_, _, None, _, _, _, _) => Err(self.fail(IdentityMember::Fields)),
+            (_, _, _, None, _, _, _) => Err(self.fail(IdentityMember::SourceRecords)),
+            (_, _, _, _, None, _, _) => Err(self.fail(IdentityMember::SourceUnions)),
+            (_, _, _, _, _, None, _) => Err(self.fail(IdentityMember::SourceObjects)),
+            (_, _, _, _, _, _, None) => Err(self.fail(IdentityMember::SourceOperations)),
         }
     }
 }
@@ -870,6 +1103,38 @@ impl ReadIdentityRows {
         &self.source_unions
     }
 
+    /// Original source-object rows, with final graph references.
+    pub fn source_objects(&self) -> &[SelectedSourceObjectRow] {
+        &self.source_objects
+    }
+
+    /// Original source-operation rows, with final anchor references.
+    pub fn source_operations(&self) -> &[SelectedSourceOperationRow] {
+        &self.source_operations
+    }
+
+    /// Validate source-object rows against this package's admitted nodes.
+    pub fn selected_source_objects<'a>(
+        &self,
+        package: &'a CheckedPackageV2,
+    ) -> Result<SelectedSourceObjects<'a>, filament_contract_model::SelectedSourceObjectError> {
+        SelectedSourceObjects::from_stage_rows(package, self.source_objects.iter().cloned())
+    }
+
+    /// Validate source-operation rows against this package under `work_limit`.
+    pub fn selected_source_operations<'a>(
+        &self,
+        package: &'a CheckedPackageV2,
+        work_limit: u64,
+    ) -> Result<SelectedSourceOperations<'a>, filament_contract_model::SelectedOperationMemberError>
+    {
+        SelectedSourceOperations::from_stage_rows(
+            package,
+            self.source_operations.iter().cloned(),
+            work_limit,
+        )
+    }
+
     /// Read `identities_json`, joining its rows to `package`.
     ///
     /// The rows grant no authority: they are trusted as the package file is,
@@ -1004,6 +1269,13 @@ impl ReadIdentityRows {
             .into_iter()
             .map(SourceRecordJson::row)
             .collect::<Result<Vec<_>, _>>()?;
+        let source_object_pairs = file
+            .source_objects
+            .into_iter()
+            .map(SourceObjectJson::row)
+            .collect::<Result<Vec<_>, _>>()?;
+        let (source_objects, source_object_member_facts): (Vec<_>, Vec<_>) =
+            source_object_pairs.into_iter().unzip();
         let rows = Self {
             package: package.name().to_owned(),
             declarations,
@@ -1014,9 +1286,18 @@ impl ReadIdentityRows {
                 .into_iter()
                 .map(SourceUnionJson::row)
                 .collect::<Result<_, _>>()?,
+            source_objects,
+            source_object_member_facts,
+            source_operations: file
+                .source_operations
+                .into_iter()
+                .map(SourceOperationJson::row)
+                .collect(),
         };
         rows.join(package, budget)
             .map_err(|error| IdentityFileRefusal::Native(Box::new(error)))?;
+        rows.selected_source_objects(package)?;
+        rows.selected_source_operations(package, u64::MAX)?;
         Ok(rows)
     }
 
@@ -1028,12 +1309,42 @@ impl ReadIdentityRows {
         source_records: Vec<SelectedSourceRecordRow>,
         source_unions: Vec<SelectedSourceUnionRow>,
     ) -> Self {
+        Self::of_rows_with_source_rows(
+            package,
+            declarations,
+            fields,
+            source_records,
+            source_unions,
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+        )
+    }
+
+    /// The rows of the in-process unit, including source-object and
+    /// source-operation witnesses. `source_object_member_facts` must align
+    /// one-for-one with `source_objects` and with each object's members. These
+    /// checked facts supply the FR-531 original member identity and type data
+    /// that [`SelectedSourceObjectRow`] does not retain.
+    pub fn of_rows_with_source_rows(
+        package: &CheckedPackageV2,
+        declarations: Vec<SelectedExactDeclarationRow>,
+        fields: Vec<SelectedExactFieldRow>,
+        source_records: Vec<SelectedSourceRecordRow>,
+        source_unions: Vec<SelectedSourceUnionRow>,
+        source_objects: Vec<SelectedSourceObjectRow>,
+        source_operations: Vec<SelectedSourceOperationRow>,
+        source_object_member_facts: Vec<Vec<crate::SourceObjectMemberFacts>>,
+    ) -> Self {
         Self {
             package: package.name().to_owned(),
             declarations,
             fields,
             source_records,
             source_unions,
+            source_objects,
+            source_object_member_facts,
+            source_operations,
         }
     }
 
@@ -1048,6 +1359,8 @@ impl ReadIdentityRows {
     /// selected declaration, and for a key the package does not hold.
     pub fn to_bytes(&self, package: &CheckedPackageV2) -> Result<Vec<u8>, IdentityFileRefusal> {
         let malformed = |member: IdentityMember| IdentityFileRefusal::Malformed { member };
+        self.selected_source_objects(package)?;
+        self.selected_source_operations(package, u64::MAX)?;
         let references = node_references(package).ok_or_else(|| malformed(IdentityMember::File))?;
         let reference = |key: &NodeKey| {
             references
@@ -1133,6 +1446,15 @@ impl ReadIdentityRows {
                 },
             });
         }
+        if self.source_objects.len() != self.source_object_member_facts.len() {
+            return Err(malformed(IdentityMember::SourceObjects));
+        }
+        let source_objects = self
+            .source_objects
+            .iter()
+            .zip(&self.source_object_member_facts)
+            .map(|(row, facts)| SourceObjectJson::of(row, facts))
+            .collect::<Result<_, _>>()?;
         let file = File {
             format: IDENTITIES_FORMAT.to_owned(),
             declarations,
@@ -1147,6 +1469,12 @@ impl ReadIdentityRows {
                 .iter()
                 .map(SourceUnionJson::of)
                 .collect::<Result<_, _>>()?,
+            source_objects,
+            source_operations: self
+                .source_operations
+                .iter()
+                .map(SourceOperationJson::of)
+                .collect(),
         };
         let mut bytes =
             serde_json::to_vec_pretty(&file).map_err(|_| malformed(IdentityMember::File))?;

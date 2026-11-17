@@ -25,6 +25,7 @@ mod child_composite;
 #[cfg(feature = "test-support")]
 mod clock_places;
 mod complete_value_lock;
+mod diagnostic_messages;
 #[cfg(feature = "test-support")]
 mod dimension_equivalence;
 mod dispatch_linking;

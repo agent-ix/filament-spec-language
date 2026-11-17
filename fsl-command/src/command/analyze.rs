@@ -130,7 +130,7 @@ fn read<'d>(
         },
         dependent_bytes,
     )?;
-    let source = intake.source(&program.source)?;
+    let source = intake.source(&program.source, "program.source")?;
     require_complete_edition(source.source())?;
     let mut documents = DocumentProvision::new();
     for document in &request.documents {
@@ -477,7 +477,8 @@ fn admit_package(
     let documents = request
         .models
         .iter()
-        .map(|model| intake.source(&model.source))
+        .enumerate()
+        .map(|(index, model)| intake.source(&model.source, &format!("models[{index}].source")))
         .collect::<Result<Vec<_>>>()?;
     let supplied = fsl_semantics::model::intake::package_input(
         documents

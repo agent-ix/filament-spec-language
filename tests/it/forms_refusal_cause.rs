@@ -8,8 +8,8 @@
 use filament_exact::Cancel;
 use fsl_cst::Limits;
 use fsl_foundation::SourceIdentity;
-use fsl_replay::spine::{parse, ParseRequest};
 use fsl_replay::OutcomeDocument;
+use fsl_replay::spine::{ParseRequest, parse};
 use ix_trace_rs::trace;
 use serde_json::Value;
 
@@ -57,7 +57,6 @@ fn function(body: &str) -> String {
 
 #[trace("TC-2155", "FR-763-AC-1")]
 #[test]
-#[ignore = "QSL-2196: the forms-stage construct payload not implemented yet"]
 fn an_undispatched_declaration_names_its_keyword() {
     for declaration in [
         "synthesis Pick using v grammar Digit domain Digit satisfies { Pick >= 3 };",
@@ -80,31 +79,31 @@ fn an_undispatched_declaration_names_its_keyword() {
 
 #[trace("TC-2156", "FR-763-AC-2")]
 #[test]
-#[ignore = "QSL-2196: the forms-stage construct payload not implemented yet"]
-fn an_index_selection_carries_its_construct_payload() {
-    let (text, diagnostic) = construct_diagnostic(&function("xs[0]"));
-    assert_eq!(diagnostic["construct"], "index-selection");
-    assert_eq!(diagnostic["text"], "xs[0]");
+fn a_null_primary_names_null() {
+    let (text, diagnostic) = construct_diagnostic(&function("null"));
+    assert_eq!(diagnostic["construct"], "null-value");
+    assert_eq!(diagnostic["text"], "null");
     assert_eq!(diagnostic["declaration"], "f");
     assert_eq!(diagnostic["profile"], PROFILE);
-    let at = text.rfind("xs[0]").expect("in the unit");
+    let at = text.rfind("null").expect("in the unit");
     assert_eq!(locus_start(&diagnostic), Some(at as u64));
 }
 
 #[trace("TC-2157", "FR-763-AC-3")]
 #[test]
-#[ignore = "QSL-2196: the forms-stage construct payload not implemented yet"]
-fn an_index_selection_names_only_its_indexing_expression() {
-    let (text, diagnostic) = construct_diagnostic(&function("size(xs) + xs[1]"));
-    assert_eq!(diagnostic["construct"], "index-selection");
-    assert_eq!(diagnostic["text"], "xs[1]");
-    let at = text.rfind("xs[1]").expect("in the unit");
-    assert_eq!(locus_start(&diagnostic), Some(at as u64));
+fn size_of_type_and_index_selection_name_their_construct() {
+    for (body, construct) in [
+        ("size<Integer>(xs)", "size-of-type"),
+        ("xs[0]", "index-selection"),
+    ] {
+        let (_, diagnostic) = construct_diagnostic(&function(body));
+        assert_eq!(diagnostic["construct"], construct, "{body}");
+        assert_eq!(diagnostic["text"], body);
+    }
 }
 
 #[trace("TC-2158", "FR-763-AC-4")]
 #[test]
-#[ignore = "QSL-2196: the forms-stage construct payload not implemented yet"]
 fn a_qualified_reaches_edge_names_the_edge() {
     let edge = "Config::ConfigVersion::parent";
     let (text, diagnostic) = construct_diagnostic(&format!(
@@ -118,17 +117,29 @@ fn a_qualified_reaches_edge_names_the_edge() {
 
 #[trace("TC-2159", "FR-763-AC-5")]
 #[test]
-#[ignore = "QSL-2196: the forms-stage construct message not implemented yet"]
 fn every_construct_message_begins_with_the_construct() {
     for (declaration, prefix) in [
+        (
+            function("null"),
+            "`null` is not supported as a value here yet".to_owned(),
+        ),
         (
             function("xs[0]"),
             "the index selection `xs[0]` is not supported here yet".to_owned(),
         ),
         (
+            function("size<Integer>(xs)"),
+            "`size<Integer>` is not supported in expressions yet".to_owned(),
+        ),
+        (
             "invariant I using v on M::Order at current { reaches(self, self, M::Order::next) }"
                 .to_owned(),
             "`reaches` over the qualified edge `M::Order::next` is not supported yet".to_owned(),
+        ),
+        (
+            "temporal T using v over (x: M::Order) clock \"steps\" on origin { always holds(x @ a = x @ b) }"
+                .to_owned(),
+            "a hyper expression is not supported as a temporal condition yet".to_owned(),
         ),
     ] {
         let (_, diagnostic) = construct_diagnostic(&declaration);
@@ -136,7 +147,7 @@ fn every_construct_message_begins_with_the_construct() {
         assert!(message.starts_with(&prefix), "{message}");
         assert!(!diagnostic["text"].as_str().expect("text").is_empty());
     }
-    let long = format!("xs[{}0000]", "0 + ".repeat(48));
+    let long = format!("size<Integer>({})", "x".repeat(185));
     assert_eq!(long.len(), 200);
     let (_, diagnostic) = construct_diagnostic(&function(&long));
     let text = diagnostic["text"].as_str().expect("text");
@@ -145,22 +156,23 @@ fn every_construct_message_begins_with_the_construct() {
 
 #[trace("TC-2160", "FR-763-AC-6")]
 #[test]
-#[ignore = "QSL-2196: the forms-stage construct payload not implemented yet"]
 fn the_parse_document_renders_the_construct_cause() {
-    let (_, value, exit) = parsed(&function("xs[0]"));
+    let (_, value, exit) = parsed(&function("null"));
     assert_eq!(value["category"], "unsupported");
     assert_eq!(exit, 21);
     let diagnostic = &value["diagnostics"][0];
     assert!(!diagnostic["cause"].is_null());
     assert_eq!(diagnostic["cause"], "not-yet-implemented");
-    assert_eq!(diagnostic["construct"], "index-selection");
-    assert_eq!(diagnostic["text"], "xs[0]");
+    assert_eq!(diagnostic["construct"], "null-value");
+    assert_eq!(diagnostic["text"], "null");
     assert_eq!(diagnostic["declaration"], "f");
     assert_eq!(diagnostic["profile"], PROFILE);
-    assert!(diagnostic["message"]
-        .as_str()
-        .expect("a message")
-        .starts_with("the index selection `xs[0]` is not supported here yet"));
+    assert!(
+        diagnostic["message"]
+            .as_str()
+            .expect("a message")
+            .starts_with("`null` is not supported as a value here yet")
+    );
 }
 
 /// The start byte of a diagnostic's source locus, written as a JSON number

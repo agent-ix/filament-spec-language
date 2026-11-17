@@ -56,6 +56,9 @@ fn assert_refused_with(
 const EVENTS: &str = "profile v = \"filament.value.complete/v1\";\n\
      profile ev = \"filament.temporal.event-position.false-extension/v1\";\n";
 
+const TIMESTAMPED: &str = "profile v = \"filament.value.complete/v1\";\n\
+     profile ev = \"filament.temporal.timestamped-event.finite-window/v1\";\n";
+
 fn clause(formula: &str) -> String {
     format!(
         "record Reading {{ k: Int[0, 9]; ok: Boolean; done: Boolean; }}\n\
@@ -63,19 +66,43 @@ fn clause(formula: &str) -> String {
     )
 }
 
+/// [`clause`] under the timestamped-event profile, on the clock `"events"`,
+/// with the time unit `ms` declared.
+fn timestamped_clause(formula: &str) -> String {
+    format!(
+        "dimension Time;\n\
+         unit ms : Time = rational(1, 1000);\n\
+         record Reading {{ k: Int[0, 9]; ok: Boolean; done: Boolean; }}\n\
+         temporal T using ev over (s: Reading) clock \"events\" on origin {{ {formula} }}"
+    )
+}
+
+/// FR-982-AC-4 (TC-2777): under event-position and under timestamped-event,
+/// with no interval-less temporal operator (FSpec FR-090-AC-7), a numeric
+/// parenthesized threshold checks and a Boolean one refuses
+/// `ill_typed`/`type-mismatch`.
 #[trace("TC-2777", "FR-982-AC-4", "FSpec-TC-1901", "FSpec-FR-784-AC-3")]
 #[test]
 #[ignore = "QSL-2160: a parenthesized threshold under the sum rule and its type check are not implemented yet"]
 fn a_parenthesized_threshold_is_typed_against_the_aggregate() {
-    let numeric =
-        clause("always (count where holds(s.ok) over past[0,1] >= (s.k + 1) and holds(s.done))");
-    if let Err(refusals) = check_in(EVENTS, &numeric, CheckMode::Linked) {
-        panic!("a numeric threshold checks: {refusals:?}");
+    let cases: [(&str, fn(&str) -> String, &str); 2] = [
+        (EVENTS, clause, "past[0,1]"),
+        (TIMESTAMPED, timestamped_clause, "past[0 ms, 1000 ms]"),
+    ];
+    for (header, wrap, window) in cases {
+        let numeric = wrap(&format!(
+            "count where holds(s.ok) over {window} >= (s.k + 1) and holds(s.done)"
+        ));
+        if let Err(refusals) = check_in(header, &numeric, CheckMode::Linked) {
+            panic!("a numeric threshold checks over {window}: {refusals:?}");
+        }
+        assert_refused_with(
+            header,
+            &wrap(&format!(
+                "count where holds(s.ok) over {window} >= (s.ok and s.done)"
+            )),
+            Code::IllTyped,
+            Some("type-mismatch"),
+        );
     }
-    assert_refused_with(
-        EVENTS,
-        &clause("always (count where holds(s.ok) over past[0,1] >= (s.ok and s.done))"),
-        Code::IllTyped,
-        Some("type-mismatch"),
-    );
 }

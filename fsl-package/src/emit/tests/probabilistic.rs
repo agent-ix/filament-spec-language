@@ -33,14 +33,15 @@ fn probabilistic_package() -> CheckedPackage {
 #[test]
 fn a_checked_probabilistic_model_refuses_emission() {
     let refusal = emit_checked(&probabilistic_package()).expect_err("emission refuses");
-    assert_eq!(
-        refusal,
+    assert!(matches!(
+        &refusal,
         EmitRefusal::ProbabilisticModelNotEmitted {
-            declaration: "Steady".to_owned(),
+            declaration,
             feature: fsl_semantics::check::ProbabilisticFeature::Workload,
             profile: Some("filament.model.complete/v1"),
-        }
-    );
+            region,
+        } if declaration == "Steady" && region.start() < region.end()
+    ));
     assert_eq!(
         (refusal.code(), refusal.cause()),
         (Code::UnsupportedConstruct, Some("not-yet-implemented"))
@@ -148,14 +149,15 @@ fn a_checked_claim_is_emitted_and_a_reward_still_refuses() {
         "reward cost on ConfigVersion::attemptUpdate = 1;",
     ]);
     let refusal = emit_checked(&package).expect_err("the reward refuses emission");
-    assert_eq!(
+    assert!(matches!(
         refusal,
         EmitRefusal::ProbabilisticModelNotEmitted {
-            declaration: "cost".to_owned(),
+            declaration,
             feature: fsl_semantics::check::ProbabilisticFeature::Reward,
             profile: Some("filament.model.complete/v1"),
-        }
-    );
+            region,
+        } if declaration == "cost" && region.start() < region.end()
+    ));
 }
 
 /// FR-186 Activation and FR-498: the checked package retains the `on each`

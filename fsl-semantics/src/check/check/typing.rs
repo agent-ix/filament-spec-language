@@ -271,7 +271,7 @@ enum Frame<'e, 'r> {
     Peer(Box<PeerFrame<'e, 'r>>),
     Unary(Box<UnaryFrame<'r>>),
     /// `e.f`: the field name and the form's location.
-    Field(&'e str, Location),
+    Field(&'e str, Option<Span>, Location),
     /// `present(r.f)` or `present(r.f.c)` of a guarded clock place: the
     /// field's name, the union case, and the `present` node's location;
     /// admits the typed owner `r` (FR-230 "Presence is derived").
@@ -493,7 +493,7 @@ enum Unary<'r> {
 fn relation_pre_eligible(expression: ExprRef<'_>, hyper: &super::HyperTyping) -> bool {
     let mut pending = vec![expression];
     while let Some(expression) = pending.pop() {
-        if let ExprNode::Field { operand, field } = expression.node() {
+        if let ExprNode::Field { operand, field, .. } = expression.node() {
             if field == "self"
                 && matches!(expression.at(*operand).node(), ExprNode::Name(name)
                     if hyper.executions.contains_key(&name.name))
@@ -517,6 +517,7 @@ fn is_option_some_constructor(name: &str) -> bool {
 /// `deref(r).f`, its `deref(r)` operand at `operand_location`.
 struct AttributeFrame<'e> {
     field: &'e str,
+    member_span: Option<Span>,
     operand_location: Location,
     location: Location,
 }
@@ -1498,7 +1499,11 @@ impl<'a> Typer<'a> {
                     )),
                 });
             }
-            ExprNode::Field { operand, field } => {
+            ExprNode::Field {
+                operand,
+                field,
+                member_span,
+            } => {
                 let operand = expression.at(*operand);
                 let operand_location = location.child(0);
                 // FR-180: an HP-1 execution variable is a typed root, not a
@@ -1524,6 +1529,7 @@ impl<'a> Typer<'a> {
                     let reference_location = operand_location.child(0);
                     frames.push(Frame::Attribute(Box::new(AttributeFrame {
                         field,
+                        member_span: *member_span,
                         operand_location,
                         location,
                     })));
@@ -1533,7 +1539,7 @@ impl<'a> Typer<'a> {
                         reference_location,
                     )));
                 }
-                frames.push(Frame::Field(field, location));
+                frames.push(Frame::Field(field, *member_span, location));
                 return Ok(Step::Descend(Goal::Infer(operand, None, operand_location)));
             }
             ExprNode::Present(operand) => {
@@ -1565,7 +1571,7 @@ impl<'a> Typer<'a> {
                 let mut base = expression.at(*operand);
                 let mut at = location.child(0);
                 loop {
-                    if let ExprNode::Field { operand, field } = base.node() {
+                    if let ExprNode::Field { operand, field, .. } = base.node() {
                         path.push(RefStep::Field(field.as_str()));
                         base = base.at(*operand);
                     } else if let ExprNode::Select { place, selector } = base.node() {
@@ -2652,12 +2658,23 @@ impl<'a> Typer<'a> {
             // `Navigate` node. Only a receiver that can be a model receiver
             // reaches the `StateModel` hook; every other `x.f` is the record
             // field read it was.
-            Frame::Field(field, location) if self.is_model_receiver(&typed.value_type, field) => {
+            Frame::Field(field, member_span, location)
+                if self.is_model_receiver(&typed.value_type, field) =>
+            {
                 let operand_location = location.child(0);
-                self.attribute(typed, field, &operand_location, &location, false)
+                self.attribute(
+                    typed,
+                    field,
+                    member_span,
+                    &operand_location,
+                    &location,
+                    false,
+                )
                     .map(Step::Typed)
             }
-            Frame::Field(field, location) => self.field(typed, field, &location).map(Step::Typed),
+            Frame::Field(field, member_span, location) => self
+                .field(typed, field, member_span, &location)
+                .map(Step::Typed),
             Frame::SlotPresence(field, all, location) => self
                 .slot_presence(typed, field, all, &location)
                 .map(Step::Typed),
@@ -2697,6 +2714,7 @@ impl<'a> Typer<'a> {
                 .attribute(
                     typed,
                     frame.field,
+                    frame.member_span,
                     &frame.operand_location,
                     &frame.location,
                     true,

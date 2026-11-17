@@ -179,8 +179,8 @@ pub use probabilistic::{
     CheckedTemporalFormula, ClaimActivation, ClaimNormalForm, Confidence, ConfidenceFault, Delay,
     DelayDistribution, DelayFault, Event, FractionMeasure, ModelSubjectRef, OverBinding,
     PreconditionSite, ProbForm, ProbScheduler, ProbabilisticCause, ProbabilisticDeclaration,
-    ProbabilisticFeature, ProbabilisticOperation, RandomParameter, ReachTarget, Reward,
-    SupportValue, WeightOwner, Workload,
+    ProbabilisticFeature, ProbabilisticOperation, QualitativeForm, RandomParameter, ReachTarget,
+    Reward, SupportValue, WeightOwner, Workload,
 };
 pub use state_model::StateModelRefusal;
 pub use sum_case::{mint_union_member_key, ExhaustivenessObligation, SumCaseCause};
@@ -885,6 +885,9 @@ pub struct CheckedGraph {
     /// The synthetic domain packages the unit's `object` declarations build
     /// (FR-569), which view admission normalizes in place of a document.
     source_packages: Vec<crate::model::domain_package::DomainPackage>,
+    /// Authored identity-field names for each checked source object type,
+    /// keyed by the source model's declaration key.
+    source_object_identity_fields: BTreeMap<filament_checked::key::DeclarationKey, Vec<String>>,
     /// The span of the unit's first source `object` declaration.
     first_source_object: Option<(
         fsl_foundation::source::provenance::RawSourceRef,
@@ -1091,6 +1094,7 @@ impl DebugWith for CheckedGraph {
             header_layers,
             first_source_object,
             source_packages,
+            source_object_identity_fields,
             extension_selections,
             extension_definitions,
             time_sources,
@@ -1212,6 +1216,10 @@ impl DebugWith for CheckedGraph {
             .field("header_layers", &header_layers)
             .field("first_source_object", &first_source_object)
             .field("source_packages", &source_packages)
+            .field(
+                "source_object_identity_fields",
+                &source_object_identity_fields,
+            )
             .field("extension_selections", &extension_selections)
             .field("extension_definitions", &extension_definitions)
             .field("time_sources", &Seq(time_sources, table))
@@ -2777,6 +2785,7 @@ impl PackageDeclarations {
         let protocol_profile = self.protocol_profile;
         let header_layers = self.header_layers;
         let first_source_object = self.first_source_object;
+        let source_object_identity_fields = self.source_object_identity_fields;
         let source_packages: Vec<_> = self
             .models
             .iter()
@@ -2796,7 +2805,7 @@ impl PackageDeclarations {
             .map(|held| held.checked_definition().clone())
             .collect();
         let models = self.models;
-        let operation_effects = checked_model_operation_effects(&models);
+        let operation_effects = checked_model_operation_effects(&models, &source);
         let model_inputs = self.model_inputs;
         let mut pending_types = self
             .pending_types
@@ -2854,6 +2863,11 @@ impl PackageDeclarations {
         let mut admitted_by_identity: BTreeMap<String, &AdmittedModel> = BTreeMap::new();
         let mut selections_by_identity = BTreeMap::new();
         for model in &models {
+            // The synthetic source package supplies checked object and
+            // operation declarations; it is not a domain model selection.
+            if model.alias() == Some("") {
+                continue;
+            }
             let selection = model.selection();
             if let Some(existing) = admitted_by_identity.get(&selection.identity) {
                 if !existing.same_package(model) {
@@ -2895,7 +2909,7 @@ impl PackageDeclarations {
             )]);
         }
         let model_clauses = self.model_clauses;
-        let operation_bodies = checked_model_operation_bodies(&models, &model_clauses);
+        let operation_bodies = checked_model_operation_bodies(&models, &model_clauses, &source);
         // FR-094: the object type `T` of each `Population<T>[N]` parameter,
         // from its resolved type form (the checked type carries only `N`).
         let mut population_targets: Vec<Vec<Option<filament_exact::EffectiveId>>> =
@@ -3924,8 +3938,30 @@ impl PackageDeclarations {
                 ))
             })
             .collect();
+        let mut declared_protocol_names =
+            std::collections::BTreeMap::<&str, Vec<fsl_foundation::Span>>::new();
+        let mut reported_protocol_names = std::collections::BTreeSet::new();
         for (index, protocol) in self.protocols.iter().enumerate() {
             let refusals_before = refusals.len();
+            let name = protocol.name.name.as_str();
+            let loci = declared_protocol_names.entry(name).or_default();
+            loci.push(protocol.name.span);
+            if loci.len() > 1 {
+                for &span in loci.iter() {
+                    if reported_protocol_names.insert((name, span.start, span.end)) {
+                        refusals.push(CheckRefusal {
+                            location: root(Origin::Expression),
+                            cause: CheckCause::ProtocolAnchor(Box::new(
+                                ProtocolAnchorCause::Ambiguous {
+                                    name: protocol.name.name.clone(),
+                                    loci: loci.clone(),
+                                    span,
+                                },
+                            )),
+                        });
+                    }
+                }
+            }
             let profile_refusals = protocol_clause::profile_uses(
                 protocol,
                 &self.alias_names,
@@ -7459,6 +7495,7 @@ impl PackageDeclarations {
             header_layers,
             first_source_object,
             source_packages,
+            source_object_identity_fields,
             extension_selections,
             extension_definitions,
             time_sources: self.time_sources,
@@ -7931,6 +7968,7 @@ pub struct CheckedPopulationBound {
 /// optional carrier unavailable; partial rows are never retained.
 fn checked_model_operation_effects(
     models: &[AdmittedModel],
+    source: &fsl_foundation::source::provenance::RawSourceRef,
 ) -> Option<Vec<filament_contract_model::CheckedOperationEffectRow>> {
     use filament_contract_model::{
         CheckedFieldScope, CheckedFrameModification, CheckedOperationEffect,
@@ -7948,11 +7986,27 @@ fn checked_model_operation_effects(
         if !seen_documents.insert(model.selected_document()) {
             continue;
         }
-        let document = model.selected_document();
+        let document = model.source_identity().unwrap_or_else(|| {
+            if model.source_package().is_some() {
+                source.identity()
+            } else {
+                model.selected_document()
+            }
+        });
         for (_owner_record, operation) in model.operation_effect_inputs() {
             let declaring_key = model.model_node_key(&operation.owner)?;
             let declaring = ids.id(&declaring_key);
             let operation_name = model.original_member_name(&operation.key)?.to_owned();
+            let source_declaration = model.source_package().is_some();
+            let provenance_member = if source_declaration {
+                let object_name = crate::model::intake::type_identity_segment(
+                    &operation.owner.package,
+                    &operation.owner.node,
+                )?;
+                format!("{object_name}::{operation_name}").into_boxed_str()
+            } else {
+                operation.key.node.as_str().into()
+            };
             let mut modifies = Vec::new();
             for member in &operation.effect.modifies {
                 let record = model.declaration_record(member)?;
@@ -8028,8 +8082,12 @@ fn checked_model_operation_effects(
                     deletes_scoped,
                 },
                 provenance: CheckedOperationEffectProvenance {
-                    origin: CheckedOperationEffectOrigin::ModelDocumentOperationFrame,
-                    member: operation.key.node.as_str().into(),
+                    origin: if source_declaration {
+                        CheckedOperationEffectOrigin::SourceDeclarationOperationFrame
+                    } else {
+                        CheckedOperationEffectOrigin::ModelDocumentOperationFrame
+                    },
+                    member: provenance_member,
                 },
             };
             rows.push(row);
@@ -8074,6 +8132,7 @@ pub struct CheckedOperationBody {
 fn checked_model_operation_bodies(
     models: &[AdmittedModel],
     model_clauses: &BTreeMap<usize, ModelClause>,
+    source: &fsl_foundation::source::provenance::RawSourceRef,
 ) -> Option<Vec<CheckedOperationBody>> {
     if models.is_empty() {
         return None;
@@ -8098,7 +8157,16 @@ fn checked_model_operation_bodies(
                 return None;
             }
             rows.push(CheckedOperationBody {
-                document: model.selected_document().into(),
+                document: model
+                    .source_identity()
+                    .unwrap_or_else(|| {
+                        if model.source_package().is_some() {
+                            source.identity()
+                        } else {
+                            model.selected_document()
+                        }
+                    })
+                    .into(),
                 declaring,
                 operation: model.original_member_name(&operation.key)?.to_owned(),
                 body,
@@ -8322,6 +8390,15 @@ impl CheckedGraph {
     #[must_use]
     pub fn source_packages(&self) -> &[crate::model::domain_package::DomainPackage] {
         &self.source_packages
+    }
+
+    /// Authored identity-field names for each checked source object type.
+    /// The key is the synthetic source package's declaration key; no field
+    /// name is re-derived from a rendered identity.
+    pub fn source_object_identity_fields(
+        &self,
+    ) -> &BTreeMap<filament_checked::key::DeclarationKey, Vec<String>> {
+        &self.source_object_identity_fields
     }
 
     /// The packages an admission of this package's observations
@@ -8937,6 +9014,35 @@ impl CheckedGraph {
             object: object.clone(),
             operation: operation.clone(),
         })
+    }
+
+    /// The checked anchor of the operation named by `object` and
+    /// `operation_name` in this unit's source model, when a clause or attempt
+    /// admitted one. The caller supplies the checked declaration key and the
+    /// operation name retained by its source package record.
+    pub fn source_operation_anchor(
+        &self,
+        object: &filament_checked::key::DeclarationKey,
+        operation_name: &str,
+    ) -> Option<filament_exact::NodeKey> {
+        let context = self.owner_types.get(object)?.clone();
+        let crate::model::operation::OperationLookup::Declared {
+            declaring,
+            operation,
+        } = self
+            .scope
+            .operations()
+            .resolve(self.scope.types(), context, operation_name)
+        else {
+            return None;
+        };
+        self.operation_frames
+            .iter()
+            .find(|frame| {
+                frame.operation.declaring == declaring
+                    && frame.operation.declaration.name() == operation.name()
+            })
+            .map(CheckedOperationFrame::anchor)
     }
 
     /// FR-116, FR-121: whether `object` names a declaration of the `model`

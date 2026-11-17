@@ -325,14 +325,35 @@ pub enum UsageCause {
 
 /// The settings operation's usage refusal: it names the offending operand and
 /// no stage runs (FR-255 Behavior 6).
-#[derive(Clone, Debug, Eq, PartialEq, thiserror::Error)]
-#[error("usage: {cause:?} in `--limit {operand}`")]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct UsageRefusal {
     /// The operand as the caller wrote it.
     pub operand: String,
     /// Why it was refused.
     pub cause: UsageCause,
 }
+
+impl core::fmt::Display for UsageRefusal {
+    fn fmt(&self, formatter: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        write!(
+            formatter,
+            "usage: {:?} in `--limit {}`",
+            self.cause, self.operand
+        )?;
+        if self.cause == UsageCause::UnknownSetting {
+            formatter.write_str("; accepted settings:")?;
+            for setting in Setting::ALL {
+                write!(formatter, " {}", setting.name())?;
+            }
+            for setting in AccountingSetting::ALL {
+                write!(formatter, " {}", setting.name())?;
+            }
+        }
+        Ok(())
+    }
+}
+
+impl core::error::Error for UsageRefusal {}
 
 /// Parse the `<name>=<value>` operands of the settings operation (a name of
 /// either FR-255 table) into settings and bounds, in operand order.
