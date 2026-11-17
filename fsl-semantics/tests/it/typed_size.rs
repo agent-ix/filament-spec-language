@@ -117,9 +117,10 @@ fn a_typed_size_is_typed_at_its_domain_and_proves_its_range() {
 #[trace("TC-2774", "FSpec-FR-144-AC-10", "FR-981-AC-4")]
 #[test]
 fn typed_size_does_not_infer_a_sequence_literal_element_type() {
-    let ambiguous = refusal(
+    let ambiguous = assert_refused(
         "function f using v(): Boolean pure { size<Int[0, 4]>(sequence[7, 8, 7]) = 3 }",
-        CheckMode::Linked,
+        Code::IllTyped,
+        "ambiguous-literal",
     );
     assert_eq!(
         ambiguous.cause,
