@@ -3943,9 +3943,15 @@ fn checked_equality_term_data(
 
 /// Convert the retained FR-150 identity without looking up a display name or
 /// traversing the checked graph.
+#[derive(Default)]
+struct SourceDeclarationKeys {
+    packages: BTreeMap<String, String>,
+    checked_nodes: BTreeMap<String, String>,
+}
+
 fn checked_effective_id(
     identity: &filament_exact::EffectiveId,
-    source_keys: &BTreeMap<String, String>,
+    source_keys: &SourceDeclarationKeys,
 ) -> Result<CheckedEffectiveId, EmitRefusal> {
     let mut current = None;
     for original in identity.owner_chain() {
@@ -3967,43 +3973,71 @@ fn checked_effective_id(
 /// during checking, but they are not available to a package reader.
 fn source_declaration_key_rewrites(
     graph: &CheckedGraph,
-) -> Result<BTreeMap<String, String>, EmitRefusal> {
-    let mut rewrites = BTreeMap::new();
+) -> Result<SourceDeclarationKeys, EmitRefusal> {
+    let mut rewrites = SourceDeclarationKeys::default();
     for node in graph.semantic_graph().nodes() {
         let Some(Owner::Source(owner)) = node.owner() else {
             continue;
         };
-        let Some(declaration) = graph.resolve_declaration(node.key()) else {
+        let Some(name) = node.declaration() else {
             continue;
         };
-        if !graph
-            .source_packages()
-            .iter()
-            .any(|package| package.model_selection.identity == declaration.package)
-        {
+        if let Some(declaration) = graph.resolve_declaration(node.key()) {
+            match rewrites.packages.entry(declaration.package.clone()) {
+                std::collections::btree_map::Entry::Vacant(entry) => {
+                    entry.insert(owner.identity().to_owned());
+                }
+                std::collections::btree_map::Entry::Occupied(entry)
+                    if entry.get() == owner.identity() => {}
+                std::collections::btree_map::Entry::Occupied(_) => {
+                    return Err(EmitRefusal::SourceMapInvariant);
+                }
+            }
+        }
+        rewrites.checked_nodes.insert(
+            node.key().to_string(),
+            source_declaration_identity(owner, name),
+        );
+    }
+    for declaration in graph.scope().types().composites() {
+        let Some(node_key) = graph.semantic_graph().composite_node(&declaration.key()) else {
             continue;
-        }
-        match rewrites.entry(declaration.package.clone()) {
-            std::collections::btree_map::Entry::Vacant(entry) => {
-                entry.insert(owner.identity().to_owned());
-            }
-            std::collections::btree_map::Entry::Occupied(entry)
-                if entry.get() == owner.identity() => {}
-            std::collections::btree_map::Entry::Occupied(_) => {
-                return Err(EmitRefusal::SourceMapInvariant);
-            }
-        }
+        };
+        let Some(node) = graph.semantic_graph().node(node_key.clone()) else {
+            return Err(EmitRefusal::SourceMapInvariant);
+        };
+        let (Some(Owner::Source(owner)), Some(name)) = (node.owner(), node.declaration()) else {
+            continue;
+        };
+        rewrites.checked_nodes.insert(
+            node_key.to_string(),
+            source_declaration_identity(owner, name),
+        );
     }
     Ok(rewrites)
+}
+
+fn source_declaration_identity(
+    owner: &fsl_semantics::check::SourceOwner,
+    name: &[filament_exact::Identifier],
+) -> String {
+    format!(
+        "ix://{}/{}",
+        owner.identity(),
+        name.iter()
+            .map(|segment| segment.as_str())
+            .collect::<Vec<_>>()
+            .join("/")
+    )
 }
 
 /// Apply the source owner's declaration-key spelling to a key retained by S3.
 fn emitted_source_declaration_key(
     package: &str,
     node: &str,
-    source_keys: &BTreeMap<String, String>,
+    source_keys: &SourceDeclarationKeys,
 ) -> Result<(String, String), EmitRefusal> {
-    let Some(identity) = source_keys.get(package) else {
+    let Some(identity) = source_keys.packages.get(package) else {
         return Ok((package.to_owned(), node.to_owned()));
     };
     let prefix = format!("ix://{package}/");
@@ -4018,11 +4052,11 @@ fn emitted_source_declaration_key(
 /// same declarations from their SourceOwner identities.
 fn rewrite_source_keys_in_clock_place(
     node: &mut CheckedSemanticNodeV2,
-    source_keys: &BTreeMap<String, String>,
+    source_keys: &SourceDeclarationKeys,
 ) -> Result<(), EmitRefusal> {
     fn rewrite_term(
         term: &mut CheckedTerm,
-        source_keys: &BTreeMap<String, String>,
+        source_keys: &SourceDeclarationKeys,
     ) -> Result<(), EmitRefusal> {
         match term {
             CheckedTerm::Literal {
@@ -4031,14 +4065,38 @@ fn rewrite_source_keys_in_clock_place(
                 ..
             } => {
                 if let Some(text) = value.as_str() {
-                    for (package, identity) in source_keys {
-                        let prefix = format!("ix://{package}/");
-                        if let Some(declaration) = text.strip_prefix(&prefix) {
-                            let rewritten = format!("ix://{identity}/{declaration}");
-                            *value = CheckedJson::from_serializable(&rewritten)
-                                .map_err(|_| EmitRefusal::SourceMapInvariant)?;
-                            break;
+                    let mut rewritten = text.to_owned();
+                    if let Some(source_node) = source_keys.checked_nodes.get(text) {
+                        rewritten = source_node.clone();
+                    } else {
+                        for (checked_node, source_node) in &source_keys.checked_nodes {
+                            if rewritten.contains(checked_node) {
+                                rewritten = rewritten.replace(checked_node, source_node);
+                            }
                         }
+                        for (package, identity) in &source_keys.packages {
+                            let prefix = format!("ix://{package}/");
+                            if let Some(declaration) = rewritten.strip_prefix(&prefix) {
+                                rewritten = format!("ix://{identity}/{declaration}");
+                                break;
+                            }
+                        }
+                        if !rewritten.starts_with("ix://") {
+                            for source_type in source_keys.checked_nodes.values() {
+                                let Some((_, type_name)) = source_type.rsplit_once('/') else {
+                                    continue;
+                                };
+                                let prefix = format!("{type_name}/");
+                                if let Some(member) = rewritten.strip_prefix(&prefix) {
+                                    rewritten = format!("{source_type}/{member}");
+                                    break;
+                                }
+                            }
+                        }
+                    }
+                    if rewritten != text {
+                        *value = CheckedJson::from_serializable(&rewritten)
+                            .map_err(|_| EmitRefusal::SourceMapInvariant)?;
                     }
                 }
             }
@@ -4066,7 +4124,7 @@ fn checked_dispatch_tables(
     graph: &CheckedGraph,
     emitted_node_ids: &HashMap<NodeKey, CheckedNodeId>,
     source_map: &[CheckedSourceMapEntry],
-    source_keys: &BTreeMap<String, String>,
+    source_keys: &SourceDeclarationKeys,
 ) -> Result<Vec<filament_contract_model::CheckedDispatchCandidateTable>, EmitRefusal> {
     let mut rows = Vec::with_capacity(graph.dispatch_producer_decisions().len());
     for ((application, location), decision) in graph.dispatch_producer_decisions() {
@@ -4168,7 +4226,7 @@ fn checked_term_data(
     )],
     equality_rows: &[EqualityProducerEmissionRow],
     source_map: &[CheckedSourceMapEntry],
-    source_keys: &BTreeMap<String, String>,
+    source_keys: &SourceDeclarationKeys,
 ) -> Result<Option<filament_contract_model::CheckedTermDataV2>, EmitRefusal> {
     let mut term_data = checked_equality_term_data(
         graph,
@@ -6416,9 +6474,6 @@ fn emit_package_inner(
         .map(|relation| graph.abstraction_nodes(relation))
         .transpose()
         .map_err(EmitRefusal::Abstraction)?;
-    if let Some((_, span)) = graph.first_source_object() {
-        return Err(EmitRefusal::SourceObjectEmission { span });
-    }
     if let Some((feature, declaration)) = graph.probabilistic_model().first_declaration() {
         let location = graph
             .probabilistic_model()
