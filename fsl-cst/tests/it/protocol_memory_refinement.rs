@@ -203,7 +203,7 @@ fn a_parallel_parses_its_memory_clause() {
 #[test]
 fn an_empty_join_list_is_refused_at_its_closing_bracket() {
     let run = "sequence Main { parallel Plain { branch a sequence A { } branch b sequence B { } } join all []; }";
-    let text = protocol("on origin", "", run);
+    let text = source(&protocol("on origin", "", run));
     let parsed = parse(&text);
     assert!(!parsed.is_admissible(), "{text}");
     let diagnostic = &parsed.diagnostics()[0];
