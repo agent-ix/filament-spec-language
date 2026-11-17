@@ -78,7 +78,7 @@ use filament_eval::{
 };
 use filament_semantic_value::catalog::CatalogCode;
 use fsl_package::CheckedPackage;
-use fsl_semantics::check::{CheckedExpression, CheckedNode};
+use fsl_semantics::check::{CheckedExpression, CheckedNode, StatePredicate};
 
 fn protocol_reference_failure(
     authority: &fsl_package::AdmittedProtocolObservation<'_>,
@@ -321,6 +321,70 @@ pub fn evaluate_state_predicate_with(
             .chain(further)
             .collect(),
     )
+}
+
+/// FR-702: evaluate one checked model operation contract against its
+/// admitted invocation. `requires` reads the pre-state; `ensures` reads the
+/// post-state and may bind the operation result.
+pub fn evaluate_operation_contract(
+    package: &CheckedPackage,
+    clause: &fsl_semantics::check::CheckedOperationClause,
+    observations: &fsl_semantics::model::observation::OperationContractObservations,
+    meter: &mut Meter,
+) -> Result<Evaluation, InternalFault> {
+    use filament_semantic_value::location::OperationClauseKind;
+
+    let mut bindings = Vec::with_capacity(clause.parameters().len());
+    bindings.push(Value::Reference(observations.self_reference.clone()));
+    if clause.binds_result() {
+        let Some(result) = &observations.result else {
+            return Err(InternalFault::new(
+                "FR-702",
+                "ensures-result-binding-is-admitted",
+            ));
+        };
+        bindings.push(result.clone());
+    }
+    bindings.extend(
+        observations
+            .parameters
+            .iter()
+            .map(|(_, value)| value.clone()),
+    );
+    if bindings.len() != clause.parameters().len() {
+        return Err(InternalFault::new(
+            "FR-702",
+            "operation-contract-bindings-match-checked-slots",
+        ));
+    }
+
+    let (current, pre) = match clause.kind() {
+        OperationClauseKind::Requires => (&observations.pre.environment, None),
+        OperationClauseKind::Ensures => (
+            &observations.post.environment,
+            Some(&observations.pre.environment),
+        ),
+    };
+    // A requires clause's current observation is already the invocation's
+    // pre-state. Its checked reads are marked Pre by the clause checker, but
+    // there is no separate `pre(...)` read in that context (checking rejects
+    // those). Omitting the read map keeps those ordinary reads on `current`.
+    let reads = (clause.kind() == OperationClauseKind::Ensures).then(|| {
+        clause
+            .reads()
+            .map(|(location, observation)| (location.clone(), observation))
+            .collect()
+    });
+    Machine::with_pre(
+        package.graph().scope(),
+        package.graph(),
+        current,
+        pre,
+        reads.as_ref(),
+        meter,
+        package.graph().dispatch_tables(),
+    )
+    .run(clause.body(), clause.slots(), bindings)
 }
 
 /// [`evaluate_state_predicate`] for an `on each` activation's `when` guard,

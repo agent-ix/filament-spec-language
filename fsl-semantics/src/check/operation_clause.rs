@@ -22,8 +22,10 @@ use filament_semantic_value::location::{
 };
 use fsl_forms::StateClauseKind;
 
+use super::observation::Observations;
 use super::refusal::CheckRefusal;
-use super::state_clause::{ClauseOperation, ClauseView};
+use super::state_clause::{ClauseOperation, ClauseView, TypedStateClause};
+use super::StatePredicate;
 use crate::model::domain_package::ParsedOperationClause;
 use crate::model::refusal::{MemberPath, MemberRoot};
 
@@ -75,6 +77,107 @@ impl OperationClauseDeclaration {
             presence_places: &[],
             body: &self.clause.expression,
         }
+    }
+}
+
+/// One model operation contract that type checking retained for evaluation by
+/// an operation run (FR-702). It keeps the authored operation-clause
+/// identity beside the checked body; unlike a unit state clause it is not a
+/// declaration in the emitted checked package.
+pub struct CheckedOperationClause {
+    operation: filament_checked::key::DeclarationKey,
+    declaring: EffectiveId,
+    operation_name: String,
+    kind: OperationClauseKind,
+    position: usize,
+    parameters: Vec<(String, filament_exact::ValueType)>,
+    body: super::CheckedBody,
+    observations: Observations,
+    slots: usize,
+    has_result: bool,
+}
+
+fsl_foundation::debug_with_struct!(CheckedOperationClause, "CheckedOperationClause" { operation: plain, declaring: plain, operation_name: plain, kind: plain, position: plain, parameters: plain, body: plain, observations: plain, slots: plain, has_result: plain });
+
+impl CheckedOperationClause {
+    pub(crate) fn new(declaration: &OperationClauseDeclaration, typed: TypedStateClause) -> Self {
+        let TypedStateClause {
+            parameters,
+            body,
+            observations,
+            slots,
+            has_result,
+            ..
+        } = typed;
+        Self {
+            operation: declaration.clause.operation.clone(),
+            declaring: declaration.operation.declaring.clone(),
+            operation_name: declaration.operation.declaration.name().to_owned(),
+            kind: declaration.clause.kind,
+            position: declaration.clause.position,
+            parameters,
+            body,
+            observations,
+            slots,
+            has_result,
+        }
+    }
+
+    /// The domain operation's declaration key.
+    pub fn operation(&self) -> &filament_checked::key::DeclarationKey {
+        &self.operation
+    }
+
+    /// The type that declares the operation.
+    pub fn declaring(&self) -> &EffectiveId {
+        &self.declaring
+    }
+
+    /// The operation's declared name.
+    pub fn operation_name(&self) -> &str {
+        &self.operation_name
+    }
+
+    /// Whether this is a `requires` or `ensures` clause.
+    pub fn kind(&self) -> OperationClauseKind {
+        self.kind
+    }
+
+    /// The clause's zero-based position in its operation's list.
+    pub fn position(&self) -> usize {
+        self.position
+    }
+
+    /// `self`, then `result` when bound, then the operation parameters.
+    pub fn parameters(&self) -> &[(String, filament_exact::ValueType)] {
+        &self.parameters
+    }
+
+    /// Whether slot 1 binds the operation result.
+    pub fn binds_result(&self) -> bool {
+        self.has_result
+    }
+
+    /// Every model read's observation, by expression location.
+    pub fn reads(
+        &self,
+    ) -> impl Iterator<
+        Item = (
+            &filament_semantic_value::location::ExpressionLocation,
+            crate::model::clause_observation::Observation,
+        ),
+    > {
+        self.observations.iter()
+    }
+}
+
+impl StatePredicate for CheckedOperationClause {
+    fn body(&self) -> super::CheckedNode<'_> {
+        self.body.root()
+    }
+
+    fn slots(&self) -> usize {
+        self.slots
     }
 }
 

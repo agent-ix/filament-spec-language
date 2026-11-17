@@ -66,7 +66,7 @@ fn ensures_unchanged(selection: ClauseRunSelection) -> ClauseRunRequest {
     )
 }
 
-fn ensures_incremented(selection: ClauseRunSelection) -> ClauseRunRequest {
+fn ensures_increased(selection: ClauseRunSelection) -> ClauseRunRequest {
     contract_request(
         &[],
         &["pre(self.versionNumber) < self.versionNumber"],
@@ -130,14 +130,20 @@ fn assert_contract_violation(report: &super::super::ClauseRunReport, kind: &str)
     );
 }
 
-/// TC-1908 step 1 (FR-702-AC-1): a false `ensures` is a violation naming it;
-/// a true one leaves the run a success.
+/// TC-1908 step 1 (FR-702-AC-1): a false `ensures` is an evaluate-stage
+/// violation naming the operation contract.
 #[trace("TC-1908", "FR-702-AC-1")]
 #[test]
-#[ignore = "QSL-2187: the frame run evaluating the operation's own ensures not implemented yet"]
-fn a_false_ensures_is_a_violation_and_a_true_one_succeeds() {
+fn a_false_ensures_is_a_violation() {
     assert_contract_violation(&changed_version_run(ensures_unchanged), "ensures");
-    let report = changed_version_run(ensures_incremented);
+}
+
+/// TC-1908 step 1 (FR-702-AC-1; W17): a true `ensures` that says the version
+/// increased leaves the run successful.
+#[trace("TC-1908", "FR-702-AC-1")]
+#[test]
+fn a_true_ensures_succeeds_when_post_exceeds_pre() {
+    let report = changed_version_run(ensures_increased);
     assert_eq!(
         report.disposition.category(),
         Category::Success,
@@ -151,7 +157,6 @@ fn a_false_ensures_is_a_violation_and_a_true_one_succeeds() {
 /// `ensures`; a true `requires` lets the run reach the false `ensures`.
 #[trace("TC-1908", "FR-702-AC-2")]
 #[test]
-#[ignore = "QSL-2187: the frame run evaluating the operation's own requires not implemented yet"]
 fn a_false_requires_is_reported_before_any_ensures() {
     assert_contract_violation(&changed_version_run(requires_above_five), "requires");
     assert_contract_violation(&changed_version_run(requires_below_five), "ensures");

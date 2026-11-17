@@ -178,7 +178,6 @@ fn items_document(output: &Output) -> Value {
 /// violation, exit 10; a non-negative one gives success, exit 0.
 #[trace("TC-1908", "FR-702-AC-3")]
 #[test]
-#[ignore = "QSL-2187: type invariants evaluated through run's value_invariants selection not implemented yet"]
 fn a_false_type_invariant_is_a_violation_through_run() {
     let directory = tempfile::tempdir().unwrap();
     let output = run(directory.path(), -1);
@@ -188,18 +187,21 @@ fn a_false_type_invariant_is_a_violation_through_run() {
     let items = document["items"].as_array().expect("items");
     let violating: Vec<_> = items
         .iter()
-        .filter(|item| item["result"]["category"] == "violation")
+        .filter(|item| item["result"]["disposition"]["category"] == "violation")
         .collect();
     assert_eq!(violating.len(), 1, "{document}");
     assert_eq!(
-        violating[0]["invariant"],
+        violating[0]["invariant"]["node"],
         id("Money/NonNegative"),
         "{document}"
     );
+    assert_eq!(violating[0]["invariant"]["package"], PACKAGE, "{document}");
     assert!(
-        violating[0]["path"]
-            .as_str()
-            .is_some_and(|path| path.contains("total")),
+        violating[0]["path"]["steps"]
+            .as_array()
+            .is_some_and(|steps| steps
+                .iter()
+                .any(|step| step["tag"] == "member" && step["name"] == "total")),
         "{document}"
     );
 

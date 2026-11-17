@@ -335,6 +335,7 @@ pub fn replay_state_clause(
         | ClauseDisposition::TraceRefused(_)
         | ClauseDisposition::ProgressContradiction(_)
         | ClauseDisposition::FrameViolation(_)
+        | ClauseDisposition::OperationContractViolation(_)
         | ClauseDisposition::TemporalValuation(_) => {
             return fault("clause-check-reports-admission-or-evaluation")
         }
