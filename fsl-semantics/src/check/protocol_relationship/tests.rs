@@ -304,6 +304,35 @@ fn a_channel_refuses_missing_connections_navigation_relationships_and_non_port_r
     )));
 }
 
+/// FR-897-AC-5: a Connection cannot be used by `related by`, and it does not
+/// become a role binding target.
+#[trace("FR-897-AC-5", "TC-2533")]
+#[test]
+fn a_connection_relates_no_values_and_cannot_bind_a_role() {
+    let related = connection_protocol(
+        "channel Feed from Outlet to Inlet via Link carries M::Flow ordering unordered \
+         delivery exactly-once-premise capacity 2 overflow reject;",
+    )
+    .replace(
+        "run sequence Main { }",
+        "run sequence Main { send Sent via Feed as (sent: M::Flow) { true }; \
+         receive Got via Feed of Main::Sent as (got: M::Flow) related by Link (sent, got) { true }; }",
+    );
+    let refusals = check_connection_protocol(&related).unwrap_err();
+    assert!(refusals.iter().any(|refusal| matches!(
+        &refusal.cause,
+        CheckCause::ProtocolAnchor(cause)
+            if matches!(cause.as_ref(), ProtocolAnchorCause::RelatedConnection { message, .. } if *message == "a connection relates ports, not values; bind it to a channel with via")
+    )));
+
+    let role_on_connection = connection_protocol(
+        "channel Feed from Outlet to Inlet via Link carries M::Flow ordering unordered \
+         delivery exactly-once-premise capacity 2 overflow reject;",
+    )
+    .replace("role Outlet on M::pump_out;", "role Outlet on M::link;");
+    assert!(check_connection_protocol(&role_on_connection).is_err());
+}
+
 /// TC-1056's base protocol `Pipeline` with the `members` written before
 /// `run` and the `related` clauses on its `receive Got`.
 fn pipeline(members: &str, related: &str) -> String {
