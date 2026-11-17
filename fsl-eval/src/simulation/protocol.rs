@@ -62,12 +62,12 @@ use crate::simulation::expansion::{Expansion, ExpansionLimit, ExpansionStop};
 use crate::simulation::explore::TransitionSystem;
 use crate::simulation::footprint::Location;
 use crate::simulation::key::{self, EncodingRefusal};
-use crate::simulation::model::encode::{map_enc, reference_enc, Canonicalizer, Enc};
+use crate::simulation::model::encode::{Canonicalizer, Enc, map_enc, reference_enc};
 use crate::simulation::model::{
-    verdict, ClauseOutcome, ModelFinding, ModelSimState, ModelSystem, Observed, TerminalClass,
-    Verdict, BROKEN,
+    BROKEN, ClauseOutcome, ModelFinding, ModelSimState, ModelSystem, Observed, TerminalClass,
+    Verdict, verdict,
 };
-use crate::simulation::not_simulated::{check_requires_bound, NotSimulated, RequiresBound};
+use crate::simulation::not_simulated::{NotSimulated, RequiresBound, check_requires_bound};
 use crate::simulation::progress::ZeroProgressError;
 use crate::simulation::subject::ConstraintError;
 use crate::simulation::subject::{Bounded, Cut, SubjectSystem};
@@ -81,11 +81,11 @@ pub use access::{
 };
 pub use capacity::{capacity_value, Capacities, CapacityRefusal, UnboundCapacity};
 pub use fairness::{
-    protocol_constraints, FairnessOrigin, ProtocolClass, ProtocolFairness, ProtocolFairnessError,
-    ProtocolTarget,
+    FairnessOrigin, ProtocolClass, ProtocolFairness, ProtocolFairnessError, ProtocolTarget,
+    protocol_constraints,
 };
 pub use footprint::{
-    visible, AnchorName, ClaimReads, ParallelInstance, ProtocolFootprintError, ProtocolLocation,
+    AnchorName, ClaimReads, ParallelInstance, ProtocolFootprintError, ProtocolLocation, visible,
 };
 pub use identity::{
     Actor, BlockedThread, CarriedComponent, PathStep, PositionAnchor, ProtocolTransition,
@@ -103,7 +103,7 @@ pub use reach::{ReachRefusal, Reachable, ReachedState};
 pub use selection::{
     MemorySelection, MemorySelectionRefusal, ResolvedMemory, ResolvedParallel, SubjectMemory,
 };
-pub use tso::{Buffered, Tso, TsoComponent, DEFAULT_MEMORY_BOUND};
+pub use tso::{Buffered, DEFAULT_MEMORY_BOUND, Tso, TsoComponent};
 pub use wire::{
     blocked_json, fairness_json, location_json, over_reference, send_record_json, transition_json,
 };
@@ -371,6 +371,7 @@ enum Status {
     Closed,
     Recovered,
     Unrecovered,
+    TimedOut,
 }
 
 impl Status {
@@ -381,6 +382,7 @@ impl Status {
             Self::Closed => "closed",
             Self::Recovered => "recovered",
             Self::Unrecovered => "unrecovered",
+            Self::TimedOut => "timed-out",
         }
     }
 
@@ -407,6 +409,16 @@ struct Registered {
 struct Registration {
     status: Status,
     captures: Vec<Bound>,
+    attempts: Vec<AttemptFact>,
+}
+
+/// One retained compensation attempt (FR-893): its own record and outcome,
+/// and the predecessor index when this is a retry.
+#[derive(Clone, Debug)]
+pub(super) struct AttemptFact {
+    pub(super) record: Enc,
+    pub(super) outcome: &'static str,
+    pub(super) retry_of: Option<u64>,
 }
 
 /// One compensation thread (ADR-027 CP-3): the registration it compensates,
@@ -481,6 +493,32 @@ struct Instance {
 }
 
 impl Instance {
+    /// FR-736's instance recovery summary over this instance's registrations.
+    pub(super) fn recovery_summary(&self) -> &'static str {
+        let mut successful = false;
+        let mut unsuccessful = false;
+        let mut pending = false;
+        for registration in self.registrations.values() {
+            match registration.status {
+                Status::Activated => pending = true,
+                Status::Recovered => successful = true,
+                Status::Unrecovered | Status::TimedOut => unsuccessful = true,
+                Status::Registered | Status::Closed => {}
+            }
+        }
+        if pending {
+            "pending"
+        } else if successful && unsuccessful {
+            "partially-recovered"
+        } else if successful {
+            "recovered"
+        } else if unsuccessful {
+            "unrecovered"
+        } else {
+            "untriggered"
+        }
+    }
+
     /// The live instances of the replicated role `index` (ADR-027 RR-3), in
     /// object order.
     fn live_of(&self, index: usize) -> impl Iterator<Item = &ObjectReference> {
@@ -1443,7 +1481,13 @@ impl<'a, M: MemoryModel> ProtocolSystem<'a, M> {
                     "protocol-instance",
                     vec![("ordinal", Enc::text(ordinal.to_string()))],
                 ),
-                Enc::tagged("instance-state", vec![("finished", Enc::Bool(false))]),
+                Enc::tagged(
+                    "instance-state",
+                    vec![
+                        ("finished", Enc::Bool(false)),
+                        ("recovery_summary", Enc::text(instance.recovery_summary())),
+                    ],
+                ),
             ));
             for (path, thread) in &instance.threads {
                 let rest = self
@@ -1591,15 +1635,38 @@ impl<'a, M: MemoryModel> ProtocolSystem<'a, M> {
                     .zip(&registration.captures)
                     .map(|(name, bound)| (text(name), bound.enc.clone()))
                     .collect();
+                let attempts = registration
+                    .attempts
+                    .iter()
+                    .map(|attempt| {
+                        let mut members = vec![
+                            ("record", attempt.record.clone()),
+                            ("outcome", Enc::text(attempt.outcome)),
+                        ];
+                        if let Some(retry_of) = attempt.retry_of {
+                            members.push(("retry_of", Enc::text(retry_of.to_string())));
+                        }
+                        Enc::tagged("compensation-attempt", members)
+                    })
+                    .collect();
+                let mut registration_members = vec![
+                    ("status", Enc::text(registration.status.text())),
+                    ("captures", map_enc(captures)),
+                    ("attempts", Enc::Array(attempts)),
+                ];
+                let recovery = match registration.status {
+                    Status::Activated => Some("pending"),
+                    Status::Recovered => Some("successful"),
+                    Status::Unrecovered => Some("failed"),
+                    Status::TimedOut => Some("timed-out"),
+                    Status::Registered | Status::Closed => None,
+                };
+                if let Some(recovery) = recovery {
+                    registration_members.push(("recovery", Enc::text(recovery)));
+                }
                 control.push((
                     named.enc(),
-                    Enc::tagged(
-                        "registration-state",
-                        vec![
-                            ("status", Enc::text(registration.status.text())),
-                            ("captures", map_enc(captures)),
-                        ],
-                    ),
+                    Enc::tagged("registration-state", registration_members),
                 ));
             }
             for node in &instance.committed {

@@ -845,6 +845,9 @@ pub(crate) fn projections(reached: &[Reached]) -> std::collections::BTreeSet<Vec
                 | StepKind::Memory
                 | StepKind::CAttempt
                 | StepKind::CEnd
+                | StepKind::CFail
+                | StepKind::CTimeout
+                | StepKind::CExpire
                 | StepKind::Activate
                 | StepKind::Spawn
                 | StepKind::Retire => None,

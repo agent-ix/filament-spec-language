@@ -26,18 +26,18 @@ use filament_eval::FamilyOutcome;
 use filament_exact::{Meter, Outcome, Value};
 use fsl_semantics::check::{CheckedBody, ProtocolNodeId};
 
-use super::identity::{ProtocolTransition, ThreadPath, WaitCause};
+use super::identity::{ProtocolTransition, StepKind, ThreadPath, WaitCause};
 use super::memory::{Access, GatedStep, MemoryModel, Written};
 use super::program::{Rest, Template};
 use super::steps::Gathered;
 use super::{
-    undetermined, Bound, Compensating, Disposition, Instance, ProtocolRefusal, ProtocolState,
-    ProtocolSystem, Registered, Registration, Status, Thread,
+    Bound, Compensating, Disposition, Instance, ProtocolRefusal, ProtocolState, ProtocolSystem,
+    Registered, Registration, Status, Thread, undetermined,
 };
 use crate::simulation::expansion::ExpansionStop;
 use crate::simulation::model::encode::{reference_enc, value_enc};
 use crate::simulation::model::{
-    verdict, FirstApplication, ModelFinding, ModelSimState, OperationRef, Verdict,
+    FirstApplication, ModelFinding, ModelSimState, OperationRef, Verdict, verdict,
 };
 use crate::value::evaluate_protocol_slot;
 
@@ -274,6 +274,7 @@ impl<M: MemoryModel> ProtocolSystem<'_, M> {
             Registration {
                 status: Status::Registered,
                 captures,
+                attempts: Vec::new(),
             },
         );
         Ok(true)
@@ -425,6 +426,18 @@ impl<M: MemoryModel> ProtocolSystem<'_, M> {
             .get(&compensating.registration)
             .ok_or_else(|| ProtocolRefusal::fault("a-compensation-thread-has-its-registration"))?;
         let key = self.registration_key(&compensating.registration)?;
+        let mut expired = state.clone();
+        let target = Self::instance_mut(&mut expired, ordinal)?;
+        target.threads.remove(path);
+        target.compensating.remove(path);
+        if let Some(entry) = target.registrations.get_mut(&compensating.registration) {
+            entry.status = Status::TimedOut;
+        }
+        self.normalize(&mut expired, ordinal)?;
+        gathered.successors.push((
+            ProtocolTransition::c_expire(path.clone(), key.clone()),
+            expired,
+        ));
         if retry {
             self.cend(state, ordinal, path, template, registration, gathered)?;
         }
@@ -453,6 +466,52 @@ impl<M: MemoryModel> ProtocolSystem<'_, M> {
         gathered.findings.extend(applications.findings);
         for applied in applications.successors {
             for record in &records {
+                // ST-16 and ST-17 are environment outcomes for a dispatched
+                // attempt. The operation's enabled application supplies the
+                // same application identity as `cattempt`, while these
+                // branches leave the model state untouched.
+                for (kind, outcome) in [
+                    (StepKind::CFail, "failed"),
+                    (StepKind::CTimeout, "timed-out"),
+                ] {
+                    let identity = ProtocolTransition::c_outcome(
+                        kind,
+                        path.clone(),
+                        key.clone(),
+                        applied.transition.clone(),
+                        reference_enc(&applied.receiver),
+                        applied
+                            .arguments
+                            .iter()
+                            .map(|value| value_enc(value, self.model.typing()))
+                            .collect(),
+                        (
+                            record.enc.clone(),
+                            record.value.clone().ok_or_else(|| {
+                                ProtocolRefusal::fault("an-attempt-record-is-bound")
+                            })?,
+                        ),
+                    );
+                    let mut next = state.clone();
+                    let target = Self::instance_mut(&mut next, ordinal)?;
+                    if let Some(thread) = target.threads.get_mut(path) {
+                        thread.rest = Rest::Retry(index);
+                    }
+                    if let Some(entry) = target.compensating.get_mut(path) {
+                        entry.count = entry.count.saturating_add(1);
+                        entry.attempt = (template.keeps_attempt && entry.count < template.attempts)
+                            .then(|| record.clone());
+                    }
+                    if let Some(entry) = target.registrations.get_mut(&compensating.registration) {
+                        entry.attempts.push(super::AttemptFact {
+                            record: record.enc.clone(),
+                            outcome,
+                            retry_of: (compensating.count > 0).then_some(compensating.count),
+                        });
+                    }
+                    self.normalize(&mut next, ordinal)?;
+                    gathered.successors.push((identity, next));
+                }
                 let identity = ProtocolTransition::cattempt(
                     path.clone(),
                     key.clone(),
@@ -497,6 +556,13 @@ impl<M: MemoryModel> ProtocolSystem<'_, M> {
                         // PS-8: the record stays only while a retry can read it.
                         entry.attempt = (template.keeps_attempt && entry.count < template.attempts)
                             .then(|| record.clone());
+                    }
+                    if let Some(entry) = target.registrations.get_mut(&compensating.registration) {
+                        entry.attempts.push(super::AttemptFact {
+                            record: record.enc.clone(),
+                            outcome: "successful",
+                            retry_of: (compensating.count > 0).then_some(compensating.count),
+                        });
                     }
                     self.normalize(&mut next, ordinal)?;
                     gathered.successors.push((identity.clone(), next));

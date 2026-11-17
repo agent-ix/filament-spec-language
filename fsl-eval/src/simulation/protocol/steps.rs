@@ -34,15 +34,15 @@ use super::program::{Cursor, Join, Rest};
 use super::race::AccessRecord;
 use super::settle::Settled;
 use super::{
-    undetermined, Bound, Disposition, Instance, Parallel, ParallelKey, ProtocolRefusal,
-    ProtocolState, ProtocolSystem, Thread,
+    Bound, Disposition, Instance, Parallel, ParallelKey, ProtocolRefusal, ProtocolState,
+    ProtocolSystem, Thread, undetermined,
 };
 use crate::simulation::expansion::{Expansion, ExpansionLimit, ExpansionStop};
 use crate::simulation::footprint::Location;
-use crate::simulation::model::encode::{reference_enc, value_enc, Enc};
+use crate::simulation::model::encode::{Enc, reference_enc, value_enc};
 use crate::simulation::model::{
-    verdict, Applied, Budget, ClauseOutcome, FirstApplication, ModelFinding, ModelSimState,
-    Observed, ObservedIdentities, OperationRef, Verdict, EXHAUSTED,
+    Applied, Budget, ClauseOutcome, EXHAUSTED, FirstApplication, ModelFinding, ModelSimState,
+    Observed, ObservedIdentities, OperationRef, Verdict, verdict,
 };
 use crate::simulation::subject::Cut;
 use crate::value::evaluate_join_predicate;
@@ -1858,6 +1858,7 @@ impl<M: MemoryModel> ProtocolSystem<'_, M> {
         if !Self::others_settled(instance, path) {
             return Ok(());
         }
+        let recovery_summary = instance.recovery_summary();
         let finish = &self.program.finish;
         let (slot, record_type) = &finish.binder;
         let records = self
@@ -1882,12 +1883,12 @@ impl<M: MemoryModel> ProtocolSystem<'_, M> {
             let mut next = state.clone();
             next.instances.remove(&ordinal);
             gathered.successors.push((
-                ProtocolTransition::record(
-                    StepKind::Finish,
+                ProtocolTransition::finish(
                     path.clone(),
                     finish.text.clone(),
                     value_enc(&record, self.model.typing()),
                     record,
+                    recovery_summary,
                 ),
                 next,
             ));

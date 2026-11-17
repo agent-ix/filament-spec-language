@@ -183,12 +183,12 @@ fn compensation(ordinal: u64) -> ThreadPath {
 }
 
 /// One explored case: its reachable states, explored under `Sc`.
-struct Explored {
-    reached: Vec<Reached>,
+pub(crate) struct Explored {
+    pub(crate) reached: Vec<Reached>,
 }
 
 /// The reachable states of `Pay` in `body`, and the system, handed to `check`.
-fn explore(body: &str, check: impl FnOnce(&ProtocolSystem<'_, Sc>, &Explored)) {
+pub(crate) fn explore(body: &str, check: impl FnOnce(&ProtocolSystem<'_, Sc>, &Explored)) {
     let case = Case::new(body, &[0]);
     let subject = case.subject("Pay");
     let system = sc_system(&subject);
@@ -199,7 +199,7 @@ fn explore(body: &str, check: impl FnOnce(&ProtocolSystem<'_, Sc>, &Explored)) {
 }
 
 /// The JSON of `state`'s key.
-fn key_json(system: &ProtocolSystem<'_, Sc>, state: &Reached) -> Json {
+pub(crate) fn key_json(system: &ProtocolSystem<'_, Sc>, state: &Reached) -> Json {
     let (bytes, _) = SubjectSystem::state_key(system, &state.state).expect("a key");
     json_of(&bytes)
 }
@@ -210,7 +210,7 @@ fn identity(system: &ProtocolSystem<'_, Sc>, transition: &ProtocolTransition) ->
 }
 
 /// Each entry of the map member `member` of `key`, as (key, value).
-fn entries(key: &Json, member: &str) -> Vec<(Json, Json)> {
+pub(crate) fn entries(key: &Json, member: &str) -> Vec<(Json, Json)> {
     key[member]["entries"]
         .as_array()
         .expect("a map")
@@ -220,7 +220,7 @@ fn entries(key: &Json, member: &str) -> Vec<(Json, Json)> {
 }
 
 /// The status of each registration of `key`.
-fn statuses(key: &Json) -> Vec<String> {
+pub(crate) fn statuses(key: &Json) -> Vec<String> {
     entries(key, "control")
         .into_iter()
         .filter(|(key, _)| key["type"] == "registration")

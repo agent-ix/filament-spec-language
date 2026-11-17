@@ -86,6 +86,7 @@ mod probability_from_source;
 mod protocol_analysis_differential;
 mod protocol_bounded_lasso;
 mod protocol_compensation;
+mod protocol_outcomes;
 mod protocol_composition;
 mod protocol_conformance;
 mod protocol_constructs;

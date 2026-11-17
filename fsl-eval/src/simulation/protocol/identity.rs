@@ -14,7 +14,7 @@ use quire_canonical::{Encode, Error, Sink, Writer};
 
 use super::memory::{MemoryChoice, MemoryStepId};
 use super::race::{AccessRecord, DataRace};
-use crate::simulation::model::encode::{reference_enc, Enc};
+use crate::simulation::model::encode::{Enc, reference_enc};
 
 /// One step of a thread's path (FSpec FR-425): for a branch thread, the
 /// `parallel` that forked it, its branch label and the parallel instance's
@@ -261,6 +261,12 @@ pub enum StepKind {
     CAttempt,
     /// ST-12: the end of a compensation thread.
     CEnd,
+    /// ST-16: a compensation attempt that did not apply its operation.
+    CFail,
+    /// ST-17: a compensation attempt that timed out.
+    CTimeout,
+    /// ST-18: a compensation window expired.
+    CExpire,
     /// ST-13: the start of a protocol instance by a trigger record.
     Activate,
     /// ST-14: an object becomes an instance of a replicated role.
@@ -275,11 +281,14 @@ impl StepKind {
     /// (`event`, and `activate` for a trigger occurrence), a `send` or a
     /// `receive`. Every other step, `spawn`, `retire`, a `fence` and a memory
     /// step (a `flush` or a release/acquire choice) included, moves the
-    /// position and not the distance.
+    /// position and not the distance. Failed and timed-out compensation
+    /// attempts count as attempts too.
     pub const fn counts(self) -> bool {
         match self {
             Self::Attempt
             | Self::CAttempt
+            | Self::CFail
+            | Self::CTimeout
             | Self::Event
             | Self::Activate
             | Self::Send
@@ -293,6 +302,7 @@ impl StepKind {
             | Self::Memory
             | Self::Fence
             | Self::CEnd
+            | Self::CExpire
             | Self::Spawn
             | Self::Retire => false,
         }
@@ -314,6 +324,9 @@ impl StepKind {
             Self::Fence => "fence",
             Self::CAttempt => "cattempt",
             Self::CEnd => "cend",
+            Self::CFail => "cfail",
+            Self::CTimeout => "ctimeout",
+            Self::CExpire => "cexpire",
             Self::Activate => "activate",
             Self::Spawn => "spawn",
             Self::Retire => "retire",
@@ -337,7 +350,10 @@ enum Members {
     /// No further member.
     Control,
     /// `record`: the bound record or payload.
-    Record { record: Enc },
+    Record {
+        record: Enc,
+        recovery_summary: Option<String>,
+    },
     /// `channel` and `entry`, with the channel's qualified name and its
     /// protocol instance's ordinal that `channel` encodes.
     Channel {
@@ -367,6 +383,17 @@ enum Members {
         template: String,
         registration: RegistrationKey,
         record: Option<Enc>,
+    },
+    /// A failed or timed-out attempt, with its dispatched application and
+    /// bound attempt record.
+    COutcome {
+        application: ModelTransition,
+        operation: String,
+        receiver: Enc,
+        arguments: Vec<Enc>,
+        record: Enc,
+        template: String,
+        registration: RegistrationKey,
     },
     /// A `spawn` or `retire`: the `role`, the `object`'s reference and the
     /// `instance` ordinal of the protocol instance that owns the role
@@ -884,7 +911,10 @@ impl ProtocolTransition {
             kind,
             thread: Some(thread),
             node: Some(node),
-            members: Members::Record { record },
+            members: Members::Record {
+                record,
+                recovery_summary: None,
+            },
             binder_record: Some(value),
             removed: None,
             send_record: None,
@@ -896,6 +926,25 @@ impl ProtocolTransition {
             children: Vec::new(),
             flow: None,
         }
+    }
+
+    /// The root `finish` step and the instance recovery summary it closes.
+    pub(crate) fn finish(
+        thread: ThreadPath,
+        node: String,
+        record: Enc,
+        value: filament_exact::Value,
+        recovery_summary: &str,
+    ) -> Self {
+        let mut transition = Self::record(StepKind::Finish, thread, node, record, value);
+        if let Members::Record {
+            recovery_summary: summary,
+            ..
+        } = &mut transition.members
+        {
+            *summary = Some(recovery_summary.to_owned());
+        }
+        transition
     }
 
     /// A channel step of `kind`, `duplicate` or `lose`, on the queue of the
@@ -994,6 +1043,69 @@ impl ProtocolTransition {
         }
     }
 
+    /// `cexpire` removes the compensation thread and times out its
+    /// registration without evaluating recovery (ADR-027 ST-18).
+    pub(crate) fn c_expire(thread: ThreadPath, registration: RegistrationKey) -> Self {
+        Self {
+            kind: StepKind::CExpire,
+            thread: Some(thread),
+            node: None,
+            members: Members::CEnd {
+                template: registration.template.clone(),
+                registration,
+                record: None,
+            },
+            binder_record: None,
+            removed: None,
+            send_record: None,
+            memory: None,
+            actor: None,
+            visibility_read: None,
+            access: None,
+            race: None,
+            children: Vec::new(),
+            flow: None,
+        }
+    }
+
+    /// A failed or timed-out compensation attempt, binding `record` but
+    /// leaving the model state unchanged (ADR-027 ST-16, ST-17).
+    pub(crate) fn c_outcome(
+        kind: StepKind,
+        thread: ThreadPath,
+        registration: RegistrationKey,
+        application: ModelTransition,
+        receiver: Enc,
+        arguments: Vec<Enc>,
+        record: (Enc, filament_exact::Value),
+    ) -> Self {
+        debug_assert!(matches!(kind, StepKind::CFail | StepKind::CTimeout));
+        Self {
+            kind,
+            thread: Some(thread),
+            node: None,
+            members: Members::COutcome {
+                operation: application.operation().to_owned(),
+                application,
+                receiver,
+                arguments,
+                record: record.0,
+                template: registration.template.clone(),
+                registration,
+            },
+            binder_record: Some(record.1),
+            removed: None,
+            send_record: None,
+            memory: None,
+            actor: None,
+            visibility_read: None,
+            access: None,
+            race: None,
+            children: Vec::new(),
+            flow: None,
+        }
+    }
+
     pub(crate) fn memory(identity: MemoryStepId) -> Self {
         Self {
             kind: StepKind::Memory,
@@ -1020,7 +1132,10 @@ impl ProtocolTransition {
             kind: StepKind::Activate,
             thread: None,
             node: None,
-            members: Members::Record { record },
+            members: Members::Record {
+                record,
+                recovery_summary: None,
+            },
             binder_record: None,
             removed: None,
             send_record: None,
@@ -1162,9 +1277,9 @@ impl ProtocolTransition {
     /// `memory` anchor naming it, and every other step's `protocol` anchor.
     pub fn anchor(&self) -> PositionAnchor<'_> {
         match &self.members {
-            Members::Attempt { operation, .. } | Members::CAttempt { operation, .. } => {
-                PositionAnchor::Operation(operation)
-            }
+            Members::Attempt { operation, .. }
+            | Members::CAttempt { operation, .. }
+            | Members::COutcome { operation, .. } => PositionAnchor::Operation(operation),
             Members::Memory { identity } => PositionAnchor::Memory(identity),
             Members::Channel { name, .. } => PositionAnchor::Protocol {
                 step: self.kind,
@@ -1191,6 +1306,18 @@ impl ProtocolTransition {
     /// The step's kind.
     pub fn kind(&self) -> StepKind {
         self.kind
+    }
+
+    /// The per-attempt compensation outcome named by this transition.
+    /// Aggregate recovery labels are carried by registration state and are
+    /// intentionally not inferred from a successful attempt.
+    pub fn compensation_outcome(&self) -> Option<&'static str> {
+        match self.kind {
+            StepKind::CAttempt => Some("successful"),
+            StepKind::CFail => Some("failed"),
+            StepKind::CTimeout => Some("timed-out"),
+            _ => None,
+        }
     }
 
     /// For a `fence`, its `ordering`.
@@ -1221,17 +1348,17 @@ impl ProtocolTransition {
         self.kind.counts()
     }
 
-    /// For a `cattempt` or `cend`, its template's qualified name.
+    /// For a compensation step, its template's qualified name.
     pub fn template(&self) -> Option<&str> {
         self.registration().map(|key| key.template.as_str())
     }
 
-    /// For a `cattempt` or `cend`, the registration its thread compensates.
+    /// For a compensation step, the registration its thread acts on.
     pub fn registration(&self) -> Option<&RegistrationKey> {
         match &self.members {
-            Members::CAttempt { registration, .. } | Members::CEnd { registration, .. } => {
-                Some(registration)
-            }
+            Members::CAttempt { registration, .. }
+            | Members::COutcome { registration, .. }
+            | Members::CEnd { registration, .. } => Some(registration),
             Members::Attempt { .. }
             | Members::Control
             | Members::Record { .. }
@@ -1248,18 +1375,18 @@ impl ProtocolTransition {
     }
 
     /// The node's static declaration path; `None` for a channel, memory,
-    /// `cattempt` or `cend` step.
+    /// compensation step.
     pub fn node(&self) -> Option<&str> {
         self.node.as_deref()
     }
 
-    /// For an `attempt` or a `cattempt`, the FR-120 transition identity of
-    /// the application it applied (ADR-027 TS-3).
+    /// For an `attempt`, `cattempt`, `cfail` or `ctimeout`, the FR-120
+    /// transition identity of the application it applied (ADR-027 TS-3).
     pub fn application(&self) -> Option<&ModelTransition> {
         match &self.members {
-            Members::Attempt { application, .. } | Members::CAttempt { application, .. } => {
-                Some(application)
-            }
+            Members::Attempt { application, .. }
+            | Members::CAttempt { application, .. }
+            | Members::COutcome { application, .. } => Some(application),
             Members::Control
             | Members::Record { .. }
             | Members::Channel { .. }
@@ -1270,8 +1397,8 @@ impl ProtocolTransition {
         }
     }
 
-    /// The typed binder record carried by an `event`, `send`, `receive`,
-    /// `finish` or recovery-view `cend` transition. Refinement rows compare
+    /// The typed binder record carried by an `event`, `send`, `receive`, a
+    /// compensation attempt, `finish` or recovery-view `cend` transition. Refinement rows compare
     /// their expressions with these admitted binder values; they do not
     /// infer a record from the transition's display identity.
     pub fn binder_record(&self) -> Option<&filament_exact::Value> {
@@ -1289,6 +1416,7 @@ impl ProtocolTransition {
             | Members::Fence { .. }
             | Members::Role { .. }
             | Members::CAttempt { .. }
+            | Members::COutcome { .. }
             | Members::CEnd { .. } => None,
         }
     }
@@ -1305,6 +1433,7 @@ impl ProtocolTransition {
             | Members::Fence { .. }
             | Members::Role { .. }
             | Members::CAttempt { .. }
+            | Members::COutcome { .. }
             | Members::CEnd { .. } => None,
         }
     }
@@ -1336,7 +1465,15 @@ impl ProtocolTransition {
                 }
             }
             Members::Control => {}
-            Members::Record { record } => members.push(("record", record.clone())),
+            Members::Record {
+                record,
+                recovery_summary,
+            } => {
+                members.push(("record", record.clone()));
+                if let Some(summary) = recovery_summary {
+                    members.push(("recovery_summary", Enc::text(summary.clone())));
+                }
+            }
             Members::Channel {
                 name,
                 instance,
@@ -1359,6 +1496,22 @@ impl ProtocolTransition {
             }
             Members::Fence { ordering } => members.push(("ordering", Enc::text(ordering.label()))),
             Members::CAttempt {
+                operation,
+                receiver,
+                arguments,
+                record,
+                template,
+                registration,
+                ..
+            } => {
+                members.push(("operation", Enc::text(operation.clone())));
+                members.push(("receiver", receiver.clone()));
+                members.push(("arguments", Enc::Array(arguments.clone())));
+                members.push(("record", record.clone()));
+                members.push(("template", Enc::text(template.clone())));
+                members.push(("registration", registration.enc()));
+            }
+            Members::COutcome {
                 operation,
                 receiver,
                 arguments,
