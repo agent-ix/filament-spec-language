@@ -215,6 +215,7 @@ fn show(expression: ExprRef<'_>) -> String {
         ExprNode::Power { exponent, .. } => format!("Power[{exponent}]"),
         ExprNode::Not(_) => "Not".into(),
         ExprNode::Field { field, .. } => format!("Field[{field}]"),
+        ExprNode::Index { .. } => "Index".into(),
         ExprNode::Present(_) => "Present".into(),
         ExprNode::Value(_) => "Value".into(),
         ExprNode::Deref(_) => "Deref".into(),
@@ -282,6 +283,30 @@ fn show(expression: ExprRef<'_>) -> String {
         head
     } else {
         format!("{head}({})", children.join(", "))
+    }
+}
+
+#[trace("TC-1821", "FR-680-AC-2")]
+#[test]
+fn tuple_and_map_index_forms_preserve_operand_and_index() {
+    for expression in ["p[0]", "m[k]"] {
+        let (text, function) = body(&format!("{expression}"));
+        let root = function.body.root();
+        let ExprNode::Index { operand, index } = root.node() else {
+            panic!("{expression} did not build as an index: {:?}", root.node());
+        };
+        let ExprNode::Name(operand_name) = root.at(*operand).node() else {
+            panic!("{expression} operand is not a name");
+        };
+        assert_eq!(
+            operand_name.name,
+            if expression == "p[0]" { "p" } else { "m" }
+        );
+        assert!(matches!(
+            root.at(*index).node(),
+            ExprNode::Integer(_) | ExprNode::Name(_)
+        ));
+        assert!(text.contains(expression));
     }
 }
 

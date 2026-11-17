@@ -3773,7 +3773,10 @@ fn unchecked_selector(form: &ExpressionForm) -> Option<Span> {
     form.expression
         .iter()
         .find(|node| {
-            matches!(node.node(), ExprNode::Select { .. }) && !under_ref.contains(&node.id())
+            matches!(
+                node.node(),
+                ExprNode::Select { .. } | ExprNode::Index { .. }
+            ) && !under_ref.contains(&node.id())
         })
         .and_then(|node| spans.get(node.id().index()).copied())
 }

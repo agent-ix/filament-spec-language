@@ -1614,6 +1614,9 @@ impl<'a> Typer<'a> {
                     } else if let ExprNode::Select { place, selector } = base.node() {
                         path.push(RefStep::Select(base.at(*selector), at.child(1)));
                         base = base.at(*place);
+                    } else if let ExprNode::Index { operand, index } = base.node() {
+                        path.push(RefStep::Select(base.at(*index), at.child(1)));
+                        base = base.at(*operand);
                     } else {
                         break;
                     }
@@ -1631,7 +1634,7 @@ impl<'a> Typer<'a> {
                 })));
                 return Ok(Step::Descend(Goal::Infer(base, None, at)));
             }
-            ExprNode::Select { .. } => {
+            ExprNode::Select { .. } | ExprNode::Index { .. } => {
                 // A selector is part of a clock place expression (FR-230
                 // "Selection"); only `ref` checks one so far, and a place
                 // read or reset by selection is not checked yet.

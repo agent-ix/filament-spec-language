@@ -679,6 +679,13 @@ pub enum ExprNode {
         /// Its source token when the expression was read from source.
         member_span: Option<fsl_foundation::Span>,
     },
+    /// `operand[index]`, a tuple position or keyed map read.
+    Index {
+        /// The tuple or map operand.
+        operand: ExprId,
+        /// The tuple position literal or map key expression.
+        index: ExprId,
+    },
     /// `present(e)`.
     Present(ExprId),
     /// `value(e)`.
@@ -1035,6 +1042,7 @@ impl ExprNode {
                 vec![*collection, *item]
             }
             Self::Select { place, selector } => vec![*place, *selector],
+            Self::Index { operand, index } => vec![*operand, *index],
             Self::AllInstances { population, .. } => vec![*population],
             Self::Lookup {
                 population,
@@ -1104,6 +1112,7 @@ impl ExprNode {
             | Self::DropFirst(_)
             | Self::Size { .. }
             | Self::Field { .. }
+            | Self::Index { .. }
             | Self::Convert { .. }
             | Self::Pre(_)
             | Self::Call { .. }
@@ -1185,6 +1194,7 @@ impl ExprNode {
             | Self::DropFirst(_)
             | Self::Size { .. }
             | Self::Field { .. }
+            | Self::Index { .. }
             | Self::Convert { .. }
             | Self::Pre(_)
             | Self::Call { .. }
@@ -1281,6 +1291,10 @@ impl ExprNode {
             | Self::Select {
                 place: first,
                 selector: second,
+            }
+            | Self::Index {
+                operand: first,
+                index: second,
             }
             | Self::Contains {
                 collection: first,
@@ -1840,6 +1854,14 @@ impl Expression {
         Self::compose([place, selector], |[place, selector]| ExprNode::Select {
             place,
             selector,
+        })
+    }
+
+    /// `operand[index]`.
+    pub fn index(operand: Self, index: Self) -> Self {
+        Self::compose([operand, index], |[operand, index]| ExprNode::Index {
+            operand,
+            index,
         })
     }
 

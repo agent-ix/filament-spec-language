@@ -596,6 +596,11 @@ fn encode_expression(
                 pending.push(expr.at(*selector));
                 pending.push(expr.at(*place));
             }
+            ExprNode::Index { operand, index } => {
+                out.write_str("index");
+                pending.push(expr.at(*index));
+                pending.push(expr.at(*operand));
+            }
             ExprNode::Ref(operand) => {
                 out.write_str("ref");
                 pending.push(expr.at(*operand));

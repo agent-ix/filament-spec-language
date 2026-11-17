@@ -750,8 +750,8 @@ impl<'f, N: TypeNames> filament_walk::Walk for Resolver<'_, 'f, N> {
             Step::Map { key, values, .. } => {
                 #[cfg(test)]
                 self.gauge.enter(2);
-                children.push(values);
                 children.push(key);
+                children.push(values);
             }
         }
         ControlFlow::Continue(step)

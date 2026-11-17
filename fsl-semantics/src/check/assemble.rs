@@ -3223,6 +3223,7 @@ fn expression_type_forms<'e>(roots: impl IntoIterator<Item = &'e Expression>) ->
                 | ExprNode::Deref(_)
                 | ExprNode::Ref(_)
                 | ExprNode::Select { .. }
+                | ExprNode::Index { .. }
                 | ExprNode::Call { .. }
                 | ExprNode::Record { .. }
                 | ExprNode::Collection { .. }
