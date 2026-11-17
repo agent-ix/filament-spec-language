@@ -876,6 +876,22 @@ impl<M: MemoryModel> ProtocolSystem<'_, M> {
             .ok_or_else(|| ProtocolRefusal::fault("an-event-node-is-an-event"))?;
         let text = self.program.text(node)?.to_owned();
         let instance = Self::instance(state, ordinal)?;
+        let effect_occurrence = self.program.effects.contains_key(&node).then(|| {
+            let occurrence = instance
+                .effect_ordinals
+                .get(&(node, path.clone()))
+                .copied()
+                .unwrap_or(0);
+            (
+                occurrence,
+                super::BusinessEffectOccurrence::new(
+                    ordinal,
+                    text.clone(),
+                    path.clone(),
+                    occurrence,
+                ),
+            )
+        });
         // ST-2: an `effect` is enabled only while its attempt's binder is
         // bound in its thread's environment.
         if let Some(attempt) = self.program.effects.get(&node) {
@@ -904,8 +920,17 @@ impl<M: MemoryModel> ProtocolSystem<'_, M> {
             }
             let enc = value_enc(&value, self.model.typing());
             let mut next = state.clone();
+            let target = Self::instance_mut(&mut next, ordinal)?;
+            if let Some((occurrence, _)) = &effect_occurrence {
+                let following = occurrence.checked_add(1).ok_or_else(|| {
+                    ProtocolRefusal::fault("a-business-effect-ordinal-does-not-overflow")
+                })?;
+                target
+                    .effect_ordinals
+                    .insert((node, path.clone()), following);
+            }
             Self::bind(
-                Self::instance_mut(&mut next, ordinal)?,
+                target,
                 node,
                 path,
                 Bound {
@@ -917,16 +942,18 @@ impl<M: MemoryModel> ProtocolSystem<'_, M> {
                 && self.place(&mut next, ordinal, path, after, &mut gathered.findings)?
             {
                 self.normalize(&mut next, ordinal)?;
-                gathered.successors.push((
-                    ProtocolTransition::record(
-                        StepKind::Event,
-                        path.clone(),
-                        text.clone(),
-                        enc,
-                        value,
-                    ),
-                    next,
-                ));
+                let transition = ProtocolTransition::record(
+                    StepKind::Event,
+                    path.clone(),
+                    text.clone(),
+                    enc,
+                    value,
+                );
+                let transition = match effect_occurrence.as_ref() {
+                    Some((_, key)) => transition.identifying_business_effect(key.clone()),
+                    None => transition,
+                };
+                gathered.successors.push((transition, next));
             }
         }
         Ok(())
@@ -1957,6 +1984,12 @@ impl<M: MemoryModel> ProtocolSystem<'_, M> {
         let counting: BTreeSet<ThreadPath> = running.into_iter().cloned().collect();
         instance
             .counters
+            .retain(|(_, thread), _| counting.contains(thread));
+        instance
+            .message_ordinals
+            .retain(|(_, thread), _| counting.contains(thread));
+        instance
+            .effect_ordinals
             .retain(|(_, thread), _| counting.contains(thread));
         self.retire_scoped(instance);
         Ok(())

@@ -21,8 +21,8 @@ use fsl_semantics::check::ProtocolNodeId;
 use fsl_semantics::check::{ChannelDelivery, ChannelOverflow, LossSelector};
 
 use super::identity::{
-    ProtocolTransition, QueueEvent, QueueFlow, Removal, SendOutcome, SendRecord, StepKind,
-    ThreadPath, WaitCause,
+    DeliveryIdentity, MessageOccurrence, ProtocolTransition, QueueEvent, QueueFlow, Removal,
+    SendOutcome, SendRecord, StepKind, ThreadPath, WaitCause,
 };
 use super::memory::MemoryModel;
 use super::program::{Channel, Cursor, Message};
@@ -70,9 +70,32 @@ struct IntervalSend<'a, 'p> {
     payload: Value,
     key: QueueKey,
     count: u64,
+    message: MessageOccurrence,
+    next_delivery: u64,
 }
 
 impl<M: MemoryModel> ProtocolSystem<'_, M> {
+    fn message_occurrence(
+        &self,
+        state: &ProtocolState<M>,
+        instance: u64,
+        path: &ThreadPath,
+        node: ProtocolNodeId,
+        text: &str,
+    ) -> Result<MessageOccurrence, ProtocolRefusal> {
+        let ordinal = Self::instance(state, instance)?
+            .message_ordinals
+            .get(&(node, path.clone()))
+            .copied()
+            .unwrap_or(0);
+        Ok(MessageOccurrence::new(
+            instance,
+            text.to_owned(),
+            path.clone(),
+            ordinal,
+        ))
+    }
+
     /// The `send` or `receive` `node`.
     fn message(&self, node: ProtocolNodeId) -> Result<&Message<'_>, ProtocolRefusal> {
         self.program
@@ -155,6 +178,8 @@ impl<M: MemoryModel> ProtocolSystem<'_, M> {
         if let Some(pending) = instance.pending_sends.get(&(path.clone(), node)) {
             let payload = pending.payload.clone();
             let remaining = pending.remaining;
+            let message_occurrence = pending.message.clone();
+            let next_delivery = pending.next_delivery;
             let key = match self.queue_key(message.channel, &payload, &state.model, node)? {
                 Ok(key) => key,
                 Err(finding) => {
@@ -175,10 +200,13 @@ impl<M: MemoryModel> ProtocolSystem<'_, M> {
                     payload,
                     key,
                     count: remaining,
+                    message: message_occurrence,
+                    next_delivery,
                 },
             )?;
             return Ok(());
         }
+        let message_occurrence = self.message_occurrence(state, ordinal, path, node, &text)?;
         let payloads = self
             .model
             .values_of(
@@ -225,6 +253,8 @@ impl<M: MemoryModel> ProtocolSystem<'_, M> {
                             payload: payload.clone(),
                             key: key.clone(),
                             count,
+                            message: message_occurrence.clone(),
+                            next_delivery: 0,
                         },
                     )?;
                     if count == upper {
@@ -237,13 +267,15 @@ impl<M: MemoryModel> ProtocolSystem<'_, M> {
             let enc = Enc::tagged(
                 "queue-entry",
                 vec![
-                    ("send", Enc::text(text.clone())),
-                    ("thread", path.enc()),
+                    ("message", message_occurrence.enc()),
+                    ("delivery", Enc::text("0")),
                     ("payload", value_enc(&payload, self.model.typing())),
                 ],
             );
             let entry = Entry {
                 send: node,
+                message: message_occurrence.clone(),
+                delivery: 0,
                 payload: payload.clone(),
                 bytes: jcs(&enc)?,
                 enc,
@@ -298,6 +330,14 @@ impl<M: MemoryModel> ProtocolSystem<'_, M> {
             let mut next = state.clone();
             let target = Self::instance_mut(&mut next, ordinal)?;
             store(target, key, queue);
+            let following_ordinal = message_occurrence
+                .ordinal()
+                .checked_add(1)
+                .ok_or_else(|| ProtocolRefusal::fault("a-message-ordinal-does-not-overflow"))?;
+            target
+                .message_ordinals
+                .insert((node, path.clone()), following_ordinal);
+            target.next_deliveries.insert(message_occurrence.clone(), 1);
             Self::bind(
                 target,
                 node,
@@ -315,6 +355,7 @@ impl<M: MemoryModel> ProtocolSystem<'_, M> {
                 payload,
             )
             .recording(record)
+            .identifying_message(message_occurrence)
             .flowing(QueueFlow {
                 key: fifo_key,
                 send_ordered: channel.send_ordered,
@@ -379,16 +420,19 @@ impl<M: MemoryModel> ProtocolSystem<'_, M> {
         let mut pending = 0;
         for index in 0..count {
             gathered.budget.charge()?;
+            let delivery = next_delivery.checked_add(index).ok_or_else(broken)?;
             let enc = Enc::tagged(
                 "queue-entry",
                 vec![
-                    ("send", Enc::text(text.to_owned())),
-                    ("thread", path.enc()),
+                    ("message", message.enc()),
+                    ("delivery", Enc::text(delivery.to_string())),
                     ("payload", value_enc(&payload, self.model.typing())),
                 ],
             );
             let entry = Entry {
                 send: node,
+                message: message.clone(),
+                delivery,
                 payload: payload.clone(),
                 bytes: jcs(&enc)?,
                 enc,
@@ -455,16 +499,31 @@ impl<M: MemoryModel> ProtocolSystem<'_, M> {
         store(target, key, queue);
         let payload_enc = value_enc(&payload, self.model.typing());
         if pending > 0 {
+            let completed = count.checked_sub(pending).ok_or_else(broken)?;
+            let next_delivery = next_delivery.checked_add(completed).ok_or_else(broken)?;
             target.pending_sends.insert(
                 (path.clone(), node),
                 super::PendingSend {
                     payload: payload.clone(),
                     enc: payload_enc.clone(),
                     remaining: pending,
+                    message: message.clone(),
+                    next_delivery,
                 },
             );
         } else {
             target.pending_sends.remove(&(path.clone(), node));
+            let following_ordinal = message
+                .ordinal()
+                .checked_add(1)
+                .ok_or_else(|| ProtocolRefusal::fault("a-message-ordinal-does-not-overflow"))?;
+            target
+                .message_ordinals
+                .insert((node, path.clone()), following_ordinal);
+            target.next_deliveries.insert(
+                message.clone(),
+                next_delivery.checked_add(count).ok_or_else(broken)?,
+            );
             Self::bind(
                 target,
                 node,
@@ -491,7 +550,8 @@ impl<M: MemoryModel> ProtocolSystem<'_, M> {
             payload_enc,
             payload,
         )
-        .recording(record);
+        .recording(record)
+        .identifying_message(message);
         if let Some(entry) = appended.first() {
             transition = transition.flowing(QueueFlow {
                 key: fifo_key,
@@ -588,6 +648,7 @@ impl<M: MemoryModel> ProtocolSystem<'_, M> {
                 enc,
                 payload,
             )
+            .identifying_delivery(DeliveryIdentity::new(entry.message.clone(), entry.delivery))
             .removing(QueueEvent {
                 channel: channel.clone(),
                 instance: ordinal,
@@ -780,19 +841,41 @@ impl<M: MemoryModel> ProtocolSystem<'_, M> {
                     let mut variants = Vec::new();
                     if channel.duplicates() && queue.len() < channel.capacity {
                         let mut copied = queue.clone();
+                        let next_delivery = instance
+                            .next_deliveries
+                            .get(&entry.message)
+                            .copied()
+                            .unwrap_or(entry.delivery.checked_add(1).ok_or_else(|| {
+                                ProtocolRefusal::fault("a-delivery-index-does-not-overflow")
+                            })?);
+                        let delivery = DeliveryIdentity::new(entry.message.clone(), next_delivery);
+                        let encoded = Enc::tagged(
+                            "queue-entry",
+                            vec![
+                                ("message", entry.message.enc()),
+                                ("delivery", Enc::text(next_delivery.to_string())),
+                                ("payload", value_enc(&entry.payload, self.model.typing())),
+                            ],
+                        );
+                        let duplicate = Entry {
+                            delivery: next_delivery,
+                            enc: encoded.clone(),
+                            bytes: jcs(&encoded)?,
+                            ..entry.clone()
+                        };
                         if key.fifo.is_some() || channel.send_ordered {
-                            copied.push(entry.clone());
+                            copied.push(duplicate);
                         } else {
-                            insert_sorted(&mut copied, entry.clone());
+                            insert_sorted(&mut copied, duplicate);
                         }
-                        variants.push((StepKind::Duplicate, copied));
+                        variants.push((StepKind::Duplicate, copied, Some(delivery)));
                     }
                     if channel.loses() {
                         let mut lost = queue.clone();
                         lost.remove(position);
-                        variants.push((StepKind::Lose, lost));
+                        variants.push((StepKind::Lose, lost, None));
                     }
-                    for (kind, changed) in variants {
+                    for (kind, changed, delivery) in variants {
                         let bytes: Vec<Vec<u8>> = changed
                             .iter()
                             .map(|queued| self.choice(Some(&state.memory), queued))
@@ -805,17 +888,23 @@ impl<M: MemoryModel> ProtocolSystem<'_, M> {
                         }
                         results.push((kind, bytes));
                         let mut next = state.clone();
-                        store(
-                            Self::instance_mut(&mut next, *ordinal)?,
-                            key.clone(),
-                            changed,
-                        );
+                        let target = Self::instance_mut(&mut next, *ordinal)?;
+                        if let Some(delivery) = &delivery {
+                            let following = delivery.index().checked_add(1).ok_or_else(broken)?;
+                            target
+                                .next_deliveries
+                                .insert(delivery.message().clone(), following);
+                        }
+                        store(target, key.clone(), changed);
                         let mut transition = ProtocolTransition::channel(
                             kind,
                             channel.name.clone(),
                             *ordinal,
                             entry.enc.clone(),
                         );
+                        if let Some(delivery) = delivery {
+                            transition = transition.identifying_delivery(delivery);
+                        }
                         transition = transition.flowing(QueueFlow {
                             key: key.fifo.as_ref().map(|fifo| fifo.bytes.clone()),
                             send_ordered: channel.send_ordered,

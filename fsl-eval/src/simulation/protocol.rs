@@ -88,9 +88,9 @@ pub use footprint::{
     AnchorName, ClaimReads, ParallelInstance, ProtocolFootprintError, ProtocolLocation, visible,
 };
 pub use identity::{
-    Actor, BlockedThread, CarriedComponent, PathStep, PositionAnchor, ProtocolTransition,
-    QueueFlow, RegistrationKey, RestKind, RestPoint, SendOutcome, SendRecord, StepKind, ThreadPath,
-    WaitCause,
+    Actor, BlockedThread, BusinessEffectOccurrence, CarriedComponent, DeliveryIdentity,
+    MessageOccurrence, PathStep, PositionAnchor, ProtocolTransition, QueueFlow, RegistrationKey,
+    RestKind, RestPoint, SendOutcome, SendRecord, StepKind, ThreadPath, WaitCause,
 };
 pub use memory::{
     Access, CarriedKey, Chosen, FootprintStep, GatedStep, MemoryBranch, MemoryChoice, MemoryModel,
@@ -354,6 +354,8 @@ struct QueueKey {
 #[derive(Clone, Debug)]
 struct Entry {
     send: fsl_semantics::check::ProtocolNodeId,
+    message: MessageOccurrence,
+    delivery: u64,
     payload: Value,
     enc: Enc,
     bytes: Vec<u8>,
@@ -439,6 +441,8 @@ struct PendingSend {
     payload: Value,
     enc: Enc,
     remaining: u64,
+    message: MessageOccurrence,
+    next_delivery: u64,
 }
 
 /// A role instance's status (ADR-027 RR-3).
@@ -478,6 +482,13 @@ struct Instance {
     environments: BTreeMap<ThreadPath, BTreeMap<fsl_semantics::check::ProtocolNodeId, Bound>>,
     /// Each `repeat` counter, by (repeat node, thread) (ADR-027 PS-6).
     counters: BTreeMap<(fsl_semantics::check::ProtocolNodeId, ThreadPath), u64>,
+    /// The next occurrence ordinal of each send node on each thread path.
+    message_ordinals: BTreeMap<(fsl_semantics::check::ProtocolNodeId, ThreadPath), u64>,
+    /// The next occurrence ordinal of each effect node on each thread path.
+    effect_ordinals: BTreeMap<(fsl_semantics::check::ProtocolNodeId, ThreadPath), u64>,
+    /// The next delivery index of each message, retained after a copy leaves
+    /// the queue so a later duplicate never reuses an index.
+    next_deliveries: BTreeMap<MessageOccurrence, u64>,
     /// Each non-empty queue, a `fifo` one in delivery order and an
     /// `unordered` one in ascending JCS bytes of its entries (PS-7).
     queues: BTreeMap<QueueKey, Vec<Entry>>,
@@ -1527,6 +1538,11 @@ impl<'a, M: MemoryModel> ProtocolSystem<'a, M> {
                         vec![
                             ("remaining", Enc::text(pending.remaining.to_string())),
                             ("payload", pending.enc.clone()),
+                            ("message", pending.message.enc()),
+                            (
+                                "next_delivery",
+                                Enc::text(pending.next_delivery.to_string()),
+                            ),
                         ],
                     ),
                 ));
@@ -1595,6 +1611,38 @@ impl<'a, M: MemoryModel> ProtocolSystem<'a, M> {
                         vec![("node", node), ("thread", thread.enc())],
                     ),
                     Enc::tagged("integer", vec![("value", Enc::text(counter.to_string()))]),
+                ));
+            }
+            for ((node, thread), counter) in &instance.message_ordinals {
+                let node = self
+                    .program
+                    .text(*node)
+                    .map_or(Enc::Unencodable("a send node"), Enc::text);
+                bounds.push((
+                    Enc::tagged(
+                        "message-ordinal",
+                        vec![("node", node), ("thread", thread.enc())],
+                    ),
+                    Enc::tagged("integer", vec![("value", Enc::text(counter.to_string()))]),
+                ));
+            }
+            for ((node, thread), counter) in &instance.effect_ordinals {
+                let node = self
+                    .program
+                    .text(*node)
+                    .map_or(Enc::Unencodable("an effect node"), Enc::text);
+                bounds.push((
+                    Enc::tagged(
+                        "business-effect-ordinal",
+                        vec![("node", node), ("thread", thread.enc())],
+                    ),
+                    Enc::tagged("integer", vec![("value", Enc::text(counter.to_string()))]),
+                ));
+            }
+            for (message, next) in &instance.next_deliveries {
+                bounds.push((
+                    Enc::tagged("next-delivery", vec![("message", message.enc())]),
+                    Enc::tagged("integer", vec![("value", Enc::text(next.to_string()))]),
                 ));
             }
             for (capture, bound) in self.program.captures.iter().zip(&instance.captures) {

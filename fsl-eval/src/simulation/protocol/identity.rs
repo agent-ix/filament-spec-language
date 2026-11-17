@@ -174,6 +174,148 @@ impl ThreadPath {
     }
 }
 
+/// The occurrence that created one protocol message (FSpec FR-051 and FR-894).
+///
+/// Payload is deliberately absent: two sends of equal records remain distinct
+/// when they occur at different positions in a thread.
+#[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+pub struct MessageOccurrence {
+    instance: u64,
+    node: String,
+    path: ThreadPath,
+    ordinal: u64,
+}
+
+impl MessageOccurrence {
+    pub(crate) fn new(instance: u64, node: String, path: ThreadPath, ordinal: u64) -> Self {
+        Self {
+            instance,
+            node,
+            path,
+            ordinal,
+        }
+    }
+
+    /// The protocol instance that sent this message.
+    pub fn instance(&self) -> u64 {
+        self.instance
+    }
+
+    /// The send node's static declaration path.
+    pub fn node(&self) -> &str {
+        &self.node
+    }
+
+    /// The sending thread's path.
+    pub fn path(&self) -> &ThreadPath {
+        &self.path
+    }
+
+    /// This send node's occurrence ordinal on `path`.
+    pub fn ordinal(&self) -> u64 {
+        self.ordinal
+    }
+
+    pub(crate) fn enc(&self) -> Enc {
+        Enc::tagged(
+            "message-occurrence",
+            vec![
+                ("instance", Enc::text(self.instance.to_string())),
+                ("node", Enc::text(self.node.clone())),
+                ("path", self.path.enc()),
+                ("ordinal", Enc::text(self.ordinal.to_string())),
+            ],
+        )
+    }
+}
+
+/// One copy of a message in a channel's delivery history (FSpec FR-058 and
+/// FR-894). A duplicate delivery has the same message and a fresh index.
+#[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+pub struct DeliveryIdentity {
+    message: MessageOccurrence,
+    index: u64,
+}
+
+impl DeliveryIdentity {
+    pub(crate) fn new(message: MessageOccurrence, index: u64) -> Self {
+        Self { message, index }
+    }
+
+    /// The message occurrence this delivery copies.
+    pub fn message(&self) -> &MessageOccurrence {
+        &self.message
+    }
+
+    /// The delivery index; the original is zero.
+    pub fn index(&self) -> u64 {
+        self.index
+    }
+
+    pub(crate) fn enc(&self) -> Enc {
+        Enc::tagged(
+            "delivery-identity",
+            vec![
+                ("message", self.message.enc()),
+                ("index", Enc::text(self.index.to_string())),
+            ],
+        )
+    }
+}
+
+/// The occurrence that established one business effect (FSpec FR-226 and
+/// FR-894). Payload values do not participate in this key.
+#[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+pub struct BusinessEffectOccurrence {
+    instance: u64,
+    node: String,
+    path: ThreadPath,
+    ordinal: u64,
+}
+
+impl BusinessEffectOccurrence {
+    pub(crate) fn new(instance: u64, node: String, path: ThreadPath, ordinal: u64) -> Self {
+        Self {
+            instance,
+            node,
+            path,
+            ordinal,
+        }
+    }
+
+    /// The protocol instance that established this effect.
+    pub fn instance(&self) -> u64 {
+        self.instance
+    }
+
+    /// The effect node's static declaration path.
+    pub fn node(&self) -> &str {
+        &self.node
+    }
+
+    /// The thread's path at the effect occurrence.
+    pub fn path(&self) -> &ThreadPath {
+        &self.path
+    }
+
+    /// This effect node's occurrence ordinal on `path`.
+    pub fn ordinal(&self) -> u64 {
+        self.ordinal
+    }
+
+    fn enc(&self) -> Enc {
+        Enc::tagged(
+            "business-effect-occurrence",
+            vec![
+                ("instance", Enc::text(self.instance.to_string())),
+                ("node", Enc::text(self.node.clone())),
+                ("path", self.path.enc()),
+                ("ordinal", Enc::text(self.ordinal.to_string())),
+            ],
+        )
+    }
+}
+
 impl Encode for ThreadPath {
     fn encode_into<S: Sink + ?Sized>(&self, writer: &mut Writer<'_, S>) -> Result<(), Error> {
         self.enc().encode_into(writer)
@@ -730,6 +872,9 @@ pub struct ProtocolTransition {
     race: Option<DataRace>,
     children: Vec<ThreadPath>,
     flow: Option<QueueFlow>,
+    message: Option<MessageOccurrence>,
+    delivery: Option<DeliveryIdentity>,
+    business_effect: Option<BusinessEffectOccurrence>,
 }
 
 /// Resolver metadata for a shared RA load. It is deliberately outside the
@@ -771,6 +916,9 @@ impl ProtocolTransition {
             race: None,
             children: Vec::new(),
             flow: None,
+            message: None,
+            delivery: None,
+            business_effect: None,
         }
     }
 
@@ -792,6 +940,9 @@ impl ProtocolTransition {
             race: None,
             children: Vec::new(),
             flow: None,
+            message: None,
+            delivery: None,
+            business_effect: None,
         }
     }
 
@@ -823,6 +974,9 @@ impl ProtocolTransition {
             race: None,
             children: Vec::new(),
             flow: None,
+            message: None,
+            delivery: None,
+            business_effect: None,
         }
     }
 
@@ -870,6 +1024,45 @@ impl ProtocolTransition {
     pub(crate) fn flowing(mut self, flow: QueueFlow) -> Self {
         self.flow = Some(flow);
         self
+    }
+
+    pub(crate) fn identifying_message(mut self, message: MessageOccurrence) -> Self {
+        self.message = Some(message);
+        if matches!(&self.members, Members::Record { .. }) {
+            self.members = Members::Control;
+        }
+        self
+    }
+
+    pub(crate) fn identifying_delivery(mut self, delivery: DeliveryIdentity) -> Self {
+        self.delivery = Some(delivery);
+        if matches!(&self.members, Members::Record { .. }) {
+            self.members = Members::Control;
+        }
+        self
+    }
+
+    pub(crate) fn identifying_business_effect(mut self, effect: BusinessEffectOccurrence) -> Self {
+        self.business_effect = Some(effect);
+        if matches!(&self.members, Members::Record { .. }) {
+            self.members = Members::Control;
+        }
+        self
+    }
+
+    /// The occurrence identity of a `send` transition.
+    pub fn message(&self) -> Option<&MessageOccurrence> {
+        self.message.as_ref()
+    }
+
+    /// The delivery copied or received by this transition.
+    pub fn delivery(&self) -> Option<&DeliveryIdentity> {
+        self.delivery.as_ref()
+    }
+
+    /// The occurrence identity of an `effect` transition.
+    pub fn business_effect(&self) -> Option<&BusinessEffectOccurrence> {
+        self.business_effect.as_ref()
     }
 
     /// The queued entries a `send`, `receive`, `duplicate` or `lose` moved;
@@ -925,6 +1118,9 @@ impl ProtocolTransition {
             race: None,
             children: Vec::new(),
             flow: None,
+            message: None,
+            delivery: None,
+            business_effect: None,
         }
     }
 
@@ -970,6 +1166,9 @@ impl ProtocolTransition {
             race: None,
             children: Vec::new(),
             flow: None,
+            message: None,
+            delivery: None,
+            business_effect: None,
         }
     }
 
@@ -1007,6 +1206,9 @@ impl ProtocolTransition {
             race: None,
             children: Vec::new(),
             flow: None,
+            message: None,
+            delivery: None,
+            business_effect: None,
         }
     }
 
@@ -1040,6 +1242,9 @@ impl ProtocolTransition {
             race: None,
             children: Vec::new(),
             flow: None,
+            message: None,
+            delivery: None,
+            business_effect: None,
         }
     }
 
@@ -1122,6 +1327,9 @@ impl ProtocolTransition {
             race: None,
             children: Vec::new(),
             flow: None,
+            message: None,
+            delivery: None,
+            business_effect: None,
         }
     }
 
@@ -1146,6 +1354,9 @@ impl ProtocolTransition {
             race: None,
             children: Vec::new(),
             flow: None,
+            message: None,
+            delivery: None,
+            business_effect: None,
         }
     }
 
@@ -1176,6 +1387,9 @@ impl ProtocolTransition {
             race: None,
             children: Vec::new(),
             flow: None,
+            message: None,
+            delivery: None,
+            business_effect: None,
         }
     }
 
@@ -1449,6 +1663,15 @@ impl ProtocolTransition {
         if let Some(actor) = &self.actor {
             members.push(("actor", reference_enc(&actor.object)));
         }
+        if let Some(message) = &self.message {
+            members.push(("message", message.enc()));
+        }
+        if let Some(delivery) = &self.delivery {
+            members.push(("delivery", delivery.enc()));
+        }
+        if let Some(effect) = &self.business_effect {
+            members.push(("business_effect", effect.enc()));
+        }
         match &self.members {
             Members::Attempt {
                 operation,
@@ -1468,12 +1691,16 @@ impl ProtocolTransition {
             Members::Record {
                 record,
                 recovery_summary,
-            } => {
+            } if self.message.is_none()
+                && self.delivery.is_none()
+                && self.business_effect.is_none() =>
+            {
                 members.push(("record", record.clone()));
                 if let Some(summary) = recovery_summary {
                     members.push(("recovery_summary", Enc::text(summary.clone())));
                 }
             }
+            Members::Record { .. } => {}
             Members::Channel {
                 name,
                 instance,
@@ -1559,6 +1786,9 @@ impl PartialEq for ProtocolTransition {
             && self.node == other.node
             && self.members == other.members
             && self.actor == other.actor
+            && self.message == other.message
+            && self.delivery == other.delivery
+            && self.business_effect == other.business_effect
     }
 }
 
@@ -1570,12 +1800,24 @@ impl Eq for ProtocolTransition {}
 /// of FR-101, which is the order of the identities' JCS bytes.
 impl Ord for ProtocolTransition {
     fn cmp(&self, other: &Self) -> std::cmp::Ordering {
-        (self.kind, &self.thread, &self.node, &self.members).cmp(&(
-            other.kind,
-            &other.thread,
-            &other.node,
-            &other.members,
-        ))
+        (
+            self.kind,
+            &self.thread,
+            &self.node,
+            &self.members,
+            &self.message,
+            &self.delivery,
+            &self.business_effect,
+        )
+            .cmp(&(
+                other.kind,
+                &other.thread,
+                &other.node,
+                &other.members,
+                &other.message,
+                &other.delivery,
+                &other.business_effect,
+            ))
     }
 }
 
