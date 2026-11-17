@@ -531,6 +531,11 @@ pub enum ControlStep {
     Event,
     /// A `fence`: its memory model's fence step (ADR-027 SE-5).
     Fence,
+    /// A protocol's final `finish` step (ST-9).
+    Finish,
+    /// A compensation template, whose threads are stepped by the protocol
+    /// evaluator (FR-427).
+    CompensateTemplate,
     /// Another construct, by its keyword.
     Unstepped(&'static str),
 }
@@ -553,7 +558,8 @@ impl CheckedControl {
             K::Receive => ControlStep::Receive,
             K::Effect | K::Event | K::Commit => ControlStep::Event,
             K::Fence => ControlStep::Fence,
-            K::Finish | K::CompensateTemplate => ControlStep::Unstepped(self.kind.label()),
+            K::Finish => ControlStep::Finish,
+            K::CompensateTemplate => ControlStep::CompensateTemplate,
         }
     }
 }

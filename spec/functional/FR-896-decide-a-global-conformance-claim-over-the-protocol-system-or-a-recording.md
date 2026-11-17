@@ -13,6 +13,8 @@ relationships:
     type: depends_on
   - target: ix://agent-ix/filament-spec-language/FR-205
     type: depends_on
+  - target: ix://agent-ix/filament-spec-language/FR-990
+    type: depends_on
   - target: ix://agent-ix/filament-specification/FR-059
     type: implements
   - target: ix://agent-ix/filament-specification/FR-060
@@ -68,7 +70,10 @@ modes, selected by the item.
 
 The capability `Capability::GlobalConformance` (FR-057) is served by the
 protocol-analysis provider in both modes. A request routed to it settles by
-this requirement, never with a stub's pending obligation.
+this requirement, never with a stub's pending obligation. In both modes the
+item reports its per-obligation results, closure record and global result
+in the shape FR-990 states, and its counterexample replays in process as
+FR-991 states.
 
 ### Decision: one meaning, two evidence sources
 
@@ -104,4 +109,7 @@ recording, where replay mode reports it as `unexpected`.
   replay mode and the obligation list.
 - [FR-205](FR-205-define-the-protocol-subject-and-its-state-key.md): the
   protocol system and role bindings.
+- [FR-990](FR-990-report-per-obligation-and-global-conformance-results.md)
+  and [FR-991](FR-991-publish-in-process-replay-of-a-global-conformance-counterexample.md):
+  the result shape and its in-process replay.
 - FSpec FR-059 and FR-060.
