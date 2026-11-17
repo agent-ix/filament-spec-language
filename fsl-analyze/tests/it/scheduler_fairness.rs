@@ -983,55 +983,11 @@ fn an_authored_operation_constraint_joins_the_scheduler_constraints() {
     assert!(keys.windows(2).all(|pair| pair[0] < pair[1]), "{keys:?}");
 }
 
-/// FR-228: a liveness clause over a protocol whose `Both` runs under `ra`
-/// refuses `unsupported_construct`/`not-yet-implemented`: the engine reads
-/// no visibility fairness, and a stale read would give a false
-/// counterexample.
-#[trace("TC-657")]
-#[test]
-fn liveness_over_an_ra_parallel_refuses() {
-    let chatter = Chatter::new("", EVENTUALLY, &IS_ONE);
-    let mut subject = chatter.subject();
-    let checked = chatter
-        .checked
-        .graph()
-        .protocol("Chatter")
-        .expect("the protocol");
-    subject.memory = ResolvedMemory::resolve(
-        checked,
-        &[MemorySelection {
-            parallel: "Chatter::Both".to_owned(),
-            model: MemoryModelName::Ra,
-        }],
-    )
-    .expect("the selection resolves");
-    let refusal = check_protocol(
-        ProtocolCheckRequest {
-            temporal_clock_selections: &[],
-            subject,
-            item: chatter.item(),
-            max_depth: None,
-            max_store_buffer: None,
-            max_messages: None,
-            max_live_instances: None,
-            limits: ModelCheckLimits::default(),
-            ignore_memory_constraints: false,
-        },
-        &Cancel::new(),
-    )
-    .expect_err("an ra liveness clause refuses");
-    assert!(
-        matches!(refusal, ModelCheckRefusal::WeakLiveness),
-        "{refusal:?}"
-    );
-}
-
 /// FR-228-AC-11: a liveness clause over `Chatter` with `Chatter::Both`
 /// resolved to `ra` is decided under visibility fairness, never refused as
 /// unsupported. This replaces the refusal `liveness_over_an_ra_parallel_refuses`
 /// asserts, which the decided behaviour retires.
 #[trace("TC-2025", "FR-228-AC-11", "FSpec-TC-1524", "FSpec-FR-437-AC-16")]
-#[ignore = "QSL-2218: liveness over an ra parallel is not implemented yet"]
 #[test]
 fn liveness_over_an_ra_parallel_is_decided_under_visibility_fairness() {
     let chatter = Chatter::new("", EVENTUALLY, &IS_ONE);

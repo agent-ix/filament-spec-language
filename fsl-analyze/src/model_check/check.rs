@@ -822,11 +822,10 @@ pub fn check_protocol(
 }
 
 /// FR-126 and FR-212 for a liveness clause over a protocol subject
-/// ([`super::liveness::check_protocol`]), over `ProtocolSystem<Sc>` or, when
-/// a `parallel` resolves to `tso`, `ProtocolSystem<Tso>` bounded by
-/// `max_store_buffer` with flush fairness in its fairness set (FR-228). A
-/// subject with an `ra` `parallel` is refused before any state is explored:
-/// the liveness engine does not read visibility fairness yet.
+/// ([`super::liveness::check_protocol`]), over `ProtocolSystem<Sc>`,
+/// `ProtocolSystem<Tso>` bounded by `max_store_buffer` with flush fairness,
+/// or `ProtocolSystem<Ra>` bounded by `max_messages` with visibility fairness
+/// in its fairness set (FR-228).
 fn check_protocol_liveness(
     request: ProtocolCheckRequest<'_>,
     cancel: &Cancel,
@@ -860,15 +859,33 @@ fn check_protocol_liveness(
         request.max_store_buffer,
         request.max_messages,
     );
-    if activates_on_each(protocol) && matches!(memory, SubjectMemory::Ra(_)) {
-        return Err(ModelCheckRefusal::WeakLiveness);
-    }
     let live_instances = live_instance_bound(request.max_live_instances);
     let instance_bound = activates_on_each(protocol).then_some(InstanceBound {
         value: live_instances,
     });
     let decided = match memory {
-        SubjectMemory::Ra(_) => return Err(ModelCheckRefusal::WeakLiveness),
+        SubjectMemory::Ra(ra) => {
+            let bound = MemoryBound {
+                member: MemoryBoundMember::MaxMessages,
+                value: ra.max_messages(),
+            };
+            ProtocolSystem::new(model, subject, ra).map(|system| {
+                super::liveness::check_protocol(
+                    subject,
+                    &system.with_max_live_instances(live_instances),
+                    Some(bound),
+                    request.item,
+                    request.temporal_clock_selections,
+                    request.max_depth,
+                    super::liveness::ProtocolLivenessOptions {
+                        limits: request.limits,
+                        ignore_memory_constraints: request.ignore_memory_constraints,
+                        instance_bound,
+                    },
+                    cancel,
+                )
+            })
+        }
         SubjectMemory::Tso(tso) => {
             let bound = MemoryBound {
                 member: MemoryBoundMember::MaxStoreBuffer,
