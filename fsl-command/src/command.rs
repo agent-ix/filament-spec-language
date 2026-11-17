@@ -200,7 +200,7 @@ pub struct CompileOutcome {
     document: fsl_replay::OutcomeDocument,
     handoff_compiled: Option<crate::emit_checked_v2::Compiled>,
     handoff_temporal_selections: Vec<crate::emit_checked_v2::ClockSelection>,
-    pub sources: crate::Sources,
+    sources: crate::Sources,
 }
 
 /// Caller-selected model/library files and stage ceilings for `check` (FR-866).
