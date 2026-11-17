@@ -1697,6 +1697,14 @@ fn check_message_one(first: &CheckRefusal) -> String {
                     "{message}: `{node}` is related by `{name}`, which is no relationship of the \
                      protocol"
                 ),
+                ProtocolAnchorCause::RelatedConnection {
+                    name,
+                    message: detail,
+                    ..
+                } => format!(
+                    "{message}: `{name}` names a Connection, which cannot be used in `related by`; \
+                     {detail}"
+                ),
                 ProtocolAnchorCause::RelatedEnd {
                     relationship, end, ..
                 } => format!(
