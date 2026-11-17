@@ -2,6 +2,7 @@
 //! FR-981 (TC-2774) and FSpec FR-783: `size<N>(c)` is typed `N` and its
 //! length interval must lie inside `N`'s domain.
 use filament_semantic_value::checking::{CheckMode, CheckingLimits};
+use filament_semantic_value::location::ExpressionOwner as Origin;
 use fsl_forms::build_unit;
 use fsl_foundation::{Code, SourceIdentity};
 use fsl_semantics::check::{
@@ -111,9 +112,9 @@ fn a_typed_size_is_typed_at_its_domain_and_proves_its_range() {
     );
 }
 
-/// FR-144-AC-10 and FR-981-AC-4: a typed size result domain does not infer an
+/// FSpec FR-144-AC-10 and FR-981-AC-4: a typed size result domain does not infer an
 /// element type for a sequence literal without an expected collection type.
-#[trace("TC-2774", "FR-144-AC-10", "FR-981-AC-4")]
+#[trace("TC-2774", "FSpec-FR-144-AC-10", "FR-981-AC-4")]
 #[test]
 fn typed_size_does_not_infer_a_sequence_literal_element_type() {
     let ambiguous = refusal(
@@ -123,5 +124,16 @@ fn typed_size_does_not_infer_a_sequence_literal_element_type() {
     assert_eq!(
         ambiguous.cause,
         CheckCause::IllTyped(filament_exact::IllTypedCause::AmbiguousLiteral)
+    );
+    assert!(
+        matches!(&ambiguous.location.origin, Origin::Body { function, index: 0, .. } if function == "f"),
+        "the refusal belongs to f's body: {:?}",
+        ambiguous.location
+    );
+    assert_eq!(
+        ambiguous.location.path(),
+        [0, 0],
+        "the refusal points to the sequence literal under size: {:?}",
+        ambiguous.location
     );
 }
