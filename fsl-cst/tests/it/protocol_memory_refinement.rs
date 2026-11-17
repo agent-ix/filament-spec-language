@@ -198,6 +198,31 @@ fn a_parallel_parses_its_memory_clause() {
     assert_eq!(texts(&text, &parsed, Production::Parallel).len(), 4);
 }
 
+/// `join all` needs at least one branch identifier.
+/// Provenance: QSL-2164.
+#[test]
+fn an_empty_join_list_is_refused_at_its_closing_bracket() {
+    let run = "sequence Main { parallel Plain { branch a sequence A { } branch b sequence B { } } join all []; }";
+    let text = protocol("on origin", "", run);
+    let parsed = parse(&text);
+    assert!(!parsed.is_admissible(), "{text}");
+    let diagnostic = &parsed.diagnostics()[0];
+    assert_eq!(diagnostic.code, CompleteCode::InvalidSyntax, "{text}");
+    assert_eq!(
+        diagnostic.cause,
+        fsl_cst::CompleteCause::UnexpectedToken,
+        "{text}"
+    );
+    assert_eq!(
+        diagnostic.byte_span().expect("located").start,
+        text.find("];").expect("the closing bracket"),
+        "{text}"
+    );
+
+    let run = "sequence Main { parallel Plain { branch a sequence A { } branch b sequence B { } } join all [a]; }";
+    assert!(parse_admitted(&protocol("on origin", "", run)).1.is_admissible());
+}
+
 /// Verifies the parse only and claims no criterion.
 /// A memory model other than `sc`, `tso` and `ra` is refused at
 /// the model word.
