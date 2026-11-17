@@ -78,6 +78,38 @@ enum Closure {
 struct Covered {
     identity: String,
     stamp: u64,
+    /// FR-993: present on a record-sample entry only, and never `null`.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "present"
+    )]
+    fingerprint: Option<String>,
+}
+
+/// A member that, when written, is a string.
+fn present<'de, D: serde::Deserializer<'de>>(deserializer: D) -> Result<Option<String>, D::Error> {
+    String::deserialize(deserializer).map(Some)
+}
+
+/// Whether `identity`, a covered entry's ledger identity, names a record
+/// sample: its authority is FR-641's `record-sample`.
+fn names_a_sample(identity: &str) -> bool {
+    let authority = super::temporal::SAMPLE_AUTHORITY;
+    identity
+        .strip_prefix(&format!("{}:", authority.len()))
+        .is_some_and(|rest| rest.starts_with(authority))
+}
+
+/// Whether `fingerprint` is FR-993's form: `sha256:` and 64 lowercase
+/// hexadecimal digits.
+fn is_fingerprint(fingerprint: &str) -> bool {
+    fingerprint.strip_prefix("sha256:").is_some_and(|digits| {
+        digits.len() == 64
+            && digits
+                .bytes()
+                .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+    })
 }
 
 impl From<Closure> for ProgressClosure {
@@ -131,6 +163,7 @@ pub fn write_ledger(ledger: &ProgressLedger) -> Result<serde_json::Value, Ledger
                     .map(|position| Covered {
                         identity: position.identity,
                         stamp: position.stamp,
+                        fingerprint: position.fingerprint,
                     })
                     .collect(),
             })
@@ -178,15 +211,46 @@ pub fn read_ledger(bytes: &[u8]) -> Result<ProgressLedger, LedgerReadError> {
                 ));
             }
         }
-        let covered = entry
-            .covered
-            .into_iter()
-            .map(|position| ObservedPosition {
+        let mut covered = Vec::with_capacity(entry.covered.len());
+        for (at, position) in entry.covered.into_iter().enumerate() {
+            // FR-641, FR-993: a record-sample entry carries its fingerprint,
+            // and no other entry does.
+            let sample = names_a_sample(&position.identity);
+            match (&position.fingerprint, sample) {
+                (Some(fingerprint), true) if is_fingerprint(fingerprint) => {}
+                (None, false) => {}
+                (Some(_), true) => {
+                    return Err(invalid(
+                        member(&format!("covered[{at}].fingerprint")),
+                        "is `sha256:` and 64 lowercase hexadecimal digits",
+                    ))
+                }
+                (None, true) => {
+                    return Err(invalid(
+                        member(&format!("covered[{at}]")),
+                        "a record-sample entry carries its fingerprint",
+                    ))
+                }
+                (Some(_), false) => {
+                    return Err(invalid(
+                        member(&format!("covered[{at}].fingerprint")),
+                        "only a record-sample entry carries a fingerprint",
+                    ))
+                }
+            }
+            covered.push(ObservedPosition {
                 identity: position.identity,
                 stamp: position.stamp,
-            })
-            .collect::<Vec<_>>();
-        if covered.windows(2).any(|pair| pair[0] >= pair[1]) {
+                fingerprint: position.fingerprint,
+            });
+        }
+        fn key(position: &ObservedPosition) -> (&str, u64) {
+            (position.identity.as_str(), position.stamp)
+        }
+        if covered
+            .windows(2)
+            .any(|pair| key(&pair[0]) >= key(&pair[1]))
+        {
             return Err(invalid(
                 member("covered"),
                 "positions are in identity-then-stamp order with none repeated",

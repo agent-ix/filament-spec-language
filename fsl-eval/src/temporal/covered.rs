@@ -12,7 +12,11 @@
 //! order the ledger's wire form writes, and two sets are equal when they
 //! hold the same positions.
 //!
-//! The set is a treap whose priorities are a hash of each position, so its
+//! A position is keyed by its identity and stamp only: a record sample's
+//! content fingerprint (FR-993) is integrity data the set holds beside its
+//! key, never part of membership or order.
+//!
+//! The set is a treap whose priorities are a hash of each position's key, so its
 //! shape depends only on the positions it holds and not on the order they
 //! arrived in.
 
@@ -38,9 +42,14 @@ pub struct CoveredList {
     len: usize,
 }
 
+/// The key the set orders and finds a position by.
+fn key(position: &ObservedPosition) -> (&str, u64) {
+    (position.identity.as_str(), position.stamp)
+}
+
 fn priority_of(position: &ObservedPosition) -> u64 {
     let mut hasher = DefaultHasher::new();
-    position.hash(&mut hasher);
+    key(position).hash(&mut hasher);
     hasher.finish()
 }
 
@@ -53,13 +62,14 @@ fn node(position: ObservedPosition, priority: u64, left: Link, right: Link) -> A
     })
 }
 
-/// The positions of `link` below `key` and above it; `key` is not held.
-fn split(link: Option<&Arc<Node>>, key: &ObservedPosition) -> (Link, Link) {
+/// The positions of `link` keyed below `at` and above it; `at`'s key is not
+/// held.
+fn split(link: Option<&Arc<Node>>, at: &ObservedPosition) -> (Link, Link) {
     let Some(held) = link else {
         return (None, None);
     };
-    if held.position < *key {
-        let (below, above) = split(held.right.as_ref(), key);
+    if key(&held.position) < key(at) {
+        let (below, above) = split(held.right.as_ref(), at);
         let kept = node(
             held.position.clone(),
             held.priority,
@@ -68,7 +78,7 @@ fn split(link: Option<&Arc<Node>>, key: &ObservedPosition) -> (Link, Link) {
         );
         (Some(kept), above)
     } else {
-        let (below, above) = split(held.left.as_ref(), key);
+        let (below, above) = split(held.left.as_ref(), at);
         let kept = node(
             held.position.clone(),
             held.priority,
@@ -88,7 +98,7 @@ fn insert(link: Option<&Arc<Node>>, position: ObservedPosition, priority: u64) -
             let (left, right) = split(Some(held), &position);
             node(position, priority, left, right)
         }
-        Some(held) if position < held.position => node(
+        Some(held) if key(&position) < key(&held.position) => node(
             held.position.clone(),
             held.priority,
             Some(insert(held.left.as_ref(), position, priority)),
@@ -119,20 +129,26 @@ impl CoveredList {
         self.len == 0
     }
 
-    /// Whether the set holds `position`.
+    /// Whether the set holds a position keyed as `position` is.
     pub fn contains(&self, position: &ObservedPosition) -> bool {
-        let mut link = self.root.as_ref();
-        while let Some(held) = link {
-            link = match position.cmp(&held.position) {
-                std::cmp::Ordering::Less => held.left.as_ref(),
-                std::cmp::Ordering::Greater => held.right.as_ref(),
-                std::cmp::Ordering::Equal => return true,
-            };
-        }
-        false
+        self.get(position).is_some()
     }
 
-    /// Add `position`; returns whether it was not held already. Every other
+    /// The held position keyed as `position` is (its identity and stamp),
+    /// with the fingerprint it was covered with.
+    pub fn get(&self, position: &ObservedPosition) -> Option<&ObservedPosition> {
+        let mut link = self.root.as_ref();
+        while let Some(held) = link {
+            link = match key(position).cmp(&key(&held.position)) {
+                std::cmp::Ordering::Less => held.left.as_ref(),
+                std::cmp::Ordering::Greater => held.right.as_ref(),
+                std::cmp::Ordering::Equal => return Some(&held.position),
+            };
+        }
+        None
+    }
+
+    /// Add `position`; returns whether its key was not held already. Every other
     /// view of the set is unchanged.
     pub fn insert(&mut self, position: ObservedPosition) -> bool {
         if self.contains(&position) {
@@ -238,6 +254,7 @@ mod tests {
         ObservedPosition {
             identity: identity.to_owned(),
             stamp,
+            fingerprint: None,
         }
     }
 

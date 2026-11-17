@@ -1415,8 +1415,7 @@ impl<L: TemporalLetters> Run<'_, L> {
             self.clause.profile().identity(),
             &self.trace.clock,
             &blocks,
-            &progress,
-            &self.trace.lateness,
+            (&progress, &self.trace.lateness),
             self.meter.limits(),
         )?;
         Ok(WindowEvaluation {
@@ -1483,6 +1482,7 @@ impl<L: TemporalLetters> Run<'_, L> {
     /// (FR-820).
     pub(super) fn settled(&self, anchor: usize, ahead: i128) -> Result<bool, InternalFault> {
         let need = self.stamp(anchor)?.saturating_add(ahead);
-        Ok(covers(self.trace.progress.completeness, need) && self.watermark >= self.trace.settling(need))
+        Ok(covers(self.trace.progress.completeness, need)
+            && self.watermark >= self.trace.settling(need))
     }
 }

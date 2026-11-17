@@ -533,6 +533,7 @@ impl<'a> MonitorSession<'a> {
                 observation: self.limits.observation,
                 accounting: self.limits.accounting,
                 max_window_values: self.limits.max_window_values,
+                covered_positions: fsl_eval::temporal::DEFAULT_COVERED_POSITIONS,
             },
         }
     }

@@ -47,6 +47,10 @@ pub struct ObservedPosition {
     /// The position's stamp: its tick, or its coordinate under event-position
     /// and fixed-sample.
     pub stamp: u64,
+    /// FR-993: a record sample's content fingerprint (`sha256:` and 64
+    /// lowercase hex digits over its canonical value bytes); `None` for
+    /// every other position. Integrity data, not part of the identity.
+    pub fingerprint: Option<String>,
 }
 
 /// The progress a trace asserts.
@@ -215,7 +219,7 @@ impl ProgressLedger {
 
 /// Why admitting a request's progress returned no ledger.
 pub(super) enum Refusal {
-    Contradiction(ProgressContradiction),
+    Contradiction(Box<ProgressContradiction>),
     LimitReached(ProgressLimitReached),
 }
 
@@ -300,7 +304,7 @@ impl From<eval::LedgerRefusal> for Refusal {
     fn from(refusal: eval::LedgerRefusal) -> Self {
         match refusal {
             eval::LedgerRefusal::Contradiction(contradiction) => {
-                Self::Contradiction(contradiction.into())
+                Self::Contradiction(Box::new(contradiction.into()))
             }
             eval::LedgerRefusal::LimitReached(reached) => Self::LimitReached(reached.into()),
         }
@@ -343,7 +347,7 @@ impl From<eval::ProgressValue> for ProgressValue {
             eval::ProgressValue::SurroundingExecution(closure) => {
                 Self::SurroundingExecution(closure.into())
             }
-            eval::ProgressValue::Position(position) => Self::Position(position.into()),
+            eval::ProgressValue::Position(position) => Self::Position((*position).into()),
         }
     }
 }
@@ -389,6 +393,7 @@ impl From<eval::ObservedPosition> for ObservedPosition {
         Self {
             identity: position.identity,
             stamp: position.stamp,
+            fingerprint: position.fingerprint,
         }
     }
 }
@@ -398,6 +403,7 @@ impl From<ObservedPosition> for eval::ObservedPosition {
         Self {
             identity: position.identity,
             stamp: position.stamp,
+            fingerprint: position.fingerprint,
         }
     }
 }

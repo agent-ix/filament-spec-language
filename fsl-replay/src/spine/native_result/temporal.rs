@@ -922,6 +922,7 @@ impl ProgressValueRead {
             Self::Position { identity, stamp } => ProgressValue::Position(ObservedPosition {
                 identity: identity.clone(),
                 stamp: *stamp,
+                fingerprint: None,
             }),
         }
     }

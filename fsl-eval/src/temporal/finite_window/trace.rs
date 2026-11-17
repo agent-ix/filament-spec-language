@@ -262,7 +262,13 @@ impl TimestampedTrace {
         // FR-820's carried trace keeps, so the trace is the one it grows.
         if positions.iter().all(|(_, interval)| interval.is_none()) {
             let mut trace = Self::open(clause_identity, clock, progress);
-            trace.extend(positions.into_iter().map(|(position, _)| position).collect(), progress);
+            trace.extend(
+                positions
+                    .into_iter()
+                    .map(|(position, _)| position)
+                    .collect(),
+                progress,
+            );
             return Ok(trace);
         }
         let extent = |(position, interval): &(TimestampedObservation, Option<StampInterval>)| {

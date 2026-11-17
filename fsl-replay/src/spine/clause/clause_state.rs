@@ -94,6 +94,9 @@ pub struct ClauseLimits {
     pub accounting: filament_exact::ScalarLimits,
     /// FR-194's window limit.
     pub max_window_values: u64,
+    /// FR-255 `progress.covered_positions`: the most positions the ledger
+    /// covers, each record sample's content fingerprint with it (FR-993).
+    pub covered_positions: u64,
 }
 
 /// FR-820's opening request: the members FR-641 gives the trace kind, as the
@@ -671,7 +674,13 @@ impl<'a> ClauseState<'a> {
             AdmittedValue::Sample(_) => None,
         };
         let document = position.reference.clone();
-        let reference = self.cite(index, position.reference);
+        let reference = match self.cite(index, position.reference) {
+            Ok(reference) => reference,
+            Err(refusal) => {
+                self.restore(mark);
+                return Err(refusal);
+            }
+        };
         self.seen.push(Seen {
             reference,
             stamp: position.stamp,
@@ -724,20 +733,26 @@ impl<'a> ClauseState<'a> {
     /// The identity the state keeps for the position `index` the caller names
     /// `reference`: its index, keeping the sample's text while it is held, for
     /// an indexed state.
-    fn cite(&mut self, index: u64, reference: DocumentRef) -> DocumentRef {
+    fn cite(&mut self, index: u64, reference: DocumentRef) -> Result<DocumentRef, ClauseRefusal> {
         if !self.indexed() || reference.authority != super::temporal::SAMPLE_AUTHORITY {
-            return reference;
+            return Ok(reference);
         }
-        // FR-502: the ledger reads the sample by its content identity.
-        let cited = super::temporal::sample_index(
-            index,
-            &super::temporal::sample_content(&reference.identity),
-        );
+        // FR-993: a progress-carrying trace's ledger entry carries the
+        // sample's content fingerprint beside its index.
+        let fingerprint = if self.open.kind.carries_progress() {
+            Some(
+                super::temporal::sample_fingerprint(&reference.identity)
+                    .map_err(ClauseRefusal::Fault)?,
+            )
+        } else {
+            None
+        };
+        let cited = super::temporal::sample_index(index, fingerprint.as_deref());
         // A refused run reads no sample, so its text is never needed.
         if self.reading != Reading::Refused {
             self.texts.insert(index, reference.identity);
         }
-        cited
+        Ok(cited)
     }
 
     /// FR-820: advance a streamed reading by `position`. The sample is read
@@ -784,11 +799,9 @@ impl<'a> ClauseState<'a> {
             }
             self.tape.push(entry);
         }
+        // A streamed reading reads a `Finite` trace, which carries no ledger.
         let reference = if self.indexed() {
-            super::temporal::sample_index(
-                index,
-                &super::temporal::sample_content(&position.reference.identity),
-            )
+            super::temporal::sample_index(index, None)
         } else {
             position.reference
         };
@@ -1231,6 +1244,7 @@ impl<'a> ClauseState<'a> {
                         snapshot: Some(snapshot),
                         admission: Some(admission),
                     }),
+                    self.open.limits.covered_positions,
                 )
             });
         }
@@ -1260,7 +1274,7 @@ impl<'a> ClauseState<'a> {
                 })
             }
         };
-        run_package_temporal_over(&request, tape)
+        run_package_temporal_over(&request, tape, self.open.limits.covered_positions)
     }
 
     /// Evaluate the clause over every position seen under `assertion`, and
@@ -1277,7 +1291,7 @@ impl<'a> ClauseState<'a> {
                 decided: None,
             });
         }
-        self.order_covered(meter);
+        self.order_covered(meter)?;
         let seen = self.seen.len();
         let report = match self.reading {
             Reading::Subject => self.subject_stream_report(meter),
@@ -1323,18 +1337,18 @@ impl<'a> ClauseState<'a> {
     /// order on the tape and in the positions seen, so the carried evaluation
     /// reads them at the positions the batch run gives them. Every earlier
     /// position is stamped below them (FR-643 "Order").
-    fn order_covered(&mut self, meter: &mut Meter) {
+    fn order_covered(&mut self, meter: &mut Meter) -> Result<(), ClauseRefusal> {
         if self.open.kind != ClauseTraceKind::Timestamped
             || !matches!(self.reading, Reading::Observed | Reading::Snapshot)
         {
-            return;
+            return Ok(());
         }
         let from = self
             .evaluated
             .map_or(0, |(seen, _)| seen)
             .min(self.seen.len());
         let Some(tail) = self.seen.get(from..) else {
-            return;
+            return Ok(());
         };
         let mut tail = tail.to_vec();
         let mut order: Vec<usize> = (0..tail.len()).collect();
@@ -1355,10 +1369,12 @@ impl<'a> ClauseState<'a> {
                 };
                 if position.reference.authority == super::temporal::SAMPLE_AUTHORITY {
                     let place = first.saturating_add(u64::try_from(at).unwrap_or(u64::MAX));
-                    let cited = super::temporal::sample_index(
-                        place,
-                        &super::temporal::sample_content(&position.reference.identity),
-                    );
+                    // FR-993: a `Timestamped` trace carries progress, so its
+                    // ledger entry carries the fingerprint.
+                    let fingerprint =
+                        super::temporal::sample_fingerprint(&position.reference.identity)
+                            .map_err(ClauseRefusal::Fault)?;
+                    let cited = super::temporal::sample_index(place, Some(&fingerprint));
                     let named = std::mem::replace(&mut position.reference, cited);
                     if let Some(text) = texts.get_mut(*index) {
                         *text = Some(named.identity);
@@ -1419,6 +1435,7 @@ impl<'a> ClauseState<'a> {
         if self.reading == Reading::Snapshot {
             self.read_pending(first, meter);
         }
+        Ok(())
     }
 
     /// The definite verdict of the clause's profile over the positions seen.
@@ -1579,9 +1596,17 @@ impl<'a> ClauseState<'a> {
                         .and_then(|index| self.objects.bytes.get(&index)),
                     _ => self.snapshots.get(&position.reference),
                 };
+                // FR-993: a sample's identity is its index; its content
+                // fingerprint is a member of its own, never part of the identity.
+                let (identity, fingerprint) =
+                    match super::temporal::indexed_sample(&position.reference) {
+                        Some((index, fingerprint)) => (index.to_string(), fingerprint),
+                        None => (position.reference.identity.clone(), None),
+                    };
                 json!({
                     "authority": position.reference.authority,
-                    "identity": position.reference.identity,
+                    "identity": identity,
+                    "fingerprint": fingerprint,
                     "stamp": position.stamp,
                     "order_key": position.order_key.as_ref().map(|key|
                         json!({"authority": key.authority, "key": key.key})),
@@ -1694,10 +1719,22 @@ impl<'a> ClauseState<'a> {
         for position in positions {
             let seen = u64::try_from(state.seen.len()).map_err(|_| mismatch())?;
             let text = |member: &str| position[member].as_str().map(str::to_owned);
-            let reference = DocumentRef {
+            let mut reference = DocumentRef {
                 authority: text("authority").ok_or_else(mismatch)?,
                 identity: text("identity").ok_or_else(mismatch)?,
             };
+            // FR-993: a sample cited by its index takes back its fingerprint.
+            match &position["fingerprint"] {
+                Json::Null => {}
+                Json::String(fingerprint) => {
+                    let index = super::temporal::indexed_sample(&reference)
+                        .filter(|(_, held)| held.is_none())
+                        .map(|(index, _)| index)
+                        .ok_or_else(mismatch)?;
+                    reference = super::temporal::sample_index(index, Some(fingerprint));
+                }
+                _ => return Err(mismatch()),
+            }
             let order_key = match &position["order_key"] {
                 Json::Null => None,
                 key => Some(TimestampedOrderKey {

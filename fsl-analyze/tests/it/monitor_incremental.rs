@@ -1518,6 +1518,7 @@ fn clause_open<'a>(
             observation: ObservationLimits::default(),
             accounting: UNLIMITED,
             max_window_values: fsl_eval::temporal::DEFAULT_MAX_WINDOW_VALUES,
+            covered_positions: fsl_eval::temporal::DEFAULT_COVERED_POSITIONS,
         },
     }
 }
@@ -1988,22 +1989,16 @@ fn a_long_stream_keeps_only_the_values_its_clauses_read() {
         let carried: serde_json::Value = serde_json::from_str(text).expect("a clause state");
         assert_eq!(carried["values"], serde_json::json!([]));
         assert_eq!(carried["texts"], serde_json::json!([]), "no sample is held");
-        // A position identity names the sample's index and its content
-        // identity (FR-502), never its value.
+        // A position identity names the sample's index, never its value; a
+        // `Finite` trace carries no ledger, so no fingerprint (FR-993).
         for (index, position) in carried["positions"]
             .as_array()
             .expect("positions")
             .iter()
             .enumerate()
         {
-            assert_eq!(
-                position["identity"]
-                    .as_str()
-                    .and_then(|identity| identity.split_once("#sha256:"))
-                    .map(|(cited, digest)| (cited, digest.len())),
-                Some((index.to_string().as_str(), 64)),
-                "{position}"
-            );
+            assert_eq!(position["identity"], index.to_string(), "{position}");
+            assert!(position["fingerprint"].is_null(), "{position}");
             assert!(position["document"].is_null(), "{position}");
         }
         assert!(carried["stop"].is_null(), "no position stopped its reading");
@@ -2601,14 +2596,27 @@ fn contradicted(report: &ClauseRunReport) -> Option<String> {
     }
 }
 
-/// Whether every covered position of `ledger` is named by a content
-/// identity, holding no sample text.
+/// Whether every covered position of `ledger` is named by its index alone
+/// and carries a content fingerprint (FR-993), holding no sample text.
 fn content_named(ledger: &spine::ProgressLedger) -> bool {
     ledger
         .entries()
         .flat_map(|(_, entry)| entry.covered())
         .all(|position| {
-            position.identity.contains("sha256:") && !position.identity.contains("integer")
+            let index = position
+                .identity
+                .strip_prefix("13:record-sample")
+                .and_then(|rest| rest.split_once(':'))
+                .is_some_and(|(_, index)| index.parse::<u64>().is_ok());
+            let fingerprint = position.fingerprint.as_deref().is_some_and(|fingerprint| {
+                fingerprint.strip_prefix("sha256:").is_some_and(|digits| {
+                    digits.len() == 64
+                        && digits
+                            .bytes()
+                            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+                })
+            });
+            index && fingerprint && !format!("{position:?}").contains("level")
         })
 }
 
@@ -2730,6 +2738,7 @@ fn each_snapshot_advance_reports_the_batch_report_over_the_prefix() {
             observation: ObservationLimits::default(),
             accounting: UNLIMITED,
             max_window_values: fsl_eval::temporal::DEFAULT_MAX_WINDOW_VALUES,
+            covered_positions: fsl_eval::temporal::DEFAULT_COVERED_POSITIONS,
         },
     };
     let node = |name: &str| {
@@ -2892,6 +2901,7 @@ fn a_progressed_snapshot_state_reports_the_batch_report() {
             observation: ObservationLimits::default(),
             accounting: UNLIMITED,
             max_window_values: fsl_eval::temporal::DEFAULT_MAX_WINDOW_VALUES,
+            covered_positions: fsl_eval::temporal::DEFAULT_COVERED_POSITIONS,
         },
     };
     let cancel = Cancel::new();
@@ -2991,13 +3001,20 @@ fn every_reading_cites_its_samples_by_index() {
             .iter()
             .enumerate()
         {
-            // FR-502: the index, then the sample's content identity.
-            let identity = position["identity"].as_str().unwrap_or_default();
+            // FR-993: the index alone; a progress-carrying trace's sample
+            // also carries its content fingerprint, as a member of its own.
             assert_eq!(
-                identity
-                    .split_once("#sha256:")
-                    .map(|(cited, digest)| (cited, digest.len())),
-                Some((index.to_string().as_str(), 64)),
+                position["identity"],
+                index.to_string(),
+                "{name} at {at}: {position}"
+            );
+            let fingerprint = &position["fingerprint"];
+            assert!(
+                fingerprint.is_null()
+                    || fingerprint
+                        .as_str()
+                        .and_then(|text| text.strip_prefix("sha256:"))
+                        .is_some_and(|digits| digits.len() == 64),
                 "{name} at {at}: {position}"
             );
         }
@@ -3210,7 +3227,6 @@ fn a_finite_observed_state_does_flat_work_per_step() {
 /// `from_bytes`) is covered by the `ClauseState` unit tests.
 #[test]
 #[trace("TC-2810", "FR-993-AC-1", "FR-993-AC-2")]
-#[ignore = "QSL-2307: record samples covered by index with a content fingerprint in the ledger not implemented yet"]
 fn a_re_delivered_changed_sample_is_refused_in_batch_and_carried_evaluation() {
     let world = world();
     let run = |levels: &[i64], through: u64, ledger: Option<&spine::ProgressLedger>| {
@@ -3239,8 +3255,16 @@ fn a_re_delivered_changed_sample_is_refused_in_batch_and_carried_evaluation() {
             cancel: &Cancel::new(),
         })
     };
+    // The covered entries: the binding names the clause's declared types,
+    // `integer` among them, which is no sample value.
     let valueless = |ledger: &spine::ProgressLedger| {
-        let spelled = format!("{ledger:?}");
+        let spelled = format!(
+            "{:?}",
+            ledger
+                .entries()
+                .flat_map(|(_, entry)| entry.covered())
+                .collect::<Vec<_>>()
+        );
         assert!(!spelled.contains("integer"), "a sample value: {spelled}");
         assert!(!spelled.contains("level"), "a sample text: {spelled}");
     };
@@ -3254,4 +3278,236 @@ fn a_re_delivered_changed_sample_is_refused_in_batch_and_carried_evaluation() {
     let accepted = format!("{:?}", same.disposition);
     assert!(!accepted.contains("Completeness"), "{accepted}");
     valueless(&same.ledger.expect("the updated ledger"));
+}
+
+/// A `Progressed` `Past` state opened on `ledger` under a covered-position
+/// bound of `covered_positions`.
+fn progressed_state<'a>(
+    world: &'a World,
+    ledger: Option<spine::ProgressLedger>,
+    covered_positions: u64,
+) -> ClauseState<'a> {
+    let mut open = clause_open(
+        world,
+        ClauseTraceKind::Progressed,
+        Some(events_binding()),
+        ProgressLowerBoundary::AuthoritativeOrigin,
+    );
+    open.ledger = ledger;
+    open.limits.covered_positions = covered_positions;
+    ClauseState::open(world.unit.package(), clause_node(world, "Past"), &open).expect("opens")
+}
+
+/// A `Progressed` trace of record samples at `levels` under
+/// `Complete { through }`.
+fn progressed_levels(levels: &[i64], through: u64) -> TraceInput {
+    TraceInput::Progressed {
+        trace: levels
+            .iter()
+            .map(|level| spine::sample_position(&text(*level)))
+            .collect(),
+        progress: progress(through),
+        lower_boundary: ProgressLowerBoundary::AuthoritativeOrigin,
+        binding: events_binding(),
+    }
+}
+
+/// Advance `state` over `levels` from position `from` on, then assert
+/// `Complete { through }`.
+fn deliver(
+    world: &World,
+    state: &mut ClauseState<'_>,
+    levels: &[i64],
+    from: usize,
+    through: u64,
+) -> Result<spine::Advance, spine::ClauseRefusal> {
+    let cancel = Cancel::new();
+    for (index, level) in levels.iter().enumerate().skip(from) {
+        state.advance(
+            admitted(world, "Past", &text(*level), index as u64),
+            &cancel,
+        )?;
+    }
+    state.assert_progress(&progress(through), &cancel)
+}
+
+/// `state` itself, or read back by `from_bytes` from its bytes under the
+/// same opening request when `restored`.
+fn reopen<'a>(
+    world: &'a World,
+    held: &spine::ProgressLedger,
+    state: ClauseState<'a>,
+    restored: bool,
+) -> ClauseState<'a> {
+    if !restored {
+        return state;
+    }
+    let bytes = state.to_bytes().expect("bytes");
+    let mut open = clause_open(
+        world,
+        ClauseTraceKind::Progressed,
+        Some(events_binding()),
+        ProgressLowerBoundary::AuthoritativeOrigin,
+    );
+    open.ledger = Some(held.clone());
+    ClauseState::from_bytes(
+        world.unit.package(),
+        clause_node(world, "Past"),
+        &open,
+        &bytes,
+        &Cancel::new(),
+    )
+    .expect("reads back")
+}
+
+/// FR-993-AC-1 (carried half), FR-820 "Content fingerprints", FR-502-AC-10
+/// (TC-2810): a `ClauseState` opened on the ledger a batch run over levels
+/// 1, 2 returned refuses levels 1, 5, 3 `Completeness`, unchanged, and
+/// accepts levels 1, 2, 3 with the ledger the batch run returns, before and
+/// after a `from_bytes` restore taken after the first position. No ledger
+/// spells a sample's value.
+#[test]
+#[trace("TC-2810", "FR-993-AC-1", "FR-993-AC-2", "FR-820-AC-1", "FR-502-AC-10")]
+fn a_carried_state_refuses_a_changed_sample_at_a_covered_index_before_and_after_restore() {
+    let world = world();
+    let cancel = Cancel::new();
+    let held = batch_from(&world, "Past", &progressed_levels(&[1, 2], 1), None)
+        .ledger
+        .expect("the retained ledger");
+    assert!(content_named(&held), "{held:?}");
+    let accepted = batch_from(
+        &world,
+        "Past",
+        &progressed_levels(&[1, 2, 3], 2),
+        Some(&held),
+    );
+    let accepted_ledger = accepted.ledger.clone().expect("the updated ledger");
+    assert!(content_named(&accepted_ledger), "{accepted_ledger:?}");
+
+    for restored in [false, true] {
+        // A changed sample at the covered index 1.
+        let mut state = progressed_state(
+            &world,
+            Some(held.clone()),
+            fsl_eval::temporal::DEFAULT_COVERED_POSITIONS,
+        );
+        state
+            .advance(admitted(&world, "Past", &text(1), 0), &cancel)
+            .expect("advances");
+        let mut state = reopen(&world, &held, state, restored);
+        for (index, level) in [(1, 5), (2, 3)] {
+            state
+                .advance(admitted(&world, "Past", &text(level), index), &cancel)
+                .expect("advances");
+        }
+        let before = state.to_bytes().expect("bytes");
+        let refused = state.assert_progress(&progress(2), &cancel);
+        let Err(spine::ClauseRefusal::Contradiction(contradiction)) = refused else {
+            panic!("restored {restored}: a contradiction, got {refused:?}");
+        };
+        assert_eq!(
+            contradiction.contradiction.dimension,
+            ContradictedDimension::Completeness,
+            "restored {restored}"
+        );
+        assert_eq!(
+            state.to_bytes().expect("bytes"),
+            before,
+            "restored {restored}: the refused call leaves the state unchanged"
+        );
+
+        // The same samples are accepted with the batch run's ledger.
+        let mut state = progressed_state(
+            &world,
+            Some(held.clone()),
+            fsl_eval::temporal::DEFAULT_COVERED_POSITIONS,
+        );
+        state
+            .advance(admitted(&world, "Past", &text(1), 0), &cancel)
+            .expect("advances");
+        let mut state = reopen(&world, &held, state, restored);
+        let advance = deliver(&world, &mut state, &[1, 2, 3], 1, 2).expect("accepted");
+        assert_eq!(
+            members(&advance.report),
+            members(&accepted),
+            "restored {restored}"
+        );
+        assert_eq!(advance.report.ledger.as_ref(), Some(&accepted_ledger));
+        let bytes = String::from_utf8(state.to_bytes().expect("bytes")).expect("UTF-8");
+        assert_eq!(spelled_samples(&bytes), 0, "restored {restored}: {bytes}");
+        let spelled = format!("{:?}", advance.report);
+        assert_eq!(
+            spelled_samples(&spelled),
+            0,
+            "restored {restored}: {spelled}"
+        );
+    }
+}
+
+/// FR-993-AC-3 (TC-2810): with `progress.covered_positions` 2, covering a
+/// third record-sample position returns `ProgressLimitReached` naming the
+/// setting and leaves the ledger as it was, two fingerprints held, in batch
+/// and carried evaluation alike.
+#[test]
+#[trace("TC-2810", "FR-993-AC-3")]
+fn the_covered_positions_bound_counts_each_fingerprinted_sample() {
+    let world = world();
+    let held = batch_from(&world, "Past", &progressed_levels(&[1, 2], 1), None)
+        .ledger
+        .expect("the retained ledger");
+    let fingerprints = |ledger: &spine::ProgressLedger| {
+        ledger
+            .entries()
+            .flat_map(|(_, entry)| entry.covered())
+            .filter(|position| position.fingerprint.is_some())
+            .count()
+    };
+    assert_eq!(fingerprints(&held), 2);
+    let limited = |report: &ClauseRunReport| match &report.disposition {
+        spine::ClauseDisposition::Temporal(spine::TemporalVerdict::ProgressLimitReached(
+            reached,
+        )) => Some((reached.value, reached.setting)),
+        _ => None,
+    };
+
+    let batch = spine::run_package_temporal_bounded(
+        &PackageTemporalRequest {
+            package: world.unit.package(),
+            packages: &world.packages,
+            model_limits: ModelNormalizationLimits::default(),
+            snapshots: &DocumentProvision::new(),
+            observation_limits: ObservationLimits::default(),
+            accounting: UNLIMITED,
+            name: "Past",
+            trace: &progressed_levels(&[1, 2, 3], 2),
+            over: None,
+            ledger: Some(&held),
+            sources: &world.sources,
+            authentication: None,
+            cancel: &Cancel::new(),
+        },
+        2,
+    );
+    assert_eq!(
+        limited(&batch),
+        Some((2, "progress.covered_positions")),
+        "{:?}",
+        batch.disposition
+    );
+
+    let mut state = progressed_state(&world, Some(held.clone()), 2);
+    let carried = deliver(&world, &mut state, &[1, 2, 3], 0, 2).expect("reports");
+    assert_eq!(
+        limited(&carried.report),
+        Some((2, "progress.covered_positions")),
+        "{:?}",
+        carried.report.disposition
+    );
+    for report in [&batch, &*carried.report] {
+        if let Some(ledger) = &report.ledger {
+            assert_eq!(ledger, &held, "the ledger is unchanged");
+            assert_eq!(fingerprints(ledger), 2);
+        }
+    }
+    assert_eq!(members(&carried.report), members(&batch));
 }

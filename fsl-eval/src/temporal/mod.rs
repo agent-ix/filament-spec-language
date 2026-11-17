@@ -63,7 +63,8 @@ pub use finite_window::{
     Assessment, Basis, ClockCover, Containment, IndeterminateReason, LateCutoff, LateObservation,
     Lateness, LowerBoundary, OrderKey, Premises, ProgressedRefusal, ResultIdentity, SampleProgress,
     StampInterval, SupportPair, TimestampedObservation, TimestampedTrace, Valuation, Watermark,
-    WindowCharge, WindowClock, WindowEvaluation, WindowProgress, WindowState, WindowUnit, WindowVerdict,
+    WindowCharge, WindowClock, WindowEvaluation, WindowProgress, WindowState, WindowUnit,
+    WindowVerdict,
 };
 pub use input::TemporalTrace;
 pub use ledger::{

@@ -86,7 +86,7 @@ impl<'a> ClauseState<'a> {
             package: self.package,
             package_name: self.package.emitted_package_name().unwrap_or_default(),
             sources: self.open.sources,
-            progress_capacity: fsl_eval::temporal::DEFAULT_COVERED_POSITIONS,
+            progress_capacity: self.open.limits.covered_positions,
         }
     }
 

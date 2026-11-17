@@ -174,15 +174,20 @@ impl TraceInput {
     /// progress-carrying trace.
     fn position_at(&self, index: usize) -> Option<ObservedPosition> {
         match self {
-            Self::Progressed { trace, .. } => Some(ObservedPosition {
-                identity: document_identity(trace.get(index)?),
-                stamp: u64::try_from(index).ok()?,
-            }),
+            Self::Progressed { trace, .. } => {
+                let document = trace.get(index)?;
+                Some(ObservedPosition {
+                    identity: document_identity(document),
+                    stamp: u64::try_from(index).ok()?,
+                    fingerprint: document_fingerprint(document),
+                })
+            }
             Self::Timestamped { observations, .. } => {
                 let observation = observations.get(index)?;
                 Some(ObservedPosition {
                     identity: document_identity(&observation.document),
                     stamp: observation.stamp,
+                    fingerprint: document_fingerprint(&observation.document),
                 })
             }
             Self::Finite(_) | Self::Lasso { .. } | Self::Model { .. } => None,
@@ -269,92 +274,103 @@ pub fn sample_position(canonical: &str) -> DocumentRef {
     }
 }
 
-/// FR-502 "Behavior", FR-643 Decision: the content identity of the record
-/// sample whose canonical JSON text is `text`: the `sha256:` digest of its
-/// canonical bytes, encoded through `quire-canonical` (ADR-013). The ledger
-/// and the covered set read a sample by it, so a different sample at a
-/// covered position is a different position, and no sample text is kept.
-pub(crate) fn sample_content(text: &str) -> String {
-    let digest = match quire_canonical::read(text.as_bytes(), u64::MAX) {
-        Ok(document) => quire_canonical::sha256(&document, quire_canonical::Limits::new(u64::MAX)),
-        Err(_) => {
-            quire_canonical::sha256(&SampleText(text), quire_canonical::Limits::new(u64::MAX))
-        }
+/// FR-993: the content fingerprint of the record sample whose canonical JSON
+/// text is `text`: `sha256:` and the 64 lowercase hexadecimal digits of the
+/// SHA-256 digest of its canonical value bytes, encoded by ADR-013's one
+/// RFC 8785 encoder (`quire-canonical`). It is integrity data beside the
+/// sample's index identity, never an identity (ADR-013 §2).
+///
+/// # Errors
+///
+/// The internal fault `content-fingerprint-failed` when the canonical bytes
+/// or their digest cannot be produced; no empty fingerprint is returned.
+pub(crate) fn sample_fingerprint(
+    text: &str,
+) -> Result<String, filament_semantic_value::catalog::InternalFault> {
+    let failed = || {
+        filament_semantic_value::catalog::InternalFault::new(
+            "temporal",
+            "content-fingerprint-failed",
+        )
     };
-    let mut identity = String::from("sha256:");
-    if let Ok(digest) = digest {
-        for byte in digest.as_bytes() {
-            identity.push_str(&format!("{byte:02x}"));
-        }
+    let document = quire_canonical::read(text.as_bytes(), u64::MAX).map_err(|_| failed())?;
+    let digest = quire_canonical::sha256(&document, quire_canonical::Limits::new(u64::MAX))
+        .map_err(|_| failed())?;
+    let mut fingerprint = String::with_capacity(71);
+    fingerprint.push_str("sha256:");
+    for byte in digest.as_bytes() {
+        fingerprint.push_str(&format!("{byte:02x}"));
     }
-    identity
+    Ok(fingerprint)
 }
 
-/// A sample text that is not canonical JSON, encoded as one string.
-struct SampleText<'a>(&'a str);
-
-impl quire_canonical::Encode for SampleText<'_> {
-    fn encode_into<S: quire_canonical::Sink + ?Sized>(
-        &self,
-        writer: &mut quire_canonical::Writer<'_, S>,
-    ) -> Result<(), quire_canonical::Error> {
-        writer.string(self.0)
-    }
-}
-
-/// FR-330-AC-18, FR-643 Decision: the record sample at `index` of a trace
-/// whose content identity is `content` ([`sample_content`]), cited by its
-/// index and its content identity, never by its value.
-pub(crate) fn sample_index(index: u64, content: &str) -> DocumentRef {
+/// FR-330-AC-18, FR-643 Decision, FR-993: the record sample at `index` of a
+/// trace, cited by its index, never by its value. A progress-carrying trace
+/// also carries the sample's content `fingerprint` ([`sample_fingerprint`])
+/// for its ledger entry: the run holds it after the index (`<index>#<fp>`),
+/// and every identity, citation and order reads the index alone
+/// ([`indexed_sample`]).
+pub(crate) fn sample_index(index: u64, fingerprint: Option<&str>) -> DocumentRef {
     DocumentRef {
         authority: SAMPLE_AUTHORITY.to_owned(),
-        identity: format!("{index}#{content}"),
+        identity: match fingerprint {
+            Some(fingerprint) => format!("{index}#{fingerprint}"),
+            None => index.to_string(),
+        },
     }
 }
 
-/// The index and content identity of a record sample [`sample_index`] names.
-fn indexed_sample(document: &DocumentRef) -> Option<(u64, &str)> {
+/// The index of a record sample [`sample_index`] names, and the content
+/// fingerprint it carries, if any. `None` for a sample named by its text and
+/// for every other document.
+pub(crate) fn indexed_sample(document: &DocumentRef) -> Option<(u64, Option<&str>)> {
     if document.authority != SAMPLE_AUTHORITY {
         return None;
     }
-    let (index, content) = document.identity.split_once('#')?;
-    Some((index.parse().ok()?, content))
+    match document.identity.split_once('#') {
+        Some((index, fingerprint)) => Some((index.parse().ok()?, Some(fingerprint))),
+        None => Some((document.identity.parse().ok()?, None)),
+    }
 }
 
 /// FR-330-AC-18, FR-643 Decision: a progress-carrying trace of record samples
 /// as the run reads it past admission, each sample named by its index in the
-/// trace, so the ledger and the finite-window trace hold no sample's value. A
-/// `Timestamped` sample's index is its place in FR-501's canonical order,
-/// which its value decides among positions of one stamp and order key, so the
-/// listing order still decides nothing. `None` for a trace that needs no
-/// renaming.
-fn indexed_samples(trace: &TraceInput) -> Option<TraceInput> {
+/// trace with its content fingerprint (FR-993), so the ledger and the
+/// finite-window trace hold no sample's value. A `Timestamped` sample's index
+/// is its place in FR-501's canonical order, which its value decides among
+/// positions of one stamp and order key, so the listing order still decides
+/// nothing. `Ok(None)` for a trace that needs no renaming.
+fn indexed_samples(
+    trace: &TraceInput,
+) -> Result<Option<TraceInput>, filament_semantic_value::catalog::InternalFault> {
     let sample = |document: &DocumentRef| document.authority == SAMPLE_AUTHORITY;
+    let cite = |index: usize, document: &DocumentRef| {
+        sample_fingerprint(&document.identity).map(|fingerprint| {
+            sample_index(u64::try_from(index).unwrap_or(u64::MAX), Some(&fingerprint))
+        })
+    };
     match trace {
         TraceInput::Progressed {
             trace: documents,
             progress,
             lower_boundary,
             binding,
-        } if documents.iter().any(sample) => Some(TraceInput::Progressed {
+        } if documents.iter().any(sample) => Ok(Some(TraceInput::Progressed {
             trace: documents
                 .iter()
                 .enumerate()
                 .map(|(index, document)| {
                     if sample(document) {
-                        sample_index(
-                            u64::try_from(index).unwrap_or(u64::MAX),
-                            &sample_content(&document.identity),
-                        )
+                        cite(index, document)
                     } else {
-                        document.clone()
+                        Ok(document.clone())
                     }
                 })
-                .collect(),
+                .collect::<Result<_, _>>()?,
             progress: *progress,
             lower_boundary: *lower_boundary,
             binding: binding.clone(),
-        }),
+        })),
         TraceInput::Timestamped {
             observations,
             progress,
@@ -369,8 +385,7 @@ fn indexed_samples(trace: &TraceInput) -> Option<TraceInput> {
             // in the listing.
             let mut canonical = vec![None; observations.len()];
             for (place, (listed, _)) in ordered_timestamped_positions(&view).iter().enumerate() {
-                let listed = *listed;
-                if let Some(slot) = canonical.get_mut(listed) {
+                if let Some(slot) = canonical.get_mut(*listed) {
                     *slot = Some(place);
                 }
             }
@@ -378,36 +393,36 @@ fn indexed_samples(trace: &TraceInput) -> Option<TraceInput> {
                 .iter()
                 .zip(canonical)
                 .map(|(observation, canonical)| match canonical {
-                    Some(index) if sample(&observation.document) => TimestampedObservation {
-                        document: sample_index(
-                            u64::try_from(index).unwrap_or(u64::MAX),
-                            &sample_content(&observation.document.identity),
-                        ),
-                        ..observation.clone()
-                    },
-                    _ => observation.clone(),
+                    Some(index) if sample(&observation.document) => {
+                        cite(index, &observation.document).map(|document| TimestampedObservation {
+                            document,
+                            ..observation.clone()
+                        })
+                    }
+                    _ => Ok(observation.clone()),
                 })
-                .collect();
-            Some(TraceInput::Timestamped {
+                .collect::<Result<_, _>>()?;
+            Ok(Some(TraceInput::Timestamped {
                 observations: renamed,
                 progress: *progress,
                 window: window.clone(),
-            })
+            }))
         }
         TraceInput::Finite(_)
         | TraceInput::Progressed { .. }
         | TraceInput::Timestamped { .. }
         | TraceInput::Lasso { .. }
-        | TraceInput::Model { .. } => None,
+        | TraceInput::Model { .. } => Ok(None),
     }
 }
 
-/// The ledger identity of a position's document. A record sample named by its
-/// index is its content identity (FR-502 "Behavior"): the covered set names
-/// what was observed, not where a request listed it.
+/// The ledger identity of a position's document: its labels, and for a
+/// record sample named by its index, the index alone (FR-330, FR-993): the
+/// content fingerprint is the covered entry's own member, never part of the
+/// identity.
 pub(super) fn document_identity(document: &DocumentRef) -> String {
-    let identity =
-        indexed_sample(document).map_or(document.identity.as_str(), |(_, content)| content);
+    let index = indexed_sample(document).map(|(index, _)| index.to_string());
+    let identity = index.as_deref().unwrap_or(document.identity.as_str());
     format!(
         "{}:{}{}:{}",
         document.authority.len(),
@@ -415,6 +430,12 @@ pub(super) fn document_identity(document: &DocumentRef) -> String {
         identity.len(),
         identity,
     )
+}
+
+/// The content fingerprint a record sample named by its index carries
+/// (FR-993), for its covered ledger entry.
+fn document_fingerprint(document: &DocumentRef) -> Option<String> {
+    indexed_sample(document).and_then(|(_, fingerprint)| fingerprint.map(str::to_owned))
 }
 
 /// FR-522 `TraceBinding`: what a trace of tick-valued quantities asserts
@@ -543,19 +564,11 @@ pub struct TimestampedObservation {
 /// A record sample named by its index (FR-330-AC-18) spells the index after
 /// its two-digit length, so the identities order as the indices do.
 pub(super) fn observation_identity(document: &DocumentRef) -> String {
-    let index = match indexed_sample(document) {
-        Some((index, _)) => Some(index),
-        None if document.authority == SAMPLE_AUTHORITY => document.identity.parse::<u64>().ok(),
-        None => None,
-    };
-    if let Some(index) = index {
-        // The identity starts with the index, so it orders as the index does.
-        return format!(
-            "{}\0{:02}:{}",
-            document.authority,
-            index.to_string().len(),
-            document.identity
-        );
+    if let Some((index, _)) = indexed_sample(document) {
+        // The index alone, after its length: the identities order as the
+        // indices do, and the content fingerprint is no part of it (FR-993).
+        let index = index.to_string();
+        return format!("{}\0{:02}:{}", document.authority, index.len(), index);
     }
     format!("{}\0{}", document.authority, document.identity)
 }
@@ -691,7 +704,7 @@ pub fn admit_progress(
         .admit(binding, assertion, positions, covered_positions)
         .map_err(|refusal| match refusal {
             Refusal::Contradiction(contradiction) => Box::new(
-                ClauseDisposition::ProgressContradiction(Box::new(contradiction.into())),
+                ClauseDisposition::ProgressContradiction(Box::new((*contradiction).into())),
             ),
             Refusal::LimitReached(reached) => Box::new(ClauseDisposition::Temporal(
                 TemporalVerdict::ProgressLimitReached(reached),
@@ -915,7 +928,7 @@ fn admit_carried_progress(
         .admit_continued(binding, assertion, covered, &positions, covered_positions)
         .map_err(|refusal| match refusal {
             Refusal::Contradiction(contradiction) => Box::new(
-                ClauseDisposition::ProgressContradiction(Box::new(contradiction.into())),
+                ClauseDisposition::ProgressContradiction(Box::new((*contradiction).into())),
             ),
             Refusal::LimitReached(reached) => Box::new(ClauseDisposition::Temporal(
                 TemporalVerdict::ProgressLimitReached(reached),
@@ -1217,7 +1230,17 @@ pub struct PackageTemporalRequest<'a> {
 /// unauthenticated: its binding is not checked and its report carries no
 /// authenticated selection.
 pub fn run_package_temporal(request: &PackageTemporalRequest<'_>) -> ClauseRunReport {
-    run_package_temporal_over(request, None)
+    run_package_temporal_bounded(request, fsl_eval::temporal::DEFAULT_COVERED_POSITIONS)
+}
+
+/// [`run_package_temporal`] under the system setting
+/// `progress.covered_positions` (FR-255): the most positions, each record
+/// sample's content fingerprint with it (FR-993), the ledger covers.
+pub fn run_package_temporal_bounded(
+    request: &PackageTemporalRequest<'_>,
+    covered_positions: u64,
+) -> ClauseRunReport {
+    run_package_temporal_over(request, None, covered_positions)
 }
 
 /// [`run_package_temporal`] reading `tape` in place of the record samples the
@@ -1225,6 +1248,7 @@ pub fn run_package_temporal(request: &PackageTemporalRequest<'_>) -> ClauseRunRe
 pub(crate) fn run_package_temporal_over(
     request: &PackageTemporalRequest<'_>,
     tape: Option<TapeInput<'_>>,
+    covered_positions: u64,
 ) -> ClauseRunReport {
     let provisions = Provisions {
         snapshots: request.snapshots,
@@ -1240,9 +1264,8 @@ pub(crate) fn run_package_temporal_over(
         package_name: request.package.emitted_package_name().unwrap_or_default(),
         sources: request.sources,
         // FR-516: the capacity is the system setting
-        // `progress.covered_positions` (FR-255), not a request member, so the
-        // package route takes its default.
-        progress_capacity: fsl_eval::temporal::DEFAULT_COVERED_POSITIONS,
+        // `progress.covered_positions` (FR-255), not a request member.
+        progress_capacity: covered_positions,
     };
     run_temporal(
         &run,
@@ -1421,7 +1444,11 @@ pub(super) fn run_temporal(run: &CompiledRun<'_>, request: &TemporalRun<'_>) -> 
     let renamed =
         (tape.is_none() && over.is_none() && matches!(clause.over().1, ValueType::Composite(_)))
             .then(|| indexed_samples(trace))
-            .flatten();
+            .transpose();
+    let renamed = match renamed {
+        Ok(renamed) => renamed.flatten(),
+        Err(fault) => return early(ClauseDisposition::EvaluateFault(fault)),
+    };
     let trace = renamed.as_ref().unwrap_or(listed);
 
     if let TraceInput::Timestamped {
@@ -2006,8 +2033,7 @@ pub(super) fn run_temporal(run: &CompiledRun<'_>, request: &TemporalRun<'_>) -> 
         let window = run_finite_window(
             run,
             node,
-            &view,
-            screened.as_ref(),
+            (&view, screened.as_ref()),
             observing,
             (
                 tape.and_then(|tape| tape.window),
@@ -2159,8 +2185,7 @@ pub(super) fn refused_disposition(
 fn run_finite_window(
     run: &CompiledRun<'_>,
     node: &fsl_semantics::check::TemporalClauseNode,
-    input: &Timestamped<'_>,
-    screened: Option<&super::late_data::Screened>,
+    (input, screened): (&Timestamped<'_>, Option<&super::late_data::Screened>),
     observing: ObservedPositions<'_>,
     (carried, admission): (
         Option<&std::cell::RefCell<fsl_eval::temporal::CarriedWindow>>,

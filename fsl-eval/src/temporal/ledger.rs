@@ -78,6 +78,11 @@ pub struct ObservedPosition {
     /// The position's stamp: its tick, or its coordinate under event-position
     /// and fixed-sample.
     pub stamp: u64,
+    /// FR-993: a record sample's content fingerprint, `sha256:` and 64
+    /// lowercase hex digits over its canonical value bytes; `None` for every
+    /// other position. Integrity data, never part of the identity: the
+    /// covered set keys a position by its identity and stamp only.
+    pub fingerprint: Option<String>,
 }
 
 /// The progress a trace asserts.
@@ -183,7 +188,7 @@ pub enum ProgressValue {
     /// The surrounding execution's closure.
     SurroundingExecution(ProgressClosure),
     /// A position the retained completeness assertion did not cover.
-    Position(ObservedPosition),
+    Position(Box<ObservedPosition>),
 }
 
 /// An assertion that contradicts the retained progress (FR-502 Outputs).
@@ -367,9 +372,27 @@ fn check_progress(
             return Err(contradiction(
                 ContradictedDimension::Completeness,
                 ProgressValue::Completeness(retained.completeness),
-                ProgressValue::Position(position.clone()),
+                ProgressValue::Position(Box::new(position.clone())),
             ));
         }
+    }
+    // FR-993 "Compared": a re-covered position whose content fingerprint
+    // differs from the retained one is a changed sample at a covered index.
+    // The contradiction names the position by its identity and stamp only.
+    if let Some(position) = positions.iter().find(|position| {
+        retained
+            .covered
+            .get(position)
+            .is_some_and(|held| held.fingerprint != position.fingerprint)
+    }) {
+        return Err(contradiction(
+            ContradictedDimension::Completeness,
+            ProgressValue::Completeness(retained.completeness),
+            ProgressValue::Position(Box::new(ObservedPosition {
+                fingerprint: None,
+                ..position.clone()
+            })),
+        ));
     }
     if retained.scope == ProgressClosure::Closed && assertion.scope == ProgressClosure::Open {
         return Err(contradiction(
@@ -424,6 +447,7 @@ mod tests {
         ObservedPosition {
             identity: identity.to_owned(),
             stamp,
+            fingerprint: None,
         }
     }
 
@@ -526,7 +550,7 @@ mod tests {
             (
                 complete(100),
                 vec![at("late", 80)],
-                ProgressValue::Position(at("late", 80)),
+                ProgressValue::Position(Box::new(at("late", 80))),
             ),
         ] {
             let refusal = admit(&ledger, &binding(), assertion(100, asserted), &positions)
@@ -746,7 +770,7 @@ mod tests {
                 dimension: ContradictedDimension::Completeness,
                 clock: "ms".to_owned(),
                 retained: ProgressValue::Completeness(complete(100)),
-                asserted: ProgressValue::Position(at("same-id", 80)),
+                asserted: ProgressValue::Position(Box::new(at("same-id", 80))),
             }
         );
         assert_eq!(ledger, before, "refusal leaves the input ledger unchanged");

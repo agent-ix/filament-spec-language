@@ -3667,6 +3667,7 @@ fn covered_positions_over_the_setting_report_incomplete_with_the_limit_fields() 
         .map(|stamp| crate::spine::ObservedPosition {
             identity: format!("p{stamp}"),
             stamp,
+            fingerprint: None,
         })
         .collect();
     let assertion = crate::spine::ProgressAssertion {
@@ -3711,6 +3712,7 @@ fn observed(identity: &str, stamp: u64) -> crate::spine::ObservedPosition {
     crate::spine::ObservedPosition {
         identity: identity.to_owned(),
         stamp,
+        fingerprint: None,
     }
 }
 

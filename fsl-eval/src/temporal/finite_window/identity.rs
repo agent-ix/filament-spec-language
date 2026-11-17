@@ -264,15 +264,14 @@ impl IdentityStream {
 
     /// The identity of the evaluation of the clause `clause_identity` under
     /// `profile` and `clock`, with the `open` blocks chained after the frozen
-    /// ones, and `progress` and `ceilings`.
+    /// ones, the asserted `progress` and late-data inputs, and `ceilings`.
     pub(super) fn identity(
         &self,
         clause_identity: &str,
         profile: &str,
         clock: &WindowClock,
         open: &[Block<'_>],
-        progress: &WindowProgress,
-        lateness: &Lateness,
+        (progress, lateness): (&WindowProgress, &Lateness),
         ceilings: &ScalarLimits,
     ) -> Result<ResultIdentity, InternalFault> {
         let mut chain = self.clone();
