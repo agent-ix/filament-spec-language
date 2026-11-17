@@ -161,7 +161,7 @@ pub(super) fn parse(
             cut_span.start,
             cut_span.end,
             format!(
-                "{omitted} additional syntax errors omitted after the first {SYNTAX_DIAGNOSTIC_BOUND}; raise s1.diagnostics to see the rest"
+                "{omitted} additional syntax errors omitted after the first {SYNTAX_DIAGNOSTIC_BOUND}; raise i2.diagnostics to see the rest"
             ),
         ));
     }
@@ -690,7 +690,7 @@ fn append_omitted_diagnostic(
         span.start,
         span.end,
         format!(
-            "{omitted_count} additional syntax errors omitted after the first {SYNTAX_DIAGNOSTIC_BOUND}; raise s1.diagnostics to see the rest"
+            "{omitted_count} additional syntax errors omitted after the first {SYNTAX_DIAGNOSTIC_BOUND}; raise i2.diagnostics to see the rest"
         ),
     ));
 }

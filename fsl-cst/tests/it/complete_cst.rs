@@ -465,7 +465,7 @@ fn the_diagnostic_list_is_cut_at_its_bound() {
         cut.byte_span().expect("located").start,
         record + text[record..].find("; }").expect("the offending token")
     );
-    assert!(cut.message.contains("s1.diagnostics") && cut.message.contains("100"));
+    assert!(cut.message.contains("i2.diagnostics") && cut.message.contains("100"));
     assert!(
         diagnostics
             .iter()
