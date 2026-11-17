@@ -1683,6 +1683,8 @@ impl From<&CallIncomplete> for ResultLimit {
 /// as an empty array.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct OutcomeDocument {
+    #[cfg(feature = "quire-extraction")]
+    native_fences: Option<crate::spine::NativeFenceReport>,
     format: &'static str,
     operation: Operation,
     last_stage: Option<OutcomeStage>,
@@ -1709,9 +1711,17 @@ impl Serialize for OutcomeDocument {
         document.serialize_field("operation", &self.operation)?;
         document.serialize_field("last_stage", &self.last_stage)?;
         document.serialize_field("category", self.category.as_str())?;
-        match &self.requirements {
-            Some(requirements) => document.serialize_field("items", &requirements.entries)?,
-            None => document.serialize_field("items", &self.items)?,
+        if let Some(requirements) = &self.requirements {
+            document.serialize_field("items", &requirements.entries)?;
+        } else {
+            #[cfg(feature = "quire-extraction")]
+            if let Some(report) = &self.native_fences {
+                document.serialize_field("items", &report.fences)?;
+            } else {
+                document.serialize_field("items", &self.items)?;
+            }
+            #[cfg(not(feature = "quire-extraction"))]
+            document.serialize_field("items", &self.items)?;
         }
         document.serialize_field("diagnostics", &self.diagnostics)?;
         document.serialize_field("artifacts", &[(); 0])?;
@@ -1729,10 +1739,28 @@ impl Serialize for OutcomeDocument {
 pub struct OutcomeWriteError(#[from] serde_json::Error);
 
 impl OutcomeDocument {
+    /// One check document carrying an independent result for every native fence.
+    #[cfg(feature = "quire-extraction")]
+    pub fn from_native_fences(report: &crate::spine::NativeFenceReport) -> Self {
+        let category =
+            Category::most_severe(report.fences.iter().map(|fence| fence.category.exit_code()))
+                .and_then(|worst| {
+                    report
+                        .fences
+                        .iter()
+                        .find(|fence| fence.category.exit_code() == worst)
+                })
+                .map_or(Category::Success, |fence| fence.category);
+        let mut document = Self::new(Operation::Check, Some(OutcomeStage::S4), category);
+        document.native_fences = Some(report.clone());
+        document
+    }
     /// A document of `operation` that last reached `last_stage` with the
     /// outcome's `category`, and no items, diagnostics or artifacts.
     pub fn new(operation: Operation, last_stage: Option<OutcomeStage>, category: Category) -> Self {
         Self {
+            #[cfg(feature = "quire-extraction")]
+            native_fences: None,
             format: OUTCOME_FORMAT,
             operation,
             last_stage,
@@ -1787,6 +1815,10 @@ impl OutcomeDocument {
     /// This document with one entry per requested item, in request order.
     #[must_use]
     pub fn with_items(mut self, items: Vec<OutcomeItem>) -> Self {
+        #[cfg(feature = "quire-extraction")]
+        {
+            self.native_fences = None;
+        }
         self.items = items;
         self
     }
@@ -1820,9 +1852,16 @@ impl OutcomeDocument {
         self.category
     }
 
-    /// The document's items, in request order.
+    /// The document's terminal-record items, in request order.
+    /// Native fence check items are available through `native_fences`.
     pub fn items(&self) -> &[OutcomeItem] {
         &self.items
+    }
+
+    /// Native fence check items, when this is a Markdown check document.
+    #[cfg(feature = "quire-extraction")]
+    pub fn native_fences(&self) -> Option<&crate::spine::NativeFenceReport> {
+        self.native_fences.as_ref()
     }
 
     /// The document's diagnostics.
