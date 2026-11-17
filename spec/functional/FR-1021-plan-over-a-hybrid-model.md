@@ -16,14 +16,15 @@ FSL SHALL run FSpec FR-819's hybrid plan synthesis: S3 SHALL admit a `synthesis`
 
 ## Behavior
 
-- Only a `flowpipe-outward-rounded` or `inductive-enclosure` enclosure SHALL validate a candidate; `infeasible` SHALL require an enclosure closure accepted by FR-751's core check.
+- Only a `flowpipe-outward-rounded` or `inductive-enclosure` enclosure SHALL validate a candidate; `infeasible` SHALL require an FSpec FR-193 `inductive-enclosure` or `flowpipe-outward-rounded` proof of `always not goal` over the schedule space whose FSpec FR-652 certificate FR-751 accepts.
 - No hybrid plan outcome SHALL be `optimal`.
+- With no hybrid candidate the outcome SHALL be `unsupported`, exit `21`; a grid exhausted with no infeasibility proof SHALL be `incomplete` with `grid-exhausted{dwell_grid}`, exit `22`.
 
 ## Acceptance Criteria
 
 | ID | Criteria | Verification |
 | --- | --- | --- |
-| FR-1021-AC-1 | The `Fill`/`Drain` tank plans `feasible` with dwell 8 into `Drain` under the reference provider; the goal `h >= 12` is `infeasible` with a `certified` closure; with no hybrid provider the outcome is `unsupported` naming `hybrid-dynamics`; without `dwell_grid` the request refuses at `/synthesis/dwell_grid`. | Test (TC-2871) |
+| FR-1021-AC-1 | The `Fill`/`Drain` tank plans `feasible` with dwell 8 into `Drain` under the reference provider; the goal `h >= 12` is `infeasible` with a `certified` proof of `always not goal`; with no hybrid provider the outcome is `unsupported` naming `hybrid-dynamics`, exit `21`; without `dwell_grid` the request refuses at `/synthesis/dwell_grid`. | Test (TC-2871) |
 
 ## Dependencies
 

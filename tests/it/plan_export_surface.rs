@@ -664,3 +664,59 @@ fn previous_transfers_only_through_a_step_for_step_refinement() {
     names(&value, "transfer-not-preserving");
     names(&value, "once[1,1]");
 }
+
+// ---- QSL-1979: target results as trusted evidence -------------------------
+
+/// FR-1022-AC-1, FSpec FR-815-AC-1: a Lean proof of an exported
+/// proposition enters as `trusted` evidence, never `certified`, or settles
+/// `tool-unavailable` when Lean is absent.
+#[test]
+#[trace("TC-2872", "FR-1022-AC-1")]
+#[trace("FSpec-TC-1974", "FSpec-FR-815-AC-1")]
+#[ignore = "QSL-1979: intake of TLA+ and Lean results as trusted evidence is not implemented yet"]
+fn a_lean_proof_enters_as_trusted_evidence() {
+    let (_, exported) = export(
+        &low_unit(),
+        true,
+        json!({"profile": "filament.output.lean4/v1", "obligations": ["Low"]}),
+    );
+    let package = exported["export"]["package"].clone();
+    assert!(package.is_object(), "{exported}");
+    let (exit, value) = run(
+        &low_unit(),
+        true,
+        (
+            "export_evidence",
+            json!({"package": package, "obligation": "Low", "tool": "lean",
+                "artifact": "low_proof.lean"}),
+        ),
+    );
+    let result = &value["export_evidence"];
+    if result["value"] == "unsupported" {
+        names(result, "tool-unavailable");
+        assert_eq!(exit, 21, "{value}");
+    } else {
+        assert_eq!(result["value"], "proved", "{value}");
+        assert_eq!(result["certification"], "trusted", "{value}");
+    }
+}
+
+/// FR-1022-AC-3, FSpec FR-815-AC-3: evidence for an unrepresented record is
+/// refused at its obligation member.
+#[test]
+#[trace("TC-2872", "FR-1022-AC-3")]
+#[trace("FSpec-TC-1974", "FSpec-FR-815-AC-3")]
+#[ignore = "QSL-1979: evidence intake refusals are not implemented yet"]
+fn evidence_for_an_unrepresented_record_is_refused() {
+    let (exit, value) = run(
+        BRAKING,
+        false,
+        (
+            "export_evidence",
+            json!({"package": {}, "obligation": "SlowEnough", "tool": "tlc",
+                "artifact": "slow.cfg"}),
+        ),
+    );
+    assert_eq!(exit, 20, "{value}");
+    names(&value, "/export_evidence/obligation");
+}

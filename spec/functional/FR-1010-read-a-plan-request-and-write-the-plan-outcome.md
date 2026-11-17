@@ -18,7 +18,7 @@ FSL SHALL read a `native-run/1` request's `synthesis` member over a state-model 
 
 - The `synthesis` member SHALL carry `declaration`, `initial` (the snapshot file), `policy`, `limits` (FSpec FR-801's member names: `max_states`, `max_work`, `max_certificate_entries`, `max_check_work`, `max_state_key_bytes`), `accounting` and `deadline_ms`, read with `fsl-command`'s strict reader before any stage runs.
 - The run outcome's `synthesis` member SHALL be the plan outcome document, every value in FR-650's run value form.
-- The exit SHALL be `0` for `optimal` and `feasible`, `10` for `infeasible`, `22` for `incomplete`, `20` for a refusal and `30` for a method failure.
+- The exit SHALL be `0` for `optimal` and `feasible`, `10` for `infeasible`, `22` for `incomplete`, `21` for `unsupported` (a hybrid plan with no hybrid candidate, FSpec FR-819), `20` for a refusal and `30` for a method failure.
 
 ## Acceptance Criteria
 
