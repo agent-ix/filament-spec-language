@@ -1973,6 +1973,7 @@ fn emit_checked_never_returns_incomplete_across_the_fixture_set() {
         TemporalClockProfileMismatch,
         ProtocolResultInvariant,
         ProtocolResultsRequired,
+        FloatEqualityScheduleNotEmitted,
     }
     fn classify(result: Result<Emission, EmitRefusal>) -> Seen {
         match result {
@@ -2024,6 +2025,9 @@ fn emit_checked_never_returns_incomplete_across_the_fixture_set() {
             }
             Err(EmitRefusal::ProtocolResultInvariant) => Seen::ProtocolResultInvariant,
             Err(EmitRefusal::ProtocolResultsRequired) => Seen::ProtocolResultsRequired,
+            Err(EmitRefusal::FloatEqualityScheduleNotEmitted) => {
+                Seen::FloatEqualityScheduleNotEmitted
+            }
             Err(EmitRefusal::OutputLimit(_)) => {
                 panic!("the fixture set emits under a ceiling no fixture reaches")
             }

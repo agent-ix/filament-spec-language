@@ -763,6 +763,11 @@ fn every_behavior_result(
         .iter()
         .map(|binding| (binding.role.clone(), binding.model.clone()))
         .collect();
+    let wire_capacities: Vec<_> = subject
+        .capacities
+        .iter()
+        .map(|binding| (binding.name.clone(), binding.value))
+        .collect();
     let item = fsl_replay::ModelCheckItem::DeadlockFreedom;
     let request = crate::model_check::ProtocolCheckRequest {
         subject,
@@ -835,6 +840,7 @@ fn every_behavior_result(
             protocol: wire_protocol,
             over,
             roles: wire_roles,
+            capacities: wire_capacities,
             max_live_instances: None,
         };
         fsl_replay::protocol_temporal_wire(counterexample, &subject, None).ok()

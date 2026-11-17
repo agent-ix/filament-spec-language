@@ -1425,7 +1425,7 @@ fn a_symbolic_capacity_projects() {
     };
     assert!(key.channels.iter().any(|channel| matches!(
         &channel.capacity,
-        CapacityPremise::Symbolic { name } if name == "Bound"
+        CapacityPremise::Symbolic { name, .. } if name == "Bound"
     )));
 }
 

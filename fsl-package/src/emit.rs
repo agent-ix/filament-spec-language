@@ -298,6 +298,10 @@ pub enum EmitRefusal {
         /// The exact checked application key retained by FSL lowering.
         application: NodeKey,
     },
+    /// FR-148's top-level `numericEqual` schedule has no checked-package/v2
+    /// equality schedule in the pinned contract IR (QSL-2173).
+    #[error("float equality schedule is not supported by the pinned checked-package/v2 contract IR yet (QSL-2173)")]
+    FloatEqualityScheduleNotEmitted,
     /// A temporal declaration whose selected profile requires a clock
     /// configuration has no exact producer selection.
     #[error(
@@ -482,6 +486,7 @@ impl EmitRefusal {
             Self::ProbabilisticModelNotEmitted { .. }
             | Self::TimedModelNotEmitted { .. }
             | Self::SourceObjectEmission { .. } => Code::UnsupportedConstruct,
+            Self::FloatEqualityScheduleNotEmitted => Code::UnsupportedConstruct,
             Self::MonitorPlanAmbiguous { .. } => Code::InvalidProjectionCorrespondence,
             Self::MonitorBaseRefused(read) => read.code(),
             Self::ClockSelection(_) => Code::InvalidRequest,
@@ -540,6 +545,7 @@ impl EmitRefusal {
             | Self::UnresolvedNodeReference
             | Self::OperandNotInGraph { .. }
             | Self::MissingEqualityIdentityContext { .. } => None,
+            Self::FloatEqualityScheduleNotEmitted => Some("not-yet-implemented"),
             Self::MissingTemporalClockSelection { .. } => Some("missing-selection"),
             Self::SurplusTemporalClockSelection { .. }
             | Self::DuplicateTemporalClockSelection { .. }
@@ -3877,6 +3883,9 @@ fn checked_equality_term_data(
             }
         }
         let schedule = match row.producer_data.schedule() {
+            filament_semantic_value::declaration::EqualitySchedule::Float => {
+                return Err(EmitRefusal::FloatEqualityScheduleNotEmitted);
+            }
             filament_semantic_value::declaration::EqualitySchedule::Text => {
                 filament_contract_model::CheckedEqualitySchedule::Text
             }
@@ -4810,6 +4819,7 @@ fn require_protocol_results_for_refusals(package: &CheckedPackage) -> Result<(),
 /// with [`EmitRefusal::OutputLimit`] in place of being returned.
 pub fn emit_checked(package: &CheckedPackage, limits: EmitLimits) -> Result<Emission, EmitRefusal> {
     require_protocol_results_for_refusals(package)?;
+    refuse_ieee_numeric_equality(package.graph())?;
     if let Some(emission) = package.remembered_emission() {
         return remembered_within(emission, limits, package.graph());
     }
@@ -4841,6 +4851,7 @@ fn emit_checked_uncached(
     limits: EmitLimits,
 ) -> Result<Emission, EmitRefusal> {
     let graph = package.graph();
+    refuse_ieee_numeric_equality(graph)?;
     emit_package_inner(
         package,
         graph.memoized_regions(),
@@ -6084,6 +6095,24 @@ pub fn emit_timed_models(
     .with_identity_row_selection())
 }
 
+/// The current semantic-value lowering represents FR-148 float equality as a
+/// catalogued IEEE operation rather than an `EqualitySchedule` producer fact.
+/// Until checked-package/v2 has the matching schedule, fail closed at this
+/// boundary rather than serializing a representation the pinned reader cannot
+/// validate (QSL-2173).
+fn refuse_ieee_numeric_equality(graph: &CheckedGraph) -> Result<(), EmitRefusal> {
+    if graph.semantic_graph().nodes().any(|node| {
+        matches!(
+            node.body(),
+            BodyTerm::Application(application)
+                if application.operation.identity() == "filament.op.ieee.numeric_equal"
+        )
+    }) {
+        return Err(EmitRefusal::FloatEqualityScheduleNotEmitted);
+    }
+    Ok(())
+}
+
 /// [`emit_checked`] under the caller's [`Cancel`] handle, polled once at
 /// entry and at every node it writes (FR-276). A cancelled handle stops the
 /// emitter with [`EmitRefusal::Cancelled`] and writes no bytes. It always
@@ -6451,6 +6480,7 @@ fn emit_package_inner(
         return Err(refusal);
     }
     let graph = package.graph();
+    refuse_ieee_numeric_equality(graph)?;
     let source_keys = source_declaration_key_rewrites(graph)?;
     // FSpec FR-490, FR-491: each guarantee and composition declaration is a
     // `correspondence` node beside the graph's own.
