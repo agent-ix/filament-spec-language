@@ -324,7 +324,10 @@ fn snapshot_admission_refusal_witnesses_name_object_member_and_path() {
         "root",
         "extra",
         "/populations/0/objects/0/fields/extra",
-        |document| document["populations"][0]["objects"][0]["fields"]["extra"] = json!(true),
+        |document| {
+            document["populations"][0]["objects"][0]["fields"]["extra"] =
+                json!({"boolean":true});
+        },
     );
     assert_snapshot_refusal(
         "invalid-value",
