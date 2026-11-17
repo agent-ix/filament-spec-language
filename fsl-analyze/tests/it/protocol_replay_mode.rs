@@ -51,18 +51,47 @@ fn recording(observations: Value, local_order: Value, correlations: Value) -> Va
     })
 }
 
-/// `fsl analyze` of one replay-mode `global-conformance` item of `Flow` in
-/// `protocol` over `recording`.
-fn replay(name: &str, protocol: &str, recording: &Value) -> Run {
+/// The document identity the replay requests bind `recording.json` to.
+fn recording_identity() -> Value {
+    json!({"authority": "test", "identity": "recording"})
+}
+
+/// The `documents` member of a request over `snapshots` snapshot files
+/// (named `snapshot-<n>.json` by `request_over`) and `recording.json`
+/// supplied as `entry` (FR-1032).
+fn documents_with(snapshots: usize, entry: Value) -> Value {
+    let mut documents: Vec<Value> = (0..snapshots)
+        .map(|n| json!({"file": format!("snapshot-{n}.json")}))
+        .collect();
+    documents.push(entry);
+    Value::Array(documents)
+}
+
+/// `fsl analyze` of the replay-mode `items` of `Flow` in `protocol` over
+/// `recording`, supplied as `entry` among the litmus snapshots.
+fn replay_with(name: &str, protocol: &str, recording: &Value, entry: Value, items: Value) -> Run {
     let ws = Workspace::new(name);
     ws.write("recording.json", recording.to_string().as_bytes());
+    let snapshots = crate::litmus::Documents::new().snapshots.len();
     analyze(&litmus_request(
         &ws,
         protocol,
-        json!({"items": [{"claim": "Flow", "kind": "global-conformance",
-                          "recording": {"authority": "test", "identity": "recording"}}],
-               "documents": [{"file": "recording.json"}]}),
+        json!({"items": items, "documents": documents_with(snapshots, entry)}),
     ))
+}
+
+/// `fsl analyze` of one replay-mode `global-conformance` item of `Flow` in
+/// `protocol` over `recording`, bound to [`recording_identity`] by its
+/// `documents` entry (FR-1032).
+fn replay(name: &str, protocol: &str, recording: &Value) -> Run {
+    replay_with(
+        name,
+        protocol,
+        recording,
+        json!({"file": "recording.json", "identity": recording_identity()}),
+        json!([{"claim": "Flow", "kind": "global-conformance",
+                "recording": recording_identity()}]),
+    )
 }
 
 /// The verdicts of `item`'s obligations.
@@ -209,7 +238,8 @@ fn a_late_compensation_attempt_violates_its_window_and_an_unread_one_is_pending(
                 json!({"items": [{"claim": "Pay", "kind": "global-conformance",
                                   "recording": {"authority": "test", "identity": "recording"},
                                   "assessment": mode}],
-                       "documents": [{"file": "recording.json"}]}),
+                       "documents": documents_with(snapshots.len(),
+                           json!({"file": "recording.json", "identity": recording_identity()}))}),
             ));
             let item = run.item(0);
             let found = verdicts(&item)
@@ -224,4 +254,172 @@ fn a_late_compensation_attempt_violates_its_window_and_an_unread_one_is_pending(
             }
         }
     }
+}
+
+// ---- FR-1032: the recording's document identity ---------------------------
+
+/// FR-895-AC-7's closed, conforming recording of `Flow`.
+fn conforming_recording() -> Value {
+    let mut finish = observation("finish", "Done", "Buyer", "m-0");
+    finish["node"] = json!("Flow::Done");
+    recording(
+        json!([
+            observation("receive", "Got", "Seller", "m-1"),
+            observation("send", "Placed", "Buyer", "m-1"),
+            observation("event", "Decide::yes::Ship", "Seller", "m-0"),
+            finish,
+        ]),
+        json!({"Seller": [0, 2], "Buyer": [1, 3]}),
+        json!([{"send": 1, "receive": 0}]),
+    )
+}
+
+/// One replay-mode `Flow` item naming `recording`.
+fn flow_item(recording: Value) -> Value {
+    json!([{"claim": "Flow", "kind": "global-conformance", "recording": recording}])
+}
+
+/// FR-1032-AC-1/AC-2, FSpec FR-821-AC-1/AC-2: a recording that declares no
+/// identity is bound by its `documents` entry, assessed, and its identity is
+/// echoed; declaring the identity instead gives the same result, and binding
+/// it under another identity changes no premise identity or verdict.
+#[trace("TC-2922", "FR-1032-AC-1")]
+#[trace("TC-2922", "FR-1032-AC-2")]
+#[trace("FSpec-TC-2001", "FSpec-FR-821-AC-1")]
+#[trace("FSpec-TC-2001", "FSpec-FR-821-AC-2")]
+#[test]
+#[ignore = "QSL-2210: the recording's document-identity binding is not implemented yet"]
+fn a_recording_is_bound_by_its_stated_or_declared_identity() {
+    let stated = replay(
+        "replay-identity-stated",
+        &order_protocol(true),
+        &conforming_recording(),
+    );
+    let stated = stated.item(0);
+    assert_eq!(label(&stated), "proved", "{stated}");
+    assert_eq!(stated["recording"], recording_identity(), "{stated}");
+
+    let mut declaring = conforming_recording();
+    declaring["identity"] = recording_identity();
+    let declared = replay_with(
+        "replay-identity-declared",
+        &order_protocol(true),
+        &declaring,
+        json!({"file": "recording.json"}),
+        flow_item(recording_identity()),
+    )
+    .item(0);
+    for member in ["obligations", "closure", "global", "recording"] {
+        assert_eq!(stated[member], declared[member], "{member}: {declared}");
+    }
+
+    let other = json!({"authority": "test", "identity": "other"});
+    let rebound = replay_with(
+        "replay-identity-other",
+        &order_protocol(true),
+        &conforming_recording(),
+        json!({"file": "recording.json", "identity": other}),
+        flow_item(other.clone()),
+    )
+    .item(0);
+    assert_eq!(
+        stated["closure"]["premises"], rebound["closure"]["premises"],
+        "{rebound}"
+    );
+    assert_eq!(stated["obligations"], rebound["obligations"], "{rebound}");
+    assert_eq!(rebound["recording"], other, "{rebound}");
+}
+
+/// FR-1032-AC-3/AC-4, FSpec FR-821-AC-3/AC-4: a malformed, contradicted,
+/// missing or duplicated recording identity, and an item `recording` that
+/// names nothing, a snapshot, or sits on another kind, refuse the request.
+#[trace("TC-2922", "FR-1032-AC-3")]
+#[trace("TC-2922", "FR-1032-AC-4")]
+#[trace("FSpec-TC-2001", "FSpec-FR-821-AC-3")]
+#[trace("FSpec-TC-2001", "FSpec-FR-821-AC-4")]
+#[test]
+#[ignore = "QSL-2210: recording document-identity refusals are not implemented yet"]
+fn a_bad_recording_identity_refuses_the_request() {
+    let snapshots = crate::litmus::Documents::new().snapshots.len();
+    let at_documents = format!("/documents/{snapshots}");
+    let refused = |name: &str, recording: &Value, entry: Value, items: Value, pointer: &str| {
+        let run = replay_with(name, &order_protocol(true), recording, entry, items);
+        assert_eq!(run.exit, 20, "{name}");
+        let document = run.document();
+        assert_eq!(document["items"], json!([]), "{name}: {document}");
+        assert_eq!(
+            document["diagnostics"][0]["code"], "invalid-request",
+            "{name}: {document}"
+        );
+        assert!(
+            document.to_string().contains(pointer),
+            "{name} names {pointer}: {document}"
+        );
+        document
+    };
+    let plain = conforming_recording();
+    let mut declaring = conforming_recording();
+    declaring["identity"] = json!({"authority": "test", "identity": "declared"});
+
+    refused(
+        "identity-malformed",
+        &plain,
+        json!({"file": "recording.json", "identity": {"authority": "test"}}),
+        flow_item(recording_identity()),
+        &format!("{at_documents}/identity"),
+    );
+    let document = refused(
+        "identity-contradicted",
+        &declaring,
+        json!({"file": "recording.json", "identity": recording_identity()}),
+        flow_item(recording_identity()),
+        &format!("{at_documents}/identity"),
+    );
+    assert!(document.to_string().contains("declared"), "{document}");
+    refused(
+        "identity-missing",
+        &plain,
+        json!({"file": "recording.json"}),
+        flow_item(recording_identity()),
+        &at_documents,
+    );
+
+    // The litmus snapshots each declare an identity; take the first.
+    let first: Value = crate::litmus::Documents::new()
+        .snapshots
+        .into_values()
+        .next()
+        .map(|bytes| serde_json::from_slice::<Value>(&bytes).unwrap()["identity"].clone())
+        .expect("a litmus snapshot");
+    refused(
+        "identity-duplicated",
+        &plain,
+        json!({"file": "recording.json", "identity": first}),
+        flow_item(first.clone()),
+        &at_documents,
+    );
+
+    let bound = json!({"file": "recording.json", "identity": recording_identity()});
+    refused(
+        "recording-unprovisioned",
+        &plain,
+        bound.clone(),
+        flow_item(json!({"authority": "test", "identity": "absent"})),
+        "/items/0/recording",
+    );
+    refused(
+        "recording-is-a-snapshot",
+        &plain,
+        bound.clone(),
+        flow_item(first),
+        "/items/0/recording",
+    );
+    refused(
+        "recording-on-another-kind",
+        &plain,
+        bound,
+        json!([{"claim": "Flow", "kind": "temporal-satisfaction",
+                "recording": recording_identity()}]),
+        "/items/0/recording",
+    );
 }
