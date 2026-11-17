@@ -429,11 +429,13 @@ fn witness(
                 operation,
                 maximum,
                 window,
+                record_type,
                 ..
             } => LocalEventKind::ControlAction {
                 operation: *operation,
                 maximum: *maximum,
                 window: window.clone(),
+                record_type: record_type.clone(),
             },
         };
         correspondence.insert(event.at.clone(), id);

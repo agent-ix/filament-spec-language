@@ -190,6 +190,11 @@ impl<'p> Reader<'p> {
         }
     }
 
+    fn record_type(&self, node: &CheckedSemanticNodeV2) -> Option<CheckedNodeId> {
+        let binder = Self::reference_member(node, "binder")?;
+        Some(self.node(&binder).ok()?.semantic_type.clone())
+    }
+
     fn walk(
         &mut self,
         id: &CheckedNodeId,
@@ -319,6 +324,7 @@ impl<'p> Reader<'p> {
                         | fsl_package::protocol_view::ControlOperation::Fence
                 ) {
                     let (maximum, window) = Self::projection_attributes(node, operation);
+                    let record_type = self.record_type(node);
                     let decision = matches!(
                         operation,
                         fsl_package::protocol_view::ControlOperation::Repeat
@@ -332,6 +338,7 @@ impl<'p> Reader<'p> {
                             owner: self.owner_of(node),
                             maximum,
                             window,
+                            record_type,
                         },
                         within: within.clone(),
                     });
@@ -418,6 +425,7 @@ impl GlobalStructure {
             if operation == fsl_package::protocol_view::ControlOperation::Compensate {
                 let (maximum, window) = Reader::projection_attributes(node, operation);
                 let owner = reader.owner_of(node);
+                let record_type = reader.record_type(node);
                 reader.input.events.push(GlobalEvent {
                     at: PortRef {
                         node: (*template).clone(),
@@ -432,6 +440,7 @@ impl GlobalStructure {
                         owner,
                         maximum,
                         window,
+                        record_type,
                     },
                     within: vec![(*template).clone()],
                 });

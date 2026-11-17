@@ -106,6 +106,8 @@ pub enum GlobalEventKind {
         maximum: Option<u64>,
         /// A timed await's closed window and clock, when present.
         window: Option<(u64, u64, String)>,
+        /// The type of a step's bound result record, when present.
+        record_type: Option<CheckedNodeId>,
     },
 }
 
