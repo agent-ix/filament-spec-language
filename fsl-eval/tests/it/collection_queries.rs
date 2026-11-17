@@ -700,6 +700,42 @@ fn q05_set_and_bag_steps_must_be_in_the_syntactic_catalog() {
     check(&package, &sequence, &difference).unwrap();
 }
 
+#[trace("FSpec-FR-335-AC-6", "QSL-2174")]
+#[test]
+fn fold_over_a_set_of_non_integer_elements_follows_the_ruling() {
+    let package = plain();
+    let set_type = of(CollectionKind::Set, ValueType::Boolean, 0, 3);
+    let parameters = [("s", set_type.clone())];
+    let fold = accumulate(
+        Accumulation::Fold,
+        "Flag",
+        "s",
+        binary(BinaryOperator::And, name("acc"), name("x")),
+        Some(Expression::boolean(true)),
+    );
+
+    check(&package, &parameters, &fold).expect("FR-701 admits Boolean Set folds");
+
+    // The input iterator order is immaterial for Set and the admitted `and`
+    // step is commutative, so both representations produce the same value.
+    for values in [[true, false, true], [false, true, true]] {
+        let result = run(
+            &package,
+            &parameters,
+            &fold,
+            vec![collection(
+                &set_type,
+                values.into_iter().map(Value::Boolean).collect(),
+            )],
+            UNLIMITED,
+        );
+        assert_eq!(
+            format!("{:?}", completed(&result)),
+            format!("{:?}", Value::Boolean(false))
+        );
+    }
+}
+
 #[trace("FSpec-TC-190", "FSpec-FR-145-AC-3")]
 #[trace("FSpec-TC-190", "FSpec-FR-145-AC-7")]
 #[test]
@@ -1214,6 +1250,121 @@ fn q16_flatten_stops_incomplete_at_result_retain() {
 /// The unbounded `K<element>` (ADR-014 N-3).
 fn unbounded(kind: CollectionKind, element: ValueType) -> ValueType {
     ValueType::collection(CollectionType::new(kind, element, None))
+}
+
+#[trace("FSpec-FR-335-AC-6", "FSpec-FR-346")]
+#[test]
+fn forall_over_an_unbounded_collection_does_not_enumerate() {
+    // An unbounded type does not mean an infinite runtime value: FR-335-AC-6
+    // evaluates a concrete value occurrence by occurrence. FR-346 applies to
+    // deciding a claim's unbounded extent, outside this per-input evaluator.
+    let package = plain();
+    let unbounded_type = unbounded(CollectionKind::Sequence, ValueType::Boolean);
+    let expression = query(BinderQuery::Forall, "values", name("x"));
+    let values = vec![Value::Boolean(true); 5];
+    let result = run(
+        &package,
+        &[("values", unbounded_type.clone())],
+        &expression,
+        vec![collection(&unbounded_type, values.clone())],
+        UNLIMITED,
+    );
+    assert_eq!(
+        format!("{:?}", completed(&result)),
+        format!("{:?}", Value::Boolean(true))
+    );
+    assert_eq!(result.work, 6, "the concrete occurrences are visited");
+}
+
+#[trace("FSpec-FR-335-AC-6")]
+#[test]
+fn forall_over_a_bounded_collection_still_enumerates() {
+    let package = plain();
+    let source_type = of(CollectionKind::Sequence, ValueType::Boolean, 0, 8);
+    let expression = query(BinderQuery::Forall, "values", name("x"));
+    let result = run(
+        &package,
+        &[("values", source_type.clone())],
+        &expression,
+        vec![collection(&source_type, vec![Value::Boolean(true); 5])],
+        UNLIMITED,
+    );
+    assert_eq!(
+        format!("{:?}", completed(&result)),
+        format!("{:?}", Value::Boolean(true))
+    );
+    assert_eq!(result.work, 6);
+}
+
+#[trace("FSpec-FR-145-AC-10", "QSL-2174")]
+#[test]
+fn drop_first_of_a_non_collection_refuses() {
+    let package = plain();
+    assert_eq!(
+        ill_typed(&package, &[], &Expression::drop_first(literal(1)),),
+        IllTypedCause::TypeMismatch
+    );
+}
+
+#[trace("FSpec-FR-145-AC-11", "QSL-2174")]
+#[test]
+fn remove_one_with_a_mismatched_element_type_refuses() {
+    let package = plain();
+    let source = integers(CollectionKind::Sequence, 1, 3);
+    assert_eq!(
+        ill_typed(
+            &package,
+            &[("values", source)],
+            &Expression::remove_one(name("values"), Expression::boolean(true)),
+        ),
+        IllTypedCause::TypeMismatch
+    );
+}
+
+#[trace("FSpec-FR-145-AC-10", "QSL-2174")]
+#[test]
+fn drop_first_result_bound_is_size_minus_one_only_under_a_nonempty_guard() {
+    let package = plain();
+    let may_be_empty = of(CollectionKind::Sequence, ValueType::Integer, 0, 4);
+    let definitely_nonempty = of(CollectionKind::Sequence, ValueType::Integer, 2, 4);
+    let empty_ok = check(
+        &package,
+        &[("values", may_be_empty)],
+        &Expression::drop_first(name("values")),
+    )
+    .unwrap();
+    let guarded = check(
+        &package,
+        &[("values", definitely_nonempty)],
+        &Expression::drop_first(name("values")),
+    )
+    .unwrap();
+    assert_eq!(
+        empty_ok.value_type(),
+        &integers(CollectionKind::Sequence, 0, 3)
+    );
+    assert_eq!(
+        guarded.value_type(),
+        &integers(CollectionKind::Sequence, 1, 3)
+    );
+}
+
+#[trace("FSpec-FR-145-AC-11", "QSL-2174")]
+#[test]
+fn remove_one_result_bound_needs_contains() {
+    let package = plain();
+    let source = of(CollectionKind::Set, ValueType::Integer, 2, 4);
+    let removed = check(
+        &package,
+        &[("values", source.clone())],
+        &Expression::remove_one(name("values"), literal(5)),
+    )
+    .unwrap();
+    assert_eq!(
+        removed.value_type(),
+        &of(CollectionKind::Set, ValueType::Integer, 1, 4),
+        "without a proved member, removeOne may leave the source unchanged"
+    );
 }
 
 /// TC-441 (ADR-014 §2, N-3): `map` and `flatMap` over an unbounded source
