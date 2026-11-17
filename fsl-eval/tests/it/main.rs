@@ -94,6 +94,7 @@ mod temporal_rulings;
 mod temporal_stream;
 mod temporal_trace;
 mod text_size;
+mod text_to_number;
 mod tick_monitor;
 mod timed_recorded_trace;
 mod timed_subject;

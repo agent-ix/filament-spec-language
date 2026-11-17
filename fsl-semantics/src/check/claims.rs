@@ -475,6 +475,7 @@ fn is_scalar_application(node: CheckedNode<'_>) -> bool {
         | NodeKind::ConvertDecimal(..)
         | NodeKind::Order(..)
         | NodeKind::IeeeToRational(..) => true,
+        NodeKind::ConvertText(..) => true,
         NodeKind::ConvertScalar(target, operand) => {
             scalar_conversion_target(target, node.at(*operand).value_type()).is_some()
         }

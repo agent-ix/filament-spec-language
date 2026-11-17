@@ -1162,6 +1162,7 @@ pub(crate) fn node_children(kind: &NodeKind<NodeId>) -> Vec<NodeId> {
         | NodeKind::OptionSome(operand)
         | NodeKind::ConvertCollection { operand, .. }
         | NodeKind::ConvertScalar(_, operand)
+        | NodeKind::ConvertText(_, operand)
         | NodeKind::IeeeToRational(operand, _)
         | NodeKind::RationalNegate(operand, _)
         | NodeKind::DecimalNegate(operand, _)

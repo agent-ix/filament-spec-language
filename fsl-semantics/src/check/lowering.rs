@@ -5179,6 +5179,58 @@ impl<'a> Lowering<'a> {
                     Operands::One(operand),
                 )
             }
+            NodeKind::ConvertText(target, operand) => {
+                let source = node.at(*operand).value_type();
+                let string_source = matches!(source, ValueType::String);
+                let member = self.type_argument(target, node.location())?;
+                let mut laws = Vec::new();
+                if matches!(source, ValueType::Text(_)) {
+                    laws.push(self.law(LawRole::TextProfile, node.location())?);
+                }
+                let (suffix, mode) = match target {
+                    ValueType::Integer | ValueType::Int(_) => ("to_integer", None),
+                    ValueType::Decimal(decimal) => (
+                        "to_decimal",
+                        Some(OperationMode::Rounding(decimal.rounding())),
+                    ),
+                    ValueType::Rational(_) => ("to_rational", None),
+                    ValueType::Float(float) => {
+                        laws.push(self.law(LawRole::IeeeProfile, node.location())?);
+                        let suffix = match float.width() {
+                            filament_exact::IeeeWidth::Binary32 => "to_float32",
+                            filament_exact::IeeeWidth::Binary64 => "to_float64",
+                        };
+                        (suffix, Some(OperationMode::Rounding(float.rounding())))
+                    }
+                    ValueType::Quantity(_) => (
+                        "to_quantity",
+                        Some(OperationMode::Rounding(filament_exact::RoundingMode::Exact)),
+                    ),
+                    _ => {
+                        return Err(CheckRefusal::ill_typed(
+                            node.location(),
+                            filament_exact::IllTypedCause::OperatorIneligible,
+                        ));
+                    }
+                };
+                let identity = if string_source {
+                    format!("filament.op.string.{suffix}")
+                } else {
+                    format!("filament.op.text.{suffix}")
+                };
+                (
+                    Keyed::Application(
+                        Operator::Convert,
+                        Operation {
+                            laws,
+                            mode,
+                            member: Some(member),
+                            ..plain(&identity)
+                        },
+                    ),
+                    Operands::One(operand),
+                )
+            }
             NodeKind::ConvertScalar(target, operand) => {
                 let Some(target) =
                     super::ir::scalar_conversion_target(target, node.at(*operand).value_type())

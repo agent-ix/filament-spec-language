@@ -601,7 +601,7 @@ fn form_name(kind: &NodeKind<fsl_semantics::check::NodeId>) -> &'static str {
         | NodeKind::Lookup { .. }
         | NodeKind::NamedPopulation { .. }
         | NodeKind::PopulationObjects { .. } => "population",
-        NodeKind::ConvertScalar(..) => "scalar conversion",
+        NodeKind::ConvertScalar(..) | NodeKind::ConvertText(..) => "scalar conversion",
         NodeKind::ProtocolReference { .. } => "protocol reference",
         NodeKind::History { .. } => "history field",
         _ => "expression",

@@ -136,6 +136,7 @@ mod temporal_clock_names;
 mod temporal_fairness;
 #[cfg(feature = "test-support")]
 mod terminal_declarations;
+mod text_to_number;
 #[cfg(feature = "test-support")]
 mod timed_declarations;
 #[cfg(feature = "test-support")]

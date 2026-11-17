@@ -13,6 +13,7 @@ use filament_checked::node::{
 };
 use std::cmp::Ordering;
 use std::collections::{BTreeSet, VecDeque};
+use std::str::FromStr;
 use std::sync::Arc;
 
 use super::causes::{
@@ -50,10 +51,10 @@ use filament_exact::{
     retain_boolean, ArithmeticOperator, BooleanConnective, IntegerArithmetic, OrderedOperands,
     OrderingOperator, RationalArithmetic,
 };
-use filament_exact::{evaluate_decimal, Decimal, DecimalOperation, DecimalType};
+use filament_exact::{evaluate_decimal, Decimal, DecimalOperation, DecimalType, InexactTarget};
 use filament_exact::{
     BoundViolation, CardinalityBound, Charge, ChargePoint, CollectionKind, Incomplete, Integer,
-    LimitKind, Meter, PopulationId,
+    LimitKind, Meter, NonZeroInteger, PopulationId, TextProfile,
 };
 use filament_exact::{DivisionMember, IntegerDomain};
 use filament_exact::{EffectiveId, NodeKey};
@@ -212,6 +213,382 @@ impl From<Stop> for Halt {
 impl From<Incomplete> for Halt {
     fn from(record: Incomplete) -> Self {
         Self::Stop(Stop::Incomplete(record))
+    }
+}
+
+/// FR-478: read a Text/String payload and convert its fixed grammar to the
+/// checked numeric target. The checker has already restricted this target to
+/// the six text conversion families.
+fn convert_text_value(
+    source_type: &ValueType,
+    target: &ValueType,
+    input: &Value,
+    units: &UnitScope<'_>,
+    ieee_admitted: bool,
+    meter: &mut Meter,
+) -> Result<(Value, Option<ValueLoss>), Halt> {
+    let text = prepare_conversion_text(source_type, input, meter)?;
+    match target {
+        ValueType::Integer | ValueType::Int(_) => {
+            let Some(integer) = parse_integer_text(&text) else {
+                return Err(Stop::Undefined(Undefined::NoneValue).into());
+            };
+            if target.admits(&Value::Integer(integer.clone())) {
+                Ok((Value::Integer(integer), None))
+            } else if let ValueType::Int(interval) = target {
+                Err(Stop::Refused(Refusal::IntegerOutOfDomain {
+                    target: Box::new(interval.clone()),
+                })
+                .into())
+            } else {
+                Err(invariant("unbounded-integer-conversion-rejected"))
+            }
+        }
+        ValueType::Decimal(decimal_type) => {
+            let Some((coefficient, scale)) = parse_decimal_text(&text, false) else {
+                return Err(Stop::Undefined(Undefined::NoneValue).into());
+            };
+            let mut coefficient = coefficient;
+            let mut scale = scale;
+            let ten = Integer::from(10_i64);
+            let ten_divisor =
+                NonZeroInteger::try_from(&ten).expect("ten is a nonzero decimal divisor");
+            while scale > decimal_type.max_scale() && text.ends_with('0') {
+                coefficient = coefficient.exact_div(ten_divisor);
+                scale -= 1;
+            }
+            let decimal = Decimal::new(coefficient.clone(), scale);
+            let (result, loss) = if scale <= decimal_type.max_scale() {
+                if !decimal_type.contains(&decimal) {
+                    return Err(Stop::Refused(Refusal::DecimalOutOfDomain {
+                        target: Box::new(decimal_type.clone()),
+                    })
+                    .into());
+                }
+                (decimal, None)
+            } else {
+                if decimal_type.rounding() == filament_exact::RoundingMode::Exact {
+                    return Err(Stop::Refused(Refusal::InexactDecimal {
+                        target: InexactTarget::Decimal(Box::new(decimal_type.clone())),
+                    })
+                    .into());
+                }
+                meter.charge(
+                    Charge::new(ChargePoint::DecimalRounding)
+                        .exact_size(LimitKind::IntegerBits, coefficient.magnitude_bits())
+                        .exact_size(LimitKind::DecimalDigits, coefficient.decimal_digits()),
+                )?;
+                let rational = Rational::new(coefficient, Integer::power_of_ten(u64::from(scale)))
+                    .map_err(|_| invariant("decimal-text-rational-invalid"))?;
+                let placed = decimal_type
+                    .placement(&rational)
+                    .map_err(|refusal| Stop::Refused(refusal))?
+                    .materialize()
+                    .map_err(|refusal| Stop::Refused(refusal))?;
+                let result = placed
+                    .admit()
+                    .map_err(|refusal| Stop::Refused(refusal))?
+                    .retain();
+                (result.value().clone(), result.loss().cloned())
+            };
+            Ok((Value::Decimal(result), loss.map(ValueLoss::Decimal)))
+        }
+        ValueType::Rational(domain) => {
+            let Some(rational) = parse_rational_text(&text, false) else {
+                return Err(Stop::Undefined(Undefined::NoneValue).into());
+            };
+            if domain.contains(&rational) {
+                Ok((Value::Rational(rational), None))
+            } else {
+                Err(Stop::Refused(Refusal::RationalOutOfDomain {
+                    target: Box::new(domain.clone()),
+                })
+                .into())
+            }
+        }
+        ValueType::Float(float_type) => {
+            let Some(parsed) = parse_float_text(&text) else {
+                return Err(Stop::Undefined(Undefined::NoneValue).into());
+            };
+            let (width, rounding) = (float_type.width(), float_type.rounding());
+            match parsed {
+                ParsedFloat::Infinity(negative) => {
+                    Ok((Value::Float(infinity(width, negative)), None))
+                }
+                ParsedFloat::NaN => Ok((Value::Float(canonical_nan(width)), None)),
+                ParsedFloat::NegativeZero => Ok((Value::Float(negative_zero(width)), None)),
+                ParsedFloat::Finite(rational) => {
+                    if !ieee_admitted {
+                        return Err(invariant("ieee-profile-unresolved"));
+                    }
+                    let rounded =
+                        outcome_into_stop(exact_to_ieee(&rational, width, rounding, meter))?;
+                    let loss = (rounded.flags() != IeeeFlags::EMPTY)
+                        .then_some(ValueLoss::IeeeFlags(rounded.flags()));
+                    Ok((Value::Float(rounded.value()), loss))
+                }
+            }
+        }
+        ValueType::Quantity(unit) => {
+            let Some((magnitude, supplied_unit)) = parse_quantity_text(&text) else {
+                return Err(Stop::Undefined(Undefined::NoneValue).into());
+            };
+            let Some(target_unit) = units.get(unit.clone()) else {
+                return Err(unresolved_unit());
+            };
+            if let Some(supplied_unit) = supplied_unit {
+                let Some(expected_name) = declared_unit_name(target_unit) else {
+                    return Err(Stop::Undefined(Undefined::NoneValue).into());
+                };
+                if supplied_unit != expected_name {
+                    return Err(Stop::Undefined(Undefined::NoneValue).into());
+                }
+            }
+            Ok((
+                Value::Quantity(Quantity::new(magnitude, unit.clone())),
+                None,
+            ))
+        }
+        _ => Err(invariant("checked-text-conversion-target-is-numeric")),
+    }
+}
+
+/// Charge the input and decode stages, then normalize a Text operand under
+/// its selected profile. String values keep their scalar sequence verbatim.
+fn prepare_conversion_text(
+    source_type: &ValueType,
+    input: &Value,
+    meter: &mut Meter,
+) -> Result<String, Halt> {
+    let (text, profile) = match (source_type, input) {
+        (ValueType::Text(text_type), Value::Text(text)) => {
+            (text.payload().as_str(), Some(text_type.profile()))
+        }
+        (ValueType::String, Value::String(text)) => (text.as_str(), None),
+        _ => return Err(invariant("text-conversion-source-not-admitted")),
+    };
+    let bytes = u64::try_from(text.len()).unwrap_or(u64::MAX);
+    let scalars = u64::try_from(text.chars().count()).unwrap_or(u64::MAX);
+    meter
+        .charge(Charge::new(ChargePoint::TextInputBytes).size(LimitKind::TextInputBytes, bytes))?;
+    meter.charge(
+        Charge::new(ChargePoint::TextDecodeScalars).size(LimitKind::TextScalars, scalars),
+    )?;
+    let Some(form) = profile.and_then(TextProfile::normalization) else {
+        return Ok(text.to_owned());
+    };
+    meter.charge(Charge::new(ChargePoint::TextNormalizeInput))?;
+    let mut normalized = String::new();
+    let mut emitted = 0_u64;
+    for scalar in form.apply(text) {
+        emitted = emitted.saturating_add(1);
+        meter.charge(
+            Charge::new(ChargePoint::TextNormalizeOutput)
+                .size(LimitKind::NormalizedScalars, emitted),
+        )?;
+        normalized.push(scalar);
+    }
+    Ok(normalized)
+}
+
+fn parse_integer_text(text: &str) -> Option<Integer> {
+    let (negative, digits) = signed_natural(text)?;
+    if negative && digits == "0" {
+        return None;
+    }
+    Integer::from_str(text).ok()
+}
+
+fn parse_decimal_text(text: &str, allow_negative_zero: bool) -> Option<(Integer, u32)> {
+    let (negative, unsigned) = text
+        .strip_prefix('-')
+        .map_or((false, text), |digits| (true, digits));
+    let (whole, fraction) = unsigned.split_once('.').unwrap_or((unsigned, ""));
+    if !natural_digits(whole)
+        || (unsigned.contains('.') && (fraction.is_empty() || !ascii_digits(fraction)))
+    {
+        return None;
+    }
+    let scale = u32::try_from(fraction.len()).ok()?;
+    let digits = format!("{whole}{fraction}");
+    let digits = digits.trim_start_matches('0');
+    let digits = if digits.is_empty() { "0" } else { digits };
+    let mut coefficient = String::with_capacity(digits.len() + usize::from(negative));
+    if negative && digits != "0" {
+        coefficient.push('-');
+    }
+    coefficient.push_str(digits);
+    let integer = Integer::from_str(&coefficient).ok()?;
+    if negative && integer.is_zero() && !allow_negative_zero {
+        return None;
+    }
+    Some((integer, scale))
+}
+
+fn parse_rational_text(text: &str, allow_negative_zero: bool) -> Option<Rational> {
+    if let Some((numerator_text, denominator_text)) = text.split_once('/') {
+        let numerator = parse_integer_text(numerator_text)?;
+        let (negative_denominator, denominator_digits) = signed_natural(denominator_text)?;
+        if negative_denominator || denominator_digits == "0" {
+            return None;
+        }
+        return Rational::new(numerator, Integer::from_str(denominator_text).ok()?).ok();
+    }
+    let (coefficient, scale) = parse_decimal_text(text, allow_negative_zero)?;
+    Rational::new(coefficient, Integer::power_of_ten(u64::from(scale))).ok()
+}
+
+fn signed_natural(text: &str) -> Option<(bool, &str)> {
+    let (negative, digits) = text
+        .strip_prefix('-')
+        .map_or((false, text), |digits| (true, digits));
+    natural_digits(digits).then_some((negative, digits))
+}
+
+fn natural_digits(digits: &str) -> bool {
+    !digits.is_empty()
+        && (digits == "0"
+            || (digits
+                .as_bytes()
+                .first()
+                .is_some_and(|byte| (b'1'..=b'9').contains(byte))
+                && ascii_digits(digits)))
+}
+
+fn ascii_digits(text: &str) -> bool {
+    !text.is_empty() && text.bytes().all(|byte| byte.is_ascii_digit())
+}
+
+enum ParsedFloat {
+    Infinity(bool),
+    NaN,
+    NegativeZero,
+    Finite(Rational),
+}
+
+fn parse_float_text(text: &str) -> Option<ParsedFloat> {
+    match text {
+        "inf" => return Some(ParsedFloat::Infinity(false)),
+        "-inf" => return Some(ParsedFloat::Infinity(true)),
+        "nan" => return Some(ParsedFloat::NaN),
+        _ => {}
+    }
+    let (significand, exponent) = match text.split_once('e') {
+        Some((significand, exponent)) => (significand, Some(exponent)),
+        None => (text, None),
+    };
+    let exponent = match exponent {
+        Some(exponent) => {
+            let (negative, digits) = signed_natural(exponent)?;
+            if negative && digits == "0" {
+                return None;
+            }
+            let magnitude = digits.bytes().fold(0_i64, |value, digit| {
+                value
+                    .saturating_mul(10)
+                    .saturating_add(i64::from(digit - b'0'))
+            });
+            Some(if negative { -magnitude } else { magnitude })
+        }
+        None => None,
+    };
+    let (coefficient, scale) = parse_decimal_text(significand, true)?;
+    if coefficient.is_zero() {
+        return Some(if significand.starts_with('-') {
+            ParsedFloat::NegativeZero
+        } else {
+            ParsedFloat::Finite(Rational::from_integer(Integer::zero()))
+        });
+    }
+    let significant_digits = i64::try_from(coefficient.abs().to_string().len()).unwrap_or(i64::MAX);
+    let decimal_order = significant_digits
+        .saturating_sub(i64::from(scale))
+        .saturating_add(exponent.unwrap_or(0));
+    if decimal_order > 400 {
+        let magnitude = Integer::power_of_ten(400);
+        let numerator = if coefficient.is_negative() {
+            Integer::zero().sub(&magnitude)
+        } else {
+            magnitude
+        };
+        return Some(ParsedFloat::Finite(Rational::from_integer(numerator)));
+    }
+    if decimal_order < -400 {
+        let numerator = if coefficient.is_negative() {
+            Integer::zero().sub(&Integer::one())
+        } else {
+            Integer::one()
+        };
+        return Some(ParsedFloat::Finite(
+            Rational::new(numerator, Integer::power_of_ten(400)).ok()?,
+        ));
+    }
+    let rational = match exponent {
+        Some(exponent) if exponent < 0 => {
+            let parsed =
+                Rational::new(coefficient, Integer::power_of_ten(u64::from(scale))).ok()?;
+            parsed.divided_by_power_of_ten(exponent.unsigned_abs())
+        }
+        Some(exponent) if exponent >= i64::from(scale) => Rational::from_integer(coefficient.mul(
+            &Integer::power_of_ten(u64::try_from(exponent - i64::from(scale)).ok()?),
+        )),
+        Some(exponent) => Rational::new(
+            coefficient,
+            Integer::power_of_ten(u64::try_from(i64::from(scale) - exponent).ok()?),
+        )
+        .ok()?,
+        None => Rational::new(coefficient, Integer::power_of_ten(u64::from(scale))).ok()?,
+    };
+    Some(ParsedFloat::Finite(rational))
+}
+
+fn parse_quantity_text(text: &str) -> Option<(Rational, Option<&str>)> {
+    match text.split_once(' ') {
+        Some((number, unit)) if filament_exact::is_identifier(unit) => {
+            Some((parse_rational_text(number, false)?, Some(unit)))
+        }
+        Some(_) => None,
+        None => Some((parse_rational_text(text, false)?, None)),
+    }
+}
+
+fn declared_unit_name(unit: &filament_semantic_value::quantity::QuantityUnit) -> Option<String> {
+    use filament_exact::PathSegment;
+    let filament_semantic_value::quantity::QuantityUnit::Declared(unit) = unit else {
+        return None;
+    };
+    unit.key()
+        .path()
+        .into_iter()
+        .rev()
+        .find_map(|segment| match segment {
+            PathSegment::Text(name) => Some(name),
+            PathSegment::Node(_) => None,
+        })
+}
+
+fn infinity(width: IeeeWidth, negative: bool) -> IeeeValue {
+    match width {
+        IeeeWidth::Binary32 => {
+            IeeeValue::binary32((if negative { 0x8000_0000 } else { 0 }) | 0x7f80_0000)
+        }
+        IeeeWidth::Binary64 => IeeeValue::binary64(
+            (if negative { 0x8000_0000_0000_0000 } else { 0 }) | 0x7ff0_0000_0000_0000,
+        ),
+    }
+}
+
+fn canonical_nan(width: IeeeWidth) -> IeeeValue {
+    match width {
+        IeeeWidth::Binary32 => IeeeValue::binary32(0x7fc0_0000),
+        IeeeWidth::Binary64 => IeeeValue::binary64(0x7ff8_0000_0000_0000),
+    }
+}
+
+fn negative_zero(width: IeeeWidth) -> IeeeValue {
+    match width {
+        IeeeWidth::Binary32 => IeeeValue::binary32(0x8000_0000),
+        IeeeWidth::Binary64 => IeeeValue::binary64(0x8000_0000_0000_0000),
     }
 }
 
@@ -3060,13 +3437,43 @@ impl<'a, 'm, N: NodeSource<'a>> Machine<'a, 'm, N> {
                 }
                 value
             }
+            NodeKind::ConvertText(_, operand) => {
+                let value = self.pop()?;
+                let source_type = node.at(*operand).value_type();
+                let target_type = node.value_type();
+                let (converted, loss) = convert_text_value(
+                    source_type,
+                    target_type,
+                    &value,
+                    &self.units,
+                    self.world.has_ieee_profile(),
+                    self.meter,
+                )?;
+                if let Some(loss) = loss {
+                    self.record(node, loss)?;
+                }
+                converted
+            }
             NodeKind::ConvertScalar(operand, source_node) => {
                 let value = self.pop()?;
                 let source_type = node.at(*source_node).value_type();
                 let target_type = node.value_type();
                 let carried_conversion = matches!(source_type, ValueType::CarriedQuantity(_))
                     || matches!(target_type, ValueType::CarriedQuantity(_));
-                if let ValueType::Float(float) = target_type {
+                if matches!(source_type, ValueType::Text(_) | ValueType::String) {
+                    let (converted, loss) = convert_text_value(
+                        source_type,
+                        target_type,
+                        &value,
+                        &self.units,
+                        self.world.has_ieee_profile(),
+                        self.meter,
+                    )?;
+                    if let Some(loss) = loss {
+                        self.record(node, loss)?;
+                    }
+                    converted
+                } else if let ValueType::Float(float) = target_type {
                     self.convert_to_float(node, &value, *float)?
                 } else if carried_conversion {
                     let Value::Quantity(quantity) = &value else {
