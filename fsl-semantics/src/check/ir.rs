@@ -89,7 +89,9 @@ pub struct Node {
 /// The peer that supplied a bounded integer type to an equality operand.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct EqualityRangeContext {
+    /// The bounded integer type supplied by the peer operand.
     pub(crate) expected: String,
+    /// The peer operand's authored name.
     pub(crate) operand: String,
 }
 
