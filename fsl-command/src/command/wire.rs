@@ -464,7 +464,7 @@ pub(super) struct AnalyzeRequest {
     #[serde(default, deserialize_with = "present_json_value")]
     pub integer_division: Option<serde_json::Value>,
     #[serde(default, deserialize_with = "deserialize_objects")]
-    pub documents: Vec<FileSelection>,
+    pub documents: Vec<DocumentFileSelection>,
     #[serde(default)]
     pub memory: Vec<serde_json::Value>,
     #[serde(default, deserialize_with = "from_object_opt")]
@@ -482,6 +482,15 @@ pub(super) struct AnalyzeRequest {
 #[serde(deny_unknown_fields)]
 pub(super) struct FileSelection {
     pub file: String,
+}
+
+/// A supplied document and its optional FR-821 provision identity.
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(super) struct DocumentFileSelection {
+    pub file: String,
+    #[serde(default)]
+    pub identity: Option<fsl_analyze::analyze::document::DocumentSelection>,
 }
 
 /// The request-level `limits`: what every item of the run shares.

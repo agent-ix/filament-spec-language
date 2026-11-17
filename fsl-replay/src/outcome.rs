@@ -945,9 +945,21 @@ pub struct ProtocolConformanceOutput {
     /// Per-role projection results, absent in recording mode.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub projections: Option<Vec<ConformanceProjectionOutput>>,
+    /// The provisioned FR-737 recording identity, present in recording mode.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub recording: Option<ConformanceRecordingIdentity>,
     /// Whether the global counterexample replay reproduced its violation.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub replay: Option<ConformanceReplayOutput>,
+}
+
+/// The command-level identity under which a protocol recording was provisioned.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+pub struct ConformanceRecordingIdentity {
+    /// The authority that provisioned the recording.
+    pub authority: String,
+    /// The provisioned recording identity.
+    pub identity: String,
 }
 
 /// The in-process replay result for a global-conformance counterexample.
@@ -2994,6 +3006,7 @@ mod tests {
                     label: "proved".to_owned(),
                     counterexample: None,
                 }]),
+                recording: None,
                 replay: Some(ConformanceReplayOutput { reproduced: true }),
             });
         let wire = serde_json::to_value(item).expect("serializes");

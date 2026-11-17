@@ -100,6 +100,17 @@ fn read<'d>(
         RunCause::Json(error) => invalid("request", error.to_string()),
         cause => cause,
     })?;
+    for (position, item) in request.items.iter().flatten().enumerate() {
+        if item.recording.is_some()
+            && item.kind.as_deref()
+                != Some(fsl_semantics::check::Capability::GlobalConformance.to_wire())
+        {
+            return Err(invalid(
+                &format!("/items/{position}/recording"),
+                "recording is only valid on a global-conformance item",
+            ));
+        }
+    }
     if let Some(package) = &request.package {
         admit_package(directory, dependent_bytes, &request, package)?;
         // The engines analyze an in-process checked package that only a
@@ -134,18 +145,64 @@ fn read<'d>(
     let source = intake.source(&program.source, "program.source")?;
     require_complete_edition(source.source())?;
     let mut documents = DocumentProvision::new();
-    for document in &request.documents {
+    let mut recording_documents = std::collections::BTreeSet::new();
+    for (position, document) in request.documents.iter().enumerate() {
         let bytes = intake.file(&document.file, intake.remaining)?;
-        let Some(reference) = fsl_semantics::model::observation::document_reference(&bytes) else {
+        let parsed: serde_json::Value = serde_json::from_slice(&bytes).map_err(|error| {
+            invalid(
+                &format!("/documents/{position}"),
+                format!("{} is not a JSON document: {error}", document.file),
+            )
+        })?;
+        let format = parsed.get("format").and_then(serde_json::Value::as_str);
+        let declared_identity = match parsed.get("identity") {
+            Some(value) => Some(
+                serde_json::from_value::<fsl_analyze::analyze::document::DocumentSelection>(
+                    value.clone(),
+                )
+                .map_err(|error| {
+                    invalid(
+                        &format!("/documents/{position}"),
+                        format!("document identity is malformed: {error}"),
+                    )
+                })?,
+            ),
+            None => None,
+        };
+        if format == Some("filament.state.snapshot/v1") && document.identity.is_some() {
             return Err(invalid(
-                "documents",
-                format!("{} declares no identity", document.file),
+                &format!("/documents/{position}/identity"),
+                "a supplied snapshot uses its declared identity and cannot state a wrapper identity",
+            ));
+        }
+        if let (Some(declared), Some(stated)) = (&declared_identity, &document.identity) {
+            if declared != stated {
+                return Err(invalid(
+                    &format!("/documents/{position}/identity"),
+                    format!(
+                        "stated identity {{{}, {}}} contradicts declared identity {{{}, {}}}",
+                        stated.authority, stated.identity, declared.authority, declared.identity
+                    ),
+                ));
+            }
+        }
+        let Some(identity) = declared_identity.as_ref().or(document.identity.as_ref()) else {
+            return Err(invalid(
+                &format!("/documents/{position}"),
+                format!("{} declares no identity and none was stated", document.file),
             ));
         };
+        let reference = fsl_semantics::model::observation::DocumentRef {
+            authority: identity.authority.clone(),
+            identity: identity.identity.clone(),
+        };
+        if format == Some("filament.protocol-recording/1") {
+            recording_documents.insert((reference.authority.clone(), reference.identity.clone()));
+        }
         if documents.insert(reference, bytes).is_some() {
             return Err(invalid(
-                "documents",
-                format!("{} repeats a provisioned identity", document.file),
+                &format!("/documents/{position}"),
+                format!("{} repeats a provisioned document identity", document.file),
             ));
         }
     }
@@ -178,12 +235,13 @@ fn read<'d>(
                 .map(|recording| (position, recording))
         })
     {
-        if !documents.contains_key(&recording.reference()) {
+        let identity = recording.reference();
+        if !recording_documents.contains(&(identity.authority.clone(), identity.identity.clone())) {
             return Err(invalid(
-                "items",
+                &format!("/items/{position}/recording"),
                 format!(
-                    "items[{position}].recording {{{}, {}}} names no provisioned document",
-                    recording.authority, recording.identity
+                    "recording {{{}, {}}} does not name a provisioned protocol recording",
+                    recording.authority, recording.identity,
                 ),
             ));
         }

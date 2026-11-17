@@ -2002,11 +2002,19 @@ pub fn settle_run(
             gaps.push(json!({"request_index": index.get(), "reason": "not-proved",
                 "result": written["result"].as_str().unwrap_or("invalid-request")}));
         }
-        let target = outcome
-            .counterexamples
-            .iter()
-            .find(|found| found.request_index == index)
-            .and_then(|found| claim_name.as_deref().map(|name| replay_target(found, name)));
+        let replay_was_published = outcome
+            .protocol_conformance
+            .get(&index)
+            .is_none_or(|conformance| conformance.replay.is_some());
+        let target = replay_was_published
+            .then(|| {
+                outcome
+                    .counterexamples
+                    .iter()
+                    .find(|found| found.request_index == index)
+                    .and_then(|found| claim_name.as_deref().map(|name| replay_target(found, name)))
+            })
+            .flatten();
         items.push(item_document(
             written,
             ItemMembers {
@@ -2223,7 +2231,7 @@ fn item_document(written: Value, members: ItemMembers) -> Value {
         }
         item.insert("counterexample".to_owned(), counterexample);
     }
-    for member in ["obligations", "closure", "global", "projections"] {
+    for member in ["obligations", "closure", "global", "projections", "recording"] {
         if let Some(value) = record.get(member) {
             item.insert(member.to_owned(), value.clone());
         }

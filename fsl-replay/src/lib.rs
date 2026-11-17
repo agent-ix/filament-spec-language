@@ -338,7 +338,7 @@ pub use outcome::{
     probabilistic_wire, protocol_temporal_wire, temporal_wire, ClauseRunNotAnItem,
     CounterexampleWireError, ExecuteResult, ItemCause, ItemLabel, Operation, OutcomeDiagnostic,
     OutcomeDocument, OutcomeItem, OutcomeItemError, OutcomeLocus, OutcomeStage, OutcomeWriteError,
-    ParityReason, ProtocolConformanceOutput, ConformanceReplayOutput, ConformanceObligationOutput,
+    ParityReason, ProtocolConformanceOutput, ConformanceRecordingIdentity, ConformanceReplayOutput, ConformanceObligationOutput,
     ConformanceClosureOutput, ConformanceGlobalOutput, ConformanceProjectionOutput, ProtocolWire,
     ResultLimit, ResultValue, OUTCOME_FORMAT,
 };

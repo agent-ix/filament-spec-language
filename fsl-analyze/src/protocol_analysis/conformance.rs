@@ -6,8 +6,8 @@ use filament_semantic_value::catalog::CatalogCode;
 use fsl_eval::model_subject::ProtocolSubject;
 use fsl_eval::simulation::model::ModelSystem;
 use fsl_eval::simulation::protocol::{
-    ProtocolRefusal, ProtocolSystem, ProtocolTransition, Ra, Sc, StepKind, SubjectMemory, Tso,
-    live_instance_bound,
+    live_instance_bound, ProtocolRefusal, ProtocolSystem, ProtocolTransition, Ra, Sc, StepKind,
+    SubjectMemory, Tso,
 };
 use fsl_eval::simulation::{SubjectSystem, TransitionSystem};
 use fsl_replay::TemporalCounterexample;
@@ -35,63 +35,13 @@ fn recording_payload(bytes: &[u8]) -> Result<Vec<u8>, String> {
     serde_json::to_vec(&document).map_err(|error| format!("recording document: {error}"))
 }
 
-fn validate_recording_closure(
-    protocol: &fsl_semantics::check::CheckedProtocol,
-    recording: &[u8],
-    assessment: &super::recording::RecordingAssessment,
-) -> Result<(), String> {
-    use std::collections::BTreeSet;
-
-    let document: serde_json::Value = serde_json::from_slice(recording)
-        .map_err(|error| format!("recording document is not valid JSON: {error}"))?;
-    let instances: BTreeSet<String> = document["observations"]
-        .as_array()
-        .ok_or_else(|| "recording observations must be an array".to_owned())?
-        .iter()
-        .filter_map(|observation| observation["instance"].as_str().map(str::to_owned))
-        .collect();
-    let mut expected = BTreeSet::new();
-    for instance in &instances {
-        expected.insert(("execution".to_owned(), instance.clone()));
-        for control in &protocol.controls.controls {
-            if matches!(
-                control.kind,
-                fsl_forms::ProtocolNodeKind::Case | fsl_forms::ProtocolNodeKind::Branch
-            ) {
-                expected.insert((
-                    "branch".to_owned(),
-                    format!("{instance}/{}::{}", protocol.name, control.path.join("::")),
-                ));
-            }
-        }
-    }
-    let actual: Vec<_> = assessment
-        .closure
-        .premises
-        .iter()
-        .map(|premise| (premise.kind.clone(), premise.identity.clone()))
-        .collect();
-    let actual_set: BTreeSet<_> = actual.iter().cloned().collect();
-    if actual.len() != actual_set.len() {
-        return Err("closure premise set contains a duplicate premise".to_owned());
-    }
-    if actual_set != expected {
-        let missing: Vec<_> = expected.difference(&actual_set).cloned().collect();
-        let extra: Vec<_> = actual_set.difference(&expected).cloned().collect();
-        return Err(format!(
-            "closure premise set does not match the recording scope (missing: {missing:?}; extra: {extra:?})"
-        ));
-    }
-    Ok(())
-}
-
 /// Build the recording-mode `global-conformance` result from the checked
 /// protocol and its provisioned FR-737 bytes.
 fn recording_result(
     index: fsl_foundation::RequestIndex,
     package: &fsl_package::CheckedPackage,
-    protocol: &fsl_semantics::check::CheckedProtocol,
     subject: Option<&fsl_eval::model_subject::ProtocolSubject<'_>>,
+    recording_identity: Option<&fsl_semantics::model::observation::DocumentRef>,
     recording: &[u8],
     cancel: &Cancel,
 ) -> crate::analyze::EngineReport {
@@ -141,27 +91,19 @@ fn recording_result(
             );
         }
     };
-    if let Err(detail) = validate_recording_closure(protocol, &recording, &assessment) {
+    let Some(recording_identity) = recording_identity else {
         return crate::analyze::EngineReport::Refused(crate::analyze::Refusal::DeclinedWithDetail(
             fsl_replay::ProofRefusalCause::InvalidInput,
             fsl_replay::DeclineCode::Fsl(fsl_foundation::Code::InvalidRuntimeInput),
-            CatalogCode::new("invalid_runtime_input", "invalid-value"),
-            [("detail".to_owned(), serde_json::json!(detail))]
+            CatalogCode::new("invalid_runtime_input", "missing-member"),
+            [("detail".to_owned(), serde_json::json!("recording has no provisioned identity"))]
                 .into_iter()
                 .collect(),
         ));
-    }
+    };
     let replayed = if assessment.global.label == "refuted" {
-        let Some(trace_position) = assessment.trace_position else {
-            return crate::analyze::EngineReport::Refused(crate::analyze::Refusal::Failed(
-                filament_semantic_value::catalog::CatalogCode::new(
-                    "runtime_invariant",
-                    "established-invariant-broken",
-                ),
-            ));
-        };
-        match subject {
-            Some(subject) => match replay_counterexample(
+        match (subject, assessment.trace_position) {
+            (Some(subject), Some(trace_position)) => match replay_counterexample(
                 subject,
                 &ConformanceCounterexample::Recording {
                     recording: recording.to_vec(),
@@ -189,27 +131,12 @@ fn recording_result(
                     );
                 }
             },
-            None => match super::recording::assess_recording(package, &recording) {
-                Ok(replayed)
-                    if replayed.global.label == "refuted"
-                        && replayed.trace_position == Some(trace_position) =>
-                {
-                    true
-                }
-                _ => {
-                    return crate::analyze::EngineReport::Refused(crate::analyze::Refusal::Failed(
-                        filament_semantic_value::catalog::CatalogCode::new(
-                            "runtime_invariant",
-                            "established-invariant-broken",
-                        ),
-                    ));
-                }
-            },
+            _ => false,
         }
     } else {
         false
     };
-    let mut output = recording_output(assessment.clone());
+    let mut output = recording_output(assessment.clone(), recording_identity);
     output.replay = replayed.then_some(fsl_replay::ConformanceReplayOutput { reproduced: true });
     let terminal = match assessment.global.label.as_str() {
         "proved" => TerminalRecord::of_protocol_analysis(
@@ -260,8 +187,8 @@ fn recording_result(
 pub(crate) fn global_recording_item<'a>(
     index: fsl_foundation::RequestIndex,
     package: &'a fsl_package::CheckedPackage,
-    protocol: &'a fsl_semantics::check::CheckedProtocol,
     subject: Option<fsl_eval::model_subject::ProtocolSubject<'a>>,
+    recording_identity: Option<fsl_semantics::model::observation::DocumentRef>,
     recording: Option<&'a [u8]>,
 ) -> crate::analyze::AnalyzeItem<'a> {
     crate::analyze::AnalyzeItem::new(
@@ -271,9 +198,14 @@ pub(crate) fn global_recording_item<'a>(
         fsl_route::Mode::Bounded,
         super::manifest::BACKEND_ID,
         move |cancel| match recording {
-            Some(recording) => {
-                recording_result(index, package, protocol, subject.as_ref(), recording, cancel)
-            }
+            Some(recording) => recording_result(
+                index,
+                package,
+                subject.as_ref(),
+                recording_identity.as_ref(),
+                recording,
+                cancel,
+            ),
             None => crate::analyze::EngineReport::Refused(crate::analyze::Refusal::Declined(
                 fsl_replay::ProofRefusalCause::InvalidInput,
                 fsl_replay::DeclineCode::Fsl(fsl_foundation::Code::InvalidRuntimeInput),
@@ -580,7 +512,11 @@ fn behavior_report(
                     .to_owned(),
                 premises: std::iter::once(serde_json::json!({
                     "kind": "execution",
-                    "identity": "protocol"
+                    "node": protocol
+                        .finish
+                        .as_ref()
+                        .map(|(_, finish)| format!("{}::{finish}", protocol.name))
+                        .unwrap_or_else(|| protocol.name.clone())
                 }))
                 .chain(
                     protocol
@@ -592,7 +528,7 @@ fn behavior_report(
                         })
                         .map(|control| serde_json::json!({
                             "kind": "branch",
-                            "identity": format!("{}/{}::{}", "protocol", protocol.name, control.path.join("::")),
+                            "node": format!("{}::{}", protocol.name, control.path.join("::")),
                         })),
                 )
                 .collect(),
@@ -630,6 +566,7 @@ fn behavior_report(
                     })
                     .collect(),
             ),
+            recording: None,
             replay: refuted.then_some(fsl_replay::ConformanceReplayOutput { reproduced: true }),
         },
         counterexample,
@@ -998,11 +935,9 @@ pub fn replay_counterexample(
         } => {
             fsl_replay::BoundExceeded::check(recording.len(), limits)
                 .map_err(|error| ConformanceReplayRefusal::invalid(error.to_string(), None))?;
-            let assessment = super::recording::assess_recording(
-                subject.model.simulation.package,
-                recording,
-            )
-            .map_err(ConformanceReplayRefusal::recording)?;
+            let assessment =
+                super::recording::assess_recording(subject.model.simulation.package, recording)
+                    .map_err(ConformanceReplayRefusal::recording)?;
             if assessment.global.label == "refuted"
                 && assessment.trace_position == Some(*trace_position)
             {
@@ -1062,12 +997,12 @@ fn replay_pending_finish<M: fsl_eval::simulation::protocol::MemoryModel>(
 /// Convert a recording assessment to the shared FR-990 item representation.
 pub(crate) fn recording_output(
     assessment: super::recording::RecordingAssessment,
+    recording_identity: &fsl_semantics::model::observation::DocumentRef,
 ) -> ProtocolConformanceOutput {
     use fsl_replay::{
         ConformanceClosureOutput, ConformanceGlobalOutput, ConformanceObligationOutput,
     };
 
-    let replayed = assessment.global.label == "refuted";
     ProtocolConformanceOutput {
         obligations: assessment
             .obligations
@@ -1107,7 +1042,11 @@ pub(crate) fn recording_output(
             cause: assessment.global.cause,
         },
         projections: None,
-        replay: replayed.then_some(fsl_replay::ConformanceReplayOutput { reproduced: true }),
+        recording: Some(fsl_replay::ConformanceRecordingIdentity {
+            authority: recording_identity.authority.clone(),
+            identity: recording_identity.identity.clone(),
+        }),
+        replay: None,
     }
 }
 
@@ -1143,6 +1082,9 @@ mod tests {
                 cause: Some("violation".to_owned()),
             },
             trace_position: Some(3),
+        }, &fsl_semantics::model::observation::DocumentRef {
+            authority: "test".to_owned(),
+            identity: "recording".to_owned(),
         });
 
         assert_eq!(output.obligations[0].verdict, "violated");
@@ -1153,6 +1095,8 @@ mod tests {
         assert_eq!(output.global.label, "refuted");
         assert!(!output.global.complete);
         assert!(output.projections.is_none());
+        assert_eq!(output.recording.as_ref().map(|identity| identity.identity.as_str()), Some("recording"));
+        assert!(output.replay.is_none());
     }
 }
 

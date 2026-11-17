@@ -7,11 +7,11 @@
 //! text mode is tested in the driver repository.
 
 use ix_trace_rs::trace;
-use serde_json::{Value, json};
+use serde_json::{json, Value};
 
 use crate::analyze_cli_support::{
-    Workspace, analyze, below_three, bounded, clause, counter_request, label, litmus_request,
-    order_protocol,
+    analyze, below_three, bounded, clause, counter_request, label, litmus_request, order_protocol,
+    Workspace,
 };
 
 const DONE: &str = "terminal Done using v on M when { self.value = 3 };\n";
@@ -443,4 +443,80 @@ fn global_conformance_is_decided_over_every_behaviour() {
         ));
         assert_eq!(label(&run.item(0)), expected, "receive {receive}");
     }
+}
+
+/// FR-1032-AC-1: bind the recording under its request-level identity and
+/// echo that identity in the settled item without claiming independent replay.
+#[trace("TC-2922", "FR-1032-AC-1", "FR-990-AC-3")]
+#[test]
+fn a_recording_result_echoes_its_provisioned_identity_without_replay_subject() {
+    let ws = Workspace::new("cli-replay-mode");
+    let recording = json!({
+        "format": "filament.protocol-recording/1",
+        "protocol": "Flow",
+        "observations": [
+            {"kind": "send", "node": "Flow::Main::Placed", "role": "Buyer",
+             "instance": "w-1", "keys": {"message": "m-1", "delivery": "d-1"},
+             "record": {"ok": true}},
+            {"kind": "receive", "node": "Flow::Main::Got", "role": "Seller",
+             "instance": "w-1", "keys": {"message": "m-1", "delivery": "d-1"},
+             "record": {"ok": true}},
+            {"kind": "case", "node": "Flow::Main::Decide::yes", "role": "Seller",
+             "instance": "w-1", "keys": {}},
+            {"kind": "finish", "node": "Flow::Done", "role": "Seller",
+             "instance": "w-1", "keys": {}, "record": {"zz": true}}
+        ],
+        "local_order": {"Seller": [1, 2, 3], "Buyer": [0]},
+        "correlations": [{"send": 0, "receive": 1}],
+        "closure": {"state": "closed", "premises": [
+            {"kind":"execution", "node":"Flow::Done"},
+            {"kind":"branch", "node":"Flow::Main::Decide::no"},
+            {"kind":"branch", "node":"Flow::Main::Decide::yes"}
+        ]}
+    });
+    ws.write("recording.json", recording.to_string().as_bytes());
+    let run = analyze(&litmus_request(
+        &ws,
+        &order_protocol(true),
+        json!({"items": [{"claim": "Flow", "kind": "global-conformance",
+                   "recording": {"authority": "test", "identity": "recording"}}],
+         "documents": [{"file": "recording.json", "identity": {
+             "authority": "test", "identity": "recording"
+         }}]}),
+    ));
+    let item = run.item(0);
+    assert_eq!(label(&item), "proved", "{item}");
+    let verdicts = item["obligations"]
+        .as_array()
+        .expect("one verdict per obligation");
+    assert!(
+        verdicts
+            .iter()
+            .all(|verdict| verdict["verdict"] == "satisfied"),
+        "{item}"
+    );
+    assert_eq!(item["closure"]["state"], "closed");
+    assert_eq!(item["global"]["complete"], true);
+    assert!(
+        item.get("replay").is_none(),
+        "recording bytes are not an independent replay: {item}"
+    );
+    assert_eq!(item["recording"], json!({"authority":"test", "identity":"recording"}));
+
+    let mut declared = recording;
+    declared["identity"] = json!({"authority":"test", "identity":"recording"});
+    let declared_ws = Workspace::new("cli-replay-mode-declared");
+    declared_ws.write("recording.json", declared.to_string().as_bytes());
+    let declared_run = analyze(&litmus_request(
+        &declared_ws,
+        &order_protocol(true),
+        json!({"items": [{"claim": "Flow", "kind": "global-conformance",
+                   "recording": {"authority": "test", "identity": "recording"}}],
+         "documents": [{"file": "recording.json"}]}),
+    ));
+    let declared_item = declared_run.item(0);
+    assert_eq!(label(&declared_item), "proved", "{declared_item}");
+    assert_eq!(declared_item["obligations"], item["obligations"]);
+    assert_eq!(declared_item["closure"], item["closure"]);
+    assert_eq!(declared_item["global"], item["global"]);
 }

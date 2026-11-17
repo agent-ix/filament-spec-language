@@ -2,10 +2,10 @@
 //! FR-895: replay-mode reading and obligation assessment of protocol recordings.
 
 use fsl_analyze::protocol_analysis::recording::{
-    RecordingFact, RecordingVerdict, assess_recording,
+    assess_recording, RecordingFact, RecordingVerdict,
 };
 use ix_trace_rs::trace;
-use serde_json::{Value, json};
+use serde_json::{json, Value};
 
 use crate::analyze_cli_support::order_protocol;
 
@@ -14,13 +14,22 @@ fn protocol() -> fsl_package::CheckedPackage {
 }
 
 fn recording(observations: Value, local_order: Value, closure_state: &str) -> Value {
+    let premises = if closure_state == "closed" {
+        json!([
+            {"kind":"execution", "node":"Flow::Done"},
+            {"kind":"branch", "node":"Flow::Main::Decide::no"},
+            {"kind":"branch", "node":"Flow::Main::Decide::yes"}
+        ])
+    } else {
+        json!([])
+    };
     json!({
         "format": "filament.protocol-recording/1",
         "protocol": "Flow",
         "observations": observations,
         "local_order": local_order,
         "correlations": [{"send": 0, "receive": 1}],
-        "closure": {"state": closure_state, "premises": []}
+        "closure": {"state": closure_state, "premises": premises}
     })
 }
 
@@ -184,12 +193,10 @@ fn a_closed_recording_assesses_observed_and_unobserved_obligations() {
         "{:#?}",
         assessed.obligations
     );
-    assert!(
-        assessed
-            .obligations
-            .iter()
-            .all(|entry| entry.verdict == RecordingVerdict::Satisfied)
-    );
+    assert!(assessed
+        .obligations
+        .iter()
+        .all(|entry| entry.verdict == RecordingVerdict::Satisfied));
 
     let mut cut = complete_observations();
     cut.as_array_mut().expect("array").truncate(2);
@@ -201,6 +208,71 @@ fn a_closed_recording_assesses_observed_and_unobserved_obligations() {
     }));
     assert!(assessed.obligations.iter().any(|entry| {
         entry.obligation.kind == "closure" && entry.verdict == RecordingVerdict::Pending
+    }));
+}
+
+/// Trace: FR-895 control obligations.
+#[trace("FR-895-AC-1")]
+#[test]
+fn a_false_control_guard_on_a_second_instance_refutes() {
+    let package = protocol();
+    let run = json!({
+        "format": "filament.protocol-recording/1",
+        "protocol": "Flow",
+        "observations": [
+            {"kind":"send", "node":"Flow::Main::Placed", "role":"Buyer", "instance":"w-1", "keys":{"message":"m-1", "delivery":"d-1"}, "record":{"ok":true}},
+            {"kind":"receive", "node":"Flow::Main::Got", "role":"Seller", "instance":"w-1", "keys":{"message":"m-1", "delivery":"d-1"}, "record":{"ok":true}},
+            {"kind":"case", "node":"Flow::Main::Decide::yes", "role":"Seller", "instance":"w-1", "keys":{}},
+            {"kind":"finish", "node":"Flow::Done", "role":"Seller", "instance":"w-1", "keys":{}, "record":{"zz":true}},
+            {"kind":"send", "node":"Flow::Main::Placed", "role":"Buyer", "instance":"w-2", "keys":{"message":"m-2", "delivery":"d-2"}, "record":{"ok":false}},
+            {"kind":"receive", "node":"Flow::Main::Got", "role":"Seller", "instance":"w-2", "keys":{"message":"m-2", "delivery":"d-2"}, "record":{"ok":false}},
+            {"kind":"case", "node":"Flow::Main::Decide::yes", "role":"Seller", "instance":"w-2", "keys":{}},
+            {"kind":"finish", "node":"Flow::Done", "role":"Seller", "instance":"w-2", "keys":{}, "record":{"zz":true}}
+        ],
+        "local_order":{"Buyer":[0,4], "Seller":[1,2,3,5,6,7]},
+        "correlations":[{"send":0,"receive":1}, {"send":4,"receive":5}],
+        "closure":{"state":"closed", "premises":[
+            {"kind":"execution", "node":"Flow::Done"},
+            {"kind":"branch", "node":"Flow::Main::Decide::no"},
+            {"kind":"branch", "node":"Flow::Main::Decide::yes"}
+        ]}
+    });
+    let assessed = assess_recording(&package, run.to_string().as_bytes()).expect("readable run");
+    assert_eq!(
+        assessed.global.label, "refuted",
+        "{:#?}",
+        assessed.obligations
+    );
+    assert!(assessed.obligations.iter().any(|entry| {
+        entry.obligation.kind == "control"
+            && entry.obligation.instance.as_deref() == Some("w-2")
+            && entry.obligation.node.as_deref() == Some("Flow::Main::Decide")
+            && entry.verdict == RecordingVerdict::Violated
+    }));
+}
+
+/// Trace: FR-895 closed-history scope.
+#[trace("FR-895-AC-3")]
+#[test]
+fn an_empty_closed_recording_does_not_prove_vacuously() {
+    let package = protocol();
+    let run = json!({
+        "format":"filament.protocol-recording/1", "protocol":"Flow",
+        "observations":[], "local_order":{}, "correlations":[],
+        "closure":{"state":"closed", "premises":[
+            {"kind":"execution", "node":"Flow::Done"},
+            {"kind":"branch", "node":"Flow::Main::Decide::no"},
+            {"kind":"branch", "node":"Flow::Main::Decide::yes"}
+        ]}
+    });
+    let assessed = assess_recording(&package, run.to_string().as_bytes()).expect("readable run");
+    assert_ne!(
+        assessed.global.label, "proved",
+        "{:#?}",
+        assessed.obligations
+    );
+    assert!(assessed.obligations.iter().any(|entry| {
+        entry.obligation.kind == "closure" && entry.verdict == RecordingVerdict::Violated
     }));
 }
 
@@ -255,6 +327,60 @@ fn a_declared_but_wrongly_owned_role_is_an_unexpected_observation() {
     );
 }
 
+/// Trace: FR-895 enabledness.
+#[trace("FR-895-AC-1")]
+#[test]
+fn a_node_repeated_outside_a_repeat_is_unexpected() {
+    let package = protocol();
+    let run = json!({
+        "format":"filament.protocol-recording/1", "protocol":"Flow",
+        "observations":[
+            {"kind":"send", "node":"Flow::Main::Placed", "role":"Buyer", "instance":"w-1", "keys":{"message":"m-1", "delivery":"d-1"}},
+            {"kind":"send", "node":"Flow::Main::Placed", "role":"Buyer", "instance":"w-1", "keys":{"message":"m-2", "delivery":"d-2"}}
+        ],
+        "local_order":{"Buyer":[0,1]}, "correlations":[],
+        "closure":{"state":"open", "premises":[]}
+    });
+    let assessed = assess_recording(&package, run.to_string().as_bytes()).expect("readable run");
+    assert!(assessed.obligations.iter().any(|entry| {
+        entry.obligation.kind == "enabledness"
+            && entry.obligation.node.as_deref() == Some("Flow::Main::Placed")
+            && entry.verdict == RecordingVerdict::Violated
+            && entry.cause
+                == Some(fsl_analyze::protocol_analysis::recording::RecordingCause::Unexpected)
+    }));
+}
+
+/// Trace: FR-895 choice exclusivity.
+#[trace("FR-895-AC-1")]
+#[test]
+fn two_cases_of_one_choice_are_not_a_single_decision() {
+    let package = protocol();
+    let run = json!({
+        "format":"filament.protocol-recording/1", "protocol":"Flow",
+        "observations":[
+            {"kind":"send", "node":"Flow::Main::Placed", "role":"Buyer", "instance":"w-1", "keys":{"message":"m-1", "delivery":"d-1"}, "record":{"ok":true}},
+            {"kind":"receive", "node":"Flow::Main::Got", "role":"Seller", "instance":"w-1", "keys":{"message":"m-1", "delivery":"d-1"}, "record":{"ok":true}},
+            {"kind":"case", "node":"Flow::Main::Decide::yes", "role":"Seller", "instance":"w-1", "keys":{}},
+            {"kind":"case", "node":"Flow::Main::Decide::no", "role":"Seller", "instance":"w-1", "keys":{}}
+        ],
+        "local_order":{"Buyer":[0], "Seller":[1,2,3]},
+        "correlations":[{"send":0,"receive":1}],
+        "closure":{"state":"open", "premises":[]}
+    });
+    let assessed = assess_recording(&package, run.to_string().as_bytes()).expect("readable run");
+    assert_eq!(
+        assessed.global.label, "refuted",
+        "{:#?}",
+        assessed.obligations
+    );
+    assert!(assessed.obligations.iter().any(|entry| {
+        entry.obligation.kind == "enabledness"
+            && entry.obligation.node.as_deref() == Some("Flow::Main::Decide::no")
+            && entry.verdict == RecordingVerdict::Violated
+    }));
+}
+
 /// Trace: FR-895-AC-5.
 #[trace("FR-895-AC-5")]
 #[test]
@@ -285,6 +411,44 @@ fn a_send_in_an_unselected_choice_branch_is_unexpected() {
         "{:#?}",
         assessed.obligations
     );
+}
+
+/// Trace: FR-895 closed-path reachability.
+#[trace("FR-895-AC-1")]
+#[test]
+fn a_closed_path_does_not_require_actions_in_an_unselected_case() {
+    let package = told_protocol();
+    let run = json!({
+        "format":"filament.protocol-recording/1", "protocol":"Flow",
+        "observations":[
+            {"kind":"send", "node":"Flow::Main::Placed", "role":"Buyer", "instance":"w-1", "keys":{"message":"m-1", "delivery":"d-1"}, "record":{"ok":false}},
+            {"kind":"receive", "node":"Flow::Main::Got", "role":"Seller", "instance":"w-1", "keys":{"message":"m-1", "delivery":"d-1"}, "record":{"ok":false}},
+            {"kind":"case", "node":"Flow::Main::Decide::no", "role":"Seller", "instance":"w-1", "keys":{}},
+            {"kind":"finish", "node":"Flow::Done", "role":"Seller", "instance":"w-1", "keys":{}, "record":{"zz":true}}
+        ],
+        "local_order":{"Buyer":[0], "Seller":[1,2,3]},
+        "correlations":[{"send":0,"receive":1}],
+        "closure":{"state":"closed", "premises":[
+            {"kind":"execution", "node":"Flow::Done"},
+            {"kind":"branch", "node":"Flow::Main::Decide::no"},
+            {"kind":"branch", "node":"Flow::Main::Decide::yes"}
+        ]}
+    });
+    let assessed = assess_recording(&package, run.to_string().as_bytes()).expect("readable run");
+    assert_ne!(
+        assessed.global.label, "refuted",
+        "{:#?}",
+        assessed.obligations
+    );
+    assert!(!assessed.obligations.iter().any(|entry| {
+        entry.obligation.kind == "causal-edge"
+            && entry
+                .obligation
+                .node
+                .as_deref()
+                .is_some_and(|node| node.contains("Told"))
+            && entry.verdict == RecordingVerdict::Violated
+    }));
 }
 
 /// Trace: TC-2530.
@@ -357,7 +521,11 @@ fn receive_before_send_is_a_causal_order_violation() {
         ],
         "local_order": {"Seller": [0, 1], "Buyer": [2, 3]},
         "correlations": [{"send": 1, "receive": 2}, {"send": 3, "receive": 0}],
-        "closure": {"state": "closed", "premises": []}
+        "closure": {"state": "closed", "premises": [
+            {"kind":"execution", "node":"Flow::Done"},
+            {"kind":"branch", "node":"Flow::Main::Decide::no"},
+            {"kind":"branch", "node":"Flow::Main::Decide::yes"}
+        ]}
     });
     let assessed =
         assess_recording(&package, run.to_string().as_bytes()).expect("well-formed recording");
@@ -486,12 +654,10 @@ fn failed_attempt_then_successful_retry_has_one_effect_and_no_duplicate() {
         recovery("successful")
     ]));
 
-    assert!(
-        !assessed
-            .facts
-            .iter()
-            .any(|fact| matches!(fact, RecordingFact::DuplicateBusinessEffect { .. }))
-    );
+    assert!(!assessed
+        .facts
+        .iter()
+        .any(|fact| matches!(fact, RecordingFact::DuplicateBusinessEffect { .. })));
     let attempts: Vec<_> = assessed
         .facts
         .iter()
@@ -565,21 +731,17 @@ fn distinct_effect_occurrences_and_repeated_effect_keys_are_not_duplicates() {
         paid_effect_at("effect-1", "operation-1", 0),
         paid_effect_at("effect-2", "operation-2", 1)
     ]));
-    assert!(
-        !distinct
-            .facts
-            .iter()
-            .any(|fact| matches!(fact, RecordingFact::DuplicateBusinessEffect { .. }))
-    );
+    assert!(!distinct
+        .facts
+        .iter()
+        .any(|fact| matches!(fact, RecordingFact::DuplicateBusinessEffect { .. })));
 
     let repeated_effect = paid_effect("effect-replayed", "operation-replayed");
     let replayed = assess_paid(json!([repeated_effect.clone(), repeated_effect]));
-    assert!(
-        !replayed
-            .facts
-            .iter()
-            .any(|fact| matches!(fact, RecordingFact::DuplicateBusinessEffect { .. }))
-    );
+    assert!(!replayed
+        .facts
+        .iter()
+        .any(|fact| matches!(fact, RecordingFact::DuplicateBusinessEffect { .. })));
     assert_eq!(
         replayed
             .facts
@@ -613,12 +775,10 @@ fn duplicate_delivery_is_classified_against_the_channel_premise() {
     }));
 
     let refused = assess_duplicate_delivery("exactly-once-premise");
-    assert!(
-        refused
-            .facts
-            .iter()
-            .any(|fact| matches!(fact, RecordingFact::DuplicateDelivery { .. }))
-    );
+    assert!(refused
+        .facts
+        .iter()
+        .any(|fact| matches!(fact, RecordingFact::DuplicateDelivery { .. })));
     assert!(refused.obligations.iter().any(|entry| {
         entry.obligation.kind == "channel-premise"
             && entry.obligation.node.as_deref() == Some("Order")
@@ -639,7 +799,11 @@ fn a_closed_empty_recording_reports_static_causal_edges_as_missing() {
         "observations": [],
         "local_order": {},
         "correlations": [],
-        "closure": {"state": "closed", "premises": []}
+        "closure": {"state": "closed", "premises": [
+            {"kind":"execution", "node":"Flow::Done"},
+            {"kind":"branch", "node":"Flow::Main::Decide::no"},
+            {"kind":"branch", "node":"Flow::Main::Decide::yes"}
+        ]}
     });
     let assessed = assess_recording(&package, run.to_string().as_bytes())
         .expect("empty recording remains assessable");
@@ -690,6 +854,54 @@ fn compensation_windows_are_assessed_for_each_instance() {
     );
 }
 
+/// Trace: FR-895 compensation obligations.
+#[trace("FR-895-AC-1")]
+#[test]
+fn a_registered_compensation_with_no_attempts_is_still_an_obligation() {
+    let package = paid_protocol();
+    let run = paid_recording(json!([paid_effect("effect-1", "operation-1")]));
+    let mut closed = run;
+    closed["closure"]["state"] = json!("closed");
+    closed["closure"]["premises"] = json!([
+        {"kind":"execution", "node":"Pay::Done"},
+        {"kind":"workflow", "node":"Pay::Main::Paid"}
+    ]);
+    let assessed =
+        assess_recording(&package, closed.to_string().as_bytes()).expect("readable paid recording");
+    assert!(
+        assessed.obligations.iter().any(|entry| {
+            entry.obligation.kind == "compensation"
+                && entry.obligation.instance.as_deref() == Some("instance-1")
+                && entry.verdict == RecordingVerdict::Violated
+                && entry.cause
+                    == Some(fsl_analyze::protocol_analysis::recording::RecordingCause::Missing)
+        }),
+        "{:#?}",
+        assessed.obligations
+    );
+    assert_ne!(
+        assessed.global.label, "proved",
+        "a closed recording cannot prove compensation completeness without an exact scope"
+    );
+}
+
+/// Trace: FR-895 closed-path reachability.
+#[trace("FR-895-AC-1")]
+#[test]
+fn an_unregistered_compensation_is_not_required_when_its_effect_was_not_observed() {
+    let package = paid_protocol();
+    let run = paid_recording(json!([]));
+    let mut closed = run;
+    closed["closure"]["state"] = json!("closed");
+    closed["closure"]["premises"] = json!([{"kind":"execution", "node":"Pay::Done"}]);
+    let assessed =
+        assess_recording(&package, closed.to_string().as_bytes()).expect("readable paid recording");
+    assert!(!assessed
+        .obligations
+        .iter()
+        .any(|entry| entry.obligation.kind == "compensation"));
+}
+
 /// Trace: FR-895-AC-2.
 #[trace("FR-895-AC-2")]
 #[test]
@@ -731,7 +943,11 @@ fn channel_delivery_minimum_and_capacity_are_assessed() {
         "observations": [{"kind":"send", "node":"Flow::Main::Placed", "role":"Buyer",
             "instance":"w-1", "keys":{"message":"m-1", "delivery":"d-1"}, "record":{"ok":true}}],
         "local_order": {"Buyer":[0]}, "correlations": [],
-        "closure": {"state":"closed", "premises":[]}
+        "closure": {"state":"closed", "premises":[
+            {"kind":"execution", "node":"Flow::Done"},
+            {"kind":"branch", "node":"Flow::Main::Decide::no"},
+            {"kind":"branch", "node":"Flow::Main::Decide::yes"}
+        ]}
     });
     let assessed =
         assess_recording(&package, send_only.to_string().as_bytes()).expect("readable run");
@@ -776,7 +992,11 @@ fn channel_delivery_minimum_and_capacity_are_assessed() {
         ],
         "local_order":{"Buyer":[0,1], "Seller":[2]},
         "correlations":[{"send":0,"receive":2}],
-        "closure":{"state":"closed", "premises":[]}
+        "closure":{"state":"closed", "premises":[
+            {"kind":"execution", "node":"Flow::Done"},
+            {"kind":"branch", "node":"Flow::Main::Decide::no"},
+            {"kind":"branch", "node":"Flow::Main::Decide::yes"}
+        ]}
     });
     let assessed = assess_recording(&package, lossy.to_string().as_bytes()).expect("readable run");
     assert!(
@@ -806,7 +1026,10 @@ fn repeat_control_reports_a_run_over_its_checked_maximum() {
         "format":"filament.protocol-recording/1", "protocol":"Pay",
         "observations":[effect("effect-0",0), effect("effect-1",1), effect("effect-2",2)],
         "local_order":{"w":[0,1,2]}, "correlations":[],
-        "closure":{"state":"closed", "premises":[]}
+        "closure":{"state":"closed", "premises":[
+            {"kind":"execution", "node":"Pay::Done"},
+            {"kind":"workflow", "node":"Pay::Main::Loop::Body::Paid"}
+        ]}
     });
     let assessed = assess_recording(&package, run.to_string().as_bytes()).expect("readable run");
     assert!(
@@ -816,6 +1039,76 @@ fn repeat_control_reports_a_run_over_its_checked_maximum() {
                 && entry.verdict == RecordingVerdict::Violated
                 && entry.cause
                     == Some(fsl_analyze::protocol_analysis::recording::RecordingCause::Duplicated)
+        }),
+        "{:#?}",
+        assessed.obligations
+    );
+}
+
+/// Trace: FR-895 repeat bounds.
+#[trace("FR-895-AC-1")]
+#[test]
+fn repeated_nodes_within_the_checked_repeat_bound_remain_enabled() {
+    let package = crate::fill::package(&crate::protocol_compensation::twice());
+    let effect = |identity: &str, ordinal: u64| {
+        json!({
+            "kind":"effect", "node":"Pay::Main::Loop::Body::Paid", "role":"w",
+            "instance":"w-1", "keys":{"business_effect":identity, "attempt":identity, "registration":"reg-1"},
+            "occurrence":{"path":[], "ordinal":ordinal}
+        })
+    };
+    let run = json!({
+        "format":"filament.protocol-recording/1", "protocol":"Pay",
+        "observations":[
+            effect("effect-0", 0),
+            effect("effect-1", 1)
+        ],
+        "local_order":{"w":[0,1]}, "correlations":[],
+        "closure":{"state":"open", "premises":[]}
+    });
+    let assessed = assess_recording(&package, run.to_string().as_bytes()).expect("readable run");
+    assert!(
+        !assessed.obligations.iter().any(|entry| {
+            entry.obligation.kind == "enabledness"
+                && entry.obligation.node.as_deref() == Some("Pay::Main::Loop::Body::Paid")
+                && entry.verdict == RecordingVerdict::Violated
+        }),
+        "{:#?}",
+        assessed.obligations
+    );
+}
+
+/// Trace: FR-895 repeated choice ambiguity.
+#[trace("FR-895-AC-1")]
+#[test]
+fn mixed_cases_across_repeat_iterations_remain_pending() {
+    let source = crate::protocol_compensation::twice().replace(
+        "sequence Body { effect Paid of Main::C as (pd: M::Cell) { true }; event Fail by w as (failed: Boolean) { true }; }",
+        "sequence Body { effect Paid of Main::C as (pd: M::Cell) { true }; event Fail by w as (failed: Boolean) { true }; choice Decide by w visible (failed) { case no when { not failed } sequence No { } case yes when { failed } sequence Yes { } } }",
+    );
+    let package = crate::fill::package(&source);
+    let run = json!({
+        "format": "filament.protocol-recording/1",
+        "protocol": "Pay",
+        "observations": [
+            {"kind":"case", "node":"Pay::Main::Loop::Body::Decide::no", "role":"w", "instance":"w-1", "keys":{}},
+            {"kind":"case", "node":"Pay::Main::Loop::Body::Decide::yes", "role":"w", "instance":"w-1", "keys":{}}
+        ],
+        "local_order":{"w":[0,1]}, "correlations":[],
+        "closure":{"state":"open", "premises":[]}
+    });
+    let assessed = assess_recording(&package, run.to_string().as_bytes()).expect("readable run");
+    assert_ne!(
+        assessed.global.label, "refuted",
+        "{:#?}",
+        assessed.obligations
+    );
+    assert!(
+        assessed.obligations.iter().any(|entry| {
+            entry.obligation.kind == "control"
+                && entry.obligation.node.as_deref() == Some("Pay::Main::Loop::Body::Decide")
+                && entry.obligation.instance.as_deref() == Some("w-1")
+                && entry.verdict == RecordingVerdict::Pending
         }),
         "{:#?}",
         assessed.obligations
@@ -839,8 +1132,9 @@ fn parallel_join_obligation_reads_branch_closure_premises() {
         ],
         "local_order":{"Buyer":[0], "Seller":[1]}, "correlations":[],
         "closure":{"state":"closed", "premises":[
-            {"kind":"branch", "identity":"w-1/Flow::Main::Both::left"},
-            {"kind":"branch", "identity":"w-1/Flow::Main::Both::right"}
+            {"kind":"execution", "node":"Flow::Done"},
+            {"kind":"branch", "node":"Flow::Main::Both::left"},
+            {"kind":"branch", "node":"Flow::Main::Both::right"}
         ]}
     });
     let assessed = assess_recording(&package, run.to_string().as_bytes()).expect("readable run");
@@ -909,8 +1203,9 @@ fn predicate_join_evaluates_the_checked_function_over_branch_premises() {
         ],
         "local_order":{"Buyer":[0], "Seller":[1]}, "correlations":[],
         "closure":{"state":"closed", "premises":[
-            {"kind":"branch", "identity":"w-1/Flow::Main::Both::left"},
-            {"kind":"branch", "identity":"w-1/Flow::Main::Both::right"}
+            {"kind":"execution", "node":"Flow::Done"},
+            {"kind":"branch", "node":"Flow::Main::Both::left"},
+            {"kind":"branch", "node":"Flow::Main::Both::right"}
         ]}
     });
     let assessed = assess_recording(&package, run.to_string().as_bytes()).expect("readable run");
@@ -926,21 +1221,12 @@ fn predicate_join_evaluates_the_checked_function_over_branch_premises() {
 
     let mut incomplete = run;
     incomplete["closure"]["premises"] = json!([
-        {"kind":"branch", "identity":"w-1/Flow::Main::Both::left"}
+        {"kind":"execution", "node":"Flow::Done"},
+        {"kind":"branch", "node":"Flow::Main::Both::left"}
     ]);
-    let assessed = assess_recording(&package, incomplete.to_string().as_bytes())
-        .expect("recording remains interpretable");
-    assert!(
-        assessed.obligations.iter().any(|entry| {
-            entry.obligation.kind == "join"
-                && entry.obligation.node.as_deref() == Some("Flow::Main::Both")
-                && entry.verdict == RecordingVerdict::Violated
-                && entry.cause
-                    == Some(fsl_analyze::protocol_analysis::recording::RecordingCause::Missing)
-        }),
-        "{:#?}",
-        assessed.obligations
-    );
+    let refusal = assess_recording(&package, incomplete.to_string().as_bytes())
+        .expect_err("omitted closure premise is refused");
+    assert!(format!("{refusal}").contains("closure premise set"), "{refusal:?}");
 }
 
 /// Trace: FR-895 channel premises.
@@ -984,10 +1270,10 @@ fn closure_workflow_premise_is_retained_as_recorded_fact() {
     let run = json!({
         "format":"filament.protocol-recording/1", "protocol":"Pay",
         "observations":[], "local_order":{}, "correlations":[],
-        "closure":{"state":"open", "premises":[{"kind":"workflow", "identity":"workflow-key"}]}
+        "closure":{"state":"open", "premises":[{"kind":"workflow", "node":"Pay::Main::Spend"}]}
     });
     let assessed = assess_recording(&package, run.to_string().as_bytes()).expect("readable run");
     assert_eq!(assessed.closure.premises.len(), 1);
-    assert_eq!(assessed.closure.premises[0].kind, "workflow");
-    assert_eq!(assessed.closure.premises[0].identity, "workflow-key");
+    assert_eq!(assessed.closure.premises[0].kind, fsl_analyze::protocol_analysis::recording::RecordingPremiseKind::Workflow);
+    assert_eq!(assessed.closure.premises[0].node, "Pay::Main::Spend");
 }
