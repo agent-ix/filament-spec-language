@@ -317,6 +317,17 @@ pub(super) fn run_bytes(
             if let Some(accounting) = accounting.clone() {
                 call.entry("accounting".to_owned()).or_insert(accounting);
             }
+            // FR-650-AC-15: a call selection's `snapshot` names an
+            // observation key of the items request; the run reads the
+            // snapshot file that key names.
+            if let Some(key) = call.get("snapshot").and_then(Value::as_str) {
+                let file = observations
+                    .get(key)
+                    .and_then(Value::as_str)
+                    .ok_or_else(|| refused(key, "observation key is not present"))?
+                    .to_owned();
+                call.insert("snapshot".to_owned(), Value::String(file));
+            }
             single_body.insert("call".to_owned(), Value::Object(call));
         } else {
             let mut clause = Map::new();

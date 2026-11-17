@@ -266,6 +266,7 @@ pub fn replay_frame(
         observation_limits: limits.observation,
         accounting: request.accounting_limits(),
         package: compiled.checked.package(),
+        package_name: compiled.package.as_str(),
         sources: &sources,
         progress_capacity: fsl_eval::temporal::DEFAULT_COVERED_POSITIONS,
     };

@@ -136,3 +136,98 @@ fn monitor_documents_name_their_stage() {
     assert_eq!(observation["last_stage"], "S6a", "{observation}");
     assert_eq!(observation["category"], "refusal", "{observation}");
 }
+
+const PROVIDER: &str = "fsl.test-last-stage-provider";
+
+/// A registered provider outside FSL that proves every item it is sent.
+#[derive(Debug)]
+struct Proving;
+
+impl fsl_analyze::provider::ExternalProvider for Proving {
+    fn settle(
+        &self,
+        request: &fsl_analyze::provider::ProviderRequest<'_>,
+        _cancel: &filament_exact::Cancel,
+    ) -> Vec<fsl_analyze::provider::ProviderVerdict> {
+        vec![fsl_analyze::provider::ProviderVerdict::Proved; request.items().len()]
+    }
+}
+
+fn proving_provider() -> fsl_analyze::analyze::Engine {
+    use fsl_semantics::check::Capability;
+    let descriptor = fsl_route::descriptor_from_manifest(
+        fsl_route::Candidate::new(fsl_foundation::BackendId::new(PROVIDER)),
+        fsl_route::ProviderOrigin::Process,
+        vec![(
+            Some(Capability::ValueValidity.to_wire()),
+            Some(fsl_route::Mode::Unbounded.to_wire()),
+        )],
+        fsl_route::ManifestMembers {
+            domains: Some(&[fsl_foundation::bound::DomainKind::Integer.to_wire()]),
+            fairness_kinds: None,
+            evidence_kinds: None,
+            memory_models: None,
+            reductions: None,
+        },
+    )
+    .expect("the descriptor advertises the external value arm");
+    fsl_analyze::analyze::Engine::external(
+        descriptor,
+        fsl_analyze::analyze::BackendTool::new("test-provider", "1").expect("a tool"),
+        Box::new(Proving),
+    )
+    .expect("the descriptor is unbounded")
+}
+
+const EVEN: &str = "function Even using v(n: Integer): Boolean pure { n * 2 - n = n }\n";
+
+/// FR-621 "Last stage": an item settled by a negotiated backend outside FSL
+/// names `S6b`, as does an item its negotiation settles `unsupported`; an
+/// in-process engine's item names `S6c`.
+#[trace("TC-2381", "FR-621-AC-11")]
+#[test]
+fn negotiated_settlements_name_s6b() {
+    let ws = Workspace::new("ls-provider");
+    let request = counter_request(
+        &ws,
+        EVEN,
+        json!([{"claim": "Even", "kind": "value-validity", "backend": PROVIDER}]),
+    );
+    let run =
+        crate::analyze_cli_support::analyze_with_providers(&request, vec![proving_provider()]);
+    assert_eq!(
+        crate::analyze_cli_support::label(&run.item(0)),
+        "proved",
+        "{}",
+        run.item(0)
+    );
+    assert_eq!(run.document()["last_stage"], "S6b", "{}", run.document());
+
+    let ws = Workspace::new("ls-negotiated-unsupported");
+    let request = counter_request(
+        &ws,
+        &bounded(),
+        json!([{"claim": "Bounded", "backend": PROVIDER}]),
+    );
+    let run =
+        crate::analyze_cli_support::analyze_with_providers(&request, vec![proving_provider()]);
+    assert_eq!(
+        run.item(0)["record"]["result"],
+        "unsupported",
+        "{}",
+        run.item(0)
+    );
+    assert_eq!(
+        run.item(0)["record"]["settled_by"],
+        "disposition",
+        "{}",
+        run.item(0)
+    );
+    assert_eq!(run.document()["last_stage"], "S6b", "{}", run.document());
+
+    let ws = Workspace::new("ls-in-process");
+    let request = counter_request(&ws, &bounded(), json!([{"claim": "Bounded"}]));
+    let run =
+        crate::analyze_cli_support::analyze_with_providers(&request, vec![proving_provider()]);
+    assert_eq!(run.document()["last_stage"], "S6c", "{}", run.document());
+}

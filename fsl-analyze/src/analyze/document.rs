@@ -1794,6 +1794,9 @@ pub fn settle_run(
         limits,
     } = run;
     let mut negotiated = Vec::new();
+    // Items negotiation ran for but no route reads: settled by its
+    // `unsupported` disposition.
+    let mut unrouted_items: Vec<RequestIndex> = Vec::new();
     let mut settled: BTreeMap<RequestIndex, (Option<String>, TerminalRecord)> = BTreeMap::new();
     let mut echoes: BTreeMap<RequestIndex, Echo> = BTreeMap::new();
     for resolved in items {
@@ -1869,6 +1872,7 @@ pub fn settle_run(
                 {
                     let mut detail = Map::new();
                     detail.insert("kind".to_owned(), json!(item.kind.to_wire()));
+                    unrouted_items.push(item.request_index);
                     settled.insert(
                         item.request_index,
                         (
@@ -1920,7 +1924,31 @@ pub fn settle_run(
     let mut records: Vec<TerminalRecord> = outcome.records;
     records.extend(settled.values().map(|(_, record)| record.clone()));
     records.sort_by_key(TerminalRecord::request_index);
-    let base = super::analyze_document(&records, &outcome.counterexamples)
+    // FR-621 "Last stage": each negotiated item's route. An item negotiated
+    // to an FSL engine settles at S6c, one negotiated to an outside provider
+    // or settled by its negotiation's disposition at S6b.
+    let mut routes: BTreeMap<RequestIndex, super::ItemRoute> = negotiated
+        .iter()
+        .map(|item| {
+            let in_process = item.disposition.target().is_some_and(|target| {
+                engines
+                    .get(target.id())
+                    .is_some_and(|engine| engine.provider.is_none())
+            });
+            let route = if in_process {
+                super::ItemRoute::InProcess
+            } else {
+                super::ItemRoute::Negotiated
+            };
+            (item.item.request_index, route)
+        })
+        .collect();
+    routes.extend(
+        unrouted_items
+            .iter()
+            .map(|index| (*index, super::ItemRoute::Negotiated)),
+    );
+    let base = super::analyze_document_routed(&records, &outcome.counterexamples, &routes)
         .map_err(|_| AnalyzeDocumentError::Fault)?;
     let mut document = serde_json::to_value(&base).map_err(|_| AnalyzeDocumentError::Fault)?;
     let written: Vec<Value> = document["items"].as_array().cloned().unwrap_or_default();

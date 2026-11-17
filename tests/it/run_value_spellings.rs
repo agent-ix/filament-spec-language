@@ -479,7 +479,6 @@ fn a_foreign_universe_refuses_and_call_selection_snapshot() {
 }
 
 #[test]
-#[ignore = "QSL-1987: an items request is not implemented yet"]
 #[trace("TC-2376", "FR-650-AC-15")]
 fn a_call_selection_snapshot_keys_the_items_universe() {
     let directory = spine_dir(SAME);
@@ -619,4 +618,34 @@ fn a_run_resolves_its_function_in_a_selected_package() {
     assert_eq!(code, Some(20), "{failure}");
     assert_eq!(failure["stage"], "request", "{failure}");
     assert!(failure.to_string().contains("program"), "{failure}");
+}
+
+/// FR-650 "Unit names": a clause `function` selection reads its arguments
+/// in the run value form against the compiled package, so a Quantity
+/// written in a unit the program's source declares binds.
+#[test]
+#[trace("TC-2371", "FR-650-AC-10")]
+fn a_function_selection_reads_a_quantity_in_a_source_declared_unit() {
+    let directory = spine_dir(
+        "dimension Time;\n\
+         unit s : Time = rational(1, 1);\n\
+         unit ms : Time = rational(1, 1000) * s;\n\
+         function short using v(a: Quantity<ms>): Boolean pure { true }\n",
+    );
+    let output = spine_request(
+        directory.path(),
+        "clause",
+        json!({
+            "selection": {"function": {"name": "short", "snapshot": "current", "arguments": [
+                {"parameter": "a", "value": quantity("ms", rational("3", "2"))}]}},
+            "observations": {"current": "spine-snapshot.json"},
+        }),
+    );
+    let text = format!(
+        "{}{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(output.status.code(), Some(0), "{text}");
+    assert!(!text.contains("unknown-unit"), "{text}");
 }

@@ -687,6 +687,33 @@ pub fn analyze_document(
     records: &[TerminalRecord],
     counterexamples: &[ItemCounterexample],
 ) -> Result<OutcomeDocument, OutcomeItemError> {
+    analyze_document_routed(records, counterexamples, &std::collections::BTreeMap::new())
+}
+
+/// How negotiation routed one item, which FR-621 "Last stage" reads: an
+/// item with no route settled before negotiation.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum ItemRoute {
+    /// Negotiated to an FSL in-process engine (EN-1 to EN-7, the zone
+    /// search), which settles it at `S6c`.
+    InProcess,
+    /// Settled at negotiation, `S6b`: negotiated to a registered provider
+    /// outside FSL, or settled by its negotiation's own disposition.
+    Negotiated,
+}
+
+/// [`analyze_document`] with each negotiated item's [`ItemRoute`] by
+/// request index, so the document's `last_stage` (FR-621 "Last stage")
+/// reads where each item was settled.
+///
+/// # Errors
+///
+/// As [`analyze_document`].
+pub fn analyze_document_routed(
+    records: &[TerminalRecord],
+    counterexamples: &[ItemCounterexample],
+    routes: &std::collections::BTreeMap<RequestIndex, ItemRoute>,
+) -> Result<OutcomeDocument, OutcomeItemError> {
     let items = records
         .iter()
         .map(|record| analyze_item(record, counterexamples))
@@ -700,7 +727,13 @@ pub fn analyze_document(
     });
     let stage = records
         .iter()
-        .map(|record| item_stage(record, counterexamples))
+        .map(|record| {
+            item_stage(
+                record,
+                counterexamples,
+                routes.get(&record.request_index()).copied(),
+            )
+        })
         .max_by_key(|stage| stage_rank(*stage))
         .unwrap_or(OutcomeStage::S4);
     Ok(OutcomeDocument::settled(
@@ -720,9 +753,14 @@ fn stage_rank(stage: OutcomeStage) -> u8 {
     }
 }
 
-/// FR-621 "Last stage": the stage that settled `record`; the document takes
-/// the greatest of `S4` and its items'.
-fn item_stage(record: &TerminalRecord, counterexamples: &[ItemCounterexample]) -> OutcomeStage {
+/// FR-621 "Last stage": the stage that settled `record`, negotiated by
+/// `route` (none when it settled before negotiation); the document takes the
+/// greatest of `S4` and its items'.
+fn item_stage(
+    record: &TerminalRecord,
+    counterexamples: &[ItemCounterexample],
+    route: Option<ItemRoute>,
+) -> OutcomeStage {
     // A counterexample reaches the document only once its replay reproduced
     // it; the state-graph one is built as a typed witness and not replayed.
     if let Some(found) = counterexamples
@@ -735,17 +773,17 @@ fn item_stage(record: &TerminalRecord, counterexamples: &[ItemCounterexample]) -
             OutcomeStage::S8
         };
     }
-    // A record `settled_by` `disposition` (FSpec FR-331): its negotiation's
-    // `unsupported` disposition names the negotiated backend (S6b); every
-    // other disposition settled before any engine ran (S4).
-    if record.settled_by_disposition() {
-        return if record.backend().is_some() {
-            OutcomeStage::S6b
-        } else {
-            OutcomeStage::S4
-        };
+    match route {
+        // Negotiated to an outside provider, or settled by a disposition of
+        // its negotiation (FSpec FR-331 `settled_by` `disposition`).
+        Some(ItemRoute::Negotiated) => OutcomeStage::S6b,
+        Some(ItemRoute::InProcess) if record.settled_by_disposition() => OutcomeStage::S6b,
+        Some(ItemRoute::InProcess) => OutcomeStage::S6c,
+        // A disposition before negotiation: an unknown claim, an
+        // unregistered backend, a malformed member.
+        None if record.settled_by_disposition() => OutcomeStage::S4,
+        None => OutcomeStage::S6c,
     }
-    OutcomeStage::S6c
 }
 
 /// The FR-286 item of `record`, with its counterexample from
