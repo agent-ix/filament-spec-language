@@ -7,9 +7,10 @@ use std::fs;
 
 fn write_request(directory: &std::path::Path, request: Value) -> std::path::PathBuf {
     let path = directory.join("request.json");
+    let envelope = json!({"format": "native-run/1", "request": request});
     fs::write(
         &path,
-        serde_json::to_vec(&request).expect("request serializes"),
+        serde_json::to_vec(&envelope).expect("request serializes"),
     )
     .expect("request writes");
     path
