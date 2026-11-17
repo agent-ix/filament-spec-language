@@ -4539,22 +4539,31 @@ fn a_violation_without_its_counterexample_is_a_record_error() {
     ));
 }
 
-/// A verdict that has no record members gives an item with none, and a
-/// report's witness is written for a violation only.
-#[trace("TC-770", "FR-286-AC-8")]
+/// Temporal Holds, Pending and Undefined reports have no witness (FR-266),
+/// and their items carry none of the terminal record members (FR-286).
+#[trace("TC-1160", "FR-266-AC-4")]
 #[test]
 fn verdicts_without_record_members_give_items_with_none() {
-    let mut held = report(lasso(Unit::Infinite, "Reaches", 0, &[0, 1, 2]));
-    held.witness = super::witness::run("AllBelow", super::witness::Snapshot::High, "mid").witness;
-    let verdicts = [
-        TemporalVerdict::Holds,
-        TemporalVerdict::Pending,
-        TemporalVerdict::PendingWindow { at: 0, deadline: 3 },
-        TemporalVerdict::PendingNextEvent { at: 0 },
-    ];
-    for verdict in verdicts {
-        let mut run = synthetic_report(ClauseDisposition::Temporal(verdict));
-        run.witness = held.witness.clone();
+    let held = report(lasso(Unit::Infinite, "Reaches", 0, &[0, 1, 2]));
+    assert_eq!(outcome(&held), &TemporalVerdict::Holds);
+
+    let pending = report(finite(Unit::Infinite, "Reaches", &[0, 1, 2]));
+    assert_eq!(outcome(&pending), &TemporalVerdict::Pending);
+
+    let pending_window = report(timestamped(&[0], &[0], 1, Some(1)));
+    assert!(matches!(
+        outcome(&pending_window),
+        TemporalVerdict::PendingWindow { .. }
+    ));
+
+    let undefined = report(finite(Unit::Undefined, "Undefined", &[0, 1, 2]));
+    assert!(matches!(
+        outcome(&undefined),
+        TemporalVerdict::Undefined { .. }
+    ));
+
+    for run in [&held, &pending, &pending_window, &undefined] {
+        assert!(run.witness.is_none());
         let item = item_json("V", &run);
         for member in [
             "position",
@@ -4566,11 +4575,6 @@ fn verdicts_without_record_members_give_items_with_none() {
             assert!(item.get(member).is_none(), "{member}");
         }
     }
-    let mut refuted_state = synthetic_report(ClauseDisposition::Evaluate(
-        crate::spine::CallOutcome::Completed(crate::spine::CallValue::Boolean(false)),
-    ));
-    refuted_state.witness = held.witness.clone();
-    assert!(item_json("V", &refuted_state).get("witness").is_none());
 }
 
 /// FR-330-AC-12: a temporal violation carries `decisive` beside its
