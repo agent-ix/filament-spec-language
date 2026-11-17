@@ -701,10 +701,9 @@ impl Checker<'_, '_> {
     }
 
     /// FR-218 "Choice and repeat decisions": every binder read of a
-    /// `visible` entry is of an eligible binder of `owner`, and every fact
-    /// a guard reads is an individually listed `visible` entry, the guard's
-    /// closure stopping at the listed entries. Returns whether every read
-    /// is admitted.
+    /// `visible` entry reads an eligible binder of `owner`, and every guard
+    /// read of that role names a binder field listed individually in
+    /// `visible`. Returns whether every read is admitted.
     fn facts(
         &mut self,
         node: usize,
@@ -713,8 +712,12 @@ impl Checker<'_, '_> {
         guards: &[&ExpressionForm],
     ) -> bool {
         let before = self.refusals.len();
+        let listed: BTreeSet<(String, Option<String>)> = visible
+            .iter()
+            .filter_map(|entry| decision_fact(entry.expression.root()))
+            .collect();
         for entry in visible {
-            for (binder, field, span) in binder_reads(entry, |_| false) {
+            for (binder, field, span) in binder_reads(entry) {
                 let reason = match self.eligibility(&binder) {
                     Some(Eligibility::Role(role)) if role == owner => continue,
                     Some(Eligibility::Role(_)) => ObservationReason::OtherRole,
@@ -725,14 +728,14 @@ impl Checker<'_, '_> {
             }
         }
         for guard in guards {
-            let listed = |candidate: ExprRef<'_>| {
-                visible
-                    .iter()
-                    .any(|entry| entry.expression.root().same_tree(candidate))
-            };
-            for (binder, field, span) in binder_reads(guard, listed) {
+            for (binder, field, span) in binder_reads(guard) {
                 let reason = match self.eligibility(&binder) {
-                    Some(Eligibility::Role(role)) if role == owner => ObservationReason::Unlisted,
+                    Some(Eligibility::Role(role)) if role == owner => {
+                        if listed.contains(&(binder.clone(), field.clone())) {
+                            continue;
+                        }
+                        ObservationReason::Unlisted
+                    }
                     Some(Eligibility::Role(_)) => ObservationReason::OtherRole,
                     Some(Eligibility::Never) => ObservationReason::IneligibleKind,
                     Some(Eligibility::Capture | Eligibility::Input) | None => continue,
@@ -765,19 +768,12 @@ impl Checker<'_, '_> {
 
 /// Every read of a binder in `form`, outermost first, as (binder, field,
 /// span): a `b.f` field read with its field, a read of `b` as a whole with
-/// none. A subtree `stop` admits is not entered. Any name is reported;
-/// the caller classifies it.
-fn binder_reads(
-    form: &ExpressionForm,
-    stop: impl Fn(ExprRef<'_>) -> bool,
-) -> Vec<(String, Option<String>, Span)> {
+/// none. Any name is reported; the caller classifies it.
+fn binder_reads(form: &ExpressionForm) -> Vec<(String, Option<String>, Span)> {
     let span = |path: &[usize]| form.spans.at(path).unwrap_or(Span { start: 0, end: 0 });
     let mut reads = Vec::new();
     let mut pending: Vec<(ExprRef<'_>, Vec<usize>)> = vec![(form.expression.root(), Vec::new())];
     while let Some((node, path)) = pending.pop() {
-        if stop(node) {
-            continue;
-        }
         match node.node() {
             ExprNode::Name(name) => reads.push((name.name.clone(), None, span(&path))),
             ExprNode::Field { operand, field, .. } => {
@@ -951,6 +947,29 @@ struct Atoms<'a> {
     expressions: Vec<ExprRef<'a>>,
 }
 
+/// Field and name reads identify decision facts independently of their
+/// source spans. The same authored fact in a `visible` entry and a guard is
+/// parsed into separate trees whose name payloads carry different spans.
+fn decision_fact(node: ExprRef<'_>) -> Option<(String, Option<String>)> {
+    match node.node() {
+        ExprNode::Name(name) => Some((name.name.clone(), None)),
+        ExprNode::Field { operand, field, .. } => {
+            let ExprNode::Name(name) = node.at(*operand).node() else {
+                return None;
+            };
+            Some((name.name.clone(), Some(field.clone())))
+        }
+        _ => None,
+    }
+}
+
+fn same_atom(left: ExprRef<'_>, right: ExprRef<'_>) -> bool {
+    match (decision_fact(left), decision_fact(right)) {
+        (Some(left), Some(right)) => left == right,
+        _ => left.same_tree(right),
+    }
+}
+
 /// The conservative independent-atom set for these guards: each visible fact
 /// is an atom, followed by every other maximal non-connective guard subterm,
 /// each once in first source traversal order.
@@ -964,7 +983,7 @@ fn atoms<'f>(visible: &'f [ExpressionForm], guards: &[&'f ExpressionForm]) -> At
     for guard in guards {
         let mut stack = vec![guard.expression.root()];
         while let Some(node) = stack.pop() {
-            if atoms.expressions.iter().any(|atom| atom.same_tree(node)) {
+            if atoms.expressions.iter().any(|atom| same_atom(*atom, node)) {
                 continue;
             }
             match node.node() {
@@ -982,7 +1001,11 @@ fn atoms<'f>(visible: &'f [ExpressionForm], guards: &[&'f ExpressionForm]) -> At
 }
 
 fn insert_atom<'a>(node: ExprRef<'a>, atoms: &mut Atoms<'a>) {
-    if !atoms.expressions.iter().any(|atom| atom.same_tree(node)) {
+    if !atoms
+        .expressions
+        .iter()
+        .any(|atom| same_atom(*atom, node))
+    {
         atoms.expressions.push(node);
     }
 }
@@ -997,7 +1020,7 @@ fn atom_indices<'a>(
         if let Some(index) = atoms
             .expressions
             .iter()
-            .position(|atom| atom.same_tree(node))
+            .position(|atom| same_atom(*atom, node))
         {
             indices.insert(node.id(), index);
             continue;
