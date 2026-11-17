@@ -260,6 +260,8 @@ fn references(slot: &FieldValue) -> Result<Vec<String>, AdmissionFailure> {
             | Value::String(_)
             | Value::Uuid(_)
             | Value::Timestamp(_)
+            | Value::Bytes(_)
+            | Value::JsonObject(_)
             | Value::Enum(_)
             | Value::Population(_) => {}
         }

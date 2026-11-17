@@ -377,6 +377,8 @@ fn native_object(object: Object<'_>, nested: bool) -> NativeObject {
         Some(Some("string")) => RawNativeKind::Known(NativeKind::String),
         Some(Some("uuid")) => RawNativeKind::Known(NativeKind::Uuid),
         Some(Some("timestamp")) => RawNativeKind::Known(NativeKind::Timestamp),
+        Some(Some("bytes")) => RawNativeKind::Known(NativeKind::Bytes),
+        Some(Some("json_object")) => RawNativeKind::Known(NativeKind::JsonObject),
         Some(Some("text")) => RawNativeKind::Known(NativeKind::Text),
         Some(Some("quantity")) => RawNativeKind::Known(NativeKind::Quantity),
         Some(Some("rational")) => RawNativeKind::Known(NativeKind::Rational),

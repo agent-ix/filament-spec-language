@@ -1132,6 +1132,8 @@ fn leaf_checked_term(
                 LiteralValue::String(value) => ("string", json!(value)),
                 LiteralValue::Uuid(value) => ("uuid", json!(value.to_string())),
                 LiteralValue::Timestamp(value) => ("timestamp", json!(value.to_string())),
+                LiteralValue::Bytes(value) => ("bytes", json!(value)),
+                LiteralValue::JsonObject(value) => ("json_object", json!(value)),
                 LiteralValue::None => ("none", Value::Null),
                 LiteralValue::Enum(case) => ("enum", json!(case)),
             };

@@ -1459,7 +1459,11 @@ fn native_payload(native: RawNative<'_>) -> Result<NativeKind, AdmissionRecord> 
         RawNativeKind::Known(kind) => kind,
     };
     let payload: &[&str] = match kind {
-        NativeKind::String | NativeKind::Uuid | NativeKind::Text => &["text"],
+        NativeKind::String
+        | NativeKind::Uuid
+        | NativeKind::Bytes
+        | NativeKind::JsonObject
+        | NativeKind::Text => &["text"],
         NativeKind::Timestamp => &["nanoseconds"],
         NativeKind::Rational => &["numerator", "denominator"],
         NativeKind::Decimal => &["coefficient", "scale"],
@@ -1545,6 +1549,8 @@ pub(super) fn quantity_magnitude(
         NativeKind::String
         | NativeKind::Uuid
         | NativeKind::Timestamp
+        | NativeKind::Bytes
+        | NativeKind::JsonObject
         | NativeKind::Text
         | NativeKind::Quantity => Err(admission_record(
             Code::InvalidRuntimeInput,
@@ -1601,6 +1607,44 @@ fn admit_native(
                 .map(Value::Timestamp)
                 .map_err(|refusal| invalid(refusal, "nanoseconds"))
         }
+        (NativeKind::Bytes, filament_exact::ValueType::Bytes) => {
+            let text = payload_text(native, "text");
+            if text.len() % 2 != 0
+                || !text
+                    .bytes()
+                    .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+            {
+                return Err(
+                    admission_record(Code::InvalidRuntimeInput, "invalid-value")
+                        .with("member", "text"),
+                );
+            }
+            let bytes = text
+                .as_bytes()
+                .chunks_exact(2)
+                .map(|pair| {
+                    let digit = |byte: u8| match byte {
+                        b'0'..=b'9' => byte - b'0',
+                        _ => byte - b'a' + 10,
+                    };
+                    digit(pair[0]) * 16 + digit(pair[1])
+                })
+                .collect();
+            Ok(Value::Bytes(bytes))
+        }
+        (NativeKind::JsonObject, filament_exact::ValueType::JsonObject) => {
+            let text = payload_text(native, "text");
+            let value = filament_exact::JsonObject::from_json_text(text).map_err(|_| {
+                admission_record(Code::InvalidRuntimeInput, "invalid-value").with("member", "text")
+            })?;
+            if value.canonical_text() != text {
+                return Err(
+                    admission_record(Code::InvalidRuntimeInput, "invalid-value")
+                        .with("member", "text"),
+                );
+            }
+            Ok(Value::JsonObject(value))
+        }
         (NativeKind::Text, filament_exact::ValueType::Text(declared)) => {
             admit_text(payload_text(native, "text"), declared)
         }
@@ -1655,6 +1699,8 @@ fn admit_native(
             NativeKind::String
             | NativeKind::Uuid
             | NativeKind::Timestamp
+            | NativeKind::Bytes
+            | NativeKind::JsonObject
             | NativeKind::Text
             | NativeKind::Quantity
             | NativeKind::Rational
@@ -1672,6 +1718,8 @@ fn admit_native(
             | filament_exact::ValueType::String
             | filament_exact::ValueType::Uuid
             | filament_exact::ValueType::Timestamp
+            | filament_exact::ValueType::Bytes
+            | filament_exact::ValueType::JsonObject
             | filament_exact::ValueType::Enum(_)
             | filament_exact::ValueType::Option(_)
             | filament_exact::ValueType::Composite(_)

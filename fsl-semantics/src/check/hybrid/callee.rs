@@ -37,6 +37,8 @@ pub(super) fn kind_of(declared: &ValueType) -> Option<Kind> {
         | ValueType::String
         | ValueType::Uuid
         | ValueType::Timestamp
+        | ValueType::Bytes
+        | ValueType::JsonObject
         | ValueType::Enum(_)
         | ValueType::Option(_)
         | ValueType::Composite(_)

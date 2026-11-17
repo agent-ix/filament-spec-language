@@ -1896,6 +1896,7 @@ impl<'w> LeafWalk<'w> {
             ValueType::Text(text) => self.append(Leaf::Text(text.profile()), location)?,
             // Native String is not profile-bounded Text and adds no Text leaf.
             ValueType::String => {}
+            ValueType::Bytes | ValueType::JsonObject => {}
             // Rule 2.
             ValueType::Option(payload) => queued.push(LeafVisit::Type {
                 segment: Some(WalkSegment::Inner),
@@ -2037,6 +2038,7 @@ impl<'w> LeafWalk<'w> {
                     | ValueType::Reference(_)
                     | ValueType::Population(_) => {}
                     ValueType::Uuid | ValueType::Timestamp => {}
+                    ValueType::Bytes | ValueType::JsonObject => {}
                 }
             }
             if direct {
@@ -3044,6 +3046,8 @@ impl<'a> Lowering<'a> {
             ValueType::String => self.scalar("string", location).map(NodeRef::from),
             ValueType::Uuid => self.scalar("uuid", location).map(NodeRef::from),
             ValueType::Timestamp => self.scalar("timestamp", location).map(NodeRef::from),
+            ValueType::Bytes => self.scalar("bytes", location).map(NodeRef::from),
+            ValueType::JsonObject => self.scalar("json_object", location).map(NodeRef::from),
         }?;
         Ok(TypeStep::Built(key))
     }
@@ -4671,6 +4675,8 @@ impl<'a> Lowering<'a> {
                 | ValueType::String
                 | ValueType::Uuid
                 | ValueType::Timestamp
+                | ValueType::Bytes
+                | ValueType::JsonObject
                 | ValueType::Enum(_)
                 | ValueType::Option(_)
                 | ValueType::Composite(_)
@@ -4739,6 +4745,37 @@ impl<'a> Lowering<'a> {
             NodeKind::QuantityPower(base, exponent) => (
                 Keyed::Application(Operator::Binary, plain("filament.op.quantity.pow")),
                 Operands::Two(base, exponent),
+            ),
+            NodeKind::QuantityScale { quantity, factor } => (
+                Keyed::Application(Operator::Binary, plain("filament.op.quantity.scale")),
+                Operands::Two(quantity, factor),
+            ),
+            NodeKind::QuantityScaleDiv { quantity, factor } => (
+                Keyed::Application(Operator::Binary, plain("filament.op.quantity.scale_div")),
+                Operands::Two(quantity, factor),
+            ),
+            NodeKind::TupleProject { operand, position, .. } => {
+                let position_type = NodeRef::from(self.scalar("integer", node.location())?);
+                let position = u64::try_from(*position)
+                    .map_err(|_| fault(node.location(), KeyFault::UnbuiltLiteral))?;
+                let member = MemberTerm::bound(
+                    "position",
+                    LeafTerm::literal(position_type, LiteralValue::Count(position)),
+                );
+                (
+                    Keyed::Application(
+                        Operator::Query,
+                        Operation {
+                            member: Some(member),
+                            ..plain("filament.op.tuple.project")
+                        },
+                    ),
+                    Operands::One(operand),
+                )
+            }
+            NodeKind::Index { collection, index, .. } => (
+                Keyed::Application(Operator::Query, plain("filament.op.collection.index")),
+                Operands::Two(collection, index),
             ),
             NodeKind::Ieee(operator, rounding, left, right) => {
                 let ValueType::Float(float) = node.at(*left).value_type() else {
@@ -4825,6 +4862,69 @@ impl<'a> Lowering<'a> {
                 ),
                 Operands::Two(left, right),
             ),
+            NodeKind::ConvertText(target, operand) => {
+                let target_kind = match target {
+                    ValueType::Integer | ValueType::Int(_) => "integer",
+                    ValueType::Decimal(_) => "decimal",
+                    ValueType::Rational(_) => "rational",
+                    ValueType::Float(float) => match float.width() {
+                        filament_exact::IeeeWidth::Binary32 => "float32",
+                        filament_exact::IeeeWidth::Binary64 => "float64",
+                    },
+                    ValueType::Quantity(_) => "quantity",
+                    _ => {
+                        return Err(refuse(
+                            node.location(),
+                            CheckCause::IllTyped(
+                                filament_exact::IllTypedCause::OperatorIneligible,
+                            ),
+                        ))
+                    }
+                };
+                let source_family = match node.at(*operand).value_type() {
+                    ValueType::String => "string",
+                    ValueType::Text(_) => "text",
+                    _ => {
+                        return Err(refuse(
+                            node.location(),
+                            CheckCause::IllTyped(
+                                filament_exact::IllTypedCause::TypeMismatch,
+                            ),
+                        ))
+                    }
+                };
+                let mut laws = Vec::new();
+                if matches!(node.at(*operand).value_type(), ValueType::Text(_)) {
+                    laws.push(self.law(LawRole::TextProfile, node.location())?);
+                }
+                if matches!(target, ValueType::Float(_)) {
+                    laws.push(self.law(LawRole::IeeeProfile, node.location())?);
+                }
+                let mode = match target {
+                    ValueType::Decimal(decimal) => {
+                        Some(OperationMode::Rounding(decimal.rounding()))
+                    }
+                    ValueType::Float(float) => Some(OperationMode::Rounding(float.rounding())),
+                    ValueType::Quantity(_) => Some(OperationMode::Rounding(
+                        filament_exact::RoundingMode::Exact,
+                    )),
+                    _ => None,
+                };
+                let member = self.type_argument(target, node.location())?;
+                let identity = format!("filament.op.{source_family}.to_{target_kind}");
+                (
+                    Keyed::Application(
+                        Operator::Convert,
+                        Operation {
+                            laws,
+                            mode,
+                            member: Some(member),
+                            ..plain(&identity)
+                        },
+                    ),
+                    Operands::One(operand),
+                )
+            }
             NodeKind::ConvertDecimal(operand, target) => {
                 // FR-149 scale reduction: a decimal of larger maximum scale,
                 // or a rational whose denominators exceed 1.
@@ -5374,6 +5474,14 @@ impl<'a> Lowering<'a> {
                                     CheckCause::UnsupportedFeature {
                                         loci: vec![node.location().clone()],
                                     },
+                                ))
+                            }
+                            ValueType::Bytes | ValueType::JsonObject => {
+                                return Err(refuse(
+                                    node.location(),
+                                    CheckCause::IllTyped(
+                                        filament_exact::IllTypedCause::TypeMismatch,
+                                    ),
                                 ))
                             }
                         };
@@ -6707,6 +6815,12 @@ impl<'a> Lowering<'a> {
             Value::Map(_) => return Err(Self::unbuilt_map_literal(node.location())),
             Value::Uuid(value) => LiteralValue::Uuid(*value),
             Value::Timestamp(value) => LiteralValue::Timestamp(*value),
+            Value::Bytes(value) => LiteralValue::Bytes(
+                value.iter().map(|byte| format!("{byte:02x}")).collect(),
+            ),
+            Value::JsonObject(value) => {
+                LiteralValue::JsonObject(value.canonical_text().to_owned())
+            }
             // A string written for a `Text` clause is a text literal of the
             // bare `text` scalar (IR joins the two).
             Value::String(value) if scalar == Some("text") => LiteralValue::Text(value.clone()),
@@ -6814,6 +6928,10 @@ impl<'a> Lowering<'a> {
             ValueType::String => "string",
             ValueType::Uuid => "uuid",
             ValueType::Timestamp => "timestamp",
+            ValueType::Bytes => "bytes",
+            ValueType::JsonObject => "json_object",
+            ValueType::Bytes => "bytes",
+            ValueType::JsonObject => "json_object",
             ValueType::Option(_) | ValueType::Composite(_) | ValueType::Collection(_) => {
                 let leaves = self.leaves(LeafSource::Compared(compared), location)?;
                 return Ok(Operation {
@@ -7589,6 +7707,7 @@ fn literal_operand_text(value: &LiteralValue) -> String {
         }
         LiteralValue::Uuid(value) => value.to_string(),
         LiteralValue::Timestamp(value) => value.to_string(),
+        LiteralValue::Bytes(value) | LiteralValue::JsonObject(value) => value.clone(),
         LiteralValue::None => "none".to_owned(),
     }
 }
