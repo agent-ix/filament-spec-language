@@ -15,7 +15,7 @@ Verify that `finish` and compensation templates are stepped, that an undefined v
 ## Test Procedure
 
 1. Explore ADR-027 §7.1's `Pay` under `on each` with triggers 0 and 1.
-2. Check deadlock freedom of a protocol whose `choice` guard divides by a capture equal to 0, under `origin` and under `each`.
+2. Check deadlock freedom of a protocol whose `choice` guard calls a Kernel-checked function (FR-952) whose body divides by a capture equal to 0 (FR-495-AC-3; the function node records `check_mode: kernel`, FR-098-AC-34), under `origin` and under `each`.
 3. Explore the one-protocol-per-construct corpus of FR-218.
 4. Check `Flow` with `check Gate { protocol Other }` where `Other`'s terminal obligation holds from its initial states and where it is refuted, and with two different model states reached before `Gate`; then `Flow` with `while { protocol Flow }`; then a `send` constraint and a capture holding `protocol Other`.
 
