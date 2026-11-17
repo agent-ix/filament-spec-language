@@ -3294,6 +3294,34 @@ fn multi_location_accesses_and_any_joins_are_stepped_under_tso() {
 #[trace("TC-2542", "FR-902-AC-2")]
 #[test]
 fn multi_location_read_modify_write_is_locked_under_tso_and_ra() {
+    struct FieldsEqual;
+    impl ModelLetters for FieldsEqual {
+        crate::units::unguarded!();
+
+        fn reads(&self, _atom: FormulaNodeId) -> crate::units::Reads {
+            crate::units::unread()
+        }
+
+        fn atom(
+            &self,
+            _atom: FormulaNodeId,
+            instance: &ModelInstance,
+            state: &ModelSimState,
+            _meter: &mut Meter,
+        ) -> Result<AtomReading, AtomStop> {
+            Ok(
+                if field(state, "cells", &instance.key, "v")
+                    == field(state, "cells", &instance.key, "w")
+                {
+                    AtomReading::True
+                } else {
+                    AtomReading::False
+                },
+            )
+        }
+    }
+
+    static FIELDS_EQUAL: FieldsEqual = FieldsEqual;
     let run = format!(
         "parallel Both {{ branch left sequence L {{ {} }} \
          branch right sequence R {{ {} {} }} }} join all [left, right];",
@@ -3301,9 +3329,17 @@ fn multi_location_read_modify_write_is_locked_under_tso_and_ra() {
         attempt("Lx", "c", "Core::read2", "", "ReadsX2, Read2"),
         attempt("Lw", "c", "Core::read3", "", "ReadsX3, ReadW"),
     );
-    let case = Case::new(&(contracts() + &protocol("SB", &run)));
+    let body = contracts()
+        + &protocol("SB", &run)
+        + "temporal FieldsEqual using t0 over (c: M::Cell) clock \"model-steps\" \
+           on origin { always holds(c.v = c.w) }\n";
+    let case = Case::with_letters(&body, &FIELDS_EQUAL);
     for model in [MemoryModelName::Tso, MemoryModelName::Ra] {
-        assert!(explores(&case, model), "{model:?}");
+        let outcome = case.claim(&[select("SB::Both", model)], None);
+        assert!(
+            matches!(outcome, ModelCheckOutcome::Holds { .. }),
+            "{model:?}: {outcome:?}"
+        );
     }
 }
 
