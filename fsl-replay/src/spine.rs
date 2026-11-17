@@ -362,7 +362,7 @@ pub enum CompileRefusal {
     #[error("{0}")]
     Extension(fsl_semantics::library::extension::ExtensionRefusal),
     /// E3: the FR-091 assembler refused the unit.
-    #[error("the assembler refused the unit: {}", assembly_message(.refusal))]
+    #[error("{}", assembly_message(.refusal))]
     Assembly {
         /// Every assembly error, never empty.
         refusal: AssemblyRefusal,
@@ -370,7 +370,7 @@ pub enum CompileRefusal {
         region: Option<SourceRegion>,
     },
     /// E3: the checker refused the package.
-    #[error("the checker refused the package: {}", check_message(.refusals))]
+    #[error("{}", check_message(.refusals))]
     Check {
         /// Every check refusal, never empty.
         refusals: Vec<CheckRefusal>,
@@ -948,18 +948,9 @@ fn forms_message(refusal: &FormsRefusal) -> String {
 }
 
 /// FR-763 messages lead with the source construct so the first words of the
-/// diagnostic identify what the author needs to change. Other forms failures
-/// retain the stage prefix.
+/// diagnostic identify what the author needs to change.
 fn forms_refusal_message(refusal: &FormsRefusal) -> String {
-    let message = forms_message(refusal);
-    if matches!(
-        &refusal.cause,
-        FormsCause::NoDispatchEntry { .. } | FormsCause::UnrepresentedConstruct { .. }
-    ) {
-        message
-    } else {
-        format!("the forms stage refused the unit: {message}")
-    }
+    forms_message(refusal)
 }
 
 /// A readable account of an I1 refusal.
@@ -1247,6 +1238,35 @@ fn check_message_one(first: &CheckRefusal) -> String {
         );
     }
     match &first.cause {
+        CheckCause::OperandTypeMismatch {
+            operator,
+            left_type,
+            right_type,
+        } => {
+            let operator = match operator {
+                fsl_forms::BinaryOperator::Add => "+",
+                fsl_forms::BinaryOperator::Subtract => "-",
+                fsl_forms::BinaryOperator::Multiply => "*",
+                fsl_forms::BinaryOperator::Divide => "/",
+                fsl_forms::BinaryOperator::IntegerDiv => "div",
+                fsl_forms::BinaryOperator::IntegerRem => "rem",
+                fsl_forms::BinaryOperator::IntegerMod => "mod",
+                fsl_forms::BinaryOperator::Equal => "=",
+                fsl_forms::BinaryOperator::NotEqual => "!=",
+                fsl_forms::BinaryOperator::Less => "<",
+                fsl_forms::BinaryOperator::LessOrEqual => "<=",
+                fsl_forms::BinaryOperator::Greater => ">",
+                fsl_forms::BinaryOperator::GreaterOrEqual => ">=",
+                fsl_forms::BinaryOperator::And => "and",
+                fsl_forms::BinaryOperator::Or => "or",
+                fsl_forms::BinaryOperator::Implies => "implies",
+            };
+            message = format!(
+                "{message}: operator `{operator}` has operands of types `{}` and `{}`",
+                value_type_source(left_type),
+                value_type_source(right_type)
+            );
+        }
         CheckCause::StateGraph(cause) => {
             if let fsl_semantics::check::StateGraphCause::NotStateLayer {
                 alias, identity, ..

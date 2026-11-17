@@ -13,7 +13,7 @@ use fsl_replay::{
     OutcomeDocument, OutcomeLocus, ReplayLimits, ReplayRefusal, StageLimits,
 };
 use ix_trace_rs::trace;
-use serde_json::Value;
+use serde_json::{Value, json};
 
 const HEADER: &str = "language \"ix:native\" edition \"1-draft\";\n\
 profile v = \"filament.value.complete/v1\";\n";
@@ -360,5 +360,91 @@ fn syntax_messages_match_the_diagnostic_goldens() {
             .unwrap_or_else(|| panic!("{name}: no diagnostic in {document:?}"));
         assert_eq!(message, expected.trim(), "{name}");
         assert!(rendered.contains(expected.trim()), "{name}: {rendered}");
+    }
+}
+
+/// QSL-2199: compile refusals name source constructs and retain their stage.
+const DIAGNOSTIC_DIRECTORY: &str =
+    concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/diagnostics");
+
+fn refused_compile_fixture(name: &str) -> Value {
+    let directory = tempfile::tempdir().expect("create compile request directory");
+    let source = std::path::Path::new(DIAGNOSTIC_DIRECTORY).join(format!("{name}.native"));
+    std::fs::copy(&source, directory.path().join("program.native"))
+        .expect("copy diagnostic source fixture");
+    let request = json!({"format": "native-compile/1", "request": {
+        "models": [],
+        "program": {"source": {"file": "program.native", "authority": "agent-ix",
+            "identity": format!("test:diagnostic-golden:{name}"), "document": "DiagnosticGolden",
+            "formal_revision": 1}}
+    }});
+    let request_path = directory.path().join("compile.json");
+    std::fs::write(
+        &request_path,
+        serde_json::to_vec(&request).expect("encode request"),
+    )
+    .expect("write compile request");
+    fsl_command::command::compile(&request_path)
+        .expect_err("the diagnostic source refuses")
+        .value()
+        .expect("the refusal has a structured envelope")
+}
+
+/// Provenance: QSL-2199.
+#[test]
+fn compile_diagnostic_messages_match_goldens_and_keep_structured_stages() {
+    for (name, stage) in [
+        ("forms", "forms"),
+        ("assembler", "assembly"),
+        ("checker", "check"),
+    ] {
+        let refusal = refused_compile_fixture(name);
+        let expected = std::fs::read_to_string(
+            std::path::Path::new(DIAGNOSTIC_DIRECTORY).join(format!("{name}.expected")),
+        )
+        .expect("read message golden");
+        assert_eq!(refusal["stage"], stage, "{name}: {refusal}");
+        assert_eq!(
+            refusal["message"],
+            expected.trim_end(),
+            "{name}: {refusal}"
+        );
+    }
+
+    let assembly = std::fs::read_to_string(
+        std::path::Path::new(DIAGNOSTIC_DIRECTORY).join("assembler.expected"),
+    )
+    .expect("read assembler message golden");
+    assert!(assembly.contains("enum `Shade`"), "{assembly}");
+    let checker = std::fs::read_to_string(
+        std::path::Path::new(DIAGNOSTIC_DIRECTORY).join("checker.expected"),
+    )
+    .expect("read checker message golden");
+    for detail in ["operator `+`", "`Integer`", "`String`"] {
+        assert!(checker.contains(detail), "{checker}");
+    }
+}
+
+/// Provenance: QSL-2199.
+#[test]
+fn compile_diagnostic_corpus_has_no_internal_stage_prefixes() {
+    let expected_directory = std::path::Path::new(DIAGNOSTIC_DIRECTORY);
+    let mut goldens = std::fs::read_dir(expected_directory)
+        .expect("read diagnostic fixture directory")
+        .map(|entry| entry.expect("read diagnostic fixture entry").path())
+        .filter(|path| path.extension().is_some_and(|extension| extension == "expected"))
+        .collect::<Vec<_>>();
+    goldens.sort();
+    assert!(!goldens.is_empty(), "the diagnostic corpus has message goldens");
+
+    for path in goldens {
+        let message = std::fs::read_to_string(&path).expect("read expected diagnostic message");
+        for forbidden in ["forms stage", "assembler", "checker refused"] {
+            assert!(
+                !message.contains(forbidden),
+                "{} contains the internal stage phrase {forbidden:?}: {message}",
+                path.display()
+            );
+        }
     }
 }

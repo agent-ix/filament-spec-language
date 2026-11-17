@@ -9,7 +9,7 @@ use filament_exact::{Integer, TextProfile, ValueType};
 use filament_semantic_value::call::WrongSnapshotCause;
 use filament_semantic_value::location::ExpressionLocation as Location;
 use filament_semantic_value::semantic_node::IdentityRefusal;
-use fsl_forms::AccessOrdering;
+use fsl_forms::{AccessOrdering, BinaryOperator};
 use fsl_foundation::diagnostic::Code;
 use fsl_foundation::source::provenance::SourceRegion;
 use fsl_foundation::MemoryModelName;
@@ -2818,6 +2818,15 @@ pub enum CheckCause {
     },
     /// `refused { code: ill_typed }` with its FR-272 cause.
     IllTyped(IllTypedCause),
+    /// A binary operator whose two typed operands have incompatible types.
+    OperandTypeMismatch {
+        /// The source operator.
+        operator: BinaryOperator,
+        /// The left operand's checked type.
+        left_type: ValueType,
+        /// The right operand's checked type.
+        right_type: ValueType,
+    },
     /// `refused { code: wrong_snapshot }` with its FR-272 cause: `pre(...)`
     /// written outside its admitted clause, or over an ineligible operand.
     WrongSnapshot(WrongSnapshotCause),
@@ -3518,6 +3527,7 @@ impl CheckCause {
             Self::TypeAdmission { code, .. } => *code,
             Self::TypeCheckAllocation(_) | Self::TypeCheckCapacity(_) => Code::ResourceExhausted,
             Self::IllTyped(_)
+            | Self::OperandTypeMismatch { .. }
             | Self::IdentityObservingForm(_)
             | Self::NonBooleanRoot
             | Self::UnitMismatch
@@ -3601,6 +3611,7 @@ impl CheckCause {
             Self::TypeCheckAllocation(_) => Some("allocation-failed"),
             Self::TypeCheckCapacity(_) => Some("reservation-size-overflow"),
             Self::IllTyped(cause) => cause.tag(),
+            Self::OperandTypeMismatch { .. } => Some("type-mismatch"),
             Self::WrongSnapshot(cause) => Some(cause.as_str()),
             Self::NonBooleanRoot => Some("non-boolean-root"),
             Self::UnitMismatch => Some("unit-mismatch"),

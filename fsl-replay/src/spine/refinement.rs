@@ -338,6 +338,7 @@ fn check_limit(cause: &CheckCause) -> Option<ReachedLimit> {
         | CheckCause::PopulationFormNotChecked { .. }
         | CheckCause::ModelConformance(_)
         | CheckCause::IllTyped(_)
+        | CheckCause::OperandTypeMismatch { .. }
         | CheckCause::IdentityObservingForm(_)
         | CheckCause::WrongSnapshot(_)
         | CheckCause::MissingName(_)

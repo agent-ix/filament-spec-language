@@ -4220,7 +4220,22 @@ impl<'a> Typer<'a> {
                     ValueType::Quantity(self.units.form(unit)),
                 )
             }
-            _ => return Err(mismatch(location)),
+            _ => {
+                let operator = match operator {
+                    ArithmeticOperator::Add => BinaryOperator::Add,
+                    ArithmeticOperator::Subtract => BinaryOperator::Subtract,
+                    ArithmeticOperator::Multiply => BinaryOperator::Multiply,
+                    ArithmeticOperator::Divide => BinaryOperator::Divide,
+                };
+                return Err(CheckRefusal {
+                    location: location.clone(),
+                    cause: CheckCause::OperandTypeMismatch {
+                        operator,
+                        left_type,
+                        right_type,
+                    },
+                });
+            }
         };
         Ok(node(kind, value_type, location))
     }
