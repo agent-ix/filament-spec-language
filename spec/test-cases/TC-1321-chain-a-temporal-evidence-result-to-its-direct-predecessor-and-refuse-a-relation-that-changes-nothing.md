@@ -23,7 +23,7 @@ Verify FR-526-AC-1 to FR-526-AC-30. Results `r1`, `r2`, `r3` are evaluated from 
 | 5 | 5 | row 4's inputs under `Superseding(r1)` | equal truth, settlement and support |
 | 6 | 6 | a request with `r1`'s `input_identity`, under both relations | `Err(CallFailure::Admission)`, cause `unchanged-input`, empty charge log |
 | 7 | 7 | `Superseding` with no `ledger` | `Err(CallFailure::Admission)`, cause `no-ledger` |
-| 8 | 8 | a ledger holding `r1` and `r2`; `Superseding(r1)`; `Superseding(r2)` | `predecessor-not-latest`; accepted |
+| 8 | 8 | a ledger holding `r1` and `r2`; `Superseding(r1)`; `Superseding` naming an identity the entry does not hold; `Superseding(r2)` | `predecessor-not-latest`; `predecessor-unknown`; accepted |
 | 9 | 9 | another clause naming `r1`; another package naming `r1` | `predecessor-unknown` each |
 | 10 | 10 | trigger differing in one byte, naming `r1` | `predecessor-unknown` |
 | 11 | 11 | `correspondence` differing, naming `r1` | `correspondence-changed` |
@@ -39,7 +39,7 @@ Verify FR-526-AC-1 to FR-526-AC-30. Results `r1`, `r2`, `r3` are evaluated from 
 | 21 | 21 | the FR-516-AC-32 twins, equal positions, valuations and correspondence, each occurrence's own binding, occurrence 3 then 7 | subjects agree in package identity, version and clause and differ in `occurrence` |
 | 22 | 22 | a test-authored event-position unit with `on origin eventually[0,1] (holds(a) and holds(b))`, `a` and `b` true at 0 and false at 1, `Complete { through: 1 }`, `Closed` | `True`; `support` exactly {(0, `a`), (0, `b`)}, each naming position 0's `observation` |
 | 23 | 23 | row 22 with `b` withdrawn at position 0; a fixed-sample clause with a silent-sample support pair; every result of this test case | no entry for a pair with no admitted valuation; every entry names a request position and an atom with an admitted valuation there |
-| 24 | 24 | `r1` and `r1'` (one valuation differs, truths differ); `Superseding(r1)` with `r1'`'s ledger; `Superseding(r1')` with changed inputs and that ledger | `predecessor-not-latest`; accepted |
+| 24 | 24 | `r1` and `r1'` (one valuation differs, truths differ); `Superseding(r1)` with `r1'`'s `Original` ledger; `Superseding(r1')` with changed inputs and that ledger | `predecessor-unknown`; accepted |
 | 25 | 25 | the twins, `r3` for occurrence 3; `Superseding(r3)` selecting occurrence 7 with `r3`'s ledger and changed inputs | `predecessor-unknown`; `r3` and its ledger unchanged |
 | 26 | 26 | `Superseding(r1)` with a clone of `r1`'s ledger, then with that ledger moved out of `r1`; compile-fail setting an entry's identity, input identity, correspondence or lineage | results equal to the request with the ledger itself; does not compile (the `compile_fail` doc tests on `ResultEntry`, which carry no trace tag) |
 | 27 | 27 | `Superseding(r1)` with changed inputs, `lineage` ceiling 1, then 0 | completes; then `Ok` `Incomplete` naming `lineage` with `value` 0 and setting `temporal_evidence.lineage`, result `lineage` 1, relation naming `r1`, `Unavailable`, no truth, `usage.instances` and `usage.positions` 0, ledger `==` the request's |

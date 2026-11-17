@@ -64,6 +64,7 @@ mod effect_boundary;
 mod emit_checked_v2;
 mod emit_readback_agreement;
 mod evaluate_reads_no_display_strings;
+mod evidence_ledger_file;
 mod exact_decimals;
 mod extension_forms;
 mod extension_s1_parse;
