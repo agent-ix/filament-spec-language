@@ -54,7 +54,7 @@ fn stripped(text: &str) -> String {
 fn calls_binders_bounds_and_type_arguments_print_canonically() {
     let text = format!(
         "{}function f using v (x : Option < Int [0,9] >, c : Sequence<Integer>[0,4], a : Integer, b : Integer) : Boolean pure \
-         {{ present (x) and forall (r in c : r > 0) and a<b and convert < Integer > (a) = b and not (true and false) }}\n",
+         {{ present (x) and forall (r in c : r > 0) and a<b and convert < Integer > (a) = b and not (a = b) }}\n",
         header("filament.value.complete/v1")
     );
     let out = formatted(&text);
@@ -64,7 +64,7 @@ fn calls_binders_bounds_and_type_arguments_print_canonically() {
         "forall(r in c: r > 0)",
         "a < b",
         "convert<Integer>(a)",
-        "not (true and false)",
+        "not (a = b)",
     ] {
         assert!(out.contains(expected), "{expected}: {out}");
     }
