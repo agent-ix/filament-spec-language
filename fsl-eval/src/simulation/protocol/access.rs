@@ -641,24 +641,25 @@ pub(crate) fn classify(
         let (Some(body), Some(chain)) = (constraint, chain_of(*node)?) else {
             continue;
         };
-        let Value::Reference(over) = over else {
-            return Err(ProtocolRefusal::fault(
-                "a-weak-node-model-read-has-a-reference-over-input",
-            ));
+        let over = match over {
+            Value::Reference(over) => Some(over),
+            _ => None,
         };
         let path = program.text(*node)?;
-        let reads =
-            model
-                .node_reads(path, &parameters, body, over)
-                .map_err(|error| match error {
-                    FootprintError::Refused(refusal) => ProtocolRefusal::NodeFootprint {
-                        node: path.to_owned(),
-                        refusal,
-                    },
-                    FootprintError::UnknownTransition | FootprintError::UnknownConstraint => {
-                        ProtocolRefusal::fault("a-node-constraint-has-a-footprint")
-                    }
-                })?;
+        let reads = model
+            .node_reads(path, &parameters, body, over)
+            .map_err(|error| match error {
+                FootprintError::Refused(refusal) => ProtocolRefusal::NodeFootprint {
+                    node: path.to_owned(),
+                    refusal,
+                },
+                FootprintError::UnknownTransition | FootprintError::UnknownConstraint => {
+                    ProtocolRefusal::fault("a-node-constraint-has-a-footprint")
+                }
+            })?
+            .ok_or_else(|| {
+                ProtocolRefusal::fault("a-weak-node-model-read-has-a-reference-over-input")
+            })?;
         node_reads.insert(*node, reads);
         reader_chains.insert(*node, chain);
     }
@@ -690,10 +691,19 @@ pub(crate) fn classify(
             }
         };
         let mut instances = BTreeMap::new();
+        let path = program.text(*node)?;
         for transition in transitions {
             let footprint = model
                 .footprint_selecting(&transition, Some(&attempt.contracts))
-                .map_err(|_| ProtocolRefusal::Unsupported(super::Unsupported::AccessFootprint))?;
+                .map_err(|error| match error {
+                    FootprintError::Refused(refusal) => ProtocolRefusal::NodeFootprint {
+                        node: path.to_owned(),
+                        refusal,
+                    },
+                    FootprintError::UnknownTransition | FootprintError::UnknownConstraint => {
+                        ProtocolRefusal::fault("an-attempt-transition-has-a-footprint")
+                    }
+                })?;
             let model_only = |locations: BTreeSet<Location>| -> BTreeSet<Location> {
                 locations
                     .into_iter()

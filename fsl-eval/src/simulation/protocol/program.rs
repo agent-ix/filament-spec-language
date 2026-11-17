@@ -586,13 +586,6 @@ impl<'a> Program<'a> {
                     attempt.operation.declaration.result() == Some(&binder.value_type)
                 })
             });
-            // An attempt binder with no value of its type is never bound, so
-            // no slot may read it (ADR-027 ST-1).
-            if let (Some(slot), None) = (binder, binds) {
-                if readers.get(slot).is_some_and(|readers| !readers.is_empty()) {
-                    return Err(unsupported(Unsupported::UnboundAttemptBinder));
-                }
-            }
             attempts.insert(
                 node,
                 Attempt {

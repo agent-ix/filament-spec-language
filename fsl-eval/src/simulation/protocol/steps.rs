@@ -43,6 +43,7 @@ use super::{
     ProtocolRefusal, ProtocolState, ProtocolSystem, Thread,
 };
 use crate::simulation::expansion::{Expansion, ExpansionLimit, ExpansionStop};
+use crate::simulation::model::FootprintError;
 use crate::simulation::footprint::Location;
 use crate::simulation::model::encode::{reference_enc, value_enc, Enc};
 use crate::simulation::model::{
@@ -631,10 +632,19 @@ impl<M: MemoryModel> ProtocolSystem<'_, M> {
         if let Some(footprint) = footprints().get(&key) {
             return Ok(Arc::clone(footprint));
         }
+        let node_name = self.program.text(node)?;
         let footprint = self
             .model
             .footprint_selecting(transition, Some(&attempt.contracts))
-            .map_err(|_| ProtocolRefusal::Unsupported(super::Unsupported::AccessFootprint))?;
+            .map_err(|error| match error {
+                FootprintError::Refused(refusal) => ProtocolRefusal::NodeFootprint {
+                    node: node_name.to_owned(),
+                    refusal,
+                },
+                FootprintError::UnknownTransition | FootprintError::UnknownConstraint => {
+                    ProtocolRefusal::fault("an-attempt-transition-has-a-footprint")
+                }
+            })?;
         let model_only = |locations: BTreeSet<Location>| -> BTreeSet<Location> {
             locations
                 .into_iter()

@@ -10,7 +10,7 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use filament_exact::{Cancel, Meter};
+use filament_exact::{Cancel, Meter, Value, ValueType};
 use filament_semantic_value::checking::CheckMode;
 use filament_semantic_value::location::ExpressionOwner;
 use fsl_analyze::model_check::{
@@ -24,12 +24,13 @@ use fsl_eval::simulation::model::{
 };
 use fsl_eval::simulation::protocol::{
     visible, AnchorName, BlockedThread, ClaimReads, ProtocolLocation, ProtocolRefusal,
-    ProtocolSystem, ProtocolTransition, RestKind, RestPoint, Sc, StepKind, ThreadPath, Unsupported,
-    WaitCause,
+    ProtocolSystem, ProtocolTransition, RestKind, RestPoint, Sc, StepKind, ThreadPath, Tso,
+    Unsupported, WaitCause,
 };
 use fsl_eval::simulation::{Location, SubjectSystem, TransitionSystem};
 use fsl_eval::temporal::AtomReading;
 use fsl_foundation::diagnostic::Code;
+use fsl_foundation::MemoryModelName;
 use fsl_foundation::source::provenance::OccurrenceKey;
 use fsl_package::CheckedPackage;
 use fsl_replay::{
@@ -41,7 +42,7 @@ use fsl_replay::{
 };
 use fsl_route::deadlock::{ItemObligation, ObligationKind};
 use fsl_route::model_request::ModelRequest;
-use fsl_semantics::check::{CheckCause, FormulaNodeId};
+use fsl_semantics::check::{CheckCause, FormulaNodeId, ProtocolAnchorCause};
 use fsl_semantics::model::observation::DocumentRef;
 use ix_trace_rs::trace;
 use serde_json::Value as Json;
@@ -2202,18 +2203,31 @@ fn a_non_object_over_ranges_over_each_finite_value() {
     let system = ProtocolSystem::new(model, &subject, Sc)
         .unwrap_or_else(|refusal| panic!("the system is built: {refusal:?}"));
     assert_eq!(system.initial().len(), 4);
-    let blocked = system
+    let outcomes = system
         .initial()
         .iter()
-        .filter(|state| {
-            system
+        .map(|state| {
+            let Value::Integer(value) = state.over() else {
+                panic!("integer over value: {:?}", state.over());
+            };
+            let value = value
+                .to_string()
+                .parse::<i64>()
+                .expect("the small bounded value fits i64");
+            let blocked = system
                 .successors(state)
                 .expect("expands")
                 .successors
-                .is_empty()
+                .is_empty();
+            (value, blocked)
         })
-        .count();
-    assert_eq!(blocked, 2);
+        .collect::<Vec<_>>();
+    assert_eq!(outcomes, [(0, true), (1, true), (2, false), (3, false)]);
+    let first_blocked = outcomes
+        .iter()
+        .find(|(_, blocked)| *blocked)
+        .expect("the guard blocks at least one over value");
+    assert_eq!(first_blocked.0, 0, "the first counterexample is n = 0");
 
     let run = "sequence Main { check Gate using v { true }; }";
     let text = unit(ORIGIN, "", "", run).replace("over (k: M::Cell)", "over (k: Boolean)");
@@ -2223,6 +2237,25 @@ fn a_non_object_over_ranges_over_each_finite_value() {
     let system = ProtocolSystem::new(model, &subject, Sc)
         .unwrap_or_else(|refusal| panic!("the system is built: {refusal:?}"));
     assert_eq!(system.initial().len(), 2);
+    let mut booleans = system
+        .initial()
+        .iter()
+        .map(|state| {
+            let Value::Boolean(value) = state.over() else {
+                panic!("Boolean over value: {:?}", state.over());
+            };
+            *value
+        })
+        .collect::<Vec<_>>();
+    booleans.sort_unstable();
+    assert_eq!(booleans, [false, true]);
+    assert!(system.initial().iter().all(|state| {
+        !system
+            .successors(state)
+            .expect("expands")
+            .successors
+            .is_empty()
+    }));
 }
 
 /// FR-882-AC-4 (TC-2506): a checked Boolean attempt binder is present while
@@ -2263,87 +2296,97 @@ fn an_attempt_binder_is_bound() {
     }));
 }
 
-/// FR-882-AC-4's forbidden case: a mismatch that reaches the defensive
-/// stepper check retains its named cause rather than reading an unbound
-/// value. S3's type-mismatch rule remains the primary refusal.
+/// FR-882-AC-4: S3 refuses an attempt result binder whose type differs from
+/// the operation result, and one supplied for an operation with no result.
 #[trace("TC-2506", "FR-882-AC-4")]
 #[test]
-fn an_unbound_attempt_binder_keeps_its_named_refusal() {
-    let run = "sequence Main { attempt T by w on M::Cell::flag contracts [FlagPre, FlagPost] \
-               as (t: Integer) { true }; check Gate using v { t >= 0 }; }";
-    let world = World::new(&unit(ORIGIN, "", "", run), &["c"], &[0]);
-    let subject = world.subject();
-    let model = ModelSystem::new(subject.model.simulation.clone()).expect("the subject admits");
-    let refusal = ProtocolSystem::new(model, &subject, Sc)
-        .err()
-        .expect("the stepper rejects an unbound attempt binder");
+fn attempt_result_binders_must_match_the_operation_result_at_s3() {
+    fn refusal_for(operation: &str, contracts: &str, binder_type: &str) -> (CheckCause, String) {
+        let run = format!(
+            "sequence Main {{ attempt T by w on M::Cell::{operation} contracts [{contracts}] \
+             as (t: {binder_type}) {{ true }}; check Gate using v {{ t = t }}; }}"
+        );
+        let refusals = check_refusals(&unit(ORIGIN, "", "", &run));
+        let [(refusal, Some(at))] = refusals.as_slice() else {
+            panic!("one S3 refusal at the binder: {refusals:?}");
+        };
+        assert_eq!(at, "t");
+        (refusal.cause.clone(), at.clone())
+    }
+
+    let (integer_refusal, _) = refusal_for("flag", "FlagPre, FlagPost", "Integer");
     assert_eq!(
-        refusal,
-        ProtocolRefusal::Unsupported(Unsupported::UnboundAttemptBinder)
+        (integer_refusal.code(), integer_refusal.cause()),
+        (Code::IllTyped, Some("type-mismatch")),
     );
+    let CheckCause::ProtocolAnchor(cause) = integer_refusal else {
+        panic!("the refusal retains the attempt binder types: {integer_refusal:?}");
+    };
+    let ProtocolAnchorCause::AttemptBinderType {
+        expected_result,
+        actual_result,
+        ..
+    } = cause.as_ref()
+    else {
+        panic!("the refusal names an attempt result binder: {cause:?}");
+    };
+    assert_eq!(expected_result.as_deref(), Some(&ValueType::Boolean));
+    assert_eq!(actual_result.as_ref(), &ValueType::Integer);
+
+    let (void_refusal, _) = refusal_for("touch", "TouchPre", "Boolean");
+    assert_eq!(
+        (void_refusal.code(), void_refusal.cause()),
+        (Code::IllTyped, Some("type-mismatch")),
+    );
+    let CheckCause::ProtocolAnchor(cause) = void_refusal else {
+        panic!("the refusal retains the no-result mismatch: {void_refusal:?}");
+    };
+    let ProtocolAnchorCause::AttemptBinderType {
+        expected_result,
+        actual_result,
+        ..
+    } = cause.as_ref()
+    else {
+        panic!("the refusal names the attempt result binder: {cause:?}");
+    };
+    assert_eq!(expected_result, &None);
+    assert_eq!(actual_result.as_ref(), &ValueType::Boolean);
 }
 
-/// FR-882-AC-7 (TC-2505): keep an exhaustive inventory of every remaining
-/// stepper refusal and its focused case. The minimal accepted corpus below
-/// has only the two refusals FR-882 allows; the other entries cover a
-/// supported fallback or invalid/blocked inputs.
+/// FR-882-AC-7 (TC-2505): every remaining `Unsupported` variant has an
+/// exercised, non-refusing counterpart for the supported path in its area.
 #[trace("TC-2505", "FR-882-AC-7")]
 #[test]
 fn no_required_construct_settles_unsupported() {
-    fn inventory(variant: Unsupported) -> (&'static str, &'static str) {
+    fn has_non_refusing_case(variant: Unsupported) -> bool {
         match variant {
-            Unsupported::WeakMemory => (
-                "WeakMemory",
-                "weak_memory::a_memory_model_refuses_a_resolved_model_it_does_not_implement",
-            ),
-            Unsupported::AccessFootprint => (
-                "AccessFootprint",
-                "weak_memory::an_access_footprint_is_stepped",
-            ),
-            Unsupported::UnboundAttemptBinder => {
-                (
-                    "UnboundAttemptBinder",
-                    "protocol_roles::an_unbound_attempt_binder_keeps_its_named_refusal",
-                )
+            Unsupported::WeakMemory => {
+                let case = crate::weak_memory::Case::new(&crate::litmus::sb_unit(
+                    &crate::litmus::sb_run("", "release", "acquire"),
+                ));
+                let selection = [crate::weak_memory::select(
+                    "SB::Both",
+                    MemoryModelName::Tso,
+                )];
+                let refused = case.system(&selection, Sc).err();
+                assert!(matches!(
+                    refused,
+                    Some(ProtocolRefusal::Unsupported(Unsupported::WeakMemory))
+                ));
+                case.system(&selection, Tso::default()).is_ok()
             }
-            Unsupported::UnenumerableRecord => (
-                "UnenumerableRecord",
-                "protocol_step_view::unsupported_and_dynamic_protocols_have_no_steps",
-            ),
+            Unsupported::UnenumerableRecord => {
+                let run = "sequence Main { attempt T by w on M::Cell::flag contracts \
+                            [FlagPre, FlagPost] as (t: Boolean) { true }; }";
+                let world = World::new(&unit(ORIGIN, "", "", run), &["c"], &[0]);
+                let subject = world.subject();
+                let model = ModelSystem::new(subject.model.simulation.clone())
+                    .expect("the subject admits");
+                ProtocolSystem::new(model, &subject, Sc).is_ok()
+            }
         }
     }
 
-    let cases = [
-        Unsupported::WeakMemory,
-        Unsupported::AccessFootprint,
-        Unsupported::UnboundAttemptBinder,
-        Unsupported::UnenumerableRecord,
-    ];
-    let entries: Vec<_> = cases.into_iter().map(inventory).collect();
-    assert_eq!(
-        entries,
-        [
-            (
-                "WeakMemory",
-                "weak_memory::a_memory_model_refuses_a_resolved_model_it_does_not_implement",
-            ),
-            (
-                "AccessFootprint",
-                "weak_memory::an_access_footprint_is_stepped",
-            ),
-            (
-                "UnboundAttemptBinder",
-                "protocol_roles::an_unbound_attempt_binder_keeps_its_named_refusal",
-            ),
-            (
-                "UnenumerableRecord",
-                "protocol_step_view::unsupported_and_dynamic_protocols_have_no_steps",
-            ),
-        ]
-    );
-    let accepted_corpus = [Unsupported::WeakMemory, Unsupported::UnenumerableRecord];
-    assert_eq!(
-        accepted_corpus.map(|variant| inventory(variant).0),
-        ["WeakMemory", "UnenumerableRecord"]
-    );
+    let variants = [Unsupported::WeakMemory, Unsupported::UnenumerableRecord];
+    assert!(variants.into_iter().all(has_non_refusing_case));
 }

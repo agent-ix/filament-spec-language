@@ -114,12 +114,6 @@ pub enum Unsupported {
     /// A `parallel` whose resolved memory model the system's memory model
     /// does not implement.
     WeakMemory,
-    /// An attempt of a weak `parallel` whose application has no footprint
-    /// to classify its access by (FR-220).
-    AccessFootprint,
-    /// A slot that reads an attempt binder whose operation returns no value
-    /// of the binder's type, so the binder is never bound.
-    UnboundAttemptBinder,
     /// A step binder whose record type has no enumeration here: a type with
     /// a field of no finite domain, such as a text type or a map.
     UnenumerableRecord,
@@ -130,8 +124,6 @@ impl Unsupported {
     pub fn construct(self) -> &'static str {
         match self {
             Self::WeakMemory => "memory",
-            Self::AccessFootprint => "attempt footprint under a weak memory model",
-            Self::UnboundAttemptBinder => "read of an unbound attempt binder",
             Self::UnenumerableRecord => "step binder of an unenumerable record type",
         }
     }
@@ -660,6 +652,12 @@ impl<M: MemoryModel> ProtocolState<M> {
     /// The model state.
     pub fn model(&self) -> &ModelSimState {
         &self.model
+    }
+
+    /// The value this protocol instance was created for, including a finite
+    /// scalar `over` input.
+    pub fn over(&self) -> &Value {
+        &self.over
     }
 
     /// The memory component.

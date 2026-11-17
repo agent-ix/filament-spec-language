@@ -1477,6 +1477,14 @@ fn check_message_one(first: &CheckRefusal) -> String {
                 ProtocolAnchorCause::BinderType { binder, fault, .. } => {
                     format!("{message}: binder `{binder}`'s type does not resolve ({fault:?})")
                 }
+                ProtocolAnchorCause::AttemptBinderType {
+                    binder,
+                    expected_result,
+                    actual_result,
+                    ..
+                } => format!(
+                    "{message}: attempt binder `{binder}` has type {actual_result:?}, operation result is {expected_result:?}"
+                ),
                 ProtocolAnchorCause::ChannelRole {
                     channel, end, name, ..
                 } => format!(

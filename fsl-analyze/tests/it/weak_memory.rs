@@ -1406,6 +1406,24 @@ fn an_access_footprint_is_stepped() {
     assert_eq!(actual.instances, expected.instances);
 }
 
+/// FR-882-AC-3/5: a scalar `over` value is legal for a weak parallel whose
+/// event constraints read no model state; only model reads need a reference
+/// over value for footprint instantiation.
+#[trace("TC-2506", "FR-882-AC-3", "FR-882-AC-5")]
+#[test]
+fn scalar_over_with_model_read_free_weak_constraints_builds() {
+    let run = "parallel Both { branch left sequence L { \
+                event Left by w as (left: Boolean) { true }; } \
+                branch right sequence R { \
+                event Right by w as (right: Boolean) { true }; } } \
+                join all [left, right];";
+    let unit = (contracts() + &protocol("SB", run))
+        .replace("over (k: M::Core)", "over (k: Int[0, 1])");
+    let case = Case::new(&unit);
+    let selection = [select("SB::Both", MemoryModelName::Tso)];
+    assert!(case.system(&selection, Tso::default()).is_ok());
+}
+
 /// FR-220-AC-4 (TC-665 step 4): `SB` under `sc` with every ordering
 /// `relaxed`, and with every ordering `seq_cst`, reaches the same states,
 /// 13 inside the `parallel` and 3 joined, and settles `proved` both times.

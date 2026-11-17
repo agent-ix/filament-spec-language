@@ -669,8 +669,8 @@ impl<'a> ModelSystem<'a> {
         name: &str,
         parameters: &[(String, ValueType)],
         body: &fsl_semantics::check::CheckedBody,
-        over: &ObjectReference,
-    ) -> Result<BTreeSet<Location>, FootprintError> {
+        over: Option<&ObjectReference>,
+    ) -> Result<Option<BTreeSet<Location>>, FootprintError> {
         let symbolic = derive_node_reads(
             self.package.graph(),
             &self.model,
@@ -678,11 +678,14 @@ impl<'a> ModelSystem<'a> {
             parameters,
             body.root(),
         )?;
-        Ok(symbolic
+        if over.is_none() && !symbolic.is_empty() {
+            return Ok(None);
+        }
+        Ok(Some(symbolic
             .iter()
             .filter_map(|location| {
                 lower(location, &|bound| match bound {
-                    FootprintObject::Receiver => Some(over.clone()),
+                    FootprintObject::Receiver => over.cloned(),
                     FootprintObject::Param(_) => None,
                 })
             })
@@ -699,7 +702,7 @@ impl<'a> ModelSystem<'a> {
                 },
                 other => vec![other],
             })
-            .collect())
+            .collect()))
     }
 
     /// FR-156 "Atom footprints": the symbolic locations the `holds` atom
