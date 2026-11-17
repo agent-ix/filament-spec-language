@@ -270,8 +270,9 @@ pub fn replay_frame(
         sources: &sources,
         progress_capacity: fsl_eval::temporal::DEFAULT_COVERED_POSITIONS,
     };
-    let FrameCheck { report, documents } =
-        check_frame(&run, context, operation_frame, &payload.invocation);
+    let FrameCheck {
+        report, documents, ..
+    } = check_frame(&run, context, operation_frame, &payload.invocation);
 
     let (replayed, value, found) = match report.disposition {
         ClauseDisposition::FrameViolation(witness) => (
@@ -279,6 +280,12 @@ pub fn replay_frame(
             Some(EvaluatedValue::Boolean(false)),
             Some(*witness),
         ),
+        ClauseDisposition::OperationContractViolation(_) => {
+            return Err(ReplayRefusal::Fault(InternalFault::new(
+                "replay",
+                "check-frame-does-not-evaluate-operation-contracts",
+            )))
+        }
         ClauseDisposition::Evaluate(CallOutcome::Completed(CallValue::Boolean(true))) => {
             (Category::Success, Some(EvaluatedValue::Boolean(true)), None)
         }

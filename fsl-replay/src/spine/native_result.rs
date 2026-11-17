@@ -656,7 +656,7 @@ pub struct CallLocusRead {
     pub span: SpanRead,
 }
 
-#[derive(Deserialize)]
+#[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 #[allow(
     dead_code,
@@ -670,7 +670,7 @@ pub struct SpanRead {
     pub end: PositionRead,
 }
 
-#[derive(Deserialize)]
+#[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 #[allow(
     dead_code,
@@ -727,6 +727,19 @@ impl CallLocationRead {
                 protocol: *protocol,
                 attempt: *attempt,
             },
+            CallOriginRead::ModelOperationClause {
+                operation,
+                clause,
+                position,
+            } => Origin::ModelOperationClause {
+                operation: operation.clone(),
+                kind: match clause.as_str() {
+                    "requires" => filament_semantic_value::location::OperationClauseKind::Requires,
+                    "ensures" => filament_semantic_value::location::OperationClauseKind::Ensures,
+                    _ => unreachable!("the native reader validates operation-clause origins"),
+                },
+                position: *position,
+            },
         };
         Location::at(origin, &self.path)
     }
@@ -774,6 +787,15 @@ pub enum CallOriginRead {
         protocol: usize,
         /// Attempt index.
         attempt: usize,
+    },
+    /// One of a model operation's kept `requires` or `ensures` clauses.
+    ModelOperationClause {
+        /// Operation declaration node identity.
+        operation: String,
+        /// `requires` or `ensures`.
+        clause: String,
+        /// Zero-based position in that clause list.
+        position: usize,
     },
 }
 
@@ -1061,6 +1083,30 @@ struct DispositionRead {
     refusal: Option<RefusalRead>,
     #[serde(default, deserialize_with = "present")]
     temporal: Option<serde_json::Value>,
+    #[serde(default, deserialize_with = "present")]
+    operation_contract: Option<OperationContractRead>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "snake_case")]
+enum OperationContractKindRead {
+    Requires,
+    Ensures,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct OperationContractRead {
+    operation: DeclarationKeyRead,
+    name: String,
+    kind: OperationContractKindRead,
+    position: usize,
+    #[serde(default, deserialize_with = "present")]
+    artifact: Option<String>,
+    #[serde(default, deserialize_with = "present")]
+    span: Option<SpanRead>,
+    location: CallLocationRead,
+    member: String,
 }
 
 #[derive(Deserialize)]
@@ -1296,6 +1342,52 @@ fn catalog_category(code: &str) -> Option<&'static str> {
 fn validate_disposition(value: &DispositionRead) -> Result<(), NativeRunReadError> {
     let invalid = |member, reason| NativeRunReadError::Invalid { member, reason };
     temporal::refuse_temporal_only_outcome(value.outcome.as_ref())?;
+    if let Some(contract) = &value.operation_contract {
+        let declaration = contract.operation.typed();
+        let (kind, member) = match contract.kind {
+            OperationContractKindRead::Requires => ("requires", "pre"),
+            OperationContractKindRead::Ensures => ("ensures", "post"),
+        };
+        let expected_member = format!("Operation.{member}[{}]", contract.position);
+        let origin_matches = matches!(
+            &contract.location.origin,
+            CallOriginRead::ModelOperationClause {
+                operation,
+                clause,
+                position,
+            } if operation == &declaration.node
+                && clause == kind
+                && *position == contract.position
+                && contract.location.path.is_empty()
+        );
+        if !matches!(value.stage, Stage::Evaluate)
+            || !matches!(value.category, Category::Violation)
+            || value.truth != Some(false)
+            || value.refusal.is_some()
+            || value.internal_fault.is_some()
+            || contract.name.is_empty()
+            || declaration.package.is_empty()
+            || declaration.node.is_empty()
+            || !matches!(
+                contract.kind,
+                OperationContractKindRead::Requires | OperationContractKindRead::Ensures
+            )
+            || contract.member != expected_member
+            || !origin_matches
+            || !matches!(
+                value.outcome,
+                Some(OutcomeRead::Completed {
+                    value: ValueRead::Boolean { value: false }
+                })
+            )
+        {
+            return Err(invalid(
+                "disposition.operation_contract",
+                "operation contract violation needs a named false evaluation",
+            ));
+        }
+        let _source_identity = (&contract.artifact, &contract.span);
+    }
     match (&value.stage, &value.category) {
         (_, Category::Pending | Category::Indeterminate) => {
             return Err(invalid(
@@ -2329,6 +2421,42 @@ struct Disposition {
     refusal: Option<RefusalWire>,
     #[serde(skip_serializing_if = "Option::is_none")]
     temporal: Option<temporal::TemporalWire>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    operation_contract: Option<OperationContractWire>,
+}
+
+#[derive(Serialize)]
+struct OperationContractWire {
+    operation: DeclarationKeyWire,
+    name: String,
+    kind: &'static str,
+    position: usize,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    artifact: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    span: Option<LocatedSpan>,
+    location: CallLocationWire,
+    member: String,
+}
+
+impl From<&crate::spine::clause::OperationContractViolation> for OperationContractWire {
+    fn from(value: &crate::spine::clause::OperationContractViolation) -> Self {
+        Self {
+            operation: DeclarationKeyWire::from(&value.operation),
+            name: value.operation_name.clone(),
+            kind: match value.kind {
+                filament_semantic_value::location::OperationClauseKind::Requires => "requires",
+                filament_semantic_value::location::OperationClauseKind::Ensures => "ensures",
+            },
+            position: value.position,
+            artifact: value.artifact.clone(),
+            span: value.span,
+            location: CallLocationWire::from(
+                &filament_semantic_value::location::ExpressionLocation::root(value.origin.clone()),
+            ),
+            member: value.member.to_string(),
+        }
+    }
 }
 
 #[derive(Serialize)]
@@ -2415,6 +2543,7 @@ impl Disposition {
             internal_fault: None,
             refusal: None,
             temporal: None,
+            operation_contract: None,
         };
         match value {
             ClauseDisposition::Compile(refusal) => {
@@ -2668,6 +2797,12 @@ impl Disposition {
                 let mut record = RefusalWire::new(witness.code.as_str(), Some(witness.cause));
                 record.frame_witness = Some(FrameWitnessWire::from(witness.as_ref()));
                 result.refusal = Some(record);
+            }
+            ClauseDisposition::OperationContractViolation(witness) => {
+                result.outcome = Some(Outcome::Completed {
+                    value: ValueWire::Boolean { value: false },
+                });
+                result.operation_contract = Some(OperationContractWire::from(witness));
             }
             ClauseDisposition::EvaluateFault(fault) => {
                 result.internal_fault = Some(InternalFaultWire {

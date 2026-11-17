@@ -23,9 +23,9 @@ use fsl_semantics::check::{CheckedGraph, CheckedStateClause};
 use fsl_semantics::model::accounting::ModelNormalizationLimits;
 use fsl_semantics::model::observation::{
     admit_current_snapshot, admit_frame_invocation, admit_observations, population_universe_for,
-    AdmissionFailure, AdmissionRecord, AdmittedObservations, ClauseFacts, ClauseSelection,
-    ClauseSelectionInput, DocumentRef, FrameFacts, FrameWitness, ObservationLimits, OperationFacts,
-    Provisions,
+    AdmissionFailure, AdmissionRecord, AdmittedInvocation, AdmittedObservations, ClauseFacts,
+    ClauseSelection, ClauseSelectionInput, DocumentRef, FrameFacts, FrameWitness,
+    ObservationLimits, OperationFacts, Provisions,
 };
 
 mod correction;
@@ -390,6 +390,9 @@ pub enum ClauseDisposition {
     /// frame witness, whose cause is `frame_violation`/`unauthorized-change`.
     /// A verdict that evaluated, not a refusal.
     FrameViolation(Box<FrameWitness>),
+    /// Stage `evaluate`, category `violation`, `truth: false` (FR-702): the
+    /// operation's first false `requires` or `ensures` clause.
+    OperationContractViolation(OperationContractViolation),
     /// Stage `evaluate` (FR-330): the TemporalTrace evaluator's outcome for
     /// a `Temporal` selection. Its category is the outcome's: a pending
     /// result is `inconclusive`, a missing fairness premise `unsupported`,
@@ -414,6 +417,27 @@ pub enum ClauseDisposition {
     /// atom's reading at each position and the clause's native value at each
     /// activation position. Only [`run_temporal_valuation`] reports it.
     TemporalValuation(Box<TemporalValuation>),
+}
+
+/// The model operation clause that failed during a `frame` run (FR-702).
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct OperationContractViolation {
+    /// The operation's checked declaration key.
+    pub operation: filament_checked::key::DeclarationKey,
+    /// The operation's authored name.
+    pub operation_name: String,
+    /// Whether the failed clause is a `requires` or an `ensures`.
+    pub kind: filament_semantic_value::location::OperationClauseKind,
+    /// The failed clause's zero-based position in its list.
+    pub position: usize,
+    /// The kept clause's source artifact id, when its origin names one.
+    pub artifact: Option<String>,
+    /// The kept clause's source span, when its origin carries one.
+    pub span: Option<fsl_foundation::source::LocatedSpan>,
+    /// The FR-103 model-operation-clause origin.
+    pub origin: filament_semantic_value::location::ExpressionOwner,
+    /// The authored operation member, such as `Operation.post[0]`.
+    pub member: fsl_semantics::model::refusal::MemberPath,
 }
 
 /// What a valuation run of a temporal clause reads (FR-757, FR-931): the
@@ -441,6 +465,7 @@ impl ClauseDisposition {
             | Self::TemporalRefusal(_)
             | Self::ProgressContradiction(_)
             | Self::FrameViolation(_)
+            | Self::OperationContractViolation(_)
             | Self::EvaluateFault(_)
             | Self::TemporalValuation(_) => ClauseRunStage::Evaluate,
         }
@@ -472,7 +497,7 @@ impl ClauseDisposition {
             Self::Admit(AdmissionFailure::Fault(_)) | Self::EvaluateFault(_) => {
                 Category::InternalFailure
             }
-            Self::FrameViolation(_) => Category::Violation,
+            Self::FrameViolation(_) | Self::OperationContractViolation(_) => Category::Violation,
             // A valuation is a completed read of the trace, not a verdict.
             Self::TemporalValuation(_) => Category::Success,
             Self::Temporal(outcome) => outcome.category(),
@@ -501,7 +526,7 @@ impl ClauseDisposition {
     pub fn truth(&self) -> Option<bool> {
         match self {
             Self::Evaluate(CallOutcome::Completed(CallValue::Boolean(value))) => Some(*value),
-            Self::FrameViolation(_) => Some(false),
+            Self::FrameViolation(_) | Self::OperationContractViolation(_) => Some(false),
             Self::Temporal(TemporalVerdict::Holds) => Some(true),
             Self::Temporal(TemporalVerdict::Violated { .. }) => Some(false),
             _ => None,
@@ -1101,6 +1126,7 @@ impl ClauseRunReport {
             }
             ClauseDisposition::Evaluate(_)
             | ClauseDisposition::FrameViolation(_)
+            | ClauseDisposition::OperationContractViolation(_)
             | ClauseDisposition::Temporal(_) => ActivationAxis::Active,
         };
         let stopped = matches!(
@@ -2264,12 +2290,17 @@ pub(crate) struct ClauseCheck {
 }
 
 /// [`check_frame`]'s report and the documents admission read.
-pub(crate) struct FrameCheck {
+pub(crate) struct FrameCheck<'a> {
     /// The report.
     pub(crate) report: ClauseRunReport,
     /// Every document admission read, in read order: the invocation, then
     /// its pre and post snapshots once admitted.
     pub(crate) documents: Vec<DocumentRef>,
+    /// The admitted invocation, when observation admission succeeded.
+    pub(crate) admitted: Option<AdmittedInvocation<'a>>,
+    /// The meter used by the frame check, retained for ordered contract
+    /// evaluation by `run_frame`.
+    pub(crate) meter: Option<Meter>,
 }
 
 /// [`check_clause`], keeping the admitted observations and the meter.
@@ -2416,7 +2447,21 @@ fn run_frame(
             name: operation.to_string(),
         });
     };
-    check_frame(run, context, operation_frame, invocation).report
+    let mut checked = check_frame(run, context, operation_frame, invocation);
+    if matches!(
+        checked.report.disposition,
+        ClauseDisposition::Evaluate(CallOutcome::Completed(CallValue::Boolean(true)))
+    ) {
+        if let (Some(admitted), Some(meter)) = (checked.admitted.as_ref(), checked.meter.as_mut()) {
+            if let Some(disposition) =
+                evaluate_operation_contracts(run, operation_frame, admitted, meter)
+            {
+                checked.report.disposition = disposition;
+                checked.report.usage = ClauseRunUsage::from_meter(meter, admitted.usage);
+            }
+        }
+    }
+    checked.report
 }
 
 /// FR-104's Resolution of a `Frame` selection: `M` and `T` resolve to a
@@ -2441,12 +2486,12 @@ pub(crate) fn resolve_frame<'g>(
 /// checks 1 and 3 to 10, and check it against the frame through the
 /// `ProtocolClause` S6a `evaluate` arm (FR-106's check 11). `context` and
 /// `operation_frame` are [`resolve_frame`]'s answer over `run.package`.
-pub(crate) fn check_frame(
-    run: &CompiledRun<'_>,
+pub(crate) fn check_frame<'a>(
+    run: &'a CompiledRun<'_>,
     context: filament_exact::EffectiveId,
     operation_frame: &fsl_semantics::check::CheckedOperationFrame,
     invocation: &DocumentRef,
-) -> FrameCheck {
+) -> FrameCheck<'a> {
     use filament_eval::CallFailure;
     use filament_eval::FamilyOutcome;
     use fsl_eval::value::{CheckedPackageEvaluation, FrameEvaluation};
@@ -2476,6 +2521,8 @@ pub(crate) fn check_frame(
             return FrameCheck {
                 report: run.report(ClauseDisposition::Admit(failure)),
                 documents: vec![invocation.clone()],
+                admitted: None,
+                meter: None,
             }
         }
     };
@@ -2563,7 +2610,80 @@ pub(crate) fn check_frame(
     };
     let mut report = run.report(disposition);
     report.usage = ClauseRunUsage::from_meter(&meter, admitted.usage);
-    FrameCheck { report, documents }
+    FrameCheck {
+        report,
+        documents,
+        admitted: Some(admitted),
+        meter: Some(meter),
+    }
+}
+
+/// FR-702: after the frame holds, evaluate each kept requires clause and
+/// then each kept ensures clause for this operation in list order.
+fn evaluate_operation_contracts(
+    run: &CompiledRun<'_>,
+    operation_frame: &fsl_semantics::check::CheckedOperationFrame,
+    admitted: &AdmittedInvocation<'_>,
+    meter: &mut Meter,
+) -> Option<ClauseDisposition> {
+    use filament_eval::FamilyOutcome;
+
+    let graph = run.package.graph();
+    let operation = operation_frame.operation();
+    let mut contracts: Vec<_> = graph
+        .operation_clauses()
+        .iter()
+        .filter(|clause| {
+            clause.declaring() == &operation.declaring
+                && clause.operation_name() == operation.declaration.name()
+        })
+        .collect();
+    contracts.sort_by_key(|clause| {
+        let kind = match clause.kind() {
+            filament_semantic_value::location::OperationClauseKind::Requires => 0,
+            filament_semantic_value::location::OperationClauseKind::Ensures => 1,
+        };
+        (kind, clause.position())
+    });
+    for clause in contracts {
+        let evaluation = match fsl_eval::value::evaluate_operation_contract(
+            run.package,
+            clause,
+            admitted.operation_contract_observations(),
+            meter,
+        ) {
+            Ok(evaluation) => evaluation,
+            Err(fault) => return Some(ClauseDisposition::EvaluateFault(fault)),
+        };
+        if matches!(
+            evaluation.outcome,
+            FamilyOutcome::Evaluated(filament_exact::Outcome::Completed(Value::Boolean(false)))
+        ) {
+            return Some(ClauseDisposition::OperationContractViolation(
+                OperationContractViolation {
+                    operation: clause.operation().clone(),
+                    operation_name: clause.operation_name().to_owned(),
+                    kind: clause.kind(),
+                    position: clause.position(),
+                    artifact: clause.artifact().map(str::to_owned),
+                    span: clause.span(),
+                    origin: clause.origin().clone(),
+                    member: clause.member().clone(),
+                },
+            ));
+        }
+        match convert_outcome(evaluation, graph, run.sources) {
+            Ok(CallOutcome::Completed(CallValue::Boolean(true))) => {}
+            Ok(outcome) => return Some(ClauseDisposition::Evaluate(outcome)),
+            Err(refusal) => {
+                return Some(match *refusal {
+                    RunRefusal::Fault(fault) => ClauseDisposition::EvaluateFault(fault),
+                    other => ClauseDisposition::ArgumentRefusal(Box::new(other)),
+                });
+            }
+        }
+    }
+    None
 }
 
 fn run_function(

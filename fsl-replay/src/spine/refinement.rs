@@ -568,6 +568,9 @@ fn classify_disposition(disposition: &ClauseDisposition) -> Classification {
         ClauseDisposition::FrameViolation(witness) => {
             one(Refused, witness.code, Some(witness.cause))
         }
+        ClauseDisposition::OperationContractViolation(_) => {
+            Classification::new(Refused, Vec::new())
+        }
         ClauseDisposition::EvaluateFault(_) => one(ToolFailure, Code::RuntimeInvariant, None),
         // A refinement check runs state clauses and functions; it selects no
         // temporal clause, so a temporal disposition is a broken invariant.

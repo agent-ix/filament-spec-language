@@ -388,6 +388,8 @@ impl SelectedModel {
                         operation: operation.key.clone(),
                         kind,
                         position: clause.position,
+                        artifact: clause.artifact.clone(),
+                        span: clause.span,
                         expression,
                     });
                 }
