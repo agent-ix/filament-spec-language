@@ -54,9 +54,13 @@ covers it.
 
 ## Inputs
 
-The `temporal` selection is the closed object `{name, trace, over, ledger}`:
-`name` and `trace` required, `over` required exactly when the trace's positions
-are snapshot keys, `ledger` optional.
+The `temporal` selection is the closed object `{name, trace, over, ledger,
+relation, evidence_ledger, admit_late}`: `name` and `trace` required, `over`
+required exactly when the trace's positions are snapshot keys, `ledger`
+optional, and the three correction members `relation`, `evidence_ledger` and
+`admit_late` optional and admitted only on a `timestamped` trace, with the
+shapes and refusals [FR-985](FR-985-read-the-correction-members-of-the-temporal-run-selection.md)
+states (FR-526 "On FR-641's run request", FR-975).
 
 ### Positions
 
