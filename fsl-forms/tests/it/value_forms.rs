@@ -450,6 +450,13 @@ impl StartAnd for Span {
     }
 }
 
+#[trace("TC-1820", "FR-680-AC-1")]
+#[test]
+fn a_bare_index_builds_a_form() {
+    let (_text, function) = body("s[0]");
+    assert_eq!(show(function.body.root()), "Index(s, 0)");
+}
+
 #[trace("FR-091-AC-3", "TC-394")]
 #[trace("TC-456", "FR-102-AC-3")]
 #[test]

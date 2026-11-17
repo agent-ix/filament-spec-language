@@ -33,7 +33,7 @@ use crate::check::family::Application;
 use crate::check::ir::{CheckedBody, IntegerRange, Node, NodeId, Slot};
 use crate::check::refusal::{
     CheckCause, CheckRefusal, CheckingLimitKind, CheckingStage, IdentityForm, IdentityNode,
-    KeyFault, StageLimitCause,
+    KeyFault, Obligation, StageLimitCause,
 };
 use crate::check::sum_case::{ArmHead, CaseBuilder, UnionMember, UnionRef};
 use crate::check::type_form::{IntegerOutsideI128, IntegerSite};
@@ -272,10 +272,12 @@ enum Frame<'e, 'r> {
     Unary(Box<UnaryFrame<'r>>),
     /// `e.f`: the field name and the form's location.
     Field(&'e str, Option<Span>, Location),
-    /// `tuple[index]` or `map[key]` after its source has been typed.
+    /// `operand[index]` after its source expression is typed.
     Index(Box<IndexFrame<'e>>),
     /// The key type of a map index after its key expression is typed.
     IndexKey(Location),
+    /// The element-position obligation after the index has integer type.
+    IndexPosition(u64, ExprRef<'e>, Location),
     /// `present(r.f)` or `present(r.f.c)` of a guarded clock place: the
     /// field's name, the union case, and the `present` node's location;
     /// admits the typed owner `r` (FR-230 "Presence is derived").
@@ -2706,8 +2708,9 @@ impl<'a> Typer<'a> {
     }
 
     /// Type the index form's source and static selector constraints. The
-    /// checked IR currently has no tuple projection or map lookup node, so a
-    /// well-typed read remains unsupported after its source-level type checks.
+    /// checked IR currently has no tuple projection, map lookup, or collection
+    /// index node, so a proved read remains unsupported after its source-level
+    /// type checks.
     fn accept_index<'e, 'r>(
         &mut self,
         frame: Box<IndexFrame<'e>>,
@@ -2773,6 +2776,21 @@ impl<'a> Typer<'a> {
                     key_location,
                 )))
             }
+            ValueType::Collection(collection)
+                if matches!(
+                    collection.kind(),
+                    CollectionKind::Sequence | CollectionKind::OrderedSet
+                ) =>
+            {
+                let minimum = collection.bound().map_or(0, |bound| bound.minimum());
+                let index_location = location.child(1);
+                frames.push(Frame::IndexPosition(minimum, index, location));
+                Ok(Step::Descend(Goal::Expect(
+                    index,
+                    Expected::Checked(Cow::Owned(ValueType::Integer)),
+                    index_location,
+                )))
+            }
             _ => Err(CheckRefusal::ill_typed(
                 &location,
                 IllTypedCause::OperatorIneligible,
@@ -2832,6 +2850,27 @@ impl<'a> Typer<'a> {
                     loci: vec![location.clone()],
                 },
             )),
+            Frame::IndexPosition(minimum, index, location) => {
+                let proved = match index.node() {
+                    ExprNode::Integer(position) => {
+                        position.to_u64().is_some_and(|position| position < minimum)
+                    }
+                    _ => false,
+                };
+                let index_location = location.child(1);
+                if !proved {
+                    return Err(refuse(
+                        &index_location,
+                        CheckCause::Unproved(Obligation::Presence),
+                    ));
+                }
+                Err(refuse(
+                    &index_location,
+                    CheckCause::UnsupportedFeature {
+                        loci: vec![index_location.clone()],
+                    },
+                ))
+            }
             Frame::SlotPresence(field, all, location) => self
                 .slot_presence(typed, field, all, &location)
                 .map(Step::Typed),

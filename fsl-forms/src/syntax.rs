@@ -679,11 +679,11 @@ pub enum ExprNode {
         /// Its source token when the expression was read from source.
         member_span: Option<fsl_foundation::Span>,
     },
-    /// `operand[index]`, a tuple position or keyed map read.
+    /// `operand[index]`, a tuple position or keyed collection read.
     Index {
-        /// The tuple or map operand.
+        /// The tuple or collection operand.
         operand: ExprId,
-        /// The tuple position literal or map key expression.
+        /// The position or key expression.
         index: ExprId,
     },
     /// `present(e)`.
