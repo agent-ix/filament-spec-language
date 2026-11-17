@@ -1472,7 +1472,7 @@ impl<'a> Definedness<'a> {
                 {
                     return Err(Self::refuse(node, Obligation::Nonzero));
                 }
-                if domain.contains_domain(&left.result_of(*operator, right)) {
+                if domain.contains_domain(&rational_result_of(left, *operator, right)) {
                     Ok(())
                 } else {
                     Err(Self::refuse(node, Obligation::RationalRange))
