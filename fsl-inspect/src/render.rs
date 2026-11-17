@@ -1543,7 +1543,7 @@ mod tests {
         assert_eq!(
             text,
             format!(
-                "{}:4-{past_end_by_one}: ill_typed: bad range\n",
+                "analyze: refusal (exit 20)\n{}:4-{past_end_by_one}: ill_typed: bad range\n",
                 source_label(region.source())
             )
         );
