@@ -1478,7 +1478,7 @@ mod tests {
         assert_eq!(
             text,
             format!(
-                "{}:8-{past_end_by_one}: ill_typed: bad range\n",
+                "{}:5-{past_end_by_one}: ill_typed: bad range\n",
                 source_label(region.source())
             )
         );
