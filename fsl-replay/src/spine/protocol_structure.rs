@@ -319,9 +319,14 @@ impl<'p> Reader<'p> {
                         | fsl_package::protocol_view::ControlOperation::Fence
                 ) {
                     let (maximum, window) = Self::projection_attributes(node, operation);
+                    let decision = matches!(
+                        operation,
+                        fsl_package::protocol_view::ControlOperation::Repeat
+                            | fsl_package::protocol_view::ControlOperation::Await
+                    );
                     self.input.events.push(GlobalEvent {
-                        at: enter,
-                        out: exit,
+                        at: enter.clone(),
+                        out: if decision { enter.clone() } else { exit },
                         kind: GlobalEventKind::Control {
                             operation,
                             owner: self.owner_of(node),
