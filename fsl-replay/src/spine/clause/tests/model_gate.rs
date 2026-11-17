@@ -658,9 +658,13 @@ fn an_abstraction_declaration_needs_the_model_profile() {
 /// the first is located at.
 fn abstraction_refusals(declarations: &str) -> (Vec<AbstractionRefusal>, String) {
     let (unit, compiled) = compile(&[("v", MODEL)], declarations);
-    let CompileRefusal::Check { refusals, region } = *compiled.expect_err("the unit refuses")
-    else {
-        panic!("a check refusal");
+    let refusal = compiled.expect_err("the unit refuses");
+    let (refusals, region) = match *refusal {
+        CompileRefusal::Check { refusals, region } => (refusals, region),
+        CompileRefusal::CheckDiagnostics { refusals, regions } => {
+            (refusals, regions.into_iter().next().flatten())
+        }
+        other => panic!("a check refusal: {other:?}"),
     };
     let causes = refusals
         .iter()

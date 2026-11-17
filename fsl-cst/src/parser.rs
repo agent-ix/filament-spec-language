@@ -15,7 +15,7 @@ use crate::lexer::Limits;
 use crate::token::{Kind, LexError};
 use filament_exact::Cancel;
 use fsl_foundation::selection::{
-    ImportSelection, ModelSelection, ProfileSelection, SourceSelections, valid_selection_identity,
+    valid_selection_identity, ImportSelection, ModelSelection, ProfileSelection, SourceSelections,
 };
 use fsl_foundation::{Phase, Source, Span, SyntaxLimit};
 
@@ -256,6 +256,13 @@ pub(super) fn parse(
 /// Parse a unit, recovering independently at declaration boundaries. The
 /// recovery path removes only a failed declaration from the parser's view;
 /// the original token stream remains the lossless CST source.
+type DeclarationRecovery = (
+    Option<Forest>,
+    Vec<Significant>,
+    Vec<CompleteDiagnostic>,
+    Vec<Recovery>,
+);
+
 fn parse_with_declaration_recovery(
     source: &Source,
     grammar: &Grammar,
@@ -263,15 +270,7 @@ fn parse_with_declaration_recovery(
     scanned: &[CompleteDiagnostic],
     limits: Limits,
     cancel: &Cancel,
-) -> Result<
-    (
-        Option<Forest>,
-        Vec<Significant>,
-        Vec<CompleteDiagnostic>,
-        Vec<Recovery>,
-    ),
-    Box<CompleteDiagnostic>,
-> {
+) -> Result<DeclarationRecovery, Box<CompleteDiagnostic>> {
     let reserved_words = grammar::complete_reserved_words(grammar);
     let lexical_spans: Vec<_> = scanned
         .iter()

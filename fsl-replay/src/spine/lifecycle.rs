@@ -1698,6 +1698,7 @@ pub fn check_with_integer_division(
         None,
         Some(*selection),
         None,
+        None,
         models,
         dependencies,
         limits,
@@ -1786,6 +1787,7 @@ pub fn check_with_profile_catalog_and_inputs(
         inputs.clocks,
         None,
         Some(profile_catalog),
+        None,
         models,
         dependencies,
         limits,
@@ -2111,6 +2113,34 @@ pub fn check_with_refinement_internals(
     limits: SpineLimits,
     cancel: &Cancel,
 ) -> Result<Staged<CheckedUnit>, FrontEndFailure> {
+    check_with_refinement_internals_and_function_modes(
+        parsed,
+        package_name,
+        inputs,
+        models,
+        dependencies,
+        limits,
+        cancel,
+        None,
+    )
+}
+
+/// Check one unit while honoring the recorded check mode for named function
+/// bodies (FR-098-AC-34).
+#[allow(
+    clippy::too_many_arguments,
+    reason = "one source's check inputs plus its per-function mode record"
+)]
+pub(crate) fn check_with_refinement_internals_and_function_modes(
+    parsed: &ParsedUnitSource,
+    package_name: String,
+    inputs: SourceInputs<'_>,
+    models: &AdmittedModels,
+    dependencies: &DependencyInput,
+    limits: SpineLimits,
+    cancel: &Cancel,
+    function_modes: Option<&BTreeMap<String, CheckMode>>,
+) -> Result<Staged<CheckedUnit>, FrontEndFailure> {
     check_with_context_and_temporal_selections(
         parsed,
         package_name,
@@ -2120,6 +2150,7 @@ pub fn check_with_refinement_internals(
         inputs.clocks,
         None,
         None,
+        function_modes,
         models,
         dependencies,
         limits,
@@ -2177,6 +2208,7 @@ pub fn check_with_execution_points_and_refinement_internals(
         None,
         None,
         None,
+        None,
         models,
         dependencies,
         limits,
@@ -2210,6 +2242,7 @@ pub fn check_with_temporal_selections_and_execution_points(
         None,
         None,
         None,
+        None,
         models,
         dependencies,
         limits,
@@ -2240,6 +2273,7 @@ pub fn check_with_execution_points_and_source_inputs(
         inputs.clocks,
         None,
         None,
+        None,
         models,
         dependencies,
         limits,
@@ -2259,6 +2293,8 @@ pub(crate) struct ContinuationInputs<'a> {
     /// The semantic owner's admitted law for this compile's unit.
     pub(crate) integer_division:
         Option<filament_checked::integer_division::AdmittedIntegerDivision>,
+    /// Recorded function-body check modes, keyed by authored function name.
+    pub(crate) function_modes: Option<&'a BTreeMap<String, CheckMode>>,
 }
 
 /// S3 continuation for the compiler: keep an attributable protocol refusal
@@ -2280,6 +2316,7 @@ pub(crate) fn check_for_continuation(
         None,
         inputs.integer_division,
         None,
+        inputs.function_modes,
         models,
         dependencies,
         limits,
@@ -2301,6 +2338,7 @@ fn check_with_context_and_temporal_selections(
     clocks: Option<&super::RequestClocks>,
     integer_division: Option<filament_checked::integer_division::AdmittedIntegerDivision>,
     extension_catalog: Option<ProfileCatalogInput<'_>>,
+    function_modes: Option<&BTreeMap<String, CheckMode>>,
     models: &AdmittedModels,
     dependencies: &DependencyInput,
     limits: SpineLimits,
@@ -2334,7 +2372,7 @@ fn check_with_context_and_temporal_selections(
             integer_division,
             extension_catalog,
             check_mode: CheckMode::Linked,
-            function_modes: None,
+            function_modes,
             active: Vec::new(),
             compiled: BTreeMap::new(),
             import_edges: 0,
@@ -4188,8 +4226,9 @@ impl<'a> Resolution<'a> {
         };
         charged(cancel, &mut self.work.s4, || {
             pkg::CheckedPackage::link_with(graph, links, self.limits.package.emit())
+                .map_err(Box::new)
         })
-        .map_err(|refusal| Box::new(CompileRefusal::Link(refusal)))
+        .map_err(|refusal| Box::new(CompileRefusal::Link(*refusal)))
     }
 
     /// One parsed unit through S3 and S4, resolving its imports depth first

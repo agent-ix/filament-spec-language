@@ -1348,7 +1348,16 @@ pub fn run_clause_with_temporal_selections(
     request: ClauseRunRequest,
     temporal_selections: &[fsl_package::TemporalClockSelection],
 ) -> Result<ClauseRunReport, ClauseRunRefusal> {
-    run_clause_reading(request, temporal_selections, false)
+    run_clause_reading(request, temporal_selections, false, None)
+}
+
+#[cfg(test)]
+pub(crate) fn run_clause_with_function_modes(
+    request: ClauseRunRequest,
+    temporal_selections: &[fsl_package::TemporalClockSelection],
+    function_modes: &BTreeMap<String, filament_semantic_value::checking::CheckMode>,
+) -> Result<ClauseRunReport, ClauseRunRefusal> {
+    run_clause_reading(request, temporal_selections, false, Some(function_modes))
 }
 
 /// FR-757 "Cross-evaluation", FR-931: compile the unit as [`run_clause`]
@@ -1361,13 +1370,14 @@ pub fn run_clause_with_temporal_selections(
 pub fn run_temporal_valuation(
     request: ClauseRunRequest,
 ) -> Result<ClauseRunReport, ClauseRunRefusal> {
-    run_clause_reading(request, &[], true)
+    run_clause_reading(request, &[], true, None)
 }
 
 fn run_clause_reading(
     request: ClauseRunRequest,
     temporal_selections: &[fsl_package::TemporalClockSelection],
     valuation: bool,
+    function_modes: Option<&BTreeMap<String, filament_semantic_value::checking::CheckMode>>,
 ) -> Result<ClauseRunReport, ClauseRunRefusal> {
     let unit = request.source.unit();
     if unit.bytes.is_empty() {
@@ -1418,19 +1428,33 @@ fn run_clause_reading(
         } else {
             temporal_selections.to_vec()
         };
-        let checked = front_end::check_with_refinement_internals(
-            &parsed,
-            request.package_name.clone(),
-            crate::spine::SourceInputs {
-                refinement_internals: None,
-                temporal_selections: &check_selections,
-                clocks: by_name.then_some(&request.clocks),
-            },
-            &models,
-            &request.dependencies,
-            request.limits,
-            &cancel,
-        )?
+        let source_inputs = crate::spine::SourceInputs {
+            refinement_internals: None,
+            temporal_selections: &check_selections,
+            clocks: by_name.then_some(&request.clocks),
+        };
+        let checked = if let Some(function_modes) = function_modes {
+            front_end::check_with_refinement_internals_and_function_modes(
+                &parsed,
+                request.package_name.clone(),
+                source_inputs,
+                &models,
+                &request.dependencies,
+                request.limits,
+                &cancel,
+                Some(function_modes),
+            )?
+        } else {
+            front_end::check_with_refinement_internals(
+                &parsed,
+                request.package_name.clone(),
+                source_inputs,
+                &models,
+                &request.dependencies,
+                request.limits,
+                &cancel,
+            )?
+        }
         .into_value();
         let package_selections = if by_name {
             request

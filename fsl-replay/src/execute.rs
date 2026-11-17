@@ -1616,6 +1616,7 @@ pub(crate) fn run_spine_with_temporal_selections_and_execution_points(
     execution_points: &spine::StateClauseExecutionPoints,
     temporal_selections: &[fsl_package::TemporalClockSelection],
     integer_division: Option<filament_checked::integer_division::AdmittedIntegerDivision>,
+    function_modes: Option<&std::collections::BTreeMap<String, filament_semantic_value::checking::CheckMode>>,
     limits: SpineLimits,
 ) -> Result<Recompiled, ReplayRefusal> {
     let SpineUnit {
@@ -1666,6 +1667,7 @@ pub(crate) fn run_spine_with_temporal_selections_and_execution_points(
             execution_points,
             temporal_selections,
             integer_division,
+            function_modes,
         },
         &models,
         dependencies,

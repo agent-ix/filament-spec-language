@@ -974,7 +974,7 @@ fn q10_contains_stops_at_the_first_equal_member_and_size_only_retains() {
     let size = run_in(
         &package,
         &parameters,
-        &Expression::size(name("hs")),
+        &Expression::size(name("hs"), None),
         arguments(),
         UNLIMITED,
         &objects,
@@ -1581,7 +1581,7 @@ fn fr041_the_amounts_example_keeps_duplicate_occurrences_and_its_exact_aggregate
     assert_eq!(integer_of(completed(&counted)), Integer::from(2_i64));
     let summed = run_amounts(&sum("Hundred", "q", name("x")), &[2, 2, 3]);
     assert_eq!(integer_of(completed(&summed)), Integer::from(7_i64));
-    let size = run_amounts(&Expression::size(name("q")), &[2, 2, 3]);
+    let size = run_amounts(&Expression::size(name("q"), None), &[2, 2, 3]);
     assert_eq!(integer_of(completed(&size)), Integer::from(3_i64));
 }
 
@@ -1615,7 +1615,7 @@ fn fr041_an_empty_domain_yields_the_declared_query_identities() {
     for zero in [
         count("Tiny", "q", is_two()),
         sum("Hundred", "q", name("x")),
-        Expression::size(name("q")),
+        Expression::size(name("q"), None),
     ] {
         assert_eq!(integer_of(&empty(&zero)), Integer::from(0_i64));
     }
@@ -1776,7 +1776,7 @@ fn fr041_an_incomplete_domain_is_never_read_as_empty_or_aggregated() {
         // Unknown membership is not `false`.
         Expression::contains(domain(), literal(2)),
         // Zero is the aggregate of an empty domain.
-        Expression::size(domain()),
+        Expression::size(domain(), None),
         Expression::count(
             declared("Tiny"),
             "x".to_owned(),
@@ -2152,7 +2152,7 @@ fn q14_count_under_a_size_guard_proves() {
         Expression::if_then_else(
             binary(
                 BinaryOperator::LessOrEqual,
-                Expression::size(name("q")),
+                Expression::size(name("q"), None),
                 literal(maximum),
             ),
             count("Three", "q", positive()),

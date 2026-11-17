@@ -368,7 +368,7 @@ impl ClauseRunRecord {
     /// The typed expression location of a refused S6a outcome, when assigned.
     pub fn outcome_location(&self) -> Option<&CallLocationRead> {
         match self.0.disposition.outcome.as_ref() {
-            Some(OutcomeRead::Refused { location, .. }) => location.as_ref(),
+            Some(OutcomeRead::Refused { location, .. }) => location.as_deref(),
             _ => None,
         }
     }
@@ -421,7 +421,7 @@ impl ClauseRunRecord {
                     cause,
                     fields: fields.as_ref(),
                     locus: locus.as_ref(),
-                    location: location.as_ref(),
+                    location: location.as_deref(),
                 },
                 OutcomeRead::Undefined { reason } => NativeRunOutcome::Undefined(reason),
                 OutcomeRead::Incomplete { limit } => NativeRunOutcome::Incomplete(limit),
@@ -625,7 +625,7 @@ enum OutcomeRead {
         #[serde(default, deserialize_with = "present")]
         locus: Option<CallLocusRead>,
         #[serde(default, deserialize_with = "present")]
-        location: Option<CallLocationRead>,
+        location: Option<Box<CallLocationRead>>,
     },
     Undefined {
         reason: String,
