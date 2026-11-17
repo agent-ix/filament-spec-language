@@ -3354,12 +3354,12 @@ fn parse_type_invariants(
     limits: SourceLimits,
 ) -> Result<SelectedModels, Box<CompileRefusal>> {
     models
-        .with_parsed_type_invariants(|text| parse_clause_text(text, limits).map_err(Box::new))
+        .with_parsed_type_invariants(|text| parse_clause_text(text, limits))
         .map_err(|failure| {
             Box::new(CompileRefusal::TypeInvariant {
                 clause: failure.clause,
                 member: failure.member,
-                failure: *failure.cause,
+                failure: failure.cause,
             })
         })
 }
@@ -3374,12 +3374,12 @@ fn parse_operation_clauses(
     limits: SourceLimits,
 ) -> Result<SelectedModels, Box<CompileRefusal>> {
     models
-        .with_parsed_operation_clauses(|text| parse_clause_text(text, limits).map_err(Box::new))
+        .with_parsed_operation_clauses(|text| parse_clause_text(text, limits))
         .map_err(|failure| {
             Box::new(CompileRefusal::OperationClause {
                 operation: failure.operation,
                 member: failure.member,
-                failure: *failure.cause,
+                failure: failure.cause,
             })
         })
 }
