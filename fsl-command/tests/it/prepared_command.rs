@@ -6,10 +6,11 @@ use std::path::Path;
 use filament_exact::Cancel;
 use fsl_command::command::{self, PreparedRun, RunLimits};
 use fsl_foundation::SourceIdentity;
+use fsl_foundation::source::Source;
 use fsl_replay::spine::{self, DependencyInput, ParseRequest, SpineLimits};
 use fsl_replay::{Operation, OutcomeDocument};
 use ix_trace_rs::trace;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
 const PROGRAM: &[u8] = include_bytes!("../../../tests/fixtures/spine-run.native");
 const DOMAIN: &[u8] = include_bytes!("../../../examples/config-version/model.semantic-ir.json");
@@ -425,6 +426,7 @@ fn borrowed_run_failure_projection_preserves_cancellation_and_fault_categories()
     ] {
         let error = command::RunError {
             cause: command::RunCause::SpineRun(Box::new(spine::RunRefusal::Cancelled(cause))),
+            sources: fsl_command::Sources::default(),
         };
         for (operation, spelling_operation) in [
             (Operation::Execute, "execute"),
@@ -442,6 +444,7 @@ fn borrowed_run_failure_projection_preserves_cancellation_and_fault_categories()
         cause: command::RunCause::SpineRun(Box::new(spine::RunRefusal::Fault(
             filament_semantic_value::catalog::InternalFault::new("S6a", "test-invariant"),
         ))),
+        sources: fsl_command::Sources::default(),
     };
     let outcome = document(&error.outcome_document(Operation::Execute));
     assert_eq!(outcome["last_stage"], Value::Null);
@@ -451,6 +454,28 @@ fn borrowed_run_failure_projection_preserves_cancellation_and_fault_categories()
         outcome["diagnostics"][0]["cause"],
         "established-invariant-broken"
     );
+}
+
+#[test]
+#[trace("TC-2455", "FR-865-AC-5")]
+fn run_error_exposes_admitted_sources_for_text_rendering() {
+    let source = Source::read_typed(
+        SourceIdentity::new("tests", "run-error"),
+        "src/run-error.fsl",
+        b"rule value = true;\n",
+        128,
+    )
+    .expect("fixture source is admitted");
+    let error = command::RunError {
+        cause: command::RunCause::SpineRun(Box::new(spine::RunRefusal::Cancelled(
+            filament_exact::CancelCause::Requested,
+        ))),
+        sources: fsl_command::Sources::from_sources([source]),
+    };
+
+    assert_eq!(error.sources().len(), 1);
+    assert_eq!(error.sources().as_slice()[0].path(), "src/run-error.fsl");
+    let _render_sources = fsl_command::render_sources(error.sources());
 }
 
 /// FR-622-AC-2 and FR-100-AC-21 (TC-1582): a function run's

@@ -15,13 +15,13 @@ mod tl;
 mod wire;
 
 pub use analyze::{
-    analyze, analyze_with_limits, analyze_with_providers, analyze_with_providers_and_limits,
-    prepare_analyze, AnalyzeInput, PreparedAnalyze,
+    AnalyzeInput, PreparedAnalyze, analyze, analyze_with_limits, analyze_with_providers,
+    analyze_with_providers_and_limits, prepare_analyze,
 };
-pub use flow::{analyze_flow_report, FlowAnalyzeError};
-pub use monitor::{monitor, MonitorEvent, MonitorSummary};
+pub use flow::{FlowAnalyzeError, analyze_flow_report};
+pub use monitor::{MonitorEvent, MonitorSummary, monitor};
 pub use output::NativeResult;
-pub use tl::{record as tl_record, AtomMapping, TlRecord};
+pub use tl::{AtomMapping, TlRecord, record as tl_record};
 
 use crate::formal_source::FormalSource;
 use filament_contract_model as ir;
@@ -171,7 +171,7 @@ pub struct RunResult {
     /// FR-963: the settled requirement items of a call that carried
     /// `requirements`; `None` exactly when it carried none.
     pub requirements: Option<RequirementResults>,
-    pub(crate) sources: crate::Sources,
+    pub sources: crate::Sources,
 }
 
 impl RunResult {
@@ -274,7 +274,11 @@ pub fn check_outcome(source_path: &Path, inputs: &CheckInputs) -> CheckOutcome {
     match result {
         Ok((document, sources)) => CheckOutcome { document, sources },
         Err((cause, sources)) => {
-            let document = RunError { cause, sources: sources.clone() }.outcome_document(fsl_replay::Operation::Check);
+            let document = RunError {
+                cause,
+                sources: sources.clone(),
+            }
+            .outcome_document(fsl_replay::Operation::Check);
             CheckOutcome { document, sources }
         }
     }
@@ -613,8 +617,20 @@ impl PreparedRun {
         match self {
             Self::Function(prepared) => crate::Sources::from_sources(
                 std::iter::once(prepared.data.source.source().clone())
-                    .chain(prepared.data.models.iter().map(|source| source.source().clone()))
-                    .chain(prepared.data.libraries.iter().map(|source| source.source().clone())),
+                    .chain(
+                        prepared
+                            .data
+                            .models
+                            .iter()
+                            .map(|source| source.source().clone()),
+                    )
+                    .chain(
+                        prepared
+                            .data
+                            .libraries
+                            .iter()
+                            .map(|source| source.source().clone()),
+                    ),
             ),
             Self::Clause(_) | Self::TlLowering(_) => crate::Sources::default(),
         }
@@ -1147,7 +1163,9 @@ impl RunError {
                 format!("dependent_bytes limit {maximum} exceeded")
             }
             RunCause::Limit(LimitKind::ObservationDocumentBytes { maximum }) => {
-                format!("observation.document_bytes limit {maximum} exceeded; raise --limit observation.document_bytes")
+                format!(
+                    "observation.document_bytes limit {maximum} exceeded; raise --limit observation.document_bytes"
+                )
             }
             RunCause::Limit(LimitKind::SelectedFiles {
                 category,
@@ -1446,8 +1464,12 @@ fn run_configured(
     } = settlement;
     // FR-961 step 2: the registry is fixed before any stage runs, so a
     // provider that cannot register refuses the request first.
-    let engines =
-        analyze::engines_with(providers, options).map_err(|cause| Box::new(RunError { cause, sources: crate::Sources::default() }))?;
+    let engines = analyze::engines_with(providers, options).map_err(|cause| {
+        Box::new(RunError {
+            cause,
+            sources: crate::Sources::default(),
+        })
+    })?;
     let settle = Settle {
         negotiate,
         engines: &engines,
@@ -2578,10 +2600,17 @@ fn with_request_limits<T>(
             }),
             cause => cause,
         };
-        Box::new(RunError { cause, sources: crate::Sources::default() })
+        Box::new(RunError {
+            cause,
+            sources: crate::Sources::default(),
+        })
     })?;
-    action(path.parent().unwrap_or(Path::new(".")), &bytes)
-        .map_err(|cause| Box::new(RunError { cause, sources: crate::Sources::default() }))
+    action(path.parent().unwrap_or(Path::new(".")), &bytes).map_err(|cause| {
+        Box::new(RunError {
+            cause,
+            sources: crate::Sources::default(),
+        })
+    })
 }
 
 /// Request settings a caller supplies beside the request file rather than
@@ -2936,7 +2965,12 @@ pub struct PreparedLowering {
 pub fn execute_tl_lowering(
     prepared: PreparedLowering,
 ) -> std::result::Result<RunResult, Box<RunError>> {
-    execute_lowering(prepared).map_err(|cause| Box::new(RunError { cause, sources: crate::Sources::default() }))
+    execute_lowering(prepared).map_err(|cause| {
+        Box::new(RunError {
+            cause,
+            sources: crate::Sources::default(),
+        })
+    })
 }
 
 fn execute_lowering(prepared: PreparedLowering) -> Result<RunResult> {
