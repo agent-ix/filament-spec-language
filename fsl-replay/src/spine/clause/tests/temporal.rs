@@ -713,29 +713,31 @@ pub(in crate::spine::clause::tests) fn report(mut request: ClauseRunRequest) -> 
             temporal_clock_selections(body.identity(), body.path(), body.text().as_bytes())
         }
     };
-    let has_kernel_mod = if let ClauseRunSource::Program { bytes, .. } = &mut request.source {
-        let source = String::from_utf8(bytes.clone()).expect("test source is UTF-8");
-        let has_kernel_mod = source.contains("3 mod (2 - c.value) >= 0")
-            || source.contains("3 mod (2 - q.value) >= 0");
-        if has_kernel_mod {
-            let source = source
-                .replace(
-                    "3 mod (2 - c.value) >= 0",
-                    "temporal_mod_undefined(c.value)",
-                )
-                .replace(
-                    "3 mod (2 - q.value) >= 0",
-                    "temporal_mod_undefined(q.value)",
+    let has_kernel_mod = match &mut request.source {
+        ClauseRunSource::Program { bytes, .. } => {
+            let source = String::from_utf8(bytes.clone()).expect("test source is UTF-8");
+            let has_kernel_mod = source.contains("3 mod (2 - c.value) >= 0")
+                || source.contains("3 mod (2 - q.value) >= 0");
+            if has_kernel_mod {
+                let source = source
+                    .replace(
+                        "3 mod (2 - c.value) >= 0",
+                        "temporal_mod_undefined(c.value)",
+                    )
+                    .replace(
+                        "3 mod (2 - q.value) >= 0",
+                        "temporal_mod_undefined(q.value)",
+                    );
+                let mut modified = source.into_bytes();
+                modified.extend_from_slice(
+                    b"\nfunction temporal_mod_undefined using v(n: Integer): Boolean pure { 3 mod (2 - n) >= 0 }\n",
                 );
-            let mut modified = source.into_bytes();
-            modified.extend_from_slice(
-                b"\nfunction temporal_mod_undefined using v(n: Integer): Boolean pure { 3 mod (2 - n) >= 0 }\n",
-            );
-            *bytes = modified;
+                *bytes = modified;
+            }
+            has_kernel_mod
         }
-        has_kernel_mod
-    } else {
-        false
+        #[cfg(feature = "quire-extraction")]
+        ClauseRunSource::Extracted(_) => false,
     };
     if has_kernel_mod {
         let modes = BTreeMap::from([(
