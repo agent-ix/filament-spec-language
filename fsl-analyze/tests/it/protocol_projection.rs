@@ -932,6 +932,26 @@ fn repeat_projects() {
     )));
 }
 
+/// FR-890-AC-2: a role with no action in a repeat carries no local loop.
+#[trace("FR-890-AC-2", "TC-2521")]
+#[test]
+fn a_role_without_repeat_actions_has_no_local_loop() {
+    let package = flow(
+        "sequence Main { repeat Loop by Buyer visible () max 2 while { true } \
+         sequence Body { } exhausted sequence Spent { } }",
+    );
+    let mut asked = request(&package, "Buyer");
+    asked.profile = Some("bounded".to_owned());
+    let graph = witness(project(&package, asked).unwrap()).local_graph;
+    assert!(!graph.events.iter().any(|event| matches!(
+        event.kind,
+        LocalEventKind::ControlAction {
+            operation: fsl_package::protocol_view::ControlOperation::Repeat,
+            ..
+        }
+    )));
+}
+
 /// FR-890-AC-3: a timed await projects with its closed window and clock.
 #[trace("FR-890-AC-3", "TC-2521")]
 #[test]
