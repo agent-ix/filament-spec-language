@@ -29,7 +29,7 @@ use filament_exact::ScalarLimits;
 use fsl_eval::model_subject::ProtocolSubject;
 use fsl_eval::simulation::model::{ModelFinding, ModelSystem, TerminalClass};
 use fsl_eval::simulation::protocol::{
-    ProtocolRefusal, ProtocolState, ProtocolSystem, ProtocolTransition, Sc,
+    Capacities, ProtocolRefusal, ProtocolState, ProtocolSystem, ProtocolTransition, Sc,
 };
 use fsl_eval::simulation::TransitionSystem;
 use fsl_eval::simulation::{ExpansionLimit, ExpansionStop};
@@ -489,7 +489,22 @@ fn admit<'a>(
     package: &CheckedPackageV2,
     request: RealizabilityRequest<'a>,
 ) -> Result<Admitted<'a>, RealizabilityRefusal> {
-    let premises = ProtocolPremises::from_view(package, &request.protocol)?;
+    let mut premises = ProtocolPremises::from_view(package, &request.protocol)?;
+    let protocol = request
+        .subject
+        .model
+        .simulation
+        .package
+        .graph()
+        .protocol(&request.subject.protocol)
+        .ok_or_else(|| {
+            RealizabilityRefusal::Protocol(ProtocolRefusal::UnknownProtocol {
+                protocol: request.subject.protocol.clone(),
+            })
+        })?;
+    let capacities = Capacities::admit(protocol, &request.subject.capacities)
+        .map_err(|refusal| RealizabilityRefusal::Protocol(ProtocolRefusal::Capacity(refusal)))?;
+    premises.state_capacities(|name| capacities.value(name));
     let open_range = premises.channels.iter().any(|channel| {
         matches!(
             channel.delivery,
@@ -547,6 +562,12 @@ fn admit<'a>(
         .or_else(|| not_stated("environment", &request.environment))
     {
         Err(outcome)
+    } else if premises.capacity_not_stated() {
+        // FSpec FR-785 "Realizability": an unbound capacity is a premise
+        // recorded as not stated, never `requires-bound`.
+        Err(Settled::Inconclusive(InconclusiveCause::PremiseNotStated {
+            member: "capacities",
+        }))
     } else {
         let model = ModelSystem::new(request.subject.model.simulation.clone())
             .map_err(|failure| RealizabilityRefusal::Admission(Box::new(failure)))?;

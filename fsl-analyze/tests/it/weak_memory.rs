@@ -175,7 +175,14 @@ impl Case {
         let subject = self.subject(selection);
         let model = ModelSystem::new(subject.model.simulation.clone()).expect("admits");
         let protocol = self.checked.graph().protocol("SB").expect("SB");
-        classify_accesses(&model, protocol, &subject.memory, &subject.over).expect("classifies")
+        classify_accesses(
+            &model,
+            protocol,
+            &subject.memory,
+            &subject.over,
+            &subject.capacities,
+        )
+        .expect("classifies")
     }
 
     /// The obligation identity of the deadlock-freedom item over `SB`
@@ -476,6 +483,7 @@ impl Case {
             protocol: "SB".to_owned(),
             over: core(),
             roles: subject.roles.clone(),
+            capacities: Vec::new(),
             memory: subject.memory.clone(),
             max_store_buffer: None,
             max_messages: None,

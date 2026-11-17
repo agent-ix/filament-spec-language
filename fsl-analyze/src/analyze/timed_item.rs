@@ -410,7 +410,10 @@ mod tests {
             panic!("one domain is unbounded");
         };
         let requires = subject_refusal(&TimedSubjectRefusal::NotSimulated(
-            NotSimulated::RequiresBound(fsl_eval::simulation::RequiresBound { domains }),
+            NotSimulated::RequiresBound(fsl_eval::simulation::RequiresBound {
+                domains,
+                capacities: Vec::new(),
+            }),
         ));
         assert!(matches!(requires, Refusal::RequiresBound));
         let unbounded = subject_refusal(&TimedSubjectRefusal::Unbounded {

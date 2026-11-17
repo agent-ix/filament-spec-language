@@ -71,8 +71,8 @@ use fsl_eval::model_subject::{
 };
 use fsl_eval::simulation::model::{ModelFinding, ModelSimState, ModelSystem, TerminalClass};
 use fsl_eval::simulation::protocol::{
-    activates_on_each, check_protocol_bounds, live_instance_bound, ProtocolFairnessError,
-    ProtocolRefusal, ProtocolSystem, Sc, SubjectMemory,
+    activates_on_each, check_protocol_bounds, live_instance_bound, Capacities,
+    ProtocolFairnessError, ProtocolRefusal, ProtocolSystem, Sc, SubjectMemory,
 };
 use fsl_eval::simulation::StateKey;
 use fsl_eval::simulation::{
@@ -402,7 +402,9 @@ fn check_protocol(
             protocol: request.subject.protocol.clone(),
         })
     })?;
-    check_protocol_bounds(&model, protocol, graph, BOUND_POSITIONS)
+    let capacities = Capacities::admit(protocol, &request.subject.capacities)
+        .map_err(|refusal| ClosureRefusal::Protocol(ProtocolRefusal::Capacity(refusal)))?;
+    check_protocol_bounds(&model, protocol, &capacities, graph, BOUND_POSITIONS)
         .map_err(|refusal| ClosureRefusal::NotSimulated(Box::new(refusal)))?;
     let subject = &request.subject;
     let live_instances = live_instance_bound(request.max_live_instances);

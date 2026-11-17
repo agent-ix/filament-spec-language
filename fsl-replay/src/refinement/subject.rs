@@ -128,6 +128,7 @@ pub fn open_protocol_systems<'a>(
         protocol: clause.clone(),
         over,
         roles,
+        capacities: Vec::new(),
         memory,
     };
     let model = ModelSystem::over_model(systems.abstract_request.clone(), &systems.abstract_model)

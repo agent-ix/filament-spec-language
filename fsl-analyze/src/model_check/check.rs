@@ -85,9 +85,9 @@ use fsl_eval::simulation::model::{
     check_model_bounds, ClauseOutcome, ModelFinding, ModelSimState, ModelSystem, TerminalClass,
 };
 use fsl_eval::simulation::protocol::{
-    activates_on_each, check_protocol_bounds, live_instance_bound, DataRace, MemoryModel,
-    ProtocolFairnessError, ProtocolRefusal, ProtocolSystem, ProtocolTransition, Sc, SubjectMemory,
-    WeakAccessShape,
+    activates_on_each, check_protocol_bounds, live_instance_bound, Capacities, DataRace,
+    MemoryModel, ProtocolFairnessError, ProtocolRefusal, ProtocolSystem, ProtocolTransition, Sc,
+    SubjectMemory, UnboundCapacity, WeakAccessShape,
 };
 use fsl_eval::simulation::StateKey;
 use fsl_eval::simulation::{
@@ -148,6 +148,10 @@ pub enum ModelCheckRefusal {
     /// explored. A `ProofBound` never makes a root finite here.
     #[error("the subject has an unbounded root and requires a bound")]
     RequiresBound(RequiresBound),
+    /// FSpec FR-785: the protocol subject's capacity binding leaves these
+    /// capacity names unbound; requires-bound, before any state is explored.
+    #[error("the protocol subject leaves a symbolic capacity unbound and requires a bound")]
+    UnboundCapacity(Vec<UnboundCapacity>),
     /// FR-101's pre-check could not classify the subject's extent.
     #[error("the subject's extent could not be classified: {0:?}")]
     Extent(Box<ClassifyFailure>),
@@ -708,9 +712,12 @@ pub fn check_protocol(
                 protocol: subject.protocol.clone(),
             })
         })?;
+    let capacities = Capacities::admit(protocol, &subject.capacities)
+        .map_err(|refusal| ModelCheckRefusal::Protocol(ProtocolRefusal::Capacity(refusal)))?;
     check_protocol_bounds(
         &model,
         protocol,
+        &capacities,
         subject.model.simulation.package.graph(),
         BOUND_POSITIONS,
     )
@@ -838,9 +845,12 @@ fn check_protocol_liveness(
                 protocol: subject.protocol.clone(),
             })
         })?;
+    let capacities = Capacities::admit(protocol, &subject.capacities)
+        .map_err(|refusal| ModelCheckRefusal::Protocol(ProtocolRefusal::Capacity(refusal)))?;
     check_protocol_bounds(
         &model,
         protocol,
+        &capacities,
         subject.model.simulation.package.graph(),
         BOUND_POSITIONS,
     )
@@ -1434,6 +1444,7 @@ pub(super) fn precheck(
 pub(super) fn not_simulated(refusal: NotSimulated) -> ModelCheckRefusal {
     match refusal {
         NotSimulated::RequiresBound(roots) => ModelCheckRefusal::RequiresBound(roots),
+        NotSimulated::UnboundCapacity(names) => ModelCheckRefusal::UnboundCapacity(names),
         NotSimulated::Extent(failure) => ModelCheckRefusal::Extent(Box::new(failure)),
         _ => fault("bounds-precheck-returns-only-requires-bound-or-extent"),
     }

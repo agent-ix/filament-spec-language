@@ -42,16 +42,16 @@ use fsl_eval::fairness::{
     check_loop, Constraint, EdgeLabel, Identity, LassoFairness, LoopStep, Strength,
 };
 use fsl_eval::model_subject::{
-    ModelInstance, ModelLetters, ModelSubject, ProtocolSubject, RoleBinding,
+    CapacityBinding, ModelInstance, ModelLetters, ModelSubject, ProtocolSubject, RoleBinding,
 };
 use fsl_eval::simulation::model::{
     ClauseLetters, DecisiveObservation, ExpansionLimits, ModelSimState, ModelSimulationRequest,
     ModelSystem, PopulationUniverse, TerminalClass,
 };
 use fsl_eval::simulation::protocol::{
-    check_protocol_bounds, live_instance_bound, protocol_constraints, CarriedComponent,
-    MemoryModel, ProtocolFairness, ProtocolFairnessError, ProtocolRefusal, ProtocolSystem,
-    ProtocolTransition, ResolvedMemory, Sc, SendRecord, StepKind, SubjectMemory,
+    check_protocol_bounds, live_instance_bound, protocol_constraints, Capacities, CapacityRefusal,
+    CarriedComponent, MemoryModel, ProtocolFairness, ProtocolFairnessError, ProtocolRefusal,
+    ProtocolSystem, ProtocolTransition, ResolvedMemory, Sc, SendRecord, StepKind, SubjectMemory,
 };
 use fsl_eval::simulation::{
     ConstraintValue, Cut, Expansion, ExpansionStop, NotSimulated, SubjectSystem, SubjectTransition,
@@ -153,6 +153,8 @@ pub struct ProtocolTraceSubject {
     pub over: ModelInstance,
     /// Each static role's binding.
     pub roles: Vec<RoleBinding>,
+    /// Each symbolic capacity's binding (FSpec FR-785).
+    pub capacities: Vec<CapacityBinding>,
     /// The resolved memory model of each outermost `parallel` (FR-227,
     /// ADR-025 MK-1).
     pub memory: ResolvedMemory,
@@ -883,8 +885,29 @@ pub fn replay_protocol_trace_with_temporal_selections(
                     ))
                 })?;
             let model = ModelSystem::new(simulation.clone()).map_err(ReplayRefusal::Admission)?;
-            check_protocol_bounds(&model, protocol, package.0.graph(), BOUND_POSITIONS)
-                .map_err(|refusal| refused(ModelTraceRefusal::NotSimulated(Box::new(refusal))))?;
+            let capacities =
+                Capacities::admit(protocol, &subject.capacities).map_err(|refusal| {
+                    refused(ModelTraceRefusal::Protocol(ProtocolRefusal::Capacity(
+                        refusal,
+                    )))
+                })?;
+            // FSpec FR-785-AC-5: a counterexample's subject without a
+            // capacity its clause names lacks the member `capacities`.
+            if let Some(unbound) = capacities.unbound().first() {
+                return Err(refused(ModelTraceRefusal::Protocol(
+                    ProtocolRefusal::Capacity(CapacityRefusal::Missing {
+                        name: unbound.name.clone(),
+                    }),
+                )));
+            }
+            check_protocol_bounds(
+                &model,
+                protocol,
+                &capacities,
+                package.0.graph(),
+                BOUND_POSITIONS,
+            )
+            .map_err(|refusal| refused(ModelTraceRefusal::NotSimulated(Box::new(refusal))))?;
             let protocol_subject = ProtocolSubject {
                 model: ModelSubject {
                     simulation,
@@ -893,6 +916,7 @@ pub fn replay_protocol_trace_with_temporal_selections(
                 protocol: subject.protocol.clone(),
                 over: subject.over.clone(),
                 roles: subject.roles.clone(),
+                capacities: subject.capacities.clone(),
                 memory: subject.memory.clone(),
             };
             let built = |refusal| refused(ModelTraceRefusal::Protocol(refusal));

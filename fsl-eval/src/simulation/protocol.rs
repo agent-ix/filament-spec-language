@@ -24,6 +24,7 @@
 //! `unsupported_construct`/`not-yet-implemented` naming it.
 
 mod access;
+mod capacity;
 mod channel;
 mod compensation;
 mod fairness;
@@ -56,7 +57,7 @@ use fsl_semantics::family::ClaimExtent;
 use quire_canonical::{Encode, Error, Sink, Writer};
 
 use crate::fairness::{Constraint, Identity};
-use crate::model_subject::{ModelInstance, ProtocolSubject};
+use crate::model_subject::{CapacityBinding, ModelInstance, ProtocolSubject};
 use crate::simulation::expansion::{Expansion, ExpansionLimit, ExpansionStop};
 use crate::simulation::explore::TransitionSystem;
 use crate::simulation::footprint::Location;
@@ -78,6 +79,7 @@ pub use access::{
     AccessShape, AttemptInstance, InstanceAccess, LoadBufferingShape, WeakAccessFailure,
     WeakAccessShape, WeakAccesses, WeakAttempt,
 };
+pub use capacity::{capacity_value, Capacities, CapacityRefusal, UnboundCapacity};
 pub use fairness::{
     protocol_constraints, FairnessOrigin, ProtocolClass, ProtocolFairness, ProtocolFairnessError,
     ProtocolTarget,
@@ -117,8 +119,6 @@ pub enum Unsupported {
     /// An attempt of a weak `parallel` whose application has no footprint
     /// to classify its access by (FR-220).
     AccessFootprint,
-    /// A channel whose capacity is `symbolic(..)`, with no bound to read.
-    SymbolicCapacity,
     /// A protocol capture, `choice` guard, `repeat` guard or `check`
     /// undecided at an initial state, before any position a finding can name.
     UndecidedInitialGuard,
@@ -139,7 +139,6 @@ impl Unsupported {
             Self::Control(keyword) => keyword,
             Self::WeakMemory => "memory",
             Self::AccessFootprint => "attempt footprint under a weak memory model",
-            Self::SymbolicCapacity => "symbolic channel capacity",
             Self::UndecidedInitialGuard => "undecided guard at an initial state",
             Self::OverNotAnObject => "over input of no object type",
             Self::UnboundAttemptBinder => "read of an unbound attempt binder",
@@ -165,6 +164,10 @@ pub enum ProtocolRefusal {
         /// The role.
         role: String,
     },
+    /// The subject's capacity binding is refused (FSpec FR-785
+    /// "Admission"), or a capacity the clause uses has none.
+    #[error(transparent)]
+    Capacity(CapacityRefusal),
     /// The `over` object is not an object of its declared type's population
     /// universe (`invalid_runtime_input`/`invalid-value`).
     #[error("invalid_runtime_input/invalid-value: {parameter} bound to {object}")]
@@ -228,6 +231,7 @@ impl ProtocolRefusal {
             | Self::OverBinding { .. }
             | Self::RolePopulation { .. }
             | Self::Memory(_) => Code::InvalidRuntimeInput,
+            Self::Capacity(refusal) => refusal.code(),
             Self::Unsupported(_) | Self::NodeFootprint { .. } | Self::WeakAccessShape(_) => {
                 Code::UnsupportedConstruct
             }
@@ -246,6 +250,7 @@ impl ProtocolRefusal {
             | Self::RolePopulation { .. }
             | Self::Memory(_) => "invalid-value",
             Self::RoleMapping { .. } => "wrong-role-mapping",
+            Self::Capacity(refusal) => refusal.cause(),
             Self::Unsupported(_) | Self::NodeFootprint { .. } => "not-yet-implemented",
             Self::WeakAccessShape(_) => "weak-access-shape",
             Self::InitialStop(stop) => stop.cause.cause(),
@@ -701,28 +706,47 @@ fn check_attempt_types(
     }
     match ClaimExtent::from_domains(domains) {
         ClaimExtent::Bounded => Ok(()),
-        ClaimExtent::Unbounded(domains) => {
-            Err(NotSimulated::RequiresBound(RequiresBound { domains }))
-        }
+        ClaimExtent::Unbounded(domains) => Err(NotSimulated::RequiresBound(RequiresBound {
+            domains,
+            capacities: Vec::new(),
+        })),
     }
 }
 
 /// FR-215 (ADR-027 TS-5): FR-101's requires-bound pre-check over the roots
-/// of `model` and of `protocol`, with no state explored.
+/// of `model` and of `protocol`, with no state explored. A capacity name
+/// `capacities` leaves unbound is an unbounded root too (FSpec FR-785): it
+/// is reported with the other unbounded roots in one requires-bound.
 ///
 /// # Errors
 ///
-/// [`NotSimulated::RequiresBound`] when a root is unbounded;
+/// [`NotSimulated::RequiresBound`] when a root is unbounded, naming every
+/// unbound capacity name with it;
+/// [`NotSimulated::UnboundCapacity`] when only capacity names are;
 /// [`NotSimulated::Extent`] when classification stops.
 pub fn check_protocol_bounds(
     model: &ModelSystem<'_>,
     protocol: &CheckedProtocol,
+    capacities: &Capacities,
     graph: &CheckedGraph,
     position_limit: u64,
 ) -> Result<(), NotSimulated> {
     let domains = subject_domains(model, protocol, graph);
-    check_requires_bound(&roots(&domains), model.types(), position_limit)?;
-    check_attempt_types(model, protocol, graph)
+    let with_capacities = |refusal| match refusal {
+        NotSimulated::RequiresBound(mut bound) => {
+            bound.capacities = capacities.unbound().to_vec();
+            NotSimulated::RequiresBound(bound)
+        }
+        other => other,
+    };
+    check_requires_bound(&roots(&domains), model.types(), position_limit)
+        .map_err(with_capacities)?;
+    check_attempt_types(model, protocol, graph).map_err(with_capacities)?;
+    if capacities.unbound().is_empty() {
+        Ok(())
+    } else {
+        Err(NotSimulated::UnboundCapacity(capacities.unbound().to_vec()))
+    }
 }
 
 /// The roots of `model` and of `protocol`.
@@ -825,11 +849,13 @@ pub fn classify_accesses(
     protocol: &CheckedProtocol,
     memory: &ResolvedMemory,
     over: &ModelInstance,
+    capacities: &[CapacityBinding],
 ) -> Result<WeakAccesses, ProtocolRefusal> {
     let governing = memory
         .governing(protocol)
         .map_err(ProtocolRefusal::Memory)?;
-    let program = Program::new(model, protocol)?;
+    let capacities = Capacities::admit(protocol, capacities).map_err(ProtocolRefusal::Capacity)?;
+    let program = Program::new(model, protocol, &capacities)?;
     let over = over_value(model, protocol, over)?;
     access::classify(
         model,
@@ -855,6 +881,7 @@ pub fn load_buffering_shapes(
     protocol: &CheckedProtocol,
     memory: &ResolvedMemory,
     over: &ModelInstance,
+    capacities: &[CapacityBinding],
 ) -> Result<Vec<LoadBufferingShape>, ProtocolRefusal> {
     let governing = memory
         .governing(protocol)
@@ -865,8 +892,9 @@ pub fn load_buffering_shapes(
     {
         return Ok(Vec::new());
     }
-    let program = Program::new(model, protocol)?;
-    let accesses = classify_accesses(model, protocol, memory, over)?;
+    let admitted = Capacities::admit(protocol, capacities).map_err(ProtocolRefusal::Capacity)?;
+    let program = Program::new(model, protocol, &admitted)?;
+    let accesses = classify_accesses(model, protocol, memory, over, capacities)?;
     Ok(
         access::load_buffering_shapes(&program, &governing, &accesses)?
             .into_iter()
@@ -1019,7 +1047,9 @@ impl<'a, M: MemoryModel> ProtocolSystem<'a, M> {
         {
             return Err(ProtocolRefusal::Unsupported(Unsupported::WeakMemory));
         }
-        let program = Program::new(&model, protocol)?;
+        let capacities =
+            Capacities::admit(protocol, &subject.capacities).map_err(ProtocolRefusal::Capacity)?;
+        let program = Program::new(&model, protocol, &capacities)?;
         let enabled = access::classify(
             &model,
             protocol,

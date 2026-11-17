@@ -633,7 +633,7 @@ fn the_closure_checker_requires_a_bound_for_an_unbounded_admitting_population() 
     let ClosureRefusal::NotSimulated(refusal) = &refusal else {
         panic!("expected NotSimulated, got {refusal:?}");
     };
-    let NotSimulated::RequiresBound(RequiresBound { domains }) = refusal.as_ref() else {
+    let NotSimulated::RequiresBound(RequiresBound { domains, .. }) = refusal.as_ref() else {
         panic!("expected RequiresBound, got {refusal:?}");
     };
     let roots: Vec<_> = domains

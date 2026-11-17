@@ -385,6 +385,8 @@ impl<'a> ReplaySubject<'a, '_> {
             protocol: self.protocol.name.clone(),
             over,
             roles: self.roles(),
+            // A supplied trace's replay states no capacity binding.
+            capacities: Vec::new(),
             memory,
         })
     }

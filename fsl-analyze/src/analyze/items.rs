@@ -7,7 +7,7 @@
 use filament_semantic_value::catalog::CatalogCode;
 use fsl_eval::model_subject::ModelInstance;
 use fsl_eval::simulation::model::{ClauseOutcome, ModelSystem, DEFAULT_MAX_CLOCKS};
-use fsl_eval::simulation::protocol::ProtocolTransition;
+use fsl_eval::simulation::protocol::{ProtocolRefusal, ProtocolTransition};
 use fsl_foundation::source::provenance::OccurrenceKey;
 use fsl_foundation::RequestIndex;
 use fsl_package::CheckedPackage;
@@ -280,6 +280,12 @@ fn run_protocol_item(
                 .iter()
                 .map(|binding| (binding.role.clone(), binding.model.clone()))
                 .collect();
+            let capacities: Vec<_> = request
+                .subject
+                .capacities
+                .iter()
+                .map(|binding| (binding.name.clone(), binding.value))
+                .collect();
             let over = request.subject.over.clone();
             let simulation = request.subject.model.simulation.clone();
             match check_protocol(request, cancel) {
@@ -304,6 +310,7 @@ fn run_protocol_item(
                             protocol,
                             over,
                             roles,
+                            capacities,
                             max_live_instances: on_each.then_some(max_live_instances),
                         });
                     EngineReport::Protocol(Box::new(record), subject)
@@ -962,7 +969,9 @@ fn symmetry() -> Refusal {
 pub(super) fn model_refusal(refusal: &ModelCheckRefusal) -> Refusal {
     match refusal {
         ModelCheckRefusal::Admission(failure) => admission(failure),
-        ModelCheckRefusal::RequiresBound(_) => Refusal::RequiresBound,
+        ModelCheckRefusal::RequiresBound(_) | ModelCheckRefusal::UnboundCapacity(_) => {
+            Refusal::RequiresBound
+        }
         ModelCheckRefusal::Symmetry(_) => symmetry(),
         ModelCheckRefusal::UnknownConstraint { .. } => Refusal::Failed(INVALID_VALUE),
         ModelCheckRefusal::Fault(fault) => Refusal::Failed(fault.catalog_code()),
@@ -1004,6 +1013,11 @@ pub(super) fn model_refusal(refusal: &ModelCheckRefusal) -> Refusal {
         | ModelCheckRefusal::Hyper(
             HyperRefusal::UnknownOperation { .. } | HyperRefusal::SubjectCount { .. },
         ) => Refusal::Failed(INVALID_VALUE),
+        // FSpec FR-785-AC-3: a refused capacity binding is the request's own
+        // `invalid_runtime_input`, naming its cause.
+        ModelCheckRefusal::Protocol(ProtocolRefusal::Capacity(refusal)) => {
+            Refusal::Failed(CatalogCode::new(refusal.code().as_str(), refusal.cause()))
+        }
         // Engine defects, and refusals whose types name no catalog code
         // (a spec point for STD-444's follow-up): `failed` with the
         // broken-invariant diagnostic.

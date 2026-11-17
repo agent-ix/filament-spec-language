@@ -132,6 +132,7 @@ impl Fixture {
                     model: PACKAGE.to_owned(),
                 })
                 .collect(),
+            capacities: Vec::new(),
             memory: source_memory(&self.checked, "Flow"),
         }
     }
@@ -1385,4 +1386,108 @@ fn realizability_settles_over_a_repeat() {
         "{:?}",
         outcome.outcome
     );
+}
+
+/// FSpec FR-785 "Realizability" (TC-1911 step 6): a symbolic capacity's
+/// channel premise takes its value from the subject's capacity binding, so
+/// the value enters the key; with no binding the premise is recorded as not
+/// stated and the key member is still present, never refused
+/// `missing-member`. A binding the clause does not name refuses
+/// `unknown-member`. `bounded-static` answers the construct
+/// `symbolic-queue-capacity` whatever the binding (FR-575).
+#[trace("FSpec-TC-1911", "FSpec-FR-785-AC-3", "FR-575-AC-1")]
+#[test]
+fn a_symbolic_capacity_premise_carries_the_bound_value_in_the_key() {
+    use fsl_eval::model_subject::CapacityBinding;
+    use fsl_eval::simulation::protocol::{CapacityRefusal, ProtocolRefusal};
+    use fsl_replay::protocol_analysis::{CapacityPremise, ProtocolAnalysisKey};
+
+    let fixture = Fixture::built(
+        "on origin",
+        "exactly-once-premise",
+        "",
+        "channel Sym from Buyer to Seller carries Ack ordering unordered delivery \
+         exactly-once-premise capacity symbolic(Bound) overflow reject;\n",
+        "sequence Main { send A via Sym as (a: Ack) { true }; \
+         receive B via Sym of A as (b: Ack) { true }; }",
+        &[0],
+    );
+    let bound = |capacities: &[(&str, u64)]| {
+        let mut request = fixture.request(64);
+        request.subject.capacities = capacities
+            .iter()
+            .map(|(name, value)| CapacityBinding {
+                name: (*name).to_owned(),
+                value: *value,
+            })
+            .collect();
+        request
+    };
+    let decided = |capacities: &[(&str, u64)]| realize(&fixture.admitted, bound(capacities));
+    let premise = |outcome: &RealizabilityOutcome| {
+        let ProtocolAnalysisKey::Realizability(key) = &outcome.key else {
+            panic!("a realizability key");
+        };
+        key.premises
+            .channels
+            .iter()
+            .find(|channel| channel.channel == fixture.named("Sym"))
+            .map(|channel| channel.capacity.clone())
+            .expect("the Sym premise")
+    };
+    let at_two = decided(&[("Bound", 2)]).expect("admitted");
+    let at_one = decided(&[("Bound", 1)]).expect("admitted");
+    let unbound = decided(&[]).expect("admitted");
+    assert_eq!(
+        premise(&at_two),
+        CapacityPremise::Symbolic {
+            name: "Bound".to_owned(),
+            value: Some(2)
+        }
+    );
+    assert_ne!(at_two.key, at_one.key);
+    assert_eq!(
+        premise(&unbound),
+        CapacityPremise::Symbolic {
+            name: "Bound".to_owned(),
+            value: None
+        }
+    );
+    for outcome in [&at_two, &unbound] {
+        assert!(
+            matches!(&outcome.outcome, AnalysisOutcome::Unsupported(cause)
+                if cause.slug == UnsupportedSlug::SymbolicQueueCapacity),
+            "{:?}",
+            outcome.outcome
+        );
+    }
+    assert!(matches!(
+        decided(&[("Other", 1)]),
+        Err(RealizabilityRefusal::Protocol(ProtocolRefusal::Capacity(
+            CapacityRefusal::UnknownName { .. }
+        )))
+    ));
+    // FSpec FR-785-AC-3 on the item route: the refused binding is the
+    // request's own `invalid_runtime_input`, never a broken invariant.
+    for (capacities, cause) in [
+        (&[("Other", 1)][..], "unknown-member"),
+        (&[("Bound", 1), ("Bound", 2)][..], "duplicate-member"),
+    ] {
+        let records = analyze_items(
+            &Engines::fsl().expect("they register"),
+            vec![realizability_item(
+                RequestIndex::new(0),
+                &fixture.admitted,
+                bound(capacities),
+            )],
+            &Cancel::new(),
+        );
+        let terminal = records[0].terminal().expect("a terminal record");
+        assert!(matches!(terminal.value(), TerminalValue::Declined { .. }));
+        let diagnostic = terminal.diagnostic().expect("a diagnostic");
+        assert_eq!(
+            (diagnostic.code(), diagnostic.cause()),
+            ("invalid_runtime_input", cause)
+        );
+    }
 }

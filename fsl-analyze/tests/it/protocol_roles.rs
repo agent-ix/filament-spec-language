@@ -135,6 +135,7 @@ impl World {
                 role: "w".to_owned(),
                 model: PACKAGE.to_owned(),
             }],
+            capacities: Vec::new(),
             memory: source_memory(&self.checked, "R"),
         }
     }
@@ -235,6 +236,7 @@ impl World {
                 protocol: "R".to_owned(),
                 over: instance("c"),
                 roles: subject.roles,
+                capacities: Vec::new(),
                 memory: subject.memory,
                 max_store_buffer: None,
                 max_messages: None,
