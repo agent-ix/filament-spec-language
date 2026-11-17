@@ -166,6 +166,14 @@ fn an_indexed_read_in_an_ordinary_temporal_clause_parses_for_the_checker_refusal
 #[trace("FSpec-TC-1008", "FSpec-FR-501-AC-8")]
 #[test]
 fn an_empty_align_skip_list_is_a_syntax_error_at_its_closing_brace() {
+    let nonempty = source(
+        "hyper NI using inf over behaviours (v: V::Vault)\n\
+         forall trace a of V forall trace b of V\n\
+         align skip { M::T::op }\n\
+         { always holds(v.l @ a = v.l @ b) }",
+    );
+    assert!(parse(&nonempty).is_admissible(), "{nonempty}");
+
     let text = source(
         "hyper NI using inf over behaviours (v: V::Vault)\n\
          forall trace a of V forall trace b of V\n\
