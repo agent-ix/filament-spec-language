@@ -61,8 +61,11 @@ On acceptance: the outcome of FR-501 and the updated ledger, which FR-330's
 assertion, the scope closure and the surrounding-execution closure, and the
 **covered position set**: the identities of the positions each retained
 completeness assertion covered (a position's identity is the identity of its
-admitted observation, FR-106), so that "a position the retained assertion did
-not cover" is decidable. On contradiction: `invalid_runtime_input`/`invalid-value` carrying a
+admitted observation, FR-106; a record sample's is its index, FR-330), so that
+"a position the retained assertion did not cover" is decidable. A covered
+record-sample entry also carries the sample's content fingerprint (FR-993), an
+integrity member that is not part of its identity; no entry carries a sample's
+text or value. On contradiction: `invalid_runtime_input`/`invalid-value` carrying a
 `contradicted_dimension` (`Watermark`, `Completeness` or `Closure`), the
 binding's clock name, the retained value and the asserted value; no outcome,
 no truth value, and the ledger unchanged: the report of a refused request
@@ -124,22 +127,27 @@ request supplied none. The same holds for a request that returns
   assertion did not cover" from the position's identity and its stamp: the stamp
   of a position in the supplied trace says whether it falls at or before the
   retained `through`, and the covered set, which holds identities only, says
-  whether the retained assertion covered that identity.
+  whether the retained assertion covered that identity. Ordering and
+  membership use the identity only.
 - A record-sample position is identified by its index (FR-330, FR-643), so a
-  changed sample at a covered index keeps a covered identity. A carried
-  evaluation state (FR-820) therefore also keeps a content fingerprint of each
-  covered sample (FR-993), and SHALL refuse as a contradiction on
-  `Completeness` a position at a covered index whose sample's fingerprint
-  differs from the retained one. The fingerprint is integrity data, not
-  identity: the covered set and the ledger a report returns hold index
-  identities only (ADR-013 §2).
+  changed sample at a covered index keeps a covered identity. To tell the two
+  apart, the evaluator SHALL record the sample's content fingerprint (FR-993)
+  in each covered record-sample entry, and SHALL refuse as a contradiction on
+  `Completeness` a position whose trace re-covers an index already covered in
+  the request's input ledger with a different fingerprint. The same sample at
+  that index is accepted. Batch evaluation (FR-330) and carried evaluation
+  (FR-820) record and compare fingerprints the same way, so a re-delivered
+  trace gets one verdict in both (FSpec FR-114). The fingerprint is integrity
+  data, not identity (ADR-013 §2).
 - A later trace that omits a position an earlier assertion covered is accepted:
   the ledger keeps the omitted position as covered and does not treat its absence
   as a contradiction; only a position that was not covered and now appears at or
   before a retained `through` contradicts.
 - The evaluator SHALL derive the covered position set from the position
-  identities of the trace in each accepted request, and the ledger returned for
-  a request SHALL equal the ledger a later request carries.
+  identities of the trace in each accepted request, with each record sample's
+  fingerprint, and the ledger returned for a request SHALL equal the ledger a
+  later request carries, fingerprints included. Batch and carried evaluation
+  of the same requests SHALL return equal ledgers.
 - Running the same sequence of requests from the same initial ledger SHALL give
   the same sequence of outcomes and the same final ledger; running one request
   twice from different ledgers MAY give different outcomes.

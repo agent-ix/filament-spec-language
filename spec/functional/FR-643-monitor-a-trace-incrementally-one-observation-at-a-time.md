@@ -134,8 +134,10 @@ spine APIs rather than a first sketch, and are accepted as its contract:
   own index. To refuse a changed sample at a covered index (FR-502), each
   clause's carried state keeps a content fingerprint of every covered
   sample (FR-993). That fingerprint is integrity data, not identity
-  (ADR-013 §2), and it is held only in the carried state and the
-  checkpoint, never in a report or a report's ledger.
+  (ADR-013 §2): it is written in the ledger's covered entries and the
+  checkpoint, never in a report's verdict members. `step` always assigns the
+  next index; a re-delivered sample reaches a covered index through a later
+  request's trace checked against its input ledger (FR-502).
 - **Reports are shared, not copied.** The session's `ClauseStatus` holds its
   FR-283 `MonitorRecord` and that record's `ClauseRunReport` behind an
   `Arc`: a settled report is returned at every later step

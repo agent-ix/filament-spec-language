@@ -1460,66 +1460,57 @@ fn a_finite_session_ignores_a_non_matching_selection_list() {
     }
 }
 
-/// FR-993-AC-2 (TC-2810): a `Progressed` session over record
-/// samples keeps each covered sample's content fingerprint only in its
-/// carried state and checkpoint. No report's ledger, before or after a
-/// resume, spells a sample value or a `sha256:` digest; covered positions
-/// are named by index. Advancing a carried state at a covered index (the
-/// `Completeness` refusal of a changed sample, before and after
+/// FR-993-AC-1 (batch half), FR-993-AC-2 (TC-2810): a later batch request
+/// that re-delivers a changed record sample at an index the input ledger
+/// covers is refused `Completeness` and returns that ledger; the same
+/// samples are accepted. Covered samples are named by index with a
+/// fingerprint, and no ledger spells a sample's text or value. The carried
+/// half (a `ClauseState` opened on the ledger, before and after
 /// `from_bytes`) is covered by the `ClauseState` unit tests.
 #[test]
-#[trace("TC-2810", "FR-993-AC-2")]
-#[ignore = "QSL-2307: covered record samples cited by index with content fingerprints held only in carried state not implemented yet"]
-fn no_report_ledger_spells_a_sample_value_or_its_fingerprint() {
+#[trace("TC-2810", "FR-993-AC-1", "FR-993-AC-2")]
+#[ignore = "QSL-2307: record samples covered by index with a content fingerprint in the ledger not implemented yet"]
+fn a_re_delivered_changed_sample_is_refused_in_batch_and_carried_evaluation() {
     let world = world();
-    let cancel = Cancel::new();
-    let clean = |step: &fsl_analyze::monitor_session::MonitorStep| {
-        for (_, status) in &step.statuses {
-            let ledger = format!("{:?}", status.record().report().ledger);
-            assert!(!ledger.contains("integer"), "a sample value: {ledger}");
-            assert!(!ledger.contains("sha256:"), "a fingerprint: {ledger}");
-        }
-    };
-    let mut session = world
-        .open(
-            &["E"],
-            MonitorTraceKind::Progressed,
-            Some(events_binding()),
-            DEFAULT_RETAINED_POSITIONS,
-        )
-        .expect("opens");
-    for (index, level) in [1, 2].into_iter().enumerate() {
-        let observed = text(level);
-        clean(&session.step(sample(&observed), &cancel).expect("steps"));
-        let step = session
-            .assert_progress(progress(u64::try_from(index).expect("index")), &cancel)
-            .expect("progress");
-        clean(&step);
-    }
-    let state = session.checkpoint().expect("checkpoints");
-    let mut resumed = MonitorSession::resume(
-        world.unit.package(),
-        &state,
-        MonitorOpen {
-            clauses: clauses(&["E"]),
-            kind: MonitorTraceKind::Progressed,
+    let run = |levels: &[i64], through: u64, ledger: Option<&spine::ProgressLedger>| {
+        let trace = TraceInput::Progressed {
+            trace: levels
+                .iter()
+                .map(|level| spine::sample_position(&text(*level)))
+                .collect(),
+            progress: progress(through),
             lower_boundary: ProgressLowerBoundary::AuthoritativeOrigin,
-            binding: Some(events_binding()),
-            cover: None,
-            ledger: None,
+            binding: events_binding(),
+        };
+        run_package_temporal(&PackageTemporalRequest {
+            package: world.unit.package(),
             packages: &world.packages,
+            model_limits: ModelNormalizationLimits::default(),
+            snapshots: &DocumentProvision::new(),
+            observation_limits: ObservationLimits::default(),
+            accounting: UNLIMITED,
+            name: "E",
+            trace: &trace,
+            over: None,
+            ledger,
             sources: &world.sources,
-            temporal_selections: &world.selections,
-        },
-        &limits(DEFAULT_RETAINED_POSITIONS),
-        &cancel,
-    )
-    .expect("resumes");
-    let observed = text(3);
-    clean(&resumed.step(sample(&observed), &cancel).expect("steps"));
-    clean(
-        &resumed
-            .assert_progress(progress(2), &cancel)
-            .expect("progress"),
-    );
+            authentication: None,
+            cancel: &Cancel::new(),
+        })
+    };
+    let valueless = |ledger: &spine::ProgressLedger| {
+        let spelled = format!("{ledger:?}");
+        assert!(!spelled.contains("integer"), "a sample value: {spelled}");
+        assert!(!spelled.contains("level"), "a sample text: {spelled}");
+    };
+    let held = run(&[1, 2], 1, None).ledger.expect("the retained ledger");
+    valueless(&held);
+    let other = run(&[1, 5, 3], 2, Some(&held));
+    let refused = format!("{:?}", other.disposition);
+    assert!(refused.contains("Completeness"), "{refused}");
+    assert_eq!(other.ledger.as_ref(), Some(&held));
+    let same = run(&[1, 2, 3], 2, Some(&held));
+    let accepted = format!("{:?}", same.disposition);
+    assert!(!accepted.contains("Completeness"), "{accepted}");
+    valueless(&same.ledger.expect("the updated ledger"));
 }

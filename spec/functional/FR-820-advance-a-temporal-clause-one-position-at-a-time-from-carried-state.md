@@ -54,7 +54,7 @@ pub struct ClauseOpen<'a> {
     pub lower_boundary: ProgressLowerBoundary,
     pub binding: Option<TraceBinding>,
     pub cover: Option<TimestampedCover>,
-    pub ledger: Option<&'a ProgressLedger>,
+    pub ledger: Option<&'a ProgressLedger>, // re-delivery is checked against its fingerprints (FR-993)
     pub sources: &'a [Source],
     pub temporal_selections: &'a [TemporalClockSelection],
 }
@@ -121,7 +121,8 @@ impl ClauseState {
 - **Equality.** For every prefix, the state SHALL return, after the
   prefix's last call, a `report` equal to FR-330's report for the same clause over that prefix as one
   trace of the same kind with the same members and latest assertions,
-  counterexample and decisive record included.
+  counterexample and decisive record included, and the same
+  ledger, covered fingerprints included (FSpec FR-114).
 - **Progress-only steps.** `assert_progress` SHALL advance the state with no
   position: a watermark alone can settle a deadline (FR-504-AC-1,
   FR-501-AC-3) and adds the fixed-sample silent samples a window reads
@@ -139,14 +140,15 @@ impl ClauseState {
   can cite, count them in `cited()` and not in `retained()`, and drop them
   once no report can cite them (when the clause settles with its report
   already built, or when no open activation's counterexample reaches them).
-  A record sample is cited by its index, and no report or report ledger
-  spells a sample's text or value.
-- **Content fingerprints.** For each covered record-sample position, the
-  state SHALL keep the content fingerprint FR-993 defines, so that a changed
-  sample at a covered index is refused `Completeness` (FR-502). The
-  fingerprint is integrity data, not an identity (ADR-013 §2). It is held in
-  the state and its bytes and never in a report, and it is counted in the
-  ledger's `progress.covered_positions` bound.
+  A record sample is cited by its index, and no report or ledger spells a
+  sample's text or value.
+- **Content fingerprints.** The state SHALL record and compare each covered
+  record sample's content fingerprint (FR-993) in its ledger entries exactly
+  as batch evaluation does (FR-502): a position at an index already covered
+  in `ClauseOpen.ledger` or in the state's own ledger, with a different
+  fingerprint, is refused `Completeness`. The fingerprint is integrity data,
+  not an identity (ADR-013 §2); it is never in a report's verdict members,
+  and it is counted in the ledger's `progress.covered_positions` bound.
 - **No partial state.** A refused or cancelled call SHALL leave the state as
   it was before the call.
 - **Bytes.** `from_bytes(to_bytes())` SHALL give a state whose later calls

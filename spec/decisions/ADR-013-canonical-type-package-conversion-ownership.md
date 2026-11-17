@@ -117,10 +117,12 @@ since it was first seen, so it cannot be compared in place of an identity,
 cited, or used as a key. The temporal evaluator's content fingerprint of a
 covered record sample (FR-993) is the one integrity fingerprint FSL defines.
 A record-sample position is identified by its index, and its fingerprint
-lets FR-502 refuse a changed sample at that index. The fingerprint is held
-only in carried evaluation state and its state bytes (FR-820, FR-643). It
-never appears in a report or a report's ledger, and no report or ledger
-carries a sample's text or value.
+lets FR-502 refuse a changed sample at that index. The fingerprint may
+appear as an integrity member of a ledger's covered entry, which batch and
+carried evaluation write and check the same way, and in carried state bytes
+(FR-820, FR-643). It never appears as an identity or inside one, and never
+in a report's verdict members. No report or ledger carries a sample's text
+or value.
 
 One RFC 8785 JCS implementation produces every RFC 8785 encoding: the
 `quire-canonical` crate (`agent-ix/quire-canonical`; implementing ticket
