@@ -217,7 +217,7 @@ fn fault(fault: SourceObjectFault, span: Span) -> AssemblyError {
 pub(super) fn build(
     objects: &[ObjectForm],
     context: &Context<'_>,
-) -> Result<DomainPackage, Vec<AssemblyError>> {
+) -> Result<(DomainPackage, BTreeMap<DeclarationKey, Vec<String>>), Vec<AssemblyError>> {
     let mut errors = Vec::new();
     let mut by_name = BTreeMap::new();
     for (index, object) in objects.iter().enumerate() {
@@ -236,6 +236,29 @@ pub(super) fn build(
     if !errors.is_empty() {
         return Err(errors);
     }
+    let mut effective_identity_fields = vec![Vec::new(); objects.len()];
+    for index in 0..objects.len() {
+        if !objects[index].identity.is_empty() {
+            effective_identity_fields[index] = objects[index]
+                .identity
+                .iter()
+                .map(|field| field.name.clone())
+                .collect();
+        } else if let Some(ancestor) = model.ancestors[index]
+            .iter()
+            .find(|ancestor| !effective_identity_fields[**ancestor].is_empty())
+        {
+            effective_identity_fields[index] = effective_identity_fields[*ancestor].clone();
+        }
+    }
+    let identity_fields = (0..objects.len())
+        .map(|index| {
+            (
+                model.type_key(context.identity, index),
+                effective_identity_fields[index].clone(),
+            )
+        })
+        .collect();
     let mut records = Vec::new();
     let mut scalars = Vec::new();
     for index in 0..objects.len() {
@@ -276,7 +299,7 @@ pub(super) fn build(
         records,
     );
     package.foreign = foreign;
-    Ok(package)
+    Ok((package, identity_fields))
 }
 
 /// Each object's `extends` entries resolved to source object types, the

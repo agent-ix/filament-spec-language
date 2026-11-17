@@ -1607,9 +1607,13 @@ fn source_model(
     identity: String,
     meter: &mut crate::model::accounting::Meter,
     errors: &mut Vec<AssemblyError>,
-) -> Option<(fsl_foundation::selection::ModelSelection, SelectedModel)> {
+) -> Option<(
+    fsl_foundation::selection::ModelSelection,
+    SelectedModel,
+    BTreeMap<DeclarationKey, Vec<String>>,
+)> {
     let first = objects.first()?;
-    let package = match super::source_model::build(
+    let (package, identity_fields) = match super::source_model::build(
         objects,
         &super::source_model::Context {
             identity: &identity,
@@ -1617,7 +1621,7 @@ fn source_model(
             foreign,
         },
     ) {
-        Ok(package) => package,
+        Ok(built) => built,
         Err(found) => {
             errors.extend(found);
             return None;
@@ -1657,6 +1661,7 @@ fn source_model(
             operation_clauses: Vec::new(),
             type_invariants: Vec::new(),
         },
+        identity_fields,
     ))
 }
 
@@ -4419,6 +4424,7 @@ impl PackageDeclarations {
         let domain_selections = selections.models.len();
         // FR-569: the unit's `object` declarations are one more selected
         // model, under the alias no `model` declaration can take.
+        let mut source_object_identity_fields = BTreeMap::new();
         if !unit.objects.is_empty() {
             source_name_collisions(&unit, &selections, &mut errors);
             if errors.is_empty() {
@@ -4463,7 +4469,7 @@ impl PackageDeclarations {
                     } else {
                         format!("source/{package_name}/{position}")
                     };
-                    if let Some((selection, model)) = source_model(
+                    if let Some((selection, model, identity_fields)) = source_model(
                         objects,
                         &declared_types,
                         &foreign,
@@ -4471,6 +4477,7 @@ impl PackageDeclarations {
                         &mut model_meter,
                         &mut errors,
                     ) {
+                        source_object_identity_fields.extend(identity_fields);
                         selections.models.push(selection);
                         model_selection_units.push(*declaring);
                         models.push(model);
@@ -5332,6 +5339,11 @@ impl PackageDeclarations {
             .iter()
             .map(|enumeration| (enumeration.name.name.clone(), enumeration.name.span))
             .collect();
+        declared_type_spans.extend(
+            unit.objects
+                .iter()
+                .map(|object| (object.name.name.clone(), object.name.span)),
+        );
         // A dimension's and a unit's declaration occurrence is located at its
         // name, under the namespace it is declared in (FR-094), so a record
         // named like a unit does not share its position.
@@ -5623,6 +5635,7 @@ impl PackageDeclarations {
         }
 
         let mut package = PackageDeclarations::new(source, package_name, limits.identity);
+        package.source_object_identity_fields = source_object_identity_fields;
         package.integer_division = super::resolve_integer_division(&selections.profiles, None)
             .map_err(|refusal| AssemblyRefusal {
                 errors: vec![AssemblyError {

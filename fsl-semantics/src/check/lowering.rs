@@ -372,6 +372,50 @@ impl SemanticNode {
             .collect()
     }
 
+    /// The effective field bindings of a source object type, each with the
+    /// exact checked target and optional-group shape used by FR-569's row.
+    pub fn source_object_member_nodes(&self) -> Option<Vec<(&str, NodeKey, bool)>> {
+        if self.node_tag() != NodeTag::Model || self.semantic_form() != "object_type" {
+            return None;
+        }
+        let BodyTerm::Aggregate(AggregateTerm { members }) = &self.content.body else {
+            return None;
+        };
+        members
+            .iter()
+            .map(|member| {
+                let MemberTerm::Binding(Binding { name, value }) = member else {
+                    return None;
+                };
+                let (leaf, optional) = match value {
+                    BindingValue::Leaf(leaf) => (leaf, false),
+                    BindingValue::Aggregate(aggregate) => {
+                        let [MemberTerm::Binding(Binding { name, value })] =
+                            aggregate.members.as_slice()
+                        else {
+                            return None;
+                        };
+                        if name != "optional" {
+                            return None;
+                        }
+                        let BindingValue::Leaf(leaf) = value else {
+                            return None;
+                        };
+                        (leaf, true)
+                    }
+                    BindingValue::Group(_)
+                    | BindingValue::Tuple(_)
+                    | BindingValue::ExecutionPoint(_) => return None,
+                };
+                Some((
+                    name.as_str(),
+                    leaf.reference_target()?.admitted().cloned()?,
+                    optional,
+                ))
+            })
+            .collect()
+    }
+
     /// FSpec FR-440 "Tuple type node": a tuple type node's positions in
     /// declared order, each as the node its bare reference names. `None` for
     /// every node whose body is not that shape: a record's members are
@@ -611,6 +655,11 @@ impl fmt::Debug for SemanticGraph {
 }
 
 impl SemanticGraph {
+    fn replace_declared_node(&mut self, key: NodeKey, content: NodeContent) {
+        self.nodes
+            .insert(key.clone(), SemanticNode::declared(key, content));
+    }
+
     pub(crate) fn integer_interval_node(
         &self,
         interval: &filament_exact::IntegerInterval,
@@ -4162,17 +4211,42 @@ impl<'a> Lowering<'a> {
             Some(clause) => {
                 let (owner, clause) = self.clause_owner(clause, function.location)?;
                 members.push(clause);
-                let key = self.insert_owned_ref(
-                    function.location,
-                    NodeTag::Function,
-                    semantic_form,
-                    Some(result),
-                    owner,
-                    BodyTerm::aggregate(members),
-                )?;
+                let body = BodyTerm::aggregate(members);
+                let key = if let Some(path) = &function
+                    .clause
+                    .and_then(|clause| clause.source_declaration.as_ref())
+                {
+                    self.insert_ref(
+                        function.location,
+                        NodeTag::Function,
+                        semantic_form,
+                        Some(result),
+                        Some(identifiers(
+                            path.iter().map(String::as_str),
+                            function.location,
+                        )?),
+                        body,
+                    )?
+                } else {
+                    self.insert_owned_ref(
+                        function.location,
+                        NodeTag::Function,
+                        semantic_form,
+                        Some(result),
+                        owner,
+                        body,
+                    )?
+                };
                 self.record(
                     key.clone(),
-                    OccurrenceRole::Generated,
+                    if function
+                        .clause
+                        .is_some_and(|clause| clause.source_declaration.is_some())
+                    {
+                        OccurrenceRole::Declaration
+                    } else {
+                        OccurrenceRole::Generated
+                    },
                     function.location.clone(),
                 );
                 key

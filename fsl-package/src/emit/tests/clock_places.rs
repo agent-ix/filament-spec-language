@@ -44,6 +44,92 @@ pub(super) fn clocked_document_with(collection: bool) -> Vec<u8> {
     crate::emit::tests::wire_bytes(&document).expect("the fixture stays JSON")
 }
 
+/// FR-088-AC-13 / TC-2360: a source record type reached from a timed source
+/// object keeps one structural identity across the clock place, record row,
+/// and next declaring type.
+#[trace("FR-088-AC-13", "TC-2360", "QSL-2314")]
+#[test]
+fn emitted_source_place_member_type_matches_its_target_node_identity() {
+    let source = "language \"ix:native\" edition \"1-draft\";\n\
+        profile P = \"filament.temporal.complete/v1\";\n\
+        dimension Time; unit ms : Time = rational(1, 1); time Order dense unit ms;\n\
+        record W { c: Clock; }\n\
+        record Wrapper { w: W; }\n\
+        object Order { nested: Wrapper; }\n";
+    let packages = fsl_semantics::model::intake::package_input(std::iter::empty::<&[u8]>())
+        .expect("the package input is empty");
+    let declarations = assemble_with_models(source.as_bytes(), &packages)
+        .expect("the source clock place assembles");
+    let graph = declarations
+        .check(CheckMode::Linked, CheckingLimits::default())
+        .unwrap_or_else(|refusals| panic!("the source checks: {refusals:?}"));
+    let emission = emit_checked(&CheckedPackage::link(graph)).expect("the source emits");
+    let wire = wire(&emission);
+
+    let wrapper = emission
+        .selected_source_record_rows()
+        .iter()
+        .find(|row| {
+            row.qualified_declaration.len() == 1
+                && row.qualified_declaration[0].as_ref() == "Wrapper"
+        })
+        .expect("the source record row for Wrapper");
+    let wrapper_w = wrapper
+        .members
+        .iter()
+        .find(|member| member.original_member_identity.as_ref() == "w")
+        .expect("Wrapper.w's record field row");
+    let target_node = serde_json::to_value(&wrapper_w.type_node).expect("the type node serializes");
+    let package_name = target_node["package"].as_str().expect("node package");
+    let path = target_node["path"]
+        .as_array()
+        .expect("node path")
+        .iter()
+        .map(|segment| serde_json::to_string(segment).expect("a path segment serializes"))
+        .collect::<Vec<_>>()
+        .join(",");
+    let ordinal = target_node["ordinal"].as_u64().expect("node ordinal");
+    let target_identity = format!("{package_name}:[{path},]:{ordinal}");
+    assert_eq!(target_identity, "pkg:[\"W\",]:0");
+
+    let place = nodes(&wire)
+        .iter()
+        .filter(|node| node["semantic_form"] == "clock_place")
+        .find(|place| {
+            steps(member(&place["body"], "resolved_path"))
+                .iter()
+                .any(|step| {
+                    step.iter()
+                        .any(|(name, value)| name == "member_identity" && value == "Wrapper/w")
+                })
+        })
+        .expect("the clock place through Order.nested.Wrapper.w");
+    let rows = steps(member(&place["body"], "resolved_path"));
+    let row_value = |row: &[(String, String)], name: &str| {
+        row.iter()
+            .find_map(|(member, value)| (member == name).then_some(value.clone()))
+            .expect("resolved path member")
+    };
+    let place_wrapper_field = rows
+        .iter()
+        .find(|row| row_value(row, "member_identity") == "Wrapper/w")
+        .expect("Wrapper.w timed path row");
+    let next_type = rows
+        .iter()
+        .find(|row| row_value(row, "declaring_type") == target_identity)
+        .expect("the next row declares W");
+    assert_eq!(
+        row_value(place_wrapper_field, "member_type"),
+        target_identity
+    );
+    assert_eq!(
+        row_value(place_wrapper_field, "member_type"),
+        row_value(next_type, "declaring_type")
+    );
+    assert!(!target_identity.contains("resolved:"));
+    assert!(!target_identity.contains("Composite("));
+}
+
 /// The unit selecting [`clocked_document`] under a dense time source, with
 /// `body` after it.
 pub(super) fn clocked_unit(body: &str) -> String {

@@ -418,6 +418,10 @@ pub struct PackageDeclarations {
     /// The span of the unit's first source `object` declaration, which the
     /// package emitter refuses until it can write source object types.
     pub first_source_object: Option<(RawSourceRef, fsl_foundation::Span)>,
+    /// Authored identity-field names for each checked source object type,
+    /// keyed by the source model's declaration key.
+    pub(crate) source_object_identity_fields:
+        BTreeMap<filament_checked::key::DeclarationKey, Vec<String>>,
     /// Record, tuple and model object-type declarations.
     pub types: TypeEnvironment,
     /// Where each record keeps the fields its ancestors name (FR-359).
@@ -810,6 +814,7 @@ impl PackageDeclarations {
             protocol_profile: None,
             header_layers: Vec::new(),
             first_source_object: None,
+            source_object_identity_fields: BTreeMap::new(),
             types: TypeEnvironment::default(),
             model_records: ModelRecords::default(),
             relationships: Relationships::default(),

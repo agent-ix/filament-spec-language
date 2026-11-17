@@ -3,8 +3,8 @@
 
 use filament_contract_model::{
     NativeJoinBudget, NativeJoinLocus, NativeJoinLocusSource, SelectedExactDeclarationRow,
-    SelectedExactFieldRow, SelectedExactIdentities, SelectedExactIdentity, SelectedSourceRecordRow,
-    SelectedSourceUnionRow,
+    SelectedExactFieldRow, SelectedExactIdentities, SelectedExactIdentity, SelectedSourceObjectRow,
+    SelectedSourceOperationRow, SelectedSourceRecordRow, SelectedSourceUnionRow,
 };
 use filament_exact::{EffectiveId, MemberId, MemberOwner};
 
@@ -147,19 +147,82 @@ impl Emission {
             let locus = adapter_locus(index, "identity_union_output");
             unions.push(copy_source_union(row, budget, locus)?);
         }
+        let locus = package_locus("identity_object_output");
+        charge::items(budget, locus, self.selected_source_object_rows.len())?;
+        let mut objects = Vec::with_capacity(self.selected_source_object_rows.len());
+        for (index, row) in self.selected_source_object_rows.iter().enumerate() {
+            objects.push(copy_source_object(
+                row,
+                budget,
+                adapter_locus(index, "identity_object_output"),
+            )?);
+        }
+        let locus = package_locus("identity_operation_output");
+        charge::items(budget, locus, self.selected_source_operation_rows.len())?;
+        let mut operations = Vec::with_capacity(self.selected_source_operation_rows.len());
+        for (index, row) in self.selected_source_operation_rows.iter().enumerate() {
+            operations.push(copy_source_operation(
+                row,
+                budget,
+                adapter_locus(index, "identity_operation_output"),
+            )?);
+        }
         charge::text(
             budget,
             package_locus("identity_package_output"),
             package.name(),
         )?;
-        Ok(ReadIdentityRows::of_rows(
+        Ok(ReadIdentityRows::of_rows_with_source_rows(
             package,
             declarations,
             fields,
             records,
             unions,
+            objects,
+            operations,
         ))
     }
+}
+
+fn copy_source_object(
+    row: &SelectedSourceObjectRow,
+    budget: &mut NativeJoinBudget,
+    locus: NativeJoinLocus,
+) -> Result<SelectedSourceObjectRow, NativeRowError> {
+    charge::work(budget, locus, 1)?;
+    charge::node(budget, locus, &row.structural_node)?;
+    charge::text(budget, locus, &row.source_authority)?;
+    charge::text(budget, locus, &row.source_identity)?;
+    charge::items(budget, locus, row.supertypes.len())?;
+    for node in &row.supertypes {
+        charge::node(budget, locus, node)?;
+    }
+    charge::texts(budget, locus, &row.identity_fields)?;
+    charge::items(budget, locus, row.members.len())?;
+    for member in &row.members {
+        charge::work(budget, locus, 1)?;
+        charge::text(budget, locus, &member.name)?;
+        charge::node(budget, locus, &member.type_node)?;
+    }
+    charge::items(budget, locus, row.populations.len())?;
+    for population in &row.populations {
+        charge::work(budget, locus, 1)?;
+        charge::text(budget, locus, &population.name)?;
+    }
+    Ok(row.clone())
+}
+
+fn copy_source_operation(
+    row: &SelectedSourceOperationRow,
+    budget: &mut NativeJoinBudget,
+    locus: NativeJoinLocus,
+) -> Result<SelectedSourceOperationRow, NativeRowError> {
+    charge::work(budget, locus, 1)?;
+    charge::text(budget, locus, &row.source_authority)?;
+    charge::text(budget, locus, &row.source_identity)?;
+    charge::node(budget, locus, &row.anchor_id)?;
+    charge::node(budget, locus, &row.structural_node)?;
+    Ok(row.clone())
 }
 
 /// Convert one authentic retained record after all of its copies are paid.

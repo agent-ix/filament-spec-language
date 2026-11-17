@@ -695,6 +695,13 @@ pub struct Emission {
     /// FSL-stage declaration witnesses for emitted source-owned records
     /// (FR-092 "Source record identity rows").
     pub(crate) selected_source_record_rows: Vec<SelectedSourceRecordRow>,
+    /// FSL-stage source-object witnesses joined to their emitted nodes
+    /// (FR-569).
+    pub(crate) selected_source_object_rows: Vec<filament_contract_model::SelectedSourceObjectRow>,
+    /// FSL-stage source-operation witnesses joined to emitted anchors
+    /// (FR-390).
+    pub(crate) selected_source_operation_rows:
+        Vec<filament_contract_model::SelectedSourceOperationRow>,
     /// FSL-stage declaration and ordered position witnesses for emitted
     /// source-owned tuples (FR-092 "Source tuple identity rows").
     pub(crate) selected_source_tuple_rows: Vec<filament_contract_model::SelectedSourceTupleRow>,
@@ -949,6 +956,8 @@ impl DebugWith for Emission {
             selected_enum_member_rows,
             selected_source_union_rows,
             selected_source_record_rows,
+            selected_source_object_rows,
+            selected_source_operation_rows,
             selected_source_tuple_rows,
             selected_model_enum_shape_rows,
             selected_source_collection_rows,
@@ -991,6 +1000,11 @@ impl DebugWith for Emission {
             .field("selected_enum_member_rows", selected_enum_member_rows)
             .field("selected_source_union_rows", selected_source_union_rows)
             .field("selected_source_record_rows", selected_source_record_rows)
+            .field("selected_source_object_rows", selected_source_object_rows)
+            .field(
+                "selected_source_operation_rows",
+                selected_source_operation_rows,
+            )
             .field("selected_source_tuple_rows", selected_source_tuple_rows)
             .field(
                 "selected_model_enum_shape_rows",
@@ -1303,6 +1317,20 @@ impl Emission {
     /// record nodes' keys.
     pub fn selected_source_record_rows(&self) -> &[SelectedSourceRecordRow] {
         &self.selected_source_record_rows
+    }
+
+    /// Source-owned object rows carried by this emission.
+    pub fn selected_source_object_rows(
+        &self,
+    ) -> &[filament_contract_model::SelectedSourceObjectRow] {
+        &self.selected_source_object_rows
+    }
+
+    /// Source-owned operation rows carried by this emission.
+    pub fn selected_source_operation_rows(
+        &self,
+    ) -> &[filament_contract_model::SelectedSourceOperationRow] {
+        &self.selected_source_operation_rows
     }
 
     /// Source-owned tuple rows carried by this emission, ascending by the
@@ -4460,9 +4488,6 @@ fn encoding(error: impl std::fmt::Display) -> EmitRefusal {
 /// a source object type has no node to write, which wins over a protocol
 /// refusal that would need results to emit.
 fn require_protocol_results_for_refusals(package: &CheckedPackage) -> Result<(), EmitRefusal> {
-    if let Some((_, span)) = package.graph().first_source_object() {
-        return Err(EmitRefusal::SourceObjectEmission { span });
-    }
     if package.graph().protocol_refusals().is_empty() {
         Ok(())
     } else {
@@ -5728,6 +5753,8 @@ pub fn emit_timed_models(
         selected_enum_member_rows: Vec::new(),
         selected_source_union_rows: Vec::new(),
         selected_source_record_rows: Vec::new(),
+        selected_source_object_rows: Vec::new(),
+        selected_source_operation_rows: Vec::new(),
         selected_source_tuple_rows: Vec::new(),
         selected_model_enum_shape_rows: Vec::new(),
         selected_source_collection_rows: Vec::new(),
@@ -6127,9 +6154,6 @@ fn emit_package_inner(
         .map(|relation| graph.abstraction_nodes(relation))
         .transpose()
         .map_err(EmitRefusal::Abstraction)?;
-    if let Some((_, span)) = graph.first_source_object() {
-        return Err(EmitRefusal::SourceObjectEmission { span });
-    }
     if let Some((feature, declaration)) = graph.probabilistic_model().first_declaration() {
         return Err(EmitRefusal::ProbabilisticModelNotEmitted {
             declaration,
@@ -6735,6 +6759,8 @@ fn emit_package_inner(
     let selected_model_enum_shape_rows = model_enum_shape_rows(graph, &emitted_node_ids)?;
     let selected_source_union_rows = source_union_rows(graph, &emitted_node_ids)?;
     let selected_source_record_rows = source_record_rows(graph, &emitted_node_ids)?;
+    let selected_source_object_rows = source_object_rows(graph, &emitted_node_ids)?;
+    let selected_source_operation_rows = source_operation_rows(graph, &emitted_node_ids)?;
     let selected_source_tuple_rows = source_tuple_rows(graph, &emitted_node_ids)?;
     let selected_source_collection_rows = source_collection_rows(graph, &emitted_node_ids)?;
     let operation_effects = graph
@@ -6798,6 +6824,8 @@ fn emit_package_inner(
         selected_enum_member_rows,
         selected_source_union_rows,
         selected_source_record_rows,
+        selected_source_object_rows,
+        selected_source_operation_rows,
         selected_source_tuple_rows,
         selected_model_enum_shape_rows,
         selected_source_collection_rows,
@@ -7026,6 +7054,184 @@ fn source_record_rows_over<'d>(
     }
     rows.sort_by(|(left, _), (right, _)| left.cmp(right));
     Ok(rows.into_iter().map(|(_, row)| row).collect())
+}
+
+/// FR-569 "Source-object identity rows": one row for each emitted source
+/// object node, joined to its checked declaration, effective body bindings,
+/// normalized supertypes and populations.
+fn source_object_rows(
+    graph: &CheckedGraph,
+    emitted: &HashMap<NodeKey, CheckedNodeId>,
+) -> Result<Vec<filament_contract_model::SelectedSourceObjectRow>, EmitRefusal> {
+    use filament_contract_model::{SelectedSourceObjectMember, SelectedSourcePopulation};
+
+    let semantic = graph.semantic_graph();
+    let mut rows = Vec::new();
+    for node in semantic.nodes() {
+        if node.node_tag() != NodeTag::Model || node.semantic_form() != "object_type" {
+            continue;
+        }
+        let Some(Owner::Source(owner)) = node.owner() else {
+            continue;
+        };
+        let Some(declaration) = graph.resolve_declaration(node.key()) else {
+            return Err(EmitRefusal::SourceMapInvariant);
+        };
+        let Some(structural_node) = emitted.get(&node.key()) else {
+            continue;
+        };
+        let Some(source_identity) = node.declaration().and_then(|name| name.last()) else {
+            return Err(EmitRefusal::SourceMapInvariant);
+        };
+        let Some(identity_fields) = graph.source_object_identity_fields().get(declaration) else {
+            return Err(EmitRefusal::SourceMapInvariant);
+        };
+        let object =
+            graph
+                .source_packages()
+                .iter()
+                .flat_map(|package| &package.records)
+                .find_map(|record| match record {
+                    fsl_semantics::model::domain_package::DomainPackageRecord::ObjectType(
+                        object,
+                    ) if &object.key == declaration => Some(object),
+                    _ => None,
+                })
+                .ok_or(EmitRefusal::SourceMapInvariant)?;
+        let members = node
+            .source_object_member_nodes()
+            .ok_or(EmitRefusal::SourceMapInvariant)?
+            .into_iter()
+            .map(|(name, target, optional)| {
+                Ok(SelectedSourceObjectMember {
+                    name: name.into(),
+                    type_node: emitted
+                        .get(&target)
+                        .cloned()
+                        .ok_or(EmitRefusal::SourceMapInvariant)?,
+                    optional,
+                })
+            })
+            .collect::<Result<Vec<_>, EmitRefusal>>()?;
+        let supertypes = object
+            .supertypes
+            .iter()
+            .map(|supertype| {
+                let node = source_node_for_declaration(graph, supertype)
+                    .ok_or(EmitRefusal::SourceMapInvariant)?;
+                emitted
+                    .get(&node.key())
+                    .cloned()
+                    .ok_or(EmitRefusal::SourceMapInvariant)
+            })
+            .collect::<Result<Vec<_>, EmitRefusal>>()?;
+        let populations = graph
+            .source_packages()
+            .iter()
+            .flat_map(|package| &package.records)
+            .filter_map(|record| match record {
+                fsl_semantics::model::domain_package::DomainPackageRecord::Population(
+                    population,
+                ) if population.member_types.contains(&object.key) => {
+                    source_identity_segment(&population.key.package, &population.key.node).map(
+                        |name| SelectedSourcePopulation {
+                            name: name.into(),
+                            symmetric: population.symmetric,
+                        },
+                    )
+                }
+                _ => None,
+            })
+            .collect();
+        rows.push(filament_contract_model::SelectedSourceObjectRow {
+            structural_node: structural_node.clone(),
+            source_authority: owner.authority().into(),
+            source_identity: source_identity.as_str().into(),
+            is_abstract: object.abstract_type,
+            supertypes,
+            identity_fields: identity_fields
+                .iter()
+                .map(|field| field.as_str().into())
+                .collect(),
+            members,
+            populations,
+        });
+    }
+    rows.sort_by(|left, right| left.structural_node.cmp(&right.structural_node));
+    Ok(rows)
+}
+
+fn source_node_for_declaration<'a>(
+    graph: &'a CheckedGraph,
+    declaration: &filament_checked::key::DeclarationKey,
+) -> Option<&'a SemanticNode> {
+    graph.semantic_graph().nodes().find(|node| {
+        graph.resolve_declaration(node.key()) == Some(declaration)
+            && matches!(node.owner(), Some(Owner::Source(_)))
+            && node.node_tag() == NodeTag::Model
+            && node.semantic_form() == "object_type"
+    })
+}
+
+/// FR-390 source-operation identity rows, for checked anchors whose declared
+/// operation belongs to a source object type.
+fn source_operation_rows(
+    graph: &CheckedGraph,
+    emitted: &HashMap<NodeKey, CheckedNodeId>,
+) -> Result<Vec<filament_contract_model::SelectedSourceOperationRow>, EmitRefusal> {
+    use fsl_semantics::model::domain_package::DomainPackageRecord;
+
+    let mut rows = Vec::new();
+    for package in graph.source_packages() {
+        for record in &package.records {
+            let DomainPackageRecord::OperationMember(operation) = record else {
+                continue;
+            };
+            let Some(object_name) =
+                source_identity_segment(&operation.owner.package, &operation.owner.node)
+            else {
+                continue;
+            };
+            let Some(operation_name) = operation
+                .key
+                .node
+                .strip_prefix(&format!("{}/", operation.owner.node))
+                .filter(|name| !name.is_empty() && !name.contains('/'))
+            else {
+                continue;
+            };
+            let Some(anchor) = graph.source_operation_anchor(&operation.owner, operation_name)
+            else {
+                continue;
+            };
+            let structural_node = emitted
+                .get(&anchor)
+                .cloned()
+                .ok_or(EmitRefusal::SourceMapInvariant)?;
+            let owner = source_node_for_declaration(graph, &operation.owner)
+                .and_then(|node| match node.owner() {
+                    Some(Owner::Source(owner)) => Some(owner),
+                    _ => None,
+                })
+                .ok_or(EmitRefusal::SourceMapInvariant)?;
+            rows.push(filament_contract_model::SelectedSourceOperationRow {
+                source_authority: owner.authority().into(),
+                source_identity: format!("{object_name}::{operation_name}").into(),
+                anchor_id: structural_node.clone(),
+                structural_node,
+            });
+        }
+    }
+    rows.sort_by(|left, right| left.anchor_id.cmp(&right.anchor_id));
+    Ok(rows)
+}
+
+/// The final authored segment in a declaration key's exact `ix://` identity.
+/// This parses the admitted key shape; it does not use a formatter or display.
+fn source_identity_segment<'a>(package: &str, identity: &'a str) -> Option<&'a str> {
+    identity
+        .strip_prefix(&format!("ix://{package}/"))
+        .filter(|segment| !segment.is_empty() && !segment.contains('/'))
 }
 
 /// FR-092 "Source tuple identity rows": one row per emitted source-owned
