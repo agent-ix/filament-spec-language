@@ -83,6 +83,7 @@ pub fn run(workspace_root: &Path, arguments: &[OsString]) -> Result<Outcome> {
     }
     let inventory_facts = facts_by_consumer(&inventory, &mut failures);
     let binding_facts = bindings_by_consumer(&bindings, &mut failures);
+    validate_binding_order(&inventory, &bindings, &mut failures);
     let crate_roots = crate_roots(workspace_root)?;
     let mut api_cache = BTreeMap::<String, PublicApi>::new();
     let mut report = Vec::new();
@@ -180,6 +181,69 @@ fn validate_object(value: &Value, allowed: &[&str], name: &str, failures: &mut V
     for key in object.keys() {
         if !allowed.contains(&key.as_str()) {
             failures.push(format!("{name}: unexpected field {key}"));
+        }
+    }
+}
+
+fn validate_binding_order(inventory: &Value, bindings: &Value, failures: &mut Vec<String>) {
+    let Some(inventory_consumers) = inventory.get("consumers").and_then(Value::as_array) else {
+        return;
+    };
+    let Some(binding_consumers) = bindings.get("consumers").and_then(Value::as_array) else {
+        return;
+    };
+    let inventory_names: Vec<_> = inventory_consumers
+        .iter()
+        .filter_map(|consumer| consumer.get("consumer").and_then(Value::as_str))
+        .collect();
+    let binding_names: Vec<_> = binding_consumers
+        .iter()
+        .filter_map(|consumer| consumer.get("consumer").and_then(Value::as_str))
+        .collect();
+    if inventory_names != binding_names {
+        if let Some(fact) = inventory_consumers
+            .iter()
+            .filter_map(|consumer| consumer.get("facts").and_then(Value::as_array))
+            .flatten()
+            .find_map(|fact| fact.get("id").and_then(Value::as_str))
+        {
+            failures.push(format!("{fact}: consumers are not in inventory order"));
+        }
+    }
+
+    for (inventory_consumer, binding_consumer) in inventory_consumers.iter().zip(binding_consumers)
+    {
+        let name = inventory_consumer
+            .get("consumer")
+            .and_then(Value::as_str)
+            .unwrap_or("<unknown>");
+        let inventory_facts: Vec<_> = inventory_consumer
+            .get("facts")
+            .and_then(Value::as_array)
+            .into_iter()
+            .flatten()
+            .filter_map(|fact| fact.get("id").and_then(Value::as_str))
+            .collect();
+        let binding_facts: Vec<_> = binding_consumer
+            .get("facts")
+            .and_then(Value::as_array)
+            .into_iter()
+            .flatten()
+            .filter_map(|fact| fact.get("fact").and_then(Value::as_str))
+            .collect();
+        if inventory_facts != binding_facts {
+            let max_len = inventory_facts.len().max(binding_facts.len());
+            for index in 0..max_len {
+                let expected = inventory_facts.get(index).copied();
+                let actual = binding_facts.get(index).copied();
+                if expected != actual {
+                    if let Some(fact) = expected.or(actual) {
+                        failures.push(format!(
+                            "{fact}: bindings {name} facts are not in inventory order"
+                        ));
+                    }
+                }
+            }
         }
     }
 }

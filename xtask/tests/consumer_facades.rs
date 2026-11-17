@@ -111,7 +111,6 @@ fn pin_check_passes_the_workspace_and_refuses_a_branch_dependency() {
 
 #[test]
 #[trace("TC-2144", "FR-761-AC-1", "FSpec-TC-1646", "FSpec-FR-661-AC-3")]
-#[ignore = "QSL-2228: `xtask consumer-facades` and the bound accessors are not implemented yet"]
 fn the_contract_check_passes_over_the_committed_bindings() {
     let output = xtask(&["consumer-facades"]);
     let text = report(&output);
@@ -135,7 +134,6 @@ fn the_contract_check_passes_over_the_committed_bindings() {
 
 #[test]
 #[trace("TC-2145", "FR-761-AC-2", "FSpec-TC-1646", "FSpec-FR-661-AC-3")]
-#[ignore = "QSL-2228: `xtask consumer-facades` is not implemented yet"]
 fn an_accessor_no_module_exposes_fails_the_check() {
     let mut bindings = committed_bindings();
     let facts = protocol_facts(&mut bindings);
@@ -152,11 +150,26 @@ fn an_accessor_no_module_exposes_fails_the_check() {
         text.contains("fsl_package::protocol_view::no_such_accessor"),
         "{text}"
     );
+
+    let mut private_binding = committed_bindings();
+    let facts = protocol_facts(&mut private_binding);
+    let endpoints = facts
+        .iter_mut()
+        .find(|fact| fact["fact"] == "CF-PR-03")
+        .expect("CF-PR-03 is bound");
+    endpoints["accessors"] = json!(["argument"]);
+    let private = check_with(&private_binding);
+    let text = report(&private);
+    assert_eq!(private.status.code(), Some(1), "{text}");
+    assert!(text.contains("CF-PR-03"), "{text}");
+    assert!(
+        text.contains("fsl_package::protocol_view::argument"),
+        "{text}"
+    );
 }
 
 #[test]
 #[trace("TC-2146", "FR-761-AC-3", "FSpec-TC-1646", "FSpec-FR-661-AC-3")]
-#[ignore = "QSL-2228: `xtask consumer-facades` is not implemented yet"]
 fn an_unbound_inventory_fact_fails_the_check() {
     let mut bindings = committed_bindings();
     protocol_facts(&mut bindings).retain(|fact| fact["fact"] != "CF-PR-05");
@@ -169,7 +182,6 @@ fn an_unbound_inventory_fact_fails_the_check() {
 
 #[test]
 #[trace("TC-2147", "FR-761-AC-4", "FSpec-TC-1646", "FSpec-FR-661-AC-3")]
-#[ignore = "QSL-2228: `xtask consumer-facades` is not implemented yet"]
 fn a_binding_with_no_inventory_fact_fails_the_check() {
     let mut bindings = committed_bindings();
     protocol_facts(&mut bindings).push(json!({"fact": "CF-PR-99", "accessors": ["protocol_view"]}));
