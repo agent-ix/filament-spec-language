@@ -1806,14 +1806,19 @@ fn derived_form(tokens: &[Significant], failure: &Failure) -> Option<&'static st
     }
 }
 
-/// Explain that `count<T>(...)` and `sum<T>(...)` take a declared type name,
-/// not an inline type expression, when parsing stops at the type argument.
+/// Explain that query type arguments take declared names, not inline types,
+/// when parsing stops at the type argument.
 fn declared_type_name_hint(tokens: &[Significant], failure: &Failure) -> Option<&'static str> {
     let position = failure.position;
     let is_query = |at: usize| {
         tokens
             .get(at)
-            .is_some_and(|token| matches!(token.spelling.as_ref(), "count" | "sum"))
+            .is_some_and(|token| {
+                matches!(
+                    token.spelling.as_ref(),
+                    "count" | "sum" | "fold" | "reduce"
+                )
+            })
     };
     let type_argument_start = if tokens
         .get(position.checked_sub(1)?)
@@ -1830,7 +1835,7 @@ fn declared_type_name_hint(tokens: &[Significant], failure: &Failure) -> Option<
         return None;
     };
     is_query(type_argument_start).then_some(
-        "`count` and `sum` require a declared type name here; declare an alias such as `type Total = Integer;` and write `count<Total>(...)` or `sum<Total>(...)`",
+        "`count`, `sum`, `fold`, and `reduce` require a declared type name here; declare an alias such as `type Total = Integer;` and write `count<Total>(...)` or `sum<Total>(...)`",
     )
 }
 

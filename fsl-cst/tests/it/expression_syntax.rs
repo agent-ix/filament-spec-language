@@ -30,6 +30,8 @@ fn a_population_query_type_argument_names_the_declared_type_requirement() {
     for (expression, anchor) in [
         ("sum<Int[0, 80]>(x in a: x)", "[0, 80]"),
         ("count<Integer>(x in a: x)", "Integer"),
+        ("fold<Integer>(0, x in a: x)", "Integer"),
+        ("reduce<Int[0, 9]>(0, x in a: x)", "[0, 9]"),
     ] {
         let text = document(expression);
         let parsed = parse(text.as_bytes()).expect("valid UTF-8 within the source ceiling");
@@ -44,11 +46,36 @@ fn a_population_query_type_argument_names_the_declared_type_requirement() {
             "{expression}"
         );
         assert!(
-            diagnostic.message.contains("require a declared type name"),
+            diagnostic.message.contains("declared type name here"),
             "{}",
             diagnostic.message
         );
         assert!(diagnostic.message.contains("type Total = Integer;"));
+    }
+
+    for expression in [
+        "sum<M::Total>(x in a: x)",
+        "fold<M::Integer>(0, x in a: x)",
+    ] {
+        let parsed = parse(document(expression).as_bytes())
+            .expect("valid UTF-8 within the source ceiling");
+        assert!(parsed.is_admissible(), "{expression}: {:?}", parsed.diagnostics());
+    }
+
+    for (expression, offending) in [
+        ("sum<>(x in a: x)", ">"),
+        ("sum<123>(x in a: x)", "123"),
+    ] {
+        let text = document(expression);
+        let parsed = parse(text.as_bytes()).expect("valid UTF-8 within the source ceiling");
+        assert!(!parsed.is_admissible(), "{expression}");
+        let diagnostic = parsed.diagnostics().first().expect("a syntax refusal");
+        assert_eq!(diagnostic.code, CompleteCode::InvalidSyntax, "{expression}");
+        assert_eq!(
+            diagnostic.byte_span().expect("located").start,
+            text.find(offending).expect("offending token"),
+            "{expression}"
+        );
     }
 }
 
