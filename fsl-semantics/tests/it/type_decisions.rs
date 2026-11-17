@@ -252,7 +252,7 @@ fn an_equality_sum_refusal_names_its_proved_range_expected_type_and_peer() {
     let rendered = format!("{refusal:?}");
     assert!(rendered.contains("[0, 20]"), "{rendered}");
     assert!(rendered.contains("Int[0, 10]"), "{rendered}");
-    assert!(rendered.contains("operand: \"c\""), "{rendered}");
+    assert!(rendered.contains("peer operand c"), "{rendered}");
     assert_checks(
         "function guarded using v(a: Int[0, 10], b: Int[0, 10], c: Int[0, 10]): Boolean pure \
          { if a <= 1 and b <= 2 then c = a + b else true }",

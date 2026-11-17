@@ -28,7 +28,7 @@ use super::check::{holds_float, DispatchOperation};
 use super::ir::{CheckedNode, DispatchTable, Slot};
 use super::observation::Observations;
 use super::refusal::{
-    CheckCause, CheckRefusal, InvalidDispatchDeclaration, Obligation, ProvedInterval,
+    CheckCause, CheckRefusal, InvalidDispatchDeclaration, Obligation, OperandText, ProvedInterval,
 };
 use crate::model::clause_observation::Observation;
 use filament_exact::{ArithmeticOperator, OrderingOperator};
@@ -1397,25 +1397,25 @@ impl<'a> Definedness<'a> {
                 if proved.within(&required) {
                     Ok(())
                 } else {
-                    let cause = node.equality_range_context().map_or_else(
-                        || {
-                            CheckCause::Unproved(Obligation::Range {
-                                required: Box::new(required.proved()),
-                                proved: Box::new(proved.proved()),
-                                operand: Default::default(),
-                            })
-                        },
+                    let operand = node.equality_range_context().map_or_else(
+                        OperandText::default,
                         |context| {
-                            CheckCause::Unproved(Obligation::EqualityRange {
-                                expected: context.expected.clone(),
-                                operand: context.operand.clone(),
-                                proved: interval_text(&proved),
-                            })
+                            let diagnostic = format!(
+                                "proved {}, expected {}, peer operand {}",
+                                interval_text(&proved),
+                                context.expected,
+                                context.operand,
+                            );
+                            OperandText::new(&diagnostic)
                         },
                     );
                     Err(CheckRefusal {
                         location: node.location().clone(),
-                        cause,
+                        cause: CheckCause::Unproved(Obligation::Range {
+                            required: Box::new(required.proved()),
+                            proved: Box::new(proved.proved()),
+                            operand,
+                        }),
                     })
                 }
             }
