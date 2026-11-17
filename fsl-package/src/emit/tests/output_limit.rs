@@ -213,13 +213,19 @@ fn nested_not_emission_bytes_are_linear_at_one_and_five_thousand_levels() {
 #[trace("FR-264-AC-6", "FR-255-AC-4")]
 #[test]
 fn a_deep_nested_not_names_and_obeys_the_output_byte_limit() {
+    const DEFAULT_OUTPUT_BYTES: u64 = 16_777_216;
     let shallow = nested_not_package(100);
-    crate::emit::emit_checked(&shallow, EmitLimits::fixture())
+    crate::emit::emit_checked(&shallow, EmitLimits::new(DEFAULT_OUTPUT_BYTES))
         .expect("100 nested nots emit under the default output limit");
 
     let deep = nested_not_package(20_000);
-    let refusal = crate::emit::emit_checked(&deep, EmitLimits::fixture())
-        .expect_err("20,000 nested nots exceed the default output limit");
+    let refusal = match crate::emit::emit_checked(&deep, EmitLimits::new(DEFAULT_OUTPUT_BYTES)) {
+        Err(refusal) => refusal,
+        Ok(emission) => panic!(
+            "20,000 nested nots emitted {} bytes under the default limit",
+            emission.package().bytes().len()
+        ),
+    };
     let EmitRefusal::OutputLimit(limit) = &refusal else {
         panic!("expected emit.output_bytes refusal, got {refusal:?}");
     };
