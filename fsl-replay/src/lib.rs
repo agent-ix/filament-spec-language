@@ -187,7 +187,7 @@ pub use certificate::task_product::{
 };
 pub use certificate::zone::{LuBounds, Zone, ZoneError};
 pub use certificate::zone_certificate::{
-    check_zone_certificate, explore_task_product, recomputed_member, AcceptanceSet, CertEdge,
+    check_free_delay_zone_certificate, check_zone_certificate, explore_task_product, recomputed_member, AcceptanceSet, CertEdge,
     CertNode, CertificateCheckLimits, CertificateItem, CertifiedItem, CheckerFault,
     ComponentReason, Components, DivergenceWitness, DivergentTarget, FairnessMember, ItemIdentity,
     NonZeno, ProductMark, QuotientEdge, QuotientIdentity, QuotientInitial, QuotientStop,
@@ -314,8 +314,9 @@ pub use model_check::outcome::{
     MemoryCause, ModelCheckOutcome, ReductionCause, RunStats, UndecidedCause,
 };
 pub use model_check::refinement_replay::{
-    replay_protocol_assumption_witness, replay_refinement_trace, replay_timed_refinement_trace,
-    ProtocolAssumptionReplaySettlement, RefinementTraceSettlement,
+    replay_free_delay_refinement_trace, replay_protocol_assumption_witness,
+    replay_refinement_trace, replay_timed_refinement_trace, ProtocolAssumptionReplaySettlement,
+    RefinementTraceSettlement,
 };
 pub use model_check::refinement_settle::{
     settle_refinement, settle_refinement_refusal, settle_refinement_safety,

@@ -1,21 +1,19 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-//! FSpec FR-430 "Timed refinement" (TC-1170): S3 admits a refinement whose
-//! concrete model is timed and whose abstract model is untimed, and refuses
-//! a timed abstract model and a clock read in a row; EN-6 decides its
-//! safety half on the symbolic product of zones with FR-142's discrete
-//! product.
+//! FSpec FR-430 "Timed refinement" and FR-900 "Timed abstract model": S3
+//! admits timed abstract models while refusing a clock read in a concrete
+//! mapping row; EN-6 decides the safety half on a combined-clock product.
 
-use filament_exact::{Cancel, Rational};
+use filament_exact::{Cancel, Integer, Rational};
 use fsl_analyze::zone_check::{
-    check_timed_model, check_timed_refinement, TimedRefinementRequest, TimedRefinementUndecided,
-    TimedSafetyOutcome, ZoneCheckItem, ZoneCheckLimits, ZoneCheckOutcome, ZoneCheckRequest,
-    ZoneUndecided,
+    check_free_delay_refinement, check_timed_model, check_timed_refinement, TimedRefinementRequest,
+    TimedRefinementUndecided, TimedSafetyOutcome, ZoneCheckItem, ZoneCheckLimits, ZoneCheckOutcome,
+    ZoneCheckRequest, ZoneUndecided,
 };
 use fsl_eval::simulation::model::{ModelSystem, TimedSystem};
 use fsl_eval::simulation::Limits;
 use fsl_replay::{
-    open_systems, replay_timed_refinement_trace, RefinementFailure, RefinementTraceSettlement,
-    TemporalCounterexample,
+    open_systems, replay_free_delay_refinement_trace, replay_timed_refinement_trace,
+    RefinementFailure, RefinementTraceSettlement, TemporalCounterexample,
 };
 use fsl_replay::{CertifiedItem, ZoneCertificateRequest};
 use fsl_route::deadlock::{ItemObligation, ObligationKind};
@@ -113,6 +111,29 @@ pub(crate) fn safety(world: &Refining) -> TimedSafetyOutcome<&'static str> {
     check_timed_refinement(safety_request(world), &Cancel::new())
         .expect("EN-6 takes the refinement")
         .safety
+}
+
+/// A timed abstract `A` and an untimed concrete `M`, with the abstract
+/// clock guard supplied by the caller.
+pub(crate) fn free_delay_world(abstract_guard: &str) -> Refining {
+    let abstract_model = renamed_package(
+        &document(&["y"], &[("send", &["inflight"])]),
+        "test/abstract",
+    );
+    let concrete = document(&[], &[("send", &["inflight"])]);
+    let time_source = DENSE.replace("time M dense unit ms;", "time A dense unit ms;");
+    refining(
+        &abstract_model,
+        &concrete,
+        &format!(
+            "{time_source}post ASend using v on A::Call::send {{ self.inflight }}\n\
+             pre ASendable using v on A::Call::send {{ {abstract_guard} }}\n\
+             pre MSend using v on M::Call::send {{ true }}\n\
+             post MSent using v on M::Call::send {{ self.inflight }}\n{}",
+            refinement("self.inflight")
+        ),
+    )
+    .unwrap_or_else(|refusals| panic!("{refusals:?}"))
 }
 
 /// FR-245's request for checking a certificate of `world`'s one refinement.
@@ -248,13 +269,13 @@ fn a_clock_read_in_the_mapping_is_refused_at_the_read() {
     );
 }
 
-/// FR-430-AC-1: a refinement whose abstract model is `TReq` and whose
-/// concrete model is a copy `TReq2` of it.
+/// FR-900: S3 admits a timed abstract model; its clocks use the same delays
+/// as the concrete model and reset on the step-row operation.
 #[trace("TC-1170", "FR-430-AC-1")]
 #[test]
-fn a_timed_abstract_model_is_refused_at_its_reference() {
+fn s3_admits_a_timed_abstract_model() {
     let treq2 = renamed_package(&treq(), "test/treq2");
-    let Err(refusals) = refining(
+    let world = refining(
         &treq2,
         &treq(),
         &format!(
@@ -262,17 +283,191 @@ fn a_timed_abstract_model_is_refused_at_its_reference() {
              pre ASend2 using v on A::Call::send {{ self.x >= 1 ms }}\n{}",
             refinement("self.inflight")
         ),
-    ) else {
-        panic!("a timed abstract model is refused");
-    };
-    assert_eq!(
-        refusals,
-        [(
-            "unsupported_construct".to_owned(),
-            "declaration-form".to_owned(),
-            "A".to_owned()
-        )]
+    )
+    .unwrap_or_else(|refusals| panic!("{refusals:?}"));
+    assert_eq!(world.package.graph().refinements().len(), 1);
+}
+
+/// FR-900-AC-2: the abstract `y >= 1` guard rejects a concrete `send` at
+/// an earlier time, and exact replay must preserve the delay.
+#[trace("TC-2538", "FR-900-AC-2")]
+#[test]
+fn an_abstract_clock_guard_refutes_and_replays_the_exact_delay() {
+    let concrete = document(&["x"], &[("send", &["inflight"])]);
+    let abstract_model = renamed_package(
+        &document(&["y"], &[("send", &["inflight"])]),
+        "test/abstract",
     );
+    let world = refining(
+        &abstract_model,
+        &concrete,
+        &format!(
+            "{DENSE}time A dense unit ms;\n\
+             post ASend using v on A::Call::send {{ self.inflight }}\n\
+             pre ASendable using v on A::Call::send {{ self.y >= 1 ms }}\n\
+             pre MSend using v on M::Call::send {{ self.x >= 0 ms }}\n\
+             post MSent using v on M::Call::send {{ self.inflight }}\n{}",
+            refinement("self.inflight")
+        ),
+    )
+    .unwrap_or_else(|refusals| panic!("{refusals:?}"));
+    let refinement = the_refinement(&world);
+    let systems = open_systems(
+        refinement,
+        &world.concrete_request(),
+        &world.package,
+        vec![world.abstract_initial.clone()],
+    )
+    .expect("the subjects open");
+    let timed_abstract = TimedSystem::new(&systems.abstract_system, refinement.abstract_model())
+        .expect("the abstract model is timed");
+    let abstract_steps = timed_abstract
+        .guarded_steps(&timed_abstract.initial()[0].discrete())
+        .expect("the abstract initial state expands");
+    assert!(
+        abstract_steps.iter().any(|step| {
+            step.operation().contains("/Call/send\"")
+                && step.parts().iter().any(|part| !part.is_empty())
+        }),
+        "the abstract send has the y >= 1 clock guard: {abstract_steps:?}"
+    );
+    let outcome = safety(&world);
+    let TimedSafetyOutcome::Violated { counterexample, .. } = outcome else {
+        panic!("the abstract clock guard refutes the refinement: {outcome:?}");
+    };
+    assert!(matches!(
+        counterexample.refinement.as_ref(),
+        Some(RefinementFailure::AbstractClockGuard { .. })
+    ));
+    let delay = counterexample.prefix[0]
+        .delay
+        .as_ref()
+        .expect("the failing send has an exact delay");
+    let one = Rational::from_integer(Integer::one());
+    assert!(delay < &one);
+    let replayed = replay(&world, &counterexample);
+    assert!(
+        matches!(
+            &replayed,
+            RefinementTraceSettlement::Reproduced {
+                failure: RefinementFailure::AbstractClockGuard { .. },
+                ..
+            }
+        ),
+        "delay={delay:?}, prefix={:?}, replay={replayed:?}",
+        counterexample.prefix
+    );
+    let mut altered = (*counterexample).clone();
+    altered.prefix[0].delay = Some(one);
+    assert!(!matches!(
+        replay_attempt(&world, &altered),
+        Ok(RefinementTraceSettlement::Reproduced { .. })
+    ));
+}
+
+/// FR-900-AC-5: an untimed concrete model admits arbitrary delays between
+/// its steps, and the exact failing delay is replayed against abstract time.
+#[trace("TC-2539", "FR-900-AC-5")]
+#[test]
+fn an_untimed_concrete_step_uses_free_delay_against_abstract_clock_time() {
+    let world = free_delay_world("self.y >= 1 ms");
+    let outcome = check_free_delay_refinement(safety_request(&world), &Cancel::new())
+        .expect("the free-delay refinement is admitted")
+        .safety;
+    let TimedSafetyOutcome::Violated { counterexample, .. } = outcome else {
+        panic!("the zero-delay concrete send violates the timed abstract guard: {outcome:?}");
+    };
+    let delay = counterexample.prefix[0]
+        .delay
+        .as_ref()
+        .expect("the concrete send records its free delay");
+    assert!(delay < &Rational::from_integer(Integer::one()));
+    assert!(matches!(
+        counterexample.refinement.as_ref(),
+        Some(RefinementFailure::AbstractClockGuard { .. })
+    ));
+    let refinement = the_refinement(&world);
+    let systems = open_systems(
+        refinement,
+        &world.concrete_request(),
+        &world.package,
+        vec![world.abstract_initial.clone()],
+    )
+    .expect("the subjects open");
+    assert!(matches!(
+        replay_free_delay_refinement_trace(
+            refinement,
+            &systems,
+            &counterexample,
+            &Limits::default(),
+        ),
+        Ok(RefinementTraceSettlement::Reproduced {
+            failure: RefinementFailure::AbstractClockGuard { .. },
+            ..
+        })
+    ));
+}
+
+/// FR-900-AC-3: the first concrete delay crosses the abstract invariant at
+/// `y = 3`; EN-6 chooses the first integer point beyond it, time 4.
+#[trace("TC-2538", "FR-900-AC-3")]
+#[test]
+fn an_abstract_time_invariant_refutes_at_its_crossing_delay() {
+    let concrete = document(&["x"], &[("send", &["inflight"])]);
+    let abstract_model = renamed_package(
+        &document(&["y"], &[("send", &["inflight"])]),
+        "test/abstract",
+    );
+    let world = refining(
+        &abstract_model,
+        &concrete,
+        &format!(
+            "{DENSE}time A dense unit ms;\n\
+             time invariant Wait when {{ true }} {{ self.y <= 3 ms }}\n\
+             post ASend using v on A::Call::send {{ self.inflight }}\n\
+             pre MSend using v on M::Call::send {{ self.x >= 0 ms }}\n\
+             post MSent using v on M::Call::send {{ self.inflight }}\n{}",
+            refinement("self.inflight")
+        ),
+    )
+    .unwrap_or_else(|refusals| panic!("{refusals:?}"));
+    let TimedSafetyOutcome::Violated { counterexample, .. } = safety(&world) else {
+        panic!("the abstract time invariant refutes the refinement");
+    };
+    assert!(matches!(
+        counterexample.refinement.as_ref(),
+        Some(RefinementFailure::AbstractTimeInvariant { .. })
+    ));
+    assert_eq!(
+        counterexample.prefix[0].delay,
+        Some(Rational::from_integer(Integer::from(4_i64)))
+    );
+    assert!(matches!(
+        replay(&world, &counterexample),
+        RefinementTraceSettlement::Reproduced {
+            failure: RefinementFailure::AbstractTimeInvariant { .. },
+            ..
+        }
+    ));
+}
+
+/// FR-900-AC-4: a derived abstract clock cannot be assigned by a field row.
+#[trace("TC-2539", "FR-900-AC-4")]
+#[test]
+fn a_field_row_cannot_map_an_abstract_clock() {
+    let treq2 = renamed_package(&treq(), "test/treq2");
+    let mapping =
+        refinement("self.inflight").replace("late = self.late;", "late = self.late; x = self.x;");
+    let Err(refusals) = refining(
+        &treq2,
+        &treq(),
+        &format!("{DENSE}time A dense unit ms;\n{CONTRACTS}{mapping}"),
+    ) else {
+        panic!("a field row cannot assign an abstract clock");
+    };
+    assert!(refusals.iter().any(|(code, cause, message)| {
+        code == "invalid_model_binding" && cause == "malformed-declaration" && message.contains("x")
+    }));
 }
 
 /// FR-430-AC-1: `TReq` refines `Req`, and EN-6's product holds. Its edges
@@ -359,6 +554,15 @@ pub(crate) fn replay(
     world: &Refining,
     payload: &TemporalCounterexample,
 ) -> RefinementTraceSettlement {
+    replay_attempt(world, payload).expect("the counterexample replays")
+}
+
+/// The raw FR-145 settlement, preserving refusal when an altered trace is
+/// inadmissible under the concrete timed model.
+pub(crate) fn replay_attempt(
+    world: &Refining,
+    payload: &TemporalCounterexample,
+) -> Result<RefinementTraceSettlement, fsl_replay::ReplayRefusal> {
     let [refinement] = world.package.graph().refinements() else {
         panic!("one refinement");
     };
@@ -370,7 +574,6 @@ pub(crate) fn replay(
     )
     .expect("the subjects open");
     replay_timed_refinement_trace(refinement, &systems, payload, &Limits::default())
-        .expect("the counterexample replays")
 }
 
 /// FR-430-AC-2: without the time invariant, the safety half is violated by

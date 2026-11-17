@@ -32,7 +32,7 @@ pub use certificate::certificate_item;
 pub use refine::{
     TimedLivenessHalf, TimedLivenessOutcome, TimedRefinementOutcome, TimedRefinementRefusal,
     TimedRefinementRequest, TimedRefinementStop, TimedRefinementUndecided, TimedSafetyOutcome,
-    check_timed_refinement,
+    check_free_delay_refinement, check_timed_refinement,
 };
 pub mod manifest;
 pub use dbm::{Bound, Dbm, DbmError};
