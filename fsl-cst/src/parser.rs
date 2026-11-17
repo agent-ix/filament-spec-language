@@ -15,7 +15,7 @@ use crate::lexer::Limits;
 use crate::token::{Kind, LexError};
 use filament_exact::Cancel;
 use fsl_foundation::selection::{
-    valid_selection_identity, ImportSelection, ModelSelection, ProfileSelection, SourceSelections,
+    ImportSelection, ModelSelection, ProfileSelection, SourceSelections, valid_selection_identity,
 };
 use fsl_foundation::{Phase, Source, Span, SyntaxLimit};
 
@@ -79,140 +79,20 @@ pub(super) fn parse(
     let compounds = grammar::complete_compound_spellings(&grammar);
     let (tokens, significant, mut diagnostics, mut recoveries) =
         scan(&source, limits, &compounds, cancel)?;
-    let mut parse_significant = significant.clone();
     let prelude_nodes = selection_prelude_nodes(&source, &grammar, &significant, limits, cancel);
-    // The word an `unsupported_construct`/`declaration-form` refusal is for;
-    // its message names the unit's selections, which are read once the tree is.
-    let mut undeclared_word: Option<(Span, String)> = None;
-    let mut declaration_form_at: Option<usize> = None;
-    let matched = if diagnostics.is_empty() {
-        let mut engine = Engine::new(&grammar, &significant, limits, cancel);
-        let matched = match engine.production(Production::CompleteUnit, 0) {
-            // A top-level match always leaves its root pending. Were that
-            // invariant broken, the unit is reported as a syntax failure
-            // with a recovery, never lowered to a silent one-node CST.
-            Outcome::Match(_) => engine.into_forest().ok_or_else(|| {
-                debug_assert!(false, "a matched unit leaves its root pending");
-                Failure::expected(0, format!("{:?}", Production::CompleteUnit))
-            }),
-            Outcome::No(failure) => {
-                if engine.starts_unknown_declaration(failure.position) {
-                    undeclared_word = significant
-                        .get(failure.position)
-                        .map(|token| (token.span, token.spelling.to_string()));
-                }
-                Err(failure)
-            }
-            Outcome::Exhausted(refusal) => {
-                let span = significant.get(refusal.position).map_or(
-                    Span {
-                        start: source.text().len(),
-                        end: source.text().len(),
-                    },
-                    |token| token.span,
-                );
-                return Err(super::diagnostic::resource_exhausted(
-                    &source,
-                    Phase::Parse,
-                    span,
-                    refusal.limit,
-                ));
-            }
-        };
-        match matched {
-            Ok(forest) => Some(forest),
-            Err(failure) => {
-                if let Some((forest, recovered, span)) = recover_at_protocol_delimiter(
-                    &grammar,
-                    &significant,
-                    limits,
-                    cancel,
-                    failure.position,
-                ) {
-                    parse_significant = recovered;
-                    diagnostics.push(*super::diagnostic::error(
-                        &source,
-                        CompleteCode::InvalidSyntax,
-                        CompleteCause::UnexpectedToken,
-                        Phase::Parse,
-                        span.start,
-                        span.end,
-                        "expected `}` before the next protocol declaration",
-                    ));
-                    recoveries.push(Recovery {
-                        kind: RecoveryKind::Insert,
-                        span,
-                        expected: "}".into(),
-                    });
-                    Some(forest)
-                } else {
-                    let span = significant.get(failure.position).map_or(
-                        Span {
-                            start: source.text().len(),
-                            end: source.text().len(),
-                        },
-                        |token| token.span,
-                    );
-                    let declaration_form = undeclared_word.is_some();
-                    let (code, cause) = if declaration_form {
-                        (
-                            CompleteCode::UnsupportedConstruct,
-                            CompleteCause::DeclarationForm,
-                        )
-                    } else {
-                        selection_code(&significant, failure.position).map_or(
-                            (
-                                CompleteCode::InvalidSyntax,
-                                if failure.position == significant.len() {
-                                    CompleteCause::UnexpectedEnd
-                                } else if malformed_decimal_argument(&significant, failure.position)
-                                {
-                                    CompleteCause::InvalidToken
-                                } else {
-                                    CompleteCause::UnexpectedToken
-                                },
-                            ),
-                            |code| (code, CompleteCause::UnsupportedSelection),
-                        )
-                    };
-                    let derived = derived_form(&significant, &failure);
-                    let expected = failure
-                        .expected
-                        .into_iter()
-                        .collect::<Vec<_>>()
-                        .join(" or ");
-                    if declaration_form {
-                        declaration_form_at = Some(diagnostics.len());
-                    }
-                    diagnostics.push(*super::diagnostic::error(
-                        &source,
-                        code,
-                        cause,
-                        if code == CompleteCode::InvalidSyntax || declaration_form {
-                            Phase::Parse
-                        } else {
-                            Phase::Profile
-                        },
-                        span.start,
-                        span.end,
-                        derived.map_or_else(|| format!("expected {expected}"), str::to_owned),
-                    ));
-                    recoveries.push(Recovery {
-                        kind: if failure.position == significant.len() {
-                            RecoveryKind::Insert
-                        } else {
-                            RecoveryKind::Delete
-                        },
-                        span,
-                        expected,
-                    });
-                    None
-                }
-            }
-        }
-    } else {
-        None
-    };
+    let (matched, parse_significant, mut parser_diagnostics, parser_recoveries) =
+        parse_with_declaration_recovery(
+            &source,
+            &grammar,
+            significant,
+            &diagnostics,
+            limits,
+            cancel,
+        )?;
+    diagnostics.append(&mut parser_diagnostics);
+    recoveries.extend(parser_recoveries);
+    diagnostics
+        .sort_by_key(|diagnostic| diagnostic.byte_span().map_or(usize::MAX, |span| span.start));
 
     let (nodes, root) = if let Some(forest) = matched {
         lower_tree(&source, &parse_significant, &forest)
@@ -245,22 +125,6 @@ pub(super) fn parse(
         selection_nodes,
         &mut diagnostics,
     );
-    if let (Some(at), Some((span, word))) = (declaration_form_at, undeclared_word) {
-        if let Some(slot) = diagnostics.get_mut(at) {
-            *slot = *super::diagnostic::error(
-                &source,
-                CompleteCode::UnsupportedConstruct,
-                CompleteCause::DeclarationForm,
-                Phase::Parse,
-                span.start,
-                span.end,
-                format!(
-                    "`{word}` begins no declaration form; the unit's selections are {}",
-                    selection_summary(&selections)
-                ),
-            );
-        }
-    }
     let cst = LosslessCst::new(source.clone(), tokens, nodes, root, recoveries);
     diagnostics.extend(interval_bounds(&source, &cst));
     diagnostics.extend(decimal_constructor_numbers(&source, &cst));
@@ -274,26 +138,319 @@ pub(super) fn parse(
     ))
 }
 
-/// The unit's header selections in source order, as a refusal names them.
-fn selection_summary(selections: &SourceSelections) -> String {
-    let profiles = selections
-        .profiles
+/// Parse a unit, recovering independently at declaration boundaries. The
+/// recovery path removes only a failed declaration from the parser's view;
+/// the original token stream remains the lossless CST source.
+fn parse_with_declaration_recovery(
+    source: &Source,
+    grammar: &Grammar,
+    significant: Vec<Significant>,
+    scanned: &[CompleteDiagnostic],
+    limits: Limits,
+    cancel: &Cancel,
+) -> Result<
+    (
+        Option<Forest>,
+        Vec<Significant>,
+        Vec<CompleteDiagnostic>,
+        Vec<Recovery>,
+    ),
+    Box<CompleteDiagnostic>,
+> {
+    const DIAGNOSTIC_BOUND: usize = 100;
+
+    let lexical_spans: Vec<_> = scanned
         .iter()
-        .map(|selection| format!("profile {} = \"{}\"", selection.alias, selection.identity));
-    let imports = selections
-        .imports
-        .iter()
-        .map(|selection| format!("import \"{}\"", selection.identity));
-    let models = selections
-        .models
-        .iter()
-        .map(|selection| format!("model {} = \"{}\"", selection.alias, selection.identity));
-    let all: Vec<String> = profiles.chain(imports).chain(models).collect();
-    if all.is_empty() {
-        "none".into()
-    } else {
-        all.join(", ")
+        .filter(|diagnostic| diagnostic.phase == Phase::Lex)
+        .filter_map(CompleteDiagnostic::byte_span)
+        .collect();
+    let mut tokens: Vec<_> = significant
+        .into_iter()
+        .filter(|token| {
+            !lexical_spans
+                .iter()
+                .any(|span| token.span.start < span.end && span.start < token.span.end)
+        })
+        .collect();
+    let mut diagnostics = Vec::new();
+    let mut recoveries = Vec::new();
+    let mut recovered_any = false;
+
+    loop {
+        let mut engine = Engine::new(grammar, &tokens, limits, cancel);
+        match engine.production(Production::CompleteUnit, 0) {
+            Outcome::Match(_) => {
+                return Ok((engine.into_forest(), tokens, diagnostics, recoveries));
+            }
+            Outcome::Exhausted(refusal) => {
+                let span = tokens.get(refusal.position).map_or(
+                    Span {
+                        start: source.text().len(),
+                        end: source.text().len(),
+                    },
+                    |token| token.span,
+                );
+                return Err(super::diagnostic::resource_exhausted(
+                    source,
+                    Phase::Parse,
+                    span,
+                    refusal.limit,
+                ));
+            }
+            Outcome::No(failure) => {
+                if let Some((forest, recovered, span)) = recover_at_protocol_delimiter(
+                    grammar,
+                    &tokens,
+                    limits,
+                    cancel,
+                    failure.position,
+                ) {
+                    let diagnostic = super::diagnostic::error(
+                        source,
+                        CompleteCode::InvalidSyntax,
+                        CompleteCause::UnexpectedToken,
+                        Phase::Parse,
+                        span.start,
+                        span.end,
+                        "expected `}` before the next protocol declaration",
+                    );
+                    return Ok((
+                        Some(forest),
+                        recovered,
+                        vec![*diagnostic],
+                        vec![Recovery {
+                            kind: RecoveryKind::Insert,
+                            span,
+                            expected: "}".into(),
+                        }],
+                    ));
+                }
+
+                let declaration_start = if engine.starts_unknown_declaration(failure.position) {
+                    None
+                } else {
+                    engine
+                        .declaration_starts
+                        .iter()
+                        .enumerate()
+                        .take(failure.position.saturating_add(1))
+                        .filter_map(|(index, started)| {
+                            (index < tokens.len() && *started).then_some(index)
+                        })
+                        .next_back()
+                };
+                let Some(start) = declaration_start else {
+                    if recovered_any {
+                        return Ok((None, tokens, diagnostics, recoveries));
+                    }
+                    let span = tokens.get(failure.position).map_or(
+                        Span {
+                            start: source.text().len(),
+                            end: source.text().len(),
+                        },
+                        |token| token.span,
+                    );
+                    let declaration_form = engine.starts_unknown_declaration(failure.position);
+                    let (code, cause) = if declaration_form {
+                        (
+                            CompleteCode::UnsupportedConstruct,
+                            CompleteCause::DeclarationForm,
+                        )
+                    } else {
+                        selection_code(&tokens, failure.position).map_or(
+                            (
+                                CompleteCode::InvalidSyntax,
+                                if failure.position == tokens.len() {
+                                    CompleteCause::UnexpectedEnd
+                                } else if malformed_decimal_argument(&tokens, failure.position) {
+                                    CompleteCause::InvalidToken
+                                } else {
+                                    CompleteCause::UnexpectedToken
+                                },
+                            ),
+                            |code| (code, CompleteCause::UnsupportedSelection),
+                        )
+                    };
+                    let expected = failure
+                        .expected
+                        .into_iter()
+                        .collect::<Vec<_>>()
+                        .join(" or ");
+                    let message = tokens
+                        .get(failure.position)
+                        .filter(|_| declaration_form)
+                        .map(|token| format!("`{}` begins no declaration form", token.spelling))
+                        .unwrap_or_else(|| {
+                            derived_form(
+                                &tokens,
+                                &Failure::expected(failure.position, expected.clone()),
+                            )
+                            .map_or_else(|| format!("expected {expected}"), str::to_owned)
+                        });
+                    diagnostics.push(*super::diagnostic::error(
+                        source,
+                        code,
+                        cause,
+                        if code == CompleteCode::InvalidSyntax || declaration_form {
+                            Phase::Parse
+                        } else {
+                            Phase::Profile
+                        },
+                        span.start,
+                        span.end,
+                        message,
+                    ));
+                    recoveries.push(Recovery {
+                        kind: if failure.position == tokens.len() {
+                            RecoveryKind::Insert
+                        } else {
+                            RecoveryKind::Delete
+                        },
+                        span,
+                        expected,
+                    });
+                    return Ok((None, tokens, diagnostics, recoveries));
+                };
+
+                let next = next_declaration_start(
+                    grammar,
+                    &tokens,
+                    failure.position.max(start.saturating_add(1)),
+                );
+                let end = next.unwrap_or(tokens.len());
+                let region = if start < end {
+                    Span {
+                        start: tokens[start].span.start,
+                        end: tokens[end - 1].span.end,
+                    }
+                } else {
+                    tokens.get(start).map_or(
+                        Span {
+                            start: source.text().len(),
+                            end: source.text().len(),
+                        },
+                        |token| token.span,
+                    )
+                };
+                let has_lexical_error = lexical_spans
+                    .iter()
+                    .any(|span| span.start < region.end && region.start < span.end);
+                if !has_lexical_error {
+                    if scanned.len().saturating_add(diagnostics.len()) >= DIAGNOSTIC_BOUND {
+                        diagnostics.push(*super::diagnostic::error(
+                            source,
+                            CompleteCode::InvalidSyntax,
+                            CompleteCause::DiagnosticListCut,
+                            Phase::Parse,
+                            failure_span(source, &tokens, failure.position).start,
+                            failure_span(source, &tokens, failure.position).end,
+                            format!(
+                                "diagnostic list cut at the s1.diagnostics bound of {DIAGNOSTIC_BOUND}"
+                            ),
+                        ));
+                        return Ok((None, tokens, diagnostics, recoveries));
+                    }
+                    let span = failure_span(source, &tokens, failure.position);
+                    let expected = failure
+                        .expected
+                        .into_iter()
+                        .collect::<Vec<_>>()
+                        .join(" or ");
+                    let message = derived_form(
+                        &tokens,
+                        &Failure::expected(failure.position, expected.clone()),
+                    )
+                    .map_or_else(|| format!("expected {expected}"), str::to_owned);
+                    diagnostics.push(*super::diagnostic::error(
+                        source,
+                        CompleteCode::InvalidSyntax,
+                        if failure.position == tokens.len() {
+                            CompleteCause::UnexpectedEnd
+                        } else {
+                            CompleteCause::UnexpectedToken
+                        },
+                        Phase::Parse,
+                        span.start,
+                        span.end,
+                        message,
+                    ));
+                }
+                recoveries.push(Recovery {
+                    kind: RecoveryKind::Delete,
+                    span: region,
+                    expected: "next declaration".into(),
+                });
+                tokens.drain(start..end);
+                recovered_any = true;
+                if next.is_none() && tokens.is_empty() {
+                    return Ok((None, tokens, diagnostics, recoveries));
+                }
+            }
+        }
     }
+}
+
+fn failure_span(source: &Source, tokens: &[Significant], position: usize) -> Span {
+    tokens.get(position).map_or(
+        Span {
+            start: source.text().len(),
+            end: source.text().len(),
+        },
+        |token| token.span,
+    )
+}
+
+fn next_declaration_start(grammar: &Grammar, tokens: &[Significant], from: usize) -> Option<usize> {
+    let starts = declaration_starts(grammar);
+    tokens
+        .iter()
+        .enumerate()
+        .skip(from)
+        .find_map(|(position, token)| starts.contains(token.spelling.as_ref()).then_some(position))
+}
+
+fn declaration_starts(grammar: &Grammar) -> BTreeSet<String> {
+    fn first(
+        rule: &Rule,
+        grammar: &Grammar,
+        seen: &mut BTreeSet<Production>,
+        output: &mut BTreeSet<String>,
+    ) {
+        match rule {
+            Rule::Terminal(Terminal::Exact(word) | Terminal::Literal(word)) => {
+                output.insert((*word).to_owned());
+            }
+            Rule::Terminal(Terminal::ExtensionKeyword(word)) => {
+                output.insert(word.to_string());
+            }
+            Rule::Terminal(_) => {}
+            Rule::Production(production) => {
+                if seen.insert(*production) {
+                    if let Some(rule) = grammar.get(production) {
+                        first(rule, grammar, seen, output);
+                    }
+                    seen.remove(production);
+                }
+            }
+            Rule::Sequence(rules) => {
+                if let Some(rule) = rules.first() {
+                    first(rule, grammar, seen, output);
+                }
+            }
+            Rule::Choice(rules) => {
+                for rule in rules {
+                    first(rule, grammar, seen, output);
+                }
+            }
+            Rule::Optional(rule) | Rule::Repeat { rule, .. } => first(rule, grammar, seen, output),
+        }
+    }
+
+    let mut output = BTreeSet::new();
+    if let Some(rule) = grammar.get(&Production::Declaration) {
+        first(rule, grammar, &mut BTreeSet::new(), &mut output);
+    }
+    output
 }
 
 /// Recover a missing protocol-body close immediately before the next

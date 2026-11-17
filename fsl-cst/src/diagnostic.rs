@@ -4,7 +4,7 @@
 use fsl_foundation::diagnostic::LimitKind;
 use fsl_foundation::source::provenance::SourceRegion;
 use fsl_foundation::source::{
-    SourceLabel, SourceReadCause, SourceReadRefusal, BLANK_LABEL_TAG, EMPTY_PATH_TAG,
+    BLANK_LABEL_TAG, EMPTY_PATH_TAG, SourceLabel, SourceReadCause, SourceReadRefusal,
 };
 use fsl_foundation::{Phase, Source, SourceIdentity, SyntaxLimit};
 
@@ -22,6 +22,9 @@ pub enum CompleteCause {
     UnexpectedEnd,
     /// `invalid_syntax`: bytes that form no token.
     InvalidToken,
+    /// `invalid_syntax`: further independent diagnostics were suppressed at
+    /// the configured diagnostic-list bound.
+    DiagnosticListCut,
     /// `invalid_syntax`: a string literal with a malformed escape.
     InvalidEscape,
     /// `unsupported_construct`: a top-level declaration begins with a word that
@@ -111,6 +114,7 @@ impl CompleteCause {
             Self::UnexpectedToken => "unexpected-token",
             Self::UnexpectedEnd => "unexpected-end",
             Self::InvalidToken => "invalid-token",
+            Self::DiagnosticListCut => "diagnostic-list-cut",
             Self::InvalidEscape => "invalid-escape",
             Self::DeclarationForm => "declaration-form",
             Self::UnsupportedSelection => "unsupported-selection",
@@ -152,6 +156,7 @@ impl CompleteCause {
             Self::UnexpectedToken
             | Self::UnexpectedEnd
             | Self::InvalidToken
+            | Self::DiagnosticListCut
             | Self::InvalidEscape => code == CompleteCode::InvalidSyntax,
             Self::DeclarationForm => code == CompleteCode::UnsupportedConstruct,
             Self::UnsupportedSelection => matches!(
@@ -407,7 +412,7 @@ pub fn resource_exhausted(
 
 #[cfg(test)]
 mod tests {
-    use super::{resource_exhausted, CompleteCause, CompleteCode};
+    use super::{CompleteCause, CompleteCode, resource_exhausted};
     use fsl_foundation::diagnostic::LimitKind;
     use fsl_foundation::{Phase, Source, SourceIdentity, Span, SyntaxLimit};
 
