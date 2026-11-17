@@ -284,6 +284,17 @@ fn document(busy: bool, reset: bool) -> Vec<u8> {
 /// The unit text: the header selecting the domain package as `V`, the `step`
 /// contract of `vault`, and `body`.
 fn unit_text(other: Option<&[u8]>, vault: Vault, reset: bool, body: &str) -> String {
+    unit_text_with_functions(other, vault, reset, "", body)
+}
+
+/// The unit text with extra function declarations before the model contracts.
+fn unit_text_with_functions(
+    other: Option<&[u8]>,
+    vault: Vault,
+    reset: bool,
+    functions: &str,
+    body: &str,
+) -> String {
     let second = if other.is_some() {
         format!("model {OTHER_ALIAS} = \"{OTHER}\";\n")
     } else {
@@ -295,7 +306,8 @@ fn unit_text(other: Option<&[u8]>, vault: Vault, reset: bool, body: &str) -> Str
          profile inf = \"filament.temporal.infinite-trace/v1\";\n\
          profile p = \"filament.protocol.finite-global/v1\";\n\
          model V = \"{PACKAGE}\";\n\
-         {second}function Noop using v(): Boolean pure {{ true }}\n{}{body}",
+         {second}function Noop using v(): Boolean pure {{ true }}\n\
+         {functions}{}{body}",
         vault.contracts(reset),
     )
 }
@@ -488,6 +500,26 @@ impl World {
         Self::started(vault, reset, &starts, declaration)
     }
 
+    /// [`Self::new`] with an additional function declaration checked under
+    /// `CheckMode::Kernel`; clauses and contracts remain Linked.
+    pub(crate) fn new_with_kernel_function(
+        vault: Vault,
+        reset: bool,
+        starts: &[(i64, i64)],
+        declaration: &str,
+        function: &str,
+    ) -> Self {
+        let snapshots = starts.iter().map(|start| vec![(KEY, *start)]).collect();
+        Self::build_with_kernel_function(
+            vault,
+            reset,
+            snapshots,
+            vec![KEY.to_owned()],
+            declaration,
+            function,
+        )
+    }
+
     /// [`Self::new`] from `starts`, each a vault `(h, l)` or, for `None`, an
     /// initial state whose population holds no object.
     pub(crate) fn started(
@@ -608,6 +640,27 @@ impl World {
         )
     }
 
+    fn build_with_kernel_function(
+        vault: Vault,
+        reset: bool,
+        starts: Vec<Vec<(&str, (i64, i64))>>,
+        universe: Vec<String>,
+        declaration: &str,
+        function: &str,
+    ) -> Self {
+        Self::assemble_with_mode(
+            vault,
+            reset,
+            starts,
+            None,
+            Vec::new(),
+            universe,
+            declaration,
+            function,
+            CheckMode::Kernel,
+        )
+    }
+
     /// The world over `starts`, whose snapshot `index` has the flag
     /// `flags[index]` (0 when `flags` holds none) in a busy vault, with the
     /// vaults `second_starts` as a second model under alias `N` when given.
@@ -619,6 +672,30 @@ impl World {
         flags: Vec<i64>,
         universe: Vec<String>,
         declaration: &str,
+    ) -> Self {
+        Self::assemble_with_mode(
+            vault,
+            reset,
+            starts,
+            second_starts,
+            flags,
+            universe,
+            declaration,
+            "",
+            CheckMode::Linked,
+        )
+    }
+
+    fn assemble_with_mode(
+        vault: Vault,
+        reset: bool,
+        starts: Vec<Vec<(&str, (i64, i64))>>,
+        second_starts: Option<Starts<'_>>,
+        flags: Vec<i64>,
+        universe: Vec<String>,
+        declaration: &str,
+        function: &str,
+        mode: CheckMode,
     ) -> Self {
         let document = document(vault.busy(), reset);
         let other = second_starts.as_ref().map(|_| other_document(&document));
@@ -633,12 +710,13 @@ impl World {
             } else {
                 String::new()
             };
-        let base = unit_text(other, vault, reset, &ieee_package_clause);
+        let base = unit_text_with_functions(other, vault, reset, function, &ieee_package_clause);
         let graph = declarations(&documents, &base)
-            .check(CheckMode::Linked, CheckingLimits::default())
+            .check(mode, CheckingLimits::default())
             .unwrap_or_else(|refusals| panic!("{base}: the unit checks: {refusals:?}"));
         let package = CheckedPackage::link(graph);
-        let text = unit_text(other, vault, reset, &format!("{declaration}\n"));
+        let text =
+            unit_text_with_functions(other, vault, reset, function, &format!("{declaration}\n"));
         let mut checked = check_hyper_clauses(&declarations(&documents, &text));
         let clause = match checked.pop() {
             Some(Ok(CheckedHyper::Behaviours(clause))) if checked.is_empty() => *clause,
