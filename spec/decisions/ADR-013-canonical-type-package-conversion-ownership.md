@@ -108,6 +108,22 @@ ADR-011 E9, the one exception R-06 names.
 | normalized | Equal iff the closed preimage values are structurally equal. The preimage is compared as a value, through its RFC 8785 JCS bytes where a byte form is needed, and is never hashed. | checked node key, `EffectiveId`, domain-package identity and version |
 | semantic | Equal by meaning under a published law. | kernel `Value` equality under the FSpec operation catalog, `filament.op.ieee.numeric_equal` |
 
+An identity and an integrity fingerprint are different things. An identity
+says which thing a value is. Identities are compared by the kinds above, and
+a normalized identity is never hashed. An integrity fingerprint is a SHA-256
+digest of a value's canonical content bytes, encoded by the single RFC 8785
+encoder below. It says only whether content held at an identity has changed
+since it was first seen, so it cannot be compared in place of an identity,
+cited, or used as a key. The temporal evaluator's content fingerprint of a
+covered record sample (FR-993) is the one integrity fingerprint FSL defines.
+A record-sample position is identified by its index, and its fingerprint
+lets FR-502 refuse a changed sample at that index. The fingerprint may
+appear as an integrity member of a ledger's covered entry, which batch and
+carried evaluation write and check the same way, and in carried state bytes
+(FR-820, FR-643). It never appears as an identity or inside one, and never
+in a report's verdict members. No report or ledger carries a sample's text
+or value.
+
 One RFC 8785 JCS implementation produces every RFC 8785 encoding: the
 `quire-canonical` crate (`agent-ix/quire-canonical`; implementing ticket
 PLAT-987). FSL encodes through it. IR's adoption (IR-274) and quoin's

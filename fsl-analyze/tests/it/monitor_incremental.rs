@@ -1459,3 +1459,58 @@ fn a_finite_session_ignores_a_non_matching_selection_list() {
         );
     }
 }
+
+/// FR-993-AC-1 (batch half), FR-993-AC-2 (TC-2810): a later batch request
+/// that re-delivers a changed record sample at an index the input ledger
+/// covers is refused `Completeness` and returns that ledger; the same
+/// samples are accepted. Covered samples are named by index with a
+/// fingerprint, and no ledger spells a sample's text or value. The carried
+/// half (a `ClauseState` opened on the ledger, before and after
+/// `from_bytes`) is covered by the `ClauseState` unit tests.
+#[test]
+#[trace("TC-2810", "FR-993-AC-1", "FR-993-AC-2")]
+#[ignore = "QSL-2307: record samples covered by index with a content fingerprint in the ledger not implemented yet"]
+fn a_re_delivered_changed_sample_is_refused_in_batch_and_carried_evaluation() {
+    let world = world();
+    let run = |levels: &[i64], through: u64, ledger: Option<&spine::ProgressLedger>| {
+        let trace = TraceInput::Progressed {
+            trace: levels
+                .iter()
+                .map(|level| spine::sample_position(&text(*level)))
+                .collect(),
+            progress: progress(through),
+            lower_boundary: ProgressLowerBoundary::AuthoritativeOrigin,
+            binding: events_binding(),
+        };
+        run_package_temporal(&PackageTemporalRequest {
+            package: world.unit.package(),
+            packages: &world.packages,
+            model_limits: ModelNormalizationLimits::default(),
+            snapshots: &DocumentProvision::new(),
+            observation_limits: ObservationLimits::default(),
+            accounting: UNLIMITED,
+            name: "E",
+            trace: &trace,
+            over: None,
+            ledger,
+            sources: &world.sources,
+            authentication: None,
+            cancel: &Cancel::new(),
+        })
+    };
+    let valueless = |ledger: &spine::ProgressLedger| {
+        let spelled = format!("{ledger:?}");
+        assert!(!spelled.contains("integer"), "a sample value: {spelled}");
+        assert!(!spelled.contains("level"), "a sample text: {spelled}");
+    };
+    let held = run(&[1, 2], 1, None).ledger.expect("the retained ledger");
+    valueless(&held);
+    let other = run(&[1, 5, 3], 2, Some(&held));
+    let refused = format!("{:?}", other.disposition);
+    assert!(refused.contains("Completeness"), "{refused}");
+    assert_eq!(other.ledger.as_ref(), Some(&held));
+    let same = run(&[1, 2, 3], 2, Some(&held));
+    let accepted = format!("{:?}", same.disposition);
+    assert!(!accepted.contains("Completeness"), "{accepted}");
+    valueless(&same.ledger.expect("the updated ledger"));
+}
