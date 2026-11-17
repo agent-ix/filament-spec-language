@@ -6704,6 +6704,7 @@ impl<'a> Lowering<'a> {
             | Value::Reference(_)
             | Value::Population(_)
             | Value::Union(_) => return Err(fault(node.location(), KeyFault::UnbuiltLiteral)),
+            Value::Map(_) => return Err(Self::unbuilt_map_literal(node.location())),
             Value::Uuid(value) => LiteralValue::Uuid(*value),
             Value::Timestamp(value) => LiteralValue::Timestamp(*value),
             // A string written for a `Text` clause is a text literal of the
@@ -6720,6 +6721,13 @@ impl<'a> Lowering<'a> {
             "literal",
             semantic_type.clone(),
             BodyTerm::literal_node(semantic_type, literal),
+        )
+    }
+
+    fn unbuilt_map_literal(location: &Location) -> CheckRefusal {
+        refuse(
+            location,
+            CheckCause::PopulationFormNotChecked { what: "map" },
         )
     }
 
