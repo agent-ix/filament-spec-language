@@ -8250,6 +8250,13 @@ fn temporal_binding_rows(
 ) -> Result<WrittenTemporalRows, EmitRefusal> {
     use fsl_semantics::check::TemporalProfile;
 
+    #[derive(Clone, Copy, Eq, Ord, PartialEq, PartialOrd)]
+    enum MissingClockKind {
+        CompensationTemplate,
+        Await,
+        Other,
+    }
+
     let mut selected = BTreeMap::new();
     for selection in selections {
         let key = (
@@ -8328,6 +8335,7 @@ fn temporal_binding_rows(
         let key = (source.clone(), span.start, span.end);
         let Some(selection) = selected.remove(&key) else {
             missing.push((
+                MissingClockKind::Other,
                 source,
                 span,
                 format!("bounded temporal rule `{}`", clause.name()),
@@ -8403,6 +8411,7 @@ fn temporal_binding_rows(
         let key = (source.clone(), span.start, span.end);
         let Some(selection) = selected.remove(&key) else {
             missing.push((
+                MissingClockKind::Other,
                 source,
                 span,
                 format!("bounded temporal rule `{}`", hyper.name()),
@@ -8465,7 +8474,12 @@ fn temporal_binding_rows(
             let key = (source.clone(), span.start, span.end);
             let declaration_name = format!("await {}::{}", protocol.name, awaited.name);
             let Some(selection) = selected.remove(&key) else {
-                missing.push((source.clone(), span, declaration_name));
+                missing.push((
+                    MissingClockKind::Await,
+                    source.clone(),
+                    span,
+                    declaration_name,
+                ));
                 continue;
             };
             check_selected_definition(&source, span, profile, selection)?;
@@ -8540,6 +8554,7 @@ fn temporal_binding_rows(
             let key = (source.clone(), span.start, span.end);
             let Some(selection) = selected.remove(&key) else {
                 missing.push((
+                    MissingClockKind::CompensationTemplate,
                     source.clone(),
                     span,
                     format!("compensate template `{}::{}`", protocol.name, template.name),
@@ -8573,16 +8588,8 @@ fn temporal_binding_rows(
             span: fsl_foundation::Span { start, end },
         });
     }
-    missing.sort_by_key(|(_, _, declaration)| {
-        if declaration.starts_with("compensate template ") {
-            0
-        } else if declaration.starts_with("await ") {
-            1
-        } else {
-            2
-        }
-    });
-    if let Some((source_ref, span, declaration)) = missing.into_iter().next() {
+    missing.sort_by_key(|(kind, _, _, _)| *kind);
+    if let Some((_, source_ref, span, declaration)) = missing.into_iter().next() {
         return Err(EmitRefusal::MissingTemporalClockSelection {
             declaration,
             source_ref,
