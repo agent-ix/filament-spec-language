@@ -464,7 +464,6 @@ const R9: &str = "Rational[1, 9; 1, 9]";
 #[trace("TC-1906", "FR-700-AC-1", "FR-700-AC-3")]
 #[trace("FSpec-TC-1403", "FSpec-FR-146-AC-19")]
 #[test]
-#[ignore = "QSL-2168: rational product range by the FR-146 interval rule not implemented yet"]
 fn rational_products_and_sums_meet_their_normalized_intervals() {
     for body in [
         format!("function f using v(a: {R9}, b: {R9}): Rational[1, 81; 1, 81] pure {{ a * b }}"),
