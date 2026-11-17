@@ -33,7 +33,7 @@ quire-canonical = { workspace = true }
 # Strict admission authenticates the plan root final clause binding.
 filament-contract-model = { workspace = true }
 # The observation owner admits progress associations independently of FSL.
-filament-observation = { git = "https://github.com/agent-ix/filament-observation", branch = "main" }
+filament-observation = { git = "https://github.com/agent-ix/filament-observation", tag = "v0.1.0" }
 filament-exact = { workspace = true }
 num-bigint = "0.4.8"
 num-integer = "0.1.47"
@@ -41,7 +41,7 @@ num-traits = "0.2.19"
 thiserror = "2.0.20"
 # ADR-012 section 9: the `#[string_edge]` marker `claim_family` decodes wire
 # words at, and the trace tags of the tests.
-ix-trace-rs = { git = "https://github.com/agent-ix/ix-trace-rs", branch = "main" }
+ix-trace-rs = { git = "https://github.com/agent-ix/ix-trace-rs", tag = "v0.1.2" }
 base64 = "0.22"
 serde = { version = "1.0.228", features = ["derive"] }
 serde_json = "1.0.151"
