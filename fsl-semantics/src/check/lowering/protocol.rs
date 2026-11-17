@@ -1975,24 +1975,27 @@ impl Lowering<'_> {
                 identifier("channel", &location)?,
                 identifier(&channel.name, &location)?,
             ];
+            let mut channel_members = vec![
+                MemberTerm::bound("from", from),
+                MemberTerm::bound("to", to),
+                MemberTerm::bound("carries", LeafTerm::reference(carries)),
+                MemberTerm::binding("ordering", ordering),
+                MemberTerm::bound("delivery", delivery),
+            ];
+            if let Some(connection) = &channel.connection {
+                let connection = self.model_node(connection, &location)?;
+                channel_members.push(MemberTerm::bound(
+                    "connection",
+                    LeafTerm::reference(connection),
+                ));
+            }
             let key = self.protocol_member(
                 &location,
                 "channel",
                 boolean.clone(),
                 declaration,
                 None,
-                BodyTerm::application(
-                    Operator::ProtocolControl,
-                    operations.channel.clone(),
-                    boolean.clone(),
-                    vec![
-                        MemberTerm::bound("from", from),
-                        MemberTerm::bound("to", to),
-                        MemberTerm::bound("carries", LeafTerm::reference(carries)),
-                        MemberTerm::binding("ordering", ordering),
-                        MemberTerm::bound("delivery", delivery),
-                    ],
-                ),
+                BodyTerm::application(Operator::ProtocolControl, operations.channel.clone(), boolean.clone(), channel_members),
             )?;
             channels.push(key.clone());
             named.push((channel.name.clone(), key.clone()));
