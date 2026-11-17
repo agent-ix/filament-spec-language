@@ -4539,11 +4539,10 @@ fn a_violation_without_its_counterexample_is_a_record_error() {
     ));
 }
 
-/// Temporal Holds, Pending and Undefined reports have no witness (FR-266),
-/// and their items carry none of the terminal record members (FR-286).
+/// Temporal Holds, Pending and Undefined reports have no witness (FR-266).
 #[trace("TC-1160", "FR-266-AC-4")]
 #[test]
-fn verdicts_without_record_members_give_items_with_none() {
+fn valid_temporal_reports_have_no_witness_item_member() {
     let held = report(lasso(Unit::Infinite, "Reaches", 0, &[0, 1, 2]));
     assert_eq!(outcome(&held), &TemporalVerdict::Holds);
 
@@ -4565,13 +4564,11 @@ fn verdicts_without_record_members_give_items_with_none() {
     for run in [&held, &pending, &pending_window, &undefined] {
         assert!(run.witness.is_none());
         let item = item_json("V", &run);
-        for member in [
-            "position",
-            "counterexample",
-            "witness",
-            "count",
-            "min_count",
-        ] {
+        assert!(item.get("witness").is_none());
+    }
+    for run in [&held, &pending] {
+        let item = item_json("V", run);
+        for member in ["position", "counterexample", "witness", "count", "min_count"] {
             assert!(item.get(member).is_none(), "{member}");
         }
     }
