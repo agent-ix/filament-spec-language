@@ -741,6 +741,22 @@ pub enum RunCause {
     /// FR-031: an extracted program is a run input, not a source-only compile.
     #[error("an extracted program requires run")]
     ExtractionRequiresRun,
+    /// FR-031-AC-6: the request cannot select a package artifact and extracted source.
+    #[error("an extracted program cannot select a package artifact")]
+    ExtractionPackageConflict,
+    /// FR-031-AC-6: exactly one authored clause binding is required.
+    #[error("extracted program has {actual} clause bindings; expected exactly one")]
+    ExtractionClauseCount {
+        /// Number of bindings supplied in the request.
+        actual: usize,
+    },
+    /// FR-031-AC-7: Quire rejected the clause-only semantic context.
+    #[cfg(feature = "quire-extraction")]
+    #[error("Quire rejected the clause-only context")]
+    InvalidQuireContext {
+        /// Unchanged diagnostics returned by Quire's semantic-block validator.
+        diagnostics: Vec<fsl_source::SemanticFailure>,
+    },
     /// FR-027/FR-480: a source-unit list must not be empty.
     #[error("the compile program has no source units")]
     EmptyCompileProgram,
@@ -968,6 +984,10 @@ impl RunCause {
             | Self::CompleteRunSelection(_)
             | Self::EmptyCompileProgram => Code::InvalidRequest,
             Self::ExtractionRequiresRun => Code::ExtractionRequiresRun,
+            Self::ExtractionPackageConflict => Code::ExtractionPackageConflict,
+            Self::ExtractionClauseCount { .. } => Code::ExtractionClauseCount,
+            #[cfg(feature = "quire-extraction")]
+            Self::InvalidQuireContext { .. } => Code::InvalidQuireContext,
             Self::Spine(failure) => failure.refusal.code(),
             Self::ExtensionCatalog(_) => Code::InvalidPackage,
             Self::SpineRun(refusal) => refusal.code(),
@@ -1184,6 +1204,34 @@ impl RunError {
                         self.outcome_message(),
                     ),
                 ])
+            }
+            #[cfg(feature = "quire-extraction")]
+            RunCause::InvalidQuireContext { diagnostics } => {
+                let details = serde_json::json!({ "diagnostics": diagnostics });
+                OutcomeDocument::new(operation, Some("quire-context".to_owned()), self.category())
+                    .with_diagnostics(vec![OutcomeDiagnostic::new(
+                        None,
+                        Code::InvalidQuireContext.as_str(),
+                        None,
+                        self.outcome_message(),
+                    )
+                    .with_details(details.as_object().cloned())])
+            }
+            RunCause::ExtractionPackageConflict | RunCause::ExtractionClauseCount { .. } => {
+                let details = match &self.cause {
+                    RunCause::ExtractionClauseCount { actual } => Some(serde_json::Map::from_iter(
+                        [("actual".to_owned(), serde_json::json!(actual))],
+                    )),
+                    _ => None,
+                };
+                OutcomeDocument::new(operation, Some("request".to_owned()), self.category())
+                    .with_diagnostics(vec![OutcomeDiagnostic::new(
+                        None,
+                        self.cause.code().as_str(),
+                        None,
+                        self.outcome_message(),
+                    )
+                    .with_details(details)])
             }
         }
     }
@@ -1811,6 +1859,16 @@ pub fn read_clause_run_request(
 ) -> std::result::Result<fsl_replay::spine::ClauseRunRequest, ClauseRunRequestRefusal> {
     with_request(path, |directory, bytes| {
         let request: wire::Request = request(bytes)?;
+        #[cfg(feature = "quire-extraction")]
+        if request.program.extraction.is_some() && request.package.is_some() {
+            return Err(RunCause::ExtractionPackageConflict);
+        }
+        #[cfg(feature = "quire-extraction")]
+        if request.program.extraction.is_some() && request.program.clauses.len() != 1 {
+            return Err(RunCause::ExtractionClauseCount {
+                actual: request.program.clauses.len(),
+            });
+        }
         let clause = request
             .clause
             .as_ref()
@@ -1839,6 +1897,20 @@ pub fn read_clause_run_request(
         )?;
         reject_current_parameters_before_sources(&mut intake, request.clause.as_ref())?;
         let source = intake.source(&request.program.source, "program.source")?;
+        #[cfg(feature = "quire-extraction")]
+        if let Some(extraction) = &request.program.extraction {
+            let _body_identity = (
+                &extraction.body.authority,
+                &extraction.body.identity,
+                &extraction.body.document,
+            );
+            let binding = &request.program.clauses[0];
+            fsl_source::clause_context(&binding.package, source.source())
+                .map_err(|diagnostics| RunCause::InvalidQuireContext { diagnostics })?;
+        } else {
+            require_complete_edition(source.source())?;
+        }
+        #[cfg(not(feature = "quire-extraction"))]
         require_complete_edition(source.source())?;
         clause::read(&mut intake, &request, clause, source)
     })

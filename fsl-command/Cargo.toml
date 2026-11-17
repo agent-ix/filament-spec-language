@@ -7,6 +7,10 @@ rust-version = "1.98"
 license = "AGPL-3.0-or-later"
 description = "Non-core bounded request-file intake and typed command orchestration"
 
+[features]
+default = []
+quire-extraction = ["dep:fsl-source", "fsl-replay/quire-extraction"]
+
 [dependencies]
 ix-trace-rs = { git = "https://github.com/agent-ix/ix-trace-rs", branch = "main" }
 fsl-foundation = { path = "../fsl-foundation" }
@@ -20,6 +24,7 @@ fsl-inspect = { path = "../fsl-inspect" }
 fsl-route = { path = "../fsl-route" }
 fsl-forms = { path = "../fsl-forms" }
 fsl-package = { path = "../fsl-package" }
+fsl-source = { path = "../fsl-source", optional = true, features = ["quire-extraction"] }
 filament-contract-model = { workspace = true }
 filament-exact = { workspace = true }
 filament-semantic-value = { workspace = true }

@@ -142,20 +142,20 @@ fn every_complete_cause_appears_in_a_diagnostic_test() {
     }
 }
 
-/// FR-031-AC-6 and AC-7 (TC-109): both extraction codes stay catalogued, and
+/// FR-031-AC-6 and AC-7 (TC-109): the extraction refusal codes stay catalogued, and
 /// the clause-run request reader (FR-312) produces them: `extraction-package-conflict`
-/// for a request carrying `extraction` and `package`, `invalid-quire-context`
-/// for a clause-only context Quire rejects.
+/// for a request carrying `extraction` and `package`, `extraction-clause-count`
+/// for a non-singleton binding list, and `invalid-quire-context` for a context Quire rejects.
 #[ix_trace_rs::trace("TC-109", "FR-031-AC-6", "FR-031-AC-7")]
 #[test]
-#[ignore = "QSL-2203: the clause-run request reader does not produce extraction-package-conflict or invalid-quire-context yet"]
-fn the_request_reader_produces_both_extraction_codes() {
-    const READER: &str = include_str!("../../fsl-replay/src/spine/request.rs");
+fn the_request_reader_produces_the_extraction_refusal_codes() {
+    const READER: &str = include_str!("../../fsl-command/src/command.rs");
     for (spelling, code) in [
         (
             "extraction-package-conflict",
             Code::ExtractionPackageConflict,
         ),
+        ("extraction-clause-count", Code::ExtractionClauseCount),
         ("invalid-quire-context", Code::InvalidQuireContext),
     ] {
         assert_eq!(Code::from_code(spelling), Some(code));
