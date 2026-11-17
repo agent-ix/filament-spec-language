@@ -3,6 +3,7 @@
 
 mod analyze;
 mod clause;
+mod export_request;
 mod flow;
 mod items;
 mod monitor;
@@ -17,6 +18,10 @@ mod wire;
 pub use analyze::{
     AnalyzeInput, PreparedAnalyze, analyze, analyze_with_limits, analyze_with_providers,
     analyze_with_providers_and_limits, prepare_analyze,
+};
+pub use export_request::{
+    ExportDisposition, ExportLimits, ExportOutcome, ExportPackage, ExportRecord, ExportRequest,
+    ExportRequestError, ExportStatus,
 };
 pub use flow::{FlowAnalyzeError, analyze_flow_report};
 pub use monitor::{MonitorEvent, MonitorSummary, monitor};
