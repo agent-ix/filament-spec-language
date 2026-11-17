@@ -122,6 +122,40 @@ impl ReplayPackage {
         })
     }
 
+    /// FR-098-AC-34, FR-952: the check mode the replay recompile runs every
+    /// function body under, read from the `check_mode` member of the
+    /// package's `function` nodes. A package whose function bodies were
+    /// checked under `Kernel` records `kernel` on them (a declared clause
+    /// function always records `linked`), so one `kernel` node selects
+    /// `Kernel`; otherwise the recompile is `Linked`. A node whose member is
+    /// absent or not `linked`/`kernel` selects nothing here: the native
+    /// reader refuses it at admission (FR-952-AC-4), after the recompile.
+    pub(crate) fn check_mode(&self) -> filament_semantic_value::checking::CheckMode {
+        use filament_semantic_value::checking::CheckMode;
+        let nodes = member(self.document.root(), "semantic_graph")
+            .and_then(|graph| member(graph, "nodes"))
+            .and_then(|nodes| match nodes.node() {
+                Node::Array(items) => Some(items),
+                _ => None,
+            });
+        let kernel = nodes.is_some_and(|nodes| {
+            nodes.into_iter().any(|node| {
+                matches!(
+                    member(node, "node_tag").map(|tag| tag.node()),
+                    Some(Node::String("function"))
+                ) && matches!(
+                    member(node, "check_mode").map(|mode| mode.node()),
+                    Some(Node::String("kernel"))
+                )
+            })
+        });
+        if kernel {
+            CheckMode::Kernel
+        } else {
+            CheckMode::Linked
+        }
+    }
+
     pub(super) fn descriptor(&self) -> Result<Descriptor, ReplayRequestRefusal> {
         let root = self.document.root();
         let name = string(required(root, "name", "/package")?, "/package/name")?.to_owned();

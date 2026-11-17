@@ -42,6 +42,7 @@ mod abstraction;
 mod admission_corpus;
 mod bare_world;
 mod carried_quantity_paths;
+mod check_mode;
 mod checked_views;
 mod child_composite;
 mod clock_places;
@@ -1208,7 +1209,11 @@ fn written_nodes(package: &CheckedPackage) -> Vec<Value> {
     let all: Vec<&Candidate<'_>> = candidates.iter().collect();
     let mut nodes: Vec<_> = graph_order(&all)
         .into_iter()
-        .map(|candidate| candidate.wire_node(&StructuralIds::default()).unwrap())
+        .map(|candidate| {
+            candidate
+                .wire_node(&StructuralIds::default(), CheckMode::Linked)
+                .unwrap()
+        })
         .collect();
     write_index_segments(
         &mut nodes,

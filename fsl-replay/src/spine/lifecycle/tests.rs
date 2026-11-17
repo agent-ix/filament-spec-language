@@ -2327,6 +2327,7 @@ fn check_units_continues_past_a_protocol_refusal_only_when_asked() {
                 clocks: None,
                 continue_protocol_refusals,
                 refinement_internals: None,
+                check_mode: None,
                 extension_catalog: None,
             },
             SpineLimits::default(),
@@ -4714,5 +4715,62 @@ fn type_report_resolves_a_deep_body_without_rewalking_each_ancestry() {
     assert!(
         elapsed < std::time::Duration::from_secs(10),
         "the type report took {elapsed:?}"
+    );
+}
+
+/// FR-098-AC-34: the recompile checks under the mode it is given. A function
+/// whose divisor may be zero is refused `unproved-nonzero` under `Linked`
+/// and checks under `Kernel`, and the emitted package records `kernel` on it.
+#[trace("TC-1784", "FR-098-AC-34")]
+#[test]
+fn the_recompile_checks_under_the_given_check_mode() {
+    use filament_semantic_value::checking::CheckMode;
+    let unit = format!("{HEADER}function r using v(x: Int[0, 9]): Integer pure {{ 10 mod x }}\n");
+    let cancel = Cancel::new();
+    let dependencies = DependencyInput::default();
+    let packages = fsl_semantics::model::intake::package_input([]).expect("no model packages");
+    let run = |check_mode| {
+        let parsed = super::parse_for_continuation(
+            &request(unit.as_bytes()),
+            SourceLimits::default(),
+            &cancel,
+        )
+        .expect("the unit parses")
+        .into_value();
+        let admitted =
+            admit_parsed_unit_list(vec![parsed], &dependencies).expect("the unit is admitted");
+        let models = super::select_units(
+            &admitted,
+            &packages,
+            ModelNormalizationLimits::default(),
+            SourceLimits::default(),
+            &cancel,
+        )
+        .expect("no model is selected")
+        .into_value();
+        check_units_with_options(
+            &admitted,
+            "fixture".to_owned(),
+            &models,
+            &dependencies,
+            UnitCheckOptions {
+                check_mode,
+                ..UnitCheckOptions::default()
+            },
+            SpineLimits::default(),
+            &cancel,
+        )
+    };
+    assert!(run(None).is_err(), "Linked refuses the unproved divisor");
+    assert!(
+        run(Some(CheckMode::Linked)).is_err(),
+        "an explicit Linked is the default"
+    );
+    let checked = run(Some(CheckMode::Kernel))
+        .expect("Kernel leaves the divisor to run time")
+        .into_value();
+    assert_eq!(
+        checked[0].package().graph().function_check_mode(),
+        CheckMode::Kernel
     );
 }

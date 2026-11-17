@@ -1835,6 +1835,7 @@ pub(crate) fn recompile_with_temporal_selections(
         clocks,
         limits.spine,
         request.refinement_internals(),
+        request.package().check_mode(),
     )
     .map_err(|failure| locate_refinement_internals(request, failure))?;
     // Rule 6: every entry names a selection of the recompiled closure.
@@ -2038,6 +2039,7 @@ fn run_spine_units(
     clocks: RecompileClocks<'_>,
     limits: SpineLimits,
     refinement_internals: Option<&[filament_contract_model::CheckedRefinementInternal]>,
+    check_mode: filament_semantic_value::checking::CheckMode,
 ) -> Result<(Recompiled, filament_contract_model::CheckedPackageEvidence), ReplayRefusal> {
     #[cfg(test)]
     SPINE_RUNS.with(|runs| runs.set(runs.get() + 1));
@@ -2107,6 +2109,7 @@ fn run_spine_units(
                 .map(internals_value)
                 .transpose()?
                 .as_ref(),
+            check_mode: Some(check_mode),
             extension_catalog: None,
         },
         limits,

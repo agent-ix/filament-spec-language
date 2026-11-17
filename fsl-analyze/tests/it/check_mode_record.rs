@@ -19,7 +19,6 @@ use crate::prob_world::{self, World};
 #[trace("TC-2662", "FR-952-AC-1")]
 #[trace("FSpec-TC-1860", "FSpec-FR-770-AC-1")]
 #[test]
-#[ignore = "QSL-2330: S4 writes no check_mode member on function nodes yet"]
 fn every_function_node_records_its_check_mode() {
     let body = "function g using v(x: Int[0, 9], y: Int[1, 9]): Integer pure { x mod y }\n";
     let items = json!([]);

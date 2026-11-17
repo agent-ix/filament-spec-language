@@ -801,6 +801,9 @@ pub struct CheckedGraph {
     /// FR-092/FR-093: every lowered, keyed node of this
     /// package's functions.
     semantic_graph: lowering::SemanticGraph,
+    /// FR-952: the mode every source-declared function body was checked
+    /// under (FR-495). A declared clause is always checked under `Linked`.
+    function_check_mode: CheckMode,
     /// Producer-retained expression identities, owned by this graph rather
     /// than written into its borrowed checked bodies.
     checked_node_keys: BTreeMap<usize, lowering::CheckedNodeKeys>,
@@ -1072,6 +1075,7 @@ impl DebugWith for CheckedGraph {
             requirements,
             model_correspondence,
             type_nodes,
+            function_check_mode,
             semantic_graph,
             checked_node_keys: _,
             dependency_references,
@@ -1166,6 +1170,7 @@ impl DebugWith for CheckedGraph {
             .field("model_correspondence", &With(model_correspondence, table))
             .field("type_nodes", &NodeValueMap(type_nodes.iter(), table))
             .field("semantic_graph", &With(semantic_graph, table))
+            .field("function_check_mode", &function_check_mode)
             .field(
                 "dependency_references",
                 &dependency_references
@@ -7473,6 +7478,7 @@ impl PackageDeclarations {
             type_nodes: key_order::sorted_by_key(type_nodes, |(node, _)| node)
                 .into_iter()
                 .collect(),
+            function_check_mode: mode,
             semantic_graph,
             checked_node_keys,
             dependency_references,
@@ -8586,6 +8592,12 @@ impl CheckedGraph {
     /// FR-092/FR-093: every lowered, keyed node of this package's functions.
     pub fn semantic_graph(&self) -> &SemanticGraph {
         &self.semantic_graph
+    }
+
+    /// FR-952: the check mode every source-declared function body was checked
+    /// under; a declared clause function is `Linked` whatever this is.
+    pub fn function_check_mode(&self) -> CheckMode {
+        self.function_check_mode
     }
 
     /// The producer-assigned graph identity of this checked expression.

@@ -436,6 +436,19 @@ impl SemanticNode {
             .collect()
     }
 
+    /// FR-952: whether this is a clause function synthesized from a declared
+    /// model clause (FR-094), whose body carries the trailing `clause`
+    /// binding. A declared clause is always checked under `Linked`.
+    pub fn is_clause_function(&self) -> bool {
+        if self.content.node_tag != NodeTag::Function {
+            return false;
+        }
+        let BodyTerm::Aggregate(AggregateTerm { members }) = &self.content.body else {
+            return false;
+        };
+        matches!(members.last(), Some(MemberTerm::Binding(Binding { name, .. })) if name == "clause")
+    }
+
     /// FR-092 "Function nodes": a function node's body expression node, read
     /// from its `body` binding. `None` for every node that is not a function
     /// node and for a function node whose body is not a keyed reference.

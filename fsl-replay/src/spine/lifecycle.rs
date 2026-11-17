@@ -1841,6 +1841,9 @@ pub(crate) struct UnitCheckOptions<'a> {
     pub(crate) clocks: Option<&'a super::RequestClocks>,
     pub(crate) continue_protocol_refusals: bool,
     pub(crate) refinement_internals: Option<&'a serde_json::Value>,
+    /// FR-098-AC-34: the mode every function body is checked under; `None`
+    /// is `Linked`. A replay passes the mode its proving package records.
+    pub(crate) check_mode: Option<CheckMode>,
     pub(crate) extension_catalog: Option<ProfileCatalogInput<'a>>,
 }
 
@@ -1887,6 +1890,7 @@ pub(crate) fn check_units_with_options(
             temporal_selections: options.temporal_selections,
             clocks: options.clocks,
             integer_division: options.integer_division,
+            check_mode: options.check_mode.unwrap_or(CheckMode::Linked),
             extension_catalog: options.extension_catalog,
             active: Vec::new(),
             compiled: BTreeMap::new(),
@@ -2224,6 +2228,7 @@ fn check_with_context_and_temporal_selections(
             clocks,
             integer_division,
             extension_catalog,
+            check_mode: CheckMode::Linked,
             active: Vec::new(),
             compiled: BTreeMap::new(),
             import_edges: 0,
@@ -3496,6 +3501,7 @@ struct Resolution<'a> {
     dependencies: &'a DependencyInput,
     packages: &'a fsl_semantics::model::intake::PackageInput,
     continuation_source: RawSourceRef,
+    check_mode: CheckMode,
     limits: SpineLimits,
     cancel: &'a Cancel,
     temporal_selections: &'a [fsl_package::TemporalClockSelection],
@@ -3959,12 +3965,12 @@ impl<'a> Resolution<'a> {
         let graph = charged(cancel, &mut self.work.s3, || {
             if frame.raw == self.continuation_source {
                 declarations.check_with_protocol_continuation_and_cancel(
-                    CheckMode::Linked,
+                    self.check_mode,
                     limits.checking,
                     cancel,
                 )
             } else {
-                declarations.check_with_cancel(CheckMode::Linked, limits.checking, cancel)
+                declarations.check_with_cancel(self.check_mode, limits.checking, cancel)
             }
         })
         .map_err(|refusals| {
