@@ -220,7 +220,11 @@ fn an_empty_join_list_is_refused_at_its_closing_bracket() {
     );
 
     let run = "sequence Main { parallel Plain { branch a sequence A { } branch b sequence B { } } join all [a]; }";
-    assert!(parse_admitted(&protocol("on origin", "", run)).1.is_admissible());
+    assert!(
+        parse_admitted(&protocol("on origin", "", run))
+            .1
+            .is_admissible()
+    );
 }
 
 /// Verifies the parse only and claims no criterion.
