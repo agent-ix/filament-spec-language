@@ -795,7 +795,7 @@ fn binding(clock_name: &str) -> TraceBinding {
 fn a_timestamped_trace_is_authenticated_and_reads_indeterminate() {
     let mut world = world();
     let refs = world.refs("t", &[0, 2, 0]);
-    let trace = window(refs.clone(), &[0, 2, 5], 5, binding("ms"));
+    let trace = window(refs.clone(), &[0, 2, 5], 5, binding("model-steps"));
     let run = |trace: &TraceInput, sources: &[Source], selections: &[TemporalClockSelection]| {
         world.run(
             &world.window,
@@ -837,7 +837,7 @@ fn a_timestamped_trace_is_authenticated_and_reads_indeterminate() {
     };
     assert_eq!(clause, "Window");
 
-    let early = window(refs.clone(), &[0, 2, 5], 3, binding("ms"));
+    let early = window(refs.clone(), &[0, 2, 5], 3, binding("model-steps"));
     let pending = run(&early, &world.window.sources, &world.window.selections)
         .expect("the request completes");
     assert_eq!(only(&pending).verdict, MonitorVerdict::Pending);
@@ -872,7 +872,7 @@ fn a_binding_is_authenticated_before_any_position_is_admitted() {
     assert_eq!(record.fields["mismatched_dimension"], "Clock");
 
     // The agreeing binding reaches admission, which names position 1.
-    let agreeing = window(refs, &[0, 2, 5], 5, binding("ms"));
+    let agreeing = window(refs, &[0, 2, 5], 5, binding("model-steps"));
     let result = world.run(
         &world.window,
         vec![model_clause("Window")],
@@ -1009,7 +1009,7 @@ fn window_run(
 fn defective_clock_selections_are_request_refusals() {
     let mut world = world();
     let refs = world.refs("s", &[0, 2, 0]);
-    let trace = window(refs, &[0, 2, 5], 5, binding("ms"));
+    let trace = window(refs, &[0, 2, 5], 5, binding("model-steps"));
     let all = world.window.selections.clone();
     let packages = world.documents.packages.clone();
     let fields = |member: &str| std::collections::BTreeMap::from([("member", member.to_owned())]);
@@ -1094,7 +1094,7 @@ fn defective_clock_selections_are_request_refusals() {
 fn domain_packages_the_strict_read_refuses_are_request_refusals() {
     let mut world = world();
     let refs = world.refs("p", &[0, 2, 0]);
-    let trace = window(refs, &[0, 2, 5], 5, binding("ms"));
+    let trace = window(refs, &[0, 2, 5], 5, binding("model-steps"));
     let selections = world.window.selections.clone();
     let identity = world
         .documents
@@ -1151,7 +1151,7 @@ fn a_forged_binding_dimension_is_refused_before_admission() {
     let selections = world.window.selections.clone();
     let packages = world.documents.packages.clone();
     let forged = |change: &dyn Fn(&mut TraceBinding)| {
-        let mut forged = binding("ms");
+        let mut forged = binding("model-steps");
         change(&mut forged);
         window(refs.clone(), &[0, 2, 5], 5, forged)
     };
@@ -1339,7 +1339,7 @@ fn run_clauses(
 fn request_defects_name_the_owner_or_the_first_clause() {
     let mut world = world();
     let refs = world.refs("n", &[0, 2, 0]);
-    let trace = window(refs, &[0, 2, 5], 5, binding("ms"));
+    let trace = window(refs, &[0, 2, 5], 5, binding("model-steps"));
     let all = world.window.selections.clone();
     assert_eq!(all.len(), 2, "Window and Window2 each bear a clock");
     let packages = world.documents.packages.clone();
@@ -1409,7 +1409,7 @@ fn a_missing_library_domain_package_is_refused_at_the_closure_stage() {
     let text = window_unit().replacen("model M", "import \"test/lib\" as g;\nmodel M", 1);
     let unit = compile_with(&world.documents, text, &library);
     let refs = world.refs("c", &[0, 2, 0]);
-    let trace = window(refs, &[0, 2, 5], 5, binding("ms"));
+    let trace = window(refs, &[0, 2, 5], 5, binding("model-steps"));
     let selections = unit.selections.clone();
     let empty = fsl_semantics::model::intake::PackageInput::default();
     let result = run_clauses(&world, &unit, &["Window"], &trace, &selections, &empty);
@@ -1436,7 +1436,7 @@ fn a_missing_library_domain_package_is_refused_at_the_closure_stage() {
 fn a_tied_stamp_without_order_keys_is_a_trace_refused_record() {
     let mut world = world();
     let refs = world.refs("u", &[0, 1, 2]);
-    let mut trace = window(refs, &[0, 1, 1], 5, binding("ms"));
+    let mut trace = window(refs, &[0, 1, 1], 5, binding("model-steps"));
     if let TraceInput::Timestamped { window, .. } = &mut trace {
         window.missing_valuations.clear();
     }
