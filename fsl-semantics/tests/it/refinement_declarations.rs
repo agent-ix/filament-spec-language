@@ -23,7 +23,7 @@ use fsl_semantics::check::{
 use fsl_semantics::model::accounting::ModelNormalizationLimits;
 use fsl_semantics::model::intake::{admit_unit, meaning, package_input};
 use ix_trace_rs::trace;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
 pub(crate) const INTEGER: &str = "ix://filament/native/Integer";
 const BOOLEAN: &str = "ix://filament/native/Boolean";
@@ -627,7 +627,7 @@ pub(crate) fn refused(models: &[(&str, &str, &[u8])], body: &str) -> Vec<Refused
 }
 
 /// The one refusal of `found`.
-fn only(found: &[Refused]) -> &Refused {
+pub(crate) fn only(found: &[Refused]) -> &Refused {
     let [only] = found else {
         panic!(
             "one refusal: {:?}",
@@ -680,7 +680,7 @@ pub(crate) fn cas_refines_counter() -> String {
 }
 
 /// Add refinement rows before the declaration's closing brace.
-fn with_refinement_rows(mut body: String, rows: &str) -> String {
+pub(crate) fn with_refinement_rows(mut body: String, rows: &str) -> String {
     let closing = body
         .rfind('}')
         .expect("a refinement body ends with a brace");
@@ -995,8 +995,8 @@ fn a_present_option_with_the_wrong_row_type_refuses_at_its_expression() {
     assert_eq!(refusal.at, "Some(self.value)");
 }
 
-const NESTED_SPEC: &str = "example/nested-spec";
-const NESTED_IMPL: &str = "example/nested-impl";
+pub(crate) const NESTED_SPEC: &str = "example/nested-spec";
+pub(crate) const NESTED_IMPL: &str = "example/nested-impl";
 
 /// `field` with the multiplicity `lower..upper` and the presence `presence`.
 fn shaped(mut value: Value, (lower, upper, ordered): (u32, u32, bool), presence: &str) -> Value {
@@ -1013,7 +1013,7 @@ fn shaped(mut value: Value, (lower, upper, ordered): (u32, u32, bool), presence:
 /// and `cells` a `Set<Reference<Cell>>[0, 2]`, and a concrete `Ring { size,
 /// chain, link }` over `Slot { value }`, whose `chain` is a
 /// `Sequence<Reference<Ring>>[0, 2]` and `link` an `Option<Reference<Ring>>`.
-fn nested_models() -> (Vec<u8>, Vec<u8>) {
+pub(crate) fn nested_models() -> (Vec<u8>, Vec<u8>) {
     /// The record value type `Box { target }`, holding a `Reference<object>`.
     fn boxed(package: &str, object: &str) -> Value {
         declaration(
@@ -1116,7 +1116,7 @@ fn nested_models() -> (Vec<u8>, Vec<u8>) {
 }
 
 /// A refinement of the nested models whose `Queue` object row holds `rows`.
-fn nested_refinement(rows: &str) -> String {
+pub(crate) fn nested_refinement(rows: &str) -> String {
     format!(
         "refinement NestedRows using inf abstract Q concrete R {{\n\
          population Q::queues from R::rings;\n\
@@ -1125,75 +1125,6 @@ fn nested_refinement(rows: &str) -> String {
          object Q::Cell from R::Slot {{ value = self.value; }}\n\
          }}"
     )
-}
-
-/// FR-135-AC-6 (TC-540 step 6): a `Sequence<Reference<Queue>>[0, 2]` field
-/// mapped by a row of type `Sequence<Reference<Ring>>[0, 2]` refuses
-/// `unsupported_construct`/`not-yet-implemented` naming `nested-reference-row`
-/// at the row's expression, and so do an option, a record, a tuple and a
-/// union holding a reference, before any check of the row's type; a
-/// population-reference row `cells = R::slots` checks, as does the same field
-/// as a plain `Reference<Queue>` mapped by `self`.
-#[trace("TC-540", "FR-135-AC-6")]
-#[test]
-fn a_row_nesting_a_reference_other_than_a_whole_population_is_unsupported() {
-    let (spec, concrete) = nested_models();
-    let models = [
-        ("Q", NESTED_SPEC, &spec[..]),
-        ("R", NESTED_IMPL, &concrete[..]),
-    ];
-
-    let graph = check_with(
-        "",
-        &models,
-        &nested_refinement("head = self; cells = R::slots;"),
-    )
-    .unwrap_or_else(|refusals| {
-        panic!(
-            "{:?}",
-            refusals.iter().map(|r| &r.refusal).collect::<Vec<_>>()
-        )
-    });
-    assert_eq!(only_refinement(&graph).objects().len(), 2);
-
-    for (declarations, row, at) in [
-        ("", "chain = self.chain;", "self.chain"),
-        ("", "link = self.link;", "self.link"),
-        ("", "box = self.box;", "self.box"),
-        (
-            "tuple Pair(Reference<R::Ring>, Boolean);",
-            "box = Pair(self, true);",
-            "Pair(self, true)",
-        ),
-        (
-            "union Holder { Empty, Has(Reference<R::Ring>) }",
-            "box = Holder::Has(self);",
-            "Holder::Has(self)",
-        ),
-    ] {
-        let found = refused(
-            &models,
-            &format!("{declarations}\n{}", nested_refinement(row)),
-        );
-        let nested = only(&found);
-        assert_eq!(
-            nested.code_and_cause(),
-            (Code::UnsupportedConstruct, Some("not-yet-implemented")),
-            "{row}"
-        );
-        assert_eq!(nested.at, at);
-        let RefinementCause::Unsupported {
-            feature,
-            profile,
-            subject,
-        } = nested.refinement()
-        else {
-            panic!("an unsupported feature: {:?}", nested.refinement());
-        };
-        assert_eq!(feature.name(), "nested-reference-row");
-        assert_eq!(profile, "filament.temporal.infinite-trace/v1");
-        assert_eq!(subject, &None);
-    }
 }
 
 /// FR-135-AC-4 (TC-540 step 4): with the `value` row removed, the refinement
@@ -1991,10 +1922,12 @@ fn state_machine_fields_are_checked_by_population_independent_object_rows() {
         });
     assert!(machine_row.concrete_type.node.ends_with("ImplMachine"));
     assert_eq!(machine_row.fields.len(), 1);
-    assert!(machine_row.fields[0]
-        .field
-        .node
-        .ends_with("SpecMachine/value"));
+    assert!(
+        machine_row.fields[0]
+            .field
+            .node
+            .ends_with("SpecMachine/value")
+    );
 }
 
 /// FR-135-AC-11: missing, duplicate and mixed-kind machine rows retain their

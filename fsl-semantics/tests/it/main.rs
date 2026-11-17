@@ -93,9 +93,13 @@ mod quantities;
 mod rational_value_types;
 mod readme_first_rule_checks;
 #[cfg(feature = "test-support")]
+mod refinement_auxiliary;
+#[cfg(feature = "test-support")]
 mod refinement_class_catalog;
 #[cfg(feature = "test-support")]
 mod refinement_declarations;
+#[cfg(feature = "test-support")]
+mod refinement_nested;
 #[cfg(feature = "test-support")]
 mod refinement_populations;
 #[cfg(feature = "test-support")]

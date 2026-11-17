@@ -6,10 +6,10 @@
 //! through the driver binary (`$FSL_BIN`).
 
 use ix_trace_rs::trace;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
 use crate::analyze_cli_support::{
-    analyze, counter_request, counter_request_with, label, request_members, request_over, Workspace,
+    Workspace, analyze, counter_request, counter_request_with, label, request_members, request_over,
 };
 
 /// The two items' results, in request order.
@@ -60,47 +60,24 @@ fn a_refinement_proves_and_a_wrong_mapping_refutes() {
     assert!(refuted["counterexample"]["steps"].is_array(), "{refuted}");
 }
 
-/// FR-630-AC-2: `refinement_internals` reaches compilation.
-#[trace("TC-1590", "FR-630-AC-2")]
-#[test]
-#[ignore = "QSL-2245: refinement_internals is not an analyze request member yet"]
-fn refinement_internals_are_a_request_member() {
-    let ws = Workspace::new("family-refinement-internals");
-    let mut request = request_members(Some(json!([
-        {"claim": "Same", "kind": "refinement", "temporal": {"item_kind": "refinement"}}
-    ])));
-    request["refinement_internals"] = json!({"Same": []});
-    let run = analyze(&counter_request_with(
-        &ws,
-        &format!(
-            "model Spec = \"test/counter\";\n{}",
-            refinement("Same", "self.value", "")
-        ),
-        request,
-    ));
-    assert_eq!(run.exit, 0, "{}", String::from_utf8_lossy(&run.stdout));
-    assert_eq!(label(&run.item(0)), "proved");
-}
-
 /// FR-630-AC-3, FR-138-AC-9: decimal and enum history rows check and the
 /// refinement item over each proves.
 #[trace("TC-1590", "FR-630-AC-3")]
 #[trace("TC-1590", "FR-138-AC-9")]
 #[test]
-#[ignore = "QSL-2245: decimal and enum history rows are refused not-yet-implemented"]
 fn decimal_and_enum_history_rows_check_and_prove() {
     for (name, rows) in [
         (
             "DecimalHistory",
             "history M::Counter last : Decimal[0, 100; 0, 2; nearest-even] = decimal(0, 0) \
-             on M::Counter::inc {{ decimal(1, 0) }};\n",
+             { on M::Counter::inc: decimal(1, 0); }\n",
         ),
         (
             "EnumHistory",
-            "history M::Counter last : Phase = Phase::idle on M::Counter::inc {{ Phase::busy }};\n",
+            "history M::Counter last : Phase = Phase::idle \
+             { on M::Counter::inc: Phase::busy; }\n",
         ),
     ] {
-        let rows = rows.replace("{{", "{").replace("}}", "}");
         let body =
             "enum Phase { idle, busy }\n".to_owned() + &refinement(name, "self.value", &rows);
         let ws = Workspace::new(&format!("family-history-{name}"));
@@ -118,35 +95,13 @@ fn decimal_and_enum_history_rows_check_and_prove() {
     }
 }
 
-/// FR-630-AC-4, FR-135-AC-6: a nested-reference row checks and proves.
-#[trace("TC-1590", "FR-630-AC-4")]
-#[trace("TC-1590", "FR-135-AC-6")]
-#[test]
-#[ignore = "QSL-2245: nested-reference rows are refused not-yet-implemented"]
-fn a_nested_reference_row_checks_and_proves() {
-    let body = "record Slots { held: Option<Reference<M::Counter>>; }\n".to_owned()
-        + &refinement(
-            "Nested",
-            "self.value",
-            "history M::Counter slot : Slots = Slots { held: none } on M::Counter::inc \
-             { Slots { held: some(self) } };\n",
-        );
-    let ws = Workspace::new("family-nested-reference");
-    let run = analyze(&refinement_request(
-        &ws,
-        &body,
-        json!([{"claim": "Nested", "kind": "refinement", "temporal": {"item_kind": "refinement"}}]),
-    ));
-    assert_eq!(label(&run.item(0)), "proved");
-}
-
 /// FR-631-AC-1: non-interference proves for the secure vault and refutes
 /// for the leaky one with a two-trace counterexample.
 #[trace("TC-1591", "FR-631-AC-1")]
 #[test]
 #[ignore = "QSL-2128: hyperproperty items are not reachable through fsl analyze yet"]
 fn non_interference_proves_and_refutes() {
-    use crate::hyper_world::{non_interference, request_files, Vault};
+    use crate::hyper_world::{Vault, non_interference, request_files};
     for (vault, expected) in [(Vault::Secure, "proved"), (Vault::Leaky, "refuted")] {
         let (unit, model, snapshot) = request_files(vault, false, (1, 0), &non_interference(""));
         let ws = Workspace::new(&format!("family-hyper-{expected}"));
@@ -174,7 +129,7 @@ fn non_interference_proves_and_refutes() {
 #[test]
 #[ignore = "QSL-2248: a hyper clause with no object parameter is checked but not emitted"]
 fn an_object_free_hyper_clause_is_analyzed() {
-    use crate::hyper_world::{request_files, Vault};
+    use crate::hyper_world::{Vault, request_files};
     let declaration = "hyper Whole using inf over behaviours () \
                        forall trace a of V forall trace b of V { always holds(true) }";
     let (unit, model, snapshot) = request_files(Vault::Secure, false, (1, 0), declaration);
@@ -198,7 +153,7 @@ pub(crate) fn rpc_unit(t: u32, claim: &str) -> String {
 /// `self.x {timeout} {t} ms`: ADR-026 section 11's strict-guard variant is
 /// `("> 3", ">")`.
 pub(crate) fn rpc_unit_with(t: u32, reply: &str, timeout: &str, claim: &str) -> String {
-    use crate::timed_world::{unit_text, DENSE, PACKAGE};
+    use crate::timed_world::{DENSE, PACKAGE, unit_text};
     let body = format!(
         "{DENSE}\
          pre SendIdle using v on M::Call::send {{ self.phase = 0 }}\n\
@@ -344,13 +299,15 @@ fn an_item_naming_a_registered_provider_settles_on_it() {
     assert!(registry.contains(&json!(provider)));
     assert!(registry.contains(&json!("en-1")) && registry.contains(&json!("en-7")));
     // FR-635 "Outputs": each entry carries its backend's FSpec FR-331 tool.
-    assert!(run.document()["registry"]
-        .as_array()
-        .expect("registry")
-        .iter()
-        .all(|entry| entry["tool"]["name"]
-            .as_str()
-            .is_some_and(|name| !name.is_empty())));
+    assert!(
+        run.document()["registry"]
+            .as_array()
+            .expect("registry")
+            .iter()
+            .all(|entry| entry["tool"]["name"]
+                .as_str()
+                .is_some_and(|name| !name.is_empty()))
+    );
     assert_eq!(label(&run.item(1)), "proved");
 }
 

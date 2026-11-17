@@ -14,8 +14,8 @@
 use std::collections::BTreeMap;
 
 use filament_exact::{
-    admit_text, EffectiveId, IllTypedCause, Meter, OptionValue, Outcome, Rational, TextPayload,
-    Value, ValueType,
+    Decimal, EffectiveId, IllTypedCause, Meter, OptionValue, Outcome, Rational, TextPayload, Value,
+    ValueType, admit_text,
 };
 use filament_semantic_value::location::{
     ExpressionLocation as Location, ExpressionOwner as Origin,
@@ -25,7 +25,7 @@ use fsl_forms::{
 };
 use fsl_foundation::Span;
 
-use super::{CheckedRow, Checker, RefinementCause, RowContext, UnsupportedFeature};
+use super::{CheckedRow, Checker, RefinementCause, RowContext};
 use crate::check::check::ScopedHistory;
 use crate::check::refusal::CheckCause;
 use crate::check::state_clause::{ClauseDeclarations, ClauseOperation};
@@ -78,8 +78,7 @@ fn bounded(declared: &ValueType) -> bool {
             true
         }
         ValueType::Option(payload) => bounded(payload),
-        // Finite, but no FR-181 form keys one in a product state.
-        ValueType::Enum(_) | ValueType::Decimal(_) => false,
+        ValueType::Enum(_) | ValueType::Decimal(_) => true,
         ValueType::Integer
         | ValueType::Float(_)
         | ValueType::Quantity(_)
@@ -96,30 +95,30 @@ fn bounded(declared: &ValueType) -> bool {
     }
 }
 
-/// The kind of finite type `declared` is or wraps whose values FR-181 gives
-/// no typed canonical form, so a product state could not key one.
-fn unkeyable(declared: &ValueType) -> Option<&'static str> {
-    match declared {
-        ValueType::Enum(_) => Some("enum"),
-        ValueType::Decimal(_) => Some("decimal"),
-        ValueType::Option(payload) => unkeyable(payload),
-        _ => None,
-    }
-}
-
 fn mismatch() -> RefinementCause {
     RefinementCause::Check(CheckCause::IllTyped(IllTypedCause::TypeMismatch))
+}
+
+fn text_literal(
+    text: &fsl_forms::StringLiteral,
+    text_type: &filament_exact::TextType,
+) -> Result<Value, RefinementCause> {
+    let payload = TextPayload::from_source_literal(text.text(), text.spelling());
+    match admit_text(
+        &payload,
+        text_type,
+        &mut Meter::new(crate::check::UNBOUNDED_SCALAR_LIMITS),
+    ) {
+        Outcome::Completed(text) => Ok(Value::Text(text)),
+        _ => Err(mismatch()),
+    }
 }
 
 impl<'c, 'a> Checker<'c, 'a> {
     /// The history rows of `form` whose type, name and initial literal
     /// check. Their fields are in the typer's scope from here on, so every
     /// row and update is typed with every field in view.
-    pub(super) fn history_headers(
-        &mut self,
-        form: &'c RefinementForm,
-        profile: &str,
-    ) -> Vec<Header<'c>> {
+    pub(super) fn history_headers(&mut self, form: &'c RefinementForm) -> Vec<Header<'c>> {
         let types = self.types();
         let concrete_types = {
             let found = self.concrete_side.object_types(types);
@@ -181,22 +180,11 @@ impl<'c, 'a> Checker<'c, 'a> {
                     continue;
                 }
             };
-            if let Some(subject) = unkeyable(&declared) {
-                self.findings.refuse(
-                    row.ty.span,
-                    RefinementCause::Unsupported {
-                        feature: UnsupportedFeature::HistoryRow,
-                        profile: profile.to_owned(),
-                        subject: Some(subject),
-                    },
-                );
-                continue;
-            }
             if !bounded(&declared) {
                 self.findings.refuse(row.ty.span, mismatch());
                 continue;
             }
-            let initial = match Self::literal(&row.initial, &declared) {
+            let initial = match self.literal(&row.initial, &declared) {
                 Ok(initial) if declared.admits(&initial) => initial,
                 Ok(_) => {
                     self.findings.refuse(row.initial_span, mismatch());
@@ -228,6 +216,7 @@ impl<'c, 'a> Checker<'c, 'a> {
     /// is not one (FSpec FR-375's history-literal rule). Whether the value
     /// is a member of the declared type's value set is the caller's check.
     fn literal(
+        &self,
         literal: &HistoryLiteralForm,
         declared: &ValueType,
     ) -> Result<Value, RefinementCause> {
@@ -240,15 +229,7 @@ impl<'c, 'a> Checker<'c, 'a> {
                 Ok(OptionValue::none((**payload).clone()))
             }
             (HistoryLiteralForm::Text(text), ValueType::Text(text_type)) => {
-                let payload = TextPayload::from_source_literal(text.text(), text.spelling());
-                match admit_text(
-                    &payload,
-                    text_type,
-                    &mut Meter::new(crate::check::UNBOUNDED_SCALAR_LIMITS),
-                ) {
-                    Outcome::Completed(text) => Ok(Value::Text(text)),
-                    _ => Err(mismatch()),
-                }
+                text_literal(text, text_type)
             }
             (HistoryLiteralForm::Exact(number), ValueType::Rational(_))
                 if number.kind == ExactNumberKind::Rational =>
@@ -257,8 +238,35 @@ impl<'c, 'a> Checker<'c, 'a> {
                     .map(Value::Rational)
                     .map_err(|_| mismatch())
             }
+            (HistoryLiteralForm::Exact(number), ValueType::Decimal(domain))
+                if number.kind == ExactNumberKind::Decimal =>
+            {
+                let scale = number
+                    .second
+                    .to_u64()
+                    .and_then(|scale| u32::try_from(scale).ok())
+                    .ok_or_else(mismatch)?;
+                let value = Decimal::new(number.first.clone(), scale);
+                domain
+                    .contains(&value)
+                    .then_some(Value::Decimal(value))
+                    .ok_or_else(mismatch)
+            }
+            (HistoryLiteralForm::EnumMember(name), ValueType::Enum(expected)) => {
+                let members = self
+                    .declarations
+                    .scope
+                    .enum_members_named(&name.name)
+                    .collect::<Vec<_>>();
+                match members.as_slice() {
+                    [(binding, member)] if &binding.shape() == expected => {
+                        Ok(crate::check::check::enum_value(binding, member))
+                    }
+                    _ => Err(mismatch()),
+                }
+            }
             (literal, ValueType::Option(payload)) => {
-                let inner = Self::literal(literal, payload)?;
+                let inner = self.literal(literal, payload)?;
                 OptionValue::present((**payload).clone(), inner).map_err(|_| mismatch())
             }
             _ => Err(mismatch()),
@@ -366,11 +374,7 @@ mod tests {
     /// The provenance of the history `Text` literal written `spelling`.
     fn provenance(spelling: &str, text_type: TextType) -> TextProvenance {
         let literal = StringLiteral::from_spelling(spelling).expect("a quoted text");
-        let value = Checker::literal(
-            &HistoryLiteralForm::Text(literal),
-            &ValueType::Text(text_type),
-        )
-        .expect("the literal is a value of its Text type");
+        let value = text_literal(&literal, &text_type).expect("the literal is a Text value");
         let Value::Text(text) = value else {
             panic!("a Text value, not {value:?}");
         };

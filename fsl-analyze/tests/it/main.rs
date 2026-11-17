@@ -120,6 +120,7 @@ mod refinement_budget;
 mod refinement_certificate;
 #[path = "../../../tests/support/refinement_cas.rs"]
 mod refinement_fixture;
+mod refinement_internals;
 mod refinement_liveness;
 #[path = "../../../tests/support/refinement_smt_proofs.rs"]
 mod refinement_proofs;

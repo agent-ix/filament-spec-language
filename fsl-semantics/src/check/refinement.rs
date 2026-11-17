@@ -34,7 +34,7 @@ mod protocol;
 mod rows;
 mod step_label;
 
-use fsl_foundation::source::node_table::{standalone, DebugTable, DebugWith, NodeKeyDebug, With};
+use fsl_foundation::source::node_table::{DebugTable, DebugWith, NodeKeyDebug, With, standalone};
 use std::collections::{BTreeMap, BTreeSet};
 
 use crate::check::wire_id::structural_id;
@@ -72,18 +72,18 @@ pub(crate) use rows::{
     KeyedFairnessRow, KeyedHistoryRow, KeyedObjectRow, KeyedPopulationRow, KeyedRefinementRows,
     KeyedStepRow, KeyedStepTarget,
 };
-pub use step_label::{observation, LabelStep, RowObservation, StepLabel};
+pub use step_label::{LabelStep, RowObservation, StepLabel, observation};
 
 use super::check::{
-    bind_parameters, PopulationScope, ScopedHistory, ScopedPopulation, StateContext, Typer,
+    PopulationScope, ScopedHistory, ScopedPopulation, StateContext, Typer, bind_parameters,
 };
-use super::ir::{static_integer_range, CheckedBody, CheckedNode};
+use super::ir::{CheckedBody, CheckedNode, static_integer_range};
 use super::lowering::AdmittedModel;
 use super::observation::Observations;
 use super::profile::TemporalProfile;
 use super::protocol_clause::ProtocolNodeId;
 use super::refusal::{CheckCause, CheckRefusal, KeyFault};
-use super::state_clause::{observation_of, ClauseDeclarations, ClauseOperation, PopulationDomain};
+use super::state_clause::{ClauseDeclarations, ClauseOperation, PopulationDomain, observation_of};
 use crate::family::CheckContext;
 use crate::model::clause_observation::Observation;
 use crate::model::domain_package::{DomainPackageRef, PopulationRecord};
@@ -1127,7 +1127,7 @@ fn leaf_checked_term(
     use crate::check::node_key::{LeafTerm, LiteralValue, NodeRef};
     use filament_contract_model::CheckedTerm;
     use serde::de::Error as _;
-    use serde_json::{json, Value};
+    use serde_json::{Value, json};
     let admitted = |node: &NodeRef| {
         node.admitted().map(structural_id).ok_or_else(|| {
             RefinementV2EncodingError::Body(serde_json::Error::custom(
@@ -2179,6 +2179,7 @@ fn conforms(types: &TypeEnvironment, actual: &ValueType, required: &ValueType) -
 /// is lifted by the object map; a reference inside an option, record, tuple,
 /// union or collection is not. A tuple is a record by position, so it is
 /// caught with the record and the union.
+#[cfg(test)]
 fn nests_reference(types: &TypeEnvironment, value_type: &ValueType) -> Result<bool, &'static str> {
     match value_type {
         ValueType::Reference(_) => Ok(false),
@@ -2189,6 +2190,7 @@ fn nests_reference(types: &TypeEnvironment, value_type: &ValueType) -> Result<bo
 /// Whether `value_type` is or contains a `Reference`. `seen` holds the
 /// composite declarations being walked, so a declaration that names itself
 /// is walked once. A composite with no declaration is an internal fault.
+#[cfg(test)]
 fn holds_reference(
     types: &TypeEnvironment,
     value_type: &ValueType,
@@ -2443,7 +2445,7 @@ pub(crate) fn check_refinement<'f: 'c, 'a, 'c>(
         internal,
     };
     checker.baseline = checker.findings.refusals.len();
-    let headers = checker.history_headers(form, &declaration.selection.identity);
+    let headers = checker.history_headers(form);
     let populations = checker.populations(form);
     let objects = checker.objects(form, cx);
     let StepRows {
@@ -3355,7 +3357,6 @@ impl<'c, 'a> Checker<'c, 'a> {
                     operation: None,
                     label: format!("{}.{written}", target.name),
                     range_agnostic: false,
-                    field_row: true,
                 },
                 cx,
             );
@@ -3464,10 +3465,8 @@ impl<'c, 'a> Checker<'c, 'a> {
             operation,
             label,
             range_agnostic,
-            field_row,
         } = context;
         let populations = self.population_scope();
-        let mut outcome: Option<Nested> = None;
         let typed = (|| {
             let mut typer = Typer::new(
                 declarations.scope,
@@ -3500,30 +3499,6 @@ impl<'c, 'a> Checker<'c, 'a> {
             // coercion into it.
             let body = typer.infer(&expression.expression, required, &location)?;
             let types = declarations.scope.types();
-            if field_row {
-                let root = body.root();
-                // A whole population is the one nesting a row may have.
-                let whole_population = matches!(root.kind(), NodeKind::PopulationObjects { .. });
-                if !whole_population {
-                    match nests_reference(types, root.value_type()) {
-                        Ok(false) => {}
-                        Ok(true) => {
-                            outcome = Some(Nested::Row);
-                            return Err(CheckRefusal::ill_typed(
-                                &location,
-                                IllTypedCause::TypeMismatch,
-                            ));
-                        }
-                        Err(invariant) => {
-                            outcome = Some(Nested::Fault(invariant));
-                            return Err(CheckRefusal::ill_typed(
-                                &location,
-                                IllTypedCause::TypeMismatch,
-                            ));
-                        }
-                    }
-                }
-            }
             let uses = match required {
                 None => Vec::new(),
                 Some(required)
@@ -3563,21 +3538,6 @@ impl<'c, 'a> Checker<'c, 'a> {
                     site,
                     spans: expression.spans.clone(),
                 })
-            }
-            Err(_) if outcome.is_some() => {
-                match (outcome, expression.spans.at(&[])) {
-                    (Some(Nested::Row), Some(span)) => self.findings.refuse(
-                        span,
-                        RefinementCause::Unsupported {
-                            feature: UnsupportedFeature::NestedReferenceRow,
-                            profile: self.profile.clone(),
-                            subject: None,
-                        },
-                    ),
-                    (Some(Nested::Fault(invariant)), _) => self.fault(invariant),
-                    _ => self.fault("row-expression-has-a-span"),
-                }
-                None
             }
             Err(refusal) => {
                 match super::region::span_at(&expression.spans, &refusal.location)
@@ -3976,7 +3936,6 @@ impl<'c, 'a> Checker<'c, 'a> {
                         operation: Some(concrete.name().to_owned()),
                         label: format!("step {}", concrete.name()),
                         range_agnostic: false,
-                        field_row: false,
                     };
                     let Some(row) = self.check_row_as(expression, None, context, cx) else {
                         complete = false;
@@ -4056,7 +4015,6 @@ impl<'c, 'a> Checker<'c, 'a> {
             operation: Some(concrete.name().to_owned()),
             label: format!("step {}", concrete.name()),
             range_agnostic: false,
-            field_row: false,
         };
         let mut complete = true;
         let receiver_type = lift(&self.lifting, &ValueType::Reference(target_type.id.clone()));
@@ -4196,14 +4154,6 @@ impl<'c, 'a> Checker<'c, 'a> {
     }
 }
 
-/// What the nesting check of a field row found.
-enum Nested {
-    /// The row's type nests a reference.
-    Row,
-    /// A composite type of the row has no declaration.
-    Fault(&'static str),
-}
-
 /// How a row expression is typed: its parameters, the clause kind it reads
 /// as and the concrete operation whose arguments it may name.
 struct RowContext {
@@ -4217,10 +4167,6 @@ struct RowContext {
     /// to run time: a history update (FR-138), whose value is computed and
     /// not a literal.
     range_agnostic: bool,
-    /// Whether the row defines an abstract field (FR-135), which a type that
-    /// nests a reference refuses `nested-reference-row` before any other
-    /// check of the row's type.
-    field_row: bool,
 }
 
 fn refuse_with(location: &Location, cause: CheckCause) -> CheckRefusal {
