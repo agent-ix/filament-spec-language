@@ -50,7 +50,7 @@ use filament_semantic_value::declaration::{EqualityOperand, EqualityOperator, Fi
 use filament_semantic_value::location::ExpressionLocation as Location;
 use fsl_forms::{
     Accumulation, BinaryOperator, BinderQuery, CaseForm, ClauseKind, ExprNode, ExprRef, Expression,
-    FieldInitializer, NameForm, PopulationForm,
+    FieldInitializer, NameForm, PopulationForm, TypeForm,
 };
 use fsl_foundation::Span;
 use ix_trace_rs::string_edge;
@@ -326,12 +326,14 @@ enum IfStage<'e> {
     },
 }
 
-/// `let name = value in body`.
+/// `let name [: type] = value in body`.
 struct LetFrame<'e, 'r> {
     branches: Branches<'r>,
     name: &'e str,
     body: ExprRef<'e>,
     location: Location,
+    /// The resolved declared binder type, when annotated.
+    annotation: Option<ValueType>,
     /// The typed value and the slot it is bound to, once typed.
     value: Option<(Node, Slot)>,
 }
@@ -1016,14 +1018,20 @@ impl<'a> Typer<'a> {
                     frames,
                 ))
             }
-            ExprNode::Let { name, value, body } => {
+            ExprNode::Let {
+                name,
+                annotation,
+                value,
+                body,
+            } => {
                 self.enter(&location)?;
-                Ok(Self::binding(
+                self.binding(
                     Branches::Expected(expected),
+                    annotation.as_ref(),
                     (name, expression.at(*value), expression.at(*body)),
                     location,
                     frames,
-                ))
+                )
             }
             ExprNode::Case(case) => {
                 self.enter(&location)?;
@@ -1070,22 +1078,39 @@ impl<'a> Typer<'a> {
         ))
     }
 
-    /// Start `let name = value in body`.
+    /// Start `let name [: type] = value in body`.
     fn binding<'e, 'r>(
+        &mut self,
         branches: Branches<'r>,
+        annotation: Option<&TypeForm>,
         (name, value, body): (&'e str, ExprRef<'e>, ExprRef<'e>),
         location: Location,
         frames: &mut Vec<Frame<'e, 'r>>,
-    ) -> Step<'e, 'r> {
+    ) -> Result<Step<'e, 'r>, CheckRefusal> {
         let value_location = location.child(0);
+        let annotation = annotation
+            .map(|form| self.resolve_type(form, &location))
+            .transpose()?;
+        if let Some(annotation) = &annotation {
+            self.check_declared_type(annotation, &location)?;
+        }
+        let value_goal = match &annotation {
+            Some(annotation) => Goal::Expect(
+                value,
+                Expected::Checked(Cow::Owned(annotation.clone())),
+                value_location,
+            ),
+            None => Goal::Infer(value, None, value_location),
+        };
         frames.push(Frame::Let(Box::new(LetFrame {
             branches,
             name,
             body,
             location,
+            annotation,
             value: None,
         })));
-        Step::Descend(Goal::Infer(value, None, value_location))
+        Ok(Step::Descend(value_goal))
     }
 
     /// Start `case scrutinee { arms }` (FR-318): type the scrutinee first.
@@ -1383,13 +1408,19 @@ impl<'a> Typer<'a> {
                     frames,
                 ))
             }
-            ExprNode::Let { name, value, body } => {
-                return Ok(Self::binding(
+            ExprNode::Let {
+                name,
+                annotation,
+                value,
+                body,
+            } => {
+                return self.binding(
                     Branches::Inferred(hint),
+                    annotation.as_ref(),
                     (name, expression.at(*value), expression.at(*body)),
                     location,
                     frames,
-                ));
+                );
             }
             ExprNode::If {
                 condition,
@@ -2920,7 +2951,11 @@ impl<'a> Typer<'a> {
             None => {
                 let slot = self.bind(
                     frame.name,
-                    typed.value_type.clone(),
+                    frame
+                        .annotation
+                        .as_ref()
+                        .unwrap_or(&typed.value_type)
+                        .clone(),
                     &frame.location,
                     LocalKind::Bound,
                 )?;

@@ -510,6 +510,7 @@ fn scoped(operand: &ExpressionForm, scope: &[(String, ExpressionForm)]) -> Optio
         builder
             .push(ExprNode::Let {
                 name: name.clone(),
+                annotation: None,
                 value,
                 body,
             })

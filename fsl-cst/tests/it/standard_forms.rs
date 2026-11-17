@@ -51,7 +51,6 @@ fn refusal(parsed: &ParsedSource) -> (CompleteCode, CompleteCause, usize) {
 /// binder; the unannotated form still parses.
 #[trace("FSpec-TC-1004", "FSpec-FR-501-AC-3")]
 #[test]
-#[ignore = "QSL-2008: the grammar has no let annotation; parsing `let x: T = e in b` is not implemented yet"]
 fn an_annotated_let_parses_with_its_type_on_the_binder() {
     let text =
         unit("function f using v(y: Int[0,2]): Integer pure { let x: Int[0,3] = y + 1 in x }");

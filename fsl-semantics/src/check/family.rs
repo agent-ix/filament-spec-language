@@ -530,9 +530,18 @@ fn encode_expression(
                     pending.push(expr.at(arm.body));
                 }
             }
-            ExprNode::Let { name, value, body } => {
+            ExprNode::Let {
+                name,
+                annotation,
+                value,
+                body,
+            } => {
                 out.write_str("let");
                 out.write_str(name);
+                out.write_bool(annotation.is_some());
+                if let Some(annotation) = annotation {
+                    measure_type_form(out, annotation);
+                }
                 pending.extend([expr.at(*value), expr.at(*body)]);
             }
             ExprNode::If {
@@ -725,7 +734,7 @@ fn encode_expression(
             }
             ExprNode::AllInstances { target, population } => {
                 out.write_str("all-instances");
-                measure_model_target(out, target);
+                measure_type_form(out, target);
                 pending.push(expr.at(*population));
             }
             ExprNode::Lookup {
@@ -735,7 +744,7 @@ fn encode_expression(
                 absence,
             } => {
                 out.write_str("lookup");
-                measure_model_target(out, target);
+                measure_type_form(out, target);
                 out.write_str(absence_mode_tag(*absence));
                 pending.extend([expr.at(*population), expr.at(*reference)]);
             }
@@ -807,7 +816,7 @@ fn encode_expression(
 }
 
 /// Measure authored model targets without resolving their S3 question.
-fn measure_model_target(out: &mut DeclarationMeter, root: &fsl_forms::TypeForm) {
+fn measure_type_form(out: &mut DeclarationMeter, root: &fsl_forms::TypeForm) {
     use fsl_forms::{BuiltinType, TypeFormHead};
     let mut pending = vec![root];
     while let Some(form) = pending.pop() {

@@ -51,7 +51,6 @@ fn significant(parsed: &ParsedSource) -> Vec<Vec<u8>> {
 /// FR-980-AC-1: the annotation is a `TypeReference` inside the `let`.
 #[trace("TC-2770", "FR-980-AC-1")]
 #[test]
-#[ignore = "QSL-2008: the grammar has no let annotation; parsing `let x: T = e in b` is not implemented yet"]
 fn an_annotated_let_holds_its_type_reference() {
     let text =
         unit("function f using v(y: Int[0,2]): Integer pure { let x: Int[0,3] = y + 1 in x }");
@@ -69,7 +68,6 @@ fn an_annotated_let_holds_its_type_reference() {
 /// grammar requires something else.
 #[trace("TC-2770", "FR-980-AC-2")]
 #[test]
-#[ignore = "QSL-2008: the let annotation and its refusals are not implemented yet"]
 fn a_malformed_let_annotation_refuses_at_the_offending_token() {
     for (body, at) in [
         ("let x: = 1 in x", "= 1"),
@@ -97,7 +95,7 @@ fn a_malformed_let_annotation_refuses_at_the_offending_token() {
 /// idempotent.
 #[trace("TC-2772", "FR-980-AC-5")]
 #[test]
-#[ignore = "QSL-2008: the let annotation is not parsed, so it cannot be formatted yet"]
+#[ignore = "QSL-1974 integration: the canonical formatter is not on this branch yet"]
 fn an_annotated_let_formats_and_keeps_its_tokens() {
     let text = unit("function f using v(y: Int[0,2]): Integer pure { let x:Int[0,3]=y+1 in x }");
     let parsed = parse(&text);

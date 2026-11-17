@@ -635,10 +635,12 @@ pub enum ExprNode {
     },
     /// A parameter, `let` or binder name, or a qualified enum member.
     Name(NameForm),
-    /// `let name = value in body`.
+    /// `let name [: type] = value in body`.
     Let {
         /// The bound name.
         name: String,
+        /// The declared binder type, when the source writes one.
+        annotation: Option<TypeForm>,
         /// The initializer, evaluated once.
         value: ExprId,
         /// The scope of the binding.
@@ -1542,6 +1544,23 @@ impl Expression {
         let name = name.into();
         Self::compose([value, body], |[value, body]| ExprNode::Let {
             name,
+            annotation: None,
+            value,
+            body,
+        })
+    }
+
+    /// `let name: annotation = value in body`.
+    pub fn let_in_annotated(
+        name: impl Into<String>,
+        annotation: TypeForm,
+        value: Self,
+        body: Self,
+    ) -> Self {
+        let name = name.into();
+        Self::compose([value, body], |[value, body]| ExprNode::Let {
+            name,
+            annotation: Some(annotation),
             value,
             body,
         })
@@ -5310,6 +5329,7 @@ mod tests {
                     },
                     2 => ExprNode::Let {
                         name: "v".to_owned(),
+                        annotation: None,
                         value: leaf(),
                         body: inner,
                     },

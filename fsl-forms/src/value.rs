@@ -811,7 +811,10 @@ enum Shape {
     String(StringLiteral),
     ReferenceLiteral(NameForm, StringLiteral),
     Name(NameForm),
-    Let(String),
+    Let {
+        name: String,
+        annotation: Option<TypeForm>,
+    },
     If,
     Case(Vec<ArmSyntax>, Span),
     Binary(BinaryOperator),
@@ -956,10 +959,11 @@ impl Shape {
                 arity(0)?;
                 ExprNode::Name(name)
             }
-            Self::Let(name) => {
+            Self::Let { name, annotation } => {
                 arity(2)?;
                 ExprNode::Let {
                     name,
+                    annotation,
                     value: operands.next()?,
                     body: operands.next()?,
                 }
@@ -1616,10 +1620,22 @@ impl<'c> Mapping<'c> {
                     .first()
                     .copied()
                     .ok_or_else(|| unexpected(node))?;
+                let annotation = match nodes_of(items, Production::TypeReference).as_slice() {
+                    [] => None,
+                    [annotation] => Some(type_form(self.cst, annotation)?),
+                    _ => return Err(unexpected(node)),
+                };
                 if operands.len() != 2 {
                     return Err(unexpected(node));
                 }
-                self.with_children(Shape::Let(text(name, node)?), &task, operands)
+                self.with_children(
+                    Shape::Let {
+                        name: text(name, node)?,
+                        annotation,
+                    },
+                    &task,
+                    operands,
+                )
             }
             Some(Item::Token(token)) if token.spelling() == b"if" => {
                 if operands.len() != 3 {

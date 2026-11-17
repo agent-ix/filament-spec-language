@@ -870,6 +870,7 @@ fn expressions(g: &mut Grammar) {
             s(vec![
                 x("let"),
                 ident(),
+                opt(s(vec![x(":"), r(P::TypeReference)])),
                 x("="),
                 r(P::Expression),
                 x("in"),

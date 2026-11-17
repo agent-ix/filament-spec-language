@@ -88,6 +88,31 @@ fn function(form: &DeclarationForm) -> &FunctionDeclaration {
     }
 }
 
+/// FR-980-AC-1: S2 preserves a `let` annotation as a syntactic type form and
+/// leaves the unannotated form unchanged.
+#[trace("TC-2770", "FR-980-AC-1")]
+#[test]
+fn let_annotations_build_as_type_forms() {
+    let (_, annotated) = body("let x: Int[0,3] = y + 1 in x");
+    let ExprNode::Let {
+        annotation: Some(annotation),
+        ..
+    } = annotated.body.root_node()
+    else {
+        panic!("an annotated let must keep its declared type");
+    };
+    assert_eq!(annotation.head, TypeFormHead::Builtin(BuiltinType::Int));
+    assert_eq!(annotation.bounds, ["0", "3"]);
+
+    let (_, unannotated) = body("let x = y + 1 in x");
+    let ExprNode::Let {
+        annotation: None, ..
+    } = unannotated.body.root_node()
+    else {
+        panic!("an unannotated let must have no declared type");
+    };
+}
+
 /// The body of `function f using v(): Boolean pure { <body> }`.
 fn body(body: &str) -> (String, FunctionDeclaration) {
     let (text, unit) = build(&format!("function f using v(): Boolean pure {{ {body} }}"));
