@@ -16,8 +16,8 @@ use std::process::ExitCode;
 use xtask::{
     Outcome, canonical_types, checked_input, conformance,
     error::{Error, Result},
-    examples_check, pin_check, qualification, refinement, route_lint, seam_probe, string_edge,
-    test_suites,
+    examples_check, facade_tests, pin_check, qualification, refinement, route_lint, seam_probe,
+    string_edge, test_suites,
 };
 
 const USAGE: &str = "usage: cargo xtask seam-probe\n       cargo xtask string-edge\n       \
@@ -28,7 +28,8 @@ const USAGE: &str = "usage: cargo xtask seam-probe\n       cargo xtask string-ed
                      cargo xtask pin-check [--manifest <Cargo.toml-or-directory>]\n       cargo xtask refinement layering <corpus>\n       \
                      cargo xtask refinement layering <corpus>\n       \
                      cargo xtask qualify --corpus <dir> [--capability <id>]... [--limit <setting>=<value>]... [--text]\n       \\
-                     cargo xtask canonical-types [<workspace>]";
+                     cargo xtask canonical-types [<workspace>]\n       \
+                     cargo xtask facade-tests [--tests <dir>] [--inventory <file>]";
 
 #[ix_trace_rs::string_edge]
 fn run(arguments: &[OsString]) -> Result<Outcome> {
@@ -42,6 +43,9 @@ fn run(arguments: &[OsString]) -> Result<Outcome> {
         .to_path_buf();
     if command == "test-suites" {
         return test_suites::run(&workspace_root, operands).map(Outcome::success);
+    }
+    if command == "facade-tests" {
+        return facade_tests::run(&workspace_root, operands);
     }
     if command == "refinement" {
         return refinement::run(&workspace_root, operands);
