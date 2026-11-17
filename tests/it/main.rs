@@ -78,6 +78,7 @@ mod guarantee_planner;
 mod half_open_watermark;
 mod observation_model_header;
 mod outcome_diagnostic_details;
+mod plan_export_surface;
 mod planner_chain;
 mod port_role_identity;
 mod producer_unit_identity;

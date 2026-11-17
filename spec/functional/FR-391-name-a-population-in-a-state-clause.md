@@ -29,6 +29,8 @@ relationships:
     type: depends_on
   - target: ix://agent-ix/filament-spec-language/FR-230
     type: references
+  - target: ix://agent-ix/filament-spec-language/FR-883
+    type: references
 ---
 # FR-391: Name a domain-package population in a state clause or a holds atom
 
@@ -39,7 +41,11 @@ binding `p` (FSpec FR-153). A function names one through a
 `Population<T>[N]` parameter. A **population position** is the body of a
 unit-level state clause (an invariant, a precondition, a postcondition or a
 step's clause, FR-102), the predicate of a `terminal when` declaration
-(FR-124), which reads `current`, or a `holds` atom of a temporal clause. The invariant
+(FR-124), which reads `current`, a `holds` atom of a temporal clause, or a
+protocol slot that reads model state: a protocol, registration or activation
+capture, an event or `send` constraint, and a `finish` constraint (FSpec
+FR-464 stage table; FR-883). In a protocol slot the population is bound to
+the model state of the protocol state the slot is evaluated in. The invariant
 of a record value type or an event type (FR-366) is not a population
 position: it keeps FR-366's refusal of a population read, since such a value
 is evaluated with no object universe. In a population
@@ -64,6 +70,14 @@ position. It is no operand of any other operator, no `let` initializer and no
 result. A function body is not a population position: a function names a
 population only through a `Population<T>[N]` parameter, so no population is
 ambient in a function.
+
+A protocol slot that bars model state (the activation and trigger guards, the
+retry relation, the recovery predicate, a `choice` or `repeat` guard, a
+`visible` entry, a `check` condition and a FIFO key) is not a population
+position. A population read there keeps FSpec FR-464's refusal,
+`ill_typed`/`operator-ineligible` at the read, rather than this
+requirement's `missing-name`, because the name resolves and only the slot
+bars it.
 
 The data predicate of a timed model's `time invariant when` and `urgent when`
 is a population position, read at `current` like a unit-level invariant. It
@@ -216,6 +230,12 @@ read as a domain, `forall(o in M::counters : o.v < 2)`, means the same.
   evaluation, a population with no row in the snapshot returns `Incomplete`
   with `incomplete_population`/`missing-required-artifact` (FR-106 check 7;
   FSpec FR-153-AC-14), and an admitted one is a closed binding in FR-084's sense.
+- The protocol evaluator SHALL evaluate the same operations and domains in a
+  protocol slot that is a population position, reading the population named
+  by the operand term's declaration key from the model state of the protocol
+  state the slot is evaluated in (FR-883). That model state's population row
+  is the binding, under the same `complete`, missing-row and coverage rules
+  as a snapshot's.
 - The result, the coverage check of `T` and the `population.visit` charges
   per member are FR-084's and FSpec's `value-accounting.md`, unchanged: the
   coverage check charges nothing, each member visited charges once.
@@ -250,6 +270,7 @@ read as a domain, `forall(o in M::counters : o.v < 2)`, means the same.
 | FR-391-AC-8 | `M::counters` in a function body and in the type-level invariant of an object type refuses `missing_declaration`/`missing-name` at `counters`. | Test (TC-1076) |
 | FR-391-AC-9 | On the `Counter` unit, `terminal Done using v on M when { forall(c in M::counters : c.v = 2) };` checks to `When` with `counters` as a domain read at `current`, and is evaluated over the snapshot's population as the `allInstances` spelling is; `M::counters` in a record-value invariant still refuses as AC-8 states. | Test (TC-1076) |
 | FR-391-AC-10 | On the `Counter` unit with `bound B on M::counters [3]`: `invariant S using v on M::Counter at current { size(seq(i in 0 .. 2: i)) = 3 }` checks with the `seq` typed `Sequence<Int[0, 2]>[0, 3]`, and `invariant C using v on M::Counter at current { count(o in M::counters where o.v = 2) <= 3 }`, `invariant E using v on M::Counter at current { exists(o in M::counters where o.v = 2) or true }` and `invariant O using v on M::Counter at current { only(o in M::counters where o.v = 2: o.v) = 2 }` each check and emit a checked package with no refusal: the population forms lower over the `all_instances` application of the `counters` population reference, and no refusal has code `unknown_required_feature`. | Test (TC-1904) |
+| FR-391-AC-11 | On the `Counter` unit, a protocol `protocol W using p over (c: M::Counter) on origin` whose capture `n: Integer = size(allInstances<M::Counter>(M::counters))`, whose registration or activation capture `o: Option<M::Counter> = lookup<M::Counter>(M::counters, c)`, whose `send` constraint `count(x in M::counters where x.v = 0) >= 1` and whose `finish` constraint `forall(x in M::counters : x.v < 3)` each name `M::counters` checks with no refusal, each read resolving to the `counters` population reference; evaluated over a protocol state whose model state holds counters `a` and `b`, the capture binds 2 and `lookup` binds `a`'s reference for `c` = `a`. The same `M::counters` read in a `choice` guard refuses `ill_typed`/`operator-ineligible` at the read, not `missing-name`. | Test (TC-2832) |
 
 ## Dependencies
 

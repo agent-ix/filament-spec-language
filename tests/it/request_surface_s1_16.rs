@@ -782,7 +782,7 @@ fn reach(objective: &str, policy: Value) -> Value {
 
 /// FR-755-AC-3 and FSpec FR-650-AC-4: under the policy `NotOne` the
 /// replayed plan never visits version 1; a policy naming no clause refuses
-/// `missing-name`; an `eventually` policy refuses `expression-form`.
+/// `missing-name`; an `eventually` policy is evaluated, not refused.
 #[test]
 #[trace("TC-2105", "FR-755-AC-3")]
 #[trace("FSpec-TC-1603", "FSpec-FR-650-AC-4")]
@@ -798,7 +798,15 @@ fn the_planner_keeps_plans_within_policy() {
         assert_ne!(state["versionNumber"], 1, "{value}");
     }
     refusal_names(&reach("", json!(["Nowhere"])), "missing-name");
-    refusal_names(&reach("", json!(["SomeTime"])), "expression-form");
+    // FSpec FR-803: a non-safety policy is evaluated on each completed plan.
+    let eventually = reach("", json!(["SomeTime"]));
+    assert!(
+        matches!(
+            eventually["synthesis"]["status"].as_str(),
+            Some("optimal" | "infeasible")
+        ),
+        "{eventually}"
+    );
 }
 
 /// FSpec FR-650-AC-2: a per-step cost objective is minimized and certified.
@@ -844,7 +852,7 @@ fn the_planner_reports_infeasible_and_incomplete() {
         (
             "synthesis",
             json!({"declaration": "Reach",
-        "initial": "spine-snapshot.json", "limits": {"work": 1}}),
+        "initial": "spine-snapshot.json", "limits": {"max_work": 1}}),
         ),
     );
     assert_eq!(value["synthesis"]["status"], "incomplete", "{value}");

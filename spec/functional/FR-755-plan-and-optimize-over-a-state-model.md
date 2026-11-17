@@ -54,7 +54,7 @@ with its plan, certificate and provenance.
 
 | ID | Criteria | Verification |
 | --- | --- | --- |
-| FR-755-AC-1 | FSpec FR-650-AC-1 and AC-2 hold over the `inc`/`double` counter fixture: `optimal` `inc, double, double` at length 3 and seven `inc` at cost 7, each with an accepted `potential` certificate. | Test (TC-2105) |
+| FR-755-AC-1 | FSpec FR-650-AC-1 and AC-2 hold over the `inc`/`double` counter fixture: `optimal` `inc, double, double` at length 3 and `inc, inc, inc, double` at cost 8, each with an accepted `potential` certificate. | Test (TC-2105) |
 | FR-755-AC-2 | Goal value 21 gives `infeasible` with an accepted closure certificate; a certificate with one successor removed is rejected by the checker naming the closure rule and entry, and the result is `feasible`. | Test (TC-2105) |
 | FR-755-AC-3 | The policy `always holds(c.value != 4)` gives a plan that never visits value 4, and the replayed plan satisfies the policy at every state. | Test (TC-2105) |
 

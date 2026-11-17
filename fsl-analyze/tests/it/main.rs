@@ -110,6 +110,7 @@ mod reduction_differential;
 mod reduction_manifest;
 mod reduction_proptest;
 mod reduction_world;
+mod reference_literal_binding;
 #[path = "../../../tests/support/refinement_aux.rs"]
 mod refinement_aux;
 mod refinement_auxiliary;
