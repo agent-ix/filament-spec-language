@@ -69,9 +69,7 @@ members are below.
 
 | `construct` | Where S2 refuses it | `text` holds | Message |
 | --- | --- | --- | --- |
-| `null-value` | `null` as a primary outside a record field value | `null` | `` `null` is not supported as a value here yet `` |
 | `index-selection` | `e[i]` that does not directly follow a field or selector of a clock place expression | the indexing expression, such as `s[i]` | `` the index selection `<text>` is not supported here yet `` |
-| `size-of-type` | `size<T>(e)` | the whole call | `` `size<T>` is not supported in expressions yet `` with `T` as written |
 | `qualified-reaches-edge` | `reaches(a, b, e)` whose edge `e` has more than one segment | the edge name | `` `reaches` over the qualified edge `<text>` is not supported yet `` |
 | `hyper-condition` | a hyper expression as a temporal condition | the hyper expression | `` a hyper expression is not supported as a temporal condition yet `` |
 | `declaration` | a declaration whose leading keyword has no dispatch entry | the leading keyword | `` `<text>` declarations are not supported yet `` |
@@ -80,6 +78,8 @@ members are below.
   `text`, followed by ` (declaration <declaration>)` when `declaration` is not
   `null`. The message begins with the construct, so a reader scanning a list
   of refusals sees which construct each one is.
+- `null` has no row: S2 builds it as the `Null` form outside a record field value, and check refuses it `ill_typed`/`type-mismatch` (FR-986).
+- `size<N>(e)` has no row: S2 builds it as the `Size` form carrying its result type (FR-981), and check types it.
 - `none` and `result` have no row: S2 builds them as the `Absent` and
   `Result` forms (FR-091 "Expression mapping"), and check, not S2, refuses
   them where their position admits neither.
@@ -105,11 +105,11 @@ members are below.
 | ID | Criteria | Verification |
 | --- | --- | --- |
 | FR-763-AC-1 | The `parse` outcome document of a unit holding `synthesis Pick using v grammar Digit domain Digit satisfies { Pick >= 3 };`, and of one holding `verify Release using v { check safe claim M::Safe method model_check domain M::Order bound 20; }`, holds no `unsupported_construct` diagnostic and no diagnostic whose `construct` is `declaration`; `leading_keywords()` yields `synthesis` and `verify`. | Test (TC-2155) |
-| FR-763-AC-2 | S2 over a function body `null` refuses `UnrepresentedConstruct` with `construct` `null-value`, `text` `null`, the function's name and profile, and the span of `null`. | Test (TC-2156) |
-| FR-763-AC-3 | S2 over a function body `size<Integer>(xs)` refuses with `construct` `size-of-type` and `text` `size<Integer>(xs)`; over a function body `xs[0]` it refuses with `construct` `index-selection` and `text` `xs[0]`. | Test (TC-2157) |
+| FR-763-AC-2 | S2 over a function body `xs[0]` refuses `UnrepresentedConstruct` with `construct` `index-selection`, `text` `xs[0]`, the function's name and profile, and the span of `xs[0]`. | Test (TC-2156) |
+| FR-763-AC-3 | S2 over the function body `size(xs) + xs[1]` refuses with `construct` `index-selection`, `text` `xs[1]` (the indexing expression alone, not the whole body) and the span of `xs[1]`. | Test (TC-2157) |
 | FR-763-AC-4 | S2 over a state clause `reaches(self, self, Config::ConfigVersion::parent)` refuses with `construct` `qualified-reaches-edge` and `text` `Config::ConfigVersion::parent`, at the edge's span. | Test (TC-2158) |
 | FR-763-AC-5 | For every `ConstructKind` variant that source reaches (every row but `declaration`), the refusal's message begins with the row's sentence filled from `text`; a construct whose source text is 200 bytes long carries a `text` of at most 123 bytes that ends with `...`. No refusal of either cause has an empty `text`. | Test (TC-2159) |
-| FR-763-AC-6 | The `parse` outcome document of AC-2's unit holds one diagnostic with `code` `unsupported_construct`, `cause` `not-yet-implemented` (not `null`), `construct` `null-value`, `text` `null`, `declaration` the function's name and `profile` its profile identity, and the message of AC-5; the document's category is `unsupported`, exit 21. | Test (TC-2160) |
+| FR-763-AC-6 | The `parse` outcome document of AC-2's unit holds one diagnostic with `code` `unsupported_construct`, `cause` `not-yet-implemented` (not `null`), `construct` `index-selection`, `text` `xs[0]`, `declaration` the function's name and `profile` its profile identity, and the message of AC-5; the document's category is `unsupported`, exit 21. | Test (TC-2160) |
 
 ## Dependencies
 

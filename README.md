@@ -156,12 +156,13 @@ protocol Orders using P over (view: M::WorkflowView) on each (started: M::StartV
   role OrdersService on M::OrderService;
   role PaymentsService on M::PaymentService;
   channel Requests from OrdersService to PaymentsService carries M::ChargeRequest
-    ordering fifo by (message: M::ChargeRequest) { message.key } delivery [0,3];
+    ordering fifo by (message: M::ChargeRequest) { message.key } delivery [0,3] capacity 4 overflow block;
   run sequence Main {
     send Sent via Requests as (sent: M::SendView) { sent.amount = requested };
     receive Received via Requests of Sent as (received: M::ReceiptView) { received.ok };
     commit Committed by OrdersService as (committed: M::CommitView) { committed.ok };
   }
+  finish Closed as (closing: M::ClosureView) { closing.complete };
 }
 ```
 

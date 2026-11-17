@@ -27,4 +27,5 @@ mod task_set_forms;
 mod temporal_clause_forms;
 mod terminal_declaration_forms;
 mod time_forms;
+mod typed_size;
 mod value_forms;
