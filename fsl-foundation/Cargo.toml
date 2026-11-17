@@ -12,7 +12,7 @@ default = ["std"]
 std = ["serde/std", "serde_json/std", "thiserror/std"]
 
 [dependencies]
-ix-trace-rs = { git = "https://github.com/agent-ix/ix-trace-rs", branch = "main" }
+ix-trace-rs = { git = "https://github.com/agent-ix/ix-trace-rs", tag = "v0.1.2" }
 # A no_std hash map: the source map groups entries by node key hash.
 hashbrown = { version = "0.17.1", default-features = false, features = ["default-hasher"] }
 # ADR-011 §6.1: F depends on K. ADR-013 T-5's `Locus` carries the kernel

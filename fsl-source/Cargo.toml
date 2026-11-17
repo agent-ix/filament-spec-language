@@ -22,15 +22,15 @@ quire-extraction = [
 ]
 
 [dependencies]
-ix-trace-rs = { git = "https://github.com/agent-ix/ix-trace-rs", branch = "main", optional = true }
+ix-trace-rs = { git = "https://github.com/agent-ix/ix-trace-rs", tag = "v0.1.2", optional = true }
 fsl-foundation = { path = "../fsl-foundation", optional = true }
-quire-rs = { git = "https://github.com/agent-ix/quire-rs", rev = "5b4be36d594a488b21c854051f05116eb9302d78", optional = true, default-features = false }
+quire-rs = { git = "https://github.com/agent-ix/quire-rs", tag = "v0.53.0", optional = true, default-features = false }
 serde = { version = "1.0.228", features = ["derive"], optional = true }
 serde_json = { version = "1.0.151", optional = true }
 thiserror = { version = "2.0.20", optional = true }
 
 [dev-dependencies]
-ix-trace-rs = { git = "https://github.com/agent-ix/ix-trace-rs", branch = "main" }
+ix-trace-rs = { git = "https://github.com/agent-ix/ix-trace-rs", tag = "v0.1.2" }
 
 [[test]]
 name = "it"

@@ -22,7 +22,7 @@ quire-extraction = ["dep:fsl-source", "fsl-source/quire-extraction"]
 test-support = []
 
 [dependencies]
-ix-trace-rs = { git = "https://github.com/agent-ix/ix-trace-rs", branch = "main" }
+ix-trace-rs = { git = "https://github.com/agent-ix/ix-trace-rs", tag = "v0.1.2" }
 fsl-cst = { path = "../fsl-cst" }
 fsl-eval = { path = "../fsl-eval" }
 fsl-forms = { path = "../fsl-forms" }
