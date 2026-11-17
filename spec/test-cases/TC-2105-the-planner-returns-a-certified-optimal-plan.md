@@ -20,6 +20,6 @@ Verify plan search, policy pruning, native replay and the core certificate check
 
 ## Expected Results
 
-- Step 1: `optimal` `inc, double, double` at 3 and seven `inc` at 7, certificates accepted.
+- Step 1: `optimal` `inc, double, double` at 3 and `inc, inc, inc, double` at 8, certificates accepted.
 - Step 2: `infeasible` with an accepted closure certificate; the tampered certificate rejected naming rule and entry, result `feasible`.
 - Step 3: no plan state has value 4 and replay holds the policy at every state.
