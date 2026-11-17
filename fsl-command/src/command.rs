@@ -647,17 +647,9 @@ fn source_from_clause(source: &fsl_replay::spine::ClauseRunSource) -> Option<Sou
             path,
             bytes,
         } => Source::read_typed(identity.clone(), path, bytes, bytes.len()).ok(),
-        #[cfg(feature = "quire-extraction")]
-        fsl_replay::spine::ClauseRunSource::Extracted(extracted) => {
-            let body = extracted.map().body();
-            Source::read_typed(
-                body.identity().clone(),
-                body.path(),
-                body.text().as_bytes(),
-                body.text().len(),
-            )
-            .ok()
-        }
+        // ClauseRunSource is non-exhaustive; future source variants need an
+        // admitted Source projection before they can be rendered here.
+        _ => None,
     }
 }
 
