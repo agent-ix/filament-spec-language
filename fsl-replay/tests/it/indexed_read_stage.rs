@@ -66,7 +66,6 @@ fn check_document(text: &str) -> (Value, u8) {
 /// FR-984-AC-1: a non-hyper temporal clause refuses `@` at S3, exit 21.
 #[trace("TC-2780", "FR-984-AC-1", "FSpec-TC-1003", "FSpec-FR-501-AC-2")]
 #[test]
-#[ignore = "QSL-2162: the S3 refusal of `@` in a non-hyper temporal clause is not locked through the outcome document yet"]
 fn an_indexed_read_in_a_non_hyper_temporal_clause_refuses_at_s3() {
     let text = format!(
         "{HEADER}record R {{ l: Integer; }}\n\
@@ -93,7 +92,6 @@ fn an_indexed_read_in_a_non_hyper_temporal_clause_refuses_at_s3() {
 /// FR-984-AC-2: in a function body `@` is a syntax error at S1, exit 20.
 #[trace("TC-2780", "FR-984-AC-2")]
 #[test]
-#[ignore = "QSL-2162: the S1 refusal category and exit of `@` in a function body are not locked yet"]
 fn an_indexed_read_in_a_function_body_is_a_syntax_error() {
     let text = format!("{HEADER}function f using v(x: Integer): Integer pure {{ x @ a }}\n");
     let (value, exit) = parse_document(&text);
@@ -110,7 +108,6 @@ fn an_indexed_read_in_a_function_body_is_a_syntax_error() {
 /// FR-984-AC-3: a hyper clause over behaviours admits two indexed reads.
 #[trace("TC-2780", "FR-984-AC-3")]
 #[test]
-#[ignore = "QSL-2162: the positive hyper case is locked with the two refusals; not run as a gate test yet"]
 fn a_hyper_clause_admits_indexed_reads() {
     let text = format!(
         "{HEADER}model V = \"acme/vault\";\n\
