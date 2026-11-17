@@ -134,16 +134,18 @@ fn collection_constructor_names_never_reach_an_invalid_forms_shape() {
     for name in ["set", "bag", "orderedSet"] {
         for declaration in [
             format!("function f using v({name}: Integer): Boolean pure {{ true }}"),
-            format!(
-                "function f using v(x: Integer): Boolean pure {{ let {name} = x in true }}"
-            ),
+            format!("function f using v(x: Integer): Boolean pure {{ let {name} = x in true }}"),
         ] {
             let (text, parsed) = parse(&declaration);
             assert!(!parsed.is_admissible(), "{text}");
             let [diagnostic] = parsed.diagnostics() else {
                 panic!("one refusal for {text}: {:?}", parsed.diagnostics());
             };
-            assert_eq!(diagnostic.code, fsl_cst::CompleteCode::InvalidSyntax, "{text}");
+            assert_eq!(
+                diagnostic.code,
+                fsl_cst::CompleteCode::InvalidSyntax,
+                "{text}"
+            );
             assert!(diagnostic.message.contains(name), "{text}: {diagnostic:?}");
             assert!(
                 build_unit(&parsed).is_err(),
