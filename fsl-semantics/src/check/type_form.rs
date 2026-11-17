@@ -957,7 +957,7 @@ mod tests {
             ])
             .with_bounds(vec!["0".to_owned(), "4".to_owned()]);
         let resolved = resolve(&map).expect("a bounded source map with scalar key resolves");
-        let ValueType::Map(resolved) = resolved else {
+        let ValueType::Map(resolved) = &resolved else {
             panic!("map type, not {resolved:?}");
         };
         assert_eq!(
