@@ -14,7 +14,9 @@
 //! The ledger does not verify or repair an assertion. It only keeps one
 //! binding from asserting less than it already asserted.
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeMap;
+
+use super::covered::CoveredList;
 
 /// FR-255's setting that raises the covered-position capacity.
 pub const COVERED_POSITIONS_SETTING: &str = "progress.covered_positions";
@@ -69,7 +71,7 @@ pub enum ProgressClosure {
 }
 
 /// One position of an admitted trace, by identity and stamp.
-#[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]
+#[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub struct ObservedPosition {
     /// The position's identity: the identity of its admitted observation.
     pub identity: String,
@@ -98,7 +100,7 @@ pub struct LedgerEntry {
     completeness: ProgressCompleteness,
     scope: ProgressClosure,
     execution: ProgressClosure,
-    covered: BTreeSet<ObservedPosition>,
+    covered: CoveredList,
 }
 
 impl LedgerEntry {
@@ -126,6 +128,34 @@ impl LedgerEntry {
     /// binding supplied, in identity-then-stamp order.
     pub fn covered(&self) -> impl Iterator<Item = &ObservedPosition> {
         self.covered.iter()
+    }
+
+    /// The covered positions as the shared set itself (FR-820): a clone is
+    /// O(1) and keeps this entry's set as it is now.
+    pub fn covered_list(&self) -> &CoveredList {
+        &self.covered
+    }
+
+    /// The retained assertion.
+    pub fn assertion(&self) -> ProgressAssertion {
+        ProgressAssertion {
+            watermark: self.watermark,
+            completeness: self.completeness,
+            scope: self.scope,
+            execution: self.execution,
+        }
+    }
+
+    /// An entry retaining `assertion` and the `covered` positions, as a
+    /// caller that carries a ledger in its own form hands it back.
+    pub fn new(assertion: ProgressAssertion, covered: CoveredList) -> Self {
+        Self {
+            watermark: assertion.watermark,
+            completeness: assertion.completeness,
+            scope: assertion.scope,
+            execution: assertion.execution,
+            covered,
+        }
     }
 }
 
@@ -236,11 +266,31 @@ impl ProgressLedger {
         positions: &[ObservedPosition],
         capacity: u64,
     ) -> Result<Self, LedgerRefusal> {
-        let mut covered = self
+        let covered = self
             .entries
             .get(binding)
             .map(|entry| entry.covered.clone())
             .unwrap_or_default();
+        self.admit_continued(binding, assertion, covered, positions, capacity)
+    }
+
+    /// FR-820: [`Self::admit`] for a caller that carries one trace forward
+    /// and admitted its earlier positions already. `covered` is the retained
+    /// entry's covered set with those earlier positions added, each of which
+    /// passed the position check against the retained entry; `positions` are
+    /// the trace's positions after them. Only `positions` are checked and
+    /// added, so the work is proportional to them, and the result equals
+    /// [`Self::admit`] over the whole trace.
+    ///
+    /// Returns the updated ledger, or the refusal with `self` unchanged.
+    pub fn admit_continued(
+        &self,
+        binding: &LedgerBinding,
+        assertion: ProgressAssertion,
+        mut covered: CoveredList,
+        positions: &[ObservedPosition],
+        capacity: u64,
+    ) -> Result<Self, LedgerRefusal> {
         if let Some(retained) = self.entries.get(binding) {
             check_progress(binding, retained, assertion, positions)
                 .map_err(LedgerRefusal::Contradiction)?;
@@ -264,17 +314,16 @@ impl ProgressLedger {
             }));
         }
         let mut entries = self.entries.clone();
-        entries.insert(
-            binding.clone(),
-            LedgerEntry {
-                watermark: assertion.watermark,
-                completeness: assertion.completeness,
-                scope: assertion.scope,
-                execution: assertion.execution,
-                covered,
-            },
-        );
+        entries.insert(binding.clone(), LedgerEntry::new(assertion, covered));
         Ok(Self { entries })
+    }
+
+    /// A ledger holding `entries`, one per binding: a caller's own form of
+    /// a ledger handed back, each covered set shared, not copied.
+    pub fn from_entries(entries: impl IntoIterator<Item = (LedgerBinding, LedgerEntry)>) -> Self {
+        Self {
+            entries: entries.into_iter().collect(),
+        }
     }
 }
 
@@ -756,5 +805,44 @@ mod tests {
             .expect_err("fifth covered position");
         assert!(matches!(refused, LedgerRefusal::LimitReached(_)));
         assert_eq!(next.entry(&binding()).expect("entry").covered().count(), 4);
+    }
+
+    #[trace("FR-502-AC-7", "FR-820-AC-1")]
+    #[test]
+    fn a_continued_admission_equals_the_admission_of_the_whole_trace() {
+        let start = retaining(assertion(2, complete(2)), &zero_to_three()[..3]);
+        let all: Vec<ObservedPosition> = (3..43).map(|n| at(&format!("q{n}"), n)).collect();
+        let mut carried = start
+            .entry(&binding())
+            .map(|entry| entry.covered_list().clone())
+            .unwrap_or_default();
+        for k in 1..=all.len() {
+            let progress = assertion(43, complete(2));
+            let whole = admit(&start, &binding(), progress, &all[..k]).expect("whole");
+            let continued = start
+                .admit_continued(
+                    &binding(),
+                    progress,
+                    carried.clone(),
+                    &all[k - 1..k],
+                    CAPACITY,
+                )
+                .expect("continued");
+            assert_eq!(continued, whole);
+            carried = continued
+                .entry(&binding())
+                .map(|entry| entry.covered_list().clone())
+                .unwrap_or_default();
+        }
+        let late = start
+            .admit_continued(
+                &binding(),
+                assertion(43, complete(2)),
+                carried,
+                &[at("late", 1)],
+                CAPACITY,
+            )
+            .expect_err("a new position inside the retained extent");
+        assert!(matches!(late, LedgerRefusal::Contradiction(_)));
     }
 }

@@ -2358,6 +2358,208 @@ fn a_carried_window_reads_only_the_open_activations() {
     assert!(late <= bound.map(|bound| bound * 2), "{decided:?}");
 }
 
+/// The batch report of `name` over `trace` from `ledger`, read
+/// unauthenticated as a carried state reads it.
+fn batch_from(
+    world: &World,
+    name: &str,
+    trace: &TraceInput,
+    ledger: Option<&spine::ProgressLedger>,
+) -> ClauseRunReport {
+    run_package_temporal(&PackageTemporalRequest {
+        package: world.unit.package(),
+        packages: &world.packages,
+        model_limits: ModelNormalizationLimits::default(),
+        snapshots: &DocumentProvision::new(),
+        observation_limits: ObservationLimits::default(),
+        accounting: UNLIMITED,
+        name,
+        trace,
+        over: None,
+        ledger,
+        sources: &world.sources,
+        authentication: None,
+        cancel: &Cancel::new(),
+    })
+}
+
+/// FR-820 "Summarized positions", FR-502 (TC-2320): a carried state's runs
+/// admit only the positions added since the last one, into the
+/// finite-window trace and into the progress ledger, whose covered set each
+/// report shares. Over 120 positions each report equals FR-330's over the
+/// prefix member for member, the ledger included, while a step admits at
+/// most the positions it added and the batch run admits every position. This
+/// holds for a `Timestamped` trace whose positions are reordered at a shared
+/// stamp, for a `Progressed` trace opened from a ledger that already covers
+/// its first position, and for a session that carries each report's ledger
+/// into the next run.
+#[test]
+#[trace("TC-2320", "FR-820-AC-1", "FR-820-AC-2", "FR-502-AC-7")]
+fn a_carried_state_admits_only_the_new_positions_into_its_trace_and_ledger() {
+    let world = world();
+    let cancel = Cancel::new();
+    let count: u64 = 120;
+    let level = |index: u64| i64::try_from(index % 7).expect("a level");
+    // Each position is admitted once, into the trace and into the ledger,
+    // by the step whose progress first covers it.
+    let flat = |name: &str, work: &[(u64, u64, u64, u64)], most: u64, admitted: u64| {
+        assert_eq!(
+            work.iter().map(|step| step.0).sum::<u64>(),
+            admitted,
+            "{name}"
+        );
+        assert_eq!(
+            work.iter().map(|step| step.1).sum::<u64>(),
+            admitted,
+            "{name}"
+        );
+        for (step, (trace, ledger, batch_trace, batch_ledger)) in work.iter().enumerate() {
+            assert!(
+                *trace <= most && *ledger <= most,
+                "{name} step {step}: {work:?}"
+            );
+            assert!(*batch_trace > 0 && *batch_ledger > 0, "{name} step {step}");
+        }
+        let (_, _, batch_trace, batch_ledger) = work[work.len() - 1];
+        assert!(
+            batch_trace >= count - 1 && batch_ledger >= count - 1,
+            "{work:?}"
+        );
+    };
+    let usage = |carried: &ClauseRunReport, batch: &ClauseRunReport| {
+        (
+            carried.usage.trace_positions,
+            carried.usage.ledger_positions,
+            batch.usage.trace_positions,
+            batch.usage.ledger_positions,
+        )
+    };
+
+    // Timestamped: two observations share every fifth stamp and arrive out
+    // of canonical order.
+    let mut state = ClauseState::open(
+        world.unit.package(),
+        clause_node(&world, "Window"),
+        &clause_open(
+            &world,
+            ClauseTraceKind::Timestamped,
+            Some(stamped_binding()),
+            ProgressLowerBoundary::AuthoritativeOrigin,
+        ),
+    )
+    .expect("opens");
+    let mut observations: Vec<TimestampedObservation> = Vec::new();
+    let mut work = Vec::new();
+    for index in 0..count {
+        let stamp = index - index / 5;
+        let observed = text(level(index));
+        let mut position = admitted(&world, "Window", &observed, stamp);
+        position.stamp = stamp;
+        state.advance(position, &cancel).expect("advances");
+        observations.push(TimestampedObservation {
+            document: spine::sample_position(&observed),
+            stamp,
+            order_key: None,
+        });
+        if index % 5 == 4 {
+            continue;
+        }
+        let advance = state
+            .assert_progress(&progress(stamp), &cancel)
+            .expect("progress");
+        let trace = TraceInput::Timestamped {
+            observations: observations.clone(),
+            progress: progress(stamp),
+            window: Box::new(TimestampedWindow {
+                binding: Some(stamped_binding()),
+                authoritative_origin: true,
+                cover: None,
+                missing_valuations: Vec::new(),
+            }),
+        };
+        let batch = batch_from(&world, "Window", &trace, None);
+        assert!(advance.report.ledger.is_some(), "Window after {index}");
+        assert_eq!(
+            members(&advance.report),
+            members(&batch),
+            "Window after position {index}"
+        );
+        work.push(usage(&advance.report, &batch));
+    }
+    flat("Window", &work, 2, count - 1);
+
+    // Progressed, from an opening ledger that covers the first position, and
+    // as a session carrying each report's ledger into the next run.
+    let first = text(level(0));
+    let opening = batch_from(
+        &world,
+        "Past",
+        &TraceInput::Progressed {
+            trace: vec![spine::sample_position(&first)],
+            progress: progress(0),
+            lower_boundary: ProgressLowerBoundary::AuthoritativeOrigin,
+            binding: events_binding(),
+        },
+        None,
+    )
+    .ledger
+    .expect("the opening ledger");
+    for carried in [false, true] {
+        let mut state = ClauseState::open(
+            world.unit.package(),
+            clause_node(&world, "Past"),
+            &ClauseOpen {
+                ledger: Some(opening.clone()),
+                ..clause_open(
+                    &world,
+                    ClauseTraceKind::Progressed,
+                    Some(events_binding()),
+                    ProgressLowerBoundary::AuthoritativeOrigin,
+                )
+            },
+        )
+        .expect("opens");
+        let mut documents = Vec::new();
+        let mut batch_ledger = opening.clone();
+        let mut work = Vec::new();
+        for index in 0..count {
+            let observed = text(if index % 11 == 3 { 9 } else { level(index) });
+            state
+                .advance(admitted(&world, "Past", &observed, index), &cancel)
+                .expect("advances");
+            documents.push(spine::sample_position(&observed));
+            let advance = state
+                .assert_progress(&progress(index), &cancel)
+                .expect("progress");
+            let trace = TraceInput::Progressed {
+                trace: documents.clone(),
+                progress: progress(index),
+                lower_boundary: ProgressLowerBoundary::AuthoritativeOrigin,
+                binding: events_binding(),
+            };
+            let batch = batch_from(&world, "Past", &trace, Some(&batch_ledger));
+            assert_eq!(
+                members(&advance.report),
+                members(&batch),
+                "Past (carried {carried}) after position {index}"
+            );
+            let covered = advance.report.ledger.as_ref().and_then(|ledger| {
+                ledger
+                    .entries()
+                    .next()
+                    .map(|(_, entry)| entry.covered().count())
+            });
+            assert_eq!(covered, Some(usize::try_from(index).expect("an index") + 1));
+            work.push(usage(&advance.report, &batch));
+            if carried {
+                state.carry_ledger(advance.report.ledger.clone());
+                batch_ledger = batch.ledger.clone().expect("the batch ledger");
+            }
+        }
+        flat("Past", &work, 1, count);
+    }
+}
+
 /// FR-820-AC-1 (TC-2320) over snapshots: `Bounded`, `Reaches` and
 /// `always holds(c.value <= 1)` over `c.value` 0, 1, 2, 1, 0. Each snapshot is
 /// admitted once; the report after each `advance` is FR-330's over the prefix,

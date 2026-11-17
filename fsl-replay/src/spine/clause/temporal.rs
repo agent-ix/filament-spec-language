@@ -26,8 +26,8 @@ use fsl_semantics::model::observation::{
 
 use super::progress::{
     ContradictedDimension, LedgerBinding, ObservedPosition, ProgressAssertion, ProgressClosure,
-    ProgressCompleteness, ProgressContradiction, ProgressLedger, ProgressLowerBoundary,
-    ProgressValue, Refusal,
+    ProgressCompleteness, ProgressContradiction, ProgressLedger, ProgressLedgerEntry,
+    ProgressLowerBoundary, ProgressValue, Refusal,
 };
 use super::trace_refusal::ClauseSite;
 use super::{
@@ -140,37 +140,63 @@ impl TraceInput {
 
     /// The progress assertion and position identities carried by this trace.
     fn progress(&self) -> Option<(ProgressAssertion, Vec<ObservedPosition>)> {
+        self.progress_from(0)
+    }
+
+    /// The progress assertion, and the identities of the positions listed
+    /// from index `from` on (FR-820: a carried state lists only the ones its
+    /// ledger has not admitted).
+    fn progress_from(&self, from: usize) -> Option<(ProgressAssertion, Vec<ObservedPosition>)> {
         match self {
             Self::Progressed {
                 trace, progress, ..
-            } => {
-                let positions = trace
-                    .iter()
-                    .enumerate()
-                    .map(|(index, document)| {
-                        Some(ObservedPosition {
-                            identity: document_identity(document),
-                            stamp: u64::try_from(index).ok()?,
-                        })
-                    })
-                    .collect::<Option<Vec<_>>>()?;
-                Some((*progress, positions))
-            }
+            } => Some((
+                *progress,
+                (from..trace.len())
+                    .map(|index| self.position_at(index))
+                    .collect::<Option<Vec<_>>>()?,
+            )),
             Self::Timestamped {
                 observations,
                 progress,
                 ..
             } => Some((
                 *progress,
-                observations
-                    .iter()
-                    .map(|observation| ObservedPosition {
-                        identity: document_identity(&observation.document),
-                        stamp: observation.stamp,
-                    })
-                    .collect(),
+                (from..observations.len())
+                    .map(|index| self.position_at(index))
+                    .collect::<Option<Vec<_>>>()?,
             )),
             Self::Finite(_) | Self::Lasso { .. } | Self::Model { .. } => None,
+        }
+    }
+
+    /// The identity and stamp of the position listed at `index` of a
+    /// progress-carrying trace.
+    fn position_at(&self, index: usize) -> Option<ObservedPosition> {
+        match self {
+            Self::Progressed { trace, .. } => Some(ObservedPosition {
+                identity: document_identity(trace.get(index)?),
+                stamp: u64::try_from(index).ok()?,
+            }),
+            Self::Timestamped { observations, .. } => {
+                let observation = observations.get(index)?;
+                Some(ObservedPosition {
+                    identity: document_identity(&observation.document),
+                    stamp: observation.stamp,
+                })
+            }
+            Self::Finite(_) | Self::Lasso { .. } | Self::Model { .. } => None,
+        }
+    }
+
+    /// The number of positions a progress-carrying trace lists.
+    fn listed(&self) -> usize {
+        match self {
+            Self::Progressed { trace, .. } => trace.len(),
+            Self::Timestamped { observations, .. } => observations.len(),
+            Self::Finite(positions) => positions.len(),
+            Self::Lasso { prefix, repeat } => prefix.len().saturating_add(repeat.len()),
+            Self::Model { .. } => 0,
         }
     }
 
@@ -499,6 +525,9 @@ pub(crate) struct TapeInput<'a> {
     /// letters stand in for the object environments, each snapshot having
     /// been admitted once when it arrived.
     pub(crate) snapshot: Option<SnapshotTape<'a>>,
+    /// FR-820: what the state's earlier runs admitted of the trace and the
+    /// ledger, which this run continues.
+    pub(crate) admission: Option<&'a std::cell::RefCell<CarriedAdmission>>,
 }
 
 /// The decisive descent of a snapshot tape: the violated activation, the
@@ -526,6 +555,161 @@ pub(crate) struct SnapshotTape<'a> {
     pub(crate) descend: SnapshotDescend<'a>,
     /// The decisive record of the atom the descent found.
     pub(crate) record: SnapshotRecord<'a>,
+}
+
+/// FR-820: what a carried clause state's runs admitted of its trace and its
+/// ledger, so each run admits only the positions added since. One is kept
+/// for the report's run and one for FR-504's open-scope reading.
+#[derive(Clone, Debug, Default)]
+pub(crate) struct CarriedAdmission {
+    /// The finite-window trace of a `Progressed` or `Timestamped` trace, as
+    /// the last run admitted it.
+    trace: Option<TimestampedTrace>,
+    /// The ledger the last admission returned.
+    ledger: Option<LedgerCarry>,
+}
+
+/// The ledger a carried admission returned, and what it was admitted from.
+#[derive(Clone, Debug)]
+struct LedgerCarry {
+    /// The binding's entry in the ledger the run started from.
+    start: Option<ProgressLedgerEntry>,
+    /// The binding's entry in the ledger the run returned: `start`'s covered
+    /// positions with the trace's first `admitted` positions added.
+    output: ProgressLedgerEntry,
+    /// How many of the trace's positions `output` covers.
+    admitted: usize,
+    /// The last of them.
+    last: Option<ObservedPosition>,
+}
+
+/// FR-820 "No partial state": a [`CarriedAdmission`] before one call, kept
+/// as its count of admitted positions.
+#[derive(Clone, Debug)]
+pub(crate) struct AdmissionMark {
+    positions: Option<usize>,
+    ledger: Option<LedgerCarry>,
+}
+
+/// Whether `left` and `right` are one version of one entry.
+fn same_entry(left: Option<&ProgressLedgerEntry>, right: Option<&ProgressLedgerEntry>) -> bool {
+    match (left, right) {
+        (Some(left), Some(right)) => {
+            left.assertion() == right.assertion()
+                && left.covered_list().shares(right.covered_list())
+        }
+        (None, None) => true,
+        (Some(_), None) | (None, Some(_)) => false,
+    }
+}
+
+impl CarriedAdmission {
+    /// The admission as it is now, for [`Self::restore`].
+    pub(crate) fn mark(&self) -> AdmissionMark {
+        AdmissionMark {
+            positions: self.trace.as_ref().map(TimestampedTrace::observed),
+            ledger: self.ledger.clone(),
+        }
+    }
+
+    /// Put back the admission `mark` was taken of.
+    pub(crate) fn restore(&mut self, mark: AdmissionMark) {
+        match (mark.positions, self.trace.as_mut()) {
+            (Some(positions), Some(trace)) => trace.truncate(positions),
+            (None, _) => self.trace = None,
+            (Some(_), None) => {}
+        }
+        self.ledger = mark.ledger;
+    }
+
+    /// Keep only the first `len` positions: the positions after them take
+    /// another order (FR-501 "Canonical order").
+    pub(crate) fn truncate(&mut self, len: usize) {
+        if let Some(trace) = self.trace.as_mut() {
+            trace.truncate(len);
+        }
+        if self.ledger.as_ref().is_some_and(|held| held.admitted > len) {
+            self.ledger = None;
+        }
+    }
+
+    /// The carried trace with every position of `listed` admitted, the first
+    /// `held` of which it holds already: the ones after them, or all when the
+    /// carried trace is not a prefix of the listing. `open` makes the trace the
+    /// first time. Returns how many positions are to be admitted.
+    fn continue_trace(
+        &mut self,
+        listed: usize,
+        held: impl Fn(&TimestampedTrace, usize) -> bool,
+        open: impl FnOnce() -> TimestampedTrace,
+    ) -> (&mut TimestampedTrace, usize) {
+        let from = match self.trace.as_ref() {
+            Some(trace) if trace.observed() <= listed && held(trace, trace.observed()) => {
+                trace.observed()
+            }
+            _ => 0,
+        };
+        let trace = self.trace.get_or_insert_with(open);
+        trace.truncate(from);
+        (trace, listed.saturating_sub(from))
+    }
+}
+
+/// FR-502, FR-820: [`admit_progress`] for a carried state. When the ledger
+/// the run starts from is the one the carried admission returned, or the
+/// one it started from, only the positions after the ones it admitted are
+/// checked and added; the result equals the whole trace's admission.
+/// Returns the ledger and the number of positions admitted.
+fn admit_carried_progress(
+    ledger: &ProgressLedger,
+    binding: &LedgerBinding,
+    trace: &TraceInput,
+    carry: &mut CarriedAdmission,
+    covered_positions: u64,
+) -> Result<(ProgressLedger, usize), Box<ClauseDisposition>> {
+    let retained = ledger.entry(binding);
+    let listed = trace.listed();
+    let (from, covered) = match carry.ledger.as_ref() {
+        Some(held)
+            if (same_entry(retained, Some(&held.output))
+                || same_entry(retained, held.start.as_ref()))
+                && held.admitted <= listed
+                && held
+                    .admitted
+                    .checked_sub(1)
+                    .map_or(held.last.is_none(), |at| {
+                        trace.position_at(at).as_ref() == held.last.as_ref()
+                    }) =>
+        {
+            (held.admitted, held.output.covered_list().clone())
+        }
+        _ => (
+            0,
+            retained
+                .map(|entry| entry.covered_list().clone())
+                .unwrap_or_default(),
+        ),
+    };
+    let Some((assertion, positions)) = trace.progress_from(from) else {
+        return Err(Box::new(refused("invalid-value", BTreeMap::new())));
+    };
+    let updated = ledger
+        .admit_continued(binding, assertion, covered, &positions, covered_positions)
+        .map_err(|refusal| match refusal {
+            Refusal::Contradiction(contradiction) => Box::new(
+                ClauseDisposition::ProgressContradiction(Box::new(contradiction.into())),
+            ),
+            Refusal::LimitReached(reached) => Box::new(ClauseDisposition::Temporal(
+                TemporalVerdict::ProgressLimitReached(reached),
+            )),
+        })?;
+    carry.ledger = updated.entry(binding).map(|output| LedgerCarry {
+        start: retained.cloned(),
+        output: output.clone(),
+        admitted: listed,
+        last: listed.checked_sub(1).and_then(|at| trace.position_at(at)),
+    });
+    Ok((updated, positions.len()))
 }
 
 /// Why `over` did not resolve in the observation at position 0.
@@ -1085,6 +1269,10 @@ pub(super) fn run_temporal(run: &CompiledRun<'_>, request: &TemporalRun<'_>) -> 
     if let Some(cancel) = cancel {
         meter = meter.with_cancel(cancel.clone());
     }
+    // FR-820: the positions this run admitted into its trace and its ledger.
+    let mut trace_positions = 0usize;
+    let mut ledger_positions = 0usize;
+    // `Some(None)`: a carried state's trace, held in its admission.
     let progressed = match trace {
         TraceInput::Progressed {
             trace: documents,
@@ -1106,13 +1294,47 @@ pub(super) fn run_temporal(run: &CompiledRun<'_>, request: &TemporalRun<'_>) -> 
                     }
                 },
             };
-            let identities = documents.iter().map(observation_identity).collect();
             let facts = if tape.is_some_and(|tape| tape.open_aggregates) {
                 fsl_eval::temporal::evidence::ClauseFacts::of_checked_letters(clause)
             } else {
                 fsl_eval::temporal::evidence::ClauseFacts::of_checked(clause)
             };
-            match TimestampedTrace::admit_progressed(&facts, identities, assertion, &mut meter) {
+            // FR-820: a carried state's trace admits only the positions added
+            // since its last run.
+            let admission = tape.and_then(|tape| tape.admission);
+            let mut carried = admission.map(std::cell::RefCell::borrow_mut);
+            let admitted_trace = match carried.as_deref_mut() {
+                Some(carried) => {
+                    let (held, count) = carried.continue_trace(
+                        documents.len(),
+                        |held, observed| {
+                            observed.checked_sub(1).is_none_or(|last| {
+                                held.positions().get(last).map(|p| p.observation.as_str())
+                                    == documents.get(last).map(observation_identity).as_deref()
+                            })
+                        },
+                        || TimestampedTrace::open_progressed(&facts),
+                    );
+                    trace_positions = count;
+                    let from = documents.len().saturating_sub(count);
+                    let identities = documents
+                        .get(from..)
+                        .unwrap_or(&[])
+                        .iter()
+                        .map(observation_identity)
+                        .collect();
+                    held.extend_progressed(&facts, identities, assertion, &mut meter)
+                        .map(|extended| extended.map(|()| None))
+                }
+                None => {
+                    trace_positions = documents.len();
+                    let identities = documents.iter().map(observation_identity).collect();
+                    TimestampedTrace::admit_progressed(&facts, identities, assertion, &mut meter)
+                        .map(|admitted| admitted.map(Some))
+                }
+            };
+            drop(carried);
+            match admitted_trace {
                 Ok(Ok(admitted)) => Some(admitted),
                 Ok(Err(inconsistent)) => {
                     let member = match inconsistent {
@@ -1368,9 +1590,10 @@ pub(super) fn run_temporal(run: &CompiledRun<'_>, request: &TemporalRun<'_>) -> 
     // `SourceNotSupplied`, so the fresh admission is skipped.
     let fresh_ledger = trace.carries_progress() && !run.sources.is_empty();
     if let Some(ledger) = ledger.or_else(|| fresh_ledger.then_some(&fresh)) {
-        let Some((assertion, positions)) = trace.progress() else {
+        // A trace whose positions have no stamp in `u64` lists no progress.
+        if !trace.carries_progress() || u64::try_from(trace.listed()).is_err() {
             return early(refused("invalid-value", BTreeMap::new()));
-        };
+        }
         let Some(package_identity) = run.sources.first().map(|source| source.identity().clone())
         else {
             return late(ClauseDisposition::EvaluateFault(
@@ -1387,29 +1610,65 @@ pub(super) fn run_temporal(run: &CompiledRun<'_>, request: &TemporalRun<'_>) -> 
             clock: clause.clock().to_owned(),
             profile: clause.profile().identity().to_owned(),
         };
-        accepted_ledger = match admit_progress(
-            ledger,
-            &binding,
-            assertion,
-            &positions,
-            run.progress_capacity,
-        ) {
-            Ok(updated) => Some(updated),
-            Err(disposition) => return late(*disposition),
+        accepted_ledger = match tape.and_then(|tape| tape.admission) {
+            Some(admission) => match admit_carried_progress(
+                ledger,
+                &binding,
+                trace,
+                &mut admission.borrow_mut(),
+                run.progress_capacity,
+            ) {
+                Ok((updated, count)) => {
+                    ledger_positions = count;
+                    Some(updated)
+                }
+                Err(disposition) => return late(*disposition),
+            },
+            None => {
+                let Some((assertion, positions)) = trace.progress() else {
+                    return early(refused("invalid-value", BTreeMap::new()));
+                };
+                ledger_positions = positions.len();
+                match admit_progress(
+                    ledger,
+                    &binding,
+                    assertion,
+                    &positions,
+                    run.progress_capacity,
+                ) {
+                    Ok(updated) => Some(updated),
+                    Err(disposition) => return late(*disposition),
+                }
+            }
         };
     }
 
-    if let Some(window_trace) = progressed {
+    if let Some(owned) = progressed {
+        let held = tape
+            .and_then(|tape| tape.admission)
+            .map(std::cell::RefCell::borrow);
+        let Some(window_trace) = owned
+            .as_ref()
+            .or_else(|| held.as_ref().and_then(|held| held.trace.as_ref()))
+        else {
+            return late(ClauseDisposition::EvaluateFault(
+                filament_semantic_value::catalog::InternalFault::new(
+                    "temporal",
+                    "carried-progressed-trace-is-held",
+                ),
+            ));
+        };
         let silent_from = u64::try_from(window_trace.observed()).ok();
         let window = run_window(
             run,
             node,
-            &window_trace,
+            window_trace,
             (&[], silent_from),
             observing,
             tape.and_then(|tape| tape.window),
             &mut meter,
         );
+        drop(held);
         // A violation carries its counterexample (FR-330 Outputs) over record
         // samples as over snapshots: the samples are its steps.
         let (disposition, counterexample) =
@@ -1477,6 +1736,8 @@ pub(super) fn run_temporal(run: &CompiledRun<'_>, request: &TemporalRun<'_>) -> 
         );
         let mut usage = ClauseRunUsage::from_meter(&meter, admitted);
         usage.temporal_visits = window.visits;
+        usage.trace_positions = u64::try_from(trace_positions).unwrap_or(u64::MAX);
+        usage.ledger_positions = u64::try_from(ledger_positions).unwrap_or(u64::MAX);
         let mut finished = report(disposition, usage, authenticated_temporal_selection.clone());
         finished.finite_window = window.report;
         finished.refused_at = window.refused_at;
@@ -1503,7 +1764,11 @@ pub(super) fn run_temporal(run: &CompiledRun<'_>, request: &TemporalRun<'_>) -> 
             node,
             &view,
             observing,
-            tape.and_then(|tape| tape.window),
+            (
+                tape.and_then(|tape| tape.window),
+                tape.and_then(|tape| tape.admission),
+            ),
+            &mut trace_positions,
             &mut meter,
         );
         // A violation carries its counterexample (FR-330 Outputs) over record
@@ -1517,6 +1782,8 @@ pub(super) fn run_temporal(run: &CompiledRun<'_>, request: &TemporalRun<'_>) -> 
         );
         let mut usage = ClauseRunUsage::from_meter(&meter, admitted);
         usage.temporal_visits = window.visits;
+        usage.trace_positions = u64::try_from(trace_positions).unwrap_or(u64::MAX);
+        usage.ledger_positions = u64::try_from(ledger_positions).unwrap_or(u64::MAX);
         // FR-330: a `Timestamped` run carries no `decisive`; FR-501's
         // decision support is its record.
         let mut finished = report(disposition, usage, authenticated_temporal_selection.clone());
@@ -1585,11 +1852,9 @@ pub(super) fn run_temporal(run: &CompiledRun<'_>, request: &TemporalRun<'_>) -> 
         filament_semantic_value::catalog::Category::Refusal
             | filament_semantic_value::catalog::Category::InternalFailure
     );
-    let mut report = report(
-        disposition,
-        ClauseRunUsage::from_meter(&meter, admitted),
-        authenticated_temporal_selection,
-    );
+    let mut usage = ClauseRunUsage::from_meter(&meter, admitted);
+    usage.ledger_positions = u64::try_from(ledger_positions).unwrap_or(u64::MAX);
+    let mut report = report(disposition, usage, authenticated_temporal_selection);
     report.counterexample = counterexample;
     report.decisive = decisive;
     report.refused_at = refused_at;
@@ -1651,7 +1916,11 @@ fn run_finite_window(
     node: &fsl_semantics::check::TemporalClauseNode,
     input: &Timestamped<'_>,
     observing: ObservedPositions<'_>,
-    carried: Option<&std::cell::RefCell<fsl_eval::temporal::CarriedWindow>>,
+    (carried, admission): (
+        Option<&std::cell::RefCell<fsl_eval::temporal::CarriedWindow>>,
+        Option<&std::cell::RefCell<CarriedAdmission>>,
+    ),
+    trace_positions: &mut usize,
     meter: &mut Meter,
 ) -> WindowRun {
     use fsl_eval::temporal::{
@@ -1664,46 +1933,87 @@ fn run_finite_window(
         ))
     };
     let clause = node.clause();
+    let clock = WindowClock {
+        unit: clause.clock().to_owned(),
+        cover: match input.window.cover.unwrap_or(TimestampedCover::Exact) {
+            TimestampedCover::Exact => fsl_eval::temporal::ClockCover::Exact,
+            TimestampedCover::Counter { uncertainty } => {
+                fsl_eval::temporal::ClockCover::Counter { uncertainty }
+            }
+            TimestampedCover::Bounded { uncertainty } => {
+                fsl_eval::temporal::ClockCover::Bounded { uncertainty }
+            }
+        },
+    };
+    let window_observation = |position: &TimestampedObservation| WindowObservation {
+        stamp: position.stamp,
+        order_key: position
+            .order_key
+            .as_ref()
+            .map(|order| fsl_eval::temporal::OrderKey {
+                authority: order.authority.clone(),
+                key: order.key,
+            }),
+        observation: observation_identity(&position.document),
+    };
+    let progress = WindowProgress {
+        watermark: Watermark::Inclusive(input.progress.watermark),
+        completeness: input.progress.completeness.into(),
+        scope: input.progress.scope.into(),
+        execution: input.progress.execution.into(),
+        lower_boundary: if input.window.authoritative_origin {
+            LowerBoundary::AuthoritativeOrigin
+        } else {
+            LowerBoundary::HistoryCutoff
+        },
+    };
+    // FR-820: a carried state lists its positions in canonical order, each
+    // stamped after the ones before (FR-643 "Order"), and supplies no absent
+    // valuation; its trace admits only the positions added since its last
+    // run.
+    if let (Some(admission), true) = (admission, input.window.missing_valuations.is_empty()) {
+        let observations = input.observations;
+        let mut held = admission.borrow_mut();
+        let (trace, count) = held.continue_trace(
+            observations.len(),
+            |held, observed| {
+                observed.checked_sub(1).is_none_or(|last| {
+                    match (held.positions().get(last), observations.get(last)) {
+                        (Some(held), Some(listed)) => *held == window_observation(listed),
+                        _ => false,
+                    }
+                })
+            },
+            || TimestampedTrace::open(clause.name(), clock.clone(), progress),
+        );
+        *trace_positions = count;
+        let from = observations.len().saturating_sub(count);
+        trace.extend(
+            observations
+                .get(from..)
+                .unwrap_or(&[])
+                .iter()
+                .map(window_observation)
+                .collect(),
+            progress,
+        );
+        drop(held);
+        let held = admission.borrow();
+        let Some(trace) = held.trace.as_ref() else {
+            return fault("carried-timestamped-trace-is-held");
+        };
+        return run_window(run, node, trace, (&[], None), observing, carried, meter);
+    }
+    *trace_positions = input.observations.len();
     let ordered = ordered_timestamped_positions(input);
     let trace = match TimestampedTrace::admit(
         clause.name(),
-        WindowClock {
-            unit: clause.clock().to_owned(),
-            cover: match input.window.cover.unwrap_or(TimestampedCover::Exact) {
-                TimestampedCover::Exact => fsl_eval::temporal::ClockCover::Exact,
-                TimestampedCover::Counter { uncertainty } => {
-                    fsl_eval::temporal::ClockCover::Counter { uncertainty }
-                }
-                TimestampedCover::Bounded { uncertainty } => {
-                    fsl_eval::temporal::ClockCover::Bounded { uncertainty }
-                }
-            },
-        },
+        clock,
         ordered
             .iter()
-            .map(|position| WindowObservation {
-                stamp: position.stamp,
-                order_key: position
-                    .order_key
-                    .as_ref()
-                    .map(|order| fsl_eval::temporal::OrderKey {
-                        authority: order.authority.clone(),
-                        key: order.key,
-                    }),
-                observation: observation_identity(&position.document),
-            })
+            .map(|position| window_observation(position))
             .collect(),
-        WindowProgress {
-            watermark: Watermark::Inclusive(input.progress.watermark),
-            completeness: input.progress.completeness.into(),
-            scope: input.progress.scope.into(),
-            execution: input.progress.execution.into(),
-            lower_boundary: if input.window.authoritative_origin {
-                LowerBoundary::AuthoritativeOrigin
-            } else {
-                LowerBoundary::HistoryCutoff
-            },
-        },
+        progress,
     ) {
         Ok(trace) => trace,
         Err(_) => return fault("finite-window-trace-admits"),

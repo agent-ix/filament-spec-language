@@ -129,7 +129,7 @@ pub fn write_ledger(ledger: &ProgressLedger) -> Result<serde_json::Value, Ledger
                 covered: entry
                     .covered()
                     .map(|position| Covered {
-                        identity: position.identity.clone(),
+                        identity: position.identity,
                         stamp: position.stamp,
                     })
                     .collect(),

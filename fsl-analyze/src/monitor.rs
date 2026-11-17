@@ -197,6 +197,8 @@ impl MonitorUsage {
                 .evaluation_admissions
                 .saturating_add(step.evaluation_admissions),
             temporal_visits: total.temporal_visits.saturating_add(step.temporal_visits),
+            trace_positions: total.trace_positions.saturating_add(step.trace_positions),
+            ledger_positions: total.ledger_positions.saturating_add(step.ledger_positions),
             evaluation_consumed: total.evaluation_consumed.clone(),
         };
         for (kind, consumed) in &step.evaluation_consumed {

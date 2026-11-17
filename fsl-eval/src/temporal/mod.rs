@@ -34,6 +34,7 @@
 //! the evaluator reaches them only through [`TemporalLetters`], the seam to
 //! the one clause evaluator (FR-107).
 
+mod covered;
 mod engine;
 pub mod evidence;
 mod facts;
@@ -55,6 +56,7 @@ mod timed;
 mod tuple;
 mod window;
 
+pub use covered::CoveredList;
 pub use engine::{unrolling, DecisiveAtom, DecisiveSearch, DecisiveStop, Unrolling};
 pub use finite_window::{
     evaluate_finite_window, evaluate_finite_window_at, Assessment, Basis, ClockCover, Containment,

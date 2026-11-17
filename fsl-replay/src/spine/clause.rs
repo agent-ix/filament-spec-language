@@ -894,6 +894,14 @@ pub struct ClauseRunUsage {
     pub evaluation_admissions: u64,
     /// `temporal.visit` charges made by finite-window temporal evaluation.
     pub temporal_visits: u64,
+    /// FR-820: the trace positions the run admitted into its finite-window
+    /// trace: every position for a batch run, the new ones for a carried
+    /// clause state.
+    pub trace_positions: u64,
+    /// FR-820: the trace positions the run checked and added to the progress
+    /// ledger: every position for a batch run, the new ones for a carried
+    /// clause state.
+    pub ledger_positions: u64,
     /// The evaluation meter's consumed total, one pair per `LimitKind::ALL`.
     pub evaluation_consumed: Vec<(filament_exact::LimitKind, u64)>,
 }
@@ -986,6 +994,8 @@ impl ClauseRunUsage {
             admission_consumed,
             evaluation_admissions: meter.admission_count(),
             temporal_visits: 0,
+            trace_positions: 0,
+            ledger_positions: 0,
             evaluation_consumed: filament_exact::LimitKind::ALL
                 .iter()
                 .map(|kind| (*kind, meter.consumed(*kind)))

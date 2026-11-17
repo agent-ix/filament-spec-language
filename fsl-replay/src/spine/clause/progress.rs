@@ -4,7 +4,7 @@
 //! outputs (FR-100-AC-8: no public `fsl_replay::spine` item names a `fsl_eval`
 //! path), converted at the boundary.
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeMap;
 
 use fsl_eval::temporal as eval;
 
@@ -138,7 +138,7 @@ pub struct ProgressLimitReached {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ProgressLedgerEntry {
     assertion: ProgressAssertion,
-    covered: BTreeSet<ObservedPosition>,
+    covered: eval::CoveredList,
 }
 
 impl ProgressLedgerEntry {
@@ -164,8 +164,18 @@ impl ProgressLedgerEntry {
 
     /// The identity and stamp of every position an accepted request of this
     /// binding supplied, in identity-then-stamp order.
-    pub fn covered(&self) -> impl Iterator<Item = &ObservedPosition> {
-        self.covered.iter()
+    pub fn covered(&self) -> impl Iterator<Item = ObservedPosition> + '_ {
+        self.covered.iter().cloned().map(Into::into)
+    }
+
+    /// The covered positions as the evaluator's shared set (FR-820).
+    pub(super) fn covered_list(&self) -> &eval::CoveredList {
+        &self.covered
+    }
+
+    /// The retained assertion.
+    pub(super) fn assertion(&self) -> ProgressAssertion {
+        self.assertion
     }
 }
 
@@ -211,8 +221,8 @@ pub(super) enum Refusal {
 
 impl ProgressLedger {
     /// FR-502: the evaluator's ledger admits `assertion` under `binding` over
-    /// `positions` against `capacity`; this ledger is rebuilt from, and
-    /// updated by, its answer.
+    /// `positions` against `capacity`; this ledger is handed to it as it is,
+    /// each covered set shared, and is updated by its answer.
     pub(super) fn admit(
         &self,
         binding: &LedgerBinding,
@@ -220,25 +230,40 @@ impl ProgressLedger {
         positions: &[ObservedPosition],
         capacity: u64,
     ) -> Result<Self, Refusal> {
-        let mut carried = eval::ProgressLedger::new();
-        for (held, entry) in &self.entries {
-            let covered: Vec<eval::ObservedPosition> =
-                entry.covered.iter().cloned().map(Into::into).collect();
-            carried = carried
-                .admit(
-                    &held.clone().into(),
-                    entry.assertion.into(),
-                    &covered,
-                    u64::MAX,
+        let covered = self
+            .entries
+            .get(binding)
+            .map(|entry| entry.covered.clone())
+            .unwrap_or_default();
+        self.admit_continued(binding, assertion, covered, positions, capacity)
+    }
+
+    /// FR-820: [`Self::admit`] for a carried state that admitted the
+    /// trace's earlier positions already: `covered` is the retained entry's
+    /// set with them added, and only `positions`, the ones after them, are
+    /// checked and added (`eval::ProgressLedger::admit_continued`).
+    pub(super) fn admit_continued(
+        &self,
+        binding: &LedgerBinding,
+        assertion: ProgressAssertion,
+        covered: eval::CoveredList,
+        positions: &[ObservedPosition],
+        capacity: u64,
+    ) -> Result<Self, Refusal> {
+        let carried =
+            eval::ProgressLedger::from_entries(self.entries.iter().map(|(held, entry)| {
+                (
+                    held.clone().into(),
+                    eval::LedgerEntry::new(entry.assertion.into(), entry.covered.clone()),
                 )
-                .map_err(Refusal::from)?;
-        }
+            }));
         let positions: Vec<eval::ObservedPosition> =
             positions.iter().cloned().map(Into::into).collect();
         carried
-            .admit(
+            .admit_continued(
                 &binding.clone().into(),
                 assertion.into(),
+                covered,
                 &positions,
                 capacity,
             )
@@ -262,7 +287,7 @@ impl From<eval::ProgressLedger> for ProgressLedger {
                             scope: entry.scope().into(),
                             execution: entry.execution().into(),
                         },
-                        covered: entry.covered().cloned().map(Into::into).collect(),
+                        covered: entry.covered_list().clone(),
                     },
                 ))
             })
@@ -421,7 +446,7 @@ impl ProgressLedgerEntry {
     ) -> Self {
         Self {
             assertion,
-            covered: covered.into_iter().collect(),
+            covered: covered.into_iter().map(Into::into).collect(),
         }
     }
 }

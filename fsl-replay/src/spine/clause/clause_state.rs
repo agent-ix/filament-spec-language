@@ -49,8 +49,8 @@ use super::progress::{
 };
 use super::temporal::with_subject_counterexample;
 use super::temporal::{
-    clause_trace_binding, run_package_temporal_over, streamed_sample_report,
-    PackageTemporalRequest, TapeInput, TimestampedCover, TimestampedObservation,
+    clause_trace_binding, run_package_temporal_over, streamed_sample_report, AdmissionMark,
+    CarriedAdmission, PackageTemporalRequest, TapeInput, TimestampedCover, TimestampedObservation,
     TimestampedOrderKey, TimestampedWindow, TraceBinding, TraceInput,
 };
 use super::trace_subject::{
@@ -282,6 +282,14 @@ pub struct ClauseState<'a> {
     /// The decisive atom of a snapshot state's activation violated for
     /// good, once its descent found it.
     snapshot_cache: RefCell<Option<(u64, Option<fsl_eval::temporal::DecisiveAtom>)>>,
+    /// FR-820: what the report's runs admitted of the trace and the ledger.
+    admission: RefCell<CarriedAdmission>,
+    /// FR-820: what FR-504's open-scope runs admitted of the trace.
+    open_admission: RefCell<CarriedAdmission>,
+    /// FR-820: the trace the report's runs read, listed once per position.
+    trace: RefCell<Option<TraceInput>>,
+    /// FR-820: the trace FR-504's open-scope runs read, listed the same way.
+    open_trace: RefCell<Option<TraceInput>>,
 }
 
 /// FR-820 "No partial state": what [`ClauseState::restore`] puts back, the
@@ -315,6 +323,8 @@ pub struct ClauseMark {
     open_window: CarriedWindow,
     objects: snapshot::SnapshotRead,
     snapshot_cache: Option<(u64, Option<fsl_eval::temporal::DecisiveAtom>)>,
+    admission: AdmissionMark,
+    open_admission: AdmissionMark,
 }
 
 /// The `pending` report of a clause no evaluation has read yet.
@@ -506,6 +516,10 @@ impl<'a> ClauseState<'a> {
             open_window: RefCell::new(CarriedWindow::default()),
             objects: snapshot::SnapshotRead::default(),
             snapshot_cache: RefCell::new(None),
+            admission: RefCell::new(CarriedAdmission::default()),
+            open_admission: RefCell::new(CarriedAdmission::default()),
+            trace: RefCell::new(None),
+            open_trace: RefCell::new(None),
         })
     }
 
@@ -548,6 +562,8 @@ impl<'a> ClauseState<'a> {
             open_window: self.open_window.borrow().clone(),
             objects: self.objects.clone(),
             snapshot_cache: *self.snapshot_cache.borrow(),
+            admission: self.admission.borrow().mark(),
+            open_admission: self.open_admission.borrow().mark(),
         }
     }
 
@@ -588,6 +604,10 @@ impl<'a> ClauseState<'a> {
         self.open_window.replace(mark.open_window);
         self.objects = mark.objects;
         self.snapshot_cache.replace(mark.snapshot_cache);
+        self.admission.get_mut().restore(mark.admission);
+        self.open_admission.get_mut().restore(mark.open_admission);
+        truncate_listing(&mut self.trace, self.seen.len());
+        truncate_listing(&mut self.open_trace, self.seen.len());
     }
 
     /// The ledger each later run starts from: a monitor carries one ledger
@@ -989,10 +1009,98 @@ impl<'a> ClauseState<'a> {
         Ok(advance)
     }
 
-    /// The trace of the first `seen` positions under `assertion`.
-    fn trace_of(&self, seen: usize, assertion: ProgressAssertion) -> TraceInput {
-        let positions = &self.seen[..seen.min(self.seen.len())];
-        let refs = || positions.iter().map(|p| p.reference.clone()).collect();
+    /// FR-820: the trace of the first `seen` positions as `shape` names them
+    /// (`shape` lists no position), kept in `cell` between runs so a run
+    /// lists only the positions added since the last one. A carried listing
+    /// that is not a prefix of the positions seen is listed again.
+    fn carried_trace<'c>(
+        &self,
+        cell: &'c RefCell<Option<TraceInput>>,
+        seen: usize,
+        mut shape: TraceInput,
+    ) -> Result<std::cell::Ref<'c, TraceInput>, ClauseRefusal> {
+        let positions = self.seen.get(..seen).unwrap_or(&self.seen);
+        {
+            let mut held = cell.borrow_mut();
+            match (&mut shape, held.take()) {
+                (
+                    TraceInput::Progressed { trace: list, .. },
+                    Some(TraceInput::Progressed { trace: kept, .. }),
+                )
+                | (TraceInput::Finite(list), Some(TraceInput::Finite(kept))) => *list = kept,
+                (
+                    TraceInput::Timestamped {
+                        observations: list, ..
+                    },
+                    Some(TraceInput::Timestamped {
+                        observations: kept, ..
+                    }),
+                ) => *list = kept,
+                _ => {}
+            }
+            let prefix = |listed: usize, same: &dyn Fn(usize) -> bool| {
+                if listed <= positions.len() && listed.checked_sub(1).is_none_or(same) {
+                    listed
+                } else {
+                    0
+                }
+            };
+            match &mut shape {
+                TraceInput::Progressed { trace: list, .. } | TraceInput::Finite(list) => {
+                    let keep = prefix(list.len(), &|at| {
+                        list.get(at) == positions.get(at).map(|p| &p.reference)
+                    });
+                    list.truncate(keep);
+                    list.extend(
+                        positions
+                            .get(keep..)
+                            .unwrap_or(&[])
+                            .iter()
+                            .map(|p| p.reference.clone()),
+                    );
+                }
+                TraceInput::Timestamped { observations, .. } => {
+                    let keep = prefix(observations.len(), &|at| match (
+                        observations.get(at),
+                        positions.get(at),
+                    ) {
+                        (Some(listed), Some(position)) => {
+                            listed.document == position.reference
+                                && listed.stamp == position.stamp
+                                && listed.order_key == position.order_key
+                        }
+                        _ => false,
+                    });
+                    observations.truncate(keep);
+                    observations.extend(positions.get(keep..).unwrap_or(&[]).iter().map(
+                        |position| TimestampedObservation {
+                            document: position.reference.clone(),
+                            stamp: position.stamp,
+                            order_key: position.order_key.clone(),
+                        },
+                    ));
+                }
+                TraceInput::Lasso { .. } | TraceInput::Model { .. } => {}
+            }
+            *held = Some(shape);
+        }
+        std::cell::Ref::filter_map(cell.borrow(), Option::as_ref)
+            .map_err(|_| fault("carried-trace-is-held"))
+    }
+
+    /// The trace of the first `seen` positions under `assertion`, as the
+    /// report's run reads it.
+    fn trace_of(
+        &self,
+        seen: usize,
+        assertion: ProgressAssertion,
+    ) -> Result<std::cell::Ref<'_, TraceInput>, ClauseRefusal> {
+        self.carried_trace(&self.trace, seen, self.trace_shape(assertion))
+    }
+
+    /// The trace under `assertion`, listing no position.
+    fn trace_shape(&self, assertion: ProgressAssertion) -> TraceInput {
+        let refs = Vec::new;
         match (self.open.kind, self.open.binding.as_ref()) {
             (ClauseTraceKind::Progressed, Some(binding)) => TraceInput::Progressed {
                 trace: refs(),
@@ -1001,14 +1109,7 @@ impl<'a> ClauseState<'a> {
                 binding: binding.clone(),
             },
             (ClauseTraceKind::Timestamped, binding) => TraceInput::Timestamped {
-                observations: positions
-                    .iter()
-                    .map(|position| TimestampedObservation {
-                        document: position.reference.clone(),
-                        stamp: position.stamp,
-                        order_key: position.order_key.clone(),
-                    })
-                    .collect(),
+                observations: Vec::new(),
                 progress: assertion,
                 window: Box::new(TimestampedWindow {
                     binding: binding.cloned(),
@@ -1074,6 +1175,11 @@ impl<'a> ClauseState<'a> {
         } else {
             &self.window
         };
+        let admission = if open {
+            &self.open_admission
+        } else {
+            &self.admission
+        };
         if self.reading == Reading::Snapshot {
             return self.with_snapshot_tape(|snapshot| {
                 run_package_temporal_over(
@@ -1085,6 +1191,7 @@ impl<'a> ClauseState<'a> {
                         open_aggregates: open,
                         window: Some(window),
                         snapshot: Some(snapshot),
+                        admission: Some(admission),
                     }),
                 )
             });
@@ -1111,6 +1218,7 @@ impl<'a> ClauseState<'a> {
                     open_aggregates: open,
                     window: Some(window),
                     snapshot: None,
+                    admission: Some(admission),
                 })
             }
         };
@@ -1139,7 +1247,7 @@ impl<'a> ClauseState<'a> {
                 self.snapshot_finite_report(meter)
             }
             Reading::Observed | Reading::Streamed | Reading::Values | Reading::Snapshot => {
-                let trace = self.trace_of(seen, assertion.unwrap_or_else(Self::open_assertion));
+                let trace = self.trace_of(seen, assertion.unwrap_or_else(Self::open_assertion))?;
                 self.run(&trace, seen, false, cancel)
             }
         };
@@ -1190,6 +1298,11 @@ impl<'a> ClauseState<'a> {
             self.seen.truncate(from);
             self.seen.extend(reordered);
             self.tape.reorder_tail(from, &order);
+            // The carried admission holds the positions before them only.
+            self.admission.get_mut().truncate(from);
+            self.open_admission.get_mut().truncate(from);
+            truncate_listing(&mut self.trace, from);
+            truncate_listing(&mut self.open_trace, from);
             // A snapshot's bytes and failed admission move with its position.
             let moved = |position: u64| -> u64 {
                 let offset = usize::try_from(position.saturating_sub(first)).ok();
@@ -1295,12 +1408,16 @@ impl<'a> ClauseState<'a> {
                 execution: ProgressClosure::Open,
             },
         };
-        let trace = TraceInput::Progressed {
-            trace: self.seen.iter().map(|p| p.reference.clone()).collect(),
-            progress,
-            lower_boundary: self.open.lower_boundary,
-            binding,
-        };
+        let trace = self.carried_trace(
+            &self.open_trace,
+            self.seen.len(),
+            TraceInput::Progressed {
+                trace: Vec::new(),
+                progress,
+                lower_boundary: self.open.lower_boundary,
+                binding,
+            },
+        )?;
         let report = self.run(&trace, self.seen.len(), true, cancel);
         cancelled(cancel)?;
         Ok(decisive_window(&report).then(|| Arc::new(report)))
@@ -1655,13 +1772,24 @@ impl<'a> ClauseState<'a> {
                 let mut meter = Meter::new(request.limits.accounting).with_cancel(cancel.clone());
                 state.subject_stream_report(&mut meter)
             } else {
-                let trace = state.trace_of(seen, assertion.unwrap_or_else(Self::open_assertion));
+                let trace = state.trace_of(seen, assertion.unwrap_or_else(Self::open_assertion))?;
                 state.run(&trace, seen, false, cancel)
             });
             cancelled(cancel)?;
             state.evaluated = Some((seen, assertion));
         }
         Ok(state)
+    }
+}
+
+/// FR-820: keep only the first `len` positions of a carried trace listing.
+fn truncate_listing(cell: &mut RefCell<Option<TraceInput>>, len: usize) {
+    match cell.get_mut() {
+        Some(TraceInput::Progressed { trace: list, .. } | TraceInput::Finite(list)) => {
+            list.truncate(len);
+        }
+        Some(TraceInput::Timestamped { observations, .. }) => observations.truncate(len),
+        Some(TraceInput::Lasso { .. } | TraceInput::Model { .. }) | None => {}
     }
 }
 
