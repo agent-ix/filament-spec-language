@@ -282,7 +282,7 @@ version = "0.1.0"
 dependencies = [
  "filament-eval",
  "filament-exact 0.3.0",
- "filament-semantic-value",
+ "filament-semantic-value 0.1.3",
  "fsl-replay",
  "ix-trace-rs",
 ]
@@ -546,7 +546,7 @@ version = "0.1.1"
 source = "git+https://github.com/agent-ix/filament-eval?tag=v0.1.1#82133104e492b62ef819638a5a5f2df48ed16617"
 dependencies = [
  "filament-exact 0.2.0",
- "filament-semantic-value",
+ "filament-semantic-value 0.1.2",
  "filament-walk",
  "quire-canonical 0.3.1",
  "serde",
@@ -559,7 +559,7 @@ version = "0.1.2"
 source = "git+https://github.com/agent-ix/filament-contract-ir?tag=v0.1.2#8387eab2d48ce371d9f56d6ca4c648300879e98b"
 dependencies = [
  "filament-exact 0.2.0",
- "filament-semantic-value",
+ "filament-semantic-value 0.1.2",
  "filament-verification-contracts",
  "filament-walk",
  "ix-trace-rs",
@@ -585,7 +585,7 @@ version = "0.1.1"
 source = "git+https://github.com/agent-ix/filament-eval?tag=v0.1.1#82133104e492b62ef819638a5a5f2df48ed16617"
 dependencies = [
  "filament-exact 0.2.0",
- "filament-semantic-value",
+ "filament-semantic-value 0.1.2",
  "thiserror",
 ]
 
@@ -666,6 +666,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "filament-semantic-value"
+version = "0.1.3"
+source = "git+https://github.com/agent-ix/filament-semantic-value?tag=v0.1.3#96a948532d8922c8e1df4a70b7d212a1a4bc59c2"
+dependencies = [
+ "filament-exact 0.3.0",
+ "quire-canonical 0.3.1",
+ "thiserror",
+]
+
+[[package]]
 name = "filament-spec-language"
 version = "0.2.0"
 dependencies = [
@@ -673,7 +683,7 @@ dependencies = [
  "filament-contract-model",
  "filament-eval",
  "filament-exact 0.3.0",
- "filament-semantic-value",
+ "filament-semantic-value 0.1.3",
  "fsl-analyze",
  "fsl-command",
  "fsl-cst",
@@ -796,7 +806,7 @@ dependencies = [
  "filament-eval",
  "filament-exact 0.3.0",
  "filament-observation",
- "filament-semantic-value",
+ "filament-semantic-value 0.1.3",
  "fsl-analyze",
  "fsl-command",
  "fsl-cst",
@@ -826,7 +836,7 @@ dependencies = [
  "filament-checked",
  "filament-eval",
  "filament-exact 0.3.0",
- "filament-semantic-value",
+ "filament-semantic-value 0.1.3",
  "fsl-analyze",
  "fsl-cst",
  "fsl-eval",
@@ -850,7 +860,7 @@ dependencies = [
  "filament-contract-model",
  "filament-eval",
  "filament-exact 0.3.0",
- "filament-semantic-value",
+ "filament-semantic-value 0.1.3",
  "fsl-analyze",
  "fsl-cst",
  "fsl-eval",
@@ -879,7 +889,7 @@ dependencies = [
  "filament-checked",
  "filament-eval",
  "filament-exact 0.3.0",
- "filament-semantic-value",
+ "filament-semantic-value 0.1.3",
  "fsl-analyze",
  "fsl-command",
  "fsl-cst",
@@ -915,7 +925,7 @@ dependencies = [
  "filament-checked",
  "filament-eval",
  "filament-exact 0.3.0",
- "filament-semantic-value",
+ "filament-semantic-value 0.1.3",
  "fsl-cst",
  "fsl-forms",
  "fsl-foundation",
@@ -934,7 +944,7 @@ name = "fsl-forms"
 version = "0.1.0"
 dependencies = [
  "filament-exact 0.3.0",
- "filament-semantic-value",
+ "filament-semantic-value 0.1.3",
  "filament-walk",
  "fsl-cst",
  "fsl-foundation",
@@ -948,7 +958,7 @@ name = "fsl-foundation"
 version = "0.1.0"
 dependencies = [
  "filament-exact 0.3.0",
- "filament-semantic-value",
+ "filament-semantic-value 0.1.3",
  "hashbrown 0.17.1",
  "ix-trace-rs",
  "quire-canonical 0.3.1",
@@ -963,7 +973,7 @@ version = "0.1.0"
 dependencies = [
  "filament-contract-model",
  "filament-exact 0.3.0",
- "filament-semantic-value",
+ "filament-semantic-value 0.1.2",
  "fsl-analyze",
  "fsl-cst",
  "fsl-eval",
@@ -986,7 +996,7 @@ dependencies = [
  "filament-checked",
  "filament-contract-model",
  "filament-exact 0.3.0",
- "filament-semantic-value",
+ "filament-semantic-value 0.1.3",
  "fsl-cst",
  "fsl-forms",
  "fsl-foundation",
@@ -1025,7 +1035,7 @@ dependencies = [
  "filament-contract-model",
  "filament-eval",
  "filament-exact 0.3.0",
- "filament-semantic-value",
+ "filament-semantic-value 0.1.3",
  "fsl-cst",
  "fsl-eval",
  "fsl-forms",
@@ -1050,7 +1060,7 @@ version = "0.1.0"
 dependencies = [
  "filament-checked",
  "filament-exact 0.3.0",
- "filament-semantic-value",
+ "filament-semantic-value 0.1.3",
  "fsl-foundation",
  "fsl-semantics",
  "ix-trace-rs",
@@ -1067,7 +1077,7 @@ dependencies = [
  "filament-checked",
  "filament-contract-model",
  "filament-exact 0.3.0",
- "filament-semantic-value",
+ "filament-semantic-value 0.1.3",
  "filament-walk",
  "fsl-cst",
  "fsl-forms",
@@ -2932,7 +2942,7 @@ version = "0.1.0"
 dependencies = [
  "arch-lint",
  "filament-exact 0.3.0",
- "filament-semantic-value",
+ "filament-semantic-value 0.1.2",
  "filament-spec-language",
  "filament-specification-qualification",
  "fsl-analyze",
