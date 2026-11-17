@@ -990,20 +990,6 @@ pub fn replay_counterexample(
             recording,
             trace_position,
         } => {
-            let protocol = subject
-                .model
-                .simulation
-                .package
-                .graph()
-                .protocols()
-                .iter()
-                .find(|protocol| protocol.name == subject.protocol)
-                .ok_or_else(|| {
-                    ConformanceReplayRefusal::invalid(
-                        format!("checked protocol `{}` is absent", subject.protocol),
-                        None,
-                    )
-                })?;
             fsl_replay::BoundExceeded::check(recording.len(), limits)
                 .map_err(|error| ConformanceReplayRefusal::invalid(error.to_string(), None))?;
             let assessment = super::recording::assess_recording(
