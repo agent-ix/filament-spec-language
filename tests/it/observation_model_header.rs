@@ -6,10 +6,10 @@
 //!
 //! The fixtures are FR-108's ConfigVersion spine files.
 
-use crate::command_harness::{Output, compile_file, run_file};
-use crate::support::config_version_spine::{Case, spine};
+use crate::command_harness::{compile_file, run_file, Output};
+use crate::support::config_version_spine::{spine, Case};
 use ix_trace_rs::trace;
-use serde_json::{Value, json};
+use serde_json::{json, Value};
 use std::path::Path;
 
 fn source(file: &str, document: &str) -> Value {
