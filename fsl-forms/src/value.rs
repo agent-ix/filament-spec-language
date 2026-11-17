@@ -857,7 +857,7 @@ enum Shape {
     },
     /// `seq(i in lo .. hi: e)`: the binder.
     Seq(String),
-    Size,
+    Size(Option<TypeForm>),
     Contains,
     /// `self` (FR-102, ADR-012 §15.2, `ProtocolClause`).
     SelfRef,
@@ -1065,9 +1065,12 @@ impl Shape {
                     item: operands.next()?,
                 }
             }
-            Self::Size => {
+            Self::Size(type_argument) => {
                 arity(1)?;
-                ExprNode::Size(operands.next()?)
+                ExprNode::Size {
+                    operand: operands.next()?,
+                    type_argument,
+                }
             }
             Self::Call(name) => ExprNode::Call {
                 name,
@@ -2037,15 +2040,11 @@ impl<'c> Mapping<'c> {
                 self.with_children(Shape::Lookup(target, absence), &task, operands)
             }
             b"size" => {
-                if !nodes_of(items, Production::TypeReference).is_empty() {
-                    return Err(unrepresented(
-                        self.cst,
-                        Production::Primary,
-                        node.span(),
-                        ConstructKind::SizeOfType,
-                    ));
-                }
-                self.with_children(Shape::Size, &task, one(&operands)?)
+                let type_argument = nodes_of(items, Production::TypeReference)
+                    .first()
+                    .map(|node| type_form(self.cst, node))
+                    .transpose()?;
+                self.with_children(Shape::Size(type_argument), &task, one(&operands)?)
             }
             b"contains" | b"removeOne" => {
                 if operands.len() != 2 {

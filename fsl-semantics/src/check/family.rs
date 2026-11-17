@@ -707,7 +707,7 @@ fn encode_expression(
                 out.write_str(binder);
                 pending.extend([expr.at(*low), expr.at(*high), expr.at(*body)]);
             }
-            ExprNode::Size(operand) => {
+            ExprNode::Size { operand, .. } => {
                 out.write_str("size");
                 pending.push(expr.at(*operand));
             }

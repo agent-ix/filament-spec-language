@@ -201,7 +201,7 @@ fn show(expression: ExprRef<'_>) -> String {
             ..
         } => format!("Population[{form:?},{binder},{population}]"),
         ExprNode::Seq { binder, .. } => format!("Seq[{binder}]"),
-        ExprNode::Size(_) => "Size".into(),
+        ExprNode::Size { .. } => "Size".into(),
         ExprNode::Contains { .. } => "Contains".into(),
         ExprNode::AllInstances { target, .. } => match &target.head {
             TypeFormHead::Name(name) => format!("AllInstances[Name({:?})]", name.name),

@@ -3229,7 +3229,7 @@ fn expression_type_forms<'e>(roots: impl IntoIterator<Item = &'e Expression>) ->
                 | ExprNode::Seq { .. }
                 | ExprNode::Power { .. }
                 | ExprNode::Flatten(_)
-                | ExprNode::Size(_)
+                | ExprNode::Size { .. }
                 | ExprNode::Contains { .. }
                 | ExprNode::DropFirst(_)
                 | ExprNode::RemoveOne { .. }

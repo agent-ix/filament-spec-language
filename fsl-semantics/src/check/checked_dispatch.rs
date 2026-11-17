@@ -1973,7 +1973,7 @@ mod tests {
             ExprNode::Sum { .. } => "Sum",
             ExprNode::Population { .. } => "Population",
             ExprNode::Seq { .. } => "Seq",
-            ExprNode::Size(_) => "Size",
+            ExprNode::Size { .. } => "Size",
             ExprNode::Contains { .. } => "Contains",
             ExprNode::DropFirst(_) => "DropFirst",
             ExprNode::RemoveOne { .. } => "RemoveOne",

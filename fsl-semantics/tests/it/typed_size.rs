@@ -4,7 +4,9 @@
 use filament_semantic_value::checking::{CheckMode, CheckingLimits};
 use fsl_forms::build_unit;
 use fsl_foundation::{Code, SourceIdentity};
-use fsl_semantics::check::{CheckRefusal, CheckedGraph, PackageDeclarations};
+use fsl_semantics::check::{
+    CheckCause, CheckRefusal, CheckedGraph, Obligation, PackageDeclarations,
+};
 use fsl_semantics::model::intake::SelectedModels;
 use ix_trace_rs::trace;
 
@@ -78,13 +80,16 @@ fn sized(result: &str, body: &str) -> String {
 #[trace("TC-2774", "FR-981-AC-3", "FSpec-TC-1900", "FSpec-FR-783-AC-1")]
 #[trace("TC-2774", "FR-981-AC-5", "FSpec-TC-1900", "FSpec-FR-783-AC-2")]
 #[test]
-#[ignore = "QSL-1966: S2 refuses size<T>(..); typing it at its result domain is not implemented yet"]
 fn a_typed_size_is_typed_at_its_domain_and_proves_its_range() {
     assert_checks(&sized("Int[0, 4]", "size<Int[0, 4]>(c)"));
-    assert_refused(
+    let narrow = assert_refused(
         &sized("Int[0, 3]", "size<Int[0, 3]>(c)"),
         Code::UndefinedExpression,
         "unproved-range",
+    );
+    assert!(
+        matches!(narrow.cause, CheckCause::Unproved(Obligation::Range { .. })),
+        "{narrow:?}"
     );
     assert_checks(&sized(
         "Int[0, 3]",

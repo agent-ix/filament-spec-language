@@ -2431,7 +2431,7 @@ fn check_match(
                 | ExprNode::Sum { .. }
                 | ExprNode::Population { .. }
                 | ExprNode::Seq { .. }
-                | ExprNode::Size(_)
+                | ExprNode::Size { .. }
                 | ExprNode::Contains { .. }
                 | ExprNode::DropFirst(_)
                 | ExprNode::RemoveOne { .. }
@@ -2878,7 +2878,7 @@ fn is_opaque(node: &ExprNode) -> bool {
         | ExprNode::Ref(_)
         | ExprNode::Select { .. }
         | ExprNode::Call { .. }
-        | ExprNode::Size(_)
+        | ExprNode::Size { .. }
         | ExprNode::Contains { .. }
         | ExprNode::DropFirst(_)
         | ExprNode::RemoveOne { .. }
@@ -3069,7 +3069,7 @@ fn leaf_payload(node: &ExprNode, swap: Swap<'_>) -> (Vec<u8>, Vec<u8>) {
         ExprNode::Ref(_) => (b"ref".to_vec(), Vec::new()),
         ExprNode::Select { .. } => (b"select".to_vec(), Vec::new()),
         ExprNode::Pre(_) => (b"pre".to_vec(), Vec::new()),
-        ExprNode::Size(_) => (b"size".to_vec(), Vec::new()),
+        ExprNode::Size { .. } => (b"size".to_vec(), Vec::new()),
         ExprNode::Contains { .. } => (b"contains".to_vec(), Vec::new()),
         ExprNode::DropFirst(_) => (b"drop-first".to_vec(), Vec::new()),
         ExprNode::RemoveOne { .. } => (b"remove-one".to_vec(), Vec::new()),

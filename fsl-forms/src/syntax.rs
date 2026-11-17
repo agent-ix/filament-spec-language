@@ -823,8 +823,13 @@ pub enum ExprNode {
         /// The element expression.
         body: ExprId,
     },
-    /// `size(c)`.
-    Size(ExprId),
+    /// `size<N>(c)` or `size(c)`, where `N` is the optional result domain.
+    Size {
+        /// The collection or text whose size is queried.
+        operand: ExprId,
+        /// The result integer domain written by the caller, if any.
+        type_argument: Option<TypeForm>,
+    },
     /// `contains(c, v)`.
     Contains {
         /// The collection operand.
@@ -994,7 +999,7 @@ impl ExprNode {
             | Self::Ref(operand)
             | Self::Flatten(operand)
             | Self::DropFirst(operand)
-            | Self::Size(operand)
+            | Self::Size { operand, .. }
             | Self::Field { operand, .. }
             | Self::Convert { operand, .. }
             | Self::Indexed { read: operand, .. }
@@ -1104,7 +1109,7 @@ impl ExprNode {
             | Self::Ref(_)
             | Self::Flatten(_)
             | Self::DropFirst(_)
-            | Self::Size(_)
+            | Self::Size { .. }
             | Self::Field { .. }
             | Self::Convert { .. }
             | Self::Pre(_)
@@ -1186,7 +1191,7 @@ impl ExprNode {
             | Self::Ref(_)
             | Self::Flatten(_)
             | Self::DropFirst(_)
-            | Self::Size(_)
+            | Self::Size { .. }
             | Self::Field { .. }
             | Self::Convert { .. }
             | Self::Pre(_)
@@ -1247,7 +1252,7 @@ impl ExprNode {
             | Self::Ref(operand)
             | Self::Flatten(operand)
             | Self::DropFirst(operand)
-            | Self::Size(operand)
+            | Self::Size { operand, .. }
             | Self::Field { operand, .. }
             | Self::Convert { operand, .. }
             | Self::AllInstances {
@@ -1649,9 +1654,12 @@ impl Expression {
         })
     }
 
-    /// `size(operand)`.
-    pub fn size(operand: Self) -> Self {
-        Self::compose([operand], |[operand]| ExprNode::Size(operand))
+    /// `size<N>(operand)` or `size(operand)`.
+    pub fn size(operand: Self, type_argument: Option<TypeForm>) -> Self {
+        Self::compose([operand], |[operand]| ExprNode::Size {
+            operand,
+            type_argument,
+        })
     }
 
     /// `name(arguments)`.

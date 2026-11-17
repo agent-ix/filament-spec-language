@@ -481,7 +481,7 @@ enum Unary<'r> {
     Pre,
     Flatten,
     DropFirst,
-    Size,
+    Size(Option<ValueType>),
     Convert(ValueType),
     AllInstances(ValueType),
 }
@@ -1950,9 +1950,22 @@ impl<'a> Typer<'a> {
                     low_location,
                 )));
             }
-            ExprNode::Size(operand) => {
+            ExprNode::Size {
+                operand,
+                type_argument,
+            } => {
+                let target = type_argument
+                    .as_ref()
+                    .map(|form| self.declared_target(form, &location))
+                    .transpose()?;
+                if target
+                    .as_ref()
+                    .is_some_and(|value_type| !is_integer(value_type))
+                {
+                    return Err(mismatch(&location));
+                }
                 let goal = Goal::Infer(expression.at(*operand), None, location.child(0));
-                return Ok(Self::unary(Unary::Size, goal, location, frames));
+                return Ok(Self::unary(Unary::Size(target), goal, location, frames));
             }
             ExprNode::DropFirst(operand) => {
                 let goal = Goal::Infer(expression.at(*operand), None, location.child(0));
@@ -3388,7 +3401,7 @@ impl<'a> Typer<'a> {
             }
             Unary::Flatten => self.flatten(operand, &location),
             Unary::DropFirst => self.drop_first(operand, &location),
-            Unary::Size => {
+            Unary::Size(target) => {
                 // FR-093-AC-63: a Text operand's size is its profile length,
                 // bounded by the text type's own bounds.
                 let value_type = if let ValueType::Text(text) = &operand.value_type {
@@ -3401,11 +3414,20 @@ impl<'a> Typer<'a> {
                     self.element_type(&operand)?;
                     ValueType::Integer
                 };
-                Ok(node(
+                let sized = node(
                     NodeKind::Size(self.push(operand)),
                     value_type,
                     &location,
-                ))
+                );
+                match target {
+                    Some(ValueType::Int(target)) => Ok(node(
+                        NodeKind::Coerce(self.push(sized), target.clone()),
+                        ValueType::Int(target),
+                        &location,
+                    )),
+                    Some(ValueType::Integer) | None => Ok(sized),
+                    Some(_) => Err(mismatch(&location)),
+                }
             }
             Unary::Convert(target) => self.convert(&target, operand, &location),
             Unary::AllInstances(target) => self.all_instances(&target, operand, &location),

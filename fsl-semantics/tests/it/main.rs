@@ -142,6 +142,7 @@ mod timed_intervals;
 #[cfg(feature = "test-support")]
 mod timed_model;
 mod type_decisions;
+mod typed_size;
 #[cfg(feature = "test-support")]
 mod type_environment_model;
 mod typed_size;
