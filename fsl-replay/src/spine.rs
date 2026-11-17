@@ -41,8 +41,9 @@ use fsl_package::{ImportViewRefusal, LinkRefusal, OmittedNode};
 use fsl_semantics::check::AssemblyLimits;
 use fsl_semantics::check::{
     AccessClass, AssemblyCause, AssemblyRefusal, CheckCause, CheckRefusal, ClockSelectionFault,
-    ExtensionCause, ProbabilisticCause, ProfileRefusal, ProtocolAnchorCause, ShadowedDeclaration,
-    SourceObjectFault, TemporalCause, TimeUnitCause, TopologyRetained,
+    ExtensionCause, ProbabilisticCause, ProfileRefusal, ProtocolAnchorCause, RefinementCause,
+    RowClass, ShadowedDeclaration, SourceObjectFault, TemporalCause, TimeUnitCause,
+    TopologyRetained,
 };
 use fsl_semantics::library::LibraryName;
 use fsl_semantics::model::accounting::ModelNormalizationLimits;
@@ -1613,7 +1614,21 @@ fn check_message(refusals: &[CheckRefusal]) -> String {
             message = format!("{message}: `refinement {name}` checks but is not emitted yet");
         }
         CheckCause::Refinement(refusal) => {
-            message = format!("{message}: in `refinement {}`", refusal.refinement);
+            let detail = match &refusal.cause {
+                RefinementCause::Unresolved { name, .. } => {
+                    format!("the refinement refers to unresolved name `{name}`")
+                }
+                RefinementCause::MissingRow {
+                    class: RowClass::Step,
+                    name,
+                } => format!("the refinement has no step row for `{name}`"),
+                RefinementCause::MissingRow {
+                    class: RowClass::Object,
+                    name,
+                } => format!("the refinement has no object row for `{name}`"),
+                _ => format!("in `refinement {}`", refusal.refinement),
+            };
+            message = format!("{message}: {detail}");
         }
         CheckCause::TimedNotChecked { construct, .. } => {
             message = format!("{message}: {} is not checked yet", construct.description());
@@ -2865,11 +2880,56 @@ mod tests {
     };
     use fsl_foundation::{Code, Setting, SettingLimits, SourceIdentity, Span};
     use fsl_semantics::check::{
-        CheckCause, CheckRefusal, HybridCause, ProtocolAnchorCause, RefusedProtocolDependency,
+        CheckCause, CheckRefusal, HybridCause, ProtocolAnchorCause, RefinementCause,
+        RefinementRefusal, RefusedProtocolDependency, RowClass,
     };
     use fsl_semantics::value::DefinitionRole;
     use ix_trace_rs::trace;
     use std::collections::BTreeMap;
+
+    #[trace("FR-135-AC-2", "FR-136-AC-2")]
+    #[test]
+    fn refinement_missing_row_messages_name_the_missing_subject() {
+        let refusal = |cause| CheckRefusal {
+            location: Location::root(Origin::Expression),
+            cause: CheckCause::Refinement(Box::new(RefinementRefusal {
+                refinement: "ClientChargesOnce".to_owned(),
+                span: Span { start: 0, end: 1 },
+                cause,
+            })),
+        };
+        let refusals = [
+            refusal(RefinementCause::MissingRow {
+                class: RowClass::Step,
+                name: "Client::Payment::retry".to_owned(),
+            }),
+            refusal(RefinementCause::MissingRow {
+                class: RowClass::Object,
+                name: "Spec::Payment".to_owned(),
+            }),
+            refusal(RefinementCause::Unresolved {
+                name: "X".to_owned(),
+                held_by: None,
+            }),
+        ];
+        let expected = [
+            "the refinement has no step row for `Client::Payment::retry`",
+            "the refinement has no object row for `Spec::Payment`",
+            "the refinement refers to unresolved name `X`",
+        ];
+        let messages = refusals
+            .iter()
+            .map(|refusal| check_message(std::slice::from_ref(refusal)))
+            .collect::<Vec<_>>();
+
+        for (message, expected) in messages.iter().zip(expected) {
+            assert!(message.contains(expected), "{message}");
+            assert!(!message.ends_with("in `refinement ClientChargesOnce`"), "{message}");
+        }
+        assert_ne!(messages[0], messages[1]);
+        assert_ne!(messages[0], messages[2]);
+        assert_ne!(messages[1], messages[2]);
+    }
 
     #[trace("TC-1339", "FR-534-AC-3")]
     #[test]
