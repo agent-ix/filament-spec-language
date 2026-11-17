@@ -4,6 +4,7 @@
 //! protocol subject, with protocol-state replay inputs kept explicit.
 
 use filament_exact::Cancel;
+use filament_semantic_value::checking::CheckMode;
 use fsl_analyze::model_check::{check_refinement, ModelCheckRefusal, RefinementCheckRequest};
 use fsl_eval::model_subject::ModelSubject;
 use fsl_eval::simulation::model::operation_identity_text;
@@ -1085,14 +1086,19 @@ fn tso_flush_fairness_replays_against_an_unmet_inc_assumption() {
 fn an_undetermined_assumption_predicate_has_a_typed_finite_witness() {
     let source = cas_twice(false, false)
         .replace(
+            "profile p = \"filament.protocol.finite-global/v1\";",
+            "profile p = \"filament.protocol.finite-global/v1\";\n\
+             function unknown_at_one using v(n: Int[0, 2]): Boolean pure { 6 mod (1 - n) >= 0 }",
+        )
+        .replace(
             "protocol Twice",
-            "pre UnknownCommit using v on Impl::Counter::commitA { mod_defined(self.value) }\nfunction mod_defined using v(n: Int[0, 2]): Boolean pure { 6 mod (1 - n) >= 0 }\nprotocol Twice",
+            "pre UnknownCommit using v on Impl::Counter::commitA { unknown_at_one(self.value) }\nprotocol Twice",
         )
         .replace(
             "step Impl::Counter::commitB -> Spec::Counter::inc(self);",
             "step Impl::Counter::commitB -> Spec::Counter::inc(self);\nassume fair weak whole Impl::Counter::commitA;",
         );
-    let world = World::with_internals(
+    let world = World::with_internals_mode(
         Variant {
             kernel: true,
             peek: false,
@@ -1101,6 +1107,7 @@ fn an_undetermined_assumption_predicate_has_a_typed_finite_witness() {
         },
         &source,
         serde_json::json!([{"refinement":"CasTwice","internal":["Spec::Twice::Done"]}]),
+        CheckMode::Kernel,
     );
     let outcome = check_refinement(
         RefinementCheckRequest {
@@ -1189,8 +1196,13 @@ fn an_undetermined_assumption_predicate_has_a_typed_finite_witness() {
 fn an_undetermined_protocol_assumption_has_a_typed_finite_witness() {
     let source = cas_twice(false, false)
         .replace(
+            "profile p = \"filament.protocol.finite-global/v1\";",
+            "profile p = \"filament.protocol.finite-global/v1\";\n\
+             function unknown_at_one using v(n: Int[0, 2]): Boolean pure { 6 mod (1 - n) >= 0 }",
+        )
+        .replace(
             "protocol Twice",
-            "pre UnknownProtocol using v on Spec::Counter::inc { mod_defined(self.value) }\nfunction mod_defined using v(n: Int[0, 2]): Boolean pure { 6 mod (1 - n) >= 0 }\n\
+            "pre UnknownProtocol using v on Spec::Counter::inc { unknown_at_one(self.value) }\n\
              temporal Left using inf over (k: Spec::Counter) clock \"model-steps\" on origin { fair weak whole Spec::Counter::inc; eventually holds(k.value >= 0) }\n\
              protocol Twice",
         )
@@ -1203,7 +1215,7 @@ fn an_undetermined_protocol_assumption_has_a_typed_finite_witness() {
             "role w on Spec::Counter; requires temporal Left; scheduling adversarial;",
         )
         .replace("finish Done as (d: Boolean) { true };", "finish Done as (d: Boolean) { false };");
-    let world = World::with_internals(
+    let world = World::with_internals_mode(
         Variant {
             kernel: true,
             peek: false,
@@ -1211,6 +1223,7 @@ fn an_undetermined_protocol_assumption_has_a_typed_finite_witness() {
         },
         &source,
         serde_json::json!([{"refinement":"CasTwice","internal":["Spec::Twice::Done"]}]),
+        CheckMode::Kernel,
     );
     let initial = world.abstract_initial();
     let outcome = check_refinement(
