@@ -756,12 +756,8 @@ pub(in crate::spine::clause::tests) fn report(mut request: ClauseRunRequest) -> 
                 temporal_clock_selections(body.identity(), body.path(), body.text().as_bytes())
             }
         };
-        return super::super::run_clause_with_function_modes(
-            request,
-            &temporal_selections,
-            &modes,
-        )
-        .expect("a well-formed request always reports");
+        return super::super::run_clause_with_function_modes(request, &temporal_selections, &modes)
+            .expect("a well-formed request always reports");
     }
     crate::spine::run_clause_with_temporal_selections(request, &temporal_selections)
         .expect("a well-formed request always reports")
@@ -1344,9 +1340,7 @@ fn observed_replay_request(
     let mut text = base.replacen(header, &format!("{header}{}", unit.profile()), 1);
     text.push_str(unit.clauses());
     let mut function_modes = BTreeMap::new();
-    if text.contains("3 mod (2 - c.value) >= 0")
-        || text.contains("3 mod (2 - q.value) >= 0")
-    {
+    if text.contains("3 mod (2 - c.value) >= 0") || text.contains("3 mod (2 - q.value) >= 0") {
         text = text
             .replace(
                 "3 mod (2 - c.value) >= 0",
@@ -4563,7 +4557,7 @@ fn valid_temporal_reports_have_no_witness_item_member() {
 
     for run in [&held, &pending, &pending_window, &undefined] {
         assert!(run.witness.is_none());
-        let item = item_json("V", &run);
+        let item = item_json("V", run);
         assert!(item.get("witness").is_none());
     }
     for run in [&held, &pending] {

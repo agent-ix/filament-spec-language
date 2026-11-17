@@ -84,7 +84,7 @@ pub enum ProbabilitySourceError {
     },
     /// A compiler stage refused, stopped or was cancelled.
     #[error("probability certificate compilation stopped: {0:?}")]
-    Compile(FrontEndFailure),
+    Compile(Box<FrontEndFailure>),
     /// Domain package intake failed.
     #[error("probability certificate domain intake failed: {0:?}")]
     Packages(Box<fsl_semantics::model::normalize::ModelRefusal>),
@@ -180,13 +180,13 @@ pub fn check_probability_certificate_source(
         limits.spine.source,
         cancel,
     )
-    .map_err(ProbabilitySourceError::Compile)?
+    .map_err(|failure| ProbabilitySourceError::Compile(Box::new(failure)))?
     .into_value();
     if !parsed.unit().selections().imports.is_empty() {
         return Err(ProbabilityDocumentError::Unsupported.into());
     }
     let models = spine::select(&parsed, &packages, limits.spine.model, cancel)
-        .map_err(ProbabilitySourceError::Compile)?
+        .map_err(|failure| ProbabilitySourceError::Compile(Box::new(failure)))?
         .into_value();
     let checked = spine::check(
         &parsed,
@@ -196,7 +196,7 @@ pub fn check_probability_certificate_source(
         limits.spine,
         cancel,
     )
-    .map_err(ProbabilitySourceError::Compile)?
+    .map_err(|failure| ProbabilitySourceError::Compile(Box::new(failure)))?
     .into_value();
     let claims = checked.package().graph().probabilistic_model().claims();
     super::bind_claim(claims, request.item, cancel).map_err(ProbabilityDocumentError::from)?;
