@@ -551,6 +551,9 @@ fn parse_with_declaration_recovery(
                             &Failure::expected(failure.position, expected.clone()),
                         )
                         .map_or_else(
+                            // Explain query type arguments at the parser's
+                            // failure point before falling back to grammar details.
+                            // `count<T>` and `sum<T>` accept declared names.
                             || {
                                 format_expected(
                                     &tokens,
@@ -605,7 +608,13 @@ fn parse_with_declaration_recovery(
                         &tokens,
                         &Failure::expected(failure.position, expected.clone()),
                     )
-                    .map_or_else(
+                        .or_else(|| {
+                            declared_type_name_hint(
+                                &tokens,
+                                &Failure::expected(failure.position, expected.clone()),
+                            )
+                        })
+                        .map_or_else(
                         || {
                             format_expected(
                                 &tokens,
@@ -1795,6 +1804,34 @@ fn derived_form(tokens: &[Significant], failure: &Failure) -> Option<&'static st
         ),
         _ => None,
     }
+}
+
+/// Explain that `count<T>(...)` and `sum<T>(...)` take a declared type name,
+/// not an inline type expression, when parsing stops at the type argument.
+fn declared_type_name_hint(tokens: &[Significant], failure: &Failure) -> Option<&'static str> {
+    let position = failure.position;
+    let is_query = |at: usize| {
+        tokens
+            .get(at)
+            .is_some_and(|token| matches!(token.spelling.as_ref(), "count" | "sum"))
+    };
+    let type_argument_start = if tokens
+        .get(position.checked_sub(1)?)
+        .is_some_and(|token| token.spelling.as_ref() == "<")
+    {
+        position.checked_sub(2)?
+    } else if tokens.get(position).is_some_and(|token| token.spelling.as_ref() == "[")
+        && tokens
+            .get(position.checked_sub(2)?)
+            .is_some_and(|token| token.spelling.as_ref() == "<")
+    {
+        position.checked_sub(3)?
+    } else {
+        return None;
+    };
+    is_query(type_argument_start).then_some(
+        "`count` and `sum` require a declared type name here; declare an alias such as `type Total = Integer;` and write `count<Total>(...)` or `sum<Total>(...)`",
+    )
 }
 
 /// An empty unknown declaration body is malformed syntax, while a non-empty

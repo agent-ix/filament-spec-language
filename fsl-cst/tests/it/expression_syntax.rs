@@ -24,6 +24,34 @@ fn parse(bytes: &[u8]) -> Result<ParsedSource, Box<fsl_cst::CompleteDiagnostic>>
     )
 }
 
+#[trace("FSpec-TC-1648", "FSpec-FR-662-AC-1")]
+#[test]
+fn a_population_query_type_argument_names_the_declared_type_requirement() {
+    for (expression, anchor) in [
+        ("sum<Int[0, 80]>(x in a: x)", "[0, 80]"),
+        ("count<Integer>(x in a: x)", "Integer"),
+    ] {
+        let text = document(expression);
+        let parsed = parse(text.as_bytes()).expect("valid UTF-8 within the source ceiling");
+        assert!(!parsed.is_admissible(), "{expression}");
+        let diagnostic = parsed.diagnostics().first().expect("a syntax refusal");
+        assert_eq!(diagnostic.code, CompleteCode::InvalidSyntax, "{expression}");
+        assert_eq!(diagnostic.phase, Phase::Parse, "{expression}");
+        let start = text.find(anchor).expect("anchor in type argument");
+        assert_eq!(
+            diagnostic.byte_span().expect("located").start,
+            start,
+            "{expression}"
+        );
+        assert!(
+            diagnostic.message.contains("require a declared type name"),
+            "{}",
+            diagnostic.message
+        );
+        assert!(diagnostic.message.contains("type Total = Integer;"));
+    }
+}
+
 #[trace("TC-012", "FR-002-AC-2")]
 #[test]
 fn a_chained_comparison_refuses_at_its_second_operator() {
