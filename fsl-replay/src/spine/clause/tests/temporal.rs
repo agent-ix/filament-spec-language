@@ -715,15 +715,21 @@ pub(in crate::spine::clause::tests) fn report(mut request: ClauseRunRequest) -> 
     };
     let has_kernel_mod = if let ClauseRunSource::Program { bytes, .. } = &mut request.source {
         let source = String::from_utf8(bytes.clone()).expect("test source is UTF-8");
-        let has_kernel_mod =
-            source.contains("3 mod (2 - c.value)") || source.contains("3 mod (2 - q.value)");
+        let has_kernel_mod = source.contains("3 mod (2 - c.value) >= 0")
+            || source.contains("3 mod (2 - q.value) >= 0");
         if has_kernel_mod {
             let source = source
-                .replace("3 mod (2 - c.value)", "temporal_mod_undefined(c.value)")
-                .replace("3 mod (2 - q.value)", "temporal_mod_undefined(q.value)");
+                .replace(
+                    "3 mod (2 - c.value) >= 0",
+                    "temporal_mod_undefined(c.value)",
+                )
+                .replace(
+                    "3 mod (2 - q.value) >= 0",
+                    "temporal_mod_undefined(q.value)",
+                );
             let mut modified = source.into_bytes();
             modified.extend_from_slice(
-                b"\nfunction temporal_mod_undefined using v(value: Integer): Integer pure { 3 mod (2 - value) }\n",
+                b"\nfunction temporal_mod_undefined using v(value: Integer): Boolean pure { 3 mod (2 - value) >= 0 }\n",
             );
             *bytes = modified;
         }
