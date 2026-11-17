@@ -3139,7 +3139,10 @@ impl PackageDeclarations {
                     if declared_clause {
                         CheckMode::Linked
                     } else {
-                        mode
+                        self.function_modes
+                            .get(&self.functions[index].name)
+                            .copied()
+                            .unwrap_or(mode)
                     },
                 )
             })

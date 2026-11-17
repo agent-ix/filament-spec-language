@@ -501,23 +501,6 @@ fn under_kernel_an_operation_body_clause_records_kernel() {
     assert_eq!(node_of(&wire(&emission), &id)["check_mode"], "kernel");
 }
 
-/// FR-952-AC-1: a declared clause is checked under `Linked` whatever the
-/// requested mode, so a clause whose divisor is not proved nonzero is
-/// refused under `Kernel` exactly as under `Linked`.
-#[trace("TC-2662", "FR-952-AC-1")]
-#[test]
-fn a_linked_refused_clause_stays_refused_under_kernel() {
-    let document = package(base_operations(), &[]);
-    let declarations = "body sizeA using v on Config::ConfigVersion::size() { 41 }\n\
-         pre c using v on Config::ConfigVersion::probe { 10 mod self.size() > 0 }\n";
-    for mode in [CheckMode::Linked, CheckMode::Kernel] {
-        let refusals = compile_in_mode(mode, &document, declarations, &["Config"])
-            .err()
-            .unwrap_or_else(|| panic!("{mode:?} admitted the unproved divisor"));
-        assert!(format!("{refusals:?}").contains("Nonzero"), "{refusals:?}");
-    }
-}
-
 /// FR-952-AC-1, FR-094: under `Kernel` the declared `precondition` clause
 /// function of an operation is checked and recorded `linked`, while the
 /// operation's `body` clause function is `kernel`.

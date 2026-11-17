@@ -688,7 +688,10 @@ fn tc_444_a_recursive_site_reproduces_only_at_frame_depth_zero() {
 
 /// `unit()`'s `r`, composed with every function body checked under `Kernel`
 /// and emitted: the package records `kernel` and the replay request carries it.
-fn kernel_spine(source: &str) -> ComposedUnit {
+fn kernel_spine(
+    source: &str,
+    modes: &BTreeMap<String, filament_semantic_value::checking::CheckMode>,
+) -> ComposedUnit {
     crate::spine::compose_in_mode(
         SourceIdentity::new(AUTHORITY, IDENTITY),
         IDENTITY,
@@ -697,6 +700,7 @@ fn kernel_spine(source: &str) -> ComposedUnit {
         &crate::spine::DependencyInput::default(),
         SpineLimits::default(),
         Some(filament_semantic_value::checking::CheckMode::Kernel),
+        modes,
     )
     .expect("the unit compiles under Kernel")
 }
@@ -713,11 +717,77 @@ fn tc_1784_a_kernel_package_replays_under_the_recorded_kernel_mode() {
         "language \"ix:native\" edition \"1-draft\";\n{PROFILE}\
          function r using v(x: Int[0, 9]): Integer pure {{ 10 mod x }}\n"
     );
-    let compiled = kernel_spine(&source);
+    let compiled = kernel_spine(&source, &BTreeMap::new());
     let package = String::from_utf8(compiled.emitted.bytes().to_vec()).expect("JSON");
     assert!(package.contains(r#""check_mode":"kernel""#), "{package}");
     let x = parameter(&compiled, "r", 0);
     let key = record(&compiled, &source, "r", "10 mod x", 0);
     let result = settled(run(&source, &compiled, "r", &key, &[(x, int(0))]));
     assert!(matches!(result, Settled::Reproduced(_)), "{result:?}");
+}
+
+/// `r` needs `Kernel` (its divisor may be zero); `g` is provable under
+/// `Linked`.
+fn mixed_source() -> String {
+    format!(
+        "language \"ix:native\" edition \"1-draft\";\n{PROFILE}\
+         function r using v(x: Int[0, 9]): Integer pure {{ 10 mod x }}\n\
+         function g using v(x: Int[0, 9], y: Int[1, 9]): Integer pure {{ x mod y }}\n"
+    )
+}
+
+/// FR-098-AC-34: a package whose body `r` records `kernel` and whose body
+/// `g` records `linked` replays each under its own recorded mode: `r` is
+/// reproduced under `Kernel` at `x = 0`, and `g` under `Linked`.
+#[trace("TC-1784", "FR-098-AC-34")]
+#[test]
+fn tc_1784_a_mixed_package_replays_each_body_under_its_own_mode() {
+    use filament_semantic_value::checking::CheckMode;
+    let source = mixed_source();
+    let modes = BTreeMap::from([("g".to_owned(), CheckMode::Linked)]);
+    let compiled = kernel_spine(&source, &modes);
+    let package = String::from_utf8(compiled.emitted.bytes().to_vec()).expect("JSON");
+    assert_eq!(package.matches(r#""check_mode":"kernel""#).count(), 1);
+    assert_eq!(package.matches(r#""check_mode":"linked""#).count(), 1);
+    let x = parameter(&compiled, "r", 0);
+    let key = record(&compiled, &source, "r", "10 mod x", 0);
+    let result = settled(run(&source, &compiled, "r", &key, &[(x, int(0))]));
+    assert!(matches!(result, Settled::Reproduced(_)), "{result:?}");
+    let x = parameter(&compiled, "g", 0);
+    let y = parameter(&compiled, "g", 1);
+    let key = record(&compiled, &source, "g", "x mod y", 0);
+    assert_eq!(
+        settled(run(&source, &compiled, "g", &key, &[(x, int(3)), (y, int(2))])),
+        Settled::Verdicts(boolean(true))
+    );
+}
+
+/// FR-098-AC-34: a forged package that flips `r`'s recorded mode to
+/// `linked` is refused: `r` is rechecked under `Linked` and its unproved
+/// divisor refuses, whatever the other function records.
+#[trace("TC-1784", "FR-098-AC-34")]
+#[test]
+fn tc_1784_a_forged_recorded_mode_is_refused() {
+    use filament_semantic_value::checking::CheckMode;
+    let source = mixed_source();
+    let modes = BTreeMap::from([("g".to_owned(), CheckMode::Linked)]);
+    let compiled = kernel_spine(&source, &modes);
+    let forged = String::from_utf8(compiled.emitted.bytes().to_vec())
+        .expect("JSON")
+        .replace(r#""check_mode":"kernel""#, r#""check_mode":"linked""#);
+    let x = parameter(&compiled, "r", 0);
+    let key = record(&compiled, &source, "r", "10 mod x", 0);
+    let mut wire = at(
+        &source,
+        &compiled,
+        "r",
+        &key,
+        ReplaySource::Input(vec![CanonicalAssignment {
+            parameter: x,
+            value: int(0),
+        }]),
+    );
+    wire.package = crate::ReplayPackage::read(forged.as_bytes(), 1 << 30).expect("JSON");
+    let refusal = replay(wire, ReplayLimits::default()).expect_err("a forged mode is refused");
+    assert!(format!("{refusal:?}").contains("Nonzero"), "{refusal:?}");
 }

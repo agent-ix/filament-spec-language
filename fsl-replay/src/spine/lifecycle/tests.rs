@@ -2328,6 +2328,7 @@ fn check_units_continues_past_a_protocol_refusal_only_when_asked() {
                 continue_protocol_refusals,
                 refinement_internals: None,
                 check_mode: None,
+                function_modes: None,
                 extension_catalog: None,
             },
             SpineLimits::default(),

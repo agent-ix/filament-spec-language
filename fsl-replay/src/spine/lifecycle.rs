@@ -1844,6 +1844,9 @@ pub(crate) struct UnitCheckOptions<'a> {
     /// FR-098-AC-34: the mode every function body is checked under; `None`
     /// is `Linked`. A replay passes the mode its proving package records.
     pub(crate) check_mode: Option<CheckMode>,
+    /// FR-098-AC-34: each named function body's recorded mode, which the
+    /// recompile of the root unit checks that body under.
+    pub(crate) function_modes: Option<&'a BTreeMap<String, CheckMode>>,
     pub(crate) extension_catalog: Option<ProfileCatalogInput<'a>>,
 }
 
@@ -1891,6 +1894,7 @@ pub(crate) fn check_units_with_options(
             clocks: options.clocks,
             integer_division: options.integer_division,
             check_mode: options.check_mode.unwrap_or(CheckMode::Linked),
+            function_modes: options.function_modes,
             extension_catalog: options.extension_catalog,
             active: Vec::new(),
             compiled: BTreeMap::new(),
@@ -2229,6 +2233,7 @@ fn check_with_context_and_temporal_selections(
             integer_division,
             extension_catalog,
             check_mode: CheckMode::Linked,
+            function_modes: None,
             active: Vec::new(),
             compiled: BTreeMap::new(),
             import_edges: 0,
@@ -3368,7 +3373,16 @@ pub(crate) fn compose(
     dependencies: &DependencyInput,
     limits: SpineLimits,
 ) -> Result<ComposedUnit, Box<CompileRefusal>> {
-    compose_in_mode(source, path, bytes, packages, dependencies, limits, None)
+    compose_in_mode(
+        source,
+        path,
+        bytes,
+        packages,
+        dependencies,
+        limits,
+        None,
+        &BTreeMap::new(),
+    )
 }
 
 /// [`compose`] with every function body checked under `check_mode` (`None`
@@ -3382,6 +3396,7 @@ pub(crate) fn compose_in_mode(
     dependencies: &DependencyInput,
     limits: SpineLimits,
     check_mode: Option<CheckMode>,
+    function_modes: &BTreeMap<String, CheckMode>,
 ) -> Result<ComposedUnit, Box<CompileRefusal>> {
     let cancel = Cancel::new();
     let refusal = |failure| match refusal_or_fault(failure) {
@@ -3415,6 +3430,7 @@ pub(crate) fn compose_in_mode(
             dependencies,
             UnitCheckOptions {
                 check_mode: Some(check_mode),
+                function_modes: Some(function_modes),
                 ..UnitCheckOptions::default()
             },
             limits,
@@ -3542,6 +3558,7 @@ struct Resolution<'a> {
     packages: &'a fsl_semantics::model::intake::PackageInput,
     continuation_source: RawSourceRef,
     check_mode: CheckMode,
+    function_modes: Option<&'a BTreeMap<String, CheckMode>>,
     limits: SpineLimits,
     cancel: &'a Cancel,
     temporal_selections: &'a [fsl_package::TemporalClockSelection],
@@ -3955,6 +3972,11 @@ impl<'a> Resolution<'a> {
             })?;
         }
         declarations.integer_division = selected;
+        if frame.raw == self.continuation_source {
+            if let Some(modes) = self.function_modes {
+                declarations.function_modes = modes.clone();
+            }
+        }
         // FR-354: the extensions the package's units were parsed against are
         // the ones S3 checks their forms with.
         declarations = declarations.with_extensions(HeldExtensions::union(

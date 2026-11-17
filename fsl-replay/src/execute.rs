@@ -1836,6 +1836,7 @@ pub(crate) fn recompile_with_temporal_selections(
         limits.spine,
         request.refinement_internals(),
         request.package().check_mode(),
+        &request.package().function_modes(),
     )
     .map_err(|failure| locate_refinement_internals(request, failure))?;
     // Rule 6: every entry names a selection of the recompiled closure.
@@ -1845,6 +1846,27 @@ pub(crate) fn recompile_with_temporal_selections(
             return Err(ReplayRefusal::DependencySelections(
                 DependencySelectionsCause::Unselected {
                     identity: entry.identity().clone(),
+                },
+            ));
+        }
+    }
+    // FR-098-AC-34: every function the proving package records is rechecked
+    // under exactly the mode it records; a function whose recompile records
+    // another mode, or none, is refused at its node.
+    let recompiled_modes: std::collections::BTreeMap<String, Option<String>> =
+        crate::ReplayPackage::function_records(compiled.emitted.package().bytes())
+            .into_iter()
+            .map(|record| (record.node_id, record.mode))
+            .collect();
+    for record in crate::ReplayPackage::function_records(request.package().bytes()) {
+        if recompiled_modes.get(&record.node_id) != Some(&record.mode) {
+            return Err(ReplayRefusal::Request(
+                crate::ReplayRequestRefusal::PackageMember {
+                    pointer: format!(
+                        "/package/semantic_graph/nodes/{}/check_mode",
+                        record.position
+                    ),
+                    cause: crate::PackageMemberCause::CheckModeMismatch,
                 },
             ));
         }
@@ -2040,6 +2062,7 @@ fn run_spine_units(
     limits: SpineLimits,
     refinement_internals: Option<&[filament_contract_model::CheckedRefinementInternal]>,
     check_mode: filament_semantic_value::checking::CheckMode,
+    function_modes: &std::collections::BTreeMap<String, filament_semantic_value::checking::CheckMode>,
 ) -> Result<(Recompiled, filament_contract_model::CheckedPackageEvidence), ReplayRefusal> {
     #[cfg(test)]
     SPINE_RUNS.with(|runs| runs.set(runs.get() + 1));
@@ -2110,6 +2133,7 @@ fn run_spine_units(
                 .transpose()?
                 .as_ref(),
             check_mode: Some(check_mode),
+            function_modes: Some(function_modes),
             extension_catalog: None,
         },
         limits,

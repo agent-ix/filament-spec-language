@@ -122,6 +122,56 @@ impl ReplayPackage {
         })
     }
 
+    /// FR-098-AC-34: every `function` node of a package document, in node
+    /// order: its position, its node id, the single-segment name it declares
+    /// (a declared function; a clause function declares none) and its
+    /// recorded `check_mode` spelling. A node id leaves out `check_mode`, so
+    /// the same function has the same id in the proving package and in its
+    /// recompile.
+    pub(crate) fn function_records(bytes: &[u8]) -> Vec<FunctionRecord> {
+        let Ok(document) = serde_json::from_slice::<serde_json::Value>(bytes) else {
+            return Vec::new();
+        };
+        let nodes = document["semantic_graph"]["nodes"]
+            .as_array()
+            .map_or(&[][..], Vec::as_slice);
+        nodes
+            .iter()
+            .enumerate()
+            .filter(|(_, node)| node["node_tag"] == "function")
+            .map(|(position, node)| FunctionRecord {
+                position,
+                node_id: node["node_id"].to_string(),
+                name: match node["declaration"]["qualified_name"].as_array().map(Vec::as_slice) {
+                    Some([name]) => name.as_str().map(str::to_owned),
+                    _ => None,
+                },
+                mode: node["check_mode"].as_str().map(str::to_owned),
+            })
+            .collect()
+    }
+
+    /// FR-098-AC-34: the recorded mode of each declared function, by name,
+    /// which the recompile checks that function's body under. A node whose
+    /// member is absent or not `linked`/`kernel` selects nothing: the
+    /// native reader refuses it at admission (FR-952-AC-4).
+    pub(crate) fn function_modes(
+        &self,
+    ) -> std::collections::BTreeMap<String, filament_semantic_value::checking::CheckMode> {
+        use filament_semantic_value::checking::CheckMode;
+        Self::function_records(&self.bytes)
+            .into_iter()
+            .filter_map(|record| {
+                let mode = match record.mode.as_deref()? {
+                    "linked" => CheckMode::Linked,
+                    "kernel" => CheckMode::Kernel,
+                    _ => return None,
+                };
+                Some((record.name?, mode))
+            })
+            .collect()
+    }
+
     /// FR-098-AC-34, FR-952: the check mode the replay recompile requests for
     /// function bodies, read from the `check_mode` member of the package's
     /// `function` nodes. A function body checked under `Kernel` records
@@ -385,3 +435,16 @@ fn json_value(value: NodeRef<'_>) -> serde_json::Value {
 
 #[cfg(test)]
 mod tests;
+
+/// A `function` node of a package document (FR-098-AC-34).
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct FunctionRecord {
+    /// The node's position in `/semantic_graph/nodes`.
+    pub(crate) position: usize,
+    /// The node id, as its JSON spelling.
+    pub(crate) node_id: String,
+    /// The name a declared function declares; `None` for a clause function.
+    pub(crate) name: Option<String>,
+    /// The recorded `check_mode` spelling, when present.
+    pub(crate) mode: Option<String>,
+}
