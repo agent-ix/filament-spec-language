@@ -353,7 +353,7 @@ fn snapshot_admission_refusal_witnesses_name_object_member_and_path() {
         "conflicting-identity",
         "root",
         "key",
-        "/populations/0/objects/1/key",
+        "/populations/0/objects/2/key",
         |document| {
             let duplicate = document["populations"][0]["objects"][0].clone();
             document["populations"][0]["objects"]
