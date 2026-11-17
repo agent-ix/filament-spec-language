@@ -36,6 +36,7 @@ reused; prose may change without changing classification.
 | unknown_required_feature | A package feature is unknown or outside the consumer's declared support. |
 | missing_import | A selected formal package or native import alias is absent. |
 | ambiguous_declaration | Multiple exact candidates or visible exports match; related formal loci are retained. |
+| stale_dependency | A selected dependency identity, revision or bytes differ from the artifact. |
 | missing_declaration | A required value, field, type or variant cannot be resolved. |
 | invalid_model_binding | An explicit context binding or clause name is invalid. |
 | invalid_runtime_input | Native runtime input structure is invalid, including a local root/child outside its admitted arena ordering. |
@@ -52,7 +53,13 @@ reused; prose may change without changing classification.
 | resource_exhausted | A source, syntax, formatter, map, linking, checking/proof or run ceiling prevented completion. |
 | conflicting_declaration | Two declarations that must be unique resolve to one identity: two unit `operation-body` declarations resolving to one operation (FR-302), cause `duplicate-declaration`. |
 | ambiguous_dispatch | FR-151 dispatch linking found no, or several undominated, applicable candidates for a closed subtype. |
+| foreign_reference | FR-153: a population document, lookup key or population member names an identity outside the bound closed environment. |
+| cardinality_out_of_bound | FR-153: a formed population selection count is outside its declared `allInstances<T>(p)` bound. |
+| duplicate_selection | ADR-013 O-01/QC-5: a domain-package identity is selected more than once. |
+| stage_limit_exceeded | A syntax, stage or work limit stopped the operation before completion. |
 | invalid_probabilistic_model | A random parameter, reward, workload or `probabilistic` claim breaks a rule of FSpec FR-405 or FR-407: cause `invalid-weight`, `repeated-support-value`, `duplicate-distribution`, `duplicate-weight`, `duplicate-reward`, `state-read-in-reward`, `qualitative-threshold`, `quantile-over-fraction`, `partial-confidence` or `invalid-confidence`; `duplicate-reward`, `quantile-over-fraction` and `invalid-confidence` are FSL-proposed pending FSpec (STD-188). |
+| invalid_timed_model | FSpec FR-415/FR-416: a timed model, clock binding or timed interval breaks the rule its cause names. |
+| unimplemented_capability | FSpec FR-271: a valid complete-V1 capability the selected producer does not implement. |
 | noncanonical_wire | A document is not in its canonical form: a domain package or observation document carries a number with no exact RFC 8785 spelling (FR-056, FR-106), cause `inexact-integer` or `inexact-number` with the number's `document_pointer`; or a checked-package/v2 wire's bytes are not RFC 8785 bytes (FR-322's I2 reader), with neither cause nor pointer. FSpec FR-271's `## Values` row catalogs the code, and FR-272's `noncanonical_wire` row its causes and `document_pointer` (filament-specification#180). |
 
 Phase identifies the observing boundary: source, lex, parse, profile, format or

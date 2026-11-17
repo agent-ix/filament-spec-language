@@ -4,6 +4,8 @@
 use filament_exact::Cancel;
 #[cfg(feature = "quire-extraction")]
 use filament_semantic_value::catalog::Category;
+#[cfg(feature = "quire-extraction")]
+use fsl_foundation::diagnostic::Code;
 use fsl_foundation::SourceIdentity;
 use fsl_replay::spine::{self, DependencyInput, ParseRequest, SpineLimits};
 use ix_trace_rs::trace;
@@ -417,6 +419,10 @@ fn duplicate_and_headless_fences_refuse_independently_and_cancel_returns_no_repo
         assert_eq!(
             fence.diagnostics[0].diagnostic.cause(),
             Some("extraction-clause-count")
+        );
+        assert_eq!(
+            fence.diagnostics[0].diagnostic.code(),
+            Code::ExtractionClauseCount.as_str()
         );
     }
     assert_eq!(first.fences[3].category, Category::Success);

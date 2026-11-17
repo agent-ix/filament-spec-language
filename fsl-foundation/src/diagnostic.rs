@@ -68,8 +68,6 @@ pub enum Code {
     IoError,
     /// The closed command request is malformed.
     InvalidRequest,
-    /// A command's selected digest spelling is invalid.
-    InvalidDigest,
     /// A command's selected identifier is invalid.
     InvalidIdentifier,
     /// A typed command result could not be serialized.
@@ -191,7 +189,6 @@ impl Code {
         match self {
             Self::IoError => "io-error",
             Self::InvalidRequest => "invalid-request",
-            Self::InvalidDigest => "invalid-digest",
             Self::InvalidIdentifier => "invalid-identifier",
             Self::OutputFailure => "output-failure",
             Self::UnsupportedProjection => "unsupported_projection",
@@ -247,7 +244,6 @@ impl Code {
         &[
             Self::IoError,
             Self::InvalidRequest,
-            Self::InvalidDigest,
             Self::InvalidIdentifier,
             Self::OutputFailure,
             Self::UnsupportedProjection,

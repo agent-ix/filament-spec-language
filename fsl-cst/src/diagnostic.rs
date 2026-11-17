@@ -412,7 +412,7 @@ pub fn resource_exhausted(
 
 #[cfg(test)]
 mod tests {
-    use super::{CompleteCause, CompleteCode, resource_exhausted};
+    use super::{resource_exhausted, CompleteCause, CompleteCode, HostCause};
     use fsl_foundation::diagnostic::LimitKind;
     use fsl_foundation::{Phase, Source, SourceIdentity, Span, SyntaxLimit};
 
@@ -472,5 +472,83 @@ mod tests {
             .cause,
             CompleteCause::StageLimit(LimitKind::TokenCount)
         ));
+    }
+
+    /// Every typed complete-source cause maps to a code admitted by the
+    /// diagnostic catalogue; the parser's independent invalid-token causes
+    /// remain distinct entries in this table.
+    #[test]
+    fn each_complete_cause_is_checked_against_its_catalogued_code() {
+        let cases = [
+            (CompleteCause::UnexpectedToken, CompleteCode::InvalidSyntax),
+            (CompleteCause::UnexpectedEnd, CompleteCode::InvalidSyntax),
+            (CompleteCause::InvalidToken, CompleteCode::InvalidSyntax),
+            (CompleteCause::InvalidEscape, CompleteCode::InvalidSyntax),
+            (
+                CompleteCause::DeclarationForm,
+                CompleteCode::UnsupportedConstruct,
+            ),
+            (
+                CompleteCause::UnsupportedSelection,
+                CompleteCode::UnknownProfile,
+            ),
+            (
+                CompleteCause::InsufficientNextCharge,
+                CompleteCode::ResourceExhausted,
+            ),
+            (CompleteCause::MissingSelection, CompleteCode::MissingImport),
+            (
+                CompleteCause::AmbiguousName,
+                CompleteCode::AmbiguousDeclaration,
+            ),
+            (
+                CompleteCause::ConflictingAuthority,
+                CompleteCode::AmbiguousDeclaration,
+            ),
+            (CompleteCause::DuplicateMember, CompleteCode::InvalidPackage),
+            (CompleteCause::InvalidValue, CompleteCode::InvalidPackage),
+            (CompleteCause::DefinitionCycle, CompleteCode::InvalidPackage),
+            (
+                CompleteCause::FeatureSetMismatch,
+                CompleteCode::InvalidPackage,
+            ),
+            (
+                CompleteCause::UnknownFeature,
+                CompleteCode::UnknownRequiredFeature,
+            ),
+            (
+                CompleteCause::UnsupportedFeature,
+                CompleteCode::UnknownRequiredFeature,
+            ),
+            (
+                CompleteCause::WrongModelSelection,
+                CompleteCode::InvalidModelBinding,
+            ),
+            (
+                CompleteCause::ConflictingBinding,
+                CompleteCode::InvalidModelBinding,
+            ),
+            (CompleteCause::CallerCancelled, CompleteCode::Cancelled),
+            (
+                CompleteCause::CorrespondenceLoss,
+                CompleteCode::InvalidProjectionCorrespondence,
+            ),
+            (
+                CompleteCause::EstablishedInvariantBroken,
+                CompleteCode::RuntimeInvariant,
+            ),
+            (
+                CompleteCause::Host(HostCause::InvalidUtf8),
+                CompleteCode::InvalidUtf8,
+            ),
+            (
+                CompleteCause::StageLimit(LimitKind::TokenCount),
+                CompleteCode::StageLimitExceeded,
+            ),
+        ];
+
+        for (cause, code) in cases {
+            assert!(cause.is_cause_of(code), "{cause:?} must map to {code}");
+        }
     }
 }
