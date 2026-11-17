@@ -91,6 +91,10 @@ fn a_function_compiled_from_source_is_called_by_name() {
 
 /// The unit's package, checked and linked, over source `declarations`.
 fn package_of(declarations: &str) -> CheckedPackage {
+    package_of_with_mode(declarations, CheckMode::Linked)
+}
+
+fn package_of_with_mode(declarations: &str, mode: CheckMode) -> CheckedPackage {
     let text = format!(
         "language \"ix:native\" edition \"1-draft\";\n\
          profile v = \"filament.value.complete/v1\";\n\
@@ -115,9 +119,40 @@ fn package_of(declarations: &str) -> CheckedPackage {
     .expect("the assembler builds the package declarations");
     CheckedPackage::link(
         declarations
-            .check(CheckMode::Linked, CheckingLimits::default())
+            .check(mode, CheckingLimits::default())
             .expect("the package checks"),
     )
+}
+
+/// TC-2830 (FR-109-AC-14): a source function run preserves the same typed
+/// sum cause that the clause-run mapping reports as an undefined evaluation.
+#[trace("TC-2830", "FR-100-AC-10", "FR-109-AC-14")]
+#[test]
+fn sum_out_of_domain_same_cause_call_and_clause() {
+    let package = package_of_with_mode(
+        "type Pos = Int[1, 9];\n\
+         function total using v(x: Pos): Pos pure { \
+         sum<Pos>(n in sequence[x, x]: n) }",
+        CheckMode::Kernel,
+    );
+    let evaluation = package
+        .call(
+            &QualifiedName::unqualified("total").expect("total is an identifier"),
+            vec![filament_exact::Value::Integer(
+                filament_exact::Integer::from(9_i64),
+            )],
+            &ObjectEnvironment::default(),
+            &mut Meter::new(UNLIMITED),
+        )
+        .expect("the function runs under Kernel checking");
+    assert!(
+        matches!(
+            evaluation.outcome,
+            FamilyOutcome::Evaluated(Outcome::Undefined(Undefined::SumOutOfDomain))
+        ),
+        "the typed cause matches the clause-run cause: {:?}",
+        evaluation.outcome
+    );
 }
 
 /// Whether calling `name` with no arguments completes with `true`.
