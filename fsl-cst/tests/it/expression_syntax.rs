@@ -28,10 +28,10 @@ fn parse(bytes: &[u8]) -> Result<ParsedSource, Box<fsl_cst::CompleteDiagnostic>>
 #[test]
 fn a_population_query_type_argument_names_the_declared_type_requirement() {
     for (expression, anchor) in [
-        ("sum<Int[0, 80]>(x in a: x)", "[0, 80]"),
+        ("sum<Int[0, 80]>(x in a: x)", "Int"),
         ("count<Integer>(x in a: x)", "Integer"),
         ("fold<Integer>(0, x in a: x)", "Integer"),
-        ("reduce<Int[0, 9]>(0, x in a: x)", "[0, 9]"),
+        ("reduce<Int[0, 9]>(0, x in a: x)", "Int"),
     ] {
         let text = document(expression);
         let parsed = parse(text.as_bytes()).expect("valid UTF-8 within the source ceiling");
