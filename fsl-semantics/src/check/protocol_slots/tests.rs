@@ -586,6 +586,70 @@ fn send_and_receive_are_owned_by_their_channel_roles_and_count_in_the_region() {
     );
 }
 
+/// FR-218-AC-17: a receive record belongs to the channel's `to` role and
+/// an individually listed field of that record is a decision fact.
+#[trace("FR-218-AC-17")]
+#[test]
+fn a_choice_can_decide_on_a_listed_field_of_its_channel_receive() {
+    let text = format!(
+        "{HEADER}protocol Decisions using p over (k: M::Node) on origin {{\n\
+         role sender on M::Node;\nrole receiver on M::Node;\n\
+         channel ch from sender to receiver carries M::Tick ordering unordered delivery unknown capacity 2 overflow block;\n\
+         run sequence Main {{\n\
+           send Sent via ch as (sent: M::Tick) {{ true }};\n\
+           receive Received via ch of Sent as (received: M::Tick) {{ true }};\n\
+           choice Verdict by receiver visible (received.ready) {{\n\
+             case yes when {{ received.ready }} sequence Yes {{}}\n\
+             case no when {{ not received.ready }} sequence No {{}}\n\
+           }}\n\
+         }}\nfinish Done as (f: M::Receipt) {{ true }};\n}}\n"
+    );
+
+    checks(&text);
+
+    let unlisted = text.replace("not received.ready", "received.count >= 0");
+    let (cause, pair, at) = only(&unlisted);
+    assert_eq!(pair, ("wrong_snapshot", Some("wrong-observation")));
+    assert_eq!(at, "received.count");
+    assert!(matches!(
+        cause,
+        ProtocolAnchorCause::WrongObservation {
+            owner,
+            reason: super::super::refusal::ObservationReason::Unlisted,
+            ..
+        } if owner == "receiver"
+    ));
+
+    let overlapping = text.replace(
+        "case no when { not received.ready } sequence No {}",
+        "case again when { received.ready } sequence Again {}\n\
+         case no when { not received.ready } sequence No {}",
+    );
+    let (cause, pair, _) = only(&overlapping);
+    assert_eq!(pair, ("undefined_expression", Some("unproved-exhaustiveness")));
+    assert!(matches!(
+        cause,
+        ProtocolAnchorCause::Exhaustiveness {
+            failed,
+            ..
+        } if failed == [super::super::refusal::ArmFault::DuplicateArm]
+    ));
+
+    let repeat = format!(
+        "{HEADER}protocol RepeatDecision using p over (k: M::Node) on origin {{\n\
+         role sender on M::Node;\nrole receiver on M::Node;\n\
+         channel ch from sender to receiver carries M::Tick ordering unordered delivery unknown capacity 2 overflow block;\n\
+         run sequence Main {{\n\
+           send Sent via ch as (sent: M::Tick) {{ true }};\n\
+           receive Received via ch of Sent as (received: M::Tick) {{ true }};\n\
+           repeat Again by receiver visible (received.ready) max 1 while {{ received.ready }}\n\
+             sequence Body {{ event Tick by receiver as (tick: M::Tick) {{ true }}; }}\n\
+             exhausted sequence Exhausted {{}}\n\
+         }}\nfinish Done as (f: M::Receipt) {{ true }};\n}}\n"
+    );
+    checks(&repeat);
+}
+
 /// FR-218 "Scopes" (TC-663): a `commit` written `by` a `scope` role is a node
 /// `by` that role, so with its `Work` inside `sequence S` and a `commit`
 /// after `S`, the region is `Main`, which holds the commit, not `S`.
