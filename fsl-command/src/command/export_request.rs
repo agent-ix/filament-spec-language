@@ -210,6 +210,17 @@ pub enum ExportStatus {
     Incomplete,
 }
 
+impl ExportStatus {
+    /// The FSpec FR-817 process exit assigned to this export result.
+    pub const fn exit_code(self) -> u8 {
+        match self {
+            Self::Assembled => 0,
+            Self::Refused => 21,
+            Self::Incomplete => 22,
+        }
+    }
+}
+
 /// Why an export request member could not be admitted.
 #[derive(Debug, thiserror::Error)]
 pub enum ExportRequestError {
@@ -231,6 +242,13 @@ pub enum ExportRequestError {
 mod tests {
     use super::{ExportDisposition, ExportOutcome, ExportRecord, ExportRequest, ExportStatus};
     use serde_json::json;
+
+    #[test]
+    fn export_status_maps_to_fspec_exit_codes() {
+        assert_eq!(ExportStatus::Assembled.exit_code(), 0);
+        assert_eq!(ExportStatus::Refused.exit_code(), 21);
+        assert_eq!(ExportStatus::Incomplete.exit_code(), 22);
+    }
 
     #[test]
     fn reads_export_fields_and_default_fidelity() {
