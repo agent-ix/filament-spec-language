@@ -65,6 +65,19 @@ fn emitted_source_place_member_type_matches_its_target_node_identity() {
         .unwrap_or_else(|refusals| panic!("the source checks: {refusals:?}"));
     let emission = emit_checked(&CheckedPackage::link(graph)).expect("the source emits");
     let wire = wire(&emission);
+    let order = nodes(&wire)
+        .iter()
+        .find(|node| {
+            node["node_tag"] == "model"
+                && node["semantic_form"] == "object_type"
+                && node["declaration"]["qualified_name"] == json!(["Order"])
+        })
+        .expect("the source Order node");
+    assert_eq!(order["owner"]["kind"], "source");
+    let source_owner = order["owner"]["identity"]
+        .as_str()
+        .expect("the SourceOwner identity");
+    let wrapper_w_identity = format!("ix://{source_owner}/Wrapper/w");
 
     let wrapper = emission
         .selected_source_record_rows()
@@ -89,8 +102,9 @@ fn emitted_source_place_member_type_matches_its_target_node_identity() {
         .collect::<Vec<_>>()
         .join(",");
     let ordinal = target_node["ordinal"].as_u64().expect("node ordinal");
-    let target_identity = format!("{package_name}:[{path},]:{ordinal}");
-    assert_eq!(target_identity, "pkg:[\"W\",]:0");
+    let checked_target_identity = format!("{package_name}:[{path},]:{ordinal}");
+    assert_eq!(checked_target_identity, "pkg:[\"W\",]:0");
+    let target_identity = format!("ix://{source_owner}/W");
 
     let place = nodes(&wire)
         .iter()
@@ -100,7 +114,9 @@ fn emitted_source_place_member_type_matches_its_target_node_identity() {
                 .iter()
                 .any(|step| {
                     step.iter()
-                        .any(|(name, value)| name == "member_identity" && value == "Wrapper/w")
+                        .any(|(name, value)| {
+                            name == "member_identity" && value == &wrapper_w_identity
+                        })
                 })
         })
         .expect("the clock place through Order.nested.Wrapper.w");
@@ -112,7 +128,7 @@ fn emitted_source_place_member_type_matches_its_target_node_identity() {
     };
     let place_wrapper_field = rows
         .iter()
-        .find(|row| row_value(row, "member_identity") == "Wrapper/w")
+        .find(|row| row_value(row, "member_identity") == wrapper_w_identity)
         .expect("Wrapper.w timed path row");
     let next_type = rows
         .iter()
