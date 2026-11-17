@@ -1890,6 +1890,7 @@ pub fn read_clause_run_request(
                 &extraction.body.document,
             );
             let binding = &request.program.clauses[0];
+            let _clause_id = &binding.clause;
             fsl_source::clause_context(&binding.package, source.source())
                 .map_err(|diagnostics| RunCause::InvalidQuireContext { diagnostics })?;
         } else {
