@@ -203,7 +203,7 @@ pub struct ProfileUseResult {
 #[cfg(test)]
 pub(crate) use lifecycle::composed_declaration;
 #[cfg(test)]
-pub(crate) use lifecycle::{compose, ComposedUnit};
+pub(crate) use lifecycle::{compose, compose_in_mode, ComposedUnit};
 
 mod bind;
 pub use bind::{

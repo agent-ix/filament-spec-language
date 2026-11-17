@@ -122,12 +122,16 @@ impl ReplayPackage {
         })
     }
 
-    /// FR-098-AC-34, FR-952: the check mode the replay recompile runs every
-    /// function body under, read from the `check_mode` member of the
-    /// package's `function` nodes. A package whose function bodies were
-    /// checked under `Kernel` records `kernel` on them (a declared clause
-    /// function always records `linked`), so one `kernel` node selects
-    /// `Kernel`; otherwise the recompile is `Linked`. A node whose member is
+    /// FR-098-AC-34, FR-952: the check mode the replay recompile requests for
+    /// function bodies, read from the `check_mode` member of the package's
+    /// `function` nodes. A function body checked under `Kernel` records
+    /// `kernel`; a declared clause function (`precondition`, `invariant`)
+    /// records `linked` whatever mode was requested. The checker applies the
+    /// requested mode to bodies only and always checks a declared clause
+    /// under `Linked`, so a recompile under the mode a `kernel` node records
+    /// reproduces each function's own mode: the bodies `Kernel`, every
+    /// declared clause `Linked`. A package with no `kernel` node is
+    /// recompiled `Linked`. A node whose member is
     /// absent or not `linked`/`kernel` selects nothing here: the native
     /// reader refuses it at admission (FR-952-AC-4), after the recompile.
     pub(crate) fn check_mode(&self) -> filament_semantic_value::checking::CheckMode {

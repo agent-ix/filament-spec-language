@@ -801,9 +801,11 @@ pub struct CheckedGraph {
     /// FR-092/FR-093: every lowered, keyed node of this
     /// package's functions.
     semantic_graph: lowering::SemanticGraph,
-    /// FR-952: the mode every source-declared function body was checked
-    /// under (FR-495). A declared clause is always checked under `Linked`.
-    function_check_mode: CheckMode,
+    /// FR-952: the mode each function (by declaration index) was checked
+    /// under (FR-495). A declared clause function (`invariant`,
+    /// `precondition`) is always checked under `Linked`; a function body,
+    /// an operation `body` clause function included, under the requested mode.
+    function_check_modes: BTreeMap<usize, CheckMode>,
     /// Producer-retained expression identities, owned by this graph rather
     /// than written into its borrowed checked bodies.
     checked_node_keys: BTreeMap<usize, lowering::CheckedNodeKeys>,
@@ -1075,7 +1077,7 @@ impl DebugWith for CheckedGraph {
             requirements,
             model_correspondence,
             type_nodes,
-            function_check_mode,
+            function_check_modes,
             semantic_graph,
             checked_node_keys: _,
             dependency_references,
@@ -1170,7 +1172,7 @@ impl DebugWith for CheckedGraph {
             .field("model_correspondence", &With(model_correspondence, table))
             .field("type_nodes", &NodeValueMap(type_nodes.iter(), table))
             .field("semantic_graph", &With(semantic_graph, table))
-            .field("function_check_mode", &function_check_mode)
+            .field("function_check_modes", &function_check_modes)
             .field(
                 "dependency_references",
                 &dependency_references
@@ -3124,6 +3126,24 @@ impl PackageDeclarations {
                     .map(|function| function.body.clone())
                     .collect()
             };
+        // FR-952: a declared clause function is checked under `Linked`
+        // whatever the requested mode; a function body, an operation `body`
+        // clause function included, under the requested mode.
+        let function_check_modes: BTreeMap<usize, CheckMode> = (0..self.functions.len())
+            .map(|index| {
+                let declared_clause = model_clauses
+                    .get(&index)
+                    .is_some_and(|clause| clause.kind != fsl_forms::DeclaredClauseKind::Body);
+                (
+                    index,
+                    if declared_clause {
+                        CheckMode::Linked
+                    } else {
+                        mode
+                    },
+                )
+            })
+            .collect();
         for (index, function) in self.functions.into_iter().enumerate() {
             // FR-092 "Function nodes": the kind travels with the draft to
             // lowering, which keys a predicate's node `predicate`.
@@ -3143,7 +3163,10 @@ impl PackageDeclarations {
                     .function_selections
                     .get(&index)
                     .is_some_and(state_clause::is_complete_value),
-                mode,
+                mode: function_check_modes
+                    .get(&index)
+                    .copied()
+                    .unwrap_or(mode),
                 model_scope: model_function_bodies
                     .get(index)
                     .copied()
@@ -7478,7 +7501,7 @@ impl PackageDeclarations {
             type_nodes: key_order::sorted_by_key(type_nodes, |(node, _)| node)
                 .into_iter()
                 .collect(),
-            function_check_mode: mode,
+            function_check_modes,
             semantic_graph,
             checked_node_keys,
             dependency_references,
@@ -8594,10 +8617,9 @@ impl CheckedGraph {
         &self.semantic_graph
     }
 
-    /// FR-952: the check mode every source-declared function body was checked
-    /// under; a declared clause function is `Linked` whatever this is.
-    pub fn function_check_mode(&self) -> CheckMode {
-        self.function_check_mode
+    /// FR-952: the mode the function at declaration `index` was checked under.
+    pub fn function_check_mode(&self, index: usize) -> Option<CheckMode> {
+        self.function_check_modes.get(&index).copied()
     }
 
     /// The producer-assigned graph identity of this checked expression.

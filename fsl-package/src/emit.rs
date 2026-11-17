@@ -1848,11 +1848,49 @@ impl<'g> Candidate<'g> {
         declared == self.node.declaration().is_some()
     }
 
+    /// FR-952: the mode a `function` node records, the one its function was
+    /// checked under: the declaration index comes from the node's own
+    /// `declaration` or `generated` occurrence, which `check` locates at the
+    /// function's body. `None` for every other node.
+    fn function_check_mode(
+        &self,
+        function_modes: &dyn Fn(usize) -> Option<filament_semantic_value::checking::CheckMode>,
+    ) -> Result<Option<filament_contract_model::CheckMode>, EmitRefusal> {
+        use filament_semantic_value::checking::CheckMode as Checked;
+        use filament_semantic_value::location::ExpressionOwner;
+        if self.node.node_tag() != NodeTag::Function {
+            return Ok(None);
+        }
+        let index = self
+            .occurrences
+            .iter()
+            .filter(|(occurrence, _)| {
+                matches!(
+                    occurrence.role,
+                    CheckedOccurrenceRole::Declaration | CheckedOccurrenceRole::Generated
+                )
+            })
+            .find_map(|(_, location)| match location {
+                RecordedLocation::Expression(location) => match &location.origin {
+                    ExpressionOwner::Body { index, .. } => Some(*index),
+                    _ => None,
+                },
+                RecordedLocation::Parameter(_) => None,
+            });
+        let mode = index
+            .and_then(function_modes)
+            .ok_or_else(|| encoding("a function node has no recorded check mode"))?;
+        Ok(Some(match mode {
+            Checked::Linked => filament_contract_model::CheckMode::Linked,
+            Checked::Kernel => filament_contract_model::CheckMode::Kernel,
+        }))
+    }
+
     /// The node as FR-322 writes it.
     fn wire_node(
         &self,
         ids: &StructuralIds,
-        function_mode: filament_semantic_value::checking::CheckMode,
+        function_modes: &dyn Fn(usize) -> Option<filament_semantic_value::checking::CheckMode>,
     ) -> Result<CheckedSemanticNodeV2, EmitRefusal> {
         let node = self.node;
         Ok(CheckedSemanticNodeV2 {
@@ -1885,27 +1923,10 @@ impl<'g> Candidate<'g> {
             }),
             owner: node.owner().map(wire_owner),
             owner_model: node.owner_model().map(|key| node_id(ids, key)),
-            check_mode: function_check_mode(node, function_mode),
+            check_mode: self.function_check_mode(function_modes)?,
             body: checked_body(ids, node, self.tag)?,
         })
     }
-}
-
-/// FR-952: the mode a `function` node records. A declared clause function is
-/// checked under `Linked`; every other function body under the mode the
-/// package was checked with. No other node carries the member.
-fn function_check_mode(
-    node: &SemanticNode,
-    function_mode: filament_semantic_value::checking::CheckMode,
-) -> Option<filament_contract_model::CheckMode> {
-    use filament_semantic_value::checking::CheckMode as Checked;
-    if node.node_tag() != NodeTag::Function {
-        return None;
-    }
-    Some(match (node.is_clause_function(), function_mode) {
-        (false, Checked::Kernel) => filament_contract_model::CheckMode::Kernel,
-        _ => filament_contract_model::CheckMode::Linked,
-    })
 }
 
 /// Convert the checked body grammar to IR's typed term vocabulary.  Every
@@ -6428,7 +6449,7 @@ fn emit_package_inner(
         .map(
             |candidate| match denied().or_else(|| fault(&candidate.id)) {
                 Some(refusal) => Err(refusal),
-                None => candidate.wire_node(ids, graph.function_check_mode()),
+                None => candidate.wire_node(ids, &|index| graph.function_check_mode(index)),
             },
         )
         .collect::<Result<Vec<_>, _>>()?;

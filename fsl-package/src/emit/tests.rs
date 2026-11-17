@@ -1211,7 +1211,7 @@ fn written_nodes(package: &CheckedPackage) -> Vec<Value> {
         .into_iter()
         .map(|candidate| {
             candidate
-                .wire_node(&StructuralIds::default(), CheckMode::Linked)
+                .wire_node(&StructuralIds::default(), &|_| Some(CheckMode::Linked))
                 .unwrap()
         })
         .collect();

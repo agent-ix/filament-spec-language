@@ -3368,6 +3368,21 @@ pub(crate) fn compose(
     dependencies: &DependencyInput,
     limits: SpineLimits,
 ) -> Result<ComposedUnit, Box<CompileRefusal>> {
+    compose_in_mode(source, path, bytes, packages, dependencies, limits, None)
+}
+
+/// [`compose`] with every function body checked under `check_mode` (`None`
+/// is `Linked`), the way a `Kernel` package is produced.
+#[cfg(test)]
+pub(crate) fn compose_in_mode(
+    source: SourceIdentity,
+    path: &str,
+    bytes: &[u8],
+    packages: &fsl_semantics::model::intake::PackageInput,
+    dependencies: &DependencyInput,
+    limits: SpineLimits,
+    check_mode: Option<CheckMode>,
+) -> Result<ComposedUnit, Box<CompileRefusal>> {
     let cancel = Cancel::new();
     let refusal = |failure| match refusal_or_fault(failure) {
         Ok(refusal) => refusal,
@@ -3387,16 +3402,41 @@ pub(crate) fn compose(
     let models = select(&parsed, packages, limits.model, &cancel)
         .map_err(refusal)?
         .into_value();
-    let checked = check(
-        &parsed,
-        "fixture".to_owned(),
-        &models,
-        dependencies,
-        limits,
-        &cancel,
-    )
-    .map_err(refusal)?
-    .into_value();
+    let checked = if let Some(check_mode) = check_mode {
+        let admitted = admit_parsed_unit_list(vec![parsed], dependencies)
+            ?;
+        let models = select_units(&admitted, packages, limits.model, limits.source, &cancel)
+            .map_err(refusal)?
+            .into_value();
+        check_units_with_options(
+            &admitted,
+            "fixture".to_owned(),
+            &models,
+            dependencies,
+            UnitCheckOptions {
+                check_mode: Some(check_mode),
+                ..UnitCheckOptions::default()
+            },
+            limits,
+            &cancel,
+        )
+        .map_err(refusal)?
+        .into_value()
+        .into_iter()
+        .next()
+        .expect("one admitted unit checks to one unit")
+    } else {
+        check(
+            &parsed,
+            "fixture".to_owned(),
+            &models,
+            dependencies,
+            limits,
+            &cancel,
+        )
+        .map_err(refusal)?
+        .into_value()
+    };
     let emitted = package(&checked, limits.package, &cancel)
         .map_err(refusal)?
         .into_value();

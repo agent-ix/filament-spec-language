@@ -621,7 +621,6 @@ fn tc_444_a_stop_inside_a_mutually_recursive_call_is_not_the_outer_observation()
 /// package records its mode.
 #[trace("TC-1784", "FR-098-AC-34")]
 #[test]
-#[ignore = "QSL-2002: Linked admits a mod whose divisor may be zero, and no package records its check mode yet"]
 fn tc_1784_replay_never_rechecks_a_claim_under_another_mode() {
     let header = format!("language \"ix:native\" edition \"1-draft\";\n{PROFILE}");
     let unguarded =
@@ -685,4 +684,40 @@ fn tc_444_a_recursive_site_reproduces_only_at_frame_depth_zero() {
     assert_eq!(at(2), Settled::NoValue);
     assert_eq!(at(3), Settled::NoValue);
     assert_eq!(at(0), Settled::Verdicts(boolean(true)));
+}
+
+/// `unit()`'s `r`, composed with every function body checked under `Kernel`
+/// and emitted: the package records `kernel` and the replay request carries it.
+fn kernel_spine(source: &str) -> ComposedUnit {
+    crate::spine::compose_in_mode(
+        SourceIdentity::new(AUTHORITY, IDENTITY),
+        IDENTITY,
+        source.as_bytes(),
+        &BTreeMap::new(),
+        &crate::spine::DependencyInput::default(),
+        SpineLimits::default(),
+        Some(filament_semantic_value::checking::CheckMode::Kernel),
+    )
+    .expect("the unit compiles under Kernel")
+}
+
+/// FR-098-AC-34, FR-952-AC-2: a unit checked under `Kernel` records `kernel`
+/// on `r`, and a request at `r`'s `10 mod x` record with `x = 0` recompiles
+/// under that recorded mode (never `Linked`, which refuses
+/// `unproved-nonzero`) and settles `reproduced-without-witness`.
+#[trace("TC-1784", "FR-098-AC-34")]
+#[trace("TC-2662", "FR-952-AC-2")]
+#[test]
+fn tc_1784_a_kernel_package_replays_under_the_recorded_kernel_mode() {
+    let source = format!(
+        "language \"ix:native\" edition \"1-draft\";\n{PROFILE}\
+         function r using v(x: Int[0, 9]): Integer pure {{ 10 mod x }}\n"
+    );
+    let compiled = kernel_spine(&source);
+    let package = String::from_utf8(compiled.emitted.bytes().to_vec()).expect("JSON");
+    assert!(package.contains(r#""check_mode":"kernel""#), "{package}");
+    let x = parameter(&compiled, "r", 0);
+    let key = record(&compiled, &source, "r", "10 mod x", 0);
+    let result = settled(run(&source, &compiled, "r", &key, &[(x, int(0))]));
+    assert!(matches!(result, Settled::Reproduced(_)), "{result:?}");
 }

@@ -4770,7 +4770,7 @@ fn the_recompile_checks_under_the_given_check_mode() {
         .expect("Kernel leaves the divisor to run time")
         .into_value();
     assert_eq!(
-        checked[0].package().graph().function_check_mode(),
-        CheckMode::Kernel
+        checked[0].package().graph().function_check_mode(0),
+        Some(CheckMode::Kernel)
     );
 }
