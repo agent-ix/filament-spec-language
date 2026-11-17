@@ -171,7 +171,7 @@ pub struct RunResult {
     /// FR-963: the settled requirement items of a call that carried
     /// `requirements`; `None` exactly when it carried none.
     pub requirements: Option<RequirementResults>,
-    pub sources: crate::Sources,
+    sources: crate::Sources,
 }
 
 impl RunResult {
@@ -200,7 +200,7 @@ pub struct CompileOutcome {
     document: fsl_replay::OutcomeDocument,
     handoff_compiled: Option<crate::emit_checked_v2::Compiled>,
     handoff_temporal_selections: Vec<crate::emit_checked_v2::ClockSelection>,
-    sources: crate::Sources,
+    pub sources: crate::Sources,
 }
 
 /// Caller-selected model/library files and stage ceilings for `check` (FR-866).
@@ -1007,7 +1007,7 @@ pub struct RunError {
     #[source]
     pub cause: RunCause,
     /// Sources admitted while producing this failure (FR-865).
-    sources: crate::Sources,
+    pub sources: crate::Sources,
 }
 
 impl RunError {
