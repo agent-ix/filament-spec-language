@@ -104,8 +104,8 @@ pub use emit::{
     profile_clock_kind, ClockSelectionCause, ClockSelectionDeclaration, ClockSelectionRefusal,
     Emission, EmitRefusal, MonitorPlanWire, OmissionCause, OmittedNode, ProtocolEmission,
     ProtocolEmissionAggregate, ProtocolEmissionResult, SelectedSourceCollectionRow,
-    SelectedSourceRecordMemberRow, SelectedSourceRecordRow, TemporalBindingRows, TemporalClauseRef,
-    TemporalClockSelection, TemporalRows, TimedOrderFault,
+    SelectedSourceRecordMemberRow, SelectedSourceRecordRow, SourceObjectMemberFacts,
+    TemporalBindingRows, TemporalClauseRef, TemporalClockSelection, TemporalRows, TimedOrderFault,
 };
 #[cfg(feature = "std")]
 pub use equality_file::{

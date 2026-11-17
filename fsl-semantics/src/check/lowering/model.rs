@@ -27,8 +27,8 @@ use crate::check::assemble::DimensionEquivalence;
 use crate::check::family::OccurrenceRole;
 
 use crate::check::node_key::{
-    Binding, BodyTerm, GroupMember, GroupTerm, LeafTerm, MemberTerm, ModelOwner, NodeRef, NodeTag,
-    Owner,
+    Binding, BindingValue, BodyTerm, GroupMember, GroupTerm, LeafTerm, MemberTerm, ModelOwner,
+    NodeRef, NodeTag, Owner,
 };
 use crate::check::refusal::{CheckCause, CheckRefusal, KeyFault};
 use crate::check::VariantTypeDeclaration;
@@ -1117,7 +1117,7 @@ impl AdmittedModel {
             };
             (crate::model::intake::type_identity_segment(&object.key.package, &object.key.node)
                 == Some(name))
-            .then(|| record_node_key(record).ok().flatten())
+            .then(|| self.model_node_key(&object.key))
             .flatten()
         })
     }
@@ -1297,6 +1297,12 @@ impl AdmittedModel {
             .then(|| self.index.package())
     }
 
+    /// The identity of this unit's source when this is its synthetic source
+    /// model.
+    pub(crate) fn source_identity(&self) -> Option<&str> {
+        self.source_unit.as_ref().map(|source| source.identity())
+    }
+
     /// The alias of the `model` declaration this package is admitted for,
     /// if any.
     pub(crate) fn alias(&self) -> Option<&str> {
@@ -1424,6 +1430,24 @@ impl AdmittedModel {
     pub(crate) fn model_node_key(&self, declaration: &DeclarationKey) -> Option<NodeKey> {
         if self.selection.identity != declaration.package {
             return None;
+        }
+        if self.alias() == Some("")
+            && matches!(
+                self.records.get(declaration),
+                Some(DomainPackageRecord::ObjectType(_))
+            )
+        {
+            let package_name = self.selection.identity.strip_prefix("source/")?;
+            let name = crate::model::intake::type_identity_segment(
+                &declaration.package,
+                &declaration.node,
+            )?;
+            return crate::check::declared_node_key(
+                package_name.to_owned(),
+                vec![name.to_owned()],
+                0,
+            )
+            .ok();
         }
         record_node_key(self.records.get(declaration)?)
             .ok()
@@ -2436,6 +2460,10 @@ pub struct ModelClause {
     pub declaration: DeclarationKey,
     /// The clause kind.
     pub kind: DeclaredClauseKind,
+    /// The source declaration path when this clause function belongs to a
+    /// source-declared object operation. Retained by checking, never rebuilt
+    /// from the function's generated label.
+    pub source_declaration: Option<Vec<String>>,
 }
 
 fn fault(location: &Location, fault: KeyFault) -> CheckRefusal {
@@ -2706,9 +2734,23 @@ impl<'a> Lowering<'a> {
             .ok_or_else(|| fault(location, KeyFault::UnknownDeclaration(declaration.clone())))?;
         let (node_tag, form) = record_form(record)
             .ok_or_else(|| fault(location, KeyFault::UnnamedRecordKind(declaration.clone())))?;
-        let key =
+        let key = if model.alias() == Some("")
+            && matches!(record, DomainPackageRecord::ObjectType(_))
+        {
+            let name = crate::model::intake::type_identity_segment(
+                &declaration.package,
+                &declaration.node,
+            )
+            .ok_or_else(|| fault(location, KeyFault::UnknownDeclaration(declaration.clone())))?;
+            crate::check::declared_node_key(self.package_name.clone(), vec![name.to_owned()], 0)
+                .map_err(|_| fault(location, KeyFault::EmptyNode(declaration.clone())))?
+        } else {
             model_declaration_key(&model.selection.identity, node_tag, form, &declaration.node)
-                .map_err(|_| fault(location, KeyFault::EmptyNode(declaration.clone())))?;
+                .map_err(|_| fault(location, KeyFault::EmptyNode(declaration.clone())))?
+        };
+        if model.alias() == Some("") && matches!(record, DomainPackageRecord::ObjectType(_)) {
+            return self.source_object_node(declaration, &key, model, location);
+        }
         // COMPILE GAP: add the keyed content to the graph; `insert_node`
         // mints content keys, so a keyed insert is owned by lowering.rs.
         self.insert_declared_node(
@@ -2720,6 +2762,78 @@ impl<'a> Lowering<'a> {
             .record(key.clone(), declaration.clone())
             .map_err(|conflict| fault(location, KeyFault::CorrespondenceConflict(conflict)))?;
         Ok(key)
+    }
+
+    /// Root one checked object in the unit's source model. The placeholder is
+    /// inserted before its field types are lowered so recursive references
+    /// resolve to this exact declared node; its body is then replaced with
+    /// the checked effective field bindings.
+    fn source_object_node(
+        &mut self,
+        declaration: &DeclarationKey,
+        key: &NodeKey,
+        model: &AdmittedModel,
+        location: &Location,
+    ) -> Result<NodeKey, CheckRefusal> {
+        if self.graph.node(key.clone()).is_some() {
+            return Ok(key.clone());
+        }
+        let name =
+            crate::model::intake::type_identity_segment(&declaration.package, &declaration.node)
+                .ok_or_else(|| {
+                    fault(location, KeyFault::UnknownDeclaration(declaration.clone()))
+                })?;
+        let owner = self
+            .source_owners
+            .get(name)
+            .cloned()
+            .unwrap_or_else(|| self.owner.clone());
+        let qualified = identifiers([name], location)?;
+        let content = NodeContent {
+            owner_model: None,
+            node_tag: NodeTag::Model,
+            semantic_form: "object_type",
+            semantic_type: Some(NodeRef::from(key.clone())),
+            declaration: Some(qualified.clone()),
+            owner: Some(Owner::Source(owner)),
+            body: BodyTerm::aggregate(Vec::new()),
+        };
+        self.insert_declared_node(location, key.clone(), content.clone())?;
+        self.correspondence
+            .record(key.clone(), declaration.clone())
+            .map_err(|conflict| fault(location, KeyFault::CorrespondenceConflict(conflict)))?;
+        self.record(key.clone(), OccurrenceRole::Declaration, location.clone());
+
+        let effective = model
+            .object_type_id(declaration)
+            .ok_or_else(|| fault(location, KeyFault::UnknownDeclaration(declaration.clone())))?;
+        let fields =
+            self.scope.types().attributes(effective).ok_or_else(|| {
+                fault(location, KeyFault::UnknownDeclaration(declaration.clone()))
+            })?;
+        let mut members = Vec::with_capacity(fields.len());
+        for attribute in fields.iter() {
+            let field = attribute.field();
+            let target = self.type_node(field.value_type(), location)?;
+            let reference = LeafTerm::reference(target);
+            let value = match field.presence() {
+                filament_exact::Presence::Required => BindingValue::Leaf(reference),
+                filament_exact::Presence::Optional => {
+                    BindingValue::Aggregate(super::super::node_key::AggregateTerm::new(vec![
+                        MemberTerm::binding("optional", BindingValue::Leaf(reference)),
+                    ]))
+                }
+            };
+            members.push(MemberTerm::binding(field.name(), value));
+        }
+        self.graph.replace_declared_node(
+            key.clone(),
+            NodeContent {
+                body: BodyTerm::aggregate(members),
+                ..content
+            },
+        );
+        Ok(key.clone())
     }
 
     /// FR-322 "Population references": the `relation`/`population` node of
@@ -2820,11 +2934,29 @@ impl<'a> Lowering<'a> {
         let mut rooted = BTreeSet::new();
         let mut declarations = Vec::new();
         for model in self.models {
+            if model.alias() == Some("") {
+                for (declaration, _) in model.object_types() {
+                    if rooted.insert(declaration.clone()) {
+                        let name = crate::model::intake::type_identity_segment(
+                            &declaration.package,
+                            &declaration.node,
+                        )
+                        .ok_or_else(|| {
+                            fault(
+                                &generated_location(),
+                                KeyFault::UnknownDeclaration(declaration.clone()),
+                            )
+                        })?;
+                        declarations.push((declaration.clone(), type_declaration(name)));
+                    }
+                }
+                continue;
+            }
             let Some(location) = model.alias.as_ref().and_then(|alias| locations.get(alias)) else {
                 continue;
             };
             for declaration in model.relationship_declarations() {
-                if rooted.insert(declaration) {
+                if rooted.insert(declaration.clone()) {
                     declarations.push((declaration.clone(), location.clone()));
                 }
             }
@@ -2863,7 +2995,13 @@ impl<'a> Lowering<'a> {
         }
         for (declaration, location) in declarations {
             let key = self.model_node(&declaration, &location)?;
-            self.record(key, OccurrenceRole::Generated, location);
+            if !self
+                .graph
+                .node(key.clone())
+                .is_some_and(|node| matches!(node.owner(), Some(Owner::Source(_))))
+            {
+                self.record(key, OccurrenceRole::Generated, location);
+            }
         }
         Ok(())
     }
@@ -3410,9 +3548,30 @@ impl<'a> Lowering<'a> {
         clause: &ModelClause,
         location: &Location,
     ) -> Result<(Owner, MemberTerm), CheckRefusal> {
-        let (owner, _) = self.model_owner(&clause.declaration, location)?;
+        let (owner, model) = self.model_owner(&clause.declaration, location)?;
+        let owner = if model.alias() == Some("") {
+            let source_name = clause
+                .declaration
+                .node
+                .strip_prefix(&format!("ix://{}/", clause.declaration.package))
+                .and_then(|path| path.split('/').next())
+                .ok_or_else(|| {
+                    fault(
+                        location,
+                        KeyFault::UnknownDeclaration(clause.declaration.clone()),
+                    )
+                })?;
+            Owner::Source(
+                self.source_owners
+                    .get(source_name)
+                    .cloned()
+                    .unwrap_or_else(|| self.owner.clone()),
+            )
+        } else {
+            Owner::Model(owner)
+        };
         let spelling = self.text_literal(clause_spelling(clause.kind), location)?;
-        Ok((Owner::Model(owner), MemberTerm::bound("clause", spelling)))
+        Ok((owner, MemberTerm::bound("clause", spelling)))
     }
 }
 

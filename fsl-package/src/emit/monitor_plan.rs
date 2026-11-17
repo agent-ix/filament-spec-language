@@ -769,6 +769,10 @@ pub(super) struct RetainedRows {
     pub(super) selected_enum_member_rows: Vec<filament_contract_model::SelectedEnumMemberRow>,
     pub(super) selected_source_union_rows: Vec<filament_contract_model::SelectedSourceUnionRow>,
     pub(super) selected_source_record_rows: Vec<super::SelectedSourceRecordRow>,
+    pub(super) selected_source_object_rows: Vec<filament_contract_model::SelectedSourceObjectRow>,
+    pub(super) source_object_member_facts: Vec<Vec<super::SourceObjectMemberFacts>>,
+    pub(super) selected_source_operation_rows:
+        Vec<filament_contract_model::SelectedSourceOperationRow>,
     pub(super) selected_source_tuple_rows: Vec<filament_contract_model::SelectedSourceTupleRow>,
     pub(super) selected_model_enum_shape_rows: Vec<super::SelectedModelEnumShapeRow>,
     pub(super) selected_source_collection_rows: Vec<super::SelectedSourceCollectionRow>,
@@ -975,6 +979,21 @@ pub(super) fn carry_rows(
             rekey.id(type_node);
         }
     }
+    let mut source_objects = retained.selected_source_object_rows.clone();
+    for row in &mut source_objects {
+        rekey.id(&mut row.structural_node);
+        for node in &mut row.supertypes {
+            rekey.id(node);
+        }
+        for member in &mut row.members {
+            rekey.id(&mut member.type_node);
+        }
+    }
+    let mut source_operations = retained.selected_source_operation_rows.clone();
+    for row in &mut source_operations {
+        rekey.id(&mut row.anchor_id);
+        rekey.id(&mut row.structural_node);
+    }
     let mut source_tuples = retained.selected_source_tuple_rows.clone();
     for row in &mut source_tuples {
         let m::SelectedSourceTupleRow {
@@ -1134,6 +1153,9 @@ pub(super) fn carry_rows(
         selected_enum_member_rows: source_enum_members,
         selected_source_union_rows: source_unions,
         selected_source_record_rows: source_records,
+        selected_source_object_rows: source_objects,
+        source_object_member_facts: retained.source_object_member_facts.clone(),
+        selected_source_operation_rows: source_operations,
         selected_source_tuple_rows: source_tuples,
         selected_model_enum_shape_rows: model_enum_shapes,
         selected_source_collection_rows: source_collections,
@@ -1356,6 +1378,9 @@ fn finish(
         selected_enum_member_rows: rows.selected_enum_member_rows,
         selected_source_union_rows: rows.selected_source_union_rows,
         selected_source_record_rows: rows.selected_source_record_rows,
+        selected_source_object_rows: rows.selected_source_object_rows,
+        source_object_member_facts: rows.source_object_member_facts,
+        selected_source_operation_rows: rows.selected_source_operation_rows,
         selected_source_tuple_rows: rows.selected_source_tuple_rows,
         selected_model_enum_shape_rows: rows.selected_model_enum_shape_rows,
         selected_source_collection_rows: rows.selected_source_collection_rows,
