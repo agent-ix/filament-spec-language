@@ -13,7 +13,8 @@ use serde_json::{Value, json};
 use std::path::Path;
 
 const FUNCTIONS: &str = "function seven using v(): Integer pure { 7 }\n\
-                         function yes using v(): Boolean pure { true }\n";
+                         function yes using v(): Boolean pure { true }\n\
+                         function bounded using v(): Int[0, 3] pure { 3 }\n";
 
 fn source(file: &str, document: &str) -> Value {
     json!({
@@ -79,6 +80,15 @@ fn a_non_boolean_function_claim_names_the_function_and_its_type() {
         refusal.contains("function `seven` returns `Integer`")
             && refusal.contains("result is `Boolean`"),
         "{refusal}"
+    );
+
+    let bounded = select(directory.path(), "bounded");
+    assert_eq!(bounded.status.code(), Some(20), "{bounded:?}");
+    let bounded = text(&bounded);
+    assert!(bounded.contains("\"actual\":\"Int[0, 3]\""), "{bounded}");
+    assert!(
+        bounded.contains("function `bounded` returns `Int[0, 3]`"),
+        "{bounded}"
     );
 
     let tested = select(directory.path(), "yes");

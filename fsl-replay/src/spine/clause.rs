@@ -2832,15 +2832,20 @@ fn run_function(
                 }
                 RunRefusal::UnsupportedResult { function } => {
                     let callable = package.graph().callable(&function);
+                    let declared = callable
+                        .as_ref()
+                        .and_then(|_| function_result_type_locus(sources, &function));
                     report(ClauseDisposition::NotAPredicate {
-                        result_type_locus: if callable.is_some() {
-                            function_result_type_locus(sources, &function)
-                        } else {
-                            None
-                        },
-                        actual: callable
-                            .map(|callable| format!("{:?}", callable.result))
-                            .unwrap_or_else(|| "unknown".to_owned()),
+                        actual: declared.as_ref().map_or_else(
+                            || {
+                                callable.as_ref().map_or_else(
+                                    || "unknown".to_owned(),
+                                    |callable| checker_type_spelling(callable.result),
+                                )
+                            },
+                            |(_, _, spelling)| spelling.clone(),
+                        ),
+                        result_type_locus: declared.map(|(file, span, _)| (file, span)),
                         name: function,
                     })
                 }
@@ -2850,10 +2855,14 @@ fn run_function(
     };
     if let Some(callable) = package.graph().callable(name) {
         if !matches!(callable.result, ValueType::Boolean) {
+            let declared = function_result_type_locus(sources, name);
             return Ok(report(ClauseDisposition::NotAPredicate {
                 name: name.to_owned(),
-                actual: format!("{:?}", callable.result),
-                result_type_locus: function_result_type_locus(sources, name),
+                actual: declared.as_ref().map_or_else(
+                    || checker_type_spelling(callable.result),
+                    |(_, _, spelling)| spelling.clone(),
+                ),
+                result_type_locus: declared.map(|(file, span, _)| (file, span)),
             }));
         }
     }
@@ -3015,7 +3024,7 @@ fn run_function(
 fn function_result_type_locus(
     sources: &[Source],
     function: &str,
-) -> Option<(String, fsl_foundation::LocatedSpan)> {
+) -> Option<(String, fsl_foundation::LocatedSpan, String)> {
     use fsl_cst::{CstElement, Production, TokenKind};
 
     for source in sources {
@@ -3054,12 +3063,24 @@ fn function_result_type_locus(
                 }
                 _ => None,
             })?;
+            let spelling = source.slice(result_type)?.trim().to_owned();
             return source
                 .locate(result_type)
-                .map(|span| (source.path().to_owned(), span));
+                .map(|span| (source.path().to_owned(), span, spelling));
         }
     }
     None
+}
+
+fn checker_type_spelling(value_type: &ValueType) -> String {
+    match value_type {
+        ValueType::Boolean => "Boolean".to_owned(),
+        ValueType::Integer => "Integer".to_owned(),
+        ValueType::Int(interval) => {
+            format!("Int[{}, {}]", interval.lower(), interval.upper())
+        }
+        _ => "unknown".to_owned(),
+    }
 }
 
 #[cfg(test)]
