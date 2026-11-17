@@ -94,12 +94,12 @@ fn an_index_selection_carries_its_construct_payload() {
 #[trace("TC-2157", "FR-763-AC-3")]
 #[test]
 #[ignore = "QSL-2196: the forms-stage construct payload not implemented yet"]
-fn an_index_selection_names_its_construct() {
-    for (body, construct) in [("xs[0]", "index-selection")] {
-        let (_, diagnostic) = construct_diagnostic(&function(body));
-        assert_eq!(diagnostic["construct"], construct, "{body}");
-        assert_eq!(diagnostic["text"], body);
-    }
+fn an_index_selection_names_only_its_indexing_expression() {
+    let (text, diagnostic) = construct_diagnostic(&function("size(xs) + xs[1]"));
+    assert_eq!(diagnostic["construct"], "index-selection");
+    assert_eq!(diagnostic["text"], "xs[1]");
+    let at = text.rfind("xs[1]").expect("in the unit");
+    assert_eq!(locus_start(&diagnostic), Some(at as u64));
 }
 
 #[trace("TC-2158", "FR-763-AC-4")]

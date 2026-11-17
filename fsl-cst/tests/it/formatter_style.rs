@@ -124,3 +124,36 @@ fn a_hyper_match_block_closes_without_a_split_brace() {
     assert!(out.lines().any(|line| line.trim() == "} {"), "{out}");
     assert!(out.contains("v.l @ a = v.l @ b"), "{out}");
 }
+
+/// FR-003-AC-15: the token after a type-argument `>` is spaced by its own
+/// rule, a `;` inside brackets keeps its line, and a closing `)`, `]` or `>`
+/// is separated from a following word or `{`.
+#[trace("TC-2783", "FR-003-AC-15")]
+#[test]
+#[ignore = "QSL-1974: the canonical spacing after `>`, `)` and `]` and of `;` inside brackets is not implemented yet"]
+fn closing_tokens_and_bracketed_semicolons_print_canonically() {
+    let header = header("filament.value.complete/v1");
+    for (source, expected) in [
+        (
+            "function f using v(): Boolean pure { let o: Option < Int[0,9] > = none in present(o) }",
+            "let o: Option<Int[0, 9]> = none in present(o)",
+        ),
+        (
+            "function g using v(x: Option<Int[0,9]>): Option<Int[0,9]>pure { x }",
+            "g using v(x: Option<Int[0, 9]>): Option<Int[0, 9]> pure {",
+        ),
+        (
+            "function d using v(x: Decimal[0,9;0,2;exact]): Boolean pure { true }",
+            "x: Decimal[0, 9; 0, 2; exact]",
+        ),
+    ] {
+        let out = formatted(&format!("{header}{source}\n"));
+        assert!(out.contains(expected), "{expected}: {out}");
+    }
+    let protocol = format!(
+        "{header}protocol P using v over (o: M::O) on origin {{ role a on M::A; \
+         run sequence Main {{}} finish Closed as (r: Boolean){{ true }}; }}\n"
+    );
+    let out = formatted(&protocol);
+    assert!(out.contains("finish Closed as (r: Boolean) {"), "{out}");
+}

@@ -17,11 +17,11 @@ Scope: FR-763-AC-3.
 
 ## Test Procedure
 
-Run the `parse` operation over the function body `xs[0]`. Test:
-`tests/it/forms_refusal_cause.rs` `an_index_selection_names_its_construct`.
+Run the `parse` operation over the function body `size(xs) + xs[1]`. Test:
+`tests/it/forms_refusal_cause.rs` `an_index_selection_names_only_its_indexing_expression`.
 
 Tag the tests `#[trace("TC-2157", "FR-763-AC-3")]`.
 
 ## Expected Results
 
-- `index-selection` with `text` `xs[0]`.
+- `index-selection` with `text` `xs[1]` and the span of `xs[1]`, not the whole body.

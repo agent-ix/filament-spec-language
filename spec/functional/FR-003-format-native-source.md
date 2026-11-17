@@ -81,7 +81,8 @@ token:
   space (`} {`, as after a hyper clause's `match { .. }` block), and any other
   token starts a new line, at every depth: a protocol `run`, `parallel`,
   `await`, `finish` or other statement after a closing brace begins its own
-  line, never `} run ..`. A `;` ends its line. Blank lines are not kept, a
+  line, never `} run ..`. A `;` ends its line, except inside `[..]`, where it is
+  followed by one space (`Decimal[0, 9; 0, 2; exact]`). Blank lines are not kept, a
   comment stands on its own line, line ends are LF, and the output ends in one
   newline.
 - **Parentheses.** No space precedes a `(` that opens an argument or
@@ -102,18 +103,24 @@ token:
   (`always[0, 30]`, `eventually[0, 5]`, `past[0, 1]`). One space precedes any
   other `[` (`over [0, 10000]`, `join all [a, b]`). No space follows `[` or
   precedes `]`.
-- **Type arguments.** A `<` and `>` that delimit type arguments
-  (`Option<Int[0, 9]>`, `count<N>`, `convert<T>`) have no space on either
-  side. A comparison `<`, `<=`, `>`, `>=` has one space on each side.
+- **Type arguments.** No space follows a `<` that opens type arguments, and
+  no space precedes the `>` that closes them (`Option<Int[0, 9]>`, `count<N>`,
+  `convert<T>`); no space precedes that `<`. What follows the closing `>` is
+  spaced by the next token's own rule: none before `(` or `[`
+  (`convert<T>(e)`, `Sequence<Integer>[0, 4]`), one before an operator
+  (`Option<Int[0, 9]> = none`), and one before a word or `{`. A comparison `<`, `<=`, `>`, `>=` has one space on each side.
 - **Separators.** A `:` has no space before it and one after it (parameters,
   fields, binders, `let x: T`, record field values, `forall(x in c: p)`). A
-  `,` and a `;` have no space before and one after when the line continues.
+  `,` has no space before and one after; a `;` has no space before it, ends
+  its line outside brackets and is followed by one space inside `[..]`.
   `.`, `::` and `?` touch their neighbours.
 - **Operators.** Every binary operator, `@`, `^`, `=`, `in`, `implies` and the
   temporal connectives have one space on each side; unary `-` touches its
   operand (`-1`); `not` is followed by one space.
 - **Words.** Two adjacent words, a word and a literal, and a word and a `{`
-  are separated by one space.
+  are separated by one space, and so are a closing `)`, `]` or type-argument
+  `>` and a following word or `{` (`(r: Boolean) {`, `Int[0, 9] pure`,
+  `Option<Int[0, 9]> pure`).
 
 Formatting keeps meaning: checking the formatted source yields the same
 checked package identity as checking the original source.
@@ -136,6 +143,7 @@ checked package identity as checking the original source.
 | FR-003-AC-12 | Formatting `present (x)`, `forall (r in c : p)`, a parameter `(v : T)`, `Int [0,9]`, `always [0,30] holds (p)`, `convert < T > (e)`, `Option < Int[0,9] >` and `a<b` prints `present(x)`, `forall(r in c: p)`, `(v: T)`, `Int[0, 9]`, `always[0, 30] holds(p)`, `convert<T>(e)`, `Option<Int[0, 9]>` and `a < b`; `over (o: M::O)`, `when (w.l = 0)` and `as (r: Boolean)` keep one space before `(`; removing all whitespace from input and output gives equal bytes. | Test (TC-2783) |
 | FR-003-AC-13 | Formatting `hyper NI using inf over behaviours (v: V::Vault) forall trace a of V forall trace b of V match { a.step.op = b.step.op } { always holds(v.l @ a = v.l @ b) }` prints the `match` block's closing brace and the body's opening brace as `} {` on one line, and `v.l @ a` with one space on each side of `@`. | Test (TC-2784) |
 | FR-003-AC-14 | Every unit of the complete-grammar corpus formats; for each, formatting the output again gives identical bytes, the output's significant token sequence equals the input's, and the output parses to the same production tree. | Test (TC-2784) |
+| FR-003-AC-15 | Formatting `function f using v(): Boolean pure { let o: Option < Int[0,9] > = none in present(o) }` prints `let o: Option<Int[0, 9]> = none in present(o)`; formatting `function g using v(x: Option<Int[0,9]>): Option<Int[0,9]>pure { x }` prints `g using v(x: Option<Int[0, 9]>): Option<Int[0, 9]> pure {`; formatting `function d using v(x: Decimal[0,9;0,2;exact]): Boolean pure { true }` prints `x: Decimal[0, 9; 0, 2; exact]` on one line; formatting a protocol `finish Closed as (r: Boolean){ true };` prints `finish Closed as (r: Boolean) {`. | Test (TC-2783) |
 
 ## Dependencies
 
