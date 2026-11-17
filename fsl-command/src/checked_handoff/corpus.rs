@@ -1006,6 +1006,10 @@ mod tests {
                 "contract_version": "",
                 "package_name": "",
                 "unit": "",
+                "source_identity": {
+                    "authority": "test",
+                    "identity": "test:checked-handoff:empty-selection",
+                },
                 "execution_points": {},
                 "read_limits": limits,
                 "evidence": { "models": [], "libraries": [] },

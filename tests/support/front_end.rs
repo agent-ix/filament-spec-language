@@ -282,6 +282,7 @@ fn checked_once(
 
 /// S1-S4 checked unit for tests that exercise APIs over the in-process checked
 /// package rather than emitted package bytes.
+#[cfg(feature = "checked-handoff")]
 pub fn checked(
     source: SourceIdentity,
     path: &str,

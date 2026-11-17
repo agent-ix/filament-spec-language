@@ -164,7 +164,7 @@ fn add_context_fixture(directory: &Path) {
 
     let unit_path = directory.join("spine-unit.native");
     let mut unit = std::fs::read_to_string(&unit_path).unwrap();
-    unit.push_str(&format!("invariant Consistent using v on Config::OrderLifecycle at current {{ not (self.placed and self.cancelled) }}\n"));
+    unit.push_str("invariant Consistent using v on Config::OrderLifecycle at current { not (self.placed and self.cancelled) }\n");
     std::fs::write(unit_path, unit).unwrap();
 
     let invocation_identity = "test:fr-652:invocation";
@@ -677,7 +677,7 @@ fn parameters_member_accepted_for_pre_snapshot() {
         clause.input,
         fsl_semantics::model::observation::ClauseSelectionInput::PreCall { .. }
     ));
-    assert!(output.stdout.len() > 0, "{output:?}");
+    assert!(!output.stdout.is_empty(), "{output:?}");
     assert!(output.stderr.is_empty(), "{output:?}");
     let document: Value = serde_json::from_slice(&output.stdout).unwrap();
     assert_eq!(document["disposition"]["stage"], "admit");
