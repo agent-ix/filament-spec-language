@@ -376,7 +376,7 @@ fn recovery_claim_holds(reachable: &fsl_eval::simulation::protocol::Reachable<Sc
             if transition.kind() != StepKind::CEnd {
                 return true;
             }
-            let Ok(identity) = fsl_eval::simulation::protocol::transition_json(transition) else {
+            let Some(identity) = fsl_eval::simulation::protocol::transition_json(transition) else {
                 return false;
             };
             let Some(registration) = named_member(&identity, "registration") else {
@@ -400,7 +400,7 @@ fn recovery_counterexample_path(
     for (at, state) in reachable.states.iter().enumerate() {
         let prefix = paths[at].clone()?;
         for (transition, next) in &state.steps {
-            let identity = fsl_eval::simulation::protocol::transition_json(transition).ok()?;
+            let identity = fsl_eval::simulation::protocol::transition_json(transition)?;
             if transition.kind() == StepKind::CEnd {
                 let Some(registration) = named_member(&identity, "registration") else {
                     continue;
@@ -439,10 +439,7 @@ fn replay_transition_path(
     for expected in path {
         let expansion = system.successors(&state).ok()?;
         let (_, next) = expansion.successors.into_iter().find(|(transition, _)| {
-            fsl_eval::simulation::protocol::transition_json(transition)
-                .ok()
-                .as_ref()
-                == Some(expected)
+            fsl_eval::simulation::protocol::transition_json(transition).as_ref() == Some(expected)
         })?;
         state = next;
     }
@@ -626,8 +623,8 @@ fn the_compensation_template_is_stepped() {
 #[trace("FSpec-FR-730-AC-1", "FSpec-FR-730-AC-3", "FSpec-FR-427-AC-6")]
 fn a_recovery_predicate_over_the_recovery_view_is_evaluated() {
     let fixture = fixture_with_recovery_view(1, true);
-    let system = system(&fixture);
-    let reachable = system
+    let protocol_system = system(&fixture);
+    let reachable = protocol_system
         .reachable(NonZeroUsize::new(1).expect("one worker"))
         .expect("finite recovery exploration completes");
     let cends: Vec<_> = reachable
@@ -645,7 +642,7 @@ fn a_recovery_predicate_over_the_recovery_view_is_evaluated() {
     );
     let mut records = BTreeMap::<_, BTreeSet<String>>::new();
     for (transition, next) in cends {
-        let record = system
+        let record = protocol_system
             .binder_record_json(transition)
             .expect("record encoding succeeds")
             .expect("recovery-view cend carries its record");
