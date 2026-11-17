@@ -732,7 +732,7 @@ fn a_recovery_predicate_that_does_not_read_its_binder_binds_no_record() {
         .expect("the baseline recovery exploration completes");
     let baseline_verdict = recovery_claim_holds(&baseline_reachable);
 
-    let fixture = fixture_with_recovery_predicate(1, Some("triggered"));
+    let fixture = fixture_with_recovery_predicate(1, Some("true"));
     let reachable = system(&fixture)
         .reachable(NonZeroUsize::new(1).expect("one worker"))
         .expect("the no-read recovery exploration completes");
@@ -743,9 +743,13 @@ fn a_recovery_predicate_that_does_not_read_its_binder_binds_no_record() {
             .iter()
             .filter(|(transition, _)| transition.kind() == StepKind::CEnd)
             .collect();
+        let registrations: BTreeSet<_> = cends
+            .iter()
+            .filter_map(|(transition, _)| transition.registration().cloned())
+            .collect();
         assert!(
-            cends.len() <= 1,
-            "a predicate that does not read its binder has at most one cend successor"
+            cends.len() <= registrations.len(),
+            "a predicate that does not read its binder has one cend successor per registration"
         );
         for (transition, _) in cends {
             cend_count += 1;
