@@ -24,4 +24,4 @@ Catches a single label standing in for per-obligation results, a closure record 
 
 - Step 1: one entry per obligation, causal/enabledness/channel `satisfied` `by-construction`, the rest `satisfied` `explored`; `closure` `closed`, producer `engine`, one execution and two branch premises; `global` `proved`, `closed-scope`, `complete` true; projections for `Buyer` and `Seller`.
 - Step 2: `global` `refuted`, `complete` false; closure obligation `violated`, cause `counterexample`, witness indexing the counterexample; `closure.state` `open`.
-- Step 3: undecided obligations `pending`, `closure.state` `incomplete`, `complete` false, never `proved`.
+- Step 3: undecided obligations `pending`, `closure.state` `incomplete`; `global` `incomplete`, cause `limit-reached`, basis `unavailable`, `complete` false, naming `max_states`; never `proved` or `inconclusive`.

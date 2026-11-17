@@ -205,7 +205,11 @@ fn a_limited_run_leaves_obligations_pending_and_closure_incomplete() {
         json!({"temporal": {"limits": {"max_states": 1}}}),
         &[],
     );
-    assert_ne!(label(&item), "proved", "{item}");
+    let global = &item["global"];
+    assert_eq!(global["label"], "incomplete", "{item}");
+    assert_eq!(global["cause"], "limit-reached");
+    assert_eq!(global["basis"], "unavailable");
+    assert!(item.to_string().contains("max_states"), "names the limit: {item}");
     assert!(obligations(&item)
         .iter()
         .any(|entry| entry["verdict"] == "pending"));
@@ -267,7 +271,9 @@ fn only_a_closed_recording_closure_gives_complete_success() {
     };
     assert_eq!(decided(&open), decided(&closed));
     let contradicted = run("contradicted");
-    assert_eq!(contradicted["global"]["cause"], "closure-contradicted");
+    assert_eq!(label(&contradicted), "inconclusive");
+    assert_eq!(contradicted["global"]["cause"], "open-history");
+    assert_eq!(contradicted["closure"]["state"], "contradicted");
     assert_eq!(contradicted["global"]["complete"], false);
 }
 

@@ -119,17 +119,22 @@ record affects a verdict. It reads the record and never writes it.
 ### `global`: the global conformance result
 
 `global` has the members `label`, `basis`, `complete` and, when the label is
-`inconclusive`, `cause`. `label` is the item's FR-360 label:
+`inconclusive` or `incomplete`, `cause`. `label` is the item's FR-360 label:
 
 | Condition | `label` | `basis` | `complete` |
 | --- | --- | --- | --- |
 | Any obligation `violated` | `refuted` | `decisive-counterexample` | `false` |
 | Every obligation `satisfied`, and `closure.state` is `closed` with every required premise present | `proved` | `closed-scope` | `true` |
-| No obligation `violated`, and some obligation is `pending` or `closure.state` is `open` or `incomplete` | `inconclusive`, cause `open-history` | `unsettled` | `false` |
-| No obligation `violated`, and `closure.state` is `contradicted` | `inconclusive`, cause `closure-contradicted` | `unsettled` | `false` |
+| No obligation `violated`, no run limit reached, and some obligation is `pending` or `closure.state` is `open`, `incomplete` or `contradicted` | `inconclusive`, cause `open-history` | `unsettled` | `false` |
+| No obligation `violated`, and a run limit stopped the run | `incomplete`, cause `limit-reached`, naming the limit and the value used | `unavailable` | `false` |
 
-A run limit over every behaviour also settles as FR-636's budgets rule
-states, naming the limit, and leaves `complete` `false`. `complete` is
+The `contradicted` closure state takes the `open-history` row, as FR-895
+settles any unviolated, incomplete assessment. The closure record's `state`
+carries the detail, and no cause is added for it. A run that a limit
+stopped settles by FR-636's budgets rule. This is FSpec FR-360's `failed`
+with execution `resource-incomplete`, and FR-573 settles a stopped run the
+same way. It is never `inconclusive` `open-history`, because the
+undecided obligations come from the limit and not from the history. `complete` is
 `true` in one case only: complete global success, which is FSpec FR-059's
 judgement. The complete result is `proved` together with a `closed` record
 that holds every required premise. A `refuted` result settles without
@@ -168,9 +173,9 @@ modes.
 | --- | --- | --- |
 | FR-990-AC-1 | `global-conformance` over the FR-636 order fixture with no recording settles an item whose `obligations` has one entry per FR-895 obligation. The causal-order, enabledness and channel-premise entries are `satisfied`, `by-construction`, and every other entry is `satisfied`, `explored`. `closure` is `{state: closed, producer: engine}` with one `execution` premise and one `branch` premise for each of `Ship` and `Cancel`. `global` is `{label: proved, basis: closed-scope, complete: true}`, and `projections` holds `Buyer` and `Seller`. | Test (TC-2800) |
 | FR-990-AC-2 | The fixture with the `receive` removed settles `global` `{label: refuted, complete: false}`. Its closure obligation is `violated`, cause `counterexample`, with a `witness` that indexes the item's deadlock counterexample, and `closure.state` is `open`. | Test (TC-2800) |
-| FR-990-AC-3 | FR-895-AC-1's closed recording settles `closure` `{state: closed, producer: recording}` and `global.complete` `true`. The same recording with closure `open` settles `inconclusive`, cause `open-history`, with `complete` `false`, and the verdicts of the obligations its observations decide are unchanged. With closure `contradicted` it settles `inconclusive`, cause `closure-contradicted`. | Test (TC-2801) |
+| FR-990-AC-3 | FR-895-AC-1's closed recording settles `closure` `{state: closed, producer: recording}` and `global.complete` `true`. The same recording with closure `open` settles `inconclusive`, cause `open-history`, with `complete` `false`, and the verdicts of the obligations its observations decide are unchanged. With closure `contradicted` it settles `inconclusive`, cause `open-history`, with `closure.state` `contradicted`. | Test (TC-2801) |
 | FR-990-AC-4 | A recording whose closure is `closed` but whose premise set omits the `Ship` branch premise, lists the execution premise twice, or names the premise of another instance is refused `invalid_runtime_input` naming the premise, and no verdict is reported. A recording that observes `finish` but states closure `open` keeps `closure.state` `open`. | Test (TC-2801) |
-| FR-990-AC-5 | A run of the order fixture with `max_states` 1 reports its undecided obligations `pending`, `closure.state` `incomplete`, and `global.complete` `false`. It never reports `proved`. | Test (TC-2800) |
+| FR-990-AC-5 | A run of the order fixture with `max_states` 1 reports its undecided obligations `pending` and `closure.state` `incomplete`. `global` is `{label: incomplete, cause: limit-reached, basis: unavailable, complete: false}` and names `max_states`, which is FSpec FR-360 `failed`, execution `resource-incomplete`. It is never `proved` or `inconclusive`. | Test (TC-2800) |
 
 ## Dependencies
 

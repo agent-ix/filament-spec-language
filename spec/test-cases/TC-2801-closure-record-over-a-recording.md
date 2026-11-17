@@ -22,6 +22,6 @@ Catches `closed` inferred from an observed `finish`, a malformed premise set acc
 
 ## Expected Results
 
-- Step 1: `closed`, producer `recording`, `complete` true; `inconclusive` `open-history`, `complete` false, decided verdicts unchanged; `inconclusive` `closure-contradicted`.
+- Step 1: `closed`, producer `recording`, `complete` true; `inconclusive` `open-history`, `complete` false, decided verdicts unchanged; `inconclusive` `open-history` with `closure.state` `contradicted`.
 - Step 2: each refused `invalid_runtime_input` naming the premise, no verdict.
 - Step 3: `closure.state` stays `open`.
