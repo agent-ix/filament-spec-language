@@ -1276,6 +1276,9 @@ impl ProtocolTransition {
             race: None,
             children: Vec::new(),
             flow: None,
+            message: None,
+            delivery: None,
+            business_effect: None,
         }
     }
 
@@ -1314,6 +1317,9 @@ impl ProtocolTransition {
             race: None,
             children: Vec::new(),
             flow: None,
+            message: None,
+            delivery: None,
+            business_effect: None,
         }
     }
 
