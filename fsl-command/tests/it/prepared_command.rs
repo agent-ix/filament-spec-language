@@ -458,6 +458,65 @@ fn borrowed_run_failure_projection_preserves_cancellation_and_fault_categories()
 
 #[test]
 #[trace("TC-2455", "FR-865-AC-5")]
+fn clause_preparation_failure_retains_all_admitted_sources() {
+    let directory = tempfile::tempdir().unwrap();
+    std::fs::write(directory.path().join("program.native"), PROGRAM).unwrap();
+    std::fs::write(directory.path().join("model.semantic-ir.json"), DOMAIN).unwrap();
+    std::fs::write(directory.path().join("library.native"), PROGRAM).unwrap();
+
+    let request = json!({
+        "format": "native-run/1",
+        "request": {
+            "models": [{
+                "format": "semantic-ir/2.0.0",
+                "source": {
+                    "file": "model.semantic-ir.json",
+                    "authority": "tests",
+                    "identity": "test:prepared-model",
+                    "document": "PreparedModel",
+                    "formal_revision": 1
+                }
+            }],
+            "libraries": [{
+                "identity": "test/library",
+                "source": {
+                    "file": "library.native",
+                    "authority": "tests",
+                    "identity": "test:prepared-library",
+                    "document": "PreparedLibrary",
+                    "formal_revision": 1
+                }
+            }],
+            "program": {"source": source()},
+            "clocks": {},
+            "clause": {
+                "selection": {
+                    "temporal": {
+                        "name": "Reaches",
+                        "trace": {"lasso": {"prefix": [], "loop": []}}
+                    }
+                },
+                "observations": {"missing": "missing-observation.json"}
+            }
+        }
+    });
+    let path = write_request(directory.path(), "clause.json", request);
+    let error = command::prepare_run(&path, RunLimits::default())
+        .err()
+        .expect("the missing observation refuses after source admission");
+    let paths = error
+        .sources()
+        .as_slice()
+        .iter()
+        .map(fsl_foundation::Source::path)
+        .collect::<Vec<_>>();
+    assert!(paths.contains(&"program.native"), "{paths:?}");
+    assert!(paths.contains(&"model.semantic-ir.json"), "{paths:?}");
+    assert!(paths.contains(&"library.native"), "{paths:?}");
+}
+
+#[test]
+#[trace("TC-2455", "FR-865-AC-5")]
 fn run_error_exposes_admitted_sources_for_text_rendering() {
     let source = Source::read_typed(
         SourceIdentity::new("tests", "run-error"),

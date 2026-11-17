@@ -361,7 +361,7 @@ pub(super) fn run_bytes(
             let snapshot_bytes = super::read_file(&directory.join(file), limits.dependent_bytes)?;
             match prepare_run_bytes(directory, &single_bytes, limits.dependent_bytes, overrides)? {
                 super::PreparedRun::Clause(request) => {
-                    let request = *request;
+                    let request = *request.into_request();
                     let candidate = compilation_from_clause(&request)?;
                     set_compilation(&mut compilation, candidate)?;
                     let reference =
@@ -410,7 +410,7 @@ pub(super) fn run_bytes(
         } else {
             match prepare_run_bytes(directory, &single_bytes, limits.dependent_bytes, overrides) {
                 Ok(super::PreparedRun::Clause(request)) => {
-                    let request = *request;
+                    let request = *request.into_request();
                     let candidate = compilation_from_clause(&request)?;
                     set_compilation(&mut compilation, candidate)?;
                     ItemExecution::Batch {
