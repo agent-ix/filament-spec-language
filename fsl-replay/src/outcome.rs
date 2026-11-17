@@ -1566,6 +1566,29 @@ fn clause_run_cause(report: &ClauseRunReport) -> Option<ItemCause> {
                 | fsl_semantics::model::observation::AdmissionFailure::Incomplete(record),
             document,
             path,
+        } if record.fields.get("setting").map(String::as_str)
+            == Some("observation.input_bytes") =>
+        {
+            let bound = record.fields.get("bound")?;
+            let actual = record.fields.get("actual")?;
+            Some(ItemCause {
+                code: Some(record.catalog.code().to_owned()),
+                limit: Some(CauseLimit::Name("input-bytes-exceeded")),
+                value: bound.parse().ok(),
+                counter: Some(actual.clone()),
+                setting: Some("observation.input_bytes"),
+                bound: Some(bound.clone()),
+                locus: snapshot_admission_locus(record, document, path.as_deref())
+                    .map(ItemLocus::Outcome),
+                ..ItemCause::kind("input-bytes-exceeded")
+            })
+        }
+        ClauseDisposition::SnapshotAdmission {
+            failure:
+                fsl_semantics::model::observation::AdmissionFailure::Refused(record)
+                | fsl_semantics::model::observation::AdmissionFailure::Incomplete(record),
+            document,
+            path,
         } => Some(ItemCause {
             kind: Some(record.catalog.cause()),
             code: Some(record.catalog.code().to_owned()),
