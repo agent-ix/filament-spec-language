@@ -612,8 +612,8 @@ dependencies = [
 
 [[package]]
 name = "filament-exact"
-version = "0.1.0"
-source = "git+https://github.com/agent-ix/filament-exact?branch=main#85034c5cbc44fcf47a441cb1cf968564b57cd357"
+version = "0.2.0"
+source = "git+https://github.com/agent-ix/filament-exact?branch=main#16eba89af55ac5e4e485f76e2debeae25a1458ba"
 dependencies = [
  "allocator-api2",
  "arrayvec",
@@ -644,7 +644,7 @@ dependencies = [
 [[package]]
 name = "filament-semantic-value"
 version = "0.1.0"
-source = "git+https://github.com/agent-ix/filament-semantic-value?branch=main#c943d9560f1c614ad6b8512bfe8b8f2963f8122d"
+source = "git+https://github.com/agent-ix/filament-semantic-value?branch=main#c496d7a5ae6db77fd18f737e209317132eb68d16"
 dependencies = [
  "filament-exact",
  "quire-canonical",
@@ -1113,7 +1113,7 @@ dependencies = [
 [[package]]
 name = "fsv-failing-allocator"
 version = "0.0.0"
-source = "git+https://github.com/agent-ix/filament-semantic-value?branch=main#c943d9560f1c614ad6b8512bfe8b8f2963f8122d"
+source = "git+https://github.com/agent-ix/filament-semantic-value?branch=main#c496d7a5ae6db77fd18f737e209317132eb68d16"
 
 [[package]]
 name = "futures-core"
