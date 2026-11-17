@@ -10,3 +10,4 @@ mod prepared_command;
 mod probabilistic_package_locus;
 mod request_overrides;
 mod run_requirement_items;
+mod short_circuit_integer_division;
