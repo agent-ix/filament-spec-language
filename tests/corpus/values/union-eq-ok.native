@@ -1,0 +1,4 @@
+language "ix:native" edition "1-draft";
+profile v = "filament.value.complete/v1";
+union Shape { Empty, Circle(Int[0, 9]) }
+function f using v(): Boolean pure { Shape::Circle(1) = Shape::Circle(1) }

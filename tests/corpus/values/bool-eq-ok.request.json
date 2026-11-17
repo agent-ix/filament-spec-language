@@ -1,0 +1,1 @@
+{"format":"native-run/1","request":{"models":[],"program":{"source":{"file":"bool-eq-ok.native","authority":"agent-ix","identity":"test:corpus:bool-eq-ok","document":"bool-eq-ok","formal_revision":1}},"call":{"function":"f","arguments":[]}}}

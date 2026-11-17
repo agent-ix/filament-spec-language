@@ -280,6 +280,7 @@ pub struct BackendDescriptor {
     solver_bounds: Option<SolverBounds>,
     max_cases: Option<std::num::NonZeroU64>,
     timed: bool,
+    options: BTreeSet<String>,
 }
 
 /// The optional FR-331 manifest members [`descriptor_from_manifest`] reads
@@ -406,6 +407,7 @@ pub fn descriptor_from_manifest<'a>(
         reductions,
         state_graph_forms: BTreeSet::new(),
         timed: false,
+        options: BTreeSet::new(),
     })
 }
 
@@ -665,6 +667,7 @@ impl BackendDescriptor {
             solver_bounds: None,
             max_cases: None,
             timed: false,
+            options: BTreeSet::new(),
         })
     }
 
@@ -830,6 +833,33 @@ impl BackendDescriptor {
     /// The state-graph claim forms this backend advertises.
     pub fn state_graph_forms(&self) -> &BTreeSet<StateGraphFormKind> {
         &self.state_graph_forms
+    }
+
+    /// Publish the option names this backend's manifest `options` hold
+    /// (FSpec FR-331, FR-779). A descriptor built without this call
+    /// publishes none, so an item naming it with any option settles
+    /// `unknown-option`.
+    #[must_use]
+    pub fn with_options(mut self, options: impl IntoIterator<Item = String>) -> Self {
+        self.options = options.into_iter().collect();
+        self
+    }
+
+    /// The option names this backend publishes.
+    pub fn options(&self) -> &BTreeSet<String> {
+        &self.options
+    }
+
+    /// The least of `requested` in byte order that this backend does not
+    /// publish (FSpec FR-779 `option`), if any.
+    pub fn unpublished_option<'n>(
+        &self,
+        requested: impl IntoIterator<Item = &'n String>,
+    ) -> Option<&'n String> {
+        requested
+            .into_iter()
+            .filter(|name| !self.options.contains(*name))
+            .min()
     }
 
     /// Whether this backend decides an item whose subject resolves its
@@ -1539,6 +1569,11 @@ impl Registry {
     /// diagnostics and tests. Never includes a conflicted identity.
     pub fn backends(&self) -> impl Iterator<Item = &BackendId> {
         self.held.keys()
+    }
+
+    /// The registered descriptor of `backend`, if the registry holds it.
+    pub fn descriptor(&self, backend: &BackendId) -> Option<&BackendDescriptor> {
+        self.held.get(backend)
     }
 
     /// Compute `kind`'s candidate set (FR-075), naming `named` when the

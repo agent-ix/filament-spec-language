@@ -2322,6 +2322,7 @@ fn check_units_continues_past_a_protocol_refusal_only_when_asked() {
             &models,
             &dependencies,
             UnitCheckOptions {
+                integer_division: None,
                 temporal_selections: &[],
                 clocks: None,
                 continue_protocol_refusals,

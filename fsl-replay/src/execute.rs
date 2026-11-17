@@ -2096,6 +2096,7 @@ fn run_spine_units(
         &models,
         dependencies,
         spine::UnitCheckOptions {
+            integer_division: None,
             temporal_selections: &check_selections,
             clocks: match clocks {
                 RecompileClocks::Explicit(_) => None,

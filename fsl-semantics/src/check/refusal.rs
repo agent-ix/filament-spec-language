@@ -2365,13 +2365,15 @@ impl TemporalCause {
 /// path resolves in.
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
 pub enum StateGraphCause {
-    /// FR-165-AC-7: the claim's `using` alias selects a temporal profile.
-    /// A state-graph claim's predicates check under a state-bearing layer
-    /// (FR-165), so the alias selects the wrong role. Located at the alias.
-    TemporalProfile {
+    /// FR-165-AC-7: the claim's `using` alias selects an identity outside
+    /// the state-bearing header layers (a temporal clause profile, the
+    /// protocol profile or another profile). A state-graph claim's
+    /// predicates check under a state-bearing layer (FR-165, FR-508), so the
+    /// alias selects the wrong role. Located at the alias.
+    NotStateLayer {
         /// The alias, as written.
         alias: String,
-        /// The temporal profile identity the alias selects.
+        /// The identity the alias selects.
         identity: String,
         /// The alias's span.
         span: Span,
@@ -2422,7 +2424,7 @@ impl StateGraphCause {
     /// The refusal's own span (FR-096), when it has one.
     pub fn span(&self) -> Option<Span> {
         match self {
-            Self::TemporalProfile { span, .. }
+            Self::NotStateLayer { span, .. }
             | Self::ReadsBeyondState { span }
             | Self::TemporalOperator { span }
             | Self::Fairness { span }
@@ -2433,7 +2435,7 @@ impl StateGraphCause {
     /// This cause's catalog code.
     pub fn code(&self) -> Code {
         match self {
-            Self::TemporalProfile { .. } => Code::UnknownProfile,
+            Self::NotStateLayer { .. } => Code::UnknownProfile,
             Self::ReadsBeyondState { .. }
             | Self::TemporalOperator { .. }
             | Self::Fairness { .. } => Code::UnsupportedConstruct,
@@ -2444,7 +2446,7 @@ impl StateGraphCause {
     /// This cause's catalog tag.
     pub fn tag(&self) -> Option<&'static str> {
         match self {
-            Self::TemporalProfile { .. } => Some("wrong-selection-role"),
+            Self::NotStateLayer { .. } => Some("wrong-selection-role"),
             Self::ReadsBeyondState { .. }
             | Self::TemporalOperator { .. }
             | Self::Fairness { .. } => Some("expression-form"),

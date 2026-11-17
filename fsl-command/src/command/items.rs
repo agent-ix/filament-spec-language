@@ -403,7 +403,9 @@ pub(super) fn run_bytes(
                     let candidate = compilation_from_clause(&request)?;
                     set_compilation(&mut compilation, candidate)?;
                     ItemExecution::Batch {
-                        selection: Some(fsl_replay::spine::ProgramBatchSelection::Clause(request)),
+                        selection: Some(fsl_replay::spine::ProgramBatchSelection::Clause(
+                            Box::new(request),
+                        )),
                         call_output: None,
                     }
                 }
@@ -516,37 +518,34 @@ pub(super) fn run_bytes(
                     fsl_replay::spine::ProgramBatchItemResult::Clause(report),
                     None,
                     Some(selection),
-                ) => ItemExecution::Run(super::output::clause_report(&report, &selection)),
+                ) => ItemExecution::Run(super::output::clause_report(*report, &selection)),
                 (
                     fsl_replay::spine::ProgramBatchItemResult::Call(result),
                     Some(call_output),
                     None,
-                ) => ItemExecution::Run(
-                    result
-                        .map_err(|refusal| RunCause::SpineRun(refusal))
-                        .and_then(|batch_call| {
-                            let settled = match (call_output.requirements, batch_call.requirements)
-                            {
-                                (Some(selection), Some(requirements)) => {
-                                    Some(super::settle::settle_call(
-                                        batch.checked.as_ref().ok_or(RunCause::ItemsFault)?,
-                                        &requirements,
-                                        &selection,
-                                        &call_output.packages,
-                                        settle,
-                                    )?)
-                                }
-                                (None, None) => None,
-                                _ => return Err(RunCause::ItemsFault),
-                            };
-                            super::output::spine_run_result_for_source(
-                                &call_output.source,
-                                &call_output.function,
-                                batch_call.outcome,
-                                settled,
-                            )
-                        }),
-                ),
+                ) => {
+                    ItemExecution::Run(result.map_err(RunCause::SpineRun).and_then(|batch_call| {
+                        let settled = match (call_output.requirements, batch_call.requirements) {
+                            (Some(selection), Some(requirements)) => {
+                                Some(super::settle::settle_call(
+                                    batch.checked.as_ref().ok_or(RunCause::ItemsFault)?,
+                                    &requirements,
+                                    &selection,
+                                    &call_output.packages,
+                                    settle,
+                                )?)
+                            }
+                            (None, None) => None,
+                            _ => return Err(RunCause::ItemsFault),
+                        };
+                        super::output::spine_run_result_for_source(
+                            &call_output.source,
+                            &call_output.function,
+                            batch_call.outcome,
+                            settled,
+                        )
+                    }))
+                }
                 (
                     fsl_replay::spine::ProgramBatchItemResult::ValueInvariants(result),
                     None,

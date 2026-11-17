@@ -88,6 +88,9 @@ pub struct ItemOptions {
     pub max_cases: Option<std::num::NonZeroU64>,
     /// The provisioned document a `finite-replay` item replays.
     pub trace: Option<fsl_semantics::model::observation::DocumentRef>,
+    /// The named backend's options (FSpec FR-196, FR-331 `options`),
+    /// each one the backend publishes (FR-967); empty when none are given.
+    pub backend_options: std::collections::BTreeMap<String, String>,
 }
 
 /// One claim occurrence and its kind-specific, subject-free settings.
@@ -617,7 +620,8 @@ fn work<'a>(
                     item.request_index,
                     &item.claim,
                     item.backend.as_ref(),
-                );
+                )
+                .map(|routed| routed.with_options(item.options.backend_options.clone()));
                 crate::provider::provider_item(
                     item.request_index,
                     backend.id(),

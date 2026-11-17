@@ -320,6 +320,7 @@ fn typed_timestamped(
                         atom: *atom,
                     })
                     .collect(),
+                late: Default::default(),
             }),
         },
         ledger: None,

@@ -28,6 +28,8 @@ use fsl_semantics::model::observation::{
     Provisions,
 };
 
+mod correction;
+mod late_data;
 mod ledger_wire;
 mod model_trace;
 mod package_authentication;
@@ -35,6 +37,12 @@ mod progress;
 mod temporal;
 mod trace_refusal;
 mod trace_subject;
+pub(crate) use correction::run_correction;
+pub use correction::{
+    read_evidence_ledger, settle_correction, settle_run_correction, CorrectionRecord,
+    CorrectionRefusal, EvidenceLedgerFile, EvidenceLedgerReadError, RunRelation,
+    EVIDENCE_LEDGER_FORMAT,
+};
 pub use ledger_wire::{read_ledger, write_ledger, LedgerReadError};
 pub use package_authentication::{
     authenticate_emission, AuthenticationFailure, PackageAuthentication, PackagesStage,
@@ -47,10 +55,11 @@ pub use progress::{
 use temporal::TemporalRun;
 pub use temporal::{
     admit_progress, authenticate_package_trace, clause_trace_binding, name_clause_atom,
-    run_package_temporal, sample_position, FiniteWindowAssessment, FiniteWindowPremises,
-    FiniteWindowReport, FiniteWindowSupport, OverObject, PackageTemporalRequest, ProgressRefusal,
-    TemporalAuthentication, TimestampedCover, TimestampedMissingValuation, TimestampedObservation,
-    TimestampedOrderKey, TimestampedWindow, TraceBinding, TraceInput, DEFAULT_MODEL_MAX_CANDIDATES,
+    run_package_temporal, sample_position, AdmittedLate, FiniteWindowAssessment,
+    FiniteWindowPremises, FiniteWindowReport, FiniteWindowSupport, LateEntry, LateInputs,
+    OverObject, PackageTemporalRequest, ProgressRefusal, TemporalAuthentication, TimestampedCover,
+    TimestampedMissingValuation, TimestampedObservation, TimestampedOrderKey, TimestampedWindow,
+    TraceBinding, TraceInput, DEFAULT_MODEL_MAX_CANDIDATES,
 };
 pub use trace_refusal::{TraceRefusal, REASONS as TRACE_REFUSAL_REASONS};
 pub use trace_subject::{
@@ -1526,7 +1535,7 @@ pub struct ProgramCompilationRequest {
 /// Inputs to one selection in a mixed FR-651 batch.
 pub enum ProgramBatchSelection {
     /// A state clause, function predicate, frame or temporal selection.
-    Clause(ClauseRunRequest),
+    Clause(Box<ClauseRunRequest>),
     /// FR-100's value call.
     Call {
         /// The call to execute.
@@ -1559,7 +1568,7 @@ pub struct ValueInvariantsBatchRequest {
 /// Successful FR-651 batch item results, retained in request order.
 pub enum ProgramBatchItemResult {
     /// A clause-family result.
-    Clause(ClauseRunReport),
+    Clause(Box<ClauseRunReport>),
     /// A value-call result or its per-item refusal.
     Call(Result<ProgramBatchCallOutcome, Box<RunRefusal>>),
     /// A value-invariant result or its per-item refusal.
@@ -1742,20 +1751,20 @@ fn run_program_batch_with_compile(
     let needs_temporal = selections.iter().any(|selection| {
         matches!(
             selection,
-            ProgramBatchSelection::Clause(ClauseRunRequest {
-                selection: ClauseRunSelection::Temporal { .. }
-                    | ClauseRunSelection::SampledTemporal { .. },
-                ..
-            })
+            ProgramBatchSelection::Clause(request)
+                if matches!(
+                    request.selection,
+                    ClauseRunSelection::Temporal { .. } | ClauseRunSelection::SampledTemporal { .. }
+                )
         )
     });
     let compiled = compile(&compilation, needs_temporal).map_err(ProgramBatchRefusal::Compile)?;
     let items = selections
         .into_iter()
         .map(|selection| match selection {
-            ProgramBatchSelection::Clause(request) => ProgramBatchItemResult::Clause(
+            ProgramBatchSelection::Clause(request) => ProgramBatchItemResult::Clause(Box::new(
                 run_compiled_clause_selection(&compiled.program, &request),
-            ),
+            )),
             ProgramBatchSelection::Call {
                 call,
                 include_requirements,

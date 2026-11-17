@@ -1553,6 +1553,58 @@ pub fn check(
     )
 }
 
+/// Check one unit under the caller's admitted integer-division law (FR-767).
+/// The selection applies to this unit; libraries retain their own header laws.
+pub fn check_with_integer_division(
+    parsed: &ParsedUnitSource,
+    package_name: String,
+    models: &AdmittedModels,
+    dependencies: &DependencyInput,
+    selection: &crate::AdmittedIntegerDivision,
+    limits: SpineLimits,
+    cancel: &Cancel,
+) -> Result<Staged<CheckedUnit>, FrontEndFailure> {
+    check_with_context_and_temporal_selections(
+        parsed,
+        package_name,
+        &BTreeMap::new(),
+        None,
+        &[],
+        None,
+        Some(*selection),
+        None,
+        models,
+        dependencies,
+        limits,
+        cancel,
+        false,
+    )
+}
+
+/// Check every admitted program unit under one caller-supplied law (FR-767).
+pub fn check_units_with_integer_division(
+    admitted: &AdmittedUnitList,
+    package_name: String,
+    models: &AdmittedModels,
+    dependencies: &DependencyInput,
+    selection: &crate::AdmittedIntegerDivision,
+    limits: SpineLimits,
+    cancel: &Cancel,
+) -> Result<Staged<Vec<CheckedUnit>>, FrontEndFailure> {
+    check_units_with_options(
+        admitted,
+        package_name,
+        models,
+        dependencies,
+        UnitCheckOptions {
+            integer_division: Some(*selection),
+            ..UnitCheckOptions::default()
+        },
+        limits,
+        cancel,
+    )
+}
+
 /// S3 and S4 with the caller's exact profile-definition registry. Profile
 /// closures are resolved before package admission and remain attached to both
 /// successful checked units and check refusals. The closure result is
@@ -1736,6 +1788,7 @@ pub fn check_units_with_refinement_internals(
 
 #[derive(Clone, Copy, Default)]
 pub(crate) struct UnitCheckOptions<'a> {
+    pub(crate) integer_division: Option<crate::AdmittedIntegerDivision>,
     pub(crate) temporal_selections: &'a [fsl_package::TemporalClockSelection],
     pub(crate) clocks: Option<&'a super::RequestClocks>,
     pub(crate) continue_protocol_refusals: bool,
@@ -1785,7 +1838,7 @@ pub(crate) fn check_units_with_options(
             cancel,
             temporal_selections: options.temporal_selections,
             clocks: options.clocks,
-            integer_division: None,
+            integer_division: options.integer_division,
             extension_catalog: options.extension_catalog,
             active: Vec::new(),
             compiled: BTreeMap::new(),

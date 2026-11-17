@@ -1,0 +1,5 @@
+language "ix:native" edition "1-draft";
+profile v = "filament.value.complete/v1";
+type Digit = Int[0, 9];
+type Small = Digit;
+function f using v(): Boolean pure { true }

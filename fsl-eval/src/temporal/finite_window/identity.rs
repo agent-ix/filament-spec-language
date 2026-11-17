@@ -6,10 +6,10 @@ use filament_exact::ScalarLimits;
 use filament_semantic_value::catalog::InternalFault;
 use quire_canonical::{Encode, Error, Limits, Sink, Writer};
 
-use super::cover::ClockCover;
+use super::cover::{ClockCover, StampInterval};
 use super::lift::Cell;
 use super::outcome::ResultIdentity;
-use super::trace::{LowerBoundary, TimestampedTrace};
+use super::trace::{LateCutoff, Lateness, LowerBoundary, TimestampedTrace};
 use crate::temporal::ledger::{ProgressClosure, ProgressCompleteness};
 use crate::temporal::plan::fault;
 
@@ -43,6 +43,60 @@ fn tag(cell: Cell) -> &'static str {
     }
 }
 
+/// An interval stamp's members: both ends and both flags.
+fn interval_members<S: Sink + ?Sized>(
+    writer: &mut Writer<'_, S>,
+    interval: StampInterval,
+) -> Result<(), Error> {
+    writer.string("interval")?;
+    count(writer, u128::from(interval.earliest))?;
+    count(writer, u128::from(interval.latest))?;
+    writer.bool(interval.earliest_open)?;
+    writer.bool(interval.latest_open)
+}
+
+/// FR-966 "Identity": the late-data cutoff (its rule and its parameter),
+/// every excluded observation and every admitted one, written only when a
+/// cutoff is selected or a repair admits an observation.
+fn lateness_members<S: Sink + ?Sized>(
+    writer: &mut Writer<'_, S>,
+    lateness: &Lateness,
+) -> Result<(), Error> {
+    if lateness.cutoff.is_none() && lateness.admitted.is_empty() {
+        return Ok(());
+    }
+    writer.begin_array()?;
+    match lateness.cutoff {
+        Some(LateCutoff::AllowedLateness { lateness }) => {
+            writer.string("allowed-lateness")?;
+            count(writer, u128::from(lateness))?;
+        }
+        Some(LateCutoff::FixedInstant { cutoff }) => {
+            writer.string("fixed-instant")?;
+            count(writer, u128::from(cutoff))?;
+        }
+        None => writer.null()?,
+    }
+    writer.begin_array()?;
+    for late in &lateness.late {
+        writer.begin_array()?;
+        writer.string(&late.observation)?;
+        count(writer, u128::from(late.stamp))?;
+        if let Some(interval) = late.interval {
+            interval_members(writer, interval)?;
+        }
+        count(writer, u128::from(late.arrival))?;
+        writer.end_array()?;
+    }
+    writer.end_array()?;
+    writer.begin_array()?;
+    for admitted in &lateness.admitted {
+        writer.string(admitted)?;
+    }
+    writer.end_array()?;
+    writer.end_array()
+}
+
 impl Encode for Preimage<'_> {
     fn encode_into<S: Sink + ?Sized>(&self, writer: &mut Writer<'_, S>) -> Result<(), Error> {
         let trace = self.trace;
@@ -63,9 +117,18 @@ impl Encode for Preimage<'_> {
             }
         }
         writer.begin_array()?;
-        for position in &trace.positions {
+        for (index, position) in trace.positions.iter().enumerate() {
             writer.begin_array()?;
             count(writer, u128::from(position.stamp))?;
+            // FR-966 "Identity": an interval stamp and an arrival watermark
+            // are members of the position only when it carries them.
+            if let Some(interval) = trace.intervals.get(index).copied().flatten() {
+                interval_members(writer, interval)?;
+            }
+            if let Some(arrival) = trace.lateness.arrivals.get(index).copied().flatten() {
+                writer.string("arrival")?;
+                count(writer, u128::from(arrival))?;
+            }
             match &position.order_key {
                 Some(key) => {
                     writer.string(&key.authority)?;
@@ -101,6 +164,7 @@ impl Encode for Preimage<'_> {
             LowerBoundary::AuthoritativeOrigin => "authoritative-origin",
             LowerBoundary::HistoryCutoff => "history-cutoff",
         })?;
+        lateness_members(writer, &trace.lateness)?;
         let ceilings = self.ceilings;
         writer.begin_array()?;
         for ceiling in [
@@ -133,4 +197,53 @@ impl Preimage<'_> {
         }
         Ok(ResultIdentity(text))
     }
+}
+
+/// What a correction's result identity reads: the run's input identity and
+/// its relation to an earlier result (FR-526).
+struct CorrectionPreimage<'a> {
+    input: &'a str,
+    relation: &'a str,
+    predecessor: Option<&'a str>,
+}
+
+impl Encode for CorrectionPreimage<'_> {
+    fn encode_into<S: Sink + ?Sized>(&self, writer: &mut Writer<'_, S>) -> Result<(), Error> {
+        writer.begin_array()?;
+        writer.string("filament.fsl.finite-window-correction/v1")?;
+        writer.string(self.input)?;
+        writer.string(self.relation)?;
+        match self.predecessor {
+            Some(predecessor) => writer.string(predecessor)?,
+            None => writer.null()?,
+        }
+        writer.end_array()
+    }
+}
+
+/// FR-526: the `result_identity` of a finite-window result whose input
+/// identity is `input` and whose relation is `relation` (`original`,
+/// `superseding` or `invalidating`) to `predecessor`, so two results of
+/// equal inputs and different relations have different identities.
+///
+/// # Errors
+///
+/// An internal fault when the preimage does not encode.
+pub fn correction_identity(
+    input: &str,
+    relation: &str,
+    predecessor: Option<&str>,
+) -> Result<ResultIdentity, InternalFault> {
+    let preimage = CorrectionPreimage {
+        input,
+        relation,
+        predecessor,
+    };
+    let digest = quire_canonical::sha256(&preimage, Limits::new(u64::MAX))
+        .map_err(|_| fault("correction-identity-encodes"))?;
+    let mut text = String::from("sha256:");
+    for byte in digest.as_bytes() {
+        text.push_str(&format!("{byte:02x}"));
+    }
+    Ok(ResultIdentity(text))
 }

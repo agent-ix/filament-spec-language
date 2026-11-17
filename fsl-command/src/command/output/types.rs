@@ -61,6 +61,14 @@ pub(super) enum Details<'a> {
     Claim {
         claim: &'a serde_json::Value,
     },
+    /// FR-526, FR-966: a refused correction's FR-516 cause, the request
+    /// member at fault and, for `admitted-not-late`, the unmatched name.
+    Correction {
+        cause: &'static str,
+        member: &'static str,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        observation: Option<&'a str>,
+    },
     Io {
         path: Cow<'a, str>,
         os_code: Option<i32>,
