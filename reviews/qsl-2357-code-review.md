@@ -58,6 +58,22 @@ Reviewed PR #2840's six Rust test and fixture changes against their traced crite
 | --- | --- | --- | --- |
 | FND-001 | low | No findings (placeholder) | - |
 
+## New findings (disposition pass 1)
+
+The follow-up at `65747c2cf179303db9ae438451c1b3de76ef4b81` was reviewed in full. The clock-place assertion was the missed defect; no other new defects were found in that commit.
+
+| ID | Severity | Summary | Refs |
+| --- | --- | --- | --- |
+| FND-002 | medium | At the reviewed head, `emitted_source_place_member_type_matches_its_target_node_identity` still searched the emitted path for the legacy `Wrapper/w` spelling. Source clock-place rows use the SourceOwner-derived identity from FR-996, so the test failed against the valid emitted path. Derive the expected row identity from the emitted `SourceOwner`. | fsl-package/src/emit/tests/clock_places.rs:103,115 |
+
+## Dispositions
+
+| FND | outcome | reason |
+| --- | --- | --- |
+| FND-002 | fixed | Commit `65747c2cf179303db9ae438451c1b3de76ef4b81` derives the path and member-type identities from the emitted SourceOwner. The exact test `cargo test --locked -p fsl-package --lib emitted_source_place_member_type_matches_its_target_node_identity` passed (1 passed, 0 failed). After excerpt: `let wrapper_w_identity = format!("ix://{source_owner}/Wrapper/w");` |
+
 ## Review record
 
 Linear comment `349330c9-f9fb-4ec8-9e62-ad4e2fcb1a52` posted and read back; YAML parsed with `clean: true`, `findings: []`, and 15 scope entries. `has-review` was already available as a workspace label and is applied to QSL-2357. Quire validation exited 0 with catalog warnings recorded above.
+
+Disposition round 1 comment `175c777f-7855-4e37-ac14-911cd3580020` posted and read back; `FND-002` is `fixed`, with the exact test passing 1/1.
