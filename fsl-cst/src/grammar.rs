@@ -727,9 +727,9 @@ fn source_and_types(g: &mut Grammar) {
             ]),
         ]),
     );
-    // `body <label> using <alias> on <qualified-name> ( <ident>, ... ) <block>`
+    // `body <label> using <alias> on <qualified-name> ( [ <ident>, ... ] ) <block>`
     // (FSpec Complete-V1 `operation-body`): the label and the receiver-less
-    // parameter names are plain identifiers.
+    // parameter names are plain identifiers; the parameter list may be empty.
     g.insert(
         P::OperationBody,
         s(vec![
