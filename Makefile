@@ -335,7 +335,7 @@ fuzz-deep-input:
 # Each aggregate prerequisite depends on validation, rather than racing it as
 # a sibling under -j (or continuing past it under -k). Standalone lane commands
 # retain their existing behavior; this ordering belongs to the aggregate gate.
-CI_CHECKS := conformance check-no-committed-binaries ci-default-features ci-all-features test-deep-format ci-clean-build seam-probe string-edge route-lint checked-input canonical-types refinement-versioning cargo-deny-bans ci-docs arch-lint-api-surface-fsl arch-lint-qualified-core build-no-std examples-check
+CI_CHECKS := conformance check-no-committed-binaries ci-default-features ci-all-features test-deep-format ci-clean-build seam-probe string-edge route-lint checked-input canonical-types refinement-versioning facade-tests cargo-deny-bans ci-docs arch-lint-api-surface-fsl arch-lint-qualified-core build-no-std examples-check
 CI_TARGETS := $(CI_CHECKS)
 # The public aggregate validates the native documents before the xtask wrapper
 # runs the focused conformance lanes.
@@ -371,6 +371,11 @@ CONFORMANCE_XTASK = cargo run --locked --package xtask --
 
 conformance:
 	@$(CONFORMANCE_XTASK) conformance
+
+# FR-912: compare the pinned consumer-fact inventory with live public-API tests.
+.PHONY: facade-tests
+facade-tests:
+	cargo run --locked --package xtask -- facade-tests
 
 # FR-765 (QSL-2101): the filament-examples gate over this checkout. Runs the
 # sibling filament-driver's examples gate (driver FR-021) with every language

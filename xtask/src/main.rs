@@ -16,8 +16,8 @@ use std::process::ExitCode;
 use xtask::{
     canonical_types, checked_input, conformance, consumer_facades,
     error::{Error, Result},
-    examples_check, pin_check, qualification, refinement, route_lint, seam_probe, string_edge,
-    test_suites, Outcome,
+    examples_check, facade_tests, pin_check, qualification, refinement, route_lint, seam_probe,
+    string_edge, test_suites, Outcome,
 };
 
 const USAGE: &str = "usage: cargo xtask seam-probe\n       cargo xtask string-edge\n       \
@@ -29,6 +29,7 @@ const USAGE: &str = "usage: cargo xtask seam-probe\n       cargo xtask string-ed
                      cargo xtask refinement layering <corpus>\n       \
                      cargo xtask qualify --corpus <dir> [--capability <id>]... [--limit <setting>=<value>]... [--text]\n       \
                      cargo xtask canonical-types [<workspace>]\n       \
+                     cargo xtask facade-tests [--tests <dir>] [--inventory <file>]\n       \
                      cargo xtask consumer-facades [--bindings <file>] [--inventory <file>]";
 
 #[ix_trace_rs::string_edge]
@@ -43,6 +44,9 @@ fn run(arguments: &[OsString]) -> Result<Outcome> {
         .to_path_buf();
     if command == "test-suites" {
         return test_suites::run(&workspace_root, operands).map(Outcome::success);
+    }
+    if command == "facade-tests" {
+        return facade_tests::run(&workspace_root, operands);
     }
     if command == "refinement" {
         return refinement::run(&workspace_root, operands);

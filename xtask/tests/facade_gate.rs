@@ -138,7 +138,6 @@ fn test_prefix_is_the_lowercase_fact_id() {
 
 #[test]
 #[trace("TC-2574", "FR-911-AC-1")]
-#[ignore = "QSL-2231: the `facade-contract-consumer` crate is not implemented yet"]
 fn the_contract_consumer_sees_only_default_features() {
     let output = cargo(&["metadata", "--locked", "--offline", "--format-version", "1"]);
     assert!(output.status.success(), "{}", report(&output));
@@ -184,7 +183,6 @@ fn the_contract_consumer_sees_only_default_features() {
 
 #[test]
 #[trace("TC-2575", "FR-911-AC-2", "FSpec-TC-1646", "FSpec-FR-661-AC-3")]
-#[ignore = "QSL-2231: the per-fact contract call tests are not implemented yet"]
 fn every_bound_fact_has_a_passing_contract_call_test() {
     let listed = cargo(&["test", "-p", CONSUMER, "--", "--list"]);
     assert!(listed.status.success(), "{}", report(&listed));
@@ -206,7 +204,6 @@ fn every_bound_fact_has_a_passing_contract_call_test() {
 
 #[test]
 #[trace("TC-2576", "FR-911-AC-3")]
-#[ignore = "QSL-2231: the protocol contract tests' typed-refusal cases are not implemented yet"]
 fn a_wrong_input_to_a_protocol_accessor_gives_its_typed_refusal() {
     let source = fs::read_to_string(
         workspace_root()
@@ -222,7 +219,6 @@ fn a_wrong_input_to_a_protocol_accessor_gives_its_typed_refusal() {
 
 #[test]
 #[trace("TC-2577", "FR-911-AC-4")]
-#[ignore = "QSL-2231: the consumer crate's private-item compile-fail doctest is not implemented yet"]
 fn a_private_item_is_not_reachable_from_the_consumer_crate() {
     let library = fs::read_to_string(workspace_root().join(CONSUMER_DIR).join("src/lib.rs"))
         .expect("the consumer library");
@@ -234,7 +230,6 @@ fn a_private_item_is_not_reachable_from_the_consumer_crate() {
 
 #[test]
 #[trace("TC-2578", "FR-912-AC-1")]
-#[ignore = "QSL-2232: `xtask facade-tests` is not implemented yet"]
 fn gate_passes_when_every_fact_has_a_live_test() {
     let scratch = scratch_tests("", None, "");
     let output = gate_over(scratch.path());
@@ -251,7 +246,6 @@ fn gate_passes_when_every_fact_has_a_live_test() {
 
 #[test]
 #[trace("TC-2579", "FR-912-AC-2")]
-#[ignore = "QSL-2232: `xtask facade-tests` is not implemented yet"]
 fn gate_fails_on_fact_without_test() {
     let scratch = scratch_tests("", Some("CF-PR-03"), "");
     let output = gate_over(scratch.path());
@@ -261,7 +255,6 @@ fn gate_fails_on_fact_without_test() {
 
 #[test]
 #[trace("TC-2580", "FR-912-AC-3")]
-#[ignore = "QSL-2232: `xtask facade-tests` is not implemented yet"]
 fn gate_fails_on_ignored_contract_test() {
     for attribute in ["#[ignore]", "#[cfg(any())]"] {
         let scratch = scratch_tests("", None, attribute);
@@ -284,7 +277,6 @@ fn gate_fails_on_ignored_contract_test() {
 
 #[test]
 #[trace("TC-2581", "FR-912-AC-4")]
-#[ignore = "QSL-2232: `xtask facade-tests` and its `make ci` step are not implemented yet"]
 fn gate_fails_on_test_for_unlisted_fact() {
     let scratch = scratch_tests("#[test]\nfn cf_pr_99_unknown() {}\n", None, "");
     let output = gate_over(scratch.path());

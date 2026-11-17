@@ -18,6 +18,7 @@ pub mod consumer_facades;
 pub mod definition_scan;
 pub mod error;
 pub mod examples_check;
+pub mod facade_tests;
 pub mod feature_scope;
 pub mod import_graph;
 pub mod pin_check;
