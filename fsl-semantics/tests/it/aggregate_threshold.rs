@@ -83,7 +83,6 @@ fn timestamped_clause(formula: &str) -> String {
 /// `ill_typed`/`type-mismatch`.
 #[trace("TC-2777", "FR-982-AC-4", "FSpec-TC-1901", "FSpec-FR-784-AC-3")]
 #[test]
-#[ignore = "QSL-2160: a parenthesized threshold under the sum rule and its type check are not implemented yet"]
 fn a_parenthesized_threshold_is_typed_against_the_aggregate() {
     let cases: [(&str, fn(&str) -> String, &str); 2] = [
         (EVENTS, clause, "past[0,1]"),
