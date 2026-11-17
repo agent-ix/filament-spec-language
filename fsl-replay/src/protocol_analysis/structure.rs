@@ -187,6 +187,7 @@ pub struct GlobalStructure {
     covers: Vec<Vec<usize>>,
     back: Vec<Vec<usize>>,
     depth: Vec<u64>,
+    role_maxima: BTreeMap<CheckedNodeId, u64>,
 }
 
 fn reachable(adjacency: &[Vec<usize>], from: usize) -> Vec<bool> {
@@ -359,7 +360,19 @@ impl GlobalStructure {
             covers,
             back,
             depth,
+            role_maxima: BTreeMap::new(),
         })
+    }
+
+    /// Store authored replication maxima from the checked protocol view.
+    pub(crate) fn set_role_maxima(&mut self, maxima: BTreeMap<CheckedNodeId, u64>) {
+        self.role_maxima = maxima;
+    }
+
+    /// The authored replication maximum of `role`, if replicated.
+    #[must_use]
+    pub fn role_maximum(&self, role: &CheckedNodeId) -> Option<u64> {
+        self.role_maxima.get(role).copied()
     }
 
     /// The events, ascending by entry port.

@@ -817,6 +817,12 @@ pub enum InconclusiveCause {
     /// undecided: an undetermined clause or protocol expression, or a
     /// terminal predicate undefined or refused at a terminal state.
     Undecided,
+    /// Realizability reached the configured live-instance bound while an
+    /// activation remained enabled.
+    InstanceBoundReached {
+        /// The `max_live_instances` value in force.
+        max_live_instances: u64,
+    },
 }
 
 impl InconclusiveCause {
@@ -831,6 +837,7 @@ impl InconclusiveCause {
             Self::StrategyReplayFailed => "strategy-replay-failed",
             Self::CutCount => "cut-count",
             Self::Undecided => "undecided-evaluation",
+            Self::InstanceBoundReached { .. } => "instance-bound-reached",
         }
     }
 }

@@ -4,19 +4,19 @@
 use std::collections::BTreeMap;
 
 use filament_contract_model::{CheckedNodeId, CheckedPackageV2};
-use fsl_package::protocol_view::{protocol_view, PortRef, ViewRefusal};
+use fsl_package::protocol_view::{protocol_view, role_replication_maximum, PortRef, ViewRefusal};
 use fsl_replay::protocol_analysis::{
     node_text, replay_projection_counterexample, Action, AnalysisOutcome, AssessedRoot,
-    AssessedRootDraft, BranchMerge, ChoiceBasis, Correspondence, GlobalEventKind, GlobalStructure,
-    InconclusiveCause, LocalEvent, LocalEventId, LocalEventKind, LocalGraph, MergeEvidence,
-    MissingMember, PremiseRefusal, ProjectionBoundsDraft, ProjectionCounterexample,
-    ProjectionKeyDraft, ProjectionWitness, ProtocolAnalysisKey, ProtocolAnalysisResult,
-    ProtocolPremises, RunBudget, RunLimit,
+    AssessedRootDraft, BranchMerge, ChoiceBasis, Correspondence, DecisionOwner, GlobalEventKind,
+    GlobalStructure, InconclusiveCause, LocalEvent, LocalEventId, LocalEventKind, LocalGraph,
+    MergeEvidence, MissingMember, PremiseRefusal, ProjectionBoundsDraft, ProjectionCounterexample,
+    ProjectionDecision, ProjectionKeyDraft, ProjectionWitness, ProtocolAnalysisKey,
+    ProtocolAnalysisResult, ProtocolPremises, RunBudget, RunLimit,
 };
 use fsl_replay::spine::StructureError;
 use fsl_replay::ModelCheckLimit;
 
-use super::profile::{unsupported_construct, Profile};
+use super::profile::{unsupported_construct_for_profile, Profile};
 
 /// A projection request (PA-5). Key members are optional so that the key
 /// builder names the first absent one (PA-13); premises (a) and (b) are
@@ -45,10 +45,8 @@ pub enum ProjectionRefusal {
     /// A key member or the assessed-subject root is absent.
     #[error(transparent)]
     Missing(#[from] MissingMember),
-    /// The profile word is not `bounded-static`.
-    #[error(
-        "invalid_runtime_input/invalid-value: the member `profile` is `{0}`, not `bounded-static`"
-    )]
+    /// The profile word is not a supported profile.
+    #[error("invalid_runtime_input/invalid-value: the member `profile` is `{0}`, not `bounded` or `bounded-static`")]
     InvalidProfile(String),
     /// The role is not a role of the clause.
     #[error("invalid_runtime_input/invalid-value: the member `role` names no role of the clause")]
@@ -100,24 +98,28 @@ pub fn project(
         unreachable!("the projection builder returns a projection key");
     };
     let max_depth = held.bounds.max_depth;
-    if request
-        .profile
-        .as_deref()
-        .and_then(Profile::from_wire)
-        .is_none()
-    {
+    let profile = request.profile.as_deref().and_then(Profile::from_wire);
+    let Some(profile) = profile else {
         return Err(ProjectionRefusal::InvalidProfile(
             request.profile.unwrap_or_default(),
         ));
-    }
+    };
     let root = AssessedRoot::new(request.assessed_root)?;
     let view = protocol_view(package, &request.protocol)?;
     if !view.roles().iter().any(|role| **role == request.role) {
         return Err(ProjectionRefusal::UnknownRole(request.role));
     }
-    if let Some(cause) = unsupported_construct(package, &request.protocol)? {
+    if let Some(cause) = unsupported_construct_for_profile(package, &request.protocol, profile)? {
         return Ok(result(key, AnalysisOutcome::Unsupported(cause)));
     }
+    let replication_maximum = package
+        .resolved_graph()
+        .nodes
+        .iter()
+        .find(|node| node.node_id == request.role)
+        .map(role_replication_maximum)
+        .transpose()?
+        .flatten();
     let structure = match GlobalStructure::from_package(package, &request.protocol, request.budget)
     {
         Ok(structure) => structure,
@@ -127,6 +129,47 @@ pub fn project(
         Err(other) => return Err(ProjectionRefusal::Structure(other)),
     };
     let role = &request.role;
+
+    if replication_maximum.is_some_and(|maximum| maximum >= 2) {
+        let role_actions: Vec<_> = structure
+            .events()
+            .iter()
+            .filter_map(|event| {
+                structure
+                    .action_of(&event.at, role)
+                    .map(|action| (event, action))
+            })
+            .collect();
+        if let Some((event, _)) = role_actions.iter().find(|(candidate, action)| {
+            action.direction == fsl_replay::protocol_analysis::Direction::Send
+                && structure
+                    .depth(&candidate.at)
+                    .is_some_and(|depth| depth <= max_depth)
+                && !role_actions.iter().any(|(prior, _)| {
+                    prior.at != candidate.at && structure.precedes(&prior.at, &candidate.at)
+                })
+        }) {
+            let position = structure
+                .depth(&event.at)
+                .map(|depth| usize::try_from(depth.saturating_sub(1)).unwrap_or(usize::MAX))
+                .unwrap_or_default();
+            let separating_witness = root.record(&event.at.node, position)?;
+            return Ok(result(
+                key.clone(),
+                AnalysisOutcome::Refuted(ProjectionCounterexample {
+                    key,
+                    role: role.clone(),
+                    decision: ProjectionDecision::ActingInstance {
+                        event: event.at.clone(),
+                        owner: DecisionOwner::Environment,
+                        instances: [0, 1],
+                        maximum: replication_maximum.unwrap_or(0),
+                    },
+                    separating_witness,
+                }),
+            ));
+        }
+    }
 
     let mut cut = structure.is_cut(max_depth);
     // Each comparison of two runs is a transition against the run limit,
@@ -292,8 +335,8 @@ impl Candidate {
         root: &AssessedRoot,
     ) -> Result<ProjectionCounterexample, ProjectionRefusal> {
         let owner = match structure.event(&self.choice).map(|event| &event.kind) {
-            Some(GlobalEventKind::Choice { owner, .. }) => owner.clone(),
-            _ => self.choice.node.clone(),
+            Some(GlobalEventKind::Choice { owner, .. }) => DecisionOwner::Role(owner.clone()),
+            _ => DecisionOwner::Environment,
         };
         let deciding = self
             .a
@@ -303,15 +346,14 @@ impl Candidate {
         let separating_witness = root.record(&deciding, self.a.path.len().saturating_sub(1))?;
         Ok(ProjectionCounterexample {
             key,
-            choice: self.choice.node,
-            owner,
             role: role.clone(),
-            case_a: self.a.case,
-            case_b: self.b.case,
-            path_a: self.a.path,
-            path_b: self.b.path,
-            action_a: self.a.action,
-            action_b: self.b.action,
+            decision: ProjectionDecision::Choice {
+                choice: self.choice.node,
+                owner,
+                cases: [self.a.case, self.b.case],
+                paths: [self.a.path, self.b.path],
+                actions: [self.a.action, self.b.action],
+            },
             separating_witness,
         })
     }

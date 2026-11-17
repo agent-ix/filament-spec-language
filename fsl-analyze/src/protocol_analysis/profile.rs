@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-//! FR-575: the first construct outside the `bounded-static` profile.
+//! FR-575: profile admission for `bounded-static` and `bounded`.
 
 use filament_contract_model::{CheckedNodeId, CheckedPackageV2, CheckedSemanticNodeV2};
 use fsl_package::protocol_view::{
@@ -15,6 +15,8 @@ pub enum Profile {
     /// `bounded-static`: static roles, literal capacities, sequence, send,
     /// receive, choice and `parallel` with `join all` (PA-21).
     BoundedStatic,
+    /// `bounded`: the bounded profile, including replicated role classes.
+    Bounded,
 }
 
 impl Profile {
@@ -24,6 +26,7 @@ impl Profile {
     pub fn from_wire(word: &str) -> Option<Self> {
         match word {
             "bounded-static" => Some(Self::BoundedStatic),
+            "bounded" => Some(Self::Bounded),
             _ => None,
         }
     }
@@ -60,6 +63,20 @@ pub fn unsupported_construct(
     package: &CheckedPackageV2,
     protocol: &CheckedNodeId,
 ) -> Result<Option<UnsupportedCause>, ViewRefusal> {
+    unsupported_construct_for_profile(package, protocol, Profile::BoundedStatic)
+}
+
+/// The first construct outside `profile` in the order activation, roles,
+/// queues, compensations, then controls in layout order.
+///
+/// # Errors
+///
+/// [`ViewRefusal`] when a view function refuses.
+pub fn unsupported_construct_for_profile(
+    package: &CheckedPackageV2,
+    protocol: &CheckedNodeId,
+    profile: Profile,
+) -> Result<Option<UnsupportedCause>, ViewRefusal> {
     let view = protocol_view(package, protocol)?;
     // `on each` starts an instance per trigger, and a role's steps in two
     // instances would share one observation.
@@ -70,13 +87,15 @@ pub fn unsupported_construct(
             None,
         )));
     }
-    for role in view.roles() {
-        if role_is_replicated(node(package, role)?)? {
-            return Ok(Some(cause(
-                UnsupportedSlug::DynamicRolePopulation,
-                role,
-                None,
-            )));
+    if profile == Profile::BoundedStatic {
+        for role in view.roles() {
+            if role_is_replicated(node(package, role)?)? {
+                return Ok(Some(cause(
+                    UnsupportedSlug::DynamicRolePopulation,
+                    role,
+                    None,
+                )));
+            }
         }
     }
     for queue in view.queues() {

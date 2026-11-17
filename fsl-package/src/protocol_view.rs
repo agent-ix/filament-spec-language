@@ -1236,6 +1236,24 @@ pub fn role_is_replicated(role: &CheckedSemanticNodeV2) -> Result<bool, ViewRefu
     Ok(!members(role, "replication", replication)?.is_empty())
 }
 
+/// The authored maximum of a replicated role, or `None` for a static role.
+///
+/// # Errors
+///
+/// [`ViewRefusal::MissingMember`] naming `replication` when the node has
+/// none, [`ViewRefusal::MalformedMember`] when its replication shape or
+/// maximum is malformed.
+pub fn role_replication_maximum(role: &CheckedSemanticNodeV2) -> Result<Option<u64>, ViewRefusal> {
+    let group = required(role, "replication")?;
+    if members(role, "replication", group)?.is_empty() {
+        return Ok(None);
+    }
+    let maximum = group_member(group, "max")
+        .and_then(integer)
+        .ok_or_else(|| malformed(&role.node_id, "replication.max"))?;
+    Ok(Some(maximum))
+}
+
 /// A `parallel` control's join policy (FSpec FR-466 "parallel").
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum ParallelJoinPolicy {

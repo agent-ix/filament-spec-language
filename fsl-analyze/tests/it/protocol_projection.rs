@@ -10,9 +10,9 @@ use fsl_analyze::protocol_analysis::{
 };
 use fsl_replay::protocol_analysis::{
     replay_projection_counterexample, AnalysisOutcome, AssessedRootDraft, ChoiceBasis,
-    GlobalStructure, InconclusiveCause, LocalEventKind, ProjectionBoundsDraft,
-    ProjectionCounterexample, ProjectionWitness, ProtocolAnalysisEvidence, RunBudget,
-    UnsupportedSlug, WalkDisagreement,
+    DecisionOwner, GlobalStructure, InconclusiveCause, LocalEventKind, ProjectionBoundsDraft,
+    ProjectionCounterexample, ProjectionDecision, ProjectionWitness, ProtocolAnalysisEvidence,
+    RunBudget, UnsupportedSlug, WalkDisagreement,
 };
 use fsl_replay::spine::replay_protocol_analysis;
 use fsl_replay::{DecidingElement, ModelCheckLimit, ObservationIdentity, ReplaySource};
@@ -172,24 +172,25 @@ const CANCELLED: &str = "send Cn via Cancelled as (c: CancelMsg) { true };\n\
 fn the_worked_example_without_a_distinguishing_message_has_a_counterexample() {
     let package = worked(PICK, "", "");
     let found = counterexample(run(&package, "Warehouse"));
-    assert_eq!(found.owner, named(&package, "Seller"));
-    assert_eq!(found.choice, named(&package, "Decide"));
-    assert_eq!(found.role, named(&package, "Warehouse"));
-    let action = found.action_a.as_ref().expect("A is the receive");
-    assert_eq!(action.at.node, named(&package, "PickedUp"));
-    assert_eq!(found.action_b, None, "B is the end of the branch");
     assert_eq!(
-        found
-            .path_a
-            .iter()
-            .map(|at| at.node.clone())
-            .collect::<Vec<_>>(),
+        found.owner(),
+        Some(&DecisionOwner::Role(named(&package, "Seller")))
+    );
+    assert_eq!(found.choice(), Some(&named(&package, "Decide")));
+    assert_eq!(found.role, named(&package, "Warehouse"));
+    let (_, path_a, action_a) = found.choice_side(0).expect("choice decision");
+    let (_, path_b, action_b) = found.choice_side(1).expect("choice decision");
+    let action = action_a.expect("A is the receive");
+    assert_eq!(action.at.node, named(&package, "PickedUp"));
+    assert_eq!(action_b, None, "B is the end of the branch");
+    assert_eq!(
+        path_a.iter().map(|at| at.node.clone()).collect::<Vec<_>>(),
         [named(&package, "PickIt"), named(&package, "PickedUp")]
     );
-    assert!(found.path_b.is_empty());
+    assert!(path_b.is_empty());
     assert_eq!(found.length(), 2);
-    assert_eq!(found.case_a, named(&package, "Ship"));
-    assert_eq!(found.case_b, named(&package, "Cancel"));
+    assert_eq!(found.choice_side(0).unwrap().0, &named(&package, "Ship"));
+    assert_eq!(found.choice_side(1).unwrap().0, &named(&package, "Cancel"));
 }
 
 /// FR-570-AC-6 (step 3, second variant): distinct first-receive message
@@ -252,7 +253,7 @@ fn a_decision_message_no_fact_reads_does_not_distinguish_the_branches() {
         receive Dec2 via Decision of Dec as (dec2: Note) { true };\n";
     let package = worked(PICK, "", before);
     let found = counterexample(run(&package, "Warehouse"));
-    assert_eq!(found.action_b, None);
+    assert_eq!(found.choice_side(1).unwrap().2, None);
 }
 
 /// FR-570-AC-4: pairwise equal (direction, peer, message type) first events
@@ -278,10 +279,10 @@ fn equal_first_actions_merge_and_recurse_on_their_continuations() {
     let package = worked(&longer, other, "");
     let found = counterexample(run(&package, "Warehouse"));
     assert_eq!(
-        found.action_a.as_ref().map(|a| a.at.node.clone()),
+        found.choice_side(0).unwrap().2.map(|a| a.at.node.clone()),
         Some(named(&package, "Tail"))
     );
-    assert_eq!(found.action_b, None);
+    assert_eq!(found.choice_side(1).unwrap().2, None);
 }
 
 /// FR-570-AC-4: a send against a receive, and sends with differing message
@@ -337,8 +338,8 @@ fn the_counterexample_is_the_shortest_then_the_first_choice() {
         choice("Second", &receive("2"))
     ));
     assert_eq!(
-        counterexample(run(&package, "Warehouse")).choice,
-        named(&package, "First")
+        counterexample(run(&package, "Warehouse")).choice(),
+        Some(&named(&package, "First"))
     );
     // A shorter path in the later choice wins over the earlier choice.
     let package = flow(&format!(
@@ -347,7 +348,7 @@ fn the_counterexample_is_the_shortest_then_the_first_choice() {
         choice("Second", &send("2"))
     ));
     let found = counterexample(run(&package, "Warehouse"));
-    assert_eq!(found.choice, named(&package, "Second"));
+    assert_eq!(found.choice(), Some(&named(&package, "Second")));
     assert_eq!(found.length(), 1);
 }
 
@@ -701,7 +702,7 @@ fn the_trace_position_is_the_divergent_actions_index_in_path_a() {
     let package = worked(&long, "", "");
     let found = counterexample(run(&package, "Warehouse"));
     assert_eq!(
-        found.path_a.len(),
+        found.choice_side(0).unwrap().1.len(),
         4,
         "two events of other roles precede the divergence"
     );
@@ -715,10 +716,13 @@ fn the_trace_position_is_the_divergent_actions_index_in_path_a() {
     );
     // The first divergent action is the Decision receive, third event on.
     assert_eq!(
-        found.action_a.as_ref().unwrap().at.node,
+        found.choice_side(0).unwrap().2.unwrap().at.node,
         named(&package, "Early2")
     );
-    assert_eq!(found.path_a.last().unwrap().node, named(&package, "Early2"));
+    assert_eq!(
+        found.choice_side(0).unwrap().1.last().unwrap().node,
+        named(&package, "Early2")
+    );
 }
 
 /// PA-20, FR-573-AC-3: the replay arm re-walks the paths and ends in the
@@ -746,7 +750,9 @@ fn the_replay_arm_reproduces_a_counterexample_and_refuses_an_edited_one() {
     );
     // A step that is not an admitted successor.
     let mut skipped = found.clone();
-    skipped.path_a.remove(0);
+    if let ProjectionDecision::Choice { paths, .. } = &mut skipped.decision {
+        paths[0].remove(0);
+    }
     assert!(matches!(
         replay_projection_counterexample(&structure, &skipped, 64),
         Err(WalkDisagreement::StepNotSuccessor(_))
@@ -754,7 +760,9 @@ fn the_replay_arm_reproduces_a_counterexample_and_refuses_an_edited_one() {
     // A walk that does not end in the stated divergence: the end is swapped
     // for a path that stops early.
     let mut early = found.clone();
-    early.path_a.pop();
+    if let ProjectionDecision::Choice { paths, .. } = &mut early.decision {
+        paths[0].pop();
+    }
     assert_eq!(
         replay_projection_counterexample(&structure, &early, 64),
         Err(WalkDisagreement::ActionMismatch)
@@ -799,8 +807,8 @@ fn a_choice_nested_in_a_branch_counts_toward_the_outer_merge() {
     );
     let package = worked(&inner, "", "");
     let found = counterexample(run(&package, "Warehouse"));
-    assert_eq!(found.choice, named(&package, "Decide"));
-    assert_eq!(found.action_b, None);
+    assert_eq!(found.choice(), Some(&named(&package, "Decide")));
+    assert_eq!(found.choice_side(1).unwrap().2, None);
 }
 
 fn two_senders(second: &str, guard_reads: &str) -> Box<CheckedPackageV2> {
@@ -825,7 +833,7 @@ fn a_decision_reading_a_message_the_role_took_no_part_in_does_not_inform_it() {
     // `got` came from Warehouse, `got2` from Buyer, and the guards test `got2`.
     let package = two_senders("Order", "got2.ok");
     let found = counterexample(run(&package, "Warehouse"));
-    assert_eq!(found.choice, named(&package, "Decide"));
+    assert_eq!(found.choice(), Some(&named(&package, "Decide")));
     // Both messages are Warehouse's: the whole decision is known to it.
     let package = two_senders("Back", "got2.ok");
     let told = witness(run(&package, "Warehouse"));
@@ -854,7 +862,7 @@ fn a_divergence_before_the_horizon_is_found_though_later_events_are_cut() {
         other => panic!("expected the shallow counterexample: {other:?}"),
     };
     assert_eq!(
-        found.action_a.as_ref().unwrap().at.node,
+        found.choice_side(0).unwrap().2.unwrap().at.node,
         named(&package, "PickedUp")
     );
 }
@@ -1079,7 +1087,7 @@ fn an_unmerged_repeat_is_refuted_for_the_role_it_hides_from() {
          receive RY via Order of RX as (ry: Ack) { true }; } }",
     );
     let refuted = counterexample(bounded(&package, "Seller"));
-    assert_eq!(refuted.choice, named(&package, "Loop"));
+    assert_eq!(refuted.choice(), Some(&named(&package, "Loop")));
 }
 
 /// FR-890-AC-5 (TC-2522): a replicated role whose first event on a thread
@@ -1087,7 +1095,6 @@ fn an_unmerged_repeat_is_refuted_for_the_role_it_hides_from() {
 /// refuted, never `unsupported`.
 #[trace("TC-2522", "FR-890-AC-5", "FSpec-FR-735-AC-3")]
 #[test]
-#[ignore = "QSL-2205: a replicated role answers dynamic-role-population instead of an acting-instance counterexample"]
 fn a_replicated_role_that_sends_first_is_refuted() {
     let members = "role Buyer on M::Cell;\nrole Warehouse on M::Cell;\n\
         role Pool each M::Cell from cells max 2 lifetime workflow;\n\
@@ -1098,10 +1105,57 @@ fn a_replicated_role_that_sends_first_is_refuted() {
         "sequence Main { send J via Job as (j: Ack) { true }; \
          receive K via Job of J as (k: Ack) { true }; }",
     ));
-    let outcome = bounded(&package, "Pool");
+    let mut request = request(&package, "Pool");
+    request.profile = Some("bounded".to_owned());
+    let outcome = project(&package, request).unwrap();
     assert!(
         matches!(outcome.outcome, AnalysisOutcome::Refuted(_)),
         "{:?}",
         outcome.outcome
     );
+    let found = counterexample(outcome);
+    assert!(matches!(
+        &found.decision,
+        ProjectionDecision::ActingInstance {
+            event,
+            owner: DecisionOwner::Environment,
+            instances: [0, 1],
+            maximum: 2,
+        } if event.node == named(&package, "J")
+    ));
+    let structure =
+        GlobalStructure::from_package(&package, &clause(&package), RunBudget::default()).unwrap();
+    assert_eq!(
+        replay_projection_counterexample(&structure, &found, 64),
+        Ok(())
+    );
+}
+
+/// FR-890-AC-5: a bounded replicated role projects to one class graph whose
+/// first action is the receive that pins later sends to the acting instance.
+#[trace("TC-2522", "FR-890-AC-5")]
+#[test]
+fn a_bounded_spawn_projects_to_one_local_role_class() {
+    let members = "role Buyer on M::Cell;\nrole Pool each M::Cell from cells max 2 lifetime workflow;\n\
+        channel Job from Buyer to Pool carries Ack ordering unordered delivery exactly-once-premise capacity 4 overflow reject;\n\
+        channel Done from Pool to Buyer carries Ack ordering unordered delivery exactly-once-premise capacity 4 overflow reject;";
+    let package = admitted_source(&source(
+        members,
+        "sequence Main { send J via Job as (j: Ack) { true }; \
+         receive K via Job of J as (k: Ack) { true }; \
+         send D via Done as (d: Ack) { true }; \
+         receive R via Done of D as (r: Ack) { true }; }",
+    ));
+    let mut request = request(&package, "Pool");
+    request.profile = Some("bounded".to_owned());
+    let found = witness(project(&package, request).unwrap());
+    assert_eq!(found.local_graph.events.len(), 2);
+    assert!(matches!(
+        &found.local_graph.events[0].kind,
+        LocalEventKind::Receive { .. }
+    ));
+    assert!(matches!(
+        &found.local_graph.events[1].kind,
+        LocalEventKind::Send { .. }
+    ));
 }

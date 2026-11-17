@@ -9,8 +9,8 @@ use std::collections::BTreeMap;
 use filament_contract_model::{CheckedNodeId, CheckedPackageV2, CheckedSemanticNodeV2};
 use fsl_package::protocol_view::{
     causal_relation, channel_endpoints, channel_ordering, control_body, decision_reads,
-    fifo_key_reads_message, protocol_view, ChannelOrdering, ControlBody, EdgeKind, Port, PortRef,
-    ViewRefusal,
+    fifo_key_reads_message, protocol_view, role_replication_maximum, ChannelOrdering, ControlBody,
+    EdgeKind, Port, PortRef, ViewRefusal,
 };
 
 use crate::protocol_analysis::{
@@ -154,7 +154,7 @@ impl<'p> Reader<'p> {
 impl GlobalStructure {
     /// The structure of the protocol clause `protocol`, from its FR-519
     /// view and causal relation (PA-3, PA-9). The caller has already
-    /// refused every construct outside the `bounded-static` profile.
+    /// refused constructs its selected profile does not admit.
     ///
     /// # Errors
     ///
@@ -199,7 +199,17 @@ impl GlobalStructure {
         }
         reader.input.uniform_fifo = fifo.into_values().collect();
         reader.walk(view.run(), &mut Vec::new())?;
-        GlobalStructure::build(reader.input, budget).map_err(StructureError::Limit)
+        let mut maxima = BTreeMap::new();
+        for role in view.roles() {
+            let maximum = role_replication_maximum(reader.node(role)?)?;
+            if let Some(maximum) = maximum {
+                maxima.insert((*role).clone(), maximum);
+            }
+        }
+        let mut structure =
+            GlobalStructure::build(reader.input, budget).map_err(StructureError::Limit)?;
+        structure.set_role_maxima(maxima);
+        Ok(structure)
     }
 }
 

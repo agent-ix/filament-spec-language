@@ -154,8 +154,8 @@ pub struct RoleStep {
     pub role: usize,
     /// The action.
     pub action: StrategyAction,
-    /// What the role observes.
-    pub observed: Observed,
+    /// What the role observes at this step, in order.
+    pub observed: Vec<Observed>,
 }
 
 /// What a play has shown its roles: each started instance's captures, as
@@ -182,7 +182,7 @@ impl Seen {
     pub fn extended(&self, step: Option<&RoleStep>) -> Self {
         let mut next = self.clone();
         if let Some(step) = step {
-            next.steps[step.role].push(step.observed.clone());
+            next.steps[step.role].extend(step.observed.iter().cloned());
         }
         next
     }
@@ -291,19 +291,29 @@ impl Arena<'_, '_> {
             .system
             .binder_record_bytes(transition)?
             .unwrap_or_default();
-        Ok(Some(match receive_from {
-            Some(sender) => RoleStep {
-                role,
-                action: StrategyAction::Receive {
+        let mut observed = Vec::new();
+        if let Some(actor) = transition.actor() {
+            observed.push(Observed::ActingInstance {
+                object: actor.object.clone(),
+            });
+        }
+        let (action, event) = match receive_from {
+            Some(sender) => (
+                StrategyAction::Receive {
                     peer: self.names.roles[sender].clone(),
                 },
-                observed: Observed::Received { node, payload },
-            },
-            None => RoleStep {
-                role,
-                action: StrategyAction::Send { node: node.clone() },
-                observed: Observed::Sent { node, payload },
-            },
+                Observed::Received { node, payload },
+            ),
+            None => (
+                StrategyAction::Send { node: node.clone() },
+                Observed::Sent { node, payload },
+            ),
+        };
+        observed.push(event);
+        Ok(Some(RoleStep {
+            role,
+            action,
+            observed,
         }))
     }
 

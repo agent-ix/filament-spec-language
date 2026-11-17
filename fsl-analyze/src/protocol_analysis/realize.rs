@@ -48,7 +48,7 @@ use fsl_replay::protocol_analysis::{
 use fsl_replay::ModelCheckLimit;
 use fsl_semantics::model::observation::AdmissionFailure;
 
-use super::profile::{unsupported_construct, Profile};
+use super::profile::{unsupported_construct_for_profile, Profile};
 
 /// The analyzer identity a realizability key carries (PA-15).
 pub const ANALYZER: &str = "fsl-analyze::protocol_analysis";
@@ -83,10 +83,8 @@ pub enum RealizabilityRefusal {
     /// A key member or the assessed-subject root is absent.
     #[error(transparent)]
     Missing(#[from] MissingMember),
-    /// The strategy profile is not `bounded-static`.
-    #[error(
-        "invalid_runtime_input/invalid-value: the member `strategy_profile` is `{0}`, not `bounded-static`"
-    )]
+    /// The strategy profile is not a supported profile.
+    #[error("invalid_runtime_input/invalid-value: the member `strategy_profile` is `{0}`, not `bounded` or `bounded-static`")]
     InvalidProfile(String),
     /// A role-knowledge or environment premise holds a fact. V1 defines no
     /// fact for groups (c) and (d), so only a declared-empty set is decided
@@ -154,6 +152,8 @@ enum Open {
     /// An undetermined finding, or a terminal predicate undefined or
     /// refused.
     Undecided,
+    /// The bounded system had an enabled activation at its live-instance cap.
+    InstanceBoundReached(u64),
 }
 
 impl Open {
@@ -161,6 +161,9 @@ impl Open {
         match self {
             Self::Horizon => InconclusiveCause::Horizon,
             Self::Undecided => InconclusiveCause::Undecided,
+            Self::InstanceBoundReached(max_live_instances) => {
+                InconclusiveCause::InstanceBoundReached { max_live_instances }
+            }
         }
     }
 }
@@ -275,6 +278,8 @@ impl Game<'_, '_> {
                 nodes[from].moves[at].child = id;
             }
             let seen = self.arena.bind(&state, seen)?;
+            let max_live_instances = fsl_eval::simulation::protocol::live_instance_bound(None);
+            let instance_bound_reached = self.arena.system.instance_limited(&state)?;
             let (expansion, terminal) = self.arena.system.successors_and_terminal(&state)?;
             let mut node = Node {
                 parent,
@@ -285,11 +290,14 @@ impl Game<'_, '_> {
                 value: Value::Cut(Open::Horizon),
                 observations: seen.observations(),
             };
-            if let Some(value) = finding_value(&expansion.findings) {
+            let finding = finding_value(&expansion.findings);
+            if finding == Some(Value::Lose) {
+                node.value = Value::Lose;
+                node.lost = Some(self.arena.names.clause().clone());
+            } else if instance_bound_reached {
+                node.value = Value::Cut(Open::InstanceBoundReached(max_live_instances));
+            } else if let Some(value) = finding {
                 node.value = value;
-                if value == Value::Lose {
-                    node.lost = Some(self.arena.names.clause().clone());
-                }
             } else if expansion.successors.is_empty() {
                 node.value = match terminal {
                     TerminalClass::Intended => Value::Win,
@@ -531,16 +539,15 @@ fn admit<'a>(
         held.bounds.max_depth,
         held.bounds.max_history.unwrap_or_default(),
     );
-    if request
+    let profile = request
         .strategy_profile
         .as_deref()
-        .and_then(Profile::from_wire)
-        .is_none()
-    {
+        .and_then(Profile::from_wire);
+    let Some(profile) = profile else {
         return Err(RealizabilityRefusal::InvalidProfile(
             request.strategy_profile.unwrap_or_default(),
         ));
-    }
+    };
     for (member, value) in [
         ("role_knowledge", &request.role_knowledge),
         ("environment", &request.environment),
@@ -556,7 +563,9 @@ fn admit<'a>(
             InconclusiveCause::PremiseNotStated { member },
         ))
     };
-    let system = if let Some(cause) = unsupported_construct(package, &request.protocol)? {
+    let system = if let Some(cause) =
+        unsupported_construct_for_profile(package, &request.protocol, profile)?
+    {
         Err(Settled::Unsupported(cause))
     } else if let Some(outcome) = not_stated("role_knowledge", &request.role_knowledge)
         .or_else(|| not_stated("environment", &request.environment))
