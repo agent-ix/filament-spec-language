@@ -458,7 +458,8 @@ fn outcome_text(
                 .and_then(serde_json::Value::as_str)
                 .unwrap_or("cause");
             let detail = cause
-                .get("reason")
+                .get("code")
+                .or_else(|| cause.get("reason"))
                 .or_else(|| cause.get("cause"))
                 .and_then(serde_json::Value::as_str);
             let rendered =
@@ -2270,6 +2271,30 @@ mod tests {
         assert_eq!(
             text_of(&packaged, &RenderSources::from_sources([])),
             "package: success (exit 0) at S4\n"
+        );
+    }
+
+    #[test]
+    #[trace("TC-2455", "FR-865-AC-2")]
+    fn text_outcome_renders_monitor_item_category_clause_and_inner_cause() {
+        let document = OutcomeDocument::settled(
+            fsl_replay::Operation::Monitor,
+            Some(fsl_replay::OutcomeStage::S6c),
+            vec![fsl_replay::OutcomeItem::undefined_evaluation(
+                fsl_foundation::RequestIndex::new(0),
+                "position 1",
+                "division-by-zero",
+            )],
+        );
+        let text = text_of(&document, &RenderSources::from_sources([]));
+        assert!(
+            text.contains("monitor: violation (exit 10) at S6c"),
+            "{text}"
+        );
+        assert!(text.contains("item 0: refuted (violation)"), "{text}");
+        assert!(
+            text.contains("  cause: undefined-evaluation (division-by-zero)"),
+            "{text}"
         );
     }
 }
