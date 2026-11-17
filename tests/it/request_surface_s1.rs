@@ -986,13 +986,17 @@ fn snapshot_refusals_carry_a_document_locus() {
     };
     assert!(text.contains("missing-member"), "{text}");
     for fragment in [
-        "\"kind\":\"artifact\"",
-        "\"pointer\":\"/child\"",
-        "\"member\":\"parent\"",
+        "\"kind\":\"document\"",
+        "\"authority\":\"agent-ix\"",
+        "\"identity\":\"ix://example/config-version/spine/snapshot/",
+        "\"population\":\"ix://example/config-version/config_history\"",
         "\"key\":\"child\"",
+        "\"member\":\"parent\"",
     ] {
         assert!(text.contains(fragment), "{fragment}: {text}");
     }
+    assert!(text.contains("/populations/"), "{text}");
+    assert!(!text.contains("\"pointer\":\"/child\""), "{text}");
 
     let mut snapshot: Value = serde_json::from_slice(&healthy_snapshot).unwrap();
     for object in snapshot["populations"][0]["objects"]
@@ -1009,12 +1013,17 @@ fn snapshot_refusals_carry_a_document_locus() {
     let text = unknown.value().unwrap().to_string();
     for fragment in [
         "unknown-member",
-        "\"kind\":\"artifact\"",
-        "\"pointer\":\"/child\"",
+        "\"kind\":\"document\"",
+        "\"authority\":\"agent-ix\"",
+        "\"identity\":\"ix://example/config-version/spine/snapshot/",
+        "\"population\":\"ix://example/config-version/config_history\"",
+        "\"key\":\"child\"",
         "\"member\":\"unexpected\"",
     ] {
         assert!(text.contains(fragment), "{fragment}: {text}");
     }
+    assert!(text.contains("/fields/unexpected"), "{text}");
+    assert!(!text.contains("\"pointer\":\"/child\""), "{text}");
 
     let absent = fsl_command::command::run(
         &directory.path().join("absent.json"),

@@ -391,6 +391,14 @@ pub enum ClauseDisposition {
     /// Stage `admit`: FR-106 admission's own failure, or (for a `Function`
     /// selection) the analogous snapshot-only admission failure.
     Admit(AdmissionFailure),
+    /// Stage `admit`: a function claim's current-snapshot refusal, with the
+    /// selected document identity retained for FR-663's locus.
+    SnapshotAdmission {
+        /// The admission failure.
+        failure: AdmissionFailure,
+        /// The snapshot's document labels.
+        document: DocumentRef,
+    },
     /// Stage `admit`: a `Function` selection's argument refused before any
     /// call (FR-100's own refusal, reused).
     ArgumentRefusal(Box<RunRefusal>),
@@ -469,7 +477,9 @@ impl ClauseDisposition {
         match self {
             Self::Compile(_) | Self::UnknownLanguage { .. } => ClauseRunStage::Compile,
             Self::MissingName { .. } | Self::NotAPredicate { .. } => ClauseRunStage::Select,
-            Self::Admit(_) | Self::ArgumentRefusal(_) => ClauseRunStage::Admit,
+            Self::Admit(_) | Self::SnapshotAdmission { .. } | Self::ArgumentRefusal(_) => {
+                ClauseRunStage::Admit
+            }
             Self::TraceRefused(refusal) => refusal.stage,
             Self::Evaluate(_)
             | Self::Temporal(_)
@@ -505,6 +515,19 @@ impl ClauseDisposition {
                     .map_or(Category::InternalFailure, |code| code.category())
             }
             Self::Admit(AdmissionFailure::Incomplete(_)) => Category::Incomplete,
+            Self::SnapshotAdmission {
+                failure: AdmissionFailure::Refused(record),
+                ..
+            } => fsl_foundation::diagnostic::Code::from_code(record.catalog.code())
+                .map_or(Category::InternalFailure, |code| code.category()),
+            Self::SnapshotAdmission {
+                failure: AdmissionFailure::Incomplete(_),
+                ..
+            } => Category::Incomplete,
+            Self::SnapshotAdmission {
+                failure: AdmissionFailure::Fault(_),
+                ..
+            } => Category::InternalFailure,
             Self::Admit(AdmissionFailure::Fault(_)) | Self::EvaluateFault(_) => {
                 Category::InternalFailure
             }
@@ -1139,6 +1162,7 @@ impl ClauseRunReport {
             | ClauseDisposition::MissingName { .. }
             | ClauseDisposition::NotAPredicate { .. }
             | ClauseDisposition::Admit(_)
+            | ClauseDisposition::SnapshotAdmission { .. }
             | ClauseDisposition::ArgumentRefusal(_)
             | ClauseDisposition::TemporalRefusal(_)
             | ClauseDisposition::TraceRefused(_)
@@ -2844,7 +2868,12 @@ fn run_function(
         observation_limits,
     ) {
         Ok(admitted) => admitted,
-        Err(failure) => return Ok(report(ClauseDisposition::Admit(failure))),
+        Err(failure) => {
+            return Ok(report(ClauseDisposition::SnapshotAdmission {
+                failure,
+                document: snapshot.clone(),
+            }))
+        }
     };
 
     // Bind each argument to its parameter (FR-100's own name-binding

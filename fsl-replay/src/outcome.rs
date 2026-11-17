@@ -1563,6 +1563,27 @@ pub enum OutcomeLocus {
         /// The RFC 6901 pointer into the artifact.
         pointer: String,
     },
+    /// A refusal located in a snapshot or invocation document.
+    Document {
+        /// The document's FR-001 labels.
+        document: Option<RawSourceRef>,
+        /// The caller's path for the document, when retained.
+        path: Option<String>,
+        /// The RFC 6901 pointer to the failing member or containing object.
+        pointer: String,
+        /// The population and key of the object, when the refusal names one.
+        object: Option<DocumentObjectLocus>,
+        /// The failing member, when the refusal names one.
+        member: Option<String>,
+    },
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+pub struct DocumentObjectLocus {
+    /// The model population.
+    pub population: String,
+    /// The snapshot object key.
+    pub key: String,
 }
 
 impl From<&Locus> for OutcomeLocus {
