@@ -8,12 +8,12 @@
 use std::collections::BTreeSet;
 
 use filament_checked::key::DeclarationKey;
-use filament_exact::{CardinalityBound, CollectionKind, CollectionType, ValueType};
+use filament_exact::{CardinalityBound, CollectionKind, CollectionType, NodeKey, ValueType};
 use filament_semantic_value::checking::{CheckMode, CheckingLimits};
 use fsl_foundation::diagnostic::Code;
 use fsl_semantics::check::{
     ApplicationTerm, Binding, BindingValue, BodyTerm, CheckRefusal, CheckedGraph, LeafTerm,
-    MemberTerm, NodeRef, NodeTag, Owner, SemanticGraph,
+    LiteralValue, MemberTerm, NodeRef, NodeTag, Owner, SemanticGraph,
 };
 use fsl_semantics::model::domain_package::{
     DomainPackage, DomainPackageRecord, DomainPackageRef, Multiplicity, RelationshipDirection,
@@ -411,6 +411,50 @@ fn a_population_only_lowers_to_collection_only() {
         assert_eq!(owner.identity(), population_fixture::PACKAGE);
         assert_eq!(owner.node(), population_fixture::ident("counters"));
     }
+
+    fn assert_parameter_name(graph: &SemanticGraph, target: &NodeRef, expected: &str) -> NodeKey {
+        let key = target
+            .admitted()
+            .expect("parameter reference is resolved")
+            .clone();
+        let parameter = graph.node(key.clone()).expect("parameter node is admitted");
+        assert_eq!(parameter.node_tag(), NodeTag::Value);
+        assert_eq!(parameter.semantic_form(), "parameter");
+        let BodyTerm::Aggregate(aggregate) = parameter.body() else {
+            panic!("parameter has a name and level binding");
+        };
+        let Some(MemberTerm::Binding(name)) = aggregate.members.first() else {
+            panic!("parameter starts with a name binding");
+        };
+        assert_eq!(name.name, "name");
+        let BindingValue::Leaf(LeafTerm::Literal {
+            value: LiteralValue::Text(name),
+            ..
+        }) = &name.value
+        else {
+            panic!("parameter name is a text literal");
+        };
+        assert_eq!(name, expected);
+        key
+    }
+
+    fn assert_projection_reads_binder(
+        graph: &SemanticGraph,
+        projection: &ApplicationTerm,
+        expected: &str,
+    ) -> NodeKey {
+        let [MemberTerm::Leaf(LeafTerm::Reference { target })] = projection.arguments.as_slice()
+        else {
+            panic!("record.project reads one record value");
+        };
+        let dereference = application_at(graph, target, "filament.op.model.deref");
+        let [MemberTerm::Leaf(LeafTerm::Reference { target })] = dereference.arguments.as_slice()
+        else {
+            panic!("model.deref reads one reference value");
+        };
+        assert_parameter_name(graph, target, expected)
+    }
+
     for (domain, filtered) in [("M::counters where o.v = 2", true), ("M::counters", false)] {
         let declarations = format!(
             "bound B on M::counters [3]\ninvariant O using v on M::Counter at current \
@@ -471,10 +515,13 @@ fn a_population_only_lowers_to_collection_only() {
             }),
             "the member names the selected value type"
         );
-        let [MemberTerm::Leaf(LeafTerm::Reference { target: source }), MemberTerm::Binding(Binding {
-            name,
-            value: BindingValue::Leaf(LeafTerm::Reference { target: value }),
-        })] = only.arguments.as_slice()
+        let [
+            MemberTerm::Leaf(LeafTerm::Reference { target: source }),
+            MemberTerm::Binding(Binding {
+                name,
+                value: BindingValue::Leaf(LeafTerm::Reference { target: value }),
+            }),
+        ] = only.arguments.as_slice()
         else {
             panic!("only has a collection source and one value binder: {domain}");
         };
@@ -485,11 +532,14 @@ fn a_population_only_lowers_to_collection_only() {
             "filament.op.model.all_instances"
         };
         let source_application = application_at(graph, source, source_identity);
-        if filtered {
-            let [MemberTerm::Leaf(LeafTerm::Reference { target: population }), MemberTerm::Binding(Binding {
-                name: filter_binder,
-                value: BindingValue::Leaf(LeafTerm::Reference { target: _ }),
-            })] = source_application.arguments.as_slice()
+        let filter_binder = if filtered {
+            let [
+                MemberTerm::Leaf(LeafTerm::Reference { target: population }),
+                MemberTerm::Binding(Binding {
+                    name: filter_binder,
+                    value: BindingValue::Leaf(LeafTerm::Reference { target: predicate }),
+                }),
+            ] = source_application.arguments.as_slice()
             else {
                 panic!("filter has a population source and a condition binder");
             };
@@ -497,9 +547,44 @@ fn a_population_only_lowers_to_collection_only() {
             let all_instances =
                 application_at(graph, population, "filament.op.model.all_instances");
             assert_counter_population(graph, all_instances);
+
+            let predicate = application_at(graph, predicate, "filament.op.integer.eq");
+            let [
+                MemberTerm::Leaf(LeafTerm::Reference { target: selected }),
+                MemberTerm::Leaf(LeafTerm::Reference { target: conversion }),
+            ] = predicate.arguments.as_slice()
+            else {
+                panic!("filter predicate shape: {predicate:#?}");
+            };
+            let conversion = application_at(graph, conversion, "filament.op.numeric.narrow");
+            let [MemberTerm::Leaf(LeafTerm::Reference { target: literal })] =
+                conversion.arguments.as_slice()
+            else {
+                panic!("numeric.narrow converts one literal");
+            };
+            let literal = graph
+                .node(literal.admitted().unwrap().clone())
+                .expect("integer literal node is admitted");
+            let BodyTerm::Leaf(LeafTerm::Literal {
+                value: LiteralValue::Integer(expected),
+                ..
+            }) = literal.body()
+            else {
+                panic!("filter predicate narrows an integer literal");
+            };
+            assert_eq!(expected.to_string(), "2");
+            let selected = application_at(graph, selected, "filament.op.record.project");
+            let Some(fsl_semantics::value::Member::Field { name, .. }) =
+                selected.operation.member()
+            else {
+                panic!("filter predicate projects a model field");
+            };
+            assert_eq!(name.as_str(), "v");
+            Some(assert_projection_reads_binder(graph, selected, "o"))
         } else {
             assert_counter_population(graph, source_application);
-        }
+            None
+        };
         let value_application = application_at(graph, value, "filament.op.record.project");
         let Some(fsl_semantics::value::Member::Field { name, .. }) =
             value_application.operation.member()
@@ -507,6 +592,13 @@ fn a_population_only_lowers_to_collection_only() {
             panic!("the selected expression projects a model field");
         };
         assert_eq!(name.as_str(), "v");
+        let value_binder = assert_projection_reads_binder(graph, value_application, "o");
+        if let Some(filter_binder) = filter_binder {
+            assert_eq!(
+                value_binder, filter_binder,
+                "filter and selected value use the only binder"
+            );
+        }
         assert_eq!(
             value_application.result_type, only.result_type,
             "the result type names the type of the selected expression"
