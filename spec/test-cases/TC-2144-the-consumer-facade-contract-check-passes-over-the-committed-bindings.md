@@ -23,4 +23,4 @@ Tag the tests `#[trace("TC-2144", "FR-761-AC-1", "FSpec-TC-1646", "FSpec-FR-661-
 ## Expected Results
 
 - Exit 0.
-- The report lists every inventory fact id, including `CF-PR-04` with `fsl_package::protocol_view::role_internality`, `CF-IR-04` with `fsl_package::SchedulabilityRoot::obligation_identity`, `CF-CG-04` with `fsl_replay::check_closed_form`, `CF-RT-02` with `fsl_analyze::monitor_root::admit_progress_view` and `CF-OB-01` with `fsl_package::checked_views::subject_kinds`.
+- The report lists every inventory fact id, including `CF-IR-04` with `fsl_package::SchedulabilityRoot::obligation_identity`, `CF-CG-04` with `fsl_replay::check_closed_form`, `CF-RT-02` with `fsl_analyze::monitor_root::admit_progress_view` and `CF-OB-01` with `fsl_package::checked_views::subject_kinds`.
