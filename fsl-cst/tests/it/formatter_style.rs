@@ -136,10 +136,6 @@ fn closing_tokens_and_bracketed_semicolons_print_canonically() {
     let header = header("filament.value.complete/v1");
     for (source, expected) in [
         (
-            "function f using v(): Boolean pure { let o: Option < Int[0,9] > = none in present(o) }",
-            "let o: Option<Int[0, 9]> = none in present(o)",
-        ),
-        (
             "function g using v(x: Option<Int[0,9]>): Option<Int[0,9]>pure { x }",
             "g using v(x: Option<Int[0, 9]>): Option<Int[0, 9]> pure {",
         ),
@@ -157,4 +153,20 @@ fn closing_tokens_and_bracketed_semicolons_print_canonically() {
     );
     let out = formatted(&protocol);
     assert!(out.contains("finish Closed as (r: Boolean) {"), "{out}");
+}
+
+/// FR-003-AC-15: the grammar's annotated `let` expression preserves its type
+/// argument spelling and receives the same canonical type formatting. The
+/// grammar is supplied by QSL-2008.
+#[trace("TC-2783", "FR-003-AC-15")]
+#[test]
+fn annotated_let_type_arguments_print_canonically() {
+    let header = header("filament.value.complete/v1");
+    let out = formatted(&format!(
+        "{header}function f using v(): Boolean pure {{ let o: Option < Int[0,9] > = none in present(o) }}\n"
+    ));
+    assert!(
+        out.contains("let o: Option<Int[0, 9]> = none in present(o)"),
+        "{out}"
+    );
 }

@@ -282,9 +282,6 @@ fn needs_space(
     if current_is_generic_angle {
         return false;
     }
-    if previous_is_generic_angle {
-        return previous.spelling() == b">" && (is_word(current) || current.spelling() == b"{");
-    }
     if previous.span().end == current.span().start
         && matches!(
             (previous.kind(), current.kind()),
@@ -303,22 +300,25 @@ fn needs_space(
         return false;
     }
     if current.spelling() == b"(" {
-        return !is_call_parenthesis(previous);
+        return !previous_is_generic_angle && !is_call_parenthesis(previous);
     }
     if current.spelling() == b"@" || previous.spelling() == b"@" {
         return true;
     }
-    !matches!(
-        previous.spelling(),
-        b"(" | b"[" | b"." | b"::" | b"^" | b":"
-    )
+    !matches!(previous.spelling(), b"(" | b"[" | b"." | b"::" | b"^")
 }
 
 fn is_word(token: &CstToken) -> bool {
-    matches!(token.kind(), TokenKind::Grammar | TokenKind::Identifier)
+    token
+        .spelling()
+        .first()
+        .is_some_and(u8::is_ascii_alphabetic)
 }
 
 fn is_call_parenthesis(previous: &CstToken) -> bool {
+    if previous.spelling() == b"behaviours" {
+        return false;
+    }
     if previous.kind() == TokenKind::Identifier {
         return true;
     }
