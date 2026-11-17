@@ -134,7 +134,7 @@ pub(crate) fn capture_form(
     })
 }
 
-/// One `Expression` node as a condition with its spans.
+/// One expression-level node as a condition with its spans.
 pub(crate) fn expression_form(
     cst: &LosslessCst,
     node: &CstNode,
@@ -556,7 +556,7 @@ fn aggregate_atom_form(
         b">" => AggregateComparison::Greater,
         _ => return Err(unexpected(atom)),
     };
-    let threshold = expression_form(cst, only(&atom_items, Production::Expression, atom)?)?;
+    let threshold = expression_form(cst, only(&atom_items, Production::Sum, atom)?)?;
     Ok(AggregateAtomForm {
         term: aggregate_term_form(cst, term)?,
         comparison,

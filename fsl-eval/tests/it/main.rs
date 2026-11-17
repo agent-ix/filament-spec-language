@@ -89,6 +89,7 @@ mod temporal_identity;
 mod temporal_laws;
 mod temporal_relation;
 mod temporal_rulings;
+mod temporal_stream;
 mod temporal_trace;
 mod text_size;
 mod tick_monitor;

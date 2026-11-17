@@ -82,7 +82,10 @@ impl ModelForm {
                 for _ in 0..levels {
                     body = Expression::binary(
                         BinaryOperator::Add,
-                        Expression::size(Expression::all_instances(named("M::Order"), name("p"))),
+                        Expression::size(
+                            Expression::all_instances(named("M::Order"), name("p")),
+                            None,
+                        ),
                         body,
                     );
                 }

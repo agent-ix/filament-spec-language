@@ -251,10 +251,10 @@ fn fairness_under_a_workload_is_refused_at_s1() {
     assert!(parsed.is_admissible(), "{:?}", parsed.diagnostics());
 }
 
-/// A quantity literal is an ordinary expression.
+/// Quantity literals and bare decimal primaries are ordinary expressions.
 #[trace("TC-890")]
 #[test]
-fn a_quantity_literal_is_an_expression_and_a_bare_decimal_is_not() {
+fn a_quantity_literal_is_an_expression() {
     let quantity = source("function f using Complete (): Boolean pure { 5 ms }");
     let parsed = parse(&quantity);
     assert!(parsed.is_admissible(), "{:?}", parsed.diagnostics());
@@ -269,7 +269,6 @@ fn a_quantity_literal_is_an_expression_and_a_bare_decimal_is_not() {
 #[trace("TC-890")]
 #[trace("TC-2161", "FR-764-AC-1")]
 #[test]
-#[ignore = "QSL-1965: the bare decimal primary not implemented yet"]
 fn a_bare_decimal_is_an_expression() {
     let decimal = source("function f using Complete (): Boolean pure { 0.5 }");
     let parsed = parse(&decimal);

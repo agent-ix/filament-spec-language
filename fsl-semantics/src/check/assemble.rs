@@ -3200,6 +3200,7 @@ fn expression_type_forms<'e>(roots: impl IntoIterator<Item = &'e Expression>) ->
                 } => forms.push(TypeForm::name(name.clone(), *span)),
                 ExprNode::Boolean(_)
                 | ExprNode::Absent
+                | ExprNode::Null
                 | ExprNode::Integer(_)
                 | ExprNode::Float32(_)
                 | ExprNode::Float64(_)
@@ -3228,7 +3229,7 @@ fn expression_type_forms<'e>(roots: impl IntoIterator<Item = &'e Expression>) ->
                 | ExprNode::Seq { .. }
                 | ExprNode::Power { .. }
                 | ExprNode::Flatten(_)
-                | ExprNode::Size(_)
+                | ExprNode::Size { .. }
                 | ExprNode::Contains { .. }
                 | ExprNode::DropFirst(_)
                 | ExprNode::RemoveOne { .. }

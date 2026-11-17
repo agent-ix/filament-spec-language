@@ -1087,7 +1087,6 @@ fn a_unit_declarations_scale_is_limited_by_the_assembly_setting() {
 /// located at its first literal, not at the comparison.
 #[trace("FR-104-AC-16", "TC-1084")]
 #[test]
-#[ignore = "QSL-1965: the ambiguous-literal refusal located at the first literal not implemented yet"]
 fn an_ambiguous_comparison_is_refused_at_its_first_literal() {
     let body = "decimal(15, 1) = decimal(150, 2)";
     let text = format!(

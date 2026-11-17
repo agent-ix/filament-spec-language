@@ -643,7 +643,7 @@ fn population_reference_and_model_rows_lower_to_their_operations() {
             "f1",
             &parameters,
             builtin(BuiltinType::Integer),
-            Expression::size(all_instances),
+            Expression::size(all_instances, None),
         ),
         function(
             "f2",

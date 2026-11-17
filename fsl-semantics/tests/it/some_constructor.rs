@@ -69,11 +69,21 @@ fn assert_refused(declarations: &str, code: Code, cause: &str) -> CheckRefusal {
     assert_refused_with(V, declarations, code, Some(cause))
 }
 
+/// FR-983-AC-1: `Some` checks as the present-option constructor in a function
+/// and a predicate body.
+#[trace("TC-2778", "FR-983-AC-1")]
+#[test]
+fn some_checks_in_function_and_predicate_bodies() {
+    assert_checks(
+        "function s using v(b: Int[0, 9]): Option<Int[0, 9]> pure { Some(b) }\n\
+         function p using v(b: Integer): Boolean pure { present(Some(b)) }",
+    );
+}
+
 /// FR-983-AC-2: `some`, `Something` and an unknown `Somex` are ordinary
 /// calls.
 #[trace("TC-2778", "FR-983-AC-2")]
 #[test]
-#[ignore = "QSL-2163: the boundary of the Some spelling is not locked by a test yet"]
 fn calls_named_like_some_are_ordinary_calls() {
     assert_checks(
         "function some using v(x: Integer): Integer pure { x }\n\
@@ -91,7 +101,6 @@ fn calls_named_like_some_are_ordinary_calls() {
 /// FR-983-AC-3: another argument count refuses at the call.
 #[trace("TC-2779", "FR-983-AC-3", "FSpec-TC-1005", "FSpec-FR-501-AC-4")]
 #[test]
-#[ignore = "QSL-2163: the Some arity refusal is not locked by a test yet"]
 fn some_with_another_argument_count_refuses() {
     for body in ["Some(b, b)", "Some()"] {
         assert_refused(

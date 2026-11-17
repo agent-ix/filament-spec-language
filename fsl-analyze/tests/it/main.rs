@@ -93,6 +93,7 @@ mod protocol_counted_steps;
 mod protocol_footprints;
 mod protocol_projection;
 mod protocol_realizability;
+mod protocol_replay_mode;
 mod protocol_roles;
 mod protocol_step_view;
 mod protocol_system;
@@ -109,6 +110,7 @@ mod reduction_differential;
 mod reduction_manifest;
 mod reduction_proptest;
 mod reduction_world;
+mod reference_literal_binding;
 #[path = "../../../tests/support/refinement_aux.rs"]
 mod refinement_aux;
 mod refinement_auxiliary;

@@ -76,6 +76,21 @@ that show it, or `pending`.
 | Requirement, one per `requires temporal` clause | the clause holds over the recording read as its trace subject (FR-283) |
 | Closure, one per protocol instance | `finish` is observed and the closure record is `closed` with every required premise (FSpec FR-059-AC-5) |
 
+**Causal order and misorder.** The recording's causal order is the
+transitive closure of each role's local order joined with the message
+correlations (FSpec FR-737), and nothing else: the position of an
+observation in the `observations` array never orders it, and a receive
+listed before its send in the array, with no other relation between them,
+is conforming. A pair of observations that lies on a cycle of that relation
+is misordered: when the target of a communication or edge precedes its
+source through local order and some other correlation, while the
+correlation itself orders the source first, the pair's causal-order
+obligation is `violated` with cause `misordered`, naming both observations,
+the item settles `refuted`, and the counterexample's `trace_position` is the
+index of the receiving (target) observation. A cycle is the only way two
+observations can be out of causal order, because a relation with no cycle
+always has an order consistent with it.
+
 **Pending, never passed.** An obligation whose deciding observation is not
 in the recording is `pending` while the closure record is not `closed`, and
 `violated` with cause `missing` once it is `closed`. A recording that stops
@@ -113,11 +128,12 @@ looking like success, which FSpec FR-059-AC-3 requires.
 | ID | Criteria | Verification |
 | --- | --- | --- |
 | FR-895-AC-1 | A closed recording of the FR-636 order fixture (`Placed`, `Got`, `Ship`, `finish`) in which every obligation holds settles `proved`, and every obligation's verdict is `satisfied`. | Test (TC-2530) |
-| FR-895-AC-2 | A recording in which `Seller`'s local order has `Got` before `Buyer` sends `Placed`, correlated as one message, gives the causal-order obligation of `Placed`/`Got` `violated`, cause `misordered`, naming both observations. The item settles `refuted` with `trace_position` at `Got`'s index. | Test (TC-2530) |
+| FR-895-AC-2 | Over the order fixture extended with a channel `Tell` from `Seller` to `Buyer` (`Seller` sends `Note` after `Got`, `Buyer` receives it as `Heard` before `Placed`), a closed recording whose observations are `Got` (0), `Note` (1), `Heard` (2) and `Placed` (3), with local order `Seller: [0, 1]`, `Buyer: [2, 3]` and correlations `3 → 0` and `1 → 2`, puts `Placed` and `Got` on a causal cycle: the causal-order obligation of `Placed`/`Got` is `violated`, cause `misordered`, naming observations 3 and 0, and the item settles `refuted` with `trace_position` 0, the index of `Got`. | Test (TC-2530) |
 | FR-895-AC-3 | The AC-1 recording cut after `Got`, with closure `open`, leaves the `choice` control and closure obligations `pending` and settles `inconclusive`, `open-history`, never `proved`. The same cut with closure `closed` makes them `violated`, cause `missing`. | Test (TC-2530) |
 | FR-895-AC-4 | A recording that names a role `Courier` the protocol does not declare is refused `invalid_runtime_input`/`missing-name` naming `Courier` and the observation's index, before any verdict. | Test (TC-2531) |
-| FR-895-AC-5 | A recording in which `Seller` sends a message on `Tell` at a point where the protocol enables no send gives that observation's enabledness obligation `violated`, cause `unexpected`, and settles `refuted`. | Test (TC-2531) |
+| FR-895-AC-5 | Over the AC-2 protocol, a recording in which `Seller` sends `Note` on `Tell` before any `Got` is observed, a point where the protocol enables no send of `Seller`, gives that observation's enabledness obligation `violated`, cause `unexpected`, and settles `refuted`. | Test (TC-2531) |
 | FR-895-AC-6 | A compensation `within [0, 120]` on clock `c`, whose recorded first attempt has a reading of 130 on `c`, gives the window obligation `violated`. With the reading absent and closure `open`, the obligation is `pending`. Batch and incremental assessment of each recording give equal verdicts. | Test (TC-2531) |
+| FR-895-AC-7 | The closed AC-1 recording with `Got` listed before `Placed` in its `observations` array, its local orders and correlations unchanged (the `Placed` to `Got` correlation being the only relation between the two), has no causal cycle: every obligation is `satisfied`, the item settles `proved`, and the verdicts equal those of the AC-1 recording. | Test (TC-2815) |
 
 ## Dependencies
 

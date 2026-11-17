@@ -110,7 +110,7 @@ fn population_type_references_reject_malformed_maxima_at_the_offending_token() {
         (
             "Population<M::Order>[1e3]",
             "1e3",
-            CompleteCause::UnexpectedToken,
+            CompleteCause::InvalidToken,
         ),
         (
             "Population<M::Order>[*]",
@@ -297,4 +297,50 @@ fn model_sources_keep_the_existing_budget_refusals() {
     )
     .unwrap_err();
     assert_eq!(refusal.code, CompleteCode::StageLimitExceeded);
+}
+
+/// FR-1000-AC-1 (TC-2833): `M::T#"s1"` parses as one reference-literal node
+/// and formats unchanged; a literal with no quoted key or no type refuses at
+/// the offending token.
+#[trace("TC-2833", "FR-1000-AC-1", "FSpec-TC-965", "FSpec-FR-480-AC-1")]
+#[test]
+#[ignore = "QSL-2166: the reference-literal production is not in the grammar yet"]
+fn a_reference_literal_parses_as_one_node() {
+    let literal = "M::T#\"s1\"";
+    let text = source(&format!("self = {literal}"));
+    let parsed = parse(&text, Limits::default());
+    assert!(parsed.is_admissible(), "{:?}", parsed.diagnostics());
+    assert_eq!(parsed.cst().render(), text.as_bytes());
+    let start = text.find(literal).unwrap();
+    let literals: Vec<Span> = parsed
+        .cst()
+        .nodes()
+        .iter()
+        .filter(|node| format!("{:?}", node.production()) == "ReferenceLiteral")
+        .map(|node| node.span())
+        .collect();
+    assert_eq!(
+        literals,
+        [Span {
+            start,
+            end: start + literal.len()
+        }]
+    );
+    let formatted = fsl_cst::format::format(&parsed).expect("formats");
+    let reparsed = parse(&formatted, Limits::default());
+    assert_eq!(
+        fsl_cst::format::format(&reparsed).expect("formats again"),
+        formatted
+    );
+    for (malformed, offending) in [("M::T#s1", "s1"), ("M::T#", "}"), ("#\"s1\"", "#")] {
+        let text = source(&format!("self = {malformed}"));
+        let parsed = parse(&text, Limits::default());
+        assert!(!parsed.is_admissible(), "{malformed}");
+        let diagnostic = parsed.diagnostics().first().expect("a diagnostic");
+        assert_eq!(diagnostic.code, CompleteCode::InvalidSyntax, "{malformed}");
+        let region = diagnostic.region.as_ref().expect("a located diagnostic");
+        let from = text.find(malformed).unwrap();
+        let at = from + text[from..].find(offending).unwrap();
+        assert_eq!(usize::try_from(region.start()).unwrap(), at, "{malformed}");
+    }
 }

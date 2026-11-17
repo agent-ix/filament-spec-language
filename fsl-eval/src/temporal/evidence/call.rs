@@ -537,6 +537,7 @@ fn admit_progress(
         .map(|position| ObservedPosition {
             identity: position.observation.identity.clone(),
             stamp: position.position,
+            fingerprint: None,
         })
         .collect();
     let assertion = ProgressAssertion {
