@@ -4152,7 +4152,7 @@ impl<'a> Typer<'a> {
             (ValueType::Rational(l), ValueType::Rational(r), _) => {
                 let domain = match hint {
                     Some(ValueType::Rational(expected)) => expected.clone(),
-                    _ => super::facts::rational_result_of(l, operator, r),
+                    _ => l.result_of(operator, r),
                 };
                 (
                     NodeKind::Rational {

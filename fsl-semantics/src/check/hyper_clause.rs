@@ -3155,6 +3155,7 @@ fn encode_type_form(root: &fsl_forms::TypeForm) -> Vec<u8> {
                     fsl_forms::BuiltinType::Text => "text",
                     fsl_forms::BuiltinType::Option => "option",
                     fsl_forms::BuiltinType::Reference => "reference",
+                    fsl_forms::BuiltinType::Map => "map",
                     fsl_forms::BuiltinType::Quantity => "quantity",
                     fsl_forms::BuiltinType::Clock => "clock",
                 };
@@ -3787,5 +3788,14 @@ mod tests {
         let second = encode_expression(&second, Swap(None, None), &[]).root;
 
         assert_ne!(swapped_first, second);
+    }
+
+    #[test]
+    fn map_type_form_has_a_distinct_copy_swap_encoding() {
+        let span = Span { start: 0, end: 0 };
+        let map = fsl_forms::TypeForm::builtin(fsl_forms::BuiltinType::Map, span);
+        let option = fsl_forms::TypeForm::builtin(fsl_forms::BuiltinType::Option, span);
+
+        assert_ne!(encode_type_form(&map), encode_type_form(&option));
     }
 }
