@@ -397,6 +397,7 @@ fn spelling(form: &TypeForm) -> String {
                 BuiltinType::Float64 => "Float64",
                 BuiltinType::Text => "Text",
                 BuiltinType::Option => "Option",
+                BuiltinType::Map => "Map",
                 BuiltinType::Reference => "Reference",
                 BuiltinType::Quantity => "Quantity",
                 BuiltinType::Clock => "ix://filament/native/Clock",

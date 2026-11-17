@@ -945,6 +945,46 @@ mod tests {
         }
     }
 
+    /// FR-680-AC-3 (TC-1822): a source map resolves its scalar key, value and
+    /// cardinality bound; a collection key is refused as operator-ineligible.
+    #[trace("FR-680-AC-3", "TC-1822")]
+    #[test]
+    fn source_map_type_resolves_and_requires_a_scalar_key() {
+        let map = TypeForm::builtin(BuiltinType::Map, SPAN)
+            .with_arguments(vec![
+                builtin(BuiltinType::Int, &["0", "3"]),
+                builtin(BuiltinType::Integer, &[]),
+            ])
+            .with_bounds(vec!["0".to_owned(), "4".to_owned()]);
+        let resolved = resolve(&map).expect("a bounded source map with scalar key resolves");
+        let ValueType::Map(resolved) = resolved else {
+            panic!("map type, not {resolved:?}");
+        };
+        assert_eq!(
+            resolved.key(),
+            &ValueType::Int(IntegerInterval::new(0.into(), 3.into()).expect("ordered bounds"))
+        );
+        assert_eq!(resolved.values(), &ValueType::Integer);
+        assert_eq!(
+            resolved.bound(),
+            Some(CardinalityBound::new(0, 4).expect("ordered bounds"))
+        );
+
+        let nested_key = TypeForm::new(TypeFormHead::Collection(CollectionKind::Sequence), SPAN)
+            .with_arguments(vec![builtin(BuiltinType::Integer, &[])]);
+        let invalid = TypeForm::builtin(BuiltinType::Map, SPAN)
+            .with_arguments(vec![nested_key, builtin(BuiltinType::Integer, &[])]);
+        let refusal = resolve(&invalid).expect_err("a collection map key is refused");
+        assert!(
+            matches!(
+                refusal.cause,
+                CheckCause::IllTyped(IllTypedCause::OperatorIneligible)
+            ),
+            "unexpected cause: {:?}",
+            refusal.cause
+        );
+    }
+
     fn builtin(builtin: BuiltinType, bounds: &[&str]) -> TypeForm {
         TypeForm::builtin(builtin, SPAN)
             .with_bounds(bounds.iter().map(|bound| (*bound).to_owned()).collect())
