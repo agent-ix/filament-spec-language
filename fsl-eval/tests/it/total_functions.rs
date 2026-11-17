@@ -504,7 +504,7 @@ fn p04_division_presence_and_reduction_need_static_proofs() {
         if_then(
             binary(
                 BinaryOperator::GreaterOrEqual,
-                Expression::size(name("s")),
+                Expression::size(name("s"), None),
                 literal(1),
             ),
             reduce_total("s"),
@@ -809,7 +809,7 @@ fn p08_measures_decrease_lexicographically_by_accepted_forms() {
         MeasureObligation::Decrease
     );
 
-    let size = || Expression::size(name("s"));
+    let size = || Expression::size(name("s"), None);
     let cardinality = function(
         "g",
         &[("s", sequence(0, 3))],

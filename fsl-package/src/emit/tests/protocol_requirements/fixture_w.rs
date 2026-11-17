@@ -130,8 +130,8 @@ on each (opened: M::OrderStarted) {
   terminal any;
   scheduling adversarial;
   run sequence Main {
-    send Requested via Charges as (sent: M::ChargeRequest) { sent.order = order };
-    receive Received via Charges of Requested as (got: M::ChargeRequest) { got.order = order };
+    send Requested via Charges as (sent: M::ChargeRequest) { sent.order = order and sent.ok = true };
+    receive Received via Charges of Requested as (got: M::ChargeRequest) { got.order = order and got.ok = sent.ok };
     attempt Charged by Payments on M::Payment::charge contracts [CanCharge,ChargePost]
       as (charge: M::ChargeResult) { true };
     effect Applied of Charged as (paid: M::ChargeResult) { true };
@@ -141,11 +141,11 @@ on each (opened: M::OrderStarted) {
       branch west attempt West by Fulfillment on M::Shipment::dispatch contracts []
         as (westRes: M::ShipmentResult) { true };
     } join all [east,west];
-    choice Outcome by Fulfillment visible (eastRes.ok) {
-      case shipped when { eastRes.ok } check Done using v { true };
-      case failed when { not eastRes.ok } check Failed using v { true };
+    choice Outcome by Payments visible (got.ok) {
+      case shipped when { got.ok } check Done using v { true };
+      case failed when { not got.ok } check Failed using v { true };
     }
-    repeat Poll by Fulfillment visible (eastRes.ok) max 3 while { eastRes.ok }
+    repeat Poll by Payments visible (got.ok) max 3 while { got.ok }
       attempt Polled by Fulfillment on M::Shipment::poll contracts []
         as (polled: M::ShipmentResult) { true };
       exhausted check Limit using v { true };

@@ -890,6 +890,21 @@ pub(crate) fn validate_state_element(node: NodeRef<'_>) -> Result<(), CauseCodec
     validate_element_shape(node).map_err(|_| CauseCodecError::Shape("deciding_element"))
 }
 
+/// FR-269's element encoding of `value`, as the canonical JSON text a carried
+/// clause state writes a capture in (FR-820 "Bytes"); `None` when a
+/// `quire-canonical` limit or number bound refuses it.
+pub(crate) fn encode_state_value(value: &Value) -> Option<String> {
+    encode_element(value).ok().map(|raw| raw.get().to_owned())
+}
+
+/// The value [`encode_state_value`] wrote, read against `package`'s admitted
+/// declarations; `None` for text that is not one closed element form.
+pub(crate) fn decode_state_value(package: &CheckedPackage, text: &str) -> Option<Value> {
+    let document = quire_canonical::read(text.as_bytes(), u64::MAX).ok()?;
+    validate_element_shape(document.root()).ok()?;
+    decode_element(document.root(), Keys::new(package)).ok()
+}
+
 /// FSpec FR-352's `witness` on a protocol-analysis record: FR-351's protocol
 /// family, with no `quantifier` and no `index` (members the closed shape
 /// refuses), a `deciding_element` holding a node id's canonical text, a

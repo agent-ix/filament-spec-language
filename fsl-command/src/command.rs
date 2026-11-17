@@ -15,13 +15,13 @@ mod tl;
 mod wire;
 
 pub use analyze::{
-    AnalyzeInput, PreparedAnalyze, analyze, analyze_with_limits, analyze_with_providers,
-    analyze_with_providers_and_limits, prepare_analyze,
+    analyze, analyze_with_limits, analyze_with_providers, analyze_with_providers_and_limits,
+    prepare_analyze, AnalyzeInput, PreparedAnalyze,
 };
-pub use flow::{FlowAnalyzeError, analyze_flow_report};
-pub use monitor::{MonitorEvent, MonitorSummary, monitor};
+pub use flow::{analyze_flow_report, FlowAnalyzeError};
+pub use monitor::{monitor, MonitorEvent, MonitorSummary};
 pub use output::NativeResult;
-pub use tl::{AtomMapping, TlRecord, record as tl_record};
+pub use tl::{record as tl_record, AtomMapping, TlRecord};
 
 use crate::formal_source::FormalSource;
 use filament_contract_model as ir;
@@ -42,7 +42,7 @@ const REQUEST_BYTES: usize = 1_048_576;
 const TOTAL_BYTES: usize = 8_388_608;
 const FILES: usize = 64;
 
-/// Caller byte ceilings for one `run` invocation (FR-312).
+/// Caller byte ceilings for one `run` or `compile` invocation (FR-312, FR-869).
 #[derive(Clone, Copy, Debug)]
 pub struct RunLimits {
     /// Maximum bytes in the request file.
@@ -70,6 +70,8 @@ pub enum FileCategory {
     Model,
     /// Clause observation artifacts.
     Observation,
+    /// Extension definition documents.
+    Extension,
 }
 
 impl FileCategory {
@@ -79,6 +81,7 @@ impl FileCategory {
             Self::Program => "programs",
             Self::Model => "models",
             Self::Observation => "observations",
+            Self::Extension => "extensions",
         }
     }
 }
@@ -88,6 +91,7 @@ struct FileCounts {
     programs: usize,
     models: usize,
     observations: usize,
+    extensions: usize,
 }
 
 /// Command intake ceiling that stopped selected-file processing.
@@ -116,6 +120,11 @@ pub enum LimitKind {
         /// The effective aggregate dependent byte ceiling.
         maximum: usize,
     },
+    /// One selected observation exceeded its document byte ceiling.
+    ObservationDocumentBytes {
+        /// Effective observation document byte ceiling.
+        maximum: usize,
+    },
     /// Total selected file count.
     SelectedFiles {
         /// Group that could not be charged.
@@ -136,6 +145,7 @@ impl LimitKind {
             Self::FileBytes => "file bytes",
             Self::RequestBytes { .. } | Self::FixedRequestBytes { .. } => "request_bytes",
             Self::DependentBytes { .. } | Self::FixedDependentBytes { .. } => "dependent_bytes",
+            Self::ObservationDocumentBytes { .. } => "observation.document_bytes",
             Self::SelectedFiles { .. } => "selected files",
         }
     }
@@ -161,6 +171,14 @@ pub struct RunResult {
     /// FR-963: the settled requirement items of a call that carried
     /// `requirements`; `None` exactly when it carried none.
     pub requirements: Option<RequirementResults>,
+    sources: crate::Sources,
+}
+
+impl RunResult {
+    /// Sources admitted while producing this run outcome (FR-865).
+    pub fn sources(&self) -> &crate::Sources {
+        &self.sources
+    }
 }
 
 /// The settled requirement items of a run call (FR-963), one record per
@@ -182,6 +200,335 @@ pub struct CompileOutcome {
     document: fsl_replay::OutcomeDocument,
     handoff_compiled: Option<crate::emit_checked_v2::Compiled>,
     handoff_temporal_selections: Vec<crate::emit_checked_v2::ClockSelection>,
+    sources: crate::Sources,
+}
+
+/// Caller-selected model/library files and stage ceilings for `check` (FR-866).
+#[derive(Clone, Debug)]
+pub struct CheckInputs {
+    /// Model selections in command-line order.
+    pub models: Vec<(String, PathBuf)>,
+    /// Library selections in command-line order.
+    pub libraries: Vec<(String, PathBuf)>,
+    /// Request-supplied extension definition documents for `check`.
+    pub extensions: Vec<CheckExtensionInput>,
+    /// Optional caller-admitted integer-division law.
+    pub integer_division: Option<fsl_replay::AdmittedIntegerDivision>,
+    /// Check-stage limits.
+    pub limits: fsl_replay::spine::SpineLimits,
+    /// Aggregate ceiling for the selected model and library files.
+    pub dependent_bytes: usize,
+}
+
+impl Default for CheckInputs {
+    fn default() -> Self {
+        Self {
+            models: Vec::new(),
+            libraries: Vec::new(),
+            extensions: Vec::new(),
+            integer_division: None,
+            limits: fsl_replay::spine::SpineLimits::default(),
+            dependent_bytes: TOTAL_BYTES,
+        }
+    }
+}
+
+/// One extension definition selected by the source-only `check` API.
+#[derive(Clone, Debug)]
+pub struct CheckExtensionInput {
+    /// Definition authority.
+    pub authority: String,
+    /// Definition identity.
+    pub identity: String,
+    /// Definition document path, resolved from the current directory.
+    pub file: PathBuf,
+    /// Exact dependency authority and identity pairs.
+    pub depends_on: Vec<(String, String)>,
+    /// Complete-V1 capabilities declared by this definition.
+    pub capabilities: Vec<String>,
+}
+
+/// Check document and the source values admitted while producing it (FR-865, FR-866).
+#[derive(Debug)]
+pub struct CheckOutcome {
+    document: fsl_replay::OutcomeDocument,
+    sources: crate::Sources,
+}
+
+impl CheckOutcome {
+    /// The FR-286 check outcome document.
+    pub fn document(&self) -> &fsl_replay::OutcomeDocument {
+        &self.document
+    }
+
+    /// Sources admitted while producing this check outcome (FR-865).
+    pub fn sources(&self) -> &crate::Sources {
+        &self.sources
+    }
+}
+
+/// Check one source against the model and library files it selects (FR-866).
+/// All selected files pass through the same bounded admission used by compile.
+pub fn check_outcome(source_path: &Path, inputs: &CheckInputs) -> CheckOutcome {
+    let result = check_outcome_inner(source_path, inputs);
+    match result {
+        Ok((document, sources)) => CheckOutcome { document, sources },
+        Err((cause, sources)) => {
+            let document = RunError { cause }.outcome_document(fsl_replay::Operation::Check);
+            CheckOutcome { document, sources }
+        }
+    }
+}
+
+fn check_outcome_inner(
+    source_path: &Path,
+    inputs: &CheckInputs,
+) -> std::result::Result<(fsl_replay::OutcomeDocument, crate::Sources), (RunCause, crate::Sources)>
+{
+    let mut intake = intake_with_bytes(
+        Path::new("."),
+        FileCounts {
+            programs: inputs.libraries.len().saturating_add(1),
+            models: inputs.models.len(),
+            observations: 0,
+            extensions: inputs.extensions.len(),
+        },
+        inputs.dependent_bytes,
+    )
+    .map_err(|cause| (cause, crate::Sources::default()))?;
+    let run = (|| -> Result<fsl_replay::OutcomeDocument> {
+        validate_check_selections(&inputs.models, "--model")?;
+        validate_check_selections(&inputs.libraries, "--library")?;
+        let extensions = inputs
+            .extensions
+            .iter()
+            .map(|extension| wire::Extension {
+                authority: extension.authority.clone(),
+                identity: extension.identity.clone(),
+                file: extension.file.to_string_lossy().into_owned(),
+                depends_on: extension
+                    .depends_on
+                    .iter()
+                    .map(|(authority, identity)| wire::DefinitionReference {
+                        authority: authority.clone(),
+                        identity: identity.clone(),
+                    })
+                    .collect(),
+                capabilities: extension.capabilities.clone(),
+            })
+            .collect::<Vec<_>>();
+        validate_extension_entries(&extensions)?;
+
+        let source = intake.source(
+            &check_source_file(source_path, "check-source", "CheckSource"),
+            "source",
+        )?;
+        let extension_catalog = extension_catalog(&extensions, &mut intake)?;
+        let cancel = filament_exact::Cancel::new();
+        let parsed = match fsl_replay::spine::parse_selecting_extensions(
+            &fsl_replay::spine::ParseRequest {
+                source: source.source().identity(),
+                path: source.source().path(),
+                bytes: source.source().text().as_bytes(),
+            },
+            fsl_replay::spine::ProfileCatalogInput {
+                catalog: &extension_catalog,
+                limits: fsl_semantics::library::bundle::PackageLimits::default(),
+            },
+            inputs.limits.source,
+            &cancel,
+        ) {
+            Ok(parsed) => parsed.into_value(),
+            Err(failure) => {
+                return Ok(fsl_replay::OutcomeDocument::from_check(&Err(failure)));
+            }
+        };
+
+        let declared_models: std::collections::BTreeSet<_> = parsed
+            .unit()
+            .selections()
+            .models
+            .iter()
+            .map(|selection| selection.identity.as_str())
+            .collect();
+        let declared_libraries: std::collections::BTreeSet<_> = parsed
+            .unit()
+            .selections()
+            .imports
+            .iter()
+            .map(|selection| selection.identity.as_str())
+            .collect();
+        reject_unselected_check_inputs(&inputs.models, "--model", &declared_models)?;
+        reject_unselected_check_inputs(&inputs.libraries, "--library", &declared_libraries)?;
+
+        let models = inputs
+            .models
+            .iter()
+            .map(|(identity, path)| {
+                Ok(wire::Model {
+                    format: DOMAIN_PACKAGE_PROFILE.to_owned(),
+                    source: check_source_file(path, identity, "CheckModel"),
+                })
+            })
+            .collect::<Result<Vec<_>>>()?;
+        let model_documents = models
+            .iter()
+            .map(|model| intake.source(&model.source, "models"))
+            .collect::<Result<Vec<_>>>()?;
+        let packages = fsl_semantics::model::intake::package_input(
+            model_documents
+                .iter()
+                .map(|document| document.source().text().as_bytes()),
+        )
+        .map_err(|refusal| RunCause::ClauseRequest {
+            member: "models".to_owned(),
+            reason: refusal.detail,
+        })?;
+        let admitted_models =
+            match fsl_replay::spine::select(&parsed, &packages, inputs.limits.model, &cancel) {
+                Ok(models) => models.into_value(),
+                Err(failure) => {
+                    let document = fsl_replay::OutcomeDocument::from_check(&Err(failure));
+                    return Ok(check_missing_model_help(document, &parsed, &inputs.models));
+                }
+            };
+
+        let libraries = inputs
+            .libraries
+            .iter()
+            .map(|(identity, path)| {
+                let source = intake.source(
+                    &check_source_file(path, identity, "CheckLibrary"),
+                    "libraries",
+                )?;
+                Ok(fsl_replay::spine::SuppliedLibrary {
+                    identity: identity.clone(),
+                    source: source.source().identity().clone(),
+                    path: source.source().path().to_owned(),
+                    bytes: source.source().text().as_bytes().to_vec(),
+                })
+            })
+            .collect::<Result<Vec<_>>>()?;
+        let dependencies = match fsl_replay::spine::DependencyInput::new(libraries) {
+            Ok(dependencies) => dependencies,
+            Err(refusal) => {
+                let failure = fsl_replay::spine::FrontEndFailure::Refused(Box::new(
+                    fsl_replay::spine::CompileRefusal::DependencyInput(refusal),
+                ));
+                return Ok(fsl_replay::OutcomeDocument::from_check(&Err(failure)));
+            }
+        };
+        let checked = if let Some(integer_division) = &inputs.integer_division {
+            fsl_replay::spine::check_with_integer_division(
+                &parsed,
+                package_name(source.source().identity()),
+                &admitted_models,
+                &dependencies,
+                integer_division,
+                inputs.limits,
+                &cancel,
+            )
+        } else {
+            fsl_replay::spine::check(
+                &parsed,
+                package_name(source.source().identity()),
+                &admitted_models,
+                &dependencies,
+                inputs.limits,
+                &cancel,
+            )
+        };
+        Ok(fsl_replay::OutcomeDocument::from_check(&checked))
+    })();
+    let sources = crate::Sources::from_sources(intake.sources);
+    run.map(|document| (document, sources.clone()))
+        .map_err(|cause| (cause, sources))
+}
+
+fn check_missing_model_help(
+    document: fsl_replay::OutcomeDocument,
+    parsed: &fsl_replay::spine::ParsedUnitSource,
+    supplied: &[(String, PathBuf)],
+) -> fsl_replay::OutcomeDocument {
+    let Some(diagnostic) = document.diagnostics().first() else {
+        return document;
+    };
+    if diagnostic.code() != Code::MissingImport.as_str()
+        || diagnostic.cause() != Some("missing-selection")
+    {
+        return document;
+    }
+    let Some(missing) = parsed.unit().selections().models.iter().find(|model| {
+        !supplied
+            .iter()
+            .any(|(identity, _)| identity == &model.identity)
+    }) else {
+        return document;
+    };
+    let message = format!(
+        "{}; supply --model {}=<file> or the compile request's models member",
+        diagnostic.message(),
+        missing.identity
+    );
+    fsl_replay::OutcomeDocument::new(
+        fsl_replay::Operation::Check,
+        Some(fsl_replay::OutcomeStage::I1),
+        document.category(),
+    )
+    .with_diagnostics(vec![fsl_replay::OutcomeDiagnostic::new(
+        diagnostic.cause(),
+        diagnostic.code(),
+        diagnostic.locus().cloned(),
+        message,
+    )])
+}
+
+fn validate_check_selections(selections: &[(String, PathBuf)], option: &str) -> Result<()> {
+    let mut identities = std::collections::BTreeSet::new();
+    for (identity, path) in selections {
+        if identity.is_empty() || path.as_os_str().is_empty() {
+            return Err(RunCause::ClauseRequest {
+                member: option.to_owned(),
+                reason: format!("invalid selection {identity}={}", path.display()),
+            });
+        }
+        if !identities.insert(identity) {
+            return Err(RunCause::ClauseRequest {
+                member: option.to_owned(),
+                reason: format!("identity {identity} was selected more than once"),
+            });
+        }
+    }
+    Ok(())
+}
+
+fn reject_unselected_check_inputs(
+    selections: &[(String, PathBuf)],
+    option: &str,
+    declared: &std::collections::BTreeSet<&str>,
+) -> Result<()> {
+    if let Some((identity, _)) = selections
+        .iter()
+        .find(|(identity, _)| !declared.contains(identity.as_str()))
+    {
+        return Err(RunCause::ClauseRequest {
+            member: option.to_owned(),
+            reason: format!("{option} {identity} is not selected by the source"),
+        });
+    }
+    Ok(())
+}
+
+fn check_source_file(path: &Path, identity: &str, document: &str) -> wire::SourceFile {
+    wire::SourceFile {
+        file: path.to_string_lossy().into_owned(),
+        identity: wire::Identity {
+            authority: "fsl-command".to_owned(),
+            identity: identity.to_owned(),
+            document: document.to_owned(),
+            formal_revision: 1,
+        },
+    }
 }
 
 impl CompileOutcome {
@@ -194,6 +541,11 @@ impl CompileOutcome {
     pub fn document(&self) -> &fsl_replay::OutcomeDocument {
         &self.document
     }
+
+    /// Sources admitted while compiling this outcome (FR-865).
+    pub fn sources(&self) -> &crate::Sources {
+        &self.sources
+    }
 }
 
 /// Prepared function input retained with its native source correspondence.
@@ -203,9 +555,11 @@ pub struct PreparedFunctionRun {
 
 struct FunctionRunData {
     source: FormalSource,
+    models: Vec<FormalSource>,
     libraries: Vec<FormalSource>,
     packages: fsl_semantics::model::intake::PackageInput,
     dependencies: fsl_replay::spine::DependencyInput,
+    extension_catalog: Option<fsl_semantics::library::bundle::DefinitionCatalog>,
     call: fsl_replay::spine::Call,
     /// FR-960: the call's `requirements`; `None` settles no item.
     requirements: Option<requirements::Requirements>,
@@ -361,6 +715,9 @@ pub enum RunCause {
     /// The request's `libraries` are refused before any library is read.
     #[error("the request's libraries are refused: {0}")]
     Libraries(LibrarySelection),
+    /// The request's extension definition catalog is invalid.
+    #[error("the request's extension definitions are refused: {0}")]
+    ExtensionCatalog(String),
     /// Spine compile of a `1-draft` program refused at one stage.
     #[error("{}", .0.refusal)]
     Spine(Box<SpineFailure>),
@@ -544,6 +901,7 @@ impl RunCause {
             | Self::EmptyCompileProgram => Code::InvalidRequest,
             Self::ExtractionRequiresRun => Code::ExtractionRequiresRun,
             Self::Spine(failure) => failure.refusal.code(),
+            Self::ExtensionCatalog(_) => Code::InvalidPackage,
             Self::SpineRun(refusal) => refusal.code(),
             Self::UnknownRequirementClaim { .. } => Code::MissingDeclaration,
             Self::TemporalCorrection(_) => Code::InvalidRuntimeInput,
@@ -713,6 +1071,7 @@ impl RunError {
             | RunCause::ExtractionRequiresRun
             | RunCause::EmptyCompileProgram
             | RunCause::Libraries(_)
+            | RunCause::ExtensionCatalog(_)
             | RunCause::CompleteRunSelection(_)
             | RunCause::AnalyzeRequest { .. }
             | RunCause::AnalyzeUniverse(_)
@@ -768,6 +1127,9 @@ impl RunError {
             RunCause::Limit(LimitKind::FixedDependentBytes { maximum }) => {
                 format!("dependent_bytes limit {maximum} exceeded")
             }
+            RunCause::Limit(LimitKind::ObservationDocumentBytes { maximum }) => {
+                format!("observation.document_bytes limit {maximum} exceeded; raise --limit observation.document_bytes")
+            }
             RunCause::Limit(LimitKind::SelectedFiles {
                 category,
                 requested,
@@ -820,6 +1182,7 @@ struct Intake<'a> {
     maximum: usize,
     dependent_limit: Option<DependentLimit>,
     prefetched_observations: std::collections::BTreeMap<String, Vec<u8>>,
+    sources: Vec<Source>,
 }
 
 #[derive(Clone, Copy)]
@@ -834,6 +1197,42 @@ impl Intake<'_> {
             return Ok(bytes);
         }
         self.bounded_file(path, ceiling)
+    }
+
+    fn observation_file(&mut self, path: &str, ceiling: usize) -> Result<Vec<u8>> {
+        if let Some(bytes) = self.prefetched_observations.remove(path) {
+            if bytes.len() > ceiling {
+                return Err(RunCause::Limit(LimitKind::ObservationDocumentBytes {
+                    maximum: ceiling,
+                }));
+            }
+            return Ok(bytes);
+        }
+        let remaining = self.remaining;
+        let bytes =
+            read_file(&self.directory.join(path), ceiling.min(remaining)).map_err(|cause| {
+                match cause {
+                    RunCause::Limit(LimitKind::FileBytes) if ceiling <= remaining => {
+                        RunCause::Limit(LimitKind::ObservationDocumentBytes { maximum: ceiling })
+                    }
+                    RunCause::Limit(LimitKind::FileBytes) => match self.dependent_limit {
+                        Some(DependentLimit::CallerConfigured) => {
+                            RunCause::Limit(LimitKind::DependentBytes {
+                                maximum: self.maximum,
+                            })
+                        }
+                        Some(DependentLimit::Fixed) => {
+                            RunCause::Limit(LimitKind::FixedDependentBytes {
+                                maximum: self.maximum,
+                            })
+                        }
+                        None => RunCause::Limit(LimitKind::FileBytes),
+                    },
+                    cause => cause,
+                }
+            })?;
+        self.remaining -= bytes.len();
+        Ok(bytes)
     }
 
     fn bounded_file(&mut self, path: &str, ceiling: usize) -> Result<Vec<u8>> {
@@ -877,6 +1276,7 @@ impl Intake<'_> {
                     diagnostic: fsl_cst::diagnostic::source_refusal(*refusal, self.maximum),
                 }))
             })?;
+        self.sources.push(source.clone());
         Ok(FormalSource::new(source, identity.formal))
     }
 }
@@ -1043,7 +1443,13 @@ fn run_configured(
             // FR-862: a `native-replay/1` request replays its FR-336 request.
             replay::run_bytes(directory, bytes, limits.dependent_bytes).map(Some)
         } else {
-            items::run_bytes(directory, bytes, limits, overrides, &settle)
+            if let Some(result) = version_argv(bytes)? {
+                Ok(Some(result))
+            } else if let Some(result) = check_argv(directory, bytes)? {
+                Ok(Some(result))
+            } else {
+                items::run_bytes(directory, bytes, limits, overrides, &settle)
+            }
         }
     })?;
     if let Some(result) = special {
@@ -1051,6 +1457,191 @@ fn run_configured(
     }
     let prepared = prepare_run_with_overrides(path, limits, overrides)?;
     execute_prepared(prepared, &settle).map_err(|cause| Box::new(RunError { cause }))
+}
+
+/// FR-661: handle the driver's in-process `version` invocation used by the
+/// command harness. The binary driver owns argv parsing at its process
+/// boundary; this entry accepts the exact JSON adapter shape used by FSL's
+/// tests and returns the same inventory document.
+fn version_argv(bytes: &[u8]) -> Result<Option<RunResult>> {
+    let value: serde_json::Value = match serde_json::from_slice(bytes) {
+        Ok(value) => value,
+        Err(_) => return Ok(None),
+    };
+    let Some(arguments) = value.get("argv") else {
+        return Ok(None);
+    };
+    let arguments: Vec<&str> = arguments
+        .as_array()
+        .ok_or_else(|| RunCause::ClauseRequest {
+            member: "argv".to_owned(),
+            reason: "expected an array of strings".to_owned(),
+        })?
+        .iter()
+        .map(|argument| {
+            argument.as_str().ok_or_else(|| RunCause::ClauseRequest {
+                member: "argv".to_owned(),
+                reason: "expected an array of strings".to_owned(),
+            })
+        })
+        .collect::<Result<_>>()?;
+    if arguments.first().copied() != Some("version") {
+        return Ok(None);
+    }
+
+    let lists = ["editions", "profiles", "families", "features", "consumers"];
+    let mut format = None;
+    let mut kind = None;
+    let mut index = 1;
+    while index < arguments.len() {
+        match arguments[index] {
+            "--format" if format.is_none() && index + 1 < arguments.len() => {
+                format = Some(arguments[index + 1]);
+                index += 2;
+            }
+            "--kind" if kind.is_none() && index + 1 < arguments.len() => {
+                kind = Some(arguments[index + 1]);
+                index += 2;
+            }
+            member => {
+                return Err(RunCause::ClauseRequest {
+                    member: member.to_owned(),
+                    reason:
+                        "version accepts --format json and --kind followed by one inventory list"
+                            .to_owned(),
+                });
+            }
+        }
+    }
+    if format.is_some_and(|format| format != "json") {
+        return Err(RunCause::ClauseRequest {
+            member: "format".to_owned(),
+            reason: "version supports only json".to_owned(),
+        });
+    }
+    if let Some(kind) = kind {
+        if !lists.contains(&kind) {
+            return Err(RunCause::ClauseRequest {
+                member: kind.to_owned(),
+                reason: format!(
+                    "unknown inventory list; expected one of {}",
+                    lists.join(", ")
+                ),
+            });
+        }
+    }
+
+    let inventory = fsl_replay::build_inventory(&fsl_route::Registry::new());
+    let mut document = serde_json::to_value(inventory).map_err(RunCause::Output)?;
+    if let Some(kind) = kind {
+        let object = document
+            .as_object_mut()
+            .expect("inventory serializes as object");
+        object.retain(|name, _| name == "application" || name == "format" || name == kind);
+    }
+    Ok(Some(RunResult {
+        exit_code: 0,
+        value: NativeResult::version_document(document),
+        outcome: None,
+        requirements: None,
+        sources: crate::Sources::default(),
+    }))
+}
+
+#[derive(serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ExtensionSetFile {
+    format: String,
+    #[serde(deserialize_with = "wire::extensions")]
+    extensions: Vec<wire::Extension>,
+}
+
+/// FR-562: route the in-process `check --extensions` command surface to the
+/// source-only check API used by FSL's integration harness.
+fn check_argv(directory: &Path, bytes: &[u8]) -> Result<Option<RunResult>> {
+    let value: serde_json::Value = match serde_json::from_slice(bytes) {
+        Ok(value) => value,
+        Err(_) => return Ok(None),
+    };
+    let Some(arguments) = value.get("argv") else {
+        return Ok(None);
+    };
+    let arguments = arguments
+        .as_array()
+        .ok_or_else(|| RunCause::ClauseRequest {
+            member: "argv".to_owned(),
+            reason: "expected an array of strings".to_owned(),
+        })?
+        .iter()
+        .map(|argument| {
+            argument.as_str().ok_or_else(|| RunCause::ClauseRequest {
+                member: "argv".to_owned(),
+                reason: "expected an array of strings".to_owned(),
+            })
+        })
+        .collect::<Result<Vec<_>>>()?;
+    if arguments.first().copied() != Some("check") {
+        return Ok(None);
+    }
+    let (extensions, source) = match arguments.as_slice() {
+        ["check", source] => (Vec::new(), *source),
+        ["check", _authority, _name, source] => (Vec::new(), *source),
+        ["check", "--extensions", set_path, _authority, _name, source] => {
+            let set_bytes = read_file(&directory.join(set_path), TOTAL_BYTES)?;
+            let set: ExtensionSetFile = serde_json::from_slice(&set_bytes)?;
+            if set.format != "filament.extension-set/v1" {
+                return Err(RunCause::ClauseRequest {
+                    member: "format".to_owned(),
+                    reason: "expected filament.extension-set/v1".to_owned(),
+                });
+            }
+            let extensions = set
+                .extensions
+                .into_iter()
+                .map(|extension| CheckExtensionInput {
+                    authority: extension.authority,
+                    identity: extension.identity,
+                    file: directory.join(extension.file),
+                    depends_on: extension
+                        .depends_on
+                        .into_iter()
+                        .map(|dependency| (dependency.authority, dependency.identity))
+                        .collect(),
+                    capabilities: extension.capabilities,
+                })
+                .collect();
+            (extensions, *source)
+        }
+        _ => {
+            return Err(RunCause::ClauseRequest {
+                member: "argv".to_owned(),
+                reason: "check expects a source or --extensions <file> <authority> <name> <source>"
+                    .to_owned(),
+            });
+        }
+    };
+    let source_path = Path::new(source);
+    let source_path = if source_path.is_absolute() {
+        source_path.to_path_buf()
+    } else {
+        directory.join(source_path)
+    };
+    let outcome = check_outcome(
+        &source_path,
+        &CheckInputs {
+            extensions,
+            ..CheckInputs::default()
+        },
+    );
+    let exit_code = outcome.document().category().exit_code();
+    let document = serde_json::to_value(outcome.document()).map_err(RunCause::Output)?;
+    Ok(Some(RunResult {
+        exit_code,
+        value: NativeResult::check_document(document),
+        outcome: None,
+        requirements: None,
+        sources: crate::Sources::default(),
+    }))
 }
 
 /// Inspect a checked-package handoff and return the command's successful
@@ -1126,6 +1717,7 @@ pub fn read_clause_run_request(
                     .values()
                     .collect::<std::collections::BTreeSet<_>>()
                     .len(),
+                extensions: request.extensions.len(),
             },
         )?;
         reject_current_parameters_before_sources(&mut intake, request.clause.as_ref())?;
@@ -1143,7 +1735,12 @@ pub fn compile(path: &Path) -> std::result::Result<Vec<u8>, Box<RunError>> {
 
 /// Compile once, retaining the actual core outcome document and package bytes.
 pub fn compile_outcome(path: &Path) -> std::result::Result<CompileOutcome, Box<RunError>> {
-    compile_outcome_with_overrides(path, &RequestOverrides::default())
+    compile_outcome_inner(
+        path,
+        RunLimits::default(),
+        &RequestOverrides::default(),
+        false,
+    )
 }
 
 /// Compile, taking request members supplied beside the request file (FR-640).
@@ -1160,8 +1757,28 @@ pub fn compile_outcome_with_overrides(
     path: &Path,
     overrides: &RequestOverrides<'_>,
 ) -> std::result::Result<CompileOutcome, Box<RunError>> {
-    with_request(path, |directory, bytes| {
+    compile_outcome_inner(path, RunLimits::default(), overrides, false)
+}
+
+/// Compile with caller-configured request/dependent byte ceilings and request
+/// overrides, including stage limits (FR-869).
+pub fn compile_outcome_with_limits_and_overrides(
+    path: &Path,
+    run_limits: RunLimits,
+    overrides: &RequestOverrides<'_>,
+) -> std::result::Result<CompileOutcome, Box<RunError>> {
+    compile_outcome_inner(path, run_limits, overrides, true)
+}
+
+fn compile_outcome_inner(
+    path: &Path,
+    run_limits: RunLimits,
+    overrides: &RequestOverrides<'_>,
+    request_limit_is_configured: bool,
+) -> std::result::Result<CompileOutcome, Box<RunError>> {
+    let result = with_request_limits(path, run_limits.request_bytes, |directory, bytes| {
         let request: wire::CompileRequest = request_with_overrides(bytes, overrides)?;
+        validate_extension_entries(&request.extensions)?;
         if let Some(handoff) = &request.handoff {
             validate_handoff_request(handoff, request.program.sources.len())?;
             let destination = directory.join(&handoff.directory);
@@ -1183,20 +1800,22 @@ pub fn compile_outcome_with_overrides(
         if request.program.sources.is_empty() {
             return Err(RunCause::EmptyCompileProgram);
         }
-        let mut intake = intake_with_fixed_bytes(
-            directory,
-            FileCounts {
-                // A library source is a program source a `1-draft` program
-                // imports, and counts toward the same file limits (FR-027).
-                programs: request
-                    .libraries
-                    .len()
-                    .saturating_add(request.program.sources.len()),
-                models: request.models.len(),
-                observations: 0,
-            },
-            TOTAL_BYTES,
-        )?;
+        let counts = FileCounts {
+            // A library source is a program source a `1-draft` program
+            // imports, and counts toward the same file limits (FR-027).
+            programs: request
+                .libraries
+                .len()
+                .saturating_add(request.program.sources.len()),
+            models: request.models.len(),
+            observations: 0,
+            extensions: request.extensions.len(),
+        };
+        let mut intake = if request_limit_is_configured {
+            intake_with_bytes(directory, counts, run_limits.dependent_bytes)?
+        } else {
+            intake_with_fixed_bytes(directory, counts, run_limits.dependent_bytes)?
+        };
         // Every unit's edition is decided before any model is read: a
         // `1-draft` program takes domain packages only, and a request
         // selecting a native rule model for it refuses whatever state the
@@ -1207,7 +1826,8 @@ pub fn compile_outcome_with_overrides(
             require_complete_edition(source.source())?;
             sources.push(source);
         }
-        let mut outcome = complete(&request, &mut intake, &sources)?;
+        let mut outcome = complete(&request, &mut intake, &sources, overrides.limits)?;
+        outcome.sources = crate::Sources::from_sources(intake.sources.iter().cloned());
         if let Some(handoff) = &request.handoff {
             let compiled =
                 outcome
@@ -1230,7 +1850,17 @@ pub fn compile_outcome_with_overrides(
             output_file::write_new_file(&output, &outcome.package_bytes)?;
         }
         Ok(outcome)
-    })
+    });
+    if request_limit_is_configured {
+        result
+    } else {
+        result.map_err(|mut error| {
+            if let RunCause::Limit(LimitKind::RequestBytes { maximum }) = &error.cause {
+                error.cause = RunCause::Limit(LimitKind::FixedRequestBytes { maximum: *maximum });
+            }
+            error
+        })
+    }
 }
 
 /// Reject malformed FR-665 handoff selections before opening selected inputs.
@@ -1398,19 +2028,22 @@ fn complete(
     request: &wire::CompileRequest,
     intake: &mut Intake<'_>,
     sources: &[FormalSource],
+    supplied_limits: Option<&fsl_replay::spine::SpineLimits>,
 ) -> Result<CompileOutcome> {
+    let limits = supplied_limits.copied().unwrap_or_default();
     if sources.len() == 1 {
-        return complete_single(request, intake, &sources[0]);
+        return complete_single(request, intake, &sources[0], limits);
     }
-    complete_units(request, intake, sources)
+    complete_units(request, intake, sources, limits)
 }
 
 fn complete_single(
     request: &wire::CompileRequest,
     intake: &mut Intake<'_>,
     source: &FormalSource,
+    limits: fsl_replay::spine::SpineLimits,
 ) -> Result<CompileOutcome> {
-    complete_sources(request, intake, std::slice::from_ref(source), false)
+    complete_sources(request, intake, std::slice::from_ref(source), false, limits)
 }
 
 /// Compile FR-480's ordered program-unit list as one checked package.
@@ -1418,8 +2051,9 @@ fn complete_units(
     request: &wire::CompileRequest,
     intake: &mut Intake<'_>,
     sources: &[FormalSource],
+    limits: fsl_replay::spine::SpineLimits,
 ) -> Result<CompileOutcome> {
-    complete_sources(request, intake, sources, true)
+    complete_sources(request, intake, sources, true, limits)
 }
 
 /// Shared request, dependency, parsing, and emission pipeline for one source
@@ -1430,15 +2064,18 @@ fn complete_sources(
     intake: &mut Intake<'_>,
     sources: &[FormalSource],
     unit_list: bool,
+    limits: fsl_replay::spine::SpineLimits,
 ) -> Result<CompileOutcome> {
     check_sources(
         request,
         intake,
         sources,
         unit_list,
+        limits,
+        None,
+        None,
         |checked, selections, points, packages, _, libraries, models, inventory, failure| {
             let cancel = filament_exact::Cancel::new();
-            let limits = fsl_replay::spine::SpineLimits::default();
             let result = fsl_replay::spine::package_with_temporal_selections(
                 &checked,
                 selections,
@@ -1474,6 +2111,7 @@ fn complete_sources(
                 document,
                 handoff_compiled,
                 handoff_temporal_selections,
+                sources: crate::Sources::default(),
             })
         },
     )
@@ -1521,6 +2159,9 @@ fn check_sources<T>(
     intake: &mut Intake<'_>,
     sources: &[FormalSource],
     unit_list: bool,
+    limits: fsl_replay::spine::SpineLimits,
+    _integer_division: Option<fsl_replay::AdmittedIntegerDivision>,
+    extension_catalog_override: Option<fsl_semantics::library::bundle::DefinitionCatalog>,
     finish: impl FnOnce(
         fsl_replay::spine::CheckedUnit,
         &[fsl_replay::spine::TemporalClockSelection],
@@ -1557,6 +2198,12 @@ fn check_sources<T>(
         reason: refusal.detail,
     })?;
     let libraries = library_sources(request, intake)?;
+    // FR-660: read definitions after the program and library sources, under
+    // the same aggregate dependent-file ceiling.
+    let extension_catalog = match extension_catalog_override {
+        Some(catalog) => catalog,
+        None => extension_catalog(&request.extensions, intake)?,
+    };
     if request.handoff.is_some() && unit_list {
         return Err(RunCause::ClauseRequest {
             member: "handoff".to_owned(),
@@ -1635,7 +2282,6 @@ fn check_sources<T>(
             .map_err(|refusal| spine_failure(*refusal))?;
     }
     let cancel = filament_exact::Cancel::new();
-    let limits = fsl_replay::spine::SpineLimits::default();
     let failure = |failure| match fsl_replay::spine::refusal_or_fault(failure) {
         Ok(refusal) => spine_failure(*refusal),
         Err(fault) => RunCause::SpineRun(Box::new(fsl_replay::spine::RunRefusal::Fault(fault))),
@@ -1643,9 +2289,17 @@ fn check_sources<T>(
     let parsed = parse_requests
         .iter()
         .map(|parse_request| {
-            fsl_replay::spine::parse(parse_request, limits.source, &cancel)
-                .map(|stage| stage.into_value())
-                .map_err(failure)
+            fsl_replay::spine::parse_selecting_extensions(
+                parse_request,
+                fsl_replay::spine::ProfileCatalogInput {
+                    catalog: &extension_catalog,
+                    limits: fsl_semantics::library::bundle::PackageLimits::default(),
+                },
+                limits.source,
+                &cancel,
+            )
+            .map(|stage| stage.into_value())
+            .map_err(failure)
         })
         .collect::<Result<Vec<_>>>()?;
     let check_selections: Vec<_> = parsed
@@ -1770,6 +2424,86 @@ fn library_sources<'r>(
         .collect()
 }
 
+/// Read the request's extension documents and bind them to a reader-owned
+/// definition catalog (FR-660).
+fn extension_catalog(
+    extensions: &[wire::Extension],
+    intake: &mut Intake<'_>,
+) -> Result<fsl_semantics::library::bundle::DefinitionCatalog> {
+    use fsl_foundation::selection::DefinitionRef;
+    use fsl_semantics::library::bundle::{CapabilityId, ExtensionDefinitionSource};
+
+    validate_extension_entries(extensions)?;
+
+    let mut definitions = Vec::with_capacity(extensions.len());
+    for extension in extensions {
+        let dependencies = extension
+            .depends_on
+            .iter()
+            .map(|dependency| {
+                DefinitionRef::new(dependency.authority.clone(), dependency.identity.clone())
+                    .map_err(|error| RunCause::ClauseRequest {
+                        member: "extensions.depends_on".to_owned(),
+                        reason: format!("{error:?}"),
+                    })
+            })
+            .collect::<Result<std::collections::BTreeSet<_>>>()?;
+        let capabilities = extension
+            .capabilities
+            .iter()
+            .map(|capability| {
+                CapabilityId::complete(capability)
+                    .map_err(|error| RunCause::ExtensionCatalog(error.to_string()))
+            })
+            .collect::<Result<std::collections::BTreeSet<_>>>()?;
+        definitions.push(ExtensionDefinitionSource {
+            authority: extension.authority.clone(),
+            identity: extension.identity.clone(),
+            exact_bytes: intake.file(&extension.file, intake.remaining)?,
+            dependencies,
+            capabilities,
+        });
+    }
+    fsl_semantics::library::bundle::DefinitionCatalog::read_extensions(definitions)
+        .map_err(|error| RunCause::ExtensionCatalog(error.to_string()))
+}
+
+/// Validate extension labels and logical identity uniqueness before intake
+/// reads any program, model, library or extension document.
+fn validate_extension_entries(extensions: &[wire::Extension]) -> Result<()> {
+    let mut identities = std::collections::BTreeMap::new();
+    for (index, extension) in extensions.iter().enumerate() {
+        for (member, value) in [
+            ("authority", extension.authority.as_str()),
+            ("identity", extension.identity.as_str()),
+            ("file", extension.file.as_str()),
+        ] {
+            if value.trim().is_empty() {
+                return Err(RunCause::ClauseRequest {
+                    member: format!("extensions[{index}].{member}"),
+                    reason: "must be a non-blank string".to_owned(),
+                });
+            }
+        }
+        let key = (extension.authority.as_str(), extension.identity.as_str());
+        if let Some(previous) = identities.insert(key, index) {
+            return Err(RunCause::ExtensionCatalog(format!(
+                "conflicting-definition: extensions[{previous}] and extensions[{index}] both name {}:{}",
+                extension.authority, extension.identity
+            )));
+        }
+        for dependency in &extension.depends_on {
+            if dependency.authority.trim().is_empty() || dependency.identity.trim().is_empty() {
+                return Err(RunCause::ClauseRequest {
+                    member: format!("extensions[{index}].depends_on"),
+                    reason: "authority and identity must be non-blank strings".to_owned(),
+                });
+            }
+        }
+    }
+    Ok(())
+}
+
 /// A request selection a complete-V1 (`1-draft`) program does not take.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 #[non_exhaustive]
@@ -1830,8 +2564,9 @@ fn with_request_limits<T>(
         .map_err(|cause| Box::new(RunError { cause }))
 }
 
-/// Request members a caller supplies beside the request file rather than inside
-/// it (FR-640). Each is read exactly as the request's own member would be.
+/// Request settings a caller supplies beside the request file rather than
+/// inside it. Each request member is read exactly as its in-file counterpart
+/// would be (FR-640); `limits` configures compile stages (FR-869).
 #[derive(Clone, Copy, Debug, Default)]
 pub struct RequestOverrides<'a> {
     /// The `clocks` object, as the driver's `--clocks` file carries it. A request
@@ -1841,6 +2576,9 @@ pub struct RequestOverrides<'a> {
     /// names it (FR-810). Only a compile reads it; a request that also carries
     /// `output` is refused `invalid-request` at stage `request`.
     pub output: Option<&'a Path>,
+    /// Compile-stage limits supplied by the caller (FR-869). `None` uses the
+    /// published defaults.
+    pub limits: Option<&'a fsl_replay::spine::SpineLimits>,
 }
 
 fn request_with_overrides<T: wire::ClocksRequest>(
@@ -1884,6 +2622,7 @@ fn check_file_count(counts: FileCounts) -> Result<()> {
         (FileCategory::Program, counts.programs),
         (FileCategory::Model, counts.models),
         (FileCategory::Observation, counts.observations),
+        (FileCategory::Extension, counts.extensions),
     ] {
         remaining_files = remaining_files
             .checked_sub(requested)
@@ -1905,6 +2644,7 @@ fn intake(directory: &Path, counts: FileCounts) -> Result<Intake<'_>> {
         maximum: TOTAL_BYTES,
         dependent_limit: None,
         prefetched_observations: std::collections::BTreeMap::new(),
+        sources: Vec::new(),
     })
 }
 
@@ -1916,6 +2656,7 @@ fn intake_with_bytes(directory: &Path, counts: FileCounts, maximum: usize) -> Re
         maximum,
         dependent_limit: Some(DependentLimit::CallerConfigured),
         prefetched_observations: std::collections::BTreeMap::new(),
+        sources: Vec::new(),
     })
 }
 
@@ -1931,6 +2672,7 @@ fn intake_with_fixed_bytes(
         maximum,
         dependent_limit: Some(DependentLimit::Fixed),
         prefetched_observations: std::collections::BTreeMap::new(),
+        sources: Vec::new(),
     })
 }
 
@@ -1941,6 +2683,7 @@ fn prepare_run_bytes(
     overrides: &RequestOverrides<'_>,
 ) -> Result<PreparedRun> {
     let request: wire::Request = request_with_overrides(bytes, overrides)?;
+    validate_extension_entries(&request.extensions)?;
     // FR-931: a malformed `tl_lowering` member refuses before any source
     // file is read.
     if let Some(member) = &request.tl_lowering {
@@ -1972,6 +2715,7 @@ fn prepare_run_bytes(
                     .as_ref()
                     .is_some_and(|call| call.snapshot.is_some()),
             ),
+            extensions: request.extensions.len(),
         },
         dependent_bytes,
     )?;
@@ -2076,6 +2820,8 @@ fn prepare_complete_run(
             ))
         })
         .collect::<Result<Vec<(&wire::Library, FormalSource)>>>()?;
+    // FR-660: the same request-owned catalog is available to run compilation.
+    let extension_catalog = Some(extension_catalog(&request.extensions, intake)?);
     let dependencies =
         fsl_replay::spine::DependencyInput::new(libraries.iter().map(|(library, read)| {
             fsl_replay::spine::SuppliedLibrary {
@@ -2141,9 +2887,11 @@ fn prepare_complete_run(
     Ok(PreparedRun::Function(PreparedFunctionRun {
         data: Box::new(FunctionRunData {
             source,
+            models: documents,
             libraries: libraries.into_iter().map(|(_, source)| source).collect(),
             packages,
             dependencies,
+            extension_catalog,
             call: spine_call,
             requirements,
         }),
@@ -2156,6 +2904,19 @@ pub struct PreparedLowering {
     request: fsl_replay::spine::ClauseRunRequest,
     lowering: tl::TlLowering,
     source: String,
+}
+
+/// Execute a prepared FR-931 TL lowering and retain the standard run error
+/// envelope used by the command API.
+///
+/// Request and dependent-file limits are enforced while constructing the
+/// `PreparedLowering` through [`prepare_run`] or
+/// [`prepare_run_with_overrides`]. This function executes only that admitted
+/// value.
+pub fn execute_tl_lowering(
+    prepared: PreparedLowering,
+) -> std::result::Result<RunResult, Box<RunError>> {
+    execute_lowering(prepared).map_err(|cause| Box::new(RunError { cause }))
 }
 
 fn execute_lowering(prepared: PreparedLowering) -> Result<RunResult> {
@@ -2184,6 +2945,7 @@ fn execute_lowering(prepared: PreparedLowering) -> Result<RunResult> {
         value: NativeResult::lowering_document(tl::document(record.record)),
         outcome: None,
         requirements: None,
+        sources: crate::Sources::default(),
     })
 }
 
@@ -2215,10 +2977,24 @@ fn execute_prepared(prepared: PreparedRun, settle: &settle::Settle<'_>) -> Resul
     // evaluation is the same with and without them.
     let call_cancel = filament_exact::Cancel::new();
     let objects = fsl_semantics::model::object_environment::ObjectEnvironment::default();
-    let Some(selection) = &prepared.requirements else {
-        // FR-960: a call without `requirements` settles no item, and its run
-        // is exactly FR-100's.
-        let outcome = fsl_replay::spine::run(
+    let run = |catalog: Option<&fsl_semantics::library::bundle::DefinitionCatalog>| match catalog {
+        Some(catalog) => fsl_replay::spine::run_with_profile_catalog(
+            source.source().identity().clone(),
+            package_name(source.source().identity()),
+            source.source().path(),
+            source.source().text().as_bytes(),
+            &prepared.packages,
+            &prepared.dependencies,
+            fsl_replay::spine::SpineLimits::default(),
+            &prepared.call,
+            &objects,
+            fsl_replay::spine::ProfileCatalogInput {
+                catalog,
+                limits: fsl_semantics::library::bundle::PackageLimits::default(),
+            },
+            &call_cancel,
+        ),
+        None => fsl_replay::spine::run(
             source.source().identity().clone(),
             package_name(source.source().identity()),
             source.source().path(),
@@ -2229,13 +3005,28 @@ fn execute_prepared(prepared: PreparedRun, settle: &settle::Settle<'_>) -> Resul
             &prepared.call,
             &objects,
             &call_cancel,
-        )
-        .map_err(compile_failure)?;
-        return output::spine_run_result(source, &prepared.call.function, outcome, None);
+        ),
+    };
+    let Some(selection) = &prepared.requirements else {
+        // FR-960: a call without `requirements` settles no item, and its run
+        // is exactly FR-100's.
+        let outcome = run(prepared.extension_catalog.as_ref()).map_err(compile_failure)?;
+        let mut result = output::spine_run_result(source, &prepared.call.function, outcome, None)?;
+        result.sources = crate::Sources::from_sources(
+            std::iter::once(source.source().clone())
+                .chain(prepared.models.iter().map(|model| model.source().clone()))
+                .chain(
+                    prepared
+                        .libraries
+                        .iter()
+                        .map(|library| library.source().clone()),
+                ),
+        );
+        return Ok(result);
     };
     // FR-961 step 3 to 5: the call runs through FR-395's
     // `run_with_requirements`, and its items are settled on the same compile.
-    let (ran, settled) = fsl_replay::run_with_requirements_reading(
+    let (ran, settled) = fsl_replay::run_with_requirements_reading_and_profile_catalog(
         &fsl_replay::RequirementsRun {
             source: source.source().identity().clone(),
             package_name: package_name(source.source().identity()),
@@ -2248,13 +3039,32 @@ fn execute_prepared(prepared: PreparedRun, settle: &settle::Settle<'_>) -> Resul
             objects: &objects,
             cancel: &call_cancel,
         },
+        prepared
+            .extension_catalog
+            .as_ref()
+            .map(|catalog| fsl_replay::spine::ProfileCatalogInput {
+                catalog,
+                limits: fsl_semantics::library::bundle::PackageLimits::default(),
+            }),
         |checked, members| {
             settle::settle_call(checked, members, selection, &prepared.packages, settle)
         },
     )
     .map_err(compile_failure)?;
     let (outcome, _) = ran.into_parts();
-    output::spine_run_result(source, &prepared.call.function, outcome, Some(settled?))
+    let mut result =
+        output::spine_run_result(source, &prepared.call.function, outcome, Some(settled?))?;
+    result.sources = crate::Sources::from_sources(
+        std::iter::once(source.source().clone())
+            .chain(prepared.models.iter().map(|model| model.source().clone()))
+            .chain(
+                prepared
+                    .libraries
+                    .iter()
+                    .map(|library| library.source().clone()),
+            ),
+    );
+    Ok(result)
 }
 
 /// The package name a program compiles under: its source identity's

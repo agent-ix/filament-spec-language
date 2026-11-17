@@ -158,7 +158,7 @@ fn form_name(node: &ExprNode) -> &'static str {
         | ExprNode::Sum { .. }
         | ExprNode::Population { .. }
         | ExprNode::Seq { .. }
-        | ExprNode::Size(_)
+        | ExprNode::Size { .. }
         | ExprNode::Contains { .. }
         | ExprNode::DropFirst(_)
         | ExprNode::RemoveOne { .. } => "a collection operation",

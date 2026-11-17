@@ -73,9 +73,9 @@ fn order_recording(closure: Value) -> Value {
 /// The required premises of instance `w-1` of the order fixture.
 fn order_premises() -> Value {
     json!([
-        {"kind": "execution", "identity": "w-1"},
-        {"kind": "branch", "identity": "w-1/Flow::Main::Decide::no"},
-        {"kind": "branch", "identity": "w-1/Flow::Main::Decide::yes"}
+        {"kind": "execution", "node": "Flow::Done"},
+        {"kind": "branch", "node": "Flow::Main::Decide::no"},
+        {"kind": "branch", "node": "Flow::Main::Decide::yes"}
     ])
 }
 
@@ -92,7 +92,13 @@ fn obligations(item: &Value) -> &Vec<Value> {
 /// QSL-2209 AC-1; FR-896-AC-1, FR-990-AC-1: role implementations that run
 /// the protocol settle `proved`, every obligation `satisfied`, closure
 /// `closed` by the engine, and complete global success.
-#[trace("TC-2532", "TC-2800", "FR-896-AC-1", "FR-990-AC-1", "FSpec-FR-059-AC-1")]
+#[trace(
+    "TC-2532",
+    "TC-2800",
+    "FR-896-AC-1",
+    "FR-990-AC-1",
+    "FSpec-FR-059-AC-1"
+)]
 #[test]
 #[ignore = "QSL-2209: global-conformance settles unsupported; no per-obligation, closure or global result is reported"]
 fn matching_implementations_conform_globally() {
@@ -132,7 +138,13 @@ fn matching_implementations_conform_globally() {
 /// QSL-2209 AC-2; FR-896-AC-3, FR-991-AC-4: over a recording, a send on
 /// `Tell` where the protocol enables none refutes conformance with an
 /// `unexpected` enabledness violation, and the counterexample replays.
-#[trace("TC-2532", "TC-2803", "FR-896-AC-3", "FR-991-AC-4", "FSpec-FR-059-AC-2")]
+#[trace(
+    "TC-2532",
+    "TC-2803",
+    "FR-896-AC-3",
+    "FR-991-AC-4",
+    "FSpec-FR-059-AC-2"
+)]
 #[test]
 #[ignore = "QSL-2209: no replay-mode global-conformance engine reports or replays an unexpected send"]
 fn an_out_of_protocol_send_refutes_conformance() {
@@ -209,7 +221,10 @@ fn a_limited_run_leaves_obligations_pending_and_closure_incomplete() {
     assert_eq!(global["label"], "incomplete", "{item}");
     assert_eq!(global["cause"], "limit-reached");
     assert_eq!(global["basis"], "unavailable");
-    assert!(item.to_string().contains("max_states"), "names the limit: {item}");
+    assert!(
+        item.to_string().contains("max_states"),
+        "names the limit: {item}"
+    );
     assert!(obligations(&item)
         .iter()
         .any(|entry| entry["verdict"] == "pending"));
@@ -287,13 +302,13 @@ fn a_malformed_closure_premise_set_refuses_the_recording() {
     let all = premises.as_array().expect("premises").clone();
     let omitted: Vec<Value> = all
         .iter()
-        .filter(|p| p["identity"] != "w-1/Flow::Main::Decide::yes")
+        .filter(|p| p["node"] != "Flow::Main::Decide::yes")
         .cloned()
         .collect();
     let mut duplicated = all.clone();
     duplicated.push(all[0].clone());
     let mut crossed = all.clone();
-    crossed[0] = json!({"kind": "execution", "identity": "w-2"});
+    crossed[0] = json!({"kind": "execution", "instance": "w-2", "node": "Flow::Done"});
     for (name, set) in [
         ("omitted", omitted),
         ("duplicated", duplicated),
@@ -376,4 +391,53 @@ fn a_compiled_handoff_publishes_its_source_provision() {
         request.contains("pub fn entries(&self)"),
         "SourceProvision::entries() not published"
     );
+}
+
+/// FR-990-AC-6 (TC-2831): each closure premise is `{kind, instance, node}`
+/// read from the checked protocol, and a recording premise differing in any
+/// one component is refused before any verdict.
+#[trace("TC-2831", "FR-990-AC-6", "FSpec-FR-247-AC-3")]
+#[test]
+#[ignore = "QSL-2210: closure premises do not carry the componentwise {kind, instance, node} identity yet"]
+fn closure_premises_carry_their_componentwise_identity() {
+    let engine = conformance("gc-premise-identity", &order_protocol(true), json!({}), &[]);
+    assert_eq!(engine["closure"]["premises"], order_premises(), "{engine}");
+    let admitted = conformance(
+        "gc-premise-identity-recorded",
+        &order_protocol(true),
+        recording_member(),
+        &[(
+            "recording.json",
+            order_recording(json!({"state": "closed", "premises": order_premises()})),
+        )],
+    );
+    assert_eq!(admitted["closure"]["state"], "closed", "{admitted}");
+    let all = order_premises().as_array().expect("premises").clone();
+    let mut instanced = all.clone();
+    instanced[0]["instance"] = json!("w-1");
+    let mut wrong_node = all.clone();
+    wrong_node[0]["node"] = json!("Flow::Main::Decide::yes");
+    let mut wrong_kind = all.clone();
+    wrong_kind[1]["kind"] = json!("workflow");
+    wrong_kind[2]["kind"] = json!("workflow");
+    for (name, set) in [
+        ("instanced", instanced),
+        ("wrong-node", wrong_node),
+        ("wrong-kind", wrong_kind),
+    ] {
+        let item = conformance(
+            &format!("gc-premise-identity-{name}"),
+            &order_protocol(true),
+            recording_member(),
+            &[(
+                "recording.json",
+                order_recording(json!({"state": "closed", "premises": set})),
+            )],
+        );
+        assert_eq!(
+            item["diagnostics"][0]["code"], "invalid_runtime_input",
+            "{name}: {item}"
+        );
+        assert!(item["obligations"].is_null(), "{name}: {item}");
+    }
 }

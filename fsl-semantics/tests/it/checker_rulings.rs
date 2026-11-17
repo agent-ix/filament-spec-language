@@ -371,6 +371,50 @@ fn population_forms_and_seq_in_a_state_clause_check_and_lower() {
     }
 }
 
+/// FR-998-AC-1: a population `only` lowers to one catalogued
+/// `filament.op.collection.only` application, through
+/// `filament.op.collection.filter` when `where` is written.
+#[trace("TC-2822", "FR-998-AC-1", "FSpec-TC-1921", "FSpec-FR-322-AC-455")]
+#[test]
+#[ignore = "QSL-2179: a population only lowers to filament.op.collection.only; not implemented yet"]
+fn a_population_only_lowers_to_collection_only() {
+    for (domain, filtered) in [("M::counters where o.v = 2", true), ("M::counters", false)] {
+        let declarations = format!(
+            "bound B on M::counters [3]\ninvariant O using v on M::Counter at current \
+             {{ only(o in {domain}: o.v) = 2 }}"
+        );
+        let checked = population_fixture::check(false, &declarations)
+            .unwrap_or_else(|refusals| panic!("{domain}: {refusals:?}"));
+        let identities: Vec<String> = checked
+            .graph
+            .semantic_graph()
+            .nodes()
+            .filter_map(|node| match node.body() {
+                fsl_semantics::check::BodyTerm::Application(term) => {
+                    Some(term.operation.identity().to_owned())
+                }
+                _ => None,
+            })
+            .collect();
+        let count = |identity: &str| identities.iter().filter(|held| *held == identity).count();
+        assert_eq!(
+            count("filament.op.collection.only"),
+            1,
+            "{domain}: {identities:?}"
+        );
+        assert_eq!(
+            count("filament.op.collection.filter"),
+            usize::from(filtered),
+            "{domain}: {identities:?}"
+        );
+        assert_eq!(
+            count("filament.op.model.all_instances"),
+            1,
+            "{domain}: {identities:?}"
+        );
+    }
+}
+
 // ----- FR-230-AC-64: a Clock parameter of a function -----
 
 const CLOCK_FUNCTIONS: &str = "dimension Time;\nunit ms : Time = rational(1, 1);\n\

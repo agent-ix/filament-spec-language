@@ -184,7 +184,7 @@ fn versions(values: &[i64]) -> Vec<Observation> {
 /// observation: `holds(<var> <op> <k>)` and
 /// `holds(<n> / (2 - c.level) <op> <k>)` (integer division; a zero divisor is
 /// the kernel's `DivisionByZero`).
-struct Letters<'a> {
+pub(crate) struct Letters<'a> {
     fixture: &'a Fixture,
     observations: Vec<Observation>,
     reads: Vec<u64>,
@@ -196,7 +196,7 @@ struct Letters<'a> {
     refused: Vec<u64>,
     /// The readings forced on the `holds` atom of the given source text at
     /// the given position, for a clause of several atoms.
-    forced: Vec<(u64, &'static str, Forced)>,
+    pub(crate) forced: Vec<(u64, &'static str, Forced)>,
     /// The positions whose `on each` `when` guard is refused.
     refused_guards: Vec<u64>,
     /// The positions whose capture initializer is refused.
@@ -205,14 +205,14 @@ struct Letters<'a> {
 
 /// What a test forces an atom to read.
 #[derive(Clone, Copy)]
-enum Forced {
+pub(crate) enum Forced {
     Refused,
     Undefined,
     ShortOfData,
 }
 
 impl<'a> Letters<'a> {
-    fn new(fixture: &'a Fixture, observations: Vec<Observation>) -> Self {
+    pub(crate) fn new(fixture: &'a Fixture, observations: Vec<Observation>) -> Self {
         Self {
             fixture,
             observations,

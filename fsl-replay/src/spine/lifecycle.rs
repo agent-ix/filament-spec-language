@@ -88,38 +88,80 @@ use filament_exact::Cancel;
 use filament_semantic_value::catalog::InternalFault;
 use filament_semantic_value::semantic_node::IdentityRefusal;
 use fsl_cst::Limits as SourceLimits;
-use fsl_forms::{FormsRefusal, ParsedUnit, parse_clause_text};
-use fsl_foundation::Setting;
-use fsl_foundation::SyntaxLimit;
+use fsl_forms::{parse_clause_text, FormsRefusal, ParsedUnit};
 use fsl_foundation::diagnostic::{LimitExceeded, Locus, StageFailure, StageWork, Staged};
 use fsl_foundation::selection::ImportSelection;
-use fsl_foundation::source::Source;
 use fsl_foundation::source::provenance::{RawSourceRef, SourceRegion};
+use fsl_foundation::source::Source;
+use fsl_foundation::Setting;
+use fsl_foundation::SyntaxLimit;
 use fsl_foundation::{Code, SourceIdentity};
 use fsl_package as pkg;
-use fsl_package::{AdmittedPackages, Emission, Import, ImportViewRefusal, read_import_view};
+use fsl_package::{read_import_view, AdmittedPackages, Emission, Import, ImportViewRefusal};
 use fsl_semantics::check::{
-    AdmittedImport, AssemblyCause, AssemblyError, CheckCause, CheckRefusal, CorrespondenceConflict,
-    KeyFault, PackageDeclarations, resolve_profiles,
+    resolve_profiles, AdmittedImport, AssemblyCause, AssemblyError, CheckCause, CheckRefusal,
+    CorrespondenceConflict, KeyFault, PackageDeclarations,
 };
 use fsl_semantics::library::extension::{CoreVocabulary, HeldExtensions};
 use fsl_semantics::library::{ImportView, LibraryName};
 use fsl_semantics::model::accounting::ModelNormalizationLimits;
 use fsl_semantics::model::intake::{
-    SelectedModel, SelectedModels, UnitIntakeCause, admit_unit_with_cancel, admit_units_with_cancel,
+    admit_unit_with_cancel, admit_units_with_cancel, SelectedModel, SelectedModels, UnitIntakeCause,
 };
 use fsl_semantics::value::identity_limit;
 
 use super::subject::StaticSubjectInput;
-use super::{BuildProvenance, StaticSubject, SubjectUnavailable};
 use super::{
-    CompileRefusal, DependencyInput, ImportRefusal, SpineLimits, SuppliedLibrary, UnitListRefusal,
-    region,
+    region, CompileRefusal, DependencyInput, ImportRefusal, SpineLimits, SuppliedLibrary,
+    UnitListRefusal,
 };
+use super::{BuildProvenance, StaticSubject, SubjectUnavailable};
 
 /// What a front-end operation returns when it produces no output: the
 /// stage's refusal, a reached limit, a cancellation or a fault.
-pub type FrontEndFailure = StageFailure<Box<CompileRefusal>, Vec<super::ProtocolResult>>;
+pub type FrontEndFailure = StageFailure<Box<CompileRefusal>, FrontEndFailurePayload>;
+
+/// Additional stage results retained when the front end refuses.
+#[derive(Clone, Debug, Default)]
+pub struct FrontEndFailurePayload {
+    /// Independent protocol results reached before the refusing stage ended.
+    pub protocol_results: Vec<super::ProtocolResult>,
+    /// Parse report retained when S1 and S2 completed before an S2 refusal.
+    pub parsed: Option<ParseReport>,
+}
+
+/// FR-663's report of a completed S1 parse, including a later S2 refusal.
+#[derive(Clone, Debug)]
+pub struct ParseReport {
+    /// The source identity labels.
+    pub source: fsl_foundation::source::provenance::RawSourceRef,
+    /// The display path supplied to the parse operation.
+    pub path: String,
+    /// Source byte count.
+    pub bytes: usize,
+    /// Effective limits under which S1 ran.
+    pub limits: fsl_cst::Limits,
+    /// S1 token count.
+    pub tokens: usize,
+    /// S1 CST node count.
+    pub nodes: usize,
+    /// S1 work units charged.
+    pub work_units: u64,
+}
+
+impl ParseReport {
+    fn from_parsed(parsed: &fsl_cst::ParsedSource, work_units: u64) -> Self {
+        Self {
+            source: parsed.source().reference().clone(),
+            path: parsed.source().path().to_owned(),
+            bytes: parsed.source().text().len(),
+            limits: parsed.effective_limits(),
+            tokens: parsed.cst().tokens().len(),
+            nodes: parsed.cst().nodes().len(),
+            work_units,
+        }
+    }
+}
 
 /// A profile-aware check failure. Profile closure outcomes are retained even
 /// when closure or the subsequent ordinary S3 check refuses the unit.
@@ -143,6 +185,7 @@ pub enum ProfileCheckFailure {
 struct StageError {
     refusal: Box<CompileRefusal>,
     protocol_results: Option<Vec<super::ProtocolResult>>,
+    parsed: Option<ParseReport>,
 }
 
 #[derive(Clone, Debug)]
@@ -215,6 +258,7 @@ impl From<Box<CompileRefusal>> for StageError {
         Self {
             refusal,
             protocol_results: None,
+            parsed: None,
         }
     }
 }
@@ -227,7 +271,13 @@ impl StageError {
         Self {
             refusal,
             protocol_results: Some(protocol_results),
+            parsed: None,
         }
+    }
+
+    fn with_parsed_report(mut self, parsed: ParseReport) -> Self {
+        self.parsed = Some(parsed);
+        self
     }
 }
 
@@ -282,19 +332,27 @@ fn failure_of(
     let StageError {
         refusal,
         protocol_results,
+        parsed,
     } = error;
+    let has_payload = protocol_results.is_some() || parsed.is_some();
+    let payload = FrontEndFailurePayload {
+        protocol_results: protocol_results.unwrap_or_default(),
+        parsed,
+    };
     if let Some(limit) = limit_of(&refusal, source_len) {
-        return match protocol_results {
-            Some(results) => StageFailure::LimitWithPayload(limit, results),
-            None => StageFailure::Limit(limit),
+        return if has_payload {
+            StageFailure::LimitWithPayload(limit, payload)
+        } else {
+            StageFailure::Limit(limit)
         };
     }
     if let Some(fault) = fault_of(&refusal) {
         return StageFailure::Fault(fault);
     }
-    match protocol_results {
-        Some(results) => StageFailure::RefusedWithPayload(Box::new(refusal), results),
-        None => StageFailure::Refused(refusal),
+    if has_payload {
+        StageFailure::RefusedWithPayload(Box::new(refusal), payload)
+    } else {
+        StageFailure::Refused(refusal)
     }
 }
 
@@ -1390,15 +1448,25 @@ fn select_extensions(
     .map_err(|diagnostic| Box::new(CompileRefusal::Source(diagnostic)))?;
     let held_by_catalog = |identity: &str| held_extension_of(catalog, identity);
     let mut selections: Vec<fsl_foundation::selection::DefinitionRef> = Vec::new();
+    let mut profile_refusals = Vec::new();
     for profile in &header.selections().profiles {
-        // A profile that refuses is reported by E3 in its own place.
-        if let Ok(found) = resolve_profiles(std::slice::from_ref(profile), &held_by_catalog) {
-            for selection in found {
-                if !selections.contains(&selection) {
-                    selections.push(selection);
+        match resolve_profiles(std::slice::from_ref(profile), &held_by_catalog) {
+            Ok(found) => {
+                for selection in found {
+                    if !selections.contains(&selection) {
+                        selections.push(selection);
+                    }
                 }
             }
+            Err(mut refusals) => profile_refusals.append(&mut refusals),
         }
+    }
+    if !profile_refusals.is_empty() {
+        let span = profile_refusals[0].identity_span;
+        return Err(Box::new(CompileRefusal::Profile {
+            refusals: profile_refusals,
+            region: region(header.source().reference(), span),
+        }));
     }
     // Step 2, against the core vocabulary.
     catalog
@@ -1462,7 +1530,16 @@ fn parse_operation(
                 limits,
                 cancel,
             )
-        })?;
+        });
+        let parsed = match parsed {
+            Ok(parsed) => parsed,
+            Err(mut error) => {
+                if let Some(report) = &mut error.parsed {
+                    report.work_units = work.s1;
+                }
+                return Err(error);
+            }
+        };
         if !continue_protocol_refusals
             && parsed.protocol_results.iter().any(|result| {
                 matches!(
@@ -1621,6 +1698,7 @@ pub fn check_with_integer_division(
         None,
         Some(*selection),
         None,
+        None,
         models,
         dependencies,
         limits,
@@ -1666,6 +1744,30 @@ pub fn check_with_profile_catalog(
     limits: SpineLimits,
     cancel: &Cancel,
 ) -> Result<Staged<CheckedUnit>, ProfileCheckFailure> {
+    check_with_profile_catalog_and_inputs(
+        parsed,
+        package_name,
+        SourceInputs::default(),
+        models,
+        dependencies,
+        profile_catalog,
+        limits,
+        cancel,
+    )
+}
+
+/// S3 and S4 with the caller's exact profile-definition registry and
+/// per-source refinement and clock inputs.
+pub fn check_with_profile_catalog_and_inputs(
+    parsed: &ParsedUnitSource,
+    package_name: String,
+    inputs: SourceInputs<'_>,
+    models: &AdmittedModels,
+    dependencies: &DependencyInput,
+    profile_catalog: ProfileCatalogInput<'_>,
+    limits: SpineLimits,
+    cancel: &Cancel,
+) -> Result<Staged<CheckedUnit>, ProfileCheckFailure> {
     let profile_uses = resolve_protocol_profile_uses(parsed, profile_catalog);
     if profile_uses.iter().any(|profile_use| {
         !matches!(
@@ -1680,11 +1782,12 @@ pub fn check_with_profile_catalog(
         parsed,
         package_name,
         &BTreeMap::new(),
-        None,
-        &[],
-        None,
+        inputs.refinement_internals,
+        inputs.temporal_selections,
+        inputs.clocks,
         None,
         Some(profile_catalog),
+        None,
         models,
         dependencies,
         limits,
@@ -1841,6 +1944,12 @@ pub(crate) struct UnitCheckOptions<'a> {
     pub(crate) clocks: Option<&'a super::RequestClocks>,
     pub(crate) continue_protocol_refusals: bool,
     pub(crate) refinement_internals: Option<&'a serde_json::Value>,
+    /// FR-098-AC-34: the mode every function body is checked under; `None`
+    /// is `Linked`. A replay passes the mode its proving package records.
+    pub(crate) check_mode: Option<CheckMode>,
+    /// FR-098-AC-34: each named function body's recorded mode, which the
+    /// recompile of the root unit checks that body under.
+    pub(crate) function_modes: Option<&'a BTreeMap<String, CheckMode>>,
     pub(crate) extension_catalog: Option<ProfileCatalogInput<'a>>,
 }
 
@@ -1887,6 +1996,8 @@ pub(crate) fn check_units_with_options(
             temporal_selections: options.temporal_selections,
             clocks: options.clocks,
             integer_division: options.integer_division,
+            check_mode: options.check_mode.unwrap_or(CheckMode::Linked),
+            function_modes: options.function_modes,
             extension_catalog: options.extension_catalog,
             active: Vec::new(),
             compiled: BTreeMap::new(),
@@ -2002,6 +2113,34 @@ pub fn check_with_refinement_internals(
     limits: SpineLimits,
     cancel: &Cancel,
 ) -> Result<Staged<CheckedUnit>, FrontEndFailure> {
+    check_with_refinement_internals_and_function_modes(
+        parsed,
+        package_name,
+        inputs,
+        models,
+        dependencies,
+        limits,
+        cancel,
+        None,
+    )
+}
+
+/// Check one unit while honoring the recorded check mode for named function
+/// bodies (FR-098-AC-34).
+#[allow(
+    clippy::too_many_arguments,
+    reason = "one source's check inputs plus its per-function mode record"
+)]
+pub(crate) fn check_with_refinement_internals_and_function_modes(
+    parsed: &ParsedUnitSource,
+    package_name: String,
+    inputs: SourceInputs<'_>,
+    models: &AdmittedModels,
+    dependencies: &DependencyInput,
+    limits: SpineLimits,
+    cancel: &Cancel,
+    function_modes: Option<&BTreeMap<String, CheckMode>>,
+) -> Result<Staged<CheckedUnit>, FrontEndFailure> {
     check_with_context_and_temporal_selections(
         parsed,
         package_name,
@@ -2011,6 +2150,7 @@ pub fn check_with_refinement_internals(
         inputs.clocks,
         None,
         None,
+        function_modes,
         models,
         dependencies,
         limits,
@@ -2068,6 +2208,7 @@ pub fn check_with_execution_points_and_refinement_internals(
         None,
         None,
         None,
+        None,
         models,
         dependencies,
         limits,
@@ -2101,6 +2242,7 @@ pub fn check_with_temporal_selections_and_execution_points(
         None,
         None,
         None,
+        None,
         models,
         dependencies,
         limits,
@@ -2131,6 +2273,7 @@ pub fn check_with_execution_points_and_source_inputs(
         inputs.clocks,
         None,
         None,
+        None,
         models,
         dependencies,
         limits,
@@ -2150,6 +2293,8 @@ pub(crate) struct ContinuationInputs<'a> {
     /// The semantic owner's admitted law for this compile's unit.
     pub(crate) integer_division:
         Option<filament_checked::integer_division::AdmittedIntegerDivision>,
+    /// Recorded function-body check modes, keyed by authored function name.
+    pub(crate) function_modes: Option<&'a BTreeMap<String, CheckMode>>,
 }
 
 /// S3 continuation for the compiler: keep an attributable protocol refusal
@@ -2171,6 +2316,7 @@ pub(crate) fn check_for_continuation(
         None,
         inputs.integer_division,
         None,
+        inputs.function_modes,
         models,
         dependencies,
         limits,
@@ -2192,6 +2338,7 @@ fn check_with_context_and_temporal_selections(
     clocks: Option<&super::RequestClocks>,
     integer_division: Option<filament_checked::integer_division::AdmittedIntegerDivision>,
     extension_catalog: Option<ProfileCatalogInput<'_>>,
+    function_modes: Option<&BTreeMap<String, CheckMode>>,
     models: &AdmittedModels,
     dependencies: &DependencyInput,
     limits: SpineLimits,
@@ -2224,6 +2371,8 @@ fn check_with_context_and_temporal_selections(
             clocks,
             integer_division,
             extension_catalog,
+            check_mode: CheckMode::Linked,
+            function_modes,
             active: Vec::new(),
             compiled: BTreeMap::new(),
             import_edges: 0,
@@ -2605,12 +2754,14 @@ fn parse_unit(
                 let refusal = source_diagnostics_refusal(parsed.diagnostics())
                     .expect("a non-empty diagnostic slice builds a refusal");
                 let diagnostic = &parsed.diagnostics()[0];
+                let report = ParseReport::from_parsed(&parsed, 0);
                 if let Some(results) =
                     bounded_protocol_results_around_nonprotocol_diagnostic(&parsed, diagnostic)
                 {
-                    return Err(StageError::with_protocol_results(refusal, results));
+                    return Err(StageError::with_protocol_results(refusal, results)
+                        .with_parsed_report(report));
                 }
-                return Err(refusal.into());
+                return Err(StageError::from(refusal).with_parsed_report(report));
             }
             return Err(Box::new(CompileRefusal::Forms {
                 region: failure.span.and_then(|span| region(&raw, span)),
@@ -3363,6 +3514,31 @@ pub(crate) fn compose(
     dependencies: &DependencyInput,
     limits: SpineLimits,
 ) -> Result<ComposedUnit, Box<CompileRefusal>> {
+    compose_in_mode(
+        source,
+        path,
+        bytes,
+        packages,
+        dependencies,
+        limits,
+        None,
+        &BTreeMap::new(),
+    )
+}
+
+/// [`compose`] with every function body checked under `check_mode` (`None`
+/// is `Linked`), the way a `Kernel` package is produced.
+#[cfg(test)]
+pub(crate) fn compose_in_mode(
+    source: SourceIdentity,
+    path: &str,
+    bytes: &[u8],
+    packages: &fsl_semantics::model::intake::PackageInput,
+    dependencies: &DependencyInput,
+    limits: SpineLimits,
+    check_mode: Option<CheckMode>,
+    function_modes: &BTreeMap<String, CheckMode>,
+) -> Result<ComposedUnit, Box<CompileRefusal>> {
     let cancel = Cancel::new();
     let refusal = |failure| match refusal_or_fault(failure) {
         Ok(refusal) => refusal,
@@ -3382,16 +3558,42 @@ pub(crate) fn compose(
     let models = select(&parsed, packages, limits.model, &cancel)
         .map_err(refusal)?
         .into_value();
-    let checked = check(
-        &parsed,
-        "fixture".to_owned(),
-        &models,
-        dependencies,
-        limits,
-        &cancel,
-    )
-    .map_err(refusal)?
-    .into_value();
+    let checked = if let Some(check_mode) = check_mode {
+        let admitted = admit_parsed_unit_list(vec![parsed], dependencies)
+            ?;
+        let models = select_units(&admitted, packages, limits.model, limits.source, &cancel)
+            .map_err(refusal)?
+            .into_value();
+        check_units_with_options(
+            &admitted,
+            "fixture".to_owned(),
+            &models,
+            dependencies,
+            UnitCheckOptions {
+                check_mode: Some(check_mode),
+                function_modes: Some(function_modes),
+                ..UnitCheckOptions::default()
+            },
+            limits,
+            &cancel,
+        )
+        .map_err(refusal)?
+        .into_value()
+        .into_iter()
+        .next()
+        .expect("one admitted unit checks to one unit")
+    } else {
+        check(
+            &parsed,
+            "fixture".to_owned(),
+            &models,
+            dependencies,
+            limits,
+            &cancel,
+        )
+        .map_err(refusal)?
+        .into_value()
+    };
     let emitted = package(&checked, limits.package, &cancel)
         .map_err(refusal)?
         .into_value();
@@ -3496,6 +3698,8 @@ struct Resolution<'a> {
     dependencies: &'a DependencyInput,
     packages: &'a fsl_semantics::model::intake::PackageInput,
     continuation_source: RawSourceRef,
+    check_mode: CheckMode,
+    function_modes: Option<&'a BTreeMap<String, CheckMode>>,
     limits: SpineLimits,
     cancel: &'a Cancel,
     temporal_selections: &'a [fsl_package::TemporalClockSelection],
@@ -3909,6 +4113,11 @@ impl<'a> Resolution<'a> {
             })?;
         }
         declarations.integer_division = selected;
+        if frame.raw == self.continuation_source {
+            if let Some(modes) = self.function_modes {
+                declarations.function_modes = modes.clone();
+            }
+        }
         // FR-354: the extensions the package's units were parsed against are
         // the ones S3 checks their forms with.
         declarations = declarations.with_extensions(HeldExtensions::union(
@@ -3959,12 +4168,12 @@ impl<'a> Resolution<'a> {
         let graph = charged(cancel, &mut self.work.s3, || {
             if frame.raw == self.continuation_source {
                 declarations.check_with_protocol_continuation_and_cancel(
-                    CheckMode::Linked,
+                    self.check_mode,
                     limits.checking,
                     cancel,
                 )
             } else {
-                declarations.check_with_cancel(CheckMode::Linked, limits.checking, cancel)
+                declarations.check_with_cancel(self.check_mode, limits.checking, cancel)
             }
         })
         .map_err(|refusals| {
@@ -4017,8 +4226,9 @@ impl<'a> Resolution<'a> {
         };
         charged(cancel, &mut self.work.s4, || {
             pkg::CheckedPackage::link_with(graph, links, self.limits.package.emit())
+                .map_err(Box::new)
         })
-        .map_err(|refusal| Box::new(CompileRefusal::Link(refusal)))
+        .map_err(|refusal| Box::new(CompileRefusal::Link(*refusal)))
     }
 
     /// One parsed unit through S3 and S4, resolving its imports depth first

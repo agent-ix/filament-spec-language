@@ -24,6 +24,90 @@ fn parse(bytes: &[u8]) -> Result<ParsedSource, Box<fsl_cst::CompleteDiagnostic>>
     )
 }
 
+#[trace("FSpec-TC-1648", "FSpec-FR-662-AC-1")]
+#[test]
+fn a_population_query_type_argument_names_the_declared_type_requirement() {
+    for (expression, anchor) in [
+        ("sum<Int[0, 80]>(x in a: x)", "Int"),
+        ("count<Integer>(x in a: x)", "Integer"),
+        ("fold<Integer>(0, x in a: x)", "Integer"),
+        ("reduce<Int[0, 9]>(0, x in a: x)", "Int"),
+    ] {
+        let text = document(expression);
+        let parsed = parse(text.as_bytes()).expect("valid UTF-8 within the source ceiling");
+        assert!(!parsed.is_admissible(), "{expression}");
+        let diagnostic = parsed.diagnostics().first().expect("a syntax refusal");
+        assert_eq!(diagnostic.code, CompleteCode::InvalidSyntax, "{expression}");
+        assert_eq!(diagnostic.phase, Phase::Parse, "{expression}");
+        let start = text.find(expression).expect("query in the document")
+            + expression.find(anchor).expect("anchor in type argument");
+        assert_eq!(
+            diagnostic.byte_span().expect("located").start,
+            start,
+            "{expression}"
+        );
+        assert!(
+            diagnostic.message.contains("declared type name here"),
+            "{}",
+            diagnostic.message
+        );
+        assert!(diagnostic.message.contains("type Total = Integer;"));
+    }
+
+    for expression in [
+        "sum<M::Total>(x in a: x)",
+        "fold<M::Integer>(acc, x in a: x)",
+    ] {
+        let text = document(expression);
+        let parsed = parse(text.as_bytes()).expect("valid UTF-8 within the source ceiling");
+        assert!(
+            parsed.is_admissible(),
+            "{expression}: {:?}",
+            parsed.diagnostics()
+        );
+        let formatted = fsl_cst::format::format(&parsed).expect("accepted query formats");
+        let reparsed = parse(formatted.as_bytes()).expect("formatted source is valid UTF-8");
+        assert!(
+            reparsed.is_admissible(),
+            "{expression}: {:?}",
+            reparsed.diagnostics()
+        );
+        let significant = |source: &ParsedSource| {
+            source
+                .cst()
+                .tokens()
+                .iter()
+                .filter(|token| {
+                    !matches!(
+                        token.kind(),
+                        fsl_cst::TokenKind::Whitespace | fsl_cst::TokenKind::Comment
+                    )
+                })
+                .map(|token| token.spelling().to_vec())
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(significant(&parsed), significant(&reparsed), "{expression}");
+        assert_eq!(
+            fsl_cst::format::format(&reparsed).expect("idempotent formatting"),
+            formatted,
+            "{expression}"
+        );
+    }
+
+    for (expression, offending) in [("sum<>(x in a: x)", ">"), ("sum<123>(x in a: x)", "123")] {
+        let text = document(expression);
+        let parsed = parse(text.as_bytes()).expect("valid UTF-8 within the source ceiling");
+        assert!(!parsed.is_admissible(), "{expression}");
+        let diagnostic = parsed.diagnostics().first().expect("a syntax refusal");
+        assert_eq!(diagnostic.code, CompleteCode::InvalidSyntax, "{expression}");
+        assert_eq!(
+            diagnostic.byte_span().expect("located").start,
+            text.find(offending).expect("offending token"),
+            "{expression}"
+        );
+    }
+}
+
 #[trace("TC-012", "FR-002-AC-2")]
 #[test]
 fn a_chained_comparison_refuses_at_its_second_operator() {
@@ -123,6 +207,10 @@ fn a_bare_decimal_in_a_primary_parses_as_a_decimal_literal() {
             parsed.diagnostics()
         );
         assert!(parsed.diagnostics().is_empty(), "{expression}");
+        assert!(
+            parsed.cst().recoveries().is_empty(),
+            "{expression}: an admitted primary has no refusal or expected-token recovery"
+        );
         let start = text.rfind(literal).expect("in the unit");
         assert!(
             parsed.cst().nodes().iter().any(|node| {

@@ -983,7 +983,7 @@ fn value_family_rows_lower_to_their_catalogued_operations() {
                 &[("s", s())],
                 integer(),
                 None,
-                Expression::size(name_expr("s")),
+                Expression::size(name_expr("s"), None),
             ),
             "filament.op.collection.size",
             "collection",

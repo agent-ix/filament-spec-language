@@ -169,6 +169,37 @@ fn assert_format_identity(
         formatted,
         "{path}: formatted source retained"
     );
+    assert_eq!(
+        original.package().name(),
+        checked.package().name(),
+        "{path}: formatted source preserves checked package identity"
+    );
+    let original_wire: serde_json::Value =
+        serde_json::from_slice(original.package().bytes()).expect("original package is JSON");
+    let formatted_wire: serde_json::Value =
+        serde_json::from_slice(checked.package().bytes()).expect("formatted package is JSON");
+    assert_eq!(
+        without_source_regions(&original_wire["semantic_graph"]),
+        without_source_regions(&formatted_wire["semantic_graph"]),
+        "{path}: formatted source preserves semantic package identity"
+    );
+}
+
+/// Source positions move when canonical formatting changes byte layout.
+fn without_source_regions(value: &serde_json::Value) -> serde_json::Value {
+    use serde_json::Value;
+
+    match value {
+        Value::Object(members) => Value::Object(
+            members
+                .iter()
+                .filter(|(name, _)| !matches!(name.as_str(), "region" | "regions" | "span"))
+                .map(|(name, member)| (name.clone(), without_source_regions(member)))
+                .collect(),
+        ),
+        Value::Array(items) => Value::Array(items.iter().map(without_source_regions).collect()),
+        other => other.clone(),
+    }
 }
 
 fn emitted_once(

@@ -34,6 +34,7 @@
 //! the evaluator reaches them only through [`TemporalLetters`], the seam to
 //! the one clause evaluator (FR-107).
 
+mod covered;
 mod engine;
 pub mod evidence;
 mod facts;
@@ -47,19 +48,23 @@ mod outcome;
 mod plan;
 mod position;
 mod steps;
+mod stream;
+mod tape;
 mod tick_monitor;
 mod tick_shape;
 mod timed;
 mod tuple;
 mod window;
 
+pub use covered::CoveredList;
 pub use engine::{unrolling, DecisiveAtom, DecisiveSearch, DecisiveStop, Unrolling};
 pub use finite_window::{
     correction_identity, evaluate_finite_window, evaluate_finite_window_at, window_reach,
     Assessment, Basis, ClockCover, Containment, IndeterminateReason, LateCutoff, LateObservation,
     Lateness, LowerBoundary, OrderKey, Premises, ProgressedRefusal, ResultIdentity, SampleProgress,
     StampInterval, SupportPair, TimestampedObservation, TimestampedTrace, Valuation, Watermark,
-    WindowCharge, WindowClock, WindowEvaluation, WindowProgress, WindowUnit, WindowVerdict,
+    WindowCharge, WindowClock, WindowEvaluation, WindowProgress, WindowState, WindowUnit,
+    WindowVerdict,
 };
 pub use input::TemporalTrace;
 pub use ledger::{
@@ -70,16 +75,22 @@ pub use ledger::{
 };
 pub use letters::{AtomReading, CaptureReading, LetterStop, TemporalLetters, UndefinedCause};
 pub use observed::{
-    evaluate_observed, evaluate_observed_at, evaluate_observed_decisive,
-    evaluate_observed_finite_window, evaluate_sampled, evaluate_sampled_finite_window,
-    observed_valuation, FirstUndefined, HoldsStop, ObservedLocus, ObservedPositions, ObservedRun,
-    ObservedValuation, ObservedWindowRun, ValuationStop, WindowValuations,
+    descend_positions, evaluate_observed, evaluate_observed_at, evaluate_observed_decisive,
+    evaluate_observed_finite_window, evaluate_positions, evaluate_positions_finite_window,
+    evaluate_sampled, evaluate_sampled_finite_window, observed_valuation, push_object, push_sample,
+    read_object_stop, read_sample_stop, CarriedWindow, DescentSlice, FirstUndefined, HoldsStop,
+    ObservedLocus, ObservedPositions, ObservedRun, ObservedValuation, ObservedWindowRun,
+    SampleStop, ValuationStop, WindowValuations,
 };
 pub use observed_window::{ObservedWindowExpressions, ObservedWindowSource};
 pub use outcome::{
     InsufficientDataEvaluation, TemporalOutcome, TemporalRefusal, UndefinedEvaluation,
 };
 pub use position::{PositionRefusal, TemporalPosition};
+pub use stream::{ClauseStream, StreamStop};
+pub use tape::{
+    read_object_letter, read_sample_letter, LetterTape, TapeEntry, TapeLetter, TapeReading,
+};
 pub use tick_monitor::{
     definitely_before, within_bound, TickBound, TickMonitorReference, TickMonitorSpec, TickOutcome,
     TickResult, TickStep, TickStepError,

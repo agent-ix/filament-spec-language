@@ -25,8 +25,8 @@
 
 mod counterexample;
 pub use counterexample::{
-    CounterexampleWireError, ProtocolWire, assignments_wire, graph_evidence_wire,
-    probabilistic_wire, protocol_temporal_wire, temporal_wire,
+    assignments_wire, graph_evidence_wire, probabilistic_wire, protocol_temporal_wire,
+    temporal_wire, CounterexampleWireError, ProtocolWire,
 };
 
 use crate::hybrid::{BoundDimension, SolverHorizon};
@@ -42,7 +42,6 @@ use serde::ser::SerializeStruct;
 use serde::{Serialize, Serializer};
 use std::collections::{BTreeMap, BTreeSet};
 
-use crate::ReplayRefusal;
 use crate::certificate::{CertificateLocus, CertificateRule};
 use crate::model_check::state_graph::WitnessSource;
 use crate::proof_result::{
@@ -53,11 +52,12 @@ use crate::proof_result::{
 use crate::result::ReplayResult;
 use crate::spine::kernel_undefined_reason;
 use crate::spine::{
-    CallIncomplete, CallOutcome, CallRefusal, CheckedUnit, ClauseDisposition, ClauseRunReport,
-    CompileRefusal, EmittedUnit, FrontEndFailure, ParsedUnitSource, ReasonWire, RunRefusal,
-    SpineStage, TemporalUndefinedCause, TemporalVerdict, classify_clause_run, item_record,
+    classify_clause_run, item_record, CallIncomplete, CallOutcome, CallRefusal, CheckedUnit,
+    ClauseDisposition, ClauseRunReport, CompileRefusal, EmittedUnit, FrontEndFailure,
+    ParsedUnitSource, ReasonWire, RunRefusal, SpineStage, TemporalUndefinedCause, TemporalVerdict,
 };
 use crate::statistical::{self, Decision, StatisticalVerdict};
+use crate::ReplayRefusal;
 use filament_semantic_value::fairness::PropertyForm;
 use fsl_eval::temporal::UndefinedCause;
 
@@ -392,7 +392,7 @@ pub struct ItemCause {
     /// A `timed-form-shape` cause's claim: its checked-package
     /// `{declaration, occurrence}` (FR-498).
     #[serde(skip_serializing_if = "Option::is_none")]
-    locus: Option<WireLocus>,
+    locus: Option<ItemLocus>,
     #[serde(skip_serializing_if = "Option::is_none")]
     code: Option<String>,
     /// A refusal's action-oriented explanation, when the source provides one.
@@ -504,6 +504,13 @@ pub struct ItemCause {
     /// own spelling; it supplies the cause's `kind`.
     #[serde(flatten)]
     reason: Option<ReasonWire>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+#[serde(untagged)]
+enum ItemLocus {
+    Claim(WireLocus),
+    Outcome(OutcomeLocus),
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
@@ -1024,7 +1031,7 @@ impl OutcomeItem {
                         item.states = Some(ItemCauseStates::Cycle(states.clone()));
                     }
                     UnavailabilityCause::TimedFormShape { span, claim } => match claim {
-                        Some(claim) => item.locus = Some(WireLocus::of(claim)),
+                        Some(claim) => item.locus = Some(ItemLocus::Claim(WireLocus::of(claim))),
                         None => item.at = Some(format!("{}..{}", span.start, span.end)),
                     },
                     UnavailabilityCause::ValueCheck { reason, .. } => {
@@ -1461,6 +1468,19 @@ fn clause_run_cause(report: &ClauseRunReport) -> Option<ItemCause> {
                 ..ItemCause::kind("input-bytes-exceeded")
             })
         }
+        ClauseDisposition::SnapshotAdmission {
+            failure:
+                fsl_semantics::model::observation::AdmissionFailure::Refused(record)
+                | fsl_semantics::model::observation::AdmissionFailure::Incomplete(record),
+            document,
+            path,
+        } => Some(ItemCause {
+            kind: Some(record.catalog.cause()),
+            code: Some(record.catalog.code().to_owned()),
+            locus: snapshot_admission_locus(record, document, path.as_deref())
+                .map(ItemLocus::Outcome),
+            ..ItemCause::kind("")
+        }),
         ClauseDisposition::Evaluate(CallOutcome::Undefined { reason }) => Some(ItemCause {
             code: Some((*reason).to_owned()),
             ..ItemCause::kind("undefined-evaluation")
@@ -1563,6 +1583,72 @@ pub enum OutcomeLocus {
         /// The RFC 6901 pointer into the artifact.
         pointer: String,
     },
+    /// A refusal located in a snapshot or invocation document.
+    Document {
+        /// The document's FR-001 labels.
+        document: Option<RawSourceRef>,
+        /// The caller's path for the document, when retained.
+        path: Option<String>,
+        /// The RFC 6901 pointer to the failing member or containing object.
+        pointer: String,
+        /// The population and key of the object, when the refusal names one.
+        object: Option<DocumentObjectLocus>,
+        /// The failing member, when the refusal names one.
+        member: Option<String>,
+    },
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+pub struct DocumentObjectLocus {
+    /// The model population.
+    pub population: String,
+    /// The snapshot object key.
+    pub key: String,
+}
+
+pub(crate) fn snapshot_admission_locus(
+    record: &fsl_semantics::model::observation::AdmissionRecord,
+    document: &fsl_semantics::model::observation::DocumentRef,
+    path: Option<&str>,
+) -> Option<OutcomeLocus> {
+    if !matches!(record.catalog.cause(), "missing-member" | "unknown-member") {
+        return None;
+    }
+    use filament_semantic_value::admission::PathStep;
+    let pointer = record.path.iter().fold(String::new(), |mut pointer, step| {
+        match step {
+            PathStep::Field(member) => {
+                pointer.push('/');
+                pointer.push_str(&member.replace('~', "~0").replace('/', "~1"));
+            }
+            PathStep::Index(index) => {
+                pointer.push('/');
+                pointer.push_str(&index.to_string());
+            }
+            PathStep::OptionValue => {}
+        }
+        pointer
+    });
+    let identity = fsl_foundation::source::provenance::RawSourceRef::new(
+        document.authority.clone(),
+        document.identity.clone(),
+    )
+    .ok();
+    let object = record
+        .fields
+        .get("object")
+        .zip(record.fields.get("population"))
+        .map(|(key, population)| DocumentObjectLocus {
+            population: population.clone(),
+            key: key.clone(),
+        });
+    Some(OutcomeLocus::Document {
+        document: identity,
+        path: path.map(str::to_owned),
+        pointer,
+        object,
+        member: record.fields.get("member").cloned(),
+    })
 }
 
 impl From<&Locus> for OutcomeLocus {
@@ -1816,6 +1902,63 @@ pub enum ExecuteResult {
     },
 }
 
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+#[serde(untagged)]
+enum OutcomeResult {
+    Execute(ExecuteResult),
+    Parsed(ParsedOutcome),
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+struct ParsedOutcome {
+    kind: &'static str,
+    source: fsl_foundation::source::provenance::RawSourceRef,
+    path: String,
+    bytes: String,
+    usage: Vec<ParseUsage>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+struct ParseUsage {
+    setting: &'static str,
+    bound: String,
+    used: String,
+}
+
+impl From<&crate::spine::ParseReport> for ParsedOutcome {
+    fn from(report: &crate::spine::ParseReport) -> Self {
+        let count = |value: usize| value.to_string();
+        Self {
+            kind: "parsed",
+            source: report.source.clone(),
+            path: report.path.clone(),
+            bytes: count(report.bytes),
+            usage: vec![
+                ParseUsage {
+                    setting: "s1.input_bytes",
+                    bound: count(report.limits.source_bytes),
+                    used: count(report.bytes),
+                },
+                ParseUsage {
+                    setting: "s1.tokens",
+                    bound: count(report.limits.tokens),
+                    used: count(report.tokens),
+                },
+                ParseUsage {
+                    setting: "s1.nodes",
+                    bound: count(report.limits.nodes),
+                    used: count(report.nodes),
+                },
+                ParseUsage {
+                    setting: "s1.work_units",
+                    bound: count(report.limits.work_units),
+                    used: report.work_units.to_string(),
+                },
+            ],
+        }
+    }
+}
+
 /// The exhausted limit of an incomplete `execute` result (FR-277): bound and
 /// counter (FR-277's counter at the failed charge) are
 /// ASCII decimal strings.
@@ -1857,7 +2000,7 @@ pub struct OutcomeDocument {
     category: Category,
     items: Vec<OutcomeItem>,
     diagnostics: Vec<OutcomeDiagnostic>,
-    result: Option<ExecuteResult>,
+    result: Option<OutcomeResult>,
     requirements: Option<Box<RequirementItems>>,
 }
 
@@ -2042,13 +2185,36 @@ impl OutcomeDocument {
         &self.diagnostics
     }
 
-    /// The document of a `parse` outcome: success at S2, with no items,
-    /// diagnostics, artifacts or evaluation result; a failure uses the
-    /// front-end's category, stage and diagnostic without running a stage.
+    /// The document of a `parse` outcome. Completed S1/S2 work carries its
+    /// parsed report, including when S2 later refuses recovered syntax.
     pub fn from_parse(result: &Result<Staged<ParsedUnitSource>, FrontEndFailure>) -> Self {
         match result {
-            Ok(_) => Self::new(Operation::Parse, Some(OutcomeStage::S2), Category::Success),
-            Err(failure) => Self::from_failure(Operation::Parse, failure),
+            Ok(staged) => {
+                let parsed = crate::spine::ParseReport {
+                    source: staged.value().source().reference().clone(),
+                    path: staged.value().source().path().to_owned(),
+                    bytes: staged.value().source().text().len(),
+                    limits: staged.value().syntax().effective_limits(),
+                    tokens: staged.value().syntax().cst().tokens().len(),
+                    nodes: staged.value().syntax().cst().nodes().len(),
+                    work_units: staged.work().s1,
+                };
+                let mut document =
+                    Self::new(Operation::Parse, Some(OutcomeStage::S2), Category::Success);
+                document.result = Some(OutcomeResult::Parsed(ParsedOutcome::from(&parsed)));
+                document
+            }
+            Err(failure) => {
+                let mut document = Self::from_failure(Operation::Parse, failure);
+                let parsed = match failure {
+                    StageFailure::RefusedWithPayload(_, payload)
+                    | StageFailure::LimitWithPayload(_, payload) => payload.parsed.as_ref(),
+                    _ => None,
+                };
+                document.result =
+                    parsed.map(|parsed| OutcomeResult::Parsed(ParsedOutcome::from(parsed)));
+                document
+            }
         }
     }
 
@@ -2266,17 +2432,17 @@ impl OutcomeDocument {
                 document.diagnostics = vec![OutcomeDiagnostic::from_call_refusal(refusal)];
             }
             CallOutcome::Completed(value) => {
-                document.result = Some(ExecuteResult::Completed {
+                document.result = Some(OutcomeResult::Execute(ExecuteResult::Completed {
                     value: ResultValue(value.form()),
-                });
+                }));
             }
             CallOutcome::Undefined { reason } => {
-                document.result = Some(ExecuteResult::Undefined { reason });
+                document.result = Some(OutcomeResult::Execute(ExecuteResult::Undefined { reason }));
             }
             CallOutcome::Incomplete(incomplete) => {
-                document.result = Some(ExecuteResult::Incomplete {
+                document.result = Some(OutcomeResult::Execute(ExecuteResult::Incomplete {
                     limit: ResultLimit::from(incomplete),
-                });
+                }));
             }
         }
         document
@@ -2310,11 +2476,12 @@ impl OutcomeDocument {
     fn run_refusal_document(operation: Operation, refusal: &RunRefusal) -> Self {
         match refusal {
             RunRefusal::Compile(compile) => {
-                Self::new(operation, Some(compile.stage().into()), refusal.category()).with_diagnostics(
-                    OutcomeDiagnostic::from_compile_refusal_diagnostics_for_operation(
-                        operation, compile,
-                    ),
-                )
+                Self::new(operation, Some(compile.stage().into()), refusal.category())
+                    .with_diagnostics(
+                        OutcomeDiagnostic::from_compile_refusal_diagnostics_for_operation(
+                            operation, compile,
+                        ),
+                    )
             }
             RunRefusal::Cancelled(cause) => Self::cancelled(operation, *cause),
             RunRefusal::Fault(fault) => Self::faulted(operation, fault),
@@ -2507,7 +2674,7 @@ mod tests {
     use fsl_foundation::diagnostic::LimitExceeded;
     use fsl_foundation::Setting;
     use fsl_semantics::model::object_environment::ObjectEnvironment;
-    use serde_json::{Value, json};
+    use serde_json::{json, Value};
 
     use super::*;
     use crate::identity::QualifiedName;
@@ -2649,8 +2816,8 @@ mod tests {
     use crate::proof_result::{IncompleteCause, ProofRefusalCause, UnavailabilityCause};
     use crate::result::{DisagreementCause, EvaluatedValue, InputArmResult, Verdict, WitnessCheck};
     use crate::spine::{
-        Call, CallLocus, DependencyInput, PackageLimits, ParseRequest, SpineLimits, check,
-        default_accounting, package, parse, run, select,
+        check, default_accounting, package, parse, run, select, Call, CallLocus, DependencyInput,
+        PackageLimits, ParseRequest, SpineLimits,
     };
 
     const FIXTURE: &str = include_str!("../../tests/fixtures/spine-compile.native");

@@ -782,7 +782,7 @@ fn reach(objective: &str, policy: Value) -> Value {
 
 /// FR-755-AC-3 and FSpec FR-650-AC-4: under the policy `NotOne` the
 /// replayed plan never visits version 1; a policy naming no clause refuses
-/// `missing-name`; an `eventually` policy refuses `expression-form`.
+/// `missing-name`; an `eventually` policy is evaluated, not refused.
 #[test]
 #[trace("TC-2105", "FR-755-AC-3")]
 #[trace("FSpec-TC-1603", "FSpec-FR-650-AC-4")]
@@ -798,7 +798,15 @@ fn the_planner_keeps_plans_within_policy() {
         assert_ne!(state["versionNumber"], 1, "{value}");
     }
     refusal_names(&reach("", json!(["Nowhere"])), "missing-name");
-    refusal_names(&reach("", json!(["SomeTime"])), "expression-form");
+    // FSpec FR-803: a non-safety policy is evaluated on each completed plan.
+    let eventually = reach("", json!(["SomeTime"]));
+    assert!(
+        matches!(
+            eventually["synthesis"]["status"].as_str(),
+            Some("optimal" | "infeasible")
+        ),
+        "{eventually}"
+    );
 }
 
 /// FSpec FR-650-AC-2: a per-step cost objective is minimized and certified.
@@ -844,7 +852,7 @@ fn the_planner_reports_infeasible_and_incomplete() {
         (
             "synthesis",
             json!({"declaration": "Reach",
-        "initial": "spine-snapshot.json", "limits": {"work": 1}}),
+        "initial": "spine-snapshot.json", "limits": {"max_work": 1}}),
         ),
     );
     assert_eq!(value["synthesis"]["status"], "incomplete", "{value}");
@@ -1103,6 +1111,54 @@ fn a_tl_lowering_request_selects_its_correspondence() {
         value["tl_lowering"]["correspondence"],
         "mltl.origin-complete-history/v1"
     );
+}
+
+/// A driver can execute the value returned by the public preparation API.
+/// Provenance: QSL-2348.
+#[test]
+#[trace("TC-2601", "FR-931-AC-1")]
+#[trace("FR-312-AC-3")]
+fn a_prepared_tl_lowering_uses_the_public_executor_and_keeps_limits() {
+    let directory = tempfile::tempdir().unwrap();
+    spine::write(directory.path(), Case::Healthy).unwrap();
+    let unit = low(EVENT_POSITION, LOW_BODY);
+    std::fs::write(directory.path().join("unit.native"), unit).unwrap();
+
+    let request = json!({"format": "native-run/1", "request": {
+        "models": [{"format": "semantic-ir/2.0.0",
+            "source": source("spine-model.semantic-ir.json")}],
+        "program": {"source": source("unit.native")},
+        "tl_lowering": {"clause": "Low"}
+    }});
+    let path = directory.path().join("request.json");
+    std::fs::write(&path, serde_json::to_vec(&request).unwrap()).unwrap();
+
+    let expected = fsl_command::command::run(&path, &crate::negotiation::Fr290)
+        .unwrap_or_else(|error| panic!("{}", error.value().unwrap()));
+    let prepared =
+        fsl_command::command::prepare_run(&path, fsl_command::command::RunLimits::default())
+            .unwrap_or_else(|error| panic!("{}", error.value().unwrap()));
+    let fsl_command::command::PreparedRun::TlLowering(prepared) = prepared else {
+        panic!("the tl_lowering request must prepare a TL lowering")
+    };
+    let actual = fsl_command::command::execute_tl_lowering(*prepared)
+        .unwrap_or_else(|error| panic!("{}", error.value().unwrap()));
+
+    assert_eq!(actual.exit_code, expected.exit_code);
+    assert_eq!(actual.value.to_string(), expected.value.to_string());
+
+    let limited = fsl_command::command::prepare_run(
+        &path,
+        fsl_command::command::RunLimits {
+            dependent_bytes: 1,
+            ..fsl_command::command::RunLimits::default()
+        },
+    )
+    .err()
+    .expect("the configured dependent-file ceiling must refuse before execution");
+    assert_eq!(limited.category().exit_code(), 22);
+    let refusal = limited.value().expect("a refusal outcome document");
+    assert!(refusal.to_string().contains("dependent_bytes"), "{refusal}");
 }
 
 /// FR-931-AC-2's timed case: `Low` under the timed profile is unsupported

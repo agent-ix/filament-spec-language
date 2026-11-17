@@ -11,7 +11,7 @@
 
 use std::collections::BTreeSet;
 
-use filament_exact::Cancel;
+use filament_exact::{Cancel, FieldValue, Value};
 use fsl_analyze::model_check::{check_protocol, ModelCheckRefusal, ProtocolCheckRequest};
 use fsl_eval::simulation::protocol::{
     protocol_domains, visible, AnchorName, ClaimReads, PathStep, ProtocolLocation, ProtocolSystem,
@@ -68,6 +68,28 @@ fn refund_of(
     recover: &str,
 ) -> String {
     let attempt_type = attempts.rsplit(' ').next().expect("an attempt type");
+    refund_with_recovery_type(
+        effect,
+        operation,
+        attempts,
+        attempt_type,
+        retry,
+        commit,
+        recover,
+    )
+}
+
+/// [`refund_of`] with a recovery record type distinct from the attempt type.
+fn refund_with_recovery_type(
+    effect: &str,
+    operation: &str,
+    attempts: &str,
+    recovery_type: &str,
+    retry: &str,
+    commit: &str,
+    recover: &str,
+) -> String {
+    let attempt_type = attempts.rsplit(' ').next().expect("an attempt type");
     format!(
         "compensate Refund for {effect} as (fwd: M::Cell)\n\
          by w on M::Cell::{operation} using t0 clock \"c\" {{\n\
@@ -76,7 +98,7 @@ fn refund_of(
          attempts {attempts};\n\
          retry (e: {attempt_type}, l: {attempt_type}) {{ {retry} }};\n\
          commit {commit};\n\
-         recover (r: {attempt_type}) {{ {recover} }};\n\
+         recover (r: {recovery_type}) {{ {recover} }};\n\
          }}"
     )
 }
@@ -110,6 +132,22 @@ fn unit(template: &str, run: &str) -> String {
 pub(crate) fn pay(recover: &str) -> String {
     unit(
         &refund("Main::Paid", "dec", 1, "false", "never", recover),
+        &pay_run(""),
+    )
+}
+
+/// [`pay`] with a recovery record type distinct from the attempt type.
+fn pay_with_recovery_type(recover: &str, recovery_type: &str) -> String {
+    unit(
+        &refund_with_recovery_type(
+            "Main::Paid",
+            "dec",
+            "1 of M::Attempt",
+            recovery_type,
+            "false",
+            "never",
+            recover,
+        ),
         &pay_run(""),
     )
 }
@@ -1230,33 +1268,50 @@ fn committed(reached: &[Reached], at: usize) -> usize {
 /// record, one successor per record, and nothing settles `unsupported`.
 #[trace("TC-652", "FR-207-AC-5", "FSpec-FR-730-AC-1")]
 #[test]
-#[ignore = "QSL-2206: a recovery predicate that reads its recovery binder settles unsupported instead of binding each recovery record at cend"]
 fn a_recovery_predicate_over_the_recovery_view_is_evaluated() {
-    explore(&pay("r.n = 0"), |system, explored| {
-        let reached = &explored.reached;
-        let t2 = after(
-            reached,
-            after(reached, 0, StepKind::Attempt),
-            StepKind::Event,
-        );
-        let (_, t4) = fail(system, reached, t2, true);
-        let t6 = after(reached, t4, StepKind::CAttempt);
-        let ends: Vec<usize> = reached[t6]
-            .steps
-            .iter()
-            .filter(|(step, _)| step.kind() == StepKind::CEnd)
-            .map(|(_, next)| *next)
-            .collect();
-        assert!(ends.len() >= 2, "one cend per recovery record: {ends:?}");
-        let found: BTreeSet<String> = ends
-            .iter()
-            .flat_map(|at| statuses(&key_json(system, &reached[*at])))
-            .collect();
-        assert_eq!(
-            found,
-            BTreeSet::from(["recovered".to_owned(), "unrecovered".to_owned()])
-        );
-    });
+    explore(
+        &pay_with_recovery_type("r.bal = 0", "M::Recovery"),
+        |system, explored| {
+            let reached = &explored.reached;
+            let t2 = after(
+                reached,
+                after(reached, 0, StepKind::Attempt),
+                StepKind::Event,
+            );
+            let (_, t4) = fail(system, reached, t2, true);
+            let t6 = after(reached, t4, StepKind::CAttempt);
+            let ends: Vec<usize> = reached[t6]
+                .steps
+                .iter()
+                .filter(|(step, _)| step.kind() == StepKind::CEnd)
+                .map(|(_, next)| *next)
+                .collect();
+            assert_eq!(ends.len(), 2, "one cend per recovery record: {ends:?}");
+            let outcomes: Vec<(String, String)> = reached[t6]
+                .steps
+                .iter()
+                .filter(|(step, _)| step.kind() == StepKind::CEnd)
+                .map(|(step, next)| {
+                    let Some(Value::Composite(record)) = step.binder_record() else {
+                        panic!("cend binds its recovery record: {step:?}");
+                    };
+                    let [FieldValue::Present(Value::Integer(balance))] = record.slots() else {
+                        panic!("recovery record contains its balance: {record:?}");
+                    };
+                    let status = statuses(&key_json(system, &reached[*next]));
+                    assert_eq!(status.len(), 1, "one registration status: {status:?}");
+                    (balance.to_string(), status[0].clone())
+                })
+                .collect();
+            assert_eq!(
+                outcomes,
+                [
+                    ("0".to_owned(), "recovered".to_owned()),
+                    ("1".to_owned(), "unrecovered".to_owned()),
+                ]
+            );
+        },
+    );
 }
 
 /// FR-207-AC-6 (TC-652): with `attempts 2 of M::RefundAttempt` and the retry

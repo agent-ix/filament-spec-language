@@ -637,6 +637,7 @@ fn a_compile_refusal_classifies_as_fr_341_does() {
         name: "seven".to_owned(),
         arguments: Vec::new(),
         snapshot: config_version_document_ref("snap"),
+        snapshot_path: None,
     });
     request.packages = BTreeMap::new();
     let report = run_clause(request).unwrap();
@@ -853,7 +854,7 @@ fn child_snapshot_report(identity: &str, complete: bool, parent_key: &str) -> Cl
         "observation": "current",
         "anchor": {"kind": "handler", "name": "validate"},
         "model": {
-            "identity": CONFIG_VERSION_PACKAGE_IDENTITY, "version": "1.0.0",
+            "identity": CONFIG_VERSION_PACKAGE_IDENTITY,
         },
         "populations": [{
             "population": population,

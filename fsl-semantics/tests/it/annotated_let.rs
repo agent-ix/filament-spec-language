@@ -73,7 +73,6 @@ fn assert_refused(declarations: &str, code: Code, cause: &str) -> CheckRefusal {
 /// initializer and keeps it where the unannotated form loses it.
 #[trace("TC-2771", "FR-980-AC-3", "FSpec-TC-1004", "FSpec-FR-501-AC-3")]
 #[test]
-#[ignore = "QSL-2008: checking a let initializer at its annotation is not implemented yet"]
 fn an_annotated_let_gives_its_declared_type_to_the_bound_expression() {
     assert_checks("function f using v(y: Int[0,2]): Integer pure { let x: Int[0,3] = y + 1 in x }");
     assert_refused(
@@ -96,7 +95,6 @@ fn an_annotated_let_gives_its_declared_type_to_the_bound_expression() {
 /// and an unresolved annotation.
 #[trace("TC-2771", "FR-980-AC-4")]
 #[test]
-#[ignore = "QSL-2008: the let annotation's type checks are not implemented yet"]
 fn an_annotated_let_refuses_an_initializer_that_does_not_conform() {
     assert_refused(
         "function b using v(): Boolean pure { let x: Boolean = 1 in x }",
@@ -117,7 +115,6 @@ fn an_annotated_let_refuses_an_initializer_that_does_not_conform() {
 /// FR-980-AC-5: the formatted source checks as the original does.
 #[trace("TC-2772", "FR-980-AC-5")]
 #[test]
-#[ignore = "QSL-2008: the let annotation is not parsed, so formatted source cannot be checked yet"]
 fn a_formatted_annotated_let_checks_as_the_original() {
     let body = "function f using v(y: Int[0,2]): Integer pure { let x:Int[0,3]=y+1 in x }";
     let text = format!("language \"ix:native\" edition \"1-draft\";\n{V}{body}\n");

@@ -242,7 +242,7 @@ fn gauge(digits: [i64; 7]) -> Json {
 fn admit(package: &CheckedPackage, post: [i64; 7]) -> AdmittedObservations {
     let bytes = serde_json::to_vec(&document()).expect("the fixture serializes");
     let packages = package_input([bytes.as_slice()]).unwrap();
-    let model = json!({"identity": k2::PACKAGE, "version": "1"});
+    let model = json!({"identity": k2::PACKAGE});
     let snapshot = |label: &str, observation: &str, digits: [i64; 7]| {
         let identity = document_ref(label);
         let bytes = serde_json::to_vec(&json!({

@@ -210,10 +210,11 @@ impl CompileRefusal {
             Self::Dependency { refusal, .. } => refusal.causes(),
             Self::Link(refusal) => vec![RefusalCause::new(refusal.code(), refusal.cause())],
             Self::Emit(refusal, _) => vec![RefusalCause::new(refusal.code(), refusal.cause())],
-            Self::Limit(limit) => vec![
-                RefusalCause::new(Code::StageLimitExceeded, Some(limit.kind().catalog_cause()))
-                    .reaching(Some(ReachedLimit::of(limit))),
-            ],
+            Self::Limit(limit) => vec![RefusalCause::new(
+                Code::StageLimitExceeded,
+                Some(limit.kind().catalog_cause()),
+            )
+            .reaching(Some(ReachedLimit::of(limit)))],
             Self::Omitted(_) => vec![RefusalCause::new(Code::UnsupportedProjection, None)],
             Self::Extension(refusal) => vec![RefusalCause::new(
                 refusal.code(),
@@ -574,6 +575,19 @@ fn classify_disposition(disposition: &ClauseDisposition) -> Classification {
             ),
             AdmissionFailure::Fault(_) => one(ToolFailure, Code::RuntimeInvariant, None),
         },
+        ClauseDisposition::SnapshotAdmission { failure, .. } => match failure {
+            AdmissionFailure::Refused(record) => one(
+                Refused,
+                Code::from_code(record.catalog.code()).unwrap_or(Code::RuntimeInvariant),
+                Some(record.catalog.cause()),
+            ),
+            AdmissionFailure::Incomplete(record) => one(
+                Incomplete,
+                Code::from_code(record.catalog.code()).unwrap_or(Code::RuntimeInvariant),
+                Some(record.catalog.cause()),
+            ),
+            AdmissionFailure::Fault(_) => one(ToolFailure, Code::RuntimeInvariant, None),
+        },
         ClauseDisposition::ArgumentRefusal(refusal) => one(Refused, refusal.code(), None),
         ClauseDisposition::Evaluate(outcome) => classify_outcome(outcome),
         ClauseDisposition::FrameViolation(witness) => {
@@ -621,10 +635,8 @@ fn classify_outcome(outcome: &CallOutcome) -> Classification {
         ),
         CallOutcome::Incomplete(incomplete) => Classification::new(
             Incomplete,
-            vec![
-                RefusalCause::new(Code::ResourceExhausted, None)
-                    .reaching(Some(accounting_limit(incomplete))),
-            ],
+            vec![RefusalCause::new(Code::ResourceExhausted, None)
+                .reaching(Some(accounting_limit(incomplete)))],
         ),
     }
 }

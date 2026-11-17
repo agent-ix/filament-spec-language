@@ -952,6 +952,7 @@ fn run_clause_evaluates_a_function_selection_with_an_integer_argument() {
             value: ClauseArgumentValue::Integer(5),
         }],
         snapshot: label,
+        snapshot_path: None,
     });
     request.snapshots.insert(
         fsl_semantics::model::observation::document_reference(&bytes)
@@ -991,6 +992,7 @@ fn run_clause_evaluates_a_function_selection_with_a_reference_argument() {
             },
         }],
         snapshot: label,
+        snapshot_path: None,
     });
     request.snapshots.insert(
         fsl_semantics::model::observation::document_reference(&bytes)
@@ -1030,6 +1032,7 @@ fn run_clause_refuses_an_unresolved_reference_argument() {
             },
         }],
         snapshot: label,
+        snapshot_path: None,
     });
     request.snapshots.insert(
         fsl_semantics::model::observation::document_reference(&bytes)
@@ -1067,6 +1070,7 @@ fn run_clause_reports_not_a_predicate_for_an_integer_function() {
         name: "seven".to_owned(),
         arguments: Vec::new(),
         snapshot: label,
+        snapshot_path: None,
     });
     request.snapshots.insert(
         fsl_semantics::model::observation::document_reference(&bytes)
@@ -1095,6 +1099,7 @@ fn run_clause_refuses_an_empty_source() {
             authority: "test".to_owned(),
             identity: "snap".to_owned(),
         },
+        snapshot_path: None,
     });
     request.source = ClauseRunSource::Program {
         identity: source(),
@@ -1121,6 +1126,7 @@ fn run_clause_reports_missing_import_when_no_package_bytes_are_supplied() {
         name: "seven".to_owned(),
         arguments: Vec::new(),
         snapshot: label,
+        snapshot_path: None,
     });
     // No snapshot bytes are inserted either: the request never gets past
     // compile, so nothing would be read even if a snapshot were named.
@@ -1159,6 +1165,7 @@ fn run_clause_writes_the_caller_budget_fields_of_a_compile_ceiling() {
         name: "seven".to_owned(),
         arguments: Vec::new(),
         snapshot: label.clone(),
+        snapshot_path: None,
     };
     let refusal_of = |request: ClauseRunRequest| {
         let report = run_clause(request).unwrap();
@@ -1225,7 +1232,7 @@ fn run_clause_reports_the_document_order_first_unknown_member_not_the_alphabetic
             "format": "filament.state.snapshot/v1",
             "identity": {"authority": "test", "identity": "snap"},
             "observation": "current",
-            "model": {"identity": "test/nodes", "version": "1.0.0"},
+            "model": {"identity": "test/nodes"},
             "populations": [],
             "zzz_unknown": true,
             "aaa_unknown": true
@@ -1756,7 +1763,7 @@ fn config_version_snapshot(
         "observation": "current",
         "anchor": {"kind": "handler", "name": "validate"},
         "model": {
-            "identity": CONFIG_VERSION_PACKAGE_IDENTITY, "version": "1.0.0",
+            "identity": CONFIG_VERSION_PACKAGE_IDENTITY,
         },
         "populations": [{"population": population, "complete": true, "objects": objects}],
     });
@@ -1829,6 +1836,7 @@ fn config_version_function_request(name: &str, arguments: Vec<ClauseArgument>) -
         name: name.to_owned(),
         arguments,
         snapshot: label,
+        snapshot_path: None,
     });
     request.snapshots.insert(
         fsl_semantics::model::observation::document_reference(&bytes)
@@ -1911,7 +1919,7 @@ fn run_clause_refuses_a_dangling_parent_reference() {
         "observation": "current",
         "anchor": {"kind": "handler", "name": "validate"},
         "model": {
-            "identity": CONFIG_VERSION_PACKAGE_IDENTITY, "version": "1.0.0",
+            "identity": CONFIG_VERSION_PACKAGE_IDENTITY,
         },
         "populations": [{
             "population": population,
@@ -1967,7 +1975,7 @@ fn run_clause_reports_incomplete_for_an_incomplete_population() {
         "observation": "current",
         "anchor": {"kind": "handler", "name": "validate"},
         "model": {
-            "identity": CONFIG_VERSION_PACKAGE_IDENTITY, "version": "1.0.0",
+            "identity": CONFIG_VERSION_PACKAGE_IDENTITY,
         },
         "populations": [{
             "population": population,
@@ -2361,6 +2369,47 @@ fn convert_outcome_drives_the_disposition_for_every_general_outcome_kind() {
     assert_eq!(disposition.category().exit_code(), 22);
 }
 
+/// TC-2830 step 1 (FR-109-AC-14): a constructed
+/// `Outcome::Undefined(SumOutOfDomain)` maps, as AC-5 checks FR-100-AC-9's
+/// outcomes, to a refuted claim: stage `evaluate`, category `violation`,
+/// `truth` false, cause `sum-out-of-domain` (never null), exit 10.
+#[trace("TC-2830", "FR-109-AC-14")]
+#[test]
+#[ignore = "QSL-2186: an undefined clause evaluation maps to violation/truth false with its cause; not implemented yet"]
+fn sum_out_of_domain_maps_to_a_refuted_claim_with_its_cause() {
+    let compiled = compiled();
+    let sources = std::slice::from_ref(&compiled.source);
+    let mapped = super::super::call::convert_outcome(
+        filament_eval::Evaluation {
+            outcome: FamilyOutcome::Evaluated(filament_exact::Outcome::Undefined(
+                filament_exact::Undefined::SumOutOfDomain,
+            )),
+            location: None,
+            losses: Vec::new(),
+        },
+        compiled.package.graph(),
+        sources,
+    )
+    .expect("Undefined maps to Ok");
+    assert!(
+        matches!(
+            mapped,
+            super::super::call::CallOutcome::Undefined {
+                reason: "sum-out-of-domain"
+            }
+        ),
+        "the cause is present: {mapped:?}"
+    );
+    let disposition = ClauseDisposition::Evaluate(mapped);
+    assert_eq!(disposition.stage(), ClauseRunStage::Evaluate);
+    assert_eq!(
+        disposition.category(),
+        filament_semantic_value::catalog::Category::Violation
+    );
+    assert_eq!(disposition.truth(), Some(false));
+    assert_eq!(disposition.exit_code(), 10);
+}
+
 /// FR-285: an admission refusal exits by its record code's category, so
 /// `unknown_required_feature` (FR-106 check 6.2) exits 21; an admission
 /// `Incomplete` exits 22 whatever its code.
@@ -2452,7 +2501,7 @@ fn config_version_invocation_snapshot(
         "identity": document_identity_json(label),
         "observation": observation,
         "model": {
-            "identity": CONFIG_VERSION_PACKAGE_IDENTITY, "version": "1.0.0",
+            "identity": CONFIG_VERSION_PACKAGE_IDENTITY,
         },
         "populations": [{"population": population, "complete": true, "objects": objects}],
     });
@@ -2474,7 +2523,7 @@ fn config_version_invocation_bytes(
         "format": "filament.state.invocation/v1",
         "identity": document_identity_json(label),
         "model": {
-            "identity": CONFIG_VERSION_PACKAGE_IDENTITY, "version": "1.0.0",
+            "identity": CONFIG_VERSION_PACKAGE_IDENTITY,
         },
         "context": config_version_type(),
         "operation": "attemptUpdate",
@@ -2839,7 +2888,7 @@ fn config_version_step3_snapshot(
         "identity": document_identity_json(label),
         "observation": observation,
         "model": {
-            "identity": CONFIG_VERSION_PACKAGE_IDENTITY, "version": "1.0.0",
+            "identity": CONFIG_VERSION_PACKAGE_IDENTITY,
         },
         "populations": [
             {"population": population, "complete": true, "objects": objects},
@@ -2903,7 +2952,7 @@ fn config_version_probe_invocation_bytes(
         "format": "filament.state.invocation/v1",
         "identity": document_identity_json(label),
         "model": {
-            "identity": CONFIG_VERSION_PACKAGE_IDENTITY, "version": "1.0.0",
+            "identity": CONFIG_VERSION_PACKAGE_IDENTITY,
         },
         "context": config_version_type(),
         "operation": "probe",

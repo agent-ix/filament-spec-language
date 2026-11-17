@@ -83,6 +83,15 @@ impl ClauseFacts {
         }
     }
 
+    /// [`Self::of_checked`] for letters that carry each window aggregate's
+    /// reading (FR-820's letter tape): an aggregate is read as an atom, so the
+    /// finite-window evaluator needs no window of samples.
+    pub fn of_checked_letters(clause: &CheckedTemporalClause) -> Self {
+        let mut facts = Self::of_checked(clause);
+        facts.formula.plan = Plan::new(clause.formula());
+        facts
+    }
+
     /// The facts with `formula` as the clause's formula.
     #[doc(hidden)]
     #[must_use]

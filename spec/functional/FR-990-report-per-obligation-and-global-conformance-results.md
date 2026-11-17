@@ -66,7 +66,7 @@ fifth axis). Its members:
 | Member | Value |
 | --- | --- |
 | `state` | `closed`, `open`, `incomplete` or `contradicted` (FSpec FR-247) |
-| `premises` | the required closure-premise identities, each `{kind, identity}`. `kind` is `execution`, `branch` or `workflow` |
+| `premises` | the required closure-premise identities, each `{kind, instance, node[, role_instance]}` (below). `kind` is `execution`, `branch` or `workflow` |
 | `producer` | `recording` or `engine` |
 
 The required premises are the protocol's own facts, in FSpec FR-052's
@@ -77,6 +77,33 @@ that does not activate `on each`. There is one `branch` premise for each
 one `workflow` premise for each compensation workflow the instance
 registers. They come from the checked protocol and never from the
 observations.
+
+**Premise identity.** A premise is the closed record `{kind, instance,
+node[, role_instance]}`. Premises are authored protocol facts (FSpec FR-247
+"Causal order"), so each component is read from the checked protocol and
+none is inferred from a display name, a position or an observation:
+
+- `instance` is the protocol instance's FSpec FR-287 runtime key. It is
+  absent when the protocol does not activate `on each`, and present on every
+  premise when it does.
+- `node` is the checked identity of the node that closes the premise,
+  spelled as an obligation's `node` is: for `execution`, the protocol's
+  `finish` terminal; for `branch`, the `choice` case, `parallel` branch or
+  fan-out node the branch is; for `workflow`, the step that registers the
+  compensation workflow.
+- `role_instance` is present only on the `branch` premise of a fan-out
+  member, and is that member's FSpec FR-737 replicated-role `instance`
+  object reference.
+
+Two premises are the same premise exactly when every component is equal,
+compared componentwise in the order `kind`, `instance`, `node`,
+`role_instance`, and an absent component equals only absence. The list is
+in FSpec FR-052's authored partial order of the premise nodes; a reader
+compares a premise set by these identities and never by list position. A
+premise whose `kind` and `node` disagree (an `execution` premise naming a
+case node), whose `instance` is present for a protocol without `on each` or
+names no activated instance, or whose `role_instance` names no member of the
+fan-out is cross-wired or scope-mismatched.
 
 **Who produces the record.**
 
@@ -174,8 +201,9 @@ modes.
 | FR-990-AC-1 | `global-conformance` over the FR-636 order fixture with no recording settles an item whose `obligations` has one entry per FR-895 obligation. The causal-order, enabledness and channel-premise entries are `satisfied`, `by-construction`, and every other entry is `satisfied`, `explored`. `closure` is `{state: closed, producer: engine}` with one `execution` premise and one `branch` premise for each of `Ship` and `Cancel`. `global` is `{label: proved, basis: closed-scope, complete: true}`, and `projections` holds `Buyer` and `Seller`. | Test (TC-2800) |
 | FR-990-AC-2 | The fixture with the `receive` removed settles `global` `{label: refuted, complete: false}`. Its closure obligation is `violated`, cause `counterexample`, with a `witness` that indexes the item's deadlock counterexample, and `closure.state` is `open`. | Test (TC-2800) |
 | FR-990-AC-3 | FR-895-AC-1's closed recording settles `closure` `{state: closed, producer: recording}` and `global.complete` `true`. The same recording with closure `open` settles `inconclusive`, cause `open-history`, with `complete` `false`, and the verdicts of the obligations its observations decide are unchanged. With closure `contradicted` it settles `inconclusive`, cause `open-history`, with `closure.state` `contradicted`. | Test (TC-2801) |
-| FR-990-AC-4 | A recording whose closure is `closed` but whose premise set omits the `Ship` branch premise, lists the execution premise twice, or names the premise of another instance is refused `invalid_runtime_input` naming the premise, and no verdict is reported. A recording that observes `finish` but states closure `open` keeps `closure.state` `open`. | Test (TC-2801) |
+| FR-990-AC-4 | A recording whose closure is `closed` but whose premise set omits the `Ship` branch premise, lists the execution premise twice, or names an instance the protocol does not activate is refused `invalid_runtime_input` naming the premise, and no verdict is reported. A recording that observes `finish` but states closure `open` keeps `closure.state` `open`. | Test (TC-2801) |
 | FR-990-AC-5 | A run of the order fixture with `max_states` 1 reports its undecided obligations `pending` and `closure.state` `incomplete`. `global` is `{label: incomplete, cause: limit-reached, basis: unavailable, complete: false}` and names `max_states`, which is FSpec FR-360 `failed`, execution `resource-incomplete`. It is never `proved` or `inconclusive`. | Test (TC-2800) |
+| FR-990-AC-6 | `global-conformance` over the FR-636 order fixture with no recording settles `closure.premises` exactly `[{kind: execution, node: Flow::Done}, {kind: branch, node: Flow::Main::Decide::no}, {kind: branch, node: Flow::Main::Decide::yes}]`, with no `instance` member (the fixture does not activate `on each`) and no `role_instance`. FR-895-AC-1's closed recording whose premises are those three records is admitted. The same recording with an `instance` member on the execution premise, with the execution premise naming `Flow::Main::Decide::yes`, or with the two branch premises' nodes exchanged for a `workflow` kind is refused `invalid_runtime_input` naming that premise, before any verdict. | Test (TC-2831) |
 
 ## Dependencies
 

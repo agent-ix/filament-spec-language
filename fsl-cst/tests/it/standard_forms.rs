@@ -51,7 +51,6 @@ fn refusal(parsed: &ParsedSource) -> (CompleteCode, CompleteCause, usize) {
 /// binder; the unannotated form still parses.
 #[trace("FSpec-TC-1004", "FSpec-FR-501-AC-3")]
 #[test]
-#[ignore = "QSL-2008: the grammar has no let annotation; parsing `let x: T = e in b` is not implemented yet"]
 fn an_annotated_let_parses_with_its_type_on_the_binder() {
     let text =
         unit("function f using v(y: Int[0,2]): Integer pure { let x: Int[0,3] = y + 1 in x }");
@@ -144,7 +143,6 @@ fn operation_names_are_a_type_name_and_a_member() {
 /// FSpec FR-501-AC-8: a `join` list names every branch and is never empty.
 #[trace("FSpec-TC-1008", "FSpec-FR-501-AC-8")]
 #[test]
-#[ignore = "QSL-2164: an empty join list is accepted; refusing it at the closing bracket is not implemented yet"]
 fn an_empty_join_list_refuses_at_its_closing_bracket() {
     let protocol = |join: &str| {
         unit(&format!(

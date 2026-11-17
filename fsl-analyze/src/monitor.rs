@@ -156,9 +156,86 @@ pub struct MonitorRecord {
     /// record names.
     atom: Option<String>,
     report: Arc<ClauseRunReport>,
+    /// FR-643 "Usage": a stepping session's own work for the clause; `None`
+    /// for a batch record, whose usage is its report's.
+    usage: Option<MonitorUsage>,
+}
+
+/// FR-643 "Usage": the work a stepping session charged one clause, each
+/// member one FR-109 `ClauseRunUsage` (admission work and evaluation meter
+/// charges).
+#[derive(Clone, Debug, Default)]
+pub struct MonitorUsage {
+    /// The work the session charged the clause since it opened: the sum of
+    /// every `step`.
+    pub cumulative: fsl_replay::spine::ClauseRunUsage,
+    /// The work charged in the latest counted call; zero once the clause has
+    /// settled.
+    pub step: fsl_replay::spine::ClauseRunUsage,
+}
+
+impl MonitorUsage {
+    /// The usage after a counted call that charged `step`.
+    pub(crate) fn charged(&self, step: fsl_replay::spine::ClauseRunUsage) -> Self {
+        let total = &self.cumulative;
+        let mut cumulative = fsl_replay::spine::ClauseRunUsage {
+            admission_consumed: fsl_semantics::model::observation::AdmissionUsage {
+                document_bytes: total
+                    .admission_consumed
+                    .document_bytes
+                    .saturating_add(step.admission_consumed.document_bytes),
+                objects: total
+                    .admission_consumed
+                    .objects
+                    .saturating_add(step.admission_consumed.objects),
+                values: total
+                    .admission_consumed
+                    .values
+                    .saturating_add(step.admission_consumed.values),
+            },
+            evaluation_admissions: total
+                .evaluation_admissions
+                .saturating_add(step.evaluation_admissions),
+            temporal_visits: total.temporal_visits.saturating_add(step.temporal_visits),
+            trace_positions: total.trace_positions.saturating_add(step.trace_positions),
+            ledger_positions: total.ledger_positions.saturating_add(step.ledger_positions),
+            evaluation_consumed: total.evaluation_consumed.clone(),
+        };
+        for (kind, consumed) in &step.evaluation_consumed {
+            match cumulative
+                .evaluation_consumed
+                .iter_mut()
+                .find(|(held, _)| held == kind)
+            {
+                Some((_, sum)) => *sum = sum.saturating_add(*consumed),
+                None => cumulative.evaluation_consumed.push((*kind, *consumed)),
+            }
+        }
+        Self { cumulative, step }
+    }
+
+    /// The usage after a counted call that charged nothing.
+    pub(crate) fn idle(&self) -> Self {
+        Self {
+            cumulative: self.cumulative.clone(),
+            step: fsl_replay::spine::ClauseRunUsage::default(),
+        }
+    }
 }
 
 impl MonitorRecord {
+    /// FR-643 "Usage": the session's `{cumulative, step}` usage of a
+    /// stepping session's record; `None` for a batch record.
+    pub fn usage(&self) -> Option<&MonitorUsage> {
+        self.usage.as_ref()
+    }
+
+    /// This record with the session usage `usage`.
+    pub(crate) fn with_usage(mut self, usage: MonitorUsage) -> Self {
+        self.usage = Some(usage);
+        self
+    }
+
     /// The clause run behind this record: its `position`, `counterexample`,
     /// `decisive`, cause and usage.
     pub fn report(&self) -> &ClauseRunReport {
@@ -750,8 +827,9 @@ pub(crate) fn record_of(
     package: &CheckedPackage,
     sources: &[Source],
     clause: &str,
-    report: ClauseRunReport,
+    report: impl Into<Arc<ClauseRunReport>>,
 ) -> Result<MonitorRecord, Failure> {
+    let report: Arc<ClauseRunReport> = report.into();
     let verdict = verdict_of(clause, &report.disposition)?;
     let atom = named_atom(package, sources, clause, &report.disposition)?;
     Ok(MonitorRecord {
@@ -759,7 +837,8 @@ pub(crate) fn record_of(
         verdict,
         category: report.category(),
         atom,
-        report: Arc::new(report),
+        report,
+        usage: None,
     })
 }
 

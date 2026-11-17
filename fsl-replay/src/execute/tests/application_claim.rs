@@ -157,7 +157,7 @@ fn int(value: i128) -> WitnessValue {
 #[test]
 fn tc_444_the_occurrence_key_selects_the_predicate_or_the_application_claim() {
     let source = unit();
-    let compiled = spine(&source, &BTreeMap::new());
+    let compiled = kernel_spine(&source, &BTreeMap::new());
     let x = |function| parameter(&compiled, function, 0);
 
     let p_declaration = declaration(&compiled, "p");
@@ -277,7 +277,7 @@ fn tc_444_the_occurrence_key_selects_the_predicate_or_the_application_claim() {
 #[test]
 fn tc_444_each_occurrence_of_one_node_is_a_claim_of_its_own() {
     let source = unit();
-    let compiled = spine(&source, &BTreeMap::new());
+    let compiled = kernel_spine(&source, &BTreeMap::new());
     let x = parameter(&compiled, "s", 0);
     let then_branch = record(&compiled, &source, "s", "10 mod x", 0);
     let right_operand = record(&compiled, &source, "s", "10 mod x", 1);
@@ -314,7 +314,7 @@ fn tc_444_each_occurrence_of_one_node_is_a_claim_of_its_own() {
 #[test]
 fn tc_444_binder_bodies_are_observed_and_unread_parameters_are_filled() {
     let source = unit();
-    let compiled = spine(&source, &BTreeMap::new());
+    let compiled = kernel_spine(&source, &BTreeMap::new());
     let t = parameter(&compiled, "b", 0);
     let sequence = |elements: &[i128]| {
         WitnessValue::Sequence(elements.iter().map(|element| int(*element)).collect())
@@ -416,7 +416,7 @@ fn record_binder_node(compiled: &ComposedUnit, function: &str) -> NodeKey {
 #[test]
 fn tc_444_a_key_selecting_no_claim_of_the_function_refuses() {
     let source = unit();
-    let compiled = spine(&source, &BTreeMap::new());
+    let compiled = kernel_spine(&source, &BTreeMap::new());
     let x = |function| parameter(&compiled, function, 0);
     let r_application = record(&compiled, &source, "r", "10 mod x", 0);
     let no_node = OccurrenceKey::new(
@@ -509,7 +509,7 @@ fn tc_444_a_key_selecting_no_claim_of_the_function_refuses() {
 #[test]
 fn tc_444_claim_selection_comes_after_the_function_and_before_the_join() {
     let source = unit();
-    let compiled = spine(&source, &BTreeMap::new());
+    let compiled = kernel_spine(&source, &BTreeMap::new());
     let x = parameter(&compiled, "p", 0);
     let r_application = record(&compiled, &source, "r", "10 mod x", 0);
     let build = || {
@@ -555,7 +555,7 @@ fn tc_444_claim_selection_comes_after_the_function_and_before_the_join() {
 #[test]
 fn tc_444_unread_parameters_fill_by_type() {
     let source = unit();
-    let compiled = spine(&source, &BTreeMap::new());
+    let compiled = kernel_spine(&source, &BTreeMap::new());
     // Each body also reads the unread parameter so that only the correct
     // fill is undefined there: the claim site (`10 mod x`) is defined at
     // `x = 1`, and the later undefined step is another location, so only the
@@ -588,7 +588,7 @@ fn tc_444_unread_parameters_fill_by_type() {
 #[test]
 fn tc_444_a_stop_inside_a_recursive_call_is_not_the_outer_observation() {
     let source = unit();
-    let compiled = spine(&source, &BTreeMap::new());
+    let compiled = kernel_spine(&source, &BTreeMap::new());
     let x = parameter(&compiled, "f", 0);
     let key = record(&compiled, &source, "f", "10 mod x", 0);
     assert_eq!(
@@ -604,7 +604,7 @@ fn tc_444_a_stop_inside_a_recursive_call_is_not_the_outer_observation() {
 #[test]
 fn tc_444_a_stop_inside_a_mutually_recursive_call_is_not_the_outer_observation() {
     let source = unit();
-    let compiled = spine(&source, &BTreeMap::new());
+    let compiled = kernel_spine(&source, &BTreeMap::new());
     let x = parameter(&compiled, "g", 0);
     let key = record(&compiled, &source, "g", "10 mod x", 0);
     assert_eq!(
@@ -616,12 +616,9 @@ fn tc_444_a_stop_inside_a_mutually_recursive_call_is_not_the_outer_observation()
 /// FR-098-AC-34: replay keeps the check mode recorded with the package. The
 /// `Linked` half is asserted here: a possibly-zero `mod` yields no `Linked`
 /// package to replay, and a `Linked` claim recompiles and settles under
-/// `Linked`. The `Kernel` half (a `Kernel` package's claim recompiled under
-/// `Kernel` and reproduced) is asserted through AC-22 to AC-27 once a
-/// package records its mode.
+/// `Linked`. The recorded-`Kernel` half is covered by the TC-1784 tests below.
 #[trace("TC-1784", "FR-098-AC-34")]
 #[test]
-#[ignore = "QSL-2002: Linked admits a mod whose divisor may be zero, and no package records its check mode yet"]
 fn tc_1784_replay_never_rechecks_a_claim_under_another_mode() {
     let header = format!("language \"ix:native\" edition \"1-draft\";\n{PROFILE}");
     let unguarded =
@@ -662,14 +659,14 @@ fn tc_1784_replay_never_rechecks_a_claim_under_another_mode() {
 /// `Location` is no observation.
 #[trace("TC-444", "FR-098-AC-27")]
 #[test]
-#[ignore = "QSL-2002: the unit must be checked and replayed under the recorded Kernel mode, and S6a reports no frame_depth yet"]
+#[ignore = "QSL-2002: S6a reports no frame_depth yet"]
 fn tc_444_a_recursive_site_reproduces_only_at_frame_depth_zero() {
     let source = format!(
         "language \"ix:native\" edition \"1-draft\";\n{PROFILE}\
          function d using v(n: Int[0, 9]): Integer pure decreases(n) \
          {{ if n = 0 then 0 else d(n - 1) + 10 mod (n - 1) }}\n"
     );
-    let compiled = spine(&source, &BTreeMap::new());
+    let compiled = kernel_spine(&source, &BTreeMap::new());
     let n = parameter(&compiled, "d", 0);
     let key = record(&compiled, &source, "d", "10 mod (n - 1)", 0);
     let at = |value| {
@@ -685,4 +682,154 @@ fn tc_444_a_recursive_site_reproduces_only_at_frame_depth_zero() {
     assert_eq!(at(2), Settled::NoValue);
     assert_eq!(at(3), Settled::NoValue);
     assert_eq!(at(0), Settled::Verdicts(boolean(true)));
+}
+
+/// `unit()`'s `r`, composed with every function body checked under `Kernel`
+/// and emitted: the package records `kernel` and the replay request carries it.
+fn kernel_spine(
+    source: &str,
+    modes: &BTreeMap<String, filament_semantic_value::checking::CheckMode>,
+) -> ComposedUnit {
+    crate::spine::compose_in_mode(
+        SourceIdentity::new(AUTHORITY, IDENTITY),
+        IDENTITY,
+        source.as_bytes(),
+        &BTreeMap::new(),
+        &crate::spine::DependencyInput::default(),
+        SpineLimits::default(),
+        Some(filament_semantic_value::checking::CheckMode::Kernel),
+        modes,
+    )
+    .expect("the unit compiles under Kernel")
+}
+
+/// FR-098-AC-34, FR-952-AC-2: a unit checked under `Kernel` records `kernel`
+/// on `r`, and a request at `r`'s `10 mod x` record with `x = 0` recompiles
+/// under that recorded mode (never `Linked`, which refuses
+/// `unproved-nonzero`) and settles `reproduced-without-witness`.
+#[trace("TC-1784", "FR-098-AC-34")]
+#[trace("TC-2662", "FR-952-AC-2")]
+#[test]
+fn tc_1784_a_kernel_package_replays_under_the_recorded_kernel_mode() {
+    let source = format!(
+        "language \"ix:native\" edition \"1-draft\";\n{PROFILE}\
+         function r using v(x: Int[0, 9]): Integer pure {{ 10 mod x }}\n"
+    );
+    let compiled = kernel_spine(&source, &BTreeMap::new());
+    let package = String::from_utf8(compiled.emitted.bytes().to_vec()).expect("JSON");
+    assert!(package.contains(r#""check_mode":"kernel""#), "{package}");
+    let x = parameter(&compiled, "r", 0);
+    let key = record(&compiled, &source, "r", "10 mod x", 0);
+    let result = settled(run(&source, &compiled, "r", &key, &[(x, int(0))]));
+    assert!(matches!(result, Settled::Reproduced(_)), "{result:?}");
+}
+
+/// `r` needs `Kernel` (its divisor may be zero); `g` is provable under
+/// `Linked`.
+fn mixed_source() -> String {
+    format!(
+        "language \"ix:native\" edition \"1-draft\";\n{PROFILE}\
+         function r using v(x: Int[0, 9]): Integer pure {{ 10 mod x }}\n\
+         function g using v(x: Int[0, 9], y: Int[1, 9]): Integer pure {{ x mod y }}\n"
+    )
+}
+
+/// FR-098-AC-34: a package whose body `r` records `kernel` and whose body
+/// `g` records `linked` replays each under its own recorded mode: `r` is
+/// reproduced under `Kernel` at `x = 0`, and `g` under `Linked`.
+#[trace("TC-1784", "FR-098-AC-34")]
+#[test]
+fn tc_1784_a_mixed_package_replays_each_body_under_its_own_mode() {
+    use filament_semantic_value::checking::CheckMode;
+    let source = mixed_source();
+    let modes = BTreeMap::from([("g".to_owned(), CheckMode::Linked)]);
+    let compiled = kernel_spine(&source, &modes);
+    let package = String::from_utf8(compiled.emitted.bytes().to_vec()).expect("JSON");
+    assert_eq!(package.matches(r#""check_mode":"kernel""#).count(), 1);
+    assert_eq!(package.matches(r#""check_mode":"linked""#).count(), 1);
+    let x = parameter(&compiled, "r", 0);
+    let key = record(&compiled, &source, "r", "10 mod x", 0);
+    let result = settled(run(&source, &compiled, "r", &key, &[(x, int(0))]));
+    assert!(matches!(result, Settled::Reproduced(_)), "{result:?}");
+    let x = parameter(&compiled, "g", 0);
+    let y = parameter(&compiled, "g", 1);
+    let key = record(&compiled, &source, "g", "x mod y", 0);
+    assert_eq!(
+        settled(run(
+            &source,
+            &compiled,
+            "g",
+            &key,
+            &[(x, int(3)), (y, int(2))]
+        )),
+        Settled::Verdicts(boolean(true))
+    );
+}
+
+/// FR-098-AC-34: a forged package that flips `r`'s recorded mode to
+/// `linked` is refused: `r` is rechecked under `Linked` and its unproved
+/// divisor refuses, whatever the other function records.
+#[trace("TC-1784", "FR-098-AC-34")]
+#[test]
+fn tc_1784_a_forged_recorded_mode_is_refused() {
+    use filament_semantic_value::checking::CheckMode;
+    let source = mixed_source();
+    let modes = BTreeMap::from([("g".to_owned(), CheckMode::Linked)]);
+    let compiled = kernel_spine(&source, &modes);
+    let forged = String::from_utf8(compiled.emitted.bytes().to_vec())
+        .expect("JSON")
+        .replace(r#""check_mode":"kernel""#, r#""check_mode":"linked""#);
+    let x = parameter(&compiled, "r", 0);
+    let key = record(&compiled, &source, "r", "10 mod x", 0);
+    let mut wire = at(
+        &source,
+        &compiled,
+        "r",
+        &key,
+        ReplaySource::Input(vec![CanonicalAssignment {
+            parameter: x,
+            value: int(0),
+        }]),
+    );
+    wire.package = crate::ReplayPackage::read(forged.as_bytes(), 1 << 30).expect("JSON");
+    let refusal = replay(wire, ReplayLimits::default()).expect_err("a forged mode is refused");
+    assert!(format!("{refusal:?}").contains("Nonzero"), "{refusal:?}");
+}
+
+/// FR-098-AC-34: a function node whose recorded `check_mode` differs from its
+/// recompile's is refused `PackageMember` at that node's `check_mode`, cause
+/// `check-mode-mismatch`; matching records pass. The recorded bytes are a
+/// real package with `g`'s recorded `linked` edited to `kernel`, compared with
+/// the recompile's own bytes.
+#[trace("TC-1784", "FR-098-AC-34")]
+#[test]
+fn tc_1784_a_recorded_mode_that_differs_from_the_recompile_is_refused() {
+    use filament_semantic_value::checking::CheckMode;
+    let source = mixed_source();
+    let modes = BTreeMap::from([("g".to_owned(), CheckMode::Linked)]);
+    let compiled = kernel_spine(&source, &modes);
+    let original = compiled.emitted.bytes();
+    check_recorded_modes(original, original).expect("matching modes pass");
+    let edited = String::from_utf8(original.to_vec())
+        .expect("JSON")
+        .replacen(r#""check_mode":"linked""#, r#""check_mode":"kernel""#, 1);
+    let refusal = check_recorded_modes(edited.as_bytes(), original)
+        .expect_err("g records kernel but recompiles linked");
+    let ReplayRefusal::Request(crate::ReplayRequestRefusal::PackageMember { pointer, cause }) =
+        refusal
+    else {
+        panic!("a package-member refusal: {refusal:?}");
+    };
+    assert_eq!(cause, crate::PackageMemberCause::CheckModeMismatch);
+    let document: serde_json::Value = serde_json::from_slice(original).expect("JSON");
+    let linked = document["semantic_graph"]["nodes"]
+        .as_array()
+        .expect("nodes")
+        .iter()
+        .position(|node| node["check_mode"] == "linked")
+        .expect("g records linked");
+    assert_eq!(
+        pointer,
+        format!("/package/semantic_graph/nodes/{linked}/check_mode")
+    );
 }

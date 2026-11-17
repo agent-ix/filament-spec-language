@@ -2160,7 +2160,7 @@ fn traversed(form: &ExpressionForm, id: ExprId, parents: &[Option<ExprId>]) -> b
         return false;
     };
     match form.expression.get(parent).map(|node| node.node()) {
-        Some(ExprNode::Size(operand)) => *operand == id,
+        Some(ExprNode::Size { operand, .. }) => *operand == id,
         Some(node) => traversal(node).is_some_and(|(_, source)| source == id),
         None => false,
     }

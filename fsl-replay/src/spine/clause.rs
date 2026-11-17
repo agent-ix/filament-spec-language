@@ -28,6 +28,7 @@ use fsl_semantics::model::observation::{
     ObservationLimits, OperationFacts, Provisions,
 };
 
+mod clause_state;
 mod correction;
 mod late_data;
 mod ledger_wire;
@@ -37,6 +38,11 @@ mod progress;
 mod temporal;
 mod trace_refusal;
 mod trace_subject;
+pub use clause_state::{
+    assertion_json, assertion_of, incomplete_json, incomplete_of, pending_report, AdmittedPosition,
+    AdmittedValue, Advance, ClauseLimits, ClauseMark, ClauseOpen, ClauseRefusal, ClauseState,
+    ClauseTraceKind, CLAUSE_STATE_FORMAT,
+};
 pub(crate) use correction::run_correction;
 pub use correction::{
     read_evidence_ledger, settle_correction, settle_run_correction, CorrectionRecord,
@@ -53,13 +59,14 @@ pub use progress::{
     ProgressLimitReached, ProgressLowerBoundary, ProgressValue,
 };
 use temporal::TemporalRun;
+pub(crate) use temporal::SAMPLE_AUTHORITY;
 pub use temporal::{
     admit_progress, authenticate_package_trace, clause_trace_binding, name_clause_atom,
-    run_package_temporal, sample_position, AdmittedLate, FiniteWindowAssessment,
-    FiniteWindowPremises, FiniteWindowReport, FiniteWindowSupport, LateEntry, LateInputs,
-    OverObject, PackageTemporalRequest, ProgressRefusal, TemporalAuthentication, TimestampedCover,
-    TimestampedMissingValuation, TimestampedObservation, TimestampedOrderKey, TimestampedWindow,
-    TraceBinding, TraceInput, DEFAULT_MODEL_MAX_CANDIDATES,
+    run_package_temporal, run_package_temporal_bounded, sample_position, AdmittedLate,
+    FiniteWindowAssessment, FiniteWindowPremises, FiniteWindowReport, FiniteWindowSupport,
+    LateEntry, LateInputs, OverObject, PackageTemporalRequest, ProgressRefusal,
+    TemporalAuthentication, TimestampedCover, TimestampedMissingValuation, TimestampedObservation,
+    TimestampedOrderKey, TimestampedWindow, TraceBinding, TraceInput, DEFAULT_MODEL_MAX_CANDIDATES,
 };
 pub use trace_refusal::{TraceRefusal, REASONS as TRACE_REFUSAL_REASONS};
 pub use trace_subject::{
@@ -112,6 +119,13 @@ pub struct ClauseArgument {
 pub enum ClauseRunSelection {
     /// A state clause, admitted per FR-106.
     Clause(ClauseSelection),
+    /// A state clause with its selected current snapshot's caller path.
+    ClauseWithPath {
+        /// The selected state clause.
+        selection: ClauseSelection,
+        /// The caller's path for its current snapshot, when retained.
+        snapshot_path: Option<String>,
+    },
     /// A function, called as a claim (FR-109's own `Function` selection).
     Function {
         /// The function's name (FR-100's `function` rule; one segment,
@@ -121,6 +135,8 @@ pub enum ClauseRunSelection {
         arguments: Vec<ClauseArgument>,
         /// The current snapshot each object argument resolves against.
         snapshot: DocumentRef,
+        /// The caller's path for the snapshot, when retained by its adapter.
+        snapshot_path: Option<String>,
     },
     /// FR-115: an operation's frame, checked over one invocation. The
     /// request carries no frame and no permission: the frame comes only from
@@ -166,7 +182,9 @@ impl ClauseRunSelection {
     #[must_use]
     pub fn clause_name(&self) -> String {
         match self {
-            Self::Clause(selection) => selection.name.clone(),
+            Self::Clause(selection) | Self::ClauseWithPath { selection, .. } => {
+                selection.name.clone()
+            }
             Self::Function { name, .. }
             | Self::Temporal { name, .. }
             | Self::SampledTemporal { name, .. } => name.clone(),
@@ -187,7 +205,10 @@ impl ClauseRunSelection {
             Self::Temporal { trace, .. } | Self::SampledTemporal { trace, .. } => {
                 Some(trace.request_pointer(reason))
             }
-            Self::Clause(_) | Self::Function { .. } | Self::Frame { .. } => None,
+            Self::Clause(_)
+            | Self::ClauseWithPath { .. }
+            | Self::Function { .. }
+            | Self::Frame { .. } => None,
         }
     }
 }
@@ -376,10 +397,24 @@ pub enum ClauseDisposition {
     NotAPredicate {
         /// The selected name.
         name: String,
+        /// The declared result type, in checker spelling.
+        actual: String,
+        /// The source position of the declared result type, when available.
+        result_type_locus: Option<(String, fsl_foundation::LocatedSpan)>,
     },
     /// Stage `admit`: FR-106 admission's own failure, or (for a `Function`
     /// selection) the analogous snapshot-only admission failure.
     Admit(AdmissionFailure),
+    /// Stage `admit`: a current-snapshot refusal, with the selected document
+    /// identity retained for FR-663's locus.
+    SnapshotAdmission {
+        /// The admission failure.
+        failure: AdmissionFailure,
+        /// The snapshot's document labels.
+        document: DocumentRef,
+        /// The caller's path for the snapshot, when retained by its adapter.
+        path: Option<String>,
+    },
     /// Stage `admit`: a `Function` selection's argument refused before any
     /// call (FR-100's own refusal, reused).
     ArgumentRefusal(Box<RunRefusal>),
@@ -458,7 +493,9 @@ impl ClauseDisposition {
         match self {
             Self::Compile(_) | Self::UnknownLanguage { .. } => ClauseRunStage::Compile,
             Self::MissingName { .. } | Self::NotAPredicate { .. } => ClauseRunStage::Select,
-            Self::Admit(_) | Self::ArgumentRefusal(_) => ClauseRunStage::Admit,
+            Self::Admit(_) | Self::SnapshotAdmission { .. } | Self::ArgumentRefusal(_) => {
+                ClauseRunStage::Admit
+            }
             Self::TraceRefused(refusal) => refusal.stage,
             Self::Evaluate(_)
             | Self::Temporal(_)
@@ -494,6 +531,19 @@ impl ClauseDisposition {
                     .map_or(Category::InternalFailure, |code| code.category())
             }
             Self::Admit(AdmissionFailure::Incomplete(_)) => Category::Incomplete,
+            Self::SnapshotAdmission {
+                failure: AdmissionFailure::Refused(record),
+                ..
+            } => fsl_foundation::diagnostic::Code::from_code(record.catalog.code())
+                .map_or(Category::InternalFailure, |code| code.category()),
+            Self::SnapshotAdmission {
+                failure: AdmissionFailure::Incomplete(_),
+                ..
+            } => Category::Incomplete,
+            Self::SnapshotAdmission {
+                failure: AdmissionFailure::Fault(_),
+                ..
+            } => Category::InternalFailure,
             Self::Admit(AdmissionFailure::Fault(_)) | Self::EvaluateFault(_) => {
                 Category::InternalFailure
             }
@@ -925,6 +975,14 @@ pub struct ClauseRunUsage {
     pub evaluation_admissions: u64,
     /// `temporal.visit` charges made by finite-window temporal evaluation.
     pub temporal_visits: u64,
+    /// FR-820: the trace positions the run admitted into its finite-window
+    /// trace: every position for a batch run, the new ones for a carried
+    /// clause state.
+    pub trace_positions: u64,
+    /// FR-820: the trace positions the run checked and added to the progress
+    /// ledger: every position for a batch run, the new ones for a carried
+    /// clause state.
+    pub ledger_positions: u64,
     /// The evaluation meter's consumed total, one pair per `LimitKind::ALL`.
     pub evaluation_consumed: Vec<(filament_exact::LimitKind, u64)>,
 }
@@ -1017,6 +1075,8 @@ impl ClauseRunUsage {
             admission_consumed,
             evaluation_admissions: meter.admission_count(),
             temporal_visits: 0,
+            trace_positions: 0,
+            ledger_positions: 0,
             evaluation_consumed: filament_exact::LimitKind::ALL
                 .iter()
                 .map(|kind| (*kind, meter.consumed(*kind)))
@@ -1118,6 +1178,7 @@ impl ClauseRunReport {
             | ClauseDisposition::MissingName { .. }
             | ClauseDisposition::NotAPredicate { .. }
             | ClauseDisposition::Admit(_)
+            | ClauseDisposition::SnapshotAdmission { .. }
             | ClauseDisposition::ArgumentRefusal(_)
             | ClauseDisposition::TemporalRefusal(_)
             | ClauseDisposition::TraceRefused(_)
@@ -1185,7 +1246,7 @@ impl ClauseRunReport {
 /// for a `success` or `violation` at stage `evaluate` (a `Function` run's
 /// result is decided by the whole call, a `Frame` run's witness is
 /// FR-115's), `unavailable` for every other disposition.
-fn undecided_basis(disposition: &ClauseDisposition) -> SettlementBasis {
+pub(super) fn undecided_basis(disposition: &ClauseDisposition) -> SettlementBasis {
     use filament_semantic_value::catalog::Category;
     match (disposition.stage(), disposition.category()) {
         (ClauseRunStage::Evaluate, Category::Success | Category::Violation) => {
@@ -1287,7 +1348,16 @@ pub fn run_clause_with_temporal_selections(
     request: ClauseRunRequest,
     temporal_selections: &[fsl_package::TemporalClockSelection],
 ) -> Result<ClauseRunReport, ClauseRunRefusal> {
-    run_clause_reading(request, temporal_selections, false)
+    run_clause_reading(request, temporal_selections, false, None)
+}
+
+#[cfg(test)]
+pub(crate) fn run_clause_with_function_modes(
+    request: ClauseRunRequest,
+    temporal_selections: &[fsl_package::TemporalClockSelection],
+    function_modes: &BTreeMap<String, filament_semantic_value::checking::CheckMode>,
+) -> Result<ClauseRunReport, ClauseRunRefusal> {
+    run_clause_reading(request, temporal_selections, false, Some(function_modes))
 }
 
 /// FR-757 "Cross-evaluation", FR-931: compile the unit as [`run_clause`]
@@ -1300,13 +1370,14 @@ pub fn run_clause_with_temporal_selections(
 pub fn run_temporal_valuation(
     request: ClauseRunRequest,
 ) -> Result<ClauseRunReport, ClauseRunRefusal> {
-    run_clause_reading(request, &[], true)
+    run_clause_reading(request, &[], true, None)
 }
 
 fn run_clause_reading(
     request: ClauseRunRequest,
     temporal_selections: &[fsl_package::TemporalClockSelection],
     valuation: bool,
+    function_modes: Option<&BTreeMap<String, filament_semantic_value::checking::CheckMode>>,
 ) -> Result<ClauseRunReport, ClauseRunRefusal> {
     let unit = request.source.unit();
     if unit.bytes.is_empty() {
@@ -1357,19 +1428,33 @@ fn run_clause_reading(
         } else {
             temporal_selections.to_vec()
         };
-        let checked = front_end::check_with_refinement_internals(
-            &parsed,
-            request.package_name.clone(),
-            crate::spine::SourceInputs {
-                refinement_internals: None,
-                temporal_selections: &check_selections,
-                clocks: by_name.then_some(&request.clocks),
-            },
-            &models,
-            &request.dependencies,
-            request.limits,
-            &cancel,
-        )?
+        let source_inputs = crate::spine::SourceInputs {
+            refinement_internals: None,
+            temporal_selections: &check_selections,
+            clocks: by_name.then_some(&request.clocks),
+        };
+        let checked = if let Some(function_modes) = function_modes {
+            front_end::check_with_refinement_internals_and_function_modes(
+                &parsed,
+                request.package_name.clone(),
+                source_inputs,
+                &models,
+                &request.dependencies,
+                request.limits,
+                &cancel,
+                Some(function_modes),
+            )?
+        } else {
+            front_end::check_with_refinement_internals(
+                &parsed,
+                request.package_name.clone(),
+                source_inputs,
+                &models,
+                &request.dependencies,
+                request.limits,
+                &cancel,
+            )?
+        }
         .into_value();
         let package_selections = if by_name {
             request
@@ -1469,11 +1554,28 @@ fn run_clause_reading(
             };
             Ok(check_clause(&run, clause, selection))
         }
+        ClauseRunSelection::ClauseWithPath {
+            ref selection,
+            ref snapshot_path,
+        } => {
+            let Some(clause) = package.graph().state_clause(&selection.name) else {
+                return Ok(run.report(ClauseDisposition::MissingName {
+                    name: selection.name.clone(),
+                }));
+            };
+            Ok(check_clause_with_path(
+                &run,
+                clause,
+                selection,
+                snapshot_path.as_deref(),
+            ))
+        }
         ClauseRunSelection::Function {
             ref name,
             ref arguments,
             ref snapshot,
-        } => run_function(&run, name, arguments, snapshot),
+            ref snapshot_path,
+        } => run_function(&run, name, arguments, snapshot, snapshot_path.as_deref()),
         ClauseRunSelection::Frame {
             ref operation,
             ref invocation,
@@ -1504,6 +1606,7 @@ fn run_clause_reading(
                     }),
                     cancel: None,
                     valuation,
+                    tape: None,
                 },
             ))
         }
@@ -1534,6 +1637,7 @@ fn run_clause_reading(
                     }),
                     cancel: None,
                     valuation,
+                    tape: None,
                 },
             ))
         }
@@ -2072,18 +2176,31 @@ fn run_compiled_clause_selection(
             };
             check_clause(&run, clause, selection)
         }
+        ClauseRunSelection::ClauseWithPath {
+            selection,
+            snapshot_path,
+        } => {
+            let Some(clause) = package.graph().state_clause(&selection.name) else {
+                return run.report(ClauseDisposition::MissingName {
+                    name: selection.name.clone(),
+                });
+            };
+            check_clause_with_path(&run, clause, selection, snapshot_path.as_deref())
+        }
         ClauseRunSelection::Function {
             name,
             arguments,
             snapshot,
-        } => run_function(&run, name, arguments, snapshot).unwrap_or_else(|_| {
-            report(ClauseDisposition::EvaluateFault(
-                filament_semantic_value::catalog::InternalFault::new(
-                    "FR-050",
-                    "compiled-function-selection-runs",
-                ),
-            ))
-        }),
+            snapshot_path,
+        } => run_function(&run, name, arguments, snapshot, snapshot_path.as_deref())
+            .unwrap_or_else(|_| {
+                report(ClauseDisposition::EvaluateFault(
+                    filament_semantic_value::catalog::InternalFault::new(
+                        "FR-050",
+                        "compiled-function-selection-runs",
+                    ),
+                ))
+            }),
         ClauseRunSelection::Frame {
             operation,
             invocation,
@@ -2114,6 +2231,7 @@ fn run_compiled_clause_selection(
                     }),
                     cancel: None,
                     valuation: false,
+                    tape: None,
                 },
             )
         }
@@ -2144,6 +2262,7 @@ fn run_compiled_clause_selection(
                     }),
                     cancel: None,
                     valuation: false,
+                    tape: None,
                 },
             )
         }
@@ -2207,7 +2326,29 @@ pub(crate) fn check_clause(
     clause: &CheckedStateClause,
     selection: &ClauseSelection,
 ) -> ClauseRunReport {
-    check_clause_admitted(run, clause, selection).report
+    check_clause_with_path(run, clause, selection, None)
+}
+
+fn check_clause_with_path(
+    run: &CompiledRun<'_>,
+    clause: &CheckedStateClause,
+    selection: &ClauseSelection,
+    snapshot_path: Option<&str>,
+) -> ClauseRunReport {
+    let mut checked = check_clause_admitted(run, clause, selection);
+    if let ClauseDisposition::Admit(failure) = checked.report.disposition {
+        if let ClauseSelectionInput::Current { snapshot, .. } = &selection.input {
+            checked.report.disposition = ClauseDisposition::SnapshotAdmission {
+                failure,
+                document: snapshot.clone(),
+                path: snapshot_path.map(str::to_owned),
+            };
+        } else {
+            checked.report.disposition = ClauseDisposition::Admit(failure);
+        }
+        checked.report.basis = undecided_basis(&checked.report.disposition);
+    }
+    checked.report
 }
 
 /// Derive the source event for every authored implication consequent from
@@ -2748,6 +2889,7 @@ fn run_function(
     name: &str,
     arguments: &[ClauseArgument],
     snapshot: &DocumentRef,
+    snapshot_path: Option<&str>,
 ) -> Result<ClauseRunReport, ClauseRunRefusal> {
     use fsl_eval::value::CheckedPackageEvaluation;
     let packages = run.packages;
@@ -2782,22 +2924,40 @@ fn run_function(
                     report(ClauseDisposition::MissingName { name: function })
                 }
                 RunRefusal::UnsupportedResult { function } => {
-                    report(ClauseDisposition::NotAPredicate { name: function })
+                    let callable = package.graph().callable(&function);
+                    let declared = callable
+                        .as_ref()
+                        .and_then(|_| function_result_type_locus(sources, &function));
+                    report(ClauseDisposition::NotAPredicate {
+                        actual: declared.as_ref().map_or_else(
+                            || {
+                                callable.as_ref().map_or_else(
+                                    || "unknown".to_owned(),
+                                    |callable| checker_type_spelling(callable.result),
+                                )
+                            },
+                            |(_, _, spelling)| spelling.clone(),
+                        ),
+                        result_type_locus: declared.map(|(file, span, _)| (file, span)),
+                        name: function,
+                    })
                 }
                 other => report(ClauseDisposition::ArgumentRefusal(Box::new(other))),
             })
         }
     };
-    if !matches!(
-        package
-            .graph()
-            .callable(name)
-            .map(|callable| callable.result),
-        Some(ValueType::Boolean)
-    ) {
-        return Ok(report(ClauseDisposition::NotAPredicate {
-            name: name.to_owned(),
-        }));
+    if let Some(callable) = package.graph().callable(name) {
+        if !matches!(callable.result, ValueType::Boolean) {
+            let declared = function_result_type_locus(sources, name);
+            return Ok(report(ClauseDisposition::NotAPredicate {
+                name: name.to_owned(),
+                actual: declared.as_ref().map_or_else(
+                    || checker_type_spelling(callable.result),
+                    |(_, _, spelling)| spelling.clone(),
+                ),
+                result_type_locus: declared.map(|(file, span, _)| (file, span)),
+            }));
+        }
     }
 
     let (environment, admission_usage) = match admit_current_snapshot(
@@ -2810,7 +2970,13 @@ fn run_function(
         observation_limits,
     ) {
         Ok(admitted) => admitted,
-        Err(failure) => return Ok(report(ClauseDisposition::Admit(failure))),
+        Err(failure) => {
+            return Ok(report(ClauseDisposition::SnapshotAdmission {
+                failure,
+                document: snapshot.clone(),
+                path: snapshot_path.map(str::to_owned),
+            }))
+        }
     };
 
     // Bind each argument to its parameter (FR-100's own name-binding
@@ -2944,6 +3110,70 @@ fn run_function(
     let mut result = report(disposition);
     result.usage = ClauseRunUsage::from_meter(&meter, admission_usage);
     Ok(result)
+}
+
+/// Locate the declared result type token for FR-867's select refusal. The
+/// checked graph retains the type but not its authored span, so recover the
+/// exact `TypeReference` span from the already admitted source CST.
+fn function_result_type_locus(
+    sources: &[Source],
+    function: &str,
+) -> Option<(String, fsl_foundation::LocatedSpan, String)> {
+    use fsl_cst::{CstElement, Production, TokenKind};
+
+    for source in sources {
+        let parsed = fsl_cst::parse(
+            source.identity().clone(),
+            source.path().to_owned(),
+            source.text().as_bytes(),
+            fsl_cst::Limits::default(),
+        )
+        .ok()?;
+        let cst = parsed.cst();
+        for node in cst.nodes() {
+            if node.production() != Production::FunctionDeclaration {
+                continue;
+            }
+            let mut tokens = cst.tokens().iter().filter(|token| {
+                token.span().start >= node.span().start && token.span().end <= node.span().end
+            });
+            let is_selected = tokens
+                .find(|token| token.spelling() == b"function")
+                .and_then(|_| {
+                    tokens
+                        .find(|token| token.kind() == TokenKind::Identifier)
+                        .map(|token| token.spelling() == function.as_bytes())
+                })
+                .unwrap_or(false);
+            if !is_selected {
+                continue;
+            }
+            let result_type = node.children().iter().find_map(|element| match element {
+                CstElement::Node(index)
+                    if cst.nodes()[*index].production() == Production::TypeReference =>
+                {
+                    Some(cst.nodes()[*index].span())
+                }
+                _ => None,
+            })?;
+            let spelling = source.slice(result_type)?.trim().to_owned();
+            return source
+                .locate(result_type)
+                .map(|span| (source.path().to_owned(), span, spelling));
+        }
+    }
+    None
+}
+
+fn checker_type_spelling(value_type: &ValueType) -> String {
+    match value_type {
+        ValueType::Boolean => "Boolean".to_owned(),
+        ValueType::Integer => "Integer".to_owned(),
+        ValueType::Int(interval) => {
+            format!("Int[{}, {}]", interval.lower(), interval.upper())
+        }
+        _ => "unknown".to_owned(),
+    }
 }
 
 #[cfg(test)]

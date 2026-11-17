@@ -1616,6 +1616,7 @@ pub(crate) fn run_spine_with_temporal_selections_and_execution_points(
     execution_points: &spine::StateClauseExecutionPoints,
     temporal_selections: &[fsl_package::TemporalClockSelection],
     integer_division: Option<filament_checked::integer_division::AdmittedIntegerDivision>,
+    function_modes: Option<&std::collections::BTreeMap<String, filament_semantic_value::checking::CheckMode>>,
     limits: SpineLimits,
 ) -> Result<Recompiled, ReplayRefusal> {
     let SpineUnit {
@@ -1627,17 +1628,17 @@ pub(crate) fn run_spine_with_temporal_selections_and_execution_points(
     #[cfg(test)]
     SPINE_RUNS.with(|runs| runs.set(runs.get() + 1));
     let cancel = Cancel::new();
-    let refusal = |failure| match failure {
+    let refusal = |failure: spine::FrontEndFailure| match failure {
         fsl_foundation::diagnostic::StageFailure::RefusedWithPayload(refusal, protocol_results) => {
             ReplayRefusal::RecompileWithProtocolResults {
                 refusal: *refusal,
-                protocol_results,
+                protocol_results: protocol_results.protocol_results,
             }
         }
         fsl_foundation::diagnostic::StageFailure::LimitWithPayload(limit, protocol_results) => {
             ReplayRefusal::RecompileWithProtocolResults {
                 refusal: Box::new(CompileRefusal::Limit(limit)),
-                protocol_results,
+                protocol_results: protocol_results.protocol_results,
             }
         }
         failure => match spine::refusal_or_fault(failure) {
@@ -1666,6 +1667,7 @@ pub(crate) fn run_spine_with_temporal_selections_and_execution_points(
             execution_points,
             temporal_selections,
             integer_division,
+            function_modes,
         },
         &models,
         dependencies,
@@ -1835,6 +1837,8 @@ pub(crate) fn recompile_with_temporal_selections(
         clocks,
         limits.spine,
         request.refinement_internals(),
+        request.package().check_mode(),
+        &request.package().function_modes(),
     )
     .map_err(|failure| locate_refinement_internals(request, failure))?;
     // Rule 6: every entry names a selection of the recompiled closure.
@@ -1848,6 +1852,7 @@ pub(crate) fn recompile_with_temporal_selections(
             ));
         }
     }
+    check_recorded_modes(request.package().bytes(), compiled.emitted.package().bytes())?;
     request
         .package()
         .admit(&evidence, limits.spine.imports.for_ir())?;
@@ -2038,21 +2043,23 @@ fn run_spine_units(
     clocks: RecompileClocks<'_>,
     limits: SpineLimits,
     refinement_internals: Option<&[filament_contract_model::CheckedRefinementInternal]>,
+    check_mode: filament_semantic_value::checking::CheckMode,
+    function_modes: &std::collections::BTreeMap<String, filament_semantic_value::checking::CheckMode>,
 ) -> Result<(Recompiled, filament_contract_model::CheckedPackageEvidence), ReplayRefusal> {
     #[cfg(test)]
     SPINE_RUNS.with(|runs| runs.set(runs.get() + 1));
     let cancel = Cancel::new();
-    let refusal = |failure| match failure {
+    let refusal = |failure: spine::FrontEndFailure| match failure {
         fsl_foundation::diagnostic::StageFailure::RefusedWithPayload(refusal, protocol_results) => {
             ReplayRefusal::RecompileWithProtocolResults {
                 refusal: *refusal,
-                protocol_results,
+                protocol_results: protocol_results.protocol_results,
             }
         }
         fsl_foundation::diagnostic::StageFailure::LimitWithPayload(limit, protocol_results) => {
             ReplayRefusal::RecompileWithProtocolResults {
                 refusal: Box::new(CompileRefusal::Limit(limit)),
-                protocol_results,
+                protocol_results: protocol_results.protocol_results,
             }
         }
         failure => match spine::refusal_or_fault(failure) {
@@ -2107,6 +2114,8 @@ fn run_spine_units(
                 .map(internals_value)
                 .transpose()?
                 .as_ref(),
+            check_mode: Some(check_mode),
+            function_modes: Some(function_modes),
             extension_catalog: None,
         },
         limits,
@@ -2745,4 +2754,29 @@ mod carried_quantity_tests {
             }))
         ));
     }
+}
+
+/// FR-098-AC-34: every function the proving package records is rechecked
+/// under exactly the mode it records; a function whose recompile records
+/// another mode, or none, is refused at its node.
+fn check_recorded_modes(recorded: &[u8], recompiled: &[u8]) -> Result<(), ReplayRefusal> {
+    let recompiled_modes: std::collections::BTreeMap<String, Option<String>> =
+        crate::ReplayPackage::function_records(recompiled)
+            .into_iter()
+            .map(|record| (record.node_id, record.mode))
+            .collect();
+    for record in crate::ReplayPackage::function_records(recorded) {
+        if recompiled_modes.get(&record.node_id) != Some(&record.mode) {
+            return Err(ReplayRefusal::Request(
+                crate::ReplayRequestRefusal::PackageMember {
+                    pointer: format!(
+                        "/package/semantic_graph/nodes/{}/check_mode",
+                        record.position
+                    ),
+                    cause: crate::PackageMemberCause::CheckModeMismatch,
+                },
+            ));
+        }
+    }
+    Ok(())
 }

@@ -533,6 +533,7 @@ impl TimedNodeMetadata {
     fn node(&self, form: &str, body: CheckedTerm) -> CheckedSemanticNodeV2 {
         CheckedSemanticNodeV2 {
             owner_model: None,
+            check_mode: None,
             node_id: self.node_id.clone(),
             schema_version: self.schema_version.clone(),
             node_tag: "timed_model".into(),

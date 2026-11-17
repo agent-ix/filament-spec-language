@@ -1613,3 +1613,185 @@ fn a_repeated_key_of_one_authority_is_not_a_usable_order() {
     assert_eq!(first.verdict, second.verdict);
     assert_eq!(first.identity, second.identity);
 }
+
+/// Every member of a finite-window report but `visits`, which counts the
+/// evaluation's own work (FR-643 "Usage").
+fn members(
+    evaluation: &fsl_eval::temporal::WindowEvaluation,
+) -> (
+    WindowVerdict,
+    Basis,
+    Vec<fsl_eval::temporal::SupportPair>,
+    fsl_eval::temporal::Premises,
+    fsl_eval::temporal::ResultIdentity,
+) {
+    (
+        evaluation.verdict.clone(),
+        evaluation.basis,
+        evaluation.support.clone(),
+        evaluation.premises.clone(),
+        evaluation.identity.clone(),
+    )
+}
+
+/// FR-820 over `fixture` and the rows of `full`, admitted one stamp at a
+/// time with progress through each stamp (scope `scope`): after each step
+/// the carried state's report equals FR-501's batch report over the prefix,
+/// member for member, and it holds at most `bound` positions. Returns the
+/// largest number held.
+fn carried_equals_batch(fixture: &Fixture, full: &Request, scope: ProgressClosure) -> usize {
+    let facts = fsl_eval::temporal::evidence::ClauseFacts::of_checked(&fixture.clause);
+    let whole = full.admit(fixture).expect("the trace admits");
+    let mut letters = Letters::new(fixture, full, &whole);
+    let mut state =
+        fsl_eval::temporal::WindowState::open(&facts, fixture.clause.name(), whole.clock().clone())
+            .expect("the state opens");
+    let positions = whole.positions();
+    let mut held = 0;
+    for (index, position) in positions.iter().enumerate() {
+        state.admit(position.clone());
+        if positions
+            .get(index + 1)
+            .is_some_and(|next| next.stamp == position.stamp)
+        {
+            continue;
+        }
+        let progress = WindowProgress {
+            watermark: Watermark::Inclusive(position.stamp),
+            completeness: ProgressCompleteness::Complete {
+                through: position.stamp,
+            },
+            scope: if index + 1 == positions.len() {
+                scope
+            } else {
+                ProgressClosure::Open
+            },
+            execution: ProgressClosure::Open,
+            lower_boundary: full.lower,
+        };
+        let mut prefix = full.clone();
+        prefix.rows = positions[..=index]
+            .iter()
+            .map(|admitted| {
+                let supplied = whole
+                    .supplied_index(TemporalPosition::new(
+                        positions
+                            .iter()
+                            .position(|p| p == admitted)
+                            .expect("an admitted position") as u64,
+                    ))
+                    .expect("a supplied index");
+                full.rows[supplied].clone()
+            })
+            .collect();
+        prefix.watermark = progress.watermark;
+        prefix.complete = progress.completeness;
+        prefix.scope = progress.scope;
+        prefix.execution = progress.execution;
+        let batch = run_with(fixture, &prefix, SCALAR_LIMITS_UNLIMITED).0;
+        let mut meter = Meter::new(SCALAR_LIMITS_UNLIMITED);
+        let carried = state.evaluate(&facts, &[], progress, progress, &mut letters, &mut meter);
+        match (&batch, &carried) {
+            (Ok(batch), Ok(carried)) => assert_eq!(
+                members(carried),
+                members(batch),
+                "{} after position {index}",
+                fixture.text
+            ),
+            (batch, carried) => assert_eq!(
+                carried.as_ref().err(),
+                batch.as_ref().err(),
+                "{} after position {index}",
+                fixture.text
+            ),
+        }
+        held = held.max(state.retained());
+    }
+    held
+}
+
+/// Rows at stamps `0, 2, 3, ...` whose `p` and `q` follow `pattern`, with a
+/// shared stamp whose two observations disagree on `p`.
+fn mixed_rows(count: u64) -> Vec<Row> {
+    let words = ["T", "F", "absent"];
+    let mut rows: Vec<Row> = (0..count)
+        .map(|index| Row {
+            stamp: index * 2 + u64::from(index % 3 == 0),
+            atoms: vec![
+                ("p", words[(index % 3) as usize]),
+                ("q", words[((index * 7 + 1) % 3) as usize]),
+            ],
+            key: None,
+        })
+        .collect();
+    rows.push(Row {
+        stamp: count * 2 + 1,
+        atoms: vec![("p", "T"), ("q", "T")],
+        key: None,
+    });
+    rows.push(Row {
+        stamp: count * 2 + 1,
+        atoms: vec![("p", "F"), ("q", "T")],
+        key: None,
+    });
+    rows
+}
+
+/// FR-820-AC-1 (finite-window route): a carried finite-window state reports,
+/// after each step, FR-501's batch report over the prefix, verdict, basis,
+/// decision support, premises and result identity included, for future,
+/// past, nested and implication clauses, `on origin` and `on each`, over
+/// definite, absent and conflicting valuations, under open and closed
+/// scope, an exact and a counter cover, and an authoritative origin and a
+/// history cutoff.
+#[trace("TC-2320", "FR-820-AC-1", "FR-501-AC-16")]
+#[test]
+fn a_carried_window_state_reports_the_batch_report_over_each_prefix() {
+    let each = "on each (q: Counter)";
+    let clauses = [
+        origin("always[0,5] holds(p)"),
+        origin("eventually[2,6] holds(q)"),
+        origin("always[0,2] eventually[0,2] holds(p)"),
+        clause(each, "eventually[0,2] holds(p)"),
+        clause(each, "once[0,4] holds(p)"),
+        clause(each, "holds(q) implies eventually[0,3] holds(p)"),
+        clause(each, "always[1,3] (holds(p) or once[2,3] holds(q))"),
+        clause(each, "holds(p) until[0,4] holds(q)"),
+        clause(each, "holds(p) since[0,4] holds(q)"),
+        clause(each, "holds(p) or not holds(p)"),
+    ];
+    let rows = mixed_rows(14);
+    let base = request(rows, 0, None);
+    for fixture in &clauses {
+        for full in [base.clone(), base.clone().cutoff(), base.clone().counter(1)] {
+            for scope in [ProgressClosure::Open, ProgressClosure::Closed] {
+                carried_equals_batch(fixture, &full, scope);
+            }
+        }
+    }
+}
+
+/// FR-820 "Summarized positions": over 300 observations a carried
+/// finite-window state holds only the positions an open activation can
+/// still read, so the number it holds stays bounded by the clause's reach,
+/// while its reports equal the batch reports.
+#[trace("TC-2320", "FR-820-AC-2")]
+#[test]
+fn a_carried_window_state_holds_only_the_positions_it_still_reads() {
+    let rows: Vec<Row> = (0..300)
+        .map(|index| p(index, if index % 4 == 0 { "T" } else { "F" }))
+        .collect();
+    let full = request(rows, 0, None);
+    for (body, bound) in [
+        ("eventually[0,4] holds(p)", 6),
+        ("once[0,4] holds(p)", 6),
+        ("holds(p) or not holds(p)", 1),
+    ] {
+        let held = carried_equals_batch(
+            &clause("on each (q: Counter)", body),
+            &full,
+            ProgressClosure::Open,
+        );
+        assert!(held <= bound, "{body} held {held} positions");
+    }
+}

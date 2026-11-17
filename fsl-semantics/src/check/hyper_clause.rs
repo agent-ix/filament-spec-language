@@ -17,7 +17,7 @@
 use fsl_foundation::source::node_table::{standalone, DebugTable, DebugWith, NodeKeyDebug};
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 
-use filament_exact::{EffectiveId, Identifier, NodeKey, ValueType};
+use filament_exact::{CollectionKind, EffectiveId, Identifier, NodeKey, ValueType};
 use filament_semantic_value::catalog::InternalFault;
 use filament_semantic_value::fairness::{FairnessConstraint, FairnessOperation};
 use filament_semantic_value::location::{
@@ -2399,6 +2399,7 @@ fn check_match(
                 },
                 ExprNode::Boolean(_)
                 | ExprNode::Absent
+                | ExprNode::Null
                 | ExprNode::Integer(_)
                 | ExprNode::Float32(_)
                 | ExprNode::Float64(_)
@@ -2430,7 +2431,7 @@ fn check_match(
                 | ExprNode::Sum { .. }
                 | ExprNode::Population { .. }
                 | ExprNode::Seq { .. }
-                | ExprNode::Size(_)
+                | ExprNode::Size { .. }
                 | ExprNode::Contains { .. }
                 | ExprNode::DropFirst(_)
                 | ExprNode::RemoveOne { .. }
@@ -2858,6 +2859,7 @@ fn is_opaque(node: &ExprNode) -> bool {
         | ExprNode::ProtocolReference { .. } => true,
         ExprNode::Boolean(_)
         | ExprNode::Absent
+        | ExprNode::Null
         | ExprNode::Integer(_)
         | ExprNode::Float32(_)
         | ExprNode::Float64(_)
@@ -2876,7 +2878,7 @@ fn is_opaque(node: &ExprNode) -> bool {
         | ExprNode::Ref(_)
         | ExprNode::Select { .. }
         | ExprNode::Call { .. }
-        | ExprNode::Size(_)
+        | ExprNode::Size { .. }
         | ExprNode::Contains { .. }
         | ExprNode::DropFirst(_)
         | ExprNode::RemoveOne { .. }
@@ -3034,6 +3036,7 @@ fn leaf_payload(node: &ExprNode, swap: Swap<'_>) -> (Vec<u8>, Vec<u8>) {
         ExprNode::Name(name) => (b"name".to_vec(), text_segment(&name.name)),
         ExprNode::Boolean(value) => (b"bool".to_vec(), vec![u8::from(*value)]),
         ExprNode::Absent => (b"absent".to_vec(), Vec::new()),
+        ExprNode::Null => (b"null".to_vec(), Vec::new()),
         ExprNode::Integer(value) => (b"int".to_vec(), text_segment(&value.to_string())),
         ExprNode::Float32(bits) => (b"float32".to_vec(), text_segment(&format!("{bits:08x}"))),
         ExprNode::Float64(bits) => (b"float64".to_vec(), text_segment(&format!("{bits:016x}"))),
@@ -3066,7 +3069,12 @@ fn leaf_payload(node: &ExprNode, swap: Swap<'_>) -> (Vec<u8>, Vec<u8>) {
         ExprNode::Ref(_) => (b"ref".to_vec(), Vec::new()),
         ExprNode::Select { .. } => (b"select".to_vec(), Vec::new()),
         ExprNode::Pre(_) => (b"pre".to_vec(), Vec::new()),
-        ExprNode::Size(_) => (b"size".to_vec(), Vec::new()),
+        ExprNode::Size { type_argument, .. } => (
+            b"size".to_vec(),
+            type_argument
+                .as_ref()
+                .map_or_else(|| b"untyped".to_vec(), encode_type_form),
+        ),
         ExprNode::Contains { .. } => (b"contains".to_vec(), Vec::new()),
         ExprNode::DropFirst(_) => (b"drop-first".to_vec(), Vec::new()),
         ExprNode::RemoveOne { .. } => (b"remove-one".to_vec(), Vec::new()),
@@ -3114,6 +3122,87 @@ fn leaf_payload(node: &ExprNode, swap: Swap<'_>) -> (Vec<u8>, Vec<u8>) {
 /// The normal form of a temporal formula under `swap`: its operands after it,
 /// so the arena is encoded from the last node to the first. Returns the root's
 /// bytes and whether an opaque node reads a trace variable.
+fn encode_type_form(root: &fsl_forms::TypeForm) -> Vec<u8> {
+    let mut pending = vec![(root, false)];
+    let mut encoded = Vec::new();
+    while let Some((form, exiting)) = pending.pop() {
+        if !exiting {
+            pending.push((form, true));
+            pending.extend(
+                form.arguments
+                    .iter()
+                    .rev()
+                    .map(|argument| (argument, false)),
+            );
+            continue;
+        }
+
+        let child_start = encoded.len().saturating_sub(form.arguments.len());
+        let children = encoded.split_off(child_start);
+        let (head, head_payload) = match &form.head {
+            TypeFormHead::Builtin(builtin) => {
+                let head = match builtin {
+                    fsl_forms::BuiltinType::Boolean => "boolean",
+                    fsl_forms::BuiltinType::Integer => "integer",
+                    fsl_forms::BuiltinType::Int => "int",
+                    fsl_forms::BuiltinType::Rational => "rational",
+                    fsl_forms::BuiltinType::Decimal => "decimal",
+                    fsl_forms::BuiltinType::Float32 => "float32",
+                    fsl_forms::BuiltinType::Float64 => "float64",
+                    fsl_forms::BuiltinType::Text => "text",
+                    fsl_forms::BuiltinType::Option => "option",
+                    fsl_forms::BuiltinType::Reference => "reference",
+                    fsl_forms::BuiltinType::Quantity => "quantity",
+                    fsl_forms::BuiltinType::Clock => "clock",
+                };
+                (head, Vec::new())
+            }
+            TypeFormHead::Collection(kind) => {
+                let head = match kind {
+                    CollectionKind::Sequence => "sequence",
+                    CollectionKind::Set => "set",
+                    CollectionKind::Bag => "bag",
+                    CollectionKind::OrderedSet => "ordered-set",
+                };
+                (head, Vec::new())
+            }
+            TypeFormHead::Population => ("population", Vec::new()),
+            TypeFormHead::Name(name) => ("name", text_segment(&name.name)),
+            TypeFormHead::UnitExpression(terms) => {
+                let mut parts = vec![usize_segment(terms.len())];
+                for term in terms {
+                    let exponent = term
+                        .exponent
+                        .as_ref()
+                        .map_or_else(|| "1".to_owned(), |(exponent, _)| exponent.to_string());
+                    parts.push(node_bytes(
+                        b"unit-term",
+                        &[text_segment(&term.name.name), text_segment(&exponent)],
+                    ));
+                }
+                ("unit-expression", node_bytes(b"unit-terms", &parts))
+            }
+        };
+        let mut parts = vec![
+            head.as_bytes().to_vec(),
+            head_payload,
+            usize_segment(form.bounds.len()),
+        ];
+        parts.extend(form.bounds.iter().map(|bound| text_segment(bound)));
+        parts.push(usize_segment(form.arguments.len()));
+        parts.extend(children);
+        encoded.push(node_bytes(b"type-form", &parts));
+    }
+    encoded.pop().unwrap_or_default()
+}
+
+fn usize_segment(value: usize) -> Vec<u8> {
+    u64::try_from(value)
+        .unwrap_or(u64::MAX)
+        .to_be_bytes()
+        .to_vec()
+}
+
 fn encode_formula(formula: &TemporalFormulaForm, swap: Swap<'_>) -> (Vec<u8>, bool) {
     let nodes = formula.nodes();
     let mut encoded: Vec<Option<Encoded>> = (0..nodes.len()).map(|_| None).collect();
@@ -3677,5 +3766,23 @@ mod tests {
         assert!(!decodable_argument(&ValueType::Option(
             std::sync::Arc::new(ValueType::Timestamp)
         )));
+    }
+
+    /// A copy swap must preserve a typed `size` only when its result type is
+    /// also identical; the type argument is part of the expression's shape.
+    #[test]
+    fn typed_size_type_arguments_distinguish_copy_swap_encodings() {
+        let span = Span { start: 0, end: 0 };
+        let integer_domain = |upper: &str| {
+            fsl_forms::TypeForm::builtin(fsl_forms::BuiltinType::Int, span)
+                .with_bounds(vec!["0".to_owned(), upper.to_owned()])
+        };
+        let first = Expression::size(Expression::name("a"), Some(integer_domain("4")));
+        let second = Expression::size(Expression::name("b"), Some(integer_domain("5")));
+
+        let swapped_first = encode_expression(&first, Swap(Some(("a", "b")), None), &[]).root;
+        let second = encode_expression(&second, Swap(None, None), &[]).root;
+
+        assert_ne!(swapped_first, second);
     }
 }

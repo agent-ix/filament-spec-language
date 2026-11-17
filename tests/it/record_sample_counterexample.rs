@@ -72,7 +72,6 @@ fn counterexample(document: &Value) -> &Value {
 /// samples at different positions get different steps.
 #[test]
 #[trace("TC-2295", "FR-330-AC-18", "FSpec-TC-1700", "FSpec-FR-364-AC-16")]
-#[ignore = "QSL-2133: record-sample counterexample steps are not written by sample index yet"]
 fn a_record_sample_counterexample_names_positions_by_index() {
     let directory = tempfile::tempdir().unwrap();
     let lasso = result(&run_file(&write(

@@ -12,4 +12,12 @@ pub mod command;
 pub mod emit_checked_v2;
 pub mod formal_source;
 pub mod replay_request;
+pub mod sources;
 pub mod unique_json;
+
+pub use sources::Sources;
+
+/// Build the renderer's source provision from the admitted sources in an outcome.
+pub fn render_sources(sources: &Sources) -> fsl_inspect::RenderSources {
+    fsl_inspect::RenderSources::from_sources(sources.as_slice().iter().cloned())
+}
