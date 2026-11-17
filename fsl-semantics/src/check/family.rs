@@ -1388,6 +1388,7 @@ impl<'a> Application<'a> {
                 equality_producer: None,
                 ordering_part: false,
                 field_population: None,
+                equality_range_context: None,
             }),
             Self::Imported {
                 callee,
@@ -1405,6 +1406,7 @@ impl<'a> Application<'a> {
                 equality_producer: None,
                 ordering_part: false,
                 field_population: None,
+                equality_range_context: None,
             }),
             Self::Tuple { declaration, .. } => Ok(Node {
                 kind: NodeKind::Tuple {
@@ -1416,6 +1418,7 @@ impl<'a> Application<'a> {
                 equality_producer: None,
                 ordering_part: false,
                 field_population: None,
+                equality_range_context: None,
             }),
             Self::Ieee { intrinsic, .. } => {
                 // Every operand is a float of the first operand's type;
@@ -1467,6 +1470,7 @@ impl<'a> Application<'a> {
                     equality_producer: None,
                     ordering_part: false,
                     field_population: None,
+                    equality_range_context: None,
                 })
             }
         }

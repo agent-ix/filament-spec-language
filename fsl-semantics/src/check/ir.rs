@@ -462,6 +462,7 @@ impl CheckedBody {
                 equality_producer: None,
                 ordering_part: false,
                 field_population: None,
+                equality_range_context: None,
             })
             .collect();
         nodes.push(Node {
@@ -473,6 +474,7 @@ impl CheckedBody {
             equality_producer: None,
             ordering_part: false,
             field_population: None,
+            equality_range_context: None,
         });
         Self::new(nodes)
     }
@@ -509,6 +511,7 @@ impl CheckedBody {
                 equality_producer: None,
                 ordering_part: false,
                 field_population: None,
+                equality_range_context: None,
             })
             .collect::<Vec<_>>();
         Self::new(nodes)
@@ -1296,6 +1299,7 @@ mod tests {
             equality_producer: None,
             ordering_part: false,
             field_population: None,
+            equality_range_context: None,
         };
         let mut builder = BodyBuilder::default();
         let mut operand = builder.push(node(NodeKind::Local(slot)));
