@@ -758,6 +758,7 @@ fn type_head(cst: &LosslessCst, node: &CstNode) -> Result<TypeForm, FormsRefusal
         b"Quantity" => TypeFormHead::Builtin(BuiltinType::Quantity),
         b"Clock" => TypeFormHead::Builtin(BuiltinType::Clock),
         b"Population" => TypeFormHead::Population,
+        b"Map" => TypeFormHead::Builtin(BuiltinType::Map),
         b"Sequence" => TypeFormHead::Collection(CollectionKind::Sequence),
         b"Set" => TypeFormHead::Collection(CollectionKind::Set),
         b"Bag" => TypeFormHead::Collection(CollectionKind::Bag),

@@ -507,6 +507,15 @@ fn source_and_types(g: &mut Grammar) {
             ]),
             s(vec![x("Option"), x("<"), r(P::TypeReference), x(">")]),
             s(vec![
+                x("Map"),
+                x("<"),
+                r(P::TypeReference),
+                x(","),
+                r(P::TypeReference),
+                x(">"),
+                opt(s(vec![x("["), uint(), x(","), uint(), x("]")])),
+            ]),
+            s(vec![
                 c(vec![x("Sequence"), x("Set"), x("Bag"), x("OrderedSet")]),
                 x("<"),
                 r(P::TypeReference),

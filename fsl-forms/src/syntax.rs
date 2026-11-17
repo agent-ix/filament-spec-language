@@ -50,6 +50,8 @@ pub enum BuiltinType {
     Text,
     /// `Option<T>`.
     Option,
+    /// `Map<K, V>`.
+    Map,
     /// `Reference<T>`.
     Reference,
     /// `Quantity<u>` or `Quantity<u, C>` (FSpec FR-142): the first argument
