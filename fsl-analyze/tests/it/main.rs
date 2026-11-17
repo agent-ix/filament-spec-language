@@ -87,6 +87,7 @@ mod protocol_analysis_differential;
 mod protocol_bounded_lasso;
 mod protocol_compensation;
 mod protocol_composition;
+mod protocol_conformance;
 mod protocol_constructs;
 mod protocol_counted_steps;
 mod protocol_footprints;
