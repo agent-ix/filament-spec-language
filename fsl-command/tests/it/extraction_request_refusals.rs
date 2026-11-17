@@ -65,10 +65,7 @@ fn extraction_and_package_conflict_refuses_before_reading_files() {
     let outcome = outcome(&error);
     assert_eq!(outcome["stage"], "request");
     assert_eq!(error.category().exit_code(), 20);
-    assert_eq!(
-        outcome["diagnostics"][0]["code"],
-        "extraction-package-conflict"
-    );
+    assert_eq!(outcome["code"], "extraction-package-conflict");
 }
 
 /// Trace: TC-109, FR-031-AC-6.
@@ -85,8 +82,8 @@ fn extraction_requires_one_clause_binding_and_reports_the_actual_count() {
         let outcome = outcome(&error);
         assert_eq!(outcome["stage"], "request");
         assert_eq!(error.category().exit_code(), 20);
-        assert_eq!(outcome["diagnostics"][0]["code"], "extraction-clause-count");
-        assert_eq!(outcome["diagnostics"][0]["details"]["actual"], actual);
+        assert_eq!(outcome["code"], "extraction-clause-count");
+        assert_eq!(outcome["details"]["actual"], actual);
     }
 }
 
@@ -104,9 +101,9 @@ fn quire_context_refusal_preserves_its_diagnostics() {
     let outcome = outcome(&error);
     assert_eq!(outcome["stage"], "quire-context");
     assert_eq!(error.category().exit_code(), 20);
-    assert_eq!(outcome["diagnostics"][0]["code"], "invalid-quire-context");
+    assert_eq!(outcome["code"], "invalid-quire-context");
     assert_eq!(
-        outcome["diagnostics"][0]["details"]["diagnostics"],
+        outcome["details"]["diagnostics"],
         json!(diagnostics)
     );
 }
