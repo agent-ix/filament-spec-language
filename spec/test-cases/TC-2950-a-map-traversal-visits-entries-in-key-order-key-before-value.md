@@ -16,9 +16,9 @@ Scope: FR-650-AC-17.
 
 ## Test Procedure
 
-Supply a `Map<Integer, ...>` whose entries are given in input order key 10 then key 9, each holding a different reference, and walk it for the first reference. Repeat with a key that holds a reference and a value that holds another.
+Supply a `Map<Integer, ...>` whose entries are given in input order key 10 then key 9, each holding a different reference, and walk it for the first reference. Repeat with a `Map<Config::Link, ...>` whose key is a record with a `to` reference field and whose value is another reference, two entries in non-canonical input order.
 
 ## Expected Results
 
 - The reference in the entry for key 9 is visited before the reference in the entry for key 10.
-- Within an entry, the key's reference is visited before the value's.
+- In the record-keyed map, the first reference found is the key's `to` reference of the canonical-first entry, before that entry's value reference.

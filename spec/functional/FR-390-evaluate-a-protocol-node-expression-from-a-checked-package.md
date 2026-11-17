@@ -719,7 +719,7 @@ anchor reached by a protocol node reports `ViewFailure::Unsupported` with
 creation is package-wide (above), so that package gets no view and none of its
 slots evaluates on the reader or bytes route; the source route is unaffected.
 A package with no source-declared operation anchor, such as TC-1070's fixture
-E, is unaffected. S4 emits every unit that declares a source object type per FR-995 and FR-996, so the rows, view creation and refusals of this section apply to such a package, and the source route evaluates it too. This is an unmet dependency (QSL-1398, IR-1213), not a ruling
+E, is unaffected. S4 emits every unit that declares a source object type per FR-995 and FR-996, so the rows, view creation and refusals of this section apply to such a package, and the source route evaluates it too. This is not a ruling
 that source-declared operations are outside the view. Slots of model-owned
 operations (QSL-852, TC-142, TC-1070 to TC-1073) do not depend on this row.
 
