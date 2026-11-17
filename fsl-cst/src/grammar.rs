@@ -1875,7 +1875,7 @@ fn temporal(g: &mut Grammar) {
         s(vec![
             r(P::AggregateTerm),
             c(vec![x("<"), x("<="), x("="), x(">="), x(">")]),
-            r(P::Expression),
+            r(P::Sum),
         ]),
     );
     g.insert(

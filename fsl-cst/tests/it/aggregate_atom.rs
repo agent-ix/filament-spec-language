@@ -45,7 +45,6 @@ fn texts<'t>(text: &'t str, parsed: &ParsedSource, production: Production) -> Ve
 /// arithmetic threshold.
 #[trace("FSpec-TC-1002", "FSpec-FR-501-AC-1")]
 #[test]
-#[ignore = "QSL-2160: the aggregate threshold is a full expression; restricting it to a sum is not implemented yet"]
 fn an_aggregate_followed_by_and_is_a_temporal_conjunction() {
     let text = clause("count where holds(s.ok) over past[0,1] >= 1 and holds(s.done)");
     let parsed = parse(&text);
@@ -71,7 +70,6 @@ fn an_aggregate_followed_by_and_is_a_temporal_conjunction() {
 /// the unit refuses at that `s`.
 #[trace("FSpec-TC-1002", "FSpec-FR-501-AC-1")]
 #[test]
-#[ignore = "QSL-2160: `>= s.k and s.ok` silently becomes one threshold; the refusal is not implemented yet"]
 fn a_boolean_connective_never_joins_the_threshold() {
     let text = clause("count where holds(s.ok) over past[0,1] >= s.k and s.ok");
     let parsed = parse(&text);
