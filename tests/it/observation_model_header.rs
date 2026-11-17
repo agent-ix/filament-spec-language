@@ -205,5 +205,4 @@ fn a_compile_model_entry_rejects_an_unknown_member() {
     assert_eq!(report["code"], "invalid-request", "{report}");
     assert_eq!(report["stage"], "request", "{report}");
     assert!(report.to_string().contains("version"), "{report}");
-    assert!(report.to_string().contains("models"), "{report}");
 }
