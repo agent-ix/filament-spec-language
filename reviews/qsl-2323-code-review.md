@@ -1,28 +1,56 @@
 ---
-id: SR-2026111612172400000026
-title: "Code review — filament-spec-language PR 2835 main-red and protocol fixes"
+id: SR-20261116121724000028
+title: "Code and Rust review — temporal witness serialization fixture"
 type: SpecReview
 analysis: code-review
-scope: "agent-ix/filament-spec-language; fsl-cst/src/parser.rs, fsl-eval/tests/it/collection_algebra.rs, fsl-eval/tests/it/collection_queries.rs, fsl-eval/tests/it/model_reference_queries.rs, fsl-eval/tests/it/total_functions.rs, fsl-forms/src/clause_text.rs, fsl-forms/src/syntax.rs, fsl-package/src/emit/tests/protocol_occurrence.rs, fsl-package/src/emit/tests/protocol_requirements/fixture_w.rs, fsl-replay/src/compile.rs, fsl-replay/src/execute.rs, fsl-replay/src/execute/tests/application_claim.rs, fsl-replay/src/spine/clause.rs, fsl-replay/src/spine/clause/tests/model_gate.rs, fsl-replay/src/spine/clause/tests/temporal.rs, fsl-replay/src/spine/dependency_tests.rs, fsl-replay/src/spine/lifecycle.rs, fsl-replay/src/spine/lifecycle/tests.rs, fsl-replay/src/spine/native_result.rs"
+scope: "agent-ix/filament-spec-language; QSL-2323 PR #2837 at 3d391aac8a797d1f02959513aec75779f03dc3a4; fsl-replay/src/spine/clause/tests/temporal.rs"
 review_set: subset
 relationships:
-  - { target: "ix://agent-ix/filament-spec-language/FR-098", type: references }
+  - target: ix://agent-ix/filament-spec-language/FR-266
+    type: reviews
 ---
 
 ## Summary
 
-Reviewed frozen PR #2835 at `3cc423e` against its Rust changes, affected tests, repository conventions, and the FR-098 replay mode contract. The code and tests inspected contain no new defect; the PR body reports one temporal witness assertion still failing on its stated main baseline, and no tests or aggregate gates were run during this review.
+Reviewed the changed Rust temporal serialization test, its FR-266-AC-4 trace, the relevant TC-1160 procedure, repository Rust/test guidance, and the changed-crate test path. The new fixture uses valid Holds, Pending, PendingWindow and Undefined reports and checks their serialized witness-member absence. One changed formatting violation remains.
 
 ## Verdict
 
-**PASS** — no defect attributable to this diff was found in the Rust code-review lane.
+**CONDITIONAL** — one low-severity formatting issue remains in the changed test block.
+
+## Coverage
+
+- `/code-review` with the Rust review lane: test intent, real report construction, output serialization assertions, requirement trace, and changed-file formatting.
+- Examined FR-266-AC-4 and its TC-1160 coverage; FR-286-AC-8 was context for the replaced test's prior trace.
+- No applicable AssuranceProfile applies. No CI workflow changed.
+- Focused test passed (1/1). `cargo fmt --check` reported the changed member array's single-line formatting should be multiline, along with unrelated existing formatting differences. `quire matrix --strict` exited 1 on repository-wide coverage conditions; FR-266-AC-4 remains tagged by this test and two existing tests. No aggregate gate was run.
 
 ## Findings
 
 | ID | Severity | Summary | Refs |
 | --- | --- | --- | --- |
-| FND-001 | low | No findings (placeholder) | - |
+| FND-001 | low | The changed compact member array does not match rustfmt output, so the PR adds a formatter violation. | fsl-replay/src/spine/clause/tests/temporal.rs:4568 |
 
-## Review notes
+## Dispositions
 
-The changed temporal replay tests route runtime division-by-zero cases through a named function explicitly recorded as `Kernel`, while preserving Linked refusal coverage. The `same_tree` change drops field-token locations from expression identity while retaining field names and other payload information. The remaining test failure is disclosed in the PR body as reproduced on the prior main baseline; it is not introduced by this diff. Reviewed all 19 changed paths from `git diff --name-only origin/main...HEAD`, including the parser and forms changes, evaluator test call-site updates, protocol fixture edits, replay check-mode plumbing, and related tests. No source files were edited. Test and aggregate gate commands were not run per the dispatch constraints.
+Round 1, reviewed at head `e0866c0b080cf7e518294673d03ceab5ff1f811b`.
+
+| FND | outcome | reason |
+| --- | --- | --- |
+| FND-001 | fixed | The member array now matches rustfmt at the finding. `rustfmt --check` on the file reports only unrelated existing differences at lines 756 and 1344. |
+
+`after_excerpt`:
+
+```rust
+        for member in [
+            "position",
+            "counterexample",
+            "witness",
+            "count",
+            "min_count",
+        ] {
+```
+
+## Final disposition
+
+**PASS — FND-001 is fixed at `e0866c0b080cf7e518294673d03ceab5ff1f811b`.** The exact targeted test passes 1/1. The finding's original wording and the review-pass verdict above remain unchanged.
