@@ -981,16 +981,14 @@ impl GlobalStructure {
                 ),
                 GlobalEventKind::Control {
                     operation: fsl_package::protocol_view::ControlOperation::Repeat,
-                    owner,
                     ..
                 } => {
-                    owner.as_ref() == Some(role)
-                        || self.events.iter().any(|nested| {
-                            nested.at != event.at
-                                && nested.within.contains(&event.at.node)
-                                && (self.action_of(&nested.at, role).is_some()
-                                    || nested.performer() == Some(role))
-                        })
+                    self.events.iter().any(|nested| {
+                        nested.at != event.at
+                            && nested.within.contains(&event.at.node)
+                            && (self.action_of(&nested.at, role).is_some()
+                                || nested.performer() == Some(role))
+                    })
                 }
                 GlobalEventKind::Control { owner, .. } => owner.as_ref() == Some(role),
                 GlobalEventKind::Region { .. } | GlobalEventKind::Join { .. } => false,
