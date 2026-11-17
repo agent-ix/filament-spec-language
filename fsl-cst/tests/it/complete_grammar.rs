@@ -980,9 +980,14 @@ fn one_occurrence_forms_fix_their_arity_in_the_grammar() {
 #[test]
 fn tuple_position_reads_and_map_types_parse() {
     let tuple_read = source(
-        "function first using Complete (p: Pair): Boolean pure { p[0] }\ntuple Pair(Boolean, Integer);",
+        "tuple Pair(Boolean, Integer);\nfunction first using Complete (p: Pair): Boolean pure { p[0] }",
     );
-    assert!(parse("tuple-position", &tuple_read).is_admissible());
+    let tuple_parsed = parse("tuple-position", &tuple_read);
+    assert!(
+        tuple_parsed.is_admissible(),
+        "{:?}",
+        tuple_parsed.diagnostics()
+    );
 
     let map_type = source(
         "function values using Complete (m: Map<Int[0, 3], Integer>[0, 4]): Integer pure { size(m) }",
