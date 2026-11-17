@@ -70,12 +70,12 @@ fn calls_binders_bounds_and_type_arguments_print_canonically() {
     }
     assert_eq!(stripped(&out), stripped(&text));
     let temporal = format!(
-        "{}temporal T using inf over (o: M::O) on origin when (o.ok) {{ always [0,30] holds (o.ok) }}\n",
+        "{}temporal T using inf over (o: M::O) on each (e: M::O) when (e.ok) {{ always [0,30] holds (o.ok) }}\n",
         header("filament.temporal.complete/v1")
     );
     let out = formatted(&temporal);
     assert!(out.contains("over (o: M::O)"), "{out}");
-    assert!(out.contains("when (o.ok)"), "{out}");
+    assert!(out.contains("on each (e: M::O) when (e.ok)"), "{out}");
     assert!(out.contains("always[0, 30] holds(o.ok)"), "{out}");
 }
 
