@@ -64,14 +64,16 @@ impl<M: MemoryModel> ProtocolSystem<'_, M> {
         ordinal: u64,
         trigger: Option<Bound>,
         model: &ModelSimState,
+        over: &Value,
     ) -> Result<Started, SettleError> {
         let root = ThreadPath::root(ordinal);
         let mut instance = Instance {
             trigger,
+            over: over.clone(),
             ..Instance::default()
         };
         for capture in &self.program.captures {
-            let mut frame = vec![Some(self.over.clone())];
+            let mut frame = vec![Some(instance.over.clone())];
             frame.extend(self.activation_value(&instance));
             frame.extend(Self::protocol_values(&instance));
             let owner = format!("{}::{}", self.protocol.name, capture.name);
@@ -236,7 +238,7 @@ impl<M: MemoryModel> ProtocolSystem<'_, M> {
                 if *status != RoleStatus::Live {
                     continue;
                 }
-                let mut frame = vec![Some(self.over.clone())];
+                let mut frame = vec![Some(instance.over.clone())];
                 frame.extend(self.activation_value(instance));
                 frame.extend(Self::protocol_values(instance));
                 frame.push(Some(Value::Reference(object.clone())));
@@ -339,7 +341,7 @@ impl<M: MemoryModel> ProtocolSystem<'_, M> {
         let mut enabled = false;
         for record in records {
             if let Some(guard) = activation.guard {
-                let frame = vec![Some(record.clone()), Some(self.over.clone())];
+                let frame = vec![Some(record.clone()), Some(state.over.clone())];
                 match self.evaluate(guard, frame, &state.model)? {
                     Verdict::True => {}
                     Verdict::False => continue,
@@ -360,7 +362,7 @@ impl<M: MemoryModel> ProtocolSystem<'_, M> {
                 value: Some(record),
                 enc: enc.clone(),
             };
-            match self.start(ordinal, Some(trigger), &state.model)? {
+            match self.start(ordinal, Some(trigger), &state.model, &state.over)? {
                 Started::Instance(started) => {
                     let mut next = state.clone();
                     next.instances.insert(ordinal, *started);

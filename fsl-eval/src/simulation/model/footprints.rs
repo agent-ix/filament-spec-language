@@ -18,9 +18,9 @@ use filament_exact::{EffectiveId, NodeKey, ObjectReference, Value, ValueType};
 use filament_semantic_value::declaration::{CompositeDeclaration, CompositeShape, TypeEnvironment};
 use filament_semantic_value::model_transition::ModelTransition;
 use fsl_semantics::check::footprint::{
-    derive_atom_reads, derive_constraint_reads, derive_footprint, derive_guard_reads,
-    derive_node_reads, derive_selected_footprint, derive_slot_reads, FootprintObject,
-    FootprintRefusal, SymbolicFootprint, SymbolicLocation,
+    derive_atom_reads, derive_attempt_footprint_fallback, derive_constraint_reads,
+    derive_footprint, derive_guard_reads, derive_node_reads, derive_selected_footprint,
+    derive_slot_reads, FootprintObject, FootprintRefusal, SymbolicFootprint, SymbolicLocation,
 };
 use fsl_semantics::check::CheckedNode;
 use fsl_semantics::model::clause_observation::Observation;
@@ -441,15 +441,29 @@ impl<'a> ModelSystem<'a> {
         let symbolic = cache
             .entry(key)
             .or_insert_with_key(|(_, _, types, selected)| {
-                derive_selected_footprint(
+                let select = |clause| selected.as_ref().is_none_or(|set| set.contains(&clause));
+                match derive_selected_footprint(
                     self.package.graph(),
                     &self.model,
                     receiver.object_type().clone(),
                     application.declaring.clone(),
                     &application.declaration,
                     types,
-                    &|clause| selected.as_ref().is_none_or(|set| set.contains(&clause)),
-                )
+                    &select,
+                ) {
+                    Err(FootprintRefusal::UnsupportedForm { .. }) => {
+                        derive_attempt_footprint_fallback(
+                            self.package.graph(),
+                            &self.model,
+                            receiver.object_type().clone(),
+                            application.declaring.clone(),
+                            &application.declaration,
+                            types,
+                            &select,
+                        )
+                    }
+                    derived => derived,
+                }
             });
         symbolic
             .as_ref()

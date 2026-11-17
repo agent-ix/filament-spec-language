@@ -44,8 +44,9 @@ pub struct ProtocolSubject<'a> {
     pub model: ModelSubject<'a>,
     /// The declared name of one protocol clause of the subject's package.
     pub protocol: String,
-    /// The object bound to the clause's `over` parameter, by population and
-    /// key.
+    /// The selected object for a reference-typed `over` parameter, by
+    /// population and key. For a finite non-reference `over` type, the
+    /// stepper ranges over that type's domain and does not use this object.
     pub over: ModelInstance,
     /// A binding for each static role.
     pub roles: Vec<RoleBinding>,

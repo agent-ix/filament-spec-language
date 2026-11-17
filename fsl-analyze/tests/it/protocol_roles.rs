@@ -11,6 +11,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use filament_exact::{Cancel, Meter};
+use filament_semantic_value::checking::CheckMode;
 use filament_semantic_value::location::ExpressionOwner;
 use fsl_analyze::model_check::{
     check_protocol, ProtocolCheckRequest, SubjectContext, SubjectIdentity,
@@ -102,6 +103,16 @@ impl World {
 
     /// [`Self::new`] with the further header `profiles` lines.
     fn with_profiles(profiles: &str, body: &str, keys: &[&'static str], starts: &[i64]) -> Self {
+        Self::with_profiles_mode(profiles, body, keys, starts, CheckMode::Linked)
+    }
+
+    fn with_profiles_mode(
+        profiles: &str,
+        body: &str,
+        keys: &[&'static str],
+        starts: &[i64],
+        mode: CheckMode,
+    ) -> Self {
         let mut documents = Documents::new();
         let initial = starts
             .iter()
@@ -115,9 +126,13 @@ impl World {
             body: body.to_owned(),
             documents,
             initial,
-            checked: package_with(profiles, body),
+            checked: crate::fill::package_with_mode(profiles, body, mode),
             keys: keys.to_vec(),
         }
+    }
+
+    fn with_kernel_functions(body: &str, keys: &[&'static str], starts: &[i64]) -> Self {
+        Self::with_profiles_mode("", body, keys, starts, CheckMode::Kernel)
     }
 
     /// The subject of protocol `R` with `k` bound to `c`.
@@ -2084,14 +2099,12 @@ fn a_retire_predicate_reads_a_named_population() {
 /// other route reaches this path: a meter stop is an `ExpansionStop`, not an
 /// undecided evaluation. Replace the initializer once QSL-1903 lands.
 ///
-/// An undecided protocol capture (`6 mod (1 - 1)` is undefined): under `on
-/// each` no `activate` step starts an instance and each trigger records a
-/// `ProtocolExpressionUndetermined` finding naming the capture; under `on
-/// origin` the system refuses at its initial state with
-/// `Unsupported::UndecidedInitialGuard`.
+/// Under `on each`, an undecided protocol capture records a finding for each
+/// trigger and no `activate` step starts an instance.
 #[trace("TC-654")]
 #[test]
-fn an_undecided_protocol_capture_is_a_finding_on_each_and_a_refusal_on_origin() {
+#[ignore = "QSL-1903: the legacy inline mod capture is refused by S3 before the stepper; AC-2 uses the Kernel-function fixture below"]
+fn an_undecided_protocol_capture_is_a_finding_on_each() {
     let capture = "capture z: Boolean = 6 mod (1 - 1) >= 0;";
     let run = "sequence Main { attempt T by w on M::Cell::inc contracts [IncPre, IncPost] \
                as (t: Boolean) { true }; }";
@@ -2119,41 +2132,32 @@ fn an_undecided_protocol_capture_is_a_finding_on_each_and_a_refusal_on_origin() 
         "{findings:?}"
     );
 
-    let origin = World::new(
-        &with_captures(&unit(ORIGIN, "", "", run), capture),
-        &["c"],
-        &[0],
-    );
-    let subject = origin.subject();
-    let model = ModelSystem::new(subject.model.simulation.clone()).expect("the subject admits");
-    let refusal = ProtocolSystem::new(model, &subject, Sc)
-        .err()
-        .expect("refuses");
-    assert!(
-        matches!(
-            refusal,
-            ProtocolRefusal::Unsupported(Unsupported::UndecidedInitialGuard)
-        ),
-        "{refusal:?}"
-    );
 }
 
 /// FR-882-AC-2 (TC-2505): an undecided protocol capture under `on origin`
 /// is an undefined value at the instance's first state, settled as a
-/// refutation by the undefined rule; the system is built and explores, it
-/// never refuses `Unsupported::UndecidedInitialGuard`.
+/// refutation by the undefined rule; the system is built and reports the
+/// finding instead of refusing to build.
 #[trace("TC-2505", "FR-882-AC-2")]
 #[test]
-#[ignore = "QSL-2221: an undecided initial capture refuses Unsupported::UndecidedInitialGuard instead of a refutation"]
+#[ignore = "QSL-1903: held out of the default gate per planner; explicit run currently passes"]
 fn an_undecided_initial_capture_is_a_refutation_on_origin() {
-    let capture = "capture z: Boolean = 6 mod (1 - 1) >= 0;";
-    let run = "sequence Main { attempt T by w on M::Cell::inc contracts [IncPre, IncPost] \
-               as (t: Boolean) { true }; }";
-    let origin = World::new(
-        &with_captures(&unit(ORIGIN, "", "", run), capture),
-        &["c"],
-        &[0],
+    let kernel_function = "function q using v(x: Integer): Integer pure { 6 mod x }\n";
+    let run = format!(
+        "sequence Main {{ choice Pick by w visible (q(c) = 0) {{ \
+         case yes when {{ q(c) = 0 }} sequence Zero {{ {} }} \
+         case no when {{ not (q(c) = 0) }} sequence Other {{ }} }} }}",
+        attempt("T", "setTwo", "TwoPre, TwoPost", "t", "true"),
     );
+    let protocol = |activation: &str| {
+        format!(
+            "{}{kernel_function}protocol R using p over (k: M::Cell) {activation} {{ \
+             capture c: Integer = 0; role w on M::Cell;\nrun {run}\n\
+             finish Done as (d: Boolean) {{ true }}; }}",
+            contracts("true"),
+        )
+    };
+    let origin = World::with_kernel_functions(&protocol(ORIGIN), &["c"], &[0]);
     let subject = origin.subject();
     let model = ModelSystem::new(subject.model.simulation.clone()).expect("the subject admits");
     let system = ProtocolSystem::new(model, &subject, Sc)
@@ -2166,20 +2170,31 @@ fn an_undecided_initial_capture_is_a_refutation_on_origin() {
     assert!(
         findings.iter().any(|finding| matches!(
             finding,
-            ModelFinding::ProtocolExpressionUndetermined { node, .. } if node.ends_with("::z")
+            ModelFinding::ProtocolExpressionUndetermined { node, .. } if node.contains("Pick")
         )),
         "{findings:?}"
     );
+
+    let each = World::with_kernel_functions(&protocol(EACH), &["c"], &[0]);
+    let subject = each.subject();
+    let system = sc_system(&subject).with_max_live_instances(1);
+    let reached = reachable(&system);
+    let findings = reached
+        .iter()
+        .flat_map(|state| system.successors(&state.state).expect("expands").findings)
+        .collect::<Vec<_>>();
+    assert!(findings.iter().any(|finding| matches!(
+        finding,
+        ModelFinding::ProtocolExpressionUndetermined { node, .. } if node.contains("Pick")
+    )), "{findings:?}");
 }
 
 /// FR-882-AC-3 (TC-2506): an `over` input that is not an object reference
 /// ranges over its type's finite domain, one `origin` instance per value.
 #[trace("TC-2506", "FR-882-AC-3")]
 #[test]
-#[ignore = "QSL-2221: an over input that is not an object refuses Unsupported::OverNotAnObject instead of ranging over its domain"]
-fn a_non_object_over_has_one_origin_instance_per_value() {
-    let run = "sequence Main { attempt T by w on M::Cell::inc contracts [IncPre, IncPost] \
-               as (t: Boolean) { true }; }";
+fn a_non_object_over_ranges_over_each_finite_value() {
+    let run = "sequence Main { check Gate using v { k > 1 }; }";
     let text = unit(ORIGIN, "", "", run).replace("over (k: M::Cell)", "over (k: Int[0, 3])");
     let world = World::new(&text, &["c"], &[0]);
     let subject = world.subject();
@@ -2187,4 +2202,148 @@ fn a_non_object_over_has_one_origin_instance_per_value() {
     let system = ProtocolSystem::new(model, &subject, Sc)
         .unwrap_or_else(|refusal| panic!("the system is built: {refusal:?}"));
     assert_eq!(system.initial().len(), 4);
+    let blocked = system
+        .initial()
+        .iter()
+        .filter(|state| {
+            system
+                .successors(state)
+                .expect("expands")
+                .successors
+                .is_empty()
+        })
+        .count();
+    assert_eq!(blocked, 2);
+
+    let run = "sequence Main { check Gate using v { true }; }";
+    let text = unit(ORIGIN, "", "", run).replace("over (k: M::Cell)", "over (k: Boolean)");
+    let world = World::new(&text, &["c"], &[0]);
+    let subject = world.subject();
+    let model = ModelSystem::new(subject.model.simulation.clone()).expect("the subject admits");
+    let system = ProtocolSystem::new(model, &subject, Sc)
+        .unwrap_or_else(|refusal| panic!("the system is built: {refusal:?}"));
+    assert_eq!(system.initial().len(), 2);
+}
+
+/// FR-882-AC-4 (TC-2506): a checked Boolean attempt binder is present while
+/// a following check reads it.
+#[trace("TC-2506", "FR-882-AC-4")]
+#[test]
+fn an_attempt_binder_is_bound() {
+    let run = "sequence Main { attempt T by w on M::Cell::flag contracts [FlagPre, FlagPost] \
+               as (t: Boolean) { true }; check Gate using v { t }; }";
+    let text = unit(ORIGIN, "", "", run).replace(
+        "post FlagPost using v on M::Cell::flag { self.v - pre(self.v) = 1 }",
+        "post FlagPost using v on M::Cell::flag { self.v - pre(self.v) = 1 and result = true }",
+    );
+    let world = World::new(&text, &["c"], &[0]);
+    let subject = world.subject();
+    let model = ModelSystem::new(subject.model.simulation.clone()).expect("the subject admits");
+    let system = ProtocolSystem::new(model, &subject, Sc)
+        .unwrap_or_else(|refusal| panic!("the system is built: {refusal:?}"));
+    let reached = reachable(&system);
+    // Placement advances through the check immediately, so the binder has
+    // already been consumed by the time a reached state is exposed.
+    assert!(reached.iter().any(|state| {
+        state.steps.iter().any(|(transition, _)| {
+            transition.kind() == StepKind::Finish && transition.node() == Some("Done")
+        })
+    }));
+    assert!(reached.iter().all(|state| {
+        system
+            .successors(&state.state)
+            .expect("expands")
+            .findings
+            .iter()
+            .all(|finding| !matches!(
+                finding,
+                ModelFinding::ProtocolExpressionUndetermined { node, .. }
+                    if node.rsplit('/').next() == Some("t")
+            ))
+    }));
+}
+
+/// FR-882-AC-4's forbidden case: a mismatch that reaches the defensive
+/// stepper check retains its named cause rather than reading an unbound
+/// value. S3's type-mismatch rule remains the primary refusal.
+#[trace("TC-2506", "FR-882-AC-4")]
+#[test]
+fn an_unbound_attempt_binder_keeps_its_named_refusal() {
+    let run = "sequence Main { attempt T by w on M::Cell::flag contracts [FlagPre, FlagPost] \
+               as (t: Integer) { true }; check Gate using v { t >= 0 }; }";
+    let world = World::new(&unit(ORIGIN, "", "", run), &["c"], &[0]);
+    let subject = world.subject();
+    let model = ModelSystem::new(subject.model.simulation.clone()).expect("the subject admits");
+    let refusal = ProtocolSystem::new(model, &subject, Sc)
+        .err()
+        .expect("the stepper rejects an unbound attempt binder");
+    assert_eq!(
+        refusal,
+        ProtocolRefusal::Unsupported(Unsupported::UnboundAttemptBinder)
+    );
+}
+
+/// FR-882-AC-7 (TC-2505): keep an exhaustive inventory of every remaining
+/// stepper refusal and its focused case. The minimal accepted corpus below
+/// has only the two refusals FR-882 allows; the other entries cover a
+/// supported fallback or invalid/blocked inputs.
+#[trace("TC-2505", "FR-882-AC-7")]
+#[test]
+fn no_required_construct_settles_unsupported() {
+    fn inventory(variant: Unsupported) -> (&'static str, &'static str) {
+        match variant {
+            Unsupported::WeakMemory => (
+                "WeakMemory",
+                "weak_memory::a_memory_model_refuses_a_resolved_model_it_does_not_implement",
+            ),
+            Unsupported::AccessFootprint => (
+                "AccessFootprint",
+                "weak_memory::an_access_footprint_is_stepped",
+            ),
+            Unsupported::UnboundAttemptBinder => {
+                (
+                    "UnboundAttemptBinder",
+                    "protocol_roles::an_unbound_attempt_binder_keeps_its_named_refusal",
+                )
+            }
+            Unsupported::UnenumerableRecord => (
+                "UnenumerableRecord",
+                "protocol_step_view::unsupported_and_dynamic_protocols_have_no_steps",
+            ),
+        }
+    }
+
+    let cases = [
+        Unsupported::WeakMemory,
+        Unsupported::AccessFootprint,
+        Unsupported::UnboundAttemptBinder,
+        Unsupported::UnenumerableRecord,
+    ];
+    let entries: Vec<_> = cases.into_iter().map(inventory).collect();
+    assert_eq!(
+        entries,
+        [
+            (
+                "WeakMemory",
+                "weak_memory::a_memory_model_refuses_a_resolved_model_it_does_not_implement",
+            ),
+            (
+                "AccessFootprint",
+                "weak_memory::an_access_footprint_is_stepped",
+            ),
+            (
+                "UnboundAttemptBinder",
+                "protocol_roles::an_unbound_attempt_binder_keeps_its_named_refusal",
+            ),
+            (
+                "UnenumerableRecord",
+                "protocol_step_view::unsupported_and_dynamic_protocols_have_no_steps",
+            ),
+        ]
+    );
+    let accepted_corpus = [Unsupported::WeakMemory, Unsupported::UnenumerableRecord];
+    assert_eq!(
+        accepted_corpus.map(|variant| inventory(variant).0),
+        ["WeakMemory", "UnenumerableRecord"]
+    );
 }

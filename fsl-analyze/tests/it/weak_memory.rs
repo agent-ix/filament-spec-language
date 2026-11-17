@@ -1371,6 +1371,41 @@ fn a_reader_constraint_with_no_footprint_rule_refuses_with_its_reason() {
     assert!(case.system(&[], Sc).is_ok());
 }
 
+/// FR-882-AC-5 (TC-2506): a pure scalar helper can make an attempt contract
+/// body opaque to ordinary footprint derivation; the attempt still uses its
+/// declared frame and the model read in the call argument.
+#[trace("TC-2506", "FR-882-AC-5")]
+#[test]
+fn an_access_footprint_is_stepped() {
+    let run = format!(
+        "parallel Both {{ branch left sequence L {{ {} }} \
+         branch right sequence R {{ {} }} }} join all [left, right];",
+        attempt("Sx", "w", "Cell::set", "", "IsX, StoreOne"),
+        attempt("Sy", "w", "Cell::set", "", "IsY, StoreOne"),
+    );
+    let direct = Case::new(&(contracts() + &protocol("SB", &run)));
+    let called_contracts = contracts().replace(
+        "pre IsX using v on M::Cell::set { self.id = 0 }",
+        "pre IsX using v on M::Cell::set { is_zero(self.id) }",
+    );
+    let called = Case::new(&format!(
+        "function is_zero using v(x: Int[0, 3]): Boolean pure {{ x = 0 }}\n{}{}",
+        called_contracts,
+        protocol("SB", &run),
+    ));
+    let selection = [select("SB::Both", MemoryModelName::Tso)];
+    assert!(explores(&called, MemoryModelName::Tso));
+    let direct_accesses = direct.accesses(&selection);
+    let expected = direct_accesses
+        .attempt("Both/left/L/Sx")
+        .expect("direct attempt classified");
+    let called_accesses = called.accesses(&selection);
+    let actual = called_accesses
+        .attempt("Both/left/L/Sx")
+        .expect("fallback attempt classified");
+    assert_eq!(actual.instances, expected.instances);
+}
+
 /// FR-220-AC-4 (TC-665 step 4): `SB` under `sc` with every ordering
 /// `relaxed`, and with every ordering `seq_cst`, reaches the same states,
 /// 13 inside the `parallel` and 3 joined, and settles `proved` both times.

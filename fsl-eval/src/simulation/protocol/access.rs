@@ -392,6 +392,35 @@ impl StateWeakAccesses {
 }
 
 impl WeakAccesses {
+    /// Union classifications made for each value of a finite protocol
+    /// `over` input. Access is state-free with respect to that binder, but a
+    /// guard may select different applications for different values.
+    pub(crate) fn extend(&mut self, other: Self) {
+        for (node, mut attempt) in other.attempts {
+            let Some(current) = self.attempts.get_mut(&node) else {
+                self.attempts.insert(node, attempt);
+                continue;
+            };
+            current.instances.append(&mut attempt.instances);
+            current.instances.sort_by(|left, right| left.transition.cmp(&right.transition));
+            current.instances.dedup_by(|left, right| left.transition == right.transition);
+        }
+        for (node, candidates) in other.load_candidates {
+            let current = self.load_candidates.entry(node).or_default();
+            for (location, transitions) in candidates {
+                current.entry(location).or_default().extend(transitions);
+            }
+        }
+        for (node, (path, mut locations)) in other.readers {
+            let entry = self.readers.entry(node).or_insert((path, Vec::new()));
+            entry.1.append(&mut locations);
+            entry.1.sort();
+            entry.1.dedup();
+        }
+        self.shared.extend(other.shared);
+        self.cells.extend(other.cells);
+    }
+
     /// Every attempt of a weak `parallel`, by its node's static declaration
     /// path.
     pub fn attempts(&self) -> impl Iterator<Item = &WeakAttempt> {
@@ -592,9 +621,6 @@ pub(crate) fn classify(
     // it. A `finish` and a node outside every weak `parallel` are not.
     let mut node_reads: BTreeMap<ProtocolNodeId, BTreeSet<Location>> = BTreeMap::new();
     let mut reader_chains: BTreeMap<ProtocolNodeId, Chain> = BTreeMap::new();
-    let Value::Reference(over) = over else {
-        return Err(ProtocolRefusal::fault("the-over-input-is-a-reference"));
-    };
     let parameters: Vec<(String, ValueType)> = protocol
         .slots
         .binders
@@ -614,6 +640,11 @@ pub(crate) fn classify(
     for (node, constraint) in constraints {
         let (Some(body), Some(chain)) = (constraint, chain_of(*node)?) else {
             continue;
+        };
+        let Value::Reference(over) = over else {
+            return Err(ProtocolRefusal::fault(
+                "a-weak-node-model-read-has-a-reference-over-input",
+            ));
         };
         let path = program.text(*node)?;
         let reads =

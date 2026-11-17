@@ -518,8 +518,7 @@ fn an_await_matches_an_event_in_a_closed_window_under_a_temporal_profile() {
             filament_semantic_value::checking::CheckingLimits::default(),
         )
         .expect_err("an await under no temporal profile refuses");
-    // `flow`'s protocol input is a Boolean, which the lowering stage reports
-    // as `NoOwnerModel`; that emission refusal is not this check's subject.
+    // The protocol profile's emission refusal is not this check's subject.
     let found: Vec<CheckRefusal> = found
         .into_iter()
         .filter(|refusal| {

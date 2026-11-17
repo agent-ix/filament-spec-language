@@ -225,6 +225,7 @@ impl<M: MemoryModel> ProtocolSystem<'_, M> {
             findings: self.model.invariant_findings(&state.model)?,
             cut: Cut::default(),
         };
+        gathered.findings.extend(state.initial_findings.iter().cloned());
         gathered.findings.extend(access_findings);
         let mut running = Vec::new();
         for (ordinal, instance) in &state.instances {

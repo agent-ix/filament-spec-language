@@ -638,10 +638,6 @@ impl Lowering<'_> {
         if self.fifo_key_unstable(protocol, &location)? {
             unemitted.push(ProtocolConstruct::ChannelKeyNotEqualityStable);
         }
-        let owner = self.owner_model_object(protocol);
-        if owner.is_none() {
-            unemitted.push(ProtocolConstruct::NoOwnerModel);
-        }
         if let Some(first) = unemitted.first() {
             self.set_protocol_key(index, ProtocolKey::NotEmitted(*first));
             return Ok(unemitted
@@ -649,9 +645,6 @@ impl Lowering<'_> {
                 .map(|construct| not_emitted(*construct, &location))
                 .collect());
         }
-        let Some(owner) = owner else {
-            return Err(fault(&location, KeyFault::UncheckedProtocolFact));
-        };
         let placeholder = match self.protocol_keys.get(index) {
             Some(ProtocolKey::Keyed(NodeRef::Pending(handle))) if cyclic => Some(*handle),
             _ => None,
@@ -669,7 +662,7 @@ impl Lowering<'_> {
         match self.protocol_node_for(
             protocol,
             &law,
-            owner,
+            self.owner_model_object(protocol),
             ProtocolClauseMembers {
                 attempts: &[],
                 compensations: &[],
@@ -751,9 +744,6 @@ impl Lowering<'_> {
             }
             let location = protocol.location();
             let law = self.law(LawRole::ProtocolProfile, &location)?;
-            let owner = self
-                .owner_model_object(protocol)
-                .ok_or_else(|| fault(&location, KeyFault::UncheckedProtocolFact))?;
             let nodes = attempts.get(compact_index).map_or(&[][..], Vec::as_slice);
             let compensation_nodes = compensations
                 .get(compact_index)
@@ -765,7 +755,7 @@ impl Lowering<'_> {
             let key = self.protocol_node_for(
                 protocol,
                 &law,
-                owner,
+                self.owner_model_object(protocol),
                 ProtocolClauseMembers {
                     attempts: nodes,
                     compensations: compensation_nodes,
@@ -791,18 +781,19 @@ impl Lowering<'_> {
         Ok(())
     }
 
-    /// The object type `protocol` is declared over, whose model declaration
-    /// node is the clause's `owner_model` (FSpec FR-464 "owner_model": the
-    /// exact local model declaration node the clause's source `over` type
-    /// represents; FSpec's published fixtures name the object type the
-    /// `over` reference targets). `None` when `over` is not a reference to an
-    /// object type of a selected model: no node can be named, so the clause
-    /// is not emitted ([`ProtocolConstruct::NoOwnerModel`]).
+    /// The object type reached by the protocol's `over` input, whose model
+    /// declaration node becomes the clause's `owner_model` (FSpec FR-464 and
+    /// FR-727). A non-object `over` type reaches no object and has no edge.
     fn owner_model_object(&self, protocol: &ProtocolInput<'_>) -> Option<EffectiveId> {
-        let ValueType::Reference(context) = &protocol.checked.slots.binders.first()?.value_type
-        else {
-            return None;
-        };
+        fn object_type(value_type: &ValueType) -> Option<&EffectiveId> {
+            match value_type {
+                ValueType::Reference(context) => Some(context),
+                ValueType::Option(payload) => object_type(payload),
+                ValueType::Collection(collection) => object_type(collection.element()),
+                _ => None,
+            }
+        }
+        let context = object_type(&protocol.checked.slots.binders.first()?.value_type)?;
         self.models
             .iter()
             .any(|model| model.object_types().any(|(_, object)| object == *context))
@@ -971,7 +962,7 @@ impl Lowering<'_> {
         &mut self,
         protocol: &ProtocolInput<'_>,
         law: &OperationLaw,
-        owner: EffectiveId,
+        owner: Option<EffectiveId>,
         members: ProtocolClauseMembers<'_>,
         location: &Location,
     ) -> Result<NodeRef, CheckRefusal> {
@@ -989,13 +980,15 @@ impl Lowering<'_> {
         &mut self,
         protocol: &ProtocolInput<'_>,
         law: &OperationLaw,
-        owner: EffectiveId,
+        owner: Option<EffectiveId>,
         members: ProtocolClauseMembers<'_>,
         location: &Location,
     ) -> Result<NodeRef, CheckRefusal> {
         let name = protocol.form.name.name.as_str();
         let slots = &protocol.checked.slots;
-        let owner_model = self.object_node(owner, location)?;
+        let owner_model = owner
+            .map(|owner| self.object_node(owner, location))
+            .transpose()?;
         let boolean = self.type_node(&ValueType::Boolean, location)?;
         let operation = |operator: &'static str| -> Result<Operation, CheckRefusal> {
             Ok(Operation {
@@ -1120,7 +1113,7 @@ impl Lowering<'_> {
             "protocol_clause",
             boolean.clone(),
             vec![identifier(name, location)?],
-            Some(owner_model),
+            owner_model,
             BodyTerm::application(
                 Operator::ProtocolControl,
                 operation("protocol")?,

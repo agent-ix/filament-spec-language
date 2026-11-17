@@ -965,12 +965,6 @@ pub enum ProtocolConstruct {
     /// `attempt`: that protocol's node is written after the state clauses
     /// its attempts list, which are written after the functions. QSL-1121g.
     ReferenceToAttemptProtocol,
-    /// A clause whose `over` input is not a reference to an object type of a
-    /// selected model: there is no exact local model declaration node to
-    /// name as the clause's `owner_model`
-    /// (FSpec FR-464 "owner_model", FR-383), and the reader refuses a clause
-    /// without one. QSL-1147.
-    NoOwnerModel,
 }
 
 impl ProtocolConstruct {
@@ -984,7 +978,6 @@ impl ProtocolConstruct {
             Self::ChannelCarriesBounded => "QSL-1137",
             Self::Relationships => "QSL-1141",
             Self::ChannelKeyNotEqualityStable => "QSL-1142",
-            Self::NoOwnerModel => "QSL-1147",
             Self::PostTestRepeat | Self::RepeatDecisionReadsBody => "STD-539",
             Self::RepeatStepsThroughRepeat => "IR-1100",
         }
