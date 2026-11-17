@@ -391,7 +391,7 @@ pub fn replay_projection_counterexample(
             instances,
             maximum,
         } => {
-            if maximum < 2
+            if *maximum < 2
                 || structure
                     .depth(event)
                     .map_or(true, |depth| depth > max_depth)

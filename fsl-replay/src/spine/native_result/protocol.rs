@@ -66,6 +66,12 @@ pub enum ProtocolInconclusiveCause {
         /// The key's `max_depth`.
         depth: u64,
     },
+    /// A protocol activation was enabled when the live-instance bound was
+    /// reached.
+    InstanceBoundReached {
+        /// The `max_live_instances` value in force.
+        max_live_instances: u64,
+    },
     /// The counterexample did not replay.
     ReplayDisagreed {},
     /// Realizability only: a premise the claim does not state.
@@ -90,7 +96,8 @@ impl ProtocolInconclusiveCause {
             | Self::UnforcedRefutation {}
             | Self::StrategyReplayFailed {}
             | Self::CutCount {}
-            | Self::UndecidedEvaluation {} => kind == ProtocolAnalysisKind::Realizability,
+            | Self::UndecidedEvaluation {}
+            | Self::InstanceBoundReached { .. } => kind == ProtocolAnalysisKind::Realizability,
         }
     }
 
@@ -103,6 +110,11 @@ impl ProtocolInconclusiveCause {
             analysis::InconclusiveCause::StrategyReplayFailed => Self::StrategyReplayFailed {},
             analysis::InconclusiveCause::CutCount => Self::CutCount {},
             analysis::InconclusiveCause::Undecided => Self::UndecidedEvaluation {},
+            analysis::InconclusiveCause::InstanceBoundReached { max_live_instances } => {
+                Self::InstanceBoundReached {
+                    max_live_instances: *max_live_instances,
+                }
+            }
         }
     }
 }

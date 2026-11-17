@@ -1103,7 +1103,7 @@ fn a_replicated_role_that_sends_first_is_refuted() {
     let package = admitted_source(&source(
         members,
         "sequence Main { send J via Job as (j: Ack) { true }; \
-         receive K via Job of J as (k: Ack) { true }; }",
+         receive K via Job of J as (got: Ack) { true }; }",
     ));
     let mut request = request(&package, "Pool");
     request.profile = Some("bounded".to_owned());
@@ -1142,7 +1142,7 @@ fn a_bounded_spawn_projects_to_one_local_role_class() {
     let package = admitted_source(&source(
         members,
         "sequence Main { send J via Job as (j: Ack) { true }; \
-         receive K via Job of J as (k: Ack) { true }; \
+         receive K via Job of J as (got: Ack) { true }; \
          send D via Done as (d: Ack) { true }; \
          receive R via Done of D as (r: Ack) { true }; }",
     ));
@@ -1150,12 +1150,17 @@ fn a_bounded_spawn_projects_to_one_local_role_class() {
     request.profile = Some("bounded".to_owned());
     let found = witness(project(&package, request).unwrap());
     assert_eq!(found.local_graph.events.len(), 2);
-    assert!(matches!(
-        &found.local_graph.events[0].kind,
-        LocalEventKind::Receive { .. }
-    ));
-    assert!(matches!(
-        &found.local_graph.events[1].kind,
-        LocalEventKind::Send { .. }
-    ));
+    let receive = found
+        .local_graph
+        .events
+        .iter()
+        .find(|event| matches!(&event.kind, LocalEventKind::Receive { .. }))
+        .expect("the pool class receives Job");
+    let send = found
+        .local_graph
+        .events
+        .iter()
+        .find(|event| matches!(&event.kind, LocalEventKind::Send { .. }))
+        .expect("the pool class sends Done");
+    assert!(found.local_graph.edges.contains(&(receive.id, send.id)));
 }
