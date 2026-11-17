@@ -62,7 +62,7 @@ use crate::simulation::expansion::{Expansion, ExpansionLimit, ExpansionStop};
 use crate::simulation::explore::TransitionSystem;
 use crate::simulation::footprint::Location;
 use crate::simulation::key::{self, EncodingRefusal};
-use crate::simulation::model::encode::{Canonicalizer, Enc, map_enc, reference_enc};
+use crate::simulation::model::encode::{Canonicalizer, Enc, map_enc, reference_enc, value_enc};
 use crate::simulation::model::{
     BROKEN, ClauseOutcome, ModelFinding, ModelSimState, ModelSystem, Observed, TerminalClass,
     Verdict, verdict,

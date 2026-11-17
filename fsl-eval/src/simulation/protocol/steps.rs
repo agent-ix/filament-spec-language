@@ -32,20 +32,22 @@ use super::access::{
 use super::identity::{
     BlockedThread, ProtocolTransition, StepKind, ThreadPath, VisibilityRead, WaitCause,
 };
-use super::memory::{Access, GatedStep, MemoryModel, Read, ReadChoice, SharedCell, Written};
+use super::memory::{
+    Access, Chosen, GatedStep, MemoryModel, Read, ReadChoice, SharedCell, Written,
+};
 use super::program::{Cursor, Join, Rest};
 use super::race::AccessRecord;
 use super::settle::Settled;
 use super::{
-    Bound, Disposition, Instance, Parallel, ParallelKey, ProtocolRefusal, ProtocolState,
-    ProtocolSystem, Thread, undetermined,
+    undetermined, Bound, Disposition, Instance, Parallel, ParallelKey, PendingAccess,
+    ProtocolRefusal, ProtocolState, ProtocolSystem, Thread,
 };
 use crate::simulation::expansion::{Expansion, ExpansionLimit, ExpansionStop};
 use crate::simulation::footprint::Location;
-use crate::simulation::model::encode::{Enc, reference_enc, value_enc};
+use crate::simulation::model::encode::{reference_enc, value_enc, Enc};
 use crate::simulation::model::{
-    Applied, Budget, ClauseOutcome, EXHAUSTED, FirstApplication, ModelFinding, ModelSimState,
-    Observed, ObservedIdentities, OperationRef, Verdict, verdict,
+    verdict, Applied, Budget, ClauseOutcome, FirstApplication, ModelFinding, ModelSimState,
+    Observed, ObservedIdentities, OperationRef, Verdict, EXHAUSTED,
 };
 use crate::simulation::subject::Cut;
 use crate::value::evaluate_join_predicate;
@@ -867,7 +869,7 @@ impl<M: MemoryModel> ProtocolSystem<'_, M> {
                 non_atomic: self.non_atomic.contains(&location),
             };
             let mut expanded = Vec::new();
-            for (observed, committed, component, choices, records, race) in observations {
+            for (observed, _committed, component, choices, records, race) in observations {
                 let reads = self.memory.reads(&component, path, &observed, &shared);
                 if reads.is_empty() {
                     let access = Access {
@@ -971,7 +973,7 @@ impl<M: MemoryModel> ProtocolSystem<'_, M> {
                 let enc = value_enc(&value, self.model.typing());
                 let mut next = state.clone();
                 next.model = committed.clone();
-                next.memory = component;
+                next.memory = component.clone();
                 let target = Self::instance_mut(&mut next, ordinal)?;
                 if let Some((occurrence, _)) = &effect_occurrence {
                     let following = occurrence.checked_add(1).ok_or_else(|| {
@@ -1001,11 +1003,11 @@ impl<M: MemoryModel> ProtocolSystem<'_, M> {
                         enc,
                         value,
                     );
-                    for record in records {
+                    for record in records.clone() {
                         self.carry_after(&mut next, &record);
                         transition = transition.accessing(record);
                     }
-                    for (location, choice) in choices {
+                    for (location, choice) in choices.clone() {
                         let cell = accesses.cell(&location).ok_or_else(|| {
                             ProtocolRefusal::fault("a-reader-location-has-a-cell")
                         })?;
@@ -1658,7 +1660,15 @@ impl<M: MemoryModel> ProtocolSystem<'_, M> {
                     ),
                 })
             });
-            let access = self.access(ordinal, path, node, applied, observed.state(), accesses)?;
+            let access = self.access(
+                state,
+                ordinal,
+                path,
+                node,
+                applied,
+                observed.state(),
+                accesses,
+            )?;
             let memory_access =
                 self.memory_access(node, applied, observed.state(), access, accesses)?;
             let multi_writes =
@@ -1978,7 +1988,9 @@ impl<M: MemoryModel> ProtocolSystem<'_, M> {
             None,
             &mut gathered.budget,
         )?;
-        gathered.findings.extend(applications.findings);
+        gathered
+            .findings
+            .extend(applications.findings.iter().cloned());
         let instance = state
             .instances
             .get(&ordinal)
@@ -2462,6 +2474,7 @@ impl<M: MemoryModel> ProtocolSystem<'_, M> {
     /// at the value `observed` gives it applies as a load (ADR-025 MA-5).
     fn access<'s>(
         &'s self,
+        state: &ProtocolState<M>,
         ordinal: u64,
         path: &ThreadPath,
         node: ProtocolNodeId,
@@ -2491,13 +2504,7 @@ impl<M: MemoryModel> ProtocolSystem<'_, M> {
             ));
         };
         let InstanceAccess::Access { class, location } = instance_access else {
-            if matches!(instance_access, InstanceAccess::Shape { writes, .. } if writes.is_empty())
-            {
-                return Ok(Access::local());
-            }
-            return Err(ProtocolRefusal::fault(
-                "a-multi-location-store-uses-a-program-order-apply-step",
-            ));
+            return Ok(Access::local());
         };
         let shared = match location {
             Some(location) => Some(SharedCell {

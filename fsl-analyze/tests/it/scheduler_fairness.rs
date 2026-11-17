@@ -996,7 +996,14 @@ fn an_authored_operation_constraint_joins_the_scheduler_constraints() {
 #[trace("TC-2025", "FR-228-AC-11", "FSpec-TC-1524", "FSpec-FR-437-AC-16")]
 #[test]
 fn liveness_over_an_ra_parallel_is_decided_under_visibility_fairness() {
-    let chatter = Chatter::new("", EVENTUALLY, &IS_ONE);
+    let base = Chatter::new("", EVENTUALLY, &IS_ONE);
+    let chatter = Chatter::with_body(
+        "ra-liveness",
+        base.body
+            .replace("delivery unknown", "delivery exactly-once-premise"),
+        0,
+        &IS_ONE,
+    );
     let mut subject = chatter.subject();
     let checked = chatter
         .checked
@@ -1018,7 +1025,7 @@ fn liveness_over_an_ra_parallel_is_decided_under_visibility_fairness() {
             item: chatter.item(),
             max_depth: None,
             max_store_buffer: None,
-            max_messages: None,
+            max_messages: Some(2),
             max_live_instances: None,
             limits: ModelCheckLimits::default(),
             ignore_memory_constraints: false,
