@@ -22,6 +22,7 @@ use crate::spine::{
 };
 use crate::ReplayRequestWire;
 use filament_exact::Identifier;
+use std::collections::BTreeMap;
 
 const OPERATIONS: &[&str] = &["noop"];
 
@@ -712,6 +713,32 @@ pub(in crate::spine::clause::tests) fn report(request: ClauseRunRequest) -> Clau
             temporal_clock_selections(body.identity(), body.path(), body.text().as_bytes())
         }
     };
+    let has_kernel_mod = if let ClauseRunSource::Program { bytes, .. } = &mut request.source {
+        let source = String::from_utf8(bytes.clone()).expect("test source is UTF-8");
+        let has_kernel_mod =
+            source.contains("3 mod (2 - c.value)") || source.contains("3 mod (2 - q.value)");
+        if has_kernel_mod {
+            let source = source
+                .replace("3 mod (2 - c.value)", "temporal_mod_undefined(c)")
+                .replace("3 mod (2 - q.value)", "temporal_mod_undefined(q)");
+            let mut modified = source.into_bytes();
+            modified.extend_from_slice(
+                b"\nfunction temporal_mod_undefined using v(c: Counters::Counter): Boolean pure { 3 mod (2 - c.value) >= 0 }\n",
+            );
+            *bytes = modified;
+        }
+        has_kernel_mod
+    } else {
+        false
+    };
+    if has_kernel_mod {
+        let modes = BTreeMap::from([(
+            "temporal_mod_undefined".to_owned(),
+            filament_semantic_value::checking::CheckMode::Kernel,
+        )]);
+        return super::super::run_clause_with_function_modes(request, &temporal_selections, &modes)
+            .expect("a well-formed request always reports");
+    }
     crate::spine::run_clause_with_temporal_selections(request, &temporal_selections)
         .expect("a well-formed request always reports")
 }

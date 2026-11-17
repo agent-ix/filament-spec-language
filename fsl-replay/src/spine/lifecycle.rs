@@ -1698,6 +1698,7 @@ pub fn check_with_integer_division(
         None,
         Some(*selection),
         None,
+        None,
         models,
         dependencies,
         limits,
@@ -1786,6 +1787,7 @@ pub fn check_with_profile_catalog_and_inputs(
         inputs.clocks,
         None,
         Some(profile_catalog),
+        None,
         models,
         dependencies,
         limits,
@@ -2111,6 +2113,30 @@ pub fn check_with_refinement_internals(
     limits: SpineLimits,
     cancel: &Cancel,
 ) -> Result<Staged<CheckedUnit>, FrontEndFailure> {
+    check_with_refinement_internals_and_function_modes(
+        parsed,
+        package_name,
+        inputs,
+        models,
+        dependencies,
+        limits,
+        cancel,
+        None,
+    )
+}
+
+/// Check one unit while honoring the recorded check mode for named function
+/// bodies (FR-098-AC-34).
+pub(crate) fn check_with_refinement_internals_and_function_modes(
+    parsed: &ParsedUnitSource,
+    package_name: String,
+    inputs: SourceInputs<'_>,
+    models: &AdmittedModels,
+    dependencies: &DependencyInput,
+    limits: SpineLimits,
+    cancel: &Cancel,
+    function_modes: Option<&BTreeMap<String, CheckMode>>,
+) -> Result<Staged<CheckedUnit>, FrontEndFailure> {
     check_with_context_and_temporal_selections(
         parsed,
         package_name,
@@ -2120,6 +2146,7 @@ pub fn check_with_refinement_internals(
         inputs.clocks,
         None,
         None,
+        function_modes,
         models,
         dependencies,
         limits,
@@ -2177,6 +2204,7 @@ pub fn check_with_execution_points_and_refinement_internals(
         None,
         None,
         None,
+        None,
         models,
         dependencies,
         limits,
@@ -2210,6 +2238,7 @@ pub fn check_with_temporal_selections_and_execution_points(
         None,
         None,
         None,
+        None,
         models,
         dependencies,
         limits,
@@ -2238,6 +2267,7 @@ pub fn check_with_execution_points_and_source_inputs(
         inputs.refinement_internals,
         inputs.temporal_selections,
         inputs.clocks,
+        None,
         None,
         None,
         models,
@@ -2280,6 +2310,7 @@ pub(crate) fn check_for_continuation(
         None,
         inputs.integer_division,
         None,
+        None,
         models,
         dependencies,
         limits,
@@ -2301,6 +2332,7 @@ fn check_with_context_and_temporal_selections(
     clocks: Option<&super::RequestClocks>,
     integer_division: Option<filament_checked::integer_division::AdmittedIntegerDivision>,
     extension_catalog: Option<ProfileCatalogInput<'_>>,
+    function_modes: Option<&BTreeMap<String, CheckMode>>,
     models: &AdmittedModels,
     dependencies: &DependencyInput,
     limits: SpineLimits,
@@ -2334,7 +2366,7 @@ fn check_with_context_and_temporal_selections(
             integer_division,
             extension_catalog,
             check_mode: CheckMode::Linked,
-            function_modes: None,
+            function_modes,
             active: Vec::new(),
             compiled: BTreeMap::new(),
             import_edges: 0,
