@@ -6,9 +6,9 @@
 //! replays in process. Driven through the in-process command adapter.
 
 use ix_trace_rs::trace;
-use serde_json::{Value, json};
+use serde_json::{json, Value};
 
-use crate::analyze_cli_support::{Workspace, analyze, label, litmus_request, order_protocol};
+use crate::analyze_cli_support::{analyze, label, litmus_request, order_protocol, Workspace};
 
 /// The order protocol with a second channel `Tell` from `Seller` to `Buyer`,
 /// on which `Seller` sends `Told` only after `Ship`.
@@ -74,9 +74,9 @@ fn order_recording(closure: Value) -> Value {
 /// The required premises of instance `w-1` of the order fixture.
 fn order_premises() -> Value {
     json!([
-        {"kind": "execution", "node": "Flow::Done"},
-        {"kind": "branch", "node": "Flow::Main::Decide::no"},
-        {"kind": "branch", "node": "Flow::Main::Decide::yes"}
+        {"kind": "execution", "identity": "w-1"},
+        {"kind": "branch", "identity": "w-1/Flow::Main::Decide::no"},
+        {"kind": "branch", "identity": "w-1/Flow::Main::Decide::yes"}
     ])
 }
 
@@ -222,11 +222,9 @@ fn a_limited_run_leaves_obligations_pending_and_closure_incomplete() {
         item.to_string().contains("max_states"),
         "names the limit: {item}"
     );
-    assert!(
-        obligations(&item)
-            .iter()
-            .any(|entry| entry["verdict"] == "pending")
-    );
+    assert!(obligations(&item)
+        .iter()
+        .any(|entry| entry["verdict"] == "pending"));
     assert_eq!(item["closure"]["state"], "incomplete");
     assert_eq!(item["global"]["complete"], false);
 }
@@ -336,13 +334,13 @@ fn a_malformed_closure_premise_set_refuses_the_recording() {
     let all = premises.as_array().expect("premises").clone();
     let omitted: Vec<Value> = all
         .iter()
-        .filter(|p| p["node"] != "Flow::Main::Decide::yes")
+        .filter(|p| p["identity"] != "w-1/Flow::Main::Decide::yes")
         .cloned()
         .collect();
     let mut duplicated = all.clone();
     duplicated.push(all[0].clone());
     let mut crossed = all.clone();
-    crossed[0] = json!({"kind": "execution", "instance": "w-2", "node": "Flow::Done"});
+    crossed[0] = json!({"kind": "execution", "identity": "w-2"});
     for (name, set) in [
         ("omitted", omitted),
         ("duplicated", duplicated),
@@ -416,9 +414,9 @@ fn conformance_replay_is_published_with_coded_refusals() {
 fn a_compiled_handoff_publishes_its_source_provision() {
     use fsl_analyze::analyze::document::SubjectSelection;
     use fsl_analyze::analyze::{
-        AnalyzeLimits, AnalyzeRefusal, AnalyzeRequest, Engines, SourceProvision, analyze,
+        analyze, AnalyzeLimits, AnalyzeRefusal, AnalyzeRequest, Engines, SourceProvision,
     };
-    use fsl_command::checked_handoff::{CheckedHandoffRequest, Corpus, compile, write};
+    use fsl_command::checked_handoff::{compile, write, CheckedHandoffRequest, Corpus};
     use fsl_command::emit_checked_v2::Request;
     use fsl_foundation::source::provenance::RawSourceRef;
 
