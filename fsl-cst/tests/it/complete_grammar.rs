@@ -586,7 +586,9 @@ fn every_named_production_has_positive_boundary_and_located_negative_vectors() {
 
         let boundary = span.end - 1;
         let mut invalid = source.clone().into_bytes();
-        invalid[boundary] = b'#';
+        // `$` is still lexically invalid; `#` became a token with reference
+        // literals, so it no longer tests the production's right boundary.
+        invalid[boundary] = b'$';
         let invalid = String::from_utf8(invalid).unwrap();
         let parsed = parse(id, &invalid);
         assert!(
