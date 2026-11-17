@@ -39,7 +39,8 @@ fn a_population_query_type_argument_names_the_declared_type_requirement() {
         let diagnostic = parsed.diagnostics().first().expect("a syntax refusal");
         assert_eq!(diagnostic.code, CompleteCode::InvalidSyntax, "{expression}");
         assert_eq!(diagnostic.phase, Phase::Parse, "{expression}");
-        let start = text.find(anchor).expect("anchor in type argument");
+        let start = text.find(expression).expect("query in the document")
+            + expression.find(anchor).expect("anchor in type argument");
         assert_eq!(
             diagnostic.byte_span().expect("located").start,
             start,
