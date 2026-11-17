@@ -542,11 +542,11 @@ checksum = "da7c62ceae207dd37ea5b845da6a0696c799f85e97da1ab5b7910be3c1c80223"
 
 [[package]]
 name = "filament-checked"
-version = "0.1.1"
-source = "git+https://github.com/agent-ix/filament-eval?tag=v0.1.1#82133104e492b62ef819638a5a5f2df48ed16617"
+version = "0.1.3"
+source = "git+https://github.com/agent-ix/filament-eval?tag=v0.1.3#ec616165b1c73efd25c278a87d670e73601614ec"
 dependencies = [
- "filament-exact 0.2.0",
- "filament-semantic-value 0.1.2",
+ "filament-exact 0.3.0",
+ "filament-semantic-value 0.1.3",
  "filament-walk",
  "quire-canonical 0.3.1",
  "serde",
@@ -581,11 +581,11 @@ dependencies = [
 
 [[package]]
 name = "filament-eval"
-version = "0.1.1"
-source = "git+https://github.com/agent-ix/filament-eval?tag=v0.1.1#82133104e492b62ef819638a5a5f2df48ed16617"
+version = "0.1.3"
+source = "git+https://github.com/agent-ix/filament-eval?tag=v0.1.3#ec616165b1c73efd25c278a87d670e73601614ec"
 dependencies = [
- "filament-exact 0.2.0",
- "filament-semantic-value 0.1.2",
+ "filament-exact 0.3.0",
+ "filament-semantic-value 0.1.3",
  "thiserror",
 ]
 
