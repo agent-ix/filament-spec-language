@@ -1581,7 +1581,7 @@ pub struct ProgramBatchOutcome {
     /// Per-selection results in the same order as the request.
     pub items: Vec<ProgramBatchItemResult>,
     /// The checked unit shared by every result.
-    pub checked: super::CheckedUnit,
+    pub checked: Option<super::CheckedUnit>,
 }
 
 /// Evaluation results of one admitted value-invariant selection.
@@ -1734,7 +1734,10 @@ fn run_program_batch_with_compile(
         return Err(ProgramBatchRefusal::DifferentCompilation);
     }
     if selections.is_empty() {
-        return Ok(Vec::new());
+        return Ok(ProgramBatchOutcome {
+            items: Vec::new(),
+            checked: None,
+        });
     }
     let needs_temporal = selections.iter().any(|selection| {
         matches!(
@@ -1792,7 +1795,7 @@ fn run_program_batch_with_compile(
         .collect();
     Ok(ProgramBatchOutcome {
         items,
-        checked: compiled.program.checked,
+        checked: Some(compiled.program.checked),
     })
 }
 

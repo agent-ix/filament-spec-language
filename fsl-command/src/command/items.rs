@@ -529,7 +529,7 @@ pub(super) fn run_bytes(
                             {
                                 (Some(selection), Some(requirements)) => {
                                     Some(super::settle::settle_call(
-                                        &batch.checked,
+                                        batch.checked.as_ref().ok_or(RunCause::ItemsFault)?,
                                         &requirements,
                                         &selection,
                                         &call_output.packages,

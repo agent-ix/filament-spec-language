@@ -227,13 +227,10 @@ pub struct FunctionRunInput {
     pub dependencies: fsl_replay::spine::DependencyInput,
     /// Function, arguments, accounting and supplied-phase limits.
     pub call: fsl_replay::spine::Call,
-    /// FR-960: an opt-in typed requirement selection retained for command
-    /// layer settlement after a shared compilation.
-    pub(super) requirements: Option<requirements::Requirements>,
 }
 
 impl PreparedFunctionRun {
-    pub(super) fn requirements(&self) -> Option<&requirements::Requirements> {
+    pub(in crate::command) fn requirements(&self) -> Option<&requirements::Requirements> {
         self.data.requirements.as_ref()
     }
 
@@ -246,7 +243,6 @@ impl PreparedFunctionRun {
             packages: data.packages,
             dependencies: data.dependencies,
             call: data.call,
-            requirements: data.requirements,
         }
     }
 }
