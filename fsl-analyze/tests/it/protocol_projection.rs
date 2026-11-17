@@ -922,14 +922,26 @@ fn repeat_projects() {
     let mut asked = request(&package, "Seller");
     asked.profile = Some("bounded".to_owned());
     let graph = witness(project(&package, asked).unwrap()).local_graph;
-    assert!(graph.events.iter().any(|event| matches!(
-        event.kind,
-        LocalEventKind::ControlAction {
-            operation: fsl_package::protocol_view::ControlOperation::Repeat,
-            maximum: Some(2),
-            ..
-        }
-    )));
+    let loop_id = graph
+        .events
+        .iter()
+        .find(|event| matches!(
+            event.kind,
+            LocalEventKind::ControlAction {
+                operation: fsl_package::protocol_view::ControlOperation::Repeat,
+                maximum: Some(2),
+                ..
+            }
+        ))
+        .expect("the loop action carries its maximum")
+        .id;
+    let send_id = graph
+        .events
+        .iter()
+        .find(|event| matches!(event.kind, LocalEventKind::Send { .. }))
+        .expect("the body send projects")
+        .id;
+    assert!(graph.edges.contains(&(loop_id, send_id)));
 }
 
 /// FR-890-AC-2: a role with no action in a repeat carries no local loop.
