@@ -206,6 +206,19 @@ fn refinement(failure: &RefinementFailure) -> Result<Json, CounterexampleWireErr
         RefinementFailure::NoAbstractMatch { position } => {
             json!({"kind": "NoAbstractMatch", "position": position})
         }
+        RefinementFailure::AbstractClockGuard {
+            position,
+            operation,
+        } => json!({
+            "kind": "AbstractClockGuard",
+            "position": position,
+            "operation": operation,
+        }),
+        RefinementFailure::AbstractTimeInvariant { position, model } => json!({
+            "kind": "AbstractTimeInvariant",
+            "position": position,
+            "model": model,
+        }),
         RefinementFailure::AbstractStepRejected {
             position,
             transition,

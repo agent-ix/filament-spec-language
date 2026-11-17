@@ -26,6 +26,7 @@ use std::collections::{BTreeMap, BTreeSet, VecDeque};
 
 use filament_exact::{Integer, Rational};
 use filament_semantic_value::catalog::InternalFault;
+use filament_semantic_value::fairness::FairnessKind;
 use filament_semantic_value::model_transition::ModelTransition;
 use fsl_eval::fairness::{analyze, Analysis, EdgeLabel, FairnessError, Graph, Identity, Vertex};
 use fsl_eval::simulation::model::{ModelFinding, ModelSimState};
@@ -98,6 +99,8 @@ struct Arc {
     via: Via,
     /// The abstract steps a position takes; `None` for a delay.
     taken: Option<Taken>,
+    /// Auxiliary abstract clock operation for a mapped discrete step.
+    auxiliary_transform: Option<super::super::concretise::ClockTransform>,
 }
 
 /// A position's judgement, by its position, its state's key and its step
@@ -174,7 +177,9 @@ impl Product<'_, '_> {
             constrained.insert(text.to_owned());
         }
         let dense = run.timed.tick_period().is_none();
-        let dim = run.timed.places().len() + 1 + usize::from(dense);
+        // The liveness product stores the same concrete + auxiliary clock
+        // valuation as EN-6, followed by its divergence clock.
+        let dim = run.dim() + usize::from(dense);
         let mut bounds: Vec<Option<BigInt>> = run
             .lower
             .iter()
@@ -238,7 +243,7 @@ impl Product<'_, '_> {
                 return Ok(Lived::Ends(Decided::Fault {
                     fault,
                     stats: run.stats(),
-                }))
+                }));
             }
         };
         let mut not_concretised = false;
@@ -307,7 +312,8 @@ impl Product<'_, '_> {
                 Judgement::Fails(_) => continue,
                 Judgement::Ends(ends) => return Ok(Some(ends)),
             };
-            let zero = Dbm::zero(live.dim);
+            let mut zero = Dbm::zero(live.dim);
+            self.auxiliary_invariants(run, q, &mut zero)?;
             for (cell, piece) in run.split(&mut live.cells, &state, &zero)? {
                 let Some(zone) = run.close(&mut live.cells, &state, piece, &cell)? else {
                     continue;
@@ -412,6 +418,11 @@ impl Product<'_, '_> {
                     Moved::To(None) => continue,
                     Moved::Ends(ends) => return Ok(Err(ends)),
                 };
+                let (failure, auxiliary_transform) =
+                    self.auxiliary_step(run, node.q, q, &taken, &mut next)?;
+                if failure.is_some() || next.is_empty() {
+                    continue;
+                }
                 for (cell, piece) in run.split(&mut live.cells, &post, &next)? {
                     let Some(entered) = run.close(&mut live.cells, &post, piece, &cell)? else {
                         continue;
@@ -435,6 +446,7 @@ impl Product<'_, '_> {
                             part: part_index,
                         },
                         taken: Some(taken.clone()),
+                        auxiliary_transform: auxiliary_transform.clone(),
                     };
                     created.extend(add_node(run, live, next, Some(arc))?);
                 }
@@ -446,6 +458,7 @@ impl Product<'_, '_> {
             let mut later = node.zone.clone();
             later.up();
             constrain_at(&mut later, &invariants, &scale)?;
+            self.auxiliary_invariants(run, node.q, &mut later)?;
             for (cell, piece) in run.split(&mut live.cells, &node.state, &later)? {
                 if !next_cell(&node.cell, &cell) {
                     continue;
@@ -466,6 +479,7 @@ impl Product<'_, '_> {
                     to: 0,
                     via: Via::Wait,
                     taken: None,
+                    auxiliary_transform: None,
                 };
                 created.extend(add_node(run, live, next, Some(arc))?);
             }
@@ -490,6 +504,7 @@ impl Product<'_, '_> {
                         to: 0,
                         via: Via::Diverge,
                         taken: None,
+                        auxiliary_transform: None,
                     };
                     created.extend(add_node(run, live, next, Some(arc))?);
                 }
@@ -527,6 +542,7 @@ impl Product<'_, '_> {
             to: 0,
             via: Via::Stutter,
             taken: Some(taken),
+            auxiliary_transform: None,
         };
         Ok(Ok(add_node(run, live, next, Some(arc))?
             .into_iter()
@@ -590,7 +606,7 @@ impl Product<'_, '_> {
                     return Ok(Err(Decided::Fault {
                         fault: InternalFault::new("refinement-liveness", "abstract-expansion"),
                         stats: run.stats(),
-                    }))
+                    }));
                 }
                 Err(stop) => {
                     let reached = match stop.limit {
@@ -708,7 +724,13 @@ impl Product<'_, '_> {
                 .add_acceptance_set(set)
                 .map_err(|_| ZoneCheckRefusal::Fault("acceptance-set"))?;
         }
-        let within: BTreeSet<Vertex> = handles
+        let constraint = self
+            .refinement
+            .abstract_operation_fairness()
+            .nth(class.constraint())
+            .ok_or(ZoneCheckRefusal::Fault("class-constraint"))?;
+        let strong = constraint.kind() == FairnessKind::Strong;
+        let class_enabled: Vec<Vertex> = handles
             .iter()
             .zip(&live.nodes)
             .filter(|(_, node)| {
@@ -718,6 +740,16 @@ impl Product<'_, '_> {
             })
             .map(|(handle, _)| *handle)
             .collect();
+        if strong {
+            graph
+                .add_acceptance_set(class_enabled.iter().copied())
+                .map_err(|_| ZoneCheckRefusal::Fault("strong-abstract-acceptance"))?;
+        }
+        let within: BTreeSet<Vertex> = if strong {
+            handles.iter().copied().collect()
+        } else {
+            class_enabled.iter().copied().collect()
+        };
         let concrete_fairness: Vec<_> = self
             .refinement
             .concrete_operation_fairness()
@@ -767,7 +799,7 @@ impl Product<'_, '_> {
             .nth(class.constraint())
             .ok_or(ZoneCheckRefusal::Fault("class-constraint"))?
             .clone();
-        let failure = if taking {
+        let failure = if taking || constraint.kind() == FairnessKind::Strong {
             RefinementFailure::AbstractUnfair { constraint }
         } else {
             RefinementFailure::Divergence {
@@ -790,7 +822,7 @@ impl Product<'_, '_> {
             blocked: Vec::new(),
             final_delay: None,
         };
-        let places = run.timed.places().len();
+        let places = run.dim() - 1;
         let mut stem = path_to(live, entry);
         if live.nodes[entry].tail {
             // The idle tail: the stem to the quiescent state, then its
@@ -987,6 +1019,15 @@ fn stage(run: &mut Run<'_, '_, '_>, live: &mut Live, arc: usize) -> Result<Stage
                 elapses,
                 target: run.timed(run.timed.invariants(&post))?,
                 before: run.cell_zone(&mut live.cells, &source.state, &source.cell)?,
+                after: None,
+                auxiliary_carries: arc
+                    .auxiliary_transform
+                    .as_ref()
+                    .map_or_else(Vec::new, |transform| transform.carries.clone()),
+                auxiliary_resets: arc
+                    .auxiliary_transform
+                    .as_ref()
+                    .map_or_else(Vec::new, |transform| transform.resets.clone()),
                 piece: run.cell_zone(&mut live.cells, &post, &target.cell)?,
                 step: Some((step, part)),
                 position: Vec::new(),
@@ -1000,6 +1041,9 @@ fn stage(run: &mut Run<'_, '_, '_>, live: &mut Live, arc: usize) -> Result<Stage
             elapses,
             target: invariants,
             before: None,
+            after: None,
+            auxiliary_carries: Vec::new(),
+            auxiliary_resets: Vec::new(),
             piece: run.cell_zone(&mut live.cells, &target.state, &target.cell)?,
             step: None,
             position: Vec::new(),

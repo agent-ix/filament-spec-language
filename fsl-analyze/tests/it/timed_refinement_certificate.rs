@@ -7,21 +7,24 @@
 //! The certificates are the engine's own; each tampering edits one part of
 //! a valid certificate.
 
-use filament_exact::Cancel;
-use fsl_analyze::zone_check::{certificate_item, TimedRefinementUndecided, TimedSafetyOutcome};
+use filament_exact::{Cancel, Integer};
+use fsl_analyze::zone_check::{
+    certificate_item, check_free_delay_refinement, TimedRefinementUndecided, TimedSafetyOutcome,
+};
 use fsl_replay::{
-    check_zone_certificate, CertificateCheckLimits, CertificateLocus, CertificateMember,
-    CertificateRejection, CertificateRule, IncompleteCause, ModelCheckLimit, RefinementFailure,
-    Taken, ZoneCertificate, ZoneCertificateRefusal, ZoneCertificateRequest, ZoneCertificateVerdict,
+    check_free_delay_zone_certificate, check_zone_certificate, CertificateCheckLimits,
+    CertificateLocus, CertificateMember, CertificateRejection, CertificateRule, IncompleteCause,
+    ModelCheckLimit, RefinementFailure, Taken, ZoneCertificate, ZoneCertificateRefusal,
+    ZoneCertificateRequest, ZoneCertificateVerdict,
 };
 use fsl_route::deadlock::{ItemObligation, ObligationKind};
 use ix_trace_rs::trace;
 
 use crate::timed_refinement::{
-    certificate_request, dead_undo, obligation, refinement, req, safety, treq, undo_world, unit,
-    CONTRACTS,
+    certificate_request, dead_undo, free_delay_world, obligation, refinement, req, safety,
+    safety_request, treq, undo_world, unit, CONTRACTS,
 };
-use crate::timed_world::{refining, refining_from, Refining, DENSE};
+use crate::timed_world::{document, refining, refining_from, renamed_package, Refining, DENSE};
 
 type Certificate = ZoneCertificate<ItemObligation<&'static str>>;
 type Checked = Result<ZoneCertificateVerdict, ZoneCertificateRefusal<ItemObligation<&'static str>>>;
@@ -60,6 +63,93 @@ fn verdict(world: &Refining, certificate: &Certificate) -> ZoneCertificateVerdic
 
 fn rejected(rule: CertificateRule, at: CertificateLocus) -> ZoneCertificateVerdict {
     ZoneCertificateVerdict::Rejected(CertificateRejection { rule, at })
+}
+
+/// FR-900-AC-1: two timed model sides with one mapped `send` operation.
+fn timed_abstract_world() -> Refining {
+    let abstract_model =
+        renamed_package(&document(&["y"], &[("send", &["inflight"])]), "test/treq2");
+    let concrete = treq();
+    refining(
+        &abstract_model,
+        &concrete,
+        &format!(
+            "{DENSE}time A dense unit ms;\n\
+             post ASend using v on A::Call::send {{ self.inflight }}\n\
+             pre ASend2 using v on A::Call::send {{ self.y >= 1 ms }}\n\
+             pre MSend using v on M::Call::send {{ self.x >= 2 ms }}\n\
+             post MSent using v on M::Call::send {{ self.inflight }}\n{}",
+            refinement("self.inflight")
+        ),
+    )
+    .unwrap_or_else(|refusals| panic!("{refusals:?}"))
+}
+
+/// FR-900-AC-1: the abstract clock is present in the zone certificate and
+/// FR-245 recomputes and accepts its guards and resets.
+#[trace("TC-2538", "FR-900-AC-1")]
+#[test]
+fn a_timed_abstract_refinement_returns_a_replayable_certificate() {
+    let world = timed_abstract_world();
+    let certificate = certified(&world);
+    assert_eq!(certificate.nodes[0].zone.dim(), 3);
+    assert_eq!(
+        verdict(&world, &certificate),
+        ZoneCertificateVerdict::Accepted
+    );
+
+    let mut altered = certificate.clone();
+    altered.nodes[certificate.initials[0]]
+        .zone
+        .reset(2, &Integer::one())
+        .expect("the auxiliary clock is a zone clock");
+    assert!(matches!(
+        verdict(&world, &altered),
+        ZoneCertificateVerdict::Rejected(_)
+    ));
+}
+
+/// FR-900-AC-5 and FR-245: the free-delay concrete side contributes no
+/// clock placement, while the abstract auxiliary clock is certified and
+/// checked independently.
+#[trace("TC-2539", "FR-900-AC-5", "FR-245-AC-1")]
+#[test]
+fn a_free_delay_refinement_certificate_has_only_the_abstract_clock() {
+    let world = free_delay_world("self.y >= 0 ms");
+    let certificate = match check_free_delay_refinement(safety_request(&world), &Cancel::new())
+        .expect("the free-delay refinement is admitted")
+        .safety
+    {
+        TimedSafetyOutcome::Holds { certificate, .. } => *certificate,
+        other => panic!("the guard always holds: {other:?}"),
+    };
+    assert_eq!(certificate.nodes[0].zone.dim(), 2);
+    let checked = check_free_delay_zone_certificate(
+        certificate_request(&world),
+        &obligation(&world),
+        certificate_item,
+        &certificate,
+        CertificateCheckLimits::default(),
+        &Cancel::new(),
+    )
+    .expect("FR-245 checks the free-delay certificate");
+    assert_eq!(checked, ZoneCertificateVerdict::Accepted);
+
+    let mut altered = certificate.clone();
+    altered.nodes[certificate.initials[0]]
+        .zone
+        .reset(1, &Integer::from(-1_i64))
+        .expect("the abstract clock is a zone clock");
+    let rejected = check_free_delay_zone_certificate(
+        certificate_request(&world),
+        &obligation(&world),
+        certificate_item,
+        &altered,
+        CertificateCheckLimits::default(),
+        &Cancel::new(),
+    )
+    .expect("the altered certificate is checked");
+    assert!(matches!(rejected, ZoneCertificateVerdict::Rejected(_)));
 }
 
 fn node(index: usize) -> CertificateLocus {
