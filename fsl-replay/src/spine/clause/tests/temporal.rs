@@ -4568,7 +4568,13 @@ fn valid_temporal_reports_have_no_witness_item_member() {
     }
     for run in [&held, &pending] {
         let item = item_json("V", run);
-        for member in ["position", "counterexample", "witness", "count", "min_count"] {
+        for member in [
+            "position",
+            "counterexample",
+            "witness",
+            "count",
+            "min_count",
+        ] {
             assert!(item.get(member).is_none(), "{member}");
         }
     }
