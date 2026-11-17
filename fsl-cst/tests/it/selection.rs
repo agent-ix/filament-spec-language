@@ -217,7 +217,7 @@ fn an_edition_other_than_1_draft_refuses_unknown_edition_at_its_literal() {
         &format!("language \"ix:native\" edition \"1-draft\";{body}"),
     );
     assert!(admitted.is_admissible(), "{:?}", admitted.diagnostics());
-    for (edition, end) in [("0-draft", 38), ("2-draft", 38), ("", 31)] {
+    for (edition, end) in [("0-draft", 38), ("2-draft", 38), ("2", 30), ("", 31)] {
         let text = format!("language \"ix:native\" edition \"{edition}\";{body}");
         let parsed = parse_unit("edition-other", &text);
         let diagnostics = parsed.diagnostics();
