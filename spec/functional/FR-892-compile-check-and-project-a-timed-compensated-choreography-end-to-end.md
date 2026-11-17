@@ -15,6 +15,8 @@ relationships:
     type: depends_on
   - target: ix://agent-ix/filament-spec-language/FR-890
     type: depends_on
+  - target: ix://agent-ix/filament-specification/FR-322
+    type: depends_on
 ---
 # FR-892: Compile, check and project a timed compensated choreography end to end
 
@@ -29,7 +31,12 @@ The steps are:
   configuration for the template's clock and the await's clock. An `await`
   is a clocked declaration in FR-640's sense, as a template is. The compile
   forms one clock selection for each of them. S4 writes the protocol, its
-  template, its await and its `requires temporal` member (FR-383, FR-880).
+  template, its await and its `requires temporal` member (FR-383, FR-880),
+  and writes each selection as one FSpec FR-322 `temporal_bindings` row: the
+  template's keyed by the compensation node and the await's keyed by the
+  await control node, each on its `declaration` occurrence with its own
+  `clock_name` (FSpec FR-322 "Temporal clock bindings", FR-322-AC-305). The
+  reader admits the await's row under the same rules as the template's.
 - **Run.** The protocol system steps the protocol (FR-206, FR-207, FR-882).
   It reads no clock (ADR-027 "Waiting"). An await's `timeout` is enabled
   while the await waits, and a compensation's `within` window is not read,

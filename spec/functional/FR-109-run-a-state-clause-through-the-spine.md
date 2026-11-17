@@ -64,6 +64,12 @@ A `ClauseRunRequest`:
 - `SpineLimits`, `ObservationLimits` and the evaluation meter budget
   (FR-100's `accounting`).
 
+The request has no check-mode input. `CheckMode::Kernel` stays internal to
+function bodies, and every declared clause is checked under `Linked` (FR-952
+"Declared clauses"), so `run_clause` always runs a clause checked under
+`Linked`. A caller cannot ask for a clause to be checked under `Kernel`,
+because a declared clause whose obligation `Linked` refuses is never admitted.
+
 ## Outputs
 
 `Result<ClauseRunReport, ClauseRunRefusal>`. `ClauseRunRefusal` is only for a
@@ -152,6 +158,16 @@ binding receipt when CG consumes the serialized result.
   (refuted)"). Category `undefined` belongs to a value run only (FR-100),
   and FR-267 writes this report as its `undefined` kind with category
   `violation`.
+- A clause run never reaches `sum-out-of-domain`. Under `Linked`, a `sum<N>`
+  whose running total can leave `N` refuses at `check` with
+  `undefined_expression`/`unproved-range` at the `sum` (FR-100 "`run` never
+  yields `sum-out-of-domain`"), so the entry reports stage `compile`, exit 20.
+  The mapping still SHALL be total: a constructed
+  `Outcome::Undefined(Undefined::SumOutOfDomain)` maps by the rule above to
+  stage `evaluate`, category `violation`, `truth` false,
+  `UndefinedEvaluation{cause: sum-out-of-domain}`, exit 10. The cause of an
+  undefined evaluation is always present; the report never carries a null
+  cause for an outcome the evaluator typed.
 - The entry SHALL map every other S6a outcome other than FR-100's internal
   failures, kernel or family, by FR-100's outcome mapping, to FR-100's
   `outcome` member and FR-100's exit status, category `refusal`,
@@ -230,6 +246,7 @@ decisions inside binders and called functions are out of scope here.
 | FR-109-AC-11 | For a `Clause` run completing a Boolean over nested implication, conjunction, disjunction and negation (`(false implies (true implies false))` under `and`, an implication under `or` and under `not`), `consequent_source_events` is `Produced` with one event per `implies` node in pre-order, `index` equal to position, the report's `package_id`, `implication` and `consequent` regions equal to the checked package source map's regions of those nodes, and the `Entered`, `Skipped` or `NotReached` state native evaluation gave each, for both a true and a false verdict; a clause with no implication reports `Produced` with no events. | Test |
 | FR-109-AC-12 | For a clause whose implication is under a `forall` or `exists` binder, or whose body calls a function, `consequent_source_events` is `Refused` with `consequent-events-under-binder` or `consequent-events-called-function`, never `NotReached`, and the report's disposition and `truth` equal those of the same run without the events. | Test |
 | FR-109-AC-13 | A run that completes no Boolean truth (such as an exhausted work budget) and a `Function` selection report `Unavailable`; a completed `Temporal` verdict reports `Refused` with `consequent-events-temporal-clause`; a pending temporal verdict reports `Unavailable`. | Test |
+| FR-109-AC-14 | Over the outcomes FR-100-AC-9 constructs, as AC-5 checks them, a constructed `Outcome::Undefined(Undefined::SumOutOfDomain)` passed through `run_clause`'s mapping reports stage `evaluate`, category `violation`, `truth` false and `UndefinedEvaluation{cause: sum-out-of-domain}`, exit 10, and its cause is present, never null. A state clause `invariant S using v on Config::ConfigVersion at current { sum<Int[1, 9]>(x in seq(i in 0 .. 1: i): x) >= 1 }` added to the step 1 unit reports stage `compile`, `undefined_expression`/`unproved-range` at the `sum`, exit 20, and admits and evaluates nothing; a `sum<Int[0, 9]>` over the same sequence runs and holds, exit 0. | Test (TC-2830) |
 
 ## Dependencies
 
