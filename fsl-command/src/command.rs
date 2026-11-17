@@ -120,11 +120,6 @@ pub enum LimitKind {
         /// The effective aggregate dependent byte ceiling.
         maximum: usize,
     },
-    /// One selected observation exceeded its document byte ceiling.
-    ObservationDocumentBytes {
-        /// Effective observation document byte ceiling.
-        maximum: usize,
-    },
     /// Total selected file count.
     SelectedFiles {
         /// Group that could not be charged.
@@ -145,7 +140,6 @@ impl LimitKind {
             Self::FileBytes => "file bytes",
             Self::RequestBytes { .. } | Self::FixedRequestBytes { .. } => "request_bytes",
             Self::DependentBytes { .. } | Self::FixedDependentBytes { .. } => "dependent_bytes",
-            Self::ObservationDocumentBytes { .. } => "observation.document_bytes",
             Self::SelectedFiles { .. } => "selected files",
         }
     }
@@ -1235,11 +1229,6 @@ impl RunError {
             RunCause::Limit(LimitKind::FixedDependentBytes { maximum }) => {
                 format!("dependent_bytes limit {maximum} exceeded")
             }
-            RunCause::Limit(LimitKind::ObservationDocumentBytes { maximum }) => {
-                format!(
-                    "observation.document_bytes limit {maximum} exceeded; raise --limit observation.document_bytes"
-                )
-            }
             RunCause::Limit(LimitKind::SelectedFiles {
                 category,
                 requested,
@@ -1307,42 +1296,6 @@ impl Intake<'_> {
             return Ok(bytes);
         }
         self.bounded_file(path, ceiling)
-    }
-
-    fn observation_file(&mut self, path: &str, ceiling: usize) -> Result<Vec<u8>> {
-        if let Some(bytes) = self.prefetched_observations.remove(path) {
-            if bytes.len() > ceiling {
-                return Err(RunCause::Limit(LimitKind::ObservationDocumentBytes {
-                    maximum: ceiling,
-                }));
-            }
-            return Ok(bytes);
-        }
-        let remaining = self.remaining;
-        let bytes =
-            read_file(&self.directory.join(path), ceiling.min(remaining)).map_err(|cause| {
-                match cause {
-                    RunCause::Limit(LimitKind::FileBytes) if ceiling <= remaining => {
-                        RunCause::Limit(LimitKind::ObservationDocumentBytes { maximum: ceiling })
-                    }
-                    RunCause::Limit(LimitKind::FileBytes) => match self.dependent_limit {
-                        Some(DependentLimit::CallerConfigured) => {
-                            RunCause::Limit(LimitKind::DependentBytes {
-                                maximum: self.maximum,
-                            })
-                        }
-                        Some(DependentLimit::Fixed) => {
-                            RunCause::Limit(LimitKind::FixedDependentBytes {
-                                maximum: self.maximum,
-                            })
-                        }
-                        None => RunCause::Limit(LimitKind::FileBytes),
-                    },
-                    cause => cause,
-                }
-            })?;
-        self.remaining -= bytes.len();
-        Ok(bytes)
     }
 
     fn bounded_file(&mut self, path: &str, ceiling: usize) -> Result<Vec<u8>> {
