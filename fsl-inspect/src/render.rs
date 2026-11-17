@@ -9,8 +9,8 @@ use fsl_foundation::{
     diagnostic::{LimitExceeded, StageFailure, Staged},
     setting::Setting,
     source::{
-        provenance::{RawSourceRef, SourceRegion},
         Source,
+        provenance::{RawSourceRef, SourceRegion},
     },
 };
 use fsl_replay::{Certification, OutcomeDocument, RenderLimits};
@@ -327,7 +327,7 @@ where
         (RenderForm::Dot, View::Node(_)) => return Err(unsupported("node", form)),
         (RenderForm::Dot, View::Outcome(_)) => return Err(unsupported("outcome", form)),
         (RenderForm::Dot, View::Counterexample(_)) => {
-            return Err(unsupported("counterexample", form))
+            return Err(unsupported("counterexample", form));
         }
     }
     Ok(writer.finish())
@@ -359,10 +359,19 @@ fn outcome_text(
             .map_err(|_| fault("outcome JSON serialization failed"))?,
     )
     .map_err(|_| fault("outcome JSON is not valid"))?;
-    let operation = wire.get("operation").and_then(serde_json::Value::as_str)
+    let operation = wire
+        .get("operation")
+        .and_then(serde_json::Value::as_str)
         .ok_or_else(|| fault("outcome document has no operation"))?;
     let last_stage = wire.get("last_stage").and_then(serde_json::Value::as_str);
-    writer.unit(|| format!("{operation}: {} (exit {}){}\n", document.category().as_str(), document.category().exit_code(), last_stage.map_or_else(String::new, |stage| format!(" at {stage}"))))?;
+    writer.unit(|| {
+        format!(
+            "{operation}: {} (exit {}){}\n",
+            document.category().as_str(),
+            document.category().exit_code(),
+            last_stage.map_or_else(String::new, |stage| format!(" at {stage}"))
+        )
+    })?;
     for (index, diagnostic) in document.diagnostics().iter().enumerate() {
         let region = view
             .and_then(|view| view.loci.get(index))
@@ -406,27 +415,54 @@ fn outcome_text(
         if let Some(cause) = diagnostic.cause() {
             writer.unit(|| format!("  cause: {cause}\n"))?;
         }
-        if let Some(label) = wire.get("diagnostics").and_then(|items| items.get(index)).and_then(|item| item.get("label")).and_then(serde_json::Value::as_str) {
+        if let Some(label) = wire
+            .get("diagnostics")
+            .and_then(|items| items.get(index))
+            .and_then(|item| item.get("label"))
+            .and_then(serde_json::Value::as_str)
+        {
             writer.unit(|| format!("  label: {label}\n"))?;
         }
     }
     for (index, item) in document.items().iter().enumerate() {
         writer.try_unit(|| {
-            let item_wire = wire.get("items").and_then(|items| items.get(index)).ok_or_else(|| fault("outcome item serialization failed"))?;
-            let category = item_wire.get("category").and_then(serde_json::Value::as_str).ok_or_else(|| fault("outcome item has no category"))?;
-            let mut line = format!("item {}: {} ({category})", item.request_index().get(), wire_label(&item.result())?);
-            if let Some(clause) = item.clause() { line.push_str(&format!(" clause {clause}")); }
+            let item_wire = wire
+                .get("items")
+                .and_then(|items| items.get(index))
+                .ok_or_else(|| fault("outcome item serialization failed"))?;
+            let category = item_wire
+                .get("category")
+                .and_then(serde_json::Value::as_str)
+                .ok_or_else(|| fault("outcome item has no category"))?;
+            let mut line = format!(
+                "item {}: {} ({category})",
+                item.request_index().get(),
+                wire_label(&item.result())?
+            );
+            if let Some(clause) = item.clause() {
+                line.push_str(&format!(" clause {clause}"));
+            }
             if let Some(certification) = item.certification() {
                 line.push_str(&format!(" {}", wire_label(&certification)?));
             }
             line.push('\n');
             Ok(line)
         })?;
-        let item_wire = wire.get("items").and_then(|items| items.get(index)).ok_or_else(|| fault("outcome item serialization failed"))?;
+        let item_wire = wire
+            .get("items")
+            .and_then(|items| items.get(index))
+            .ok_or_else(|| fault("outcome item serialization failed"))?;
         if let Some(cause) = item_wire.get("cause").filter(|cause| !cause.is_null()) {
-            let kind = cause.get("kind").and_then(serde_json::Value::as_str).unwrap_or("cause");
-            let detail = cause.get("reason").or_else(|| cause.get("cause")).and_then(serde_json::Value::as_str);
-            let rendered = detail.map_or_else(|| kind.to_owned(), |detail| format!("{kind} ({detail})"));
+            let kind = cause
+                .get("kind")
+                .and_then(serde_json::Value::as_str)
+                .unwrap_or("cause");
+            let detail = cause
+                .get("reason")
+                .or_else(|| cause.get("cause"))
+                .and_then(serde_json::Value::as_str);
+            let rendered =
+                detail.map_or_else(|| kind.to_owned(), |detail| format!("{kind} ({detail})"));
             writer.unit(|| format!("  cause: {rendered}\n"))?;
         }
         for key in ["counterexample", "trace"] {
@@ -436,10 +472,20 @@ fn outcome_text(
         }
     }
     if let Some(result) = wire.get("result").filter(|result| !result.is_null()) {
-        let kind = result.get("kind").and_then(serde_json::Value::as_str).ok_or_else(|| fault("outcome result has no kind"))?;
-        let mut members = result.as_object().cloned().ok_or_else(|| fault("outcome result is not an object"))?;
+        let kind = result
+            .get("kind")
+            .and_then(serde_json::Value::as_str)
+            .ok_or_else(|| fault("outcome result has no kind"))?;
+        let mut members = result
+            .as_object()
+            .cloned()
+            .ok_or_else(|| fault("outcome result is not an object"))?;
         members.remove("kind");
-        let suffix = if members.is_empty() { String::new() } else { format!(" {}", canonical_json(&serde_json::Value::Object(members))) };
+        let suffix = if members.is_empty() {
+            String::new()
+        } else {
+            format!(" {}", canonical_json(&serde_json::Value::Object(members)))
+        };
         writer.unit(|| format!("result: {kind}{suffix}\n"))?;
     }
     Ok(())
@@ -1262,12 +1308,12 @@ fn source_label(source: &RawSourceRef) -> String {
 mod tests {
     use super::*;
     use crate::{
-        inspect_node, inspect_package, inspect_state_graph, tests::emitted_spine_package,
-        AssignmentView, InspectLimits, NodeSelector, OutcomeView, TracePositionView,
+        AssignmentView, InspectLimits, NodeSelector, OutcomeView, TracePositionView, inspect_node,
+        inspect_package, inspect_state_graph, tests::emitted_spine_package,
     };
     use filament_exact::CancelCause;
     use filament_semantic_value::catalog::Category;
-    use fsl_foundation::{diagnostic::LimitKind, source::SourceIdentity, Span};
+    use fsl_foundation::{Span, diagnostic::LimitKind, source::SourceIdentity};
     use ix_trace_rs::trace;
 
     const EXPECTED_JSON: &[&str] = &[
@@ -1473,7 +1519,7 @@ mod tests {
         // Column 2: the scalar column, not the byte-based 3.
         assert_eq!(
             text_of(&document, &RenderSources::from_sources([input.clone()])),
-            "src/inv.fsl:2:2: ill_typed: bad value\n"
+            "analyze: refusal (exit 20)\nsrc/inv.fsl:2:2: ill_typed: bad value\n"
         );
 
         let fallback_label = format!(
@@ -1486,7 +1532,7 @@ mod tests {
             RenderSources::from_sources([source_under("ref-other", "src/other.fsl", "zzz\n")]);
         for sources in [RenderSources::from_sources([]), unrelated] {
             let text = text_of(&document, &sources);
-            assert!(text.starts_with(&fallback_label), "{text}");
+            assert!(text.contains(&fallback_label), "{text}");
             assert!(!text.contains("src/"), "{text}");
         }
 
@@ -1503,8 +1549,10 @@ mod tests {
         );
         // The region's end exactly at the source's length still resolves.
         let at_end = refusal_over(&region, u64::try_from(text_source.len()).unwrap(), "edge");
-        assert!(text_of(&at_end, &RenderSources::from_sources([input]))
-            .contains("src/inv.fsl:2:2: ill_typed: edge"));
+        assert!(
+            text_of(&at_end, &RenderSources::from_sources([input]))
+                .contains("src/inv.fsl:2:2: ill_typed: edge")
+        );
     }
 
     #[trace("TC-783", "FR-298-AC-11")]
@@ -1674,12 +1722,16 @@ mod tests {
             assignments: Vec::new(),
             certification: Some(fsl_replay::Certification::Uncertified),
         });
-        assert!(render_default(&view, RenderForm::Json)
-            .as_str()
-            .contains(r#""certification":"uncertified""#));
-        assert!(render_default(&view, RenderForm::Text)
-            .as_str()
-            .contains("Certification: uncertified\n"));
+        assert!(
+            render_default(&view, RenderForm::Json)
+                .as_str()
+                .contains(r#""certification":"uncertified""#)
+        );
+        assert!(
+            render_default(&view, RenderForm::Text)
+                .as_str()
+                .contains("Certification: uncertified\n")
+        );
     }
 
     #[trace("TC-783", "FR-298-AC-3", "FR-298-AC-5")]
