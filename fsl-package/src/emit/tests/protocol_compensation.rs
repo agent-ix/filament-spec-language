@@ -144,7 +144,7 @@ fn checked_graph(unit: &str) -> Result<fsl_semantics::check::CheckedGraph, Vec<C
 #[test]
 fn a_compensation_and_a_timed_await_emit_together() {
     let temporal =
-        "temporal Due using t over (c: M::Ledger) clock \"c\" on origin { always true }\n";
+        "temporal Due using t over (c: M::Ledger) clock \"model-steps\" on origin { always[0,120] true }\n";
     let mut unit = unit_text(temporal, "true", "false");
     unit = unit.replace(
         "role R on M::Ledger;\n",
@@ -154,7 +154,7 @@ fn a_compensation_and_a_timed_await_emit_together() {
         "effect Applied of Update as (applied: M::Money) { true };\n",
         "effect Applied of Update as (applied: M::Money) { true };\n\
          event Started by R as (started: Boolean) { true };\n\
-         await Wait after Started using t clock \"c\" within [0, 120] \
+         await Wait after Started using t clock \"model-steps\" within [0, 120] \
            match event Seen by R as (seen: Boolean) { true }; \
            then sequence Continued { } timeout sequence TimedOut { }\n",
     );
@@ -195,7 +195,7 @@ fn a_compensation_and_a_timed_await_emit_together() {
     assert_eq!(
         bindings.len(),
         4,
-        "both templates, the await and required clause bind clock c"
+        "both templates, the await and required clause bind clock model-steps"
     );
     assert_eq!(emission.omitted, []);
 }
@@ -206,7 +206,7 @@ fn a_compensation_and_a_timed_await_emit_together() {
 #[test]
 fn a_timed_unit_without_clock_selection_is_refused_by_declaration_name() {
     let temporal =
-        "temporal Due using t over (c: M::Ledger) clock \"c\" on origin { always true }\n";
+        "temporal Due using t over (c: M::Ledger) clock \"model-steps\" on origin { always[0,120] true }\n";
     let mut unit = unit_text(temporal, "true", "false");
     unit = unit.replace(
         "role R on M::Ledger;\n",
@@ -216,7 +216,7 @@ fn a_timed_unit_without_clock_selection_is_refused_by_declaration_name() {
         "effect Applied of Update as (applied: M::Money) { true };\n",
         "effect Applied of Update as (applied: M::Money) { true };\n\
          event Started by R as (started: Boolean) { true };\n\
-         await Wait after Started using t clock \"c\" within [0, 120] \
+         await Wait after Started using t clock \"model-steps\" within [0, 120] \
            match event Seen by R as (seen: Boolean) { true }; \
            then sequence Continued { } timeout sequence TimedOut { }\n",
     );
@@ -245,7 +245,7 @@ fn a_timed_unit_without_clock_selection_is_refused_by_declaration_name() {
 #[test]
 fn a_missing_await_clock_names_the_await() {
     let temporal =
-        "temporal Due using t over (c: M::Ledger) clock \"c\" on origin { always true }\n";
+        "temporal Due using t over (c: M::Ledger) clock \"model-steps\" on origin { always[0,120] true }\n";
     let mut unit = unit_text(temporal, "true", "false");
     unit = unit.replace(
         "role R on M::Ledger;\n",
@@ -255,7 +255,7 @@ fn a_missing_await_clock_names_the_await() {
         "effect Applied of Update as (applied: M::Money) { true };\n",
         "effect Applied of Update as (applied: M::Money) { true };\n\
          event Started by R as (started: Boolean) { true };\n\
-         await Wait after Started using t clock \"c\" within [0, 120] \
+         await Wait after Started using t clock \"model-steps\" within [0, 120] \
            match event Seen by R as (seen: Boolean) { true }; \
            then sequence Continued { } timeout sequence TimedOut { }\n",
     );

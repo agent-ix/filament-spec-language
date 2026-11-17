@@ -843,7 +843,7 @@ pub(crate) fn settled(before: &str) -> String {
 fn timed_branching() -> String {
     let run = format!(
         "parallel Both {{ branch pay sequence Main {{ {CHARGE} {} {FAIL} \
-         await Wait after Fail using t0 clock \"c\" within [0, 120] \
+         await Wait after Fail using t0 clock \"model-steps\" within [0, 120] \
          match event Seen by w as (seen: Boolean) {{ true }}; \
          then sequence Continued {{ }} timeout sequence TimedOut {{ }} }} \
          branch shipment sequence Shipment {{ event Shipped by w as (shipped: Boolean) {{ true }}; }} }} \
@@ -851,7 +851,7 @@ fn timed_branching() -> String {
         paid("Both::pay::Main::C"),
     );
     let template = refund("Both::pay::Main::Paid", "dec", 1, "false", "never", "true");
-    let due = "temporal Due using t0 over (c: M::Cell) clock \"c\" on origin { always true }\n";
+    let due = "temporal Due using t0 over (c: M::Cell) clock \"model-steps\" on origin { always[0,120] true }\n";
     let members = format!("{template}\nrequires temporal Due;");
     let body = contracts("self.v = 0") + REFUND + due + &protocol("Pay", &members, &run, "d");
     body.replace("within [0, 10]", "within [0, 120]")
