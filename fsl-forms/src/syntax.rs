@@ -1225,6 +1225,7 @@ impl ExprNode {
             | Self::DecimalValue { .. }
             | Self::Quantity(_)
             | Self::String(_)
+            | Self::ReferenceLiteral { .. }
             | Self::Name(_)
             | Self::SelfRef
             | Self::Result
