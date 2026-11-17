@@ -574,8 +574,7 @@ fn every_named_production_has_positive_boundary_and_located_negative_vectors() {
         let (id, source, span) = occurrences.get(production).unwrap();
         assert!(span.start < source.len(), "{production:?} must own a token");
         let mut invalid = source.clone().into_bytes();
-        // `$` is a single-byte lexer error; `#` is now a recognized token.
-        invalid[span.start] = b'$';
+        invalid[span.start] = b'#';
         let invalid = String::from_utf8(invalid).unwrap();
         let parsed = parse(id, &invalid);
         assert!(!parsed.is_admissible(), "{production:?} mutation admitted");
