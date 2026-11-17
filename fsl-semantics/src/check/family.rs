@@ -724,7 +724,7 @@ fn encode_expression(
                 match type_argument {
                     Some(type_argument) => {
                         out.write_str("typed");
-                        measure_model_target(out, type_argument);
+                        measure_type_form(out, type_argument);
                     }
                     None => out.write_str("untyped"),
                 }
