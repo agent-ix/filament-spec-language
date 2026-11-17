@@ -110,3 +110,18 @@ fn a_typed_size_is_typed_at_its_domain_and_proves_its_range() {
          function few using v(c: Sequence<Integer>[0, 4]): Boolean pure { size<Count>(c) >= 0 }",
     );
 }
+
+/// FR-144-AC-10 and FR-981-AC-4: a typed size result domain does not infer an
+/// element type for a sequence literal without an expected collection type.
+#[trace("TC-2774", "FR-144-AC-10", "FR-981-AC-4")]
+#[test]
+fn typed_size_does_not_infer_a_sequence_literal_element_type() {
+    let ambiguous = refusal(
+        "function f using v(): Boolean pure { size<Int[0, 4]>(sequence[7, 8, 7]) = 3 }",
+        CheckMode::Linked,
+    );
+    assert_eq!(
+        ambiguous.cause,
+        CheckCause::IllTyped(filament_exact::IllTypedCause::AmbiguousLiteral)
+    );
+}
