@@ -5,21 +5,20 @@ use std::collections::BTreeMap;
 
 use filament_contract_model::{CheckedNodeId, CheckedPackageV2};
 use fsl_package::protocol_view::{
-    PortRef, ViewRefusal, clause_activation_trigger, protocol_view, role_replication_maximum,
+    clause_activation_trigger, protocol_view, role_replication_maximum, PortRef, ViewRefusal,
 };
-use fsl_replay::ModelCheckLimit;
 use fsl_replay::protocol_analysis::{
-    Action, AnalysisOutcome, AssessedRoot, AssessedRootDraft, BranchMerge, ChoiceBasis,
-    Correspondence, DecisionOwner, GlobalEventKind, GlobalStructure, InconclusiveCause, LocalEvent,
-    LocalEventId, LocalEventKind, LocalGraph, MergeEvidence, MissingMember, PremiseRefusal,
-    ProjectionBoundsDraft, ProjectionCounterexample,
+    node_text, replay_projection_counterexample, Action, AnalysisOutcome, AssessedRoot,
+    AssessedRootDraft, BranchMerge, ChoiceBasis, Correspondence, DecisionOwner, GlobalEventKind,
+    GlobalStructure, InconclusiveCause, LocalEvent, LocalEventId, LocalEventKind, LocalGraph,
+    MergeEvidence, MissingMember, PremiseRefusal, ProjectionBoundsDraft, ProjectionCounterexample,
     ProjectionDecision, ProjectionKeyDraft, ProjectionWitness, ProtocolAnalysisKey,
-    ProtocolAnalysisResult, ProtocolPremises, RunBudget, RunLimit, node_text,
-    replay_projection_counterexample,
+    ProtocolAnalysisResult, ProtocolPremises, RunBudget, RunLimit,
 };
 use fsl_replay::spine::StructureError;
+use fsl_replay::ModelCheckLimit;
 
-use super::profile::{Profile, unsupported_construct_for_profile};
+use super::profile::{unsupported_construct_for_profile, Profile};
 
 /// A projection request (PA-5). Key members are optional so that the key
 /// builder names the first absent one (PA-13); premises (a) and (b) are
