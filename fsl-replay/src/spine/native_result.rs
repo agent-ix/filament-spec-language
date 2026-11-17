@@ -2575,11 +2575,27 @@ impl Disposition {
                         .fields(BTreeMap::from([("name", name.clone())])),
                 );
             }
-            ClauseDisposition::NotAPredicate { name } => {
-                result.refusal = Some(
-                    RefusalWire::new(Code::IllTyped.as_str(), Some("type-mismatch"))
-                        .fields(BTreeMap::from([("name", name.clone())])),
-                );
+            ClauseDisposition::NotAPredicate {
+                name,
+                actual,
+                result_type_locus,
+            } => {
+                let mut refusal = RefusalWire::new(Code::IllTyped.as_str(), Some("type-mismatch"))
+                    .fields(BTreeMap::from([
+                        ("function", name.clone()),
+                        ("expected", "Boolean".to_owned()),
+                        ("actual", actual.clone()),
+                    ]));
+                refusal.message = Some(format!(
+                    "function `{name}` returns `{actual}`; a claim selection needs a function whose result is `Boolean`"
+                ));
+                refusal.locus = result_type_locus.as_ref().map(|(file, span)| {
+                    crate::outcome::OutcomeLocus::Located {
+                        file: file.clone(),
+                        span: *span,
+                    }
+                });
+                result.refusal = Some(refusal);
             }
             ClauseDisposition::Admit(failure) => match failure {
                 fsl_semantics::model::observation::AdmissionFailure::Refused(record)

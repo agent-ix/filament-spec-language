@@ -6,10 +6,10 @@
 //!
 //! The fixtures are FR-108's ConfigVersion spine files.
 
-use crate::command_harness::{run_file, Output};
-use crate::support::config_version_spine::{spine, Case};
+use crate::command_harness::{Output, run_file};
+use crate::support::config_version_spine::{Case, spine};
 use ix_trace_rs::trace;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use std::path::Path;
 
 const FUNCTIONS: &str = "function seven using v(): Integer pure { 7 }\n\
@@ -55,7 +55,6 @@ fn text(output: &Output) -> String {
 #[test]
 #[trace("TC-2459", "FR-867-AC-1")]
 #[trace("TC-2459", "FR-867-AC-2")]
-#[ignore = "QSL-2184: the type-mismatch refusal naming the function and its result type is not implemented yet"]
 fn a_non_boolean_function_claim_names_the_function_and_its_type() {
     let directory = tempfile::tempdir().unwrap();
     spine::write(directory.path(), Case::Healthy).unwrap();
@@ -69,18 +68,31 @@ fn a_non_boolean_function_claim_names_the_function_and_its_type() {
     let refused = select(directory.path(), "seven");
     assert_eq!(refused.status.code(), Some(20), "{refused:?}");
     let refusal = text(&refused);
+    assert!(refusal.contains("\"stage\":\"select\""), "{refusal}");
     assert!(refusal.contains("ill_typed"), "{refusal}");
     assert!(refusal.contains("type-mismatch"), "{refusal}");
     assert!(refusal.contains("\"function\":\"seven\""), "{refusal}");
+    assert!(refusal.contains("\"kind\":\"located\""), "{refusal}");
     assert!(refusal.contains("\"expected\":\"Boolean\""), "{refusal}");
     assert!(refusal.contains("\"actual\":\"Integer\""), "{refusal}");
+    assert!(
+        refusal.contains("function `seven` returns `Integer`")
+            && refusal.contains("result is `Boolean`"),
+        "{refusal}"
+    );
 
     let tested = select(directory.path(), "yes");
     assert_eq!(tested.status.code(), Some(0), "{tested:?}");
+    assert!(
+        text(&tested).contains("\"truth\":true"),
+        "{}",
+        text(&tested)
+    );
 
     let unknown = select(directory.path(), "nope");
     assert_eq!(unknown.status.code(), Some(20), "{unknown:?}");
     let unknown = text(&unknown);
+    assert!(unknown.contains("\"stage\":\"select\""), "{unknown}");
     assert!(unknown.contains("missing_declaration"), "{unknown}");
     assert!(unknown.contains("nope"), "{unknown}");
 }

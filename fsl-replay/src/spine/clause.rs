@@ -383,6 +383,10 @@ pub enum ClauseDisposition {
     NotAPredicate {
         /// The selected name.
         name: String,
+        /// The declared result type, in checker spelling.
+        actual: String,
+        /// The source position of the declared result type, when available.
+        result_type_locus: Option<(String, fsl_foundation::LocatedSpan)>,
     },
     /// Stage `admit`: FR-106 admission's own failure, or (for a `Function`
     /// selection) the analogous snapshot-only admission failure.
@@ -2803,22 +2807,31 @@ fn run_function(
                     report(ClauseDisposition::MissingName { name: function })
                 }
                 RunRefusal::UnsupportedResult { function } => {
-                    report(ClauseDisposition::NotAPredicate { name: function })
+                    let callable = package.graph().callable(&function);
+                    report(ClauseDisposition::NotAPredicate {
+                        result_type_locus: if callable.is_some() {
+                            function_result_type_locus(sources, &function)
+                        } else {
+                            None
+                        },
+                        actual: callable
+                            .map(|callable| format!("{:?}", callable.result))
+                            .unwrap_or_else(|| "unknown".to_owned()),
+                        name: function,
+                    })
                 }
                 other => report(ClauseDisposition::ArgumentRefusal(Box::new(other))),
             })
         }
     };
-    if !matches!(
-        package
-            .graph()
-            .callable(name)
-            .map(|callable| callable.result),
-        Some(ValueType::Boolean)
-    ) {
-        return Ok(report(ClauseDisposition::NotAPredicate {
-            name: name.to_owned(),
-        }));
+    if let Some(callable) = package.graph().callable(name) {
+        if !matches!(callable.result, ValueType::Boolean) {
+            return Ok(report(ClauseDisposition::NotAPredicate {
+                name: name.to_owned(),
+                actual: format!("{:?}", callable.result),
+                result_type_locus: function_result_type_locus(sources, name),
+            }));
+        }
     }
 
     let (environment, admission_usage) = match admit_current_snapshot(
@@ -2965,6 +2978,59 @@ fn run_function(
     let mut result = report(disposition);
     result.usage = ClauseRunUsage::from_meter(&meter, admission_usage);
     Ok(result)
+}
+
+/// Locate the declared result type token for FR-867's select refusal. The
+/// checked graph retains the type but not its authored span, so recover the
+/// exact `TypeReference` span from the already admitted source CST.
+fn function_result_type_locus(
+    sources: &[Source],
+    function: &str,
+) -> Option<(String, fsl_foundation::LocatedSpan)> {
+    use fsl_cst::{CstElement, Production, TokenKind};
+
+    for source in sources {
+        let parsed = fsl_cst::parse(
+            source.identity().clone(),
+            source.path().to_owned(),
+            source.text().as_bytes(),
+            fsl_cst::Limits::default(),
+        )
+        .ok()?;
+        let cst = parsed.cst();
+        for node in cst.nodes() {
+            if node.production() != Production::FunctionDeclaration {
+                continue;
+            }
+            let mut tokens = cst.tokens().iter().filter(|token| {
+                token.span().start >= node.span().start
+                    && token.span().end <= node.span().end
+            });
+            let is_selected = tokens
+                .find(|token| token.spelling() == b"function")
+                .and_then(|_| {
+                    tokens
+                        .find(|token| token.kind() == TokenKind::Identifier)
+                        .map(|token| token.spelling() == function.as_bytes())
+                })
+                .unwrap_or(false);
+            if !is_selected {
+                continue;
+            }
+            let result_type = node.children().iter().find_map(|element| match element {
+                CstElement::Node(index)
+                    if cst.nodes()[*index].production() == Production::TypeReference =>
+                {
+                    Some(cst.nodes()[*index].span())
+                }
+                _ => None,
+            })?;
+            return source
+                .locate(result_type)
+                .map(|span| (source.path().to_owned(), span));
+        }
+    }
+    None
 }
 
 #[cfg(test)]
