@@ -13,6 +13,8 @@ relationships:
     type: depends_on
   - target: ix://agent-ix/filament-spec-language/FR-641
     type: depends_on
+  - target: ix://agent-ix/filament-spec-language/FR-975
+    type: references
   - target: ix://agent-ix/filament-specification/FR-094
     type: depends_on
   - target: ix://agent-ix/filament-specification/FR-160
@@ -117,6 +119,13 @@ refusal.
   `invalid_runtime_input`/`invalid-value`, its `cause` and member
   `relation`, as the evaluator refuses it, and SHALL write no result
   document and no ledger.
+- The run SHALL tell the two predecessor causes apart as FR-526 does:
+  `predecessor-unknown` when the `evidence_ledger` file (FR-975) holds no
+  entry for the request's whole obligation-instance key, or holds one whose
+  `result_identity` and `superseded` list both lack the named identity;
+  `predecessor-not-latest` when the entry's `superseded` list holds the named
+  identity, so the ledger holds the predecessor and a later correction
+  superseded it.
 
 ## Acceptance Criteria
 
