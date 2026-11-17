@@ -42,12 +42,17 @@ is not an input to `fsl analyze`.
 
 ## Outputs
 
-- One FR-621 `filament-outcome/1` document with one native analysis item for
-  each flow rule, plus an implication item for each direction of every pair
-  of rules with the same subject archetype.
-- Each flow-rule item retains the original rule name and stable subject
-  identity (`archetype`, `id`, and `repo` when present) in its claim or
-  evidence. A missing `repo` is not replaced with an inferred repository.
+- One FR-621 `filament-outcome/1` document with a bounded set of native items
+  for each `(flow rule, subject identity)` group, plus an implication item for
+  each direction of every pair of rules with the same subject archetype.
+- Each tuple item retains the original rule name, stable subject identity
+  (`archetype`, `id`, and `repo` when present), and the matched path witnesses
+  in its claim or evidence. A missing `repo` is not replaced with an inferred
+  repository. Consumers aggregate tuple outcomes by `(rule, subject identity)`.
+- When a group's tuple count reaches the explicit generated-item limit, its
+  remaining witnesses are represented by a native `incomplete` item naming
+  that `(rule, subject identity)` group and the item-limit cause. The limit for
+  one group SHALL NOT prevent other groups from settling.
 
 ## Behavior
 
@@ -82,16 +87,20 @@ is not an input to `fsl analyze`.
   equal claim outcomes and evidence. The integration SHALL return the existing
   `filament-outcome/1` analyze result and SHALL NOT add a separate report
   format.
+- The integration SHALL bound witness expansion before materializing its
+  Cartesian product. Reaching the per-group item limit SHALL yield the
+  incomplete group item described above, while the remaining analysis items
+  continue to settle independently.
 
 ## Acceptance Criteria
 
 | ID | Criteria | Verification |
 |----|----------|--------------|
-| FR-821-AC-1 | Given a supported flow report with a rule that denies connection `CONN-1` because it carries `health` across an untrusted boundary without a protecting control, the native analysis item for that rule is `refuted` and its evidence names `CONN-1`, the matched classification and boundary identities, and the rule name. The report's `denials` array is not used to construct the analyzed claim. | Test |
-| FR-821-AC-2 | Given AC-1's facts with an `encrypt-in-transit` control protecting `CONN-1`, the same native claim is `proved`; adding unrelated facts does not change that result. | Test |
+| FR-821-AC-1 | Given a supported flow report with a rule that denies connection `CONN-1` because it carries `health` across an untrusted boundary without a protecting control, the tuple item for that `(rule, CONN-1)` group is `refuted` and its evidence names `CONN-1`, the matched classification and boundary identities, and the rule name. The report's `denials` array is not used to construct the analyzed claim. | Test |
+| FR-821-AC-2 | Given AC-1's facts with an `encrypt-in-transit` control protecting `CONN-1`, every tuple item in that `(rule, CONN-1)` group is `proved`; adding unrelated facts does not change those results. | Test |
 | FR-821-AC-3 | Over every supported PLAT-1540 pass and fail fixture, the set of native `refuted` `(rule, subject identity)` results equals the corresponding set in FR-096's `denials`; each `proved` rule contributes no denial. Items whose exact lowering is unsupported are retained with an explicit non-conclusive native result and are excluded from the equality comparison. | Test |
 | FR-821-AC-4 | Given the broad `personal-across-untrusted-boundary` rule and a narrower copy restricted to `trust_level: untrusted`, the native implication claim proves that every denial of the narrower rule is also a denial of the broad rule, and the integration reports the narrower rule as redundant. If the implication does not prove, the integration does not report it as redundant. | Test |
-| FR-821-AC-5 | Given a valid report where one generated claim reaches an existing native analysis limit, that item is `incomplete` with the native limit cause; another supported item in the same report still settles independently. The limited result is never reported as `proved`. | Test |
+| FR-821-AC-5 | Given a valid report where one `(rule, subject identity)` group reaches the generated-item limit, the group retains a native `incomplete` item naming the limit cause and no omitted witness is reported as `proved`; another supported group in the same report still settles independently. A native analyzer limit reached by an individual tuple item likewise remains `incomplete` with its native cause. | Test |
 | FR-821-AC-6 | Given a valid report with a rule or implication whose exact expression the native analyzer cannot represent, the outcome retains an item for it with native `unsupported` and its reason; no such result is reported as `proved`. A supported rule in the same report still settles independently. | Test |
 | FR-821-AC-7 | A malformed report or generated source that fails the existing request, parse, type or compile checks yields the corresponding whole-request refusal and no partial successful outcome. | Test |
 | FR-821-AC-8 | Two analyses of one unchanged flow report give equal item order, claim outcomes and evidence. `fsl analyze` consumes its source-driven request and does not read the checked-package file emitted by `fsl compile --output`. | Test |

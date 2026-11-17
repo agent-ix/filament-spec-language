@@ -19,6 +19,7 @@ use fsl_route::CandidateOutcome;
 const PACKAGE: &str = "filament/flow-report";
 const NATIVE_STRING: &str = "ix://filament/native/String";
 const GENERATOR: &str = "ix://filament-spec-language/FR-821";
+const MAX_GENERATED_ITEMS: usize = 4096;
 static NEXT_WORKSPACE: AtomicU64 = AtomicU64::new(0);
 
 /// A malformed report or a failure while preparing the generated native request.
@@ -143,13 +144,28 @@ pub fn analyze_flow_report(
     }
     validate_report(&report)?;
     let generated = Generated::new(&report)?;
+    run_generated(&generated, negotiate, cancel)
+}
+
+fn run_generated(
+    generated: &Generated,
+    negotiate: &dyn Negotiate,
+    cancel: &Cancel,
+) -> Result<RunResult, FlowAnalyzeError> {
     let workspace = Workspace::new()?;
     workspace.write("flow.fsl", generated.source.as_bytes())?;
     workspace.write("model.json", generated.model.as_bytes())?;
     workspace.write("snapshot.json", generated.snapshot.as_bytes())?;
     workspace.write("analyze.json", generated.request.as_bytes())?;
-    analyze(&workspace.path.join("analyze.json"), negotiate, cancel)
-        .map_err(FlowAnalyzeError::Native)
+    let mut result = analyze(&workspace.path.join("analyze.json"), negotiate, cancel)
+        .map_err(FlowAnalyzeError::Native)?;
+    if !generated.incomplete_items.is_empty() {
+        result
+            .value
+            .mark_flow_items_incomplete(&generated.incomplete_items);
+        result.exit_code = 22;
+    }
+    Ok(result)
 }
 
 fn validate_report(report: &Report) -> Result<(), FlowAnalyzeError> {
@@ -303,10 +319,27 @@ struct Generated {
     model: String,
     snapshot: String,
     request: String,
+    incomplete_items: BTreeSet<String>,
 }
 
 impl Generated {
     fn new(report: &Report) -> Result<Self, FlowAnalyzeError> {
+        Self::with_item_limit(report, MAX_GENERATED_ITEMS)
+    }
+
+    fn with_item_limit(report: &Report, item_limit: usize) -> Result<Self, FlowAnalyzeError> {
+        let rule_pairs = report
+            .rules
+            .len()
+            .checked_mul(report.rules.len().saturating_sub(1))
+            .ok_or_else(|| invalid_report("rule implication count overflows"))?;
+        let implication_count = rule_pairs;
+        if implication_count > item_limit {
+            return Err(invalid_report(format!(
+                "flow analysis exceeds the {item_limit} generated-item limit"
+            )));
+        }
+        let flow_item_limit = item_limit - implication_count;
         let mut source = format!(
             "language \"ix:native\" edition \"1-draft\";\n\
              profile v = \"filament.value.complete/v1\";\n\
@@ -317,21 +350,50 @@ impl Generated {
         let rels = relationship_names(report);
         let key_map = flat_key_map(&facts);
         let mut flow_items = Vec::new();
+        let mut incomplete_items = BTreeSet::new();
+        let group_count = report.rules.iter().try_fold(0usize, |count, rule| {
+            count.checked_add(subject_groups(rule, &facts).len())
+        });
+        let Some(group_count) = group_count else {
+            return Err(invalid_report("rule-subject group count overflows"));
+        };
+        if group_count > flow_item_limit {
+            return Err(invalid_report(format!(
+                "flow analysis has {group_count} rule-subject groups but only {flow_item_limit} generated items are available"
+            )));
+        }
+        let mut groups_left = group_count;
         for (index, rule) in report.rules.iter().enumerate() {
-            let tuples = rule_tuples(rule, &facts, &key_map);
-            for tuple in tuples {
-                let name = rule_tuple_claim(index, rule, &tuple);
-                let denied = rule_expression_scoped(
-                    rule,
-                    &rule.subject,
-                    &rels,
-                    tuple.subject.as_ref().map(|subject| subject.key.as_str()),
-                    Some(&tuple.matches),
-                );
-                source.push_str(&format!(
-                    "temporal {name} using t0 over (x: M::Fact) clock \"model-steps\" on origin {{ always holds(not ({denied})) }}\n"
-                ));
-                flow_items.push(name);
+            for subject in subject_groups(rule, &facts) {
+                let remaining = flow_item_limit - flow_items.len();
+                let quota = remaining / groups_left;
+                let tuples = rule_tuples(rule, subject, &facts, &key_map, quota)?;
+                for tuple in tuples {
+                    let name = rule_tuple_claim(index, rule, &tuple);
+                    let witnesses = if tuple.incomplete {
+                        None
+                    } else {
+                        Some(tuple.matches.as_slice())
+                    };
+                    let denied = rule_expression_scoped(
+                        rule,
+                        &rule.subject,
+                        &rels,
+                        tuple.subject.as_ref().map(|subject| subject.key.as_str()),
+                        witnesses,
+                    );
+                    source.push_str(&format!(
+                        "temporal {name} using t0 over (x: M::Fact) clock \"model-steps\" on origin {{ always holds(not ({denied})) }}\n"
+                    ));
+                    flow_items.push(name.clone());
+                    if tuple.incomplete {
+                        // This native per-item ceiling turns the bounded
+                        // generation marker into an explicit non-conclusive
+                        // result while allowing the other items to settle.
+                        incomplete_items.insert(name);
+                    }
+                }
+                groups_left -= 1;
             }
         }
         let mut implication_items = Vec::new();
@@ -388,6 +450,7 @@ impl Generated {
             model,
             snapshot: snapshot.to_string(),
             request: request.to_string(),
+            incomplete_items,
         })
     }
 }
@@ -697,6 +760,7 @@ enum ClaimWitness {
 struct RuleTuple {
     subject: Option<FlatFact>,
     matches: Vec<Option<ClaimWitness>>,
+    incomplete: bool,
 }
 
 fn flat_key_map(facts: &[FlatFact]) -> BTreeMap<(String, String, Option<String>), String> {
@@ -715,56 +779,119 @@ fn flat_key_map(facts: &[FlatFact]) -> BTreeMap<(String, String, Option<String>)
         .collect()
 }
 
-fn rule_tuples(
-    rule: &Rule,
-    facts: &[FlatFact],
-    key_map: &BTreeMap<(String, String, Option<String>), String>,
-) -> Vec<RuleTuple> {
-    let fact_by_key = facts
-        .iter()
-        .map(|fact| (fact.key.as_str(), fact))
-        .collect::<BTreeMap<_, _>>();
+fn subject_groups(rule: &Rule, facts: &[FlatFact]) -> Vec<Option<FlatFact>> {
     let subjects = facts
         .iter()
         .filter(|fact| rule.subject.contains(&fact.archetype))
         .cloned()
+        .map(Some)
         .collect::<Vec<_>>();
     if subjects.is_empty() {
-        return vec![RuleTuple {
+        vec![None]
+    } else {
+        subjects
+    }
+}
+
+fn rule_tuples(
+    rule: &Rule,
+    subject: Option<FlatFact>,
+    facts: &[FlatFact],
+    key_map: &BTreeMap<(String, String, Option<String>), String>,
+    max_tuples: usize,
+) -> Result<Vec<RuleTuple>, FlowAnalyzeError> {
+    let fact_by_key = facts
+        .iter()
+        .map(|fact| (fact.key.as_str(), fact))
+        .collect::<BTreeMap<_, _>>();
+    let Some(subject) = subject else {
+        if max_tuples == 0 {
+            return Err(expansion_limit(max_tuples));
+        }
+        return Ok(vec![RuleTuple {
             subject: None,
             matches: rule.matches.iter().map(|_| None).collect(),
-        }];
+            incomplete: false,
+        }]);
+    };
+    if max_tuples == 0 {
+        return Err(expansion_limit(max_tuples));
     }
-    let mut tuples = Vec::new();
-    for subject in subjects {
-        let choices = rule
-            .matches
-            .iter()
-            .map(|condition| {
-                if condition.absent == Some(true) {
-                    return vec![None];
-                }
-                let mut witnesses = BTreeSet::new();
-                for (path_index, path) in condition_paths(condition).iter().enumerate() {
-                    for keys in path_targets(&subject, path, key_map, &fact_by_key) {
-                        witnesses.insert(Some(ClaimWitness::Path { path_index, keys }));
+    let mut witness_truncated = false;
+    let witness_limit = max_tuples.saturating_add(1);
+    let choices = rule
+        .matches
+        .iter()
+        .map(|condition| {
+            if condition.absent == Some(true) {
+                return Ok((vec![None], false));
+            }
+            let mut witnesses = BTreeSet::new();
+            let mut condition_truncated = false;
+            for (path_index, path) in condition_paths(condition).iter().enumerate() {
+                let (paths, path_truncated) =
+                    path_targets(&subject, path, key_map, &fact_by_key, witness_limit)?;
+                condition_truncated |= path_truncated;
+                for keys in paths {
+                    witnesses.insert(Some(ClaimWitness::Path { path_index, keys }));
+                    if witnesses.len() > witness_limit {
+                        witnesses.pop_last();
+                        condition_truncated = true;
+                        break;
                     }
                 }
-                if witnesses.is_empty() {
-                    vec![Some(ClaimWitness::Unreachable)]
-                } else {
-                    witnesses.into_iter().collect()
+                if condition_truncated && witnesses.len() >= witness_limit {
+                    break;
                 }
-            })
-            .collect::<Vec<_>>();
-        for matches in product(&choices) {
-            tuples.push(RuleTuple {
-                subject: Some(subject.clone()),
-                matches,
-            });
-        }
+            }
+            witness_truncated |= condition_truncated;
+            if witnesses.is_empty() {
+                Ok((vec![Some(ClaimWitness::Unreachable)], condition_truncated))
+            } else {
+                Ok((witnesses.into_iter().collect(), condition_truncated))
+            }
+        })
+        .collect::<Result<Vec<_>, FlowAnalyzeError>>()?;
+    let choices = choices
+        .into_iter()
+        .map(|(choices, _)| choices)
+        .collect::<Vec<_>>();
+    let tuple_count = choices
+        .iter()
+        .try_fold(1usize, |count, choice| count.checked_mul(choice.len()));
+    let tuple_count = tuple_count.unwrap_or(usize::MAX);
+    let incomplete = witness_truncated || tuple_count > max_tuples;
+    let concrete_limit = if incomplete {
+        max_tuples.saturating_sub(1)
+    } else {
+        max_tuples
+    };
+    let mut tuples = product_limited(&choices, concrete_limit)
+        .into_iter()
+        .map(|matches| RuleTuple {
+            subject: Some(subject.clone()),
+            matches,
+            incomplete: false,
+        })
+        .collect::<Vec<_>>();
+    if incomplete {
+        let marker_matches = product_limited(&choices, 1)
+            .into_iter()
+            .next()
+            .unwrap_or_else(|| rule.matches.iter().map(|_| None).collect());
+        tuples.push(RuleTuple {
+            subject: Some(subject),
+            matches: marker_matches,
+            incomplete: true,
+        });
     }
-    tuples
+    Ok(tuples)
+}
+
+fn expansion_limit(limit: usize) -> FlowAnalyzeError {
+    invalid_report(format!(
+        "flow analysis has no remaining generated-item capacity for a group (limit {limit})"
+    ))
 }
 
 fn condition_paths(condition: &Condition) -> Vec<Vec<Step>> {
@@ -781,8 +908,10 @@ fn path_targets(
     path: &[Step],
     key_map: &BTreeMap<(String, String, Option<String>), String>,
     fact_by_key: &BTreeMap<&str, &FlatFact>,
-) -> Vec<Vec<String>> {
+    limit: usize,
+) -> Result<(Vec<Vec<String>>, bool), FlowAnalyzeError> {
     let mut current = vec![(subject.key.clone(), Vec::<String>::new())];
+    let mut truncated = false;
     for step in path {
         let mut next = BTreeSet::new();
         for (source_key, prefix) in current {
@@ -806,32 +935,46 @@ fn path_targets(
                 let mut keys = prefix.clone();
                 keys.push(target_key.clone());
                 next.insert((target_key.clone(), keys));
+                if next.len() > limit {
+                    next.pop_last();
+                    truncated = true;
+                }
             }
         }
         current = next.into_iter().collect();
     }
-    current.into_iter().map(|(_, keys)| keys).collect()
+    Ok((
+        current.into_iter().map(|(_, keys)| keys).collect(),
+        truncated,
+    ))
 }
 
-fn product(choices: &[Vec<Option<ClaimWitness>>]) -> Vec<Vec<Option<ClaimWitness>>> {
+fn product_limited(
+    choices: &[Vec<Option<ClaimWitness>>],
+    limit: usize,
+) -> Vec<Vec<Option<ClaimWitness>>> {
     fn append(
         choices: &[Vec<Option<ClaimWitness>>],
         index: usize,
         current: &mut Vec<Option<ClaimWitness>>,
         output: &mut Vec<Vec<Option<ClaimWitness>>>,
+        limit: usize,
     ) {
+        if output.len() == limit {
+            return;
+        }
         if index == choices.len() {
             output.push(current.clone());
             return;
         }
         for choice in &choices[index] {
             current.push(choice.clone());
-            append(choices, index + 1, current, output);
+            append(choices, index + 1, current, output, limit);
             current.pop();
         }
     }
     let mut output = Vec::new();
-    append(choices, 0, &mut Vec::new(), &mut output);
+    append(choices, 0, &mut Vec::new(), &mut output, limit);
     output
 }
 
@@ -855,6 +998,9 @@ fn rule_tuple_claim(index: usize, rule: &Rule, tuple: &RuleTuple) -> String {
             None => readable.push("match_absent".into()),
         }
     }
+    if tuple.incomplete {
+        readable.push("item_limit".to_owned());
+    }
     let payload = match &tuple.subject {
         Some(subject) => json!({
             "rule":rule.name,
@@ -863,9 +1009,10 @@ fn rule_tuple_claim(index: usize, rule: &Rule, tuple: &RuleTuple) -> String {
                 Some(ClaimWitness::Path { path_index, keys }) => json!({"path_index":path_index,"fact_keys":keys}),
                 Some(ClaimWitness::Unreachable) => json!({"unreachable":true}),
                 None => json!({"absent":true})
-            }).collect::<Vec<_>>()
+            }).collect::<Vec<_>>(),
+            "incomplete":tuple.incomplete
         }),
-        None => json!({"rule":rule.name,"subject":null}),
+        None => json!({"rule":rule.name,"subject":null,"incomplete":tuple.incomplete}),
     };
     let visible = symbol_part(&rule.name);
     format!(
@@ -1051,7 +1198,6 @@ fn relationship_names(report: &Report) -> BTreeMap<(String, String), String> {
                 .path
                 .iter()
                 .cloned()
-                .into_iter()
                 .chain(condition.any_path.iter().flatten().cloned());
             for path in paths {
                 for step in path {
@@ -1155,6 +1301,7 @@ impl Negotiate for Supported {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use ix_trace_rs::trace;
     use serde_json::json;
 
     fn report(protected: bool) -> Vec<u8> {
@@ -1202,7 +1349,30 @@ mod tests {
         }).to_string().into_bytes()
     }
 
+    fn report_with_two_connections() -> Value {
+        let mut value: Value = serde_json::from_slice(&report(false)).unwrap();
+        let facts = &mut value["facts"];
+        facts["connection"][0]["edges"] = json!([
+            {"edge":"carries","direction":"outgoing","target":{"id":"CLASS-1"},"archetype":"classification"},
+            {"edge":"carries","direction":"outgoing","target":{"id":"CLASS-2"},"archetype":"classification"},
+            {"edge":"crosses","direction":"outgoing","target":{"id":"BOUNDARY-1"},"archetype":"boundary"}
+        ]);
+        facts["connection"].as_array_mut().unwrap().push(json!({
+            "id":"CONN-2","path":"connections/conn-2.md","fields":{},"edges":[
+                {"edge":"carries","direction":"outgoing","target":{"id":"CLASS-1"},"archetype":"classification"},
+                {"edge":"crosses","direction":"outgoing","target":{"id":"BOUNDARY-1"},"archetype":"boundary"}
+            ]
+        }));
+        facts["classification"].as_array_mut().unwrap().push(json!({
+            "id":"CLASS-2","path":"classification/class-2.md","fields":{"regulated_categories":["Health"]},"edges":[]
+        }));
+        value
+    }
+
     #[test]
+    #[trace("FR-821-AC-1")]
+    #[trace("FR-821-AC-2")]
+    #[trace("FR-821-AC-8")]
     fn native_claim_reads_report_facts_and_resolved_edges_not_denials() {
         let cancel = Cancel::new();
         let denied =
@@ -1258,6 +1428,110 @@ mod tests {
     }
 
     #[test]
+    #[trace("FR-821-AC-3")]
+    fn supported_refutations_match_the_fixture_denial_set() {
+        let mut raw: Value = serde_json::from_slice(&report(false)).unwrap();
+        raw["denials"] = json!([{
+            "rule":"health-across-untrusted-boundary",
+            "subject":{"archetype":"connection","id":"CONN-1"}
+        }]);
+        let expected = raw["denials"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|denial| {
+                format!(
+                    "{}:{}",
+                    denial["rule"].as_str().unwrap(),
+                    denial["subject"]["id"].as_str().unwrap()
+                )
+            })
+            .collect::<BTreeSet<_>>();
+        let result = analyze_flow_report(raw.to_string().as_bytes(), &Supported, &Cancel::new())
+            .expect("supported report");
+        let actual = result.value.as_value()["items"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter(|item| item["record"]["result"] == "refuted")
+            .map(|item| {
+                let claim = item["claim_name"].as_str().unwrap();
+                assert!(claim.starts_with("FlowRule0_health_across_untrusted_boundary"));
+                assert!(claim.contains("subject_connection_CONN_1"));
+                "health-across-untrusted-boundary:CONN-1".to_owned()
+            })
+            .collect::<BTreeSet<_>>();
+        assert_eq!(actual, expected);
+    }
+
+    #[test]
+    #[trace("FR-821-AC-5")]
+    fn item_limit_marks_only_the_overflowing_group_incomplete() {
+        let raw = report_with_two_connections();
+        let report: Report = serde_json::from_value(raw).expect("valid flow report");
+        let generated = Generated::with_item_limit(&report, 3).expect("bounded generated items");
+        let result = run_generated(&generated, &Supported, &Cancel::new())
+            .expect("native analysis keeps independent items");
+        let items = result.value.as_value()["items"].as_array().unwrap();
+        assert_eq!(items.len(), 2);
+        assert_eq!(items[0]["record"]["result"], "incomplete");
+        assert!(items[0]["claim_name"]
+            .as_str()
+            .unwrap()
+            .contains("item_limit"));
+        assert_ne!(items[1]["record"]["result"], "incomplete");
+        assert!(items[1]["claim_name"].as_str().unwrap().contains("CONN_2"));
+    }
+
+    struct FirstUnsupported;
+
+    impl Negotiate for FirstUnsupported {
+        fn negotiate(
+            &self,
+            item: &fsl_analyze::analyze::ClaimItem,
+            candidates: &CandidateOutcome,
+        ) -> (
+            fsl_route::routing::Disposition,
+            Option<fsl_analyze::analyze::Diagnostic>,
+        ) {
+            if item.request_index.get() == 0 {
+                use fsl_analyze::analyze::{Diagnostic, Payload};
+                use fsl_semantics::check::NegotiationOutcome;
+                return (
+                    fsl_route::routing::Disposition::Unsupported,
+                    Some(Diagnostic {
+                        code: NegotiationOutcome::UnsupportedRequestedCapability.code(),
+                        payload: Payload::Kind(item.kind),
+                    }),
+                );
+            }
+            Supported.negotiate(item, candidates)
+        }
+    }
+
+    #[test]
+    #[trace("FR-821-AC-6")]
+    fn unsupported_item_is_retained_while_a_supported_group_settles() {
+        let result = analyze_flow_report(
+            report_with_two_connections().to_string().as_bytes(),
+            &FirstUnsupported,
+            &Cancel::new(),
+        )
+        .expect("native analysis with one unsupported item");
+        let items = result.value.as_value()["items"].as_array().unwrap();
+        assert_eq!(items.len(), 3);
+        assert_eq!(items[0]["record"]["result"], "unsupported");
+        assert!(items[0]["claim_name"]
+            .as_str()
+            .unwrap()
+            .contains("health_across_untrusted_boundary"));
+        assert!(items[0]["record"]["diagnostic"].is_object());
+        assert_ne!(items[1]["record"]["result"], "unsupported");
+        assert_ne!(items[2]["record"]["result"], "unsupported");
+    }
+
+    #[test]
+    #[trace("FR-821-AC-4")]
     fn directed_implications_are_native_items_and_preserve_their_order() {
         let report = json!({
             "schema":"quire.flow-report/v1",
@@ -1289,6 +1563,7 @@ mod tests {
     }
 
     #[test]
+    #[trace("FR-821-AC-7")]
     fn malformed_report_refuses_the_whole_request() {
         let mut malformed: Value = serde_json::from_slice(&report(false)).unwrap();
         malformed["rules"][0]["match"][0]["path"] = json!([]);
@@ -1305,6 +1580,7 @@ mod tests {
     }
 
     #[test]
+    #[trace("FR-821-AC-7")]
     fn empty_array_field_is_preserved_in_the_native_snapshot() {
         let report = json!({
             "schema":"quire.flow-report/v1",
@@ -1351,6 +1627,7 @@ mod tests {
     }
 
     #[test]
+    #[trace("FR-821-AC-7")]
     fn non_array_denials_refuse_the_whole_request() {
         let mut malformed: Value = serde_json::from_slice(&report(false)).unwrap();
         malformed["denials"] = json!({"fabricated":"denial"});

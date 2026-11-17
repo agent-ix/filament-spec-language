@@ -21,6 +21,69 @@ impl NativeResult {
         Self(document)
     }
 
+    /// Mark generated flow items whose bounded tuple expansion stopped
+    /// before analysis. The result remains the ordinary analyze document;
+    /// only those item records and their aggregate gaps change.
+    pub(super) fn mark_flow_items_incomplete(
+        &mut self,
+        claim_names: &std::collections::BTreeSet<String>,
+    ) {
+        let Some(items) = self.0.get_mut("items").and_then(Value::as_array_mut) else {
+            return;
+        };
+        let mut stopped = std::collections::BTreeSet::new();
+        for item in items {
+            if !item
+                .get("claim_name")
+                .and_then(Value::as_str)
+                .is_some_and(|name| claim_names.contains(name))
+            {
+                continue;
+            }
+            let Some(index) = item.get("request_index").and_then(Value::as_u64) else {
+                continue;
+            };
+            stopped.insert(index);
+            item["category"] = Value::String("incomplete".to_owned());
+            let Some(record) = item.get_mut("record").and_then(Value::as_object_mut) else {
+                continue;
+            };
+            let request_index = record.get("request_index").cloned();
+            record.clear();
+            if let Some(request_index) = request_index {
+                record.insert("request_index".to_owned(), request_index);
+            }
+            record.insert("result".to_owned(), Value::String("incomplete".to_owned()));
+            record.insert(
+                "cause".to_owned(),
+                serde_json::json!({"kind": "limit-reached"}),
+            );
+            record.insert(
+                "category".to_owned(),
+                Value::String("incomplete".to_owned()),
+            );
+        }
+        if stopped.is_empty() {
+            return;
+        }
+        if let Some(gaps) = self
+            .0
+            .pointer_mut("/aggregate/gaps")
+            .and_then(Value::as_array_mut)
+        {
+            for gap in gaps {
+                if gap
+                    .get("request_index")
+                    .and_then(Value::as_u64)
+                    .is_some_and(|i| stopped.contains(&i))
+                {
+                    gap["result"] = Value::String("incomplete".to_owned());
+                }
+            }
+        }
+        self.0["category"] = Value::String("incomplete".to_owned());
+    }
+
     /// The FR-644 `filament.monitor-run/1` document.
     pub(super) fn monitor_document(document: Value) -> Self {
         Self(document)
