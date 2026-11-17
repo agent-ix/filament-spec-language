@@ -1,9 +1,9 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //! FR-027: `command::compile` in process over of `1-draft` sources through the spine.
 
-use crate::command_harness::{compile, run_file, Output};
+use crate::command_harness::{Output, compile, run_file};
 use ix_trace_rs::trace;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use std::path::Path;
 
 fn compile_in_process(directory: &Path) -> Result<Vec<u8>, Box<fsl_command::command::RunError>> {
@@ -200,7 +200,8 @@ fn source_selection_and_dependent_byte_refusals_are_typed() {
         fsl_command::command::RunLimits::default(),
         &fsl_command::command::RequestOverrides::default(),
     )
-    .unwrap_err();
+    .err()
+    .expect("the dependent-byte ceiling refuses the oversized source");
     let value = error.value().unwrap();
     assert_eq!(value["code"], "resource_exhausted", "{value}");
     assert_eq!(value["details"]["limit"], "dependent_bytes", "{value}");
