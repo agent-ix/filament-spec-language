@@ -742,6 +742,18 @@ pub(in crate::spine::clause::tests) fn report(mut request: ClauseRunRequest) -> 
             "temporal_mod_undefined".to_owned(),
             filament_semantic_value::checking::CheckMode::Kernel,
         )]);
+        let temporal_selections = match &request.source {
+            ClauseRunSource::Program {
+                identity,
+                path,
+                bytes,
+            } => temporal_clock_selections(identity, path, bytes),
+            #[cfg(feature = "quire-extraction")]
+            ClauseRunSource::Extracted(extracted) => {
+                let body = extracted.map().body();
+                temporal_clock_selections(body.identity(), body.path(), body.text().as_bytes())
+            }
+        };
         return super::super::run_clause_with_function_modes(
             request,
             &temporal_selections,
