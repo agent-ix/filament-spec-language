@@ -966,6 +966,7 @@ pub(super) fn type_fault_class(fault: &super::type_form::TypeFormFault) -> (Code
         }
         F::AmbiguousName(_) => (Code::AmbiguousDeclaration, "ambiguous-name"),
         F::UnitArithmetic(_) => (Code::IllTyped, "operator-ineligible"),
+        F::IneligibleMapKey => (Code::IllTyped, "operator-ineligible"),
         F::UnitIdentity(IdentityRefusal::InputBytes { .. }) => (
             Code::StageLimitExceeded,
             Setting::IdentityInputBytes.kind().catalog_cause(),
@@ -2469,6 +2470,35 @@ pub struct ProvedInterval {
     pub upper: Option<Integer>,
 }
 
+/// Source text of an expression whose obligation failed, used for diagnostics
+/// without changing refusal identity.
+#[derive(Clone, Debug, Default)]
+pub struct OperandText(Option<Box<str>>);
+
+impl OperandText {
+    /// Store the expression's source text.
+    pub fn new(source: &str) -> Self {
+        Self(Some(source.into()))
+    }
+
+    /// The text supplied by a source-owning stage.
+    pub fn text(&self) -> Option<&str> {
+        self.0.as_deref()
+    }
+}
+
+impl PartialEq for OperandText {
+    fn eq(&self, _: &Self) -> bool {
+        true
+    }
+}
+
+impl Eq for OperandText {}
+
+impl std::hash::Hash for OperandText {
+    fn hash<H: std::hash::Hasher>(&self, _: &mut H) {}
+}
+
 /// The definedness obligation that could not be proved.
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
 pub enum Obligation {
@@ -2483,6 +2513,9 @@ pub enum Obligation {
         required: Box<ProvedInterval>,
         /// The interval the accepted proof forms establish.
         proved: Box<ProvedInterval>,
+        /// Source spelling for the expression, filled when source spans are
+        /// available at the compile boundary.
+        operand: OperandText,
     },
     /// A rational quotient may lie outside its `Rational[..]` domain:
     /// `unproved-range`.

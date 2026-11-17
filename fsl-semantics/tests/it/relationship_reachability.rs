@@ -546,27 +546,25 @@ fn c18_the_operand_check_is_reported_before_direction_and_multiplicity() {
     );
 }
 
-/// FR-365-AC-3 (C11): an unbounded, an ordered and a multiplicity-less
-/// destination each refuse `unsupported_construct`/`expression-form`.
+/// FR-365-AC-3: destination multiplicity does not restrict reachability.
 #[trace("TC-1046", "FR-365-AC-3", "FSpec-TC-197", "FSpec-FR-152-AC-12")]
 #[test]
-fn c11_an_unbounded_ordered_or_undeclared_destination_is_unsupported() {
+fn reachability_accepts_unbounded_ordered_and_undeclared_multiplicity() {
     for role in ["crowd", "ranked", "bare"] {
-        assert_refused(
+        assert_admitted(
             &invariant("Order", &format!("reaches(self, self, {role})")),
-            Code::UnsupportedConstruct,
-            "expression-form",
-            vec![],
+            role,
+            role,
         );
     }
 }
 
 /// FR-365-AC-3 (C12): `back`, a forward traversal of a `target-to-source`
-/// relationship with an unbounded destination, is a direction refusal, not an
-/// `expression-form`.
+/// relationship is a direction refusal even when its destination is
+/// unbounded.
 #[trace("TC-1046", "FR-365-AC-3", "FSpec-TC-197", "FSpec-FR-152-AC-12")]
 #[test]
-fn c12_direction_is_reported_before_multiplicity() {
+fn c12_direction_is_reported_before_destination_type() {
     assert_refused(
         &invariant("Order", "reaches(self, self, back)"),
         Code::IllTyped,
@@ -654,15 +652,15 @@ fn the_context_population_is_not_added_twice() {
     assert_eq!(claim_domains(&graph), 1, "orders alone");
 }
 
-/// FR-365-AC-3 (C16): `loose`'s destination fails both the multiplicity and
-/// the type check, and the multiplicity is reported first.
+/// FR-365-AC-3 (C16): `loose`'s destination type mismatch is typed after
+/// multiplicity-independent direction checking.
 #[trace("TC-1046", "FR-365-AC-3", "FSpec-TC-197", "FSpec-FR-152-AC-12")]
 #[test]
-fn c16_multiplicity_is_reported_before_destination_type() {
+fn c16_destination_type_is_checked_without_multiplicity_gating() {
     assert_refused(
         &invariant("Order", "reaches(self, self, loose)"),
-        Code::UnsupportedConstruct,
-        "expression-form",
+        Code::IllTyped,
+        "operator-ineligible",
         vec![],
     );
 }

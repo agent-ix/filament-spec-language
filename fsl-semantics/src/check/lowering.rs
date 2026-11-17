@@ -1385,6 +1385,9 @@ enum LowerFrame<'n> {
     Let(Box<LetFrame<'n>>),
     /// A one-binder operation: its source, then its body under the binder.
     Binder(Box<BinderFrame<'n>>),
+    /// `seq(i in low .. high: body)`: its bounds, then its body over the
+    /// integer-range source under the sequence binder.
+    Seq(Box<SeqFrame<'n>>),
     /// `deref(r).f` over the reference `r`, of object type `object`.
     Attribute {
         node: CheckedNode<'n>,
@@ -1487,6 +1490,17 @@ struct BinderFrame<'n> {
     operation: Operation,
     /// The source's term and the binder's name, once the source is lowered.
     bound: Option<(LeafTerm, String)>,
+}
+
+/// `seq(i in low .. high: body)`'s bounds and body under its integer binder.
+struct SeqFrame<'n> {
+    node: CheckedNode<'n>,
+    slot: Slot,
+    high: CheckedNode<'n>,
+    body: CheckedNode<'n>,
+    low_term: Option<LeafTerm>,
+    high_term: Option<LeafTerm>,
+    bound: Option<(NodeRef, String)>,
 }
 
 /// A record value's members, one binding per declared field.
@@ -5011,8 +5025,7 @@ impl<'a> Lowering<'a> {
             NodeKind::PopulationObjects { .. }
             | NodeKind::History { .. }
             | NodeKind::PlaceReference { .. }
-            | NodeKind::SlotPresence { .. }
-            | NodeKind::Seq { .. } => {
+            | NodeKind::SlotPresence { .. } => {
                 return Err(refuse(
                     node.location(),
                     CheckCause::UnsupportedFeature {
@@ -5246,6 +5259,23 @@ impl<'a> Lowering<'a> {
                     ),
                     Operands::One(operand),
                 )
+            }
+            NodeKind::Seq {
+                slot,
+                low,
+                high,
+                body,
+            } => {
+                frames.push(LowerFrame::Seq(Box::new(SeqFrame {
+                    node,
+                    slot: *slot,
+                    high: node.at(*high),
+                    body: node.at(*body),
+                    low_term: None,
+                    high_term: None,
+                    bound: None,
+                })));
+                return Ok(LowerStep::Descend(node.at(*low)));
             }
             NodeKind::Query {
                 visit,
@@ -6297,6 +6327,56 @@ impl<'a> Lowering<'a> {
                     .map(LowerStep::Lowered)
                 }
             },
+            LowerFrame::Seq(mut frame) => {
+                if frame.low_term.is_none() {
+                    frame.low_term = Some(term);
+                    let high = frame.high;
+                    frames.push(LowerFrame::Seq(frame));
+                    return Ok(LowerStep::Descend(high));
+                }
+                if frame.high_term.is_none() {
+                    let location = frame.node.location();
+                    let low = frame
+                        .low_term
+                        .take()
+                        .ok_or_else(|| fault(location, KeyFault::UnresolvedDraft))?;
+                    let integer = self.scalar("integer", location)?;
+                    let range = self.bounded(
+                        "integer_range",
+                        integer.clone(),
+                        vec![("min", low), ("max", term.clone())],
+                        location,
+                    )?;
+                    let name = self.bind(binders, frame.slot, integer, location)?;
+                    frame.high_term = Some(term);
+                    frame.bound = Some((range, name));
+                    let body = frame.body;
+                    frames.push(LowerFrame::Seq(frame));
+                    return Ok(LowerStep::Descend(body));
+                }
+                let (range, name) = frame
+                    .bound
+                    .take()
+                    .ok_or_else(|| fault(frame.node.location(), KeyFault::UnresolvedDraft))?;
+                binders.pop();
+                let leaves = self.leaves(
+                    LeafSource::ResultInner(frame.node.value_type()),
+                    frame.node.location(),
+                )?;
+                self.application(
+                    frame.node,
+                    Operator::Collection,
+                    Operation {
+                        leaves,
+                        ..plain("filament.op.collection.map")
+                    },
+                    vec![
+                        MemberTerm::reference_node(range),
+                        MemberTerm::bound(name, term),
+                    ],
+                )
+                .map(LowerStep::Lowered)
+            }
             LowerFrame::Attribute {
                 node,
                 object,

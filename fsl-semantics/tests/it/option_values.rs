@@ -38,6 +38,61 @@ fn check(
     .check(CheckMode::Linked, CheckingLimits::default())
 }
 
+fn assert_checks(declaration: &str) {
+    check(declaration).unwrap_or_else(|refusals| panic!("{declaration}: {refusals:?}"));
+}
+
+fn assert_refused(declaration: &str, code: Code, cause: &str) {
+    let refusals = check(declaration).expect_err(declaration);
+    let [refusal] = refusals.as_slice() else {
+        panic!("one refusal for {declaration}: {refusals:?}");
+    };
+    assert_eq!(refusal.cause.code(), code, "{refusal:?}");
+    assert_eq!(refusal.cause.cause(), Some(cause), "{refusal:?}");
+}
+
+#[trace("TC-1823", "FR-680-AC-4", "FSpec-FR-143-AC-21")]
+#[test]
+fn some_literal_checks_as_an_option_int_result() {
+    assert_checks("function f using v(): Option<Int[0, 9]> pure { Some(3) }");
+}
+
+#[trace("TC-1823", "FR-680-AC-4", "FSpec-FR-143-AC-21")]
+#[test]
+fn some_literal_checks_as_an_equality_operand() {
+    assert_checks(
+        "function f using v(x: Option<Int[0, 9]>): Boolean pure { x = Some(3) }",
+    );
+}
+
+#[trace("TC-1823", "FR-680-AC-4", "FSpec-FR-143-AC-21")]
+#[test]
+fn some_literal_out_of_range_refuses() {
+    assert_refused(
+        "function f using v(): Option<Int[0, 9]> pure { Some(30) }",
+        Code::IllTyped,
+        "type-mismatch",
+    );
+}
+
+#[trace("TC-1823", "FR-680-AC-4", "FSpec-FR-143-AC-21")]
+#[test]
+fn some_of_a_decimal_literal_payload_checks_against_a_decimal_option() {
+    assert_checks(
+        "function f using v(): Option<Decimal[0, 9; 0, 0; exact]> pure { Some(decimal(3, 0)) }",
+    );
+}
+
+#[trace("TC-1823", "FR-680-AC-4", "FSpec-FR-143-AC-21")]
+#[test]
+fn some_with_a_payload_of_the_wrong_kind_refuses() {
+    assert_refused(
+        "function f using v(): Option<Int[0, 9]> pure { Some(true) }",
+        Code::IllTyped,
+        "type-mismatch",
+    );
+}
+
 /// TC-1273's S3 negative vector: Some(Integer) does not match Option<Boolean>.
 #[trace("TC-1273")]
 #[test]

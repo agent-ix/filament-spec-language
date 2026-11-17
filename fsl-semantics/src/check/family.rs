@@ -596,6 +596,11 @@ fn encode_expression(
                 pending.push(expr.at(*selector));
                 pending.push(expr.at(*place));
             }
+            ExprNode::Index { operand, index } => {
+                out.write_str("index");
+                pending.push(expr.at(*index));
+                pending.push(expr.at(*operand));
+            }
             ExprNode::Ref(operand) => {
                 out.write_str("ref");
                 pending.push(expr.at(*operand));
@@ -845,6 +850,7 @@ fn measure_type_form(out: &mut DeclarationMeter, root: &fsl_forms::TypeForm) {
                 BuiltinType::Float64 => "Float64",
                 BuiltinType::Text => "Text",
                 BuiltinType::Option => "Option",
+                BuiltinType::Map => "Map",
                 BuiltinType::Reference => "Reference",
                 BuiltinType::Quantity => "Quantity",
                 BuiltinType::Clock => "Clock",

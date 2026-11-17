@@ -25,8 +25,8 @@ use super::check::SourceScope;
 use super::refusal::{CheckCause, CheckRefusal};
 use filament_exact::{
     CardinalityBound, CarriedQuantityType, CollectionKind, CollectionType, DecimalType,
-    EffectiveId, FloatType, IeeeWidth, IllTypedCause, Integer, IntegerInterval, QuantityCarrier,
-    RationalDomain, RoundingMode, TextProfile, TextType, UnitId, ValueType,
+    EffectiveId, FloatType, IeeeWidth, IllTypedCause, Integer, IntegerInterval, MapType,
+    QuantityCarrier, RationalDomain, RoundingMode, TextProfile, TextType, UnitId, ValueType,
 };
 use filament_semantic_value::location::ExpressionLocation as Location;
 use fsl_forms::{BuiltinType, NameForm, TypeForm, TypeFormHead};
@@ -161,6 +161,8 @@ pub enum TypeFormFault {
     /// A bound is missing, is not a number or a grammar spelling, or the
     /// form has the wrong number of type arguments.
     Malformed,
+    /// A map key is not a scalar type (FR-680).
+    IneligibleMapKey,
     /// An `Int` or `Rational` interval whose lower bound is above its
     /// upper bound (`IntegerInterval`'s own refusal).
     EmptyInterval,
@@ -208,6 +210,9 @@ impl TypeFormError {
                 name,
                 loci: vec![location.clone()],
             },
+            TypeFormFault::IneligibleMapKey => {
+                CheckCause::IllTyped(IllTypedCause::OperatorIneligible)
+            }
             TypeFormFault::IntegerOutsideI128(outside) => CheckCause::IntegerOutsideI128(outside),
             TypeFormFault::ClockNotChecked => CheckCause::TimedNotChecked {
                 construct: super::refusal::TimedConstruct::Clock,
@@ -401,6 +406,12 @@ enum Step<'f> {
         form: &'f TypeForm,
         argument: &'f TypeForm,
     },
+    /// A source `Map<K, V>`: builds its key and value types.
+    Map {
+        form: &'f TypeForm,
+        key: &'f TypeForm,
+        values: &'f TypeForm,
+    },
 }
 
 fn resolve_builtin<'f>(
@@ -449,6 +460,12 @@ fn resolve_builtin<'f>(
                 form,
                 argument: only_argument(form)?,
             })
+        }
+        BuiltinType::Map => {
+            let [key, values] = form.arguments.as_slice() else {
+                return Err(malformed(form));
+            };
+            return Ok(Step::Map { form, key, values });
         }
         BuiltinType::Clock => Err(fault(form, TypeFormFault::ClockNotChecked)),
         BuiltinType::Reference => {
@@ -599,7 +616,9 @@ fn carried_quantity_type(
                     ValueType::Decimal(decimal) => decimal.clone(),
                     _ => return Err(malformed(form)),
                 },
-                Step::Option { .. } | Step::Collection { .. } => return Err(malformed(form)),
+                Step::Option { .. } | Step::Collection { .. } | Step::Map { .. } => {
+                    return Err(malformed(form))
+                }
             };
             QuantityCarrier::Decimal(decimal)
         }
@@ -610,7 +629,9 @@ fn carried_quantity_type(
                     ValueType::Rational(domain) => domain.clone(),
                     _ => return Err(malformed(form)),
                 },
-                Step::Option { .. } | Step::Collection { .. } => return Err(malformed(form)),
+                Step::Option { .. } | Step::Collection { .. } | Step::Map { .. } => {
+                    return Err(malformed(form))
+                }
             };
             QuantityCarrier::Rational(domain)
         }
@@ -726,6 +747,12 @@ impl<'f, N: TypeNames> filament_walk::Walk for Resolver<'_, 'f, N> {
                 self.gauge.enter(1);
                 children.push(argument);
             }
+            Step::Map { key, values, .. } => {
+                #[cfg(test)]
+                self.gauge.enter(2);
+                children.push(key);
+                children.push(values);
+            }
         }
         ControlFlow::Continue(step)
     }
@@ -771,6 +798,44 @@ impl<N: TypeNames> Resolver<'_, '_, N> {
                 Ok(ValueType::collection(CollectionType::new(
                     kind, element, bound,
                 )))
+            }
+            Step::Map { form, .. } => {
+                let values = self.resolved.pop().ok_or_else(|| malformed(form))?;
+                let key = self.resolved.pop().ok_or_else(|| malformed(form))?;
+                optional_bounds(form, 2)?;
+                let bound = if form.bounds.is_empty() {
+                    None
+                } else {
+                    let minimum = bound_u64(form, 0)?;
+                    let maximum = bound_u64(form, 1)?;
+                    Some(
+                        CardinalityBound::new(minimum, maximum)
+                            .map_err(|_| fault(form, TypeFormFault::EmptyCardinality))?,
+                    )
+                };
+                let scalar_key = matches!(
+                    &key,
+                    ValueType::Boolean
+                        | ValueType::Integer
+                        | ValueType::Int(_)
+                        | ValueType::Rational(_)
+                        | ValueType::Decimal(_)
+                        | ValueType::Float(_)
+                        | ValueType::Text(_)
+                        | ValueType::String
+                        | ValueType::Uuid
+                        | ValueType::Timestamp
+                        | ValueType::Enum(_)
+                );
+                if !scalar_key {
+                    return Err(fault(
+                        form.arguments.first().unwrap_or(form),
+                        TypeFormFault::IneligibleMapKey,
+                    ));
+                }
+                MapType::new(key, values, bound)
+                    .map(ValueType::map)
+                    .map_err(|_| fault(form, TypeFormFault::Malformed))
             }
         }
     }
@@ -878,6 +943,49 @@ mod tests {
                 assert!(peak <= DEPTH + 1, "{stack} peaked at {peak}");
             }
         }
+    }
+
+    /// FR-680-AC-3 (TC-1822): a source map resolves its scalar key, value and
+    /// cardinality bound; a collection key is refused as operator-ineligible.
+    #[trace("FR-680-AC-3", "TC-1822")]
+    #[test]
+    fn source_map_type_resolves_and_requires_a_scalar_key() {
+        let map = TypeForm::builtin(BuiltinType::Map, SPAN)
+            .with_arguments(vec![
+                builtin(BuiltinType::Int, &["0", "3"]),
+                builtin(BuiltinType::Integer, &[]),
+            ])
+            .with_bounds(vec!["0".to_owned(), "4".to_owned()]);
+        let resolved = resolve(&map).expect("a bounded source map with scalar key resolves");
+        let ValueType::Map(resolved) = &resolved else {
+            panic!("map type, not {resolved:?}");
+        };
+        assert_eq!(
+            resolved.key(),
+            &ValueType::Int(
+                IntegerInterval::new(Integer::from(0_i64), Integer::from(3_i64))
+                    .expect("ordered bounds"),
+            )
+        );
+        assert_eq!(resolved.values(), &ValueType::Integer);
+        assert_eq!(
+            resolved.bound(),
+            Some(CardinalityBound::new(0, 4).expect("ordered bounds"))
+        );
+
+        let nested_key = TypeForm::new(TypeFormHead::Collection(CollectionKind::Sequence), SPAN)
+            .with_arguments(vec![builtin(BuiltinType::Integer, &[])]);
+        let invalid = TypeForm::builtin(BuiltinType::Map, SPAN)
+            .with_arguments(vec![nested_key, builtin(BuiltinType::Integer, &[])]);
+        let refusal = resolve(&invalid).expect_err("a collection map key is refused");
+        assert!(
+            matches!(
+                refusal.cause,
+                CheckCause::IllTyped(IllTypedCause::OperatorIneligible)
+            ),
+            "unexpected cause: {:?}",
+            refusal.cause
+        );
     }
 
     fn builtin(builtin: BuiltinType, bounds: &[&str]) -> TypeForm {

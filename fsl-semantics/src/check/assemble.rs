@@ -814,7 +814,9 @@ impl AssemblyCause {
                 TopologyFault::TwoRoots => "conflicting-definition",
                 TopologyFault::TargetCycle => "definition-cycle",
             },
-            Self::IllFormedBounds(TypeFormFault::UnitArithmetic(_)) => "operator-ineligible",
+            Self::IllFormedBounds(
+                TypeFormFault::UnitArithmetic(_) | TypeFormFault::IneligibleMapKey,
+            ) => "operator-ineligible",
             Self::IllFormedBounds(_) | Self::OverNotObjectType { .. } => "type-mismatch",
             Self::ImportedTypeName { .. } => "operator-ineligible",
             Self::FloatingType { .. } | Self::UnsupportedModelMember { .. } => {
@@ -3221,6 +3223,7 @@ fn expression_type_forms<'e>(roots: impl IntoIterator<Item = &'e Expression>) ->
                 | ExprNode::Deref(_)
                 | ExprNode::Ref(_)
                 | ExprNode::Select { .. }
+                | ExprNode::Index { .. }
                 | ExprNode::Call { .. }
                 | ExprNode::Record { .. }
                 | ExprNode::Collection { .. }
@@ -3359,7 +3362,8 @@ fn check_names(
                 | BuiltinType::Rational
                 | BuiltinType::Decimal
                 | BuiltinType::Text
-                | BuiltinType::Option,
+                | BuiltinType::Option
+                | BuiltinType::Map,
             )
             | TypeFormHead::Collection(_)
             | TypeFormHead::Population
@@ -3407,7 +3411,8 @@ fn resolution_error(unit: &Unit, error: TypeFormError) -> AssemblyError {
         | TypeFormFault::MalformedDecimal
         | TypeFormFault::EmptyTextBounds
         | TypeFormFault::EmptyCardinality
-        | TypeFormFault::UnitArithmetic(_)) => AssemblyCause::IllFormedBounds(fault),
+        | TypeFormFault::UnitArithmetic(_)
+        | TypeFormFault::IneligibleMapKey) => AssemblyCause::IllFormedBounds(fault),
         TypeFormFault::UnitIdentity(cause) => {
             AssemblyCause::handle(NodeKeyRefusal::Identity(cause))
         }

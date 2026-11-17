@@ -24,6 +24,7 @@ mod checker_rulings;
 mod child_composite;
 #[cfg(feature = "test-support")]
 mod clock_places;
+mod collection_index;
 mod complete_value_lock;
 mod diagnostic_messages;
 #[cfg(feature = "test-support")]

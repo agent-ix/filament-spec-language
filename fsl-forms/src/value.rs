@@ -758,6 +758,7 @@ fn type_head(cst: &LosslessCst, node: &CstNode) -> Result<TypeForm, FormsRefusal
         b"Quantity" => TypeFormHead::Builtin(BuiltinType::Quantity),
         b"Clock" => TypeFormHead::Builtin(BuiltinType::Clock),
         b"Population" => TypeFormHead::Population,
+        b"Map" => TypeFormHead::Builtin(BuiltinType::Map),
         b"Sequence" => TypeFormHead::Collection(CollectionKind::Sequence),
         b"Set" => TypeFormHead::Collection(CollectionKind::Set),
         b"Bag" => TypeFormHead::Collection(CollectionKind::Bag),
@@ -821,11 +822,11 @@ enum Shape {
     Power(Integer),
     Not,
     Field(String, Span),
+    Index,
     Present,
     Value,
     Deref,
     Ref,
-    Select,
     Pre,
     Call(NameForm),
     /// Field names in source order, each with whether its value is `null`.
@@ -1022,6 +1023,13 @@ impl Shape {
                     member_span: Some(member_span),
                 }
             }
+            Self::Index => {
+                arity(2)?;
+                ExprNode::Index {
+                    operand: operands.next()?,
+                    index: operands.next()?,
+                }
+            }
             Self::Present => {
                 arity(1)?;
                 ExprNode::Present(operands.next()?)
@@ -1033,13 +1041,6 @@ impl Shape {
             Self::Deref => {
                 arity(1)?;
                 ExprNode::Deref(operands.next()?)
-            }
-            Self::Select => {
-                arity(2)?;
-                ExprNode::Select {
-                    place: operands.next()?,
-                    selector: operands.next()?,
-                }
             }
             Self::Ref => {
                 arity(1)?;
@@ -1845,19 +1846,10 @@ impl<'c> Mapping<'c> {
                     suffixes.push((shape, end, arguments));
                 }
                 Item::Token(token) if token.spelling() == b"[" => {
-                    // FR-091 "Unrepresented constructs", FR-230 "Selection":
-                    // a selector directly after a field access or another
-                    // selector (`r.f[s]`) builds as a `Select`, and the
-                    // checker decides whether the whole is a clock place
-                    // expression; a selector after anything else (`xs[0]`,
-                    // `r.f()[s]`) is unrepresented.
                     let ahead = rest.clone();
-                    let selects_a_field =
-                        matches!(suffixes.last(), Some((Shape::Field(..) | Shape::Select, ..)));
                     let selector = match (rest.next(), rest.next()) {
                         (Some(Item::Node(selector)), Some(Item::Token(close)))
-                            if selects_a_field
-                                && selector.production() == Production::Expression
+                            if selector.production() == Production::Expression
                                 && close.spelling() == b"]" =>
                         {
                             Some((*selector, close.span().end))
@@ -1884,7 +1876,7 @@ impl<'c> Mapping<'c> {
                             ConstructKind::IndexSelection,
                         ));
                     };
-                    suffixes.push((Shape::Select, end, vec![selector]));
+                    suffixes.push((Shape::Index, end, vec![selector]));
                 }
                 Item::Token(_) | Item::Node(_) => return Err(unexpected(node)),
             }

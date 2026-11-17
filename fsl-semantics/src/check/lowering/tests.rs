@@ -19,7 +19,7 @@ use serde_json::{json, Value as Json};
 use super::*;
 use crate::check::depth_forms::{binary, boolean, function, int_form, integer_expr, name_expr};
 use crate::check::family::fixtures::{admitted_source, empty_scope, fixture_source, scope_with};
-use crate::check::{CheckedGraph, PackageDeclarations};
+use crate::check::{CheckedBody, CheckedGraph, PackageDeclarations};
 use filament_semantic_value::checking::CheckingLimits;
 use filament_semantic_value::declaration::{
     CompositeDeclaration, FieldDeclaration, TypeEnvironment,
@@ -638,6 +638,74 @@ fn binder_levels_count_enclosing_binders() {
     assert_eq!(
         arguments[1]["value"]["target"]["digest"],
         json!(exists_key.to_string())
+    );
+}
+
+/// FR-391-AC-10: `seq(i in low .. high: i)` lowers as a collection map over
+/// the checked integer range, with the sequence binder as its map binding.
+#[trace("FR-391-AC-10", "TC-544")]
+#[test]
+fn seq_lowers_as_a_map_over_its_integer_range() {
+    let sequence = ValueType::collection(CollectionType::new(
+        CollectionKind::Sequence,
+        int(0, 2),
+        Some(CardinalityBound::new(0, 3).expect("bound")),
+    ));
+    let checked = CheckedBody::fixture(
+        vec![ValueType::Integer; 3],
+        |ids| NodeKind::Seq {
+            slot: 0,
+            low: ids[0],
+            high: ids[1],
+            body: ids[2],
+        },
+        sequence,
+    );
+    let scope = empty_scope();
+    let owner = SourceOwner::from(&fixture_source());
+    let mut occurrences = OccurrenceMap::default();
+    let location = generated_location();
+    let mut meter = Meter::new(crate::check::family::SCALAR_LIMITS_UNLIMITED);
+    let mut lowering = Lowering::new_with_source_owners(
+        &scope,
+        &owner,
+        &std::collections::BTreeMap::new(),
+        &[],
+        &[],
+        scope.types().units().clone(),
+        None,
+        0,
+        &mut occurrences,
+        &mut meter,
+        "fixture",
+    );
+    let slot_names = vec!["i".to_owned()];
+    let mut binders = Binders::new(&slot_names, &[]);
+    lowering
+        .expression(checked.root(), &mut binders)
+        .expect("seq lowers");
+    let semantic = lowering.finish(&location).expect("lowering finishes").graph;
+    let map = application(&semantic, "filament.op.collection.map");
+    let arguments = &map["body"]["arguments"];
+    assert_eq!(arguments[0]["term"], "reference");
+    let range_key = arguments[0]["target"]["digest"]
+        .as_str()
+        .expect("range source key");
+    let range = semantic
+        .nodes()
+        .find(|node| node.key().to_string() == range_key)
+        .expect("the map source is its integer range");
+    assert_eq!(range.semantic_form(), "integer_range");
+    assert_eq!(arguments[1]["term"], "binding");
+    assert_eq!(arguments[1]["name"], "i");
+    assert_eq!(
+        arguments[1]["value"]["term"], "reference",
+        "the fixture body references its third literal operand"
+    );
+    let _ = parameter_named(&semantic, "i");
+    assert_eq!(
+        map["body"]["operation"]["identity"],
+        "filament.op.collection.map"
     );
 }
 

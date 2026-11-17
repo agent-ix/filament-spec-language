@@ -974,6 +974,35 @@ fn one_occurrence_forms_fix_their_arity_in_the_grammar() {
     }
 }
 
+/// FR-680-AC-2 and AC-3 (TC-1821, TC-1822): tuple positions use bracket
+/// indexing, and maps are writable source type references with optional bounds.
+#[trace("FR-680-AC-2", "FR-680-AC-3", "TC-1821", "TC-1822")]
+#[test]
+fn tuple_position_reads_and_map_types_parse() {
+    let tuple_read = source(
+        "tuple Pair(Boolean, Integer);\nfunction f using Complete (p: Pair): Boolean pure { p[0] }",
+    );
+    let tuple_parsed = parse("tuple-position", &tuple_read);
+    assert!(
+        tuple_parsed.is_admissible(),
+        "{:?}",
+        tuple_parsed.diagnostics()
+    );
+
+    let map_type = source(
+        "function values using Complete (m: Map<Int[0, 3], Integer>[0, 4]): Integer pure { size(m) }",
+    );
+    assert!(parse("map-type", &map_type).is_admissible());
+
+    let tuple_dot = source(
+        "tuple Pair(Boolean, Integer);\nfunction f using Complete (p: Pair): Boolean pure { p.0 }",
+    );
+    assert_eq!(
+        first_diagnostic("tuple-dot", tuple_dot.as_bytes()),
+        (CompleteCode::InvalidSyntax, CompleteCause::UnexpectedToken)
+    );
+}
+
 /// FR-001-AC-6, AC-11: the complete reader carries `blank-label` with the
 /// first blank label, and `empty-path` only when every label is non-blank;
 /// neither names a region.

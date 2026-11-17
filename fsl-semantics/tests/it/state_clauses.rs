@@ -5913,7 +5913,6 @@ const DEBITED: &str = "post Debited using v on Config::ConfigVersion::withdraw \
 #[trace("TC-1416", "FR-577-AC-2")]
 #[trace("FSpec-TC-1360", "FSpec-FR-146-AC-17")]
 #[test]
-#[ignore = "QSL-2177: precondition facts discharging a postcondition's range obligation not implemented yet"]
 fn a_precondition_fact_discharges_a_postcondition_difference() {
     let document = withdraw_document();
     let before = check(&document, &format!("{CAN_AFFORD}{DEBITED}"));
@@ -5930,7 +5929,6 @@ fn a_precondition_fact_discharges_a_postcondition_difference() {
 #[trace("TC-1416", "FR-577-AC-8")]
 #[trace("FSpec-TC-1360", "FSpec-FR-146-AC-18")]
 #[test]
-#[ignore = "QSL-2177: difference facts from a non-literal integer ordering not implemented yet"]
 fn strict_flipped_and_negated_orderings_record_the_difference_bound() {
     let document = withdraw_document();
     let strict = "pre CanAfford using v on Config::ConfigVersion::withdraw \
@@ -5980,7 +5978,6 @@ fn a_range_obligation_not_provable_from_the_precondition_still_refuses() {
 #[trace("TC-1416", "FR-577-AC-26")]
 #[trace("FSpec-TC-1360", "FSpec-FR-146-AC-17")]
 #[test]
-#[ignore = "QSL-2177: precondition facts and the redefinition-family exclusion not implemented yet"]
 fn a_redefinition_family_transfers_no_precondition_fact() {
     let document = redefined_withdraw_document();
     assert_eq!(

@@ -2421,6 +2421,7 @@ fn check_match(
                 | ExprNode::Deref(_)
                 | ExprNode::Ref(_)
                 | ExprNode::Select { .. }
+                | ExprNode::Index { .. }
                 | ExprNode::Record { .. }
                 | ExprNode::Collection { .. }
                 | ExprNode::Convert { .. }
@@ -2877,6 +2878,7 @@ fn is_opaque(node: &ExprNode) -> bool {
         | ExprNode::Deref(_)
         | ExprNode::Ref(_)
         | ExprNode::Select { .. }
+        | ExprNode::Index { .. }
         | ExprNode::Call { .. }
         | ExprNode::Size { .. }
         | ExprNode::Contains { .. }
@@ -3068,6 +3070,7 @@ fn leaf_payload(node: &ExprNode, swap: Swap<'_>) -> (Vec<u8>, Vec<u8>) {
         ExprNode::Deref(_) => (b"deref".to_vec(), Vec::new()),
         ExprNode::Ref(_) => (b"ref".to_vec(), Vec::new()),
         ExprNode::Select { .. } => (b"select".to_vec(), Vec::new()),
+        ExprNode::Index { .. } => (b"index".to_vec(), Vec::new()),
         ExprNode::Pre(_) => (b"pre".to_vec(), Vec::new()),
         ExprNode::Size { type_argument, .. } => (
             b"size".to_vec(),
@@ -3152,6 +3155,7 @@ fn encode_type_form(root: &fsl_forms::TypeForm) -> Vec<u8> {
                     fsl_forms::BuiltinType::Text => "text",
                     fsl_forms::BuiltinType::Option => "option",
                     fsl_forms::BuiltinType::Reference => "reference",
+                    fsl_forms::BuiltinType::Map => "map",
                     fsl_forms::BuiltinType::Quantity => "quantity",
                     fsl_forms::BuiltinType::Clock => "clock",
                 };
@@ -3784,5 +3788,14 @@ mod tests {
         let second = encode_expression(&second, Swap(None, None), &[]).root;
 
         assert_ne!(swapped_first, second);
+    }
+
+    #[test]
+    fn map_type_form_has_a_distinct_copy_swap_encoding() {
+        let span = Span { start: 0, end: 0 };
+        let map = fsl_forms::TypeForm::builtin(fsl_forms::BuiltinType::Map, span);
+        let option = fsl_forms::TypeForm::builtin(fsl_forms::BuiltinType::Option, span);
+
+        assert_ne!(encode_type_form(&map), encode_type_form(&option));
     }
 }

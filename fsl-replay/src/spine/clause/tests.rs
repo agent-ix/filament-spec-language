@@ -5039,6 +5039,7 @@ mod observation_limits;
 mod one_source;
 mod operation_contract_run;
 mod ordered_end_positions;
+mod postcondition_range;
 mod pre_call_invocation;
 mod protocol_premises;
 pub(super) mod receiver_frames;

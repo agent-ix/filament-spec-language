@@ -1962,6 +1962,7 @@ mod tests {
             ExprNode::Deref(_) => "Deref",
             ExprNode::Ref(_) => "Ref",
             ExprNode::Select { .. } => "Select",
+            ExprNode::Index { .. } => "Index",
             ExprNode::Call { .. } => "Call",
             ExprNode::Record { .. } => "Record",
             ExprNode::Collection { .. } => "Collection",
