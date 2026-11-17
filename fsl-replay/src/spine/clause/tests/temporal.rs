@@ -723,7 +723,7 @@ pub(in crate::spine::clause::tests) fn report(mut request: ClauseRunRequest) -> 
                 .replace("3 mod (2 - q.value)", "temporal_mod_undefined(q)");
             let mut modified = source.into_bytes();
             modified.extend_from_slice(
-                b"\nfunction temporal_mod_undefined using v(c: Counters::Counter): Boolean pure { 3 mod (2 - c.value) >= 0 }\n",
+                b"\nfunction temporal_mod_undefined using v(c: Counters::Counter): Integer pure { 3 mod (2 - c.value) }\n",
             );
             *bytes = modified;
         }
