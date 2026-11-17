@@ -36,6 +36,8 @@ pub enum ChannelOrdering {
         binder: Box<ParameterForm>,
         /// The key expression over the binder.
         key: ExpressionForm,
+        /// The key expression's exact source text.
+        key_text: String,
     },
 }
 
@@ -366,12 +368,24 @@ fn ordering_form(cst: &LosslessCst, ordering: &CstNode) -> Result<ChannelOrderin
         return Ok(ChannelOrdering::Unordered);
     }
     if has_token(&ordering_items, b"fifo") {
+        let key = block_expression(cst, only(&ordering_items, Production::Block, ordering)?)?;
+        let key_span = key
+            .spans
+            .span(key.spans.root())
+            .ok_or_else(|| unexpected(ordering))?;
+        let key_text = cst
+            .source()
+            .text()
+            .get(key_span.start..key_span.end)
+            .ok_or_else(|| unexpected(ordering))?
+            .to_owned();
         return Ok(ChannelOrdering::Fifo {
             binder: Box::new(parameter_form(
                 cst,
                 only(&ordering_items, Production::Parameter, ordering)?,
             )?),
-            key: block_expression(cst, only(&ordering_items, Production::Block, ordering)?)?,
+            key,
+            key_text,
         });
     }
     Err(unexpected(ordering))

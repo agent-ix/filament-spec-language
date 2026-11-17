@@ -262,11 +262,16 @@ fn check_channel(
     };
     let ordering = match &channel.ordering.value {
         ChannelOrdering::Unordered => Some(CheckedOrdering::Unordered),
-        ChannelOrdering::Fifo { binder, key } => check_fifo(
+        ChannelOrdering::Fifo {
+            binder,
+            key,
+            key_text,
+        } => check_fifo(
             protocol,
             channel,
             binder,
             key,
+            key_text,
             carries.as_ref(),
             keys,
             refusals,
@@ -298,6 +303,7 @@ fn check_fifo(
     channel: &ChannelForm,
     binder: &ParameterForm,
     key: &ExpressionForm,
+    key_text: &str,
     carries: Option<&ValueType>,
     keys: &mut Keys<'_, '_, '_>,
     refusals: &mut Vec<(Span, CheckRefusal)>,
@@ -377,6 +383,8 @@ fn check_fifo(
             span,
             refusal(ProtocolAnchorCause::KeyEquality {
                 channel: name.to_owned(),
+                operator: "=".to_owned(),
+                key_text: key_text.to_owned(),
                 key_type: Box::new(key_type),
                 span,
             }),
@@ -405,6 +413,8 @@ fn check_fifo(
             span,
             refusal(ProtocolAnchorCause::KeyEquality {
                 channel: name.to_owned(),
+                operator: "=".to_owned(),
+                key_text: key_text.to_owned(),
                 key_type: Box::new(key_type),
                 span,
             }),

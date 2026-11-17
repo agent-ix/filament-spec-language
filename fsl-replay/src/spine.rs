@@ -1381,9 +1381,14 @@ fn check_message(refusals: &[CheckRefusal]) -> String {
                     format!("{message}: the FIFO key of channel `{channel}` reads model state")
                 }
                 ProtocolAnchorCause::KeyEquality {
-                    channel, key_type, ..
+                    channel,
+                    operator,
+                    key_text,
+                    key_type,
+                    ..
                 } => format!(
-                    "{message}: key type {} of channel {channel} is not FIFO-key-stable",
+                    "{message}: key type {} of channel {channel} is not FIFO-key-stable \
+                     (key {operator} {key_text})",
                     value_type_source(key_type)
                 ),
                 ProtocolAnchorCause::SlotClause { node, slot, cause, .. } => format!(
@@ -3124,13 +3129,16 @@ mod tests {
             location: Location::root(Origin::Expression),
             cause: CheckCause::ProtocolAnchor(Box::new(ProtocolAnchorCause::KeyEquality {
                 channel: "Q".to_owned(),
+                operator: "=".to_owned(),
+                key_text: "m.ready".to_owned(),
                 key_type: Box::new(ValueType::Integer),
                 span: Span { start: 0, end: 1 },
             })),
         };
         let message = check_message(&[refusal]);
         assert!(
-            message.ends_with("key type Integer of channel Q is not FIFO-key-stable"),
+            message
+                .ends_with("key type Integer of channel Q is not FIFO-key-stable (key = m.ready)"),
             "{message}"
         );
     }

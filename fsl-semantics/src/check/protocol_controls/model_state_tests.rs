@@ -180,12 +180,18 @@ fn a_fifo_key_admits_equality() {
     let (cause, pair, at) = only(&text);
     assert_eq!(pair, ("ill_typed", Some("operator-ineligible")));
     let ProtocolAnchorCause::KeyEquality {
-        channel, key_type, ..
+        channel,
+        operator,
+        key_text,
+        key_type,
+        ..
     } = &cause
     else {
         panic!("a key-equality refusal, got {cause:?}");
     };
     assert_eq!(channel, "Q");
+    assert_eq!(operator, "=");
+    assert_eq!(key_text, "m");
     assert!(matches!(**key_type, ValueType::Composite(_)));
     assert_eq!(at, "m");
 }
@@ -199,10 +205,18 @@ fn an_ieee_fifo_key_refuses_at_the_key() {
         let text = with_channel(carries, &format!("fifo by (m: {carries}) {{ m }}"));
         let (cause, pair, at) = only(&text);
         assert_eq!(pair, ("ill_typed", Some("operator-ineligible")));
-        let ProtocolAnchorCause::KeyEquality { channel, .. } = &cause else {
+        let ProtocolAnchorCause::KeyEquality {
+            channel,
+            operator,
+            key_text,
+            ..
+        } = &cause
+        else {
             panic!("a FIFO-key-stable refusal, got {cause:?}");
         };
         assert_eq!(channel, "Q");
+        assert_eq!(operator, "=");
+        assert_eq!(key_text, "m");
         assert_eq!(at, "m");
     }
 }

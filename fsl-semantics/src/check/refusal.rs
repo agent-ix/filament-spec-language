@@ -414,6 +414,10 @@ pub enum ProtocolAnchorCause {
     KeyEquality {
         /// The channel's declared name.
         channel: String,
+        /// The equality operator used to establish FIFO-key stability.
+        operator: String,
+        /// The key expression as written in source.
+        key_text: String,
         /// The key's type.
         key_type: Box<filament_exact::ValueType>,
         /// The key.
