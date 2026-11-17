@@ -290,11 +290,17 @@ fn production_tree(parsed: &ParsedSource) -> ProductionTree {
         let children = node
             .children()
             .iter()
-            .map(|child| match child {
-                CstElement::Token(_) => ProductionChild::Token,
-                CstElement::Node(index) => {
-                    ProductionChild::Node(visit(parsed, &parsed.cst().nodes()[*index]))
+            .filter_map(|child| match child {
+                CstElement::Token(index)
+                    if parsed.cst().tokens()[*index].class() == TokenClass::Token =>
+                {
+                    Some(ProductionChild::Token)
                 }
+                CstElement::Token(_) => None,
+                CstElement::Node(index) => Some(ProductionChild::Node(visit(
+                    parsed,
+                    &parsed.cst().nodes()[*index],
+                ))),
             })
             .collect();
         ProductionTree {
