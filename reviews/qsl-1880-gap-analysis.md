@@ -92,3 +92,15 @@ FND-003 after excerpt:
 ```rust
 assert_ne!(source_node["node_id"], selected_model_node["node_id"]);
 ```
+
+### Round 3
+
+| FND | Outcome | Reason |
+| --- | --- | --- |
+| FND-003 | fixed | The selected-model/source-owned comparison is now asserted, and the AC-7 tests carry the TC-1408 tag. |
+
+FND-003 after excerpt:
+
+```rust
+assert_ne!(source_node["node_id"], selected_model_node["node_id"]);
+```

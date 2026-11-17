@@ -16,6 +16,7 @@ use fsl_semantics::{
         intake::{admit_unit, package_input, PackageInput},
     },
 };
+use ix_trace_rs::trace;
 use serde_json::{json, Value};
 
 fn checked_source_object() -> (CheckedPackage, filament_contract_model::CheckedPackageV2) {
@@ -71,6 +72,7 @@ fn checked_source_object() -> (CheckedPackage, filament_contract_model::CheckedP
     (package, *checked)
 }
 
+#[trace("FR-531-AC-8", "FR-569-AC-8", "TC-1408")]
 #[test]
 fn public_source_object_rows_constructor_serializes_nonempty_member_facts() {
     let (source_package, checked_package) = checked_source_object();

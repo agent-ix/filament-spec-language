@@ -86,3 +86,28 @@ assert!(object_json.get("is_abstract").is_none());
 | FND | Outcome | Reason |
 | --- | --- | --- |
 | FND-002 | still-open | The constructor now takes `Vec<Vec<crate::emit::SourceObjectMemberFacts>>`, but `emit` is a private module and its facts field is crate-private on `Emission`. External callers still cannot provide source-object member facts to this public constructor. |
+
+### New findings (disposition pass 3)
+
+| ID | Severity | Summary | Refs |
+| --- | --- | --- | --- |
+| FND-003 | low | The new public integration test has no trace tag, so its public-constructor evidence is not bound to FR-531-AC-8 / FR-569-AC-8. | fsl-package/tests/source_object_identity_rows_public.rs:74-114 |
+
+### FND-003 — public integration test is untraced
+
+This repository traces integration tests with `#[trace(...)]` (for example, the adjacent public API tests in `fsl-package/tests/`). The new `public_source_object_rows_constructor_serializes_nonempty_member_facts` test has only `#[test]`; its evidence for the source-object identity-file and public constructor requirements is therefore omitted from the trace matrix. Add FR-531-AC-8 / FR-569-AC-8 and TC-1408 trace ids.
+
+### Round 3
+
+| FND | Outcome | Reason |
+| --- | --- | --- |
+| FND-002 | fixed | The source facts type is re-exported from the crate root, `Emission::source_object_member_facts()` exposes them, and the external integration test constructs and serializes nonempty facts successfully. |
+| FND-003 | still-open | The new integration test remains untagged; its public-constructor evidence is not trace-linked. |
+
+FND-002 after excerpt:
+
+```rust
+pub fn source_object_member_facts(&self) -> &[Vec<SourceObjectMemberFacts>] {
+    &self.source_object_member_facts
+}
+```
