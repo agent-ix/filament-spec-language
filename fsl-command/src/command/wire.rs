@@ -44,6 +44,75 @@ pub(super) struct CompileRequest {
     /// when absent.
     #[serde(default, deserialize_with = "deserialize_objects")]
     pub libraries: Vec<Library>,
+    /// FR-640: the clock configurations by clock name; empty when absent.
+    #[serde(default, deserialize_with = "clocks")]
+    pub clocks: fsl_replay::spine::RequestClocks,
+    /// FR-810: the file the checked package is written to; none when absent.
+    #[serde(default, deserialize_with = "from_object_opt")]
+    pub output: Option<OutputMember>,
+    /// FR-665: checked-package handoff written after compilation succeeds.
+    #[serde(default, deserialize_with = "from_object_opt")]
+    pub handoff: Option<Handoff>,
+}
+
+/// FR-665's checked-package handoff selection.
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(super) struct Handoff {
+    pub directory: String,
+    pub package_name: String,
+    #[serde(default)]
+    pub execution_points: std::collections::BTreeMap<String, serde_json::Value>,
+    #[serde(default, deserialize_with = "handoff_corpus")]
+    pub corpus: HandoffCorpus,
+    #[serde(default, deserialize_with = "from_object_opt")]
+    pub native_join: Option<NativeJoin>,
+}
+
+/// The adverse corpus requested for a handoff.
+#[derive(Clone, Copy, Default)]
+pub(super) enum HandoffCorpus {
+    #[default]
+    None,
+    Standard,
+}
+
+fn handoff_corpus<'de, D: serde::Deserializer<'de>>(decoder: D) -> Result<HandoffCorpus, D::Error> {
+    let value = String::deserialize(decoder)?;
+    match value.as_str() {
+        "none" => Ok(HandoffCorpus::None),
+        "standard" => Ok(HandoffCorpus::Standard),
+        _ => Err(serde::de::Error::custom(format!(
+            "handoff.corpus must be `none` or `standard`, found {value:?}"
+        ))),
+    }
+}
+
+/// Required native-join ceilings for handoff identity joins.
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(super) struct NativeJoin {
+    pub work_units: u64,
+    pub storage: u64,
+}
+
+/// FR-810's closed `output` record.
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(super) struct OutputMember {
+    #[serde(deserialize_with = "package_path")]
+    pub package: std::path::PathBuf,
+}
+
+fn package_path<'de, D: serde::Deserializer<'de>>(
+    decoder: D,
+) -> Result<std::path::PathBuf, D::Error> {
+    match serde_json::Value::deserialize(decoder)? {
+        serde_json::Value::String(path) if !path.is_empty() => Ok(path.into()),
+        _ => Err(serde::de::Error::custom(
+            "output member \"package\" must be a non-empty string",
+        )),
+    }
 }
 
 /// The compiler accepts its legacy single-program object or FR-480's ordered
@@ -124,10 +193,20 @@ pub(super) struct Request {
     /// FR-312: a clause run, mutually exclusive with `call` for 1-draft.
     #[serde(default, deserialize_with = "from_object_opt")]
     pub clause: Option<ClauseRun>,
+    /// FR-651: several independent call or clause selections in one request.
+    #[serde(default, deserialize_with = "from_object_opt")]
+    pub items: Option<serde_json::Value>,
     /// FR-100/ADR-015 D-1: a `1-draft` program's supplied libraries; none
     /// when absent.
     #[serde(default, deserialize_with = "deserialize_objects")]
     pub libraries: Vec<Library>,
+    /// FR-640: the clock configurations by clock name; empty when absent.
+    #[serde(default, deserialize_with = "clocks")]
+    pub clocks: fsl_replay::spine::RequestClocks,
+    /// FR-931: the TL lowering request member, decoded by its own reader so
+    /// each refusal names its member path; none when absent.
+    #[serde(default, deserialize_with = "present_json_value")]
+    pub tl_lowering: Option<serde_json::Value>,
 }
 
 fn from_object_opt<'de, D: serde::Deserializer<'de>, T: serde::Deserialize<'de>>(
@@ -165,6 +244,14 @@ pub(super) struct Call {
     /// FR-100: the call's accounting limits by counter name; absent is `{}`.
     #[serde(default, deserialize_with = "from_object")]
     pub accounting: Accounting,
+    /// FR-650: the file of the one current snapshot the call's Reference and
+    /// Population arguments resolve against.
+    #[serde(default)]
+    pub snapshot: Option<String>,
+    /// FR-960: the call's requirement settlement and the backends of its
+    /// items, read by `requirements::read`; absent settles no item.
+    #[serde(default, deserialize_with = "present_json_value")]
+    pub requirements: Option<serde_json::Value>,
 }
 
 /// The `accounting` member of a [`Call`] (FR-100): any subset of the ten
@@ -226,15 +313,14 @@ fn counter<'de, D: serde::Deserializer<'de>>(decoder: D) -> Result<Option<u64>, 
     u64::deserialize(decoder).map(Some)
 }
 
-/// One `{parameter, value}` argument of a [`Call`] (FR-100): `value` is a
-/// JSON integer in the signed 64-bit range, read as `i64` so an out-of-range
-/// or non-integer JSON value refuses at decode (`invalid-request`), never
-/// reaching `fsl_replay::spine::run`.
+/// One `{parameter, value}` argument of a [`Call`] (FR-100, FR-650): `value` is
+/// a JSON integer in the signed 64-bit range or a JSON object; the command
+/// refuses any other JSON value `invalid-request` before the run.
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(super) struct Argument {
     pub parameter: String,
-    pub value: i64,
+    pub value: serde_json::Value,
 }
 
 #[derive(Deserialize)]
@@ -270,16 +356,23 @@ pub(super) struct Identity {
 }
 
 impl Identity {
-    pub fn bind(&self) -> Result<crate::formal_source::SourceIdentities, ir::Diagnostic> {
+    pub fn bind(
+        &self,
+        request_member: &str,
+    ) -> Result<crate::formal_source::SourceIdentities, ir::Diagnostic> {
+        let document = ir::SourceDocumentId::new(&self.document)?;
+        let revision =
+            ir::SourceRevision::new(self.formal_revision).map_err(|mut diagnostic| {
+                diagnostic.path = format!("{request_member}.formal_revision");
+                diagnostic.message = format!("{request_member}.formal_revision must be positive");
+                diagnostic
+            })?;
         Ok(crate::formal_source::SourceIdentities {
             native: fsl_foundation::SourceIdentity::new(
                 self.authority.clone(),
                 self.identity.clone(),
             ),
-            formal: ir::SourceIdentity::new(
-                ir::SourceDocumentId::new(&self.document)?,
-                ir::SourceRevision::new(self.formal_revision)?,
-            ),
+            formal: ir::SourceIdentity::new(document, revision),
         })
     }
 }
@@ -304,4 +397,304 @@ fn supplied_limits<'de, D: serde::Deserializer<'de>>(
     fsl_replay::read_supplied_limits(&value)
         .map(Some)
         .map_err(serde::de::Error::custom)
+}
+
+impl RequestKind for AnalyzeRequest {
+    const FORMAT: fsl_foundation::wire_format::WireFormat =
+        fsl_foundation::wire_format::WireFormat::AnalyzeRequest;
+}
+
+/// FR-620's closed `native-analyze/1` request (FSpec FR-520 "Document
+/// members").
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(super) struct AnalyzeRequest {
+    #[serde(default, deserialize_with = "from_object_opt")]
+    pub program: Option<Program>,
+    #[serde(default, deserialize_with = "from_object_opt")]
+    pub package: Option<FileSelection>,
+    #[serde(default, deserialize_with = "deserialize_objects")]
+    pub models: Vec<Model>,
+    #[serde(default, deserialize_with = "deserialize_objects")]
+    pub libraries: Vec<Library>,
+    #[serde(default, deserialize_with = "present_json_value")]
+    pub refinement_internals: Option<serde_json::Value>,
+    #[serde(default, deserialize_with = "present_json_value")]
+    pub integer_division: Option<serde_json::Value>,
+    #[serde(default, deserialize_with = "deserialize_objects")]
+    pub documents: Vec<FileSelection>,
+    #[serde(default)]
+    pub memory: Vec<serde_json::Value>,
+    #[serde(default, deserialize_with = "from_object_opt")]
+    pub subject: Option<fsl_analyze::analyze::document::SubjectSelection>,
+    #[serde(default)]
+    pub items: Option<Vec<fsl_analyze::analyze::document::ItemSelection>>,
+    #[serde(default, deserialize_with = "from_object")]
+    pub limits: AnalyzeLimits,
+    #[serde(default, deserialize_with = "deadline")]
+    pub deadline_ms: Option<u64>,
+}
+
+/// A `{file}` selection of a supplied document or checked package.
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(super) struct FileSelection {
+    pub file: String,
+}
+
+/// The request-level `limits`: what every item of the run shares.
+#[derive(Default, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(super) struct AnalyzeLimits {
+    #[serde(default, deserialize_with = "from_object")]
+    pub accounting: Accounting,
+    #[serde(default, deserialize_with = "from_object")]
+    pub observation: ObservationLimits,
+    #[serde(default, deserialize_with = "from_object")]
+    pub normalization: NormalizationLimits,
+}
+
+/// FR-620's `limits.observation`: the FR-255 `observation.*` settings by
+/// their names without the stage prefix, each omitted one at its default.
+#[derive(Default, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(super) struct ObservationLimits {
+    #[serde(default, deserialize_with = "limit")]
+    pub input_bytes: Option<u64>,
+    #[serde(default, deserialize_with = "limit")]
+    pub objects: Option<u64>,
+    #[serde(default, deserialize_with = "limit")]
+    pub values: Option<u64>,
+}
+
+impl ObservationLimits {
+    /// The published observation limits with each stated member applied.
+    pub fn resolve(&self) -> fsl_semantics::model::observation::ObservationLimits {
+        let mut limits = fsl_semantics::model::observation::ObservationLimits::default();
+        if let Some(bound) = self.input_bytes {
+            limits.document_bytes = bound;
+        }
+        if let Some(bound) = self.objects {
+            limits.objects_per_document = bound;
+        }
+        if let Some(bound) = self.values {
+            limits.values_per_document = bound;
+        }
+        limits
+    }
+}
+
+/// FR-620's `limits.normalization`: the FR-255 `model.*` normalization
+/// settings by their names without the stage prefix, each omitted one at
+/// its default.
+#[derive(Default, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(super) struct NormalizationLimits {
+    #[serde(default, deserialize_with = "limit")]
+    pub declaration_records: Option<u64>,
+    #[serde(default, deserialize_with = "limit")]
+    pub derivation_facts: Option<u64>,
+    #[serde(default, deserialize_with = "limit")]
+    pub effective_declarations: Option<u64>,
+    #[serde(default, deserialize_with = "limit")]
+    pub dispatch_candidates: Option<u64>,
+    /// `model.hashed_bytes` is FSpec's limit name (FR-255): it is read and
+    /// range-checked so a request that states it is admitted, but FSL's
+    /// normalization hashes under no byte meter, so no FSL limit takes it.
+    #[serde(default, rename = "hashed_bytes", deserialize_with = "limit")]
+    _hashed_bytes: Option<u64>,
+    #[serde(default, deserialize_with = "limit")]
+    pub work_units: Option<u64>,
+    #[serde(default, deserialize_with = "limit")]
+    pub ancestor_steps: Option<u64>,
+    #[serde(default, deserialize_with = "limit")]
+    pub family_steps: Option<u64>,
+}
+
+impl NormalizationLimits {
+    /// The published normalization limits with each stated member applied.
+    pub fn resolve(&self) -> fsl_semantics::model::accounting::ModelNormalizationLimits {
+        let mut limits = fsl_semantics::model::accounting::ModelNormalizationLimits::default();
+        for (field, bound) in [
+            (&mut limits.declaration_records, self.declaration_records),
+            (&mut limits.derivation_facts, self.derivation_facts),
+            (
+                &mut limits.effective_declarations,
+                self.effective_declarations,
+            ),
+            (&mut limits.dispatch_candidates, self.dispatch_candidates),
+            (&mut limits.work_units, self.work_units),
+            (&mut limits.ancestor_steps, self.ancestor_steps),
+            (&mut limits.family_steps, self.family_steps),
+        ] {
+            if let Some(bound) = bound {
+                *field = bound;
+            }
+        }
+        limits
+    }
+}
+
+/// One limit member: a JSON integer from 0 to 2^53 - 1 (FR-620).
+fn limit<'de, D: serde::Deserializer<'de>>(decoder: D) -> Result<Option<u64>, D::Error> {
+    let value = u64::deserialize(decoder)?;
+    if value > MAX_DEADLINE_MS {
+        return Err(serde::de::Error::custom(format!(
+            "limit {value} exceeds {MAX_DEADLINE_MS}"
+        )));
+    }
+    Ok(Some(value))
+}
+
+/// The largest integer every JSON reader holds exactly (FSpec FR-520).
+const MAX_DEADLINE_MS: u64 = 9_007_199_254_740_991;
+
+/// `deadline_ms`: a JSON integer from 0 to 2^53 - 1.
+fn deadline<'de, D: serde::Deserializer<'de>>(decoder: D) -> Result<Option<u64>, D::Error> {
+    let value = u64::deserialize(decoder)?;
+    if value > MAX_DEADLINE_MS {
+        return Err(serde::de::Error::custom(format!(
+            "deadline_ms {value} exceeds {MAX_DEADLINE_MS}"
+        )));
+    }
+    Ok(Some(value))
+}
+
+/// FR-640's `clocks`: an object from clock name to one closed clock
+/// configuration in the `TemporalBinding` `clock` wire form. A value that is
+/// not an object, a repeated name, an empty name and a member that is not a
+/// well-formed configuration each refuse, naming `clocks` or the member.
+fn clocks<'de, D: serde::Deserializer<'de>>(
+    decoder: D,
+) -> Result<fsl_replay::spine::RequestClocks, D::Error> {
+    struct Visitor;
+    impl<'de> serde::de::Visitor<'de> for Visitor {
+        type Value = fsl_replay::spine::RequestClocks;
+
+        fn expecting(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+            f.write_str("a clocks object keyed by clock name")
+        }
+
+        fn visit_map<M: serde::de::MapAccess<'de>>(
+            self,
+            mut map: M,
+        ) -> Result<Self::Value, M::Error> {
+            let mut members = std::collections::BTreeMap::new();
+            while let Some(name) = map.next_key::<String>()? {
+                let value = map.next_value::<serde_json::Value>()?;
+                let bad = |reason: String| {
+                    serde::de::Error::custom(format!("clocks member {name:?}: {reason}"))
+                };
+                if members.contains_key(&name) {
+                    return Err(bad("given more than once".to_owned()));
+                }
+                let clock = ir::ClockConfiguration::deserialize(value)
+                    .map_err(|error| bad(error.to_string()))?;
+                members.insert(name, clock);
+            }
+            fsl_replay::spine::RequestClocks::new(members).map_err(serde::de::Error::custom)
+        }
+    }
+    decoder.deserialize_map(Visitor)
+}
+
+/// A request kind that carries FR-640's `clocks` member.
+pub(super) trait ClocksRequest: RequestKind {
+    /// The request's clock selections.
+    fn clocks_mut(&mut self) -> &mut fsl_replay::spine::RequestClocks;
+}
+
+impl ClocksRequest for Request {
+    fn clocks_mut(&mut self) -> &mut fsl_replay::spine::RequestClocks {
+        &mut self.clocks
+    }
+}
+
+impl ClocksRequest for CompileRequest {
+    fn clocks_mut(&mut self) -> &mut fsl_replay::spine::RequestClocks {
+        &mut self.clocks
+    }
+}
+
+/// Read a supplied `clocks` value exactly as the request member is read: the
+/// same object shape, repeated-name and configuration refusals.
+pub(super) fn read_clocks(
+    raw: &RawValue,
+) -> Result<fsl_replay::spine::RequestClocks, serde_json::Error> {
+    clocks(&mut serde_json::Deserializer::from_str(raw.get()))
+}
+
+impl RequestKind for MonitorRequest {
+    const FORMAT: fsl_foundation::wire_format::WireFormat =
+        fsl_foundation::wire_format::WireFormat::MonitorRequest;
+}
+
+/// FR-644's closed `native-monitor/1` request.
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(super) struct MonitorRequest {
+    #[serde(deserialize_with = "deserialize_objects")]
+    pub models: Vec<Model>,
+    #[serde(deserialize_with = "from_object")]
+    pub program: Program,
+    #[serde(default, deserialize_with = "deserialize_objects")]
+    pub libraries: Vec<Library>,
+    #[serde(default, deserialize_with = "clocks")]
+    pub clocks: fsl_replay::spine::RequestClocks,
+    #[serde(deserialize_with = "deserialize_objects")]
+    pub clauses: Vec<MonitorClauseWire>,
+    #[serde(deserialize_with = "from_object")]
+    pub trace: MonitorTraceWire,
+    /// The path of an FR-641 ledger file.
+    #[serde(default)]
+    pub ledger: Option<String>,
+    /// The path of a `filament.monitor-state/1` checkpoint to resume from.
+    #[serde(default)]
+    pub state: Option<String>,
+    /// Snapshot files by key, for records that name a snapshot by key.
+    #[serde(default, deserialize_with = "from_object")]
+    pub observations: std::collections::BTreeMap<String, String>,
+    /// The relative path of a JSON Lines record file (the batch form).
+    #[serde(default)]
+    pub records: Option<String>,
+}
+
+/// One selected clause: its name and, for a snapshot trace, its `over`.
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(super) struct MonitorClauseWire {
+    pub name: String,
+    #[serde(default, deserialize_with = "from_object_opt")]
+    pub over: Option<MonitorOverWire>,
+}
+
+/// FR-641's `over`: the object a clause's `over` parameter names.
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(super) struct MonitorOverWire {
+    #[serde(deserialize_with = "from_object")]
+    pub reference: fsl_replay::spine::ObjectReferenceWire,
+}
+
+/// The `trace` member: the kind and the members FR-641 gives it.
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(super) struct MonitorTraceWire {
+    pub kind: MonitorKindWire,
+    #[serde(default)]
+    pub lower_boundary: Option<fsl_replay::spine::LowerBoundaryWire>,
+    #[serde(default, deserialize_with = "from_object_opt")]
+    pub binding: Option<fsl_replay::spine::BindingWire>,
+    #[serde(default)]
+    pub cover: Option<fsl_replay::spine::CoverWire>,
+}
+
+/// The trace kinds a monitor request names.
+#[derive(Clone, Copy, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub(super) enum MonitorKindWire {
+    Finite,
+    Progressed,
+    Timestamped,
+    Timed,
 }

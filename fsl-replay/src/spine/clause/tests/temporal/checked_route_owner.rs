@@ -194,6 +194,7 @@ fn a_trace_of_the_wrong_shape_for_the_profile_is_refused_at_admit() {
                     authoritative_origin: true,
                     cover: None,
                     missing_valuations: Vec::new(),
+                    late: Default::default(),
                 }),
             },
             over: over("c1"),
@@ -201,7 +202,11 @@ fn a_trace_of_the_wrong_shape_for_the_profile_is_refused_at_admit() {
         },
         &[0, 1, 2],
     );
-    assert_admit_invalid_value(&report(timestamped_for_reach));
+    assert_trace_refused(
+        &report(timestamped_for_reach),
+        ClauseRunStage::Admit,
+        "trace-kind-mismatch",
+    );
 
     let finite_for_window = request(
         Unit::OwnerWindow,
@@ -213,10 +218,18 @@ fn a_trace_of_the_wrong_shape_for_the_profile_is_refused_at_admit() {
         },
         &[0, 1, 2],
     );
-    assert_admit_invalid_value(&report(finite_for_window));
+    assert_trace_refused(
+        &report(finite_for_window),
+        ClauseRunStage::Admit,
+        "trace-kind-mismatch",
+    );
 
     let lasso_for_reach = report(lasso(Unit::OwnerReach, "Reach", 0, &[0, 1, 2]));
-    assert_admit_invalid_value(&lasso_for_reach);
+    assert_trace_refused(
+        &lasso_for_reach,
+        ClauseRunStage::Admit,
+        "trace-kind-mismatch",
+    );
     assert_eq!(lasso_for_reach.disposition.truth(), None);
 }
 

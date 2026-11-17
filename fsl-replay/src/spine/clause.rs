@@ -23,15 +23,27 @@ use fsl_semantics::check::{CheckedGraph, CheckedStateClause};
 use fsl_semantics::model::accounting::ModelNormalizationLimits;
 use fsl_semantics::model::observation::{
     admit_current_snapshot, admit_frame_invocation, admit_observations, population_universe_for,
-    AdmissionFailure, AdmissionRecord, AdmittedObservations, ClauseFacts, ClauseSelection,
-    ClauseSelectionInput, DocumentRef, FrameFacts, FrameWitness, ObservationLimits, OperationFacts,
-    Provisions,
+    AdmissionFailure, AdmissionRecord, AdmittedInvocation, AdmittedObservations, ClauseFacts,
+    ClauseSelection, ClauseSelectionInput, DocumentRef, FrameFacts, FrameWitness,
+    ObservationLimits, OperationFacts, Provisions,
 };
 
+mod correction;
+mod late_data;
+mod ledger_wire;
+mod model_trace;
 mod package_authentication;
 mod progress;
 mod temporal;
+mod trace_refusal;
 mod trace_subject;
+pub(crate) use correction::run_correction;
+pub use correction::{
+    read_evidence_ledger, settle_correction, settle_run_correction, CorrectionRecord,
+    CorrectionRefusal, EvidenceLedgerFile, EvidenceLedgerReadError, RunRelation,
+    EVIDENCE_LEDGER_FORMAT,
+};
+pub use ledger_wire::{read_ledger, write_ledger, LedgerReadError};
 pub use package_authentication::{
     authenticate_emission, AuthenticationFailure, PackageAuthentication, PackagesStage,
 };
@@ -42,21 +54,25 @@ pub use progress::{
 };
 use temporal::TemporalRun;
 pub use temporal::{
-    admit_progress, authenticate_package_trace, name_clause_atom, run_package_temporal,
-    FiniteWindowAssessment, FiniteWindowPremises, FiniteWindowReport, FiniteWindowSupport,
+    admit_progress, authenticate_package_trace, clause_trace_binding, name_clause_atom,
+    run_package_temporal, sample_position, AdmittedLate, FiniteWindowAssessment,
+    FiniteWindowPremises, FiniteWindowReport, FiniteWindowSupport, LateEntry, LateInputs,
     OverObject, PackageTemporalRequest, ProgressRefusal, TemporalAuthentication, TimestampedCover,
     TimestampedMissingValuation, TimestampedObservation, TimestampedOrderKey, TimestampedWindow,
-    TraceBinding, TraceInput,
+    TraceBinding, TraceInput, DEFAULT_MODEL_MAX_CANDIDATES,
 };
+pub use trace_refusal::{TraceRefusal, REASONS as TRACE_REFUSAL_REASONS};
 pub use trace_subject::{
     run_package_trace_subject, run_trace_subject_clause, PackageTraceSubjectRequest,
     TraceSubjectClauseRequest,
 };
 
-use super::call::{convert_call_failure, convert_outcome, select};
+use super::call::{
+    convert_call_failure, convert_outcome, run_compiled as run_call_compiled, select, CallSources,
+};
 pub use super::call::{CallOutcome, CallValue, RunRefusal};
 use super::lifecycle as front_end;
-use super::{CompileRefusal, DependencyInput, SpineLimits};
+use super::{CompileRefusal, DependencyInput, RequestClocks, SpineLimits};
 use crate::proof_result::SettlementBasis;
 use crate::result::SeparatingWitnessRecord;
 use crate::witness::derive_separating_witness;
@@ -76,6 +92,8 @@ pub enum ClauseArgumentValue {
         /// The object's declared key.
         key: String,
     },
+    /// Any other FR-650 run value form, read against the parameter's type.
+    Form(serde_json::Value),
 }
 
 /// One `{parameter, value}` argument of a `Function` selection.
@@ -127,6 +145,51 @@ pub enum ClauseRunSelection {
         /// requests of this clause; `None` evaluates the trace alone.
         ledger: Option<ProgressLedger>,
     },
+    /// FR-641: a temporal clause over a declared record trace subject, run over
+    /// a trace of record samples. Each position of `trace` is a sample carried
+    /// as [`sample_position`]; the clause's subject parameter is bound to the
+    /// sample at each position and no `over` object exists.
+    SampledTemporal {
+        /// The temporal clause's declared name.
+        name: String,
+        /// The samples the clause is run over.
+        trace: TraceInput,
+        /// FR-502: the progress ledger carried from earlier requests.
+        ledger: Option<ProgressLedger>,
+    },
+}
+
+impl ClauseRunSelection {
+    /// The name an FR-286 `monitor` item carries for this selection: the
+    /// clause, function or temporal clause name, or the frame's operation
+    /// as `M::T::op`.
+    #[must_use]
+    pub fn clause_name(&self) -> String {
+        match self {
+            Self::Clause(selection) => selection.name.clone(),
+            Self::Function { name, .. }
+            | Self::Temporal { name, .. }
+            | Self::SampledTemporal { name, .. } => name.clone(),
+            Self::Frame { operation, .. } => format!(
+                "{}::{}::{}",
+                operation.model.as_str(),
+                operation.object.as_str(),
+                operation.operation.as_str()
+            ),
+        }
+    }
+
+    /// FR-645: the member path, from `clause`, of the part of the request's
+    /// trace that the trace refusal `reason` is about; `None` for a selection
+    /// that holds no trace.
+    pub fn request_pointer(&self, reason: &str) -> Option<String> {
+        match self {
+            Self::Temporal { trace, .. } | Self::SampledTemporal { trace, .. } => {
+                Some(trace.request_pointer(reason))
+            }
+            Self::Clause(_) | Self::Function { .. } | Self::Frame { .. } => None,
+        }
+    }
 }
 
 /// FR-115: the operation a `Frame` selection names, `M::T::op`: model
@@ -241,6 +304,9 @@ pub struct ClauseRunRequest {
     pub observation_limits: ObservationLimits,
     /// The evaluation meter's accounting limits (FR-100's `accounting` object).
     pub accounting: ScalarLimits,
+    /// FR-640: the clock configurations of the unit's clock-bearing
+    /// declarations, by clock name; empty when the request supplied none.
+    pub clocks: RequestClocks,
 }
 
 /// Why [`run_clause`] returned no report: a request that cannot be formed
@@ -251,6 +317,26 @@ pub enum ClauseRunRefusal {
     /// The unit's source is empty.
     #[error("the unit source is empty")]
     EmptySource,
+}
+
+/// Why a clause-run batch could not use one shared compilation.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, thiserror::Error)]
+pub enum ClauseRunBatchRefusal {
+    /// The unit's source is empty.
+    #[error("the unit source is empty")]
+    EmptySource,
+    /// The requests do not share one program, package, dependency, clock or
+    /// limit input.
+    #[error("the clause-run batch selects more than one compilation")]
+    DifferentCompilation,
+}
+
+/// Result of FR-651's batch compile and independent selection runs.
+pub enum ClauseRunBatchOutcome {
+    /// The one shared compile succeeded and every request was evaluated.
+    Reports(Vec<ClauseRunReport>),
+    /// The shared compile refused before any selection ran.
+    CompileRefusal(Box<ClauseRunReport>),
 }
 
 /// FR-109's disposition stage.
@@ -304,6 +390,9 @@ pub enum ClauseDisposition {
     /// frame witness, whose cause is `frame_violation`/`unauthorized-change`.
     /// A verdict that evaluated, not a refusal.
     FrameViolation(Box<FrameWitness>),
+    /// Stage `evaluate`, category `violation`, `truth: false` (FR-702): the
+    /// operation's first false `requires` or `ensures` clause.
+    OperationContractViolation(OperationContractViolation),
     /// Stage `evaluate` (FR-330): the TemporalTrace evaluator's outcome for
     /// a `Temporal` selection. Its category is the outcome's: a pending
     /// result is `inconclusive`, a missing fairness premise `unsupported`,
@@ -312,6 +401,10 @@ pub enum ClauseDisposition {
     /// Stage `evaluate`, category `refusal` (FR-330): the evaluator refused
     /// the supplied trace (a lasso with an empty loop, for one).
     TemporalRefusal(TemporalTraceRefusal),
+    /// Stage `admit` or `evaluate`, category `refusal` (FR-645): a trace the
+    /// clause's profile does not read, or one that holds no position, with
+    /// its reason, message and the clause's locus.
+    TraceRefused(Box<TraceRefusal>),
     /// Stage `evaluate`, category `refusal` (FR-502): the supplied progress
     /// contradicts what the request's ledger retains for the binding.
     ProgressContradiction(Box<ProgressRefusal>),
@@ -319,6 +412,44 @@ pub enum ClauseDisposition {
     /// invariant reached outside the outcome mapping (FR-100's own
     /// internal-failure exit status).
     EvaluateFault(filament_semantic_value::catalog::InternalFault),
+    /// Stage `evaluate` (FR-757 "Cross-evaluation"): a valuation run's
+    /// checked clause and, over a supplied closed finite trace, every `holds`
+    /// atom's reading at each position and the clause's native value at each
+    /// activation position. Only [`run_temporal_valuation`] reports it.
+    TemporalValuation(Box<TemporalValuation>),
+}
+
+/// The model operation clause that failed during a `frame` run (FR-702).
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct OperationContractViolation {
+    /// The operation's checked declaration key.
+    pub operation: filament_checked::key::DeclarationKey,
+    /// The operation's authored name.
+    pub operation_name: String,
+    /// Whether the failed clause is a `requires` or an `ensures`.
+    pub kind: filament_semantic_value::location::OperationClauseKind,
+    /// The failed clause's zero-based position in its list.
+    pub position: usize,
+    /// The kept clause's source artifact id, when its origin names one.
+    pub artifact: Option<String>,
+    /// The kept clause's source span, when its origin carries one.
+    pub span: Option<fsl_foundation::source::LocatedSpan>,
+    /// The FR-103 model-operation-clause origin.
+    pub origin: filament_semantic_value::location::ExpressionOwner,
+    /// The authored operation member, such as `Operation.post[0]`.
+    pub member: fsl_semantics::model::refusal::MemberPath,
+}
+
+/// What a valuation run of a temporal clause reads (FR-757, FR-931): the
+/// checked clause a TL lowering is built from and, when a trace was
+/// supplied, the native valuation a cross-evaluation compares against.
+#[derive(Debug)]
+pub struct TemporalValuation {
+    /// The checked clause.
+    pub clause: fsl_semantics::check::CheckedTemporalClause,
+    /// The valuation over the supplied trace; `None` when the trace is an
+    /// empty finite trace, which asks for the clause alone.
+    pub positions: Option<fsl_eval::temporal::ObservedValuation>,
 }
 
 impl ClauseDisposition {
@@ -328,12 +459,15 @@ impl ClauseDisposition {
             Self::Compile(_) | Self::UnknownLanguage { .. } => ClauseRunStage::Compile,
             Self::MissingName { .. } | Self::NotAPredicate { .. } => ClauseRunStage::Select,
             Self::Admit(_) | Self::ArgumentRefusal(_) => ClauseRunStage::Admit,
+            Self::TraceRefused(refusal) => refusal.stage,
             Self::Evaluate(_)
             | Self::Temporal(_)
             | Self::TemporalRefusal(_)
             | Self::ProgressContradiction(_)
             | Self::FrameViolation(_)
-            | Self::EvaluateFault(_) => ClauseRunStage::Evaluate,
+            | Self::OperationContractViolation(_)
+            | Self::EvaluateFault(_)
+            | Self::TemporalValuation(_) => ClauseRunStage::Evaluate,
         }
     }
 
@@ -363,7 +497,9 @@ impl ClauseDisposition {
             Self::Admit(AdmissionFailure::Fault(_)) | Self::EvaluateFault(_) => {
                 Category::InternalFailure
             }
-            Self::FrameViolation(_) => Category::Violation,
+            Self::FrameViolation(_) | Self::OperationContractViolation(_) => Category::Violation,
+            // A valuation is a completed read of the trace, not a verdict.
+            Self::TemporalValuation(_) => Category::Success,
             Self::Temporal(outcome) => outcome.category(),
             // The refusal's own catalog code decides: a malformed trace is a
             // refusal, a profile the evaluator does not read is unsupported.
@@ -371,6 +507,7 @@ impl ClauseDisposition {
                 fsl_foundation::diagnostic::Code::from_code(refusal.catalog_code().code())
                     .map_or(Category::InternalFailure, |code| code.category())
             }
+            Self::TraceRefused(_) => Category::Refusal,
             Self::ProgressContradiction(refusal) => {
                 fsl_foundation::diagnostic::Code::from_code(refusal.record.catalog.code())
                     .map_or(Category::InternalFailure, |code| code.category())
@@ -378,9 +515,9 @@ impl ClauseDisposition {
             Self::Evaluate(CallOutcome::Completed(CallValue::Boolean(false))) => {
                 Category::Violation
             }
-            Self::Evaluate(CallOutcome::Completed(CallValue::Reference(_))) => {
-                Category::InternalFailure
-            }
+            Self::Evaluate(CallOutcome::Completed(
+                CallValue::Reference(_) | CallValue::Written(_),
+            )) => Category::InternalFailure,
             Self::Evaluate(outcome) => outcome.category(),
         }
     }
@@ -389,7 +526,7 @@ impl ClauseDisposition {
     pub fn truth(&self) -> Option<bool> {
         match self {
             Self::Evaluate(CallOutcome::Completed(CallValue::Boolean(value))) => Some(*value),
-            Self::FrameViolation(_) => Some(false),
+            Self::FrameViolation(_) | Self::OperationContractViolation(_) => Some(false),
             Self::Temporal(TemporalVerdict::Holds) => Some(true),
             Self::Temporal(TemporalVerdict::Violated { .. }) => Some(false),
             _ => None,
@@ -514,6 +651,10 @@ pub enum TemporalVerdict {
     /// The progress ledger's covered positions outgrew `progress.
     /// covered_positions` (FR-502); no truth value, ledger unchanged.
     ProgressLimitReached(ProgressLimitReached),
+    /// A model-arm run's expansion stopped at a bound its request does not
+    /// carry or at an `accounting.*` counter (FR-203, FR-255): the limit it
+    /// reached and the value it ran under; no truth value.
+    ExpansionLimitReached(crate::model_check::limits::ReachedLimit),
 }
 
 impl TemporalVerdict {
@@ -537,7 +678,8 @@ impl TemporalVerdict {
             Self::Incomplete(_)
             | Self::ActivationIncomplete { .. }
             | Self::WindowLimitReached { .. }
-            | Self::ProgressLimitReached(_) => Category::Incomplete,
+            | Self::ProgressLimitReached(_)
+            | Self::ExpansionLimitReached(_) => Category::Incomplete,
         }
     }
 
@@ -896,6 +1038,12 @@ pub struct ClauseRunReport {
     /// FR-266 (FSpec FR-351): the separating witness record, present
     /// exactly when `basis` is decisive.
     pub witness: Option<SeparatingWitnessRecord>,
+    /// FR-122's typed state-clause counterexample, retaining the selected
+    /// observation with its witness for a refuted invariant or operation rule.
+    pub state_clause_counterexample: Option<crate::StateClauseCounterexample>,
+    /// The admitted before/after field slots for an unauthorized frame write,
+    /// retained for the FR-286 outcome item's frame witness.
+    pub frame_field_values: Option<(String, String)>,
     /// Per-implication consequent observations from a completed native
     /// Boolean clause evaluation, in checked expression order.
     pub consequent_source_events: ConsequentSourceEvents,
@@ -955,6 +1103,81 @@ impl ClauseRunReport {
     /// the full temporal category set, including `pending` and `indeterminate`.
     pub fn category_label(&self) -> &'static str {
         self.disposition.category_label()
+    }
+
+    /// FR-622's four outcome axes of the assessed instance, read from the
+    /// report's own fields: the activation from the disposition's stage and
+    /// verdict, the execution from the finite-window assessment or whether
+    /// evaluation completed, the truth from the verdict, and the settlement
+    /// from `basis`. The category does not decide any of them.
+    pub fn axes(&self) -> crate::OutcomeAxes {
+        use crate::{ActivationAxis, ExecutionAxis, TruthAxis};
+        let activation = match &self.disposition {
+            ClauseDisposition::Compile(_)
+            | ClauseDisposition::UnknownLanguage { .. }
+            | ClauseDisposition::MissingName { .. }
+            | ClauseDisposition::NotAPredicate { .. }
+            | ClauseDisposition::Admit(_)
+            | ClauseDisposition::ArgumentRefusal(_)
+            | ClauseDisposition::TemporalRefusal(_)
+            | ClauseDisposition::TraceRefused(_)
+            | ClauseDisposition::ProgressContradiction(_)
+            | ClauseDisposition::EvaluateFault(_)
+            | ClauseDisposition::TemporalValuation(_)
+            | ClauseDisposition::Temporal(TemporalVerdict::Incomplete(_)) => {
+                ActivationAxis::Unavailable
+            }
+            ClauseDisposition::Temporal(TemporalVerdict::ActivationIncomplete { .. }) => {
+                ActivationAxis::Unknown
+            }
+            ClauseDisposition::Evaluate(_)
+            | ClauseDisposition::FrameViolation(_)
+            | ClauseDisposition::OperationContractViolation(_)
+            | ClauseDisposition::Temporal(_) => ActivationAxis::Active,
+        };
+        let stopped = matches!(
+            &self.disposition,
+            ClauseDisposition::Temporal(
+                TemporalVerdict::Incomplete(_)
+                    | TemporalVerdict::WindowLimitReached { .. }
+                    | TemporalVerdict::ProgressLimitReached(_)
+                    | TemporalVerdict::ExpansionLimitReached(_)
+                    | TemporalVerdict::ActivationIncomplete { .. }
+            ) | ClauseDisposition::Evaluate(CallOutcome::Incomplete(_))
+        );
+        let execution = match (&self.finite_window, activation) {
+            (Some(window), _) => Some(match window.premises.assessment {
+                FiniteWindowAssessment::Completed => ExecutionAxis::Completed,
+                FiniteWindowAssessment::Failed => ExecutionAxis::Failed,
+            }),
+            (None, ActivationAxis::Unavailable) => None,
+            (None, _) if stopped => Some(ExecutionAxis::Failed),
+            (None, _) => Some(ExecutionAxis::Completed),
+        };
+        let truth = match &self.disposition {
+            ClauseDisposition::Temporal(
+                TemporalVerdict::Pending
+                | TemporalVerdict::PendingWindow { .. }
+                | TemporalVerdict::PendingNextEvent { .. },
+            ) => Some(TruthAxis::Pending),
+            disposition => disposition.truth().map(|holds| {
+                if holds {
+                    TruthAxis::True
+                } else {
+                    TruthAxis::False
+                }
+            }),
+        };
+        crate::OutcomeAxes {
+            activation,
+            execution,
+            truth,
+            settlement: Some(
+                self.finite_window
+                    .as_ref()
+                    .map_or(self.basis, |window| window.basis),
+            ),
+        }
     }
 }
 
@@ -1049,16 +1272,41 @@ pub(crate) fn admit_clause_observations(
     )
 }
 
-/// FR-109: `fsl_replay::spine::run_clause`.
+/// FR-109: `fsl_replay::spine::run_clause`. The unit's clock-bearing
+/// declarations take their configurations from `request.clocks` by clock
+/// name (FR-640).
 pub fn run_clause(request: ClauseRunRequest) -> Result<ClauseRunReport, ClauseRunRefusal> {
     run_clause_with_temporal_selections(request, &[])
 }
 
 /// [`run_clause`] with explicit clock configurations for checked temporal
-/// declarations in the selected source and its resolved libraries.
+/// declarations in the selected source and its resolved libraries, keyed by
+/// each declaration's exact locus. Non-empty `temporal_selections` replace
+/// the configurations `request.clocks` names.
 pub fn run_clause_with_temporal_selections(
     request: ClauseRunRequest,
     temporal_selections: &[fsl_package::TemporalClockSelection],
+) -> Result<ClauseRunReport, ClauseRunRefusal> {
+    run_clause_reading(request, temporal_selections, false)
+}
+
+/// FR-757 "Cross-evaluation", FR-931: compile the unit as [`run_clause`]
+/// does and, for a `Temporal` or `SampledTemporal` selection, report
+/// [`ClauseDisposition::TemporalValuation`] in place of the verdict: the
+/// checked clause and, over a non-empty closed finite trace, the native
+/// valuation of its atoms and activations. An empty finite trace asks for
+/// the clause alone. Every refusal before evaluation is the one the clause
+/// run gives.
+pub fn run_temporal_valuation(
+    request: ClauseRunRequest,
+) -> Result<ClauseRunReport, ClauseRunRefusal> {
+    run_clause_reading(request, &[], true)
+}
+
+fn run_clause_reading(
+    request: ClauseRunRequest,
+    temporal_selections: &[fsl_package::TemporalClockSelection],
+    valuation: bool,
 ) -> Result<ClauseRunReport, ClauseRunRefusal> {
     let unit = request.source.unit();
     if unit.bytes.is_empty() {
@@ -1068,6 +1316,8 @@ pub fn run_clause_with_temporal_selections(
     let report = |disposition: ClauseDisposition| ClauseRunReport {
         basis: undecided_basis(&disposition),
         witness: None,
+        state_clause_counterexample: None,
+        frame_field_values: None,
         disposition,
         usage: ClauseRunUsage::default(),
         consequent_source_events: ConsequentSourceEvents::Unavailable,
@@ -1101,20 +1351,37 @@ pub fn run_clause_with_temporal_selections(
         .into_value();
         let models = front_end::select(&parsed, &request.packages, request.limits.model, &cancel)?
             .into_value();
-        let checked = front_end::check_with_temporal_selections_and_execution_points(
+        let by_name = temporal_selections.is_empty();
+        let check_selections = if by_name {
+            request.clocks.check_selections(&parsed)
+        } else {
+            temporal_selections.to_vec()
+        };
+        let checked = front_end::check_with_refinement_internals(
             &parsed,
             request.package_name.clone(),
-            &crate::spine::StateClauseExecutionPoints::new(),
-            temporal_selections,
+            crate::spine::SourceInputs {
+                refinement_internals: None,
+                temporal_selections: &check_selections,
+                clocks: by_name.then_some(&request.clocks),
+            },
             &models,
             &request.dependencies,
             request.limits,
             &cancel,
         )?
         .into_value();
+        let package_selections = if by_name {
+            request
+                .clocks
+                .package_selections(&checked, &[&parsed])
+                .map_err(front_end::FrontEndFailure::Refused)?
+        } else {
+            temporal_selections.to_vec()
+        };
         let emitted = front_end::package_with_temporal_selections(
             &checked,
-            temporal_selections,
+            &package_selections,
             request.limits.package,
             &cancel,
         )?
@@ -1150,10 +1417,14 @@ pub fn run_clause_with_temporal_selections(
         observation_limits: request.observation_limits,
         accounting: request.accounting,
         package,
+        package_name: &request.package_name,
         sources: &sources,
         progress_capacity: request.limits.progress.covered_positions,
     };
-    let admitted_package = if matches!(&request.selection, ClauseRunSelection::Temporal { .. }) {
+    let admitted_package = if matches!(
+        &request.selection,
+        ClauseRunSelection::Temporal { .. } | ClauseRunSelection::SampledTemporal { .. }
+    ) {
         let evidence = match super::bind::admission_evidence(
             &models,
             &checked,
@@ -1207,6 +1478,35 @@ pub fn run_clause_with_temporal_selections(
             ref operation,
             ref invocation,
         } => Ok(run_frame(&run, operation, invocation)),
+        ClauseRunSelection::SampledTemporal {
+            ref name,
+            ref trace,
+            ref ledger,
+        } => {
+            let Some(admitted_package) = admitted_package.as_deref() else {
+                return Ok(report(ClauseDisposition::EvaluateFault(
+                    filament_semantic_value::catalog::InternalFault::new(
+                        "FR-050",
+                        "temporal-selection-retains-strictly-admitted-package",
+                    ),
+                )));
+            };
+            Ok(temporal::run_temporal(
+                &run,
+                &TemporalRun {
+                    name,
+                    trace,
+                    over: None,
+                    ledger: ledger.as_ref(),
+                    authentication: Some(temporal::TemporalAuthentication {
+                        clock_rows: emitted.temporal_binding_rows(),
+                        admitted_package,
+                    }),
+                    cancel: None,
+                    valuation,
+                },
+            ))
+        }
         ClauseRunSelection::Temporal {
             ref name,
             ref trace,
@@ -1226,15 +1526,626 @@ pub fn run_clause_with_temporal_selections(
                 &TemporalRun {
                     name,
                     trace,
-                    over,
+                    over: Some(over),
                     ledger: ledger.as_ref(),
                     authentication: Some(temporal::TemporalAuthentication {
                         clock_rows: emitted.temporal_binding_rows(),
                         admitted_package,
                     }),
                     cancel: None,
+                    valuation,
                 },
             ))
+        }
+    }
+}
+
+struct CompiledClauseProgram {
+    models: super::AdmittedModels,
+    checked: super::CheckedUnit,
+    emitted: super::EmittedUnit,
+    sources: Vec<Source>,
+    temporal_package: Option<Box<filament_contract_model::CheckedPackageV2>>,
+}
+
+/// Source and compile inputs shared by a whole FR-651 `items` request.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ProgramCompilationRequest {
+    /// The native program source identity.
+    pub source: SourceIdentity,
+    /// The program's display path.
+    pub path: String,
+    /// The exact admitted source bytes.
+    pub bytes: Vec<u8>,
+    /// The package identity the compiler assigns to the program.
+    pub package_name: String,
+    /// Domain package documents selected by the program's model declarations.
+    pub packages: fsl_semantics::model::intake::PackageInput,
+    /// Supplied library closure.
+    pub dependencies: DependencyInput,
+    /// Front-end stage limits.
+    pub limits: SpineLimits,
+    /// The request's named clock configurations.
+    pub clocks: RequestClocks,
+}
+
+/// Inputs to one selection in a mixed FR-651 batch.
+pub enum ProgramBatchSelection {
+    /// A state clause, function predicate, frame or temporal selection.
+    Clause(Box<ClauseRunRequest>),
+    /// FR-100's value call.
+    Call {
+        /// The call to execute.
+        call: super::Call,
+        /// Whether FR-395 call requirement members must be returned for
+        /// settlement by the command layer.
+        include_requirements: bool,
+    },
+    /// FR-652's no-clause value-invariant selection.
+    ValueInvariants(ValueInvariantsBatchRequest),
+}
+
+/// FR-652 inputs needed to admit and evaluate one value-invariant selection
+/// against an already compiled program.
+pub struct ValueInvariantsBatchRequest {
+    /// Snapshot documents supplied by the items request.
+    pub snapshots: fsl_semantics::model::observation::DocumentProvision,
+    /// Invocation documents supplied by the items request.
+    pub invocations: fsl_semantics::model::observation::DocumentProvision,
+    /// Selected current snapshot.
+    pub snapshot: DocumentRef,
+    /// Optional selected invocation.
+    pub invocation: Option<DocumentRef>,
+    /// FR-106 observation limits for this item.
+    pub observation_limits: ObservationLimits,
+    /// This item's independent evaluation accounting.
+    pub accounting: ScalarLimits,
+}
+
+/// Successful FR-651 batch item results, retained in request order.
+pub enum ProgramBatchItemResult {
+    /// A clause-family result.
+    Clause(Box<ClauseRunReport>),
+    /// A value-call result or its per-item refusal.
+    Call(Result<ProgramBatchCallOutcome, Box<RunRefusal>>),
+    /// A value-invariant result or its per-item refusal.
+    ValueInvariants(Result<ValueInvariantsBatchOutcome, ValueInvariantsBatchFailure>),
+}
+
+/// One call result and, when requested, its requirement items from the same
+/// checked package.
+pub struct ProgramBatchCallOutcome {
+    /// The per-item call outcome.
+    pub outcome: CallOutcome,
+    /// FR-395 requirement items available for command-layer settlement.
+    pub requirements: Option<crate::CallRequirements>,
+}
+
+/// Results from one whole-request compilation, including the checked unit
+/// needed by command-layer settlement callbacks.
+pub struct ProgramBatchOutcome {
+    /// Per-selection results in the same order as the request.
+    pub items: Vec<ProgramBatchItemResult>,
+    /// The checked unit shared by every result.
+    pub checked: Option<super::CheckedUnit>,
+}
+
+/// Evaluation results of one admitted value-invariant selection.
+pub struct ValueInvariantsBatchOutcome {
+    /// The ordered evaluation result for each reached invariant/value pair.
+    pub evaluation: fsl_eval::value::ValueInvariantEvaluation,
+    /// FR-106 admission usage for this selection.
+    pub admission_usage: fsl_semantics::model::observation::AdmissionUsage,
+}
+
+/// A value-invariant item refusal after the whole request compiled.
+pub enum ValueInvariantsBatchFailure {
+    /// FR-106 admission refused or was incomplete.
+    Admission(fsl_semantics::model::observation::AdmissionFailure),
+    /// Evaluation refused or faulted.
+    Evaluation(filament_eval::CallFailure),
+}
+
+/// Why the mixed item batch could not use one common program compilation.
+#[derive(Debug)]
+pub enum ProgramBatchRefusal {
+    /// The requests did not share one compile input.
+    DifferentCompilation,
+    /// The one compile refused before any item ran.
+    Compile(Box<ClauseRunReport>),
+}
+
+struct CompiledProgramContext {
+    program: CompiledClauseProgram,
+    packages: fsl_semantics::model::intake::PackageInput,
+    model_limits: ModelNormalizationLimits,
+}
+
+/// Compile the common program once, then independently evaluate each
+/// selection against that checked graph. Callers must supply requests that
+/// share source, package, dependency, clock and limit inputs; only provisions,
+/// accounting and selection may differ.
+pub fn run_clause_batch(
+    requests: Vec<ClauseRunRequest>,
+) -> Result<ClauseRunBatchOutcome, ClauseRunBatchRefusal> {
+    let Some(first) = requests.first() else {
+        return Ok(ClauseRunBatchOutcome::Reports(Vec::new()));
+    };
+    if first.source.unit().bytes.is_empty() {
+        return Err(ClauseRunBatchRefusal::EmptySource);
+    }
+    if requests
+        .iter()
+        .skip(1)
+        .any(|request| !same_clause_compilation(first, request))
+    {
+        return Err(ClauseRunBatchRefusal::DifferentCompilation);
+    }
+    let needs_temporal = requests.iter().any(|request| {
+        matches!(
+            request.selection,
+            ClauseRunSelection::Temporal { .. } | ClauseRunSelection::SampledTemporal { .. }
+        )
+    });
+    let compiled = match compile_clause_program(first, needs_temporal) {
+        Ok(compiled) => compiled,
+        Err(report) => return Ok(ClauseRunBatchOutcome::CompileRefusal(report)),
+    };
+    let reports = requests
+        .iter()
+        .map(|request| run_compiled_clause_selection(&compiled, request))
+        .collect();
+    Ok(ClauseRunBatchOutcome::Reports(reports))
+}
+
+fn same_clause_compilation(left: &ClauseRunRequest, right: &ClauseRunRequest) -> bool {
+    let left_unit = left.source.unit();
+    let right_unit = right.source.unit();
+    left_unit.identity == right_unit.identity
+        && left_unit.path == right_unit.path
+        && left_unit.bytes == right_unit.bytes
+        && left_unit.language == right_unit.language
+        && left.package_name == right.package_name
+        && left.packages == right.packages
+        && left.dependencies == right.dependencies
+        && left.limits == right.limits
+        && left.clocks == right.clocks
+}
+
+fn compile_clause_program(
+    request: &ClauseRunRequest,
+    needs_temporal: bool,
+) -> Result<CompiledClauseProgram, Box<ClauseRunReport>> {
+    compile_program_parts(
+        request.source.unit(),
+        request.package_name.clone(),
+        &request.packages,
+        &request.dependencies,
+        request.limits,
+        &request.clocks,
+        needs_temporal,
+    )
+}
+
+fn compile_program_context(
+    request: &ProgramCompilationRequest,
+    needs_temporal: bool,
+) -> Result<CompiledProgramContext, Box<ClauseRunReport>> {
+    let unit = Unit {
+        identity: &request.source,
+        path: &request.path,
+        bytes: &request.bytes,
+        language: None,
+    };
+    let program = compile_program_parts(
+        unit,
+        request.package_name.clone(),
+        &request.packages,
+        &request.dependencies,
+        request.limits,
+        &request.clocks,
+        needs_temporal,
+    )?;
+    Ok(CompiledProgramContext {
+        program,
+        packages: request.packages.clone(),
+        model_limits: request.limits.model,
+    })
+}
+
+/// Compile the shared program once, then run every FR-651 item through the
+/// same checked package while retaining each item's own inputs and budgets.
+pub fn run_program_batch(
+    compilation: ProgramCompilationRequest,
+    selections: Vec<ProgramBatchSelection>,
+) -> Result<ProgramBatchOutcome, ProgramBatchRefusal> {
+    run_program_batch_with_compile(compilation, selections, compile_program_context)
+}
+
+fn run_program_batch_with_compile(
+    compilation: ProgramCompilationRequest,
+    selections: Vec<ProgramBatchSelection>,
+    compile: impl FnOnce(
+        &ProgramCompilationRequest,
+        bool,
+    ) -> Result<CompiledProgramContext, Box<ClauseRunReport>>,
+) -> Result<ProgramBatchOutcome, ProgramBatchRefusal> {
+    if selections.iter().any(|selection| match selection {
+        ProgramBatchSelection::Clause(request) => {
+            !clause_matches_compilation(request, &compilation)
+        }
+        ProgramBatchSelection::Call { call, .. } => call.clocks != compilation.clocks,
+        ProgramBatchSelection::ValueInvariants(_) => false,
+    }) {
+        return Err(ProgramBatchRefusal::DifferentCompilation);
+    }
+    if selections.is_empty() {
+        return Ok(ProgramBatchOutcome {
+            items: Vec::new(),
+            checked: None,
+        });
+    }
+    let needs_temporal = selections.iter().any(|selection| {
+        matches!(
+            selection,
+            ProgramBatchSelection::Clause(request)
+                if matches!(
+                    request.selection,
+                    ClauseRunSelection::Temporal { .. } | ClauseRunSelection::SampledTemporal { .. }
+                )
+        )
+    });
+    let compiled = compile(&compilation, needs_temporal).map_err(ProgramBatchRefusal::Compile)?;
+    let items = selections
+        .into_iter()
+        .map(|selection| match selection {
+            ProgramBatchSelection::Clause(request) => ProgramBatchItemResult::Clause(Box::new(
+                run_compiled_clause_selection(&compiled.program, &request),
+            )),
+            ProgramBatchSelection::Call {
+                call,
+                include_requirements,
+            } => {
+                let cancel = Cancel::new();
+                let result = run_call_compiled(
+                    &compiled.program.checked,
+                    &compiled.program.models,
+                    CallSources {
+                        package_name: &compilation.package_name,
+                        packages: &compiled.packages,
+                        model_limits: compiled.model_limits,
+                    },
+                    &call,
+                    &fsl_semantics::model::object_environment::ObjectEnvironment::default(),
+                    &fsl_eval::execution::SuppliedBackends::default(),
+                    &fsl_eval::execution::PrepareLimits::default(),
+                    &cancel,
+                )
+                .and_then(|outcome| {
+                    let requirements = if include_requirements {
+                        Some(crate::call_requirements_for(
+                            &compiled.program.checked,
+                            &call,
+                        )?)
+                    } else {
+                        None
+                    };
+                    Ok(ProgramBatchCallOutcome {
+                        outcome,
+                        requirements,
+                    })
+                });
+                ProgramBatchItemResult::Call(result)
+            }
+            ProgramBatchSelection::ValueInvariants(request) => {
+                ProgramBatchItemResult::ValueInvariants(run_compiled_value_invariants(
+                    &compiled, request,
+                ))
+            }
+        })
+        .collect();
+    Ok(ProgramBatchOutcome {
+        items,
+        checked: Some(compiled.program.checked),
+    })
+}
+
+fn clause_matches_compilation(
+    request: &ClauseRunRequest,
+    compilation: &ProgramCompilationRequest,
+) -> bool {
+    let unit = request.source.unit();
+    unit.language.is_none()
+        && unit.identity == &compilation.source
+        && unit.path == compilation.path
+        && unit.bytes == compilation.bytes
+        && request.package_name == compilation.package_name
+        && request.packages == compilation.packages
+        && request.dependencies == compilation.dependencies
+        && request.limits == compilation.limits
+        && request.clocks == compilation.clocks
+}
+
+fn run_compiled_value_invariants(
+    compiled: &CompiledProgramContext,
+    request: ValueInvariantsBatchRequest,
+) -> Result<ValueInvariantsBatchOutcome, ValueInvariantsBatchFailure> {
+    use fsl_eval::value::CheckedPackageEvaluation;
+
+    let package = compiled.program.checked.package();
+    let graph = package.graph();
+    let (observations, admission_usage) =
+        fsl_semantics::model::observation::admit_value_invariant_selection(
+            graph.model_inputs(),
+            graph.scope().types(),
+            graph.scope().operations(),
+            &compiled.packages,
+            compiled.model_limits,
+            &fsl_semantics::model::observation::Provisions {
+                snapshots: &request.snapshots,
+                invocations: &request.invocations,
+            },
+            &request.snapshot,
+            request.invocation.as_ref(),
+            request.observation_limits,
+        )
+        .map_err(ValueInvariantsBatchFailure::Admission)?;
+    let mut meter = Meter::new(request.accounting);
+    let evaluation = package
+        .evaluate_value_invariant_selection(&observations, &mut meter)
+        .map_err(ValueInvariantsBatchFailure::Evaluation)?;
+    Ok(ValueInvariantsBatchOutcome {
+        evaluation,
+        admission_usage,
+    })
+}
+
+fn compile_program_parts(
+    unit: Unit<'_>,
+    package_name: String,
+    packages: &fsl_semantics::model::intake::PackageInput,
+    dependencies: &DependencyInput,
+    limits: SpineLimits,
+    clocks: &RequestClocks,
+    needs_temporal: bool,
+) -> Result<CompiledClauseProgram, Box<ClauseRunReport>> {
+    let report = |disposition: ClauseDisposition| ClauseRunReport {
+        basis: undecided_basis(&disposition),
+        witness: None,
+        state_clause_counterexample: None,
+        frame_field_values: None,
+        disposition,
+        usage: ClauseRunUsage::default(),
+        consequent_source_events: ConsequentSourceEvents::Unavailable,
+        finite_window: None,
+        counterexample: None,
+        decisive: None,
+        ledger: None,
+        authenticated_temporal_selection: None,
+        refused_at: None,
+    };
+    if let Some(language) = unit.language {
+        if NativeLanguage::of(language).is_none() {
+            return Err(Box::new(report(ClauseDisposition::UnknownLanguage {
+                language: language.to_owned(),
+            })));
+        }
+    }
+    let cancel = Cancel::new();
+    let front_end = || -> Result<_, front_end::FrontEndFailure> {
+        let parsed = front_end::parse(
+            &front_end::ParseRequest {
+                source: unit.identity,
+                path: unit.path,
+                bytes: unit.bytes,
+            },
+            limits.source,
+            &cancel,
+        )?
+        .into_value();
+        let models = front_end::select(&parsed, packages, limits.model, &cancel)?.into_value();
+        let check_selections = clocks.check_selections(&parsed);
+        let checked = front_end::check_with_refinement_internals(
+            &parsed,
+            package_name.clone(),
+            crate::spine::SourceInputs {
+                refinement_internals: None,
+                temporal_selections: &check_selections,
+                clocks: Some(clocks),
+            },
+            &models,
+            dependencies,
+            limits,
+            &cancel,
+        )?
+        .into_value();
+        let package_selections = clocks
+            .package_selections(&checked, &[&parsed])
+            .map_err(front_end::FrontEndFailure::Refused)?;
+        let emitted = front_end::package_with_temporal_selections(
+            &checked,
+            &package_selections,
+            limits.package,
+            &cancel,
+        )?
+        .into_value();
+        Ok((models, checked, emitted))
+    };
+    let (models, checked, emitted) = match front_end() {
+        Ok(compiled) => compiled,
+        Err(failure) => {
+            let disposition = match front_end::refusal_or_fault(failure) {
+                Ok(refusal) => ClauseDisposition::Compile(refusal),
+                Err(fault) => ClauseDisposition::EvaluateFault(fault),
+            };
+            return Err(Box::new(report(disposition)));
+        }
+    };
+    let mut sources = Vec::with_capacity(1 + checked.libraries().len());
+    sources.push(checked.source().clone());
+    sources.extend(checked.libraries().iter().cloned());
+    let temporal_package = if needs_temporal {
+        let evidence = match super::bind::admission_evidence(
+            &models,
+            &checked,
+            &emitted,
+            limits.imports,
+            limits.package.emit(),
+        ) {
+            Ok(evidence) => evidence,
+            Err(_) => {
+                return Err(Box::new(report(ClauseDisposition::EvaluateFault(
+                    filament_semantic_value::catalog::InternalFault::new(
+                        "FR-050",
+                        "checked-package-admission-evidence-is-retained",
+                    ),
+                ))))
+            }
+        };
+        match filament_contract_model::CheckedPackageV2::read(
+            emitted.package().bytes(),
+            filament_contract_model::CheckedPackageReadLimits::bounded(),
+            &evidence,
+        ) {
+            filament_contract_model::CheckedPackageV2ReadResult::Admitted(package) => Some(package),
+            _ => {
+                return Err(Box::new(report(ClauseDisposition::EvaluateFault(
+                    filament_semantic_value::catalog::InternalFault::new(
+                        "FR-050",
+                        "emitted-checked-package-strict-read-admits",
+                    ),
+                ))))
+            }
+        }
+    } else {
+        None
+    };
+    Ok(CompiledClauseProgram {
+        models,
+        checked,
+        emitted,
+        sources,
+        temporal_package,
+    })
+}
+
+fn run_compiled_clause_selection(
+    compiled: &CompiledClauseProgram,
+    request: &ClauseRunRequest,
+) -> ClauseRunReport {
+    let report = |disposition: ClauseDisposition| ClauseRunReport {
+        basis: undecided_basis(&disposition),
+        witness: None,
+        state_clause_counterexample: None,
+        frame_field_values: None,
+        disposition,
+        usage: ClauseRunUsage::default(),
+        consequent_source_events: ConsequentSourceEvents::Unavailable,
+        finite_window: None,
+        counterexample: None,
+        decisive: None,
+        ledger: None,
+        authenticated_temporal_selection: None,
+        refused_at: None,
+    };
+    let package = compiled.checked.package();
+    let run = CompiledRun {
+        packages: &request.packages,
+        model_limits: request.limits.model,
+        provisions: Provisions {
+            snapshots: &request.snapshots,
+            invocations: &request.invocations,
+        },
+        observation_limits: request.observation_limits,
+        accounting: request.accounting,
+        package,
+        package_name: &request.package_name,
+        sources: &compiled.sources,
+        progress_capacity: request.limits.progress.covered_positions,
+    };
+    match &request.selection {
+        ClauseRunSelection::Clause(selection) => {
+            let Some(clause) = package.graph().state_clause(&selection.name) else {
+                return run.report(ClauseDisposition::MissingName {
+                    name: selection.name.clone(),
+                });
+            };
+            check_clause(&run, clause, selection)
+        }
+        ClauseRunSelection::Function {
+            name,
+            arguments,
+            snapshot,
+        } => run_function(&run, name, arguments, snapshot).unwrap_or_else(|_| {
+            report(ClauseDisposition::EvaluateFault(
+                filament_semantic_value::catalog::InternalFault::new(
+                    "FR-050",
+                    "compiled-function-selection-runs",
+                ),
+            ))
+        }),
+        ClauseRunSelection::Frame {
+            operation,
+            invocation,
+        } => run_frame(&run, operation, invocation),
+        ClauseRunSelection::SampledTemporal {
+            name,
+            trace,
+            ledger,
+        } => {
+            let Some(admitted_package) = compiled.temporal_package.as_deref() else {
+                return report(ClauseDisposition::EvaluateFault(
+                    filament_semantic_value::catalog::InternalFault::new(
+                        "FR-050",
+                        "temporal-selection-retains-strictly-admitted-package",
+                    ),
+                ));
+            };
+            temporal::run_temporal(
+                &run,
+                &TemporalRun {
+                    name,
+                    trace,
+                    over: None,
+                    ledger: ledger.as_ref(),
+                    authentication: Some(temporal::TemporalAuthentication {
+                        clock_rows: compiled.emitted.temporal_binding_rows(),
+                        admitted_package,
+                    }),
+                    cancel: None,
+                    valuation: false,
+                },
+            )
+        }
+        ClauseRunSelection::Temporal {
+            name,
+            trace,
+            over,
+            ledger,
+        } => {
+            let Some(admitted_package) = compiled.temporal_package.as_deref() else {
+                return report(ClauseDisposition::EvaluateFault(
+                    filament_semantic_value::catalog::InternalFault::new(
+                        "FR-050",
+                        "temporal-selection-retains-strictly-admitted-package",
+                    ),
+                ));
+            };
+            temporal::run_temporal(
+                &run,
+                &TemporalRun {
+                    name,
+                    trace,
+                    over: Some(over),
+                    ledger: ledger.as_ref(),
+                    authentication: Some(temporal::TemporalAuthentication {
+                        clock_rows: compiled.emitted.temporal_binding_rows(),
+                        admitted_package,
+                    }),
+                    cancel: None,
+                    valuation: false,
+                },
+            )
         }
     }
 }
@@ -1257,6 +2168,9 @@ pub(crate) struct CompiledRun<'a> {
     pub(crate) accounting: ScalarLimits,
     /// The compiled package.
     pub(crate) package: &'a fsl_package::CheckedPackage,
+    /// The package name the program was compiled as: the owner of its
+    /// source-declared units (FR-650 "Unit names").
+    pub(crate) package_name: &'a str,
     /// The unit's and every resolved library's source, for loci.
     pub(crate) sources: &'a [Source],
     /// The covered-position capacity for temporal progress admission.
@@ -1268,6 +2182,8 @@ impl CompiledRun<'_> {
         ClauseRunReport {
             basis: undecided_basis(&disposition),
             witness: None,
+            state_clause_counterexample: None,
+            frame_field_values: None,
             disposition,
             usage: ClauseRunUsage::default(),
             consequent_source_events: ConsequentSourceEvents::Unavailable,
@@ -1388,12 +2304,17 @@ pub(crate) struct ClauseCheck {
 }
 
 /// [`check_frame`]'s report and the documents admission read.
-pub(crate) struct FrameCheck {
+pub(crate) struct FrameCheck<'a> {
     /// The report.
     pub(crate) report: ClauseRunReport,
     /// Every document admission read, in read order: the invocation, then
     /// its pre and post snapshots once admitted.
     pub(crate) documents: Vec<DocumentRef>,
+    /// The admitted invocation, when observation admission succeeded.
+    pub(crate) admitted: Option<AdmittedInvocation<'a>>,
+    /// The meter used by the frame check, retained for ordered contract
+    /// evaluation by `run_frame`.
+    pub(crate) meter: Option<Meter>,
 }
 
 /// [`check_clause`], keeping the admitted observations and the meter.
@@ -1519,6 +2440,12 @@ pub(crate) fn check_clause_admitted(
             report.witness = derived.record;
         }
     }
+    if report.disposition.truth() == Some(false) {
+        report.state_clause_counterexample = Some(crate::StateClauseCounterexample {
+            observation: selection.input.clone(),
+            witness: report.witness.clone(),
+        });
+    }
     ClauseCheck {
         report,
         documents,
@@ -1540,7 +2467,58 @@ fn run_frame(
             name: operation.to_string(),
         });
     };
-    check_frame(run, context, operation_frame, invocation).report
+    let mut checked = check_frame(run, context, operation_frame, invocation);
+    if matches!(
+        checked.report.disposition,
+        ClauseDisposition::Evaluate(CallOutcome::Completed(CallValue::Boolean(true)))
+    ) {
+        if let (Some(admitted), Some(meter)) = (checked.admitted.as_ref(), checked.meter.as_mut()) {
+            if let Some(disposition) =
+                evaluate_operation_contracts(run, operation_frame, admitted, meter)
+            {
+                checked.report.disposition = disposition;
+                checked.report.usage = ClauseRunUsage::from_meter(meter, admitted.usage);
+            }
+        }
+    }
+    if let (ClauseDisposition::FrameViolation(witness), Some(admitted)) =
+        (&checked.report.disposition, checked.admitted.as_ref())
+    {
+        if let fsl_semantics::model::observation::FrameChange::FieldWrite {
+            object, field, ..
+        } = &witness.change
+        {
+            let observations = admitted.operation_contract_observations();
+            let slot = |observation: &fsl_semantics::model::observation::Observation| {
+                observation
+                    .environment
+                    .objects()
+                    .iter()
+                    .find(|(reference, _)| reference.object().as_str() == object)
+                    .and_then(|(reference, _)| observation.environment.objects().object(reference))
+                    .and_then(|attributes| attributes.get(field))
+                    .map(frame_field_value_text)
+            };
+            checked.report.frame_field_values =
+                slot(&observations.pre).zip(slot(&observations.post));
+        }
+    }
+    checked.report
+}
+
+fn frame_field_value_text(value: &filament_exact::FieldValue) -> String {
+    use filament_exact::{FieldValue, Value};
+
+    match value {
+        FieldValue::Absent => "absent".to_owned(),
+        FieldValue::Null => "null".to_owned(),
+        FieldValue::Present(Value::Boolean(value)) => value.to_string(),
+        FieldValue::Present(Value::Integer(value)) => value.to_string(),
+        FieldValue::Present(Value::Reference(reference)) => reference.object().to_string(),
+        FieldValue::Present(Value::String(value)) => value.clone(),
+        FieldValue::Present(Value::Text(value)) => value.retained().to_owned(),
+        other => format!("{other:?}"),
+    }
 }
 
 /// FR-104's Resolution of a `Frame` selection: `M` and `T` resolve to a
@@ -1565,12 +2543,12 @@ pub(crate) fn resolve_frame<'g>(
 /// checks 1 and 3 to 10, and check it against the frame through the
 /// `ProtocolClause` S6a `evaluate` arm (FR-106's check 11). `context` and
 /// `operation_frame` are [`resolve_frame`]'s answer over `run.package`.
-pub(crate) fn check_frame(
-    run: &CompiledRun<'_>,
+pub(crate) fn check_frame<'a>(
+    run: &'a CompiledRun<'_>,
     context: filament_exact::EffectiveId,
     operation_frame: &fsl_semantics::check::CheckedOperationFrame,
     invocation: &DocumentRef,
-) -> FrameCheck {
+) -> FrameCheck<'a> {
     use filament_eval::CallFailure;
     use filament_eval::FamilyOutcome;
     use fsl_eval::value::{CheckedPackageEvaluation, FrameEvaluation};
@@ -1600,6 +2578,8 @@ pub(crate) fn check_frame(
             return FrameCheck {
                 report: run.report(ClauseDisposition::Admit(failure)),
                 documents: vec![invocation.clone()],
+                admitted: None,
+                meter: None,
             }
         }
     };
@@ -1687,7 +2667,80 @@ pub(crate) fn check_frame(
     };
     let mut report = run.report(disposition);
     report.usage = ClauseRunUsage::from_meter(&meter, admitted.usage);
-    FrameCheck { report, documents }
+    FrameCheck {
+        report,
+        documents,
+        admitted: Some(admitted),
+        meter: Some(meter),
+    }
+}
+
+/// FR-702: after the frame holds, evaluate each kept requires clause and
+/// then each kept ensures clause for this operation in list order.
+fn evaluate_operation_contracts(
+    run: &CompiledRun<'_>,
+    operation_frame: &fsl_semantics::check::CheckedOperationFrame,
+    admitted: &AdmittedInvocation<'_>,
+    meter: &mut Meter,
+) -> Option<ClauseDisposition> {
+    use filament_eval::FamilyOutcome;
+
+    let graph = run.package.graph();
+    let operation = operation_frame.operation();
+    let mut contracts: Vec<_> = graph
+        .operation_clauses()
+        .iter()
+        .filter(|clause| {
+            clause.declaring() == &operation.declaring
+                && clause.operation_name() == operation.declaration.name()
+        })
+        .collect();
+    contracts.sort_by_key(|clause| {
+        let kind = match clause.kind() {
+            filament_semantic_value::location::OperationClauseKind::Requires => 0,
+            filament_semantic_value::location::OperationClauseKind::Ensures => 1,
+        };
+        (kind, clause.position())
+    });
+    for clause in contracts {
+        let evaluation = match fsl_eval::value::evaluate_operation_contract(
+            run.package,
+            clause,
+            admitted.operation_contract_observations(),
+            meter,
+        ) {
+            Ok(evaluation) => evaluation,
+            Err(fault) => return Some(ClauseDisposition::EvaluateFault(fault)),
+        };
+        if matches!(
+            evaluation.outcome,
+            FamilyOutcome::Evaluated(filament_exact::Outcome::Completed(Value::Boolean(false)))
+        ) {
+            return Some(ClauseDisposition::OperationContractViolation(
+                OperationContractViolation {
+                    operation: clause.operation().clone(),
+                    operation_name: clause.operation_name().to_owned(),
+                    kind: clause.kind(),
+                    position: clause.position(),
+                    artifact: clause.artifact().map(str::to_owned),
+                    span: clause.span(),
+                    origin: clause.origin().clone(),
+                    member: clause.member().clone(),
+                },
+            ));
+        }
+        match convert_outcome(evaluation, graph, run.sources) {
+            Ok(CallOutcome::Completed(CallValue::Boolean(true))) => {}
+            Ok(outcome) => return Some(ClauseDisposition::Evaluate(outcome)),
+            Err(refusal) => {
+                return Some(match *refusal {
+                    RunRefusal::Fault(fault) => ClauseDisposition::EvaluateFault(fault),
+                    other => ClauseDisposition::ArgumentRefusal(Box::new(other)),
+                });
+            }
+        }
+    }
+    None
 }
 
 fn run_function(
@@ -1703,10 +2756,13 @@ fn run_function(
     let observation_limits = run.observation_limits;
     let accounting = run.accounting;
     let package = run.package;
+    let package_name = run.package_name;
     let sources = run.sources;
     let report = |disposition: ClauseDisposition| ClauseRunReport {
         basis: undecided_basis(&disposition),
         witness: None,
+        state_clause_counterexample: None,
+        frame_field_values: None,
         disposition,
         usage: ClauseRunUsage::default(),
         consequent_source_events: ConsequentSourceEvents::Unavailable,
@@ -1828,6 +2884,39 @@ fn run_function(
                     ))));
                 };
                 Value::Reference(reference.clone())
+            }
+            (ClauseArgumentValue::Form(form), value_type) => {
+                let universe_of = |declared: &filament_exact::EffectiveId| {
+                    population_universe_for(
+                        package.graph().model_inputs(),
+                        packages,
+                        model_limits,
+                        declared.clone(),
+                    )
+                    .ok()
+                };
+                let world = super::run_value::World {
+                    objects: &environment,
+                    universe_of: &universe_of,
+                };
+                let forms = super::run_value::Forms::new(
+                    package.graph().scope().types(),
+                    package.graph().scope().enums(),
+                )
+                .in_world(package_name, Some(&world));
+                match forms.read(form, value_type) {
+                    Ok(value) => value,
+                    Err(super::run_value::ReadStop::Defect(defect)) => {
+                        return Ok(report(ClauseDisposition::ArgumentRefusal(Box::new(
+                            RunRefusal::Argument { position, defect },
+                        ))))
+                    }
+                    Err(_) => {
+                        return Ok(report(ClauseDisposition::ArgumentRefusal(Box::new(
+                            RunRefusal::UnsupportedParameter { position },
+                        ))))
+                    }
+                }
             }
             _ => {
                 return Ok(report(ClauseDisposition::ArgumentRefusal(Box::new(

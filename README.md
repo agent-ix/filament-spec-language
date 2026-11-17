@@ -31,7 +31,7 @@ model `example/config-version`:
 
 ```
 language "ix:native" edition "1-draft";
-profile v = "filament.value.complete/v1";
+profile v = "filament.model.complete/v1";
 model Config = "example/config-version";
 
 invariant ParentOrder using v on Config::ConfigVersion at current {
@@ -49,8 +49,8 @@ post VersionUnchanged using v on Config::ConfigVersion::attemptUpdate {
 
 - **`language … edition`** sets the language version of the file.
 - **`profile`** selects the part of the language the rules may use.
-  `filament.value.complete/v1` covers values, records and expressions. The line
-  binds it to the name `v`, and each rule says `using v`.
+  `filament.model.complete/v1` covers values, object graphs and model operations.
+  The line binds it to the name `v`, and each rule says `using v`.
 - **`model`** imports the domain model by identity.
   A rule is checked against the model with that identity.
 - **`invariant … at current`** must hold for every `ConfigVersion` in the data.
@@ -118,7 +118,8 @@ and `P` are profiles and `M` is a model, declared at the top of the unit as in
 the first example.
 
 **Values and functions.** Bounded integers, exact rationals, records, unions
-and pure functions. There is no floating point.
+and pure functions. `Float32` and `Float64` support `exact`, `nearest-even`,
+`nearest-away`, `toward-zero`, `toward-positive` and `toward-negative` rounding modes.
 
 ```
 type Digit = Int[0, 9];
@@ -155,12 +156,13 @@ protocol Orders using P over (view: M::WorkflowView) on each (started: M::StartV
   role OrdersService on M::OrderService;
   role PaymentsService on M::PaymentService;
   channel Requests from OrdersService to PaymentsService carries M::ChargeRequest
-    ordering fifo by (message: M::ChargeRequest) { message.key } delivery [0,3];
+    ordering fifo by (message: M::ChargeRequest) { message.key } delivery [0,3] capacity 4 overflow block;
   run sequence Main {
     send Sent via Requests as (sent: M::SendView) { sent.amount = requested };
     receive Received via Requests of Sent as (received: M::ReceiptView) { received.ok };
     commit Committed by OrdersService as (committed: M::CommitView) { committed.ok };
   }
+  finish Closed as (closing: M::ClosureView) { closing.complete };
 }
 ```
 

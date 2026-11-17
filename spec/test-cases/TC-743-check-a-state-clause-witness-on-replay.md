@@ -34,8 +34,9 @@ provision.
    member; with the deciding element 700 at index 1; with 0 at
    index 0. Repeat FR-265-AC-1's record over variants of `AllBelow` whose
    domain expression evaluates `undefined` on `high`, whose body evaluates
-   `undefined` for `mid`, and whose domain is refused (a `count` into
-   `Int[0, 0]` of a one-element collection); then over `AllBelow` with the
+   `undefined` for `mid`, and whose domain is refused (it calls `z`, whose body is a `count` into
+   `Int[0, 0]` of a one-element collection, in a package checked under
+   `CheckMode::Kernel`; FR-268-AC-3); then over `AllBelow` with the
    evaluation meter one unit below step 2's need.
 4. TC-517 step 1's `VersionUnchanged` and `ParentOrder` envelopes; an
    `AllBelow` envelope whose reader bound is smaller than its encoded

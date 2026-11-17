@@ -217,7 +217,7 @@ fn fault(fault: SourceObjectFault, span: Span) -> AssemblyError {
 pub(super) fn build(
     objects: &[ObjectForm],
     context: &Context<'_>,
-) -> Result<DomainPackage, Vec<AssemblyError>> {
+) -> Result<(DomainPackage, BTreeMap<DeclarationKey, Vec<String>>), Vec<AssemblyError>> {
     let mut errors = Vec::new();
     let mut by_name = BTreeMap::new();
     for (index, object) in objects.iter().enumerate() {
@@ -236,6 +236,29 @@ pub(super) fn build(
     if !errors.is_empty() {
         return Err(errors);
     }
+    let mut effective_identity_fields = vec![Vec::new(); objects.len()];
+    for index in 0..objects.len() {
+        if !objects[index].identity.is_empty() {
+            effective_identity_fields[index] = objects[index]
+                .identity
+                .iter()
+                .map(|field| field.name.clone())
+                .collect();
+        } else if let Some(ancestor) = model.ancestors[index]
+            .iter()
+            .find(|ancestor| !effective_identity_fields[**ancestor].is_empty())
+        {
+            effective_identity_fields[index] = effective_identity_fields[*ancestor].clone();
+        }
+    }
+    let identity_fields = (0..objects.len())
+        .map(|index| {
+            (
+                model.type_key(context.identity, index),
+                effective_identity_fields[index].clone(),
+            )
+        })
+        .collect();
     let mut records = Vec::new();
     let mut scalars = Vec::new();
     for index in 0..objects.len() {
@@ -276,7 +299,7 @@ pub(super) fn build(
         records,
     );
     package.foreign = foreign;
-    Ok(package)
+    Ok((package, identity_fields))
 }
 
 /// Each object's `extends` entries resolved to source object types, the
@@ -753,9 +776,6 @@ fn value_type(
         let [element] = form.arguments.as_slice() else {
             return Err(unsupported());
         };
-        if matches!(element.head, TypeFormHead::Collection(_)) {
-            return Err(unsupported());
-        }
         let (element, _) = value_type(model, context, owner, site, element, scalars)?;
         let bound = |at: usize| {
             form.bounds
@@ -806,6 +826,7 @@ fn scalar_type(
         TypeFormHead::Builtin(BuiltinType::Integer) => {
             Ok(ValueTypeRef::Native(NativeValueType::Integer))
         }
+        TypeFormHead::Builtin(BuiltinType::Clock) => Ok(ValueTypeRef::Clock),
         TypeFormHead::Builtin(BuiltinType::Reference) => {
             let [target] = form.arguments.as_slice() else {
                 return Err(unsupported());
@@ -832,7 +853,8 @@ fn scalar_type(
                 record @ (DomainPackageRecord::ScalarType(_)
                 | DomainPackageRecord::AliasType(_)
                 | DomainPackageRecord::RecordValueType(_)
-                | DomainPackageRecord::TupleValueType(_)),
+                | DomainPackageRecord::TupleValueType(_)
+                | DomainPackageRecord::Enum(_)),
             ) => Ok(ValueTypeRef::Package(record.key().clone())),
             Some(_) => Err(unsupported()),
             None => Err(missing(&name.name, form.span)),
@@ -864,6 +886,11 @@ fn scalar_type(
             }));
             Ok(ValueTypeRef::Package(key))
         }
-        _ => Err(unsupported()),
+        // The synthetic package is admitted before the unit's complete type
+        // namespace exists. `assemble` replaces this temporary model view
+        // with the type resolved from the original form once enums,
+        // composites, aliases and units have been bound. Keep a simple
+        // placeholder here so the model's structural checks can run first.
+        _ => Ok(ValueTypeRef::Native(NativeValueType::Integer)),
     }
 }

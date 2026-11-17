@@ -88,34 +88,34 @@ use filament_exact::Cancel;
 use filament_semantic_value::catalog::InternalFault;
 use filament_semantic_value::semantic_node::IdentityRefusal;
 use fsl_cst::Limits as SourceLimits;
-use fsl_forms::{parse_clause_text, FormsRefusal, ParsedUnit};
-use fsl_foundation::diagnostic::{LimitExceeded, Locus, StageFailure, StageWork, Staged};
-use fsl_foundation::selection::ImportSelection;
-use fsl_foundation::source::provenance::{RawSourceRef, SourceRegion};
-use fsl_foundation::source::Source;
+use fsl_forms::{FormsRefusal, ParsedUnit, parse_clause_text};
 use fsl_foundation::Setting;
 use fsl_foundation::SyntaxLimit;
+use fsl_foundation::diagnostic::{LimitExceeded, Locus, StageFailure, StageWork, Staged};
+use fsl_foundation::selection::ImportSelection;
+use fsl_foundation::source::Source;
+use fsl_foundation::source::provenance::{RawSourceRef, SourceRegion};
 use fsl_foundation::{Code, SourceIdentity};
 use fsl_package as pkg;
-use fsl_package::{read_import_view, AdmittedPackages, Emission, Import, ImportViewRefusal};
+use fsl_package::{AdmittedPackages, Emission, Import, ImportViewRefusal, read_import_view};
 use fsl_semantics::check::{
-    resolve_profiles, AdmittedImport, AssemblyCause, AssemblyError, CheckCause, CheckRefusal,
-    CorrespondenceConflict, KeyFault, PackageDeclarations,
+    AdmittedImport, AssemblyCause, AssemblyError, CheckCause, CheckRefusal, CorrespondenceConflict,
+    KeyFault, PackageDeclarations, resolve_profiles,
 };
 use fsl_semantics::library::extension::{CoreVocabulary, HeldExtensions};
 use fsl_semantics::library::{ImportView, LibraryName};
 use fsl_semantics::model::accounting::ModelNormalizationLimits;
 use fsl_semantics::model::intake::{
-    admit_unit_with_cancel, admit_units_with_cancel, SelectedModel, SelectedModels, UnitIntakeCause,
+    SelectedModel, SelectedModels, UnitIntakeCause, admit_unit_with_cancel, admit_units_with_cancel,
 };
 use fsl_semantics::value::identity_limit;
 
 use super::subject::StaticSubjectInput;
-use super::{
-    region, CompileRefusal, DependencyInput, ImportRefusal, SpineLimits, SuppliedLibrary,
-    UnitListRefusal,
-};
 use super::{BuildProvenance, StaticSubject, SubjectUnavailable};
+use super::{
+    CompileRefusal, DependencyInput, ImportRefusal, SpineLimits, SuppliedLibrary, UnitListRefusal,
+    region,
+};
 
 /// What a front-end operation returns when it produces no output: the
 /// stage's refusal, a reached limit, a cancellation or a fault.
@@ -148,6 +148,7 @@ struct StageError {
 #[derive(Clone, Debug)]
 enum ProtocolFailure {
     Source(fsl_cst::CompleteDiagnostic),
+    SourceDiagnostics(Vec<fsl_cst::CompleteDiagnostic>),
     Forms {
         failure: FormsRefusal,
         region: Option<SourceRegion>,
@@ -156,14 +157,24 @@ enum ProtocolFailure {
         refusals: Vec<CheckRefusal>,
         region: Option<SourceRegion>,
     },
+    CheckDiagnostics {
+        refusals: Vec<CheckRefusal>,
+        regions: Vec<Option<SourceRegion>>,
+    },
 }
 
 impl ProtocolFailure {
     fn from_refusal(refusal: CompileRefusal) -> Self {
         match refusal {
             CompileRefusal::Source(diagnostic) => Self::Source(*diagnostic),
+            CompileRefusal::SourceDiagnostics { diagnostics } => {
+                Self::SourceDiagnostics(diagnostics)
+            }
             CompileRefusal::Forms { failure, region } => Self::Forms { failure, region },
             CompileRefusal::Check { refusals, region } => Self::Check { refusals, region },
+            CompileRefusal::CheckDiagnostics { refusals, regions } => {
+                Self::CheckDiagnostics { refusals, regions }
+            }
             other => Self::Check {
                 refusals: Vec::new(),
                 region: match other {
@@ -180,6 +191,9 @@ impl ProtocolFailure {
     fn to_refusal(&self) -> CompileRefusal {
         match self {
             Self::Source(diagnostic) => CompileRefusal::Source(Box::new(diagnostic.clone())),
+            Self::SourceDiagnostics(diagnostics) => CompileRefusal::SourceDiagnostics {
+                diagnostics: diagnostics.clone(),
+            },
             Self::Forms { failure, region } => CompileRefusal::Forms {
                 failure: failure.clone(),
                 region: region.clone(),
@@ -187,6 +201,10 @@ impl ProtocolFailure {
             Self::Check { refusals, region } => CompileRefusal::Check {
                 refusals: refusals.clone(),
                 region: region.clone(),
+            },
+            Self::CheckDiagnostics { refusals, regions } => CompileRefusal::CheckDiagnostics {
+                refusals: refusals.clone(),
+                regions: regions.clone(),
             },
         }
     }
@@ -343,6 +361,37 @@ fn limit_of(
                 locus,
             ))
         }
+        CompileRefusal::CheckDiagnostics { refusals, regions } => {
+            if let Some((index, bound, required)) =
+                refusals.iter().enumerate().find_map(|(index, refusal)| {
+                    match refusal.cause.unwrapped() {
+                        CheckCause::Identity(IdentityRefusal::InputBytes { bound, required }) => {
+                            Some((index, *bound, *required))
+                        }
+                        _ => None,
+                    }
+                })
+            {
+                return Some(at(
+                    identity_limit(bound, required),
+                    regions.get(index).and_then(Option::as_ref),
+                ));
+            }
+            let (index, cause) = refusals.iter().enumerate().find_map(|(index, refusal)| {
+                match refusal.cause.unwrapped() {
+                    CheckCause::ResourceExhausted(cause) => Some((index, cause)),
+                    _ => None,
+                }
+            })?;
+            let locus = cause
+                .region
+                .as_ref()
+                .or_else(|| regions.get(index).and_then(Option::as_ref));
+            Some(at(
+                LimitExceeded::new(cause.kind.setting(), cause.limit, cause.actual),
+                locus,
+            ))
+        }
         CompileRefusal::Assembly { refusal, .. } => {
             refusal.errors.iter().find_map(|error| match &error.cause {
                 AssemblyCause::TypeLimit(limit)
@@ -368,6 +417,7 @@ fn limit_of(
         },
         CompileRefusal::Limit(limit) => Some(limit.clone()),
         CompileRefusal::UnitList(_)
+        | CompileRefusal::SourceDiagnostics { .. }
         | CompileRefusal::Forms { .. }
         | CompileRefusal::OperationClause { .. }
         | CompileRefusal::TypeInvariant { .. }
@@ -385,38 +435,40 @@ fn limit_of(
 /// the input.
 fn fault_of(refusal: &CompileRefusal) -> Option<InternalFault> {
     match refusal {
-        CompileRefusal::Check { refusals, .. } => refusals.iter().find_map(|refusal| match refusal
-            .cause
-            .unwrapped()
-        {
-            CheckCause::InternalFault(fault) => {
-                let named = match fault.as_ref() {
-                    KeyFault::CorrespondenceConflict(conflict) => match conflict.as_ref() {
-                        CorrespondenceConflict::NodeRebound {
-                            node,
-                            recorded,
-                            offered,
-                        } => vec![
-                            ("node", format!("{node:?}")),
-                            ("recorded", format!("{recorded:?}")),
-                            ("offered", format!("{offered:?}")),
-                        ],
-                        CorrespondenceConflict::DeclarationRebound {
-                            declaration,
-                            recorded,
-                            offered,
-                        } => vec![
-                            ("declaration", format!("{declaration:?}")),
-                            ("recorded", format!("{recorded:?}")),
-                            ("offered", format!("{offered:?}")),
-                        ],
-                    },
-                    _ => Vec::new(),
-                };
-                Some(InternalFault::new("S3", fault.invariant()).with_named(named))
-            }
-            _ => None,
-        }),
+        CompileRefusal::Check { refusals, .. }
+        | CompileRefusal::CheckDiagnostics { refusals, .. } => {
+            refusals
+                .iter()
+                .find_map(|refusal| match refusal.cause.unwrapped() {
+                    CheckCause::InternalFault(fault) => {
+                        let named = match fault.as_ref() {
+                            KeyFault::CorrespondenceConflict(conflict) => match conflict.as_ref() {
+                                CorrespondenceConflict::NodeRebound {
+                                    node,
+                                    recorded,
+                                    offered,
+                                } => vec![
+                                    ("node", format!("{node:?}")),
+                                    ("recorded", format!("{recorded:?}")),
+                                    ("offered", format!("{offered:?}")),
+                                ],
+                                CorrespondenceConflict::DeclarationRebound {
+                                    declaration,
+                                    recorded,
+                                    offered,
+                                } => vec![
+                                    ("declaration", format!("{declaration:?}")),
+                                    ("recorded", format!("{recorded:?}")),
+                                    ("offered", format!("{offered:?}")),
+                                ],
+                            },
+                            _ => Vec::new(),
+                        };
+                        Some(InternalFault::new("S3", fault.invariant()).with_named(named))
+                    }
+                    _ => None,
+                })
+        }
         CompileRefusal::Intake { refusal, .. }
             if matches!(refusal.cause, UnitIntakeCause::Invariant) =>
         {
@@ -1420,11 +1472,7 @@ fn parse_operation(
                 )
             })
         {
-            let refusal = parsed
-                .syntax
-                .diagnostics()
-                .first()
-                .map(|diagnostic| Box::new(CompileRefusal::Source(Box::new(diagnostic.clone()))))
+            let refusal = source_diagnostics_refusal(parsed.syntax.diagnostics())
                 .or_else(|| {
                     parsed.protocol_forms_refusal.clone().map(|failure| {
                         Box::new(CompileRefusal::Forms {
@@ -1541,9 +1589,65 @@ pub fn check(
     check_with_refinement_internals(
         parsed,
         package_name,
+        SourceInputs {
+            refinement_internals: None,
+            temporal_selections: &[],
+            clocks: None,
+        },
+        models,
+        dependencies,
+        limits,
+        cancel,
+    )
+}
+
+/// Check one unit under the caller's admitted integer-division law (FR-767).
+/// The selection applies to this unit; libraries retain their own header laws.
+pub fn check_with_integer_division(
+    parsed: &ParsedUnitSource,
+    package_name: String,
+    models: &AdmittedModels,
+    dependencies: &DependencyInput,
+    selection: &crate::AdmittedIntegerDivision,
+    limits: SpineLimits,
+    cancel: &Cancel,
+) -> Result<Staged<CheckedUnit>, FrontEndFailure> {
+    check_with_context_and_temporal_selections(
+        parsed,
+        package_name,
+        &BTreeMap::new(),
+        None,
+        &[],
+        None,
+        Some(*selection),
         None,
         models,
         dependencies,
+        limits,
+        cancel,
+        false,
+    )
+}
+
+/// Check every admitted program unit under one caller-supplied law (FR-767).
+pub fn check_units_with_integer_division(
+    admitted: &AdmittedUnitList,
+    package_name: String,
+    models: &AdmittedModels,
+    dependencies: &DependencyInput,
+    selection: &crate::AdmittedIntegerDivision,
+    limits: SpineLimits,
+    cancel: &Cancel,
+) -> Result<Staged<Vec<CheckedUnit>>, FrontEndFailure> {
+    check_units_with_options(
+        admitted,
+        package_name,
+        models,
+        dependencies,
+        UnitCheckOptions {
+            integer_division: Some(*selection),
+            ..UnitCheckOptions::default()
+        },
         limits,
         cancel,
     )
@@ -1578,6 +1682,7 @@ pub fn check_with_profile_catalog(
         &BTreeMap::new(),
         None,
         &[],
+        None,
         None,
         Some(profile_catalog),
         models,
@@ -1687,12 +1792,27 @@ pub fn check_units(
     )
 }
 
+/// The per-source inputs of a check beside the unit itself: the request's
+/// unchecked refinement-internal-list value (FR-147/FR-099) and the clock
+/// selections S3 reads ([`super::RequestClocks::check_selections`]).
+#[derive(Clone, Debug, Default)]
+pub struct SourceInputs<'a> {
+    /// The unit's unchecked internal-list value; `None` when absent.
+    pub refinement_internals: Option<serde_json::Value>,
+    /// The clock selections S3 reads.
+    pub temporal_selections: &'a [fsl_package::TemporalClockSelection],
+    /// The request's `clocks` member (FR-640), which serves the library
+    /// units the check compiles; `None` when the caller selects by locus.
+    pub clocks: Option<&'a super::RequestClocks>,
+}
+
 /// S3 and S4 over an admitted source-unit list, with the root request's
-/// unchecked refinement-internal-list value carried into the combined unit.
+/// unchecked refinement-internal-list value carried into the combined unit and the
+/// request's clock selections ([`SourceInputs`]).
 pub fn check_units_with_refinement_internals(
     admitted: &AdmittedUnitList,
     package_name: String,
-    refinement_internals: Option<serde_json::Value>,
+    inputs: SourceInputs<'_>,
     models: &AdmittedModels,
     dependencies: &DependencyInput,
     limits: SpineLimits,
@@ -1704,7 +1824,9 @@ pub fn check_units_with_refinement_internals(
         models,
         dependencies,
         UnitCheckOptions {
-            refinement_internals: refinement_internals.as_ref(),
+            refinement_internals: inputs.refinement_internals.as_ref(),
+            temporal_selections: inputs.temporal_selections,
+            clocks: inputs.clocks,
             ..UnitCheckOptions::default()
         },
         limits,
@@ -1714,7 +1836,9 @@ pub fn check_units_with_refinement_internals(
 
 #[derive(Clone, Copy, Default)]
 pub(crate) struct UnitCheckOptions<'a> {
+    pub(crate) integer_division: Option<crate::AdmittedIntegerDivision>,
     pub(crate) temporal_selections: &'a [fsl_package::TemporalClockSelection],
+    pub(crate) clocks: Option<&'a super::RequestClocks>,
     pub(crate) continue_protocol_refusals: bool,
     pub(crate) refinement_internals: Option<&'a serde_json::Value>,
     pub(crate) extension_catalog: Option<ProfileCatalogInput<'a>>,
@@ -1761,7 +1885,8 @@ pub(crate) fn check_units_with_options(
             limits,
             cancel,
             temporal_selections: options.temporal_selections,
-            integer_division: None,
+            clocks: options.clocks,
+            integer_division: options.integer_division,
             extension_catalog: options.extension_catalog,
             active: Vec::new(),
             compiled: BTreeMap::new(),
@@ -1866,25 +1991,31 @@ pub(crate) fn check_units_with_options(
 }
 
 /// S3 and S4 with the unit's unchecked internal-list value and each
-/// dependency library's own value carried to its source owner (FR-147/FR-099).
+/// dependency library's own value carried to its source owner (FR-147/FR-099), and the
+/// request's clock selections ([`SourceInputs`]).
 pub fn check_with_refinement_internals(
     parsed: &ParsedUnitSource,
     package_name: String,
-    refinement_internals: Option<serde_json::Value>,
+    inputs: SourceInputs<'_>,
     models: &AdmittedModels,
     dependencies: &DependencyInput,
     limits: SpineLimits,
     cancel: &Cancel,
 ) -> Result<Staged<CheckedUnit>, FrontEndFailure> {
-    check_with_execution_points_and_refinement_internals(
+    check_with_context_and_temporal_selections(
         parsed,
         package_name,
         &BTreeMap::new(),
-        refinement_internals,
+        inputs.refinement_internals,
+        inputs.temporal_selections,
+        inputs.clocks,
+        None,
+        None,
         models,
         dependencies,
         limits,
         cancel,
+        false,
     )
 }
 
@@ -1936,6 +2067,7 @@ pub fn check_with_execution_points_and_refinement_internals(
         &[],
         None,
         None,
+        None,
         models,
         dependencies,
         limits,
@@ -1966,6 +2098,37 @@ pub fn check_with_temporal_selections_and_execution_points(
         execution_points,
         None,
         temporal_selections,
+        None,
+        None,
+        None,
+        models,
+        dependencies,
+        limits,
+        cancel,
+        false,
+    )
+}
+
+/// S3 and S4 with accepted execution points, refinement internals and the
+/// request's clock configurations carried together.
+#[allow(clippy::too_many_arguments)]
+pub fn check_with_execution_points_and_source_inputs(
+    parsed: &ParsedUnitSource,
+    package_name: String,
+    execution_points: &super::StateClauseExecutionPoints,
+    inputs: SourceInputs<'_>,
+    models: &AdmittedModels,
+    dependencies: &DependencyInput,
+    limits: SpineLimits,
+    cancel: &Cancel,
+) -> Result<Staged<CheckedUnit>, FrontEndFailure> {
+    check_with_context_and_temporal_selections(
+        parsed,
+        package_name,
+        execution_points,
+        inputs.refinement_internals,
+        inputs.temporal_selections,
+        inputs.clocks,
         None,
         None,
         models,
@@ -2005,6 +2168,7 @@ pub(crate) fn check_for_continuation(
         inputs.execution_points,
         None,
         inputs.temporal_selections,
+        None,
         inputs.integer_division,
         None,
         models,
@@ -2025,6 +2189,7 @@ fn check_with_context_and_temporal_selections(
     execution_points: &super::StateClauseExecutionPoints,
     refinement_internals: Option<serde_json::Value>,
     temporal_selections: &[fsl_package::TemporalClockSelection],
+    clocks: Option<&super::RequestClocks>,
     integer_division: Option<filament_checked::integer_division::AdmittedIntegerDivision>,
     extension_catalog: Option<ProfileCatalogInput<'_>>,
     models: &AdmittedModels,
@@ -2056,6 +2221,7 @@ fn check_with_context_and_temporal_selections(
             limits,
             cancel,
             temporal_selections,
+            clocks,
             integer_division,
             extension_catalog,
             active: Vec::new(),
@@ -2435,8 +2601,10 @@ fn parse_unit(
     let (unit, forms_refusals) = match fsl_forms::build_unit_with_protocol_results(&parsed) {
         Ok(built) => built,
         Err(failure) => {
-            if let Some(diagnostic) = parsed.diagnostics().first() {
-                let refusal = Box::new(CompileRefusal::Source(Box::new(diagnostic.clone())));
+            if !parsed.diagnostics().is_empty() {
+                let refusal = source_diagnostics_refusal(parsed.diagnostics())
+                    .expect("a non-empty diagnostic slice builds a refusal");
+                let diagnostic = &parsed.diagnostics()[0];
                 if let Some(results) =
                     bounded_protocol_results_around_nonprotocol_diagnostic(&parsed, diagnostic)
                 {
@@ -2464,6 +2632,20 @@ fn parse_unit(
         protocol_results,
         protocol_forms_refusal,
     })
+}
+
+fn source_diagnostics_refusal(
+    diagnostics: &[fsl_cst::CompleteDiagnostic],
+) -> Option<Box<CompileRefusal>> {
+    match diagnostics {
+        [] => None,
+        [diagnostic] => Some(Box::new(CompileRefusal::Source(Box::new(
+            diagnostic.clone(),
+        )))),
+        diagnostics => Some(Box::new(CompileRefusal::SourceDiagnostics {
+            diagnostics: diagnostics.to_vec(),
+        })),
+    }
 }
 
 /// Clean, brace-bounded protocol declarations on both sides of a
@@ -2846,15 +3028,29 @@ fn protocol_check_outcome(
         // fallback.
         let regions = graph.memoized_regions();
         let refusals = graph.unit_refusals().to_vec();
+        let mut refusal_regions: Vec<_> = refusals
+            .iter()
+            .map(|refusal| regions(&refusal.location))
+            .collect();
         let region = graph.unit_refusal_region().cloned().or_else(|| {
             refusals.first().and_then(|refusal| match &refusal.cause {
                 CheckCause::LayerEquality {
                     span: Some(span), ..
                 } => region(parsed.source().reference(), *span),
-                _ => regions(&refusal.location),
+                _ => refusal_regions.first().cloned().flatten(),
             })
         });
-        first_failure = Some(CompileRefusal::Check { refusals, region });
+        if let Some(first_region) = refusal_regions.first_mut() {
+            *first_region = region.clone();
+        }
+        first_failure = Some(if refusals.len() > 1 {
+            CompileRefusal::CheckDiagnostics {
+                refusals,
+                regions: refusal_regions,
+            }
+        } else {
+            CompileRefusal::Check { refusals, region }
+        });
     }
     if first_failure.is_none() {
         first_failure = protocol_failure_from_parsed(parsed);
@@ -2923,8 +3119,8 @@ fn attach_protocol_results(
 }
 
 fn protocol_failure_from_parsed(parsed: &ParsedUnitSource) -> Option<CompileRefusal> {
-    if let Some(diagnostic) = parsed.syntax.diagnostics().first() {
-        return Some(CompileRefusal::Source(Box::new(diagnostic.clone())));
+    if !parsed.syntax.diagnostics().is_empty() {
+        return source_diagnostics_refusal(parsed.syntax.diagnostics()).map(|refusal| *refusal);
     }
     parsed
         .protocol_forms_refusal
@@ -3060,6 +3256,35 @@ fn emit_refusal(
                 region,
             )
         }
+        fsl_package::EmitRefusal::MissingTemporalClockSelection {
+            source_ref,
+            span,
+            declaration,
+        } => {
+            let locus = region(&source_ref, span);
+            CompileRefusal::Emit(
+                fsl_package::EmitRefusal::MissingTemporalClockSelection {
+                    source_ref,
+                    span,
+                    declaration,
+                },
+                locus,
+            )
+        }
+        fsl_package::EmitRefusal::ProbabilisticModelNotEmitted {
+            declaration,
+            feature,
+            profile,
+            region,
+        } => CompileRefusal::Emit(
+            fsl_package::EmitRefusal::ProbabilisticModelNotEmitted {
+                declaration,
+                feature,
+                profile,
+                region: region.clone(),
+            },
+            Some(region),
+        ),
         other => CompileRefusal::Emit(other, None),
     })
 }
@@ -3073,7 +3298,7 @@ fn emit_unit(
     cancel: &Cancel,
     limits: PackageLimits,
 ) -> Result<Emission, Box<CompileRefusal>> {
-    let emission = fsl_package::emit_checked_with_temporal_selections_and_cancel(
+    let emission = fsl_package::emit_dependency_with_temporal_selections_and_cancel(
         package,
         selections,
         cancel,
@@ -3099,22 +3324,17 @@ fn temporal_selections_for_source(
         .collect()
 }
 
-/// The timestamped-event clock unit of each selection, for S3's `duration`
-/// window conversion (FR-337 "Aggregate formula emission").
+/// The clock configuration of each selection, for S3's `duration` window
+/// conversion (FR-337 "Aggregate formula emission") and a role-clock timed
+/// clause's binding unit (FR-933).
 fn clock_units(
     selections: &[fsl_package::TemporalClockSelection],
 ) -> Vec<fsl_semantics::check::ClockUnitSelection> {
     selections
         .iter()
-        .filter_map(|selection| match &selection.clock {
-            filament_contract_model::ClockConfiguration::TimestampedEvent { timestamp_unit } => {
-                Some(fsl_semantics::check::ClockUnitSelection {
-                    declaration_span: selection.declaration_span,
-                    timestamp_unit: timestamp_unit.to_string(),
-                })
-            }
-            filament_contract_model::ClockConfiguration::EventPosition { .. }
-            | filament_contract_model::ClockConfiguration::FixedSample { .. } => None,
+        .map(|selection| fsl_semantics::check::ClockUnitSelection {
+            declaration_span: selection.declaration_span,
+            clock: selection.clock.clone(),
         })
         .collect()
 }
@@ -3279,6 +3499,9 @@ struct Resolution<'a> {
     limits: SpineLimits,
     cancel: &'a Cancel,
     temporal_selections: &'a [fsl_package::TemporalClockSelection],
+    /// The request's `clocks` member (FR-640), which serves a library unit
+    /// no explicit selection names.
+    clocks: Option<&'a super::RequestClocks>,
     integer_division: Option<filament_checked::integer_division::AdmittedIntegerDivision>,
     /// The catalog that holds the extensions a unit or library selects
     /// (FR-354); `None` holds none.
@@ -3670,9 +3893,22 @@ impl<'a> Resolution<'a> {
                 refusal,
             })
         })?;
-        if frame.raw == self.continuation_source {
-            declarations.integer_division = self.integer_division;
+        let mut selected = (frame.raw == self.continuation_source)
+            .then_some(self.integer_division)
+            .flatten();
+        for source in &source_units {
+            selected = fsl_semantics::check::resolve_integer_division(
+                &source.unit().selections().profiles,
+                selected.map(|law| (law, "caller selection")),
+            )
+            .map_err(|refusal| {
+                Box::new(CompileRefusal::Profile {
+                    region: region(source.source().reference(), refusal.identity_span),
+                    refusals: vec![*refusal],
+                })
+            })?;
         }
+        declarations.integer_division = selected;
         // FR-354: the extensions the package's units were parsed against are
         // the ones S3 checks their forms with.
         declarations = declarations.with_extensions(HeldExtensions::union(
@@ -3684,7 +3920,7 @@ impl<'a> Resolution<'a> {
         // FR-337 "Aggregate formula emission": a clause's `duration` windows
         // convert to its selected timestamped-event clock unit at S3.
         declarations =
-            declarations.with_clock_units(clock_units(&self.temporal_selections_for(&frame.raw)));
+            declarations.with_clock_units(clock_units(&self.check_selections_for(frame)));
         // FR-302: link the dispatch table of each family a dispatched call's
         // member name may name, under the caller's model normalization
         // limits, before `check` types the calls against them. A family
@@ -3695,14 +3931,31 @@ impl<'a> Resolution<'a> {
         })
         .map_err(|refusals| {
             let regions = declarations.regions();
-            Box::new(CompileRefusal::Check {
-                region: refusals
-                    .first()
-                    .and_then(|refusal| regions.refusal_region(refusal)),
-                refusals,
+            let mut refusal_regions: Vec<_> = refusals
+                .iter()
+                .map(|refusal| regions.refusal_region(refusal))
+                .collect();
+            let region = refusal_regions.first().cloned().flatten();
+            if let Some(first_region) = refusal_regions.first_mut() {
+                *first_region = region.clone();
+            }
+            Box::new(if refusals.len() > 1 {
+                CompileRefusal::CheckDiagnostics {
+                    refusals,
+                    regions: refusal_regions,
+                }
+            } else {
+                CompileRefusal::Check { refusals, region }
             })
         })?;
         let regions = declarations.regions();
+        // FR-640, FR-933: a role clock's `timed` configuration the request's
+        // `clocks` member does not supply, or supplies with a unit that is no
+        // declared time unit, is the request's fault, refused at stage `emit`
+        // as the other clock-selection faults are.
+        let by_name_clocks = self
+            .clocks
+            .filter(|_| self.temporal_selections_for(&frame.raw).is_empty());
         let graph = charged(cancel, &mut self.work.s3, || {
             if frame.raw == self.continuation_source {
                 declarations.check_with_protocol_continuation_and_cancel(
@@ -3716,6 +3969,13 @@ impl<'a> Resolution<'a> {
         })
         .map_err(|refusals| {
             let refusals = pending.report(refusals);
+            if let Some(clocks) = by_name_clocks {
+                if let Some(refusal) = refusals.iter().find_map(|refusal| {
+                    super::clocks::check_clock_refusal(clocks, refusal, &regions)
+                }) {
+                    return refusal;
+                }
+            }
             let region = refusals.first().and_then(|refusal| {
                 regions
                     .refusal_region(refusal)
@@ -3728,7 +3988,21 @@ impl<'a> Resolution<'a> {
                         _ => None,
                     })
             });
-            Box::new(CompileRefusal::Check { region, refusals })
+            let mut refusal_regions: Vec<_> = refusals
+                .iter()
+                .map(|refusal| regions.refusal_region(refusal))
+                .collect();
+            if let Some(first_region) = refusal_regions.first_mut() {
+                *first_region = region.clone();
+            }
+            Box::new(if refusals.len() > 1 {
+                CompileRefusal::CheckDiagnostics {
+                    refusals,
+                    regions: refusal_regions,
+                }
+            } else {
+                CompileRefusal::Check { refusals, region }
+            })
         })?;
         // The protocol continuation check keeps a refused state clause on the
         // graph instead of failing: report it the same way (FR-302).
@@ -3783,6 +4057,7 @@ impl<'a> Resolution<'a> {
     fn check_frame(&mut self, mut root: Frame) -> Result<pkg::CheckedPackage, Box<CompileRefusal>> {
         let mut libraries: Vec<Library> = Vec::new();
         loop {
+            let in_library = !libraries.is_empty();
             let frame = current(&mut root, &mut libraries);
             if let Some(import) = frame.unit.selections().imports.get(frame.next).cloned() {
                 let raw = frame.raw.clone();
@@ -3805,6 +4080,17 @@ impl<'a> Resolution<'a> {
                 continue;
             }
             let source = frame.raw.clone();
+            // FR-640: a library unit no explicit selection names reads the
+            // request's `clocks`; the locator is taken before the check
+            // consumes the frame's parsed units.
+            let by_name = in_library
+                && self.clocks.is_some()
+                && self.temporal_selections_for(&source).is_empty();
+            let locator = if by_name {
+                super::ClockLocator::new(frame.source_units.iter())
+            } else {
+                super::ClockLocator::default()
+            };
             let package = self
                 .finish_unit(frame)
                 .map_err(|refusal| unwind(&libraries, refusal))?;
@@ -3812,7 +4098,12 @@ impl<'a> Resolution<'a> {
                 return Ok(package);
             }
             let cancel = self.cancel;
-            let selections = self.temporal_selections_for(&source);
+            let selections = match self.clocks.filter(|_| by_name) {
+                Some(clocks) => clocks
+                    .library_selections(&package, &locator)
+                    .map_err(|refusal| unwind(&libraries, refusal))?,
+                None => self.temporal_selections_for(&source),
+            };
             let emission = charged(cancel, &mut self.work.e4, || {
                 emit_unit(&package, &selections, cancel, self.limits.package)
             })
@@ -3867,6 +4158,21 @@ impl<'a> Resolution<'a> {
         source: &RawSourceRef,
     ) -> Vec<fsl_package::TemporalClockSelection> {
         temporal_selections_for_source(self.temporal_selections, source)
+    }
+
+    /// The selections S3 reads for `frame`: the explicit ones of its source,
+    /// or, when there are none, those the request's `clocks` names
+    /// ([`super::RequestClocks::check_selections`]).
+    fn check_selections_for(&self, frame: &Frame) -> Vec<fsl_package::TemporalClockSelection> {
+        let explicit = self.temporal_selections_for(&frame.raw);
+        match self.clocks {
+            Some(clocks) if explicit.is_empty() => frame
+                .source_units
+                .iter()
+                .flat_map(|unit| clocks.check_selections(unit))
+                .collect(),
+            _ => explicit,
+        }
     }
 
     /// ADR-015 D-1's steps for one `import` of the unit `raw` names:

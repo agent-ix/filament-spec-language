@@ -21,6 +21,8 @@ relationships:
     type: implements
   - target: ix://agent-ix/filament-specification/FR-301
     type: depends_on
+  - target: ix://agent-ix/filament-spec-language/FR-853
+    type: references
 ---
 # FR-644: Stream observations through the monitor command
 
@@ -36,8 +38,11 @@ longer exits `unsupported` with no output.
 
 ## Use case
 
-`tail -f plant.jsonl | quire monitor monitor.json` prints a line when a clause
-settles, and nothing while every clause is pending. When the log ends the command
+`tail -f plant.jsonl | quire monitor monitor.json` prints a line
+when a clause's status changes, with `settled` `true` on the line where a
+clause settles; a consumer that acts only on settled lines acts once per
+clause, and a pending clause's provisional line (`settled` `false`) never
+counts as its verdict. When the log ends the command
 prints a summary and exits 10 if any clause was violated.
 
 ## Inputs
@@ -47,6 +52,9 @@ The request file, a closed JSON envelope `{"format": "native-monitor/1",
 
 - `models`, `program`, `libraries` and `clocks`: as in a `1-draft` native-run/1
   request (FR-100, FR-640); the command compiles the program once;
+- `integer_division`: optional, the integer-division law name for the program,
+  also admitted on each `libraries` entry, as in a native-run/1 request
+  ([FR-767](FR-767-supply-the-integer-division-law-from-a-command-option-or-request-member.md));
 - `clauses`: a non-empty array of `{"name": N, "over": R}`, `over` as FR-641
   states for snapshot positions and absent for samples;
 - `trace`: `{"kind": "finite"|"progressed"|"timestamped"|"timed", "lower_boundary":
@@ -73,24 +81,55 @@ one of
   or an exact rational string as the kind requires, `stamp` and `order_key`
   optional as the kind allows;
 - `{"progress": G}`: a progress assertion (FR-641's `G`);
+- `{"through": X}`: for the `timed` kind only, FR-642's completeness stamp,
+  FR-643's `assert_through`;
 - `{"checkpoint": PATH}`: write the session's checkpoint to `PATH`;
-- `{"end": "closed"|"open"}`: the last record; end of input without it is
-  `{"end": "open"}`.
+- `{"end": true}`: the last record; end of input without it ends the stream
+  the same way. It ends the stream and adds no closure: the trace's closure
+  comes from its kind, its latest progress assertion and its latest
+  `through` (FR-643 "Trace end"). A caller closes a progressed trace with a
+  `progress` record whose scope is `closed`.
 
 In process: `command::monitor(path: &Path, records: impl Iterator<Item =
 Result<Vec<u8>, std::io::Error>>, sink: &mut dyn FnMut(&MonitorEvent), limits:
-RunLimits, cancel: &Cancel) -> Result<MonitorSummary, Box<RunError>>`.
+RunLimits, cancel: &Cancel) -> Result<MonitorSummary, Box<RunError>>`. It also
+takes the started process providers as `providers`, by FR-635's rule for
+every provider-routing entry (FR-635 "One rule for every provider-routing
+entry").
 
 ## Outputs
 
 - One `filament.monitor-event/1` object per clause whose status changed at a
   record, in `clauses` order: `{"format", "record", "position", "clause",
-  "category", "basis", "disposition"}`, where `record` is the zero-based line
+  "settled", "category", "basis", "disposition", "settlement"}`, `settlement`
+  present exactly when `settled` is `true`, where `settled` is `true`
+  exactly when the clause's status is `Settled` after the record, `record` is the zero-based line
   number, `position` the trace position, and `disposition` FR-267's clause-run
-  disposition for that clause, written as FR-267 writes it.
+  disposition for that clause, written as FR-267 writes it. The `disposition`
+  is that of the clause's report, `B(k)` or `B(s)` (FR-643 "Batch
+  equality"), and carries no member of the reading that settled it. An
+  event whose `settled` is `true` also carries `settlement`, FR-643's
+  `Settlement` as the closed JSON object `{"step", "trigger", "basis",
+  "horizon", "position", "through", "cause"}` with each member present exactly
+  when FR-643 "Settlement" gives it, `cause` (`requested` or `deadline`)
+  present exactly when `trigger` is `cancelled` (FR-853), decimal positions and counts as strings and
+  `position` `null` where the reading names none, for example
+  `{"step": "3", "trigger": "decided", "basis": "decisive-witness",
+  "horizon": "2", "position": "2"}`; an event whose `settled` is `false`
+  carries no `settlement`.
 - At the end, one `filament.monitor-summary/1` object: each clause's final
-  category, basis and disposition, the number of records read, and the final
-  ledger when the kind carries progress.
+  `settled` (`true` for a clause settled before the end, `false` for one
+  settled by the end itself), category, basis and disposition, and
+  `settlement` with the event's shape, present for every clause: a clause
+  settled before the end carries the `settlement` of the event that settled
+  it, and a clause settled by the end itself carries `{"step": "<n>",
+  "trigger": "finish"}`, `n` the number of counted calls made before
+  `finish` (FR-643 "Counted calls": refused records do not count), and a clause
+  still open when the stream is cancelled carries `{"step": "<n>",
+  "trigger": "cancelled", "cause": "<cause>"}` (FR-853); the number of records
+  read; `cancelled`, the handle's cause `requested` or `deadline`, present
+  exactly when the stream was cancelled (FR-853); and the final ledger exactly when the kind carries progress (`progressed` or
+  `timestamped`), so a `finite` stream's summary carries no ledger.
 - The exit code: FR-285's code of the most severe final category, in the order
   internal failure (30), refusal (20), violation or undefined (10),
   indeterminate (11), unsupported (21), incomplete (22), and otherwise 0.
@@ -100,8 +139,14 @@ RunLimits, cancel: &Cancel) -> Result<MonitorSummary, Box<RunError>>`.
 - `command::monitor` SHALL write nothing to the process streams; it hands each
   event to `sink` before reading the next record, so a driver that writes events
   as they come gives a live monitor.
-- The events SHALL be exactly the status changes FR-643's `step` reports, so the
-  events plus the summary equal a batch run over the same records (FSpec FR-114).
+- The events SHALL be exactly the status changes FR-643's `step` reports (a
+  change of the clause's settled status, category or disposition), so the events plus the
+  summary agree with a batch run over the same records in FR-643's "Batch
+  equality" sense (FSpec FR-114): a pending clause's latest event carries the
+  batch disposition over the records so far, a settled clause's carries
+  the batch disposition over the records that decided it, and a clause
+  settled on a limit carries its `incomplete` limit report instead, which no
+  batch run produces (FR-643 "Settlement").
 - A malformed record (not one closed object of the forms above, an observation
   key `observations` lacks, a stamp of the wrong form for the kind) SHALL produce
   a `filament.monitor-event/1` with `category` `refusal`, `invalid-request`,
@@ -119,11 +164,13 @@ RunLimits, cancel: &Cancel) -> Result<MonitorSummary, Box<RunError>>`.
 
 | ID | Criteria | Verification |
 |----|----------|--------------|
-| FR-644-AC-1 | `command::monitor` over FR-643-AC-1's three clauses and five snapshot records ending `{"end": "closed"}` hands the sink one event per status change, at the record that caused it, and returns a summary whose dispositions equal FR-283's batch `monitor` over the closed trace; the exit code is 10. | Test (TC-1668) |
+| FR-644-AC-1 | `command::monitor` over FR-643-AC-1's three clauses and five snapshot records ending `{"end": true}` hands the sink one event per status change, at the record that caused it, and returns a summary whose dispositions equal FR-283's batch `monitor` over the closed trace; the exit code is 10. | Test (TC-1668) |
 | FR-644-AC-2 | A record with an unknown member between two good records gives one `refusal` event naming that record, and the events and summary for the good records equal those of the stream without it. | Test (TC-1668) |
 | FR-644-AC-3 | A `{"checkpoint": PATH}` record after record 2, then a second `command::monitor` call whose request names that file as `state` and whose stream holds records 3 to 5, gives the events of records 3 to 5 that the uninterrupted stream gives. | Test (TC-1669) |
 | FR-644-AC-4 | A request naming a clause the program lacks returns the command-error envelope, exit 20, and the sink receives nothing; `command::monitor` writes no byte to stdout or stderr. | Test (TC-1669) |
-| FR-644-AC-5 | Through `command::run`, a `native-monitor/1` request whose `records` file holds sample observations for two infinite-trace clauses over a record trace subject, `Reaches` (`eventually holds(r.level = 2)`) and `Never` (`always holds(r.level < 2)`), over levels 0, 1, 2, 1 then `{"end": "open"}` returns a `filament.monitor-run/1` document whose per-clause status after each observation record equals the clause-run result of the native-run/1 request over the `finite` trace of the samples received so far, whose summary equals the run over all four samples, and whose exit code is 10 (`Never` is violated). | Test (TC-1668) |
+| FR-644-AC-5 | Through `command::run`, a `native-monitor/1` request whose `records` file holds sample observations for two infinite-trace clauses over a record trace subject, `Reaches` (`eventually holds(r.level = 2)`) and `Never` (`always holds(r.level < 2)`), over levels 0, 1, 2, 1 then `{"end": true}` returns a `filament.monitor-run/1` document in which, for each clause after each observation record `k`: the `category` of the clause's latest event equals the `category` of the clause-run result of the native-run/1 request over the `finite` trace of samples 0 to `k`; that event's `disposition` equals the clause-run disposition over samples 0 to `j`, `j` the record of the latest event (`Never` settles `violation` at record 2, its event `settled` `true`, so from record 2 on `j` is 2 and its disposition carries the three-sample counterexample while the run over four samples carries four; `Reaches` stays `pending`, its events `settled` `false`, and `j` is the record of its latest pending event); the summary's `settled` and disposition for each clause equal its latest event's, `Reaches` `pending`; the summary's `settlement` is the settling event's for `Never` and `{"step": "4", "trigger": "finish"}` for `Reaches`; and the exit code is 10 (`Never` is violated). | Test (TC-1668) |
+| FR-644-AC-6 | A `timed` stream of FR-643-AC-10's `Ack` with the one record `req` at 0, followed by `{"through": 250}`, gives, at the `through` record, an event for `Ack` with `settled` `true` and category `violation`; a `{"through": X}` record on a `finite` stream, and a record `{"end": "closed"}`, each give a `refusal` event, `invalid-request`, naming `through` and `end` respectively, and leave the session unchanged. | Test (TC-2324) |
+| FR-644-AC-7 | Through `command::run`, a `finite` stream of FR-643-AC-7's `E` over levels 0, 1, 2 then `{"end": true}` gives at record 2 an event with `settled` `true`, a `disposition` equal to the native-run/1 clause run over samples 0 to 2 (category `success`, basis `closed-scope`, no `finite_window`), and `settlement` `{"step": "3", "trigger": "decided", "basis": "decisive-witness", "horizon": "2", "position": "2"}`; the events at records 0 and 1 carry `settled` `false` and no `settlement`; the summary entry carries the same `settlement`, and the summary has no `ledger`. | Test (TC-2340) |
 
 ## Dependencies
 

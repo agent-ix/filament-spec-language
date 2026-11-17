@@ -12,7 +12,7 @@
 use fsl_cst::{CstNode, LosslessCst, Production, TokenKind};
 use fsl_foundation::Span;
 
-use super::dispatch::{Construct, FormsRefusal};
+use super::dispatch::{Construct, ConstructKind, FormsRefusal};
 use super::syntax::{
     ActivationForm, AggregateAtomForm, AggregateComparison, AggregateKindForm, AggregateTermForm,
     CaptureForm, ClockForm, DeclarationForm, ExpressionForm, FairnessConstraintForm,
@@ -22,8 +22,8 @@ use super::syntax::{
     UsingAlias,
 };
 use super::value::{
-    declared_name, exact_value, expression, has_token, items, name_form, nodes_of, only,
-    production_node, quantity_form, text, tokens_of, type_form, unexpected, unrepresented, Item,
+    Item, declared_name, exact_value, expression, has_token, items, name_form, nodes_of, only,
+    production_node, quantity_form, text, tokens_of, type_form, unexpected, unrepresented,
 };
 
 /// `temporal Name using p over (x: T) clock "c" activation { fairness*
@@ -66,6 +66,7 @@ pub(crate) fn temporal_clause(construct: Construct<'_>) -> Result<DeclarationFor
             parameter: Box::new(parameter_form(cst, parameter)?),
             when: nodes_of(&activation_items, Production::Expression)
                 .first()
+                .or(nodes_of(&activation_items, Production::HyperExpression).first())
                 .map(|condition| expression_form(cst, condition))
                 .transpose()?,
         },
@@ -101,7 +102,7 @@ pub(crate) fn temporal_clause(construct: Construct<'_>) -> Result<DeclarationFor
         captures,
         // S2 keeps indexed reads as syntax. S3 knows whether the `over`
         // type makes this a hybrid claim and can give the right refusal.
-        formula: formula_form(cst, formula, true)?,
+        formula: formula_form(cst, formula, false)?,
     })))
 }
 
@@ -505,11 +506,19 @@ impl<'c> Formula<'c> {
                 );
                 Ok(())
             }
-            [Item::Token(holds), Item::Token(_), Item::Node(condition), Item::Token(_)]
-                if holds.spelling() == b"holds" =>
-            {
+            [
+                Item::Token(holds),
+                Item::Token(_),
+                Item::Node(condition),
+                Item::Token(_),
+            ] if holds.spelling() == b"holds" => {
                 if condition.production() == Production::HyperExpression && !self.hyper {
-                    return Err(unrepresented(Production::HyperExpression, condition.span()));
+                    return Err(unrepresented(
+                        self.cst,
+                        Production::HyperExpression,
+                        condition.span(),
+                        ConstructKind::HyperCondition,
+                    ));
                 }
                 let condition = expression_form(self.cst, condition)?;
                 self.add(

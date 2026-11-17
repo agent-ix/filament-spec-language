@@ -235,6 +235,230 @@ pub(super) fn run(
         .expect("a well-formed request always reports")
 }
 
+fn outcome_item(clause: &str, report: &crate::spine::ClauseRunReport) -> serde_json::Value {
+    let document = crate::OutcomeDocument::from_clause_runs(None, [(clause, report)])
+        .expect("the completed clause run becomes an outcome item");
+    let bytes = document.to_bytes().expect("the outcome document encodes");
+    let value: serde_json::Value = serde_json::from_slice(&bytes).expect("outcome JSON");
+    value["items"][0].clone()
+}
+
+fn assert_outcome_witness_names_history(item: &serde_json::Value) {
+    let witness = item
+        .get("witness")
+        .expect("refuted state item has a witness");
+    assert_eq!(witness["deciding_element"]["decimal"], "600", "{witness}");
+    assert!(witness.get("quantifier").is_some(), "{witness}");
+    assert_eq!(witness["index"], 1, "{witness}");
+    assert_eq!(
+        witness["value_path"]["root"]["subject"]["object_identity"], "mid",
+        "{witness}"
+    );
+    assert_eq!(
+        witness["value_path"]["steps"][0]["name"], "history",
+        "{witness}"
+    );
+    assert_eq!(
+        witness["value_path"]["steps"].as_array().unwrap().len(),
+        1,
+        "{witness}"
+    );
+}
+
+/// FR-286-AC-10: a state-clause outcome keeps the selected object and its
+/// field-backed deciding element through the existing separating-witness
+/// member, for current, pre-call and invocation observations.
+#[trace("TC-770", "FR-286-AC-10")]
+#[test]
+fn outcome_documents_keep_state_clause_witnesses_for_invariant_pre_and_post() {
+    let invariant = super::witness_member::run_current("MemberAll", &[0, 600, 700]);
+    let invariant_payload = invariant
+        .state_clause_counterexample
+        .as_ref()
+        .expect("a violated invariant carries its typed state-clause payload");
+    assert!(matches!(
+        &invariant_payload.observation,
+        fsl_semantics::model::observation::ClauseSelectionInput::Current { .. }
+    ));
+    let invariant_item = outcome_item("MemberAll", &invariant);
+    assert_eq!(invariant_item["category"], "violation");
+    assert_outcome_witness_names_history(&invariant_item);
+
+    let pre = super::witness_member::run_pre_call(&[0, 600, 700]);
+    let pre_payload = pre
+        .state_clause_counterexample
+        .as_ref()
+        .expect("a violated precondition carries its typed state-clause payload");
+    assert!(matches!(
+        &pre_payload.observation,
+        fsl_semantics::model::observation::ClauseSelectionInput::PreCall { .. }
+    ));
+    let pre_item = outcome_item("MemberPre", &pre);
+    assert_eq!(pre_item["category"], "violation");
+    assert_outcome_witness_names_history(&pre_item);
+
+    let post = super::witness_member::run_post_invocation(&[0, 600, 700], &[0, 600, 700]);
+    let post_payload = post
+        .state_clause_counterexample
+        .as_ref()
+        .expect("a violated postcondition carries its typed state-clause payload");
+    assert!(matches!(
+        &post_payload.observation,
+        fsl_semantics::model::observation::ClauseSelectionInput::Invocation { .. }
+    ));
+    let post_item = outcome_item("MemberPost", &post);
+    assert_eq!(post_item["category"], "violation");
+    assert_outcome_witness_names_history(&post_item);
+
+    let holds = super::witness_member::run_current("MemberAll", &[0, 1]);
+    let holds_item = outcome_item("MemberAll", &holds);
+    assert_eq!(holds_item["category"], "success");
+    assert!(holds_item.get("witness").is_none(), "{holds_item}");
+    assert!(holds.state_clause_counterexample.is_none());
+}
+
+/// Run the witness unit after editing its current snapshot document.
+fn run_with_snapshot_edit(
+    edit: impl FnOnce(&mut serde_json::Value),
+) -> crate::spine::ClauseRunReport {
+    let mut request = clause_request("AllBelow", Snapshot::Low, "child", 1_000_000);
+    let (label, bytes) = request
+        .snapshots
+        .iter()
+        .next()
+        .expect("the witness request has one snapshot");
+    let label = label.clone();
+    let mut document: serde_json::Value = serde_json::from_slice(bytes).unwrap();
+    edit(&mut document);
+    request
+        .snapshots
+        .insert(label, serde_json::to_vec(&document).unwrap());
+    run_clause(request).expect("a well-formed request always reports")
+}
+
+/// Assert one admission refusal's catalog, object, member and source path,
+/// including the fields retained by the native result reader.
+fn assert_snapshot_refusal(
+    cause: &str,
+    object: &str,
+    member: &str,
+    path: &str,
+    edit: impl FnOnce(&mut serde_json::Value),
+) {
+    let report = run_with_snapshot_edit(edit);
+    assert_eq!(
+        report.disposition.stage(),
+        crate::spine::ClauseRunStage::Admit
+    );
+    let crate::spine::ClauseDisposition::Admit(
+        fsl_semantics::model::observation::AdmissionFailure::Refused(record),
+    ) = &report.disposition
+    else {
+        panic!(
+            "expected the {cause} snapshot refusal, got {:?}",
+            report.disposition
+        );
+    };
+    assert_eq!(record.catalog.cause(), cause);
+    assert_eq!(
+        record.fields.get("object").map(String::as_str),
+        Some(object)
+    );
+    assert_eq!(record.fields.get("field").map(String::as_str), Some(member));
+    assert_eq!(record.fields.get("path").map(String::as_str), Some(path));
+
+    let bytes = crate::spine::write_clause_run_result(&report).unwrap();
+    let value: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+    assert_eq!(
+        value.pointer("/disposition/refusal/fields/path"),
+        Some(&json!(path)),
+        "the native result retains the snapshot JSON pointer for {cause}"
+    );
+    let read = crate::spine::read_native_run_result(&bytes).unwrap();
+    let crate::spine::NativeRunResult::Clause(read) = read else {
+        panic!("the report must read as a clause-run document");
+    };
+    assert_eq!(
+        read.fields().and_then(|fields| fields.get("path")),
+        Some(&path.to_owned())
+    );
+}
+
+/// FR-106-AC-3: admission items identify the object, member and source JSON
+/// pointer for snapshot defects; a valid snapshot has no admission item.
+#[trace("TC-465", "FR-106-AC-3")]
+#[test]
+fn snapshot_admission_refusal_witnesses_name_object_member_and_path() {
+    assert_snapshot_refusal(
+        "missing-member",
+        "root",
+        "versionNumber",
+        "/populations/0/objects/0/fields/versionNumber",
+        |document| {
+            document["populations"][0]["objects"][0]["fields"]
+                .as_object_mut()
+                .unwrap()
+                .remove("versionNumber");
+        },
+    );
+    assert_snapshot_refusal(
+        "unknown-member",
+        "root",
+        "extra",
+        "/populations/0/objects/0/fields/extra",
+        |document| {
+            document["populations"][0]["objects"][0]["fields"]["extra"] = json!({"boolean":true});
+        },
+    );
+    assert_snapshot_refusal(
+        "invalid-value",
+        "root",
+        "versionNumber",
+        "/populations/0/objects/0/fields/versionNumber",
+        |document| {
+            document["populations"][0]["objects"][0]["fields"]["versionNumber"] =
+                json!({"integer":"1001"});
+        },
+    );
+    assert_snapshot_refusal(
+        "wrong-value-kind",
+        "root",
+        "versionNumber",
+        "/populations/0/objects/0/fields/versionNumber",
+        |document| {
+            document["populations"][0]["objects"][0]["fields"]["versionNumber"] =
+                json!({"boolean":true});
+        },
+    );
+    assert_snapshot_refusal(
+        "conflicting-identity",
+        "root",
+        "key",
+        "/populations/0/objects/2/key",
+        |document| {
+            let duplicate = document["populations"][0]["objects"][0].clone();
+            document["populations"][0]["objects"]
+                .as_array_mut()
+                .unwrap()
+                .push(duplicate);
+        },
+    );
+
+    let report = run("AllBelow", Snapshot::Low, "child");
+    assert_ne!(
+        report.disposition.stage(),
+        crate::spine::ClauseRunStage::Admit
+    );
+    let bytes = crate::spine::write_clause_run_result(&report).unwrap();
+    let value: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+    assert!(value.pointer("/disposition/refusal").is_none());
+    let read = crate::spine::read_native_run_result(&bytes).unwrap();
+    let crate::spine::NativeRunResult::Clause(read) = read else {
+        panic!("the report must read as a clause-run document");
+    };
+    assert!(read.fields().is_none());
+}
+
 pub(super) fn decisive_witness_wire() -> serde_json::Value {
     let report = run("AllBelow", Snapshot::High, "mid");
     let bytes = crate::spine::write_clause_run_result(&report).unwrap();

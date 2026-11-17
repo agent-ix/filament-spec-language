@@ -20,7 +20,7 @@ Verify FR-621's item members and document category. Scope: FR-621-AC-1 to FR-621
 4. Check every category and label of steps 1 to 3 against FSpec FR-352's registry; hand the writer an unregistered kind.
 5. Compare the library document with the driver's machine-mode document for step 2.
 6. Render step 2 in text mode.
-7. Analyze a `finite-replay` item whose clause is pending at the trace end, and read the value spelling of step 2's counterexample.
+7. Run the temporal clause `Reaches` through an FR-641 clause-run request over the `finite` samples 0, 1, where it is pending at the trace end; analyze a `finite-replay` item naming a temporal clause; and read the value spelling of step 2's counterexample.
 
 ## Expected Results
 
@@ -30,5 +30,5 @@ Verify FR-621's item members and document category. Scope: FR-621-AC-1 to FR-621
 - Step 4: every kind registered; the unregistered kind gives `internal-failure`, exit 30.
 - Step 5: byte-equal documents.
 - Step 6: first line `0 Bounded refuted`, exit 10.
-- Step 7: kind `pending`, category `pending`, basis and `axes.settlement` `unsettled`, exit 0; `value` spelled `{"type": "integer", "value": "3"}`.
+- Step 7: the clause run reports kind `pending`, category `pending`, basis and `axes.settlement` `unsettled`, exit 0; the `finite-replay` item settles `inapplicable-kind`, family `temporal-trace`, exit 20; `value` spelled `{"type": "integer", "value": "3"}`.
 - Assertions compare the outcome document's typed members and the exit code, never message text.

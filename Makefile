@@ -11,14 +11,28 @@ check-no-committed-binaries:
 # artifacts. A narrower document selection supports the native gate controls.
 SPEC_VALIDATION_DOCUMENTS ?= spec/**/*.md
 export SPEC_VALIDATION_DOCUMENTS
+WORKSPACE_ROOT := $(abspath $(dir $(lastword $(MAKEFILE_LIST))))
 .PHONY: check-spec-validation
 check-spec-validation:
-	@validator=$$(command -v quire) || { echo "check-spec-validation: native quire is required on PATH" >&2; exit 127; }; \
-	PATH= "$$validator" validate --scope . "$$SPEC_VALIDATION_DOCUMENTS"
+	@helper="$(WORKSPACE_ROOT)/xtask/ci_spec_validation.rs"; \
+	if [ ! -r "$$helper" ]; then \
+	  echo "check-spec-validation: Rust validator helper is missing: $$helper" >&2; exit 1; \
+	fi; \
+	if ! rustc=$$(command -v rustc); then \
+	  echo "check-spec-validation: rustc is required to build the Rust validator helper" >&2; exit 127; \
+	fi; \
+	target="$${CARGO_TARGET_DIR:-target}/ci-tools/spec-validation"; \
+	mkdir -p "$$target"; \
+	"$$rustc" --edition=2021 --crate-name fsl_ci_spec_validation -D warnings "$$helper" -o "$$target/check-spec-validation" || { \
+	  echo "check-spec-validation: failed to build the Rust validator helper" >&2; exit 1; \
+	}; \
+	"$$target/check-spec-validation"
 
-# The native CLI tries `quoin plugin ensure-defaults` when discovery is empty.
-# Its child PATH above is empty to prevent installation during a gate; missing
-# modules must fail with the CLI's configuration diagnostic instead.
+# The validator scans PATH for canonical npm @agent-ix/quire-cli JavaScript
+# launchers, selecting the lexicographically first installation, then invokes
+# it with the resolved Node executable. The child PATH is empty to prevent
+# module installation during a gate.
+# Missing modules must fail with the CLI's configuration diagnostic instead.
 
 # QSL#214 (FR-063-AC-5): demonstrated on every full-gate run, not only when
 # run by hand. Runs three normal builds (the root crate, fsl-route and
@@ -329,7 +343,7 @@ fuzz-deep-input:
 # Each aggregate prerequisite depends on validation, rather than racing it as
 # a sibling under -j (or continuing past it under -k). Standalone lane commands
 # retain their existing behavior; this ordering belongs to the aggregate gate.
-CI_CHECKS := conformance check-no-committed-binaries ci-default-features ci-all-features test-deep-format ci-clean-build seam-probe string-edge route-lint checked-input canonical-types refinement-versioning cargo-deny-bans ci-docs arch-lint-api-surface-fsl arch-lint-qualified-core build-no-std
+CI_CHECKS := conformance check-no-committed-binaries ci-default-features ci-all-features test-deep-format ci-clean-build seam-probe string-edge route-lint checked-input canonical-types refinement-versioning cargo-deny-bans ci-docs arch-lint-api-surface-fsl arch-lint-qualified-core build-no-std examples-check
 CI_TARGETS := $(CI_CHECKS)
 # The public aggregate validates the native documents before the xtask wrapper
 # canonicalizes FSPEC_DIR for every child lane.
@@ -365,6 +379,22 @@ check-conformance-input:
 
 conformance: check-conformance-input
 	@$(CONFORMANCE_XTASK) conformance
+
+# FR-765 (QSL-2101): the filament-examples gate over this checkout. Runs the
+# sibling filament-driver's examples gate (driver FR-021) with every language
+# package of its `fsl` build patched to this checkout's crates, then the
+# negative check that a verdict this checkout no longer gives fails the target
+# (`xtask/tests/examples_check.rs`). Hosted CI stays manual; this is local.
+# A missing driver or examples checkout is an error, never a skip.
+FSL_DRIVER_DIR ?= $(SIBLINGS)/filament-driver
+FSL_EXAMPLES_DIR ?= $(SIBLINGS)/filament-examples
+export FSL_DRIVER_DIR FSL_EXAMPLES_DIR
+EXAMPLES_XTASK ?= cargo run --locked --package xtask --
+EXAMPLES_CHECK_TESTS ?= cargo test --locked --package xtask --test examples_check
+.PHONY: examples-check
+examples-check:
+	@$(EXAMPLES_XTASK) examples-check
+	$(EXAMPLES_CHECK_TESTS)
 
 # FR-059/FR-060 (ADR-011 §7.1 T-12, #215): architecture-conformance
 # checks over the FSL/IR/RT/CG ecosystem.
@@ -419,7 +449,7 @@ arch-lint: arch-lint-api-surface-fsl arch-lint-qualified-core
 
 # The committed performance benchmarks (`fsl-bench/`), one
 # criterion bench per axis group, each runnable by name. `make bench` runs all
-# ten; `make bench-probe` prints the counts, refusal boundaries and one-shot
+# eleven; `make bench-probe` prints the counts, refusal boundaries and one-shot
 # large-input timings (with peak RSS) the criterion benches do not record.
 # Compare a candidate with current main in one interleaved session; see
 # `fsl-bench/BENCHMARKING.md` for the live-run method. No stored baseline is used.
@@ -427,14 +457,20 @@ arch-lint: arch-lint-api-surface-fsl arch-lint-qualified-core
 # Not part of `ci:`
 # -- timing is not a pass/fail gate.
 BENCH_ARGS ?=
-BENCH_AXES := parser checker cst model evaluator text_cluster mc reach key en4
+BENCH_AXES := parser checker cst model evaluator evaluator_kernel text_cluster mc reach key en4
+BENCH_GENERIC_AXES := $(filter-out evaluator_kernel,$(BENCH_AXES))
 
 .PHONY: bench bench-probe $(addprefix bench-,$(BENCH_AXES))
 
 bench: $(addprefix bench-,$(BENCH_AXES))
 
-$(addprefix bench-,$(BENCH_AXES)): bench-%:
+$(addprefix bench-,$(BENCH_GENERIC_AXES)): bench-%:
 	cargo bench --locked -p fsl-bench --bench $* -- $(BENCH_ARGS)
+
+bench-evaluator_kernel:
+	cargo run --locked -p fsl-bench --bin fsl-bench-kernel-report -- start
+	cargo bench --locked -p fsl-bench --bench evaluator_kernel -- $(BENCH_ARGS)
+	cargo run --locked -p fsl-bench --bin fsl-bench-kernel-report -- report -- $(BENCH_ARGS)
 
 # One process per `check`/`eval` size: peak RSS is process-wide.
 BENCH_PROBE := cargo run --locked --release -q -p fsl-bench --bin fsl-bench-probe --

@@ -443,6 +443,9 @@ fn run_execute(
     ))));
 
     let call = Call {
+        clocks: Default::default(),
+        wire_arguments: Vec::new(),
+        snapshot: None,
         function: input.function.to_owned(),
         arguments: input
             .arguments
@@ -762,6 +765,8 @@ fn run_monitor(
         normalization: defaults.model,
         accounting: parameters.accounting,
         max_window_values: parameters.max_window_values,
+        retained_positions: fsl_analyze::monitor::DEFAULT_RETAINED_POSITIONS,
+        retained_identities: fsl_analyze::monitor::DEFAULT_RETAINED_IDENTITIES,
     };
     let document = match monitor(checked.package(), &request, &limits, cancel) {
         Ok(staged) => staged

@@ -780,7 +780,7 @@ fn binder_reads(
         }
         match node.node() {
             ExprNode::Name(name) => reads.push((name.name.clone(), None, span(&path))),
-            ExprNode::Field { operand, field } => {
+            ExprNode::Field { operand, field, .. } => {
                 if let ExprNode::Name(name) = node.at(*operand).node() {
                     reads.push((name.name.clone(), Some(field.clone()), span(&path)));
                     continue;
@@ -2022,7 +2022,10 @@ fn partition(
             .map(|case| case.name.name.clone())
             .collect(),
         failed,
-        span: choice.name.span,
+        span: Span {
+            start: choice.span.start,
+            end: choice.owner.span.end,
+        },
     }))
 }
 

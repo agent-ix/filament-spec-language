@@ -25,8 +25,8 @@ Scope: FR-326-AC-1 to FR-326-AC-6.
    event-position, and the last two under infinite-trace.
 3. Check `eventually[0,18446744073709551615] eventually[0,1] holds(p)` under
    event-position.
-4. Check a unit with a temporal clause and no temporal profile selection,
-   and one selecting two temporal profiles.
+4. Check a temporal clause whose `using` alias selects
+   `filament.value.complete/v1`, a profile with no temporal facet.
 5. Check a bounded clause over `over (c: Counter)` and compare the `[0,2]`
    interval keys under event-position and fixed-sample.
 6. Under the finite-window profile with clock unit `ms`, check
@@ -48,6 +48,7 @@ Tag the tests `#[trace("TC-836", "FR-326-AC-n")]`.
 - Step 3: `stage_limit_exceeded`, limit kind work budget, at the overflowing
   operator.
 - Step 4: `unknown_profile`/`unsupported-selection` at the clause, naming the
-  selections found.
+  alias and its selection. A unit selecting two temporal profiles under two
+  aliases is not refused for that (FR-326-AC-7, TC-2180).
 - Step 5: record (`temporal-satisfaction`, `Bounded`); unequal keys.
 - Step 6: the tick interval `[0,5]`; each timed form `ill_typed`/`type-mismatch` at the interval's span; `[3,*]` `unsupported_construct`/`expression-form`; `[3 ms, *]` `ill_typed`/`type-mismatch`; the aggregate window checks.

@@ -30,7 +30,6 @@ fn oracle(start: i64) -> (usize, usize) {
 /// FR-625-AC-1: verdict and counts agree with the oracle.
 #[trace("TC-1585", "FR-625-AC-1")]
 #[test]
-#[ignore = "QSL-2122: explicit-state items and their exploration counts are not reachable through fsl analyze yet"]
 fn verdict_and_counts_match_the_breadth_first_oracle() {
     let (states, steps) = oracle(0);
     assert_eq!((states, steps), (4, 3));
@@ -47,10 +46,10 @@ fn verdict_and_counts_match_the_breadth_first_oracle() {
     assert_eq!(item["exploration"]["transitions"], steps.to_string());
 }
 
-/// FR-625-AC-3: a state budget and a horizon stop the search incomplete.
+/// FR-625-AC-3: a state budget stops the search `incomplete`; a horizon
+/// cut settles `inconclusive` `bound-reached` (FR-127 V-5).
 #[trace("TC-1585", "FR-625-AC-3")]
 #[test]
-#[ignore = "QSL-2122: explicit-state budgets are not reachable through fsl analyze yet"]
 fn budgets_settle_incomplete_with_what_was_explored() {
     let ws = Workspace::new("oracle-budget");
     let run = analyze(&counter_request(
@@ -61,7 +60,10 @@ fn budgets_settle_incomplete_with_what_was_explored() {
     ));
     assert_eq!(label(&run.item(0)), "incomplete");
     assert_eq!(run.item(0)["exploration"]["states"], "2");
-    assert_eq!(label(&run.item(1)), "incomplete");
-    assert_eq!(run.item(1)["record"]["cause"]["limit"], "max_depth");
+    // A horizon is not a resource limit: FR-127's V-5 row settles the cut
+    // `inconclusive` `bound-reached` at the requested depth.
+    assert_eq!(label(&run.item(1)), "inconclusive");
+    assert_eq!(run.item(1)["record"]["cause"]["kind"], "bound-reached");
+    assert_eq!(run.item(1)["record"]["cause"]["depth"], 1);
     assert_eq!(run.exit, 22);
 }

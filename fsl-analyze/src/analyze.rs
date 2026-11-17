@@ -33,9 +33,14 @@
 //! with the cancellation cause kept.
 
 mod clause_item;
+mod derived_item;
+pub mod document;
 mod exact;
 mod items;
+mod reduction_item;
 mod request;
+mod state_graph_item;
+mod timed_item;
 pub(crate) use request::analyze_bound;
 
 pub use request::{
@@ -57,7 +62,7 @@ use fsl_replay::{
 };
 use fsl_replay::{
     DeclineCode, IncompleteCause, ModelCheckRecord, Operation, OutcomeDiagnostic, OutcomeDocument,
-    OutcomeItem, ProofRefusalCause, TerminalRecord, TerminalValue,
+    OutcomeItem, OutcomeStage, ProofRefusalCause, TerminalRecord, TerminalValue,
 };
 use fsl_route::routing::Disposition;
 use fsl_route::{BackendDescriptor, Candidate, Mode, ProviderOrigin, RegistrationRefusal};
@@ -74,21 +79,75 @@ pub use clause_item::{ClauseItemRefusal, ClauseLimits, ClauseSubject, CLAUSE_TRA
 pub use exact::{exact_probabilistic_item, ExactProbabilityEvidence};
 #[cfg(feature = "test-support")]
 pub use exact::{exact_probabilistic_item_tampered, exact_probabilistic_item_witness_tampered};
+pub(crate) use items::admission;
 pub use items::{
     derived_model_item, derived_protocol_item, derived_zone_item, hyper_form_item, model_item,
     protocol_item, statistical_item, timed_refinement_item, zone_item, DerivedItemMismatch,
     ModelItem, ProtocolItem, ProtocolReplayFn, RefinementReplayFn, TimedItem, TimedRefinementItem,
 };
 
-use crate::external_provider::{ExternalProvider, NotUnbounded, ProviderReport};
+use crate::provider::{ExternalProvider, NotUnbounded, ProviderOptions, ProviderReport};
 use crate::zone_check::ZoneCheckRecord;
-use crate::{contract_check, external_provider, model_check, statistical, value_check, zone_check};
+use crate::{contract_check, model_check, statistical, value_check, zone_check};
+
+/// FSpec FR-331 "Backend tool": the closed `{name, version}` naming the code
+/// that decides a backend's results. A linked FSL engine is a pure
+/// in-process engine: its tool is the crate that implements it at its
+/// package version. An external provider names the executable it fronts.
+#[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]
+pub struct BackendTool {
+    name: String,
+    version: String,
+}
+
+/// A [`BackendTool`] with an empty `name` or `version` (FSpec FR-331-AC-37).
+#[derive(Clone, Copy, Debug, Eq, PartialEq, thiserror::Error)]
+#[error("a backend tool names a nonempty name and version")]
+pub struct EmptyToolMember;
+
+impl BackendTool {
+    /// The tool `name` at `version`.
+    ///
+    /// # Errors
+    ///
+    /// [`EmptyToolMember`] when either is empty.
+    pub fn new(
+        name: impl Into<String>,
+        version: impl Into<String>,
+    ) -> Result<Self, EmptyToolMember> {
+        let (name, version) = (name.into(), version.into());
+        if name.is_empty() || version.is_empty() {
+            return Err(EmptyToolMember);
+        }
+        Ok(Self { name, version })
+    }
+
+    /// The tool of an engine linked into this crate.
+    fn linked() -> Self {
+        Self {
+            name: env!("CARGO_PKG_NAME").to_owned(),
+            version: env!("CARGO_PKG_VERSION").to_owned(),
+        }
+    }
+
+    /// The tool's name.
+    pub fn name(&self) -> &str {
+        &self.name
+    }
+
+    /// The tool's version.
+    pub fn version(&self) -> &str {
+        &self.version
+    }
+}
 
 /// One layer-A engine as `analyze` runs it: its backend identity and the
 /// descriptor FR-288 converts its manifest into.
 #[derive(Clone, Debug)]
 pub struct Engine {
     descriptor: BackendDescriptor,
+    /// The code that decides this engine's results (FSpec FR-331).
+    tool: BackendTool,
     /// The external provider an [`Engine::external`] engine decides items
     /// with; absent for the in-process engines.
     provider: Option<std::sync::Arc<dyn ExternalProvider>>,
@@ -100,6 +159,7 @@ impl Engine {
     pub(crate) fn new(descriptor: BackendDescriptor) -> Self {
         Self {
             descriptor,
+            tool: BackendTool::linked(),
             provider: None,
         }
     }
@@ -113,9 +173,12 @@ impl Engine {
     ///
     /// [`NotUnbounded`] when `descriptor` does not advertise `value-validity`
     /// in the `unbounded` mode; no engine is made and `provider` is never
-    /// called.
+    /// called. `tool` is the provider's FSpec FR-331 tool record. The
+    /// engine holds no limit: a run's FSpec FR-462 limits are the run's
+    /// [`ProviderOptions`] (FR-964), which every request carries.
     pub fn external(
         descriptor: BackendDescriptor,
+        tool: BackendTool,
         provider: Box<dyn ExternalProvider>,
     ) -> Result<Self, NotUnbounded> {
         let unbounded = descriptor
@@ -129,12 +192,19 @@ impl Engine {
         Ok(Self {
             descriptor,
             provider: Some(provider.into()),
+            tool,
         })
     }
 
     /// The external provider this engine decides items with, if any.
     pub(crate) fn provider(&self) -> Option<&dyn ExternalProvider> {
         self.provider.as_deref()
+    }
+
+    /// The descriptor this engine was registered with: for an external
+    /// engine, the negotiated manifest entry its requests name.
+    pub(crate) fn descriptor(&self) -> &BackendDescriptor {
+        &self.descriptor
     }
 
     /// A probe engine `id` that advertises every capability kind in bounded
@@ -291,6 +361,9 @@ impl DuplicateEngine {
 #[derive(Clone, Debug, Default)]
 pub struct Engines {
     engines: Vec<Engine>,
+    /// The run's provider options (FR-964), which every provider request
+    /// this run sends carries.
+    options: ProviderOptions,
 }
 
 /// FR-120's caller-supplied subject members other than the checked package.
@@ -392,6 +465,41 @@ pub struct AnalyzeOutcome {
     /// request's required indices (FR-507-AC-5); a gap when the request
     /// repeats an index.
     pub aggregate: Result<Aggregate, AggregateGap>,
+    /// What each record's engine reported beside its terminal record, in
+    /// request order (FR-621 `exploration` and `certificate`).
+    pub details: Vec<ItemDetail>,
+}
+
+/// What an item's engine reported beside its terminal record (FR-621).
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct ItemDetail {
+    /// The item's request index.
+    pub request_index: RequestIndex,
+    /// The states, transitions and automaton states an explicit-state
+    /// engine explored; `None` for an engine that explores no states.
+    pub exploration: Option<fsl_replay::RunStats>,
+    /// The qualified-core checker that accepted a proof's certificate.
+    pub checker: Option<fsl_replay::CertificateChecker>,
+    /// The steps of the supplied trace a `finite-replay` proof replayed.
+    pub replayed_steps: Option<u64>,
+}
+
+impl ItemDetail {
+    fn of(record: &AnalyzeRecord) -> Self {
+        let model = record.model_check.as_deref();
+        let protocol = record.protocol_check.as_deref();
+        Self {
+            request_index: record.request_index,
+            exploration: model
+                .and_then(|model| model.exploration)
+                .or_else(|| protocol.and_then(|protocol| protocol.exploration))
+                .or_else(|| record.state_graph.as_ref().map(|graph| graph.exploration)),
+            checker: model
+                .and_then(|model| model.checker)
+                .or_else(|| protocol.and_then(|protocol| protocol.checker)),
+            replayed_steps: record.replayed_steps,
+        }
+    }
 }
 
 /// Why analyze could not admit a shared subject binding.
@@ -464,6 +572,25 @@ pub enum Counterexample {
     Assignments(Box<value_check::ValueCounterexample>),
     /// The operation-contract arm's counterexample.
     Contract(Box<fsl_replay::contract_check::ContractCounterexample>),
+    /// A state-graph item's settled instance (FR-628): the record, its
+    /// FSpec FR-393 refuting evidence when refuted and its witnesses when
+    /// proved by one.
+    StateGraph(Box<GraphReport>),
+}
+
+/// What a state-graph engine run reports for one item (FR-628): the record of
+/// the instance that decides it and the spelling of its evidence.
+#[derive(Clone, Debug)]
+pub struct GraphReport {
+    /// The decisive instance's FR-169 record.
+    pub record: fsl_replay::StateGraphRecord,
+    /// The explored graph's counts (FR-621 `exploration`).
+    pub exploration: fsl_replay::RunStats,
+    /// A refuted record's evidence in FSpec FR-393's spelling.
+    pub counterexample: Option<serde_json::Value>,
+    /// A proved record's witnesses in FSpec FR-393's spelling, with the
+    /// sampled ones.
+    pub evidence: Option<serde_json::Value>,
 }
 
 /// A reproduced counterexample with its FR-286 spelling, written where the
@@ -492,18 +619,18 @@ impl AnalyzeRefusal {
         match self {
             Self::Binding(failure) => {
                 refusal_document(Operation::Analyze, failure, failure.to_string())
+                    .with_last_stage(Some(OutcomeStage::S4))
             }
             Self::Provision(refusal) => {
                 let catalog = refusal.catalog_code();
                 let category = category_of(&catalog).unwrap_or(Category::Refusal);
-                OutcomeDocument::new(Operation::Analyze, None, category).with_diagnostics(vec![
-                    OutcomeDiagnostic::new(
+                OutcomeDocument::new(Operation::Analyze, Some(OutcomeStage::S4), category)
+                    .with_diagnostics(vec![OutcomeDiagnostic::new(
                         Some(catalog.cause()),
                         catalog.code(),
                         None,
                         refusal.to_string(),
-                    ),
-                ])
+                    )])
             }
         }
     }
@@ -560,11 +687,103 @@ pub fn analyze_document(
     records: &[TerminalRecord],
     counterexamples: &[ItemCounterexample],
 ) -> Result<OutcomeDocument, OutcomeItemError> {
+    analyze_document_routed(records, counterexamples, &std::collections::BTreeMap::new())
+}
+
+/// How negotiation routed one item, which FR-621 "Last stage" reads: an
+/// item with no route settled before negotiation.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum ItemRoute {
+    /// Negotiated to an FSL in-process engine (EN-1 to EN-7, the zone
+    /// search), which settles it at `S6c`.
+    InProcess,
+    /// Settled at negotiation, `S6b`: negotiated to a registered provider
+    /// outside FSL, or settled by its negotiation's own disposition.
+    Negotiated,
+}
+
+/// [`analyze_document`] with each negotiated item's [`ItemRoute`] by
+/// request index, so the document's `last_stage` (FR-621 "Last stage")
+/// reads where each item was settled.
+///
+/// # Errors
+///
+/// As [`analyze_document`].
+pub fn analyze_document_routed(
+    records: &[TerminalRecord],
+    counterexamples: &[ItemCounterexample],
+    routes: &std::collections::BTreeMap<RequestIndex, ItemRoute>,
+) -> Result<OutcomeDocument, OutcomeItemError> {
     let items = records
         .iter()
         .map(|record| analyze_item(record, counterexamples))
         .collect::<Result<Vec<_>, _>>()?;
-    Ok(OutcomeDocument::settled(Operation::Analyze, None, items))
+    // FR-286: a cancelled request names no stage.
+    let cancelled = records.iter().any(|record| {
+        matches!(
+            record.value(),
+            TerminalValue::Incomplete(IncompleteCause::Cancelled { .. })
+        )
+    });
+    let stage = records
+        .iter()
+        .map(|record| {
+            item_stage(
+                record,
+                counterexamples,
+                routes.get(&record.request_index()).copied(),
+            )
+        })
+        .max_by_key(|stage| stage_rank(*stage))
+        .unwrap_or(OutcomeStage::S4);
+    Ok(OutcomeDocument::settled(
+        Operation::Analyze,
+        (!cancelled).then_some(stage),
+        items,
+    ))
+}
+
+fn stage_rank(stage: OutcomeStage) -> u8 {
+    match stage {
+        OutcomeStage::S4 => 4,
+        OutcomeStage::S6b => 6,
+        OutcomeStage::S6c => 7,
+        OutcomeStage::S7 => 8,
+        _ => 9,
+    }
+}
+
+/// FR-621 "Last stage": the stage that settled `record`, negotiated by
+/// `route` (none when it settled before negotiation); the document takes the
+/// greatest of `S4` and its items'.
+fn item_stage(
+    record: &TerminalRecord,
+    counterexamples: &[ItemCounterexample],
+    route: Option<ItemRoute>,
+) -> OutcomeStage {
+    // A counterexample reaches the document only once its replay reproduced
+    // it; the state-graph one is built as a typed witness and not replayed.
+    if let Some(found) = counterexamples
+        .iter()
+        .find(|found| found.request_index == record.request_index())
+    {
+        return if matches!(found.counterexample, Counterexample::StateGraph(_)) {
+            OutcomeStage::S7
+        } else {
+            OutcomeStage::S8
+        };
+    }
+    match route {
+        // Negotiated to an outside provider, or settled by a disposition of
+        // its negotiation (FSpec FR-331 `settled_by` `disposition`).
+        Some(ItemRoute::Negotiated) => OutcomeStage::S6b,
+        Some(ItemRoute::InProcess) if record.settled_by_disposition() => OutcomeStage::S6b,
+        Some(ItemRoute::InProcess) => OutcomeStage::S6c,
+        // A disposition before negotiation: an unknown claim, an
+        // unregistered backend, a malformed member.
+        None if record.settled_by_disposition() => OutcomeStage::S4,
+        None => OutcomeStage::S6c,
+    }
 }
 
 /// The FR-286 item of `record`, with its counterexample from
@@ -582,6 +801,12 @@ pub fn analyze_item(
     let found = counterexamples
         .iter()
         .find(|found| found.request_index == record.request_index());
+    if let Some(Counterexample::StateGraph(graph)) = found.map(|found| &found.counterexample) {
+        return Ok(
+            OutcomeItem::from_state_graph(record.request_index(), &graph.record)
+                .with_graph_evidence(graph.counterexample.clone(), graph.evidence.clone()),
+        );
+    }
     let wire = found.map(|found| found.wire.clone()).transpose()?;
     let undefined = found.and_then(|found| found.counterexample.undefined_cause());
     OutcomeItem::from_analyze(record, wire, undefined)
@@ -598,6 +823,7 @@ impl Engines {
     /// manifest.
     pub fn fsl() -> Result<Self, RegistrationRefusal> {
         Ok(Self {
+            options: ProviderOptions::default(),
             engines: vec![
                 Engine::model_check()?,
                 Engine::statistical()?,
@@ -610,12 +836,34 @@ impl Engines {
         })
     }
 
+    /// These engines under the run's provider `options` (FR-964): the
+    /// FSpec FR-462 limits every provider request of the run carries. A
+    /// provider-routing entry sets them once for the run; no engine holds
+    /// one of its own.
+    #[must_use]
+    pub fn under(mut self, options: ProviderOptions) -> Self {
+        self.options = options;
+        self
+    }
+
+    /// The run's provider options.
+    pub fn options(&self) -> &ProviderOptions {
+        &self.options
+    }
+
     /// The exact provider descriptors owned by these linked engines.
     ///
     /// The returned descriptors are borrowed from their engine instances;
     /// callers cannot substitute a capability-only registration.
     pub fn registrations(&self) -> impl ExactSizeIterator<Item = &BackendDescriptor> {
         self.engines.iter().map(|engine| &engine.descriptor)
+    }
+
+    /// Each registered descriptor with its FSpec FR-331 tool record.
+    pub fn tools(&self) -> impl ExactSizeIterator<Item = (&BackendDescriptor, &BackendTool)> {
+        self.engines
+            .iter()
+            .map(|engine| (&engine.descriptor, &engine.tool))
     }
 
     /// Add `engine`.
@@ -634,7 +882,7 @@ impl Engines {
         Ok(())
     }
 
-    fn get(&self, backend: &BackendId) -> Option<&Engine> {
+    pub(crate) fn get(&self, backend: &BackendId) -> Option<&Engine> {
         self.engines.iter().find(|engine| engine.id() == backend)
     }
 }
@@ -677,6 +925,14 @@ pub enum Payload {
         /// The claim's declaration family, absent for an unknown claim node.
         family: Option<DeclarationFamily>,
     },
+    /// A provider item whose checked package could not be emitted, so no
+    /// request was sent (FSpec FR-331-AC-33): the kind and the backend.
+    NotEmitted {
+        /// The item's kind.
+        kind: Capability,
+        /// The provider the item was negotiated to.
+        backend: BackendId,
+    },
 }
 
 impl Payload {
@@ -704,6 +960,11 @@ impl Payload {
                     "modes",
                     Value::Array(modes.iter().map(|mode| json!(mode.to_wire())).collect()),
                 ),
+            ],
+            Self::NotEmitted { kind, backend } => vec![
+                ("kind", json!(kind.to_wire())),
+                ("backend", json!(backend.as_str())),
+                ("reason", json!("package-not-emitted")),
             ],
             Self::Inapplicable {
                 request_index,
@@ -805,6 +1066,8 @@ pub(crate) enum EngineReport {
     Contract(Box<contract_check::ContractReport>),
     /// An external provider's verdict, its counterexample replayed.
     Provider(Box<ProviderReport>),
+    /// EN-1's state-graph record (FR-169) for the item's decisive instance.
+    StateGraph(Box<GraphReport>),
     /// EN-6's record, settled by FR-235's map, or a timed refinement's by
     /// FR-144's rows over EN-6's causes.
     Zone(Box<ZoneCheckRecord>, Option<ObjectReference>),
@@ -812,6 +1075,8 @@ pub(crate) enum EngineReport {
     Exact(Box<exact::ExactReport>),
     /// The protocol analysis engine's report, settled by FR-573's map.
     ProtocolAnalysis(Box<crate::protocol_analysis::ProtocolAnalysisArtifact>),
+    /// The protocol analysis engine's replay of a supplied finite trace.
+    FiniteReplay(crate::protocol_analysis::FiniteReplayReport),
     /// The engine refused the item, and its settlement map gives the refusal
     /// no terminal record.
     Refused(Refusal),
@@ -826,14 +1091,32 @@ pub(crate) enum Refusal {
     RequiresBound,
     /// EN-4 `NotStatistical`: `invalid-request` with `not-statistical`.
     NotStatistical,
+    /// `incomplete`: the request's subject exhausted a resource bound before
+    /// the engine ran.
+    Incomplete(fsl_replay::IncompleteCause),
     /// `unsupported` with the refusal's own diagnostic.
     Unsupported(CatalogCode),
     /// `failed` with the refusal's diagnostic.
     Failed(CatalogCode),
+    /// `unsupported` `unsupported-requested-capability`: the package of a
+    /// provider item could not be emitted, so no request was sent (FSpec
+    /// FR-331-AC-33).
+    NotEmitted,
 }
 
 /// The work an engine runs for one item.
 type Work<'a> = Box<dyn FnOnce(&Cancel, &Engine) -> EngineReport + 'a>;
+
+/// What settles one item: an engine's own work, or an external provider's
+/// verdict, which [`analyze_items`] obtains for every provider item of a
+/// backend in one FSpec FR-331 request after routing and negotiation, and
+/// the item then replays (FR-281 "External provider arm", FR-635).
+pub(crate) enum ItemWork<'a> {
+    /// The work an in-process engine runs.
+    Engine(Work<'a>),
+    /// The members a provider request is built from.
+    Provider(Box<crate::provider::ProviderWork<'a>>),
+}
 
 /// One item to analyze: its request index, its claim, its settled
 /// disposition and the work an engine runs for it, when the claim kind has an
@@ -847,7 +1130,7 @@ pub struct AnalyzeItem<'a> {
     mode: Mode,
     disposition: Disposition,
     diagnostic: Option<Diagnostic>,
-    work: Option<Work<'a>>,
+    work: Option<ItemWork<'a>>,
     /// The caller's requiredness for this request index (FR-507-AC-5).
     required: bool,
     /// The claim the item is read at, the locus of a counterexample that
@@ -856,6 +1139,57 @@ pub struct AnalyzeItem<'a> {
 }
 
 impl<'a> AnalyzeItem<'a> {
+    /// The provider work of an item that [`analyze_items`] will settle on
+    /// the external engine its disposition names, with that engine: an item
+    /// whose kind applies to its claim, that negotiation settled
+    /// `Supported` on a registered engine advertising the item's kind and
+    /// mode. Every other item settles without a provider request, as
+    /// `run` states.
+    pub(crate) fn provider_route<'e>(
+        &self,
+        engines: &'e Engines,
+    ) -> Option<(&'e Engine, RequestIndex, &crate::provider::ProviderWork<'a>)> {
+        let Some(ItemWork::Provider(work)) = &self.work else {
+            return None;
+        };
+        if self
+            .family
+            .is_none_or(|family| !self.kind.applies_to_declaration(family))
+        {
+            return None;
+        }
+        let Disposition::Supported(candidate) = &self.disposition else {
+            return None;
+        };
+        let engine = engines.get(candidate.id())?;
+        engine
+            .modes(self.kind)
+            .contains(&self.mode)
+            .then_some((engine, self.index, work.as_ref()))
+    }
+
+    /// An item that an external provider settles: `work` holds the members
+    /// its FSpec FR-331 request is built from (FR-281 "External provider
+    /// arm").
+    pub(crate) fn new_with_provider(
+        index: RequestIndex,
+        family: Option<DeclarationFamily>,
+        backend: &str,
+        work: crate::provider::ProviderWork<'a>,
+    ) -> Self {
+        Self {
+            index,
+            kind: Capability::ValueValidity,
+            family,
+            mode: Mode::Unbounded,
+            disposition: Disposition::Supported(Candidate::new(BackendId::new(backend))),
+            diagnostic: None,
+            work: Some(ItemWork::Provider(Box::new(work))),
+            required: false,
+            claim: None,
+        }
+    }
+
     /// An item of claim kind `kind` and mode `mode` that `backend` runs as
     /// `work`: `Supported(backend)` unless [`Self::disposed`] says otherwise.
     pub(crate) fn new(
@@ -873,7 +1207,7 @@ impl<'a> AnalyzeItem<'a> {
             mode,
             disposition: Disposition::Supported(Candidate::new(BackendId::new(backend))),
             diagnostic: None,
-            work: Some(Box::new(move |cancel, _| work(cancel))),
+            work: Some(ItemWork::Engine(Box::new(move |cancel, _| work(cancel)))),
             required: false,
             claim: None,
         }
@@ -896,7 +1230,7 @@ impl<'a> AnalyzeItem<'a> {
             mode,
             disposition: Disposition::Supported(Candidate::new(BackendId::new(backend))),
             diagnostic: None,
-            work: Some(Box::new(work)),
+            work: Some(ItemWork::Engine(Box::new(work))),
             required: false,
             claim: None,
         }
@@ -1037,6 +1371,11 @@ pub struct AnalyzeRecord {
     /// The protocol analysis result: its key, and the witness or the
     /// counterexample with its FR-351 record (ADR-036 PA-24, PA-25).
     pub protocol_analysis: Option<Box<crate::protocol_analysis::ProtocolAnalysisArtifact>>,
+    /// The state-graph engine's report (FR-628).
+    pub state_graph: Option<Box<GraphReport>>,
+    /// The number of steps of a supplied trace a `finite-replay` item
+    /// replayed to its proof (FR-941).
+    pub replayed_steps: Option<u64>,
 }
 
 /// How an item settled.
@@ -1064,7 +1403,9 @@ impl AnalyzeRecord {
             probabilistic_counterexample: None,
             over_reference: None,
             protocol_subject: None,
+            replayed_steps: None,
             protocol_analysis: None,
+            state_graph: None,
         }
     }
 
@@ -1257,7 +1598,7 @@ impl Counterexample {
                 undefined_cause(Some(&counterexample.kind), None)
             }
             Self::Assignments(found) => undefined_cause(None, Some(found)),
-            Self::Probabilistic(_) | Self::Contract(_) => None,
+            Self::Probabilistic(_) | Self::Contract(_) | Self::StateGraph(_) => None,
         }
     }
 }
@@ -1272,9 +1613,10 @@ pub fn analyze_items(
     items: Vec<AnalyzeItem<'_>>,
     cancel: &Cancel,
 ) -> Vec<AnalyzeRecord> {
+    let mut settled = crate::provider::settle_items(engines, &items, cancel);
     items
         .into_iter()
-        .map(|item| run(engines, item, cancel))
+        .map(|item| run(engines, item, cancel, &mut settled))
         .collect()
 }
 
@@ -1377,6 +1719,22 @@ pub fn split_records(
     let mut terminals = Vec::with_capacity(records.len());
     let mut counterexamples = Vec::new();
     for mut record in records {
+        if let Some(graph) = record.state_graph.take() {
+            let terminal = into_terminal(record);
+            if let Some(backend) = terminal.backend().cloned() {
+                counterexamples.push(ItemCounterexample {
+                    request_index: terminal.request_index(),
+                    backend,
+                    wire: Ok(graph
+                        .counterexample
+                        .clone()
+                        .unwrap_or(serde_json::Value::Null)),
+                    counterexample: Counterexample::StateGraph(graph),
+                });
+            }
+            terminals.push(terminal);
+            continue;
+        }
         let wire = record.spell(package);
         let counterexample = record.take_counterexample();
         let mut terminal = into_terminal(record);
@@ -1433,7 +1791,12 @@ fn into_terminal(record: AnalyzeRecord) -> TerminalRecord {
     }
 }
 
-fn run(engines: &Engines, item: AnalyzeItem<'_>, cancel: &Cancel) -> AnalyzeRecord {
+fn run(
+    engines: &Engines,
+    item: AnalyzeItem<'_>,
+    cancel: &Cancel,
+    settled: &mut crate::provider::Settled,
+) -> AnalyzeRecord {
     let AnalyzeItem {
         index,
         kind,
@@ -1505,7 +1868,12 @@ fn run(engines: &Engines, item: AnalyzeItem<'_>, cancel: &Cancel) -> AnalyzeReco
             IncompleteCause::Cancelled { source },
         )));
     }
-    let report = work(cancel, engine);
+    let report = match work {
+        ItemWork::Engine(work) => work(cancel, engine),
+        ItemWork::Provider(work) => {
+            crate::provider::finish(*work, settled.remove(&index), cancel, engine)
+        }
+    };
     // An item whose charge saw the cancel was still open when the handle was
     // cancelled and settles `incomplete` with its cause (FR-276); a handle
     // cancelled after the item's last charge is not tripped and the verdict
@@ -1577,7 +1945,7 @@ fn settle(
         }
         EngineReport::Provider(report) => {
             let (settled_record, counterexample) =
-                external_provider::settle(*report, index, backend, engine.descriptor.origin());
+                crate::provider::settle_record(*report, index, backend, engine.descriptor.origin());
             let mut settled = record(terminal(settled_record), None);
             settled.value_check = counterexample.map(Box::new);
             settled
@@ -1608,6 +1976,42 @@ fn settle(
         EngineReport::Statistical(statistical) => {
             record(terminal(statistical.into_terminal(index, backend)), None)
         }
+        EngineReport::FiniteReplay(report) => {
+            let mut replayed = None;
+            let settled_record = match report {
+                crate::protocol_analysis::FiniteReplayReport::Replayed(steps) => {
+                    replayed = Some(steps);
+                    TerminalRecord::proved_by_replay(index, backend, steps)
+                }
+                crate::protocol_analysis::FiniteReplayReport::Declined {
+                    cause,
+                    position,
+                    path,
+                } => {
+                    let declined = TerminalRecord::declined_with(
+                        index,
+                        backend,
+                        ProofRefusalCause::InvalidInput,
+                        DeclineCode::Fsl(fsl_foundation::Code::InvalidRuntimeInput),
+                        CatalogCode::new("invalid_runtime_input", cause),
+                    );
+                    let detail: serde_json::Map<String, serde_json::Value> = position
+                        .map(|position| ("position".to_owned(), serde_json::json!(position)))
+                        .into_iter()
+                        .chain(path.map(|path| ("path".to_owned(), serde_json::json!(path))))
+                        .collect();
+                    if detail.is_empty() {
+                        declined
+                    } else {
+                        declined.with_diagnostic_detail(detail)
+                    }
+                }
+            };
+            AnalyzeRecord {
+                replayed_steps: replayed,
+                ..record(terminal(settled_record), None)
+            }
+        }
         EngineReport::ProtocolAnalysis(report) => {
             let (settled_record, artifact) =
                 crate::protocol_analysis::settle(*report, index, backend);
@@ -1622,6 +2026,17 @@ fn settle(
             settled.probabilistic_counterexample =
                 counterexample.map(|(found, wire)| Spelled { found, wire });
             settled
+        }
+        EngineReport::StateGraph(graph) => {
+            let settlement = terminal(TerminalRecord::of_state_graph(
+                index,
+                backend,
+                &graph.record,
+            ));
+            AnalyzeRecord {
+                state_graph: Some(graph),
+                ..AnalyzeRecord::of(index, settlement)
+            }
         }
         EngineReport::Zone(zone, zone_over) => {
             // A refuted value without its reproduced counterexample is an
@@ -1647,12 +2062,29 @@ fn settle(
             )),
             None,
         ),
+        EngineReport::Refused(Refusal::Incomplete(cause)) => record(
+            terminal(TerminalRecord::incomplete(index, backend, cause)),
+            None,
+        ),
         EngineReport::Refused(Refusal::Failed(code)) => record(
             terminal(TerminalRecord::failed_with(index, backend, code)),
             None,
         ),
         EngineReport::Refused(Refusal::Unsupported(code)) => {
             disposed(DispositionKind::Unsupported, Diagnostic::new(code), backend)
+        }
+        EngineReport::Refused(Refusal::NotEmitted) => {
+            let diagnostic = Diagnostic {
+                code: CatalogCode::new(
+                    "unsupported_projection",
+                    "unsupported-requested-capability",
+                ),
+                payload: Payload::NotEmitted {
+                    kind,
+                    backend: backend.clone(),
+                },
+            };
+            disposed(DispositionKind::Unsupported, diagnostic, backend)
         }
         EngineReport::Refused(Refusal::NotStatistical) => disposed(
             DispositionKind::InvalidRequest,
@@ -2325,7 +2757,8 @@ mod tests {
 
     /// FR-286 and FSpec FR-331: an item a disposition settles carries its
     /// diagnostic as `{code, cause, detail}`, `detail` keyed by FR-272 payload
-    /// names. An `unsupported` item has no `cause`; a `declined` item has both.
+    /// names. An `unsupported` item has no `cause`; an `invalid-request` item
+    /// has no `result` and no `cause` (FR-286, FR-621).
     #[trace("TC-763", "FR-281-AC-11")]
     #[test]
     fn dispositions_write_their_diagnostic_detail_into_the_item() {
@@ -2363,8 +2796,8 @@ mod tests {
             DeclarationFamily::StateModel,
             &ran,
         ));
-        assert_eq!(inapplicable["result"], "declined");
-        assert_eq!(inapplicable["cause"]["kind"], "invalid-input");
+        assert!(inapplicable.get("result").is_none(), "{inapplicable}");
+        assert!(inapplicable.get("cause").is_none(), "{inapplicable}");
         assert_eq!(
             inapplicable["diagnostic"],
             json!({
@@ -2384,7 +2817,8 @@ mod tests {
             DeclarationFamily::TemporalTrace,
             &ran,
         ));
-        assert_eq!(inconsistent["cause"]["kind"], "invalid-input");
+        assert!(inconsistent.get("result").is_none(), "{inconsistent}");
+        assert!(inconsistent.get("cause").is_none(), "{inconsistent}");
         assert_eq!(
             inconsistent["diagnostic"]["detail"],
             json!({ "candidates": ["test-a"] })

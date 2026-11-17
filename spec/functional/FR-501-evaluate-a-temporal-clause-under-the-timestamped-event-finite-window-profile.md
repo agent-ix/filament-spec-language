@@ -35,6 +35,8 @@ relationships:
     type: depends_on
   - target: ix://agent-ix/filament-spec-language/FR-640
     type: references
+  - target: ix://agent-ix/filament-spec-language/FR-966
+    type: references
 ---
 # FR-501: Evaluate a temporal clause under the timestamped-event finite-window profile at S6a, with definite verdicts on a closed complete window
 
@@ -248,7 +250,10 @@ ranks below 10.
   position stamped `D` participates, one stamped `D + 1` does not. A watermark
   the supplier states as half-open SHALL be consumed only through an FSpec FR-289
   mapping that proves inclusive coverage, and the evaluator SHALL NOT read a
-  half-open end equal to `D` as coverage of `D` (FSpec FR-094).
+  half-open end equal to `D` as coverage of `D` (FSpec FR-094). A half-open
+  end `E` reads as the inclusive watermark `E - 1`; an end of 0 covers no
+  tick, has no inclusive reading and is refused before evaluation (FR-641
+  "Behavior").
 - An activation is **open** when it is not established. The `deadline` of a
   `Pending` result is `t0 + Hf + m`.
 
@@ -338,12 +343,15 @@ ranks below 10.
   otherwise).
 - An interval stamp with `earliest > latest`, or with `earliest = latest` and
   an open end, SHALL be refused `invalid_runtime_input`/`invalid-value` at the
-  observation; a midpoint is never substituted.
+  observation; a midpoint is never substituted. FR-966 states the stage, the
+  position, the nominal stamp's place inside the interval, the classified
+  instant, the positions of on-time observations and the identity members of
+  these inputs.
 
 ### Late-data cutoff
 
 - With a late-data cutoff, an observation with event instant `t` (the upper
-  end of its interval, or its stamp) and arrival watermark `A` SHALL be
+  end of its uncertainty (FR-966)) and arrival watermark `A` SHALL be
   classified `late` when `A > t + lateness` (`AllowedLateness`) or when
   `t <= cutoff` and `A > cutoff` (`FixedInstant`), and `on-time` otherwise
   (FSpec FR-094 "Late-data cutoff", FR-294). An observation with no arrival
@@ -375,8 +383,10 @@ result carries the `late` list:
   arrival watermark. `stamp` stays required and is the nominal stamp `t`.
 - The member admits `"late_data_cutoff": {"allowed_lateness": N}` or
   `{"fixed_instant": N}`.
-- The result document writes `late`, an array of `{"position": N, "stamp": N,
-  "arrival": N, "anchors": [N, ...]}` in input order, whenever a late-data
+- The result document writes `late`, an array of `{"position": N,
+  "observation": ID, "stamp": N, "arrival": N, "anchors": [N, ...]}` in input
+  order, `observation` the observation's identity (FR-106) by which a
+  revisioned repair admits it (FR-526), whenever a late-data
   cutoff is selected (`[]` when no observation is late), and writes no `late`
   member otherwise.
 

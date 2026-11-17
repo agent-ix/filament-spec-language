@@ -718,6 +718,7 @@ impl Totals {
         RunStats {
             product_states: self.states,
             product_edges: self.edges,
+            stutter_edges: 0,
             automaton_states: self.automaton_states,
             depth: self.depth,
             bound_limited: 0,

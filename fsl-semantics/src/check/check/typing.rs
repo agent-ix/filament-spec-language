@@ -31,10 +31,14 @@ use super::{
 use crate::check::call_target::{resolve_target, ResolvedTarget};
 use crate::check::family::Application;
 use crate::check::ir::{CheckedBody, IntegerRange, Node, NodeId, Slot};
-use crate::check::refusal::{CheckCause, CheckRefusal, IdentityForm, IdentityNode, KeyFault};
+use crate::check::refusal::{
+    CheckCause, CheckRefusal, CheckingLimitKind, CheckingStage, IdentityForm, IdentityNode,
+    KeyFault, StageLimitCause,
+};
 use crate::check::sum_case::{ArmHead, CaseBuilder, UnionMember, UnionRef};
 use crate::check::type_form::{IntegerOutsideI128, IntegerSite};
 use crate::check::DispatchOperation;
+use filament_exact::Cancel;
 use filament_exact::{
     ArithmeticOperator, CollectionKind, CollectionType, FloatType, IeeeValue, IeeeWidth,
     IllTypedCause, Integer, IntegerInterval, NodeKey, OrderingOperator, RoundingMode, Value,
@@ -267,7 +271,7 @@ enum Frame<'e, 'r> {
     Peer(Box<PeerFrame<'e, 'r>>),
     Unary(Box<UnaryFrame<'r>>),
     /// `e.f`: the field name and the form's location.
-    Field(&'e str, Location),
+    Field(&'e str, Option<Span>, Location),
     /// `present(r.f)` or `present(r.f.c)` of a guarded clock place: the
     /// field's name, the union case, and the `present` node's location;
     /// admits the typed owner `r` (FR-230 "Presence is derived").
@@ -489,7 +493,7 @@ enum Unary<'r> {
 fn relation_pre_eligible(expression: ExprRef<'_>, hyper: &super::HyperTyping) -> bool {
     let mut pending = vec![expression];
     while let Some(expression) = pending.pop() {
-        if let ExprNode::Field { operand, field } = expression.node() {
+        if let ExprNode::Field { operand, field, .. } = expression.node() {
             if field == "self"
                 && matches!(expression.at(*operand).node(), ExprNode::Name(name)
                     if hyper.executions.contains_key(&name.name))
@@ -513,6 +517,7 @@ fn is_option_some_constructor(name: &str) -> bool {
 /// `deref(r).f`, its `deref(r)` operand at `operand_location`.
 struct AttributeFrame<'e> {
     field: &'e str,
+    member_span: Option<Span>,
     operand_location: Location,
     location: Location,
 }
@@ -1220,9 +1225,9 @@ impl<'a> Typer<'a> {
             ExprNode::Rational(numerator, denominator) => {
                 self.rational_literal(numerator, denominator, hint.as_deref(), &location)?
             }
-            ExprNode::DecimalValue { coefficient, scale } => {
-                self.decimal_literal(coefficient, *scale, hint.as_deref(), &location)?
-            }
+            ExprNode::DecimalValue {
+                coefficient, scale, ..
+            } => self.decimal_literal(coefficient, *scale, hint.as_deref(), &location)?,
             ExprNode::Absent => self.absent_literal(hint.as_deref(), &location)?,
             // FR-185: a quantity literal is its magnitude, measured and
             // reduced as an exact value, in the unit its name declares.
@@ -1401,13 +1406,34 @@ impl<'a> Typer<'a> {
                 left,
                 right,
             } => {
+                // `p != absent` and `p = absent` of a guarded clock place are
+                // the place's presence and its negation (FR-230 "Presence and
+                // element members", FSpec FR-322 `CW-05`).
+                if let Some(comparison) = self.absent_comparison(expression, &location) {
+                    if !comparison.present {
+                        frames.push(Frame::Unary(Box::new(UnaryFrame {
+                            form: Unary::Not,
+                            location: location.clone(),
+                        })));
+                    }
+                    frames.push(Frame::PlacePresence(
+                        comparison.field,
+                        comparison.case,
+                        location,
+                    ));
+                    return Ok(Step::Descend(Goal::Infer(
+                        comparison.owner,
+                        None,
+                        comparison.owner_location,
+                    )));
+                }
                 return self.binary(
                     *operator,
                     (expression.at(*left), expression.at(*right)),
                     hint,
                     location,
                     frames,
-                )
+                );
             }
             ExprNode::Negate(operand) => {
                 // A negated `decimal(c, s)` literal takes its operand's
@@ -1436,6 +1462,23 @@ impl<'a> Typer<'a> {
                 ));
             }
             ExprNode::Not(operand) => {
+                // `not (p = absent)` is `present(p)`, located at the
+                // negation, so its spellings type to one presence read.
+                if let Some(comparison) = self
+                    .absent_comparison(expression.at(*operand), &location.child(0))
+                    .filter(|comparison| !comparison.present)
+                {
+                    frames.push(Frame::PlacePresence(
+                        comparison.field,
+                        comparison.case,
+                        location,
+                    ));
+                    return Ok(Step::Descend(Goal::Infer(
+                        comparison.owner,
+                        None,
+                        comparison.owner_location,
+                    )));
+                }
                 let goal = Goal::Expect(
                     expression.at(*operand),
                     Expected::Checked(boolean()),
@@ -1443,7 +1486,24 @@ impl<'a> Typer<'a> {
                 );
                 return Ok(Self::unary(Unary::Not, goal, location, frames));
             }
-            ExprNode::Field { operand, field } => {
+            // FR-612: outside a `hyper` clause, `t.step.op` over a name `t`
+            // that names nothing is a step label, refused at the form as
+            // hyper-only rather than as a missing `t`.
+            ExprNode::Field { operand, .. }
+                if self.hyper.is_none() && self.unbound_step_label(expression.at(*operand)) =>
+            {
+                return Err(CheckRefusal {
+                    location,
+                    cause: CheckCause::Hyper(Box::new(
+                        crate::check::hyper_clause::HyperCause::OutsideHyperClause,
+                    )),
+                });
+            }
+            ExprNode::Field {
+                operand,
+                field,
+                member_span,
+            } => {
                 let operand = expression.at(*operand);
                 let operand_location = location.child(0);
                 // FR-180: an HP-1 execution variable is a typed root, not a
@@ -1469,6 +1529,7 @@ impl<'a> Typer<'a> {
                     let reference_location = operand_location.child(0);
                     frames.push(Frame::Attribute(Box::new(AttributeFrame {
                         field,
+                        member_span: *member_span,
                         operand_location,
                         location,
                     })));
@@ -1478,7 +1539,7 @@ impl<'a> Typer<'a> {
                         reference_location,
                     )));
                 }
-                frames.push(Frame::Field(field, location));
+                frames.push(Frame::Field(field, *member_span, location));
                 return Ok(Step::Descend(Goal::Infer(operand, None, operand_location)));
             }
             ExprNode::Present(operand) => {
@@ -1510,7 +1571,7 @@ impl<'a> Typer<'a> {
                 let mut base = expression.at(*operand);
                 let mut at = location.child(0);
                 loop {
-                    if let ExprNode::Field { operand, field } = base.node() {
+                    if let ExprNode::Field { operand, field, .. } = base.node() {
                         path.push(RefStep::Field(field.as_str()));
                         base = base.at(*operand);
                     } else if let ExprNode::Select { place, selector } = base.node() {
@@ -2186,6 +2247,60 @@ impl<'a> Typer<'a> {
         })
     }
 
+    /// The checker-visible result range of Euclidean `mod` (FR-495).
+    fn modulo_result_type(
+        &mut self,
+        dividend: &ValueType,
+        divisor: &ValueType,
+        dividend_range: Option<&IntegerRange>,
+        divisor_range: Option<&IntegerRange>,
+        location: &Location,
+    ) -> Result<ValueType, CheckRefusal> {
+        let result = super::modulo_interval::result_type(
+            dividend,
+            divisor,
+            dividend_range,
+            divisor_range,
+            || {
+                if self.cancel.is_some_and(Cancel::poll) {
+                    return Err(super::cancelled_refusal(location));
+                }
+                if let Some(context) = self.context.as_mut() {
+                    if let Err(incomplete) = context.meter.charge(
+                        filament_exact::Charge::new(filament_exact::ChargePoint::DeclarationCheck)
+                            .work(Integer::one()),
+                    ) {
+                        return Err(CheckRefusal {
+                            location: location.clone(),
+                            cause: CheckCause::ResourceExhausted(Box::new(StageLimitCause {
+                                stage: CheckingStage::Typing,
+                                kind: CheckingLimitKind::WorkBudget,
+                                limit: incomplete.limit,
+                                actual: u128::from(incomplete.consumed) + 1,
+                                region: None,
+                            })),
+                        });
+                    }
+                }
+                Ok(())
+            },
+        );
+
+        match result {
+            Ok(value_type) => Ok(value_type),
+            Err(super::modulo_interval::ModuloRangeError::Refused(refusal)) => Err(refusal),
+            Err(super::modulo_interval::ModuloRangeError::Invariant(_)) => Err(CheckRefusal {
+                location: location.clone(),
+                cause: CheckCause::InternalFault(Box::new(KeyFault::StageFault(
+                    filament_semantic_value::catalog::InternalFault::new(
+                        "check.integer-modulo",
+                        "range-invariant",
+                    ),
+                ))),
+            }),
+        }
+    }
+
     /// A typed equality operand and the type its peer is hinted with. A
     /// `convert<T>(e)` operand that changes the type is a `ConvertScalar`
     /// node of type `T`, which the stored equality compares as typed; the
@@ -2208,6 +2323,11 @@ impl<'a> Typer<'a> {
                     ) {
                         return Err(refusal);
                     }
+                }
+                if matches!(&target, ValueType::Float(_))
+                    && !super::admits_equality_conversion(&typed.value_type, &target, &self.units)
+                {
+                    return Err(mismatch(&location));
                 }
                 if matches!(typed.value_type, ValueType::Float(_)) {
                     let source = typed.value_type.clone();
@@ -2538,12 +2658,23 @@ impl<'a> Typer<'a> {
             // `Navigate` node. Only a receiver that can be a model receiver
             // reaches the `StateModel` hook; every other `x.f` is the record
             // field read it was.
-            Frame::Field(field, location) if self.is_model_receiver(&typed.value_type, field) => {
+            Frame::Field(field, member_span, location)
+                if self.is_model_receiver(&typed.value_type, field) =>
+            {
                 let operand_location = location.child(0);
-                self.attribute(typed, field, &operand_location, &location, false)
+                self.attribute(
+                    typed,
+                    field,
+                    member_span,
+                    &operand_location,
+                    &location,
+                    false,
+                )
                     .map(Step::Typed)
             }
-            Frame::Field(field, location) => self.field(typed, field, &location).map(Step::Typed),
+            Frame::Field(field, member_span, location) => self
+                .field(typed, field, member_span, &location)
+                .map(Step::Typed),
             Frame::SlotPresence(field, all, location) => self
                 .slot_presence(typed, field, all, &location)
                 .map(Step::Typed),
@@ -2583,6 +2714,7 @@ impl<'a> Typer<'a> {
                 .attribute(
                     typed,
                     frame.field,
+                    frame.member_span,
                     &frame.operand_location,
                     &frame.location,
                     true,
@@ -2599,7 +2731,11 @@ impl<'a> Typer<'a> {
                     .get(frame.typed.len())
                     .and_then(|index| frame.application.call_parameter(*index))
                 {
-                    Some(parameter) if integer_widens(&typed.value_type, &parameter) => {
+                    Some(parameter)
+                        if integer_widens(&typed.value_type, &parameter)
+                            && !(parameter == ValueType::Integer
+                                && self.lowers_as_integer(&typed)) =>
+                    {
                         let location = typed.location.clone();
                         self.convert(&parameter, typed, &location)?
                     }
@@ -2726,7 +2862,17 @@ impl<'a> Typer<'a> {
                             then.value_type.clone()
                         } else if is_integer(&then.value_type) && is_integer(&otherwise.value_type)
                         {
-                            ValueType::Integer
+                            match (self.static_range(&then), self.static_range(&otherwise)) {
+                                (
+                                    Some((then_lower, then_upper)),
+                                    Some((else_lower, else_upper)),
+                                ) => int_type(
+                                    then_lower.min(else_lower),
+                                    then_upper.max(else_upper),
+                                    &location,
+                                )?,
+                                _ => ValueType::Integer,
+                            }
                         } else {
                             return Err(mismatch(&otherwise.location));
                         }
@@ -2759,6 +2905,9 @@ impl<'a> Typer<'a> {
                     &frame.location,
                     LocalKind::Bound,
                 )?;
+                if self.lowers_as_integer(&typed) {
+                    self.integer_lowered_locals.insert(slot);
+                }
                 let goal = frame.branches.goal(frame.body, frame.location.child(1));
                 frame.value = Some((typed, slot));
                 frames.push(Frame::Let(frame));
@@ -2967,6 +3116,80 @@ impl<'a> Typer<'a> {
                         }
                         IntegerDivisionOperator::Mod => None,
                     };
+                    let value_type = match operator {
+                        IntegerDivisionOperator::Mod => {
+                            let left_range = self.static_range(&left);
+                            let right_range = self.static_range(&right);
+                            self.modulo_result_type(
+                                &left.value_type,
+                                &right.value_type,
+                                left_range.as_ref(),
+                                right_range.as_ref(),
+                                &location,
+                            )?
+                        }
+                        IntegerDivisionOperator::Div | IntegerDivisionOperator::Rem => {
+                            let range = if let Some(selection) = selection {
+                                let dividend = self.static_range(&left);
+                                let divisor = self.static_range(&right);
+                                let mut charge = || {
+                                    if self.cancel.is_some_and(filament_exact::Cancel::poll) {
+                                        return Err(super::cancelled_refusal(&location));
+                                    }
+                                    let denied =
+                                        if let Some(context) = &mut self.context {
+                                            context
+                                    .meter
+                                    .charge(
+                                        filament_exact::Charge::new(
+                                            filament_exact::ChargePoint::DeclarationCheck,
+                                        )
+                                        .work(Integer::one()),
+                                    )
+                                    .err()
+                                    .map(|denial| (denial.limit, u128::from(denial.consumed) + 1))
+                                        } else {
+                                            self.integer_division_work =
+                                                self.integer_division_work.saturating_add(1);
+                                            (self.integer_division_work > self.limits.work_budget())
+                                                .then_some((
+                                                    self.limits.work_budget(),
+                                                    u128::from(self.integer_division_work),
+                                                ))
+                                        };
+                                    match denied {
+                                        Some((limit, actual)) => Err(refuse(
+                                            &location,
+                                            CheckCause::ResourceExhausted(Box::new(
+                                                super::StageLimitCause {
+                                                    stage: super::CheckingStage::Typing,
+                                                    kind: super::CheckingLimitKind::WorkBudget,
+                                                    limit,
+                                                    actual,
+                                                    region: None,
+                                                },
+                                            )),
+                                        )),
+                                        None => Ok(()),
+                                    }
+                                };
+                                super::integer_division_range::infer(
+                                    operator,
+                                    selection.profile(),
+                                    dividend,
+                                    divisor,
+                                    &mut charge,
+                                    &location,
+                                )?
+                            } else {
+                                None
+                            };
+                            match range {
+                                Some((lo, hi)) => int_type(lo, hi, &location)?,
+                                None => ValueType::Integer,
+                            }
+                        }
+                    };
                     let left = self.push(left);
                     let right = self.push(right);
                     Ok(Step::Typed(node(
@@ -2976,7 +3199,7 @@ impl<'a> Typer<'a> {
                             left,
                             right,
                         },
-                        ValueType::Integer,
+                        value_type,
                         &location,
                     )))
                 }

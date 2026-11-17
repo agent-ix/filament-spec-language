@@ -13,16 +13,17 @@
 //! grow with nesting. S2 takes no limit of its own: it builds at most one
 //! node per CST node, so S1's node limit bounds it (FR-257).
 
-use super::dispatch::{Construct, FormsCause, FormsRefusal};
+use super::dispatch::{Construct, ConstructKind, FormsCause, FormsRefusal};
 use super::spans::{DeclarationSpans, ExpressionSpans};
 use super::syntax::{
     AbsenceMode, Accumulation, AliasForm, ArmForm, BinaryOperator, BinderQuery, BuiltinType,
-    CaseForm, DeclarationForm, DeclarationKind, DeclaredName, DimensionEquivalenceForm,
-    DimensionForm, DimensionTermForm, EnumForm, EnumMemberForm, ExactNumberForm, ExactNumberKind,
-    ExactValueForm, ExactValueKind, ExprId, ExprNode, Expression, ExpressionBuilder,
-    FieldInitializer, FunctionDeclaration, NameForm, PopulationForm, QuantityForm, RatioNumberForm,
-    RatioNumberKind, RatioTermForm, RecordFieldForm, RecordForm, StepLabelForm, StringLiteral,
-    TermOperator, TupleForm, TypeForm, TypeFormHead, UnitForm, UnitTermForm, UsingAlias,
+    CaseForm, DecimalSpellingKind, DeclarationForm, DeclarationKind, DeclaredName,
+    DimensionEquivalenceForm, DimensionForm, DimensionTermForm, EnumForm, EnumMemberForm,
+    ExactNumberForm, ExactNumberKind, ExactValueForm, ExactValueKind, ExprId, ExprNode, Expression,
+    ExpressionBuilder, FieldInitializer, FunctionDeclaration, NameForm, PopulationForm,
+    QuantityForm, RatioNumberForm, RatioNumberKind, RatioTermForm, RecordFieldForm, RecordForm,
+    StepLabelForm, StringLiteral, TermOperator, TupleForm, TypeForm, TypeFormHead, UnitForm,
+    UnitTermForm, UsingAlias,
 };
 use filament_exact::{CollectionKind, Integer};
 use fsl_cst::{CstElement, CstNode, CstToken, LosslessCst, Production, TokenClass, TokenKind};
@@ -119,8 +120,39 @@ pub(crate) fn unexpected(node: &CstNode) -> FormsRefusal {
 }
 
 /// The refusal for a construct no `Expression` variant represents.
-pub(crate) fn unrepresented(production: Production, span: Span) -> FormsRefusal {
-    FormsRefusal::at(FormsCause::UnrepresentedConstruct { production }, span)
+pub(crate) fn unrepresented(
+    cst: &LosslessCst,
+    production: Production,
+    span: Span,
+    construct: ConstructKind,
+) -> FormsRefusal {
+    let text = source_text(cst, span);
+    FormsRefusal::at(
+        FormsCause::UnrepresentedConstruct {
+            production,
+            construct,
+            text,
+            declaration: None,
+            profile: None,
+        },
+        span,
+    )
+}
+
+fn source_text(cst: &LosslessCst, span: Span) -> String {
+    let text = cst
+        .source()
+        .text()
+        .get(span.start..span.end)
+        .unwrap_or_default();
+    if text.len() <= 120 {
+        return text.to_owned();
+    }
+    let mut end = 120;
+    while !text.is_char_boundary(end) {
+        end -= 1;
+    }
+    format!("{}...", &text[..end])
 }
 
 /// A token's spelling as text.
@@ -773,7 +805,7 @@ enum Shape {
     Float32(u32),
     Float64(u64),
     Rational(Integer, Integer),
-    Decimal(Integer, u32),
+    Decimal(Integer, u32, DecimalSpellingKind),
     Quantity(QuantityForm),
     String(StringLiteral),
     Name(NameForm),
@@ -784,7 +816,7 @@ enum Shape {
     Negate,
     Power(Integer),
     Not,
-    Field(String),
+    Field(String, Span),
     Present,
     Value,
     Deref,
@@ -894,9 +926,13 @@ impl Shape {
                 arity(0)?;
                 ExprNode::Rational(numerator, denominator)
             }
-            Self::Decimal(coefficient, scale) => {
+            Self::Decimal(coefficient, scale, spelling) => {
                 arity(0)?;
-                ExprNode::DecimalValue { coefficient, scale }
+                ExprNode::DecimalValue {
+                    coefficient,
+                    scale,
+                    spelling,
+                }
             }
             Self::Quantity(quantity) => {
                 arity(0)?;
@@ -969,11 +1005,12 @@ impl Shape {
                 arity(1)?;
                 ExprNode::Not(operands.next()?)
             }
-            Self::Field(field) => {
+            Self::Field(field, member_span) => {
                 arity(1)?;
                 ExprNode::Field {
                     operand: operands.next()?,
                     field,
+                    member_span: Some(member_span),
                 }
             }
             Self::Present => {
@@ -1779,7 +1816,7 @@ impl<'c> Mapping<'c> {
                     let shape = if call {
                         Shape::Dispatch(name)
                     } else {
-                        Shape::Field(name)
+                        Shape::Field(name, member.span())
                     };
                     suffixes.push((shape, end, arguments));
                 }
@@ -1792,7 +1829,7 @@ impl<'c> Mapping<'c> {
                     // `r.f()[s]`) is unrepresented.
                     let ahead = rest.clone();
                     let selects_a_field =
-                        matches!(suffixes.last(), Some((Shape::Field(_) | Shape::Select, ..)));
+                        matches!(suffixes.last(), Some((Shape::Field(..) | Shape::Select, ..)));
                     let selector = match (rest.next(), rest.next()) {
                         (Some(Item::Node(selector)), Some(Item::Token(close)))
                             if selects_a_field
@@ -1814,11 +1851,13 @@ impl<'c> Mapping<'c> {
                             })
                             .unwrap_or(node.span().end);
                         return Err(unrepresented(
+                            self.cst,
                             Production::Postfix,
                             Span {
                                 start: node.span().start,
                                 end,
                             },
+                            ConstructKind::IndexSelection,
                         ));
                     };
                     suffixes.push((Shape::Select, end, vec![selector]));
@@ -1861,6 +1900,20 @@ impl<'c> Mapping<'c> {
                 TokenKind::Integer => {
                     let value = integer(&text(token, node)?, node)?;
                     self.leaf(Shape::Integer(value), &task)
+                }
+                TokenKind::Grammar if token.spelling().contains(&b'.') => {
+                    let spelling = text(token, node)?;
+                    let Some((whole, fraction)) = spelling.split_once('.') else {
+                        return Err(unexpected(node));
+                    };
+                    let digits = format!("{whole}{fraction}");
+                    let digits = digits.trim_start_matches('0');
+                    let coefficient = integer(if digits.is_empty() { "0" } else { digits }, node)?;
+                    let scale = u32::try_from(fraction.len()).map_err(|_| unexpected(node))?;
+                    self.leaf(
+                        Shape::Decimal(coefficient, scale, DecimalSpellingKind::DecimalLiteral),
+                        &task,
+                    )
                 }
                 TokenKind::Text => {
                     // The lexer admitted the token, so its JSON decoding
@@ -1912,7 +1965,12 @@ impl<'c> Mapping<'c> {
             b"true" => self.leaf(Shape::Boolean(true), &task),
             b"false" => self.leaf(Shape::Boolean(false), &task),
             b"absent" | b"none" => self.leaf(Shape::Absent, &task),
-            b"null" => Err(unrepresented(Production::Primary, node.span())),
+            b"null" => Err(unrepresented(
+                self.cst,
+                Production::Primary,
+                node.span(),
+                ConstructKind::NullValue,
+            )),
             b"self" => self.leaf(Shape::SelfRef, &task),
             b"result" => self.leaf(Shape::Result, &task),
             b"protocol" => {
@@ -1936,7 +1994,12 @@ impl<'c> Mapping<'c> {
                     // S1 parses the edge as a `QualifiedName`; a
                     // multi-segment spelling names a member of the
                     // operands' own type, which S3 resolves (FR-102-AC-3).
-                    return Err(unrepresented(Production::QualifiedName, edge_node.span()));
+                    return Err(unrepresented(
+                        self.cst,
+                        Production::QualifiedName,
+                        edge_node.span(),
+                        ConstructKind::QualifiedReachesEdge,
+                    ));
                 };
                 let edge = text(edge_token, node)?;
                 let edge_span = edge_token.span();
@@ -1969,7 +2032,12 @@ impl<'c> Mapping<'c> {
             }
             b"size" => {
                 if !nodes_of(items, Production::TypeReference).is_empty() {
-                    return Err(unrepresented(Production::Primary, node.span()));
+                    return Err(unrepresented(
+                        self.cst,
+                        Production::Primary,
+                        node.span(),
+                        ConstructKind::SizeOfType,
+                    ));
                 }
                 self.with_children(Shape::Size, &task, one(&operands)?)
             }
@@ -2011,7 +2079,10 @@ impl<'c> Mapping<'c> {
                         .to_string()
                         .parse::<u32>()
                         .map_err(|_| unexpected(child))?;
-                    return self.leaf(Shape::Decimal(form.first, scale), &task);
+                    return self.leaf(
+                        Shape::Decimal(form.first, scale, DecimalSpellingKind::DecimalConstructor),
+                        &task,
+                    );
                 }
                 let parts = nodes_of(&items, Production::SignedInteger);
                 let [numerator, denominator] = parts.as_slice() else {

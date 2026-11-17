@@ -43,7 +43,7 @@ use super::state_clause::{population_of, PopulationDomain};
 use super::temporal_clause::FormulaNodeId;
 use super::temporal_clause::{
     build_formula, checked_constraint, checked_operators, in_safety_fragment, CheckedFormula,
-    CheckedOperator, IntervalReading, TemporalClaim, TemporalDeclarations, TemporalSelection,
+    CheckedOperator, IntervalReading, TemporalClaim, TemporalDeclarations,
 };
 use super::Scope;
 use super::{AdmittedModel, Capability};
@@ -1352,10 +1352,9 @@ fn check_behaviours<'a>(
     let scope = temporal.scope;
     let clause_index = declarations.behaviours_checked.get();
     declarations.behaviours_checked.set(clause_index + 1);
-    let profile = match temporal.selections {
-        [only] => only.profile,
-        found => return Err(profile_selection(found, form.span)),
-    };
+    let profile =
+        super::temporal_clause::clause_profile(temporal.selections, &form.profile, form.span)
+            .map_err(|cause| Found::Temporal(cause).into_failure())?;
     let mut found: Vec<Found> = Vec::new();
 
     let (quantifiers, fairness_spans) = checked_quantifiers(form, declarations, &mut found)?;
@@ -1495,7 +1494,9 @@ fn check_behaviours<'a>(
                 let location = lowering::hyper_location(clause_index, site);
                 // A conjunct refuses at its own span, the span the first
                 // typing pass names.
-                let locate = |_: &Location| draft.span;
+                let locate = |at: &Location| {
+                    lowering::span_at_subtree(&block.expression, &block.spans, draft.root, at)
+                };
                 match lowering::lower_conjunct(
                     &typing,
                     &mut cx.reborrow(scope),
@@ -1631,17 +1632,6 @@ fn check_behaviours<'a>(
         fairness_spans,
         occurrence: None,
     })
-}
-
-fn profile_selection(found: &[TemporalSelection], span: Span) -> StageFailure<CheckRefusal> {
-    Found::Temporal(TemporalCause::ProfileSelection {
-        found: found
-            .iter()
-            .map(|selection| selection.profile.identity())
-            .collect(),
-        span,
-    })
-    .into_failure()
 }
 
 /// The quantifiers, each bound to its alias and its fairness set. A quantifier
@@ -1914,6 +1904,11 @@ fn body_refusal_at(
     }
     let location = refusal.location.clone();
     let path = location.path();
+    if matches!(&refusal.cause, CheckCause::Unproved(Obligation::Nonzero)) {
+        if let Some(divisor_span) = unproved_nonzero_divisor_span(expression, spans, span) {
+            span = divisor_span;
+        }
+    }
     let node_spans = spans.of_nodes(expression);
     let mut field = None;
     for depth in (0..=path.len()).rev() {
@@ -1923,6 +1918,7 @@ fn body_refusal_at(
         if let ExprNode::Field {
             operand,
             field: name,
+            ..
         } = expression.at(id).node()
         {
             field = Some((id, *operand, name.as_str()));
@@ -2007,6 +2003,37 @@ fn body_refusal_at(
         _ => HyperCause::BodyIllTyped { span },
     };
     Found::Typed(cause, location)
+}
+
+/// The divisor expression for the division at the exact failed occurrence.
+fn unproved_nonzero_divisor_span(
+    expression: &Expression,
+    spans: &ExpressionSpans,
+    occurrence: Span,
+) -> Option<Span> {
+    let node_spans = spans.of_nodes(expression)?;
+    let mut pending = vec![expression.root_id()];
+    while let Some(id) = pending.pop() {
+        if node_spans.get(id.index()).copied() != Some(occurrence) {
+            pending.extend(expression.at(id).node().children());
+            continue;
+        }
+        let node = expression.at(id).node();
+        if let ExprNode::Binary {
+            operator:
+                BinaryOperator::Divide
+                | BinaryOperator::IntegerDiv
+                | BinaryOperator::IntegerRem
+                | BinaryOperator::IntegerMod,
+            right,
+            ..
+        } = node
+        {
+            return node_spans.get(right.index()).copied();
+        }
+        pending.extend(node.children());
+    }
+    None
 }
 
 /// A body fault as the cause it is reported as.
@@ -3051,7 +3078,9 @@ fn leaf_payload(node: &ExprNode, swap: Swap<'_>) -> (Vec<u8>, Vec<u8>) {
             b"rational".to_vec(),
             text_segment(&format!("{numerator}/{denominator}")),
         ),
-        ExprNode::DecimalValue { coefficient, scale } => (
+        ExprNode::DecimalValue {
+            coefficient, scale, ..
+        } => (
             b"decimal".to_vec(),
             text_segment(&format!("{coefficient}e-{scale}")),
         ),

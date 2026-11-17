@@ -587,6 +587,7 @@ pub fn check_model(
         enabled: BTreeMap::new(),
         queue: VecDeque::new(),
         edges: 0,
+        stutter_edges: 0,
         horizon_cut: false,
         first_bad: None,
         deferred_local: BTreeMap::new(),
@@ -922,10 +923,6 @@ fn construction_refusal(
             cause: MemoryCause::WeakAccessShape(shape),
             stats: RunStats::default(),
         }),
-        ProtocolRefusal::RecoveryView { predicate } => Ok(ModelCheckOutcome::RecoveryView {
-            predicate,
-            stats: RunStats::default(),
-        }),
         ProtocolRefusal::InitialStop(stop) => expansion_stopped(stop, meter, max_candidates)
             .map(|(cause, limit)| ModelCheckOutcome::Stopped {
                 cause,
@@ -987,6 +984,7 @@ impl ProtocolRun<'_> {
             enabled: BTreeMap::new(),
             queue: VecDeque::new(),
             edges: 0,
+            stutter_edges: 0,
             horizon_cut: false,
             first_bad: None,
             deferred_local: BTreeMap::new(),
@@ -1070,6 +1068,7 @@ fn sum(left: RunStats, right: RunStats) -> RunStats {
     RunStats {
         product_states: left.product_states.saturating_add(right.product_states),
         product_edges: left.product_edges.saturating_add(right.product_edges),
+        stutter_edges: left.stutter_edges.saturating_add(right.stutter_edges),
         automaton_states: left.automaton_states.saturating_add(right.automaton_states),
         depth: left.depth.max(right.depth),
         bound_limited: left.bound_limited.saturating_add(right.bound_limited),
@@ -1174,6 +1173,7 @@ fn check_reduced(
             enabled: BTreeMap::new(),
             queue: VecDeque::new(),
             edges: 0,
+            stutter_edges: 0,
             horizon_cut: false,
             first_bad: None,
             deferred_local: BTreeMap::new(),
@@ -1593,6 +1593,8 @@ struct Run<'r, S: SubjectSystem> {
     enabled: BTreeMap<usize, Vec<S::TransitionId>>,
     queue: VecDeque<usize>,
     edges: usize,
+    /// The terminal stutter edges among `edges`.
+    stutter_edges: usize,
     horizon_cut: bool,
     /// The first bad product state created and its violation; no state is
     /// created after it.
@@ -1698,6 +1700,7 @@ impl<S: SubjectSystem> Run<'_, S> {
         RunStats {
             product_states: widen(self.nodes.len()),
             product_edges: widen(self.edges),
+            stutter_edges: widen(self.stutter_edges),
             automaton_states: widen(self.monitor.automaton().state_count()),
             depth: widen(self.nodes.iter().map(|node| node.depth).max().unwrap_or(0)),
             bound_limited: widen(self.bound_limited.len()),
@@ -2055,6 +2058,9 @@ impl<S: SubjectSystem> Run<'_, S> {
                     .into());
                 }
                 self.edges += 1;
+                if transition.is_none() {
+                    self.stutter_edges += 1;
+                }
                 let node = Node {
                     state,
                     key: fsl_eval::simulation::StateKey::from_canonical_bytes(key.clone()),

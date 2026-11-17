@@ -22,6 +22,7 @@ fsl-cst = { path = "../fsl-cst" }
 logos = "0.16.1"
 fsl-route = { path = "../fsl-route" }
 fsl-replay = { path = "../fsl-replay" }
+fsl-command = { path = "../fsl-command" }
 fsl-semantics = { path = "../fsl-semantics" }
 filament-exact = { workspace = true }
 quire-canonical = { workspace = true, features = ["serde_json"] }
@@ -42,6 +43,13 @@ test-support = []
 
 [dev-dependencies]
 tempfile = "3.27.0"
+
+# FR-765-AC-3: needs the sibling driver and examples checkouts; run by
+# `make examples-check` after the gate itself.
+[[test]]
+name = "examples_check"
+path = "tests/examples_check.rs"
+test = false
 
 [lints.rust]
 unsafe_code = "forbid"

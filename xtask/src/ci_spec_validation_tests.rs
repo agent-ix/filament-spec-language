@@ -41,7 +41,9 @@ fn owned_fixture() -> tempfile::TempDir {
 }
 
 fn make(root: &Path) -> Command {
-    make_with_file(root, &workspace().join("Makefile"))
+    let mut command = make_with_file(root, &workspace().join("Makefile"));
+    command.env("CARGO_TARGET_DIR", root.join("target"));
+    command
 }
 
 fn make_with_file(root: &Path, file: &Path) -> Command {
@@ -77,6 +79,224 @@ fn refused(output: &Output, diagnostic: &str) {
         stderr.contains(diagnostic),
         "expected {diagnostic}: {stderr}"
     );
+}
+
+const NODE_RECORDER: &str = r#"
+fn main() {
+    let path = std::env::var_os("SPEC_VALIDATION_NODE_CALLS").expect("owned call log");
+    let path_variable = std::env::var("PATH").expect("PATH is set for the child");
+    let arguments = std::env::args_os()
+        .skip(1)
+        .map(|argument| argument.to_string_lossy().into_owned())
+        .collect::<Vec<_>>();
+    let mut lines = vec![path_variable];
+    lines.extend(arguments);
+    std::fs::write(path, lines.join("\n")).expect("write child invocation");
+}
+"#;
+
+fn rustc_directory() -> PathBuf {
+    std::env::split_paths(&std::env::var_os("PATH").expect("test process PATH"))
+        .map(|directory| directory.join("rustc"))
+        .find(|candidate| candidate.is_file())
+        .expect("rustc on the test process PATH")
+        .parent()
+        .expect("rustc has a parent directory")
+        .to_path_buf()
+}
+
+fn compile_recorder(root: &Path, name: &str, source: &str) -> PathBuf {
+    let source_path = root.join(format!("{name}.rs"));
+    let executable = root.join(name);
+    std::fs::write(&source_path, source).unwrap();
+    let compiler = run(Command::new("rustc")
+        .args(["--edition=2021", "-D", "warnings"])
+        .arg(&source_path)
+        .arg("-o")
+        .arg(&executable));
+    assert!(compiler.status.success(), "compile {name} recorder");
+    executable
+}
+
+fn prepend_path(directories: &[&Path]) -> std::ffi::OsString {
+    let paths = directories
+        .iter()
+        .map(|directory| directory.to_path_buf())
+        .collect::<Vec<_>>();
+    std::env::join_paths(
+        paths
+            .into_iter()
+            .chain([PathBuf::from("/usr/bin"), PathBuf::from("/bin")]),
+    )
+    .unwrap()
+}
+
+fn write_npm_launcher(root: &Path) -> PathBuf {
+    let launcher = root.join("npm installation/node_modules/@agent-ix/quire-cli/bin/launcher.js");
+    std::fs::create_dir_all(launcher.parent().unwrap()).unwrap();
+    std::fs::write(&launcher, "// npm launcher fixture\n").unwrap();
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&launcher, std::fs::Permissions::from_mode(0o755)).unwrap();
+    }
+    launcher
+}
+
+#[cfg(unix)]
+fn write_native_quire(bin: &Path) -> PathBuf {
+    let quire = bin.join("quire");
+    std::os::unix::fs::symlink("/bin/true", &quire).unwrap();
+    quire
+}
+
+#[trace("TC-920", "NFR-002-AC-3")]
+#[test]
+fn spec_validation_selects_npm_launcher_when_native_quire_is_first() {
+    let fixture = owned_fixture();
+    let root = fixture.path();
+    let tools = root.join("node and npm tools");
+    let native_bin = root.join("native quire bin");
+    let npm_bin = root.join("npm launcher bin");
+    std::fs::create_dir(&tools).unwrap();
+    std::fs::create_dir(&native_bin).unwrap();
+    std::fs::create_dir(&npm_bin).unwrap();
+    std::fs::create_dir(root.join("spec")).unwrap();
+
+    let launcher = write_npm_launcher(root);
+    let node = compile_recorder(root, "node", NODE_RECORDER);
+    std::fs::copy(node, tools.join("node")).unwrap();
+    let native_quire = write_native_quire(&native_bin);
+    let path_quire = npm_bin.join("quire");
+    std::os::unix::fs::symlink(&launcher, &path_quire).unwrap();
+    let path = prepend_path(&[&tools, &native_bin, &npm_bin, &rustc_directory()]);
+    let calls = root.join("node calls");
+    let output = run(make(root)
+        .arg("check-spec-validation")
+        .env("PATH", path)
+        .env("SPEC_VALIDATION_NODE_CALLS", &calls));
+    assert!(
+        output.status.success(),
+        "the npm launcher must be selected despite native quire preceding it"
+    );
+
+    let recorded = std::fs::read_to_string(&calls).unwrap();
+    let mut lines = recorded.lines();
+    assert_eq!(lines.next(), Some(""), "child PATH stays empty");
+    assert_eq!(
+        lines.collect::<Vec<_>>(),
+        [
+            launcher.to_str().unwrap(),
+            "validate",
+            "--scope",
+            ".",
+            "spec/**/*.md",
+        ],
+        "Node receives the global npm JavaScript launcher, never native quire"
+    );
+    assert!(native_quire.exists());
+    assert!(path_quire.exists());
+}
+
+#[trace("TC-920", "NFR-002-AC-3")]
+#[test]
+fn spec_validation_uses_lexicographically_first_npm_launcher_independent_of_path_order() {
+    let fixture = owned_fixture();
+    let root = fixture.path();
+    let tools = root.join("tools");
+    let native_bin = root.join("native quire bin");
+    let first_bin = root.join("first npm bin");
+    let second_bin = root.join("second npm bin");
+    for directory in [&tools, &native_bin, &first_bin, &second_bin] {
+        std::fs::create_dir(directory).unwrap();
+    }
+    std::fs::create_dir(root.join("spec")).unwrap();
+
+    let first_root = root.join("a installation");
+    let second_root = root.join("z installation");
+    let first_launcher = write_npm_launcher(&first_root);
+    let second_launcher = write_npm_launcher(&second_root);
+    let node = compile_recorder(root, "node", NODE_RECORDER);
+    std::fs::copy(node, tools.join("node")).unwrap();
+    write_native_quire(&native_bin);
+    std::os::unix::fs::symlink(&first_launcher, first_bin.join("quire")).unwrap();
+    std::os::unix::fs::symlink(&second_launcher, second_bin.join("quire")).unwrap();
+    let calls = root.join("node calls");
+
+    for launcher_order in [[&first_bin, &second_bin], [&second_bin, &first_bin]] {
+        let path = prepend_path(&[
+            &tools,
+            &native_bin,
+            launcher_order[0],
+            launcher_order[1],
+            &rustc_directory(),
+        ]);
+        let output = run(make(root)
+            .arg("check-spec-validation")
+            .env("PATH", path)
+            .env("SPEC_VALIDATION_NODE_CALLS", &calls));
+        assert!(output.status.success(), "npm launcher validation succeeds");
+        let recorded = std::fs::read_to_string(&calls).unwrap();
+        assert_eq!(recorded.lines().nth(1), first_launcher.to_str());
+        std::fs::remove_file(&calls).unwrap();
+    }
+}
+
+#[trace("TC-920", "NFR-002-AC-3")]
+#[test]
+fn native_quire_without_npm_launcher_fails_with_a_clear_diagnostic() {
+    let fixture = owned_fixture();
+    let root = fixture.path();
+    let tools = root.join("node and npm tools");
+    let native_bin = root.join("native quire bin");
+    std::fs::create_dir(&tools).unwrap();
+    std::fs::create_dir(&native_bin).unwrap();
+    std::fs::create_dir(root.join("spec")).unwrap();
+
+    let node = compile_recorder(root, "node", NODE_RECORDER);
+    std::fs::copy(node, tools.join("node")).unwrap();
+    write_native_quire(&native_bin);
+    let rustc_dir = rustc_directory();
+    let path = std::env::join_paths([
+        tools.as_path(),
+        native_bin.as_path(),
+        rustc_dir.as_path(),
+        Path::new("/usr/bin"),
+        Path::new("/bin"),
+    ])
+    .unwrap();
+    let calls = root.join("node calls");
+    let output = run(make(root)
+        .arg("check-spec-validation")
+        .env("PATH", path)
+        .env("SPEC_VALIDATION_NODE_CALLS", &calls));
+
+    refused(&output, "npm @agent-ix/quire-cli Node launcher is missing");
+    assert!(!calls.exists(), "a native quire is never passed to Node");
+}
+
+#[trace("TC-920", "NFR-002-AC-3")]
+#[test]
+fn check_spec_validation_reports_missing_rustc_and_helper() {
+    let fixture = owned_fixture();
+    let root = fixture.path();
+    std::fs::create_dir(root.join("spec")).unwrap();
+    let empty_path = root.join("empty PATH");
+    std::fs::create_dir(&empty_path).unwrap();
+    let no_rustc = run(make(root)
+        .arg("check-spec-validation")
+        .env("PATH", &empty_path));
+    refused(
+        &no_rustc,
+        "rustc is required to build the Rust validator helper",
+    );
+
+    let fixture_makefile = root.join("Makefile");
+    std::fs::copy(workspace().join("Makefile"), &fixture_makefile).unwrap();
+    let no_helper = run(make_with_file(root, &fixture_makefile)
+        .arg("check-spec-validation")
+        .env("PATH", prepend_path(&[&rustc_directory()])));
+    refused(&no_helper, "Rust validator helper is missing");
 }
 
 #[trace("TC-920", "NFR-002-AC-3")]
@@ -138,7 +358,10 @@ fn spec_validation_executes_native_schema_controls_and_fails_closed() {
     );
 
     let binary_missing = run(make(root).arg("check-spec-validation").env("PATH", ""));
-    refused(&binary_missing, "native quire is required on PATH");
+    refused(
+        &binary_missing,
+        "rustc is required to build the Rust validator helper",
+    );
     assert!(String::from_utf8_lossy(&binary_missing.stderr).contains("Error 127"));
 
     let isolated_home = root.join("empty home");
@@ -162,7 +385,7 @@ fn full_ci_composes_the_unrestricted_scoped_validator() {
     let output = run(make(&workspace()).args(["-n", "ci"]));
     assert!(output.status.success(), "expand the real aggregate gate");
     let stdout = String::from_utf8(output.stdout).unwrap();
-    assert!(stdout.contains("validate --scope . \"$SPEC_VALIDATION_DOCUMENTS\""));
+    assert!(stdout.contains("xtask/ci_spec_validation.rs"));
     assert!(
         stdout.contains("cargo run --locked --package xtask -- ci"),
         "aggregate invokes the canonical FSPEC wrapper"

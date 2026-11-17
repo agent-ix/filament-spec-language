@@ -38,8 +38,8 @@ use filament_exact::{
 use filament_semantic_value::catalog::CatalogCode;
 use fsl_forms::{
     AliasForm, BuiltinType, DeclarationForm, DeclaredName, DimensionEquivalenceForm, DimensionForm,
-    EnumForm, ExprNode, Expression, FunctionDeclaration, OperationBodyForm, ParsedUnit,
-    PopulationBoundForm, RecordFieldForm, StateClauseForm, TerminalDeclarationForm,
+    EnumForm, ExprNode, Expression, FunctionDeclaration, ObjectMemberForm, OperationBodyForm,
+    ParsedUnit, PopulationBoundForm, RecordFieldForm, StateClauseForm, TerminalDeclarationForm,
     TerminalDeclarationKind, TimeInvariantForm, TimeSourceForm, TypeForm, TypeFormHead, UnitForm,
     UrgentForm,
 };
@@ -72,6 +72,7 @@ use crate::library::{ImportView, LibraryName};
 use std::sync::Arc;
 
 mod equivalence;
+mod source_spellings;
 mod units;
 
 pub(crate) use units::{package_dimension, package_unit_key};
@@ -305,6 +306,8 @@ pub enum SourceObjectFault {
 /// refuses in these cases").
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum AssemblyCause {
+    /// A header's integer-division law conflicts with another selected law.
+    Profile(Box<super::ProfileRefusal>),
     /// The aggregate assembler was given no admitted source units.
     EmptyUnitList,
     /// A source object declaration the assembler refuses (FR-569).
@@ -636,12 +639,23 @@ pub enum AssemblyCause {
     /// and no S3 check reads yet (FR-230): `unsupported_construct`/
     /// `not-yet-implemented`, never compiled unchecked.
     TimedNotChecked(super::refusal::TimedConstruct),
+    /// A synthesis form whose FR-754 lowering is not installed yet.
+    SynthesisNotChecked {
+        /// The synthesis declaration's authored name.
+        name: String,
+    },
+    /// A verification plan form whose FR-753 lowering is not installed yet.
+    VerificationPlanNotChecked {
+        /// The verification plan's authored name.
+        name: String,
+    },
 }
 
 impl AssemblyCause {
     /// This cause's catalog code (FR-091 "Catalog codes").
     pub fn code(&self) -> Code {
         match self {
+            Self::Profile(refusal) => refusal.code(),
             Self::EmptyUnitList => Code::InvalidPackage,
             Self::SourceObject(fault) => match fault {
                 SourceObjectFault::UnsupportedType => Code::UnknownRequiredFeature,
@@ -715,7 +729,9 @@ impl AssemblyCause {
             Self::Handle(_) | Self::NominalAdmission(_) => Code::RuntimeInvariant,
             Self::UnsupportedLayerForm { .. }
             | Self::UnselectedModelConstruct(_)
-            | Self::TimedNotChecked(_) => Code::UnsupportedConstruct,
+            | Self::TimedNotChecked(_)
+            | Self::SynthesisNotChecked { .. }
+            | Self::VerificationPlanNotChecked { .. } => Code::UnsupportedConstruct,
         }
     }
 
@@ -748,6 +764,7 @@ impl AssemblyCause {
     /// ADR-013 O-17).
     pub fn catalog_code(&self) -> CatalogCode {
         let cause = match self {
+            Self::Profile(refusal) => refusal.cause(),
             Self::EmptyUnitList => "established-invariant-broken",
             Self::SourceObject(fault) => match fault {
                 SourceObjectFault::UnsupportedType => "unsupported-feature",
@@ -827,7 +844,9 @@ impl AssemblyCause {
             Self::Handle(_) | Self::NominalAdmission(_) => "established-invariant-broken",
             Self::UnsupportedLayerForm { form, .. } => form.refusal_cause(),
             Self::UnselectedModelConstruct(refusal) => refusal.family.refusal_cause(),
-            Self::TimedNotChecked(_) => "not-yet-implemented",
+            Self::TimedNotChecked(_)
+            | Self::SynthesisNotChecked { .. }
+            | Self::VerificationPlanNotChecked { .. } => "not-yet-implemented",
         };
         CatalogCode::new(self.code().as_str(), cause)
     }
@@ -974,6 +993,8 @@ pub(super) fn time_source_owner(index: usize) -> String {
 
 /// The unit's declarations, split by kind, and the names they bind.
 struct Unit {
+    /// Original source type forms, including clock components omitted from data.
+    source_types: Vec<DeclarationForm>,
     aliases: Vec<AliasForm>,
     dimensions: Vec<DimensionForm>,
     equivalences: Vec<DimensionEquivalenceForm>,
@@ -1039,6 +1060,32 @@ impl Unit {
     fn new(forms: Vec<fsl_forms::ParsedForm>, package_bearing: BTreeSet<String>) -> Self {
         let mut clock_forms = clock_forms::classify(&forms, package_bearing);
         let mut unit = Self {
+            source_types: forms
+                .iter()
+                .filter_map(|form| match form.form() {
+                    declaration @ DeclarationForm::Record(record)
+                        if clock_forms.bearing_types.contains(&record.name.name) =>
+                    {
+                        Some(declaration.clone())
+                    }
+                    declaration @ DeclarationForm::Tuple(tuple)
+                        if clock_forms.bearing_types.contains(&tuple.name.name) =>
+                    {
+                        Some(declaration.clone())
+                    }
+                    declaration @ DeclarationForm::Union(union)
+                        if clock_forms.bearing_types.contains(&union.name.name) =>
+                    {
+                        Some(declaration.clone())
+                    }
+                    declaration @ DeclarationForm::Alias(alias)
+                        if clock_forms.bearing_types.contains(&alias.name.name) =>
+                    {
+                        Some(declaration.clone())
+                    }
+                    _ => None,
+                })
+                .collect(),
             aliases: Vec::new(),
             dimensions: Vec::new(),
             equivalences: Vec::new(),
@@ -1201,6 +1248,7 @@ impl Unit {
                             span,
                         });
                 }
+                DeclarationForm::Synthesis(_) | DeclarationForm::VerificationPlan(_) => {}
             }
         }
         // The `Clock` type positions were listed first; FR-230's gate reads
@@ -1574,9 +1622,13 @@ fn source_model(
     identity: String,
     meter: &mut crate::model::accounting::Meter,
     errors: &mut Vec<AssemblyError>,
-) -> Option<(fsl_foundation::selection::ModelSelection, SelectedModel)> {
+) -> Option<(
+    fsl_foundation::selection::ModelSelection,
+    SelectedModel,
+    BTreeMap<DeclarationKey, Vec<String>>,
+)> {
     let first = objects.first()?;
-    let package = match super::source_model::build(
+    let (package, identity_fields) = match super::source_model::build(
         objects,
         &super::source_model::Context {
             identity: &identity,
@@ -1584,7 +1636,7 @@ fn source_model(
             foreign,
         },
     ) {
-        Ok(package) => package,
+        Ok(built) => built,
         Err(found) => {
             errors.extend(found);
             return None;
@@ -1624,6 +1676,7 @@ fn source_model(
             operation_clauses: Vec::new(),
             type_invariants: Vec::new(),
         },
+        identity_fields,
     ))
 }
 
@@ -1735,6 +1788,24 @@ fn model_object_types(
         let mut merged = identities.clone();
         for other in foreign {
             let other_package = other.view.domain_package();
+            match variant_type_declarations(&other.view, &other.alias) {
+                Ok(declared) => {
+                    for (key, declaration) in declared {
+                        if let Some(owned) = other_package
+                            .records
+                            .iter()
+                            .find(|record| record.key() == &key)
+                            .map(DomainPackageRecord::key)
+                        {
+                            variant_shapes.insert(owned, declaration.shape());
+                        }
+                    }
+                }
+                Err(VariantTypeFault::Broken(node)) => errors.push(broken(&node)),
+                Err(VariantTypeFault::Handle(refusal)) => {
+                    errors.push(error(AssemblyCause::nominal(nominal_key_refusal(refusal))))
+                }
+            }
             records.extend(
                 other_package
                     .records
@@ -1753,6 +1824,15 @@ fn model_object_types(
                     DomainPackageRecord::RecordValueType(_) => "record_value_type",
                     DomainPackageRecord::TupleValueType(_) => "tuple_value_type",
                     DomainPackageRecord::EventType(_) => "event_type",
+                    DomainPackageRecord::Enum(variant_type)
+                        if other_package.records.iter().any(|record| {
+                            matches!(record,
+                            DomainPackageRecord::Variant(case)
+                                if case.owner == variant_type.key && case.payload_type.is_some())
+                        }) =>
+                    {
+                        "variant_type"
+                    }
                     _ => continue,
                 };
                 let key = record.key();
@@ -2572,6 +2652,9 @@ fn model_value_type(
     }
     let element = match value_type {
         ValueTypeRef::Clock => return Err(Unmapped::Unsupported),
+        ValueTypeRef::Resolved(value_type) => {
+            return with_multiplicity((**value_type).clone(), multiplicity)
+        }
         ValueTypeRef::Native(native) => match native {
             NativeValueType::Boolean => ValueType::Boolean,
             NativeValueType::Integer => ValueType::Integer,
@@ -3335,6 +3418,254 @@ fn resolution_error(unit: &Unit, error: TypeFormError) -> AssemblyError {
     }
 }
 
+/// Re-resolves source object members after the unit's complete type
+/// namespace has been assembled. The synthetic domain package is needed
+/// earlier for structural model checks, before these names are available;
+/// its member types are temporary placeholders only.
+struct SourceObjectTypeContext<'a> {
+    unit: &'a Unit,
+    names: &'a Names,
+    spellings: &'a ModelSpellings,
+    source_owners: &'a BTreeMap<String, RawSourceRef>,
+}
+
+fn resolve_source_object_members(
+    context: SourceObjectTypeContext<'_>,
+    models: &mut [SelectedModel],
+    object_types: &mut [ObjectTypeDeclaration],
+    operations: &mut OperationTable,
+    errors: &mut Vec<AssemblyError>,
+) {
+    let SourceObjectTypeContext {
+        unit,
+        names,
+        spellings,
+        source_owners,
+    } = context;
+    let mut normalized_fields = BTreeMap::new();
+    let mut normalized_operations = BTreeMap::new();
+    let reference_models = models
+        .iter()
+        .filter(|model| !model.alias.is_empty())
+        .map(|model| model.view.shared_model_index().clone())
+        .collect::<Vec<_>>();
+    for object in &unit.objects {
+        let Some(index) = object_types
+            .iter()
+            .position(|declaration| declaration.name() == object.name.name)
+        else {
+            continue;
+        };
+        let declaration = &object_types[index];
+        let key = declaration.key();
+        let object_name = declaration.name().to_owned();
+        let supertypes = declaration.supertypes().to_vec();
+        let owner_key = models.iter().find_map(|model| {
+            if !model.alias.is_empty() {
+                return None;
+            }
+            model
+                .view
+                .domain_package()
+                .records
+                .iter()
+                .find_map(|record| {
+                    let DomainPackageRecord::ObjectType(object_type) = record else {
+                        return None;
+                    };
+                    (type_identity_segment(&object_type.key.package, &object_type.key.node)
+                        == Some(object.name.name.as_str()))
+                    .then(|| object_type.key.clone())
+                })
+        });
+        let object_names = names.in_unit(spellings, source_owners.get(&object.name.name));
+        let mut fields = Vec::new();
+        for member in &object.members {
+            let ObjectMemberForm::Field(field) = member else {
+                continue;
+            };
+            let Some(existing) = declaration
+                .attributes()
+                .iter()
+                .find(|existing| existing.name() == field.name.name)
+            else {
+                // Clock places are carried by the timed model rather than
+                // the value type environment.
+                continue;
+            };
+            match resolve_form(&object_names, &field.type_form) {
+                Ok(value_type) => {
+                    let resolved = FieldDeclaration::new(
+                        field.name.name.clone(),
+                        value_type.clone(),
+                        if field.optional {
+                            Presence::Optional
+                        } else {
+                            Presence::Required
+                        },
+                    );
+                    fields.push(match existing.redefines() {
+                        Some(target) => resolved.with_redefines(target.clone()),
+                        None => resolved,
+                    });
+                    if let Some(owner) = &owner_key {
+                        normalized_fields.insert(
+                            source_member_declaration_key(owner, &field.name.name),
+                            source_member_type(&value_type),
+                        );
+                    }
+                }
+                Err(error) => errors.push(resolution_error(unit, error)),
+            }
+        }
+        object_types[index] = ObjectTypeDeclaration::new(key.clone(), object_name, fields)
+            .with_supertypes(supertypes);
+
+        let existing_operations = operations.declared_by(key.clone());
+        let mut resolved_operations = Vec::new();
+        for member in &object.members {
+            let ObjectMemberForm::Operation(operation) = member else {
+                continue;
+            };
+            let mut parameters = Vec::new();
+            let mut clocks = Vec::new();
+            let mut normalized_parameters = Vec::new();
+            for (position, parameter) in operation.parameters.iter().enumerate() {
+                if matches!(
+                    &parameter.value_type.head,
+                    TypeFormHead::Builtin(BuiltinType::Clock)
+                ) {
+                    clocks.push((position, parameter.name.name.clone()));
+                    normalized_parameters.push((ValueTypeRef::Clock, Multiplicity::one()));
+                    continue;
+                }
+                match resolve_form(&object_names, &parameter.value_type) {
+                    Ok(value_type) => {
+                        parameters.push((parameter.name.name.clone(), value_type.clone()));
+                        normalized_parameters.push(source_member_type(&value_type));
+                    }
+                    Err(error) => errors.push(resolution_error(unit, error)),
+                }
+            }
+            let (result, clock_result) = match &operation.result {
+                Some(form) if matches!(&form.head, TypeFormHead::Builtin(BuiltinType::Clock)) => {
+                    (None, true)
+                }
+                Some(form) => match resolve_form(&object_names, form) {
+                    Ok(value_type) => (Some(value_type), false),
+                    Err(error) => {
+                        errors.push(resolution_error(unit, error));
+                        (None, false)
+                    }
+                },
+                None => (None, false),
+            };
+            if let Some(owner) = &owner_key {
+                let normalized_result = match &operation.result {
+                    Some(form)
+                        if matches!(&form.head, TypeFormHead::Builtin(BuiltinType::Clock)) =>
+                    {
+                        Some((ValueTypeRef::Clock, Multiplicity::one()))
+                    }
+                    Some(_) => result
+                        .clone()
+                        .map(|value_type| source_member_type(&value_type)),
+                    None => None,
+                };
+                normalized_operations.insert(
+                    source_member_declaration_key(owner, &operation.name.name),
+                    (normalized_parameters, normalized_result),
+                );
+            }
+            let effect = existing_operations
+                .iter()
+                .find(|existing| existing.name() == operation.name.name)
+                .map(|existing| existing.effect().clone())
+                .unwrap_or_default();
+            resolved_operations.push(
+                OperationDeclaration::new(operation.name.name.clone(), parameters, result, effect)
+                    .with_clocks(clocks, clock_result),
+            );
+        }
+        if !resolved_operations.is_empty() {
+            operations.declare(key, resolved_operations);
+        }
+    }
+    if !normalized_fields.is_empty() || !normalized_operations.is_empty() {
+        let source_spellings: BTreeMap<String, Arc<crate::model::spelling::SourceSpellings>> =
+            models
+                .iter()
+                .filter(|model| model.alias.is_empty())
+                .map(|model| {
+                    (
+                        model.view.domain_package().model_selection.identity.clone(),
+                        Arc::new(source_spellings::build(
+                            unit,
+                            names,
+                            spellings,
+                            source_owners,
+                            model,
+                            models,
+                        )),
+                    )
+                })
+                .collect();
+        for model in models.iter_mut().filter(|model| model.alias.is_empty()) {
+            model.view = model.view.with_resolved_source_member_types(
+                &normalized_fields,
+                &normalized_operations,
+                reference_models.clone(),
+                source_spellings
+                    .get(&model.view.domain_package().model_selection.identity)
+                    .cloned()
+                    .unwrap_or_default(),
+            );
+        }
+    }
+}
+
+/// A source member separates exactly one outer collection into multiplicity.
+fn source_member_type(value_type: &ValueType) -> (ValueTypeRef, Multiplicity) {
+    let (element, multiplicity) = match value_type {
+        ValueType::Collection(collection) => {
+            let (ordered, unique) = match collection.kind() {
+                CollectionKind::Set => (false, true),
+                CollectionKind::Bag => (false, false),
+                CollectionKind::Sequence => (true, false),
+                CollectionKind::OrderedSet => (true, true),
+            };
+            let (lower, upper) = collection
+                .bound()
+                .map_or((0, None), |bound| (bound.minimum(), Some(bound.maximum())));
+            (
+                collection.element(),
+                Multiplicity {
+                    lower,
+                    upper,
+                    ordered,
+                    unique,
+                },
+            )
+        }
+        _ => (value_type, Multiplicity::one()),
+    };
+    let value_ref = match element {
+        ValueType::Reference(identity) => ValueTypeRef::Package(DeclarationKey {
+            package: identity.original().package().to_owned(),
+            node: identity.original().node().to_owned(),
+        }),
+        _ => ValueTypeRef::Resolved(Box::new(element.clone())),
+    };
+    (value_ref, multiplicity)
+}
+
+fn source_member_declaration_key(owner: &DeclarationKey, name: &str) -> DeclarationKey {
+    DeclarationKey {
+        package: owner.package.clone(),
+        node: format!("{}/{name}", owner.node),
+    }
+}
+
 /// The admitted enum of `form` under `owners` (FR-091 "Enum declarations"
 /// steps 2 to 5). The cases are sorted by byte order unless the form is
 /// `ordered`. A refusal here is a nominal-admission fault: the caller has
@@ -4059,6 +4390,29 @@ impl PackageDeclarations {
         let mut model_selection_units = unit.model_selection_units().to_vec();
         let repeated_model_selection_units = unit.repeated_model_selection_units().to_vec();
         let import_selection_units = unit.import_selection_units().to_vec();
+        let mut errors: Vec<AssemblyError> = unit
+            .forms()
+            .iter()
+            .filter_map(|form| {
+                let cause = match form.form() {
+                    fsl_forms::DeclarationForm::Synthesis(synthesis) => {
+                        Some(AssemblyCause::SynthesisNotChecked {
+                            name: synthesis.name.name.clone(),
+                        })
+                    }
+                    fsl_forms::DeclarationForm::VerificationPlan(plan) => {
+                        Some(AssemblyCause::VerificationPlanNotChecked {
+                            name: plan.name.name.clone(),
+                        })
+                    }
+                    _ => None,
+                }?;
+                Some(AssemblyError {
+                    cause,
+                    span: form.span(),
+                })
+            })
+            .collect();
         let (mut selections, forms) = unit.into_parts();
         // The models and the one meter their admission counted on; checking
         // continues that meter into the conformance stage.
@@ -4086,7 +4440,6 @@ impl PackageDeclarations {
         let mut unit = Unit::new(forms, package_bearing);
         // FR-393: retain the parsed timed forms through S2. FR-230 checks
         // their meaning, including the facet gate, at S3.
-        let mut errors: Vec<AssemblyError> = Vec::new();
         let owner = SourceOwner::from(&source);
         let source_node_owners: BTreeMap<String, SourceOwner> = source_owners
             .iter()
@@ -4108,6 +4461,7 @@ impl PackageDeclarations {
         let domain_selections = selections.models.len();
         // FR-569: the unit's `object` declarations are one more selected
         // model, under the alias no `model` declaration can take.
+        let mut source_object_identity_fields = BTreeMap::new();
         if !unit.objects.is_empty() {
             source_name_collisions(&unit, &selections, &mut errors);
             if errors.is_empty() {
@@ -4152,7 +4506,7 @@ impl PackageDeclarations {
                     } else {
                         format!("source/{package_name}/{position}")
                     };
-                    if let Some((selection, model)) = source_model(
+                    if let Some((selection, model, identity_fields)) = source_model(
                         objects,
                         &declared_types,
                         &foreign,
@@ -4160,6 +4514,7 @@ impl PackageDeclarations {
                         &mut model_meter,
                         &mut errors,
                     ) {
+                        source_object_identity_fields.extend(identity_fields);
                         selections.models.push(selection);
                         model_selection_units.push(*declaring);
                         models.push(model);
@@ -4545,6 +4900,20 @@ impl PackageDeclarations {
                     .find(|profile| profile.alias == using.alias)
                 {
                     Some(profile) => {
+                        if super::integer_division_role(&profile.identity).is_some() {
+                            errors.push(AssemblyError {
+                                span: using.span,
+                                cause: AssemblyCause::Profile(Box::new(super::ProfileRefusal {
+                                    alias: using.alias.clone(),
+                                    identity_span: using.span,
+                                    selected: profile.identity.clone(),
+                                    required_role: crate::value::DefinitionRole::Root,
+                                    root: crate::value::DefinitionRole::Root.reference(),
+                                    cause: super::ProfileCause::WrongSelectionRole,
+                                    supplied_by: None,
+                                })),
+                            });
+                        }
                         function_selections.insert(index, profile.clone());
                         // FR-110 "Layer selection".
                         if let Some(layer) = HeaderLayer::from_identity(&profile.identity) {
@@ -4923,8 +5292,80 @@ impl PackageDeclarations {
                 }
             }
         }
+        if errors.is_empty() {
+            resolve_source_object_members(
+                SourceObjectTypeContext {
+                    unit: &unit,
+                    names: &names,
+                    spellings: &model_spellings,
+                    source_owners: &source_owners,
+                },
+                &mut models,
+                &mut object_types,
+                &mut operations,
+                &mut errors,
+            );
+        }
         if !errors.is_empty() {
             return refuse(errors);
+        }
+
+        for model in &models {
+            if model.alias.is_empty() {
+                let source_names = names.in_unit(&model_spellings, None);
+                let (clock_roots, needed_clock_types) = clock_forms::needed_types(
+                    &unit.source_types,
+                    &source_names,
+                    model.view.domain_package(),
+                );
+                let inherited_clock_layouts = admitted
+                    .iter()
+                    .filter(|held| held.alias() != Some(""))
+                    .flat_map(|held| held.value_clock_layouts(&needed_clock_types))
+                    .collect();
+                for held in admitted.iter_mut().filter(|held| {
+                    held.alias() == Some("")
+                        && held.selection() == &model.view.domain_package().model_selection
+                }) {
+                    let mut field_spans = BTreeMap::new();
+                    for object in &unit.objects {
+                        let owner = model
+                            .view
+                            .domain_package()
+                            .records
+                            .iter()
+                            .find_map(|record| match record {
+                                DomainPackageRecord::ObjectType(ty)
+                                    if type_identity_segment(&ty.key.package, &ty.key.node)
+                                        == Some(object.name.name.as_str()) =>
+                                {
+                                    Some(&ty.key)
+                                }
+                                _ => None,
+                            });
+                        if let Some(owner) = owner {
+                            for member in &object.members {
+                                if let ObjectMemberForm::Field(field) = member {
+                                    field_spans.insert(
+                                        source_member_declaration_key(owner, &field.name.name),
+                                        field.span,
+                                    );
+                                }
+                            }
+                        }
+                    }
+                    held.refresh_source_view(
+                        &model.view,
+                        clock_forms::source_places(
+                            &unit.source_types,
+                            &source_names,
+                            &inherited_clock_layouts,
+                            &clock_roots,
+                        ),
+                        field_spans,
+                    );
+                }
+            }
         }
 
         // Records and tuples.
@@ -4935,6 +5376,11 @@ impl PackageDeclarations {
             .iter()
             .map(|enumeration| (enumeration.name.name.clone(), enumeration.name.span))
             .collect();
+        declared_type_spans.extend(
+            unit.objects
+                .iter()
+                .map(|object| (object.name.name.clone(), object.name.span)),
+        );
         // A dimension's and a unit's declaration occurrence is located at its
         // name, under the namespace it is declared in (FR-094), so a record
         // named like a unit does not share its position.
@@ -5226,6 +5672,14 @@ impl PackageDeclarations {
         }
 
         let mut package = PackageDeclarations::new(source, package_name, limits.identity);
+        package.source_object_identity_fields = source_object_identity_fields;
+        package.integer_division = super::resolve_integer_division(&selections.profiles, None)
+            .map_err(|refusal| AssemblyRefusal {
+                errors: vec![AssemblyError {
+                    span: refusal.identity_span,
+                    cause: AssemblyCause::Profile(refusal),
+                }],
+            })?;
         package.decimal_literal_limits = limits.decimal_literal;
         package.sources = sources;
         package.source_owners = source_owners;
@@ -5622,11 +6076,11 @@ impl PackageDeclarations {
         package.temporal_selections = selections
             .profiles
             .iter()
-            .filter_map(|profile| {
-                Some(super::temporal_clause::TemporalSelection {
-                    profile: super::profile::TemporalProfile::from_identity(&profile.identity)?,
-                    span: profile.span,
-                })
+            .map(|profile| super::temporal_clause::TemporalSelection {
+                profile: super::profile::TemporalProfile::from_identity(&profile.identity),
+                identity: profile.identity.clone(),
+                alias: profile.alias.clone(),
+                span: profile.span,
             })
             .collect();
         package.protocol_attempts = protocol_attempts;

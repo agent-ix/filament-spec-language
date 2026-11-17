@@ -101,12 +101,13 @@ Each refusal below that carries a bracketed string is an
 claim's locus and names the offending part. Every such cause is in FSpec FR-272's closed set for that code (FSpec
 FR-407).
 
-A decimal literal denotes an exact rational only where the grammar takes an
+A decimal literal denotes an exact rational where the grammar takes an
 `exact-value`: a probability, mean-of-fraction or long-run threshold, a
 quantile level, a confidence parameter and the magnitude of a
 `quantity-literal`. A bare dimensionless threshold in an `expr` position,
-such as an event comparison's `>= rational(999, 1000)`, is written
-`rational(n, d)` or `decimal(n, s)`; a quantity threshold such as `5 ms` or
+such as an event comparison's `>= 0.999`, is the decimal primary of
+[FR-764](FR-764-read-a-bare-decimal-literal-as-an-exact-decimal-value.md), the
+same exact rational as `rational(999, 1000)` or `decimal(999, 3)`; a quantity threshold such as `5 ms` or
 `0.005 s` is a `quantity-literal` and keeps its decimal magnitude. S3 reduces
 every `exact-value` under the written-value bound and limit outcome that
 FR-185 states (setting pending, QSL-883).
@@ -238,11 +239,80 @@ FR-185 states (setting pending, QSL-883).
   claim [`invalid-confidence`], naming the
   parameter.
 
+### Activation
+
+- A claim's activation SHALL be `on origin` or `on each (x: T)`, optionally
+  with `when (g)`. Both are checked; neither is refused as not yet
+  implemented.
+- For `on each (x: T)`, `T` SHALL be an object type that some population of
+  the subject's model admits; otherwise S3 SHALL refuse the claim
+  [`over-not-object-type`] at the parameter's name, for the reason the
+  `over` rule above gives: a type with no instance would make the claim hold
+  or fail vacuously.
+- The guard `g` SHALL be a Boolean state expression over `x`, the `over`
+  parameter and the subject, checked as FR-125's activation guard; a guard
+  of another type SHALL be refused `ill_typed`/`type-mismatch` at the guard.
+- S3 SHALL record the activation in the checked claim and in its normal form
+  as `Each{parameter type, guard}`, so two claims differing only in their
+  activation are distinct obligations.
+- The meaning is FSpec FR-407 "Activation": FSL instantiates the claim per
+  key of the universe of `T`'s population, in product with any `over`
+  parameter (FR-125 "Instancing", including `NoInstance` for an empty
+  population, settled `inconclusive`); each instance's event or measure is
+  read from the run's first activating position, conditioned on the run
+  activating; and the item holds when every instance holds, naming the first
+  failing instance in key order.
+
+### Time positions
+
+- An `elapsed` measure, an `expected elapsed` claim and a time quantity used
+  as a horizon or interval bound (`within 5 ms`, `over [0, 5 ms]`,
+  `[0 ms, 4 ms]`) SHALL be admitted over a timed subject (a subject whose
+  model declares a time binding, FR-233 `ModelTime`), with the horizon or
+  bound converted exactly into the model's time unit and recorded as that
+  exact rational.
+- Over a subject whose model declares no time binding, each of them SHALL be
+  refused `ill_typed`/`type-mismatch`, located at the `elapsed` measure, at
+  `expected elapsed`'s quantity or at the time quantity, with a message
+  stating that the subject's model declares no time binding. There is no
+  elapsed time to measure, which is a type fact of the subject, not a missing
+  feature.
+- A claim under the timed profile (`filament.temporal.timed/v1`) over a timed
+  subject SHALL be checked by that profile's operator admission (FR-326,
+  FSpec FR-407-AC-11). Over a subject whose model declares no time binding,
+  its clock is the model's `model-steps` binding, which the timed profile
+  does not read: S3 SHALL refuse the claim
+  `invalid_timed_model`/`model-time-on-untimed-model`, naming the model,
+  at the `using` alias (FSpec FR-252). No claim is refused with an FSL-only
+  cause for the timed profile.
+
+### Quantity positions
+
+Every position of a probabilistic declaration or claim that the grammar lets
+hold a quantity literal SHALL be read by a check. A quantity of another
+dimension than the position's SHALL be refused `ill_typed`/`unit-mismatch`,
+naming the dimension, at the literal; a quantity literal in a position that
+takes no quantity SHALL be refused `ill_typed`/`type-mismatch` at the
+literal. No position refuses a quantity literal as not yet implemented.
+
+| Position | Dimension it takes | Owner |
+| --- | --- | --- |
+| `accumulate R` measure threshold | `R`'s dimension | this requirement |
+| quantile threshold (`quantile q of (M) <= c`) | the measure's dimension | this requirement |
+| `expected accumulate R` threshold, quantity reward | `R`'s dimension | FR-195 |
+| `expected elapsed` threshold | time | FR-195 |
+| measure horizon (`within h`) and fraction window (`over [0, h]`) | time, over a timed subject; otherwise a natural number | this requirement |
+| timed interval bound of an event | time | this requirement, FR-254 |
+| `uniform[a, b]` and `discrete { d: w }` delay values | time | FR-185 |
+| reward value (`reward R on Op = e`) | any quantity; it gives `R` its type | FR-185 |
+| fraction threshold, `steps` threshold | none: a rational or a natural number | this requirement |
+| probability threshold, quantile level, confidence parameter, random or workload weight | none; the grammar takes an `exact-value`, so a quantity there is `invalid_syntax` at S1 | FR-185, this requirement |
+
 ### Normal form
 
 - S3 SHALL record each checked claim's normal form: the content the claim
   asserts, which is its subject, profile, scheduler, fairness set, `over`
-  binding type, form and, when stated, confidence parameters. The normal form
+  binding type, activation, form and, when stated, confidence parameters. The normal form
   SHALL bind no source span, no method and no budget.
 - S3 SHALL give two checked claims equal normal forms exactly when they
   agree on the content below, and different normal forms when they differ in
@@ -279,6 +349,13 @@ FR-185 states (setting pending, QSL-883).
 | FR-186-AC-5 | `steps ... >= 3` checks with threshold 3; `steps ... >= rational(1, 2)` and `steps ... >= 5 ms` are each refused `ill_typed`/`type-mismatch`; a threshold that is no literal is refused `ill_typed`/`type-mismatch`; `fraction holds(P) over [0, 10] <= rational(1, 4)` checks, and `>= rational(1, 1)`, `>= rational(0, 1)` `>= rational(3, 2)` and a negative bound are each refused `fraction-bound-out-of-range` with a diagnostic that does not name the qualitative form. An event whose interval bounds sum beyond `u64` (two `[0, 2^63]` intervals) is refused as a resource-exhausted checking limit located at the operator whose bound overflows. A claim `over (n: Integer)` is refused `invalid_probabilistic_model`/`over-not-object-type` located at `n`, as is one over an object type that no population of the subject's model admits; the same claim over an object type a population admits checks. A package holding a checked claim and no other probabilistic declaration is emitted by S4 with the claim's node (FR-498); with a reward declared after it, S4 emits the claim node and the reward's `probabilistic`/`reward` node (FR-740). | Test (TC-621, TC-2062) |
 | FR-186-AC-6 | A claim over `on Nowhere`, one `using zz`, one `under Nope`, one that accumulates a reward no operation declares, and one `under every scheduler fair weak Node::nope` are each refused `missing_declaration`/`missing-name` located at that name. A claim that accumulates a reward `R` that one operation of the model declares as `Millis` and another as an integer is refused `ambiguous_declaration`/`ambiguous-name` naming `R`; with `R` of one value type on both it checks. | Test (TC-621) |
 | FR-186-AC-7 | Under a bounded profile, `probability >= 0.99 [eventually[2, *] holds(n.healthy)]` is refused `unsupported_construct`/`expression-form` at the interval and `[always holds(n.healthy)]` at `always`, each with the refusal the same formula gets in a `temporal` clause under that profile, and neither is refused `unbounded-event`; under the infinite-trace profile `[eventually[2, *] holds(n.healthy)]` is refused `unbounded-event`; under the timed profile over a subject with a time binding, `[eventually[0 ms, 4 ms] holds(n.healthy)]` checks with time horizon 4 ms and `[eventually holds(n.healthy)]` is refused `unsupported_construct`/`expression-form`. | Test (TC-2063) |
+| FR-186-AC-8 | Over the service model, `on each (m: Service::Server) { probability >= 0.9 [ holds(P) ] }` checks and records activation `Each` with parameter type `Service::Server` and no guard; with `when (m.phase = Service::Phase::Idle)` it records that guard; the two checked claims have unequal normal forms. Neither is refused `not-yet-implemented`. | Test (TC-2166) |
+| FR-186-AC-9 | `on each (k: Integer)` is refused `over-not-object-type` at `k`, and `on each (m: Service::Server) when (1)` is refused `ill_typed`/`type-mismatch` at `1`. | Test (TC-2166) |
+| FR-186-AC-10 | Through `fsl analyze` over the `Link` model, `probabilistic E using inf on M under Even on each (k: M::Msg) when (not k.delivered) { probability >= rational(9, 10) [ eventually holds(k.delivered) ] }` settles `proved`, never `unsupported`, with one instance per `Msg` key of the start snapshot: the one key `m` activates at position 0, so its proof basis equals the `on origin` claim's (`391/400`). | Test (TC-2167) |
+| FR-186-AC-11 | Over the untimed service model, `expected elapsed until holds(P) <= 3 ms`, the measure `elapsed from holds(A) until holds(B) within 5` and the window `steps from holds(A) until holds(B) within 5 ms` are each refused `ill_typed`/`type-mismatch` at `expected elapsed`'s quantity, at the measure and at `5 ms`; none is refused `not-yet-implemented`. | Test (TC-2168) |
+| FR-186-AC-12 | Over the timed `Retx` subject (`time dense unit ms`) under the timed profile, `expected elapsed until holds(c.late) <= 3 ms`, the measure `elapsed from holds(not c.late) until holds(c.late) within 5 ms >= 1 ms` and the window `steps from holds(not c.late) until holds(c.late) within 5 ms >= 1` each check, the `expected elapsed` threshold recorded as 3 and each horizon as 5, in milliseconds. | Test (TC-2169) |
+| FR-186-AC-13 | A claim under the timed profile over the untimed service model is refused `invalid_timed_model`/`model-time-on-untimed-model` naming `Service`, at the `using` alias, and not `timed-event-profile`; under the timed profile over `Retx`, `probability >= 0.99 [ eventually[0 ms, 4 ms] holds(c.late) ]` checks. | Test (TC-2170) |
+| FR-186-AC-14 | For each quantity row of "Quantity positions" a quantity of the position's dimension checks and a quantity of length (`5 m`) is refused `ill_typed`/`unit-mismatch` naming `Length` at the literal; `fraction holds(P) over [0, 10] <= 5 ms` and `steps from holds(A) until holds(B) within 5 >= 5 ms` are refused `ill_typed`/`type-mismatch` at `5 ms`; no position refuses a quantity literal `not-yet-implemented`. | Test (TC-2171) |
 
 ## Dependencies
 

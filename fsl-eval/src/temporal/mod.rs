@@ -55,9 +55,10 @@ mod window;
 
 pub use engine::{unrolling, DecisiveAtom, DecisiveSearch, DecisiveStop, Unrolling};
 pub use finite_window::{
-    evaluate_finite_window, evaluate_finite_window_at, Assessment, Basis, ClockCover, Containment,
-    IndeterminateReason, LowerBoundary, OrderKey, Premises, ProgressedRefusal, ResultIdentity,
-    SampleProgress, SupportPair, TimestampedObservation, TimestampedTrace, Valuation, Watermark,
+    correction_identity, evaluate_finite_window, evaluate_finite_window_at, window_reach,
+    Assessment, Basis, ClockCover, Containment, IndeterminateReason, LateCutoff, LateObservation,
+    Lateness, LowerBoundary, OrderKey, Premises, ProgressedRefusal, ResultIdentity, SampleProgress,
+    StampInterval, SupportPair, TimestampedObservation, TimestampedTrace, Valuation, Watermark,
     WindowCharge, WindowClock, WindowEvaluation, WindowProgress, WindowUnit, WindowVerdict,
 };
 pub use input::TemporalTrace;
@@ -70,8 +71,9 @@ pub use ledger::{
 pub use letters::{AtomReading, CaptureReading, LetterStop, TemporalLetters, UndefinedCause};
 pub use observed::{
     evaluate_observed, evaluate_observed_at, evaluate_observed_decisive,
-    evaluate_observed_finite_window, FirstUndefined, HoldsStop, ObservedLocus, ObservedRun,
-    ObservedWindowRun, WindowValuations,
+    evaluate_observed_finite_window, evaluate_sampled, evaluate_sampled_finite_window,
+    observed_valuation, FirstUndefined, HoldsStop, ObservedLocus, ObservedPositions, ObservedRun,
+    ObservedValuation, ObservedWindowRun, ValuationStop, WindowValuations,
 };
 pub use observed_window::{ObservedWindowExpressions, ObservedWindowSource};
 pub use outcome::{
@@ -135,6 +137,30 @@ pub fn evaluate_with_enabledness<L: TemporalLetters>(
         },
         trace,
         engine::Goal::Clause,
+        letters,
+        meter,
+    )
+}
+
+/// [`evaluate_with_enabledness`] that also finds the decisive atom of a
+/// violation (FR-330 "The decisive atom") on the same evaluator and meter.
+pub fn evaluate_with_enabledness_decisive<L: TemporalLetters>(
+    clause: &CheckedTemporalClause,
+    trace: TemporalTrace,
+    letters: &mut L,
+    meter: &mut Meter,
+) -> (
+    Result<TemporalOutcome, TemporalRefusal>,
+    Option<DecisiveSearch>,
+) {
+    engine::run_seeking(
+        engine::Subject {
+            fairness: &[],
+            ..engine::Subject::of_clause(clause)
+        },
+        trace,
+        engine::Goal::Clause,
+        true,
         letters,
         meter,
     )

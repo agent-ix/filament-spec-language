@@ -70,6 +70,14 @@ pub enum PastWindow { Positions { a: u64, b: u64 }, Duration { a: Quantity, b: Q
   aggregate term in a claim over a model subject SHALL be refused
   `unsupported_construct`/`expression-form` at the aggregate term, with a
   diagnostic naming ADR-024 §2's measures (FSpec FR-414-AC-6).
+  The refusal is category `unsupported`, exit 21, at stage `compile`
+  (FR-330-AC-8, FR-285): the source is valid, and a model subject has no
+  observed trace or window profile for the aggregate to read, so the claim
+  over a model's behaviours is stated with ADR-024's measures instead. The
+  same aggregate term over a trace subject is the supported form, and S3
+  SHALL check it, S4 SHALL emit it and the run SHALL evaluate it through
+  FR-330 over a trace FR-641 carries, under the clock configuration FR-640
+  selects.
 - `past[a, b]` SHALL have `a <= b`: natural numbers under event-position,
   durations under the timestamped-event profile. A duration window under
   event-position, or a position window under timestamped-event, SHALL be
@@ -215,6 +223,7 @@ pub enum PastWindow { Positions { a: u64, b: u64 }, Duration { a: Quantity, b: Q
 | FR-194-AC-10 | Under event-position over `x` values `1, 2` at positions 0 and 1, at position 1: `count where holds(e.x > 5) over past[0, 9] min_count 0 <= 2` is `true` (count 0), `count where holds(e.x > 5) over past[0, 9] min_count 0 >= 1` is `false`, and `sum of e.x where holds(e.x > 5) over past[0, 9] min_count 0 = 0` is `true`, none of them `InsufficientData`; the same `count` without `min_count` reads `Undefined(InsufficientData{count: 0, min_count: 1})`. `min`, `max`, `fraction holds(e.x > 1)` and `quantile 0.5` of `e.x` each with `min_count 0` refuse `invalid_package`/`invalid-value` at `0`. | Test (TC-629) |
 | FR-194-AC-11 | With `model M = "acme/rpc"`, the package declaring base dimension `Time`, its root unit `s` and a unit `ms` of `Time` (`target` `s`, `scale` `1/1000`), and the unit declaring `dimension Time; unit s : Time = rational(1, 1); unit ms : Time = rational(1, 1000) * s;`, under event-position over event field `latency: Quantity<M::ms>` with values `5`, `1` and `4` of `M::ms` at positions 0 to 2, at position 2 the `sum`, `min`, `max` and `quantile 0.5` terms of `e.latency` over `past[0, 2]` check with value type `Quantity<M::ms>` over the package unit's node and evaluate to `10`, `1`, `5` and `4` of `M::ms`; `sum of e.latency over past[0, 2] <= 1 M::s` checks with its threshold converted to `1000` of `M::ms` and is `true`; `sum of e.latency where holds(e.latency > 9 M::ms) over past[0, 2] min_count 0 = 0 M::ms` is `true`; the thresholds `10 ms` and `10 s` of the source units each refuse `ill_typed`/`unit-mismatch` at the threshold (FSpec FR-414-AC-13). | Test (TC-629) |
 | FR-194-AC-12 | With `dimension Length; unit m : Length = rational(1, 1);` and `type Lc = Quantity<m, Int[-5, 5]>;`, under event-position over event field `d: Quantity<m>`, each of `sum`, `min`, `max` and `quantile 0.5` of `convert<Lc>(e.d)` over `past[0, 2]` with threshold `5 m` reports exactly one refusal, `ill_typed`/`type-mismatch` at `convert<Lc>(e.d)`, and with threshold `5 s` (beside `dimension Time; unit s : Time = rational(1, 1);`) that refusal then `ill_typed`/`unit-mismatch` at `5 s`; `sum of e.d over past[0, 2] <= convert<Lc>(5 m)` refuses `ill_typed`/`type-mismatch` at the threshold; `sum of convert<Quantity<m>>(convert<Lc>(e.d)) over past[0, 2] <= 5 m` checks, and over `d` values `2`, `-1` and `3` of `m` its sum at position 2 is `4 m` (FSpec FR-414-AC-14). | Test (TC-629) |
+| FR-194-AC-13 | Through `command::run`, a unit declaring `record Resp { latency: Quantity<ms>; }` and `temporal P using w over (r: Resp) clock "plant-ms" on origin { always[0, 300000] (quantile 0.95 of r.latency over past[0 ms, 300 s] <= 5 ms) }` under the timestamped-event profile (the operator interval a tick interval in the clock unit `ms`, FR-326-AC-6, and the aggregate window a duration), its role configured `{"kind": "timestamped_event", "timestamp_unit": "ms"}` (FR-640), over AC-1's 20 latencies stamped 0 to 19 ms as a closed `timestamped` trace complete through 300000 (FR-641), reports `violated`, exit 10; with `quantile 0.9` it reports `holds`, exit 0. The model-subject refusal `unsupported_construct`/`expression-form` of AC-7 has category `unsupported`, exit 21 (FR-330-AC-8). | Test (TC-2387) |
 
 ## Dependencies
 

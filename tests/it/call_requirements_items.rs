@@ -31,6 +31,9 @@ const K: &str = "language \"ix:native\" edition \"1-draft\";\n\
 
 fn members(function: &str) -> Vec<(OccurrenceKey, usize)> {
     let call = Call {
+        clocks: Default::default(),
+        wire_arguments: Vec::new(),
+        snapshot: None,
         function: function.to_owned(),
         arguments: vec![CallArgument {
             parameter: "x".to_owned(),
@@ -40,18 +43,18 @@ fn members(function: &str) -> Vec<(OccurrenceKey, usize)> {
         supplied: SuppliedLimits::default(),
         backend: filament_eval::ExecutionBackendChoice::Interpreter,
     };
-    let result = run_with_requirements(
-        SourceIdentity::new("a", "u"),
-        "fixture".to_owned(),
-        "unit.native",
-        K.as_bytes(),
-        &BTreeMap::new(),
-        &DependencyInput::default(),
-        SpineLimits::default(),
-        &call,
-        &ObjectEnvironment::default(),
-        &Cancel::new(),
-    )
+    let result = run_with_requirements(&fsl_replay::RequirementsRun {
+        source: SourceIdentity::new("a", "u"),
+        package_name: "fixture".to_owned(),
+        path: "unit.native",
+        bytes: K.as_bytes(),
+        packages: &BTreeMap::new(),
+        dependencies: &DependencyInput::default(),
+        limits: SpineLimits::default(),
+        call: &call,
+        objects: &ObjectEnvironment::default(),
+        cancel: &Cancel::new(),
+    })
     .expect("the call runs");
     result
         .requirements()

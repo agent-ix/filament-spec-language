@@ -523,6 +523,152 @@ pub fn probabilistic_wire(
     Ok(written)
 }
 
+/// The unpadded base64url spelling of a state key, as FSpec FR-393 writes a
+/// `post_state` and a `state_key`.
+fn key_text(key: &fsl_eval::simulation::StateKey) -> Result<Json, CounterexampleWireError> {
+    state(key)?
+        .get("key")
+        .cloned()
+        .ok_or(CounterexampleWireError::Unspelled("state key"))
+}
+
+fn graph_step(
+    step: &crate::model_check::counterexample::ModelStep,
+) -> Result<Json, CounterexampleWireError> {
+    Ok(json!({
+        "type": "step",
+        "transition": model_transition(&step.transition)?,
+        "post_state": key_text(&step.post_state)?,
+    }))
+}
+
+fn graph_steps(
+    steps: &[crate::model_check::counterexample::ModelStep],
+) -> Result<Vec<Json>, CounterexampleWireError> {
+    steps.iter().map(graph_step).collect()
+}
+
+fn model_path(
+    path: &crate::model_check::state_graph::ModelPath,
+) -> Result<Json, CounterexampleWireError> {
+    Ok(json!({
+        "type": "model-path",
+        "initial": path.initial.to_string(),
+        "steps": graph_steps(&path.steps)?,
+    }))
+}
+
+fn graph_witness(
+    path: &crate::model_check::state_graph::WitnessPath,
+    source: &crate::model_check::state_graph::WitnessSource,
+) -> Result<Json, CounterexampleWireError> {
+    let crate::model_check::state_graph::WitnessPath::Path(path) = path else {
+        return Err(CounterexampleWireError::Unspelled("lasso witness"));
+    };
+    Ok(json!({
+        "path": model_path(path)?,
+        "source": serde_json::to_value(source)
+            .map_err(|_| CounterexampleWireError::Unspelled("witness source"))?,
+    }))
+}
+
+/// FSpec FR-393's spelling of the state-graph `evidence` of the instance
+/// bound to `over` (the claim's `over` parameter `parameter`), with
+/// `sampled` the witnesses phase 0 found per initial state (FR-628).
+///
+/// # Errors
+///
+/// [`CounterexampleWireError`] for a lasso witness, which no state-graph
+/// claim yields, and for a state or transition with no spelling.
+pub fn graph_evidence_wire(
+    evidence: &crate::model_check::state_graph::GraphEvidence,
+    form: crate::model_check::state_graph::StateGraphPropertyForm,
+    parameter: Option<&str>,
+    over: Option<&ObjectReference>,
+    sampled: &[Option<crate::model_check::state_graph::GraphWitness>],
+) -> Result<Json, CounterexampleWireError> {
+    use crate::model_check::state_graph::{GraphEvidence, StateGraphPropertyForm};
+    let key = match over {
+        Some(found) => reference(found)?,
+        None => Json::Null,
+    };
+    let instance = json!({"type": "instance", "parameter": parameter, "key": key});
+    let mut written = json!({"type": "graph-evidence", "instance": instance});
+    match evidence {
+        GraphEvidence::Witness { paths, .. } => {
+            written["arm"] = json!("witness");
+            written["paths"] = Json::Array(
+                paths
+                    .iter()
+                    .map(|(path, source)| graph_witness(path, source))
+                    .collect::<Result<Vec<_>, _>>()?,
+            );
+            if !sampled.is_empty() {
+                written["sampled"] = Json::Array(
+                    sampled
+                        .iter()
+                        .map(|found| match found {
+                            Some(found) => graph_witness(
+                                &crate::model_check::state_graph::WitnessPath::Path(
+                                    found.path.clone(),
+                                ),
+                                &found.source,
+                            ),
+                            None => Ok(Json::Null),
+                        })
+                        .collect::<Result<Vec<_>, _>>()?,
+                );
+            }
+        }
+        GraphEvidence::Trap { stem, .. } => {
+            written["arm"] = json!("trap");
+            written["stem"] = model_path(stem)?;
+        }
+        GraphEvidence::PathPair {
+            stem,
+            first,
+            second,
+            ..
+        } => {
+            written["arm"] = json!("path-pair");
+            written["stem"] = model_path(stem)?;
+            written["first"] = Json::Array(graph_steps(first)?);
+            written["second"] = Json::Array(graph_steps(second)?);
+        }
+        GraphEvidence::Undefined {
+            stem, undefined, ..
+        } => {
+            let role = undefined.predicate.map(|role| match (role, form) {
+                (fsl_semantics::check::PredicateRole::Target, _) => "P",
+                (
+                    fsl_semantics::check::PredicateRole::From,
+                    StateGraphPropertyForm::AlwaysPossible,
+                ) => "Q",
+                (fsl_semantics::check::PredicateRole::From, _) => "X",
+                (fsl_semantics::check::PredicateRole::To, _) => "Y",
+            });
+            let mut at = json!({
+                "position": stem.steps.len(),
+                "state_key": key_text(&undefined.state_key)?,
+            });
+            if let Some(role) = role {
+                at["predicate"] = json!(role);
+            }
+            if let Some(guard) = &undefined.transition {
+                at["transition"] = model_transition(guard)?;
+            }
+            written["arm"] = json!("undefined");
+            written["stem"] = model_path(stem)?;
+            written["undefined"] = json!({
+                "type": "undefined-evaluation",
+                "where": at,
+                "cause": undefined_reason(&undefined.cause),
+            });
+        }
+    }
+    Ok(written)
+}
+
 #[cfg(test)]
 mod tests {
     use filament_exact::{Integer, Origin, Role, Undefined};

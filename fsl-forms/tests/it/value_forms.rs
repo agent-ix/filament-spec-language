@@ -5,9 +5,9 @@
 use filament_exact::{CollectionKind, Integer};
 use fsl_cst::{CstElement, LosslessCst, ParsedSource, Production};
 use fsl_forms::{
-    build_unit, Accumulation, BinaryOperator, BinderQuery, BuiltinType, DeclarationForm,
+    Accumulation, BinaryOperator, BinderQuery, BuiltinType, DecimalSpellingKind, DeclarationForm,
     DeclarationKind, ExactNumberKind, ExprNode, ExprRef, Expression, FieldInitializer, FormsCause,
-    FunctionDeclaration, ParsedUnit, TermOperator, TypeFormHead,
+    FunctionDeclaration, ParsedUnit, TermOperator, TypeFormHead, build_unit,
 };
 use fsl_foundation::{Code, SourceIdentity, Span, SyntaxLimit};
 use ix_trace_rs::trace;
@@ -82,6 +82,8 @@ fn function(form: &DeclarationForm) -> &FunctionDeclaration {
         | DeclarationForm::Probabilistic(_)
         | DeclarationForm::StateGraphClaim(_)
         | DeclarationForm::Hybrid(_)
+        | DeclarationForm::Synthesis(_)
+        | DeclarationForm::VerificationPlan(_)
         | DeclarationForm::Extension(_) => panic!("a function form, not {form:?}"),
     }
 }
@@ -122,10 +124,6 @@ fn span_of(text: &str, needle: &str) -> Span {
     }
 }
 
-fn name(spelling: &str) -> String {
-    spelling.to_owned()
-}
-
 /// A compact rendering of an expression tree, operands in order.
 fn show(expression: ExprRef<'_>) -> String {
     let children: Vec<String> = expression.children().into_iter().map(show).collect();
@@ -136,7 +134,9 @@ fn show(expression: ExprRef<'_>) -> String {
         ExprNode::Float32(bits) => format!("float32({bits:08x})"),
         ExprNode::Float64(bits) => format!("float64({bits:016x})"),
         ExprNode::Rational(n, d) => format!("rational({n},{d})"),
-        ExprNode::DecimalValue { coefficient, scale } => format!("decimal({coefficient},{scale})"),
+        ExprNode::DecimalValue {
+            coefficient, scale, ..
+        } => format!("decimal({coefficient},{scale})"),
         ExprNode::Quantity(quantity) => {
             format!(
                 "quantity({} {})",
@@ -287,6 +287,8 @@ fn a_unit_builds_one_form_per_declaration_in_source_order() {
             DeclarationForm::Probabilistic(_) => "probabilistic",
             DeclarationForm::StateGraphClaim(_) => "state-graph",
             DeclarationForm::Hybrid(_) => "hybrid",
+            DeclarationForm::Synthesis(_) => "synthesis",
+            DeclarationForm::VerificationPlan(_) => "verification_plan",
             DeclarationForm::Object(_) => "object",
             DeclarationForm::Extension(_) => "extension",
         })
@@ -564,23 +566,13 @@ fn s2_refuses_inadmissible_input_and_undispatched_declarations() {
         other => panic!("the diagnosed-source cause, not {other:?}"),
     }
 
-    // FR-102 gave `invariant`/`pre`/`post` their own dispatch
-    // entry, so FR-091-AC-6's undispatched case moves to a spelling no
-    // family claims yet: `synthesis` (`SynthesisDeclaration`).
-    let synthesis = "synthesis Syn using v grammar M::G domain M::D satisfies { true };";
-    let (text, cause, span) = refusal(&format!(
-        "function t using v(): Boolean pure {{ true }}\n{synthesis}"
-    ));
-    assert_eq!(
-        cause,
-        FormsCause::NoDispatchEntry {
-            spelling: name("synthesis")
-        }
-    );
-    assert_eq!(span, Some(span_of(&text, synthesis)));
+    // Every declaration spelling admitted by the current grammar has a
+    // dispatch entry. The no-entry branch is exercised with a fixture CST in
+    // `dispatch`'s unit tests; synthesis and verify now build (FR-753/FR-754).
 }
 
 #[trace("FR-091-AC-7", "TC-396")]
+#[trace("TC-2214", "FR-091-AC-7")]
 #[test]
 fn a_construct_no_variant_represents_refuses_the_unit() {
     let cases = [
@@ -601,10 +593,13 @@ fn a_construct_no_variant_represents_refuses_the_unit() {
         let (text, cause, span) = refusal(&format!(
             "function f using v(): Boolean pure {{ {source} }}"
         ));
-        assert_eq!(
-            cause,
-            FormsCause::UnrepresentedConstruct { production },
-            "{source}"
+        assert!(
+            matches!(
+                &cause,
+                FormsCause::UnrepresentedConstruct { production: actual, .. }
+                    if *actual == production
+            ),
+            "{source}: {cause:?}"
         );
         assert_eq!(cause.catalog_code(), Code::UnsupportedConstruct);
         assert_eq!(span, Some(span_of(&text, construct)), "{source}");
@@ -637,12 +632,13 @@ fn a_qualified_reachability_end_is_refused_at_the_form_build() {
     let (text, cause, span) = refusal(&format!(
         "invariant I using v on M::Order at current {{ reaches(self, self, {edge}) }}"
     ));
-    assert_eq!(
-        cause,
+    assert!(matches!(
+        &cause,
         FormsCause::UnrepresentedConstruct {
-            production: Production::QualifiedName
+            production: Production::QualifiedName,
+            ..
         }
-    );
+    ));
     assert_eq!(cause.catalog_code(), Code::UnsupportedConstruct);
     assert_eq!(span, Some(span_of(&text, edge)));
 }
@@ -1568,7 +1564,8 @@ fn a_decimal_constructor_builds_one_decimal_value_as_written() {
             root,
             &ExprNode::DecimalValue {
                 coefficient: Integer::from(coefficient),
-                scale
+                scale,
+                spelling: fsl_forms::DecimalSpellingKind::DecimalConstructor,
             },
             "{source}"
         );
@@ -1763,12 +1760,13 @@ fn a_selector_of_a_clock_place_expression_builds() {
 
     let with_function = format!("{clauses}function f using v(): Boolean pure {{ xs[0] }}\n");
     let (text, cause, span) = refusal(&with_function);
-    assert_eq!(
-        cause,
+    assert!(matches!(
+        &cause,
         FormsCause::UnrepresentedConstruct {
-            production: Production::Postfix
+            production: Production::Postfix,
+            ..
         }
-    );
+    ));
     assert_eq!(span, Some(span_of(&text, "xs[0]")));
 }
 
@@ -1778,11 +1776,43 @@ fn a_selector_of_a_clock_place_expression_builds() {
 #[test]
 fn a_selector_after_a_call_is_refused_at_its_own_span() {
     let (text, cause, span) = refusal("function f using v(): Boolean pure { self.ts[0].n()[1] }");
-    assert_eq!(
-        cause,
+    assert!(matches!(
+        &cause,
         FormsCause::UnrepresentedConstruct {
-            production: Production::Postfix
+            production: Production::Postfix,
+            ..
         }
-    );
+    ));
     assert_eq!(span, Some(span_of(&text, "self.ts[0].n()[1]")));
+}
+
+/// FR-764-AC-2: a bare decimal literal builds the `DecimalValue` of the
+/// `decimal(c, s)` it spells, unreduced.
+#[trace("TC-2161", "FR-764-AC-2")]
+#[test]
+fn a_bare_decimal_literal_builds_the_decimal_value_it_spells() {
+    for (source, coefficient, scale) in [("0.9", 9_i64, 1_u32), ("5.0", 50, 1), ("0.90", 90, 2)] {
+        let (text, function) = body(source);
+        let literal_span = span_of(&text, source);
+        let spans = function.spans().expect("the form carries expression spans");
+        assert_eq!(
+            spans.body.at(&[]),
+            Some(literal_span),
+            "the S2 expression span equals the `{source}` literal span"
+        );
+        assert_eq!(
+            &text[literal_span.start..literal_span.end],
+            source,
+            "the S2 expression span names the exact literal"
+        );
+        assert_eq!(
+            function.body.root_node().clone(),
+            ExprNode::DecimalValue {
+                coefficient: Integer::from(coefficient),
+                scale,
+                spelling: DecimalSpellingKind::DecimalLiteral,
+            },
+            "{source}"
+        );
+    }
 }

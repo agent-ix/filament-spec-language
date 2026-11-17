@@ -215,6 +215,9 @@ mod tests {
 
     fn run(source: &str, limits: CallerLimits) -> RunWithReplayContext {
         let call = Call {
+            clocks: Default::default(),
+            wire_arguments: Vec::new(),
+            snapshot: None,
             function: "q".to_owned(),
             arguments: vec![crate::CallArgument {
                 parameter: "x".to_owned(),
@@ -361,6 +364,9 @@ mod tests {
             "function r using v(x: Int[0, 9]): Integer pure { 10 mod x }\nfunction q",
         );
         let call = Call {
+            clocks: Default::default(),
+            wire_arguments: Vec::new(),
+            snapshot: None,
             function: "r".to_owned(),
             arguments: vec![crate::CallArgument {
                 parameter: "x".to_owned(),

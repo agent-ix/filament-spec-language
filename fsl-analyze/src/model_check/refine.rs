@@ -1745,6 +1745,7 @@ impl Run<'_, '_> {
         RunStats {
             product_states: widen(self.nodes.len()),
             product_edges: widen(self.edges),
+            stutter_edges: 0,
             automaton_states: 0,
             depth: widen(self.nodes.iter().map(|node| node.depth).max().unwrap_or(0)),
             bound_limited: 0,

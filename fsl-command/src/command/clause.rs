@@ -17,14 +17,9 @@ fn invalid(member: impl Into<String>, reason: impl Into<String>) -> RunCause {
     }
 }
 
-fn observation(
-    intake: &mut Intake<'_>,
-    key: &str,
-    file: &str,
-    document_bytes: u64,
-) -> Result<SuppliedObservation> {
-    let bytes =
-        intake.observation_file(file, usize::try_from(document_bytes).unwrap_or(usize::MAX))?;
+fn observation(intake: &mut Intake<'_>, key: &str, file: &str) -> Result<SuppliedObservation> {
+    let remaining = intake.remaining;
+    let bytes = intake.file(file, remaining)?;
     SuppliedObservation::from_document(key, bytes)
         .map_err(|error| invalid(error.member, error.reason))
 }
@@ -45,7 +40,8 @@ pub(super) fn read(
     let documents = request
         .models
         .iter()
-        .map(|model| intake.source(&model.source))
+        .enumerate()
+        .map(|(index, model)| intake.source(&model.source, &format!("models[{index}].source")))
         .collect::<Result<Vec<_>>>()?;
     let packages = fsl_semantics::model::intake::package_input(
         documents
@@ -56,7 +52,13 @@ pub(super) fn read(
     let libraries = request
         .libraries
         .iter()
-        .map(|library| Ok((library, intake.source(&library.source)?)))
+        .enumerate()
+        .map(|(index, library)| {
+            Ok((
+                library,
+                intake.source(&library.source, &format!("libraries[{index}].source"))?,
+            ))
+        })
         .collect::<Result<Vec<_>>>()?;
     let dependencies =
         DependencyInput::new(libraries.iter().map(|(library, read)| SuppliedLibrary {
@@ -75,11 +77,42 @@ pub(super) fn read(
         let observed = if let Some(existing) = by_file.get(file) {
             existing.clone()
         } else {
-            let observed = observation(intake, key, file, observation_limits.document_bytes)?;
+            let observed = observation(intake, key, file)?;
             by_file.insert(file.clone(), observed.clone());
             observed
         };
         observations.insert(key.clone(), observed);
+    }
+    let ledger = clause
+        .selection
+        .ledger_path()
+        .map(|path| {
+            let bytes = intake.file(path, intake.remaining)?;
+            fsl_replay::spine::read_ledger(&bytes)
+                .map_err(|error| invalid(error.member, error.reason))
+        })
+        .transpose()?;
+    // FR-526: the evidence ledger file a prior run wrote, read once here.
+    let evidence_ledger = clause
+        .selection
+        .correction()
+        .and_then(|(_, path, _)| path)
+        .map(|path| {
+            let bytes = intake.file(path, intake.remaining)?;
+            fsl_replay::spine::read_evidence_ledger(&bytes)
+                .map_err(|error| invalid("evidence_ledger", error.to_string()))
+        })
+        .transpose()?;
+    let mut selection = clause
+        .selection
+        .into_parts()
+        .map_err(|error| invalid(error.member, error.reason))?;
+    if let fsl_replay::spine::ClauseSelectionPartsKind::Temporal {
+        trace: fsl_replay::spine::TemporalTraceParts::Timestamped(timestamped),
+        ..
+    } = &mut selection
+    {
+        timestamped.late.evidence_ledger = evidence_ledger;
     }
     let source_identity = source.source().identity().clone();
     let source = ClauseRunSource::Program {
@@ -93,13 +126,12 @@ pub(super) fn read(
         packages,
         dependencies,
         observations,
-        selection: clause
-            .selection
-            .into_parts()
-            .map_err(|error| invalid(error.member, error.reason))?,
+        selection,
         limits: SpineLimits::default(),
         observation_limits,
         accounting: super::call_accounting(&clause.accounting),
+        clocks: request.clocks.clone(),
+        ledger,
     })
     .map_err(|error| invalid(error.member, error.reason))
 }

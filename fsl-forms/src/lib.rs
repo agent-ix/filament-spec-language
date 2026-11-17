@@ -44,6 +44,7 @@ mod refinement;
 mod spans;
 mod state_graph;
 mod state_model;
+mod synthesis_verify;
 mod sum_case;
 mod syntax;
 mod task_set;
@@ -56,15 +57,15 @@ pub use abstraction_declaration::{
     AbstractionBindingForm, AbstractionDeclarationForm, FieldBindingForm, FrameBindingForm,
     ObjectBindingForm, ParameterBindingForm, PopulationBindingForm, RustSpelling,
 };
-pub use clause_text::{parse_clause_text, parse_type_text, ClauseTextRefusal};
+pub use clause_text::{ClauseTextRefusal, parse_clause_text, parse_type_text};
 pub use composition_declaration::{
     ComponentClauseForm, CompositionComponentForm, CompositionDeclarationForm,
     CompositionGuaranteeForm, CompositionMemberForm, CompositionPremiseForm, CompositionRuleForm,
     CompositionSuppliesForm,
 };
 pub use dispatch::{
-    build_unit, build_unit_with_protocol_results, leading_keywords, FormsCause, FormsRefusal,
-    LeadingTokenKind, ParsedForm, ParsedUnit, ProtocolFormsRefusal,
+    ConstructKind, FormsCause, FormsRefusal, LeadingTokenKind, ParsedForm, ParsedUnit,
+    ProtocolFormsRefusal, build_unit, build_unit_with_protocol_results, leading_keywords,
 };
 pub use guarantee_declaration::{
     GuaranteeDeclarationForm, GuaranteeEnvironmentForm, GuaranteeInitialForm, GuaranteeMeasureForm,
@@ -92,32 +93,33 @@ pub use syntax::{
     AttemptForm, BinaryOperator, BinderForm, BinderKind, BinderQuery, BoundOp, BuiltinType,
     CaptureForm, CaseForm, CheckForm, ChoiceCaseForm, ChoiceForm, ClauseKind, ClockBoundForm,
     ClockForm, CompensationAttempts, CompensationCommit, CompensationForm, CompensationRecover,
-    CompensationRetry, ConfidenceItemForm, ConfidenceKey, CriticalityForm, DeclarationForm,
-    DeclarationKind, DeclaredClauseKind, DeclaredName, DelayDistributionForm, DelayForm,
-    DimensionEquivalenceForm, DimensionForm, DimensionTermForm, EnumForm, EnumMemberForm,
-    EquationForm, EventForm, ExactNumberForm, ExactNumberKind, ExactValueForm, ExactValueKind,
-    ExpectedQuantity, ExprId, ExprNode, ExprRef, Expression, ExpressionBuilder, ExpressionForm,
-    ExtensionClauseForm, ExtensionForm, FairnessConstraintForm, FairnessGranularity, FairnessKind,
-    FieldInitializer, FractionForm, FrameEntryForm, FunctionDeclaration, HorizonForm, HybridForm,
-    HybridInitialForm, HybridModeForm, InitialEntryForm, IntervalForm, IntervalUpper, MeasureForm,
-    MeasureWindowForm, NameForm, ObjectFieldForm, ObjectForm, ObjectMemberForm,
-    ObjectOperationForm, ObjectPopulationForm, OperationBodyForm, OperatorInterval, ParameterForm,
-    PastWindowForm, PolicyForm, PopulationBoundForm, PopulationForm, PriorityForm,
-    ProbabilisticBody, ProbabilisticForm, ProtocolBodyForm, ProtocolConstructForm,
-    ProtocolConstructKind, ProtocolDeclarationForm, ProtocolNodeDeclaration, ProtocolNodeKind,
-    QuantifiedClockBoundForm, QuantityForm, RandomForm, RatioNumberForm, RatioNumberKind,
-    RatioTermForm, RecordFieldForm, RecordForm, RedefinesForm, RelatedForm, RelationshipForm,
-    ReleaseForm, ReplicatedRoleForm, RequirementForm, ResponseForm, RewardForm, RoleForm,
-    RoleLifetime, SchedulableForm, SchedulerForm, ScopeEntry, ScopeId, ScopeName, ScopedAnchorForm,
-    ShapeChanged, SignedQuantityForm, SignificantContent, Spellings, StateClauseForm,
-    StateClauseKind, StateGraphClaimForm, StateGraphClaimKind, StateGraphPredicateForm,
-    StepLabelForm, StringLiteral, TaskForm, TasksetForm, TemporalClauseForm, TemporalFormulaForm,
-    TemporalNodeForm, TemporalNodeId, TemporalOperator, TemporalOperatorForm, TemporalOperatorUse,
-    TermOperator, TerminalDeclarationForm, TerminalDeclarationKind, TimeInvariantBoundForm,
-    TimeInvariantForm, TimeSourceForm, TimeSourceSyntax, TimedIntervalForm, TimedUpper,
-    TransitionForm, TreeRefusal, TupleForm, TypeForm, TypeFormHead, UnionForm, UnionMemberForm,
-    UnitForm, UnitTermForm, UrgentForm, UrgentTarget, UsingAlias, WeightedDelayForm,
-    WeightedValueForm, WeightingForm, WorkloadForm, WorkloadWeightForm,
+    CompensationRetry, ConfidenceItemForm, ConfidenceKey, CriticalityForm, DecimalSpellingKind,
+    DeclarationForm, DeclarationKind, DeclaredClauseKind, DeclaredName, DelayDistributionForm,
+    DelayForm, DimensionEquivalenceForm, DimensionForm, DimensionTermForm, EnumForm,
+    EnumMemberForm, EquationForm, EventForm, ExactNumberForm, ExactNumberKind, ExactValueForm,
+    ExactValueKind, ExpectedQuantity, ExprId, ExprNode, ExprRef, Expression, ExpressionBuilder,
+    ExpressionForm, ExtensionClauseForm, ExtensionForm, FairnessConstraintForm,
+    FairnessGranularity, FairnessKind, FieldInitializer, FractionForm, FrameEntryForm,
+    FunctionDeclaration, HorizonForm, HybridForm, HybridInitialForm, HybridModeForm,
+    InitialEntryForm, IntervalForm, IntervalUpper, MeasureForm, MeasureWindowForm, NameForm,
+    ObjectFieldForm, ObjectForm, ObjectMemberForm, ObjectOperationForm, ObjectPopulationForm,
+    OperationBodyForm, OperatorInterval, ParameterForm, PastWindowForm, PolicyForm,
+    PopulationBoundForm, PopulationForm, PriorityForm, ProbabilisticBody, ProbabilisticForm,
+    ProtocolBodyForm, ProtocolConstructForm, ProtocolConstructKind, ProtocolDeclarationForm,
+    ProtocolNodeDeclaration, ProtocolNodeKind, QuantifiedClockBoundForm, QuantityForm, RandomForm,
+    RatioNumberForm, RatioNumberKind, RatioTermForm, RecordFieldForm, RecordForm, RedefinesForm,
+    RelatedForm, RelationshipForm, ReleaseForm, ReplicatedRoleForm, RequirementForm, ResponseForm,
+    RewardForm, RoleForm, RoleLifetime, SchedulableForm, SchedulerForm, ScopeEntry, ScopeId,
+    ScopeName, ScopedAnchorForm, ShapeChanged, SignedQuantityForm, SignificantContent, Spellings,
+    StateClauseForm, StateClauseKind, StateGraphClaimForm, StateGraphClaimKind, SynthesisForm,
+    StateGraphPredicateForm, StepLabelForm, StringLiteral, TaskForm, TasksetForm,
+    TemporalClauseForm, TemporalFormulaForm, TemporalNodeForm, TemporalNodeId, TemporalOperator,
+    TemporalOperatorForm, TemporalOperatorUse, TermOperator, TerminalDeclarationForm,
+    TerminalDeclarationKind, TimeInvariantBoundForm, TimeInvariantForm, TimeSourceForm,
+    TimeSourceSyntax, TimedIntervalForm, TimedUpper, TransitionForm, TreeRefusal, TupleForm,
+    TypeForm, TypeFormHead, UnionForm, UnionMemberForm, UnitForm, UnitTermForm, UrgentForm,
+    UrgentTarget, UsingAlias, WeightedDelayForm, WeightedValueForm, WeightingForm, WorkloadForm,
+    VerificationPlanForm, WorkloadWeightForm,
 };
 
 /// Each explicit heap stack S2 and the form traits keep grows by at most a
@@ -125,7 +127,7 @@ pub use syntax::{
 #[cfg(test)]
 mod stack_charge_tests {
     use super::syntax::stack_peak::take;
-    use super::{build_unit, DeclarationForm, ParsedUnit};
+    use super::{DeclarationForm, ParsedUnit, build_unit};
     use fsl_foundation::SourceIdentity;
     use ix_trace_rs::trace;
 

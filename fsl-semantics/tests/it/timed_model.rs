@@ -1643,3 +1643,61 @@ fn each_units_tick_anchor_is_its_own_packages_operation() {
     };
     assert_ne!(first_anchor, second_anchor);
 }
+
+/// FR-230-AC-68 "Recursive clock readings": a measured recursive
+/// clock-reading declaration unfolds at a call whose data arguments are
+/// constants, and a call whose data argument is not a constant reads a clock
+/// outside a constraint.
+#[trace("TC-2392", "FR-230-AC-68")]
+#[test]
+#[ignore = "QSL-2144: measured recursive clock-reading expansion is refused TimedNotChecked, not unfolded"]
+fn a_measured_recursive_clock_reading_unfolds() {
+    let document = rpc_document(&["x", "y"]);
+    let declarations = |call: &str| {
+        format!(
+            "{UNITS}time Config dense unit ms;\n\
+             function loop using v(c: Clock, n: Integer): Boolean pure decreases(n) {{ \
+                 if n = 0 then c <= 3 ms else loop(c, n - 1) }}\n\
+             pre L using v on Config::Call::reply {{ {call} }}\n"
+        )
+    };
+    check(&document, &declarations("loop(self.x, 3)"))
+        .unwrap_or_else(|refusals| panic!("the constant call unfolds: {refusals:?}"));
+    let (cause, text) = refused(&document, &declarations("loop(self.x, self.n)"));
+    assert_eq!(
+        (cause.code(), cause.tag(), text.as_str()),
+        (
+            Code::InvalidTimedModel,
+            "clock-read-outside-constraint",
+            "loop(self.x, self.n)"
+        )
+    );
+    // Each unfolding is one work unit: the smallest budget that admits the
+    // constant call, less one, refuses `work-budget-exceeded` at the call.
+    let unit = declarations("loop(self.x, 3)");
+    let with_budget = |budget: u64| {
+        admit_and_assemble_with_profiles(&document, TEMPORAL, &unit)
+            .expect("S2 builds every timed form")
+            .with_unwritten_timed_members()
+            .check(
+                CheckMode::Linked,
+                filament_semantic_value::checking::CheckingLimits::default()
+                    .with_work_budget(budget),
+            )
+    };
+    let (mut low, mut high) = (0_u64, 1_u64 << 32);
+    while low + 1 < high {
+        let middle = low + (high - low) / 2;
+        if with_budget(middle).is_ok() {
+            high = middle;
+        } else {
+            low = middle;
+        }
+    }
+    let refusals = with_budget(high - 1).expect_err("one unit short refuses");
+    let text = format!("{refusals:?}");
+    assert!(
+        text.contains("WorkBudget"),
+        "work-budget-exceeded at the call: {text}"
+    );
+}

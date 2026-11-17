@@ -23,7 +23,10 @@ each refinement-witness capability its real provider.
    EN-4's `probabilistic-satisfaction` capability with the evidence kind in
    EN-4's descriptor, following FR-075-AC-13. Then query for the
    `ValueValidity` and `OperationContract` capabilities used by FR-345's
-   witness rows.
+   witness rows. Query `operation-contract` for an `invariant` state
+   clause with a model subject named (EN-1 alone), the same clause with no
+   model subject, and an operation's `pre` contract (`contract-checker`
+   alone each).
 3. Construct a test-only factory with an injected descriptor source that
    returns a typed construction error; assert it returns that error and no
    snapshot. Construct another test-only factory with an injected registry
@@ -40,7 +43,8 @@ assertion verifies.
 
 - The two snapshots are equal. The registration accessor yields exactly the
   EN-1 and EN-6 `temporal-satisfaction` descriptors, the EN-4 and EN-5
-  `probabilistic-satisfaction` descriptors, the `value-checker` descriptor,
+  `probabilistic-satisfaction` descriptors, the EN-7 `schedulability`
+  descriptor (`en-7`), the `value-checker` descriptor,
   the `contract-checker` descriptor and the `protocol-analysis` descriptor
   owned by `Engines::fsl()`. For each
   descriptor, the snapshot retains its exact `BackendId`, origin and
@@ -49,7 +53,9 @@ assertion verifies.
   supplied the evidence kind in EN-4's descriptor;
   neither descriptor is replaced or supplemented with an ad hoc candidate.
 - The `ValueValidity` candidate outcome is exactly `value-checker` and the
-  `OperationContract` candidate outcome is exactly `contract-checker`.
+  `OperationContract` candidate outcome is exactly `contract-checker`. The
+  invariant-with-model-subject query gives exactly EN-1; the invariant with
+  no model subject and the `pre` contract give exactly `contract-checker`.
 - The injected descriptor-source error and registration refusal are each
   returned as their typed production registry error. The CLI emits FR-344
   tool failure, exit 30, for each and does not return an expected unsupported

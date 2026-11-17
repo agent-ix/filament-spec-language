@@ -3,7 +3,7 @@
 //! chained comparison at its second operator, a parenthesized expression
 //! spans its parentheses, and a bounded malformed corpus never panics.
 use fsl_cst::{CompleteCode, Limits, ParsedSource};
-use fsl_foundation::SourceIdentity;
+use fsl_foundation::{Phase, SourceIdentity};
 use ix_trace_rs::trace;
 
 const HEADER: &str =
@@ -105,5 +105,99 @@ fn a_bounded_malformed_corpus_returns_a_parse_or_a_diagnostic() {
                 check(&text);
             }
         }
+    }
+}
+
+/// FR-764-AC-1: a bare decimal literal is a primary; a decimal literal
+/// followed by a qualified name stays a quantity literal.
+#[trace("TC-2161", "FR-764-AC-1")]
+#[trace("FSpec-TC-1648", "FSpec-FR-662-AC-1")]
+#[test]
+fn a_bare_decimal_in_a_primary_parses_as_a_decimal_literal() {
+    for (expression, literal) in [("a < 0.9", "0.9"), ("a <= 5.0", "5.0"), ("0.5", "0.5")] {
+        let text = document(expression);
+        let parsed = parse(text.as_bytes()).expect("S1 reads the unit");
+        assert!(
+            parsed.is_admissible(),
+            "{expression}: {:?}",
+            parsed.diagnostics()
+        );
+        assert!(parsed.diagnostics().is_empty(), "{expression}");
+        let start = text.rfind(literal).expect("in the unit");
+        assert!(
+            parsed.cst().nodes().iter().any(|node| {
+                node.production() == fsl_cst::Production::Primary
+                    && node.span().start == start
+                    && node.span().end == start + literal.len()
+            }),
+            "{expression}: a primary spans exactly `{literal}`"
+        );
+    }
+    for unchanged in ["decimal(5, 1) = decimal(5, 1)", "5", "a.b"] {
+        let text = document(unchanged);
+        let parsed = parse(text.as_bytes()).expect("S1 reads the unit");
+        assert!(
+            parsed.is_admissible(),
+            "{unchanged}: {:?}",
+            parsed.diagnostics()
+        );
+    }
+    let quantity = "0.5 M::ms";
+    let text = document(quantity);
+    let parsed = parse(text.as_bytes()).expect("S1 reads the unit");
+    assert!(parsed.is_admissible(), "{:?}", parsed.diagnostics());
+    let start = text.find(quantity).expect("quantity in the unit");
+    assert!(
+        parsed.cst().nodes().iter().any(|node| {
+            node.production() == fsl_cst::Production::QuantityLiteral
+                && node.span().start == start
+                && node.span().end == start + quantity.len()
+        }),
+        "one QuantityLiteral spans exactly `{quantity}`"
+    );
+}
+
+/// FR-764-AC-4: an exponent spelling is one numeric token, refused
+/// `invalid_syntax`/`invalid-token` at the whole spelling.
+#[trace("TC-2161", "FR-764-AC-4")]
+#[trace("FSpec-TC-1648", "FSpec-FR-662-AC-4")]
+#[test]
+fn an_exponent_number_is_the_unsupported_numeric_form() {
+    for spelling in ["1e5", "1.5E-3"] {
+        let text = document(spelling);
+        let parsed = parse(text.as_bytes()).expect("S1 reads the unit");
+        assert!(!parsed.is_admissible());
+        let diagnostic = &parsed.diagnostics()[0];
+        assert_eq!(diagnostic.phase, Phase::Lex, "{spelling}");
+        assert_eq!(diagnostic.code, CompleteCode::InvalidSyntax, "{spelling}");
+        assert_eq!(
+            diagnostic.cause,
+            fsl_cst::CompleteCause::InvalidToken,
+            "{spelling}"
+        );
+        let start = text.rfind(spelling).expect("in the unit");
+        let span = diagnostic.byte_span().expect("located");
+        assert_eq!(
+            (span.start, span.end),
+            (start, start + spelling.len()),
+            "{spelling}"
+        );
+        assert!(
+            diagnostic.message.contains(spelling),
+            "{}",
+            diagnostic.message
+        );
+        assert!(
+            diagnostic
+                .message
+                .contains("an exponent is not part of a number"),
+            "{}",
+            diagnostic.message
+        );
+        assert!(
+            diagnostic.message.contains("decimal(c, s)"),
+            "{}",
+            diagnostic.message
+        );
     }
 }

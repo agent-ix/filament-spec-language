@@ -191,15 +191,6 @@ pub enum ProtocolRefusal {
     /// (FR-219, FR-220): the item settles V-8 `WeakAccessShape`.
     #[error("unsupported: weak-access-shape at {}", .0.site)]
     WeakAccessShape(Box<WeakAccessShape>),
-    /// A template's recovery predicate reads its recovery binder, whose
-    /// recovery view no rule derives from a model state (ADR-027 ST-12,
-    /// FR-207-AC-5): the item settles V-8 `unsupported`, `RecoveryView`.
-    #[error("unsupported: recovery-view of {predicate}")]
-    RecoveryView {
-        /// The template whose recovery predicate reads the view, by its
-        /// qualified name.
-        predicate: String,
-    },
     /// The protocol holds a construct this system does not step
     /// (`unsupported_construct`/`not-yet-implemented`).
     #[error("unsupported_construct/not-yet-implemented: {}", .0.construct())]
@@ -237,10 +228,9 @@ impl ProtocolRefusal {
             | Self::OverBinding { .. }
             | Self::RolePopulation { .. }
             | Self::Memory(_) => Code::InvalidRuntimeInput,
-            Self::Unsupported(_)
-            | Self::NodeFootprint { .. }
-            | Self::WeakAccessShape(_)
-            | Self::RecoveryView { .. } => Code::UnsupportedConstruct,
+            Self::Unsupported(_) | Self::NodeFootprint { .. } | Self::WeakAccessShape(_) => {
+                Code::UnsupportedConstruct
+            }
             Self::InitialStop(stop) => {
                 Code::from_code(stop.cause.code()).unwrap_or(Code::RuntimeInvariant)
             }
@@ -258,7 +248,6 @@ impl ProtocolRefusal {
             Self::RoleMapping { .. } => "wrong-role-mapping",
             Self::Unsupported(_) | Self::NodeFootprint { .. } => "not-yet-implemented",
             Self::WeakAccessShape(_) => "weak-access-shape",
-            Self::RecoveryView { .. } => "recovery-view",
             Self::InitialStop(stop) => stop.cause.cause(),
             Self::Fault(_) => "established-invariant-broken",
         }
@@ -1156,7 +1145,7 @@ impl<'a, M: MemoryModel> ProtocolSystem<'a, M> {
                     roles::Started::Undecided(_) => {
                         return Err(ProtocolRefusal::Unsupported(
                             Unsupported::UndecidedInitialGuard,
-                        ))
+                        ));
                     }
                 }
             };

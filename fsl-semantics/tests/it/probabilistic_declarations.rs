@@ -22,7 +22,7 @@ use fsl_foundation::diagnostic::Code;
 use fsl_semantics::check::{
     Bound, BoundedMeasure, CheckCause, CheckRefusal, CheckedGraph, CheckingLimitKind, Confidence,
     Event, PackageDeclarations, PreconditionSite, ProbForm, ProbScheduler, ProbabilisticCause,
-    ProbabilisticFeature, ReachTarget, WeightOwner,
+    ProbabilisticFeature, ReachTarget, SemanticNode, WeightOwner,
 };
 use fsl_semantics::model::accounting::ModelNormalizationLimits;
 use fsl_semantics::model::intake::{admit_unit, meaning, package_input};
@@ -143,6 +143,22 @@ fn service_document() -> Vec<u8> {
     service_document_with(&[])
 }
 
+/// The timed fixture needs a model with one object node. Keep only `Server`
+/// and its population so the timed declaration has one clock owner.
+fn timed_service_document() -> Vec<u8> {
+    let mut envelope: Value =
+        serde_json::from_slice(&service_document()).expect("the Service fixture is JSON");
+    envelope["types"]
+        .as_array_mut()
+        .expect("package types")
+        .retain(|ty| ty["kind"]["name"] != "object_type" || ty["identity"] == id("Server"));
+    envelope["populations"]
+        .as_array_mut()
+        .expect("package populations")
+        .retain(|population| population["identity"] == id("servers"));
+    serde_json::to_vec(&envelope).expect("serializes the timed fixture")
+}
+
 /// [`service_document`], with `requires` as `attempt`'s domain-package
 /// `requires` clauses.
 fn service_document_with(requires: &[&str]) -> Vec<u8> {
@@ -238,6 +254,11 @@ fn service_document_with_parameter_type(
         variant_type("Outcome", &["Ok", "Fail"]),
         bounded_integer("Attempts", "0", "2"),
         bounded_integer("Millis", "1", "12"),
+        definition(
+            "Orphan",
+            "object_type",
+            json!({"supertypes": [], "fields": [], "operations": [], "relationships": []}),
+        ),
         server,
         client,
     ]);
@@ -272,6 +293,7 @@ fn service_unit_over(
          profile v = \"filament.model.complete/v1\";\n\
          profile ev = \"filament.temporal.event-position.false-extension/v1\";\n\
          profile inf = \"filament.temporal.infinite-trace/v1\";\n\
+         profile tc = \"filament.temporal.complete/v1\";\n\
          profile tm = \"filament.temporal.timed/v1\";\n\
          model Service = {P:?};\n\
          {selections}\n\
@@ -329,6 +351,16 @@ fn checked(body: &str) -> CheckedGraph {
         .unwrap_or_else(|refusals| panic!("{body}: the unit checks: {refusals:?}"))
 }
 
+fn semantic_nodes(graph: &CheckedGraph) -> Vec<SemanticNode> {
+    graph.semantic_graph().nodes().cloned().collect()
+}
+
+fn checked_timed_service(body: &str) -> CheckedGraph {
+    assemble_over(&timed_service_document(), body)
+        .check(CheckMode::Linked, CheckingLimits::default())
+        .unwrap_or_else(|refusals| panic!("{body}: the timed unit checks: {refusals:?}"))
+}
+
 fn refusals_of(body: &str) -> Vec<CheckRefusal> {
     assemble(body)
         .check(CheckMode::Linked, CheckingLimits::default())
@@ -337,9 +369,13 @@ fn refusals_of(body: &str) -> Vec<CheckRefusal> {
 
 /// Each refusal's code, catalog cause and the source text its region names.
 fn located(body: &str) -> Vec<(Code, Option<&'static str>, String)> {
-    let declarations = assemble(body);
+    located_over(&service_document(), body)
+}
+
+fn located_over(document: &[u8], body: &str) -> Vec<(Code, Option<&'static str>, String)> {
+    let declarations = assemble_over(document, body);
     let regions = declarations.regions();
-    let (text, _) = service_unit(body);
+    let (text, _) = service_unit_over(document, body);
     declarations
         .check(CheckMode::Linked, CheckingLimits::default())
         .expect_err("the unit refuses")
@@ -367,14 +403,6 @@ fn limit(at: &str) -> (Code, Option<&'static str>, String) {
     (
         Code::StageLimitExceeded,
         Some("rational-bits-exceeded"),
-        at.to_owned(),
-    )
-}
-
-fn not_yet(at: &str) -> (Code, Option<&'static str>, String) {
-    (
-        Code::UnsupportedConstruct,
-        Some("not-yet-implemented"),
         at.to_owned(),
     )
 }
@@ -847,35 +875,11 @@ fn names_workload_operation(cause: &ProbabilisticCause, expected: (&str, &str)) 
     }
 }
 
-/// TC-620 step 3 (FR-185 "Workloads"): each workload variant refuses naming
+/// TC-620 step 3 (FR-185 "Workloads"): a duplicate weight refuses naming
 /// the workload and the operation and carrying its cause.
 #[trace("TC-620", "FR-185-AC-3")]
 #[test]
-fn workload_variants_refuse_naming_the_workload_and_the_operation() {
-    let without_reset =
-        "workload Steady on Service { weight Server::request = 1; weight Server::attempt = 1; }";
-    let body = service(Some((STEADY, without_reset)), "");
-    assert_eq!(
-        located(&body),
-        [invalid("incomplete-workload", without_reset)]
-    );
-    assert!(names_workload_operation(
-        &causes(&body)[0],
-        ("Steady", "Server::reset")
-    ));
-
-    let unknown = "workload Steady on Service { weight Server::request = 1; \
-         weight Server::attempt = 1; weight Server::reset = 1; weight Server::launch = 1; }";
-    let body = service(Some((STEADY, unknown)), "");
-    assert_eq!(
-        located(&body),
-        [invalid("unknown-operation", "Server::launch")]
-    );
-    assert!(names_workload_operation(
-        &causes(&body)[0],
-        ("Steady", "Server::launch")
-    ));
-
+fn workload_duplicate_weight_is_refused() {
     let twice = "workload Steady on Service { weight Server::request = 1; \
          weight Server::attempt = 1; weight Server::reset = 1; weight Server::request = 2; }";
     let body = service(Some((STEADY, twice)), "");
@@ -883,13 +887,6 @@ fn workload_variants_refuse_naming_the_workload_and_the_operation() {
         located(&body),
         [invalid("duplicate-weight", "weight Server::request = 2;")]
     );
-    assert!(names_workload_operation(
-        &causes(&body)[0],
-        ("Steady", "Server::request")
-    ));
-
-    let body = service(Some((STEADY, &steady_with_request("0"))), "");
-    assert_eq!(located(&body), [invalid("invalid-weight", "0")]);
     assert!(names_workload_operation(
         &causes(&body)[0],
         ("Steady", "Server::request")
@@ -1750,18 +1747,7 @@ fn an_unbounded_event_is_refused_and_a_windowed_one_has_its_horizon() {
         panic!("an unbounded event: {:?}", causes(&inf));
     };
     assert_eq!(named, "C");
-    // The timed profile has no event reading: it is refused for that alone.
-    let timed = service(
-        None,
-        &format!(
-            "probabilistic C using tm on Service {OVER} under Steady on origin \
-             {{ probability >= 0.99 [ eventually[0,5] {holds} ] }}"
-        ),
-    );
-    let [ProbabilisticCause::TimedEventProfile { claim: named, .. }] = &causes(&timed)[..] else {
-        panic!("a timed event profile: {:?}", causes(&timed));
-    };
-    assert_eq!(named, "C");
+    // The timed profile over this untimed model: `probabilistic_claim_timed_profile_untimed_model`.
 }
 
 /// FR-186 "Kind and subject": a claim over a name that is no `model` alias
@@ -1967,50 +1953,99 @@ fn a_predicate_is_a_boolean_clause_over_the_over_parameter() {
     assert_eq!(found[0].1, Some("missing-name"));
 }
 
-/// The forms FR-195 owns, a timed window and an `on each` activation refuse
-/// `unsupported_construct`/`not-yet-implemented` at the construct: no claim
-/// compiles unchecked.
-#[trace("TC-621")]
+/// FR-195-AC-7: expected elapsed over an untimed model is ill typed at its
+/// time quantity.
+#[trace("TC-2168", "FR-186-AC-11")]
 #[test]
-fn what_s3_does_not_check_yet_refuses_not_yet_implemented() {
-    let phase_a = format!("holds({IDLE})");
-    for (body, construct, at) in [
-        (
-            format!("{{ expected elapsed until {phase_a} <= 3 }}"),
-            "an `expected elapsed` claim",
-            IDLE,
-        ),
-        (
-            format!(
-                "{{ probability >= 0.5 [ elapsed from {phase_a} until {phase_a} within 5 >= 3 ] }}"
-            ),
-            "an `elapsed` measure",
-            "elapsed from holds(s.phase = Service::Phase::Idle) until holds(s.phase = Service::Phase::Idle) within 5",
-        ),
-        (
-            format!(
-                "{{ probability >= 0.5 [ steps from {phase_a} until {phase_a} within 5 ms >= 3 ] }}"
-            ),
-            "a timed window",
-            "5 ms",
-        ),
-    ] {
-        let source = claim(&body);
-        let found = located(&service(None, &source));
-        assert_eq!(found, [not_yet(at)], "{body}");
-        let [ProbabilisticCause::NotYetImplemented { construct: named, .. }] =
-            &causes(&service(None, &source))[..]
-        else {
-            panic!("not yet implemented: {body}");
-        };
-        assert_eq!(*named, construct);
-    }
-    // The activation, not the claim, is what is not checked.
-    let each = format!(
-        "probabilistic C using ev on Service {OVER} under Steady \
-         on each (m: Service::Server) {{ probability >= 0.9 [ {phase_a} ] }}"
+fn expected_elapsed_untimed_is_ill_typed() {
+    let body = format!("{{ expected elapsed until holds({IDLE}) <= 3 ms }}");
+    assert_eq!(
+        located(&service(None, &claim(&body))),
+        [(Code::IllTyped, Some("type-mismatch"), "3 ms".to_owned())]
     );
-    assert_eq!(located(&service(None, &each)), [not_yet("m")]);
+}
+
+/// FR-186-AC-11: an elapsed measure over an untimed model is ill typed at
+/// the measure.
+#[trace("TC-2168", "FR-186-AC-11")]
+#[test]
+fn elapsed_untimed_is_ill_typed() {
+    let a = format!("holds({IDLE})");
+    let measure = format!("elapsed from {a} until {a} within 5");
+    let body = format!("{{ probability >= 0.5 [ {measure} >= 3 ] }}");
+    assert_eq!(
+        located(&service(None, &claim(&body))),
+        [(Code::IllTyped, Some("type-mismatch"), measure)]
+    );
+}
+
+/// FR-186-AC-11: a time quantity in a measure window over an untimed model is
+/// ill typed at the quantity.
+#[trace("TC-2168", "FR-186-AC-11")]
+#[test]
+fn timed_window_untimed_is_ill_typed() {
+    let a = format!("holds({IDLE})");
+    let body = format!("{{ probability >= 0.5 [ steps from {a} until {a} within 5 ms >= 3 ] }}");
+    assert_eq!(
+        located(&service(None, &claim(&body))),
+        [(Code::IllTyped, Some("type-mismatch"), "5 ms".to_owned())]
+    );
+}
+
+/// FR-186-AC-12: expected elapsed, elapsed measures and timed measure windows
+/// check against a dense timed subject and retain their time-unit bounds.
+#[trace("TC-2169", "FR-186-AC-12")]
+#[test]
+fn elapsed_timed_checks() {
+    let a = format!("holds({IDLE})");
+    let timed = "time Service dense unit ms;";
+    let source = |form: &str| {
+        service(
+            None,
+            &format!(
+                "{timed}\nprobabilistic C using tm on Service {OVER} under Steady \
+                 on origin {{ {form} }}"
+            ),
+        )
+    };
+
+    let expected = checked_timed_service(&source(&format!("expected elapsed until {a} <= 3 ms")));
+    let ProbForm::MeanTime { bound, .. } = &claim_of(&expected).form else {
+        panic!("a checked mean-time claim: {:?}", claim_of(&expected).form);
+    };
+    assert_eq!(bound, &Bound::AtMost(ratio(3, 1)));
+
+    let elapsed = checked_timed_service(&source(&format!(
+        "probability >= 0.5 [ elapsed from {a} until {a} within 5 ms >= 1 ms ]"
+    )));
+    let ProbForm::Probability {
+        event:
+            Event::Compare {
+                measure: BoundedMeasure::Elapsed { within, .. },
+                ..
+            },
+        ..
+    } = &claim_of(&elapsed).form
+    else {
+        panic!("an elapsed measure: {:?}", claim_of(&elapsed).form);
+    };
+    assert_eq!(within, &ratio(5, 1));
+
+    let window = checked_timed_service(&source(&format!(
+        "probability >= 0.5 [ steps from {a} until {a} within 5 ms >= 1 ]"
+    )));
+    let ProbForm::Probability {
+        event:
+            Event::Compare {
+                measure: BoundedMeasure::Steps { timed_within, .. },
+                ..
+            },
+        ..
+    } = &claim_of(&window).form
+    else {
+        panic!("a time-valued steps window: {:?}", claim_of(&window).form);
+    };
+    assert_eq!(timed_within, &Some(ratio(5, 1)));
 }
 
 /// A claim `C` `using` the profile `profile`, `on origin`, over `Service`'s
@@ -2174,8 +2209,7 @@ fn a_reach_operand_must_be_a_state_predicate() {
 /// checks as `ExpectedReward` with a threshold that is a rational for an
 /// integer reward and a quantity in the reward's unit for a quantity reward;
 /// a quantity of another dimension, a quantity for an integer reward and an
-/// unknown reward are refused, and `expected elapsed` is not checked (no
-/// subject is timed).
+/// unknown reward are refused.
 #[trace("TC-630", "FR-195-AC-2")]
 #[test]
 fn an_expected_reward_claim_is_typed_by_its_rewards_unit() {
@@ -2220,7 +2254,6 @@ fn an_expected_reward_claim_is_typed_by_its_rewards_unit() {
         } if *found == ratio(5, 1)
     ));
 
-    let at = IDLE.to_owned() + " or " + &done();
     assert_eq!(
         located(&expected(&format!(
             "expected accumulate latency until {target} <= 5 m"
@@ -2243,12 +2276,7 @@ fn an_expected_reward_claim_is_typed_by_its_rewards_unit() {
             "nothing".to_owned()
         )]
     );
-    assert_eq!(
-        located(&expected(&format!(
-            "expected elapsed until {target} <= 3 ms"
-        ))),
-        [not_yet(&at)]
-    );
+    // `expected elapsed` over this untimed model: `time_forms_over_an_untimed_model_are_ill_typed`.
 }
 
 /// Checks FR-195-AC-3 (TC-630 step 3): `exact_only` is true for a reachability form,
@@ -2926,12 +2954,12 @@ fn a_weight_sum_past_the_ceiling_refuses_promptly() {
 #[trace("TC-620")]
 #[test]
 fn a_second_weight_after_an_invalid_one_is_still_a_duplicate() {
-    let workload = "workload Steady on Service { weight Server::request = 0; \
+    let workload = "workload Steady on Service { weight Server::request = rational(-1, 1); \
          weight Server::attempt = 1; weight Server::reset = 1; weight Server::request = 2; }";
     assert_eq!(
         located(&service(Some((STEADY, workload)), "")),
         [
-            invalid("invalid-weight", "0"),
+            invalid("invalid-weight", "rational(-1, 1)"),
             invalid("duplicate-weight", "weight Server::request = 2;")
         ]
     );
@@ -3244,14 +3272,12 @@ fn a_claims_subject_is_its_own_units_package() {
     assert_eq!(claim.subject.package.identity, P);
 }
 
-/// TC-2060 (FR-185-AC-10): a workload weight of 0 is admitted and recorded
-/// with no diagnostic, a workload of all zero weights is admitted, and an
-/// omitted operation is still refused `incomplete-workload`.
+/// TC-2060 (FR-185-AC-10): zero and all-zero workload weights are admitted
+/// and recorded with no diagnostic.
 #[trace("TC-2060", "FR-185-AC-10")]
 #[trace("FSpec-TC-1560", "FSpec-FR-405-AC-10")]
 #[test]
-#[ignore = "QSL-1991: workload weight 0 admitted not implemented yet"]
-fn a_workload_admits_weight_zero_and_all_zero_weights() {
+fn workload_zero_weight_follows_spec() {
     let reset_zero = "workload Steady on Service { weight Server::request = 1; \
          weight Server::attempt = 1; weight Server::reset = 0; }";
     let graph = checked(&service(Some((STEADY, reset_zero)), ""));
@@ -3275,14 +3301,56 @@ fn a_workload_admits_weight_zero_and_all_zero_weights() {
 
     let all_zero = "workload Steady on Service { weight Server::request = 0; \
          weight Server::attempt = 0; weight Server::reset = 0; }";
-    checked(&service(Some((STEADY, all_zero)), ""));
+    let graph = checked(&service(Some((STEADY, all_zero)), ""));
+    let steady = graph
+        .probabilistic_model()
+        .workload("Steady")
+        .expect("all-zero Steady is recorded");
+    assert_eq!(
+        steady
+            .weights()
+            .iter()
+            .map(|(_, weight)| weight.clone())
+            .collect::<Vec<_>>(),
+        [ratio(0, 1), ratio(0, 1), ratio(0, 1)]
+    );
+}
 
+/// TC-2060 (FR-185-AC-10): omitting an operation remains a refusal and names
+/// the workload and the omitted operation.
+#[trace("TC-2060", "FR-185-AC-10")]
+#[trace("FSpec-TC-1560", "FSpec-FR-405-AC-10")]
+#[test]
+fn workload_omitted_operation_follows_spec() {
     let without_reset =
         "workload Steady on Service { weight Server::request = 0; weight Server::attempt = 1; }";
+    let body = service(Some((STEADY, without_reset)), "");
     assert_eq!(
-        located(&service(Some((STEADY, without_reset)), "")),
+        located(&body),
         [invalid("incomplete-workload", without_reset)]
     );
+    assert!(names_workload_operation(
+        &causes(&body)[0],
+        ("Steady", "Server::reset")
+    ));
+}
+
+/// TC-620 (FR-185-AC-3): a workload still refuses an operation outside its
+/// model, naming the workload and the operation.
+#[trace("TC-620", "FR-185-AC-3")]
+#[test]
+fn workload_unknown_operation_refused() {
+    let unknown = "workload Steady on Service { weight Server::request = 1; \
+         weight Server::attempt = 1; weight Server::reset = 1; weight Server::launch = 1; }";
+    let body = service(Some((STEADY, unknown)), "");
+    assert_eq!(
+        located(&body),
+        [invalid("unknown-operation", "Server::launch")]
+    );
+    assert!(names_workload_operation(
+        &causes(&body)[0],
+        ("Steady", "Server::launch")
+    ));
 }
 
 /// TC-2060 (FR-185-AC-3): a negative workload weight, written as an exact
@@ -3373,4 +3441,429 @@ fn a_bounded_profile_refuses_unbounded_operators_by_operator_admission() {
             &format!("eventually[2,*] {holds}")
         )]
     );
+}
+
+/// FR-764-AC-3: a bare decimal literal is checked exactly as the
+/// `decimal(c, s)` it spells.
+#[trace("TC-2162", "FR-764-AC-3")]
+#[trace("FSpec-TC-1648", "FSpec-FR-662-AC-2")]
+#[test]
+fn a_bare_decimal_literal_is_typed_as_its_constructor() {
+    let typed = "type D = Decimal[-1000, 1000; 0, 2; exact];";
+    let checked_body = |literal: &str| {
+        checked(&service(
+            None,
+            &format!("{typed}\nfunction f using v(): D pure {{ {literal} }}"),
+        ))
+    };
+    let bare = checked_body("0.9");
+    let constructor = checked_body("decimal(9, 1)");
+    assert_eq!(
+        semantic_nodes(&bare),
+        semantic_nodes(&constructor),
+        "the complete checked semantic graphs match"
+    );
+    for literal in ["0.9", "decimal(9, 1)"] {
+        assert_eq!(
+            located(&service(
+                None,
+                &format!("function g using v(n: Integer): Boolean pure {{ n < {literal} }}"),
+            )),
+            [(Code::IllTyped, Some("type-mismatch"), literal.to_owned())],
+            "{literal}"
+        );
+        assert_eq!(
+            located(&service(
+                None,
+                &format!(
+                    "function h using v(): Boolean pure {{ let x = {literal} in x > decimal(1, 1) }}"
+                ),
+            )),
+            [(Code::IllTyped, Some("ambiguous-literal"), literal.to_owned())],
+            "{literal}"
+        );
+    }
+}
+
+/// FR-764-AC-5: a bare decimal threshold is checked as the exact rational it
+/// spells, never as a binary floating-point value.
+#[trace("TC-2163", "FR-764-AC-5")]
+#[test]
+fn bare_decimal_threshold_is_exact() {
+    let target = format!("holds({IDLE} or {})", done());
+    let graph = checked(&exact_claim(
+        "ev",
+        "Steady",
+        "",
+        &format!("expected accumulate duration until {target} <= 0.5"),
+    ));
+    let ProbForm::ExpectedReward { bound, .. } = &claim_of(&graph).form else {
+        panic!("an expected reward: {:?}", claim_of(&graph).form);
+    };
+    assert_eq!(*bound, Bound::AtMost(ratio(1, 2)));
+}
+
+/// FR-764-AC-5: equivalent exact threshold spellings yield one bound.
+#[trace("TC-2163", "FR-764-AC-5")]
+#[test]
+fn decimal_forms_equivalent() {
+    let target = format!("holds({IDLE} or {})", done());
+    let normal_form = |threshold: &str| {
+        let graph = checked(&exact_claim(
+            "ev",
+            "Steady",
+            "",
+            &format!("expected accumulate duration until {target} <= {threshold}"),
+        ));
+        claim_of(&graph).normal_form.clone()
+    };
+    let bare = normal_form("0.5");
+    assert_eq!(bare, normal_form("decimal(5, 1)"));
+    assert_eq!(bare, normal_form("rational(1, 2)"));
+}
+
+/// FR-764-AC-6: a bare decimal with an overlong written scale is refused at
+/// the literal, as `decimal(c, s)` is.
+#[trace("TC-2163", "FR-764-AC-6")]
+#[test]
+fn bare_decimal_threshold_overlong_refused() {
+    let target = format!("holds({IDLE} or {})", done());
+    let long = format!("0.{}", "1".repeat(65536));
+    let body = exact_claim(
+        "ev",
+        "Steady",
+        "",
+        &format!("expected accumulate duration until {target} <= {long}"),
+    );
+    let declarations = assemble(&body);
+    let regions = declarations.regions();
+    let refusals = declarations
+        .check(CheckMode::Linked, CheckingLimits::default())
+        .expect_err("a threshold beyond the decimal scale limit refuses");
+    let [refusal] = refusals.as_slice() else {
+        panic!("one threshold refusal: {refusals:?}");
+    };
+    assert_eq!(refusal.cause.code(), Code::StageLimitExceeded);
+    assert_eq!(refusal.cause.cause(), Some("work-budget-exceeded"));
+    let CheckCause::ResourceExhausted(limit) = &refusal.cause else {
+        panic!("a decimal scale limit refusal: {refusal:?}");
+    };
+    assert_eq!(limit.kind, CheckingLimitKind::DecimalLiteralScale);
+    assert_eq!(limit.kind.setting().name(), "s3.decimal_literal_scale");
+    assert_eq!(limit.limit, 65_535);
+    assert_eq!(limit.actual, 65_536);
+    let region = regions
+        .refusal_region(refusal)
+        .expect("the refusal names a region of the unit");
+    let (text, _) = service_unit(&body);
+    assert_eq!(
+        &text[region.start() as usize..region.end() as usize],
+        long,
+        "the refusal names the whole literal"
+    );
+}
+
+/// The service claim `C` with activation `activation`, `{LATENCY}` declared.
+fn activated(activation: &str, body: &str) -> String {
+    service(
+        None,
+        &format!(
+            "{LATENCY}\nprobabilistic C using ev on Service {OVER} under Steady \
+             {activation} {{ {body} }}"
+        ),
+    )
+}
+
+/// FR-186-AC-8 (TC-2166): an `on each` activation checks and is recorded in
+/// the claim and its normal form, with its guard when written.
+#[trace("TC-2166", "FR-186-AC-8")]
+#[test]
+fn probabilistic_on_each_checks() {
+    let body = format!("probability >= 0.9 [ eventually[0,5] holds({IDLE}) ]");
+    let plain = checked(&activated("on each (m: Service::Server)", &body));
+    let guarded = checked(&activated(
+        "on each (m: Service::Server) when (m.phase = Service::Phase::Idle)",
+        &body,
+    ));
+    let plain = claim_of(&plain);
+    let guarded = claim_of(&guarded);
+    assert!(format!("{plain:?}").contains("Each"), "{plain:?}");
+    assert!(format!("{guarded:?}").contains("Each"), "{guarded:?}");
+    assert_ne!(
+        format!("{:?}", plain.normal_form),
+        format!("{:?}", guarded.normal_form)
+    );
+}
+
+/// FR-186-AC-9 (TC-2166): an `on each` over a type no population admits is
+/// `over-not-object-type` at its name, and a non-Boolean guard is ill typed.
+#[trace("TC-2166", "FR-186-AC-9")]
+#[test]
+fn probabilistic_on_each_non_object_type_refused() {
+    let body = format!("probability >= 0.9 [ eventually[0,5] holds({IDLE}) ]");
+    assert_eq!(
+        located(&activated("on each (k: Integer)", &body)),
+        [invalid("over-not-object-type", "k")]
+    );
+    assert_eq!(
+        located(&activated("on each (m: Service::Server) when (1)", &body)),
+        [(Code::IllTyped, Some("type-mismatch"), "1".to_owned())]
+    );
+}
+
+/// FR-186 Activation: `on each` rejects an object type outside every subject
+/// population at the activation binder.
+#[trace("TC-2166", "FR-186-AC-9")]
+#[test]
+fn probabilistic_on_each_non_population_refused() {
+    let body = format!("probability >= 0.9 [ eventually[0,5] holds({IDLE}) ]");
+    assert_eq!(
+        located(&activated("on each (m: Service::Orphan)", &body)),
+        [invalid("over-not-object-type", "m")]
+    );
+}
+
+/// FR-186-AC-11 (TC-2168): over the untimed service model the time forms are
+/// ill typed at the form, never not-yet-implemented.
+#[trace("TC-2168", "FR-186-AC-11")]
+#[trace("TC-630", "FR-195-AC-2")]
+#[trace("TC-630", "FR-195-AC-7")]
+#[test]
+fn time_forms_over_an_untimed_model_are_ill_typed() {
+    let a = format!("holds({IDLE})");
+    let measure = format!("elapsed from {a} until {a} within 5");
+    for (body, at) in [
+        (
+            format!("{{ expected elapsed until {a} <= 3 ms }}"),
+            "3 ms".to_owned(),
+        ),
+        (
+            format!("{{ probability >= 0.5 [ {measure} >= 3 ] }}"),
+            measure.clone(),
+        ),
+        (
+            format!("{{ probability >= 0.5 [ steps from {a} until {a} within 5 ms >= 3 ] }}"),
+            "5 ms".to_owned(),
+        ),
+    ] {
+        assert_eq!(
+            located(&service(None, &claim(&body))),
+            [(Code::IllTyped, Some("type-mismatch"), at)],
+            "{body}"
+        );
+    }
+}
+
+/// FR-186-AC-13 (TC-2170): under the timed profile over the untimed model the
+/// claim is refused with the standard's clock cause at the alias.
+#[trace("TC-2170", "FR-186-AC-13")]
+#[trace("TC-621", "FR-186-AC-3")]
+#[test]
+fn probabilistic_claim_timed_profile_untimed_model() {
+    let timed = service(
+        None,
+        &format!(
+            "probabilistic C using tm on Service {OVER} under Steady on origin \
+             {{ probability >= 0.99 [ eventually[0,5] holds({IDLE}) ] }}"
+        ),
+    );
+    assert_eq!(
+        located(&timed),
+        [(
+            Code::InvalidTimedModel,
+            Some("model-time-on-untimed-model"),
+            "tm".to_owned()
+        )]
+    );
+}
+
+/// FR-407-AC-11: the timed profile admits a probabilistic claim on a timed
+/// subject, while a non-temporal profile keeps its standard diagnostic locus.
+#[trace("TC-2169", "FR-186-AC-12")]
+#[test]
+fn probabilistic_claim_timed_profile_checks() {
+    let timed = service(
+        None,
+        &format!(
+            "time Service dense unit ms;\n\
+             probabilistic C using tm on Service {OVER} under Steady on origin \
+             {{ probability >= 0.99 [ eventually[0 ms, 4 ms] holds({IDLE}) ] }}"
+        ),
+    );
+    checked_timed_service(&timed);
+
+    let unadmitted = service(
+        None,
+        &format!(
+            "probabilistic C using v on Service {OVER} under Steady on origin \
+             {{ probability >= 0.99 [ holds({IDLE}) ] }}"
+        ),
+    );
+    assert_eq!(
+        located(&unadmitted),
+        [(
+            Code::InvalidProbabilisticModel,
+            Some("not-temporal-profile"),
+            "v".to_owned()
+        )]
+    );
+}
+
+/// FR-186-AC-14 (TC-2171): every quantity position of a claim is read: the
+/// position's dimension checks, a length is a unit mismatch, and a
+/// dimensionless position refuses a quantity as a type mismatch.
+#[trace("TC-2171", "FR-186-AC-14")]
+#[test]
+fn quantity_literal_positions_check_and_refuse_by_dimension() {
+    let a = format!("holds({IDLE})");
+    let latency = format!("accumulate latency from {a} until {a} within 10");
+    let with = |confidence: &str, form: &str| {
+        service(
+            None,
+            &format!(
+                "{LATENCY}\nprobabilistic C using ev on Service {OVER} under Steady \
+                 on origin {confidence} {{ {form} }}"
+            ),
+        )
+    };
+    for template in [
+        format!("probability >= 0.5 [ {latency} <= QTY ]"),
+        format!("quantile 0.95 of ({latency}) <= QTY"),
+        format!("expected accumulate latency until {a} <= QTY"),
+    ] {
+        checked(&with("", &template.replace("QTY", "5 ms")));
+        assert_eq!(
+            located(&with("", &template.replace("QTY", "5 m"))),
+            [(Code::IllTyped, Some("unit-mismatch"), "5 m".to_owned())],
+            "{template}"
+        );
+    }
+    for (confidence, form, at) in [
+        (
+            "",
+            format!("probability >= 0.5 [ fraction {a} over [0, 10] <= 5 ms ]"),
+            "5 ms",
+        ),
+        (
+            "",
+            format!("probability >= 0.5 [ steps from {a} until {a} within 5 >= 5 ms ]"),
+            "5 ms",
+        ),
+    ] {
+        assert_eq!(
+            located(&with(confidence, &form)),
+            [(Code::IllTyped, Some("type-mismatch"), at.to_owned())],
+            "{form}"
+        );
+    }
+}
+
+/// FR-186-AC-14: time-valued measure horizons and timed event intervals read
+/// quantity literals, convert time units and reject length at the literal.
+#[trace("TC-2171", "FR-186-AC-14")]
+#[test]
+fn quantity_literal_timed_positions_check_and_refuse_by_dimension() {
+    let a = format!("holds({IDLE})");
+    let timed = "time Service dense unit ms;";
+    let source = |form: &str| {
+        service(
+            None,
+            &format!(
+                "{timed}\nprobabilistic C using tm on Service {OVER} under Steady \
+                 on origin {{ {form} }}"
+            ),
+        )
+    };
+    for form in [
+        format!("probability >= 0.5 [ steps from {a} until {a} within 5 ms >= 1 ]"),
+        format!("probability >= 0.5 [ fraction {a} over [0, 5 ms] >= rational(1, 2) ]"),
+    ] {
+        checked_timed_service(&source(&form));
+        let wrong = form.replace("5 ms", "5 m");
+        assert_eq!(
+            located_over(&timed_service_document(), &source(&wrong)),
+            [(Code::IllTyped, Some("type-mismatch"), "m".to_owned())],
+            "{wrong}"
+        );
+    }
+    let event = format!("probability >= 0.5 [ eventually[0 ms, 4 ms] holds({IDLE}) ]");
+    checked_timed_service(&source(&event));
+    assert_eq!(
+        located_over(
+            &timed_service_document(),
+            &source(&event.replace("4 ms", "4 m"))
+        ),
+        [(Code::IllTyped, Some("type-mismatch"), "m".to_owned())]
+    );
+}
+
+/// FR-186-AC-14: quantity literals in dimensionless measure thresholds are
+/// type errors rather than an unimplemented probabilistic cause.
+#[trace("TC-2171", "FR-186-AC-14")]
+#[test]
+fn quantity_literal_non_quantity_position_refused() {
+    let a = format!("holds({IDLE})");
+    for form in [
+        format!("probability >= 0.5 [ fraction {a} over [0, 10] <= 5 ms ]"),
+        format!("probability >= 0.5 [ steps from {a} until {a} within 5 >= 5 ms ]"),
+    ] {
+        let at = "5 ms";
+        assert_eq!(
+            located(&service(None, &claim(&format!("{{ {form} }}")))),
+            [(Code::IllTyped, Some("type-mismatch"), at.to_owned())],
+            "{form}"
+        );
+    }
+}
+
+/// FR-764-AC-7 (TC-2186): a comparison operand that is not a literal gives a
+/// bare decimal literal its type; two literal operands fix none.
+#[trace("TC-2186", "FR-764-AC-7")]
+#[trace("FSpec-TC-1648", "FSpec-FR-662-AC-2")]
+#[test]
+fn a_comparison_operand_types_a_bare_decimal_literal() {
+    let typed = "type D = Decimal[-1000, 1000; 0, 2; exact];";
+    let checked_parameter = |literal: &str| {
+        checked(&service(
+            None,
+            &format!("{typed}\nfunction k using v(l: D): Boolean pure {{ l < {literal} }}"),
+        ))
+    };
+    let bare_parameter = checked_parameter("0.9");
+    let constructor_parameter = checked_parameter("decimal(9, 1)");
+    assert_eq!(
+        semantic_nodes(&bare_parameter),
+        semantic_nodes(&constructor_parameter),
+        "the parameter comparison's complete checked semantic graphs match"
+    );
+    let checked_field = |literal: &str| {
+        checked(&service(
+            None,
+            &format!(
+                "{typed}\nrecord Reading {{ level: D; }}\n\
+                 function field_level using v(r: Reading): Boolean pure {{ r.level < {literal} }}"
+            ),
+        ))
+    };
+    let bare_field = checked_field("0.9");
+    let constructor_field = checked_field("decimal(9, 1)");
+    assert_eq!(
+        semantic_nodes(&bare_field),
+        semantic_nodes(&constructor_field),
+        "the record-field comparison's complete checked semantic graphs match"
+    );
+    for literal in ["0.9", "decimal(9, 1)"] {
+        assert_eq!(
+            located(&service(
+                None,
+                &format!("function m using v(): Boolean pure {{ {literal} < decimal(1, 0) }}"),
+            )),
+            [(
+                Code::IllTyped,
+                Some("ambiguous-literal"),
+                literal.to_owned()
+            )],
+            "{literal}"
+        );
+    }
 }

@@ -45,6 +45,7 @@
 
 mod admitted;
 mod application;
+mod axes;
 pub mod backends;
 mod bounds;
 mod call_replay_context;
@@ -103,7 +104,8 @@ pub use application::{
 pub use bounds::{BoundExceeded, ReplayLimits, DEFAULT_REPLAY_INPUT_BYTES};
 pub use call_replay_context::{run_with_replay_context, CallReplayContext, RunWithReplayContext};
 pub use call_requirements::{
-    run_with_requirements, CallRequirement, CallRequirements, RunWithRequirements,
+    call_requirements_for, run_with_requirements, run_with_requirements_reading, CallRequirement,
+    CallRequirements, RequirementsRun, RunWithRequirements,
 };
 pub use call_site::{
     call_site, CallSite, CallSiteRefusal, CallSiteSelection, ClauseName, ClauseSite, FieldName,
@@ -260,14 +262,14 @@ pub use model_check::refinement_settle::{
 #[doc(hidden)]
 pub use model_check::replay::replay_timed_counterexample;
 pub use model_check::replay::{
-    replay_model_trace, replay_model_trace_with_temporal_selections, replay_protocol_trace,
-    replay_protocol_trace_with_temporal_selections, DelayBar, ModelTraceRefusal,
-    ModelTraceReplayResult, ModelTraceSettlement, ModelTraceSubject, ModelTraceValue,
-    ProtocolTraceSubject, StrongFairnessHint, TimedReplay,
+    evaluate_model_trace, replay_model_trace, replay_model_trace_with_temporal_selections,
+    replay_protocol_trace, replay_protocol_trace_with_temporal_selections, DelayBar, ModelTraceEnd,
+    ModelTraceRefusal, ModelTraceReplayResult, ModelTraceRun, ModelTraceSettlement,
+    ModelTraceSubject, ModelTraceValue, ProtocolTraceSubject, StrongFairnessHint, TimedReplay,
 };
 pub use model_check::settle::{
-    settle_model_check, settle_protocol_check, Execution, ModelCheckRecord, RecordWarning,
-    ResultLabel, Truth, EXPLICIT_STATE, K_INDUCTION,
+    settle_model_check, settle_protocol_check, CertificateChecker, Execution, ModelCheckRecord,
+    RecordWarning, ResultLabel, Truth, EXPLICIT_STATE, K_INDUCTION,
 };
 pub use model_check::smt_query::{
     encode_smt_query, Refusal, SmtEncodingLimits, SmtEncodingRefusal, SmtQueryKind,
@@ -305,29 +307,33 @@ pub use refinement::{
     abstract_classes, check_initial, check_protocol_initial, check_protocol_state_relations,
     check_protocol_step, check_step, initial_history, map_state, open_protocol_systems,
     open_systems, protocol_observation_label, protocol_transition_class, step_history,
-    AbstractClass, AbstractProtocolSystem, AssumptionIdentity, AssumptionOrigin,
+    step_view_over, AbstractClass, AbstractProtocolSystem, AssumptionIdentity, AssumptionOrigin,
     AssumptionSelectedMember, AssumptionSide, AssumptionTarget, ConcreteStep, EvalFailure,
     HiddenSlot, HistoryValues, LivenessHalf, MappedState, MappingFailure, MappingRowRef,
     MappingUndetermined, ObjectKey, ObservationField, ObservationLabel, PairedAssumptionPath,
     PairedAssumptionStep, ProtocolAssumptionFairness, ProtocolAssumptionReason,
     ProtocolAssumptionWitness, ProtocolCandidate, ProtocolRelationError, ProtocolStateRelation,
-    ProtocolTrace, RefinementFailure, RefinementOutcome, RefinementPosition, RefinementSystems,
-    RequiredTemporalFairness, SafetyOutcome, SafetyUndecided, StepArgument, StepRejection,
-    StepResult, StepVerdict, SubjectRefusal, Taken, TerminalSuccessDirection, Undetermined,
+    ProtocolStep, ProtocolStepView, ProtocolSteps, ProtocolTrace, RefinementFailure,
+    RefinementOutcome, RefinementPosition, RefinementSystems, RefinementWitness,
+    RefinementWitnessError, RequiredTemporalFairness, SafetyOutcome, SafetyUndecided, StateIndex,
+    StepArgument, StepRejection, StepResult, StepVerdict, StepViewRefusal, SubjectRefusal, Taken,
+    TerminalSuccessDirection, Undetermined, UnsteppedConstruct,
 };
 // The equality operator a composite parity claim names (FR-358).
 pub use filament_semantic_value::declaration::EqualityOperator;
 // The typed identity and catalog code a `TerminalRecord` and a
 // `TerminalValue` are built from, so the code generator, which depends on
 // this crate alone, names them without naming `fsl_foundation`.
+pub use axes::{ActivationAxis, ExecutionAxis, OutcomeAxes, TruthAxis};
 pub use filament_contract_model::{std001_code, Std001Code};
 pub use fsl_foundation::{BackendId, Code, RequestIndex};
 pub use outcome::undefined_reason;
 pub use outcome::{
-    assignments_wire, probabilistic_wire, protocol_temporal_wire, temporal_wire,
-    ClauseRunNotAnItem, CounterexampleWireError, ExecuteResult, ItemCause, ItemLabel, Operation,
-    OutcomeDiagnostic, OutcomeDocument, OutcomeItem, OutcomeItemError, OutcomeLocus, OutcomeStage,
-    OutcomeWriteError, ParityReason, ProtocolWire, ResultLimit, ResultValue, OUTCOME_FORMAT,
+    assignments_wire, certificate_identity_wire, claim_locus_wire, graph_evidence_wire,
+    probabilistic_wire, protocol_temporal_wire, temporal_wire, ClauseRunNotAnItem,
+    CounterexampleWireError, ExecuteResult, ItemCause, ItemLabel, Operation, OutcomeDiagnostic,
+    OutcomeDocument, OutcomeItem, OutcomeItemError, OutcomeLocus, OutcomeStage, OutcomeWriteError,
+    ParityReason, ProtocolWire, ResultLimit, ResultValue, OUTCOME_FORMAT,
 };
 pub use planner::{
     read_premise_item, read_result_entry, read_settlement_request, Budget, PlannerDeclaration,
@@ -474,11 +480,11 @@ pub use request::{
     StageLimitNameRefusal, StageLimits, StateEnvironment,
 };
 pub use result::{
-    read_bounded, CauseCodecError, DecidingElement, DisagreementCause, EvaluatedValue,
-    HybridTraceDisagreement, InputArmResult, InputSettlement, ObservedTemporalParity,
-    ObservedTemporalResult, ObservedTemporalSettlement, ReplayResult, SeparatingWitnessRecord,
-    SeparationReason, SeparationRefusal, TemporalDecisive, Verdict, WitnessArmResult, WitnessCheck,
-    WitnessFailure, WitnessSettlement,
+    read_bounded, runtime_value_path_json, CauseCodecError, DecidingElement, DisagreementCause,
+    EvaluatedValue, HybridTraceDisagreement, InputArmResult, InputSettlement,
+    ObservedTemporalParity, ObservedTemporalResult, ObservedTemporalSettlement, ReplayResult,
+    SeparatingWitnessRecord, SeparationReason, SeparationRefusal, TemporalDecisive, Verdict,
+    WitnessArmResult, WitnessCheck, WitnessFailure, WitnessSettlement,
 };
 pub use supplied_limits::{read_supplied_limits, SuppliedLimitsRefusal};
 // FSpec FR-323: the replay target a packet, envelope and request each carry.

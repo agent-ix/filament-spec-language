@@ -11,15 +11,13 @@ use filament_exact::{
     Cancel, EffectiveId, NodeKey, ObjectId, ObjectReference, OriginalDeclarationKey, PathSegment,
     ScalarLimits, UniverseId,
 };
-use filament_spec_language::checked_handoff::{
-    self, CheckedHandoffRequest, CompiledHandoff, Corpus,
-};
-use filament_spec_language::emit_checked_v2::Request;
 use fsl_analyze::analyze::{analyze_items, Engines};
 use fsl_analyze::protocol_analysis::{
     protocol_subject, realizability_item, RealizabilityRequest, SubjectBindings, SubjectPackage,
     SubjectRefusal,
 };
+use fsl_command::checked_handoff::{self, CheckedHandoffRequest, CompiledHandoff, Corpus};
+use fsl_command::emit_checked_v2::Request;
 use fsl_eval::model_subject::{ModelInstance, RoleBinding};
 use fsl_eval::simulation::model::{ExpansionLimits, PopulationUniverse};
 use fsl_eval::simulation::protocol::{MemorySelection, MemorySelectionRefusal};

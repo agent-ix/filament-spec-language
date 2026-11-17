@@ -34,7 +34,7 @@ fn source(temporal: &[&str], over: &str, formula: &str) -> String {
     text.push_str(&format!(
         "record Counter {{ level: Int[0, 9]; }}\n\
          record Loose {{ n: Integer; }}\n\
-         temporal C using {using} over (c: {over}) clock \"model-steps\" on origin \
+         temporal C using {using} over (c: {over}) clock \"events\" on origin \
          {{ {formula} }}\n"
     ));
     text
@@ -302,29 +302,36 @@ fn a_horizon_past_u64_is_a_work_budget_limit_at_the_overflowing_operator() {
     );
 }
 
-/// FR-326-AC-4: a unit holding a temporal clause with no temporal profile
-/// selection, or two, refuses `unknown_profile`/`unsupported-selection` at
-/// the clause, naming the selections it found.
+/// FR-326-AC-4: a clause whose `using` alias selects a profile with no
+/// temporal facet (the value profile `v`) refuses
+/// `unknown_profile`/`unsupported-selection` at the clause.
 #[trace("TC-836", "FR-326-AC-4")]
 #[test]
 fn the_unit_selects_exactly_one_temporal_profile() {
-    for (profiles, found) in [
-        (&[][..], Vec::new()),
-        (&[EVENT, INFINITE][..], vec![EVENT, INFINITE]),
-    ] {
-        let (text, cause) = refused(profiles, "eventually[0,1] holds(c.level = 3)");
-        let start = text.find("temporal C").expect("the clause");
-        let end = text.rfind('}').expect("the clause's close") + 1;
-        assert_eq!(
-            cause,
-            TemporalCause::ProfileSelection {
-                found,
-                span: Span { start, end }
-            }
-        );
-        assert_eq!(cause.code(), Code::UnknownProfile);
-        assert_eq!(cause.tag(), "unsupported-selection");
-    }
+    let (text, cause) = refused(&[], "eventually[0,1] holds(c.level = 3)");
+    let start = text.find("temporal C").expect("the clause");
+    let end = text.rfind('}').expect("the clause's close") + 1;
+    assert_eq!(
+        cause,
+        TemporalCause::ProfileSelection {
+            alias: "v".to_owned(),
+            selected: vec![VALUE.to_owned()],
+            found: Vec::new(),
+            span: Span { start, end }
+        }
+    );
+    assert_eq!(cause.code(), Code::UnknownProfile);
+    assert_eq!(cause.tag(), "unsupported-selection");
+}
+
+/// FR-326-AC-4 and AC-7: a unit selecting two temporal profiles under two
+/// aliases is not refused for that; the clause is checked under the profile
+/// its own `using` alias (`t0`, event-position) selects.
+#[trace("TC-836", "FR-326-AC-4")]
+#[trace("TC-2180", "FR-326-AC-7")]
+#[test]
+fn a_unit_may_select_two_temporal_profiles() {
+    checked(&[EVENT, INFINITE], "eventually[0,1] holds(c.level = 3)");
 }
 
 /// FR-326-AC-5: a bounded-profile clause over a type with no unbounded
@@ -1087,7 +1094,7 @@ fn a_holds_condition_is_typed_over_the_over_parameter() {
 }
 
 /// FR-233 and FR-326: a timed interval (FR-393) where the clause counts
-/// steps, here under `model-steps` with infinite-trace and event-position,
+/// steps, here a trace subject's role with infinite-trace and event-position,
 /// refuses `ill_typed`/`type-mismatch` at the interval, rather than being
 /// checked as a step interval or dropped.
 #[trace("TC-1078", "TC-688", "FR-233-AC-2")]
@@ -1176,8 +1183,7 @@ fn the_finite_window_profile_admits_only_integral_closed_tick_intervals() {
 
 /// The unit of [`source`] with its clause's clock written `clock "{clock}"`.
 fn with_clock(temporal: &[&str], clock: &str, formula: &str) -> String {
-    source(temporal, "Counter", formula)
-        .replace("clock \"model-steps\"", &format!("clock \"{clock}\""))
+    source(temporal, "Counter", formula).replace("clock \"events\"", &format!("clock \"{clock}\""))
 }
 
 /// FR-610-AC-1: over the record trace subject a free clock role checks under
@@ -1216,7 +1222,6 @@ fn a_free_clock_role_over_a_trace_subject_checks_and_counts_by_the_profile() {
     "FSpec-FR-090-AC-12"
 )]
 #[test]
-#[ignore = "QSL-2141: a unit-spelled or model-binding clock role over a trace subject is not refused yet"]
 fn a_unit_spelled_or_model_binding_role_over_a_trace_subject_is_refused() {
     let formula = "eventually[0,3] holds(c.level = 3)";
     for profile in [INFINITE, EVENT, FIXED, TIMESTAMPED] {
@@ -1282,4 +1287,22 @@ fn a_retired_temporal_profile_spelling_is_an_unknown_profile() {
         resolve_profiles(&[selection(INFINITE)], &|_| None),
         Ok(Vec::new())
     );
+}
+
+/// FR-610-AC-5: a clause over a trace subject that writes no `clock` checks
+/// as the same clause written `clock "default"`.
+#[trace("TC-2388", "FR-610-AC-5")]
+#[test]
+fn an_unwritten_clock_is_the_default_role() {
+    let formula = "eventually[0,3] holds(c.level = 3)";
+    for profile in [INFINITE, EVENT, FIXED] {
+        let unwritten = source(&[profile], "Counter", formula).replace("clock \"events\" ", "");
+        assert!(!unwritten.contains("clock \""), "{unwritten}");
+        let clause = check(&assemble(&unwritten))
+            .unwrap_or_else(|failure| panic!("{profile}: checks, not {failure:?}"));
+        let written = check(&assemble(&with_clock(&[profile], "default", formula)))
+            .unwrap_or_else(|failure| panic!("{profile}: the written form checks: {failure:?}"));
+        assert_eq!(clause.clock(), "default", "{profile}");
+        assert_eq!(clause.horizon(), written.horizon(), "{profile}");
+    }
 }

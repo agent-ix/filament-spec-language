@@ -17,7 +17,7 @@ Scope: FR-526-AC-31.
 ## Test Procedure
 
 1. Evaluate FR-501-AC-29's request as `Original` (`r1`).
-2. Send `Superseding(r1)` with the observation arriving on time.
+2. Send `Superseding(r1)` with the same trace and cutoff and `admit_late` naming the observation's identity.
 3. Re-send `r1`'s own request as `Superseding(r1)`.
 
 Tag the tests `#[trace("TC-1548", "FR-526-AC-31")]`.
@@ -25,5 +25,5 @@ Tag the tests `#[trace("TC-1548", "FR-526-AC-31")]`.
 ## Expected Results
 
 - Step 1: `r1` lists the observation as late; the ledger holds `r1`.
-- Step 2: lineage 1, the observation read, `r1` unchanged.
+- Step 2: lineage 1, the observation read and listed in `admitted_late`, `r1` unchanged.
 - Step 3: `unchanged-input`.

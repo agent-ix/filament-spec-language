@@ -81,10 +81,10 @@ caller gets when it does not configure the limit (ADR-014 §2, "inherited").
 Every limit has no ceiling beyond the width of the quantity it bounds: a
 caller raises or lowers it, and the value is used as given (a limit over a
 `u32` quantity, `model.sequence_maximum`, takes at most `u32::MAX`; FR-506). The requirement that owns each limit defines its counter:
-NFR-001 (`s1.*`), NFR-011 (`s3.*`), FR-082 (`environment.*`), FR-260 (`intake.*`), FR-297 (`inspect.*`), FR-298 (`render.*`),
+NFR-001 (`s1.*`; FR-762 for `s1.diagnostics`), NFR-011 (`s3.*`), FR-082 (`environment.*`), FR-260 (`intake.*`), FR-297 (`inspect.*`), FR-298 (`render.*`),
 NFR-012 and FR-506 (`model.*`, `admission.*`), FR-106 (`observation.*`), FR-523 (`temporal_evidence.*`), FR-111
 (`library.*`), FR-099 (`dependency.*`), FR-098 (`replay.*`), FR-264 (`i2.*`, `emit.*`),
-FR-003 (`format.*`), FR-294 (`prepare.*`), and FR-101 (`explore.*`). Analysis
+FR-003 (`format.*`), FR-294 (`prepare.*`), FR-101 (`explore.*`) and NFR-130 (`evaluation.live_occurrences`). Analysis
 engine limits and the typed inspection operation's limit have their own table
 (Engine limit setting names).
 
@@ -94,6 +94,7 @@ engine limits and the typed inspection operation's limit have their own table
 | `s1.tokens` | S1 | token count | `fsl_cst::Limits` tokens | 100000 tokens |
 | `s1.nodes` | S1 | node count | `fsl_cst::Limits` nodes | 50000 nodes |
 | `s1.work_units` | S1 | work budget | `fsl_cst::Limits` parser work | 288 units per significant token, plus 288 |
+| `s1.diagnostics` | S1 | diagnostic count | `fsl_cst::Limits` reported syntax diagnostics (FR-762; reaching it cuts the report and keeps the refusal) | 100 diagnostics |
 | `s3.nodes` | S3 | node count | `CheckingLimits` nodes | 100000 units |
 | `s3.input_bytes` | S3 | input bytes | `CheckingLimits` declaration preimage bytes | 16777216 bytes |
 | `s3.work_units` | S3 | work budget | `CheckingLimits` work budget | 16777216 units |
@@ -109,7 +110,6 @@ engine limits and the typed inspection operation's limit have their own table
 | `model.derivation_facts` | model normalization | node count | `ModelNormalizationLimitsV1` derivation_facts | 1600000 facts |
 | `model.effective_declarations` | model normalization | node count | `ModelNormalizationLimitsV1` effective_declarations | 1600000 declarations |
 | `model.dispatch_candidates` | model normalization | node count | `ModelNormalizationLimitsV1` dispatch_candidates | 1600000 candidates |
-| `model.hashed_bytes` | model normalization | input bytes | `ModelNormalizationLimitsV1` hashed_bytes (FSpec limit name) | 268435456 bytes |
 | `model.work_units` | model normalization | work budget | `ModelNormalizationLimitsV1` work_units | 16777216 units |
 | `model.ancestor_steps` | model normalization | edge count | `ModelNormalizationLimitsV1` ancestor_steps | 16777216 edges |
 | `model.family_steps` | model normalization | edge count | `ModelNormalizationLimitsV1` family_steps | 16777216 edges |
@@ -154,6 +154,7 @@ engine limits and the typed inspection operation's limit have their own table
 | `emit.output_bytes` | E4 emit | input bytes | `fsl_package::EmitLimits` output_bytes; `fsl_replay::spine::PackageLimits` output_bytes | 16777216 bytes |
 | `explore.states` | exploration | node count | exploration `Limits` max_states | 10000000 states |
 | `explore.transitions` | exploration | edge count | exploration `Limits` max_transitions | 100000000 transitions |
+| `evaluation.live_occurrences` | S6a evaluation | occurrence count | the evaluator's live-occurrence bound (NFR-130): call frames in progress and their bound argument values | 1048576 occurrences |
 | `prepare.compile_work_units` | execution-backend prepare | work budget | `PrepareLimits` compile_work_units | 16777216 units |
 | `prepare.code_bytes` | execution-backend prepare | input bytes | `PrepareLimits` code_bytes | 67108864 bytes |
 
@@ -256,7 +257,7 @@ its row (FR-315 "Size limits").
 | `model_check.max_live_instances` | `max_live_instances` | EN-1 protocol subjects | `ModelCheckRequest` max_live_instances | 3 instances | FR-209 |
 | `model_check.max_store_buffer` | `max_store_buffer` | EN-1 weak memory | `ModelCheckRequest` max_store_buffer | 4 entries | FR-225 |
 | `model_check.max_messages` | `max_messages` | EN-1 weak memory | `ModelCheckRequest` max_messages | 4 messages | FR-225 |
-| `expansion.max_candidates` | `max_candidates` | model-subject expansion | `ExpansionLimits` max_candidates | none: the caller sets it | FR-120 |
+| `expansion.max_candidates` | `max_candidates` | model-subject expansion | `ExpansionLimits` max_candidates | none: the caller sets it; a clause-run request sets it from its `model` trace's `max_candidates`, 1000000 candidates when absent (FR-641) | FR-120 |
 | `exact_prob.max_states` | `max_states` | EN-5 product | `ExactProbLimits.model.limits` max_states | 10000000 states | FR-203 |
 | `exact_prob.max_transitions` | `max_transitions` | EN-5 product | `ExactProbLimits.model.limits` max_transitions | 100000000 transitions | FR-203 |
 | `exact_prob.max_automaton_states` | `max_automaton_states` | EN-5 product | `ExactProbLimits.model` max_automaton_states | 1048576 states | FR-203 |

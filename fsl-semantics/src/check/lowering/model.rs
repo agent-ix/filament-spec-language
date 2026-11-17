@@ -27,8 +27,8 @@ use crate::check::assemble::DimensionEquivalence;
 use crate::check::family::OccurrenceRole;
 
 use crate::check::node_key::{
-    Binding, BodyTerm, GroupMember, GroupTerm, LeafTerm, MemberTerm, ModelOwner, NodeRef, NodeTag,
-    Owner,
+    Binding, BindingValue, BodyTerm, GroupMember, GroupTerm, LeafTerm, MemberTerm, ModelOwner,
+    NodeRef, NodeTag, Owner,
 };
 use crate::check::refusal::{CheckCause, CheckRefusal, KeyFault};
 use crate::check::VariantTypeDeclaration;
@@ -112,6 +112,31 @@ pub(crate) struct PackagePlace {
     /// the member identity of a field step (FSpec FR-322 "Timed-model
     /// nodes", `resolved_path`).
     pub(crate) members: Vec<(String, Option<String>)>,
+    /// Element identities supplied by checked types for source collection slots.
+    pub(crate) resolved_slots: BTreeMap<usize, String>,
+}
+
+/// A source value type's clock paths and its FR-322 type identity.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct SourceClockLayout {
+    pub identity: String,
+    pub places: Vec<SourceClockPlace>,
+}
+
+/// A clock component's path within a source-declared checked value type.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct SourceClockPlace {
+    /// Steps below the value's containing field.
+    pub path: Vec<PlaceStep>,
+    /// Whether the path passes through an optional value or case.
+    pub optional: bool,
+    /// Whether this clock alone introduces an optional presence bit.
+    pub bit: bool,
+    /// Whether this clock is directly guarded by its union case.
+    pub case: bool,
+    /// Resolved member rows corresponding to the steps.
+    pub members: Vec<(String, Option<String>)>,
+    pub slots: BTreeMap<usize, String>,
 }
 
 /// One row of a clock place's `resolved_path` (FSpec FR-322 "Timed-model
@@ -161,6 +186,63 @@ fn collection_type(shape: CollectionShape, inner: &str) -> String {
     format!("{kind}<{inner}>")
 }
 
+/// FR-322 identities on clock-bearing value paths. Scalar data cannot hold
+/// a clock; nominal data, options, collections and map values can.
+pub(crate) fn clock_type_identity(
+    value_type: &ValueType,
+    nominal: impl Fn(&NodeKey) -> Option<String>,
+) -> Option<String> {
+    enum Part<'a> {
+        Value(&'a ValueType),
+        Text(&'static str),
+    }
+    let mut pending = vec![Part::Value(value_type)];
+    let mut output = String::new();
+    while let Some(part) = pending.pop() {
+        let value_type = match part {
+            Part::Text(text) => {
+                output.push_str(text);
+                continue;
+            }
+            Part::Value(value_type) => value_type,
+        };
+        match value_type {
+            ValueType::Composite(key) => {
+                output.push_str(&nominal(key).unwrap_or_else(|| key.to_string()))
+            }
+            ValueType::Option(inner) => {
+                output.push_str("Option<");
+                pending.push(Part::Text(">"));
+                pending.push(Part::Value(inner));
+            }
+            ValueType::Collection(collection) => {
+                output.push_str(match collection.kind() {
+                    filament_exact::CollectionKind::Sequence => "Sequence<",
+                    filament_exact::CollectionKind::Set => "Set<",
+                    filament_exact::CollectionKind::Bag => "Bag<",
+                    filament_exact::CollectionKind::OrderedSet => "OrderedSet<",
+                });
+                pending.push(Part::Text(">"));
+                pending.push(Part::Value(collection.element()));
+            }
+            ValueType::Map(map) => {
+                output.push_str("Map<");
+                pending.push(Part::Text(">"));
+                pending.push(Part::Value(map.values()));
+                pending.push(Part::Text(", "));
+                pending.push(Part::Value(map.key()));
+            }
+            ValueType::Boolean => output.push_str("ix://filament/native/Boolean"),
+            ValueType::Integer => output.push_str("ix://filament/native/Integer"),
+            ValueType::String => output.push_str("ix://filament/native/String"),
+            ValueType::Uuid => output.push_str("ix://filament/native/UUID"),
+            ValueType::Timestamp => output.push_str("ix://filament/native/Timestamp"),
+            _ => return None,
+        }
+    }
+    Some(output)
+}
+
 /// The element type of the rendered collection type `rendered`, read
 /// through an `Option<..>` around it (FSL FR-230-AC-19's `o:
 /// Option<Sequence<Clock>[0, 2]>`). A string edge: `rendered` is the
@@ -207,7 +289,13 @@ impl PackagePlace {
                 }
                 PlaceStep::Slot(_) => {
                     let parent = previous.unwrap_or_default();
-                    (element_type(&parent).to_owned(), format!("{parent}[slot]"))
+                    (
+                        self.resolved_slots
+                            .get(&index)
+                            .cloned()
+                            .unwrap_or_else(|| element_type(&parent).to_owned()),
+                        format!("{parent}[slot]"),
+                    )
                 }
                 PlaceStep::Union(case) => {
                     let declaring = previous.unwrap_or_default();
@@ -286,6 +374,8 @@ pub struct AdmittedModel {
     /// Every clock place of the package's object types
     /// ([`Self::clock_places`]), found once from `records`.
     places: Vec<PackagePlace>,
+    source_places: BTreeMap<NodeKey, SourceClockLayout>,
+    source_field_spans: BTreeMap<DeclarationKey, fsl_foundation::Span>,
     /// Every required single-valued field whose type is a package object
     /// type, `(owner, field name, target)`: [`Self::referenced_object`],
     /// found once from `records`.
@@ -920,6 +1010,8 @@ impl AdmittedModel {
             source_unit: None,
             population_bounds: BTreeMap::new(),
             places: Vec::new(),
+            source_places: BTreeMap::new(),
+            source_field_spans: BTreeMap::new(),
             references: Vec::new(),
             selection: domain_package.model_selection.clone(),
             records: domain_package
@@ -970,6 +1062,8 @@ impl AdmittedModel {
             source_unit: None,
             population_bounds: BTreeMap::new(),
             places: Vec::new(),
+            source_places: BTreeMap::new(),
+            source_field_spans: BTreeMap::new(),
             references: Vec::new(),
             selection: domain_package.model_selection.clone(),
             records: domain_package
@@ -990,6 +1084,130 @@ impl AdmittedModel {
     pub fn with_alias(mut self, alias: impl Into<String>) -> Self {
         self.alias = Some(alias.into());
         self
+    }
+
+    /// Refresh the source view after its complete member types resolve.
+    pub(crate) fn refresh_source_view(
+        &mut self,
+        view: &EffectiveView,
+        places: BTreeMap<NodeKey, SourceClockLayout>,
+        field_spans: BTreeMap<DeclarationKey, fsl_foundation::Span>,
+    ) {
+        self.index = view.shared_model_index().clone();
+        self.records = view
+            .domain_package()
+            .records
+            .iter()
+            .map(|record| (record.key().clone(), record.clone()))
+            .collect();
+        self.source_places = places;
+        self.source_field_spans = field_spans;
+        self.places = self.find_places();
+        self.references = self.find_references();
+    }
+
+    /// The named source object's checked node, for the source model's time member.
+    pub(crate) fn source_object_time_node(&self, name: &str) -> Option<NodeKey> {
+        if self.alias() != Some("") {
+            return None;
+        }
+        self.records.values().find_map(|record| {
+            let DomainPackageRecord::ObjectType(object) = record else {
+                return None;
+            };
+            (crate::model::intake::type_identity_segment(&object.key.package, &object.key.node)
+                == Some(name))
+            .then(|| self.model_node_key(&object.key))
+            .flatten()
+        })
+    }
+
+    /// The first source member, in authored order, whose value contains a clock.
+    pub(crate) fn first_source_clock(&self) -> Option<(String, fsl_foundation::Span)> {
+        self.places
+            .iter()
+            .filter_map(|place| Some((place, *self.source_field_spans.get(&place.field)?)))
+            .min_by_key(|(_, span)| span.start)
+            .map(|(place, span)| {
+                let name = match place.path.first() {
+                    Some(PlaceStep::Field(name)) => name.clone(),
+                    _ => place.field.node.clone(),
+                };
+                (name, span)
+            })
+    }
+
+    /// Clock layouts of admitted model value types, indexed by the same
+    /// checked type keys their record fields use.
+    pub(crate) fn value_clock_layouts(
+        &self,
+        needed: &BTreeSet<NodeKey>,
+    ) -> BTreeMap<NodeKey, SourceClockLayout> {
+        let mut layouts = BTreeMap::new();
+        if needed.is_empty() {
+            return layouts;
+        }
+        for (key, record) in &self.records {
+            if !matches!(
+                record,
+                DomainPackageRecord::RecordValueType(_)
+                    | DomainPackageRecord::TupleValueType(_)
+                    | DomainPackageRecord::Enum(_)
+            ) {
+                continue;
+            }
+            let (Some(identity), Ok(Some(node))) =
+                (self.effective_id(key), record_node_key(record))
+            else {
+                continue;
+            };
+            if !needed.contains(&node) {
+                continue;
+            }
+            let root = PackagePlace {
+                owner: identity,
+                field: key.clone(),
+                path: Vec::new(),
+                optional: false,
+                bit: false,
+                case: false,
+                aliases: Vec::new(),
+                declaring: key.node.clone(),
+                members: Vec::new(),
+                resolved_slots: BTreeMap::new(),
+            };
+            let value_ref = crate::model::domain_package::ValueTypeRef::Package(key.clone());
+            let mut places = Vec::new();
+            self.places_below(
+                &value_ref,
+                root,
+                self.rendered(&value_ref),
+                false,
+                false,
+                &mut Vec::new(),
+                &mut places,
+            );
+            if !places.is_empty() {
+                layouts.insert(
+                    node,
+                    SourceClockLayout {
+                        identity: key.node.clone(),
+                        places: places
+                            .into_iter()
+                            .map(|place| SourceClockPlace {
+                                path: place.path,
+                                optional: place.optional,
+                                bit: place.bit,
+                                case: place.case,
+                                members: place.members,
+                                slots: place.resolved_slots,
+                            })
+                            .collect(),
+                    },
+                );
+            }
+        }
+        layouts
     }
 
     /// This source model as declared by `unit`.
@@ -1079,6 +1297,12 @@ impl AdmittedModel {
             .then(|| self.index.package())
     }
 
+    /// The identity of this unit's source when this is its synthetic source
+    /// model.
+    pub(crate) fn source_identity(&self) -> Option<&str> {
+        self.source_unit.as_ref().map(|source| source.identity())
+    }
+
     /// The alias of the `model` declaration this package is admitted for,
     /// if any.
     pub(crate) fn alias(&self) -> Option<&str> {
@@ -1143,6 +1367,11 @@ impl AdmittedModel {
         &self.selection
     }
 
+    /// Source type names retained for diagnostics, independent of this model's identities.
+    pub fn source_spellings(&self) -> &crate::model::spelling::SourceSpellings {
+        self.index.source_spellings()
+    }
+
     /// Whether `other` admits the same package content, whatever alias
     /// selects it.
     pub(crate) fn same_package(&self, other: &Self) -> bool {
@@ -1201,6 +1430,24 @@ impl AdmittedModel {
     pub(crate) fn model_node_key(&self, declaration: &DeclarationKey) -> Option<NodeKey> {
         if self.selection.identity != declaration.package {
             return None;
+        }
+        if self.alias() == Some("")
+            && matches!(
+                self.records.get(declaration),
+                Some(DomainPackageRecord::ObjectType(_))
+            )
+        {
+            let package_name = self.selection.identity.strip_prefix("source/")?;
+            let name = crate::model::intake::type_identity_segment(
+                &declaration.package,
+                &declaration.node,
+            )?;
+            return crate::check::declared_node_key(
+                package_name.to_owned(),
+                vec![name.to_owned()],
+                0,
+            )
+            .ok();
         }
         record_node_key(self.records.get(declaration)?)
             .ok()
@@ -1472,6 +1719,7 @@ impl AdmittedModel {
                 aliases: Vec::new(),
                 declaring: field.owner.node.clone(),
                 members: Vec::new(),
+                resolved_slots: BTreeMap::new(),
             };
             self.places_of(field, root, &mut Vec::new(), &mut places);
         }
@@ -1495,6 +1743,9 @@ impl AdmittedModel {
                     break format!("ix://filament/native/{}", native.as_str())
                 }
                 ValueTypeRef::Unit(name) => break name.clone(),
+                ValueTypeRef::Resolved(value_type) => {
+                    break self.resolved_identity(value_type).unwrap_or_default()
+                }
                 ValueTypeRef::Package(key) => match self.records.get(key) {
                     Some(DomainPackageRecord::AliasType(alias)) if steps <= self.records.len() => {
                         named = &alias.target;
@@ -1525,6 +1776,11 @@ impl AdmittedModel {
         // The field step's row: the member's declared type, its collection
         // or `Option` around the type it holds.
         let declared = self.rendered(&field.value_type);
+        let resolved = matches!(
+            &field.value_type,
+            crate::model::domain_package::ValueTypeRef::Resolved(_)
+        );
+        let element_identity = declared.clone();
         let member_type = if !single(field) {
             // An optional collection member holds optional elements:
             // `q: Sequence<Option<Clock>>[0, 2]` (FSpec FR-322's
@@ -1560,7 +1816,15 @@ impl AdmittedModel {
                 max: field.multiplicity.upper,
                 map: false,
             }));
-            reached = element_type(&reached).to_owned();
+            reached = if resolved {
+                element_identity
+            } else {
+                element_type(&reached).to_owned()
+            };
+            if resolved {
+                at.resolved_slots
+                    .insert(at.path.len().saturating_sub(1), reached.clone());
+            }
             at.members.push((reached.clone(), None));
         }
         let above = at.optional;
@@ -1630,6 +1894,10 @@ impl AdmittedModel {
                 return;
             }
             ValueTypeRef::Package(key) => key,
+            ValueTypeRef::Resolved(value_type) => {
+                self.resolved_places(value_type, at, places);
+                return;
+            }
             ValueTypeRef::Native(_) | ValueTypeRef::Unit(_) => return,
         };
         match self.records.get(key) {
@@ -1698,6 +1966,100 @@ impl AdmittedModel {
             }
             _ => {}
         }
+    }
+
+    fn resolved_places(
+        &self,
+        value_type: &ValueType,
+        at: PackagePlace,
+        places: &mut Vec<PackagePlace>,
+    ) {
+        let mut pending = vec![(value_type, at)];
+        while let Some((value_type, mut at)) = pending.pop() {
+            match value_type {
+                ValueType::Option(payload) => {
+                    at.optional = true;
+                    pending.push((payload, at));
+                }
+                ValueType::Collection(collection) => {
+                    let (min, max) = collection
+                        .bound()
+                        .map_or((0, None), |bound| (bound.minimum(), Some(bound.maximum())));
+                    at.path.push(PlaceStep::Slot(CollectionShape {
+                        ordered: collection.kind().is_ordered(),
+                        unique: collection.kind().is_unique(),
+                        min,
+                        max,
+                        map: false,
+                    }));
+                    let element = self
+                        .resolved_identity(collection.element())
+                        .unwrap_or_default();
+                    at.resolved_slots
+                        .insert(at.path.len().saturating_sub(1), element.clone());
+                    at.members.push((element, None));
+                    pending.push((collection.element(), at));
+                }
+                ValueType::Composite(key) => {
+                    if let Some(layout) = self.source_places.get(key) {
+                        for component in &layout.places {
+                            let mut below = at.clone();
+                            let offset = below.path.len();
+                            below.path.extend(component.path.iter().cloned());
+                            below.bit = !below.optional && component.bit;
+                            below.case = !below.optional && component.case;
+                            below.optional |= component.optional;
+                            below.members.extend(component.members.iter().cloned());
+                            below.resolved_slots.extend(
+                                component
+                                    .slots
+                                    .iter()
+                                    .map(|(index, identity)| (index + offset, identity.clone())),
+                            );
+                            places.push(below);
+                        }
+                    }
+                }
+                ValueType::Map(map) => {
+                    let (min, max) = map
+                        .bound()
+                        .map_or((0, None), |bound| (bound.minimum(), Some(bound.maximum())));
+                    at.path.push(PlaceStep::Slot(CollectionShape {
+                        ordered: false,
+                        unique: true,
+                        min,
+                        max,
+                        map: true,
+                    }));
+                    at.members.push((
+                        self.resolved_identity(map.values()).unwrap_or_default(),
+                        None,
+                    ));
+                    pending.push((map.values(), at));
+                }
+                _ => {}
+            }
+        }
+    }
+
+    fn resolved_bears_clock(&self, mut value_type: &ValueType) -> bool {
+        loop {
+            match value_type {
+                ValueType::Option(inner) => value_type = inner,
+                ValueType::Collection(collection) => value_type = collection.element(),
+                ValueType::Map(map) => value_type = map.values(),
+                ValueType::Composite(key) => return self.source_places.contains_key(key),
+                _ => return false,
+            }
+        }
+    }
+
+    fn resolved_identity(&self, value_type: &ValueType) -> Option<String> {
+        clock_type_identity(value_type, |key| {
+            self.source_places
+                .get(key)
+                .map(|layout| layout.identity.clone())
+        })
     }
 
     /// Whether an object of type `object` has the fields of `owner`: the
@@ -1946,6 +2308,9 @@ impl AdmittedModel {
                             ValueTypeRef::Clock => true,
                             ValueTypeRef::Package(inner) => self.type_bears_clock(inner, visiting),
                             ValueTypeRef::Native(_) | ValueTypeRef::Unit(_) => false,
+                            ValueTypeRef::Resolved(value_type) => {
+                                self.resolved_bears_clock(value_type)
+                            }
                         }
                 });
                 visiting.pop();
@@ -2095,6 +2460,10 @@ pub struct ModelClause {
     pub declaration: DeclarationKey,
     /// The clause kind.
     pub kind: DeclaredClauseKind,
+    /// The source declaration path when this clause function belongs to a
+    /// source-declared object operation. Retained by checking, never rebuilt
+    /// from the function's generated label.
+    pub source_declaration: Option<Vec<String>>,
 }
 
 fn fault(location: &Location, fault: KeyFault) -> CheckRefusal {
@@ -2365,9 +2734,23 @@ impl<'a> Lowering<'a> {
             .ok_or_else(|| fault(location, KeyFault::UnknownDeclaration(declaration.clone())))?;
         let (node_tag, form) = record_form(record)
             .ok_or_else(|| fault(location, KeyFault::UnnamedRecordKind(declaration.clone())))?;
-        let key =
+        let key = if model.alias() == Some("")
+            && matches!(record, DomainPackageRecord::ObjectType(_))
+        {
+            let name = crate::model::intake::type_identity_segment(
+                &declaration.package,
+                &declaration.node,
+            )
+            .ok_or_else(|| fault(location, KeyFault::UnknownDeclaration(declaration.clone())))?;
+            crate::check::declared_node_key(self.package_name.clone(), vec![name.to_owned()], 0)
+                .map_err(|_| fault(location, KeyFault::EmptyNode(declaration.clone())))?
+        } else {
             model_declaration_key(&model.selection.identity, node_tag, form, &declaration.node)
-                .map_err(|_| fault(location, KeyFault::EmptyNode(declaration.clone())))?;
+                .map_err(|_| fault(location, KeyFault::EmptyNode(declaration.clone())))?
+        };
+        if model.alias() == Some("") && matches!(record, DomainPackageRecord::ObjectType(_)) {
+            return self.source_object_node(declaration, &key, model, location);
+        }
         // COMPILE GAP: add the keyed content to the graph; `insert_node`
         // mints content keys, so a keyed insert is owned by lowering.rs.
         self.insert_declared_node(
@@ -2379,6 +2762,78 @@ impl<'a> Lowering<'a> {
             .record(key.clone(), declaration.clone())
             .map_err(|conflict| fault(location, KeyFault::CorrespondenceConflict(conflict)))?;
         Ok(key)
+    }
+
+    /// Root one checked object in the unit's source model. The placeholder is
+    /// inserted before its field types are lowered so recursive references
+    /// resolve to this exact declared node; its body is then replaced with
+    /// the checked effective field bindings.
+    fn source_object_node(
+        &mut self,
+        declaration: &DeclarationKey,
+        key: &NodeKey,
+        model: &AdmittedModel,
+        location: &Location,
+    ) -> Result<NodeKey, CheckRefusal> {
+        if self.graph.node(key.clone()).is_some() {
+            return Ok(key.clone());
+        }
+        let name =
+            crate::model::intake::type_identity_segment(&declaration.package, &declaration.node)
+                .ok_or_else(|| {
+                    fault(location, KeyFault::UnknownDeclaration(declaration.clone()))
+                })?;
+        let owner = self
+            .source_owners
+            .get(name)
+            .cloned()
+            .unwrap_or_else(|| self.owner.clone());
+        let qualified = identifiers([name], location)?;
+        let content = NodeContent {
+            owner_model: None,
+            node_tag: NodeTag::Model,
+            semantic_form: "object_type",
+            semantic_type: Some(NodeRef::from(key.clone())),
+            declaration: Some(qualified.clone()),
+            owner: Some(Owner::Source(owner)),
+            body: BodyTerm::aggregate(Vec::new()),
+        };
+        self.insert_declared_node(location, key.clone(), content.clone())?;
+        self.correspondence
+            .record(key.clone(), declaration.clone())
+            .map_err(|conflict| fault(location, KeyFault::CorrespondenceConflict(conflict)))?;
+        self.record(key.clone(), OccurrenceRole::Declaration, location.clone());
+
+        let effective = model
+            .object_type_id(declaration)
+            .ok_or_else(|| fault(location, KeyFault::UnknownDeclaration(declaration.clone())))?;
+        let fields =
+            self.scope.types().attributes(effective).ok_or_else(|| {
+                fault(location, KeyFault::UnknownDeclaration(declaration.clone()))
+            })?;
+        let mut members = Vec::with_capacity(fields.len());
+        for attribute in fields.iter() {
+            let field = attribute.field();
+            let target = self.type_node(field.value_type(), location)?;
+            let reference = LeafTerm::reference(target);
+            let value = match field.presence() {
+                filament_exact::Presence::Required => BindingValue::Leaf(reference),
+                filament_exact::Presence::Optional => {
+                    BindingValue::Aggregate(super::super::node_key::AggregateTerm::new(vec![
+                        MemberTerm::binding("optional", BindingValue::Leaf(reference)),
+                    ]))
+                }
+            };
+            members.push(MemberTerm::binding(field.name(), value));
+        }
+        self.graph.replace_declared_node(
+            key.clone(),
+            NodeContent {
+                body: BodyTerm::aggregate(members),
+                ..content
+            },
+        );
+        Ok(key.clone())
     }
 
     /// FR-322 "Population references": the `relation`/`population` node of
@@ -2479,11 +2934,29 @@ impl<'a> Lowering<'a> {
         let mut rooted = BTreeSet::new();
         let mut declarations = Vec::new();
         for model in self.models {
+            if model.alias() == Some("") {
+                for (declaration, _) in model.object_types() {
+                    if rooted.insert(declaration.clone()) {
+                        let name = crate::model::intake::type_identity_segment(
+                            &declaration.package,
+                            &declaration.node,
+                        )
+                        .ok_or_else(|| {
+                            fault(
+                                &generated_location(),
+                                KeyFault::UnknownDeclaration(declaration.clone()),
+                            )
+                        })?;
+                        declarations.push((declaration.clone(), type_declaration(name)));
+                    }
+                }
+                continue;
+            }
             let Some(location) = model.alias.as_ref().and_then(|alias| locations.get(alias)) else {
                 continue;
             };
             for declaration in model.relationship_declarations() {
-                if rooted.insert(declaration) {
+                if rooted.insert(declaration.clone()) {
                     declarations.push((declaration.clone(), location.clone()));
                 }
             }
@@ -2522,7 +2995,13 @@ impl<'a> Lowering<'a> {
         }
         for (declaration, location) in declarations {
             let key = self.model_node(&declaration, &location)?;
-            self.record(key, OccurrenceRole::Generated, location);
+            if !self
+                .graph
+                .node(key.clone())
+                .is_some_and(|node| matches!(node.owner(), Some(Owner::Source(_))))
+            {
+                self.record(key, OccurrenceRole::Generated, location);
+            }
         }
         Ok(())
     }
@@ -2774,7 +3253,8 @@ impl<'a> Lowering<'a> {
                         ValueTypeRef::Unit(name) => Some(name.as_str()),
                         ValueTypeRef::Clock
                         | ValueTypeRef::Native(_)
-                        | ValueTypeRef::Package(_) => None,
+                        | ValueTypeRef::Package(_)
+                        | ValueTypeRef::Resolved(_) => None,
                     });
                 for name in names.chain(scalar_unit) {
                     let unit = units.get(name).ok_or_else(|| {
@@ -3068,9 +3548,30 @@ impl<'a> Lowering<'a> {
         clause: &ModelClause,
         location: &Location,
     ) -> Result<(Owner, MemberTerm), CheckRefusal> {
-        let (owner, _) = self.model_owner(&clause.declaration, location)?;
+        let (owner, model) = self.model_owner(&clause.declaration, location)?;
+        let owner = if model.alias() == Some("") {
+            let source_name = clause
+                .declaration
+                .node
+                .strip_prefix(&format!("ix://{}/", clause.declaration.package))
+                .and_then(|path| path.split('/').next())
+                .ok_or_else(|| {
+                    fault(
+                        location,
+                        KeyFault::UnknownDeclaration(clause.declaration.clone()),
+                    )
+                })?;
+            Owner::Source(
+                self.source_owners
+                    .get(source_name)
+                    .cloned()
+                    .unwrap_or_else(|| self.owner.clone()),
+            )
+        } else {
+            Owner::Model(owner)
+        };
         let spelling = self.text_literal(clause_spelling(clause.kind), location)?;
-        Ok((Owner::Model(owner), MemberTerm::bound("clause", spelling)))
+        Ok((owner, MemberTerm::bound("clause", spelling)))
     }
 }
 

@@ -4,7 +4,7 @@
 use fsl_foundation::diagnostic::LimitKind;
 use fsl_foundation::source::provenance::SourceRegion;
 use fsl_foundation::source::{
-    SourceLabel, SourceReadCause, SourceReadRefusal, BLANK_LABEL_TAG, EMPTY_PATH_TAG,
+    BLANK_LABEL_TAG, EMPTY_PATH_TAG, SourceLabel, SourceReadCause, SourceReadRefusal,
 };
 use fsl_foundation::{Phase, Source, SourceIdentity, SyntaxLimit};
 
@@ -22,6 +22,9 @@ pub enum CompleteCause {
     UnexpectedEnd,
     /// `invalid_syntax`: bytes that form no token.
     InvalidToken,
+    /// `invalid_syntax`: further independent diagnostics were suppressed at
+    /// the configured diagnostic-list bound.
+    DiagnosticListCut,
     /// `invalid_syntax`: a string literal with a malformed escape.
     InvalidEscape,
     /// `unsupported_construct`: a top-level declaration begins with a word that
@@ -111,6 +114,7 @@ impl CompleteCause {
             Self::UnexpectedToken => "unexpected-token",
             Self::UnexpectedEnd => "unexpected-end",
             Self::InvalidToken => "invalid-token",
+            Self::DiagnosticListCut => "diagnostic-list-cut",
             Self::InvalidEscape => "invalid-escape",
             Self::DeclarationForm => "declaration-form",
             Self::UnsupportedSelection => "unsupported-selection",
@@ -152,6 +156,7 @@ impl CompleteCause {
             Self::UnexpectedToken
             | Self::UnexpectedEnd
             | Self::InvalidToken
+            | Self::DiagnosticListCut
             | Self::InvalidEscape => code == CompleteCode::InvalidSyntax,
             Self::DeclarationForm => code == CompleteCode::UnsupportedConstruct,
             Self::UnsupportedSelection => matches!(
@@ -407,7 +412,7 @@ pub fn resource_exhausted(
 
 #[cfg(test)]
 mod tests {
-    use super::{resource_exhausted, CompleteCause, CompleteCode};
+    use super::{resource_exhausted, CompleteCause, CompleteCode, HostCause};
     use fsl_foundation::diagnostic::LimitKind;
     use fsl_foundation::{Phase, Source, SourceIdentity, Span, SyntaxLimit};
 
@@ -467,5 +472,86 @@ mod tests {
             .cause,
             CompleteCause::StageLimit(LimitKind::TokenCount)
         ));
+    }
+
+    /// Every typed complete-source cause maps to a code admitted by the
+    /// diagnostic catalogue; the parser's independent invalid-token causes
+    /// remain distinct entries in this table.
+    #[test]
+    fn each_complete_cause_is_checked_against_its_catalogued_code() {
+        let cases = [
+            (CompleteCause::UnexpectedToken, CompleteCode::InvalidSyntax),
+            (CompleteCause::UnexpectedEnd, CompleteCode::InvalidSyntax),
+            (CompleteCause::InvalidToken, CompleteCode::InvalidSyntax),
+            // TC-2153 exercises this cut marker when the retained list reaches
+            // its bound; it remains an invalid-syntax diagnostic.
+            (CompleteCause::DiagnosticListCut, CompleteCode::InvalidSyntax),
+            (CompleteCause::InvalidEscape, CompleteCode::InvalidSyntax),
+            (
+                CompleteCause::DeclarationForm,
+                CompleteCode::UnsupportedConstruct,
+            ),
+            (
+                CompleteCause::UnsupportedSelection,
+                CompleteCode::UnknownProfile,
+            ),
+            (
+                CompleteCause::InsufficientNextCharge,
+                CompleteCode::ResourceExhausted,
+            ),
+            (CompleteCause::MissingSelection, CompleteCode::MissingImport),
+            (
+                CompleteCause::AmbiguousName,
+                CompleteCode::AmbiguousDeclaration,
+            ),
+            (
+                CompleteCause::ConflictingAuthority,
+                CompleteCode::AmbiguousDeclaration,
+            ),
+            (CompleteCause::DuplicateMember, CompleteCode::InvalidPackage),
+            (CompleteCause::InvalidValue, CompleteCode::InvalidPackage),
+            (CompleteCause::DefinitionCycle, CompleteCode::InvalidPackage),
+            (
+                CompleteCause::FeatureSetMismatch,
+                CompleteCode::InvalidPackage,
+            ),
+            (
+                CompleteCause::UnknownFeature,
+                CompleteCode::UnknownRequiredFeature,
+            ),
+            (
+                CompleteCause::UnsupportedFeature,
+                CompleteCode::UnknownRequiredFeature,
+            ),
+            (
+                CompleteCause::WrongModelSelection,
+                CompleteCode::InvalidModelBinding,
+            ),
+            (
+                CompleteCause::ConflictingBinding,
+                CompleteCode::InvalidModelBinding,
+            ),
+            (CompleteCause::CallerCancelled, CompleteCode::Cancelled),
+            (
+                CompleteCause::CorrespondenceLoss,
+                CompleteCode::InvalidProjectionCorrespondence,
+            ),
+            (
+                CompleteCause::EstablishedInvariantBroken,
+                CompleteCode::RuntimeInvariant,
+            ),
+            (
+                CompleteCause::Host(HostCause::InvalidUtf8),
+                CompleteCode::InvalidUtf8,
+            ),
+            (
+                CompleteCause::StageLimit(LimitKind::TokenCount),
+                CompleteCode::StageLimitExceeded,
+            ),
+        ];
+
+        for (cause, code) in cases {
+            assert!(cause.is_cause_of(code), "{cause:?} must map to {code}");
+        }
     }
 }

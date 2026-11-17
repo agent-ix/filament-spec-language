@@ -1081,3 +1081,49 @@ fn a_unit_declarations_scale_is_limited_by_the_assembly_setting() {
     assert_eq!(limit.actual(), 5000);
     assert_eq!(limit.setting(), fsl_foundation::Setting::S3DecimalScale);
 }
+
+/// FR-104-AC-16 `e2` (TC-1084): with neither operand fixing a type, the
+/// `ambiguous-literal` refusal of `decimal(15, 1) = decimal(150, 2)` is
+/// located at its first literal, not at the comparison.
+#[trace("FR-104-AC-16", "TC-1084")]
+#[test]
+#[ignore = "QSL-1965: the ambiguous-literal refusal located at the first literal not implemented yet"]
+fn an_ambiguous_comparison_is_refused_at_its_first_literal() {
+    let body = "decimal(15, 1) = decimal(150, 2)";
+    let text = format!(
+        "language \"ix:native\" edition \"1-draft\";\n\
+         profile v = \"filament.value.complete/v1\";\n\
+         function f using v(): Boolean pure {{ {body} }}\n"
+    );
+    let parsed = fsl_cst::parse(
+        fsl_foundation::SourceIdentity::new("a", "u"),
+        "unit.native",
+        text.as_bytes(),
+        fsl_cst::Limits::default(),
+    )
+    .expect("S1 reads the unit");
+    let unit = fsl_forms::build_unit(&parsed).expect("S2 builds the unit");
+    let declarations = PackageDeclarations::assemble(
+        parsed.source().reference().clone(),
+        "fixture".to_owned(),
+        unit,
+        Vec::new(),
+        Vec::new(),
+    )
+    .expect("the unit assembles");
+    let regions = declarations.regions();
+    let refusals = declarations
+        .check(CheckMode::Linked, CheckingLimits::default())
+        .expect_err("the comparison is refused");
+    let [refusal] = refusals.as_slice() else {
+        panic!("one refusal, got {refusals:?}");
+    };
+    assert_eq!(refusal.cause.cause(), Some("ambiguous-literal"));
+    let region = regions
+        .refusal_region(refusal)
+        .expect("the refusal names a region");
+    assert_eq!(
+        &text[region.start() as usize..region.end() as usize],
+        "decimal(15, 1)"
+    );
+}

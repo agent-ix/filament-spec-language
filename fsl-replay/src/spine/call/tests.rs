@@ -32,6 +32,9 @@ fn source() -> SourceIdentity {
 
 fn call(function: &str, arguments: Vec<CallArgument>) -> Call {
     Call {
+        clocks: Default::default(),
+        wire_arguments: Vec::new(),
+        snapshot: None,
         function: function.to_owned(),
         arguments,
         accounting: default_accounting(1_000_000),
@@ -243,6 +246,9 @@ fn tc_792_source_compiled_lookup_driver_preserves_present_and_absent_paths() {
             &DependencyInput::default(),
             SpineLimits::default(),
             &Call {
+                clocks: Default::default(),
+                wire_arguments: Vec::new(),
+                snapshot: None,
                 function: "query".to_owned(),
                 arguments: vec![
                     CallArgument {
@@ -296,6 +302,9 @@ fn tc_792_source_driver_admits_unused_parameters_before_body_evaluation() {
         &DependencyInput::default(),
         SpineLimits::default(),
         &Call {
+            clocks: Default::default(),
+            wire_arguments: Vec::new(),
+            snapshot: None,
             function: "unused".to_owned(),
             arguments: vec![
                 CallArgument {
@@ -336,6 +345,9 @@ fn tc_792_source_driver_binding_precedence_precedes_value_admission() {
         &DependencyInput::default(),
         SpineLimits::default(),
         &Call {
+            clocks: Default::default(),
+            wire_arguments: Vec::new(),
+            snapshot: None,
             function: "query".to_owned(),
             arguments: vec![CallArgument {
                 parameter: "p".to_owned(),
@@ -371,6 +383,9 @@ fn tc_792_source_driver_cancellation_returns_no_lookup_result() {
         &DependencyInput::default(),
         SpineLimits::default(),
         &Call {
+            clocks: Default::default(),
+            wire_arguments: Vec::new(),
+            snapshot: None,
             function: "query".to_owned(),
             arguments: vec![
                 CallArgument {
@@ -407,6 +422,9 @@ fn arg(parameter: &str, value: i64) -> CallArgument {
 #[trace("TC-792", "FR-100-AC-16")]
 fn tc_792_typed_call_contract_is_not_an_integer_only_facade() {
     let call = Call {
+        clocks: Default::default(),
+        wire_arguments: Vec::new(),
+        snapshot: None,
         function: "held".to_owned(),
         arguments: vec![CallArgument {
             parameter: "w".to_owned(),
@@ -1219,12 +1237,15 @@ fn tc_451_step_5_function_shape_and_lookup() {
             "{refusal:?}"
         );
     }
+    // FR-650: `corner`'s record result has a run value form, so only its
+    // integer argument is refused, as a value of another kind.
     let corner = run_fixture(FIXTURE, &call("corner", vec![arg("p", 0)])).unwrap_err();
     assert_eq!(corner.stage(), Some("call"));
-    assert_eq!(corner.code(), Code::UnsupportedConstruct);
-    assert!(
-        matches!(*corner, RunRefusal::UnsupportedResult { ref function } if function == "corner")
-    );
+    assert_eq!(corner.code(), Code::InvalidRuntimeInput);
+    assert!(matches!(
+        *corner,
+        RunRefusal::WrongValueKind { position: 0 }
+    ));
 }
 
 /// FR-100-AC-5 (TC-451 step 6): a syntax error refuses at stage `source`
@@ -2464,12 +2485,7 @@ fn tc_792_reference_completions_serialize_the_returned_reference() {
         assert_eq!(document["artifacts"], serde_json::json!([]));
         assert_eq!(
             document["result"],
-            serde_json::json!({"kind": "completed", "value": {
-                "kind": "reference",
-                "universe": expected.universe().root_type().to_string(),
-                "type": crate::spine::effective_spelling(expected.object_type()),
-                "object_identity": expected.object().as_str(),
-            }})
+            serde_json::json!({"kind": "completed", "value": crate::spine::run_value::reference_form(expected)})
         );
     };
 

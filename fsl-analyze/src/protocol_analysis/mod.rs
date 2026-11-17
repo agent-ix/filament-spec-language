@@ -8,13 +8,18 @@
 //! provider manifest ([`manifest`]) and its `analyze` item adapters, which
 //! settle each result by the FR-573 map (PA-4, PA-20).
 
+mod finite_replay;
 mod item;
 pub mod manifest;
 mod profile;
 mod project;
 mod realize;
+mod step_view;
 mod subject;
 
+pub(crate) use finite_replay::{
+    finite_replay_item, FiniteReplayReport, SuppliedTrace, TraceDefect,
+};
 pub(crate) use item::settle;
 pub use item::{projection_item, realizability_item, ProtocolAnalysisArtifact};
 pub use profile::{unsupported_construct, Profile};
@@ -25,4 +30,5 @@ pub use realize::{
     realize, replay_counterexample, replay_strategy, RealizabilityOutcome, RealizabilityRefusal,
     RealizabilityRequest, ANALYZER,
 };
+pub use step_view::protocol_step_view;
 pub use subject::{protocol_subject, SubjectBindings, SubjectPackage, SubjectRefusal};

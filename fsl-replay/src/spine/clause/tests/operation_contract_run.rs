@@ -66,10 +66,10 @@ fn ensures_unchanged(selection: ClauseRunSelection) -> ClauseRunRequest {
     )
 }
 
-fn ensures_incremented(selection: ClauseRunSelection) -> ClauseRunRequest {
+fn ensures_increased(selection: ClauseRunSelection) -> ClauseRunRequest {
     contract_request(
         &[],
-        &["self.versionNumber = pre(self.versionNumber) + 1"],
+        &["pre(self.versionNumber) < self.versionNumber"],
         selection,
     )
 }
@@ -128,16 +128,52 @@ fn assert_contract_violation(report: &super::super::ClauseRunReport, kind: &str)
         text.contains("attemptupdate"),
         "the violation names the operation: {disposition:?}"
     );
+
+    let bytes = crate::spine::write_clause_run_result(report).expect("the violation serializes");
+    let document: serde_json::Value = serde_json::from_slice(&bytes).expect("valid result JSON");
+    let contract = &document["disposition"]["operation_contract"];
+    let operation = format!("ix://{CONFIG_VERSION_PACKAGE_IDENTITY}/ConfigVersion/attemptUpdate");
+    let member = if kind == "requires" { "pre" } else { "post" };
+    assert_eq!(contract["operation"]["node"], operation);
+    assert_eq!(contract["kind"], kind);
+    assert_eq!(contract["position"], 0);
+    assert_eq!(
+        contract["artifact"],
+        format!("ix://{CONFIG_VERSION_PACKAGE_IDENTITY}/spec")
+    );
+    assert_eq!(contract["span"]["start"]["line"], 1);
+    assert_eq!(contract["span"]["start"]["column"], 1);
+    assert_eq!(contract["span"]["end"]["line"], 1);
+    assert_eq!(contract["span"]["end"]["column"], 1);
+    assert_eq!(contract["member"], format!("Operation.{member}[0]"));
+    assert_eq!(
+        contract["location"]["origin"]["kind"],
+        "model-operation-clause"
+    );
+    assert_eq!(contract["location"]["origin"]["operation"], operation);
+    assert_eq!(contract["location"]["origin"]["clause"], kind);
+    assert_eq!(contract["location"]["origin"]["position"], 0);
+    assert_eq!(contract["location"]["path"], json!([]));
+    assert!(matches!(
+        crate::spine::read_native_run_result(&bytes),
+        Ok(crate::spine::NativeRunResult::Clause(_))
+    ));
 }
 
-/// TC-1908 step 1 (FR-702-AC-1): a false `ensures` is a violation naming it;
-/// a true one leaves the run a success.
+/// TC-1908 step 1 (FR-702-AC-1): a false `ensures` is an evaluate-stage
+/// violation naming the operation contract.
 #[trace("TC-1908", "FR-702-AC-1")]
 #[test]
-#[ignore = "QSL-2187: the frame run evaluating the operation's own ensures not implemented yet"]
-fn a_false_ensures_is_a_violation_and_a_true_one_succeeds() {
+fn a_false_ensures_is_a_violation() {
     assert_contract_violation(&changed_version_run(ensures_unchanged), "ensures");
-    let report = changed_version_run(ensures_incremented);
+}
+
+/// TC-1908 step 1 (FR-702-AC-1; W17): a true `ensures` that says the version
+/// increased leaves the run successful.
+#[trace("TC-1908", "FR-702-AC-1")]
+#[test]
+fn a_true_ensures_succeeds_when_post_exceeds_pre() {
+    let report = changed_version_run(ensures_increased);
     assert_eq!(
         report.disposition.category(),
         Category::Success,
@@ -151,7 +187,6 @@ fn a_false_ensures_is_a_violation_and_a_true_one_succeeds() {
 /// `ensures`; a true `requires` lets the run reach the false `ensures`.
 #[trace("TC-1908", "FR-702-AC-2")]
 #[test]
-#[ignore = "QSL-2187: the frame run evaluating the operation's own requires not implemented yet"]
 fn a_false_requires_is_reported_before_any_ensures() {
     assert_contract_violation(&changed_version_run(requires_above_five), "requires");
     assert_contract_violation(&changed_version_run(requires_below_five), "ensures");

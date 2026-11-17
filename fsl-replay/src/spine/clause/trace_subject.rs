@@ -10,9 +10,9 @@ use filament_exact::{
 use filament_semantic_value::catalog::{CatalogCode, InternalFault};
 use filament_semantic_value::declaration::CompositeShape;
 use fsl_eval::temporal::{
-    AggregateAtom, AtomReading, CaptureReading, LetterStop, TemporalLetters, TemporalOutcome,
-    TemporalPosition, TemporalTrace, UndefinedCause, WindowRead, WindowSource, WindowTrace,
-    DEFAULT_MAX_WINDOW_VALUES,
+    AggregateAtom, AtomReading, CaptureReading, FirstUndefined, LetterStop, ObservedLocus,
+    TemporalLetters, TemporalOutcome, TemporalPosition, TemporalTrace, UndefinedCause, WindowRead,
+    WindowSource, WindowTrace, DEFAULT_MAX_WINDOW_VALUES,
 };
 use fsl_foundation::source::provenance::OccurrenceKey;
 use fsl_foundation::source_map::NativeLanguage;
@@ -60,6 +60,8 @@ pub fn run_trace_subject_clause(
     let empty_report = |disposition| ClauseRunReport {
         basis: super::undecided_basis(&disposition),
         witness: None,
+        state_clause_counterexample: None,
+        frame_field_values: None,
         disposition,
         usage: ClauseRunUsage::default(),
         consequent_source_events: super::ConsequentSourceEvents::Unavailable,
@@ -138,6 +140,7 @@ pub fn run_trace_subject_clause(
         observation_limits: ObservationLimits::default(),
         accounting: request.accounting,
         package,
+        package_name: &request.package_name,
         sources: &sources,
         progress_capacity: request.limits.progress.covered_positions,
     };
@@ -190,6 +193,7 @@ pub fn run_package_trace_subject(request: &PackageTraceSubjectRequest<'_>) -> Cl
         observation_limits: ObservationLimits::default(),
         accounting: request.accounting,
         package: request.package,
+        package_name: request.package.emitted_package_name().unwrap_or_default(),
         sources: request.sources,
         progress_capacity: 0,
     };
@@ -204,13 +208,36 @@ pub fn run_package_trace_subject(request: &PackageTraceSubjectRequest<'_>) -> Cl
 }
 
 /// FR-330-AC-17: the trace-subject evaluation of `name` over `samples`.
-fn run_subject(
+pub(super) fn run_subject(
     run: &CompiledRun<'_>,
     name: &str,
     subject: &ValueType,
     samples: &[Value],
     max_window_values: u64,
     cancel: Option<&Cancel>,
+) -> ClauseRunReport {
+    run_subject_observing(
+        run,
+        name,
+        subject,
+        samples,
+        max_window_values,
+        cancel,
+        &mut None,
+    )
+}
+
+/// [`run_subject`], beside the first undefined reading of a `holds` atom that
+/// is not a data shortfall, which a caller that holds the trace needs to build
+/// the counterexample of an `Undefined` verdict (FR-330 Outputs).
+pub(super) fn run_subject_observing(
+    run: &CompiledRun<'_>,
+    name: &str,
+    subject: &ValueType,
+    samples: &[Value],
+    max_window_values: u64,
+    cancel: Option<&Cancel>,
+    first_undefined: &mut Option<FirstUndefined>,
 ) -> ClauseRunReport {
     let package = run.package;
     let Some(node) = package
@@ -265,6 +292,7 @@ fn run_subject(
         captures: Vec::new(),
         atom_values: BTreeMap::new(),
         undefined_atom: None,
+        first_undefined: None,
     };
     let result = fsl_eval::temporal::evaluate(
         node.clause(),
@@ -272,6 +300,7 @@ fn run_subject(
         &mut letters,
         &mut meter,
     );
+    *first_undefined = None;
     let (disposition, decisive) = match result {
         Ok(outcome) => {
             let decisive = decisive_aggregate(node, &outcome, &letters.atom_values);
@@ -288,6 +317,7 @@ fn run_subject(
             None,
         ),
     };
+    *first_undefined = letters.first_undefined.take();
     let mut report = run.report(disposition);
     report.usage = ClauseRunUsage::from_meter(&meter, Default::default());
     if let Some((atom, position)) = decisive {
@@ -609,6 +639,8 @@ struct TraceSubjectLetters<'a> {
     captures: Vec<Value>,
     atom_values: BTreeMap<(usize, u64), Option<bool>>,
     undefined_atom: Option<usize>,
+    /// The first undefined reading of an atom that is not a data shortfall.
+    first_undefined: Option<FirstUndefined>,
 }
 
 impl TraceSubjectLetters<'_> {
@@ -674,8 +706,8 @@ enum ExpressionReading {
     Undefined(UndefinedCause),
 }
 
-impl TemporalLetters for TraceSubjectLetters<'_> {
-    fn atom(
+impl TraceSubjectLetters<'_> {
+    fn read_atom(
         &mut self,
         atom: FormulaNodeId,
         position: TemporalPosition,
@@ -750,6 +782,29 @@ impl TemporalLetters for TraceSubjectLetters<'_> {
                 AtomReading::Undefined(_) => None,
             },
         );
+        Ok(reading)
+    }
+}
+
+impl TemporalLetters for TraceSubjectLetters<'_> {
+    fn atom(
+        &mut self,
+        atom: FormulaNodeId,
+        position: TemporalPosition,
+        meter: &mut Meter,
+    ) -> Result<AtomReading, LetterStop> {
+        let reading = self.read_atom(atom, position, meter)?;
+        if let AtomReading::Undefined(cause) = &reading {
+            if !matches!(cause, UndefinedCause::InsufficientData(_))
+                && self.first_undefined.is_none()
+            {
+                self.first_undefined = Some(FirstUndefined {
+                    locus: ObservedLocus::Atom(atom),
+                    position,
+                    cause: cause.clone(),
+                });
+            }
+        }
         Ok(reading)
     }
 
@@ -927,34 +982,34 @@ mod tests {
          profile t = \"filament.temporal.event-position.false-extension/v1\";\n\
          record Counter { level: Int[0, 9]; }\n\
          record Other { level: Int[0, 9]; }\n\
-         temporal A using t over (c: Counter) clock \"model-steps\" on origin {\n\
+         temporal A using t over (c: Counter) clock \"events\" on origin {\n\
            always[0,2] (count where holds(c.level != 2) over past[0,0] min_count 1 >= 1)\n\
          }\n\
-         temporal B using t over (c: Counter) clock \"model-steps\" on origin {\n\
+         temporal B using t over (c: Counter) clock \"events\" on origin {\n\
            always[0,0] (count where holds(c.level > 9) over past[0,0] min_count 0 >= 1)\n\
          }\n\
-         temporal Each using t over (c: Counter) clock \"model-steps\" on each (q: Counter) {\n\
+         temporal Each using t over (c: Counter) clock \"events\" on each (q: Counter) {\n\
            always[0,0] (count where holds(c.level > 9) over past[0,0] min_count 0 >= 1)\n\
          }\n\
-         temporal BoundedFalse using t over (c: Counter) clock \"model-steps\" on origin {\n\
+         temporal BoundedFalse using t over (c: Counter) clock \"events\" on origin {\n\
            always[0,2] ((count where holds(c.level > 9) over past[0,0] min_count 0 >= 1) and holds(c.level > 0))\n\
          }\n\
-         temporal ComposedHeld using t over (c: Counter) clock \"model-steps\" on origin {\n\
+         temporal ComposedHeld using t over (c: Counter) clock \"events\" on origin {\n\
            always[0,2] ((count where holds(c.level = 0) over past[0,0] min_count 0 >= 1) and holds(c.level > 0))\n\
          }\n\
-         temporal ComposedOr using t over (c: Counter) clock \"model-steps\" on origin {\n\
+         temporal ComposedOr using t over (c: Counter) clock \"events\" on origin {\n\
            always[0,2] ((count where holds(c.level > 9) over past[0,0] min_count 0 >= 1) or holds(c.level > 0))\n\
          }\n\
-         temporal ComposedOrReverse using t over (c: Counter) clock \"model-steps\" on origin {\n\
+         temporal ComposedOrReverse using t over (c: Counter) clock \"events\" on origin {\n\
            always[0,2] (holds(c.level > 9) or (count where holds(c.level > 9) over past[0,0] min_count 0 >= 1))\n\
          }\n\
-         temporal ComposedNested using t over (c: Counter) clock \"model-steps\" on origin {\n\
+         temporal ComposedNested using t over (c: Counter) clock \"events\" on origin {\n\
            always[0,2] (((count where holds(c.level > 9) over past[0,0] min_count 0 >= 1) and holds(c.level > 0)) and holds(c.level > 0))\n\
          }\n\
-         temporal UnknownThenFalse using t over (c: Counter) clock \"model-steps\" on each (q: Counter) {\n\
+         temporal UnknownThenFalse using t over (c: Counter) clock \"events\" on each (q: Counter) {\n\
            always[0,2] (count where holds(c.level = 0) over past[1,1] min_count 1 >= 2)\n\
          }\n\
-         temporal Plain using t over (c: Counter) clock \"model-steps\" on origin {\n\
+         temporal Plain using t over (c: Counter) clock \"events\" on origin {\n\
            always[0,0] holds(c.level > 0)\n\
          }\n";
 

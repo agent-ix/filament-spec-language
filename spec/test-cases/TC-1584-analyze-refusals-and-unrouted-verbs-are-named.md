@@ -25,7 +25,7 @@ Steps 4 and 5 run in the driver repository, against the `fsl` binary.
 ## Expected Results
 
 - Step 1: category `refusal`, empty `items`, diagnostic `invalid-request`, exit 20; text line `fsl analyze: invalid-request:`.
-- Step 2: `last_stage` `check`, the refusal's code, exit 20.
+- Step 2: `last_stage` `S3`, the refusal's code, exit 20.
 - Step 3: the binding refusal's code, exit 20.
 - Step 4: each writes a document with that `operation`, `unsupported`, `unsupported_operation`/`operation-not-routed`, payload `verb`, exit 21; stdout never empty.
 - Step 5: each prints the named message and exits 21.

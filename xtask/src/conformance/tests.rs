@@ -326,6 +326,9 @@ fn ordinary_ci_cargo_lane_inherits_canonical_checkout() {
         "arch-lint-qualified-core",
         "-o",
         "build-no-std",
+        // FR-765: its own lane, run in the sibling driver checkout.
+        "-o",
+        "examples-check",
     ];
     run_ci_with(
         Path::new("make"),

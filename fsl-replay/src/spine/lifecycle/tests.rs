@@ -2064,14 +2064,14 @@ fn aggregate_package_accepts_temporal_selection_from_later_source() {
     let a_text = format!(
         "{header}model M = \"acme/orders\";\n\
          record Point {{ x: Int[0, 9]; }}\n\
-         temporal Root using ev over (input: M::Widget) clock \"events\" on origin {{ eventually[0,1] holds(true) }}"
+         temporal Root using ev over (input: M::Widget) clock \"model-steps\" on origin {{ eventually[0,1] holds(true) }}"
     );
     let a = parse_named(source_a, a_text.as_bytes());
     // FR-480: a model alias resolves only in the unit that declares it, so
     // the later source binds its own `M` to write `M::Widget`.
     let b_text = format!(
         "{header}model M = \"acme/orders\";\n\
-         temporal Due using ev over (input: M::Widget) clock \"events\" on origin {{ eventually[0,1] holds(true) }}"
+         temporal Due using ev over (input: M::Widget) clock \"model-steps\" on origin {{ eventually[0,1] holds(true) }}"
     );
     let b = parse_named(source_b, b_text.as_bytes());
     let temporal_span = b
@@ -2322,7 +2322,9 @@ fn check_units_continues_past_a_protocol_refusal_only_when_asked() {
             &models,
             &dependencies,
             UnitCheckOptions {
+                integer_division: None,
                 temporal_selections: &[],
+                clocks: None,
                 continue_protocol_refusals,
                 refinement_internals: None,
                 extension_catalog: None,
@@ -3312,6 +3314,9 @@ fn a_cancel_tripped_mid_run_is_cancelled_with_its_cause_never_a_fault() {
             &DependencyInput::default(),
             SpineLimits::default(),
             &crate::spine::Call {
+                clocks: Default::default(),
+                wire_arguments: Vec::new(),
+                snapshot: None,
                 function: "seven".to_owned(),
                 arguments: Vec::new(),
                 accounting: default_accounting(DEFAULT_WORK_UNITS),
@@ -3447,7 +3452,11 @@ fn an_unimported_library_internal_list_defect_refuses_the_compile_at_its_owner()
     let failure = check_with_refinement_internals(
         &parsed,
         "fixture".to_owned(),
-        None,
+        super::SourceInputs {
+            refinement_internals: None,
+            temporal_selections: &[],
+            clocks: None,
+        },
         &models,
         &dependencies,
         limits,

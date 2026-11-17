@@ -78,16 +78,23 @@ for negotiation whether the claim is bounded.
 ### Profile identity
 
 - A temporal clause SHALL be checked under exactly one temporal profile: the
-  unit's one temporal profile selection resolved by FR-110 to one of
+  profile its own `using` alias selects, resolved by FR-110 to one of
   `filament.temporal.event-position.false-extension/v1`,
   `filament.temporal.fixed-sample.false-extension/v1`,
   `filament.temporal.timestamped-event.finite-window/v1`,
   `filament.temporal.infinite-trace/v1` and `filament.temporal.timed/v1` (FSpec
   FR-250, FR-234).
-- When a unit holds a temporal clause and selects no temporal profile, or
-  selects two, the check SHALL refuse `unknown_profile`/
-  `unsupported-selection` at the clause's span, naming the selections it
-  found.
+- A unit MAY select several temporal profiles under distinct aliases, and its
+  clauses MAY use different ones: the grammar gives every temporal clause a
+  `using` alias, so the alias, not the unit, names the clause's profile, and
+  a unit that mixes event-position, fixed-sample and timestamped-event
+  clauses over one trace subject (FSpec FR-540-AC-1, FR-640-AC-1) is one
+  unit. The count of temporal profiles the unit selects SHALL NOT be a reason
+  to refuse.
+- When a clause's `using` alias resolves to no temporal profile, or to two
+  (a composed profile carrying two temporal facets), the check SHALL refuse
+  `unknown_profile`/`unsupported-selection` at the clause's span, naming the
+  alias and the selections it resolved to.
 - The infinite-trace profile SHALL read positions with the event-position
   sequence authority and no false-extension closure (FSpec FR-250-AC-6).
 
@@ -159,7 +166,8 @@ for negotiation whether the claim is bounded.
 | FR-326-AC-1 | Under infinite-trace, `eventually holds(c.value = 3)` checks with `None` on `eventually`, no horizon, and the record (`temporal-satisfaction`, `Unbounded`) with one infinite-trace-formula domain keyed by the clause node; under event-position false-extension the same clause refuses `unsupported_construct`/`expression-form` at `eventually`'s span. | Test (TC-836) |
 | FR-326-AC-2 | Under event-position false-extension, `always[0,2] eventually[1,3] holds(c.value = 3)` checks with horizon 5, and `eventually[3,*] holds(p)` refuses `unsupported_construct`/`expression-form` at the interval's span; under infinite-trace `eventually[3,*] holds(p)` checks with `Some{3, Open}`. `eventually[5,3] holds(p)` refuses `ill_typed`/`type-mismatch` at the interval's span under both profiles. | Test (TC-836) |
 | FR-326-AC-3 | Under event-position false-extension, `eventually[0,18446744073709551615] eventually[0,1] holds(p)` refuses `stage_limit_exceeded` with limit kind work budget at the operator whose interval overflowed. | Test (TC-836) |
-| FR-326-AC-4 | A unit holding a temporal clause with no temporal profile selection refuses `unknown_profile`/`unsupported-selection` at the clause's span; one selecting both the event-position and the infinite-trace profiles refuses the same way, naming both. | Test (TC-836) |
+| FR-326-AC-4 | A temporal clause whose `using` alias selects `filament.value.complete/v1`, a profile with no temporal facet, refuses `unknown_profile`/`unsupported-selection` at the clause's span, naming the alias and its selection. | Test (TC-836) |
+| FR-326-AC-7 | A unit selecting the event-position profile as `ev` and the infinite-trace profile as `inf`, with one clause `using ev` and one `using inf`, checks, each clause under its own alias's profile, with no `unknown_profile` refusal. | Test (TC-2180) |
 | FR-326-AC-5 | A bounded-profile clause over `over (c: Counter)` with no unbounded type has record (`temporal-satisfaction`, `Bounded`); the `[0,2]` interval's key under event-position differs from the `[0,2]` key under fixed-sample. | Test (TC-836) |
 | FR-326-AC-6 | Under the finite-window profile with the clock unit `ms`, `eventually[0,5] holds(p)` checks with the tick interval `[0,5]`; `eventually[0 ms, 5 ms] holds(p)`, `eventually[0 ms, 5 ms) holds(p)`, `eventually[0.5 ms, 5 ms] holds(p)` and `eventually(1 ms, 5 ms] holds(p)` are each refused `ill_typed`/`type-mismatch` at the interval's span; `eventually[3,*] holds(p)` is refused `unsupported_construct`/`expression-form`, and `eventually[3 ms, *] holds(p)` is refused `ill_typed`/`type-mismatch`; the aggregate window `count over past[0 ms, 300 ms] min_count 1 >= 1` checks. | Test (TC-836) |
 

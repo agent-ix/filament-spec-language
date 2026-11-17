@@ -176,7 +176,7 @@ fn one_source_checks_packages_and_executes() {
     }
     assert_eq!(
         outcomes[2].0["result"],
-        serde_json::json!({"kind": "completed", "value": {"kind": "boolean", "value": true}})
+        serde_json::json!({"kind": "completed", "value": {"boolean": true}})
     );
 }
 

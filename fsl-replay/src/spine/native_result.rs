@@ -55,6 +55,12 @@ pub enum NativeRunResultError {
     /// A temporal report's basis is not its verdict's FR-266 Temporal row.
     #[error("temporal basis disagrees with its verdict")]
     TemporalBasis,
+    /// The finite-window result's correction relation is refused (FR-526).
+    #[error("the correction relation is refused: {0}")]
+    Correction(#[from] super::clause::CorrectionRefusal),
+    /// The report's progress ledger has no document form.
+    #[error("cannot write the progress ledger: {0}")]
+    Ledger(#[from] super::clause::LedgerReadError),
     /// The typed report could not be represented as JSON.
     #[error("cannot serialize clause-run result: {0}")]
     Json(#[from] serde_json::Error),
@@ -244,6 +250,11 @@ impl ClauseRunRecord {
     /// The settlement basis label.
     pub fn basis(&self) -> &'static str {
         self.0.basis.as_str()
+    }
+
+    /// The document's four outcome axes (FR-622).
+    pub fn axes(&self) -> crate::OutcomeAxes {
+        self.0.axes
     }
 
     /// Whether the document carries a separating witness.
@@ -645,7 +656,7 @@ pub struct CallLocusRead {
     pub span: SpanRead,
 }
 
-#[derive(Deserialize)]
+#[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 #[allow(
     dead_code,
@@ -659,7 +670,7 @@ pub struct SpanRead {
     pub end: PositionRead,
 }
 
-#[derive(Deserialize)]
+#[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 #[allow(
     dead_code,
@@ -716,6 +727,19 @@ impl CallLocationRead {
                 protocol: *protocol,
                 attempt: *attempt,
             },
+            CallOriginRead::ModelOperationClause {
+                operation,
+                clause,
+                position,
+            } => Origin::ModelOperationClause {
+                operation: operation.clone(),
+                kind: match clause.as_str() {
+                    "requires" => filament_semantic_value::location::OperationClauseKind::Requires,
+                    "ensures" => filament_semantic_value::location::OperationClauseKind::Ensures,
+                    _ => unreachable!("the native reader validates operation-clause origins"),
+                },
+                position: *position,
+            },
         };
         Location::at(origin, &self.path)
     }
@@ -764,6 +788,15 @@ pub enum CallOriginRead {
         /// Attempt index.
         attempt: usize,
     },
+    /// One of a model operation's kept `requires` or `ensures` clauses.
+    ModelOperationClause {
+        /// Operation declaration node identity.
+        operation: String,
+        /// `requires` or `ensures`.
+        clause: String,
+        /// Zero-based position in that clause list.
+        position: usize,
+    },
 }
 
 #[derive(Deserialize)]
@@ -783,8 +816,10 @@ struct RefusalRead {
     code: String,
     #[serde(default, deserialize_with = "present")]
     cause: Option<String>,
-    #[serde(default, deserialize_with = "present")]
+    #[serde(default, deserialize_with = "fields_read")]
     fields: Option<BTreeMap<String, String>>,
+    #[serde(default, deserialize_with = "present")]
+    message: Option<String>,
     #[serde(default, deserialize_with = "present")]
     locus: Option<RefusalLocusRead>,
     #[serde(default, deserialize_with = "present")]
@@ -1048,6 +1083,30 @@ struct DispositionRead {
     refusal: Option<RefusalRead>,
     #[serde(default, deserialize_with = "present")]
     temporal: Option<serde_json::Value>,
+    #[serde(default, deserialize_with = "present")]
+    operation_contract: Option<OperationContractRead>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "snake_case")]
+enum OperationContractKindRead {
+    Requires,
+    Ensures,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct OperationContractRead {
+    operation: DeclarationKeyRead,
+    name: String,
+    kind: OperationContractKindRead,
+    position: usize,
+    #[serde(default, deserialize_with = "present")]
+    artifact: Option<String>,
+    #[serde(default, deserialize_with = "present")]
+    span: Option<SpanRead>,
+    location: CallLocationRead,
+    member: String,
 }
 
 #[derive(Deserialize)]
@@ -1059,6 +1118,25 @@ struct ClauseRead {
     basis: Basis,
     #[serde(default, deserialize_with = "present")]
     witness: Option<RecordWire<Box<RawValue>>>,
+    #[serde(default, deserialize_with = "present")]
+    ledger: Option<serde_json::Value>,
+    axes: crate::OutcomeAxes,
+    #[serde(default, rename = "support")]
+    _support: Option<serde_json::Value>,
+    #[serde(default, rename = "late")]
+    _late: Option<serde_json::Value>,
+    #[serde(default, rename = "admitted_late")]
+    _admitted_late: Option<serde_json::Value>,
+    #[serde(default, rename = "result_identity")]
+    _result_identity: Option<String>,
+    #[serde(default, rename = "input_identity")]
+    _input_identity: Option<String>,
+    #[serde(default, rename = "relation")]
+    _relation: Option<serde_json::Value>,
+    #[serde(default, rename = "lineage")]
+    _lineage: Option<u64>,
+    #[serde(default, rename = "evidence_ledger")]
+    _evidence_ledger: Option<serde_json::Value>,
 }
 
 #[derive(Deserialize)]
@@ -1073,6 +1151,30 @@ struct CommandErrorRead {
     #[serde(rename = "details")]
     _details: Box<RawValue>,
     basis: Basis,
+}
+
+/// A refusal record's `fields`: text members, and FR-645's `expected` list, which
+/// reads as its kinds joined by commas.
+fn fields_read<'de, D>(decoder: D) -> Result<Option<BTreeMap<String, String>>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    #[derive(Deserialize)]
+    #[serde(untagged)]
+    enum Field {
+        Text(String),
+        List(Vec<String>),
+    }
+    let fields = BTreeMap::<String, Field>::deserialize(decoder)?;
+    Ok(Some(
+        fields
+            .into_iter()
+            .map(|(name, field)| match field {
+                Field::Text(text) => (name, text),
+                Field::List(kinds) => (name, kinds.join(",")),
+            })
+            .collect(),
+    ))
 }
 
 fn present<'de, D, T>(decoder: D) -> Result<Option<T>, D::Error>
@@ -1240,6 +1342,52 @@ fn catalog_category(code: &str) -> Option<&'static str> {
 fn validate_disposition(value: &DispositionRead) -> Result<(), NativeRunReadError> {
     let invalid = |member, reason| NativeRunReadError::Invalid { member, reason };
     temporal::refuse_temporal_only_outcome(value.outcome.as_ref())?;
+    if let Some(contract) = &value.operation_contract {
+        let declaration = contract.operation.typed();
+        let (kind, member) = match contract.kind {
+            OperationContractKindRead::Requires => ("requires", "pre"),
+            OperationContractKindRead::Ensures => ("ensures", "post"),
+        };
+        let expected_member = format!("Operation.{member}[{}]", contract.position);
+        let origin_matches = matches!(
+            &contract.location.origin,
+            CallOriginRead::ModelOperationClause {
+                operation,
+                clause,
+                position,
+            } if operation == &declaration.node
+                && clause == kind
+                && *position == contract.position
+                && contract.location.path.is_empty()
+        );
+        if !matches!(value.stage, Stage::Evaluate)
+            || !matches!(value.category, Category::Violation)
+            || value.truth != Some(false)
+            || value.refusal.is_some()
+            || value.internal_fault.is_some()
+            || contract.name.is_empty()
+            || declaration.package.is_empty()
+            || declaration.node.is_empty()
+            || !matches!(
+                contract.kind,
+                OperationContractKindRead::Requires | OperationContractKindRead::Ensures
+            )
+            || contract.member != expected_member
+            || !origin_matches
+            || !matches!(
+                value.outcome,
+                Some(OutcomeRead::Completed {
+                    value: ValueRead::Boolean { value: false }
+                })
+            )
+        {
+            return Err(invalid(
+                "disposition.operation_contract",
+                "operation contract violation needs a named false evaluation",
+            ));
+        }
+        let _source_identity = (&contract.artifact, &contract.span);
+    }
     match (&value.stage, &value.category) {
         (_, Category::Pending | Category::Indeterminate) => {
             return Err(invalid(
@@ -1400,6 +1548,29 @@ fn validate_disposition(value: &DispositionRead) -> Result<(), NativeRunReadErro
             }
         }
         (Stage::Evaluate, Category::Refusal | Category::Unsupported) => {
+            // FR-645: a trace refusal at `evaluate` is the record itself, with
+            // its reason in `fields`.
+            let trace_refusal = value.outcome.is_none()
+                && value.internal_fault.is_none()
+                && value.truth.is_none()
+                && value.refusal.as_ref().is_some_and(|refusal| {
+                    refusal.code == "invalid_runtime_input"
+                        && refusal.cause.as_deref() == Some("invalid-value")
+                        && refusal
+                            .message
+                            .as_deref()
+                            .is_some_and(|message| !message.is_empty())
+                        && refusal
+                            .fields
+                            .as_ref()
+                            .and_then(|fields| fields.get("reason"))
+                            .is_some_and(|reason| {
+                                super::clause::TRACE_REFUSAL_REASONS.contains(&reason.as_str())
+                            })
+                });
+            if trace_refusal {
+                return Ok(());
+            }
             if !matches!(value.outcome.as_ref(), Some(OutcomeRead::Refused { .. }))
                 || value.internal_fault.is_some()
                 || value.refusal.is_some()
@@ -1774,6 +1945,14 @@ pub fn read_native_run_result_bounded(
         if document.format != format {
             return Err(NativeRunReadError::UnsupportedFormat(document.format));
         }
+        if let Some(ledger) = &document.ledger {
+            let invalid = |_| NativeRunReadError::Invalid {
+                member: "ledger",
+                reason: "a closed filament.progress-ledger/1 document",
+            };
+            let bytes = serde_json::to_vec(ledger).map_err(|error| invalid(error.to_string()))?;
+            super::clause::read_ledger(&bytes).map_err(|error| invalid(error.to_string()))?;
+        }
         if let Some(value) = &document.disposition.temporal {
             let record = temporal::decode(value)?;
             temporal::validate_temporal(
@@ -2027,11 +2206,22 @@ struct RefusalWire {
     #[serde(skip_serializing_if = "Option::is_none")]
     cause: Option<&'static str>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    fields: Option<BTreeMap<&'static str, String>>,
+    fields: Option<BTreeMap<&'static str, FieldWire>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    message: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     locus: Option<crate::outcome::OutcomeLocus>,
     #[serde(skip_serializing_if = "Option::is_none")]
     frame_witness: Option<FrameWitnessWire>,
+}
+
+/// One member of a refusal record's `fields`: text, or the list of FR-645's
+/// `expected` trace kinds.
+#[derive(Serialize)]
+#[serde(untagged)]
+enum FieldWire {
+    Text(String),
+    List(Vec<&'static str>),
 }
 
 impl RefusalWire {
@@ -2040,12 +2230,18 @@ impl RefusalWire {
             code,
             cause,
             fields: None,
+            message: None,
             locus: None,
             frame_witness: None,
         }
     }
     fn fields(mut self, fields: BTreeMap<&'static str, String>) -> Self {
-        self.fields = Some(fields);
+        self.fields = Some(
+            fields
+                .into_iter()
+                .map(|(name, text)| (name, FieldWire::Text(text)))
+                .collect(),
+        );
         self
     }
 }
@@ -2225,6 +2421,42 @@ struct Disposition {
     refusal: Option<RefusalWire>,
     #[serde(skip_serializing_if = "Option::is_none")]
     temporal: Option<temporal::TemporalWire>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    operation_contract: Option<OperationContractWire>,
+}
+
+#[derive(Serialize)]
+struct OperationContractWire {
+    operation: DeclarationKeyWire,
+    name: String,
+    kind: &'static str,
+    position: usize,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    artifact: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    span: Option<LocatedSpan>,
+    location: CallLocationWire,
+    member: String,
+}
+
+impl From<&crate::spine::clause::OperationContractViolation> for OperationContractWire {
+    fn from(value: &crate::spine::clause::OperationContractViolation) -> Self {
+        Self {
+            operation: DeclarationKeyWire::from(&value.operation),
+            name: value.operation_name.clone(),
+            kind: match value.kind {
+                filament_semantic_value::location::OperationClauseKind::Requires => "requires",
+                filament_semantic_value::location::OperationClauseKind::Ensures => "ensures",
+            },
+            position: value.position,
+            artifact: value.artifact.clone(),
+            span: value.span,
+            location: CallLocationWire::from(
+                &filament_semantic_value::location::ExpressionLocation::root(value.origin.clone()),
+            ),
+            member: value.member.to_string(),
+        }
+    }
 }
 
 #[derive(Serialize)]
@@ -2235,12 +2467,68 @@ struct ClauseRunDocument {
     basis: &'static str,
     #[serde(skip_serializing_if = "Option::is_none")]
     witness: Option<RecordWire<Box<RawValue>>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    ledger: Option<serde_json::Value>,
+    /// FR-641-AC-8, FSpec FR-352-AC-19: the effective limits a `model`
+    /// trace ran under, defaults written out, so runs that differ only in a
+    /// limit have different result identities. A sample trace writes none.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    limits: Option<BTreeMap<&'static str, String>>,
+    axes: crate::OutcomeAxes,
+    /// FR-501 "Result report": the decision support of a finite-window
+    /// result, as `(position, atom)` pairs in canonical positions.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    support: Option<Vec<SupportWire>>,
+    /// FR-501 "Request-file spelling": the observations a late-data cutoff
+    /// excluded, written whenever a cutoff is selected.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    late: Option<Vec<LateWire>>,
+    /// FR-526: the late observations a superseding repair admitted.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    admitted_late: Option<Vec<AdmittedWire>>,
+    /// FR-526: the result's identity, its input identity, its relation, its
+    /// lineage and the updated evidence ledger.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    result_identity: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    input_identity: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    relation: Option<serde_json::Value>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    lineage: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    evidence_ledger: Option<serde_json::Value>,
+}
+
+/// One decision-support pair of a finite-window result.
+#[derive(Serialize)]
+struct SupportWire {
+    position: u64,
+    atom: String,
+}
+
+/// One `late` entry of a finite-window result.
+#[derive(Serialize)]
+struct LateWire {
+    position: u64,
+    observation: String,
+    stamp: u64,
+    arrival: u64,
+    anchors: Vec<u64>,
+}
+
+/// One `admitted_late` entry of a superseding repair.
+#[derive(Serialize)]
+struct AdmittedWire {
+    position: u64,
+    observation: String,
 }
 
 impl Disposition {
     fn of(
         value: &ClauseDisposition,
         counterexample: Option<&crate::ObservedTemporalCounterexample>,
+        selection: Option<&super::ClauseRunSelection>,
     ) -> Result<Self, NativeRunResultError> {
         let mut result = Self {
             stage: match value.stage() {
@@ -2255,6 +2543,7 @@ impl Disposition {
             internal_fault: None,
             refusal: None,
             temporal: None,
+            operation_contract: None,
         };
         match value {
             ClauseDisposition::Compile(refusal) => {
@@ -2266,7 +2555,9 @@ impl Disposition {
                 while let super::CompileRefusal::Dependency { refusal, .. } = source {
                     source = refusal.as_ref();
                 }
-                record.fields = source.fields();
+                if let Some(fields) = source.fields() {
+                    record = record.fields(fields);
+                }
                 if let super::CompileRefusal::Limit(limit) = source {
                     record.locus = limit.locus().map(crate::outcome::OutcomeLocus::from);
                 }
@@ -2317,6 +2608,8 @@ impl Disposition {
                     super::RunRefusal::Compile(compile) => compile.cause(),
                     super::RunRefusal::Fault(_) => None,
                     super::RunRefusal::SourceNotSupplied { .. } => Some("missing-member"),
+                    super::RunRefusal::Argument { defect, .. } => Some(defect.cause),
+                    super::RunRefusal::UnsupportedParameter { .. } => Some("unsupported-feature"),
                     super::RunRefusal::MissingDeclaration { .. }
                     | super::RunRefusal::UnsupportedResult { .. }
                     | super::RunRefusal::UnknownParameter { .. }
@@ -2349,7 +2642,14 @@ impl Disposition {
                     | super::RunRefusal::UnboundParameter { parameter } => {
                         record = record.fields(BTreeMap::from([("parameter", parameter.clone())]));
                     }
-                    super::RunRefusal::WrongValueKind { position } => {
+                    super::RunRefusal::Argument { position, defect } => {
+                        record = record.fields(BTreeMap::from([
+                            ("position", position.to_string()),
+                            ("path", defect.path.clone()),
+                        ]));
+                    }
+                    super::RunRefusal::WrongValueKind { position }
+                    | super::RunRefusal::UnsupportedParameter { position } => {
                         record =
                             record.fields(BTreeMap::from([("position", position.to_string())]));
                     }
@@ -2451,7 +2751,7 @@ impl Disposition {
                         },
                     });
                 }
-                CallOutcome::Completed(CallValue::Reference(_)) => {
+                CallOutcome::Completed(CallValue::Reference(_) | CallValue::Written(_)) => {
                     result.category = Category::InternalFailure.as_str();
                     result.internal_fault = Some(InternalFaultWire {
                         stage: "native-result",
@@ -2498,10 +2798,24 @@ impl Disposition {
                 record.frame_witness = Some(FrameWitnessWire::from(witness.as_ref()));
                 result.refusal = Some(record);
             }
+            ClauseDisposition::OperationContractViolation(witness) => {
+                result.outcome = Some(Outcome::Completed {
+                    value: ValueWire::Boolean { value: false },
+                });
+                result.operation_contract = Some(OperationContractWire::from(witness));
+            }
             ClauseDisposition::EvaluateFault(fault) => {
                 result.internal_fault = Some(InternalFaultWire {
                     stage: fault.stage(),
                     invariant: fault.invariant(),
+                });
+            }
+            // A valuation is read by the TL cross-evaluation (FR-931), never
+            // written as a clause-run result.
+            ClauseDisposition::TemporalValuation(_) => {
+                result.internal_fault = Some(InternalFaultWire {
+                    stage: "clause-run",
+                    invariant: "a-valuation-is-not-a-clause-run-result",
                 });
             }
             ClauseDisposition::Temporal(verdict) => {
@@ -2527,6 +2841,34 @@ impl Disposition {
                     }
                 }
             },
+            ClauseDisposition::TraceRefused(refusal) => {
+                let mut fields = BTreeMap::from([
+                    ("reason", FieldWire::Text(refusal.reason.to_owned())),
+                    ("profile", FieldWire::Text(refusal.profile.to_owned())),
+                ]);
+                if !refusal.expected.is_empty() {
+                    fields.insert("expected", FieldWire::List(refusal.expected.clone()));
+                }
+                if let Some(supplied) = refusal.supplied {
+                    fields.insert("supplied", FieldWire::Text(supplied.to_owned()));
+                }
+                if let Some(position) = refusal.position {
+                    fields.insert("position", FieldWire::Text(position.to_string()));
+                }
+                if let Some(pointer) =
+                    selection.and_then(|selection| selection.request_pointer(refusal.reason))
+                {
+                    fields.insert("request_pointer", FieldWire::Text(pointer));
+                }
+                let mut record =
+                    RefusalWire::new(Code::InvalidRuntimeInput.as_str(), Some("invalid-value"));
+                record.fields = Some(fields);
+                record.message = Some(refusal.message.clone());
+                record.locus = refusal.locus.as_ref().map(|region| {
+                    crate::outcome::OutcomeLocus::from(&Locus::Region(region.clone()))
+                });
+                result.refusal = Some(record);
+            }
             ClauseDisposition::ProgressContradiction(refusal) => {
                 let (wire, outcome) = temporal::contradiction_wire(refusal);
                 result.temporal = Some(wire);
@@ -2574,21 +2916,35 @@ pub(crate) struct ItemRecord {
 
 pub(crate) fn item_record(report: &ClauseRunReport) -> Result<ItemRecord, NativeRunResultError> {
     use super::{TemporalIndeterminateReason as Reason, TemporalUndefinedCause, TemporalVerdict};
+    let witness = match &report.disposition {
+        ClauseDisposition::FrameViolation(frame_witness) => {
+            let mut witness = serde_json::to_value(FrameWitnessWire::from(frame_witness.as_ref()))?;
+            if let Some((before, after)) = &report.frame_field_values {
+                witness["before"] = serde_json::Value::String(before.clone());
+                witness["after"] = serde_json::Value::String(after.clone());
+            }
+            Some(witness)
+        }
+        _ => report
+            .state_clause_counterexample
+            .as_ref()
+            .and_then(|counterexample| counterexample.witness.as_ref())
+            .or(report.witness.as_ref())
+            .map(|witness| RecordWire::of(witness).and_then(|wire| Ok(serde_json::to_value(wire)?)))
+            .transpose()?,
+    };
+    let base = ItemRecord {
+        witness,
+        ..ItemRecord::default()
+    };
     let ClauseDisposition::Temporal(verdict) = &report.disposition else {
-        return Ok(ItemRecord::default());
+        return Ok(base);
     };
     let counterexample = temporal::item_counterexample(verdict, report.counterexample.as_ref())?;
     Ok(match verdict {
         TemporalVerdict::Violated { at } => ItemRecord {
             position: Some(*at),
             counterexample,
-            witness: report
-                .witness
-                .as_ref()
-                .map(|witness| {
-                    RecordWire::of(witness).and_then(|wire| Ok(serde_json::to_value(wire)?))
-                })
-                .transpose()?,
             decisive: report
                 .decisive
                 .as_ref()
@@ -2597,7 +2953,7 @@ pub(crate) fn item_record(report: &ClauseRunReport) -> Result<ItemRecord, Native
                         .and_then(|wire| Ok(serde_json::to_value(wire)?))
                 })
                 .transpose()?,
-            ..ItemRecord::default()
+            ..base
         },
         TemporalVerdict::Undefined {
             at,
@@ -2609,12 +2965,12 @@ pub(crate) fn item_record(report: &ClauseRunReport) -> Result<ItemRecord, Native
             position: Some(*at),
             count: Some(*count),
             min_count: Some(*min_count),
-            ..ItemRecord::default()
+            ..base
         },
         TemporalVerdict::Undefined { at, .. } => ItemRecord {
             position: Some(*at),
             counterexample,
-            ..ItemRecord::default()
+            ..base
         },
         TemporalVerdict::Indeterminate {
             reason:
@@ -2623,7 +2979,7 @@ pub(crate) fn item_record(report: &ClauseRunReport) -> Result<ItemRecord, Native
             ..
         } => ItemRecord {
             position: Some(*position),
-            ..ItemRecord::default()
+            ..base
         },
         TemporalVerdict::Indeterminate {
             reason: Reason::IncompleteInput | Reason::MissingHistory | Reason::StraddlesBound,
@@ -2637,12 +2993,23 @@ pub(crate) fn item_record(report: &ClauseRunReport) -> Result<ItemRecord, Native
         | TemporalVerdict::Incomplete(_)
         | TemporalVerdict::ActivationIncomplete { .. }
         | TemporalVerdict::WindowLimitReached { .. }
-        | TemporalVerdict::ProgressLimitReached(_) => ItemRecord::default(),
+        | TemporalVerdict::ProgressLimitReached(_)
+        | TemporalVerdict::ExpansionLimitReached(_) => base,
     })
 }
 
 /// Serialize one FR-109 report as RFC 8785 `native-run-result/2` bytes.
 pub fn write_clause_run_result(report: &ClauseRunReport) -> Result<Vec<u8>, NativeRunResultError> {
+    write_clause_run_result_for(report, None)
+}
+
+/// [`write_clause_run_result`] for a report of the request whose selection is
+/// `selection`: a trace refusal also names the request member it is about
+/// (FR-645 `request_pointer`).
+pub fn write_clause_run_result_for(
+    report: &ClauseRunReport,
+    selection: Option<&super::ClauseRunSelection>,
+) -> Result<Vec<u8>, NativeRunResultError> {
     if report.basis.is_decisive() != report.witness.is_some() {
         return Err(NativeRunResultError::BasisWitness);
     }
@@ -2653,7 +3020,7 @@ pub fn write_clause_run_result(report: &ClauseRunReport) -> Result<Vec<u8>, Nati
     } else if !verdict_basis(report) {
         return Err(NativeRunResultError::BasisDisposition);
     }
-    write_document(report)
+    write_document(report, selection)
 }
 
 /// FR-266: a verdict has a decisive or closed settlement, a non-verdict
@@ -2679,11 +3046,31 @@ fn verdict_basis(report: &ClauseRunReport) -> bool {
     }
 }
 
-fn write_document(report: &ClauseRunReport) -> Result<Vec<u8>, NativeRunResultError> {
+fn write_document(
+    report: &ClauseRunReport,
+    selection: Option<&super::ClauseRunSelection>,
+) -> Result<Vec<u8>, NativeRunResultError> {
     let witness = report.witness.as_ref().map(RecordWire::of).transpose()?;
+    let ledger = report
+        .ledger
+        .as_ref()
+        .map(super::clause::write_ledger)
+        .transpose()?;
+    let window = report.finite_window.as_ref();
+    // FR-526: the result's place in its correction chain, settled from the
+    // selection when the report does not already carry it.
+    let correction = match selection {
+        Some(selection) => super::clause::run_correction(report, selection)?,
+        None => window.and_then(|window| window.correction.clone()),
+    };
+    let correction = correction.as_ref();
     let document = ClauseRunDocument {
         format: WireFormat::RunResult,
-        disposition: Disposition::of(&report.disposition, report.counterexample.as_ref())?,
+        disposition: Disposition::of(
+            &report.disposition,
+            report.counterexample.as_ref(),
+            selection,
+        )?,
         usage: Usage {
             admission: AdmissionUsage {
                 document_bytes: report.usage.admission_consumed.document_bytes,
@@ -2703,6 +3090,51 @@ fn write_document(report: &ClauseRunReport) -> Result<Vec<u8>, NativeRunResultEr
         },
         basis: report.basis.as_str(),
         witness,
+        ledger,
+        limits: run_limits(selection),
+        axes: report.axes(),
+        support: window.map(|window| {
+            window
+                .support
+                .iter()
+                .map(|pair| SupportWire {
+                    position: pair.position,
+                    atom: pair.atom.clone(),
+                })
+                .collect()
+        }),
+        late: window.and_then(|window| window.late.as_ref()).map(|late| {
+            late.iter()
+                .map(|entry| LateWire {
+                    position: entry.position,
+                    observation: entry.observation.clone(),
+                    stamp: entry.stamp,
+                    arrival: entry.arrival,
+                    anchors: entry.anchors.clone(),
+                })
+                .collect()
+        }),
+        admitted_late: window
+            .filter(|window| {
+                window.correction.as_ref().is_some_and(|correction| {
+                    matches!(correction.relation, super::RunRelation::Superseding(_))
+                }) || !window.admitted_late.is_empty()
+            })
+            .map(|window| {
+                window
+                    .admitted_late
+                    .iter()
+                    .map(|entry| AdmittedWire {
+                        position: entry.position,
+                        observation: entry.observation.clone(),
+                    })
+                    .collect()
+            }),
+        result_identity: correction.map(|correction| correction.result_identity.clone()),
+        input_identity: correction.map(|correction| correction.input_identity.clone()),
+        relation: correction.map(|correction| correction.relation.wire()),
+        lineage: correction.map(|correction| correction.lineage),
+        evidence_ledger: correction.map(|correction| correction.ledger.clone()),
     };
     let json = serde_json::to_vec(&document)?;
     let parsed = quire_canonical::read(&json, u64::MAX)?;
@@ -2710,4 +3142,22 @@ fn write_document(report: &ClauseRunReport) -> Result<Vec<u8>, NativeRunResultEr
         &parsed.root(),
         quire_canonical::Limits::new(u64::MAX),
     )?)
+}
+
+/// FR-641-AC-8: the limits member of a run over `selection`: a `model`
+/// trace's effective `expansion.max_candidates`, and nothing for any other
+/// trace or selection.
+fn run_limits(
+    selection: Option<&super::ClauseRunSelection>,
+) -> Option<BTreeMap<&'static str, String>> {
+    match selection? {
+        super::ClauseRunSelection::Temporal {
+            trace: super::TraceInput::Model { max_candidates, .. },
+            ..
+        } => Some(BTreeMap::from([(
+            "expansion.max_candidates",
+            max_candidates.to_string(),
+        )])),
+        _ => None,
+    }
 }

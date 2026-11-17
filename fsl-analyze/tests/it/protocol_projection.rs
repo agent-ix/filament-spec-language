@@ -42,12 +42,21 @@ fn source(members: &str, run: &str) -> String {
 }
 
 pub(crate) fn admitted_source(text: &str) -> Box<CheckedPackageV2> {
-    let checked = package(text);
-    let emission = fsl_package::emit_checked(&checked, fsl_package::EmitLimits::fixture())
+    admitted(&package(text), PACKAGE, &document())
+}
+
+/// `checked` emitted and admitted with the domain package `domain`'s
+/// `document` as its evidence.
+pub(crate) fn admitted(
+    checked: &fsl_package::CheckedPackage,
+    domain: &str,
+    document: &[u8],
+) -> Box<CheckedPackageV2> {
+    let emission = fsl_package::emit_checked(checked, fsl_package::EmitLimits::fixture())
         .expect("the protocol package emits");
     let mut evidence = emission.evidence().clone();
     evidence
-        .insert_domain_package_document(PACKAGE, document().as_slice())
+        .insert_domain_package_document(domain, document)
         .expect("fresh domain evidence");
     match filament_contract_model::read_checked_package(
         emission.package().bytes(),
@@ -1010,4 +1019,89 @@ fn comparing_nested_runs_is_charged_to_the_transition_limit() {
         project(&package, enough).unwrap().outcome,
         AnalysisOutcome::Proved(_)
     ));
+}
+
+/// `request` under the profile `bounded` (FR-575, ADR-036 PA-26).
+fn bounded(package: &CheckedPackageV2, role: &str) -> ProjectionOutcome {
+    let mut asked = request(package, role);
+    asked.profile = Some("bounded".to_owned());
+    project(package, asked).expect("the bounded profile is admitted")
+}
+
+/// FR-890-AC-1, FR-575-AC-5 (TC-2520): under `bounded`, each construct the
+/// fragment answers `unsupported` projects onto every role, with no
+/// `unsupported` outcome.
+#[trace("TC-2520", "FR-890-AC-1", "FR-575-AC-5", "FSpec-FR-735-AC-1")]
+#[test]
+#[ignore = "QSL-2212: the bounded profile is refused and every construct outside the fragment answers unsupported"]
+fn the_bounded_profile_projects_every_construct() {
+    let runs = [
+        "sequence Main { parallel Par { branch a sequence Ay { } branch b sequence Bee { } } \
+         join any [a] outstanding cancel; }",
+        "sequence Main { parallel Par { branch a sequence Ay { } branch b sequence Bee { } } \
+         join quorum(1) [a] outstanding continue; }",
+        "sequence Main { repeat Loop by Buyer visible () max 1 while { true } \
+         sequence Body { send RS via Order as (rs: Ack) { true }; } exhausted sequence Spent { } }",
+        "sequence Main { check Gate using v { true }; }",
+    ];
+    for run_text in runs {
+        let package = flow(run_text);
+        for role in ["Buyer", "Seller", "Warehouse"] {
+            let outcome = bounded(&package, role);
+            assert!(
+                !matches!(outcome.outcome, AnalysisOutcome::Unsupported(_)),
+                "{run_text} onto {role}: {:?}",
+                outcome.outcome
+            );
+        }
+    }
+    let each = admitted_source(
+        &source(MEMBERS, "sequence Main { }").replace("on origin", "on each (t: M::Cell)"),
+    );
+    assert!(!matches!(
+        bounded(&each, "Seller").outcome,
+        AnalysisOutcome::Unsupported(_)
+    ));
+}
+
+/// FR-890-AC-2 (TC-2521): a `repeat` is a decision point owned by its `by`
+/// role. A loop whose continue and exit alternatives give `Seller` nothing
+/// to tell them apart is refuted, not answered `unsupported`.
+#[trace("TC-2521", "FR-890-AC-2", "FSpec-FR-735-AC-2")]
+#[test]
+#[ignore = "QSL-2213: a repeat answers unsupported instead of merging its continue and exit alternatives"]
+fn an_unmerged_repeat_is_refuted_for_the_role_it_hides_from() {
+    let package = flow(
+        "sequence Main { repeat Loop by Buyer visible () max 2 while { true } \
+         sequence Body { send RS via Order as (rs: Ack) { true }; \
+         receive RR via Order of RS as (rr: Ack) { true }; } \
+         exhausted sequence Spent { send RX via Order as (rx: Ack) { true }; \
+         receive RY via Order of RX as (ry: Ack) { true }; } }",
+    );
+    let refuted = counterexample(bounded(&package, "Seller"));
+    assert_eq!(refuted.choice, named(&package, "Loop"));
+}
+
+/// FR-890-AC-5 (TC-2522): a replicated role whose first event on a thread
+/// is a send has no instance that knows it is to act; the projection is
+/// refuted, never `unsupported`.
+#[trace("TC-2522", "FR-890-AC-5", "FSpec-FR-735-AC-3")]
+#[test]
+#[ignore = "QSL-2205: a replicated role answers dynamic-role-population instead of an acting-instance counterexample"]
+fn a_replicated_role_that_sends_first_is_refuted() {
+    let members = "role Buyer on M::Cell;\nrole Warehouse on M::Cell;\n\
+        role Pool each M::Cell from cells max 2 lifetime workflow;\n\
+        channel Job from Pool to Buyer carries Ack ordering unordered delivery \
+        exactly-once-premise capacity 4 overflow reject;";
+    let package = admitted_source(&source(
+        members,
+        "sequence Main { send J via Job as (j: Ack) { true }; \
+         receive K via Job of J as (k: Ack) { true }; }",
+    ));
+    let outcome = bounded(&package, "Pool");
+    assert!(
+        matches!(outcome.outcome, AnalysisOutcome::Refuted(_)),
+        "{:?}",
+        outcome.outcome
+    );
 }

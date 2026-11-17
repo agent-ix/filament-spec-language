@@ -3,6 +3,7 @@
 use super::long_run_certificate::{limits, produce};
 use crate::prob_world::{self, World};
 use filament_exact::{Cancel, CancelCause};
+use filament_semantic_value::checking::CheckMode;
 use fsl_analyze::analyze::{
     analyze_items, exact_probabilistic_item, DispositionKind, Engines, Settlement,
 };
@@ -28,9 +29,11 @@ fn in_horizon_undefined_preserves_the_actual_owner_predicate_cause() {
         .replace("eventually[0,2]", "eventually[0,0]");
     let valid = World::new(&prob_world::link(&source));
     let bytes = produce(&valid, "Likely");
-    let undefined = World::new(&prob_world::link(
-        &source.replace("holds(m.delivered)", "holds(1 mod m.attempts = 0)"),
-    ));
+    let undefined_source = format!(
+        "function zero_mod using vc(n: Int[0, 2]): Boolean pure {{ 1 mod n = 0 }}\n{}",
+        source.replace("holds(m.delivered)", "holds(zero_mod(m.attempts))")
+    );
+    let undefined = World::new_with_mode(&prob_world::link(&undefined_source), CheckMode::Kernel);
     let system = ModelSystem::new(undefined.subject().simulation).unwrap();
     let claim = undefined.claim("Likely");
     let item = probabilistic_claim_identity(claim).unwrap();

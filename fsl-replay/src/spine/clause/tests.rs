@@ -15,6 +15,7 @@
 //! as the thing under test through the `Frame` selection.
 
 use fsl_package::EmitLimits;
+use std::cell::Cell;
 use std::collections::{BTreeMap, BTreeSet};
 use std::num::NonZeroU64;
 
@@ -37,9 +38,12 @@ use ix_trace_rs::trace;
 use serde_json::json;
 
 use super::{
-    admit_clause_observations, run_clause, ClauseArgument, ClauseArgumentValue, ClauseDisposition,
-    ClauseRunRefusal, ClauseRunRequest, ClauseRunSelection, ClauseRunSource, ClauseRunStage,
+    admit_clause_observations, run_clause, run_program_batch_with_compile, ClauseArgument,
+    ClauseArgumentValue, ClauseDisposition, ClauseRunRefusal, ClauseRunRequest, ClauseRunSelection,
+    ClauseRunSource, ClauseRunStage, ProgramBatchItemResult, ProgramBatchSelection,
+    ProgramCompilationRequest, ValueInvariantsBatchRequest,
 };
+use crate::spine::Call;
 use crate::spine::{
     default_accounting, CompileRefusal, ComposedUnit, DependencyInput, SpineLimits, SuppliedLibrary,
 };
@@ -744,6 +748,7 @@ fn evaluate_clause_reports_incomplete_when_the_meter_is_exhausted() {
 fn request(selection: ClauseRunSelection) -> ClauseRunRequest {
     let (unit, packages) = unit_and_packages();
     ClauseRunRequest {
+        clocks: Default::default(),
         source: ClauseRunSource::Program {
             identity: source(),
             path: "clause-run.native".to_owned(),
@@ -1613,6 +1618,7 @@ fn config_version_request_for(
     selection: ClauseRunSelection,
 ) -> ClauseRunRequest {
     ClauseRunRequest {
+        clocks: Default::default(),
         source: ClauseRunSource::Program {
             identity: source(),
             path: path.to_owned(),
@@ -1638,6 +1644,70 @@ fn config_version_request(selection: ClauseRunSelection) -> ClauseRunRequest {
         "clause-run-config-version.native",
         selection,
     )
+}
+
+/// FR-651-AC-1: the replay batch boundary invokes its compiler once for a
+/// mixed call/value-invariant request.
+#[trace("TC-1708", "FR-651-AC-1", "FR-652-AC-3")]
+#[test]
+fn mixed_program_batch_compiles_once_for_call_and_value_invariants() {
+    let (mut unit, packages) = config_version_unit_and_packages();
+    unit.push_str("function seven using v(): Integer pure { 7 }\n");
+    let label = DocumentRef {
+        authority: "test".to_owned(),
+        identity: "mixed-batch-snapshot".to_owned(),
+    };
+    let snapshot = config_version_snapshot(&label, 2, Some(3));
+    let reference = fsl_semantics::model::observation::document_reference(&snapshot).unwrap();
+    let mut snapshots = BTreeMap::new();
+    snapshots.insert(reference.clone(), snapshot);
+    let mut call = Call::new(
+        "seven".to_owned(),
+        Vec::new(),
+        default_accounting(1_000_000),
+        filament_semantic_value::supplied_stop::SuppliedLimits::default(),
+    );
+    call.clocks = Default::default();
+    let compilation = ProgramCompilationRequest {
+        source: source(),
+        path: "mixed-items.native".to_owned(),
+        bytes: unit.into_bytes(),
+        package_name: "fixture".to_owned(),
+        packages,
+        dependencies: DependencyInput::default(),
+        limits: SpineLimits::default(),
+        clocks: Default::default(),
+    };
+    let selections = vec![
+        ProgramBatchSelection::Call {
+            call,
+            include_requirements: false,
+        },
+        ProgramBatchSelection::ValueInvariants(ValueInvariantsBatchRequest {
+            snapshots,
+            invocations: BTreeMap::new(),
+            snapshot: reference,
+            invocation: None,
+            observation_limits: ObservationLimits::default(),
+            accounting: default_accounting(1_000_000),
+        }),
+    ];
+    let compilations = Cell::new(0);
+    let results = run_program_batch_with_compile(compilation, selections, |request, temporal| {
+        compilations.set(compilations.get() + 1);
+        super::compile_program_context(request, temporal)
+    })
+    .expect("the mixed batch shares one valid compilation");
+    assert_eq!(compilations.get(), 1);
+    assert_eq!(results.items.len(), 2);
+    assert!(matches!(
+        results.items[0],
+        ProgramBatchItemResult::Call(Ok(_))
+    ));
+    assert!(matches!(
+        results.items[1],
+        ProgramBatchItemResult::ValueInvariants(Ok(_))
+    ));
 }
 
 fn config_version_document_ref(identity: &str) -> DocumentRef {
@@ -4900,6 +4970,7 @@ fn a_refused_dependency_protocol_precedes_the_importing_units_s3_check() {
     assert_ne!(locus.source(), &importer_source);
 }
 
+mod accounting_boundaries;
 mod call_site;
 mod call_site_owners;
 mod clause_paths;
@@ -4910,9 +4981,12 @@ mod frame;
 mod frame_occurrence_region;
 mod frame_replay;
 mod invocation_parameters;
+mod item_cause;
 mod layers;
 mod link_replay;
+mod malformed_trace;
 mod model_gate;
+mod observation_limits;
 mod one_source;
 mod operation_contract_run;
 mod ordered_end_positions;

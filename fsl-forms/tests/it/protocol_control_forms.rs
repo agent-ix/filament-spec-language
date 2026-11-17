@@ -150,11 +150,17 @@ fn each_delivery_capacity_and_ordering_spelling_builds_its_own_value() {
     let unit = build(&text);
     let form = protocol(&unit);
     let channel = only_channel(form);
-    let ChannelOrdering::Fifo { binder, key } = &channel.ordering.value else {
+    let ChannelOrdering::Fifo {
+        binder,
+        key,
+        key_text,
+    } = &channel.ordering.value
+    else {
         panic!("a fifo ordering: {:?}", channel.ordering);
     };
     assert_eq!(binder.name.name, "m");
     assert_eq!(expression_text(&text, key), "m.ready");
+    assert_eq!(key_text, "m.ready");
     assert!(slice(&text, channel.ordering.span).starts_with("fifo by"));
     assert!(form
         .constructs

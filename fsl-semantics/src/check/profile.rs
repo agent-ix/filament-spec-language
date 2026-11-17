@@ -80,6 +80,18 @@ impl TemporalProfile {
         }
     }
 
+    /// What one tick of an interval `[a,b]` counts under the profile
+    /// (FR-610 "What a tick counts").
+    pub const fn tick(self) -> &'static str {
+        match self {
+            Self::EventPositionFalseExtension => "one admitted event position",
+            Self::FixedSampleFalseExtension => "one sample of the configured period",
+            Self::TimestampedEventFiniteWindow => "one tick of the configured timestamp unit",
+            Self::InfiniteTrace => "one position of the trace",
+            Self::Timed => "an exact time quantity in the configured unit",
+        }
+    }
+
     /// The profile a header identity selects, if it is admitted for the
     /// `TemporalTrace` family (FR-110). The one place a header profile's
     /// spelling is read for that family.
@@ -115,6 +127,8 @@ impl TemporalProfile {
 /// Why a header profile does not resolve (FR-110's table).
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum ProfileCause {
+    /// Two selected integer-division definitions disagree.
+    ConflictingDefinition,
     /// The identity is not a closed semantic role: `unknown_profile`/`unsupported-selection`.
     UnsupportedSelection,
     /// The identity is a closed semantic role other than `root`:
@@ -126,6 +140,8 @@ pub enum ProfileCause {
 /// row it was compared with.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ProfileRefusal {
+    /// Origin of a conflicting caller selection, when supplied externally.
+    pub supplied_by: Option<String>,
     /// The profile's local alias.
     pub alias: String,
     /// The span of the selection's identity literal.
@@ -134,7 +150,7 @@ pub struct ProfileRefusal {
     pub selected: String,
     /// The role a header profile must select.
     pub required_role: DefinitionRole,
-    /// The `root` row the selection was compared with.
+    /// The conflicting definition, or the root role used for a role refusal.
     pub root: DefinitionReference,
     /// Why it refused.
     pub cause: ProfileCause,
@@ -144,6 +160,7 @@ impl ProfileRefusal {
     /// The `filament.native.diagnostics/v1` code.
     pub fn code(&self) -> Code {
         match self.cause {
+            ProfileCause::ConflictingDefinition => Code::InvalidPackage,
             ProfileCause::UnsupportedSelection | ProfileCause::WrongSelectionRole => {
                 Code::UnknownProfile
             }
@@ -153,10 +170,85 @@ impl ProfileRefusal {
     /// The `filament.native.diagnostics/v1` cause tag.
     pub fn cause(&self) -> &'static str {
         match self.cause {
+            ProfileCause::ConflictingDefinition => "conflicting-definition",
             ProfileCause::UnsupportedSelection => "unsupported-selection",
             ProfileCause::WrongSelectionRole => "wrong-selection-role",
         }
     }
+
+    /// The located profile refusal with the retained selection identities.
+    pub fn message(&self) -> String {
+        match self.cause {
+            ProfileCause::ConflictingDefinition => format!(
+                "integer-division law `{}` selected by header profile `{}` conflicts with `{}` supplied by `{}`",
+                self.selected, self.alias, self.root.identity,
+                self.supplied_by.as_deref().unwrap_or("header profile")
+            ),
+            ProfileCause::UnsupportedSelection | ProfileCause::WrongSelectionRole => format!(
+                "header profile `{}` selecting `{}` does not resolve: {}/{}", self.alias,
+                self.selected,
+                self.code().as_str(), self.cause()
+            ),
+        }
+    }
+}
+
+/// Resolve an integer-division header identity to its exact definition role.
+#[ix_trace_rs::string_edge]
+pub fn integer_division_role(identity: &str) -> Option<DefinitionRole> {
+    [
+        DefinitionRole::IntegerDivisionEuclidean,
+        DefinitionRole::IntegerDivisionFloor,
+        DefinitionRole::IntegerDivisionTruncating,
+    ]
+    .into_iter()
+    .find(|role| role.identity() == identity)
+}
+
+/// Compose a unit's header laws with an optional admitted caller law (FR-670).
+#[ix_trace_rs::string_edge]
+pub fn resolve_integer_division(
+    profiles: &[ProfileSelection],
+    supplied: Option<(
+        filament_checked::integer_division::AdmittedIntegerDivision,
+        &str,
+    )>,
+) -> Result<Option<filament_checked::integer_division::AdmittedIntegerDivision>, Box<ProfileRefusal>>
+{
+    let mut selected = supplied.map(|(law, _)| law);
+    for profile in profiles {
+        let Some(role) = integer_division_role(&profile.identity) else {
+            continue;
+        };
+        let refusal = |cause, other| {
+            Box::new(ProfileRefusal {
+                alias: profile.alias.clone(),
+                identity_span: profile.identity_span,
+                selected: profile.identity.clone(),
+                required_role: role,
+                root: other,
+                cause,
+                supplied_by: supplied.map(|(_, origin)| origin.to_owned()),
+            })
+        };
+        if let Some(law) = selected {
+            if law.profile().definition_identity() != role.identity() {
+                return Err(refusal(
+                    ProfileCause::ConflictingDefinition,
+                    DefinitionReference {
+                        authority: CLAUSE_PROFILE_AUTHORITY.to_owned(),
+                        identity: law.profile().definition_identity().to_owned(),
+                    },
+                ));
+            }
+        } else {
+            selected = Some(
+                crate::value::admit_integer_division(&[role.reference()], None)
+                    .map_err(|_| refusal(ProfileCause::UnsupportedSelection, role.reference()))?,
+            );
+        }
+    }
+    Ok(selected)
 }
 
 /// Resolve each header profile by identity against the closed typed profile
@@ -180,6 +272,7 @@ pub fn resolve_profiles(
             let cause = if HeaderLayer::from_identity(selected).is_some()
                 || protocol_profile(selected).is_some()
                 || TemporalProfile::from_identity(selected).is_some()
+                || integer_division_role(selected).is_some()
             {
                 return None;
             } else if let Some(extension) = extension_of(selected) {
@@ -202,6 +295,7 @@ pub fn resolve_profiles(
                 ProfileCause::UnsupportedSelection
             };
             Some(ProfileRefusal {
+                supplied_by: None,
                 alias: profile.alias.clone(),
                 identity_span: profile.identity_span,
                 selected: selected.to_owned(),
@@ -223,6 +317,36 @@ mod tests {
     use ix_trace_rs::trace;
 
     use super::*;
+
+    /// FR-110: an unsupported header identity is named alongside its binding,
+    /// while a known value-layer identity resolves without a refusal.
+    #[trace("FR-110-AC-1", "FR-110-AC-2")]
+    #[test]
+    fn unsupported_header_profile_message_names_binding_and_selection() {
+        let selection = |identity: &str| ProfileSelection {
+            alias: "v".to_owned(),
+            identity: identity.to_owned(),
+            span: Span { start: 0, end: 0 },
+            identity_span: Span { start: 0, end: 0 },
+        };
+        let unknown = selection("quire.value.complete/v1");
+        let refusals = resolve_profiles(&[unknown], &|_| None)
+            .expect_err("an unrecognized header profile refuses");
+        let refusal = &refusals[0];
+        assert_eq!(refusal.code(), Code::UnknownProfile);
+        assert_eq!(refusal.cause(), "unsupported-selection");
+        let message = refusal.message();
+        assert!(message.contains("`v`"), "message was: {message}");
+        assert!(
+            message.contains("`quire.value.complete/v1`"),
+            "message was: {message}"
+        );
+
+        assert!(
+            resolve_profiles(&[selection("filament.value.complete/v1")], &|_| None).is_ok(),
+            "a known filament profile resolves without a refusal"
+        );
+    }
 
     /// FR-110: a header profile naming the protocol clause family's profile
     /// resolves against that family's closed profile set, and selects it as the package's

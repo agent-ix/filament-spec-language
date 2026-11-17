@@ -1,0 +1,4 @@
+language "ix:native" edition "1-draft";
+profile v = "filament.value.complete/v1";
+union U { A, B }
+function f using v(x: U): Int[0, 9] pure { case x { U::A: 0; } }

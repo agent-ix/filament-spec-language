@@ -233,45 +233,10 @@ fn weighted_draws_and_transients_use_component_fractions_not_pooled_payoffs() {
 }
 #[trace("TC-1402", "FR-201-AC-32", "FR-201-AC-34")]
 #[test]
-fn reachable_zero_weight_components_remain_typed_unsupported() {
+fn reachable_zero_weight_components_take_their_unweighted_fraction() {
     let world = periodic(2, "1: 1, 3: 1", "1", true);
-    let system = ModelSystem::new(world.subject().simulation).unwrap();
-    let identity = fsl_replay::probabilistic_claim_identity(world.claim("Fraction")).unwrap();
-    // A fabricated otherwise plausible document cannot turn zero stationary weight into a ratio.
-    let positive = periodic(2, "1: 1, 3: 1", "1", false);
-    let bytes = produce(&positive, "Fraction");
-    let mut document =
-        read_weighted_long_run_probability_certificate(&bytes, limits(), &Cancel::new()).unwrap();
-    document.certificate.identity = identity.clone();
-    let bytes =
-        write_weighted_long_run_probability_certificate(&document, limits(), &Cancel::new())
-            .unwrap();
-    let result = fsl_replay::check_probability_certificate_document(
-        &system,
-        world.package.graph().probabilistic_model().claims(),
-        &identity,
-        &bytes,
-        limits(),
-        &Cancel::new(),
-    );
-    let zero_key = &document
-        .certificate
-        .components
-        .iter()
-        .find(|component| component.value == ratio(1, 1))
-        .unwrap()
-        .bias[0]
-        .state;
-    let outcome = match &result {
-        Ok(ExactProbabilityCertificateCheck::Accepted(_)) => "accepted",
-        Ok(ExactProbabilityCertificateCheck::Rejected(_)) => "rejected",
-        Err(ProbabilityDocumentError::ZeroWeightComponent { .. }) => "zero-weight-component",
-        Err(_) => "other-error",
-    };
-    assert!(
-        matches!(result, Err(ProbabilityDocumentError::ZeroWeightComponent { ref state }) if state == zero_key),
-        "expected actual zero-component key, got {outcome}"
-    );
+    // The zero-weight component uses its unweighted fraction, and its own
+    // certificate is accepted by the independent checker.
     let records = analyze_items(
         &Engines::fsl().unwrap(),
         vec![exact_probabilistic_item(
@@ -280,16 +245,17 @@ fn reachable_zero_weight_components_remain_typed_unsupported() {
         )],
         &Cancel::new(),
     );
-    let Settlement::Disposed(disposed) = &records[0].settlement else {
-        panic!("{:?}", records[0]);
-    };
-    assert_eq!(disposed.kind, DispositionKind::Unsupported);
-    assert_eq!(
-        disposed.diagnostic.as_ref().unwrap().code.cause(),
-        "zero-weight-component"
+    assert!(
+        !matches!(records[0].settlement, Settlement::Disposed(_)),
+        "{:?}",
+        records[0]
     );
-    assert!(records[0].terminal().is_none());
-    assert!(records[0].exact_probabilistic.is_none());
+    assert!(records[0].terminal().is_some());
+    let own = produce(&world, "Fraction");
+    assert!(matches!(
+        check(&world, "Fraction", &own, &Cancel::new(), limits()),
+        Ok(ExactProbabilityCertificateCheck::Accepted(_))
+    ));
 }
 #[trace("TC-1402", "FR-201-AC-34")]
 #[test]
@@ -684,4 +650,28 @@ fn checked_weight_units_and_equivalent_expressions_are_not_display_aliases() {
         2
     );
     assert!(accepted(&compound, "Lower", &compound_doc));
+}
+
+/// FR-199-AC-4 (TC-2177): a component whose every cycle has weight 0 takes
+/// its unweighted fraction, `1800/1801` for the availability model, and its
+/// certificate passes the independent check.
+#[trace("TC-2177", "FR-199-AC-4")]
+#[test]
+fn zero_weight_certificate_checks() {
+    let world = availability_with_claims(
+        claim("Zero", "s.phase = 0", ">= rational(1800,1801)"),
+        "reward duration on Server::tick = 0;\nreward duration on Server::repair = 0;\n",
+    );
+    let bytes = produce(&world, "Zero");
+    let document =
+        read_weighted_long_run_probability_certificate(&bytes, limits(), &Cancel::new()).unwrap();
+    assert!(document
+        .certificate
+        .components
+        .iter()
+        .all(|component| component.value == ratio(1800, 1801)));
+    assert!(matches!(
+        check(&world, "Zero", &bytes, &Cancel::new(), limits()),
+        Ok(ExactProbabilityCertificateCheck::Accepted(_))
+    ));
 }

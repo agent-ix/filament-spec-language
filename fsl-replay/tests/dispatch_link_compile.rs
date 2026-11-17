@@ -1464,6 +1464,9 @@ fn a_clause_function_is_a_known_owner_and_no_fault() {
 
     let (text, packages) = unit(&document, &declarations);
     let call = fsl_replay::Call {
+        clocks: Default::default(),
+        wire_arguments: Vec::new(),
+        snapshot: None,
         function: "inc".to_owned(),
         arguments: vec![fsl_replay::CallArgument {
             parameter: "x".to_owned(),
@@ -1473,18 +1476,18 @@ fn a_clause_function_is_a_known_owner_and_no_fault() {
         supplied: filament_semantic_value::supplied_stop::SuppliedLimits::default(),
         backend: filament_eval::ExecutionBackendChoice::Interpreter,
     };
-    let result = fsl_replay::run_with_requirements(
-        SourceIdentity::new("a", "u"),
-        "fixture".to_owned(),
-        "unit.native",
-        text.as_bytes(),
-        &packages,
-        &DependencyInput::default(),
-        SpineLimits::default(),
-        &call,
-        &fsl_replay::ObjectEnvironment::default(),
-        &Cancel::new(),
-    )
+    let result = fsl_replay::run_with_requirements(&fsl_replay::RequirementsRun {
+        source: SourceIdentity::new("a", "u"),
+        package_name: "fixture".to_owned(),
+        path: "unit.native",
+        bytes: text.as_bytes(),
+        packages: &packages,
+        dependencies: &DependencyInput::default(),
+        limits: SpineLimits::default(),
+        call: &call,
+        objects: &fsl_replay::ObjectEnvironment::default(),
+        cancel: &Cancel::new(),
+    })
     .expect("a clause function's record is no fault");
     assert_eq!(result.requirements().members().len(), 1);
 }

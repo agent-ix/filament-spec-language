@@ -59,7 +59,7 @@ pub enum ExactOutcome {
     Straddles { lower: Rational, upper: Rational },                            // PrecisionBudget
     Stopped { limit: ExactProbLimit, value: u64, setting: SettingName },       // LimitReached
 }
-pub enum ExactProbRefusal { Admission(AdmissionFailure), NotMarkov(NotMarkov), ZeroWeightComponent, Timed(TimedRefusal) } // TimedRefusal: FR-204
+pub enum ExactProbRefusal { Admission(AdmissionFailure), NotMarkov(NotMarkov), Timed(TimedRefusal) } // TimedRefusal: FR-204, DelayDistribution only
 
 ```
 
@@ -416,10 +416,10 @@ timestamp remain available. If no admissible such letter can meet the event
 before the horizon passes, TA-6 replay/closure must re-enumerate guards,
 urgency, time invariants and idle control, then close pending as reject.
 A time-lock follows ADR-026 TD-2's separate item rather than inventing a
-delay edge or a false-extension letter. TA-5 zero-delay cycle refusal remains
-required. These timed moves do not use FR-338's counted event-position counters.
-Unsupported TT-2 shapes still refuse; this alternative admits no additional
-timed formula or new timed scheduler premise.
+delay edge or a false-extension letter. Zero-time cycles are decided over time-divergent behaviours (FR-204,
+FR-924), not refused. These timed moves do not use FR-338's counted event-position counters.
+Every bounded-window shape FR-204 admits is decided; the region route of
+FR-922 uses FR-920's region key in place of this digital alternative.
 
 A quiescent state SHALL retain ADR-026 TS-5's timed idle-tail alternative,
 even if the behavior chooses to end discrete operations there while later

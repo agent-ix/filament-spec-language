@@ -138,6 +138,12 @@ impl CompileRefusal {
                     )),
                 ]
             }
+            Self::SourceDiagnostics { diagnostics } => or_invariant(
+                diagnostics
+                    .iter()
+                    .map(|diagnostic| RefusalCause::new(diagnostic.code, None))
+                    .collect(),
+            ),
             Self::Forms { failure, .. } => {
                 vec![RefusalCause::new(failure.catalog_code(), None)]
             }
@@ -172,7 +178,7 @@ impl CompileRefusal {
                     })
                     .collect(),
             ),
-            Self::Check { refusals, .. } => or_invariant(
+            Self::Check { refusals, .. } | Self::CheckDiagnostics { refusals, .. } => or_invariant(
                 refusals
                     .iter()
                     .map(|refusal| {
@@ -204,11 +210,10 @@ impl CompileRefusal {
             Self::Dependency { refusal, .. } => refusal.causes(),
             Self::Link(refusal) => vec![RefusalCause::new(refusal.code(), refusal.cause())],
             Self::Emit(refusal, _) => vec![RefusalCause::new(refusal.code(), refusal.cause())],
-            Self::Limit(limit) => vec![RefusalCause::new(
-                Code::StageLimitExceeded,
-                Some(limit.kind().catalog_cause()),
-            )
-            .reaching(Some(ReachedLimit::of(limit)))],
+            Self::Limit(limit) => vec![
+                RefusalCause::new(Code::StageLimitExceeded, Some(limit.kind().catalog_cause()))
+                    .reaching(Some(ReachedLimit::of(limit))),
+            ],
             Self::Omitted(_) => vec![RefusalCause::new(Code::UnsupportedProjection, None)],
             Self::Extension(refusal) => vec![RefusalCause::new(
                 refusal.code(),
@@ -225,7 +230,7 @@ fn widen(bound: usize) -> u64 {
 /// The limit an assembly cause reached, where it carries one.
 fn assembly_limit(cause: &AssemblyCause) -> Option<ReachedLimit> {
     match cause {
-        AssemblyCause::EmptyUnitList => None,
+        AssemblyCause::EmptyUnitList | AssemblyCause::Profile(_) => None,
         AssemblyCause::TypeLimit(limit)
         | AssemblyCause::IdentityLimit(limit)
         | AssemblyCause::DecimalScaleLimit(limit) => Some(ReachedLimit::of(limit)),
@@ -273,7 +278,9 @@ fn assembly_limit(cause: &AssemblyCause) -> Option<ReachedLimit> {
         | AssemblyCause::AmbiguousPopulation { .. }
         | AssemblyCause::UnsupportedLayerForm { .. }
         | AssemblyCause::UnselectedModelConstruct(_)
-        | AssemblyCause::TimedNotChecked(_) => None,
+        | AssemblyCause::TimedNotChecked(_)
+        | AssemblyCause::SynthesisNotChecked { .. }
+        | AssemblyCause::VerificationPlanNotChecked { .. } => None,
     }
 }
 
@@ -331,9 +338,11 @@ fn check_limit(cause: &CheckCause) -> Option<ReachedLimit> {
         | CheckCause::PopulationFormNotChecked { .. }
         | CheckCause::ModelConformance(_)
         | CheckCause::IllTyped(_)
+        | CheckCause::OperandTypeMismatch { .. }
         | CheckCause::IdentityObservingForm(_)
         | CheckCause::WrongSnapshot(_)
         | CheckCause::MissingName(_)
+        | CheckCause::UnknownField { .. }
         | CheckCause::ExecutionPointBinding(_)
         | CheckCause::MissingQualifiedName(_)
         | CheckCause::UnresolvedUnitName { .. }
@@ -430,11 +439,13 @@ enum Group {
 fn group(refusal: &CompileRefusal) -> Group {
     match refusal {
         CompileRefusal::Source(_)
+        | CompileRefusal::SourceDiagnostics { .. }
         | CompileRefusal::Forms { .. }
         | CompileRefusal::OperationClause { .. }
         | CompileRefusal::TypeInvariant { .. }
         | CompileRefusal::Assembly { .. }
         | CompileRefusal::Check { .. } => Group::Content,
+        CompileRefusal::CheckDiagnostics { .. } => Group::Content,
         CompileRefusal::Intake { refusal, .. } => match refusal.cause {
             UnitIntakeCause::Limit(_) => Group::IntakeBudget,
             UnitIntakeCause::Refused(_) | UnitIntakeCause::Invariant => Group::Setup,
@@ -568,14 +579,17 @@ fn classify_disposition(disposition: &ClauseDisposition) -> Classification {
         ClauseDisposition::FrameViolation(witness) => {
             one(Refused, witness.code, Some(witness.cause))
         }
+        ClauseDisposition::OperationContractViolation(_) => {
+            Classification::new(Refused, Vec::new())
+        }
         ClauseDisposition::EvaluateFault(_) => one(ToolFailure, Code::RuntimeInvariant, None),
         // A refinement check runs state clauses and functions; it selects no
         // temporal clause, so a temporal disposition is a broken invariant.
         ClauseDisposition::Temporal(_)
         | ClauseDisposition::TemporalRefusal(_)
-        | ClauseDisposition::ProgressContradiction(_) => {
-            one(ToolFailure, Code::RuntimeInvariant, None)
-        }
+        | ClauseDisposition::TraceRefused(_)
+        | ClauseDisposition::ProgressContradiction(_)
+        | ClauseDisposition::TemporalValuation(_) => one(ToolFailure, Code::RuntimeInvariant, None),
     }
 }
 
@@ -589,9 +603,9 @@ fn classify_outcome(outcome: &CallOutcome) -> Classification {
             Classification::new(Refused, Vec::new())
         }
         // FR-109 selects only `Boolean` functions, so neither completes.
-        CallOutcome::Completed(CallValue::Integer(_) | CallValue::Reference(_)) => {
-            Classification::new(ToolFailure, vec![RefusalCause::INVARIANT])
-        }
+        CallOutcome::Completed(
+            CallValue::Integer(_) | CallValue::Reference(_) | CallValue::Written(_),
+        ) => Classification::new(ToolFailure, vec![RefusalCause::INVARIANT]),
         CallOutcome::Refused(refusal) => {
             let (CallRefusal::Record { code, .. } | CallRefusal::Family { code, .. }) = refusal;
             let causes = Code::from_code(code.code())
@@ -607,8 +621,10 @@ fn classify_outcome(outcome: &CallOutcome) -> Classification {
         ),
         CallOutcome::Incomplete(incomplete) => Classification::new(
             Incomplete,
-            vec![RefusalCause::new(Code::ResourceExhausted, None)
-                .reaching(Some(accounting_limit(incomplete)))],
+            vec![
+                RefusalCause::new(Code::ResourceExhausted, None)
+                    .reaching(Some(accounting_limit(incomplete))),
+            ],
         ),
     }
 }

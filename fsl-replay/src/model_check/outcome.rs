@@ -23,6 +23,9 @@ pub struct RunStats {
     pub product_states: u64,
     /// Product edges explored.
     pub product_edges: u64,
+    /// The product edges among them that are a terminal state's stutter
+    /// step, which takes no model transition.
+    pub stutter_edges: u64,
     /// Distinct automaton states materialized.
     pub automaton_states: u64,
     /// The greatest depth of a created product state.

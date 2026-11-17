@@ -47,8 +47,13 @@ it runs on the in-process simulator and no other backend.
   with cause `LimitReached{limit}`, `state-key-limit-exceeded` or
   `cancelled`.
 - `traces`: each trace's states in FSpec FR-181's typed canonical form and
-  the choice taken at each step.
-- `coverage`: `{"states", "transitions", "choices"}` counts.
+  the choice taken at each step, as "Traces" below selects them.
+- `coverage`: `{"states", "transitions", "choices"}`, each an ASCII decimal
+  count over what the run visited, with one meaning in both modes:
+  `states` the distinct state keys visited, `transitions` the distinct
+  (pre-state, transition identity, post-state) edges traversed, and
+  `choices` the distinct visited states at which more than one successor
+  was enabled, the nondeterministic choice points the run met.
 - `frontier`: the unexplored states by state key, or by position for a key
   beyond `max_state_key_bytes`.
 - `seed`: echoed for `sample`.
@@ -59,6 +64,26 @@ it runs on the in-process simulator and no other backend.
 
 - Enumeration is deterministic; two runs of one request give equal
   documents. Sampling with one seed gives equal documents.
+
+### Traces
+
+- **Enumerate.** Enumeration is FSpec FR-181's breadth-first expansion,
+  which coalesces equal state keys, so the explored behaviours form a graph,
+  not a tree, and listing every path through it would grow without bound on
+  a cycle. Each explored state other than an initial one has a *discovery
+  edge*, the edge by which the expansion first reached it, and the discovery
+  edges form a tree rooted at the initial states. The item SHALL report one
+  trace per leaf of that tree (a state no discovery edge leaves: a terminal
+  state, a frontier state, or a state whose every successor was discovered
+  earlier), running from its initial state along discovery edges to the
+  leaf, in the leaves' discovery order. Every explored state lies on at
+  least one reported trace and each leaf ends exactly one, so the traces
+  cover the exploration with no more traces than states, and each is a real
+  behaviour prefix that replays.
+- **Sample.** The item SHALL report one trace per sample, `samples` traces
+  in trace-index order `0` to `samples - 1`, each named by the echoed seed
+  and its trace index and drawn by FSpec FR-181's sampler, ending at a
+  terminal state or after `max_steps` steps.
 - **Cancellation** returns `incomplete` with cause `cancelled` and the
   frontier at the time of cancellation.
 - **Refusals.** A subject that does not admit refuses the whole request
@@ -68,9 +93,11 @@ it runs on the in-process simulator and no other backend.
 
 | ID | Criteria | Verification |
 |----|----------|--------------|
-| FR-634-AC-1 | Enumerating the Counter subject gives `success`, `coverage.states` 4 and `coverage.transitions` 3, one trace reaching `value = 3`, and an empty frontier. | Test (TC-1594) |
+| FR-634-AC-1 | Enumerating the Counter subject gives `success`, `coverage.states` 4, `coverage.transitions` 3 and `coverage.choices` 0, exactly one trace, from `value = 0` to `value = 3`, and an empty frontier. | Test (TC-1594) |
 | FR-634-AC-2 | `max_states` 2 gives `incomplete` `LimitReached{max_states}` with a non-empty frontier. | Test (TC-1594) |
 | FR-634-AC-3 | Two `sample` runs with seed 5 and `samples` 3 give equal documents. | Test (TC-1594) |
+| FR-634-AC-4 | Enumerating the staying Counter (FR-627's `setTo` self-loop at `value = 0`) gives `success`, `coverage.states` 4, `coverage.transitions` 4 and `coverage.choices` 1, and exactly one trace, `value` 0, 1, 2, 3, since the self-loop's edge reaches a state already discovered. | Test (TC-2293) |
+| FR-634-AC-5 | A `sample` run with seed 5 and `samples` 3 over the staying Counter reports three traces with trace indices 0, 1 and 2 in that order, each starting at `value = 0`, the item's `seed` 5, `coverage.states` equal to the number of distinct states on the three reported traces, and `coverage.transitions` equal to the number of distinct (pre-state, transition, post-state) steps on them. | Test (TC-2293) |
 
 ## Dependencies
 

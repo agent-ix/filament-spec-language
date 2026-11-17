@@ -67,13 +67,43 @@ The document carries FR-286's members (`format`, `operation`, `last_stage`,
 analyze member:
 
 - `aggregate`: FR-281's aggregate over the required items,
-  `{"status": "complete" | "incomplete", "gaps": [{"request_index", "reason"}]}`,
-  `reason` the FR-281 `AggregateGap` spelling. It is `complete` exactly when
+  `{"status": "complete" | "incomplete", "gaps": [{"request_index", "reason", "result"?}]}`.
+  `reason` is one of FR-281's `AggregateGap` spellings for an index the
+  aggregate cannot account for (`duplicate-index`, `missing-index`,
+  `unexpected-index`), or `not-proved` for a required item that settled
+  other than `proved` or `measured`; a `not-proved` gap also carries
+  `result`, the item's record `result` label (or `invalid-request` for a
+  disposition record), so a reader sees why the aggregate is incomplete
+  without opening the item. It is `complete` exactly when
   every required item settled `proved` or `measured`.
 - `registry`: the backends the request negotiated against (FR-635).
 
 A `simulation` item carries FR-634's members in place of `record`,
 `certificate`, `counterexample`, `replay` and `axes`.
+
+### Last stage
+
+An `analyze` document's `last_stage` is FR-286's greatest stage the request
+entered, so a reader sees how far the request got without reading its items.
+The program is compiled and linked through `S4` before any item is
+admitted, and each item adds the stage that settled it:
+
+| Outcome | `last_stage` |
+| --- | --- |
+| A request document refused before any source is read (malformed `native-analyze/1`, an unreadable file) | `null` |
+| A source or compile refusal of the program | the refusing stage, `S1` to `S4` (`S3` for a checker refusal, FR-624-AC-2) |
+| A request-level refusal after linking: a snapshot or binding that does not fit the linked package (FR-624-AC-3) | `S4` |
+| A document whose items are all settled by a disposition before any engine ran (an unknown claim, an unregistered backend) | `S4` |
+| An item settled by a negotiated backend, or by its negotiation's `unsupported` disposition | `S6b` |
+| An item settled by an FSL in-process engine (EN-1 to EN-7, the zone search): `proved`, `measured`, `incomplete` at a budget, `inconclusive` (an unknown verdict or a rejected certificate) | `S6c` |
+| An item whose counterexample is built as a typed witness and not replayed | `S7` |
+| An item whose counterexample is replayed (its `replay` member is present) | `S8` |
+| A cancelled request, and an internal failure (an engine or evaluator fault), category internal-failure | `null` (FR-286) |
+
+A document with several items takes the greatest of `S4` and its items'
+stages. Every settled document therefore names a stage, `S4` or later, and
+`null` appears only for request intake, cancellation and faults, as for
+every other operation.
 
 ### Item members
 
@@ -85,22 +115,53 @@ Each item, in request order, carries:
 | `claim_name` | The declared name the document used, or for a default item the claim's declared name; a derived item's anchor name. |
 | `request` | The admitted FSpec FR-331 request item that `ClaimItem::request_item_wire` writes, every default made explicit, so the item can be re-requested exactly. A `simulation` item carries its admitted `simulation` settings instead (FR-634). |
 | `category` | The item's ADR-013 O-16 category (FR-285). |
-| `record` | The FSpec FR-331 terminal record, in its wire spelling: the verdict in its `result` member (`proved`, `refuted`, `tested`, `measured`, `inconclusive`, `unsupported`, `declined`, `incomplete`, `failed`); an `invalid-request` disposition record carries no `result` (FSpec FR-331), its cause or proof basis, its `certification` for a proved record, and `settled_by`. A disposition record carries its FR-272 `diagnostic` and no `cause`, as FR-286 states. |
-| `certificate` | For a `proved` record whose engine returned a certificate: `{"identity", "checker", "accepted"}`, the FSpec FR-331 certificate identity, the qualified-core checker that ran (FR-282) and whether it accepted. Absent when the engine returns none. |
+| `record` | The FSpec FR-331 terminal record, in its wire spelling: the verdict in its `result` member (`proved`, `refuted`, `tested`, `measured`, `inconclusive`, `unsupported`, `declined`, `incomplete`, `failed`); an `invalid-request` disposition record carries no `result` (FSpec FR-331), its cause or proof basis, its `certification` for a proved record, `settled_by`, and `backend` exactly when `settled_by` is `result`. A disposition record carries its FR-272 `diagnostic` and no `cause`, as FR-286 states. |
+| `certificate` | For a `proved` record whose engine returned a certificate: `{"identity", "checker", "accepted"}`. `identity` is FSpec FR-412's `CertificateIdentity` `{node_id, model, ordinal}` for every certificate kind, EN-1's closure and component certificates included: `node_id` the checked claim's node (a derived item's anchor node), `model` the subject model's identity text and `ordinal` the obligation's FSpec FR-418-AC-9 ordinal, so one structural identity names the obligation whatever engine proved it. `checker` is the qualified-core checker that ran (FR-282) and `accepted` whether it accepted. Absent when the engine returns none. |
 | `counterexample` | The FSpec FR-331 counterexample entry, present exactly for a `refuted` record. |
-| `replay` | Present with `counterexample`: `{"target", "reproduced"}`, the FR-098 replay target the counterexample was replayed against and `true`. A counterexample that replay did not reproduce never reaches the document: its item is `inconclusive` with `replay-parity` or `replay-refused` (FR-281) and carries neither member. |
+| `replay` | Present with `counterexample`: `{"target", "reproduced"}`. `target` is the FSpec FR-323 replay target member object exactly as a replay request carries it: `{"state_clause": Q}` for a state clause, a temporal clause or a state-graph claim (`possible`, `always possible`, `unique path`), `Q` its declared qualified name (EN-1 counterexamples included; a state-graph refutation replays through FSpec FR-393's model-graph arm, whose obligation identity binds the claim, so naming the claim is enough to select it), `{"function": ...}` or `{"frame_operation": ...}` for those targets, and FR-071's `{"protocol_refinement": {package_id, node}}` for a protocol refinement; `reproduced` is `true`. A counterexample that replay did not reproduce never reaches the document: its item is `inconclusive` with `replay-parity` or `replay-refused` (FR-281) and carries neither member. |
 | `accounting` | The item's FSpec FR-331 accounting record: the limits applied, the method and seed where they apply, the limits the run reached (`reached`), and `settled_by`. With `exploration` it is the item's budget use. |
 | `exploration` | For an item whose engine explores states: `{"states", "transitions", "automaton_states"}`, the states stored, transitions expanded and claim-automaton states, each an ASCII decimal count. Absent for a closed-form or provider item. |
-| `axes` | The four outcome axes of FR-622, for an item that has an activation scope. |
+| `axes` | The four outcome axes of FR-622, for an item that has an activation scope. Every `monitor` item has one, the activation of the clause it monitors, so every `monitor` item carries `axes` as FR-622 and FR-286 state; a `simulation` item carries FR-634's members instead. |
 
 The settlement of an item is its record's `settled_by` together with, for a
 disposition record, the negotiation disposition and diagnostic the record
 carries.
 
+### The record's `backend` member
+
+FSpec FR-331 keeps two artifacts per item: the result entry, which carries
+`backend`, the `BackendId` of the provider that produced it (FR-288), and the
+accounting record, whose `settled_by` says whether the item was settled by
+that result entry (`result`) or by a negotiation disposition with no result
+entry (`disposition`). The item's `record` is the two merged in FSpec FR-331's
+spellings, so it SHALL carry `backend`, copied from the result entry, exactly
+when `settled_by` is `result`, and SHALL carry no `backend` when `settled_by`
+is `disposition`: a disposition (`invalid-request`, or a negotiation
+`unsupported` that no candidate met) has no producing backend, and
+writing one would claim an engine decided what negotiation refused. No other
+member names the backend, so a reader finds the deciding engine of every
+result-settled item in one place, whatever its verdict.
+
+### Items over several claim instances
+
+A claim whose `over` parameter binds a population has one instance per
+object of the subject's universe, and the item reports one record for all of
+them. The writer SHALL order the instances by the bound object's universe
+key in FSpec FR-181 key order and SHALL report: the first `refuted`
+instance, when any instance is refuted, with its counterexample and replay;
+otherwise the first instance whose record is not `proved`; otherwise a
+`proved` record, whose certificate covers every instance. A claim is false
+when any instance is false, so a single refutation decides the item, and a
+fixed key order makes the reported instance the same on every run. The
+counterexample names the instance it refutes (FSpec FR-364
+`over_binding`; FSpec FR-393 `instance` for state-graph evidence).
+
 ### Temporal dispositions, values and engine roles
 
-- An item that reports a temporal disposition (a `finite-replay` or
-  `monitor`-style evaluation of a clause over one trace) SHALL carry it as
+- An item that reports a temporal disposition (a `monitor` item's
+  evaluation of a temporal clause over one supplied trace, or a
+  `finite-replay` item's evaluation of a protocol clause over its replayed
+  trace) SHALL carry it as
   FSpec FR-352's `disposition.temporal` with one of its sixteen kinds
   (`holds`, `violated`, `undefined`, `insufficient-data`, `pending`,
   `pending-window`, `pending-next-event`, `indeterminate`,
@@ -113,7 +174,12 @@ carries.
   `incomplete` and no outcome; `progress-contradicted` has category
   `refusal` with outcome `invalid_runtime_input`/`invalid-value`. Any other
   kind is refused by the writer as below. The `axes.settlement` member of
-  such an item equals the disposition's `basis`.
+  such an item equals the disposition's `basis`. A temporal clause is never
+  evaluated over a supplied trace by a `finite-replay` item: that kind
+  applies to the `protocol` family only, and such an item settles
+  `inapplicable-kind` (FR-507, FR-627); the FR-641 clause run and the monitor
+  evaluate a temporal clause over a supplied trace and write the same
+  `disposition.temporal` rows (FR-267).
 - Every value in a counterexample state, an assignment, a witness or a
   simulation trace SHALL use FSpec FR-181's typed canonical forms, such as
   `{"type": "integer", "value": "3"}`, because the analyze document is the
@@ -158,7 +224,12 @@ The Counter fixture is FR-620's.
 | FR-621-AC-4 | Every `category` and record label in the analyze documents of AC-1 to AC-3 is a kind FSpec FR-352 registers; a writer handed an unregistered kind writes an `internal-failure` document, exit 30, naming it. | Test (TC-1581) |
 | FR-621-AC-5 | The document the library writes for a request and the document the driver writes in machine mode for the same request are byte-equal. | Test (TC-1581) |
 | FR-621-AC-6 | In text mode the AC-2 request prints `0 Bounded refuted` as its first line and exits 10. | Test (TC-1581) |
-| FR-621-AC-7 | A `finite-replay` item whose clause is still pending at the end of the supplied trace carries `disposition.temporal` kind `pending` with category `pending`, basis `unsettled` and `axes.settlement` `unsettled`, exits 0; the refuted counterexample of AC-2 spells `value` as `{"type": "integer", "value": "3"}`. | Test (TC-1581) |
+| FR-621-AC-7 | The temporal clause `Reaches` (`eventually holds(r.level = 2)` under infinite-trace over a record trace subject), still pending at the end of the `finite` samples 0, 1 it is run over through the FR-641 clause-run request, reports `disposition.temporal` kind `pending` with category `pending`, basis `unsettled` and `axes.settlement` `unsettled`, exits 0; a `finite-replay` analyze item naming a temporal clause settles `invalid-request` `inapplicable-kind` with `detail.family` `temporal-trace`, exit 20; the refuted counterexample of AC-2 spells `value` as `{"type": "integer", "value": "3"}`. | Test (TC-1581) |
+| FR-621-AC-8 | Over the Counter subject, the `proved` EN-1 item of `Bounded` carries `certificate.identity` with exactly the members `node_id`, `model` and `ordinal`, `model` the Counter model's identity text; the `refuted` item of `BelowThree` carries `replay.target` `{"state_clause": Q}` with `Q` ending in `BelowThree`; and, both items required, `aggregate` is `incomplete` with one gap for `BelowThree`'s index, `reason` `not-proved`, `result` `refuted`. | Test (TC-2184) |
+| FR-621-AC-9 | Over the Counter subject provisioned with counters `a` at 1, `b` at 0 and `d` at 0, `always holds(c.value >= 1)` settles `refuted` with a counterexample whose `over_binding` names `b` (the first refuted instance in key order, though `a` precedes it and is proved), and the same document run twice writes equal items; the refuted `always possible (value = 0)` item over the one-counter fixture carries `replay.target` `{"state_clause": Q}` with `Q` ending in the claim's declared name, and `replay.reproduced` `true`. | Test (TC-2292) |
+| FR-621-AC-10 | Over the Counter subject, the `proved` item of `Bounded` and the `refuted` item of `BelowThree` each carry `record.settled_by` `result` and `record.backend` `en-1`; the `invalid-request` item of an unknown claim `Missing` carries `record.settled_by` `disposition` and no `backend` member. | Test (TC-2296) |
+| FR-621-AC-11 | Over the Counter subject, the analyze document of `[{"claim": "Bounded"}]` has `last_stage` `S6c`; of `[{"claim": "Bounded"}, {"claim": "BelowThree"}]`, whose refuted item is replayed, `S8`; of `[{"claim": "Bounded", "temporal": {"limits": {"max_states": 2}}}]`, whose item is `incomplete`, `S6c`; and of `[{"claim": "Nothing", "temporal": {"item_kind": "deadlock-freedom"}}]`, whose only item is an `unknown-claim` disposition, `S4`. | Test (TC-2381) |
+| FR-621-AC-12 | A malformed `native-analyze/1` document gives `last_stage` `null`; a program the checker refuses gives `S3`; a snapshot naming the undeclared population `ix://test/counter/nowhere` gives `S4`; and a request cancelled before its first item gives `null`. | Test (TC-2382) |
 
 ## Dependencies
 

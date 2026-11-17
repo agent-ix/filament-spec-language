@@ -42,6 +42,11 @@ pub enum Code {
     Refinement,
     /// FR-353: qualification arguments or corpus were refused before execution.
     Qualification,
+    /// FR-765: a checkout `cargo xtask examples-check` needs is not named or
+    /// not present.
+    ExamplesCheckInput,
+    /// FR-765: the driver examples gate could not run or failed.
+    ExamplesCheck,
 }
 
 impl Code {
@@ -61,6 +66,8 @@ impl Code {
             Self::TestSuites => "test-suites",
             Self::Refinement => "refinement",
             Self::Qualification => "qualify",
+            Self::ExamplesCheckInput => "examples-check-input",
+            Self::ExamplesCheck => "examples-check",
         }
     }
 }
@@ -113,6 +120,48 @@ pub enum Error {
     #[error("conformance: local CI graph exited with {status}")]
     ConformanceCiFailed {
         /// The child Make process status.
+        status: std::process::ExitStatus,
+    },
+    /// FR-765: the variable naming a checkout examples-check needs is unset.
+    #[error("examples-check: {var} is not set; name a {repository} checkout (clone agent-ix/{repository} next to this repository)")]
+    ExamplesCheckUnset {
+        /// The variable.
+        var: &'static str,
+        /// The repository the checkout is of.
+        repository: &'static str,
+    },
+    /// FR-765: the folder a variable names is not a checkout of its repository.
+    #[error("examples-check: no {repository} checkout at {path} ({var}): {missing} is missing; clone agent-ix/{repository} there or set {var}")]
+    ExamplesCheckMissing {
+        /// The variable.
+        var: &'static str,
+        /// The repository the checkout is of.
+        repository: &'static str,
+        /// The folder the variable names.
+        path: PathBuf,
+        /// The first identifying file the folder lacks.
+        missing: &'static str,
+    },
+    /// FR-765: the driver gate could not be launched.
+    #[error("examples-check: cannot launch the driver examples gate: {source}")]
+    ExamplesCheckSpawn {
+        /// The process spawn failure.
+        #[source]
+        source: io::Error,
+    },
+    /// FR-765: the driver gate passed without reporting that it built `fsl`
+    /// from this checkout.
+    #[error("examples-check: the driver examples gate did not report building fsl from {language}{}; the sibling driver may predate the FSL_LANGUAGE_DIR build (driver FR-021-AC-7), so update it", reported.as_ref().map(|path| format!(" (it reported {path})")).unwrap_or_default())]
+    ExamplesCheckUnverified {
+        /// This language checkout.
+        language: PathBuf,
+        /// The other checkout the gate reported, if it reported one.
+        reported: Option<String>,
+    },
+    /// FR-765: the driver gate failed with this checkout's `fsl`.
+    #[error("examples-check: the driver examples gate failed with {status}")]
+    ExamplesCheckFailed {
+        /// The child cargo status.
         status: std::process::ExitStatus,
     },
     /// A filesystem read or write failed.
@@ -416,6 +465,12 @@ impl Error {
             | Self::RefinementRegistryBuild { .. }
             | Self::LayeringUnexpectedRun { .. } => Code::Refinement,
             Self::QualificationRefusal(_) => Code::Qualification,
+            Self::ExamplesCheckUnset { .. } | Self::ExamplesCheckMissing { .. } => {
+                Code::ExamplesCheckInput
+            }
+            Self::ExamplesCheckSpawn { .. }
+            | Self::ExamplesCheckFailed { .. }
+            | Self::ExamplesCheckUnverified { .. } => Code::ExamplesCheck,
         }
     }
 
@@ -443,9 +498,11 @@ impl Error {
             | Code::CheckedInput
             | Code::CanonicalTypes
             | Code::Conformance
-            | Code::TestSuites => 1,
+            | Code::TestSuites
+            | Code::ExamplesCheck => 1,
             Code::Usage | Code::Io | Code::Metadata | Code::StringEdgeScan => 2,
             Code::Qualification => 2,
+            Code::ExamplesCheckInput => 2,
             // FSpec FR-301's tool-failure code: the gate could not report.
             Code::Refinement => Verdict::ToolFailure.exit_code(),
         }

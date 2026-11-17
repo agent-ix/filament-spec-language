@@ -13,7 +13,9 @@
 //! (one FR-120 application of its template's operation, every clause of
 //! the operation selected) up to the template's authored attempt count, and
 //! ends with `cend` at its retry point, which records the recovery
-//! predicate's value as the registration's status.
+//! predicate's value as the registration's status. If that predicate reads
+//! its recovery binder, `cend` branches over the recovery type's finite
+//! records as environment reports (FSpec FR-730).
 //!
 //! A registration holds its ordinal while it is `registered` or
 //! `activated` (CP-1's "live"); a closed or ended one stays in the key until
@@ -33,7 +35,7 @@ use super::{
     ProtocolSystem, Registered, Registration, Status, Thread,
 };
 use crate::simulation::expansion::ExpansionStop;
-use crate::simulation::model::encode::{reference_enc, typed_value_enc, value_enc};
+use crate::simulation::model::encode::{reference_enc, value_enc};
 use crate::simulation::model::{
     verdict, FirstApplication, ModelFinding, ModelSimState, OperationRef, Verdict,
 };
@@ -409,7 +411,7 @@ impl<M: MemoryModel> ProtocolSystem<'_, M> {
             | Rest::End => {
                 return Err(
                     ProtocolRefusal::fault("a-compensation-thread-rests-at-its-template").into(),
-                )
+                );
             }
         };
         let template = self.program.template(index)?;
@@ -554,19 +556,16 @@ impl<M: MemoryModel> ProtocolSystem<'_, M> {
                 }
             }
             records.push(Bound {
-                enc: typed_value_enc(
-                    &value,
-                    self.model.types(),
-                    self.package.graph().scope().variant_types(),
-                ),
+                enc: value_enc(&value, self.model.value_typing()),
                 value: Some(value),
             });
         }
         Ok(records)
     }
 
-    /// ST-12: the thread ends and is removed; the registration's status
-    /// records the recovery predicate's value over its captures.
+    /// ST-12 and FSpec FR-730: the thread ends and is removed; when the
+    /// predicate reads its binder, each recovery record gives one successor
+    /// and the registration records the predicate's value over its captures.
     fn cend(
         &self,
         state: &ProtocolState<M>,
@@ -576,41 +575,56 @@ impl<M: MemoryModel> ProtocolSystem<'_, M> {
         registration: &Registration,
         gathered: &mut Gathered<M>,
     ) -> Result<(), ExpansionStop> {
-        // The predicate reads no recovery view: `Program::new` refuses one
-        // that does.
-        let mut frame = vec![None];
-        frame.extend(Self::protocol_values(Self::instance(state, ordinal)?));
-        frame.extend(Self::captured(registration, usize::MAX));
-        frame.push(Some(self.over.clone()));
-        let Some(recovered) = self.holds(
-            template,
-            template.recover,
-            frame,
-            state,
-            &mut gathered.findings,
-        )?
-        else {
-            return Ok(());
+        let records = if template.reads_recovery {
+            self.model
+                .values_of(&template.recovery_type, &state.model, &mut gathered.budget)?
+                .ok_or_else(|| ProtocolRefusal::fault("a-recovery-type-is-bounded"))?
+                .into_iter()
+                .map(Some)
+                .collect()
+        } else {
+            vec![None]
         };
-        let mut next = state.clone();
-        let target = Self::instance_mut(&mut next, ordinal)?;
-        target.threads.remove(path);
-        let compensating = target
-            .compensating
-            .remove(path)
-            .ok_or_else(|| ProtocolRefusal::fault("a-compensation-thread-has-its-registration"))?;
-        let key = self.registration_key(&compensating.registration)?;
-        if let Some(entry) = target.registrations.get_mut(&compensating.registration) {
-            entry.status = if recovered {
-                Status::Recovered
-            } else {
-                Status::Unrecovered
+        let instance = Self::instance(state, ordinal)?;
+        for record in records {
+            let mut frame = vec![record.clone()];
+            frame.extend(Self::protocol_values(instance));
+            frame.extend(Self::captured(registration, usize::MAX));
+            frame.push(Some(self.over.clone()));
+            let Some(recovered) = self.holds(
+                template,
+                template.recover,
+                frame,
+                state,
+                &mut gathered.findings,
+            )?
+            else {
+                continue;
             };
+            let mut next = state.clone();
+            let target = Self::instance_mut(&mut next, ordinal)?;
+            target.threads.remove(path);
+            let compensating = target.compensating.remove(path).ok_or_else(|| {
+                ProtocolRefusal::fault("a-compensation-thread-has-its-registration")
+            })?;
+            let key = self.registration_key(&compensating.registration)?;
+            if let Some(entry) = target.registrations.get_mut(&compensating.registration) {
+                entry.status = if recovered {
+                    Status::Recovered
+                } else {
+                    Status::Unrecovered
+                };
+            }
+            self.normalize(&mut next, ordinal)?;
+            let identity_record = record.map(|value| {
+                let encoded = value_enc(&value, self.model.typing());
+                (encoded, value)
+            });
+            gathered.successors.push((
+                ProtocolTransition::cend(path.clone(), key, identity_record),
+                next,
+            ));
         }
-        self.normalize(&mut next, ordinal)?;
-        gathered
-            .successors
-            .push((ProtocolTransition::cend(path.clone(), key), next));
         Ok(())
     }
 

@@ -252,6 +252,37 @@ member of its own.
   settles `refuted` with cause `UndefinedEvaluation` (ADR-018 UE-6, DL-5).
   An enabled identity, or the predicate `true`, SHALL settle
   `inconclusive`, `ReplayParity`.
+- When the envelope's clause node is an `invariant` state clause (an
+  invariant item, FR-625, FR-951), the executor SHALL replay its
+  state-clause counterexample as a reachable-state safety violation. The
+  envelope's identity members are those of an authored clause above:
+  `replay_target` is the `state_clause` member naming the invariant,
+  `occurrence_key` its `state_clause` node and `claim` occurrence, and
+  `backend` EN-1's identity. The payload is FSpec FR-364's finite prefix
+  for a reachable-state invariant, with an empty `loop`, `over_binding`
+  `null` and `fairness` `[]` (FSpec FR-364-AC-2). The executor SHALL check no fairness, since a safety
+  violation is a finite prefix. At every replayed state, in order, it SHALL
+  evaluate the invariant's letter as FR-338 "Canonical translation state"
+  defines it for an invariant root: the checked body for every object of
+  the state whose most-specific type conforms to the context type, in
+  ascending reference-key order, with FR-107's `evaluate_clause`.
+  - For `kind: Formula`, when the letter is true at every replayed state
+    before the last and false at the last one, the executor SHALL settle
+    `reproduced-with-evaluated-witness` with value `Truth(false)` and
+    `trace_position` the last state's position. A letter that is false at
+    an earlier state, true at the last state, or with no value SHALL settle
+    `inconclusive`, `ReplayParity` or `NoValue` (FR-072).
+  - For `kind: UndefinedEvaluation{where, cause}`, `where.locus` names the
+    invariant's `state_clause` node and `claim` occurrence. When the letter
+    is true at every earlier replayed state and first undefined at
+    `where.position`, the last state, with an undefined cause equal to
+    `cause`, the executor SHALL settle `reproduced-with-evaluated-witness`
+    with the `UndefinedEvaluation` as the arm's value. Any other first
+    undefined position, locus or cause SHALL settle `inconclusive`,
+    `ReplayParity`.
+  - A non-empty `loop`, or a payload `kind` of `Deadlock`, over an
+    invariant clause SHALL refuse `invalid_runtime_input`/`invalid-value`
+    before any step is replayed.
 - An internal fault SHALL refuse with an `InternalFault` and settle no
   result.
 - Replay SHALL read no path, environment variable, clock or search

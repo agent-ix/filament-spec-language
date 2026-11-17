@@ -107,23 +107,29 @@ as this route does.
 ## Outputs
 
 FR-109's `ClauseRunReport`: the disposition, the compiled `package_id` and
-the usage; for a `Timestamped` trace it also returns the updated `ledger`
-(FR-502) and FR-501's result report (basis, decision support, premises and
-result identity); a request refused by FR-502 returns the ledger it supplied,
+the usage; for a `Progressed` or `Timestamped` trace it also returns the
+updated `ledger` (FR-502) and FR-501's result report (basis, decision
+support, premises and result identity) as `ClauseRunReport::finite_window`,
+whose `basis` is FR-504's or FR-501's and may differ from the report's
+top-level FR-266 `basis`; a request refused by FR-502 returns the ledger it supplied,
 unchanged. Its `category` adds `pending` (a pending result, with the pending clause ids in its body)
 and `unsupported` (a missing fairness premise). Its `disposition` for a
 `violation` (`Completed(false)` or an `Undefined` that is a violation)
 carries the failing `TemporalPosition` and the refutation's
 `TemporalCounterexample`, FSpec FR-364's observed arm, which the entry
-builds from what it ran: one `{document}` step per represented position
-from the identities of the trace's `DocumentRef`s (the `Finite`
+builds from what it ran: one `{document}` step per represented snapshot
+position from the identities of the trace's `DocumentRef`s, and one
+`{"sample": I}` step per represented record-sample position (FR-641), `I`
+the position's zero-based index in the request trace's position list as a
+`U64String` (prefix positions first, then loop positions), as FSpec FR-364's
+observed arm defines it (the `Finite`
 trace as `prefix` with an empty `loop`, or the `Lasso`'s `prefix` and
 `loop`; for an `Undefined` result, the positions 0 to the failing position
 as `prefix` and an empty `loop`), the checked clause's fairness set, the
 interval of its first interval-carrying operator in pre-order (`null` when
 it has none, and for an `Undefined` result), the trace position, and for
 an `Undefined` result the undefined-evaluation envelope whose `where`
-carries the position, that position's document identity and the undefined
+carries the position, that position's document identity (its `sample` index for a record-sample position) and the undefined
 atom's locus. A refused condition's disposition carries its position. The
 FR-267 writer writes these as the report holds them and derives none.
 
@@ -305,6 +311,7 @@ position (FR-327); `decisive.position` may be later or earlier than it.
 | FR-330-AC-15 | Over the closed `Counter` trace `c.value` 0, 1, 2 under event-position false-extension, `always[0,3] holds(c.value <= 2)` `on origin` is violated at position 0 and carries no `decisive`, because it is false only at position 3, past the last position; `holds(c.value = 1) until[1,2] holds(c.value = 3)` `on origin` is violated at position 0 with a `decisive` of `position` 2 (the left operand is not required at the anchor, and is false at position 2 where the right operand is also false). | Test (TC-840) |
 | FR-330-AC-16 | Over `Model` whose initial state and steps reconstruct `c.value` 0, then the loop states 1, 2, `always holds(c.value <= 1)` is violated at position 0 with a `decisive` of `position` 2, the atom evaluated over the reconstructed state of position 2. | Test (TC-840) |
 | FR-330-AC-17 | From source, `run_trace_subject_clause` on FR-327-AC-7's non-model subject `c: Counter` and its `level` samples 0, 1, 2 runs `always[0,2] A` `on origin` and reports category `undefined`, exit 10, `InsufficientData{where: 2, atom: A, count: 0, min_count: 1}`, with no `truth` or counterexample; running `always[0,0] B` `on origin`, where `B` is `count where holds(c.level > 9) over past[0,0] min_count 0 >= 1`, reports `violation` at position 0 with a `decisive` naming `B`'s aggregate occurrence at position 0. An empty sample sequence, a sample whose record does not conform to `Counter`, a clause declared over another record type, and a model-subject clause without aggregate terms each refuse before formula evaluation; the existing `run_clause` request and model-population behavior are unchanged. | Test |
+| FR-330-AC-18 | Through `command::run`, the infinite-trace clause `always holds(r.level < 2)` over a `lasso` of record samples with prefix levels 0, 0 and loop level 2 reports `violated` with a counterexample whose `prefix` is `[{"sample": "0"}, {"sample": "1"}]` and whose `loop` is `[{"sample": "2"}]`: the two equal samples have distinct steps, no step carries a `document` member or the sample's value, no ledger in the report spells a sample's text or value (a covered entry may carry the sample's FR-993 integrity fingerprint, which is not an identity), and the counterexample replays through FSpec FR-364 against the same request. A violated finite sample trace of an event-position clause carries a counterexample of the same form. | Test (TC-2295) |
 
 ## Dependencies
 

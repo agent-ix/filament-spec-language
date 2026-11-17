@@ -274,11 +274,13 @@ pub struct BackendDescriptor {
     fairness_kinds: BTreeSet<FairnessKind>,
     memory_models: BTreeSet<MemoryModelName>,
     reductions: BTreeSet<ReductionKind>,
+    state_graph_forms: BTreeSet<StateGraphFormKind>,
     evidence_kinds: BTreeSet<EvidenceKind>,
     dynamics: Option<BTreeSet<DynamicsKind>>,
     solver_bounds: Option<SolverBounds>,
     max_cases: Option<std::num::NonZeroU64>,
     timed: bool,
+    options: BTreeSet<String>,
 }
 
 /// The optional FR-331 manifest members [`descriptor_from_manifest`] reads
@@ -403,7 +405,9 @@ pub fn descriptor_from_manifest<'a>(
         max_cases: None,
         memory_models,
         reductions,
+        state_graph_forms: BTreeSet::new(),
         timed: false,
+        options: BTreeSet::new(),
     })
 }
 
@@ -657,11 +661,13 @@ impl BackendDescriptor {
             fairness_kinds: BTreeSet::new(),
             memory_models: BTreeSet::new(),
             reductions: BTreeSet::new(),
+            state_graph_forms: BTreeSet::new(),
             evidence_kinds,
             dynamics: None,
             solver_bounds: None,
             max_cases: None,
             timed: false,
+            options: BTreeSet::new(),
         })
     }
 
@@ -810,6 +816,50 @@ impl BackendDescriptor {
     /// The reductions this backend advertises (FR-159).
     pub fn reductions(&self) -> &BTreeSet<ReductionKind> {
         &self.reductions
+    }
+
+    /// Advertise the state-graph claim forms this backend decides (FSpec
+    /// FR-331 `state_graph_forms`, FR-390). A descriptor built without this
+    /// call decides none, so it is no candidate for a state-graph item.
+    #[must_use]
+    pub fn with_state_graph_forms(
+        mut self,
+        forms: impl IntoIterator<Item = StateGraphFormKind>,
+    ) -> Self {
+        self.state_graph_forms = forms.into_iter().collect();
+        self
+    }
+
+    /// The state-graph claim forms this backend advertises.
+    pub fn state_graph_forms(&self) -> &BTreeSet<StateGraphFormKind> {
+        &self.state_graph_forms
+    }
+
+    /// Publish the option names this backend's manifest `options` hold
+    /// (FSpec FR-331, FR-779). A descriptor built without this call
+    /// publishes none, so an item naming it with any option settles
+    /// `unknown-option`.
+    #[must_use]
+    pub fn with_options(mut self, options: impl IntoIterator<Item = String>) -> Self {
+        self.options = options.into_iter().collect();
+        self
+    }
+
+    /// The option names this backend publishes.
+    pub fn options(&self) -> &BTreeSet<String> {
+        &self.options
+    }
+
+    /// The least of `requested` in byte order that this backend does not
+    /// publish (FSpec FR-779 `option`), if any.
+    pub fn unpublished_option<'n>(
+        &self,
+        requested: impl IntoIterator<Item = &'n String>,
+    ) -> Option<&'n String> {
+        requested
+            .into_iter()
+            .filter(|name| !self.options.contains(*name))
+            .min()
     }
 
     /// Whether this backend decides an item whose subject resolves its
@@ -1044,6 +1094,38 @@ pub enum FairnessKindsDefect {
     DuplicateLabel(String),
 }
 
+/// A state-graph claim form, spelled as the FSpec FR-331 `state_graph_forms`
+/// member spells it (FR-390).
+#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+pub enum StateGraphFormKind {
+    /// `possible`.
+    Possible,
+    /// `always possible`.
+    AlwaysPossible,
+    /// `unique path`.
+    UniquePath,
+}
+
+impl StateGraphFormKind {
+    /// The `state_graph_forms` spelling.
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Possible => "possible",
+            Self::AlwaysPossible => "always-possible",
+            Self::UniquePath => "unique-path",
+        }
+    }
+
+    /// The form of a checked claim.
+    pub fn of(form: &fsl_semantics::check::StateGraphForm) -> Self {
+        match form {
+            fsl_semantics::check::StateGraphForm::Possible { .. } => Self::Possible,
+            fsl_semantics::check::StateGraphForm::AlwaysPossible { .. } => Self::AlwaysPossible,
+            fsl_semantics::check::StateGraphForm::UniquePath { .. } => Self::UniquePath,
+        }
+    }
+}
+
 /// Why a `memory_models` member was refused (FSpec FR-331-AC-30).
 #[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]
 pub enum MemoryModelsDefect {
@@ -1241,6 +1323,29 @@ impl CandidateSet {
             missing_reduction: None,
             evidence: None,
         }
+    }
+
+    /// This set narrowed to its one member `backend`, every other member
+    /// unchanged: the set a tie rule's row selects (FR-962). `None` when
+    /// `backend` is not a member.
+    #[must_use]
+    pub fn narrowed_to(&self, backend: &BackendId) -> Option<Self> {
+        let kept = self
+            .candidates
+            .iter()
+            .find(|candidate| candidate.id() == backend)?
+            .clone();
+        let fairness = self
+            .fairness
+            .iter()
+            .filter(|(candidate, _)| candidate.id() == backend)
+            .map(|(candidate, kinds)| (candidate.clone(), kinds.clone()))
+            .collect();
+        Some(Self {
+            candidates: vec![kept],
+            fairness,
+            ..self.clone()
+        })
     }
 
     /// The evidence value a `probabilistic-satisfaction` item named,
@@ -1466,6 +1571,11 @@ impl Registry {
         self.held.keys()
     }
 
+    /// The registered descriptor of `backend`, if the registry holds it.
+    pub fn descriptor(&self, backend: &BackendId) -> Option<&BackendDescriptor> {
+        self.held.get(backend)
+    }
+
     /// Compute `kind`'s candidate set (FR-075), naming `named` when the
     /// caller requests one specific backend.
     ///
@@ -1626,6 +1736,29 @@ impl Registry {
         } else {
             outcome
         }
+    }
+
+    /// FSpec FR-390: `outcome`, a candidate set computed for a state-graph
+    /// item, restricted to the backends whose manifest lists the claim's
+    /// `form` in `state_graph_forms`. An unknown named backend is returned
+    /// unchanged.
+    pub fn restrict_to_state_graph_form(
+        &self,
+        outcome: CandidateOutcome,
+        form: StateGraphFormKind,
+    ) -> CandidateOutcome {
+        self.keep_candidates(outcome, |descriptor| {
+            descriptor.state_graph_forms.contains(&form)
+        })
+    }
+
+    /// FSL FR-243: `outcome` restricted to the engines whose timing matches
+    /// the item's subject: the engines that decide timed items for a timed
+    /// subject (`timed`), and the others for an untimed one, so an untimed
+    /// clause item read from an analyze document routes to EN-1 and a timed
+    /// one to EN-6. An unknown named backend is returned unchanged.
+    pub fn restrict_to_timing(&self, outcome: CandidateOutcome, timed: bool) -> CandidateOutcome {
+        self.keep_candidates(outcome, |descriptor| descriptor.decides_timed() == timed)
     }
 
     /// FR-144 and FSpec FR-430: `outcome`, a candidate set computed for a

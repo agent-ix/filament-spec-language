@@ -289,7 +289,8 @@ A native-run/1 request (FR-026's closed envelope and shared limits). For a
   driver's `run` verb always reaches this mode ([FR-662](FR-662-check-every-native-fence-of-a-markdown-specification.md)).
 - `package`: an optional closed selection of an existing `filament.checked-package/v2`
   artifact by package-file path. When present, FR-027's strict package reader
-  admits and executes that package without fallback to source compilation.
+  admits and executes that package without fallback to source compilation,
+  as FR-945 states.
 - `models`: zero or more `semantic-ir/2.0.0` domain package documents, each
   read and handed to spine `compile` as FR-056's
   package input, exactly as FR-027 does for compile.
@@ -300,6 +301,9 @@ A native-run/1 request (FR-026's closed envelope and shared limits). For a
 - `extensions`: zero or more extension definition entries, the caller's
   definition catalog that every unit of the request selects extensions from
   ([FR-660](FR-660-supply-extension-definitions-through-the-request-extensions-member.md));
+  a `native-compile/1` request carries the same member.
+- `integer_division`: optional, the integer-division law name `euclidean`, `floor` or `truncating` for the program units, also admitted on each `libraries` object for that library, and refused beside `package`
+  ([FR-767](FR-767-supply-the-integer-division-law-from-a-command-option-or-request-member.md));
   a `native-compile/1` request carries the same member.
 - `call`: a closed object naming the call.
   - `function`: the called function's name, a string of one or more
@@ -322,6 +326,14 @@ A native-run/1 request (FR-026's closed envelope and shared limits). For a
     or counter uses the accounting default: `work_units` is 1,000,000 and
     the other nine counters are `u64::MAX`. A `work_units` member directly
     in `call` is not accepted.
+  - `evaluation`: optional, a closed object whose one member is
+    `live_occurrences`, a JSON integer from 0 to 18446744073709551615, the
+    NFR-130 live-occurrence limit of the call's evaluation; omitted, it is
+    the FR-255 default 1048576. It is not an accounting counter: it bounds the
+    frames and argument values the evaluation holds at once, not work done.
+  - `requirements`: optional, the closed object FR-960 gives, which asks the
+    run to settle the requirement items of the call and names their backends;
+    FR-961 settles them and FR-963 adds their members to this document.
 
 ## Outputs
 
@@ -336,9 +348,9 @@ An unexpected completed kind remains an internal invariant failure.
 
 A completed value is serialized in FR-650's run value form. A Reference is
 `{"reference": {"universe": U, "type": T, "object_identity": O}}`: `U` and
-`T` are the actual UniverseId and most-specific EffectiveId, each 64
-lowercase hexadecimal characters, and `O` is the exact nonempty UTF-8 object
-identity. No population binding or object fields are serialized as a
+`T` are the actual UniverseId and most-specific EffectiveId, written as
+FR-650 "Identity spellings" states (structural identity objects, never hex),
+and `O` is the exact nonempty UTF-8 object identity. No population binding or object fields are serialized as a
 Reference result.
 
 For a call that reaches S6a, `command`'s outcome carries one
@@ -515,7 +527,7 @@ exits with that code's exit status:
 | `Admission` carrying `ForeignModelSelection` with `OfferedSelection::Document(actual)` | `call` | `foreign_reference`, cause `foreign-model-selection` | Exactly `{"position": P, "model_identity": actual, "expected": E}`; `actual` is the original document's modelIdentity string and `E` the cause's full required DomainPackageRef | 20 |
 | `Admission` carrying `ForeignModelSelection` with `OfferedSelection::Population(actual)` | `call` | `foreign_reference`, cause `foreign-model-selection` | Exactly `{"position": P, "population": D, "expected": E}`; `D` is the actual offered population DeclarationKey, not a substitute model selection; `E` the cause's full required DomainPackageRef | 20 |
 | `Admission` carrying `ForeignType { member, type_name }` | `call` | `foreign_reference`, cause `foreign-type` | Exactly `{"position": P, "member": member, "type": D}`; `D` is the cause's actual uncovered/absent type DeclarationKey | 20 |
-| `Admission` carrying `ForeignUniverse { actual, expected }` | `call` | `foreign_reference`, cause `foreign-universe` | Exactly `{"position": P, "required": H, "supplied": A}`; `H` is the actual expected UniverseId as lowercase hex, `A` the actual supplied bytes as lowercase hex, unchanged and unpadded, matching FR-096's cause fields | 20 |
+| `Admission` carrying `ForeignUniverse { actual, expected }` | `call` | `foreign_reference`, cause `foreign-universe` | Exactly `{"position": P, "required": H, "supplied": A}`; `H` is the actual expected UniverseId and `A` the actual supplied universe, each the universe object of FR-650 "Identity spellings" | 20 |
 | `DanglingReference { position }` | `call` | `dangling_reference`, cause `absent-target-in-complete-population` | Exactly `{"position": P}`; no lookup binding/key or invented locus | 20 |
 
 In these rows, `P` is the declared parameter's zero-based position. `D`

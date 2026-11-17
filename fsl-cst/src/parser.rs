@@ -15,7 +15,7 @@ use crate::lexer::Limits;
 use crate::token::{Kind, LexError};
 use filament_exact::Cancel;
 use fsl_foundation::selection::{
-    valid_selection_identity, ImportSelection, ModelSelection, ProfileSelection, SourceSelections,
+    ImportSelection, ModelSelection, ProfileSelection, SourceSelections, valid_selection_identity,
 };
 use fsl_foundation::{Phase, Source, Span, SyntaxLimit};
 
@@ -43,6 +43,9 @@ type Scan = (
     Vec<Recovery>,
 );
 
+const SYNTAX_DIAGNOSTIC_BOUND: usize = 100;
+const EXPECTED_ALTERNATIVE_BOUND: usize = 12;
+
 #[derive(Clone, Debug)]
 struct Failure {
     position: usize,
@@ -69,6 +72,68 @@ impl Failure {
     }
 }
 
+fn format_expected(
+    tokens: &[Significant],
+    position: usize,
+    expected: &BTreeSet<String>,
+    reserved_words: &BTreeSet<&'static str>,
+) -> String {
+    if let Some(token) = tokens.get(position) {
+        if reserved_words.contains(token.spelling.as_ref())
+            && expected.iter().any(|item| {
+                item == "identifier"
+                    || item.starts_with("identifier or ")
+                    || item.starts_with("type name other than ")
+            })
+        {
+            return format!("`{}` is a reserved word", token.spelling);
+        }
+    }
+
+    let lowercase_hex_digits = (b'0'..=b'9')
+        .chain(b'a'..=b'f')
+        .map(|byte| format!("`{}`", byte as char))
+        .collect::<BTreeSet<_>>();
+    if expected == &lowercase_hex_digits
+        && tokens.get(position).is_some_and(|token| {
+            token.spelling.len() == 1
+                && token
+                    .spelling
+                    .chars()
+                    .next()
+                    .is_some_and(|character| ('A'..='F').contains(&character))
+        })
+    {
+        return "expected a lowercase hex digit".into();
+    }
+
+    if expected.len() > EXPECTED_ALTERNATIVE_BOUND {
+        return if expected.contains("decimal literal") || expected.contains("quoted string") {
+            "expected an expression".into()
+        } else {
+            "expected a declaration".into()
+        };
+    }
+
+    let expression_start = expected.contains("true")
+        || expected.contains("false")
+        || expected.contains("decimal literal") && expected.contains("quoted string")
+        || expected.contains("identifier")
+        || expected
+            .iter()
+            .any(|item| item.starts_with("identifier or "));
+    let mut alternatives = expected
+        .iter()
+        .filter(|item| !item.starts_with("one of `"))
+        .filter(|item| !(expression_start && item.as_str() == "decimal literal"))
+        .cloned()
+        .collect::<Vec<_>>();
+    if alternatives.is_empty() {
+        alternatives.push("an expression".into());
+    }
+    format!("expected {}", alternatives.join(" or "))
+}
+
 pub(super) fn parse(
     source: Source,
     limits: Limits,
@@ -79,141 +144,45 @@ pub(super) fn parse(
     let compounds = grammar::complete_compound_spellings(&grammar);
     let (tokens, significant, mut diagnostics, mut recoveries) =
         scan(&source, limits, &compounds, cancel)?;
-    let mut parse_significant = significant.clone();
+    if diagnostics.len() > SYNTAX_DIAGNOSTIC_BOUND {
+        let omitted = diagnostics.len() - SYNTAX_DIAGNOSTIC_BOUND;
+        let cut_span = diagnostics[SYNTAX_DIAGNOSTIC_BOUND]
+            .byte_span()
+            .unwrap_or(Span {
+                start: source.text().len(),
+                end: source.text().len(),
+            });
+        diagnostics.truncate(SYNTAX_DIAGNOSTIC_BOUND);
+        diagnostics.push(*super::diagnostic::error(
+            &source,
+            CompleteCode::InvalidSyntax,
+            CompleteCause::DiagnosticListCut,
+            Phase::Parse,
+            cut_span.start,
+            cut_span.end,
+            format!(
+                "{omitted} additional syntax errors omitted after the fixed limit of {SYNTAX_DIAGNOSTIC_BOUND}"
+            ),
+        ));
+    }
     let prelude_nodes = selection_prelude_nodes(&source, &grammar, &significant, limits, cancel);
-    // The word an `unsupported_construct`/`declaration-form` refusal is for;
-    // its message names the unit's selections, which are read once the tree is.
-    let mut undeclared_word: Option<(Span, String)> = None;
-    let mut declaration_form_at: Option<usize> = None;
-    let matched = if diagnostics.is_empty() {
-        let mut engine = Engine::new(&grammar, &significant, limits, cancel);
-        let matched = match engine.production(Production::CompleteUnit, 0) {
-            // A top-level match always leaves its root pending. Were that
-            // invariant broken, the unit is reported as a syntax failure
-            // with a recovery, never lowered to a silent one-node CST.
-            Outcome::Match(_) => engine.into_forest().ok_or_else(|| {
-                debug_assert!(false, "a matched unit leaves its root pending");
-                Failure::expected(0, format!("{:?}", Production::CompleteUnit))
-            }),
-            Outcome::No(failure) => {
-                if engine.starts_unknown_declaration(failure.position) {
-                    undeclared_word = significant
-                        .get(failure.position)
-                        .map(|token| (token.span, token.spelling.to_string()));
-                }
-                Err(failure)
-            }
-            Outcome::Exhausted(refusal) => {
-                let span = significant.get(refusal.position).map_or(
-                    Span {
-                        start: source.text().len(),
-                        end: source.text().len(),
-                    },
-                    |token| token.span,
-                );
-                return Err(super::diagnostic::resource_exhausted(
-                    &source,
-                    Phase::Parse,
-                    span,
-                    refusal.limit,
-                ));
-            }
-        };
-        match matched {
-            Ok(forest) => Some(forest),
-            Err(failure) => {
-                if let Some((forest, recovered, span)) = recover_at_protocol_delimiter(
-                    &grammar,
-                    &significant,
-                    limits,
-                    cancel,
-                    failure.position,
-                ) {
-                    parse_significant = recovered;
-                    diagnostics.push(*super::diagnostic::error(
-                        &source,
-                        CompleteCode::InvalidSyntax,
-                        CompleteCause::UnexpectedToken,
-                        Phase::Parse,
-                        span.start,
-                        span.end,
-                        "expected `}` before the next protocol declaration",
-                    ));
-                    recoveries.push(Recovery {
-                        kind: RecoveryKind::Insert,
-                        span,
-                        expected: "}".into(),
-                    });
-                    Some(forest)
-                } else {
-                    let span = significant.get(failure.position).map_or(
-                        Span {
-                            start: source.text().len(),
-                            end: source.text().len(),
-                        },
-                        |token| token.span,
-                    );
-                    let declaration_form = undeclared_word.is_some();
-                    let (code, cause) = if declaration_form {
-                        (
-                            CompleteCode::UnsupportedConstruct,
-                            CompleteCause::DeclarationForm,
-                        )
-                    } else {
-                        selection_code(&significant, failure.position).map_or(
-                            (
-                                CompleteCode::InvalidSyntax,
-                                if failure.position == significant.len() {
-                                    CompleteCause::UnexpectedEnd
-                                } else if malformed_decimal_argument(&significant, failure.position)
-                                {
-                                    CompleteCause::InvalidToken
-                                } else {
-                                    CompleteCause::UnexpectedToken
-                                },
-                            ),
-                            |code| (code, CompleteCause::UnsupportedSelection),
-                        )
-                    };
-                    let expected = failure
-                        .expected
-                        .into_iter()
-                        .collect::<Vec<_>>()
-                        .join(" or ");
-                    if declaration_form {
-                        declaration_form_at = Some(diagnostics.len());
-                    }
-                    diagnostics.push(*super::diagnostic::error(
-                        &source,
-                        code,
-                        cause,
-                        if code == CompleteCode::InvalidSyntax || declaration_form {
-                            Phase::Parse
-                        } else {
-                            Phase::Profile
-                        },
-                        span.start,
-                        span.end,
-                        format!("expected {expected}"),
-                    ));
-                    recoveries.push(Recovery {
-                        kind: if failure.position == significant.len() {
-                            RecoveryKind::Insert
-                        } else {
-                            RecoveryKind::Delete
-                        },
-                        span,
-                        expected,
-                    });
-                    None
-                }
-            }
-        }
-    } else {
-        None
-    };
+    let (matched, parse_significant, mut parser_diagnostics, parser_recoveries) =
+        parse_with_declaration_recovery(
+            &source,
+            &grammar,
+            significant.clone(),
+            &diagnostics,
+            limits,
+            cancel,
+        )?;
+    let parser_failed = !parser_diagnostics.is_empty();
+    diagnostics.append(&mut parser_diagnostics);
+    recoveries.extend(parser_recoveries);
+    diagnostics
+        .sort_by_key(|diagnostic| diagnostic.byte_span().map_or(usize::MAX, |span| span.start));
 
-    let (nodes, root) = if let Some(forest) = matched {
+    let has_forest = matched.is_some();
+    let (mut nodes, root) = if let Some(forest) = matched {
         lower_tree(&source, &parse_significant, &forest)
     } else {
         (
@@ -228,15 +197,42 @@ pub(super) fn parse(
             0,
         )
     };
-    let selection_nodes = if nodes.iter().any(|node| {
+    if !has_forest {
+        let starts = declaration_starts(&grammar);
+        let recovered_declarations: Vec<_> = recoveries
+            .iter()
+            .filter(|recovery| recovery.expected == "next declaration")
+            .filter(|recovery| {
+                significant.iter().any(|token| {
+                    token.span.start == recovery.span.start
+                        && starts.contains(token.spelling.as_ref())
+                })
+            })
+            .map(|recovery| recovery.span)
+            .collect();
+        for span in recovered_declarations {
+            let child = nodes.len();
+            nodes.push(RawNode {
+                production: Production::Declaration,
+                span,
+                children: Vec::new(),
+            });
+            if let Some(unit) = nodes.get_mut(root) {
+                unit.children.push(CstElement::Node(child));
+            }
+        }
+    }
+    let selection_nodes: &[RawNode] = if nodes.iter().any(|node| {
         matches!(
             node.production,
             Production::Profile | Production::ImportDeclaration | Production::Model
         )
     }) {
         &nodes
-    } else {
+    } else if !parser_failed {
         &prelude_nodes
+    } else {
+        &[]
     };
     let selections = extract_selections(
         &source,
@@ -244,22 +240,6 @@ pub(super) fn parse(
         selection_nodes,
         &mut diagnostics,
     );
-    if let (Some(at), Some((span, word))) = (declaration_form_at, undeclared_word) {
-        if let Some(slot) = diagnostics.get_mut(at) {
-            *slot = *super::diagnostic::error(
-                &source,
-                CompleteCode::UnsupportedConstruct,
-                CompleteCause::DeclarationForm,
-                Phase::Parse,
-                span.start,
-                span.end,
-                format!(
-                    "`{word}` begins no declaration form; the unit's selections are {}",
-                    selection_summary(&selections)
-                ),
-            );
-        }
-    }
     let cst = LosslessCst::new(source.clone(), tokens, nodes, root, recoveries);
     diagnostics.extend(interval_bounds(&source, &cst));
     diagnostics.extend(decimal_constructor_numbers(&source, &cst));
@@ -273,26 +253,601 @@ pub(super) fn parse(
     ))
 }
 
-/// The unit's header selections in source order, as a refusal names them.
-fn selection_summary(selections: &SourceSelections) -> String {
-    let profiles = selections
-        .profiles
+/// Parse a unit, recovering independently at declaration boundaries. The
+/// recovery path removes only a failed declaration from the parser's view;
+/// the original token stream remains the lossless CST source.
+fn parse_with_declaration_recovery(
+    source: &Source,
+    grammar: &Grammar,
+    significant: Vec<Significant>,
+    scanned: &[CompleteDiagnostic],
+    limits: Limits,
+    cancel: &Cancel,
+) -> Result<
+    (
+        Option<Forest>,
+        Vec<Significant>,
+        Vec<CompleteDiagnostic>,
+        Vec<Recovery>,
+    ),
+    Box<CompleteDiagnostic>,
+> {
+    let reserved_words = grammar::complete_reserved_words(grammar);
+    let lexical_spans: Vec<_> = scanned
         .iter()
-        .map(|selection| format!("profile {} = \"{}\"", selection.alias, selection.identity));
-    let imports = selections
-        .imports
+        .filter(|diagnostic| diagnostic.phase == Phase::Lex)
+        .filter_map(CompleteDiagnostic::byte_span)
+        .collect();
+    let mut tokens: Vec<_> = significant
+        .into_iter()
+        .filter(|token| {
+            !lexical_spans
+                .iter()
+                .any(|span| token.span.start < span.end && span.start < token.span.end)
+        })
+        .collect();
+    let mut diagnostics = Vec::new();
+    let mut recoveries = Vec::new();
+    let mut recovered_any = false;
+    let mut omitted_count = 0_usize;
+    let mut first_omitted_span = None;
+
+    if scanned
         .iter()
-        .map(|selection| format!("import \"{}\"", selection.identity));
-    let models = selections
-        .models
-        .iter()
-        .map(|selection| format!("model {} = \"{}\"", selection.alias, selection.identity));
-    let all: Vec<String> = profiles.chain(imports).chain(models).collect();
-    if all.is_empty() {
-        "none".into()
-    } else {
-        all.join(", ")
+        .any(|diagnostic| diagnostic.cause == CompleteCause::DiagnosticListCut)
+    {
+        return Ok((None, tokens, diagnostics, recoveries));
     }
+
+    loop {
+        let mut engine = Engine::new(grammar, &tokens, limits, cancel);
+        match engine.production(Production::CompleteUnit, 0) {
+            Outcome::Match(_) => {
+                append_omitted_diagnostic(
+                    source,
+                    &mut diagnostics,
+                    first_omitted_span,
+                    omitted_count,
+                );
+                return Ok((engine.into_forest(), tokens, diagnostics, recoveries));
+            }
+            Outcome::Exhausted(refusal) => {
+                let span = tokens.get(refusal.position).map_or(
+                    Span {
+                        start: source.text().len(),
+                        end: source.text().len(),
+                    },
+                    |token| token.span,
+                );
+                if recovered_any || !scanned.is_empty() {
+                    let reported = scanned.len().saturating_add(diagnostics.len());
+                    diagnostics.push(*super::diagnostic::error(
+                        source,
+                        CompleteCode::InvalidSyntax,
+                        CompleteCause::DiagnosticListCut,
+                        Phase::Parse,
+                        span.start,
+                        span.end,
+                        format!(
+                            "the diagnostic list was cut after {reported} syntax errors because s1.work_units was reached; raise s1.work_units to see the rest"
+                        ),
+                    ));
+                    return Ok((None, tokens, diagnostics, recoveries));
+                }
+                return Err(super::diagnostic::resource_exhausted(
+                    source,
+                    Phase::Parse,
+                    span,
+                    refusal.limit,
+                ));
+            }
+            Outcome::No(failure) => {
+                if let Some((forest, recovered, span)) = recover_at_protocol_delimiter(
+                    grammar,
+                    &tokens,
+                    limits,
+                    cancel,
+                    failure.position,
+                ) {
+                    if scanned.len().saturating_add(diagnostics.len()) < SYNTAX_DIAGNOSTIC_BOUND {
+                        diagnostics.push(*super::diagnostic::error(
+                            source,
+                            CompleteCode::InvalidSyntax,
+                            CompleteCause::UnexpectedToken,
+                            Phase::Parse,
+                            span.start,
+                            span.end,
+                            "expected `}` before the next protocol declaration",
+                        ));
+                    } else {
+                        omitted_count = omitted_count.saturating_add(1);
+                        first_omitted_span.get_or_insert(span);
+                    }
+                    append_omitted_diagnostic(
+                        source,
+                        &mut diagnostics,
+                        first_omitted_span,
+                        omitted_count,
+                    );
+                    push_recovery(
+                        &mut recoveries,
+                        Recovery {
+                            kind: RecoveryKind::Insert,
+                            span,
+                            expected: "}".into(),
+                        },
+                    );
+                    return Ok((Some(forest), recovered, diagnostics, recoveries));
+                }
+
+                let header_start = if recovered_any {
+                    None
+                } else {
+                    header_start_for_failure(grammar, &tokens, failure.position)
+                };
+                let declaration_start = if header_start.is_some() {
+                    header_start
+                } else if engine.starts_unknown_declaration(failure.position) {
+                    None
+                } else {
+                    engine
+                        .declaration_starts
+                        .iter()
+                        .enumerate()
+                        .take(failure.position.saturating_add(1))
+                        .filter_map(|(index, started)| {
+                            (index < tokens.len() && *started).then_some(index)
+                        })
+                        .next_back()
+                };
+                let Some(start) = declaration_start else {
+                    if recovered_any {
+                        append_omitted_diagnostic(
+                            source,
+                            &mut diagnostics,
+                            first_omitted_span,
+                            omitted_count,
+                        );
+                        return Ok((None, tokens, diagnostics, recoveries));
+                    }
+                    let span = tokens.get(failure.position).map_or(
+                        Span {
+                            start: source.text().len(),
+                            end: source.text().len(),
+                        },
+                        |token| token.span,
+                    );
+                    let declaration_form = engine.starts_unknown_declaration(failure.position)
+                        && !empty_unknown_declaration_body(&tokens, failure.position);
+                    let (code, cause) = if declaration_form {
+                        (
+                            CompleteCode::UnsupportedConstruct,
+                            CompleteCause::DeclarationForm,
+                        )
+                    } else {
+                        selection_code(&tokens, failure.position).map_or(
+                            (
+                                CompleteCode::InvalidSyntax,
+                                if failure.position == tokens.len() {
+                                    CompleteCause::UnexpectedEnd
+                                } else if malformed_decimal_argument(&tokens, failure.position) {
+                                    CompleteCause::InvalidToken
+                                } else {
+                                    CompleteCause::UnexpectedToken
+                                },
+                            ),
+                            |code| (code, CompleteCause::UnsupportedSelection),
+                        )
+                    };
+                    let expected = failure
+                        .expected
+                        .iter()
+                        .cloned()
+                        .collect::<Vec<_>>()
+                        .join(" or ");
+                    let message = tokens
+                        .get(failure.position)
+                        .filter(|_| declaration_form)
+                        .map(|token| format!("`{}` begins no declaration form", token.spelling))
+                        .unwrap_or_else(|| {
+                            derived_form(
+                                &tokens,
+                                &Failure::expected(failure.position, expected.clone()),
+                            )
+                            .map_or_else(
+                                || {
+                                    format_expected(
+                                        &tokens,
+                                        failure.position,
+                                        &failure.expected,
+                                        &reserved_words,
+                                    )
+                                },
+                                str::to_owned,
+                            )
+                        });
+                    diagnostics.push(*super::diagnostic::error(
+                        source,
+                        code,
+                        cause,
+                        if code == CompleteCode::InvalidSyntax || declaration_form {
+                            Phase::Parse
+                        } else {
+                            Phase::Profile
+                        },
+                        span.start,
+                        span.end,
+                        message,
+                    ));
+                    push_recovery(
+                        &mut recoveries,
+                        Recovery {
+                            kind: if failure.position == tokens.len() {
+                                RecoveryKind::Insert
+                            } else {
+                                RecoveryKind::Delete
+                            },
+                            span,
+                            expected,
+                        },
+                    );
+                    return Ok((None, tokens, diagnostics, recoveries));
+                };
+
+                let next = if is_header_start(&tokens[start]) {
+                    next_header_resumption(grammar, &tokens, start, failure.position)
+                } else {
+                    next_declaration_start(
+                        grammar,
+                        source,
+                        &tokens,
+                        failure.position.max(start.saturating_add(1)),
+                        start,
+                    )
+                };
+                let end = next.unwrap_or(tokens.len());
+                let region = if start < end {
+                    Span {
+                        start: tokens[start].span.start,
+                        end: tokens[end - 1].span.end,
+                    }
+                } else {
+                    tokens.get(start).map_or(
+                        Span {
+                            start: source.text().len(),
+                            end: source.text().len(),
+                        },
+                        |token| token.span,
+                    )
+                };
+                let has_lexical_error = lexical_spans
+                    .iter()
+                    .any(|span| span.start < region.end && region.start < span.end);
+                if next.is_none() && !has_lexical_error && failure.expected.contains(";") {
+                    let insertion_span = failure_span(source, &tokens, failure.position);
+                    let mut inserted = tokens.clone();
+                    inserted.insert(
+                        failure.position.min(inserted.len()),
+                        Significant {
+                            kind: None,
+                            span: Span {
+                                start: insertion_span.start,
+                                end: insertion_span.start,
+                            },
+                            spelling: ";".into(),
+                        },
+                    );
+                    let mut retry = Engine::new(grammar, &inserted, limits, cancel);
+                    if let Outcome::Match(_) = retry.production(Production::CompleteUnit, 0) {
+                        let span = failure_span(source, &tokens, failure.position);
+                        let expected = failure
+                            .expected
+                            .iter()
+                            .cloned()
+                            .collect::<Vec<_>>()
+                            .join(" or ");
+                        let message = derived_form(
+                            &tokens,
+                            &Failure::expected(failure.position, expected.clone()),
+                        )
+                        .map_or_else(
+                            || {
+                                format_expected(
+                                    &tokens,
+                                    failure.position,
+                                    &failure.expected,
+                                    &reserved_words,
+                                )
+                            },
+                            str::to_owned,
+                        );
+                        if scanned.len().saturating_add(diagnostics.len()) < SYNTAX_DIAGNOSTIC_BOUND
+                        {
+                            diagnostics.push(*super::diagnostic::error(
+                                source,
+                                CompleteCode::InvalidSyntax,
+                                CompleteCause::UnexpectedToken,
+                                Phase::Parse,
+                                span.start,
+                                span.end,
+                                message,
+                            ));
+                        } else {
+                            omitted_count = omitted_count.saturating_add(1);
+                            first_omitted_span.get_or_insert(span);
+                        }
+                        append_omitted_diagnostic(
+                            source,
+                            &mut diagnostics,
+                            first_omitted_span,
+                            omitted_count,
+                        );
+                        push_recovery(
+                            &mut recoveries,
+                            Recovery {
+                                kind: RecoveryKind::Insert,
+                                span,
+                                expected,
+                            },
+                        );
+                        return Ok((retry.into_forest(), inserted, diagnostics, recoveries));
+                    }
+                }
+                if !has_lexical_error {
+                    let span = failure_span(source, &tokens, failure.position);
+                    let expected = failure
+                        .expected
+                        .iter()
+                        .cloned()
+                        .collect::<Vec<_>>()
+                        .join(" or ");
+                    let message = derived_form(
+                        &tokens,
+                        &Failure::expected(failure.position, expected.clone()),
+                    )
+                    .map_or_else(
+                        || {
+                            format_expected(
+                                &tokens,
+                                failure.position,
+                                &failure.expected,
+                                &reserved_words,
+                            )
+                        },
+                        str::to_owned,
+                    );
+                    if scanned.len().saturating_add(diagnostics.len()) < SYNTAX_DIAGNOSTIC_BOUND {
+                        diagnostics.push(*super::diagnostic::error(
+                            source,
+                            CompleteCode::InvalidSyntax,
+                            if failure.position == tokens.len() {
+                                CompleteCause::UnexpectedEnd
+                            } else {
+                                CompleteCause::UnexpectedToken
+                            },
+                            Phase::Parse,
+                            span.start,
+                            span.end,
+                            message,
+                        ));
+                    } else {
+                        omitted_count = omitted_count.saturating_add(1);
+                        first_omitted_span.get_or_insert(span);
+                    }
+                }
+                push_recovery(
+                    &mut recoveries,
+                    Recovery {
+                        kind: RecoveryKind::Delete,
+                        span: region,
+                        expected: "next declaration".into(),
+                    },
+                );
+                tokens.drain(start..end);
+                recovered_any = true;
+                if next.is_none() && tokens.is_empty() {
+                    append_omitted_diagnostic(
+                        source,
+                        &mut diagnostics,
+                        first_omitted_span,
+                        omitted_count,
+                    );
+                    return Ok((None, tokens, diagnostics, recoveries));
+                }
+            }
+        }
+    }
+}
+
+fn failure_span(source: &Source, tokens: &[Significant], position: usize) -> Span {
+    tokens.get(position).map_or(
+        Span {
+            start: source.text().len(),
+            end: source.text().len(),
+        },
+        |token| token.span,
+    )
+}
+
+fn append_omitted_diagnostic(
+    source: &Source,
+    diagnostics: &mut Vec<CompleteDiagnostic>,
+    first_omitted_span: Option<Span>,
+    omitted_count: usize,
+) {
+    if omitted_count == 0 {
+        return;
+    }
+    let span = first_omitted_span.unwrap_or(Span {
+        start: source.text().len(),
+        end: source.text().len(),
+    });
+    diagnostics.push(*super::diagnostic::error(
+        source,
+        CompleteCode::InvalidSyntax,
+        CompleteCause::DiagnosticListCut,
+        Phase::Parse,
+        span.start,
+        span.end,
+        format!(
+            "{omitted_count} additional syntax errors omitted after the fixed limit of {SYNTAX_DIAGNOSTIC_BOUND}"
+        ),
+    ));
+}
+
+fn push_recovery(recoveries: &mut Vec<Recovery>, recovery: Recovery) {
+    if recoveries.len() < SYNTAX_DIAGNOSTIC_BOUND {
+        recoveries.push(recovery);
+    }
+}
+
+fn is_header_start(token: &Significant) -> bool {
+    matches!(
+        token.spelling.as_ref(),
+        "language" | "profile" | "import" | "model"
+    )
+}
+
+fn header_start_for_failure(
+    grammar: &Grammar,
+    tokens: &[Significant],
+    position: usize,
+) -> Option<usize> {
+    let header = tokens
+        .iter()
+        .enumerate()
+        .take(position.saturating_add(1))
+        .filter_map(|(index, token)| is_header_start(token).then_some(index))
+        .next_back()?;
+    let declaration_words = declaration_starts(grammar);
+    let declaration_after_header = tokens
+        .iter()
+        .enumerate()
+        .take(position.saturating_add(1))
+        .skip(header.saturating_add(1))
+        .any(|(_, token)| declaration_words.contains(token.spelling.as_ref()));
+    (!declaration_after_header).then_some(header)
+}
+
+fn next_header_resumption(
+    grammar: &Grammar,
+    tokens: &[Significant],
+    start: usize,
+    failure: usize,
+) -> Option<usize> {
+    let starts = declaration_starts(grammar);
+    let mut delimiters = Vec::new();
+    for (position, token) in tokens.iter().enumerate().skip(start) {
+        match token.spelling.as_ref() {
+            "(" | "[" | "{" => delimiters.push(token.spelling.as_ref()),
+            ")" if delimiters.last() == Some(&"(") => {
+                delimiters.pop();
+            }
+            "]" if delimiters.last() == Some(&"[") => {
+                delimiters.pop();
+            }
+            "}" if delimiters.last() == Some(&"{") => {
+                delimiters.pop();
+            }
+            ";" if position >= failure && delimiters.is_empty() => {
+                return tokens.get(position + 1).map(|_| position + 1);
+            }
+            _ => {}
+        }
+        if position > failure
+            && delimiters.is_empty()
+            && (starts.contains(token.spelling.as_ref()) || is_header_start(token))
+        {
+            return Some(position);
+        }
+    }
+    None
+}
+
+fn next_declaration_start(
+    grammar: &Grammar,
+    source: &Source,
+    tokens: &[Significant],
+    from: usize,
+    declaration: usize,
+) -> Option<usize> {
+    let starts = declaration_starts(grammar);
+    let mut delimiters = Vec::new();
+    let mut previous_end = tokens.get(declaration).map_or(0, |token| token.span.start);
+    for (position, token) in tokens.iter().enumerate().skip(declaration) {
+        let line_start = source.text()[previous_end..token.span.start]
+            .bytes()
+            .any(|byte| matches!(byte, b'\n' | b'\r'));
+        if position >= from && delimiters.is_empty() && starts.contains(token.spelling.as_ref()) {
+            return Some(position);
+        }
+        if position >= from
+            && !delimiters.is_empty()
+            && line_start
+            && starts.contains(token.spelling.as_ref())
+        {
+            return Some(position);
+        }
+        match token.spelling.as_ref() {
+            "(" | "[" | "{" => delimiters.push(token.spelling.as_ref()),
+            ")" if delimiters.last() == Some(&"(") => {
+                delimiters.pop();
+            }
+            "]" if delimiters.last() == Some(&"[") => {
+                delimiters.pop();
+            }
+            "}" if delimiters.last() == Some(&"{") => {
+                delimiters.pop();
+            }
+            _ => {}
+        }
+        previous_end = token.span.end;
+    }
+    None
+}
+
+fn declaration_starts(grammar: &Grammar) -> BTreeSet<String> {
+    fn first(
+        rule: &Rule,
+        grammar: &Grammar,
+        seen: &mut BTreeSet<Production>,
+        output: &mut BTreeSet<String>,
+    ) {
+        match rule {
+            Rule::Terminal(Terminal::Exact(word) | Terminal::Literal(word)) => {
+                output.insert((*word).to_owned());
+            }
+            Rule::Terminal(Terminal::ExtensionKeyword(word)) => {
+                output.insert(word.to_string());
+            }
+            Rule::Terminal(_) => {}
+            Rule::Production(production) => {
+                if seen.insert(*production) {
+                    if let Some(rule) = grammar.get(production) {
+                        first(rule, grammar, seen, output);
+                    }
+                    seen.remove(production);
+                }
+            }
+            Rule::Sequence(rules) => {
+                if let Some(rule) = rules.first() {
+                    first(rule, grammar, seen, output);
+                }
+            }
+            Rule::Choice(rules) => {
+                for rule in rules {
+                    first(rule, grammar, seen, output);
+                }
+            }
+            Rule::Optional(rule) | Rule::Repeat { rule, .. } => first(rule, grammar, seen, output),
+        }
+    }
+
+    let mut output = BTreeSet::new();
+    if let Some(rule) = grammar.get(&Production::Declaration) {
+        first(rule, grammar, &mut BTreeSet::new(), &mut output);
+    }
+    output
 }
 
 /// Recover a missing protocol-body close immediately before the next
@@ -792,6 +1347,25 @@ fn scan(
         let spelling = &source.text()[range.clone()];
         let (class, kind) = match result {
             Ok(Kind::Comment) => (TokenClass::Comment, Some(Kind::Comment)),
+            Ok(Kind::Fractional) if spelling.contains(['e', 'E']) => {
+                diagnostics.push(*super::diagnostic::error(
+                    source,
+                    CompleteCode::InvalidSyntax,
+                    CompleteCause::InvalidToken,
+                    Phase::Lex,
+                    span.start,
+                    span.end,
+                    format!(
+                        "`{spelling}` is not a numeric literal: an exponent is not part of a number; write a decimal literal such as 0.5, decimal(c, s) or rational(n, d)"
+                    ),
+                ));
+                recoveries.push(Recovery {
+                    kind: RecoveryKind::Delete,
+                    span,
+                    expected: "decimal literal or exact number".into(),
+                });
+                (TokenClass::Invalid, None)
+            }
             // FSpec FR-339-AC-5: `helper`, `rec`, `cast` and `Tuple`, which
             // the recognizer holds unsupported for the historical grammar,
             // are ordinary identifiers under `1-draft`.
@@ -1178,6 +1752,63 @@ fn interval_bounds(source: &Source, cst: &LosslessCst) -> Vec<CompleteDiagnostic
         }
     }
     diagnostics
+}
+
+/// FR-611: the message for `previous`, `next` or `weak until` written where
+/// a temporal formula admits an operator, naming the derived form that
+/// expresses it (FSpec FR-092 "Derived forms"); `None` for any other failure.
+#[ix_trace_rs::string_edge]
+fn derived_form(tokens: &[Significant], failure: &Failure) -> Option<&'static str> {
+    const FORMULA_STARTS: [&str; 16] = [
+        "holds",
+        "(",
+        "not",
+        "true",
+        "false",
+        "eventually",
+        "always",
+        "once",
+        "historically",
+        "count",
+        "sum",
+        "min",
+        "max",
+        "fraction",
+        "previous",
+        "next",
+    ];
+    let word = tokens.get(failure.position)?;
+    let follower = tokens.get(failure.position + 1)?;
+    let admits = |operator: &str| failure.expected.contains(&format!("`{operator}`"));
+    let starts_formula = || FORMULA_STARTS.contains(&follower.spelling.as_ref());
+    match word.spelling.as_ref() {
+        "previous" if admits("once") && starts_formula() => {
+            Some("`previous` is not a temporal operator; strong previous is written `once[1,1] p`")
+        }
+        "next" if admits("eventually") && starts_formula() => {
+            Some("`next` is not a temporal operator; next is written `eventually[1,1] p`")
+        }
+        "weak" if follower.spelling.as_ref() == "until" => Some(
+            "`weak until` is not a temporal operator; weak until is written \
+             `(p until[a,b] q) or always[a,b] p`, and under the infinite-trace profile \
+             `(p until q) or always p`",
+        ),
+        _ => None,
+    }
+}
+
+/// An empty unknown declaration body is malformed syntax, while a non-empty
+/// unselected extension-shaped form retains the unsupported cause. Keep the
+/// refusal located at the declaration word in either case.
+fn empty_unknown_declaration_body(tokens: &[Significant], position: usize) -> bool {
+    tokens.get(position).is_some_and(Significant::names)
+        && tokens.get(position + 1).is_some_and(Significant::names)
+        && tokens
+            .get(position + 2)
+            .is_some_and(|token| token.spelling.as_ref() == "{")
+        && tokens
+            .get(position + 3)
+            .is_some_and(|token| token.spelling.as_ref() == "}")
 }
 
 #[ix_trace_rs::string_edge]

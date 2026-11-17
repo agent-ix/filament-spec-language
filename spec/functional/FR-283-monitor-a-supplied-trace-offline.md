@@ -130,6 +130,21 @@ pub struct MonitorLimits {
   published default (FR-277, FR-194).
 - `&Cancel`.
 
+### Finite traces
+
+A finite trace (`Document` without `loop`, `Typed` `Finite`, or `Samples`)
+carries no closed or open member, because it has exactly one reading per
+profile (FR-327): under an event-position or fixed-sample profile it is a
+closed trace read by false extension, and under the infinite-trace profile
+it is a finite prefix of an unknown infinite behaviour. A caller cannot
+choose another reading, so the same positions always give the same records.
+If a `Document` trace carries a `closed` or `open` member, then `monitor`
+SHALL refuse it `invalid_runtime_input`/`unknown-member` naming that member,
+as the trace document's closed member set states (rule 3 below).
+Closure that a caller asserts belongs to a `Progressed` or `Timestamped`
+trace's progress assertion (`scope` and `execution`, FR-504, FR-501), and
+FR-643's `finish` and FR-644's `end` record add none (FR-643 "Trace end").
+
 ### Trace document
 
 A `Document` trace holds a trace document. The trace document is a UTF-8 JSON object, format `filament.monitor-trace/1`,
@@ -523,6 +538,7 @@ clause reports no verdict for the others.
 | FR-283-AC-14 | Each `MonitorRecord` this operation returns renders through `OutcomeItem::from_clause_run` (FR-286), and the document built from the records equals `OutcomeDocument::from_clause_runs` over the same clause runs, for the runs FR-286-AC-13 names. | Test (TC-765) |
 | FR-283-AC-15 | Over FR-501-AC-4's trace (stamps 0, 2, 5, `W` 5, `Complete { through: 5 }`, scope `Closed`, `p` false at stamps 0 and 5 and its valuation absent at stamp 2) as a `Typed` `Timestamped` trace, with `temporal_selections` holding the clause's `TimestampedEvent` selection and a `binding` that agrees with the emitted rows, `eventually[0,5] holds(p)` under the finite-window profile reports `Indeterminate` at position 0 with reason `MissingValuation { position: 1, atom: holds(p) }`, its `atom` and `MonitorRecord::atom()` the source text `holds(p)` of the whole `holds` atom, category indeterminate, exit 11; with `sources` empty the same request refuses with `MonitorRefusal::SourceNotSupplied`; with `W` 3 it reports `Pending`, exit 0. The same trace whose `binding` asserts another clock name refuses the whole request with `MonitorRefusal::ClauseRefused`, `invalid_runtime_input`/`invalid-value` with `mismatched_dimension` `Clock`, and no record, also when its position 1 snapshot fails FR-106 admission; with `temporal_selections` empty it refuses with `ClauseRefused`, `missing_declaration`/`missing-selection`; the clause over AC-1's `Document` trace refuses with `ClauseRefused`, `invalid_runtime_input`/`invalid-value` (FR-330-AC-9). Over the same `Timestamped` trace (binding unit `ms`), each of these refuses the whole request with `ClauseRefused` naming the clause and no record: `temporal_selections` lacking the selection of a clock-bearing declaration the request does not select, `missing_declaration`/`missing-selection` with `member` `temporal_selections`; `temporal_selections` with a selection repeated, with a surplus selection at a span no declaration holds, or with the clause's selection replaced by an `EventPosition` configuration, each `invalid_runtime_input`/`invalid-value` with `member` `temporal_selections`; the clause's selection with `timestamp_unit` `us`, `invalid_runtime_input`/`invalid-value` with `mismatched_dimension` `TimestampUnit`, `asserted` `ms` and `expected` `us`; `packages` empty, its package document truncated to one byte, or another document under its identity, each `invalid_runtime_input`/`invalid-value` with `member` `packages` and `stage` `strict-read`; and a `binding` whose profile, clock parameters or timestamp unit is forged, `invalid_runtime_input`/`invalid-value` with `mismatched_dimension` `Profile`, `ClockParameters` and `TimestampUnit` respectively, though position 1 names a snapshot `snapshots` does not hold, so no position is admitted. | Test (TC-765) |
 | FR-283-AC-16 | Over AC-15's `Timestamped` trace, in a package declaring two clock-bearing finite-window clauses `Window` and `Window2`: a request selecting `Window` then `Window2` whose `temporal_selections` lack `Window2`'s selection refuses with `ClauseRefused` naming `Window2`, `missing_declaration`/`missing-selection` with `member` `temporal_selections`; a request selecting `Window2` then `Window` whose `packages` is empty refuses with `ClauseRefused` naming `Window2`, `invalid_runtime_input`/`invalid-value` with `member` `packages` and `stage` `strict-read`; and for a package checked against a library dependency, a request whose `packages` omits the library's domain package document refuses with `ClauseRefused`, `invalid_runtime_input`/`invalid-value` with `member` `packages` and `stage` `closure`. Each has no record. | Test (TC-765) |
+| FR-283-AC-17 | Over the `Finite` trace `c.value` 0, 1, 2, FR-330-AC-1's `Bounded` (event-position) returns `violation` at position 0 with `truth` `false`, and FR-330-AC-2's `Reaches` (infinite-trace) returns `pending` with no `truth`. The same records come back when the request also sets `limits.max_window_values` to 1 and when it passes an empty `temporal_selections`. A `Document` trace of the same snapshots carrying `"closed": true`, and one carrying `"open": true`, are each refused `invalid_runtime_input`/`unknown-member` naming that member, before any position is admitted. | Test (TC-2323) |
 
 ## Dependencies
 

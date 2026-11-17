@@ -255,7 +255,7 @@ fn tc_450_step_1_seven_completes_through_the_spine() {
     assert_eq!(document["function"], "seven");
     assert_eq!(
         document["outcome"],
-        json!({"kind": "completed", "value": {"kind": "integer", "decimal": "7"}})
+        json!({"kind": "completed", "value": {"integer": "7"}})
     );
     // FND-008: the whole document, not only its members individually --
     // catches a stray extra member the per-field assertions above would
@@ -270,7 +270,7 @@ fn tc_450_step_1_seven_completes_through_the_spine() {
                 "path": "program.native",
             },
             "function": "seven",
-            "outcome": {"kind": "completed", "value": {"kind": "integer", "decimal": "7"}},
+            "outcome": {"kind": "completed", "value": {"integer": "7"}},
         })
     );
 }
@@ -293,14 +293,14 @@ fn tc_450_step_3_unknown_edition_refuses_at_profile() {
     let failure: Value = serde_json::from_slice(&output.stderr).unwrap();
     assert_eq!(failure["code"], "unknown_edition", "{failure}");
     assert_eq!(failure["stage"], "profile");
+    let message = failure["message"].as_str().unwrap();
+    assert!(message.contains("program.native"), "{failure}");
+    assert!(message.contains("7-draft"), "{failure}");
     assert!(
-        failure["message"]
-            .as_str()
-            .unwrap()
-            .contains("program.native")
-            && failure["message"].as_str().unwrap().contains("7-draft"),
+        message.contains("this command reads \"1-draft\""),
         "{failure}"
     );
+    assert!(!message.contains("compile reads"), "{failure}");
 }
 
 /// FR-100-AC-3 (TC-450 step 4): a `1-draft` request carrying each of the
@@ -483,7 +483,7 @@ fn tc_451_step_1_arguments_bind_by_declared_name() {
     let document: Value = serde_json::from_slice(&output.stdout).unwrap();
     assert_eq!(
         document["outcome"],
-        json!({"kind": "completed", "value": {"kind": "boolean", "value": false}})
+        json!({"kind": "completed", "value": {"boolean": false}})
     );
 
     // FND-008: CLI-level coverage for `flag` and `id`, not only `lt`.
@@ -498,7 +498,7 @@ fn tc_451_step_1_arguments_bind_by_declared_name() {
     let document: Value = serde_json::from_slice(&output.stdout).unwrap();
     assert_eq!(
         document["outcome"],
-        json!({"kind": "completed", "value": {"kind": "boolean", "value": true}})
+        json!({"kind": "completed", "value": {"boolean": true}})
     );
 
     let directory = tempfile::tempdir().unwrap();
@@ -512,7 +512,7 @@ fn tc_451_step_1_arguments_bind_by_declared_name() {
     let document: Value = serde_json::from_slice(&output.stdout).unwrap();
     assert_eq!(
         document["outcome"],
-        json!({"kind": "completed", "value": {"kind": "integer", "decimal": "4"}})
+        json!({"kind": "completed", "value": {"integer": "4"}})
     );
 }
 
@@ -615,9 +615,8 @@ fn tc_451_step_6_compile_refusals_carry_their_own_stage() {
 }
 
 /// FR-100-AC-5 (TC-451 step 5): `function` shapes that malform or fail
-/// lookup refuse `missing_declaration` at stage `call`, and `corner`'s
-/// record result refuses `unsupported_construct`, both exit codes as
-/// tabled, empty stdout.
+/// lookup refuse `missing_declaration` at stage `call`, and `corner`, whose
+/// record result has a run value form, completes with the record it was given.
 #[test]
 #[trace("TC-451", "FR-100-AC-5")]
 fn tc_451_step_5_function_shape_and_lookup_refusals() {
@@ -634,18 +633,20 @@ fn tc_451_step_5_function_shape_and_lookup_refusals() {
         assert_eq!(failure["details"]["function"], name, "{name}: {failure}");
     }
     let directory = tempfile::tempdir().unwrap();
+    let record = json!({"record": {"type": "Point", "fields": {
+        "x": {"integer": "3"}, "y": {"integer": "4"}}}});
     spine_run_request(
         directory.path(),
         &program,
-        call("corner", json!([{"parameter":"p","value":0}])),
+        call("corner", json!([{"parameter":"p","value":record}])),
     );
     let output = run(directory.path());
-    assert_eq!(output.status.code(), Some(21));
-    assert!(output.stdout.is_empty());
-    let failure: Value = serde_json::from_slice(&output.stderr).unwrap();
-    assert_eq!(failure["code"], "unsupported_construct", "{failure}");
-    assert_eq!(failure["stage"], "call");
-    assert_eq!(failure["details"]["function"], "corner");
+    assert_eq!(output.status.code(), Some(0));
+    let document: Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(
+        document["outcome"],
+        json!({"kind": "completed", "value": record})
+    );
 }
 
 /// FR-100-AC-6 (TC-451 step 7): `seven` with `call.accounting` `{"work_units": 0}` writes outcome
@@ -709,7 +710,10 @@ fn command_library_outcomes_carry_the_exit_function_codes() {
         println!("{BEGIN}");
         eprintln!("{BEGIN}");
         let compiled = fsl_command::command::compile(&directory.path().join("compile.json"));
-        let ran = fsl_command::command::run(&directory.path().join("request.json"));
+        let ran = fsl_command::command::run(
+            &directory.path().join("request.json"),
+            &crate::negotiation::Fr290,
+        );
         println!("{END}");
         eprintln!("{END}");
 
@@ -773,7 +777,7 @@ fn native_run_integer_bits_limit_reaches_evaluation() {
     let literal_document: Value = serde_json::from_slice(&literal_output.stdout).unwrap();
     assert_eq!(
         literal_document["outcome"],
-        json!({"kind": "completed", "value": {"kind": "integer", "decimal": "7"}})
+        json!({"kind": "completed", "value": {"integer": "7"}})
     );
 
     let program = fixture.replace(
@@ -930,14 +934,16 @@ fn tc_450_step_6_libraries_and_models_both_present_runs() {
     let document: Value = serde_json::from_slice(&output.stdout).unwrap();
     assert_eq!(
         document["outcome"],
-        json!({"kind": "completed", "value": {"kind": "integer", "decimal": "7"}})
+        json!({"kind": "completed", "value": {"integer": "7"}})
     );
 }
 
 /// FR-100-AC-11 (TC-786 steps 2 and 3): each `run` exit status is FR-285's
 /// exit code of the outcome's category, and `fsl_replay::spine::run` over
 /// the same input reports a category whose exit code equals the command's:
-/// `invalid_runtime_input` 20, a record result 21, `work_units` 0 22.
+/// `invalid_runtime_input` 20 (an integer for the record parameter `p` included),
+/// `work_units` 0 22. The 21 of FR-650-AC-6 is the unit test of
+/// `run_value::Forms` over types with no run value form.
 #[test]
 #[trace("TC-786", "FR-100-AC-11")]
 fn tc_786_run_exit_statuses_come_from_the_exit_function() {
@@ -946,7 +952,7 @@ fn tc_786_run_exit_statuses_come_from_the_exit_function() {
     for (function, parameter, value, work_units, expected) in [
         ("flag", Some("b"), 2_i64, DEFAULT_WORK_UNITS, 20),
         ("id", Some("x"), 12_i64, DEFAULT_WORK_UNITS, 20),
-        ("corner", Some("p"), 0_i64, DEFAULT_WORK_UNITS, 21),
+        ("corner", Some("p"), 0_i64, DEFAULT_WORK_UNITS, 20),
         ("seven", None, 0_i64, 0, 22),
     ] {
         let arguments: Vec<CallArgument> = parameter
@@ -980,6 +986,9 @@ fn tc_786_run_exit_statuses_come_from_the_exit_function() {
             &fsl_replay::spine::DependencyInput::default(),
             fsl_replay::spine::SpineLimits::default(),
             &Call {
+                clocks: Default::default(),
+                wire_arguments: Vec::new(),
+                snapshot: None,
                 function: function.to_owned(),
                 arguments,
                 accounting: default_accounting(work_units),
@@ -1074,7 +1083,7 @@ fn run_outcome_is_independent_of_working_directory() {
             from_request_directory.starts_with("child-result 0 "),
             "{from_request_directory}"
         );
-        assert!(from_request_directory.contains("\"decimal\":\"7\""));
+        assert!(from_request_directory.contains("\"integer\":\"7\""));
         assert_eq!(
             run_from(root.path(), &format!("req/{name}")),
             from_request_directory
@@ -1087,5 +1096,87 @@ fn run_outcome_is_independent_of_working_directory() {
             run_from(&other_directory, absolute.to_str().unwrap()),
             from_request_directory
         );
+    }
+}
+
+/// NFR-130: a unit whose `d` recurses `n` frames deep, each frame holding
+/// one frame occurrence and one argument occurrence.
+const RECURSION: &str = "language \"ix:native\" edition \"1-draft\";\n\
+     profile v = \"filament.value.complete/v1\";\n\
+     function d using v(n: Int[0, 1000000]): Integer pure decreases(n) { if n > 0 then d(n - 1) else 0 }\n";
+
+/// Run `d(n)` with the call members `members` added, returning the exit code,
+/// stdout and stderr as JSON (`Value::Null` when empty).
+fn run_recursion(n: i64, members: Value) -> (Option<i32>, Value, Value) {
+    let directory = tempfile::tempdir().unwrap();
+    let mut request = call("d", json!([{"parameter": "n", "value": n}]));
+    for (member, value) in members.as_object().expect("an object") {
+        request[member] = value.clone();
+    }
+    spine_run_request(directory.path(), RECURSION.as_bytes(), request);
+    let output = run(directory.path());
+    let parse = |bytes: &[u8]| serde_json::from_slice(bytes).unwrap_or(Value::Null);
+    (
+        output.status.code(),
+        parse(&output.stdout),
+        parse(&output.stderr),
+    )
+}
+
+const ZERO: &str = "0";
+
+/// NFR-130-AC-3 (TC-2164): with `work_units` raised far past the call's
+/// work, the default live-occurrence limit stops a million-frame recursion;
+/// raising the limit lets it finish.
+#[trace("TC-2164", "NFR-130-AC-3")]
+#[test]
+#[ignore = "QSL-2183: the evaluation.live_occurrences limit not implemented yet"]
+fn native_run_live_occurrence_limit_stops_deep_recursion() {
+    let work = json!({"work_units": 100_000_000_000_u64});
+    let (code, document, stderr) = run_recursion(1_000_000, json!({"accounting": work}));
+    assert_eq!(code, Some(22), "{stderr}");
+    assert_eq!(
+        document["outcome"],
+        json!({"kind": "incomplete", "limit": "evaluation.live_occurrences"})
+    );
+    let (code, document, stderr) = run_recursion(
+        1_000_000,
+        json!({"accounting": work, "evaluation": {"live_occurrences": 4_000_000}}),
+    );
+    assert_eq!(code, Some(0), "{stderr}");
+    assert_eq!(
+        document["outcome"],
+        json!({"kind": "completed", "value": {"integer": ZERO}})
+    );
+}
+
+/// NFR-130-AC-4 (TC-2165): a shallow recursion completes under the defaults,
+/// zero is a real limit, and a malformed `call.evaluation` refuses.
+#[trace("TC-2165", "NFR-130-AC-4")]
+#[test]
+#[ignore = "QSL-2183: the evaluation.live_occurrences limit not implemented yet"]
+fn native_run_live_occurrence_limit_defaults_and_refusals() {
+    let (code, document, stderr) = run_recursion(1000, json!({}));
+    assert_eq!(code, Some(0), "{stderr}");
+    assert_eq!(
+        document["outcome"],
+        json!({"kind": "completed", "value": {"integer": ZERO}})
+    );
+    let (code, document, _) = run_recursion(1000, json!({"evaluation": {"live_occurrences": 0}}));
+    assert_eq!(code, Some(22));
+    assert_eq!(
+        document["outcome"],
+        json!({"kind": "incomplete", "limit": "evaluation.live_occurrences"})
+    );
+    for evaluation in [
+        json!({"live_occurrences": -1}),
+        json!({"live_occurrences": 1.5}),
+        json!({"live_occurrences": "x"}),
+        json!({"frames": 1}),
+    ] {
+        let (code, _, failure) = run_recursion(1000, json!({"evaluation": evaluation}));
+        assert_eq!(code, Some(20), "{evaluation}");
+        assert_eq!(failure["code"], "invalid-request", "{evaluation}");
+        assert_eq!(failure["stage"], "request", "{evaluation}");
     }
 }

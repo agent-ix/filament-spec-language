@@ -381,11 +381,9 @@ mod analyze_request {
     #[trace("TC-1583", "FR-623-AC-2")]
     #[trace("TC-1583", "FR-623-AC-5")]
     #[test]
-    #[ignore = "QSL-2124: reduction selection in analyze items is not implemented yet"]
     fn declared_symmetry_admits_the_explicit_class_and_proves_reduced() {
         let ws = Workspace::new("reduction-differential-declared");
-        let body = "symmetric M::counters;\n".to_owned()
-            + &clause("Holds", "", "always holds(c.value <= 3)");
+        let body = clause("Holds", "", "always holds(c.value <= 3)");
         let explicit = json!({"symmetry": [{"population": "counters", "classes": [["a", "b"]]}]});
         let path = counter_request_with(
             &ws,
@@ -395,6 +393,7 @@ mod analyze_request {
                 {"claim": "Holds", "reductions": explicit},
             ]))),
         );
+        ws.write("model.json", &crate::counter::symmetric_document());
         ws.write("start.json", &counter_snapshot(&[("a", 0), ("b", 0)]));
         let run = analyze(&path);
         assert_eq!(

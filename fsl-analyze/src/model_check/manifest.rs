@@ -61,6 +61,14 @@ pub const REDUCTIONS: [&str; 3] = [
     ReductionKind::StateConstraint.as_str(),
 ];
 
+/// The state-graph claim forms EN-1 decides (FSpec FR-331 `state_graph_forms`,
+/// FR-390): its explicit-state search over the explored graph (FR-168).
+pub const STATE_GRAPH_FORMS: [fsl_route::StateGraphFormKind; 3] = [
+    fsl_route::StateGraphFormKind::Possible,
+    fsl_route::StateGraphFormKind::AlwaysPossible,
+    fsl_route::StateGraphFormKind::UniquePath,
+];
+
 /// EN-1's routed descriptor, converted from [`ADVERTISED`], [`DOMAINS`],
 /// [`FAIRNESS_KINDS`], [`MEMORY_MODELS`] and [`REDUCTIONS`] by FR-288's
 /// conversion. `origin` is the host's fact (ADR-029 PV-1).
@@ -82,4 +90,5 @@ pub fn descriptor(origin: ProviderOrigin) -> Result<BackendDescriptor, Registrat
             reductions: Some(&REDUCTIONS),
         },
     )
+    .map(|descriptor| descriptor.with_state_graph_forms(STATE_GRAPH_FORMS))
 }

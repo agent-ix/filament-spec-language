@@ -66,7 +66,8 @@ argument are the driver's (FR-287, Overlap).
   confined to that declaration as FR-503 states.
 - When the source holds a syntax error, `fsl_cst::parse` SHALL return a
   recovered `ParsedSource` that retains every source byte, holds the located
-  diagnostic and is not admissible; the `parse` operation SHALL refuse it as
+  diagnostic of every independent syntax error in source order (FR-762) and
+  is not admissible; the `parse` operation SHALL refuse it as
   a typed refusal at S1.
 - The `parse` operation SHALL run S1 under exactly the `fsl_cst::Limits` its
   caller gives it.

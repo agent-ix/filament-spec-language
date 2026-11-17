@@ -31,9 +31,11 @@ the scheduler chooses delays and identities; under a workload, the workload
 resolves the identity and every delay a `discrete` delay distribution
 gives, so the subject is a DTMC over digital timed states; a delay no
 distribution gives stays the scheduler's choice and is decided by its
-minimum and maximum. Strict constraints, real-valued delay distributions,
-zero-delay cycles and other form shapes SHALL settle `unsupported` with a
-cause that names them.
+minimum and maximum. Strict constraints, other bounded-window form shapes,
+delay distributions over every scheduler, zero-delay cycles and time-locks
+are decided exactly by the rules under Admission; only continuous delay
+distributions, whose probabilities exact evidence cannot state, go to the
+statistical engine.
 
 ## Use case
 
@@ -57,27 +59,60 @@ FR-196's complete tail control. Each edge has the mandatory closed
 ProductAction choice. Delay/tail observation operation projections remain
 `action: None`; this projection cannot identify the policy choice. Delay
 choices carry one digital unit of elapsed time; IdleObserve carries zero. The results of
-FR-197 and FR-198 over it, and FR-203's unsupported causes
-`StrictClockConstraint{locus}`, `DelayDistribution{operation}`,
-`ZeroDelayCycle{states}`, `TimedFormShape` and ADR-026's `NotStochastic`.
+FR-197 and FR-198 over it, or over the region MDP for strict constraints;
+and, for exact evidence over a continuous delay distribution only, FR-203's
+unsupported cause `DelayDistribution{operation}`.
 
 ## Behavior
 
 ### Admission
 
-- Every atomic clock constraint in a guard, every time invariant and every
-  timed interval of the claim SHALL be non-strict, or EN-5 SHALL settle
-  `Unsupported(StrictClockConstraint{locus})` naming the first strict one in
-  source order.
-- The admitted forms SHALL be `Reach` over state predicates; deadline events
-  `eventually[0, D] holds(P)` and `holds(A) until[0, D] holds(B)` with `D`
-  closed; and `expected elapsed until holds(B)`. Another form shape SHALL
-  settle `Unsupported(TimedFormShape)`.
-- Over every scheduler, a model that declares any `delay` distribution SHALL
-  settle `Unsupported(DelayDistribution{operation})` naming the first such
-  operation.
-- Under a workload, a `uniform`, `uniform[a, b]` or `exponential` delay
-  distribution SHALL settle `Unsupported(DelayDistribution{operation})`.
+- Every claim over a timed subject whose delays are deterministic or given by
+  `discrete` distributions SHALL be decided with exact evidence; no form,
+  constraint or scheduler of that class settles `unsupported`. The digital MDP
+  below decides it when every clock constraint is closed; the following rules
+  decide the rest.
+- **Strict constraints.** When a guard, a time invariant or a timed interval
+  of the claim is strict, EN-5 SHALL decide the claim over the region MDP
+  instead of the digital MDP: each clock keeps its integer part, capped as in
+  the digital MDP, together with whether its fractional part is zero and the
+  order of the clocks' fractional parts. Region MDPs give exact minimum and
+  maximum probabilities and expected times for these forms, which digital
+  clocks do not once a constraint is strict, so the strict case keeps an
+  exact verdict. Its certificate keys each value by region in place of
+  digital clock values.
+- **Form shapes.** Every bounded-window formula FR-186 admits under the timed
+  profile SHALL be decided. `always[0, D] holds(P)` SHALL be decided as the
+  complement of `eventually[0, D] holds(not P)`, a minimum becoming a
+  maximum and the reverse. Every other bounded-window formula SHALL be
+  decided over the product of the MDP with the claim's monitor, which keeps
+  one deadline clock per interval operator occurrence, capped at its upper
+  bound plus one.
+- **Delay distributions over every scheduler.** Over every scheduler, a
+  `discrete` delay distribution SHALL apply as it does under a workload: the
+  race draws given delays with their probabilities, and the scheduler chooses
+  identities and every free delay, so the subject is an MDP decided by its
+  minimum and maximum.
+- **Continuous delays.** A `uniform`, `uniform[a, b]` or `exponential` delay
+  makes the subject a continuous-time stochastic process whose probabilities
+  are in general not rational, so exact evidence cannot state them. Such an
+  item SHALL be negotiated to the statistical engine (FR-189), which samples
+  the continuous delays and settles `measured`. An item that requests exact
+  evidence for it SHALL settle `unsupported` with
+  `DelayDistribution{operation}` naming the first such operation and the
+  locus of its `delay` declaration.
+- **Zero-delay cycles.** A behaviour of a timed subject lets time diverge
+  (FSpec FR-416), so no scheduler may stay forever in a cycle of zero-delay
+  moves. EN-5 SHALL decide over the MDP with every end component that holds
+  no delay move made transient: its states take the value of their best exit
+  for the objective, and a scheduler's choice inside it is read as a choice
+  of that exit. An end component with no exit is a time-lock, decided as
+  below.
+- **Time-locks.** A digital or region state from which time cannot advance
+  and no discrete move is enabled (under a workload, a state where no
+  identity races and delay is bounded) SHALL be terminal: its run ends there
+  with FR-196's terminal stutter, time frozen, so a deadline not yet met is
+  never met. The verdict is exact.
 
 ### The digital MDP
 
@@ -104,7 +139,7 @@ FR-197 and FR-198 over it, and FR-203's unsupported causes
   edge, delaying by the winning amount and taking the winning identity, with
   its exact probability. A delay no distribution gives SHALL be an action of
   the scheduler. A state where no identity races and delay is bounded SHALL
-  settle `Unsupported(NotStochastic)`.
+  is a time-lock, decided by Admission's time-lock rule.
 - Under a workload, a state whose racing identities all have given delays
   (`discrete` distributions) SHALL resolve as above, each race edge carrying
   `Identity(r)` with `r` the first racing identity in canonical order.
@@ -184,8 +219,9 @@ FR-197 and FR-198 over it, and FR-203's unsupported causes
 - A timed witness path SHALL carry ADR-026 CT-1 delays and replay by CT-3
   through FR-202; replay SHALL check that its last timed state has no
   admissible discrete step before the event's time horizon passes.
-- A certificate SHALL name digital product states, and FR-201's checker
-  SHALL re-enumerate the digital MDP. Optimization and evidence SHALL
+- A certificate SHALL be FR-920's `timed-product/v1` document, keyed by
+  digital, region or boundary-region product states, and FR-921's checker
+  SHALL rebuild the digital or region MDP itself (FR-922 to FR-924, FR-877). Optimization and evidence SHALL
   apply ADR-028 §13a/FR-198 infimum/supremum rules over almost-surely
   TS-5-admissible schedulers, including positive finite-wait components
   with admissible exits. Original continuation graphs, observation edges
@@ -198,17 +234,22 @@ FR-197 and FR-198 over it, and FR-203's unsupported causes
 | ID | Criteria | Verification |
 |----|----------|--------------|
 | FR-204-AC-1 | §15.5 `Deadline` over every scheduler: `x` takes the values 0 to 2 and the deadline clock 0 to 5; the minimum is `99/100` (send at `x = 2`) and the maximum `9999/10000` (send at `x = 1`); the item settles `proved`, `ExactValue{99/100}`. At threshold 0.995 it settles `refuted` with a path of two losses at 2 ms and 4 ms of probability `1/100`, whose replay checks that the next `send` needs `x >= 1`, after 4 ms. | Test (TC-639) |
-| FR-204-AC-2 | §15.5 `MeanTime` settles `proved`, `ExactValue{20/9 ms}` (maximum; the minimum is `10/9 ms`). The no-operation x>=1/cap2 oracle of FR-196 has elapsed infimum1 and supremum+infinity despite eventual observation almost surely; at threshold3 its geometric IdleDelay3/4/IdleObserve1/4 policy has exact value5 and a checked infinite observation continuation. A finite maximum3 or delay-only witness fails. With the guard `self.x > 1 ms` the items settle `unsupported`, `StrictClockConstraint`, naming the guard. | Test (TC-639) |
-| FR-204-AC-3 | `Retx` with `delay Msg::send ~ discrete { 1 ms: 1, 2 ms: 1 };`, under a workload `One` with weight 1 on `send`, is a DTMC over digital timed states; `probability >= 0.99 [eventually[0 ms, 4 ms] holds(m.delivered)]` settles `proved`, `ExactValue{159129/160000}`: after every reset `send` waits 1 or 2 ms with probability 1/2 each, both inside its window `[1, 2]`, loses with `1/10`, and attempts at time stamps up to 4 ms inclusive count. The same claim `under every scheduler` settles `unsupported`, `DelayDistribution`, naming `send`; with `delay Msg::send ~ exponential(1 per ms);` under `One` it settles `unsupported`, `DelayDistribution`. | Test (TC-639) |
-| FR-204-AC-4 | A variant of `Retx` whose `send` has no `x >= 1 ms` guard and no reset settles `unsupported`, `ZeroDelayCycle`, naming the cycle's states. `probability >= 0.99 [always[0 ms, 4 ms] holds(not m.delivered)]` over `Retx` settles `unsupported`, `TimedFormShape`. | Test (TC-639) |
+| FR-204-AC-2 | §15.5 `MeanTime` settles `proved`, `ExactValue{20/9 ms}` (maximum; the minimum is `10/9 ms`). The no-operation x>=1/cap2 oracle of FR-196 has elapsed infimum1 and supremum+infinity despite eventual observation almost surely; at threshold3 its geometric IdleDelay3/4/IdleObserve1/4 policy has exact value5 and a checked infinite observation continuation. A finite maximum3 or delay-only witness fails. With the guard `self.x > 1 ms` the items are decided over the region MDP, never `unsupported`: the maximum is `20/9 ms`, attained by taking every delay at 2 ms, and the minimum is the infimum `10/9 ms`, approached by delays just above 1 ms and not attained (FR-204-AC-13). | Test (TC-639) |
+| FR-204-AC-3 | `Retx` with `delay Msg::send ~ discrete { 1 ms: 1, 2 ms: 1 };`, under a workload `One` with weight 1 on `send`, is a DTMC over digital timed states; `probability >= 0.99 [eventually[0 ms, 4 ms] holds(m.delivered)]` settles `proved`, `ExactValue{159129/160000}`: after every reset `send` waits 1 or 2 ms with probability 1/2 each, both inside its window `[1, 2]`, loses with `1/10`, and attempts at time stamps up to 4 ms inclusive count. The same claim `under every scheduler` is decided with the distribution applied (FR-204-AC-15); with `delay Msg::send ~ exponential(1 per ms);` under `One` and exact evidence requested it settles `unsupported`, `DelayDistribution`, naming `send`. | Test (TC-639) |
+| FR-204-AC-4 | A variant of `Retx` whose `send` has no `x >= 1 ms` guard and no reset has a zero-delay cycle at its initial state; it is decided with that cycle's end component made transient: once `x` reaches 2 ms time cannot pass before delivery, every time-divergent scheduler delivers with probability 1, so `Deadline`'s minimum and maximum are both `1` and it settles `proved`, never `unsupported` (FR-204-AC-16). `probability >= 0.99 [always[0 ms, 4 ms] holds(not m.delivered)]` over `Retx` is decided as the complement of `eventually[0 ms, 4 ms] holds(m.delivered)`: its minimum is `1 - 9999/10000 = 1/10000` and its maximum `1 - 99/100 = 1/100`, so it settles `refuted`, its minimum being below 0.99 (FR-204-AC-14). | Test (TC-639) |
 | FR-204-AC-5 | §15.5 `Retx`, whose `send` has no `delay` declaration, under the workload `One` (weight 1 on `send`): the workload resolves the scheduled identity and `send`'s delay stays the scheduler's choice in `[1, 2]` ms after each reset, with no distribution assumed for it. `probability >= 0.99 [eventually[0 ms, 4 ms] holds(m.delivered)]` under `One` settles `proved`, `ExactValue{99/100}`, its entry marked a minimum. `probability <= 0.999` over the same event under `One` settles `refuted` on the maximum `9999/10000`, its entry marked a maximum and its witness scheduler choosing `UnitDelay` at `x = 0` and `WorkloadResolve{send, 0}` at `x = 1`. At the same quiescent D=1 idle-delayed key, IdleObserve reads success at D with elapsed0 while IdleDelay crosses D with elapsed1; replay/certificates preserve the distinct actions, post-keys and predicate positions. | Test (TC-642) |
 | FR-204-AC-6 | The model `Race` (`time dense unit ms`) has `phase` (`Idle` or `Done`) and `b`; the operation `A` is guarded by `phase = Idle`, sets `Done` and declares `delay Race::A ~ discrete { 2 ms: 1 }`; the operation `B` has no `delay` declaration, is guarded by `phase = Idle and x >= 1 ms` under the time invariant `x <= 3 ms` while `Idle`, sets `Done` and `b`; the workload `Both` weights `A` and `B` 1. Under `Both`, `probability >= 0.5 [eventually[0 ms, 5 ms] holds(r.b)]` settles `refuted` on the minimum `ExactValue{0}`, its witness scheduler's `FreeDelays` entry holding the one row given `[2]` to `B` delay 3 (`A` wins at 2 ms, mass 1); `probability <= 0.5` settles `refuted` on the maximum `ExactValue{1}`, its witness entry holding the row given `[2]` to `B` delay 1 (`B` wins at 1 ms, mass 1). The row given `[2]` to `B` delay 2 is the tie at `m = 2`: `B` and `A` each win with probability `1/2`. The state offers the three `FreeDelays` actions and no `WorkloadResolve`. | Test (TC-642) |
-| FR-204-AC-7 | With `B`'s guard changed to `phase = Idle and x >= 2 ms`, the choices of `B` are the delays 2 and 3, so the maximum is `1/2` (the tie) and the minimum `0`: `probability <= 0.5 [eventually[0 ms, 5 ms] holds(r.b)]` under `Both` settles `proved`, `ExactValue{1/2}`, its entry marked a maximum, and `probability <= 0.4` settles `refuted` on that maximum with the `FreeDelays` row given `[2]` to `B` delay 2 as its witness choice. The same claim `under every scheduler` settles `unsupported`, `DelayDistribution`, naming `A`, and not a mixed-delay refusal. | Test (TC-642) |
+| FR-204-AC-7 | With `B`'s guard changed to `phase = Idle and x >= 2 ms`, the choices of `B` are the delays 2 and 3, so the maximum is `1/2` (the tie) and the minimum `0`: `probability <= 0.5 [eventually[0 ms, 5 ms] holds(r.b)]` under `Both` settles `proved`, `ExactValue{1/2}`, its entry marked a maximum, and `probability <= 0.4` settles `refuted` on that maximum with the `FreeDelays` row given `[2]` to `B` delay 2 as its witness choice. The same claim `under every scheduler` is decided with `A`'s distribution applied, not refused. | Test (TC-642) |
 | FR-204-AC-8 | In `Race` with `A` declaring `delay Race::A ~ discrete { 1 ms: 1, 3 ms: 1 }`, `B` guarded by `phase = Idle and x >= 1 ms` under the invariant `x <= 3 ms` while `Idle`, and `Both` as before: `probability <= 0.7 [eventually[0 ms, 5 ms] holds(r.b)]` settles `refuted` on the maximum `ExactValue{3/4}` (with the draw `1`, `B` at delay 1 ties for `1/2`; with the draw `3`, `B` at delay 1 or 2 wins), and `probability >= 0.3` settles `refuted` on the minimum `ExactValue{1/4}` (with the draw `1`, `B` at delay 2 or 3 loses; with the draw `3`, `B` at delay 3 ties for `1/2`). | Test (TC-642) |
 | FR-204-AC-9 | Over AC-8's `Race` the initial state offers nine `FreeDelays` actions (two rows, given `[1]` and `[3]`, each assigning `B` one of 1, 2, 3) and no `WorkloadResolve`. The witness scheduler for the maximum `3/4` holds the `FreeDelays` entry with the rows given `[1]` to `B` delay 1 and given `[3]` to `B` delay 1, and for the minimum `1/4` the rows given `[1]` to `B` delay 2 and given `[3]` to `B` delay 3 (least attaining delay per row). A single race whose payoff falls as `B`'s delay rises gives equal optima before and after the draw, so AC-8 cannot separate them; AC-10 does. | Test (TC-642) |
 | FR-204-AC-10 | Separating vector. The model `Detour` (`time dense unit ms`) has `phase` (`Idle`, `Half` or `Done`) and `b`. `A`, guarded by `phase = Idle`, sets `Done` and `b` and declares `delay Detour::A ~ discrete { 1 ms: 1, 3 ms: 1 }`; `B` has no `delay` declaration, is guarded by `phase = Idle and x >= 1 ms` under the time invariant `x <= 3 ms` while `Idle`, and sets `Half`; `G` and `L` are guarded by `phase = Half` and declare `delay Detour::G ~ discrete { 1 ms: 1 }` and `delay Detour::L ~ discrete { 1 ms: 1 }`; `G` sets `Done` and `b`, `L` sets `Done`. The workload `All` weights `A`, `B`, `G` and `L` 1. For `eventually[0 ms, 2 ms] holds(d.b)`, write `Q(g, d)` for the probability after the draw `g` with `B` at delay `d`: `Q(1, 1) = 3/4` (tie: `A` wins `1/2`; `B` wins `1/2`, then `G` wins the tie at 2 ms with `1/2`), `Q(1, 2) = Q(1, 3) = 1` (`A` wins at 1 ms); `Q(3, 1) = 1/2` (`B` at 1 ms, then `G` at 2 ms), `Q(3, 2) = Q(3, 3) = 0` (nothing sets `b` by 2 ms). After the draw the maximum is `(1 + 1/2)/2 = 3/4` and the minimum `(3/4 + 0)/2 = 3/8`; a choice before the draw gives `5/8`, `1/2` and `1/2` for `B` at 1, 2 and 3, so maximum `5/8` and minimum `1/2`. Under `All`, `probability <= 0.7` settles `refuted` on the maximum `ExactValue{3/4}`, its witness entry the `FreeDelays` rows given `[1]` to `B` delay 2 and given `[3]` to `B` delay 1, and with `max_witness_paths` at least 2 its path set (`A` at 1 ms, `1/2`; `B` at 1 ms then `G` at 2 ms, `1/4`) replays `refuted`; `probability >= 0.45` settles `refuted` on the minimum `ExactValue{3/8}`, its witness entry the rows given `[1]` to `B` delay 1 and given `[3]` to `B` delay 2. A product that chose before the draw would prove both claims. | Test (TC-642) |
 | FR-204-AC-11 | Every free identity in each row. AC-6's `Race` with a second free operation `C`, guarded by `phase = Idle and x >= 1 ms` under the same invariant, setting `Done` and not `b`, and `Both` weighting `A`, `B` and `C` 1: the initial state offers nine `FreeDelays` actions, each one row given `[2]` assigning both `B` and `C` a delay in `[1, 3]`. The maximum is `ExactValue{1}` with the row `B` delay 1, `C` delay 2; the minimum is `ExactValue{0}` with the row `B` delay 2, `C` delay 1 (`C` wins at 1 ms). A witness row naming `B` alone refuses `invalid_runtime_input`/`invalid-value` at replay. | Test (TC-642) |
 | FR-204-AC-12 | Witness at an end component. The model `Loop` (`time dense unit ms`) has `phase` (`Idle` or `Done`) and `b`; `A`, guarded by `phase = Idle`, sets `Done` and `b` and declares `delay Loop::A ~ discrete { 2 ms: 1 }`; `B` has no `delay` declaration, is guarded by `phase = Idle and x >= 1 ms` under the time invariant `x <= 2 ms` while `Idle`, resets `x` and keeps `Idle`; the workload `Both` weights `A` and `B` 1. The initial state offers two `FreeDelays` actions, one row given `[2]` each: `B` delay 1 (`B` wins and returns to the initial state) and `B` delay 2 (tie: either order reaches `b`: `A` first sets `b`; `B` first resets `x` and `A`, still enabled, sets `b`). Both attain the maximum's upper iterate 1. The `Reach` claim `probability <= 0.9 [eventually holds(r.b)]` under `Both` settles `refuted` on the maximum `ExactValue{1}`, its witness entry the row given `[2]` to `B` delay 2 (the MEC exit, not the least delay 1), and the refutation replays `refuted`; the chain the entry `B` delay 1 would induce never reaches `b` (value `0`), which is why the least attaining delay is not the witness. | Test (TC-642) |
+| FR-204-AC-13 | Over `Retx` with the guard `self.x > 1 ms`, over every scheduler, `Deadline` builds an MDP product over region states, with no refusal; its exact minimum is `99/100` (attempts at 2 ms and 4 ms) and its exact maximum `999/1000` (three attempts, each just after 1 ms past the last, fit in 4 ms, a fourth does not), so `Deadline` at 0.99 settles `proved` at equality. | Test (TC-2172) |
+| FR-204-AC-14 | Over `Retx` over every scheduler, `probability >= 0.99 [always[0 ms, 4 ms] holds(c.late)]` builds a product, with no `TimedFormShape` refusal, and its exact minimum is `0`, because `c.late` is false at the initial state. | Test (TC-2173) |
+| FR-204-AC-15 | Over `Retx` with `delay M::Call::send ~ discrete { 1 ms: 1, 2 ms: 1 };`, `Deadline` over every scheduler builds an MDP product with no `DelayDistribution` refusal. | Test (TC-2174) |
+| FR-204-AC-16 | Over the `Retx` variant whose `send` has no guard and no reset, `Deadline` over every scheduler builds a product with no `ZeroDelayCycle` refusal, and its exact minimum and maximum are both `1`. | Test (TC-2175) |
+| FR-204-AC-17 | Under a workload, `Retx` with `delay M::Call::send ~ discrete { 5 ms: 1 };`, whose `send` window excludes its only delay, builds a product whose time-locked state is terminal, with no `NotStochastic` refusal. | Test (TC-2176) |
 
 ## Rulings
 

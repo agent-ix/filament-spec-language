@@ -6,6 +6,7 @@
 use super::clause_set::{admit, documents, Documents};
 use super::frame_replay::{config_version_unit, unit_for, Unit};
 use super::*;
+use crate::spine::{CallOutcome, CallRefusal, ClauseRunReport};
 use fsl_eval::value::ValuePathSubject;
 use fsl_eval::value::{ClauseEvaluation, ObservationIdentity, RuntimeValuePath, ValuePathStep};
 
@@ -235,4 +236,120 @@ fn a_parameter_read_is_rooted_at_the_invocation_and_absent_without_one() {
     let evaluation = evaluate(&unit, "ProbeOrdered", &by_pre_call, UNLIMITED);
     assert_eq!(evaluation.receiver_path(), Some(&path("W", &a, vec![])));
     assert_eq!(read_paths(&evaluation), vec![Some(own), None]);
+}
+
+/// FR-766-AC-5 (TC-2195): the `AtMostOne` unit, whose `count<One>` over a
+/// two-element sequence can reach 2, with `One` spelled `one`.
+fn at_most_one(one: &str) -> (String, fsl_semantics::model::intake::PackageInput) {
+    let (base, packages) = config_version_unit_and_packages();
+    let unit = format!(
+        "{base}type One = {one};\n\
+         function pair using v(a: Int[0, 1000]): Sequence<Int[0, 1000]>[0, 2] pure {{ sequence[a, a] }}\n\
+         invariant AtMostOne using v on Config::ConfigVersion at current \
+         {{ count<One>(m in pair(self.versionNumber): m >= 0) <= 1 }}\n"
+    );
+    (unit, packages)
+}
+
+/// The run item a clause run of `clause` builds from `report`, as JSON.
+fn run_item(clause: &str, report: &ClauseRunReport) -> serde_json::Value {
+    let item = crate::OutcomeItem::from_clause_run(crate::RequestIndex::new(0), clause, report)
+        .expect("a refusal is an item");
+    serde_json::to_value(&item).expect("the item serializes")
+}
+
+/// FR-766-AC-5 (TC-2195): a clause run compiles its unit under
+/// `CheckMode::Linked`, so an invariant whose `count<One>` can exceed `One`
+/// is refused at compile with a named cause, never run to a null-cause
+/// refusal; with a domain that holds the count it compiles.
+#[trace("TC-2195", "FR-766-AC-5")]
+#[test]
+#[ignore = "QSL-2003: a linked count<N> result range is not proved at check yet; when it is, move the temporal-atom count<Zero> run-time-refusal fixtures to a package checked under CheckMode::Kernel (FR-766 Notes): fsl-replay/src/spine/clause/tests/temporal.rs:35-141,363-473, fsl-analyze/tests/it/monitor_inputs.rs:45-55,478; the invariant RefusedDomain fixture (witness.rs:84,1736, tc_743_the_separation_check_names_its_failing_step) moves its count<Zero> into a called function z (FR-268-AC-3) under CheckMode::Kernel and keeps its step-2 refusal record"]
+fn count_out_of_domain_names_its_cause() {
+    let compile = |one: &str| {
+        let (unit, packages) = at_most_one(one);
+        compose(
+            source(),
+            super::frame_replay::IDENTITY,
+            unit.as_bytes(),
+            &packages,
+            &DependencyInput::default(),
+            SpineLimits::default(),
+        )
+    };
+    let refusal = compile("Int[0, 1]").expect_err("the count can reach 2, outside Int[0, 1]");
+    assert_eq!(refusal.code().as_str(), "undefined_expression");
+    assert_eq!(refusal.cause(), Some("unproved-range"));
+    assert_eq!(refusal.code().category().exit_code(), 20);
+    assert!(
+        compile("Int[0, 2]").is_ok(),
+        "a domain holding [0, 2] proves the count"
+    );
+}
+
+/// FR-766-AC-6 (TC-2195): the clause run of that unit reports a compile
+/// disposition whose run item names `unproved-range`.
+#[trace("TC-2195", "FR-766-AC-6")]
+#[test]
+#[ignore = "QSL-2003: a linked count<N> result range is not proved at check yet; when it is, move the temporal-atom count<Zero> run-time-refusal fixtures to a package checked under CheckMode::Kernel (FR-766 Notes): fsl-replay/src/spine/clause/tests/temporal.rs:35-141,363-473, fsl-analyze/tests/it/monitor_inputs.rs:45-55,478; the invariant RefusedDomain fixture (witness.rs:84,1736, tc_743_the_separation_check_names_its_failing_step) moves its count<Zero> into a called function z (FR-268-AC-3) under CheckMode::Kernel and keeps its step-2 refusal record"]
+fn a_count_refused_at_compile_is_a_declined_run_item_with_its_cause() {
+    let (unit, packages) = at_most_one("Int[0, 1]");
+    let selection = ClauseSelection {
+        name: "AtMostOne".to_owned(),
+        input: ClauseSelectionInput::Current {
+            snapshot: config_version_document_ref("snap"),
+            anchor: SelectedAnchor {
+                kind: fsl_semantics::model::observation::AnchorKind::Initialization,
+                name: "init".to_owned(),
+            },
+            self_object: None,
+        },
+    };
+    let request = config_version_request_for(
+        unit,
+        packages,
+        "at-most-one.native",
+        ClauseRunSelection::Clause(selection),
+    );
+    let report = run_clause(request).expect("a report");
+    assert_eq!(report.disposition.stage(), ClauseRunStage::Compile);
+    let item = run_item("AtMostOne", &report);
+    assert_eq!(item["category"], "refusal", "{item}");
+    assert_eq!(item["result"], "declined", "{item}");
+    assert_eq!(item["cause"]["code"], "undefined_expression", "{item}");
+    assert_eq!(item["cause"]["kind"], "unproved-range", "{item}");
+}
+
+/// FR-766-AC-7 (TC-2195): a clause-run report whose S6a outcome is a kernel
+/// refusal record projects that record's code and cause onto its run item.
+#[trace("TC-2195", "FR-766-AC-7")]
+#[test]
+#[ignore = "QSL-2003: a clause-run item over a kernel refusal record does not carry its cause yet"]
+fn a_kernel_refusal_record_names_its_cause_on_the_run_item() {
+    use filament_semantic_value::catalog::CatalogCode;
+    let report = ClauseRunReport {
+        usage: Default::default(),
+        basis: crate::proof_result::SettlementBasis::Unavailable,
+        witness: None,
+        state_clause_counterexample: None,
+        frame_field_values: None,
+        consequent_source_events: Default::default(),
+        finite_window: None,
+        counterexample: None,
+        decisive: None,
+        authenticated_temporal_selection: None,
+        refused_at: None,
+        ledger: None,
+        disposition: ClauseDisposition::Evaluate(CallOutcome::Refused(CallRefusal::Record {
+            code: CatalogCode::new("integer_out_of_domain", "outside-domain"),
+            fields: [("expected", "Int[0, 1]".to_owned())].into_iter().collect(),
+            locus: None,
+            location: None,
+        })),
+    };
+    let item = run_item("AtMostOne", &report);
+    assert_eq!(item["category"], "refusal", "{item}");
+    assert_eq!(item["result"], "declined", "{item}");
+    assert_eq!(item["cause"]["code"], "integer_out_of_domain", "{item}");
+    assert_eq!(item["cause"]["kind"], "outside-domain", "{item}");
 }

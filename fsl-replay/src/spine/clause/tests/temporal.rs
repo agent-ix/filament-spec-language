@@ -153,7 +153,7 @@ enum ObservedReplayExpectation {
 /// A unit holds one temporal profile, so the bounded and the infinite-trace
 /// clauses of the spec's `Counter` unit are two units.
 #[derive(Clone, Copy)]
-enum Unit {
+pub(in crate::spine::clause::tests) enum Unit {
     /// `Bounded`, under event-position false-extension.
     Bounded,
     /// `Bounded` and its same-body twin under a third name `Twin2`.
@@ -333,23 +333,23 @@ impl Unit {
                  { always[0,0] holds(c.value = c.value) }\n"
             }
             Self::Timestamped => {
-                "temporal Window using t over (c: Counters::Counter) clock \"ms\" \
+                "temporal Window using t over (c: Counters::Counter) clock \"model-steps\" \
                  on origin { eventually[0,5] holds(c.value > 0) }\n"
             }
             Self::TimestampedOne => {
-                "temporal Window using t over (c: Counters::Counter) clock \"ms\" \
+                "temporal Window using t over (c: Counters::Counter) clock \"model-steps\" \
                  on origin { eventually[0,1] holds(c.value > 0) }\n"
             }
             Self::TimestampedTwo => {
-                "temporal Window using t over (c: Counters::Counter) clock \"ms\" \
+                "temporal Window using t over (c: Counters::Counter) clock \"model-steps\" \
                  on origin { eventually[0,2] holds(c.value > 0) }\n"
             }
             Self::TimestampedLaterEventually => {
-                "temporal Window using t over (c: Counters::Counter) clock \"ms\" \
+                "temporal Window using t over (c: Counters::Counter) clock \"model-steps\" \
                  on origin { eventually[2,3] holds(c.value > 0) }\n"
             }
             Self::TimestampedLaterAlways => {
-                "temporal Window using t over (c: Counters::Counter) clock \"ms\" \
+                "temporal Window using t over (c: Counters::Counter) clock \"model-steps\" \
                  on origin { always[2,3] holds(c.value > 0) }\n"
             }
             Self::DifferentialEvent => differential_clauses!("\"model-steps\""),
@@ -358,7 +358,7 @@ impl Unit {
                 "type Zero = Int[0, 0];\n",
                 "function ints using v(xs: Sequence<Integer>[0, 3]): Sequence<Integer>[0, 3] \
                  pure { xs }\n",
-                "temporal Window using t over (c: Counters::Counter) clock \"ms\" \
+                "temporal Window using t over (c: Counters::Counter) clock \"model-steps\" \
                  on origin { always[0,10] holds(3 mod (2 - c.value) >= 0 and \
                  count<Zero>(m in ints(sequence[c.value mod 2]): m > 0) = 0) }\n",
             ),
@@ -366,36 +366,36 @@ impl Unit {
                 "type Zero = Int[0, 0];\n",
                 "function ints using v(xs: Sequence<Integer>[0, 3]): Sequence<Integer>[0, 3] \
                  pure { xs }\n",
-                "temporal Window using t over (c: Counters::Counter) clock \"ms\" \
+                "temporal Window using t over (c: Counters::Counter) clock \"model-steps\" \
                  on each (q: Counters::Counter) { always[0,0] holds(c.value = 1 and \
                  count<Zero>(m in ints(sequence[c.value]): m > 0) = 0) }\n",
             ),
             Self::TimestampedEach => {
-                "temporal Window using t over (c: Counters::Counter) clock \"ms\" \
+                "temporal Window using t over (c: Counters::Counter) clock \"model-steps\" \
                  on each (q: Counters::Counter) { eventually[0,2] holds(c.value > 0) }\n"
             }
             Self::TimestampedAlwaysFive => {
-                "temporal Window using t over (c: Counters::Counter) clock \"ms\" \
+                "temporal Window using t over (c: Counters::Counter) clock \"model-steps\" \
                  on origin { always[0,5] holds(c.value > 0) }\n"
             }
             Self::TimestampedOnce => {
-                "temporal Window using t over (c: Counters::Counter) clock \"ms\" \
+                "temporal Window using t over (c: Counters::Counter) clock \"model-steps\" \
                  on each (q: Counters::Counter) { once[0,4] holds(c.value > 0) }\n"
             }
             Self::FixedEventually => {
-                "temporal Sample using t over (c: Counters::Counter) clock \"samples\" \
+                "temporal Sample using t over (c: Counters::Counter) clock \"model-steps\" \
                  on origin { eventually[0,3] holds(c.value = 1) }\n"
             }
             Self::FixedHugeReach => {
-                "temporal Sample using t over (c: Counters::Counter) clock \"samples\" \
+                "temporal Sample using t over (c: Counters::Counter) clock \"model-steps\" \
                  on origin { eventually[0,1000000000000] holds(c.value = 1) }\n"
             }
             Self::FixedEach => {
-                "temporal Sample using t over (c: Counters::Counter) clock \"samples\" \
+                "temporal Sample using t over (c: Counters::Counter) clock \"model-steps\" \
                  on each (q: Counters::Counter) { eventually[0,1] holds(c.value = 1) }\n"
             }
             Self::FixedAlways => {
-                "temporal Sample using t over (c: Counters::Counter) clock \"samples\" \
+                "temporal Sample using t over (c: Counters::Counter) clock \"model-steps\" \
                  on origin { always[0,3] holds(c.value = 1) }\n"
             }
             Self::EventEventually => {
@@ -415,9 +415,9 @@ impl Unit {
                  on origin { eventually[0,2] holds(c.value = 2) }\n"
             }
             Self::OwnerWindow => {
-                "temporal Window using t over (c: Counters::Counter) clock \"ms\" \
+                "temporal Window using t over (c: Counters::Counter) clock \"model-steps\" \
                  on origin { eventually[0,5] holds(c.value = 2) }\n\
-                 temporal Other using t over (c: Counters::Counter) clock \"ms\" \
+                 temporal Other using t over (c: Counters::Counter) clock \"model-steps\" \
                  on origin { eventually[0,5] holds(c.value > 1) }\n"
             }
             Self::Safety => {
@@ -490,7 +490,7 @@ impl Unit {
 fn finite_window_binding() -> crate::spine::TraceBinding {
     crate::spine::TraceBinding {
         profile: "filament.temporal.timestamped-event.finite-window/v1".to_owned(),
-        clock_name: "ms".to_owned(),
+        clock_name: "model-steps".to_owned(),
         parameters: fsl_package::ClockConfiguration::TimestampedEvent {
             timestamp_unit: "ms".into(),
         },
@@ -503,7 +503,7 @@ fn progressed_binding(unit: Unit) -> crate::spine::TraceBinding {
     let (profile, clock_name, parameters) = match unit {
         Unit::FixedEventually | Unit::FixedAlways | Unit::FixedHugeReach | Unit::FixedEach => (
             "filament.temporal.fixed-sample.false-extension/v1",
-            "samples",
+            "model-steps",
             fsl_package::ClockConfiguration::FixedSample {
                 epoch: fsl_package::ClockExactNumber::Integer {
                     decimal: "0".into(),
@@ -592,6 +592,7 @@ fn timestamped_named(
                     authoritative_origin: true,
                     cover: None,
                     missing_valuations: Vec::new(),
+                    late: Default::default(),
                 }),
             },
             over: over("c1"),
@@ -644,7 +645,11 @@ fn over(key: &str) -> OverObject {
 }
 
 /// `name` over a finite trace of `values`.
-fn finite(unit: Unit, name: &str, values: &[i64]) -> ClauseRunRequest {
+pub(in crate::spine::clause::tests) fn finite(
+    unit: Unit,
+    name: &str,
+    values: &[i64],
+) -> ClauseRunRequest {
     request(
         unit,
         |labels| ClauseRunSelection::Temporal {
@@ -673,7 +678,12 @@ fn ghost() -> ClauseRunRequest {
 
 /// `name` over a lasso whose prefix is the first `prefix` of `values` and
 /// whose loop is the rest.
-fn lasso(unit: Unit, name: &str, prefix: usize, values: &[i64]) -> ClauseRunRequest {
+pub(in crate::spine::clause::tests) fn lasso(
+    unit: Unit,
+    name: &str,
+    prefix: usize,
+    values: &[i64],
+) -> ClauseRunRequest {
     request(
         unit,
         |labels| ClauseRunSelection::Temporal {
@@ -689,7 +699,7 @@ fn lasso(unit: Unit, name: &str, prefix: usize, values: &[i64]) -> ClauseRunRequ
     )
 }
 
-fn report(request: ClauseRunRequest) -> ClauseRunReport {
+pub(in crate::spine::clause::tests) fn report(request: ClauseRunRequest) -> ClauseRunReport {
     let temporal_selections = match &request.source {
         ClauseRunSource::Program {
             identity,
@@ -1555,18 +1565,7 @@ fn a_selection_that_cannot_run_reports_its_stage_and_cause() {
     );
 
     let bounded_lasso = report(lasso(Unit::Bounded, "Bounded", 0, &[0, 1, 2]));
-    assert_eq!(bounded_lasso.disposition.stage(), ClauseRunStage::Admit);
-    let ClauseDisposition::Admit(AdmissionFailure::Refused(record)) = &bounded_lasso.disposition
-    else {
-        panic!(
-            "expected an admission refusal, got {:?}",
-            bounded_lasso.disposition
-        );
-    };
-    assert_eq!(
-        (record.catalog.code(), record.catalog.cause()),
-        ("invalid_runtime_input", "invalid-value")
-    );
+    assert_trace_refused(&bounded_lasso, ClauseRunStage::Admit, "trace-kind-mismatch");
 
     let ghost = report(ghost());
     assert_eq!(ghost.disposition.stage(), ClauseRunStage::Admit);
@@ -1579,17 +1578,7 @@ fn a_selection_that_cannot_run_reports_its_stage_and_cause() {
     );
 
     let empty_loop = report(lasso(Unit::Infinite, "Reaches", 3, &[0, 1, 2]));
-    assert_eq!(empty_loop.disposition.stage(), ClauseRunStage::Evaluate);
-    assert_eq!(empty_loop.disposition.category(), Category::Refusal);
-    let ClauseDisposition::TemporalRefusal(refusal) = &empty_loop.disposition else {
-        panic!("expected a trace refusal, got {:?}", empty_loop.disposition);
-    };
-    assert_eq!(refusal, &TemporalTraceRefusal::EmptyLoop);
-    let code = refusal.catalog_code();
-    assert_eq!(
-        (code.code(), code.cause()),
-        ("invalid_runtime_input", "invalid-value")
-    );
+    assert_trace_refused(&empty_loop, ClauseRunStage::Evaluate, "empty-lasso-loop");
 }
 
 /// `Reaches` over the loop 0, 1, 2 with no work budget is incomplete, exit
@@ -1871,18 +1860,7 @@ fn timestamped_profile_and_trace_shape_must_match() {
         &[1],
     );
     let first_report = report(timestamped_clause_on_positions);
-    assert_eq!(first_report.disposition.stage(), ClauseRunStage::Admit);
-    let ClauseDisposition::Admit(AdmissionFailure::Refused(record)) = &first_report.disposition
-    else {
-        panic!(
-            "expected an admission refusal, got {:?}",
-            first_report.disposition
-        );
-    };
-    assert_eq!(
-        (record.catalog.code(), record.catalog.cause()),
-        ("invalid_runtime_input", "invalid-value")
-    );
+    assert_trace_refused(&first_report, ClauseRunStage::Admit, "trace-kind-mismatch");
 
     let position_clause_on_timestamps = request(
         Unit::Bounded,
@@ -1911,6 +1889,7 @@ fn timestamped_profile_and_trace_shape_must_match() {
                     authoritative_origin: true,
                     cover: None,
                     missing_valuations: Vec::new(),
+                    late: Default::default(),
                 }),
             },
             over: over("c1"),
@@ -1919,18 +1898,7 @@ fn timestamped_profile_and_trace_shape_must_match() {
         &[1],
     );
     let second_report = report(position_clause_on_timestamps);
-    assert_eq!(second_report.disposition.stage(), ClauseRunStage::Admit);
-    let ClauseDisposition::Admit(AdmissionFailure::Refused(record)) = &second_report.disposition
-    else {
-        panic!(
-            "expected an admission refusal, got {:?}",
-            second_report.disposition
-        );
-    };
-    assert_eq!(
-        (record.catalog.code(), record.catalog.cause()),
-        ("invalid_runtime_input", "invalid-value")
-    );
+    assert_trace_refused(&second_report, ClauseRunStage::Admit, "trace-kind-mismatch");
 }
 
 /// FR-501-AC-11/FR-285 (TC-1295): temporal-only result classes retain their
@@ -2434,6 +2402,9 @@ fn spine_cover(cover: fsl_eval::temporal::ClockCover) -> crate::spine::Timestamp
         fsl_eval::temporal::ClockCover::Counter { uncertainty } => {
             crate::spine::TimestampedCover::Counter { uncertainty }
         }
+        fsl_eval::temporal::ClockCover::Bounded { uncertainty } => {
+            crate::spine::TimestampedCover::Bounded { uncertainty }
+        }
     }
 }
 
@@ -2672,7 +2643,6 @@ fn timestamped_report_keeps_four_independent_dimensions() {
 #[trace("TC-1582", "FR-267-AC-22")]
 #[trace("TC-1081", "FSpec-FR-521-AC-1")]
 #[test]
-#[ignore = "QSL-2121: the clause-run document does not carry the four outcome axes yet"]
 fn clause_run_document_carries_four_independent_axes() {
     let base = || {
         timestamped_with(
@@ -2702,6 +2672,32 @@ fn clause_run_document_carries_four_independent_axes() {
     assert_eq!(open["axes"]["execution"], axes["execution"]);
     assert_eq!(open["axes"]["truth"], axes["truth"]);
     assert_ne!(open["axes"]["settlement"], axes["settlement"]);
+}
+
+/// FR-622 "Clause runs and monitor items", FR-621 `axes`: every `monitor`
+/// item carries the four axes of the clause run it was built from, copied
+/// from the run (a pending run's `truth` `pending` and settlement
+/// `unsettled`, a refuted run's `false`), not recomputed from the category.
+#[trace("TC-1582", "FR-622-AC-1")]
+#[test]
+fn every_monitor_item_carries_its_clause_runs_axes() {
+    let pending = report(finite(Unit::Infinite, "Reaches", &[0, 1, 2]));
+    let refuted = report(finite(Unit::Bounded, "Bounded", &[0, 1, 2]));
+    let (_, json) = monitor_json(&[("Reaches", &pending), ("Bounded", &refuted)]);
+    for (item, run) in json["items"]
+        .as_array()
+        .expect("items")
+        .iter()
+        .zip([&pending, &refuted])
+    {
+        assert_eq!(
+            item["axes"],
+            serde_json::to_value(run.axes()).expect("the axes write"),
+            "{item}"
+        );
+    }
+    assert_eq!(json["items"][0]["axes"]["truth"], "pending");
+    assert_eq!(json["items"][1]["axes"]["truth"], "false");
 }
 
 /// FR-501-AC-16 (TC-1295 row 30): one result identity per input; each input
@@ -3016,7 +3012,10 @@ fn timestamped_binding_is_required_and_authenticated() {
         Some("Clock")
     );
     assert_eq!(clock.get("asserted").map(String::as_str), Some("us"));
-    assert_eq!(clock.get("expected").map(String::as_str), Some("ms"));
+    assert_eq!(
+        clock.get("expected").map(String::as_str),
+        Some("model-steps")
+    );
     // Both differ: the first dimension in order, `Profile`, is reported, and
     // it is reported even for an empty trace.
     let profile = refusal(timestamped_changed(
@@ -3084,7 +3083,7 @@ fn strict_readback_temporal_run_retains_authenticated_selection() {
         selection.profile.identity.as_ref(),
         "filament.temporal.timestamped-event.finite-window/v1"
     );
-    assert_eq!(selection.clock_name.as_ref(), "ms");
+    assert_eq!(selection.clock_name.as_ref(), "model-steps");
     assert_eq!(
         selection.clock,
         fsl_package::ClockConfiguration::TimestampedEvent {
@@ -3099,7 +3098,7 @@ fn strict_readback_temporal_run_retains_authenticated_selection() {
     let mut request = timestamped(&[0, 2, 5], &[0, 1, 0], 5, Some(5));
     let source_bytes = program_source_bytes(&mut request);
     let source_text = std::str::from_utf8(source_bytes).expect("fixture source is UTF-8");
-    let declaration = "temporal Window using t over (c: Counters::Counter) clock \"ms\"";
+    let declaration = "temporal Window using t over (c: Counters::Counter) clock \"model-steps\"";
     let declaration_start = source_text
         .find(declaration)
         .expect("fixture declares the checked Window temporal clause");
@@ -3221,7 +3220,7 @@ fn progressed_binding_dimensions_are_each_authenticated_and_retained() {
     let retained = report(progressed_sample(Unit::FixedEventually, fixed()))
         .authenticated_temporal_selection
         .expect("the matching fixed-sample binding is retained");
-    assert_eq!(retained.clock_name.as_ref(), "samples");
+    assert_eq!(retained.clock_name.as_ref(), "model-steps");
     assert_eq!(
         retained.clock,
         Clock::FixedSample {
@@ -3548,6 +3547,16 @@ fn with_ledger(
     request
 }
 
+/// FR-645: the run was refused with `reason` at `stage`, as a refusal.
+fn assert_trace_refused(report: &ClauseRunReport, stage: ClauseRunStage, reason: &str) {
+    let ClauseDisposition::TraceRefused(refusal) = &report.disposition else {
+        panic!("expected a trace refusal, got {:?}", report.disposition);
+    };
+    assert_eq!(refusal.reason, reason);
+    assert_eq!(report.disposition.stage(), stage);
+    assert_eq!(report.disposition.category(), Category::Refusal);
+}
+
 fn assert_admit_invalid_value(report: &ClauseRunReport) {
     let ClauseDisposition::Admit(AdmissionFailure::Refused(record)) = &report.disposition else {
         panic!(
@@ -3569,7 +3578,7 @@ fn a_ledger_with_a_finite_trace_without_progress_is_refused_at_admit_and_returne
         finite(Unit::Bounded, "Bounded", &[0, 1, 2]),
         &ledger,
     ));
-    assert_admit_invalid_value(&report);
+    assert_trace_refused(&report, ClauseRunStage::Admit, "ledger-without-progress");
     assert_eq!(report.ledger, Some(ledger));
 }
 
@@ -3581,7 +3590,7 @@ fn a_ledger_with_a_lasso_is_refused_at_admit_and_returned_unchanged() {
         lasso(Unit::Infinite, "Reaches", 0, &[0, 1, 2]),
         &ledger,
     ));
-    assert_admit_invalid_value(&report);
+    assert_trace_refused(&report, ClauseRunStage::Admit, "ledger-without-progress");
     assert_eq!(report.ledger, Some(ledger));
 }
 
@@ -3593,7 +3602,7 @@ fn a_ledger_with_an_infinite_trace_clause_is_refused_at_admit_and_returned_uncha
         finite(Unit::Infinite, "Reaches", &[0, 1, 2]),
         &ledger,
     ));
-    assert_admit_invalid_value(&report);
+    assert_trace_refused(&report, ClauseRunStage::Admit, "ledger-without-progress");
     assert_eq!(report.ledger, Some(ledger));
 }
 
@@ -4150,6 +4159,8 @@ fn the_undefined_label_is_written_only_for_the_undefined_category() {
     let synthetic = |disposition| ClauseRunReport {
         basis: SettlementBasis::Unavailable,
         witness: None,
+        state_clause_counterexample: None,
+        frame_field_values: None,
         disposition,
         usage: super::super::ClauseRunUsage::default(),
         consequent_source_events: crate::spine::ConsequentSourceEvents::Unavailable,
@@ -4194,6 +4205,8 @@ fn synthetic_report(disposition: ClauseDisposition) -> ClauseRunReport {
     ClauseRunReport {
         basis: SettlementBasis::Unavailable,
         witness: None,
+        state_clause_counterexample: None,
+        frame_field_values: None,
         disposition,
         usage: super::super::ClauseRunUsage::default(),
         consequent_source_events: crate::spine::ConsequentSourceEvents::Unavailable,
@@ -4206,7 +4219,10 @@ fn synthetic_report(disposition: ClauseDisposition) -> ClauseRunReport {
     }
 }
 
-fn item_json(clause: &str, run: &ClauseRunReport) -> serde_json::Value {
+pub(in crate::spine::clause::tests) fn item_json(
+    clause: &str,
+    run: &ClauseRunReport,
+) -> serde_json::Value {
     monitor_json(&[(clause, run)]).1["items"][0].clone()
 }
 
@@ -4249,7 +4265,7 @@ fn violated_undefined_and_insufficient_data_items_carry_their_record_members() {
     assert_eq!(undefined["counterexample"]["trace_position"], 2);
     assert_eq!(undefined["cause"]["kind"], "undefined-evaluation");
     assert_eq!(undefined["cause"]["where"], "position 2");
-    assert_eq!(undefined["cause"]["cause"], "division-by-zero");
+    assert_eq!(undefined["cause"]["code"], "division-by-zero");
     assert!(undefined.get("witness").is_none());
 
     let insufficient = synthetic_report(ClauseDisposition::Temporal(TemporalVerdict::Undefined {
@@ -4285,7 +4301,7 @@ fn incomplete_unsupported_and_declined_rows_carry_their_labels_and_causes() {
     assert_eq!(starved["category"], "incomplete");
     assert_eq!(starved["cause"]["kind"], "limit-reached");
     assert_eq!(starved["cause"]["limit"], "work_units");
-    assert_eq!(starved["cause"]["setting"], "work_units");
+    assert_eq!(starved["cause"]["setting"], "accounting.work_units");
 
     let fair = report(lasso(Unit::Infinite, "Fair", 0, &[0, 1, 2]));
     assert_eq!(fair.disposition.exit_code(), 21);
@@ -4302,6 +4318,18 @@ fn incomplete_unsupported_and_declined_rows_carry_their_labels_and_causes() {
     assert_eq!(empty_loop["category"], "refusal");
     assert_eq!(empty_loop["cause"]["kind"], "invalid-value");
     assert_eq!(empty_loop["cause"]["code"], "invalid_runtime_input");
+    assert!(empty_loop["cause"]["message"]
+        .as_str()
+        .is_some_and(|message| message.contains("loop")));
+
+    let empty_finite = item_json("Reaches", &report(finite(Unit::Infinite, "Reaches", &[])));
+    assert_eq!(empty_finite["result"], "declined");
+    assert!(empty_finite["cause"]["message"]
+        .as_str()
+        .is_some_and(|message| message.contains("trace")));
+
+    let nonempty_lasso = item_json("Reaches", &report(lasso(Unit::Infinite, "Reaches", 0, &[0, 1, 2])));
+    assert_ne!(nonempty_lasso["result"], "declined");
 
     let ghost = item_json("Reaches", &report(ghost()));
     assert_eq!(ghost["result"], "declined");
@@ -4816,7 +4844,7 @@ fn mixed_unit_clock_in(library: &str, checked_with_selections: bool) -> MixedUni
          profile t = \"filament.temporal.timestamped-event.finite-window/v1\";\n\
          model Counters = {package:?};\n\
          record Sample {{ v: Int[0, 9]; }}\n\
-         temporal Window using t over (e: Sample) clock \"ms\" on origin \
+         temporal Window using t over (e: Sample) clock \"plant-ms\" on origin \
          {{ always[0,3] (count over past[0 Counters::s, 300000 Counters::ms] >= 1) }}\n"
     );
     let identity = fsl_foundation::SourceIdentity::new("test", "window");

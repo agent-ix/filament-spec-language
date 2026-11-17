@@ -1637,42 +1637,51 @@ fn event_unit(declarations: &str, ty: &str) -> Case {
     )
 }
 
-/// Part of FR-215-AC-5 (TC-660, ADR-027 TS-5, ST-2): an `event` binder of
-/// the record `Msg` with an `Int[0, 1]` field and a nested record field
-/// gives exactly four `event` steps in domain order, and building the system
-/// refuses nothing. A record `Wide` with an unbounded field `t` returns
-/// `RequiresBound` naming the binder and the field before any state is
-/// explored.
-///
-/// Partial: Remaining work: the `enum Mode` field of the criterion's `Msg`.
-/// An event whose record holds a native `enum` value cannot be explored: the
-/// value has no form in the protocol identity ("an undeclared enum value"),
-/// so the expansion stops with `runtime_invariant`. The criterion id is
-/// therefore not cited; only the test case is.
-#[trace("TC-660")]
+/// FR-215-AC-5 (TC-660, ADR-027 TS-5, ST-2): an `event` binder of the
+/// record `Msg` with an `Int[0, 1]` field, a native `enum` field and a
+/// nested record field gives exactly eight `event` steps in domain order,
+/// and building the system refuses nothing. A record `Wide` with an
+/// unbounded field `t` returns `RequiresBound` naming the binder and the
+/// field before any state is explored.
+#[trace("TC-660", "FR-215-AC-5")]
 #[test]
 fn a_finite_field_record_binder_steps_in_domain_order() {
     let msg = event_unit(
-        "record Inner { ok: Boolean; }\nrecord Msg { n: Int[0, 1]; i: Inner; }",
+        "enum Mode { slow, fast }\nrecord Inner { up: Boolean; }\n\
+         record Msg { n: Int[0, 1]; m: Mode; i: Inner; }",
         "Msg",
     );
     let subject = msg.subject("P");
     let system = sc_system(&subject);
     let reached = reachable(&system);
-    let records: Vec<String> = reached[0]
+    let records: Vec<(String, String, bool)> = reached[0]
         .steps
         .iter()
         .filter(|(transition, _)| transition.kind() == StepKind::Event)
         .map(|(transition, _)| {
-            json_of(&system.transition_key(transition).expect("an identity"))["record"].to_string()
+            let identity = json_of(&system.transition_key(transition).expect("an identity"));
+            let fields = &identity["record"]["fields"];
+            (
+                fields[0]["value"]["value"].as_str().expect("n").to_owned(),
+                fields[1]["value"]["member"].as_str().expect("m").to_owned(),
+                fields[2]["value"]["fields"][0]["value"]["value"]
+                    .as_bool()
+                    .expect("i.up"),
+            )
         })
         .collect();
-    assert_eq!(records.len(), 4, "{records:?}");
-    let distinct: BTreeSet<_> = records.iter().collect();
-    assert_eq!(distinct.len(), 4);
-    for (at, record) in records.iter().enumerate() {
-        assert_eq!(record.contains("true"), at % 2 == 1, "{at}: {record}");
-    }
+    // FR-141: an unordered `enum`'s members are in case-name order.
+    let expected: Vec<(String, String, bool)> = ["0", "1"]
+        .into_iter()
+        .flat_map(|n| {
+            ["fast", "slow"].into_iter().flat_map(move |m| {
+                [false, true]
+                    .into_iter()
+                    .map(move |up| (n.to_owned(), m.to_owned(), up))
+            })
+        })
+        .collect();
+    assert_eq!(records, expected);
 
     let wide = event_unit("record Wide { n: Int[0, 1]; t: Integer; }", "Wide");
     let refusal = check_protocol(

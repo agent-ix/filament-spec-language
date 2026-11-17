@@ -16,6 +16,8 @@ fn report() -> ClauseRunReport {
         usage: Default::default(),
         basis: SettlementBasis::Unavailable,
         witness: None,
+        frame_field_values: None,
+        state_clause_counterexample: None,
         consequent_source_events: Default::default(),
         finite_window: None,
         counterexample: None,
@@ -199,7 +201,8 @@ fn tc_1340_root_api_refuses_invalid_documents() {
 
 /// FR-535-AC-4: the facade adds no tool-version, digest, receipt or token. The
 /// limits are exactly the two bounds, and a written document keeps only the
-/// FR-267 member set.
+/// FR-267 member set, which includes FR-622's `axes` (FR-267 "Outcome axes",
+/// FR-267-AC-22).
 #[test]
 #[trace("TC-1340", "FR-535-AC-4")]
 fn tc_1340_root_api_adds_no_authentication_claim() {
@@ -216,7 +219,7 @@ fn tc_1340_root_api_adds_no_authentication_claim() {
         .map(String::as_str)
         .collect();
     members.sort_unstable();
-    assert_eq!(members, ["basis", "disposition", "format", "usage"]);
+    assert_eq!(members, ["axes", "basis", "disposition", "format", "usage"]);
 }
 
 /// FR-535-AC-3: both bounds, refused before a result exists.

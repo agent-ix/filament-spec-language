@@ -56,6 +56,7 @@ use crate::model::domain_package::{
 };
 use crate::model::normalize::{ModelRefusal, ModelRefusalCause};
 use filament_checked::key::DeclarationKey;
+use filament_exact::{EffectiveId, ValueType};
 use fsl_foundation::diagnostic::Code;
 
 /// One interned declaration key. Index order is [`DeclarationKey`] order.
@@ -129,12 +130,24 @@ struct Ancestry {
 ///
 /// A package and its index are built together and never paired afterwards,
 /// so no caller can read one package's records through another's index.
-#[derive(Debug, Eq, PartialEq)]
+#[derive(Debug)]
 pub struct ModelIndex {
     package: Arc<DomainPackage>,
     records: RecordIndex,
     type_fact_counts: BTreeMap<DeclarationKey, u64>,
+    reference_models: Vec<Arc<ModelIndex>>,
+    source_spellings: Arc<super::spelling::SourceSpellings>,
 }
+
+impl PartialEq for ModelIndex {
+    fn eq(&self, other: &Self) -> bool {
+        self.package == other.package
+            && self.records == other.records
+            && self.type_fact_counts == other.type_fact_counts
+            && self.reference_models == other.reference_models
+    }
+}
+impl Eq for ModelIndex {}
 
 /// The positional index [`ModelIndex`] keeps over its package's records.
 /// Normalization builds it over a borrowed package, before a completed
@@ -329,6 +342,8 @@ impl ModelIndex {
             package,
             records,
             type_fact_counts,
+            reference_models: Vec::new(),
+            source_spellings: Arc::default(),
         }
     }
 
@@ -348,7 +363,42 @@ impl ModelIndex {
             package,
             records,
             type_fact_counts,
+            reference_models: Vec::new(),
+            source_spellings: Arc::default(),
         }
+    }
+
+    /// Retain the selected models that source member references can name.
+    pub(crate) fn with_reference_models(mut self, models: Vec<Arc<ModelIndex>>) -> Self {
+        self.reference_models = models;
+        self
+    }
+
+    pub(crate) fn reindex(&self, package: DomainPackage) -> Self {
+        Self::build(package)
+            .with_reference_models(self.reference_models.clone())
+            .with_source_spellings(self.source_spellings.clone())
+    }
+
+    /// Diagnostic names retained by the source assembler; no names for a domain package.
+    pub fn source_spellings(&self) -> &super::spelling::SourceSpellings {
+        &self.source_spellings
+    }
+
+    pub(crate) fn with_source_spellings(
+        mut self,
+        spellings: Arc<super::spelling::SourceSpellings>,
+    ) -> Self {
+        self.source_spellings = spellings;
+        self
+    }
+
+    pub(crate) fn spelling(
+        &self,
+        value_type: &ValueTypeRef,
+        slot: &super::spelling::MemberSlot,
+    ) -> String {
+        super::spelling::fsl_spelling(value_type, &self.source_spellings, Some(slot))
     }
 
     /// Actual qualify/inherit fact count for an object type; non-object
@@ -425,6 +475,9 @@ impl ModelIndex {
         limit: u64,
     ) -> Result<bool, crate::model::accounting::NormalizationIncomplete> {
         match (s, t) {
+            (ValueTypeRef::Resolved(a), ValueTypeRef::Resolved(b)) => {
+                self.resolved_conforms(a, b, limit)
+            }
             (ValueTypeRef::Native(a), ValueTypeRef::Native(b)) => Ok(a == b),
             (ValueTypeRef::Unit(a), ValueTypeRef::Unit(b)) => Ok(a == b),
             // A bounded integer scalar is an Integer; a native alias is its
@@ -443,11 +496,107 @@ impl ModelIndex {
                         Ok(parent_lo <= lo && hi <= parent_hi)
                     }
                     (Some(_), None) | (None, Some(_)) => Ok(false),
-                    (None, None) => self.conformance_walk(a, b, limit),
+                    (None, None) => self.package_conforms(a, b, limit),
                 }
             }
             _ => Ok(false),
         }
+    }
+
+    fn resolved_conforms(
+        &self,
+        mut source: &ValueType,
+        mut target: &ValueType,
+        limit: u64,
+    ) -> Result<bool, crate::model::accounting::NormalizationIncomplete> {
+        loop {
+            if source == target {
+                return Ok(true);
+            }
+            match (source, target) {
+                (ValueType::Int(a), ValueType::Int(b)) => {
+                    return Ok(b.lower() <= a.lower() && a.upper() <= b.upper())
+                }
+                (ValueType::Int(_), ValueType::Integer) => return Ok(true),
+                (ValueType::Option(a), ValueType::Option(b)) => {
+                    source = a;
+                    target = b;
+                }
+                (ValueType::Collection(a), ValueType::Collection(b)) => {
+                    let bounds = |collection: &filament_exact::CollectionType| {
+                        collection
+                            .bound()
+                            .map_or((0, None), |bound| (bound.minimum(), Some(bound.maximum())))
+                    };
+                    let (a_min, a_max) = bounds(a);
+                    let (b_min, b_max) = bounds(b);
+                    if a.kind() != b.kind()
+                        || a_min < b_min
+                        || matches!((a_max, b_max), (None, Some(_)))
+                        || matches!((a_max, b_max), (Some(a), Some(b)) if a > b)
+                    {
+                        return Ok(false);
+                    }
+                    source = a.element();
+                    target = b.element();
+                }
+                (ValueType::Reference(a), ValueType::Reference(b)) => {
+                    return match (self.object_key(a), self.object_key(b)) {
+                        (Some(a), Some(b)) => self.package_conforms(a, b, limit),
+                        _ => Ok(false),
+                    };
+                }
+                _ => return Ok(false),
+            }
+        }
+    }
+
+    fn package_conforms(
+        &self,
+        source: &DeclarationKey,
+        target: &DeclarationKey,
+        limit: u64,
+    ) -> Result<bool, crate::model::accounting::NormalizationIncomplete> {
+        if source == target {
+            return Ok(true);
+        }
+        if self
+            .records
+            .position(source)
+            .is_some_and(|position| self.records.declarations.contains_key(&position))
+        {
+            return self.conformance_walk(source, target, limit);
+        }
+        for model in &self.reference_models {
+            if model
+                .records
+                .position(source)
+                .is_some_and(|position| model.records.declarations.contains_key(&position))
+            {
+                return model.conformance_walk(source, target, limit);
+            }
+        }
+        Ok(false)
+    }
+
+    /// The original object key of a reference in this view or a selected model.
+    fn object_key(&self, identity: &EffectiveId) -> Option<&DeclarationKey> {
+        let original = identity.original();
+        self.package
+            .records
+            .iter()
+            .find_map(|record| {
+                let DomainPackageRecord::ObjectType(object) = record else {
+                    return None;
+                };
+                (object.key.package == original.package() && object.key.node == original.node())
+                    .then_some(&object.key)
+            })
+            .or_else(|| {
+                self.reference_models
+                    .iter()
+                    .find_map(|model| model.object_key(identity))
+            })
     }
 
     /// All declared field redefinition links followed by an effect test,
@@ -1275,6 +1424,114 @@ mod tests {
 
     use super::*;
     use crate::model::domain_package::{DomainPackageRef, ObjectTypeRecord};
+
+    #[trace("FR-088-AC-13", "TC-2360")]
+    #[test]
+    fn diagnostic_spellings_do_not_change_index_equality_or_conformance() {
+        let point = crate::check::declared_node_key(
+            "test/spellings".to_owned(),
+            vec!["Point".to_owned()],
+            0,
+        )
+        .expect("nominal key");
+        let mut first = crate::model::spelling::SourceSpellings::default();
+        first.name_node(point.clone(), "Point".to_owned());
+        let mut second = first.clone();
+        second.name_node(point.clone(), "Spot".to_owned());
+        let first = ModelIndex::build(package(&[])).with_source_spellings(Arc::new(first));
+        let second = ModelIndex::build(package(&[])).with_source_spellings(Arc::new(second));
+        let value = ValueTypeRef::Resolved(Box::new(ValueType::Composite(point)));
+        let other = ValueTypeRef::Resolved(Box::new(ValueType::Integer));
+        assert_eq!(first, second);
+        assert_eq!(first.package(), second.package());
+        for target in [&value, &other] {
+            assert_eq!(
+                first.value_conformance_walk(&value, target, 10),
+                second.value_conformance_walk(&value, target, 10)
+            );
+        }
+        assert_eq!(
+            crate::model::spelling::fsl_spelling(&value, first.source_spellings(), None),
+            "Point"
+        );
+        assert_eq!(
+            crate::model::spelling::fsl_spelling(&value, second.source_spellings(), None),
+            "Spot"
+        );
+    }
+
+    #[trace("FR-569-AC-15", "TC-1940")]
+    #[test]
+    fn resolved_conformance_recurses_only_through_options_and_same_kind_collections() {
+        use filament_exact::{
+            CardinalityBound, CollectionKind, CollectionType, Integer, IntegerInterval,
+        };
+        let index = ModelIndex::build(package(&[]));
+        let int = |lower, upper| {
+            ValueType::Int(
+                IntegerInterval::new(Integer::from(lower), Integer::from(upper)).expect("interval"),
+            )
+        };
+        let collection = |kind, element, lower, upper| {
+            ValueType::collection(CollectionType::new(
+                kind,
+                element,
+                Some(CardinalityBound::new(lower, upper).expect("bound")),
+            ))
+        };
+        let conforms = |source, target| {
+            index
+                .value_conformance_walk(
+                    &ValueTypeRef::Resolved(Box::new(source)),
+                    &ValueTypeRef::Resolved(Box::new(target)),
+                    10,
+                )
+                .expect("bounded walk")
+        };
+        assert!(conforms(
+            ValueType::option(int(1_i64, 3_i64)),
+            ValueType::option(int(0_i64, 9_i64))
+        ));
+        assert!(!conforms(
+            ValueType::option(int(0_i64, 9_i64)),
+            ValueType::option(int(1_i64, 3_i64))
+        ));
+        assert!(conforms(
+            collection(CollectionKind::Set, int(1_i64, 3_i64), 1, 2),
+            collection(CollectionKind::Set, ValueType::Integer, 0, 3)
+        ));
+        assert!(!conforms(
+            collection(CollectionKind::Set, ValueType::Integer, 0, 4),
+            collection(CollectionKind::Set, ValueType::Integer, 0, 3)
+        ));
+        assert!(!conforms(
+            collection(CollectionKind::Bag, ValueType::Integer, 0, 3),
+            collection(CollectionKind::Set, ValueType::Integer, 0, 3)
+        ));
+        assert!(!conforms(
+            ValueType::Integer,
+            ValueType::option(ValueType::Integer)
+        ));
+        for (a, b) in [
+            (
+                ValueTypeRef::Resolved(Box::new(ValueType::Integer)),
+                ValueTypeRef::Native(NativeValueType::Integer),
+            ),
+            (
+                ValueTypeRef::Resolved(Box::new(ValueType::Reference(
+                    crate::model::key::effective_id_of(None, &key("T")),
+                ))),
+                ValueTypeRef::Package(key("T")),
+            ),
+        ] {
+            assert!(!index
+                .value_conformance_walk(&a, &b, 10)
+                .expect("mixed pair"));
+            assert!(!index
+                .value_conformance_walk(&b, &a, 10)
+                .expect("reverse mixed pair"));
+        }
+    }
 
     fn key(node: &str) -> DeclarationKey {
         DeclarationKey::fixture(node)

@@ -545,3 +545,43 @@ fn supplied_dependency_internal_lists_reach_the_library_semantic_owner() {
     };
     assert_eq!(defect.pointer, "/0/refinement");
 }
+
+/// FR-640-AC-8 with a library clock: a library that declares its own
+/// timestamped-event clause on a clock the program does not use compiles
+/// with the program under the request's `clocks`, and the replay of the
+/// program's call of the library function recompiles under the clocks the
+/// proof ran under and gives the same value as a library with no clause.
+#[trace("FR-640-AC-8", "FR-640-AC-9")]
+#[test]
+#[ignore = "QSL-2274: replay has no source for the clock selections only a library unit uses"]
+fn a_replay_recompiles_a_library_that_uses_its_own_clock() {
+    let clocked = library(
+        "test/units",
+        "units",
+        &format!(
+            "profile w = \"filament.temporal.timestamped-event.finite-window/v1\";\n\
+             {}record Reading {{ level: Int[0, 9]; }}\n\
+             temporal Late using w over (r: Reading) clock \"plant-ms\" \
+             on origin {{ eventually[0,5] holds(r.level > 0) }}\n",
+            units_body()
+        ),
+    );
+    let unit = unit_source("test/units", "u", UNIT_BODY);
+    let libraries = [clocked];
+    let big = imported(&unit, libraries.to_vec(), "big");
+    let located = Located {
+        package: big.package.clone(),
+        site: big.site.function.clone(),
+    };
+    for (x, holds) in [(3, false), (7, true)] {
+        let result = input_arm(replay(
+            request(&unit, &libraries, owned(&big, "big"), &located, &[x]),
+            ReplayLimits::default(),
+        ));
+        assert_eq!(
+            result.value(),
+            Some(EvaluatedValue::Boolean(holds)),
+            "x = {x}"
+        );
+    }
+}

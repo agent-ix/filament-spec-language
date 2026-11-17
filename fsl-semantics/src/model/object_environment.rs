@@ -475,12 +475,21 @@ impl ObjectEnvironment {
     /// The binding already admitted for an exact population declaration
     /// identity. This reads the recorded correspondence; it creates no id.
     pub fn population_binding(&self, identity: &str) -> Option<&PopulationBinding> {
-        let provenance = self
+        if let Some(provenance) = self
             .population_node(identity)
-            .and_then(|node| self.population_provenance(node))?;
+            .and_then(|node| self.population_provenance(node))
+        {
+            return self
+                .populations
+                .values()
+                .find(|binding| binding.population_key() == provenance.declaration())
+                .map(Arc::as_ref);
+        }
+        // A snapshot-admitted environment records no provenance: name the
+        // binding by its declaration node.
         self.populations
             .values()
-            .find(|binding| binding.population_key() == provenance.declaration())
+            .find(|binding| binding.population_key().node == identity)
             .map(Arc::as_ref)
     }
 }

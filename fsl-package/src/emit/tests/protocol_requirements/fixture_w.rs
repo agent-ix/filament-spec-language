@@ -674,7 +674,7 @@ fn complete_w_activation_map_matches_read_back() {
     }
     for text in [W.to_owned(), format!("// reformatted W\n{}", W.replace(';', ";\n\n")),
         W.replace("requires temporal OrderClosureBounded;", "requires temporal OrderClosureBounded;\nrequires temporal OrderClosureBounded;"),
-        format!("temporal RefundBounded using T over (view: M::OrderView) clock \"refund-clock\" on origin {{ eventually[0,1] holds(false) }}\n{W}"),
+        format!("temporal RefundBounded using T over (view: M::OrderView) clock \"model-steps\" on origin {{ eventually[0,1] holds(false) }}\n{W}"),
         format!("temporal Unrequired using T over (view: M::OrderView) clock \"model-steps\" on origin {{ eventually[0,1] holds(false) }}\n{W}"),
     ] {
         let variant = lower_with(document(), PROFILES_W, &text);
@@ -1802,4 +1802,35 @@ fn w_wire_bytes_do_not_follow_unrelated_protocols() {
         &w_between_unrelated_protocols(),
         |_: &WireGraph, _: &Value, raw: &Value| raw.clone(),
     );
+}
+
+/// FR-892-AC-4 (TC-2525): a compensation template missing its clock
+/// selection is refused with a message that names it as a compensate
+/// template, never as a "temporal declaration".
+#[trace("TC-2525", "FR-892-AC-4")]
+#[test]
+fn a_missing_template_clock_names_the_compensate_template() {
+    let graph = tc134_timed_graph();
+    let selections = tc134_selections(&graph);
+    let package = CheckedPackage::link(graph);
+    let first = package
+        .graph()
+        .protocols()
+        .iter()
+        .flat_map(|protocol| protocol.obligations.compensations.iter().map(|c| c.span))
+        .next()
+        .expect("a compensation");
+    let mut missing = selections.clone();
+    missing.retain(|selection| selection.declaration_span != first);
+    let refusal = crate::emit::emit_checked_with_temporal_selections(
+        &package,
+        &missing,
+        crate::EmitLimits::fixture(),
+    )
+    .expect_err("the missing selection refuses");
+    let message = refusal.to_string();
+    assert!(message.contains("compensate template"), "{message}");
+    assert!(!message.contains("temporal declaration"), "{message}");
+    assert!(!message.contains("RawSourceRef"), "{message}");
+    assert!(!message.contains("Span {"), "{message}");
 }

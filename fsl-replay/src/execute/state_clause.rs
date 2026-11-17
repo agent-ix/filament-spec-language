@@ -267,6 +267,7 @@ pub fn replay_state_clause(
         },
         accounting: request.accounting_limits(),
         package: compiled.checked.package(),
+        package_name: compiled.package.as_str(),
         sources: &sources,
         progress_capacity: fsl_eval::temporal::DEFAULT_COVERED_POSITIONS,
     };
@@ -308,9 +309,9 @@ pub fn replay_state_clause(
         ClauseDisposition::Evaluate(CallOutcome::Completed(CallValue::Integer(_))) => {
             return fault("state-clause-completes-a-boolean")
         }
-        ClauseDisposition::Evaluate(CallOutcome::Completed(CallValue::Reference(_))) => {
-            return fault("state-clause-completes-a-boolean")
-        }
+        ClauseDisposition::Evaluate(CallOutcome::Completed(
+            CallValue::Reference(_) | CallValue::Written(_),
+        )) => return fault("state-clause-completes-a-boolean"),
         ClauseDisposition::Evaluate(CallOutcome::Refused(_)) => (Category::Refusal, None),
         ClauseDisposition::Evaluate(CallOutcome::Incomplete(_)) => (Category::Incomplete, None),
         // O-16's `undefined` row is not a proof category (as in FR-098).
@@ -331,8 +332,11 @@ pub fn replay_state_clause(
         | ClauseDisposition::ArgumentRefusal(_)
         | ClauseDisposition::Temporal(_)
         | ClauseDisposition::TemporalRefusal(_)
+        | ClauseDisposition::TraceRefused(_)
         | ClauseDisposition::ProgressContradiction(_)
-        | ClauseDisposition::FrameViolation(_) => {
+        | ClauseDisposition::FrameViolation(_)
+        | ClauseDisposition::OperationContractViolation(_)
+        | ClauseDisposition::TemporalValuation(_) => {
             return fault("clause-check-reports-admission-or-evaluation")
         }
     };

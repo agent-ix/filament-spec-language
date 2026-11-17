@@ -107,6 +107,12 @@ impl<M: MemoryModel> ProtocolSystem<'_, M> {
                     | ControlStep::Receive
                     | ControlStep::Event
                     | ControlStep::Fence => return Ok(Settled::Rest(Rest::Node(node))),
+                    ControlStep::Finish => return Ok(Settled::Rest(Rest::Finish)),
+                    ControlStep::CompensateTemplate => {
+                        return Err(
+                            ProtocolRefusal::fault("a-template-is-not-in-the-run-tree").into()
+                        );
+                    }
                     ControlStep::Await => return Ok(Settled::Rest(Rest::Await(node))),
                     ControlStep::Check => {
                         let condition = self
@@ -140,7 +146,7 @@ impl<M: MemoryModel> ProtocolSystem<'_, M> {
                                 }
                                 Decision::Value(false) => {}
                                 Decision::Undecided(finding) => {
-                                    return Ok(Settled::Undecided(finding))
+                                    return Ok(Settled::Undecided(finding));
                                 }
                             }
                         }
@@ -162,7 +168,9 @@ impl<M: MemoryModel> ProtocolSystem<'_, M> {
                         }
                     }
                     ControlStep::Unstepped(_) => {
-                        return Err(ProtocolRefusal::fault("a-stepped-construct-is-admitted").into())
+                        return Err(
+                            ProtocolRefusal::fault("a-stepped-construct-is-admitted").into()
+                        );
                     }
                 },
                 Cursor::Guard(node) => {
@@ -235,8 +243,10 @@ impl<M: MemoryModel> ProtocolSystem<'_, M> {
                         | ControlStep::Receive
                         | ControlStep::Event
                         | ControlStep::Fence
+                        | ControlStep::Finish
+                        | ControlStep::CompensateTemplate
                         | ControlStep::Unstepped(_) => {
-                            return Err(ProtocolRefusal::fault("a-parent-holds-controls").into())
+                            return Err(ProtocolRefusal::fault("a-parent-holds-controls").into());
                         }
                     }
                 }

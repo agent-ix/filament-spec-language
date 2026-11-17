@@ -78,10 +78,9 @@ fn scanned_files(directory: &Path, out: &mut Vec<PathBuf>) {
                 continue;
             }
             scanned_files(&path, out);
-        } else if path
-            .extension()
-            .is_some_and(|extension| extension == "rs" || extension == "toml")
-        {
+        } else if path.extension().is_some_and(|extension| {
+            matches!(extension.to_str(), Some("rs" | "toml" | "yml" | "yaml"))
+        }) {
             out.push(path);
         }
     }
@@ -101,11 +100,11 @@ fn the_standard_is_a_tag_pinned_dependency_whose_fixture_carries_the_wire_tag() 
 
 #[test]
 #[trace("TC-2140", "FR-760-AC-2", "FSpec-TC-1641", "FSpec-FR-660-AC-2")]
-#[ignore = "QSL-2227: removal of the FSPEC_DIR sibling-checkout lookup is not implemented yet"]
+#[ignore = "QSL-2233: removal of the FSPEC_DIR sibling-checkout lookup from the Makefile, CI workflow and tests is not implemented yet"]
 fn no_file_locates_the_standard_by_variable_or_sibling_path() {
     let root = workspace_root();
     let mut files = vec![root.join("Makefile")];
-    for directory in ["xtask/src", "src", "tests"] {
+    for directory in [".github/workflows", "xtask/src", "src", "tests"] {
         scanned_files(&root.join(directory), &mut files);
     }
     for entry in fs::read_dir(&root).expect("workspace root") {
@@ -125,7 +124,9 @@ fn no_file_locates_the_standard_by_variable_or_sibling_path() {
         .filter(|path| **path != this_file)
         .filter(|path| {
             fs::read_to_string(path).is_ok_and(|text| {
-                text.contains("FSPEC_DIR") || text.contains("../filament-specification")
+                text.contains("FSPEC_DIR")
+                    || text.contains("../filament-specification")
+                    || text.contains("repository: agent-ix/filament-specification")
             })
         })
         .map(|path| path.display().to_string())
@@ -319,8 +320,24 @@ fn the_pinned_inventory_has_its_closed_shape() {
         assert_eq!(consumer["consumer"], name);
         let facts = consumer["facts"].as_array().expect("facts");
         assert!(!facts.is_empty(), "{name} lists facts");
-        for (ordinal, fact) in facts.iter().enumerate() {
-            assert_eq!(fact["id"], format!("CF-{code}-{:02}", ordinal + 1));
+        // A removed fact's id is retired and never reused (FSpec FR-661), so
+        // the ordinals start at 01 and strictly increase, with gaps allowed.
+        let prefix = format!("CF-{code}-");
+        let mut previous = 0_u32;
+        for fact in facts {
+            let id = fact["id"].as_str().expect("fact id");
+            let digits = id
+                .strip_prefix(&prefix)
+                .filter(|digits| digits.len() == 2)
+                .unwrap_or_else(|| panic!("{id} is {prefix}NN"));
+            let ordinal: u32 = digits
+                .parse()
+                .unwrap_or_else(|_| panic!("{id} has a two-digit ordinal"));
+            if previous == 0 {
+                assert_eq!(ordinal, 1, "{name}'s first fact is {prefix}01, not {id}");
+            }
+            assert!(ordinal > previous, "{id} follows {prefix}{previous:02}");
+            previous = ordinal;
             let uri = fact["requirement"].as_str().expect("requirement URI");
             assert!(
                 requirement_file(&directory, uri).is_some(),
@@ -362,7 +379,6 @@ fn the_pinned_inventory_lists_the_required_facts() {
         ("protocol", "protocol view"),
         ("protocol", "causal relation"),
         ("protocol", "endpoints"),
-        ("protocol", "internality"),
         ("protocol", "await"),
         ("protocol", "visibility of a choice"),
         ("protocol", "attempts maximum"),

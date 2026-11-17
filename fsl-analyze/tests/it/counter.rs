@@ -244,8 +244,13 @@ fn declarations_from_text(document: &[u8], text: String) -> PackageDeclarations 
 
 /// The checked package of `body` over `document`.
 pub(crate) fn package(document: &[u8], body: &str) -> CheckedPackage {
+    package_with_mode(document, body, CheckMode::Linked)
+}
+
+/// [`package`] checked under `mode`.
+pub(crate) fn package_with_mode(document: &[u8], body: &str, mode: CheckMode) -> CheckedPackage {
     let graph = declarations(document, body)
-        .check(CheckMode::Linked, CheckingLimits::default())
+        .check(mode, CheckingLimits::default())
         .unwrap_or_else(|refusals| panic!("{body}: the unit checks: {refusals:?}"));
     CheckedPackage::link(graph)
 }
@@ -284,6 +289,38 @@ pub(crate) fn bounded_package_with_clauses(
     CheckedPackage::link(graph)
 }
 
+/// A package declaring the event-position clauses `bounded` and the
+/// infinite-trace clauses `infinite` together (name, fairness, formula).
+pub(crate) fn mixed_package_with_clauses(
+    document: &[u8],
+    bounded: &[(&str, &str, &str)],
+    infinite: &[(&str, &str, &str)],
+) -> (CheckedPackage, fsl_foundation::Source) {
+    let mut text = unit_text("").replace(
+        "profile t0 = \"filament.temporal.infinite-trace/v1\";",
+        "profile t0 = \"filament.temporal.infinite-trace/v1\";\nprofile t1 = \"filament.temporal.event-position.false-extension/v1\";",
+    );
+    for (name, fairness, formula) in infinite {
+        text += &clause_text(name, fairness, formula);
+    }
+    for (name, fairness, formula) in bounded {
+        text += &clause_text(name, fairness, formula).replace(" using t0 ", " using t1 ");
+    }
+    let source = fsl_cst::parse(
+        SourceIdentity::new("agent-ix", "counter"),
+        "counter.native",
+        text.as_bytes(),
+        fsl_cst::Limits::default(),
+    )
+    .expect("S1 parses the unit")
+    .source()
+    .clone();
+    let graph = declarations_from_text(document, text)
+        .check(CheckMode::Linked, CheckingLimits::default())
+        .unwrap_or_else(|refusals| panic!("the unit checks: {refusals:?}"));
+    (CheckedPackage::link(graph), source)
+}
+
 /// The text of the temporal clause `name` over `c: M::Counter`, `on origin`,
 /// whose formula is `formula` under infinite-trace.
 pub(crate) fn clause_text(name: &str, fairness: &str, formula: &str) -> String {
@@ -300,13 +337,23 @@ pub(crate) fn package_with_clauses(
     body: &str,
     declared: &[(&str, &str, &str)],
 ) -> (CheckedPackage, Vec<CheckedTemporalClause>) {
+    package_with_clauses_mode(document, body, declared, CheckMode::Linked)
+}
+
+/// [`package_with_clauses`] checked under `mode`.
+pub(crate) fn package_with_clauses_mode(
+    document: &[u8],
+    body: &str,
+    declared: &[(&str, &str, &str)],
+    mode: CheckMode,
+) -> (CheckedPackage, Vec<CheckedTemporalClause>) {
     let body = declared
         .iter()
         .fold(body.to_owned(), |text, (name, fairness, formula)| {
             text + &clause_text(name, fairness, formula)
         });
     let graph = declarations(document, &body)
-        .check(CheckMode::Linked, CheckingLimits::default())
+        .check(mode, CheckingLimits::default())
         .unwrap_or_else(|refusals| panic!("{body}: the unit checks: {refusals:?}"));
     let clauses = graph
         .temporal_clauses()
@@ -533,4 +580,15 @@ pub(crate) fn package_from_text(document: &[u8], text: &str) -> CheckedPackage {
     .check(CheckMode::Linked, CheckingLimits::default())
     .unwrap_or_else(|refusals| panic!("the unit checks: {refusals:?}"));
     CheckedPackage::link(graph)
+}
+
+/// [`document`] (bounded) with the `counters` population declared
+/// `symmetric` (FR-150), the annotation a reduction selection of FR-623
+/// reads.
+pub(crate) fn symmetric_document() -> Vec<u8> {
+    let mut envelope: Json = serde_json::from_slice(&document(false)).expect("valid JSON");
+    for population in envelope["populations"].as_array_mut().expect("populations") {
+        population["symmetric"] = json!(true);
+    }
+    serde_json::to_vec(&envelope).expect("valid JSON")
 }

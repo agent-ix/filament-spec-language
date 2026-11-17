@@ -108,6 +108,22 @@ ADR-011 E9, the one exception R-06 names.
 | normalized | Equal iff the closed preimage values are structurally equal. The preimage is compared as a value, through its RFC 8785 JCS bytes where a byte form is needed, and is never hashed. | checked node key, `EffectiveId`, domain-package identity and version |
 | semantic | Equal by meaning under a published law. | kernel `Value` equality under the FSpec operation catalog, `filament.op.ieee.numeric_equal` |
 
+An identity and an integrity fingerprint are different things. An identity
+says which thing a value is. Identities are compared by the kinds above, and
+a normalized identity is never hashed. An integrity fingerprint is a SHA-256
+digest of a value's canonical content bytes, encoded by the single RFC 8785
+encoder below. It says only whether content held at an identity has changed
+since it was first seen, so it cannot be compared in place of an identity,
+cited, or used as a key. The temporal evaluator's content fingerprint of a
+covered record sample (FR-993) is the one integrity fingerprint FSL defines.
+A record-sample position is identified by its index, and its fingerprint
+lets FR-502 refuse a changed sample at that index. The fingerprint may
+appear as an integrity member of a ledger's covered entry, which batch and
+carried evaluation write and check the same way, and in carried state bytes
+(FR-820, FR-643). It never appears as an identity or inside one, and never
+in a report's verdict members. No report or ledger carries a sample's text
+or value.
+
 One RFC 8785 JCS implementation produces every RFC 8785 encoding: the
 `quire-canonical` crate (`agent-ix/quire-canonical`; implementing ticket
 PLAT-987). FSL encodes through it. IR's adoption (IR-274) and quoin's
@@ -432,7 +448,7 @@ checkers; neither is a semantic authority.
 | --- | --- |
 | Owner | FSL, check stage, for package types; `filament-exact` for the evaluation shape. |
 | Implementing ticket | #213 S-3. |
-| Public type | A package type is a checked graph node (`scalar_type`, `composite_type`, `bounded_domain`) identified by its node id; record, tuple and union identity is that node id (FR-143-AC-6). The kernel `ValueType` is the evaluation shape. Model field types are `ValueTypeRef{Clock, Native(NativeValueType), Package(DeclarationKey), Unit(String)}` (AD-016 intake). |
+| Public type | A package type is a checked graph node (`scalar_type`, `composite_type`, `bounded_domain`) identified by its node id; record, tuple and union identity is that node id (FR-143-AC-6). The kernel `ValueType` is the evaluation shape. Model field types are `ValueTypeRef{Clock, Native(NativeValueType), Package(DeclarationKey), Unit(String)}` (AD-016 intake). Amended by FR-088 (QSL-2175): `ValueTypeRef` gains a fifth variant, `Resolved(Box<ValueType>)`. It carries the checked value type of a source object member (FR-569) and has no wire form. |
 | Serialized authority | FR-322 type nodes; `literal.type` and `application.result_type` are node keys and are never inferred. |
 | Sum types | Answers ADR-012 §13.2 Q4 (first part). A sum type is a checked type node like a record or tuple, identified by its node id, with its variants as declared members (O-06). The kernel `ValueType` gains one sum shape whose variants are opaque `VariantId` keys (QC-15). An enum is the sum whose variants carry no payload. An enum variant's `VariantId` is its FSpec FR-141 enum member identity: the `filament.checked-semantic-node/v1` node key over the `filament.enum-member-node/v1` preimage, whose `declaration_node_id` is the enum's node key (OQ-F ruling). The enum's node id therefore reaches the kernel only inside each `VariantId`'s preimage, and the kernel shape and an enum value carry no `NodeKey`. An enum value carries its `VariantId` and its rank, the variant's zero-based index in the FR-141 canonical member list (OQ-D ruling). The kernel enum shape carries that ranked list, so a rank is a function of its `VariantId`, and value admission refuses a (`VariantId`, rank) pair that disagrees with the shape. Identity and equality use the `VariantId` only. The canonical key is the rank, which gives the FSpec FR-144 enumeration key order. Values of different enums never share a collection, because comparing them refuses `ill_typed` (FSpec FR-141-AC-2). The identity of a variant that carries a payload is not decided here; it follows the v2 sum node spelling. In the code, `compare_keys` orders enum values by `VariantId` bytes (`filament-exact/src/key.rs:103`), which does not conform to FR-144; `EnumShape` carries an unranked set (`filament-exact/src/value.rs:73`); the kernel `VariantId` domain is `filament.enum-variant/v1` (`filament-exact/src/identity.rs:129-135`); and `check` mints `VariantId` over a private `"sum-variant-member"` preimage (`fsl-semantics/src/check/identity.rs:570`). The v2 node spelling is agent-ix/filament-specification#115. While v2 is prerelease, FSpec revises its node-kind set in place, with no version bump per kind; a reader refuses an unknown node kind explicitly with a named code (QC-19). Amended 2026-09-29 (OQ-I, ARCH-41 #221): the "one sum shape whose variants are opaque `VariantId` keys" text above is superseded for a union carrying a payload (a payload-bearing sum). The kernel `ValueType` gains no inline sum shape for these; instead a union type is `ValueType::Composite(union node key)`, with its member list in the layer-3 type environment, as for records and tuples, and the kernel `Value` gains one union variant carrying the union node key, the active member's `VariantId` and the payload values. An enum (a sum with no payload) is unaffected and keeps the ranked `VariantId` shape above. See OQ-I in §8 for the ruling and its reason. |
 | Conversions | Checked type node → v2 node (FSL). Checked type node → kernel `ValueType` (FSL checker, C-26). v2 → IR value type (IR, total `From` from checked forms, AD-016, C-05). `checking::types::NativeType` and native-v1's use of `ir::ValueType` are lane-private (§6). |
@@ -544,13 +560,7 @@ stopped by an `ExactProbLimits` budget maps to incomplete, with
 threshold.
 
 Amended by ADR-025 MV-1 (weak memory models). `InconclusiveCause` gains
-`MemoryBoundReached{bound, states}`, category inconclusive. The `Unsupported`
-causes gain `WeakAccessShape{failures}`, category unsupported. Its entries
-are ordered by typed protocol transition identity; the first failure supplies
-the headline reason, and the cause retains every failure.
-
-Amended by ADR-027 ST-12 (protocol transition system). The `Unsupported`
-causes gain `RecoveryView{predicate}`, category unsupported.
+`MemoryBoundReached{bound, states}`, category inconclusive. No access shape is an `Unsupported` cause (ADR-025 MA-4).
 
 Agreement across backends ([FR-448](../functional/FR-448-cross-check-verification-backends-over-the-conformance-corpus.md)).
 When two or more backends answer the same requirement item, their terminal

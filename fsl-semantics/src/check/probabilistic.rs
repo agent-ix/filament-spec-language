@@ -7,7 +7,7 @@
 //! checked graph ([`model`]): a random parameter's operation, parameter,
 //! typed support and probabilities; a reward's operation and its integer or
 //! quantity expression over the operation's parameters; a workload's model
-//! and one positive weight per operation of it. Each refusal is the
+//! and one non-negative weight per operation of it. Each refusal is the
 //! `invalid_probabilistic_model` cause FR-185 names, a `missing_declaration`
 //! or `ambiguous_declaration` for a name that resolves to no single
 //! declaration, or the typer's own refusal.
@@ -35,8 +35,8 @@ mod model;
 
 pub use claim::{
     Bound, BoundedMeasure, CheckedPredicate, CheckedProbabilisticClaim, CheckedTemporalFormula,
-    ClaimNormalForm, Confidence, Event, FractionMeasure, ModelSubjectRef, OverBinding, ProbForm,
-    ProbScheduler, ReachTarget,
+    ClaimActivation, ClaimNormalForm, Confidence, Event, FractionMeasure, ModelSubjectRef,
+    OverBinding, ProbForm, ProbScheduler, ReachTarget,
 };
 pub(crate) use model::{check, precondition_reads, site_spans, ProbabilisticInput, Unresolved};
 pub use model::{
@@ -80,7 +80,8 @@ pub enum ProbabilisticDeclaration {
     Claim(Box<ProbabilisticForm>),
 }
 
-/// Whose weight is not a positive exact rational.
+/// Whose weight violates its rule: distributions require positive weights;
+/// workloads require non-negative weights.
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
 pub enum WeightOwner {
     /// A value of a random parameter's distribution.
@@ -131,7 +132,8 @@ pub enum ConfidenceFault {
 /// which `region::DeclarationRegions::refusal_region` reads directly.
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
 pub enum ProbabilisticCause {
-    /// A weight that is not a positive exact rational.
+    /// A distribution weight that is not positive, or a workload weight that
+    /// is negative.
     /// `invalid_probabilistic_model`/`invalid-weight`.
     InvalidWeight {
         /// Whose weight it is.
@@ -228,6 +230,8 @@ pub enum ProbabilisticCause {
     QualitativeThreshold {
         /// The claim.
         claim: String,
+        /// The qualitative form equivalent to the threshold, when it is 0 or 1.
+        qualitative_form: Option<QualitativeForm>,
         /// The threshold's span.
         span: Span,
     },
@@ -396,15 +400,6 @@ pub enum ProbabilisticCause {
         /// The alias's span.
         span: Span,
     },
-    /// A claim under the timed profile, which has no probabilistic event
-    /// reading (FR-234). `invalid_probabilistic_model`/`timed-event-profile`
-    /// (FSL-proposed).
-    TimedEventProfile {
-        /// The claim.
-        claim: String,
-        /// The alias's span.
-        span: Span,
-    },
     /// An event with an operator that has no closed interval, or whose
     /// profile is not bounded: a probabilistic event needs a finite window
     /// (ADR-024 PF-8). `invalid_probabilistic_model`/`unbounded-event`
@@ -487,6 +482,15 @@ pub enum ProbabilisticCause {
         /// The threshold's span.
         span: Span,
     },
+    /// A time-valued form at a subject that declares no model-time binding,
+    /// or a step count where a time quantity is required.
+    /// `ill_typed`/`type-mismatch`.
+    TimeTypeMismatch {
+        /// The claim.
+        claim: String,
+        /// The time position's span.
+        span: Span,
+    },
     /// A claim's `over` parameter whose type is not an object type of the
     /// subject's model. `invalid_probabilistic_model`/`over-not-object-type`
     /// (FSL-proposed, STD-188).
@@ -508,18 +512,15 @@ pub enum ProbabilisticCause {
         /// The operand's span.
         span: Span,
     },
-    /// A construct of a claim that S3 does not check yet: an `expected
-    /// elapsed` claim or an `elapsed` measure (no subject is timed), a timed
-    /// window or an `on each` activation.
-    /// `unsupported_construct`/`not-yet-implemented`.
-    NotYetImplemented {
-        /// The claim's name.
-        claim: String,
-        /// The construct, as the diagnostic names it.
-        construct: &'static str,
-        /// The construct's span.
-        span: Span,
-    },
+}
+
+/// The qualitative property equivalent to a probabilistic threshold of 0 or 1.
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+pub enum QualitativeForm {
+    /// A probability threshold of 0 asks whether a property is possible.
+    Possible,
+    /// A probability threshold of 1 asks whether a property always holds.
+    Always,
 }
 
 impl ProbabilisticCause {
@@ -553,7 +554,6 @@ impl ProbabilisticCause {
             | Self::TraceSubject { span, .. }
             | Self::UnresolvedProfile { span, .. }
             | Self::NotTemporalProfile { span, .. }
-            | Self::TimedEventProfile { span, .. }
             | Self::UnboundedEvent { span, .. }
             | Self::UnresolvedWorkload { span, .. }
             | Self::ForeignWorkload { span, .. }
@@ -562,9 +562,9 @@ impl ProbabilisticCause {
             | Self::UnitMismatch { span, .. }
             | Self::FractionBound { span, .. }
             | Self::ThresholdNotLiteral { span, .. }
+            | Self::TimeTypeMismatch { span, .. }
             | Self::OverNotObjectType { span, .. }
-            | Self::NotStatePredicate { span, .. }
-            | Self::NotYetImplemented { span, .. } => Some(*span),
+            | Self::NotStatePredicate { span, .. } => Some(*span),
             Self::RandomReadInPrecondition { .. } => None,
         }
     }
@@ -600,14 +600,15 @@ impl ProbabilisticCause {
             | Self::RewardType { .. }
             | Self::TraceSubject { .. }
             | Self::NotTemporalProfile { .. }
-            | Self::TimedEventProfile { .. }
             | Self::UnboundedEvent { .. }
             | Self::ForeignWorkload { .. }
             | Self::FractionBound { .. }
             | Self::OverNotObjectType { .. }
             | Self::NotStatePredicate { .. } => Code::InvalidProbabilisticModel,
             Self::InvalidDelay { .. } => Code::InvalidModelBinding,
-            Self::UnitMismatch { .. } | Self::ThresholdNotLiteral { .. } => Code::IllTyped,
+            Self::UnitMismatch { .. }
+            | Self::ThresholdNotLiteral { .. }
+            | Self::TimeTypeMismatch { .. } => Code::IllTyped,
             Self::ZeroDenominator { .. } => Code::UndefinedExpression,
             Self::UnresolvedOperation { .. }
             | Self::UnresolvedParameter { .. }
@@ -620,7 +621,6 @@ impl ProbabilisticCause {
                 Code::AmbiguousDeclaration
             }
             Self::DuplicateWorkload { .. } => Code::ConflictingDeclaration,
-            Self::NotYetImplemented { .. } => Code::UnsupportedConstruct,
         }
     }
 
@@ -655,16 +655,15 @@ impl ProbabilisticCause {
             Self::AmbiguousOperation { .. } | Self::AmbiguousReward { .. } => "ambiguous-name",
             Self::TraceSubject { .. } => "trace-subject",
             Self::NotTemporalProfile { .. } => "not-temporal-profile",
-            Self::TimedEventProfile { .. } => "timed-event-profile",
             Self::UnboundedEvent { .. } => "unbounded-event",
             Self::ForeignWorkload { .. } => "foreign-workload",
             Self::UnitMismatch { .. } => "unit-mismatch",
             Self::ThresholdNotLiteral { .. } => "type-mismatch",
+            Self::TimeTypeMismatch { .. } => "type-mismatch",
             Self::FractionBound { .. } => "fraction-bound-out-of-range",
             Self::OverNotObjectType { .. } => "over-not-object-type",
             Self::NotStatePredicate { .. } => "not-state-predicate",
             Self::DuplicateWorkload { .. } => "duplicate-declaration",
-            Self::NotYetImplemented { .. } => "not-yet-implemented",
         }
     }
 }
@@ -891,6 +890,7 @@ fn claim(form: &ProbabilisticForm) -> Vec<ProbabilisticCause> {
             Magnitude::NonPositive | Magnitude::AtLeastOne => {
                 causes.push(ProbabilisticCause::QualitativeThreshold {
                     claim: claim.clone(),
+                    qualitative_form: qualitative_form(value),
                     span: value.span,
                 });
                 false
@@ -918,6 +918,17 @@ fn claim(form: &ProbabilisticForm) -> Vec<ProbabilisticCause> {
     let theta = theta.filter(|theta| qualitative(theta, &mut causes));
     confidence(form, theta, &mut causes);
     causes
+}
+
+fn qualitative_form(value: &ExactValueForm) -> Option<QualitativeForm> {
+    let (numerator, denominator) = ratio(value)?;
+    if numerator.is_zero() {
+        Some(QualitativeForm::Possible)
+    } else if numerator == denominator {
+        Some(QualitativeForm::Always)
+    } else {
+        None
+    }
 }
 
 /// A claim states `alpha`, `beta` and `indifference` each once, or none; when

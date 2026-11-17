@@ -14,7 +14,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use crate::model::normalize::ModelRefusal;
 use crate::model::origin::JsonValue;
 use filament_checked::key::DeclarationKey;
-use filament_exact::{Presence, RationalDomain, TextType};
+use filament_exact::{Presence, RationalDomain, TextType, ValueType};
 use filament_semantic_value::location::OperationClauseKind;
 use fsl_forms::Expression;
 
@@ -34,6 +34,18 @@ pub struct Multiplicity {
     pub ordered: bool,
     /// Whether membership is unique.
     pub unique: bool,
+}
+
+impl Multiplicity {
+    /// Exactly one value, with no collection ordering or uniqueness contract.
+    pub(crate) const fn one() -> Self {
+        Self {
+            lower: 1,
+            upper: Some(1),
+            ordered: false,
+            unique: true,
+        }
+    }
 }
 
 /// An object type export: `{key, interfaceFeatures, abstract, supertypes}`.
@@ -343,6 +355,11 @@ pub enum ValueTypeRef {
     Package(DeclarationKey),
     /// A unit of the compiling FSL unit: `ix://filament/unit/<name>`.
     Unit(String),
+    /// A source declaration's fully resolved value type. Source object
+    /// members are normalized before the unit's type namespace is complete;
+    /// assembly replaces their temporary model refs with this exact type
+    /// before model conformance reads the retained view.
+    Resolved(Box<ValueType>),
 }
 
 impl ValueTypeRef {
@@ -351,7 +368,7 @@ impl ValueTypeRef {
     /// package node.
     pub fn as_package(&self) -> Option<&DeclarationKey> {
         match self {
-            Self::Clock | Self::Native(_) | Self::Unit(_) => None,
+            Self::Clock | Self::Native(_) | Self::Unit(_) | Self::Resolved(_) => None,
             Self::Package(key) => Some(key),
         }
     }
@@ -366,6 +383,9 @@ impl std::fmt::Display for ValueTypeRef {
             Self::Native(native) => write!(f, "ix://filament/native/{}", native.as_str()),
             Self::Package(key) => f.write_str(&key.node),
             Self::Unit(name) => write!(f, "ix://filament/unit/{name}"),
+            Self::Resolved(value_type) => {
+                f.write_str(&super::spelling::identity_spelling(value_type))
+            }
         }
     }
 }
@@ -633,6 +653,10 @@ pub struct ParsedOperationClause {
     pub kind: OperationClauseKind,
     /// The clause's position in the operation's list of that kind.
     pub position: usize,
+    /// The source artifact id, when the kept clause's origin provides one.
+    pub artifact: Option<String>,
+    /// The source span, when the kept clause's origin provides one.
+    pub span: Option<fsl_foundation::source::LocatedSpan>,
     /// The parsed clause text.
     pub expression: Expression,
 }

@@ -1,0 +1,1 @@
+ill_typed (type-mismatch): operator `+` has operands of types `Integer` and `String`

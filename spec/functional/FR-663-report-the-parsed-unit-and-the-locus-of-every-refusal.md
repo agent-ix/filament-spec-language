@@ -46,7 +46,7 @@ not, `result` is:
 
 `source` holds the unit's two FR-001 labels exactly; `path` is the path
 label the caller gave; `bytes` is the exact count of source bytes read;
-`usage` lists the four FR-255 S1 settings in this order, each with the
+`usage` lists the four FR-255 S1 resource settings in this order (the diagnostic bound `s1.diagnostics` bounds the report, not the parse, and is not listed: FR-762), each with the
 bound the parse ran under and the count the parse reached. Counts are ASCII
 decimal strings in FR-038's integer spelling. The unit's identity is the
 pair of labels the caller gave; the report adds no other identity of the

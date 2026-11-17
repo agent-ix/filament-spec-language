@@ -2107,6 +2107,53 @@ fn admit_value<'a: 'w, 'w>(
         .ok_or_else(|| admission_record(Code::InvalidRuntimeInput, "wrong-value-kind"))
 }
 
+/// FR-641: admit one record sample of a record trace subject. `sample` is a
+/// closed JSON object with one member per field of the record value type
+/// `record`, each value in the snapshot document's field-value encoding
+/// (FR-106). A refusal names the typed path of the field at fault.
+///
+/// # Errors
+///
+/// `invalid_runtime_input` with `wrong-value-kind`, `missing-member` or
+/// `unknown-member` where the sample does not conform to the record type.
+pub fn admit_record_sample(
+    types: &TypeEnvironment,
+    record: &filament_exact::NodeKey,
+    sample: &[u8],
+) -> Result<Value, AdmissionRecord> {
+    let wrong = || admission_record(Code::InvalidRuntimeInput, "wrong-value-kind");
+    let document = quire_canonical::read(sample, u64::MAX).map_err(|_| wrong())?;
+    let object = Json::of(document.root()).as_object().ok_or_else(wrong)?;
+    let mut fields = Vec::new();
+    for (name, member) in object.iter() {
+        let raw = read_raw_value(member, &mut || Ok::<(), ()>(()))
+            .ok()
+            .flatten()
+            .ok_or_else(|| wrong().at(vec![PathStep::Field(name.to_owned())]))?;
+        fields.push((name.to_owned(), raw));
+    }
+    let raw = SnapshotValue::record(RECORD_SAMPLE, fields);
+    let mut references = References {
+        views: &[],
+        types,
+        admitted: BTreeMap::new(),
+        completeness: BTreeMap::new(),
+        unresolved: Vec::new(),
+        record_keys: Some(BTreeMap::from([(RECORD_SAMPLE.to_owned(), record.clone())])),
+        variant_keys: None,
+    };
+    admit_form(
+        &mut references,
+        raw.form(),
+        &filament_exact::ValueType::Composite(record.clone()),
+        None,
+    )
+}
+
+/// The node identity a record sample's synthetic record form names; its only
+/// resolution is the record type the caller supplies.
+const RECORD_SAMPLE: &str = "record-sample";
+
 /// Where a member with no checked type is written.
 #[derive(Clone, Copy)]
 pub(super) enum UntypedSlot<'a> {
@@ -2775,6 +2822,27 @@ pub(super) fn unit_bound_refusal(
         })
 }
 
+/// Escape one JSON Pointer segment.
+fn json_pointer_segment(segment: &str) -> String {
+    segment.replace('~', "~0").replace('/', "~1")
+}
+
+/// The JSON pointer to an object's member in its source snapshot.
+fn snapshot_member_path(population: usize, object: usize, member: &str) -> String {
+    format!(
+        "/populations/{population}/objects/{object}/{}",
+        json_pointer_segment(member)
+    )
+}
+
+/// The JSON pointer to an object's field value in its source snapshot.
+fn snapshot_field_path(population: usize, object: usize, field: &str) -> String {
+    format!(
+        "/populations/{population}/objects/{object}/fields/{}",
+        json_pointer_segment(field)
+    )
+}
+
 pub(super) fn admit_population_values<'t>(
     views: &[ModelView],
     types: &'t TypeEnvironment,
@@ -2799,7 +2867,7 @@ pub(super) fn admit_population_values<'t>(
         PostStateRange::Witness => Vec::new(),
     };
 
-    for entry in populations {
+    for (population_index, entry) in populations.iter().enumerate() {
         completeness.insert(entry.population.clone(), entry.complete);
         let Some((population_view, population_info)) = find_population(views, &entry.population)
         else {
@@ -2811,7 +2879,7 @@ pub(super) fn admit_population_values<'t>(
         let seen = keys_by_population
             .entry(entry.population.clone())
             .or_default();
-        for object in &entry.objects {
+        for (object_index, object) in entry.objects.iter().enumerate() {
             // 6.1: type/population membership, before anything else in this
             // check (SR-750 FND-005 round 2's own numbered order).
             let Some((_, object_key)) = find_declaration(views, object.type_identity.as_str())
@@ -2894,7 +2962,12 @@ pub(super) fn admit_population_values<'t>(
             if is_duplicate {
                 return Err(refuse(
                     admission_record(Code::InvalidRuntimeInput, "conflicting-identity")
-                        .with("object", object.key.clone()),
+                        .with("object", object.key.clone())
+                        .with("field", "key")
+                        .with(
+                            "path",
+                            snapshot_member_path(population_index, object_index, "key"),
+                        ),
                 ));
             }
             // 6.4: a declared field missing (`missing-member`), then an
@@ -2906,7 +2979,11 @@ pub(super) fn admit_population_values<'t>(
                     return Err(refuse(
                         admission_record(Code::InvalidRuntimeInput, "missing-member")
                             .with("object", object.key.clone())
-                            .with("field", name.to_owned()),
+                            .with("field", name.to_owned())
+                            .with(
+                                "path",
+                                snapshot_field_path(population_index, object_index, name),
+                            ),
                     ));
                 }
             }
@@ -2926,13 +3003,21 @@ pub(super) fn admit_population_values<'t>(
                         return Err(refuse(
                             record
                                 .with("object", object.key.clone())
-                                .with("field", name.clone()),
+                                .with("field", name.clone())
+                                .with(
+                                    "path",
+                                    snapshot_field_path(population_index, object_index, name),
+                                ),
                         ));
                     }
                     return Err(refuse(
                         admission_record(Code::InvalidRuntimeInput, "unknown-member")
                             .with("object", object.key.clone())
-                            .with("field", name.clone()),
+                            .with("field", name.clone())
+                            .with(
+                                "path",
+                                snapshot_field_path(population_index, object_index, name),
+                            ),
                     ));
                 }
             }
@@ -2951,7 +3036,11 @@ pub(super) fn admit_population_values<'t>(
                     return Err(refuse(
                         admission_record(Code::InvalidRuntimeInput, "wrong-value-kind")
                             .with("object", object.key.clone())
-                            .with("field", name.to_owned()),
+                            .with("field", name.to_owned())
+                            .with(
+                                "path",
+                                snapshot_field_path(population_index, object_index, name),
+                            ),
                     ));
                 }
                 let mut found = Vec::new();
@@ -2965,7 +3054,11 @@ pub(super) fn admit_population_values<'t>(
                             refuse(
                                 record
                                     .with("object", object.key.clone())
-                                    .with("field", name.to_owned()),
+                                    .with("field", name.to_owned())
+                                    .with(
+                                        "path",
+                                        snapshot_field_path(population_index, object_index, name),
+                                    ),
                             )
                         })?;
                 if let (false, FieldValue::Present(value)) = (bounds.is_empty(), &field_value) {
@@ -2974,7 +3067,11 @@ pub(super) fn admit_population_values<'t>(
                         return Err(refuse(
                             record
                                 .with("object", object.key.clone())
-                                .with("field", name.to_owned()),
+                                .with("field", name.to_owned())
+                                .with(
+                                    "path",
+                                    snapshot_field_path(population_index, object_index, name),
+                                ),
                         ));
                     }
                 }
@@ -4020,6 +4117,63 @@ fn context_universe_key(
         original.node(),
     )
     .map_err(|_| fault("context-universe-unkeyed"))
+}
+
+/// FR-650 "Unit names": the name of `unit` in `types`, one half of the
+/// registry's public pair. A unit the unit's own source (`own_package`)
+/// declares is its declared name; a unit a selected model declares is
+/// `ix://<package>/unit/<name>`; a compound unit is FR-088's `u1^e1*u2^e2` in
+/// the factor order of its `UnitId`, every exponent written and each factor
+/// named by this rule.
+pub fn unit_name_of(
+    types: &TypeEnvironment,
+    own_package: &str,
+    unit: &filament_exact::UnitId,
+) -> Option<String> {
+    if let Some(key) = unit.declared_key() {
+        return declared_unit_name(types, own_package, key);
+    }
+    match types.units().get(unit.clone())? {
+        filament_semantic_value::quantity::QuantityUnit::Compound(compound) => {
+            let factors = compound
+                .terms()
+                .map(|(key, exponent)| {
+                    declared_unit_name(types, own_package, &key)
+                        .map(|name| format!("{name}^{exponent}"))
+                })
+                .collect::<Option<Vec<_>>>()?;
+            Some(factors.join("*"))
+        }
+        filament_semantic_value::quantity::QuantityUnit::Declared(_) => None,
+    }
+}
+
+fn declared_unit_name(
+    types: &TypeEnvironment,
+    own_package: &str,
+    key: &filament_exact::NodeKey,
+) -> Option<String> {
+    let node = types.units().nominal_node(key)?;
+    let name = node.declaration.qualified_declaration.join("::");
+    let package = key.view().package();
+    Some(if package == own_package {
+        name
+    } else {
+        format!("ix://{package}/unit/{name}")
+    })
+}
+
+/// FR-650 "Unit names": the unit named `name`, the other half of the
+/// registry's public pair; `None` for a name that reads to no unit.
+pub fn unit_id_named(
+    types: &TypeEnvironment,
+    own_package: &str,
+    name: &str,
+) -> Option<filament_exact::UnitId> {
+    types
+        .units()
+        .ids()
+        .find(|unit| unit_name_of(types, own_package, unit).as_deref() == Some(name))
 }
 
 #[cfg(test)]

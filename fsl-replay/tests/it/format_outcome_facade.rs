@@ -60,6 +60,7 @@ fn diagnostic_json(diagnostic: &CompleteDiagnostic) -> Value {
         "cause": diagnostic.cause.as_str(),
         "code": diagnostic.code.as_str(),
         "locus": locus,
+        "details": null,
         "message": diagnostic.message
     })
 }
@@ -99,7 +100,7 @@ fn assert_refusal(
     "FR-286-AC-3"
 )]
 #[test]
-fn a_driver_serializes_format_success_at_s2_without_text_payload() {
+fn a_driver_serializes_format_success_at_s2() {
     let text = format!("{FIXTURE}\n// café λ\n");
     let source = parsed(&text);
     assert!(source.is_admissible());
@@ -127,8 +128,11 @@ fn a_driver_serializes_format_success_at_s2_without_text_payload() {
     let document = OutcomeDocument::from_format(&result);
     assert_eq!(document.category(), Category::Success);
     assert_eq!(document.category().exit_code(), 0);
-    let json = document_json(&document);
+    let mut json = document_json(&document);
     assert_eq!(json.as_object().unwrap().len(), 8);
+    // `result` carries the formatted text (FR-286-AC-16,
+    // `format_json_result_carries_text`); every other member is as below.
+    json["result"] = Value::Null;
     assert_eq!(json, expected("success", json!([])));
     let borrowed_text = output.clone();
     assert_eq!(result.unwrap().into_value(), borrowed_text);
@@ -258,4 +262,31 @@ fn a_driver_serializes_a_constructed_format_invariant_failure() {
         })
     );
     assert_eq!(result.as_ref().unwrap_err().diagnostic(), &original);
+}
+
+/// FR-286-AC-16 (TC-2178): a completed format's document carries the
+/// formatted text as its `result`, and formatting that text gives it back.
+#[trace("TC-2178", "FR-286-AC-16")]
+#[test]
+#[ignore = "QSL-2192: the format outcome's `formatted` result not implemented yet"]
+fn format_json_result_carries_text() {
+    let source = parsed(FIXTURE);
+    let limits = FormatLimits::default();
+    let result = format_with_limits(&source, limits).map(Staged::new);
+    let text = result
+        .as_ref()
+        .expect("the fixture formats")
+        .value()
+        .clone();
+    let document = OutcomeDocument::from_format(&result);
+    assert_eq!(document.category().exit_code(), 0);
+    assert_eq!(
+        document_json(&document)["result"],
+        json!({"kind": "formatted", "text": text})
+    );
+    let again = format_with_limits(&parsed(&text), limits).map(Staged::new);
+    assert_eq!(
+        document_json(&OutcomeDocument::from_format(&again))["result"]["text"],
+        json!(text)
+    );
 }

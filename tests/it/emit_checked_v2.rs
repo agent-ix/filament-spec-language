@@ -14,7 +14,7 @@ use filament_contract_model::{
     CheckedPackageReadLimits, CheckedPackageSidecarsRef, CheckedPackageV2,
     CheckedPackageV2ReadResult, CheckedSemanticNodeV2, CheckedTerm,
 };
-use filament_spec_language::emit_checked_v2::{emit, run, Error, Request};
+use fsl_command::emit_checked_v2::{emit, run, Error, Request};
 use fsl_foundation::SourceIdentity;
 use fsl_replay::spine::DependencyInput;
 use ix_trace_rs::trace;
@@ -963,7 +963,7 @@ fn a_clock_selection_by_clause_name_converts_a_duration_window_to_the_clock_unit
          profile t = \"filament.temporal.timestamped-event.finite-window/v1\";\n\
          model M = \"acme/orders\";\n\
          record Sample { v: Int[0, 9]; }\n\
-         temporal Window using t over (e: Sample) clock \"ms\" on origin \
+         temporal Window using t over (e: Sample) clock \"plant-ms\" on origin \
          { always[0,3] (count over past[0 M::s, 300000 M::ms] >= 1) }\n",
     )
     .unwrap();

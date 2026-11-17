@@ -10,6 +10,7 @@
 //!   -- N nested parentheses, or N one-line functions.
 //! - [`check`]: `PackageDeclarations` for the S3 checker -- an N-function
 //!   call chain, or N independent functions.
+//! - [`kernel`]: checked evaluator kernels for the `evaluator/kernel` axis.
 //! - [`deep_input`]: complete-V1 units nested 1 to 100,000 levels deep,
 //!   built from fuzzer bytes and compiled through S1 to S4, for the
 //!   `fuzz/` deep-input target (FR-356-AC-7).
@@ -45,6 +46,7 @@ pub mod check;
 #[cfg(feature = "counters")]
 pub mod counters;
 pub mod deep_input;
+pub mod kernel;
 pub mod mc;
 pub mod model;
 pub mod parse;

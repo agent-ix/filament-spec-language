@@ -706,10 +706,15 @@ keep every result the enumeration would give:
   of FR-120 "Bounds" except a `float64`-bearing or clock-bearing one), no
   two clauses assign the same field, and `e` reads only `pre(self.g)`
   terms and the operation's arguments: not `self.g` outside `pre(...)`, not
-  `result`, not another field's post value. Any other `post` clause on the
-  application, a conjunction that adds a conjunct to the equation, and an
-  operation whose clauses name `result` make the application ineligible; it
-  is enumerated as before. A field no clause assigns keeps its enumerated
+  `result`, not another field's post value. A `post` clause that is a
+  conjunction of top-level `and` operands is read conjunct by conjunct
+  (FR-851 "Eligible conjuncts"): each conjunct that is such an equation, or
+  a boolean field literal `self.b` or `not self.b` (the equation
+  `self.b = true` or `self.b = false`), solves its field; each FR-851 bound
+  narrows its field; and every other conjunct is kept and evaluated on each
+  generated candidate, so it never makes the application ineligible. No two
+  equations may assign the same field. An operation whose clauses name
+  `result` makes the application ineligible; it is enumerated as before. A field no clause assigns keeps its enumerated
   domain.
 - *Value.* The generator evaluates `e` once per application, with a fresh
   meter, through `evaluate_clause`. Only `Completed(v)` solves the

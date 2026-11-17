@@ -7,7 +7,7 @@ model M = "agent-ix/checked-handoff";
 dimension Money;
 unit U : Money = rational(1, 1);
 
-temporal DueSample using t over (view: M::Workflow) clock "sample-clock" on origin {
+temporal DueSample using t over (view: M::Workflow) clock "model-steps" on origin {
     always[0,30] holds(
         L::Ready(view.ready)
         and L::RatioBounded(rational(-1, 2))

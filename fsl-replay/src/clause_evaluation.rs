@@ -79,8 +79,7 @@ pub struct ClauseEvaluationRequest {
     pub observation: ClauseObservation,
     /// The spine's stage limits.
     pub limits: SpineLimits,
-    /// FR-106's observation limits; `document_bytes` also bounds the
-    /// snapshot bytes read before admission.
+    /// FR-106's observation limits, including `observation.input_bytes`.
     pub observation_limits: ObservationLimits,
     /// The evaluation meter's accounting limits.
     pub accounting: ScalarLimits,
@@ -140,7 +139,7 @@ pub enum ClauseIncomplete {
     },
     /// The observation lacks evidence the clause reads (an incomplete
     /// population or an unresolved closure), at admission, or its snapshot
-    /// exceeds `observation_limits.document_bytes` (`resource_exhausted`,
+    /// exceeds `observation.input_bytes` (`resource_exhausted`,
     /// `observation-input-bytes`) and is not read.
     Observation {
         /// The catalog code.
@@ -254,6 +253,7 @@ pub fn evaluate_clause(request: ClauseEvaluationRequest) -> ClauseEvaluation {
         }
     };
     let run = ClauseRunRequest {
+        clocks: Default::default(),
         package_name,
         source: ClauseRunSource::Program {
             identity: source,
@@ -396,9 +396,12 @@ fn settle(disposition: ClauseDisposition) -> ClauseEvaluation {
         ClauseDisposition::UnknownLanguage { .. }
         | ClauseDisposition::NotAPredicate { .. }
         | ClauseDisposition::FrameViolation(_)
+        | ClauseDisposition::OperationContractViolation(_)
         | ClauseDisposition::Temporal(_)
         | ClauseDisposition::TemporalRefusal(_)
-        | ClauseDisposition::ProgressContradiction(_) => unreachable_disposition(),
+        | ClauseDisposition::TraceRefused(_)
+        | ClauseDisposition::ProgressContradiction(_)
+        | ClauseDisposition::TemporalValuation(_) => unreachable_disposition(),
     }
 }
 

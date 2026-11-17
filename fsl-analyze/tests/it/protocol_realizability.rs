@@ -63,15 +63,15 @@ fn members(delivery: &str) -> String {
 }
 
 /// One fixture: both package forms and its documents.
-struct Fixture {
+pub(crate) struct Fixture {
     checked: CheckedPackage,
-    admitted: Box<CheckedPackageV2>,
+    pub(crate) admitted: Box<CheckedPackageV2>,
     documents: Documents,
     initial: Vec<DocumentRef>,
 }
 
 impl Fixture {
-    fn new(delivery: &str, run: &str) -> Self {
+    pub(crate) fn new(delivery: &str, run: &str) -> Self {
         Self::over(delivery, "", run, &[0])
     }
 
@@ -82,7 +82,7 @@ impl Fixture {
     }
 
     /// [`Self::over`] with the protocol's `activation`.
-    fn activated(
+    pub(crate) fn activated(
         activation: &str,
         delivery: &str,
         captures: &str,
@@ -93,7 +93,7 @@ impl Fixture {
     }
 
     /// [`Self::activated`] with `channels` declared after the members.
-    fn built(
+    pub(crate) fn built(
         activation: &str,
         delivery: &str,
         captures: &str,
@@ -120,7 +120,7 @@ impl Fixture {
         }
     }
 
-    fn subject(&self) -> ProtocolSubject<'_> {
+    pub(crate) fn subject(&self) -> ProtocolSubject<'_> {
         ProtocolSubject {
             model: model_subject(&self.checked, &self.documents, self.initial.clone(), &["c"]),
             protocol: "Flow".to_owned(),
@@ -157,17 +157,17 @@ impl Fixture {
         realize(&self.admitted, request).expect("the request is admitted")
     }
 
-    fn run(&self) -> RealizabilityOutcome {
+    pub(crate) fn run(&self) -> RealizabilityOutcome {
         self.decide(self.request(64))
     }
 
-    fn named(&self, last: &str) -> CheckedNodeId {
+    pub(crate) fn named(&self, last: &str) -> CheckedNodeId {
         named(&self.admitted, last)
     }
 }
 
 /// `Buyer` places an order; `Seller` reads it and owns `ship | cancel`.
-fn worked(delivery: &str, ship: &str, cancel: &str) -> Fixture {
+pub(crate) fn worked(delivery: &str, ship: &str, cancel: &str) -> Fixture {
     worked_over(delivery, "", ship, cancel)
 }
 
@@ -189,9 +189,9 @@ fn worked_over(delivery: &str, captures: &str, ship: &str, cancel: &str) -> Fixt
     )
 }
 
-const PICK: &str = "send PickIt via Pick as (p: PickMsg) { true };\n\
+pub(crate) const PICK: &str = "send PickIt via Pick as (p: PickMsg) { true };\n\
     receive PickedUp via Pick of PickIt as (q: PickMsg) { true };";
-const CANCELLED: &str = "send Cn via Cancelled as (c: CancelMsg) { true };\n\
+pub(crate) const CANCELLED: &str = "send Cn via Cancelled as (c: CancelMsg) { true };\n\
     receive Cn2 via Cancelled of Cn as (d: CancelMsg) { true };";
 
 fn witness(outcome: RealizabilityOutcome) -> RealizabilityWitness {
@@ -201,7 +201,7 @@ fn witness(outcome: RealizabilityOutcome) -> RealizabilityWitness {
     }
 }
 
-fn refuted(outcome: RealizabilityOutcome) -> RealizabilityCounterexample {
+pub(crate) fn refuted(outcome: RealizabilityOutcome) -> RealizabilityCounterexample {
     match outcome.outcome {
         AnalysisOutcome::Refuted(counterexample) => counterexample,
         other => panic!("expected a refutation: {other:?}"),
@@ -1338,4 +1338,51 @@ fn a_declined_item_writes_no_protocol_analysis_record() {
         Some(TerminalValue::Declined { .. })
     ));
     assert!(records[0].protocol_analysis.is_none());
+}
+
+/// FR-891-AC-3 (TC-2524): under `bounded`, a protocol activated `on each`
+/// trigger is decided over the arena of every instance, never answered
+/// `activation-on-each`.
+#[trace("TC-2524", "FR-891-AC-3", "FSpec-FR-735-AC-1")]
+#[test]
+#[ignore = "QSL-2212: realizability under the bounded profile is refused and activation on each answers unsupported"]
+fn realizability_settles_over_activation_on_each() {
+    let fixture = Fixture::activated(
+        "on each (t: M::Cell)",
+        "exactly-once-premise",
+        "",
+        "sequence Main { send Placed via Order as (placed: Ack) { true }; \
+         receive Got via Order of Placed as (got: Ack) { true }; }",
+        &[0],
+    );
+    let mut request = fixture.request(64);
+    request.strategy_profile = Some("bounded".to_owned());
+    let outcome = fixture.decide(request);
+    assert!(
+        !matches!(outcome.outcome, AnalysisOutcome::Unsupported(_)),
+        "{:?}",
+        outcome.outcome
+    );
+}
+
+/// FR-891-AC-1 (TC-2523): under `bounded`, a `repeat` is decided, never
+/// answered `repeat`.
+#[trace("TC-2523", "FR-891-AC-1")]
+#[test]
+#[ignore = "QSL-2213: realizability over a repeat answers unsupported instead of settling"]
+fn realizability_settles_over_a_repeat() {
+    let fixture = Fixture::new(
+        "exactly-once-premise",
+        "sequence Main { repeat Loop by Buyer visible () max 1 while { true } \
+         sequence Body { send RS via Order as (rs: Ack) { true }; \
+         receive RR via Order of RS as (rr: Ack) { true }; } exhausted sequence Spent { } }",
+    );
+    let mut request = fixture.request(64);
+    request.strategy_profile = Some("bounded".to_owned());
+    let outcome = fixture.decide(request);
+    assert!(
+        !matches!(outcome.outcome, AnalysisOutcome::Unsupported(_)),
+        "{:?}",
+        outcome.outcome
+    );
 }

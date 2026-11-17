@@ -727,7 +727,7 @@ fn a_choice_owner_is_a_role_and_its_constant_guards_partition() {
         assert_eq!(choice, "Pick");
         assert_eq!(faults, &[failed]);
         assert_eq!(found, &cases);
-        assert_eq!(located(&text, &cause), "Pick");
+        assert_eq!(located(&text, &cause), "choice Pick by R");
     }
 
     let graph = checks(&choice("S", "true and true", "false"));
@@ -1295,7 +1295,7 @@ fn guards_partition_the_visible_facts() {
         assert_eq!(choice, "Pick");
         assert_eq!(found, &failed, "{yes} / {no}");
         assert_eq!(cases, &["yes".to_owned(), "no".to_owned()], "{yes} / {no}");
-        assert_eq!(located(&text, &cause), "Pick");
+        assert_eq!(located(&text, &cause), "choice Pick by S");
     }
     checks(&received(&pick(
         "S",

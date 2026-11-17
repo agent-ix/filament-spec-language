@@ -283,7 +283,11 @@ fn compile_accepts_a_multi_unit_program_array() {
     let checked = fsl_replay::spine::check_units_with_refinement_internals(
         &admitted,
         "test:unit-a".to_owned(),
-        Some(json!([])),
+        fsl_replay::spine::SourceInputs {
+            refinement_internals: Some(json!([])),
+            temporal_selections: &[],
+            clocks: None,
+        },
         &models,
         &dependencies,
         limits,
@@ -549,7 +553,13 @@ fn retired_and_unknown_editions_refuse_before_emitting_package_bytes() {
         let failure: Value = serde_json::from_slice(&output.stderr).unwrap();
         assert_eq!(failure["code"], "unknown_edition", "{failure}");
         assert_eq!(failure["stage"], "profile", "{failure}");
-        assert!(failure["message"].as_str().unwrap().contains(edition));
+        let message = failure["message"].as_str().unwrap();
+        assert!(message.contains(edition), "{failure}");
+        assert!(
+            message.contains("this command reads \"1-draft\""),
+            "{failure}"
+        );
+        assert!(!message.contains("compile reads"), "{failure}");
         let literal = program.find(&format!("\"{edition}\"")).unwrap();
         assert_eq!(failure["details"]["span"]["start"]["byte"], literal);
         assert_eq!(
@@ -957,7 +967,11 @@ fn refinement_internals_compile_matches_the_spine_composition() {
         let checked = fsl_replay::spine::check_units_with_refinement_internals(
             &admitted,
             "test:spine".to_owned(),
-            root_internals,
+            fsl_replay::spine::SourceInputs {
+                refinement_internals: root_internals,
+                temporal_selections: &[],
+                clocks: None,
+            },
             &models,
             &dependencies,
             limits,
@@ -1229,4 +1243,20 @@ fn a_library_source_over_the_fixed_dependent_byte_ceiling_is_refused() {
     assert_eq!(value["details"]["maximum"], 8_388_608, "{value}");
     assert!(value["details"].get("option").is_none(), "{value}");
     assert!(value.get("artifact").is_none(), "{value}");
+}
+
+/// FR-480-AC-19 (TC-2179): a compile request whose `program` is `[]` is a
+/// malformed request: `invalid-request`, exit 20, the message naming the
+/// program, before any unit is read.
+#[test]
+#[trace("TC-2179", "FR-480-AC-19")]
+fn compile_empty_program_is_invalid_request() {
+    let directory = tempfile::tempdir().unwrap();
+    spine_request(directory.path(), b"");
+    let output = compile_changed(directory.path(), |job| {
+        job["request"]["program"] = json!([]);
+    });
+    let failure = refusal(&output, 20, "invalid-request", "empty program");
+    let message = failure["message"].as_str().unwrap_or_default();
+    assert!(message.contains("program"), "{failure}");
 }

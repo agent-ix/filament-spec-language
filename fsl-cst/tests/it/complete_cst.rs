@@ -83,16 +83,20 @@ fn complete_source_builds_a_byte_exact_trivia_preserving_cst() {
         assert_eq!(resolved.production(), node.production());
         assert_eq!(resolved.identity(), node.identity());
     }
-    assert!(parsed
-        .cst()
-        .tokens()
-        .iter()
-        .any(|token| token.class() == TokenClass::Comment));
-    assert!(parsed
-        .cst()
-        .tokens()
-        .iter()
-        .any(|token| token.class() == TokenClass::Whitespace));
+    assert!(
+        parsed
+            .cst()
+            .tokens()
+            .iter()
+            .any(|token| token.class() == TokenClass::Comment)
+    );
+    assert!(
+        parsed
+            .cst()
+            .tokens()
+            .iter()
+            .any(|token| token.class() == TokenClass::Whitespace)
+    );
 
     let productions: BTreeSet<_> = parsed
         .cst()
@@ -291,4 +295,298 @@ fn r04_a_sum_declaration_is_invalid_syntax_at_variant() {
         diagnostic.byte_span().unwrap().start,
         text.find("variant").unwrap()
     );
+}
+
+/// FR-762: the header shared by the multi-error recovery units.
+const RECOVERY_HEADER: &str = "language \"ix:native\" edition \"1-draft\";\n";
+
+fn recover(body: &str) -> (String, fsl_cst::ParsedSource) {
+    let text = format!("{RECOVERY_HEADER}{body}");
+    let parsed = fsl_cst::parse(
+        identity(),
+        "recovery.native",
+        text.as_bytes(),
+        Limits::default(),
+    )
+    .expect("valid UTF-8 within the S1 limits");
+    (text, parsed)
+}
+
+fn byte_at(text: &str, needle: &str) -> usize {
+    text.find(needle).expect("the needle is in the unit")
+}
+
+const THREE_RECORDS: &str = concat!(
+    "record A { x: Integer y: Integer; }\n",
+    "record B { u: Integer; v: Integer; }\n",
+    "record C { z: ; }\n",
+);
+
+#[trace("TC-2148", "FR-762-AC-1")]
+#[test]
+fn two_independent_syntax_errors_give_two_diagnostics() {
+    let (text, parsed) = recover(THREE_RECORDS);
+    assert!(!parsed.is_admissible());
+    let found: Vec<_> = parsed
+        .diagnostics()
+        .iter()
+        .map(|diagnostic| {
+            (
+                diagnostic.code,
+                diagnostic.cause,
+                diagnostic.byte_span().expect("located").start,
+            )
+        })
+        .collect();
+    assert_eq!(
+        found,
+        [
+            (
+                CompleteCode::InvalidSyntax,
+                CompleteCause::UnexpectedToken,
+                byte_at(&text, "y: Integer;")
+            ),
+            (
+                CompleteCode::InvalidSyntax,
+                CompleteCause::UnexpectedToken,
+                text.rfind("; }").expect("the third record")
+            ),
+        ]
+    );
+}
+
+#[trace("TC-2149", "FR-762-AC-2")]
+#[test]
+fn two_invalid_tokens_give_two_invalid_token_diagnostics() {
+    let (text, parsed) =
+        recover("record A { x: $; }\nrecord B { y: Integer; }\nrecord C { z: $; }\n");
+    let first = byte_at(&text, "$");
+    let second = text.rfind('$').expect("two dollars");
+    let found: Vec<_> = parsed
+        .diagnostics()
+        .iter()
+        .map(|diagnostic| {
+            (
+                diagnostic.cause,
+                diagnostic.byte_span().expect("located").start,
+            )
+        })
+        .collect();
+    assert_eq!(
+        found,
+        [
+            (CompleteCause::InvalidToken, first),
+            (CompleteCause::InvalidToken, second)
+        ]
+    );
+}
+
+#[trace("TC-2150", "FR-762-AC-3")]
+#[test]
+fn a_valid_declaration_between_broken_ones_is_recovered() {
+    let (text, parsed) = recover(THREE_RECORDS);
+    let second = "record B { u: Integer; v: Integer; }";
+    let start = byte_at(&text, second);
+    assert!(
+        parsed.cst().nodes().iter().any(|node| {
+            node.production() == Production::Declaration
+                && node.span().start == start
+                && node.span().end == start + second.len()
+        }),
+        "the second record is a recovered declaration"
+    );
+    assert_eq!(parsed.cst().render(), text.as_bytes());
+}
+
+#[trace("TC-2151", "FR-762-AC-4")]
+#[test]
+fn a_missing_semicolon_gives_one_diagnostic() {
+    let (text, parsed) = recover("record A { x: Integer }\nrecord B { y: Integer; }\n");
+    assert_eq!(parsed.diagnostics().len(), 1, "{:?}", parsed.diagnostics());
+    let start = byte_at(&text, "record B");
+    assert!(
+        parsed
+            .cst()
+            .nodes()
+            .iter()
+            .any(|node| node.production() == Production::Declaration && node.span().start == start)
+    );
+}
+
+#[trace("TC-2152", "FR-762-AC-5")]
+#[test]
+fn a_single_error_keeps_its_one_diagnostic() {
+    for (expression, second) in [("a < b < c", 6), ("a = b != c", 6), ("a < b + c = d", 10)] {
+        let body = format!(
+            "profile Complete = \"filament.value.complete/v1\";\n\
+             function f using Complete(a: Integer, b: Integer, c: Integer, d: Integer): Boolean pure {{ {expression} }}\n"
+        );
+        let (text, parsed) = recover(&body);
+        let at = byte_at(&text, expression) + second;
+        let found: Vec<_> = parsed
+            .diagnostics()
+            .iter()
+            .map(|diagnostic| {
+                (
+                    diagnostic.code,
+                    diagnostic.byte_span().map(|span| span.start),
+                )
+            })
+            .collect();
+        assert_eq!(
+            found,
+            [(CompleteCode::InvalidSyntax, Some(at))],
+            "{expression}: {:#?}",
+            parsed.diagnostics()
+        );
+    }
+}
+
+#[trace("TC-2153", "FR-762-AC-6")]
+#[trace("FSpec-TC-1649", "FSpec-FR-272-AC-30")]
+#[test]
+fn the_diagnostic_list_is_cut_at_its_bound() {
+    let body: String = (0..150)
+        .map(|n| format!("record R{n} {{ z: ; }}\n"))
+        .collect();
+    let (text, parsed) = recover(&body);
+    let diagnostics = parsed.diagnostics();
+    assert_eq!(diagnostics.len(), 101);
+    assert!(
+        diagnostics[..100]
+            .iter()
+            .all(|diagnostic| diagnostic.cause == CompleteCause::UnexpectedToken)
+    );
+    let cut = &diagnostics[100];
+    assert_eq!(cut.code, CompleteCode::InvalidSyntax);
+    assert_eq!(cut.cause.as_str(), "diagnostic-list-cut");
+    let record = byte_at(&text, "record R100 ");
+    assert_eq!(
+        cut.byte_span().expect("located").start,
+        record + text[record..].find("; }").expect("the offending token")
+    );
+    assert_eq!(
+        cut.message,
+        "50 additional syntax errors omitted after the fixed limit of 100"
+    );
+    assert!(
+        !cut.message.contains("raise")
+            && !cut.message.contains("s1.diagnostics")
+            && !cut.message.contains("i2.diagnostics")
+    );
+    assert!(
+        diagnostics
+            .iter()
+            .all(|diagnostic| diagnostic.limit().is_none())
+    );
+}
+
+#[trace("TC-2154", "FR-762-AC-7")]
+#[test]
+fn a_recovered_unit_is_never_admitted() {
+    let (_, parsed) = recover(THREE_RECORDS);
+    assert!(!parsed.is_admissible());
+    assert_eq!(parsed.diagnostics().len(), 2);
+}
+
+/// Parse `body` after the recovery header under `limits`.
+fn recover_under(body: &str, limits: Limits) -> Result<fsl_cst::ParsedSource, String> {
+    let text = format!("{RECOVERY_HEADER}{body}");
+    fsl_cst::parse(identity(), "recovery.native", text.as_bytes(), limits)
+        .map_err(|diagnostic| diagnostic.to_string())
+}
+
+#[trace("TC-2187", "FR-762-AC-8")]
+#[trace("FSpec-TC-1649", "FSpec-FR-272-AC-30")]
+#[test]
+fn recovery_stops_at_the_work_budget() {
+    let records_first_error = |work: usize| {
+        recover_under(THREE_RECORDS, Limits::default().with_work_units(work)).is_ok_and(|parsed| {
+            parsed
+                .diagnostics()
+                .first()
+                .is_some_and(|diagnostic| diagnostic.cause == CompleteCause::UnexpectedToken)
+        })
+    };
+    let (mut low, mut high) = (0_usize, Limits::default().work_units);
+    assert!(records_first_error(high));
+    while low + 1 < high {
+        let middle = low + (high - low) / 2;
+        if records_first_error(middle) {
+            high = middle;
+        } else {
+            low = middle;
+        }
+    }
+    let parsed = recover_under(THREE_RECORDS, Limits::default().with_work_units(high))
+        .expect("the first error is recorded");
+    assert!(!parsed.is_admissible());
+    let last = parsed.diagnostics().last().expect("diagnostics");
+    assert_eq!(last.cause.as_str(), "diagnostic-list-cut");
+    assert!(last.message.contains("s1.work_units"), "{}", last.message);
+    // The cut is located at the token at which the budget ran out: one whole
+    // token of the unit, after the first recorded error.
+    let span = last.byte_span().expect("the cut is located");
+    assert!(
+        parsed
+            .cst()
+            .tokens()
+            .iter()
+            .any(|token| token.span().start == span.start && token.span().end == span.end)
+    );
+    let first = parsed.diagnostics()[0].byte_span().expect("located");
+    assert!(span.start > first.start, "{span:?} after {first:?}");
+    assert!(
+        parsed
+            .diagnostics()
+            .iter()
+            .all(|diagnostic| diagnostic.limit().is_none())
+    );
+}
+
+#[trace("TC-2187", "FR-762-AC-9")]
+#[test]
+fn header_recovery_resumes_at_the_next_declaration() {
+    let body = "profile v = ;\nrecord A { x: Integer y: Integer; }\n";
+    let (text, parsed) = recover(body);
+    let starts: Vec<usize> = parsed
+        .diagnostics()
+        .iter()
+        .map(|diagnostic| diagnostic.byte_span().expect("located").start)
+        .collect();
+    assert_eq!(
+        starts,
+        [byte_at(&text, "= ;") + 2, byte_at(&text, "y: Integer;")],
+        "{:#?}",
+        parsed.diagnostics()
+    );
+    let start = byte_at(&text, "record A");
+    assert!(
+        parsed
+            .cst()
+            .nodes()
+            .iter()
+            .any(|node| node.production() == Production::Declaration && node.span().start == start),
+        "{:?}",
+        parsed
+            .cst()
+            .nodes()
+            .iter()
+            .map(|node| (node.production(), node.span()))
+            .collect::<Vec<_>>()
+    );
+}
+
+#[trace("TC-2187", "FR-762-AC-10")]
+#[test]
+fn an_error_with_no_resumption_point_is_last() {
+    let (text, parsed) = recover("record A { x: Integer; }\nrecord B { z: ; }\n");
+    let diagnostics = parsed.diagnostics();
+    assert_eq!(diagnostics.len(), 1, "{diagnostics:?}");
+    let last = diagnostics.last().expect("one diagnostic");
+    assert_eq!(
+        last.byte_span().expect("located").start,
+        text.rfind("; }").expect("in the unit")
+    );
+    assert_ne!(last.cause.as_str(), "diagnostic-list-cut");
 }

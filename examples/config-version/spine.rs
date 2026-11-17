@@ -287,6 +287,7 @@ pub fn write(directory: &Path, case: Case) -> io::Result<()> {
                     ClauseArgumentValue::Reference { population, key } => {
                         json!({"reference": {"population": population, "key": key}})
                     }
+                    ClauseArgumentValue::Form(form) => form.clone(),
                 },
             })).collect::<Vec<_>>(),
         }),
@@ -294,8 +295,9 @@ pub fn write(directory: &Path, case: Case) -> io::Result<()> {
             "kind": "frame",
             "operation": operation.to_string(),
         }),
-        // FR-312's request wire has no temporal selection yet.
-        ClauseRunSelection::Temporal { .. } => {
+        // The `clause-run/1` corpus form names state clauses, functions and
+        // frames; a temporal selection has no such form.
+        ClauseRunSelection::Temporal { .. } | ClauseRunSelection::SampledTemporal { .. } => {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidInput,
                 "a temporal selection has no clause-run/1 wire form",
@@ -340,7 +342,7 @@ pub fn request(directory: &Path, case: Case) -> io::Result<ClauseRunRequest> {
     };
     let written = written(directory, case)?;
     Ok(ClauseRunRequest {
-        // Every case reads byte-identical `unit_text()`, so the unit's own
+        clocks: Default::default(), // Every case reads byte-identical `unit_text()`, so the unit's own
         // `SourceIdentity` and package name are the same fixed values across
         // cases (TC-469 step 6's "every case shares the same unit and
         // package").

@@ -604,12 +604,15 @@ pub enum ExprNode {
     /// `rational(n, d)`; it takes its unique expected `Rational[..]` type.
     Rational(Integer, Integer),
     /// `decimal(c, s)`: the coefficient and the scale exactly as written,
-    /// unreduced; it takes its unique expected `Decimal[..]` type.
+    /// unreduced; `spelling` distinguishes a constructor from a bare
+    /// `decimal-literal`; it takes its unique expected `Decimal[..]` type.
     DecimalValue {
         /// The signed coefficient `c`.
         coefficient: Integer,
         /// The unsigned scale `s`.
         scale: u32,
+        /// Whether the source used `decimal(c, s)` or a bare decimal literal.
+        spelling: DecimalSpellingKind,
     },
     /// A quantity literal such as `5 ms` (FR-393): the magnitude and the
     /// spelled unit. S2 resolves neither.
@@ -666,6 +669,8 @@ pub enum ExprNode {
         operand: ExprId,
         /// The field or attribute name.
         field: String,
+        /// Its source token when the expression was read from source.
+        member_span: Option<fsl_foundation::Span>,
     },
     /// `present(e)`.
     Present(ExprId),
@@ -926,6 +931,15 @@ pub enum ExprNode {
     /// constructed outside the probe build.
     #[cfg(seam_probe)]
     __SeamProbe,
+}
+
+/// The source spelling that produced an exact decimal value expression.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum DecimalSpellingKind {
+    /// An explicit `decimal(c, s)` constructor.
+    DecimalConstructor,
+    /// A bare decimal-literal primary such as `0.9`.
+    DecimalLiteral,
 }
 
 impl ExprNode {
@@ -1471,7 +1485,11 @@ impl Expression {
 
     /// `decimal(coefficient, scale)`.
     pub fn decimal(coefficient: Integer, scale: u32) -> Self {
-        Self::single(ExprNode::DecimalValue { coefficient, scale })
+        Self::single(ExprNode::DecimalValue {
+            coefficient,
+            scale,
+            spelling: DecimalSpellingKind::DecimalConstructor,
+        })
     }
 
     /// A quantity literal such as `5 ms` (FR-393).
@@ -1543,7 +1561,11 @@ impl Expression {
     /// `operand.field`.
     pub fn field(operand: Self, field: impl Into<String>) -> Self {
         let field = field.into();
-        Self::compose([operand], |[operand]| ExprNode::Field { operand, field })
+        Self::compose([operand], |[operand]| ExprNode::Field {
+            operand,
+            field,
+            member_span: None,
+        })
     }
 
     /// `present(operand)`.
@@ -5119,6 +5141,37 @@ pub enum DeclarationForm {
     /// A `hybrid` declaration (FR-447), boxed for the same reason as
     /// [`Self::Function`].
     Hybrid(Box<HybridForm>),
+    /// A bounded `synthesis` declaration (FR-754).
+    Synthesis(Box<SynthesisForm>),
+    /// A `verify` plan declaration (FR-753).
+    VerificationPlan(Box<VerificationPlanForm>),
+}
+
+/// The S2 source identity of a synthesis declaration while FR-754's detailed
+/// expression and domain forms are built by their owning implementation.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct SynthesisForm {
+    /// The authored declaration name.
+    pub name: DeclaredName,
+    /// The selected profile alias.
+    pub profile: UsingAlias,
+    /// The complete source spelling retained for later stages.
+    pub source: String,
+    /// The declaration's source span.
+    pub span: Span,
+}
+
+/// The S2 source identity of a verification plan (FR-753).
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct VerificationPlanForm {
+    /// The authored declaration name.
+    pub name: DeclaredName,
+    /// The selected profile alias.
+    pub profile: UsingAlias,
+    /// The complete source spelling retained for later stages.
+    pub source: String,
+    /// The declaration's source span.
+    pub span: Span,
 }
 
 /// The longest each explicit heap stack grew in this thread, by name, so a

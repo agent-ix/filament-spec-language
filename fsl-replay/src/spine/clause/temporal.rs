@@ -7,13 +7,13 @@
 
 use std::collections::BTreeMap;
 
-use filament_exact::{Meter, ValueType};
+use filament_exact::{Meter, Value, ValueType};
 use filament_semantic_value::catalog::CatalogCode;
 use fsl_eval::temporal::{
-    evaluate_observed_decisive, DecisiveAtom, DecisiveSearch, DecisiveStop, FirstUndefined,
-    HoldsStop, PositionRefusal, ProgressedRefusal, TemporalOutcome, TemporalPosition,
-    TemporalRefusal, TemporalTrace, TimestampedTrace, UndefinedCause, UndefinedEvaluation,
-    WindowRefusal,
+    evaluate_observed_decisive, evaluate_sampled, DecisiveAtom, DecisiveSearch, DecisiveStop,
+    FirstUndefined, HoldsStop, ObservedPositions, PositionRefusal, ProgressedRefusal,
+    TemporalOutcome, TemporalPosition, TemporalRefusal, TemporalTrace, TimestampedTrace,
+    UndefinedCause, UndefinedEvaluation, WindowRefusal,
 };
 use fsl_foundation::diagnostic::Code;
 use fsl_foundation::source::Source;
@@ -29,6 +29,7 @@ use super::progress::{
     ProgressCompleteness, ProgressContradiction, ProgressLedger, ProgressLowerBoundary,
     ProgressValue, Refusal,
 };
+use super::trace_refusal::ClauseSite;
 use super::{
     convert_call_failure, convert_outcome, ClauseDisposition, ClauseRunReport, ClauseRunUsage,
     CompiledRun, ConsequentEventRefusal, ConsequentSourceEvents, RunRefusal,
@@ -77,16 +78,63 @@ pub enum TraceInput {
         /// lasso, which the evaluator refuses.
         repeat: Vec<DocumentRef>,
     },
+    /// A model-arm behaviour (FR-641 `model`, FSpec FR-364): an initial state,
+    /// the universes, and the steps of its prefix and loop; FR-330 reconstructs
+    /// its positions as FR-329 states for `Lasso::Model`.
+    Model {
+        /// The initial-state snapshot.
+        initial: DocumentRef,
+        /// The snapshots whose complete populations are the universes.
+        universes: Vec<DocumentRef>,
+        /// The steps before the loop.
+        prefix: Vec<crate::ModelStep>,
+        /// The steps of the loop, a terminal stutter step excluded.
+        repeat: Vec<crate::ModelStep>,
+        /// Whether the loop is the one terminal stutter step.
+        terminal_stutter: bool,
+        /// FR-641, FR-255 `expansion.max_candidates`: the most candidates one
+        /// step reconstruction expands before the run stops `incomplete`.
+        max_candidates: u64,
+    },
 }
 
 impl TraceInput {
+    /// The wire member that names this trace's kind (FR-641 "Trace kinds"):
+    /// the kind FR-645 reports as `supplied`.
+    pub fn kind(&self) -> &'static str {
+        match self {
+            Self::Finite(_) => "finite",
+            Self::Progressed { .. } => "progressed",
+            Self::Timestamped { .. } => "timestamped",
+            Self::Lasso { .. } => "lasso",
+            Self::Model { .. } => "model",
+        }
+    }
+
+    /// FR-645: the member path, from `clause`, of the part of a request-file
+    /// trace the refusal `reason` is about.
+    pub fn request_pointer(&self, reason: &str) -> String {
+        let kind = self.kind();
+        match (reason, self) {
+            ("ledger-without-progress", _) => "selection.temporal.ledger".to_owned(),
+            ("empty-lasso-loop", Self::Model { .. }) => {
+                "selection.temporal.trace.model.loop".to_owned()
+            }
+            ("empty-lasso-loop", _) => "selection.temporal.trace.lasso.loop".to_owned(),
+            ("empty-finite-trace", Self::Progressed { .. }) => {
+                "selection.temporal.trace.progressed.positions".to_owned()
+            }
+            _ => format!("selection.temporal.trace.{kind}"),
+        }
+    }
+
     /// Whether the trace carries a progress assertion a ledger can retain
     /// (FR-502 Inputs). A `Finite` trace and a `Lasso` carry none: a lasso is
     /// the whole infinite behavior and a finite trace is its own closure.
     fn carries_progress(&self) -> bool {
         match self {
             Self::Progressed { .. } | Self::Timestamped { .. } => true,
-            Self::Finite(_) | Self::Lasso { .. } => false,
+            Self::Finite(_) | Self::Lasso { .. } | Self::Model { .. } => false,
         }
     }
 
@@ -122,7 +170,7 @@ impl TraceInput {
                     })
                     .collect(),
             )),
-            Self::Finite(_) | Self::Lasso { .. } => None,
+            Self::Finite(_) | Self::Lasso { .. } | Self::Model { .. } => None,
         }
     }
 
@@ -144,9 +192,12 @@ impl TraceInput {
                     window,
                 })
                 .into_iter()
-                .map(|observation| &observation.document),
+                .map(|(_, observation)| &observation.document),
             ),
             Self::Lasso { prefix, repeat } => Box::new(prefix.iter().chain(repeat)),
+            Self::Model {
+                initial, universes, ..
+            } => Box::new(std::iter::once(initial).chain(universes)),
         }
     }
 
@@ -166,11 +217,33 @@ impl TraceInput {
                 prefix: u64::try_from(prefix.len()).ok()?,
                 loop_len: u64::try_from(repeat.len()).ok()?,
             }),
+            // A model behaviour is reconstructed from its steps, not read as
+            // observations.
+            Self::Model { .. } => None,
         }
     }
 }
 
-fn document_identity(document: &DocumentRef) -> String {
+/// FR-641: the per-expansion candidate bound of a `model` trace that names
+/// none.
+pub const DEFAULT_MODEL_MAX_CANDIDATES: u64 = 1_000_000;
+
+/// The authority label of a position that carries a record sample.
+const SAMPLE_AUTHORITY: &str = "record-sample";
+
+/// FR-641: a record sample as one position of a
+/// [`ClauseRunSelection::SampledTemporal`](super::ClauseRunSelection)
+/// trace. `canonical` is the sample's canonical JSON object text; it is the
+/// position's identity, so the progress ledger and the canonical order of a
+/// timestamped trace read a sample as they read a snapshot's labels.
+pub fn sample_position(canonical: &str) -> DocumentRef {
+    DocumentRef {
+        authority: SAMPLE_AUTHORITY.to_owned(),
+        identity: canonical.to_owned(),
+    }
+}
+
+pub(super) fn document_identity(document: &DocumentRef) -> String {
     format!(
         "{}:{}{}:{}",
         document.authority.len(),
@@ -230,6 +303,56 @@ pub struct TimestampedWindow {
     /// each is a position, by its index in `observations`, and the zero-based
     /// `holds` formula node of the checked clause.
     pub missing_valuations: Vec<TimestampedMissingValuation>,
+    /// The interval stamps, arrival watermarks and late-data cutoff, and
+    /// the late observations a repair admits (FR-501, FR-526, FR-966).
+    pub late: LateInputs,
+}
+
+/// FR-501 "Bounded cover and interval stamps" and "Late-data cutoff",
+/// FR-526: the per-observation uncertainty and arrival of a timestamped
+/// trace, each list by the observation's index in `observations` (an empty
+/// list gives no observation the member).
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub struct LateInputs {
+    /// Each observation's interval stamp, when it has one.
+    pub intervals: Vec<Option<fsl_eval::temporal::StampInterval>>,
+    /// Each observation's arrival watermark, when it states one.
+    pub arrivals: Vec<Option<u64>>,
+    /// The late-data cutoff, when one is selected.
+    pub cutoff: Option<fsl_eval::temporal::LateCutoff>,
+    /// The late observations a superseding repair admits, by observation
+    /// identity (FR-526).
+    pub admit_late: Vec<String>,
+    /// FR-526: the relation of the run's result to an earlier one.
+    pub relation: super::correction::RunRelation,
+    /// FR-526: the evidence ledger a prior run wrote, which a correction
+    /// reads.
+    pub evidence_ledger: Option<super::correction::EvidenceLedgerFile>,
+}
+
+/// One observation the late-data cutoff excluded, as the result's `late`
+/// list writes it (FR-501 "Request-file spelling").
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct LateEntry {
+    /// The observation's index in input order.
+    pub position: u64,
+    /// The observation's identity (FR-106), by which a repair admits it.
+    pub observation: String,
+    /// The classified event instant: the upper end of its uncertainty.
+    pub stamp: u64,
+    /// Its arrival watermark.
+    pub arrival: u64,
+    /// The canonical positions of the activations whose windows it falls in.
+    pub anchors: Vec<u64>,
+}
+
+/// One late observation a superseding repair admitted (FR-526).
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct AdmittedLate {
+    /// The observation's index in input order.
+    pub position: u64,
+    /// The observation's identity.
+    pub observation: String,
 }
 
 /// The finite-window input as the evaluator reads it.
@@ -257,22 +380,34 @@ pub(super) fn observation_identity(document: &DocumentRef) -> String {
     format!("{}\0{}", document.authority, document.identity)
 }
 
-/// FR-501 "Canonical order": ascending stamp, then ascending order-authority
-/// identity (an observation without an order key after every keyed one), then
-/// ascending key within the authority, then ascending observation identity.
-/// A total order over distinct observations: the listing order decides
-/// nothing.
-fn ordered_timestamped_positions<'a>(input: &Timestamped<'a>) -> Vec<&'a TimestampedObservation> {
-    let mut positions: Vec<_> = input.observations.iter().collect();
-    positions.sort_by(|left, right| {
-        fn order(position: &TimestampedObservation) -> Option<(&str, i64)> {
-            position
-                .order_key
-                .as_ref()
-                .map(|order| (order.authority.as_str(), order.key))
-        }
-        left.stamp
-            .cmp(&right.stamp)
+/// FR-501 "Canonical order": ascending earliest and then latest instant (an
+/// observation's interval stamp, or the cover of its stamp), then ascending
+/// stamp, then ascending order-authority identity (an observation without an
+/// order key after every keyed one), then ascending key within the
+/// authority, then ascending observation identity. A total order over
+/// distinct observations: the listing order decides nothing. Each entry is
+/// the observation's index in `observations` and the observation.
+fn ordered_timestamped_positions<'a>(
+    input: &Timestamped<'a>,
+) -> Vec<(usize, &'a TimestampedObservation)> {
+    fn order(position: &TimestampedObservation) -> Option<(&str, i64)> {
+        position
+            .order_key
+            .as_ref()
+            .map(|order| (order.authority.as_str(), order.key))
+    }
+    let cover = super::late_data::eval_cover(input.window.cover);
+    let span = |index: usize, position: &TimestampedObservation| {
+        cover.order_span(
+            position.stamp,
+            super::late_data::interval_at(&input.window.late, index),
+        )
+    };
+    let mut positions: Vec<_> = input.observations.iter().enumerate().collect();
+    positions.sort_by(|(left_index, left), (right_index, right)| {
+        span(*left_index, left)
+            .cmp(&span(*right_index, right))
+            .then_with(|| left.stamp.cmp(&right.stamp))
             .then_with(|| match (order(left), order(right)) {
                 (Some(left), Some(right)) => left.cmp(&right),
                 (Some(_), None) => std::cmp::Ordering::Less,
@@ -389,7 +524,7 @@ pub(super) struct TemporalRun<'a> {
     /// The supplied trace.
     pub(super) trace: &'a TraceInput,
     /// The clause's `over` binding.
-    pub(super) over: &'a OverObject,
+    pub(super) over: Option<&'a OverObject>,
     /// The caller's ledger, when it carries one.
     pub(super) ledger: Option<&'a ProgressLedger>,
     /// What FR-522 authenticates a clock-bearing trace against; `None` for a
@@ -398,6 +533,8 @@ pub(super) struct TemporalRun<'a> {
     pub(super) authentication: Option<TemporalAuthentication<'a>>,
     /// The caller's handle: every charge of the run's meter polls it.
     pub(super) cancel: Option<&'a filament_exact::Cancel>,
+    /// Whether the run reports its valuation (FR-757) in place of a verdict.
+    pub(super) valuation: bool,
 }
 
 /// The emitted package a clock-bearing trace is authenticated against.
@@ -462,7 +599,10 @@ fn authenticate_binding(
     })
 }
 
-fn refused(cause: &'static str, fields: BTreeMap<&'static str, String>) -> ClauseDisposition {
+pub(super) fn refused(
+    cause: &'static str,
+    fields: BTreeMap<&'static str, String>,
+) -> ClauseDisposition {
     ClauseDisposition::Admit(AdmissionFailure::Refused(Box::new(AdmissionRecord {
         catalog: CatalogCode::new(Code::InvalidRuntimeInput.as_str(), cause),
         fields,
@@ -476,62 +616,47 @@ fn refused(cause: &'static str, fields: BTreeMap<&'static str, String>) -> Claus
 /// the emitted rows. The authentication precedes every position of the trace
 /// (FR-330-AC-11). The selection is `None` for a `Finite` or `Lasso` trace.
 fn authenticate_trace(
-    node: &fsl_semantics::check::TemporalClauseNode,
+    site: ClauseSite<'_>,
     trace: &TraceInput,
     authentication: Option<TemporalAuthentication<'_>>,
 ) -> Result<Option<crate::spine::AuthenticatedTemporalSelection>, Box<ClauseDisposition>> {
+    let node = site.node;
     let clause = node.clause();
-    // The temporal subject is read only to authenticate a clock-bearing
-    // trace.
-    let subject_of = || {
-        let Some(TemporalAuthentication {
-            clock_rows,
-            admitted_package,
-        }) = authentication
-        else {
-            return Err(filament_semantic_value::catalog::InternalFault::new(
-                "FR-050",
-                "clock-bearing-trace-has-authentication-rows",
-            ));
-        };
-        let Some(declaration) = clock_rows.declaration(&node.identity(), node.claim().ordinal())
-        else {
-            return Err(filament_semantic_value::catalog::InternalFault::new(
-                "FR-050",
-                "emitted-temporal-declaration-retains-checked-id",
-            ));
-        };
-        fsl_package::checked_views::temporal_subject(admitted_package, declaration).map_err(|_| {
-            filament_semantic_value::catalog::InternalFault::new(
-                "FR-050",
-                "admitted-temporal-subject-resolves",
-            )
-        })
-    };
-    let fitted = match trace {
-        TraceInput::Progressed { .. } => matches!(
-            clause.profile(),
-            TemporalProfile::EventPositionFalseExtension
-                | TemporalProfile::FixedSampleFalseExtension
-        ),
-        TraceInput::Timestamped { .. } => {
-            clause.profile() == TemporalProfile::TimestampedEventFiniteWindow
-        }
-        // The finite-window profile reads a timestamped trace only (FR-330).
-        TraceInput::Finite(_) | TraceInput::Lasso { .. } => {
-            clause.profile() != TemporalProfile::TimestampedEventFiniteWindow
-        }
-    };
-    if !fitted {
-        return Err(Box::new(refused("invalid-value", BTreeMap::new())));
+    // FR-645: a trace kind the clause's profile does not read refuses at stage
+    // `admit` before any position is admitted.
+    if !super::trace_refusal::profile_reads(clause.profile()).contains(&trace.kind()) {
+        return Err(Box::new(ClauseDisposition::TraceRefused(Box::new(
+            site.kind_mismatch(trace.kind()),
+        ))));
     }
     let binding = match trace {
         TraceInput::Progressed { binding, .. } => Some(binding),
         TraceInput::Timestamped { window, .. } => window.binding.as_ref(),
-        TraceInput::Finite(_) | TraceInput::Lasso { .. } => return Ok(None),
+        TraceInput::Finite(_) | TraceInput::Lasso { .. } | TraceInput::Model { .. } => {
+            return Ok(None)
+        }
     };
-    let subject =
-        subject_of().map_err(|fault| Box::new(ClauseDisposition::EvaluateFault(fault)))?;
+    // A caller that holds no emission asserts none (FR-820: the decided reading
+    // of a `Finite` trace needs no binding), so a clock-bearing trace is read
+    // unauthenticated. With rows, the temporal subject is read to authenticate
+    // the trace's binding.
+    let Some(TemporalAuthentication {
+        clock_rows,
+        admitted_package,
+    }) = authentication
+    else {
+        return Ok(None);
+    };
+    let fault = |what: &'static str| {
+        Box::new(ClauseDisposition::EvaluateFault(
+            filament_semantic_value::catalog::InternalFault::new("FR-050", what),
+        ))
+    };
+    let Some(declaration) = clock_rows.declaration(&node.identity(), node.claim().ordinal()) else {
+        return Err(fault("emitted-temporal-declaration-retains-checked-id"));
+    };
+    let subject = fsl_package::checked_views::temporal_subject(admitted_package, declaration)
+        .map_err(|_| fault("admitted-temporal-subject-resolves"))?;
     authenticate_binding(binding, &subject, node.claim().ordinal()).map(Some)
 }
 
@@ -539,6 +664,7 @@ fn authenticate_trace(
 /// temporal clause `name` of `package`, before any of its positions is
 /// admitted. A clause `package` does not declare, and a `Finite` or `Lasso`
 /// trace, authenticate nothing.
+/// `authentication` is `None` for a caller that holds no emission
 ///
 /// # Errors
 ///
@@ -548,7 +674,7 @@ pub fn authenticate_package_trace(
     package: &fsl_package::CheckedPackage,
     name: &str,
     trace: &TraceInput,
-    authentication: TemporalAuthentication<'_>,
+    authentication: Option<TemporalAuthentication<'_>>,
 ) -> Result<(), Box<ClauseDisposition>> {
     let Some(node) = package
         .graph()
@@ -558,7 +684,41 @@ pub fn authenticate_package_trace(
     else {
         return Ok(());
     };
-    authenticate_trace(node, trace, Some(authentication)).map(drop)
+    let site = ClauseSite { package, node };
+    authenticate_trace(site, trace, authentication).map(drop)
+}
+
+/// The `TraceBinding` a trace of the clause `name` asserts to agree with the
+/// emitted package: its profile, clock name and clock configuration, read from
+/// the admitted `temporal_bindings` row. `None` for a clause the package does
+/// not declare or that has no clock row.
+pub fn clause_trace_binding(
+    package: &fsl_package::CheckedPackage,
+    name: &str,
+    authentication: TemporalAuthentication<'_>,
+) -> Option<TraceBinding> {
+    let node = package
+        .graph()
+        .temporal_clauses()
+        .iter()
+        .find(|node| node.clause().name() == name)?;
+    let declaration = authentication
+        .clock_rows
+        .declaration(&node.identity(), node.claim().ordinal())?;
+    let subject =
+        fsl_package::checked_views::temporal_subject(authentication.admitted_package, declaration)
+            .ok()?;
+    let occurrence = node.claim().ordinal();
+    let row = subject
+        .occurrences()
+        .iter()
+        .find(|found| found.ordinal == occurrence)
+        .and_then(|found| subject.clock_of(found))?;
+    Some(TraceBinding {
+        profile: subject.profile().definition.identity.to_string(),
+        clock_name: row.clock_name.to_string(),
+        parameters: row.clock.clone(),
+    })
 }
 
 /// FR-283: one temporal clause run over a checked package, with no source to
@@ -582,14 +742,20 @@ pub struct PackageTemporalRequest<'a> {
     pub name: &'a str,
     /// The supplied trace.
     pub trace: &'a TraceInput,
-    /// The object the clause's `over` parameter names.
-    pub over: &'a OverObject,
+    /// The object the clause's `over` parameter names; `None` for a clause
+    /// over a declared record trace subject, whose positions are record
+    /// samples (FR-641).
+    pub over: Option<&'a OverObject>,
+    /// The progress ledger carried into the run (FR-502); `None` starts a
+    /// fresh one for a trace that asserts progress.
+    pub ledger: Option<&'a ProgressLedger>,
     /// The unit's and each library's source the package was checked from;
     /// a locus and an atom name are rendered from them.
     pub sources: &'a [Source],
     /// What FR-522 authenticates a `Progressed` or `Timestamped` trace
-    /// against; `None` for a request that holds no emission, which accepts
-    /// only a `Finite` or `Lasso` trace.
+    /// against; `None` for a request that holds no emission, which reads a
+    /// `Progressed` or `Timestamped` trace unauthenticated (FR-820), with no
+    /// `authenticated_temporal_selection` in its report.
     pub authentication: Option<TemporalAuthentication<'a>>,
     /// The caller's handle, polled at every charge of the run's meter.
     pub cancel: &'a filament_exact::Cancel,
@@ -597,9 +763,9 @@ pub struct PackageTemporalRequest<'a> {
 
 /// FR-283: run one temporal clause over a supplied finite or lasso trace
 /// through the evaluator [`super::run_clause`]'s `Temporal` selection uses.
-/// A progressed or timestamped trace without `authentication` reports an
-/// internal failure, because it has no emitted package to be authenticated
-/// against.
+/// A progressed or timestamped trace without `authentication` is read
+/// unauthenticated: its binding is not checked and its report carries no
+/// authenticated selection.
 pub fn run_package_temporal(request: &PackageTemporalRequest<'_>) -> ClauseRunReport {
     let provisions = Provisions {
         snapshots: request.snapshots,
@@ -612,8 +778,12 @@ pub fn run_package_temporal(request: &PackageTemporalRequest<'_>) -> ClauseRunRe
         observation_limits: request.observation_limits,
         accounting: request.accounting,
         package: request.package,
+        package_name: request.package.emitted_package_name().unwrap_or_default(),
         sources: request.sources,
-        progress_capacity: 0,
+        // FR-516: the capacity is the system setting
+        // `progress.covered_positions` (FR-255), not a request member, so the
+        // package route takes its default.
+        progress_capacity: fsl_eval::temporal::DEFAULT_COVERED_POSITIONS,
     };
     run_temporal(
         &run,
@@ -621,9 +791,10 @@ pub fn run_package_temporal(request: &PackageTemporalRequest<'_>) -> ClauseRunRe
             name: request.name,
             trace: request.trace,
             over: request.over,
-            ledger: None,
+            ledger: request.ledger,
             authentication: request.authentication,
             cancel: Some(request.cancel),
+            valuation: false,
         },
     )
 }
@@ -637,6 +808,7 @@ pub(super) fn run_temporal(run: &CompiledRun<'_>, request: &TemporalRun<'_>) -> 
         ledger,
         authentication,
         cancel,
+        valuation,
     } = *request;
     // A trace is evidence for that trace only: it settles no item and
     // derives no witness (FR-332).
@@ -649,6 +821,8 @@ pub(super) fn run_temporal(run: &CompiledRun<'_>, request: &TemporalRun<'_>) -> 
             _ => SettlementBasis::Unavailable,
         },
         witness: None,
+        state_clause_counterexample: None,
+        frame_field_values: None,
         // A completed temporal verdict names no consequent events: it
         // refuses typed rather than reporting an empty list.
         consequent_source_events: if disposition.truth().is_some() {
@@ -658,7 +832,8 @@ pub(super) fn run_temporal(run: &CompiledRun<'_>, request: &TemporalRun<'_>) -> 
         },
         disposition,
         usage,
-        // A refused request leaves the caller's ledger as it was.
+        // A refused request returns the caller's ledger as it was; a refused
+        // request that supplied none writes none (FSpec FR-352).
         ledger: ledger.cloned(),
         finite_window: None,
         counterexample: None,
@@ -679,7 +854,21 @@ pub(super) fn run_temporal(run: &CompiledRun<'_>, request: &TemporalRun<'_>) -> 
         });
     };
     let clause = node.clause();
-    let authenticated_temporal_selection = match authenticate_trace(node, trace, authentication) {
+    // FR-931: a valuation run with an empty finite trace asks for the
+    // checked clause alone.
+    if valuation && matches!(trace, TraceInput::Finite(positions) if positions.is_empty()) {
+        return early(ClauseDisposition::TemporalValuation(Box::new(
+            super::TemporalValuation {
+                clause: clause.clone(),
+                positions: None,
+            },
+        )));
+    }
+    let site = ClauseSite {
+        package: run.package,
+        node,
+    };
+    let authenticated_temporal_selection = match authenticate_trace(site, trace, authentication) {
         Ok(selection) => selection,
         Err(disposition) => return early(*disposition),
     };
@@ -690,6 +879,8 @@ pub(super) fn run_temporal(run: &CompiledRun<'_>, request: &TemporalRun<'_>) -> 
         ..
     } = trace
     {
+        // FR-645 keeps each refusal's existing stage: an empty timestamped
+        // trace was refused at admit before the trace refusals were named.
         if observations.is_empty() {
             return early(refused("invalid-value", BTreeMap::new()));
         }
@@ -706,32 +897,63 @@ pub(super) fn run_temporal(run: &CompiledRun<'_>, request: &TemporalRun<'_>) -> 
         }) {
             return early(refused("invalid-value", BTreeMap::new()));
         }
+        if let Err(refusal) = super::late_data::admit_intervals(observations, &window.late) {
+            return early(*refusal);
+        }
     }
+    // FR-501 "Late-data cutoff": the evaluator reads the on-time
+    // observations only.
+    let screened = match trace {
+        TraceInput::Timestamped {
+            observations,
+            progress,
+            window,
+        } => match super::late_data::screen(observations, *progress, window) {
+            Ok(screened) => screened,
+            Err(refusal) => return early(*refusal),
+        },
+        _ => None,
+    };
+    let trace = screened.as_ref().map_or(trace, |screened| &screened.trace);
 
     // A ledger retains progress; a trace that asserts none has nothing to
     // retain (FR-502 Behavior).
-    if ledger.is_some()
-        && (!trace.carries_progress() || clause.profile() == TemporalProfile::InfiniteTrace)
-    {
-        return early(refused("invalid-value", BTreeMap::new()));
+    if ledger.is_some() && !trace.carries_progress() {
+        return early(ClauseDisposition::TraceRefused(Box::new(
+            site.ledger_without_progress(),
+        )));
     }
-
-    // A bounded profile reads a closed finite trace.
-    if matches!(trace, TraceInput::Lasso { .. })
-        && clause.profile() != TemporalProfile::InfiniteTrace
-    {
-        return early(refused("invalid-value", BTreeMap::new()));
+    // FR-330: a model-arm behaviour is re-executed, not read as snapshots.
+    if matches!(trace, TraceInput::Model { .. }) {
+        let model = super::model_trace::run_model(run, node, trace, over);
+        let mut finished = report(
+            model.disposition,
+            model.usage,
+            authenticated_temporal_selection,
+        );
+        finished.decisive = model.decisive;
+        return finished;
     }
     let Some(shape) = trace.shape() else {
         return early(refused("invalid-value", BTreeMap::new()));
     };
 
-    // A trace with no position has no observation to evaluate over.
-    if trace.documents().next().is_none() {
-        return early(ClauseDisposition::TemporalRefusal(match shape {
-            TemporalTrace::Finite { .. } => TemporalTraceRefusal::EmptyTrace,
-            TemporalTrace::Lasso { .. } => TemporalTraceRefusal::EmptyLoop,
-        }));
+    // FR-645: a trace with no position, or a lasso with no loop position, has
+    // no observation to evaluate over.
+    let empty = match trace {
+        TraceInput::Lasso { repeat, .. } if repeat.is_empty() => Some(site.empty_loop()),
+        TraceInput::Finite(positions)
+        | TraceInput::Progressed {
+            trace: positions, ..
+        } if positions.is_empty() => Some(site.empty_trace(trace.kind())),
+        TraceInput::Finite(_)
+        | TraceInput::Progressed { .. }
+        | TraceInput::Timestamped { .. }
+        | TraceInput::Lasso { .. }
+        | TraceInput::Model { .. } => None,
+    };
+    if let Some(refusal) = empty {
+        return early(ClauseDisposition::TraceRefused(Box::new(refusal)));
     }
 
     // FR-504 "Consistency": an assertion the trace contradicts is refused at
@@ -790,13 +1012,56 @@ pub(super) fn run_temporal(run: &CompiledRun<'_>, request: &TemporalRun<'_>) -> 
                 }
             }
         }
-        TraceInput::Finite(_) | TraceInput::Timestamped { .. } | TraceInput::Lasso { .. } => None,
+        TraceInput::Finite(_)
+        | TraceInput::Timestamped { .. }
+        | TraceInput::Lasso { .. }
+        | TraceInput::Model { .. } => None,
     };
 
     let mut admitted = AdmissionUsage::default();
     let mut environments: Vec<ObjectEnvironment> = Vec::new();
+    let mut samples: Vec<Value> = Vec::new();
     let named = node.named_populations();
-    for document in trace.documents() {
+
+    // FR-641: a clause over a declared record trace subject reads record
+    // samples, a clause over a model object reads snapshots.
+    let (_, over_type) = clause.over();
+    let sampled = over.is_none();
+    let fits = if sampled {
+        matches!(over_type, ValueType::Composite(_))
+    } else {
+        matches!(over_type, ValueType::Reference(_))
+    };
+    if !fits {
+        return early(refused(
+            "invalid-value",
+            BTreeMap::from([(
+                "member",
+                (if sampled { "trace" } else { "over" }).to_owned(),
+            )]),
+        ));
+    }
+    if let (true, ValueType::Composite(record)) = (sampled, over_type) {
+        for (index, document) in trace.documents().enumerate() {
+            match fsl_semantics::model::observation::admit_record_sample(
+                graph.scope().types(),
+                record,
+                document.identity.as_bytes(),
+            ) {
+                Ok(sample) => samples.push(sample),
+                Err(record) => {
+                    let mut record = record;
+                    record.fields.insert("position", index.to_string());
+                    return report(
+                        ClauseDisposition::Admit(AdmissionFailure::Refused(Box::new(record))),
+                        ClauseRunUsage::default(),
+                        authenticated_temporal_selection.clone(),
+                    );
+                }
+            }
+        }
+    }
+    for document in trace.documents().filter(|_| !sampled) {
         match admit_trace_snapshot(
             graph.model_inputs(),
             graph.scope().types(),
@@ -840,36 +1105,148 @@ pub(super) fn run_temporal(run: &CompiledRun<'_>, request: &TemporalRun<'_>) -> 
     };
 
     // `over` resolves in the observation at position 0 (FR-330 Inputs).
-    let (_, over_type) = clause.over();
-    let ValueType::Reference(type_identity) = over_type else {
-        return late(ClauseDisposition::EvaluateFault(
-            filament_semantic_value::catalog::InternalFault::new("temporal", "over-is-a-reference"),
-        ));
+    let observing = match over {
+        None => ObservedPositions::Samples(&samples),
+        Some(over) => {
+            let ValueType::Reference(type_identity) = over_type else {
+                return late(ClauseDisposition::EvaluateFault(
+                    filament_semantic_value::catalog::InternalFault::new(
+                        "temporal",
+                        "over-is-a-reference",
+                    ),
+                ));
+            };
+            let universe = match population_universe_for(
+                graph.model_inputs(),
+                run.packages,
+                run.model_limits,
+                type_identity.clone(),
+            ) {
+                Ok(universe) => universe,
+                Err(failure) => return late(ClauseDisposition::Admit(failure)),
+            };
+            let resolved = environments
+                .first()
+                .and_then(|environment| environment.objects().find(universe, &over.key));
+            let Some(reference) = resolved else {
+                return late(refused(
+                    "wrong-role-mapping",
+                    BTreeMap::from([
+                        ("population", over.population.clone()),
+                        ("object", over.key.clone()),
+                    ]),
+                ));
+            };
+            ObservedPositions::Objects {
+                environments: &environments,
+                over: reference,
+            }
+        }
     };
-    let universe = match population_universe_for(
-        graph.model_inputs(),
-        run.packages,
-        run.model_limits,
-        type_identity.clone(),
-    ) {
-        Ok(universe) => universe,
-        Err(failure) => return late(ClauseDisposition::Admit(failure)),
-    };
-    let resolved = environments
-        .first()
-        .and_then(|environment| environment.objects().find(universe, &over.key));
-    let Some(reference) = resolved else {
-        return late(refused(
-            "wrong-role-mapping",
-            BTreeMap::from([
-                ("population", over.population.clone()),
-                ("object", over.key.clone()),
-            ]),
-        ));
+    // The snapshot positions a counterexample and a decisive record read; a
+    // record sample has neither.
+    let objects = match observing {
+        ObservedPositions::Objects { environments, over } => Some((environments, over)),
+        ObservedPositions::Samples(_) => None,
     };
 
+    // FR-757 "Cross-evaluation": a valuation run reads every atom and
+    // activation of the admitted closed finite trace through the one clause
+    // evaluator, in place of the verdict.
+    if valuation {
+        return match fsl_eval::temporal::observed_valuation(
+            run.package,
+            node,
+            observing,
+            shape,
+            &mut meter,
+        ) {
+            Ok(positions) => late(ClauseDisposition::TemporalValuation(Box::new(
+                super::TemporalValuation {
+                    clause: clause.clone(),
+                    positions: Some(positions),
+                },
+            ))),
+            Err(fsl_eval::temporal::ValuationStop::NotFinite) => early(refused(
+                "invalid-value",
+                BTreeMap::from([("member", "trace".to_owned())]),
+            )),
+            Err(_) => late(ClauseDisposition::EvaluateFault(
+                filament_semantic_value::catalog::InternalFault::new(
+                    "temporal",
+                    "valuation-reads-every-atom-and-activation",
+                ),
+            )),
+        };
+    }
+
+    // QSL-2138: only the closed finite route below reads window aggregates.
+    if sampled
+        && !(matches!(trace, TraceInput::Finite(_))
+            && clause.profile() == TemporalProfile::EventPositionFalseExtension)
+        && clause
+            .formula()
+            .nodes()
+            .iter()
+            .any(|formula| matches!(formula, FormulaNode::Aggregate { .. }))
+    {
+        return early(ClauseDisposition::TraceRefused(Box::new(
+            site.window_aggregate(trace.kind()),
+        )));
+    }
+
+    // FR-330-AC-17: a closed finite trace of samples under the event-position
+    // profile is the trace-subject route's, which also reads window
+    // aggregates.
+    if sampled
+        && matches!(trace, TraceInput::Finite(_))
+        && clause.profile() == TemporalProfile::EventPositionFalseExtension
+    {
+        let mut first_undefined = None;
+        let mut delegated = super::trace_subject::run_subject_observing(
+            run,
+            name,
+            over_type,
+            &samples,
+            fsl_eval::temporal::DEFAULT_MAX_WINDOW_VALUES,
+            cancel,
+            &mut first_undefined,
+        );
+        // A violation, and an `Undefined` that is a violation, carries its
+        // counterexample (FR-330 Outputs): the samples are its steps, as for
+        // the other sample routes.
+        let needs = match &delegated.disposition {
+            ClauseDisposition::Temporal(TemporalVerdict::Violated { .. }) => true,
+            ClauseDisposition::Temporal(TemporalVerdict::Undefined { cause, .. }) => {
+                !matches!(cause, TemporalUndefinedCause::InsufficientData { .. })
+            }
+            _ => false,
+        };
+        if needs {
+            match counterexample(node, trace, &delegated.disposition, first_undefined) {
+                Some(built) => delegated.counterexample = Some(built),
+                None => {
+                    delegated.disposition = ClauseDisposition::EvaluateFault(
+                        filament_semantic_value::catalog::InternalFault::new(
+                            "temporal",
+                            "violation-has-its-counterexample",
+                        ),
+                    );
+                }
+            }
+        }
+        return delegated;
+    }
+
+    // FR-352: a run over a trace that asserts progress returns its ledger,
+    // the one it was given or a fresh one.
+    let fresh = ProgressLedger::new();
     let mut accepted_ledger = None;
-    if let Some(ledger) = ledger {
+    // A fresh ledger needs the package's source identity to bind to; a run
+    // with no sources has none, and its atom naming then refuses with
+    // `SourceNotSupplied`, so the fresh admission is skipped.
+    let fresh_ledger = trace.carries_progress() && !run.sources.is_empty();
+    if let Some(ledger) = ledger.or_else(|| fresh_ledger.then_some(&fresh)) {
         let Some((assertion, positions)) = trace.progress() else {
             return early(refused("invalid-value", BTreeMap::new()));
         };
@@ -908,43 +1285,50 @@ pub(super) fn run_temporal(run: &CompiledRun<'_>, request: &TemporalRun<'_>) -> 
             node,
             &window_trace,
             (&[], silent_from),
-            &environments,
-            reference,
+            observing,
             &mut meter,
         );
+        // A violation carries its counterexample (FR-330 Outputs) over record
+        // samples as over snapshots: the samples are its steps.
         let (disposition, counterexample) =
             with_counterexample(node, trace, window.disposition, window.undefined);
         // FR-504: a progressed trace's violation reads its decisive atom
-        // through the finite-trace evaluator, over the supplied trace.
-        let seeking = matches!(
+        // through the finite-trace evaluator, over the supplied trace. A
+        // record sample has none.
+        let violated = matches!(
             disposition,
             ClauseDisposition::Temporal(TemporalVerdict::Violated { .. })
-        )
-        .then(|| {
-            progressed_search(evaluate_observed_decisive(
-                run.package,
-                node,
-                &environments,
-                shape,
-                reference,
-                silent_from,
-                &mut meter,
-            ))
-        });
-        let (disposition, counterexample, decisive) = with_decisive(
-            &DecisiveRun {
-                run,
-                node,
-                trace,
-                environments: &environments,
-                over: reference,
-                silent_from,
-            },
-            seeking,
-            disposition,
-            counterexample,
-            &mut meter,
         );
+        let (disposition, counterexample, decisive) = match objects {
+            Some((environments, reference)) => {
+                let seeking = violated.then(|| {
+                    progressed_search(evaluate_observed_decisive(
+                        run.package,
+                        node,
+                        environments,
+                        shape,
+                        reference,
+                        silent_from,
+                        &mut meter,
+                    ))
+                });
+                with_decisive(
+                    &DecisiveRun {
+                        run,
+                        node,
+                        trace,
+                        environments,
+                        over: reference,
+                        silent_from,
+                    },
+                    seeking,
+                    disposition,
+                    counterexample,
+                    &mut meter,
+                )
+            }
+            None => (disposition, counterexample, None),
+        };
         let accepted = !matches!(
             disposition.category(),
             filament_semantic_value::catalog::Category::Refusal
@@ -973,7 +1357,9 @@ pub(super) fn run_temporal(run: &CompiledRun<'_>, request: &TemporalRun<'_>) -> 
             progress: *progress,
             window,
         };
-        let window = run_finite_window(run, node, &view, &environments, reference, &mut meter);
+        let window = run_finite_window(run, node, &view, screened.as_ref(), observing, &mut meter);
+        // A violation carries its counterexample (FR-330 Outputs) over record
+        // samples as over snapshots: the samples are its steps.
         let (disposition, counterexample) =
             with_counterexample(node, trace, window.disposition, window.undefined);
         let accepted = !matches!(
@@ -994,37 +1380,51 @@ pub(super) fn run_temporal(run: &CompiledRun<'_>, request: &TemporalRun<'_>) -> 
         }
         return finished;
     }
-    let observed = evaluate_observed_decisive(
-        run.package,
-        node,
-        &environments,
-        shape,
-        reference,
-        None,
-        &mut meter,
-    );
+    let observed = match observing {
+        ObservedPositions::Objects { environments, over } => evaluate_observed_decisive(
+            run.package,
+            node,
+            environments,
+            shape,
+            over,
+            None,
+            &mut meter,
+        ),
+        ObservedPositions::Samples(samples) => {
+            evaluate_sampled(run.package, node, samples, shape, None, &mut meter)
+        }
+    };
     let (disposition, refused_at) = observed_disposition(
         observed.stopped,
         observed.result,
         run.package.graph(),
         run.sources,
     );
-    let (disposition, counterexample) =
-        with_counterexample(node, trace, disposition, observed.undefined);
-    let (disposition, counterexample, decisive) = with_decisive(
-        &DecisiveRun {
-            run,
-            node,
-            trace,
-            environments: &environments,
-            over: reference,
-            silent_from: None,
-        },
-        observed.decisive,
-        disposition,
-        counterexample,
-        &mut meter,
-    );
+    let (disposition, counterexample, decisive) = match objects {
+        Some((environments, reference)) => {
+            let (disposition, counterexample) =
+                with_counterexample(node, trace, disposition, observed.undefined);
+            with_decisive(
+                &DecisiveRun {
+                    run,
+                    node,
+                    trace,
+                    environments,
+                    over: reference,
+                    silent_from: None,
+                },
+                observed.decisive,
+                disposition,
+                counterexample,
+                &mut meter,
+            )
+        }
+        None => {
+            let (disposition, counterexample) =
+                with_counterexample(node, trace, disposition, observed.undefined);
+            (disposition, counterexample, None)
+        }
+    };
     let accepted = !matches!(
         disposition.category(),
         filament_semantic_value::catalog::Category::Refusal
@@ -1095,8 +1495,8 @@ fn run_finite_window(
     run: &CompiledRun<'_>,
     node: &fsl_semantics::check::TemporalClauseNode,
     input: &Timestamped<'_>,
-    environments: &[ObjectEnvironment],
-    over: &filament_exact::ObjectReference,
+    screened: Option<&super::late_data::Screened>,
+    observing: ObservedPositions<'_>,
     meter: &mut Meter,
 ) -> WindowRun {
     use fsl_eval::temporal::{
@@ -1110,29 +1510,29 @@ fn run_finite_window(
     };
     let clause = node.clause();
     let ordered = ordered_timestamped_positions(input);
-    let trace = match TimestampedTrace::admit(
+    let late = &input.window.late;
+    let trace = match TimestampedTrace::admit_uncertain(
         clause.name(),
         WindowClock {
             unit: clause.clock().to_owned(),
-            cover: match input.window.cover.unwrap_or(TimestampedCover::Exact) {
-                TimestampedCover::Exact => fsl_eval::temporal::ClockCover::Exact,
-                TimestampedCover::Counter { uncertainty } => {
-                    fsl_eval::temporal::ClockCover::Counter { uncertainty }
-                }
-            },
+            cover: super::late_data::eval_cover(input.window.cover),
         },
         ordered
             .iter()
-            .map(|position| WindowObservation {
-                stamp: position.stamp,
-                order_key: position
-                    .order_key
-                    .as_ref()
-                    .map(|order| fsl_eval::temporal::OrderKey {
-                        authority: order.authority.clone(),
-                        key: order.key,
-                    }),
-                observation: observation_identity(&position.document),
+            .map(|(index, position)| {
+                (
+                    WindowObservation {
+                        stamp: position.stamp,
+                        order_key: position.order_key.as_ref().map(|order| {
+                            fsl_eval::temporal::OrderKey {
+                                authority: order.authority.clone(),
+                                key: order.key,
+                            }
+                        }),
+                        observation: observation_identity(&position.document),
+                    },
+                    super::late_data::interval_at(late, *index),
+                )
             })
             .collect(),
         WindowProgress {
@@ -1150,18 +1550,22 @@ fn run_finite_window(
         Ok(trace) => trace,
         Err(_) => return fault("finite-window-trace-admits"),
     };
+    // FR-966 "Identity": each read observation's arrival watermark, in
+    // canonical order, and the late-data cutoff and classification.
+    let mut lateness = screened.map_or_else(Default::default, |screened| screened.lateness.clone());
+    lateness.arrivals = ordered
+        .iter()
+        .map(|(index, _)| late.arrivals.get(*index).copied().flatten())
+        .collect();
+    let trace = trace.with_lateness(lateness);
     // The valuation lists name positions by listing index; the evaluator reads
     // canonical positions.
     let canonical = |valuations: &[TimestampedMissingValuation]| -> Vec<(u64, u64)> {
         valuations
             .iter()
             .filter_map(|valuation| {
-                let original = input
-                    .observations
-                    .get(usize::try_from(valuation.position).ok()?)?;
-                let position = ordered
-                    .iter()
-                    .position(|candidate| std::ptr::eq(*candidate, original))?;
+                let listed = usize::try_from(valuation.position).ok()?;
+                let position = ordered.iter().position(|(index, _)| *index == listed)?;
                 Some((u64::try_from(position).ok()?, valuation.atom))
             })
             .collect()
@@ -1186,15 +1590,37 @@ fn run_finite_window(
             .collect()
     };
     let absent = same_atom(canonical(&input.window.missing_valuations));
-    run_window(
-        run,
-        node,
-        &trace,
-        (&absent, None),
-        environments,
-        over,
-        meter,
-    )
+    let mut window = run_window(run, node, &trace, (&absent, None), observing, meter);
+    if let (Some(screened), Some(report)) = (screened, window.report.as_mut()) {
+        let reach = match fsl_eval::temporal::window_reach(
+            &fsl_eval::temporal::evidence::ClauseFacts::of_checked(clause),
+        ) {
+            Ok(reach) => reach,
+            Err(_) => return fault("finite-window-reach-fits"),
+        };
+        let stamps: Vec<u64> = trace
+            .positions()
+            .iter()
+            .map(|position| position.stamp)
+            .collect();
+        report.late = screened.late.as_ref().map(|entries| {
+            entries
+                .iter()
+                .map(|entry| LateEntry {
+                    anchors: super::late_data::anchors(
+                        &clause.activation(),
+                        &stamps,
+                        reach,
+                        entry.stamp,
+                    ),
+                    ..entry.clone()
+                })
+                .collect()
+        });
+        report.admitted_late.clone_from(&screened.admitted);
+        report.unmatched_admissions.clone_from(&screened.unmatched);
+    }
+    window
 }
 
 /// FR-501, FR-504: evaluate `clause` over the admitted `trace` and report its
@@ -1206,24 +1632,36 @@ fn run_window(
     node: &fsl_semantics::check::TemporalClauseNode,
     trace: &fsl_eval::temporal::TimestampedTrace,
     (absent, silent_from): (&[(u64, u64)], Option<u64>),
-    environments: &[ObjectEnvironment],
-    over: &filament_exact::ObjectReference,
+    observing: ObservedPositions<'_>,
     meter: &mut Meter,
 ) -> WindowRun {
     let classes = atom_classes(run, node);
-    let observed = fsl_eval::temporal::evaluate_observed_finite_window(
-        run.package,
-        node,
-        environments,
-        trace,
-        over,
-        fsl_eval::temporal::WindowValuations {
-            absent,
-            classes: &classes,
-            silent_from,
-        },
-        meter,
-    );
+    let valuations = fsl_eval::temporal::WindowValuations {
+        absent,
+        classes: &classes,
+        silent_from,
+    };
+    let observed = match observing {
+        ObservedPositions::Objects { environments, over } => {
+            fsl_eval::temporal::evaluate_observed_finite_window(
+                run.package,
+                node,
+                environments,
+                trace,
+                over,
+                valuations,
+                meter,
+            )
+        }
+        ObservedPositions::Samples(samples) => fsl_eval::temporal::evaluate_sampled_finite_window(
+            run.package,
+            node,
+            samples,
+            trace,
+            valuations,
+            meter,
+        ),
+    };
     let undefined = observed.undefined;
     match (observed.stopped, observed.result) {
         (Some(HoldsStop::Refused { at, evaluation }), _) => WindowRun {
@@ -1390,15 +1828,11 @@ fn with_decisive(
 }
 
 /// The decisive record of `atom`, read over the observation at its position.
-#[deny(clippy::wildcard_enum_match_arm)]
 fn decisive_record(
     source: &DecisiveRun<'_>,
     atom: DecisiveAtom,
     meter: &mut Meter,
 ) -> Result<Option<crate::TemporalDecisive>, Box<ClauseDisposition>> {
-    use filament_eval::FamilyOutcome;
-    use filament_exact::{Outcome, Value};
-    use fsl_eval::value::CheckedPackageEvaluation as _;
     let DecisiveRun {
         run,
         node,
@@ -1433,19 +1867,45 @@ fn decisive_record(
     let objects = environments
         .get(slot)
         .ok_or_else(|| fault("decisive-position-has-an-environment"))?;
+    decisive_over(
+        run,
+        node,
+        atom,
+        over,
+        objects,
+        fsl_eval::value::ObservationIdentity {
+            authority: document.authority.clone(),
+            identity: document.identity.clone(),
+        },
+        meter,
+    )
+}
+
+/// The decisive record of `atom`, evaluated over `objects`, the observation
+/// `observation` names, with the clause's `over` parameter bound to `over`.
+#[deny(clippy::wildcard_enum_match_arm)]
+#[allow(clippy::too_many_arguments)]
+pub(super) fn decisive_over(
+    run: &CompiledRun<'_>,
+    node: &fsl_semantics::check::TemporalClauseNode,
+    atom: DecisiveAtom,
+    over: &filament_exact::ObjectReference,
+    objects: &ObjectEnvironment,
+    observation: fsl_eval::value::ObservationIdentity,
+    meter: &mut Meter,
+) -> Result<Option<crate::TemporalDecisive>, Box<ClauseDisposition>> {
+    use filament_eval::FamilyOutcome;
+    use filament_exact::{Outcome, Value};
+    use fsl_eval::value::CheckedPackageEvaluation as _;
+    let fault = |invariant: &'static str| {
+        Box::new(ClauseDisposition::EvaluateFault(
+            filament_semantic_value::catalog::InternalFault::new("temporal", invariant),
+        ))
+    };
+    let position = atom.position.index();
     let evaluation = run
         .package
-        .evaluate_holds_traced(
-            node,
-            atom.atom,
-            over,
-            objects,
-            fsl_eval::value::ObservationIdentity {
-                authority: document.authority.clone(),
-                identity: document.identity.clone(),
-            },
-            meter,
-        )
+        .evaluate_holds_traced(node, atom.atom, over, objects, observation, meter)
         .map_err(|failure| {
             let refusal = *convert_call_failure(failure);
             Box::new(if let RunRefusal::Fault(internal) = refusal {
@@ -1493,7 +1953,8 @@ pub(super) fn observation_slot(trace: &TraceInput, at: usize) -> Option<usize> {
         TraceInput::Lasso { .. }
         | TraceInput::Finite(_)
         | TraceInput::Progressed { .. }
-        | TraceInput::Timestamped { .. } => Some(at),
+        | TraceInput::Timestamped { .. }
+        | TraceInput::Model { .. } => Some(at),
     }
 }
 
@@ -1712,10 +2173,15 @@ fn finite_window_report(
             cover: match premises.cover {
                 ClockCover::Exact => TimestampedCover::Exact,
                 ClockCover::Counter { uncertainty } => TimestampedCover::Counter { uncertainty },
+                ClockCover::Bounded { uncertainty } => TimestampedCover::Bounded { uncertainty },
             },
             unit: premises.unit,
         },
         identity: identity.0,
+        late: None,
+        admitted_late: Vec::new(),
+        unmatched_admissions: Vec::new(),
+        correction: None,
     })
 }
 
@@ -1875,6 +2341,12 @@ pub enum TimestampedCover {
         /// The widening `u`, in ticks.
         uncertainty: u64,
     },
+    /// A point stamp `t` covers the closed interval `[t-u, t+u]` (FR-501
+    /// "Bounded cover and interval stamps").
+    Bounded {
+        /// The widening `u`, in ticks.
+        uncertainty: u64,
+    },
 }
 
 /// Whether the evaluator produced an outcome (FR-501 "Result report").
@@ -1930,6 +2402,17 @@ pub struct FiniteWindowReport {
     pub premises: FiniteWindowPremises,
     /// The result identity: a content identity over the inputs.
     pub identity: String,
+    /// FR-501 "Late-data cutoff": the observations the cutoff excluded, in
+    /// input order; `None` when no cutoff is selected.
+    pub late: Option<Vec<LateEntry>>,
+    /// FR-526: the late observations a superseding repair admitted.
+    pub admitted_late: Vec<AdmittedLate>,
+    /// The `admit_late` names that match no late observation, which the
+    /// run's correction refuses `admitted-not-late` (FR-526).
+    pub unmatched_admissions: Vec<String>,
+    /// FR-526: the run's place in a correction chain, once the run settles
+    /// its relation.
+    pub correction: Option<super::correction::CorrectionRecord>,
 }
 
 /// The spine's own form of the evaluator's outcome (FR-100-AC-8).

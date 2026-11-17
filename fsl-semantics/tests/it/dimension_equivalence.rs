@@ -1259,3 +1259,28 @@ fn a_refused_unit_graph_still_resolves_package_typed_units_for_equivalences() {
     );
     assert_eq!(at, "z");
 }
+
+/// FR-480-AC-19 (TC-2179): the library assembler handed an empty unit list
+/// refuses `invalid_package`/`established-invariant-broken`, because every
+/// caller's request reader refuses an empty program first.
+#[trace("TC-2179", "FR-480-AC-19")]
+#[test]
+fn an_empty_unit_list_breaks_the_assemblers_invariant() {
+    let refusal = PackageDeclarations::assemble_units(
+        "example".to_owned(),
+        Vec::new(),
+        Vec::<fsl_semantics::model::intake::SelectedModel>::new(),
+        Vec::new(),
+        fsl_semantics::check::AssemblyLimits::default(),
+        &filament_exact::Cancel::new(),
+    )
+    .expect_err("an empty unit list is refused");
+    let [error] = refusal.errors.as_slice() else {
+        panic!("exactly one error: {:?}", refusal.errors);
+    };
+    assert_eq!(error.cause, AssemblyCause::EmptyUnitList);
+    assert_eq!(
+        error.cause.catalog_code().to_string(),
+        "invalid_package/established-invariant-broken"
+    );
+}

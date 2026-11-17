@@ -17,14 +17,14 @@ Verify FR-625's request item and result. Scope: FR-625-AC-1 to FR-625-AC-5.
 1. Analyze `Bounded` and count the Counter subject's reachable states and steps with an independent breadth-first search.
 2. Analyze `always holds(c.value <= 2)`.
 3. Analyze `Bounded` with `max_states` 2, then with `max_depth` 1.
-4. Analyze invariant clauses `self.value <= 3` and `self.value <= 2`.
+4. Analyze invariant clauses `self.value <= 3` and `self.value <= 2` with no `kind`, then `self.value <= 3` with `kind` `temporal-satisfaction`.
 5. Analyze over the Counter domain with an unbounded `setTo(n: Integer)`.
 
 ## Expected Results
 
 - Step 1: `proved`, `exhaustive`, `certified`, counts equal to the oracle's 4 and 3.
 - Step 2: `refuted`, four-state prefix ending at 3, reproduced.
-- Step 3: `incomplete` `LimitReached{max_states}` with 2 states; `LimitReached{max_depth}`.
-- Step 4: `proved`; `refuted` ending at 3.
+- Step 3: `incomplete` `LimitReached{max_states}` with 2 states; the horizon run `inconclusive` `bound-reached` with depth 1, never `incomplete` or `proved`; exit 22.
+- Step 4: each read as `operation-contract`, family `state-model`, and run on EN-1: `proved`; `refuted` ending at 3. The `temporal-satisfaction` item settles `invalid-request` `inapplicable-kind`, `family` `state-model`, with no engine run.
 - Step 5: `unsupported` `unbounded-extent`.
 - Assertions compare the outcome document's typed members and the exit code, never message text.

@@ -136,7 +136,11 @@ fn request(with_dependency: bool) -> ReplayRequestWire {
     let checked = spine::check_units_with_refinement_internals(
         &admitted,
         ROOT.into(),
-        Some(root_internals.clone()),
+        fsl_replay::spine::SourceInputs {
+            refinement_internals: Some(root_internals.clone()),
+            temporal_selections: &[],
+            clocks: None,
+        },
         &models,
         &dependencies,
         limits,

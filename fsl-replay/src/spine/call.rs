@@ -41,6 +41,7 @@ use fsl_semantics::model::refusal::OfferedSelection;
 use fsl_semantics::value::environment_stage::membership_failure_code;
 
 use super::lifecycle as front_end;
+use super::run_value::{ArgumentDefect, Forms, ReadStop};
 use super::{
     AdmittedModels, CheckedUnit, CompileRefusal, DependencyInput, EmittedUnit, SpineLimits,
 };
@@ -77,6 +78,35 @@ pub struct CallArgument {
     pub value: Value,
 }
 
+/// One `{parameter, value}` argument as the request wrote it: FR-650's run
+/// value form, read against the parameter's declared type once the program
+/// is checked.
+#[derive(Clone, Debug)]
+pub struct WireArgument {
+    /// The parameter's declared name.
+    pub parameter: String,
+    /// A JSON integer in the signed 64-bit range, or a JSON object.
+    pub value: serde_json::Value,
+}
+
+/// A call's snapshot document, as the command path admitted its bytes, and
+/// the limits its admission runs under.
+#[derive(Clone)]
+pub struct CallSnapshot {
+    /// The snapshot document.
+    pub observation: super::SuppliedObservation,
+    /// FR-106's admission limits.
+    pub limits: fsl_semantics::model::observation::ObservationLimits,
+}
+
+impl std::fmt::Debug for CallSnapshot {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("CallSnapshot")
+            .field("reference", &self.observation.reference)
+            .finish_non_exhaustive()
+    }
+}
+
 /// The `call` member of a 1-draft native-run/1 request (FR-100 Inputs):
 /// which function to call, its arguments, and the S6a accounting limits the
 /// call runs under.
@@ -87,6 +117,13 @@ pub struct Call {
     pub function: String,
     /// The call's arguments, one per parameter, in any order.
     pub arguments: Vec<CallArgument>,
+    /// The call's arguments as a request wrote them (FR-650); they bind with
+    /// [`Self::arguments`], one per parameter.
+    pub wire_arguments: Vec<WireArgument>,
+    /// FR-650 "Arguments": the one current snapshot whose object world a
+    /// Reference or Population argument resolves against; `None` for a call
+    /// with an empty object world.
+    pub snapshot: Option<CallSnapshot>,
     /// The S6a `filament.value.accounting/v1` limits the call charges under.
     pub accounting: ScalarLimits,
     /// FR-277: the caller's supplied-value helper ceilings. An omitted
@@ -96,6 +133,10 @@ pub struct Call {
     /// default. A backend the caller did not supply refuses; no other
     /// backend runs in its place.
     pub backend: filament_eval::ExecutionBackendChoice,
+    /// FR-640, FR-100: the clock configurations of the program's
+    /// clock-bearing declarations by clock name; empty when the request
+    /// supplied none.
+    pub clocks: super::RequestClocks,
 }
 
 impl Call {
@@ -110,16 +151,19 @@ impl Call {
         Self {
             function,
             arguments,
+            wire_arguments: Vec::new(),
+            snapshot: None,
             accounting,
             supplied,
             backend: filament_eval::ExecutionBackendChoice::default(),
+            clocks: super::RequestClocks::default(),
         }
     }
 }
 
-/// A value [`run`] completed. [`run`] refuses `unsupported_construct` before
-/// any call for a function whose declared result is not Boolean, integer or
-/// Reference.
+/// A value [`run`] completed. [`run`] refuses `unknown_required_feature`
+/// before any call for a function whose declared result has no run value form
+/// (FR-650).
 #[derive(Clone, Debug)]
 pub enum CallValue {
     /// `{"kind": "boolean", "value": ...}`.
@@ -129,6 +173,20 @@ pub enum CallValue {
     Integer(Integer),
     /// An admitted model reference, retaining its exact identity triple.
     Reference(filament_exact::ObjectReference),
+    /// Any other kind, in FR-650's run value form.
+    Written(serde_json::Value),
+}
+
+impl CallValue {
+    /// The value in FR-650's run value form.
+    pub fn form(&self) -> serde_json::Value {
+        match self {
+            Self::Boolean(value) => serde_json::json!({"boolean": value}),
+            Self::Integer(value) => serde_json::json!({"integer": value.to_string()}),
+            Self::Reference(reference) => super::run_value::reference_form(reference),
+            Self::Written(form) => form.clone(),
+        }
+    }
 }
 
 /// A refusal's [`Locus::Region`], resolved to the path of the source it
@@ -270,9 +328,9 @@ pub enum RunRefusal {
         /// The request's `function` string.
         function: String,
     },
-    /// The named function's declared result is neither `Boolean` nor an
-    /// integer type (`unsupported_construct`).
-    #[error("the function {function} does not declare a Boolean or integer result")]
+    /// The named function's declared result type has no run value form
+    /// (`unknown_required_feature`, FR-650).
+    #[error("the result of the function {function} has no run value form")]
     UnsupportedResult {
         /// The request's `function` string.
         function: String,
@@ -296,6 +354,22 @@ pub enum RunRefusal {
     UnboundParameter {
         /// The unbound parameter's declared name.
         parameter: String,
+    },
+    /// An argument is not a value of its parameter's declared type, with the
+    /// cause and the JSON pointer FR-650 names.
+    #[error("the argument at position {position} is refused: {} at {:?}", .defect.cause, .defect.path)]
+    Argument {
+        /// The parameter's zero-based declared position.
+        position: usize,
+        /// The defect.
+        defect: ArgumentDefect,
+    },
+    /// A parameter's declared type has no run value form
+    /// (`unknown_required_feature`, FR-650).
+    #[error("the parameter at position {position} has no run value form")]
+    UnsupportedParameter {
+        /// The parameter's zero-based declared position.
+        position: usize,
     },
     /// An argument's value is not of its parameter's declared type, found
     /// either before the call or by S6a admission (`invalid_runtime_input`).
@@ -391,6 +465,8 @@ impl RunRefusal {
             | Self::UnknownParameter { .. }
             | Self::DuplicateArgument { .. }
             | Self::UnboundParameter { .. }
+            | Self::Argument { .. }
+            | Self::UnsupportedParameter { .. }
             | Self::WrongValueKind { .. }
             | Self::Admission { .. }
             | Self::Storage { .. }
@@ -426,6 +502,8 @@ impl RunRefusal {
             | Self::UnknownParameter { .. }
             | Self::DuplicateArgument { .. }
             | Self::UnboundParameter { .. }
+            | Self::Argument { .. }
+            | Self::UnsupportedParameter { .. }
             | Self::WrongValueKind { .. }
             | Self::Admission { .. }
             | Self::Storage { .. }
@@ -445,7 +523,10 @@ impl RunRefusal {
         match self {
             Self::Compile(refusal) => refusal.code(),
             Self::MissingDeclaration { .. } => Code::MissingDeclaration,
-            Self::UnsupportedResult { .. } => Code::UnsupportedConstruct,
+            Self::UnsupportedResult { .. } | Self::UnsupportedParameter { .. } => {
+                Code::UnknownRequiredFeature
+            }
+            Self::Argument { defect, .. } => defect.code,
             Self::UnknownParameter { .. }
             | Self::DuplicateArgument { .. }
             | Self::UnboundParameter { .. }
@@ -470,6 +551,80 @@ impl RunRefusal {
     /// [`Self::Fault`] is an internal failure.
     pub fn category(&self) -> Category {
         self.code().category()
+    }
+
+    /// FR-286 "Diagnostic details" and FR-100's refusal table: the one closed
+    /// object that locates this refusal inside the request and the call, or
+    /// `None` for a refusal whose row has none. The command-error envelope and
+    /// the outcome diagnostic carry this same object.
+    #[must_use]
+    pub fn details(&self) -> Option<serde_json::Map<String, serde_json::Value>> {
+        use serde_json::{json, Value};
+        let object = |value: Value| match value {
+            Value::Object(members) => Some(members),
+            _ => None,
+        };
+        match self {
+            Self::MissingDeclaration { function } | Self::UnsupportedResult { function } => {
+                object(json!({"function": function}))
+            }
+            Self::UnknownParameter { parameter }
+            | Self::DuplicateArgument { parameter }
+            | Self::UnboundParameter { parameter } => object(json!({"parameter": parameter})),
+            Self::Argument { position, defect } => {
+                object(json!({"position": position, "path": defect.path}))
+            }
+            Self::UnsupportedParameter { position }
+            | Self::WrongValueKind { position }
+            | Self::DanglingReference { position }
+            | Self::Storage { position, .. } => object(json!({"position": position})),
+            Self::Admission { position, refusal } => match &refusal.cause {
+                ModelRefusalCause::ForeignUniverse { actual, expected } => object(json!({
+                    "position": position,
+                    "required": super::node_key_form(expected.root_type()),
+                    "supplied": super::node_key_form(actual),
+                })),
+                ModelRefusalCause::ForeignModelSelection { actual, expected } => {
+                    let expected = json!({"identity": expected.identity});
+                    match actual {
+                        OfferedSelection::Document(identity) => object(json!({
+                            "position": position,
+                            "model_identity": identity,
+                            "expected": expected,
+                        })),
+                        OfferedSelection::Population(population) => object(json!({
+                            "position": position,
+                            "population": {"package": population.package, "node": population.node},
+                            "expected": expected,
+                        })),
+                    }
+                }
+                ModelRefusalCause::ForeignType { member, type_name } => object(json!({
+                    "position": position,
+                    "member": member,
+                    "type": {"package": type_name.package, "node": type_name.node},
+                })),
+                _ => object(json!({"position": position})),
+            },
+            Self::Supplied(stop) => stop
+                .context
+                .parameter
+                .and_then(|position| object(json!({"position": position}))),
+            Self::UnsupportedHelper(stop) => stop
+                .context
+                .parameter
+                .and_then(|position| object(json!({"position": position}))),
+            Self::Fault(fault) => object(json!({
+                "stage": fault.stage(),
+                "invariant": fault.invariant(),
+            })),
+            Self::Compile(_)
+            | Self::SourceNotSupplied { .. }
+            | Self::ObjectEnvironment(_)
+            | Self::Cancelled(_)
+            | Self::Unsupported(_)
+            | Self::PrepareLimit(_) => None,
+        }
     }
 }
 
@@ -549,6 +704,7 @@ pub(crate) fn run_reading<T>(
             Err(fault) => Box::new(RunRefusal::Fault(fault)),
         },
     };
+    let own_package = package_name.clone();
     let parsed = front_end::parse(
         &front_end::ParseRequest {
             source: &source,
@@ -563,15 +719,118 @@ pub(crate) fn run_reading<T>(
     let models = front_end::select(&parsed, packages, limits.model, cancel)
         .map_err(refusal)?
         .into_value();
-    let checked = front_end::check(&parsed, package_name, &models, dependencies, limits, cancel)
-        .map_err(refusal)?
-        .into_value();
-    let emitted = front_end::package(&checked, limits.package, cancel)
-        .map_err(refusal)?
-        .into_value();
+    let check_selections = call.clocks.check_selections(&parsed);
+    let checked = front_end::check_with_refinement_internals(
+        &parsed,
+        package_name,
+        super::SourceInputs {
+            refinement_internals: None,
+            temporal_selections: &check_selections,
+            clocks: Some(&call.clocks),
+        },
+        &models,
+        dependencies,
+        limits,
+        cancel,
+    )
+    .map_err(refusal)?
+    .into_value();
+    let selections = call
+        .clocks
+        .package_selections(&checked, &[&parsed])
+        .map_err(|compile| Box::new(RunRefusal::Compile(compile)))?;
+    let emitted =
+        front_end::package_with_temporal_selections(&checked, &selections, limits.package, cancel)
+            .map_err(refusal)?
+            .into_value();
+    let outcome = run_compiled(
+        &checked,
+        &models,
+        CallSources {
+            package_name: &own_package,
+            packages,
+            model_limits: limits.model,
+        },
+        call,
+        objects,
+        backends,
+        prepare,
+        cancel,
+    )?;
+    let read = read(&checked, &emitted, &models)?;
+    Ok((outcome, read))
+}
+
+/// The compile inputs a call over an already compiled program still reads
+/// (FR-650): the package it was compiled as, and the model packages and
+/// limits its call snapshot and population universes are admitted against.
+#[derive(Clone, Copy)]
+pub(crate) struct CallSources<'a> {
+    pub(crate) package_name: &'a str,
+    pub(crate) packages: &'a fsl_semantics::model::intake::PackageInput,
+    pub(crate) model_limits: fsl_semantics::model::accounting::ModelNormalizationLimits,
+}
+
+/// Run a call against one already compiled program. The call gets fresh
+/// argument admission and evaluation accounting while reusing the checked
+/// package, emitted package and admitted model set.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn run_compiled(
+    checked: &super::CheckedUnit,
+    models: &super::AdmittedModels,
+    sources: CallSources<'_>,
+    call: &Call,
+    objects: &ObjectEnvironment,
+    backends: &SuppliedBackends<'_>,
+    prepare: &PrepareLimits,
+    cancel: &Cancel,
+) -> Result<CallOutcome, Box<RunRefusal>> {
+    backends
+        .member(call.backend)
+        .map_err(|entry| Box::new(RunRefusal::Unsupported(entry)))?;
     let package = checked.package();
+    let CallSources {
+        package_name: own_package,
+        packages,
+        model_limits,
+    } = sources;
     let selected = select(package, &call.function)?;
-    let arguments = bind_arguments(selected.parameters, &call.arguments)?;
+    let admitted_world;
+    let objects = match &call.snapshot {
+        Some(snapshot) => {
+            admitted_world = admit_call_snapshot(package, packages, model_limits, snapshot)?;
+            &admitted_world
+        }
+        None => objects,
+    };
+    let bound_world;
+    let objects = if call.snapshot.is_some() {
+        bound_world =
+            bind_snapshot_populations(objects, models.models(), selected.parameters, call)?;
+        &bound_world
+    } else {
+        objects
+    };
+    let universe_of = |declared: &filament_exact::EffectiveId| {
+        fsl_semantics::model::observation::population_universe_for(
+            package.graph().model_inputs(),
+            packages,
+            model_limits,
+            declared.clone(),
+        )
+        .ok()
+    };
+    let world = call.snapshot.as_ref().map(|_| super::run_value::World {
+        objects,
+        universe_of: &universe_of,
+    });
+    let forms = Forms::new(
+        package.graph().scope().types(),
+        package.graph().scope().enums(),
+    )
+    .in_world(own_package, world.as_ref());
+    let supplied = admit_wire_arguments(&forms, selected.parameters, call)?;
+    let arguments = bind_arguments(selected.parameters, &supplied)?;
     admit_model_arguments(
         models.models(),
         package.graph().scope().types(),
@@ -609,9 +868,144 @@ pub(crate) fn run_reading<T>(
     let mut sources = Vec::with_capacity(1 + checked.libraries().len());
     sources.push(checked.source().clone());
     sources.extend(checked.libraries().iter().cloned());
-    let outcome = convert_outcome(evaluation, package.graph(), &sources)?;
-    let read = read(&checked, &emitted, &models)?;
-    Ok((outcome, read))
+    let outcome = match &evaluation.outcome {
+        FamilyOutcome::Evaluated(Outcome::Completed(value))
+            if !matches!(
+                value,
+                Value::Boolean(_) | Value::Integer(_) | Value::Reference(_)
+            ) =>
+        {
+            match forms.write(value) {
+                Ok(form) => CallOutcome::Completed(CallValue::Written(form)),
+                Err(super::run_value::WriteStop::NoForm) => {
+                    return Err(Box::new(RunRefusal::UnsupportedResult {
+                        function: call.function.clone(),
+                    }))
+                }
+                Err(super::run_value::WriteStop::Fault(invariant)) => {
+                    return Err(Box::new(RunRefusal::Fault(InternalFault::new(
+                        "call", invariant,
+                    ))))
+                }
+            }
+        }
+        _ => convert_outcome(evaluation, package.graph(), &sources)?,
+    };
+    Ok(outcome)
+}
+
+/// FR-650 "Population argument": FR-084 admission binds each population the
+/// call names for a `Population<T>[N]` parameter, with the parameter's
+/// declared maximum, and FR-089 records its identity in the object context.
+fn bind_snapshot_populations(
+    objects: &ObjectEnvironment,
+    models: &[fsl_semantics::model::intake::SelectedModel],
+    parameters: &[(String, ValueType)],
+    call: &Call,
+) -> Result<ObjectEnvironment, Box<RunRefusal>> {
+    use fsl_semantics::model::dispatch::GeneralizationClosure;
+    use fsl_semantics::model::domain_package::DomainPackageRecord;
+    use fsl_semantics::model::population::{
+        admit_binding, AdmissionMeter, AdmissionOutcome, PopulationAdmissionLimits,
+        PopulationDocument, PopulationMember,
+    };
+    let mut environment = objects.clone();
+    for (position, (name, value_type)) in parameters.iter().enumerate() {
+        let ValueType::Population(maximum) = value_type else {
+            continue;
+        };
+        let Some(named) = call
+            .wire_arguments
+            .iter()
+            .find(|argument| argument.parameter == *name)
+            .and_then(|argument| argument.value.get("population"))
+            .and_then(serde_json::Value::as_str)
+        else {
+            continue;
+        };
+        let Some(members) = objects.population_members(named) else {
+            continue;
+        };
+        let wrong = || Box::new(RunRefusal::WrongValueKind { position });
+        let Some((model, key)) = models.iter().find_map(|model| {
+            model
+                .view
+                .domain_package()
+                .records
+                .iter()
+                .find_map(|record| match record {
+                    DomainPackageRecord::Population(population) if population.key.node == named => {
+                        Some((model, population.key.clone()))
+                    }
+                    _ => None,
+                })
+        }) else {
+            continue;
+        };
+        let documents = members
+            .iter()
+            .map(|member| {
+                model
+                    .view
+                    .type_identities()
+                    .iter()
+                    .find(|(_, identity)| *identity == member.object_type())
+                    .map(|(declaration, _)| PopulationMember {
+                        object: member.object().as_str().to_owned(),
+                        type_identity: declaration.clone(),
+                        field_values: Vec::new(),
+                    })
+            })
+            .collect::<Option<Vec<_>>>()
+            .ok_or_else(wrong)?;
+        let document = PopulationDocument {
+            model_identity: model.view.model_selection().identity.clone(),
+            members: documents,
+        };
+        let mut meter = AdmissionMeter::new(PopulationAdmissionLimits::default());
+        let AdmissionOutcome::Admitted(binding) = admit_binding(
+            &model.view,
+            &document,
+            &key,
+            GeneralizationClosure::Closed,
+            *maximum,
+            &mut meter,
+        ) else {
+            return Err(wrong());
+        };
+        environment = environment.with_population(binding).map_err(|_| wrong())?;
+    }
+    Ok(environment)
+}
+
+/// FR-650 "Arguments": the object world of the call's snapshot, admitted
+/// as FR-109's `Function` selection admits its snapshot.
+fn admit_call_snapshot(
+    package: &CheckedPackage,
+    packages: &fsl_semantics::model::intake::PackageInput,
+    model_limits: fsl_semantics::model::accounting::ModelNormalizationLimits,
+    snapshot: &CallSnapshot,
+) -> Result<ObjectEnvironment, Box<RunRefusal>> {
+    use fsl_semantics::model::observation::AdmissionFailure;
+    let provision = BTreeMap::from([(
+        snapshot.observation.reference.clone(),
+        snapshot.observation.bytes.clone(),
+    )]);
+    match fsl_semantics::model::observation::admit_current_snapshot(
+        package.graph().model_inputs(),
+        package.graph().scope().types(),
+        packages,
+        model_limits,
+        &provision,
+        &snapshot.observation.reference,
+        snapshot.limits,
+    ) {
+        Ok((environment, _)) => Ok(environment),
+        Err(AdmissionFailure::Refused(record) | AdmissionFailure::Incomplete(record)) => {
+            Err(Box::new(RunRefusal::ObjectEnvironment(record)))
+        }
+        Err(AdmissionFailure::Fault(fault)) => Err(Box::new(RunRefusal::Fault(fault))),
+    }
 }
 
 /// The selected function: its S6a name and declared parameters.
@@ -643,10 +1037,10 @@ pub(crate) fn select<'a>(
         return Err(missing());
     }
     let callable = package.graph().callable(first).ok_or_else(missing)?;
-    if !matches!(
-        callable.result,
-        ValueType::Boolean | ValueType::Integer | ValueType::Int(_) | ValueType::Reference(_)
-    ) {
+    let graph_scope = package.graph().scope();
+    let result_has_form =
+        Forms::new(graph_scope.types(), graph_scope.enums()).has_form(callable.result);
+    if !result_has_form {
         return Err(Box::new(RunRefusal::UnsupportedResult {
             function: function.to_owned(),
         }));
@@ -666,6 +1060,89 @@ pub(crate) fn is_identifier(segment: &str) -> bool {
         _ => return false,
     }
     bytes.all(|byte| byte.is_ascii_alphanumeric() || byte == b'_')
+}
+
+/// Read each request-written argument (FR-650) as the value of its
+/// parameter's declared type, after the binding-name checks of FR-100 and in
+/// declared parameter order, stopping at the first defect. Returns every
+/// argument as a typed one.
+pub(crate) fn admit_wire_arguments(
+    forms: &Forms<'_>,
+    parameters: &[(String, ValueType)],
+    call: &Call,
+) -> Result<Vec<CallArgument>, Box<RunRefusal>> {
+    if call.wire_arguments.is_empty() {
+        return Ok(call.arguments.clone());
+    }
+    let mut bound = vec![false; parameters.len()];
+    let names = call
+        .arguments
+        .iter()
+        .map(|argument| &argument.parameter)
+        .chain(
+            call.wire_arguments
+                .iter()
+                .map(|argument| &argument.parameter),
+        );
+    for name in names {
+        let position = parameters
+            .iter()
+            .position(|(parameter, _)| parameter == name)
+            .ok_or_else(|| {
+                Box::new(RunRefusal::UnknownParameter {
+                    parameter: name.clone(),
+                })
+            })?;
+        if std::mem::replace(&mut bound[position], true) {
+            return Err(Box::new(RunRefusal::DuplicateArgument {
+                parameter: name.clone(),
+            }));
+        }
+    }
+    if let Some((_, (name, _))) = bound.iter().zip(parameters).find(|(bound, _)| !**bound) {
+        return Err(Box::new(RunRefusal::UnboundParameter {
+            parameter: name.clone(),
+        }));
+    }
+    let mut supplied = call.arguments.clone();
+    for (position, (name, value_type)) in parameters.iter().enumerate() {
+        let Some(wire) = call
+            .wire_arguments
+            .iter()
+            .find(|argument| argument.parameter == *name)
+        else {
+            continue;
+        };
+        // A parameter with no run value form refuses whatever the value is.
+        if !forms.has_form(value_type) {
+            return Err(Box::new(RunRefusal::UnsupportedParameter { position }));
+        }
+        let read = match &wire.value {
+            serde_json::Value::Number(number) => match number.as_i64() {
+                Some(number) => forms.bare_integer(number, value_type),
+                None => Err(ReadStop::Defect(ArgumentDefect {
+                    code: Code::InvalidRuntimeInput,
+                    cause: "wrong-value-kind",
+                    path: String::new(),
+                })),
+            },
+            form => forms.read(form, value_type),
+        };
+        let value = read.map_err(|stop| {
+            Box::new(match stop {
+                ReadStop::Defect(defect) => RunRefusal::Argument { position, defect },
+                ReadStop::Unsupported => RunRefusal::UnsupportedParameter { position },
+                ReadStop::Fault(invariant) => {
+                    RunRefusal::Fault(InternalFault::new("call", invariant))
+                }
+            })
+        })?;
+        supplied.push(CallArgument {
+            parameter: name.clone(),
+            value,
+        });
+    }
+    Ok(supplied)
 }
 
 /// Join each argument to the parameter of the same declared name (refusing
@@ -761,18 +1238,48 @@ pub(crate) fn argument_value(
             Value::Population(value) => Ok(Value::Population(value)),
             _ => Err(wrong()),
         },
-        ValueType::Rational(_)
-        | ValueType::Decimal(_)
-        | ValueType::Float(_)
-        | ValueType::Quantity(_)
-        | ValueType::BoundedQuantity(_)
-        | ValueType::CarriedQuantity(_)
-        | ValueType::Text(_)
-        | ValueType::Enum(_)
-        | ValueType::Option(_)
-        | ValueType::Composite(_)
-        | ValueType::Collection(_)
-        | ValueType::Map(_) => Err(wrong()),
+        // A value of these types arrives admitted against its declared type
+        // (FR-650) or is checked by S6a admission; only its kind is read here.
+        ValueType::Rational(_) => match value {
+            Value::Rational(value) => Ok(Value::Rational(value)),
+            _ => Err(wrong()),
+        },
+        ValueType::Decimal(_) => match value {
+            Value::Decimal(value) => Ok(Value::Decimal(value)),
+            _ => Err(wrong()),
+        },
+        ValueType::Float(_) => match value {
+            Value::Float(value) => Ok(Value::Float(value)),
+            _ => Err(wrong()),
+        },
+        ValueType::Text(_) => match value {
+            Value::Text(value) => Ok(Value::Text(value)),
+            _ => Err(wrong()),
+        },
+        ValueType::Enum(_) => match value {
+            Value::Enum(value) => Ok(Value::Enum(value)),
+            _ => Err(wrong()),
+        },
+        ValueType::Option(_) => match value {
+            Value::Option(value) => Ok(Value::Option(value)),
+            _ => Err(wrong()),
+        },
+        ValueType::Composite(_) => match value {
+            Value::Composite(value) => Ok(Value::Composite(value)),
+            Value::Union(value) => Ok(Value::Union(value)),
+            _ => Err(wrong()),
+        },
+        ValueType::Collection(_) => match value {
+            Value::Collection(value) => Ok(Value::Collection(value)),
+            _ => Err(wrong()),
+        },
+        ValueType::Quantity(_) | ValueType::BoundedQuantity(_) | ValueType::CarriedQuantity(_) => {
+            match value {
+                Value::Quantity(value) => Ok(Value::Quantity(value)),
+                _ => Err(wrong()),
+            }
+        }
+        ValueType::Map(_) => Err(wrong()),
     }
 }
 

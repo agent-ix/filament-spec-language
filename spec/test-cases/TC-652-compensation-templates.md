@@ -42,8 +42,10 @@ Tag the tests `#[trace("TC-652", "FR-207-AC-n")]`.
 - Step 3: the enabled steps FR-207-AC-3 states.
 - Step 4: closed at `Ok`; no activation, no compensation thread, no second
   registration.
-- Step 5: V-8 `unsupported`, cause `RecoveryView{predicate}`, with
-  no state explored.
+- Step 5: `cend` at t6 has two successors, `recovered` at `r.bal` 0 and
+  `unrecovered` at `r.bal` 1; nothing settles `unsupported`; the claim that
+  every finished instance is `recovered` is refuted at `r.bal` 1 and the
+  counterexample replays.
 - Step 6: two `cattempt` identities at t4, differing only in `record`;
   under `not e.ok`, two retry `cattempt` steps and `cend` after `ok` false
   and `cend` alone after `ok` true; under `l.ok`, one retry `cattempt` with

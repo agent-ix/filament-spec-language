@@ -51,7 +51,13 @@ id of every node.
 The source is the checked tree (`check::ir::Node`), not the parsed
 `Expression`: each checked node carries its checked type, and FR-322 takes
 every `result_type` and literal `type` from the checked type, never by
-inference. Each `Expression` form checks to the `NodeKind` the table below
+inference. The exceptions are an integer `div`, `rem` or `mod` application,
+whose `result_type` is the builtin `Integer` node while its checked type is
+FR-495's exact interval, and an integer-typed control node (`if`, `let`,
+`case`) whose `result_type` is the node of its lowered type, the hull of the
+lowered types of the leaves it yields, which is `Integer` when one of them is such an
+application (FR-495 "Representation of an integer division
+result"). Each `Expression` form checks to the `NodeKind` the table below
 names.
 
 FSpec references (`ix://agent-ix/filament-specification`, by reference): FR-322 "Operation families, groups and constraints", the closed
@@ -433,15 +439,18 @@ and `decimal(1, 0)` are the values 1.00 and 1, and neither is reduced.
 `check` SHALL type the constructor by the decimal type its position gives it:
 the declared result of a function gives one, and a literal operand of `+`, `-`,
 `*` or `/` beside an operand of one named decimal type takes that type
-(FR-104 "Infix decimal arithmetic"). A negated literal takes its operand's
+(FR-104 "Infix decimal arithmetic"). A literal operand of a comparison
+(`=`, `!=`, `<`, `<=`, `>`, `>=`) takes the other operand's static type when
+that operand is not a literal (FSpec FR-140), so `self.level < decimal(9, 1)`
+over a `Decimal[..]` field `level` is typed by `level`'s type. A negated literal takes its operand's
 decimal type from the position and is typed by it. A `let` binding gives no
-type.
+type, and two literal operands of one operator give each other none.
 
 `check` SHALL decide a constructor in this order, and the first failing step
 is the refusal:
 
 1. A position that gives no type SHALL refuse `ill_typed`/`ambiguous-literal`
-   (FR-104-AC-16), and a position that expects a type that is not a
+   (FR-104-AC-16), located at the literal, and a position that expects a type that is not a
    `Decimal[..]` SHALL refuse `ill_typed`/`type-mismatch`.
 2. **Literal scale limit.** A written scale `s` above the S3 setting
    `s3.decimal_literal_scale`, default 65535 digits, SHALL refuse
@@ -541,7 +550,7 @@ to `x`'s node.
 | `IeeeNumericEquality`, `IeeeTotalOrder`, `IeeeBitIdentical` (`=` over floats, and the `numericEqual`, `totalOrder` and `bitIdentical` intrinsic calls) | `call`, as the operation catalog lists them | `filament.op.ieee.numeric_equal`, `filament.op.ieee.total_order`, `filament.op.ieee.bit_identical` | law `ieee_profile`; no mode; none is a requirement claim site | `[ref(l), ref(r)]` |
 | `Order(operator, kind)` (`<`, `<=`, `>`, `>=`) | `binary` | `filament.op.<f>.lt`, `.le`, `.gt`, `.ge`, where `<f>` is `integer`, `rational`, `decimal`, `enum`, `text` or `quantity` for `kind` `Integers`, `Rationals`, `Decimals`, `Enums`, `Texts`, `Quantities` | for `text`: law `text_profile`, mode `text_profile` = the operands' profile | `[ref(l), ref(r)]` |
 | `Equality(operator, schedule)` (`=`, `!=`) | `binary` | `filament.op.<f>.eq` or `.ne` for an operand family `<f>` of `boolean`, `integer`, `rational`, `decimal`, `text`, `enum`, `quantity`, `reference`, `string`, `uuid` or `timestamp`; `filament.op.structural.eq` or `.ne` for an `option`, record, tuple, union or collection operand | for `text`: law `text_profile`, mode `text_profile`; for `string`, `uuid` and `timestamp`: no law, no mode, no member and no leaves; for `structural`: leaves `operand:0`, the compared type's text-leaf list | `[ref(l), ref(r)]` |
-| `Coerce(e, interval)` (an integer admitted into an `Int[..]` that does not contain its type) | `convert` | `filament.op.numeric.narrow` | member `type_argument{declaration: T(Int[interval])}` | `[ref(e)]` |
+| `Coerce(e, interval)` (an integer admitted into an `Int[..]` that does not contain its type, or an `e` whose lowered type is `Integer` because it is an integer `div`, `rem` or `mod` application, a control node yielding one, or a read of a `let` binder bound to either, admitted into any `Int[..]`, FR-495) | `convert` | `filament.op.numeric.narrow` | member `type_argument{declaration: T(Int[interval])}` | `[ref(e)]` |
 | `ConvertScalar(target, e)` whose operand type is an exact numeric type other than the target | `convert` | `filament.op.numeric.convert` | member `type_argument` of the target type node | `[ref(e)]` |
 | `ConvertScalar(target, e)` whose operand is a quantity | `convert` | `filament.op.quantity.convert` | member `type_argument` of the target type node; mode `rounding` = `exact` for a `Quantity<u>` target, and the carried node's `rounding` for a `Quantity<u, C>` target (FR-497) | `[ref(e)]` |
 | `ConvertText(target, e)` (`convert<T>(e)` whose operand has a `Text[..]` or `String` type, FSpec FR-478) | `convert` | `filament.op.text.to_<k>` for a `Text[..]` operand, `filament.op.string.to_<k>` for a `String` operand, where `<k>` is `integer` (`Integer`, `Int[..]`), `decimal` (`Decimal`, `Decimal[..]`), `rational` (`Rational`, `Rational[..]`), `float32`, `float64` or `quantity` (`Quantity<u>`) for the target | law `text_profile` for a `Text[..]` operand, then law `ieee_profile` for a `float32` or `float64` target; mode `rounding` = the target's mode for a decimal or IEEE target (`exact` when the target omits it) and `exact` for a quantity target, no mode for an integer or rational target; member `type_argument` of the target type node | `[ref(e)]` |
@@ -660,8 +669,13 @@ text that is not a number, and its refusals for a number outside `T` or a
 strict `exact` rounding, are FR-478's at evaluation.
 
 A `Coerce` exists only for a narrowing: an integer whose type an `Int[..]`
-contains is admitted with no node, and a `ConvertScalar` whose operand type
-equals its target builds no node; its parent references the operand's node.
+contains is admitted with no node, except an operand whose lowered type is
+`Integer` while its checked type is an interval (an integer `div`, `rem` or
+`mod` application, a control node yielding one, or a read of a `let` binder bound to either; FR-495
+"Representation of an integer division result"): its `Coerce` into any
+`Int[..]`, a containing one included, lowers to exactly one narrow over the
+operand. A `ConvertScalar` whose operand type equals its target builds no
+node. Where no node is built, the parent references the operand's node.
 
 **Converted equality operand.** An `Equality` operand written `convert<T>(e)`,
 whose `e` has an exact numeric or quantity type other than `T`, is checked as

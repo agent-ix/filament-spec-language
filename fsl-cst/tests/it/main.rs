@@ -5,6 +5,8 @@
 
 mod abstraction_declaration;
 mod aggregate_atom;
+mod aggregate_connectives;
+mod annotated_let;
 mod complete_cst;
 mod complete_grammar;
 mod composition_declaration;
@@ -12,8 +14,10 @@ mod cst_identity;
 mod decimal_constructor;
 mod deep_sources;
 mod expression_syntax;
+mod formatter_style;
 mod guarantee_declaration;
 mod hyper_clause;
+mod limit_messages;
 mod limits;
 mod model_source;
 mod model_unit;
@@ -24,5 +28,6 @@ mod reserved_declaration_names;
 mod selection;
 mod source_refusal;
 mod standard_forms;
+mod syntax_messages;
 mod taskset;
 mod terminal_declaration;

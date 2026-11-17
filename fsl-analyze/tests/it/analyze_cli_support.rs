@@ -1,8 +1,9 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //! Shared harness for the `native-analyze/1` stubs (FR-620 to FR-636): writes
 //! a request document and its files into a fresh directory, hands it to the
-//! in-process command adapter (`fsl_command::command::run`), and returns the
-//! exit code and the FR-286 outcome document. The driver binary is not used:
+//! in-process command adapter (`fsl_command::command::analyze`) with an FSpec
+//! FR-290 negotiation double standing for the driver's `negotiate_*`, and
+//! returns the exit code and the FR-286 outcome document. The driver binary is not used:
 //! the language repository cannot depend on the driver, and the adapter is
 //! the library half every frontend calls.
 
@@ -55,11 +56,83 @@ impl Workspace {
     }
 }
 
+/// The FSpec FR-290 settlement the driver's `negotiate_*` gives an item
+/// from its candidates, as a test double: one candidate is `supported`, none
+/// `unsupported`, several `invalid-request` `ambiguous-backend`, and an
+/// unregistered named backend `invalid-request` `unknown-backend`.
+pub(crate) struct Fr290;
+
+impl fsl_analyze::analyze::document::Negotiate for Fr290 {
+    fn negotiate(
+        &self,
+        item: &fsl_analyze::analyze::ClaimItem,
+        candidates: &fsl_route::CandidateOutcome,
+    ) -> (
+        fsl_route::routing::Disposition,
+        Option<fsl_analyze::analyze::Diagnostic>,
+    ) {
+        use fsl_analyze::analyze::{Diagnostic, Payload};
+        use fsl_route::routing::Disposition;
+        use fsl_semantics::check::NegotiationOutcome;
+        match candidates {
+            fsl_route::CandidateOutcome::UnknownBackend(backend) => (
+                Disposition::InvalidRequest,
+                Some(Diagnostic {
+                    code: NegotiationOutcome::UnknownBackend.code(),
+                    payload: Payload::Backend(backend.clone()),
+                }),
+            ),
+            fsl_route::CandidateOutcome::Candidates(set) => match set.candidates() {
+                [candidate] => (Disposition::Supported(candidate.clone()), None),
+                [] => (
+                    Disposition::Unsupported,
+                    Some(Diagnostic {
+                        code: NegotiationOutcome::UnsupportedRequestedCapability.code(),
+                        payload: Payload::Kind(item.kind),
+                    }),
+                ),
+                _ => (
+                    Disposition::InvalidRequest,
+                    Some(Diagnostic::new(NegotiationOutcome::AmbiguousBackend.code())),
+                ),
+            },
+        }
+    }
+}
+
 /// Hand `request` to the command adapter and return its exit code and its
 /// outcome document: the result document of an accepted request, or the
 /// FR-286 `analyze` document of a refused one.
 pub(crate) fn analyze(request: &Path) -> Run {
-    match fsl_command::command::run(request) {
+    analyze_with_providers(request, Vec::new())
+}
+
+/// [`analyze`] with `providers` registered as the caller's process providers
+/// (FR-635), through `fsl_command::command::analyze_with_providers`.
+pub(crate) fn analyze_with_providers(
+    request: &Path,
+    providers: Vec<fsl_analyze::analyze::Engine>,
+) -> Run {
+    analyze_with_providers_under(
+        request,
+        providers,
+        &fsl_analyze::provider::ProviderOptions::default(),
+    )
+}
+
+/// [`analyze_with_providers`] under the run's provider `options` (FR-964).
+pub(crate) fn analyze_with_providers_under(
+    request: &Path,
+    providers: Vec<fsl_analyze::analyze::Engine>,
+    options: &fsl_analyze::provider::ProviderOptions,
+) -> Run {
+    match fsl_command::command::analyze_with_providers(
+        request,
+        &Fr290,
+        providers,
+        options,
+        &filament_exact::Cancel::new(),
+    ) {
         Ok(result) => Run {
             exit: i32::from(result.exit_code),
             stdout: result.value.to_string().into_bytes(),
@@ -129,6 +202,25 @@ pub(crate) fn counter_request_with(ws: &Workspace, body: &str, request: Value) -
 /// [`counter_request_with`] over the default members and `items`.
 pub(crate) fn counter_request(ws: &Workspace, body: &str, items: Value) -> PathBuf {
     counter_request_with(ws, body, request_members(Some(items)))
+}
+
+/// FR-627's staying Counter: `setTo(n: Int[0, 3])` is enabled only at
+/// `value = 0` with `n = 0`, a self-loop. A behaviour may take it forever
+/// while `inc` stays enabled, so only fairness on `inc` forces `value = 3`.
+pub(crate) const STAY: &str =
+    "pre Stay using v on M::Counter::setTo { self.value = 0 and n = 0 }\n\
+     post Keeps using v on M::Counter::setTo { self.value = n }\n";
+
+/// [`request_over`] for the staying Counter (the contract, [`STAY`] and
+/// `body`) from counter `a` at 0, with `items`.
+pub(crate) fn staying_counter_request(ws: &Workspace, body: &str, items: Value) -> PathBuf {
+    request_over(
+        ws,
+        &unit_text(&format!("{CONTRACT}{STAY}{body}")),
+        &crate::counter::document_with_ranged_parameter(),
+        &[counter_snapshot(&[("a", 0)])],
+        json!({"items": items}),
+    )
 }
 
 /// The clause `name` over the Counter subject with `fairness` and `formula`.

@@ -19,7 +19,6 @@ const DONE: &str = "terminal Done using v on M when { self.value = 3 };\n";
 /// FR-624-AC-1: a malformed document is a named refusal.
 #[trace("TC-1584", "FR-624-AC-1")]
 #[test]
-#[ignore = "QSL-1976: analyze refusals are not written as named outcome documents yet"]
 fn a_malformed_request_is_a_named_refusal() {
     let ws = Workspace::new("cli-malformed");
     let path = ws.write(
@@ -35,10 +34,11 @@ fn a_malformed_request_is_a_named_refusal() {
     assert_eq!(document["diagnostics"][0]["code"], "invalid-request");
 }
 
-/// FR-624-AC-2: a checker refusal of the program refuses the request at `check`.
+/// FR-624-AC-2: a checker refusal of the program refuses the request at the
+/// checker stage, which FR-286 spells `S3`; FR-624-AC-2 still says `check`, a
+/// wording conflict tracked as QSL-2288.
 #[trace("TC-1584", "FR-624-AC-2")]
 #[test]
-#[ignore = "QSL-1976: analyze compile refusals are not written as outcome documents yet"]
 fn a_refused_program_refuses_at_its_stage() {
     let ws = Workspace::new("cli-check-refusal");
     let path = counter_request(
@@ -48,7 +48,9 @@ fn a_refused_program_refuses_at_its_stage() {
     );
     let run = analyze(&path);
     assert_eq!(run.exit, 20);
-    assert_eq!(run.document()["last_stage"], "check");
+    // FR-286 spells the checker stage `S3` in `last_stage` (FR-286-AC-6).
+    assert_eq!(run.document()["last_stage"], "S3");
+    assert_eq!(run.document()["diagnostics"][0]["code"], "ill_typed");
     assert_eq!(run.document()["items"], json!([]));
 }
 
@@ -59,7 +61,6 @@ fn a_refused_program_refuses_at_its_stage() {
 #[trace("TC-1584", "FR-624-AC-1")]
 #[trace("TC-1082", "FSpec-FR-522-AC-2")]
 #[test]
-#[ignore = "QSL-1976: the command adapter does not route native-analyze/1 requests yet"]
 fn analyze_is_routed_and_never_refused_as_not_routed() {
     let ws = Workspace::new("cli-routed");
     let run = analyze(&counter_request(
@@ -86,7 +87,6 @@ fn analyze_is_routed_and_never_refused_as_not_routed() {
 #[trace("TC-1585", "FR-625-AC-1")]
 #[trace("TC-1585", "FR-625-AC-2")]
 #[test]
-#[ignore = "QSL-2122: explicit-state model-check items are not reachable through fsl analyze yet"]
 fn explicit_state_items_prove_and_refute() {
     let ws = Workspace::new("cli-mc");
     let body = format!("{}{}", bounded(), below_three());
@@ -105,7 +105,7 @@ fn explicit_state_items_prove_and_refute() {
 /// FR-625-AC-4: an invariant state clause is an explicit-state item.
 #[trace("TC-1585", "FR-625-AC-4")]
 #[test]
-#[ignore = "QSL-2122: invariant clauses are not reachable through fsl analyze yet"]
+#[ignore = "QSL-2301: needs an EN-1 invariant item form (translation, closure certificate, replayed state-clause counterexample) and the record backend member FR-621 states"]
 fn invariant_items_prove_and_refute() {
     let ws = Workspace::new("cli-invariant");
     let body = "invariant AtMostThree using v on M::Counter at current { self.value <= 3 }\n\
@@ -113,17 +113,33 @@ fn invariant_items_prove_and_refute() {
     let run = analyze(&counter_request(
         &ws,
         body,
-        json!([{"claim": "AtMostThree"}, {"claim": "AtMostTwo"}]),
+        json!([{"claim": "AtMostThree"}, {"claim": "AtMostTwo"},
+            {"claim": "AtMostThree", "kind": "temporal-satisfaction"}]),
     ));
+    // An invariant keeps its `state-model` family's one kind; over the
+    // request's model subject the tie-break routes it to EN-1, never to the
+    // contract checker (FR-489).
+    assert_eq!(run.item(0)["request"]["kind"], "operation-contract");
+    assert_eq!(run.item(0)["record"]["backend"], "en-1");
     assert_eq!(label(&run.item(0)), "proved");
+    assert_eq!(run.item(0)["record"]["basis"]["type"], "exhaustive");
     assert_eq!(label(&run.item(1)), "refuted");
+    assert_eq!(run.item(1)["record"]["backend"], "en-1");
+    let refused = run.item(2);
+    assert_eq!(
+        refused["record"]["diagnostic"]["cause"],
+        "inapplicable-kind"
+    );
+    assert_eq!(
+        refused["record"]["diagnostic"]["detail"]["family"], "state-model",
+        "{refused}"
+    );
 }
 
 /// FR-626-AC-1, AC-2: deadlock freedom respects intended terminal states.
 #[trace("TC-1586", "FR-626-AC-1")]
 #[trace("TC-1586", "FR-626-AC-2")]
 #[test]
-#[ignore = "QSL-2122: deadlock-freedom items are not reachable through fsl analyze yet"]
 fn deadlock_freedom_respects_terminal_states() {
     let item = json!([{"claim": "M", "temporal": {"item_kind": "deadlock-freedom"}}]);
     let ws = Workspace::new("cli-deadlock");
@@ -137,7 +153,6 @@ fn deadlock_freedom_respects_terminal_states() {
 /// FR-626-AC-3: time-lock freedom over an untimed subject is inapplicable.
 #[trace("TC-1586", "FR-626-AC-3")]
 #[test]
-#[ignore = "QSL-2122: time-lock-freedom items are not reachable through fsl analyze yet"]
 fn time_lock_freedom_over_an_untimed_subject_is_inapplicable() {
     let ws = Workspace::new("cli-time-lock");
     let run = analyze(&counter_request(
@@ -154,7 +169,6 @@ fn time_lock_freedom_over_an_untimed_subject_is_inapplicable() {
 /// FR-627-AC-1: weak fairness proves a liveness item that fails without it.
 #[trace("TC-1587", "FR-627-AC-1")]
 #[test]
-#[ignore = "QSL-2123: liveness items are not reachable through fsl analyze yet"]
 fn weak_fairness_decides_liveness() {
     let fair = clause(
         "Fair",
@@ -163,20 +177,47 @@ fn weak_fairness_decides_liveness() {
     );
     let unfair = clause("Unfair", "", "eventually holds(c.value = 3)");
     let ws = Workspace::new("cli-liveness");
-    let run = analyze(&counter_request(
+    // Over the inc-only Counter the one behaviour reaches 3 and stutters only
+    // at its terminal state (FR-125-AC-2), so `Unfair` holds there; the
+    // staying Counter adds the `setTo(0)` self-loop at 0 that only fairness
+    // on `inc` excludes.
+    let run = analyze(&crate::analyze_cli_support::staying_counter_request(
         &ws,
         &format!("{fair}{unfair}"),
         json!([{"claim": "Fair"}, {"claim": "Unfair"}]),
     ));
     assert_eq!(label(&run.item(0)), "proved");
-    assert_eq!(label(&run.item(1)), "refuted");
+    assert_eq!(run.item(0)["record"]["certification"], "certified");
+    let refuted = run.item(1);
+    assert_eq!(label(&refuted), "refuted");
+    let cycle = refuted["counterexample"]["loop"]
+        .as_array()
+        .expect("a lasso loop");
+    assert!(!cycle.is_empty(), "{refuted}");
+    // Every loop step is the `setTo(0)` self-loop taken at `value = 0`: its
+    // FSpec FR-181 transition identity names `setTo`, and its post state
+    // holds `value` 0 (`Stay` admits only `n = 0` there), so the cycle
+    // never takes `inc`.
+    for step in cycle {
+        let transition = step["transition"].to_string();
+        assert!(transition.contains("setTo"), "a setTo step: {step}");
+        assert!(
+            step["post_state"]["state"]
+                .to_string()
+                .contains(r#""name":"value","value":{"type":"integer","value":"0"}"#),
+            "at value = 0: {step}"
+        );
+    }
+    let ws = Workspace::new("cli-liveness-inc-only");
+    let run = analyze(&counter_request(&ws, &unfair, json!([{"claim": "Unfair"}])));
+    assert_eq!(label(&run.item(0)), "proved");
 }
 
-/// FR-627-AC-4: fairness over a supplied trace is a missing premise.
+/// FR-627-AC-4: a `finite-replay` item naming a temporal clause is
+/// inapplicable to its `temporal-trace` family (FR-507).
 #[trace("TC-1587", "FR-627-AC-4")]
 #[test]
-#[ignore = "QSL-2123: finite-replay items with fairness are not reachable through fsl analyze yet"]
-fn strong_fairness_over_a_supplied_trace_is_refused() {
+fn a_finite_replay_item_over_a_temporal_clause_is_inapplicable() {
     let strong = clause(
         "Strong",
         "fair strong M::Counter::inc;",
@@ -197,27 +238,45 @@ fn strong_fairness_over_a_supplied_trace_is_refused() {
     let run = analyze(&crate::analyze_cli_support::counter_request_with(
         &ws, &strong, request,
     ));
-    assert_eq!(run.exit, 21);
+    // `finite-replay` applies to protocol claims only (FR-507): a temporal
+    // clause is evaluated over a supplied trace by the clause run, where
+    // FR-132 settles the missing premise.
+    assert_eq!(run.exit, 20);
     let item = run.item(0);
-    assert_eq!(label(&item), "unsupported");
-    assert_eq!(item["record"]["cause"]["type"], "missing-fairness-premise");
+    assert_eq!(
+        item["record"]["diagnostic"]["cause"], "inapplicable-kind",
+        "{item}"
+    );
+    assert_eq!(
+        item["record"]["diagnostic"]["detail"]["family"], "temporal-trace",
+        "{item}"
+    );
 }
 
 /// FR-628-AC-1: a possible claim proves with a witness and refutes.
 #[trace("TC-1588", "FR-628-AC-1")]
 #[test]
-#[ignore = "QSL-2125: state-graph items are not reachable through fsl analyze yet"]
 fn possible_claims_prove_and_refute() {
-    let body = "possible ReachThree using t0 over (c: M::Counter) { c.value = 3 }\n\
-                possible ReachFour using t0 over (c: M::Counter) { c.value = 4 }\n";
+    // A target outside `Int[0, 3]` refuses at check (FR-104), so the
+    // unreachable target is `value = 0` from a counter started at 1.
+    let body = "possible ReachThree using v over (c: M::Counter) { c.value = 3 }\n\
+                possible ReachZero using v over (c: M::Counter) { c.value = 0 }\n";
     let ws = Workspace::new("cli-state-graph");
     let run = analyze(&counter_request(
         &ws,
         body,
-        json!([{"claim": "ReachThree"}, {"claim": "ReachFour"}]),
+        json!([{"claim": "ReachThree"}]),
     ));
     assert_eq!(label(&run.item(0)), "proved");
-    assert_eq!(label(&run.item(1)), "refuted");
+    let ws = Workspace::new("cli-state-graph-from-one");
+    let run = analyze(&crate::analyze_cli_support::request_over(
+        &ws,
+        &crate::counter::unit_text(&format!("{}{body}", crate::counter::CONTRACT)),
+        &crate::counter::document(false),
+        &[crate::analyze_cli_support::counter_snapshot(&[("a", 1)])],
+        json!({"items": [{"claim": "ReachZero"}]}),
+    ));
+    assert_eq!(label(&run.item(0)), "refuted");
 }
 
 /// FR-629-AC-4: a liveness item over a release/acquire parallel always has
@@ -262,7 +321,7 @@ fn store_buffering_separates_sc_and_tso() {
 /// FR-634-AC-1: enumerating the Counter subject reports coverage and traces.
 #[trace("TC-1594", "FR-634-AC-1")]
 #[test]
-#[ignore = "QSL-2132: simulation items are not reachable through fsl analyze yet"]
+#[ignore = "QSL-2296 (from QSL-2132): FR-634 does not say which traces an enumerate item reports nor what coverage.choices counts, and fsl-eval exploration returns no traces (spec question open)"]
 fn simulation_enumerates_the_counter_subject() {
     let ws = Workspace::new("cli-simulation");
     let run = analyze(&counter_request(
@@ -274,6 +333,8 @@ fn simulation_enumerates_the_counter_subject() {
     assert_eq!(item["category"], "success");
     assert_eq!(item["coverage"]["states"], "4");
     assert_eq!(item["coverage"]["transitions"], "3");
+    assert_eq!(item["coverage"]["choices"], "0");
+    assert_eq!(item["traces"].as_array().map(Vec::len), Some(1));
     assert_eq!(item["frontier"], json!([]));
     assert!(item.get("record").is_none());
 }
@@ -323,4 +384,109 @@ fn protocol_deadlock_proves_and_refutes() {
             assert_eq!(item["replay"]["reproduced"], true);
         }
     }
+}
+
+/// FR-626-AC-1: the refuted deadlock item's counterexample is a finite prefix
+/// whose last state is the stuck state `value = 3`, and its replay reproduced.
+#[trace("TC-1586", "FR-626-AC-1")]
+#[test]
+fn a_deadlock_counterexample_ends_at_the_stuck_state_and_replays() {
+    let ws = Workspace::new("cli-deadlock-ce");
+    let run = analyze(&counter_request(
+        &ws,
+        "",
+        json!([{"claim": "M", "temporal": {"item_kind": "deadlock-freedom"}}]),
+    ));
+    let item = run.item(0);
+    assert_eq!(label(&item), "refuted");
+    assert_eq!(item["counterexample"]["kind"], "deadlock");
+    assert_eq!(item["replay"]["reproduced"], true);
+    let prefix = item["counterexample"]["prefix"]
+        .as_array()
+        .expect("a finite prefix");
+    assert_eq!(prefix.len(), 3, "inc runs three times from value 0");
+    let last = prefix.last().expect("a last step")["post_state"]["state"].to_string();
+    assert!(last.contains(r#""name":"value","value":{"type":"integer","value":"3"}"#));
+    assert_eq!(run.exit, 10);
+}
+
+/// FR-626-AC-1: a derived item named by its model alias is the one derived
+/// item of the subject, and a claim naming no model alias is `unknown-claim`.
+#[trace("TC-1586", "FR-626-AC-1")]
+#[test]
+fn a_derived_item_over_a_name_that_is_no_model_alias_is_an_unknown_claim() {
+    let ws = Workspace::new("cli-deadlock-unknown");
+    let run = analyze(&counter_request(
+        &ws,
+        "",
+        json!([{"claim": "Nothing", "temporal": {"item_kind": "deadlock-freedom"}}]),
+    ));
+    assert_eq!(
+        run.item(0)["record"]["diagnostic"]["cause"],
+        "unknown-claim"
+    );
+}
+
+/// FR-896-AC-1, AC-2 (TC-2532): a `global-conformance` item with no
+/// recording is decided over every behaviour of the protocol and its bound
+/// role implementations: the order protocol conforms, and without its
+/// receive it is refuted with the deadlock.
+#[trace("TC-2532", "FR-896-AC-1", "FR-896-AC-2")]
+#[test]
+#[ignore = "QSL-2209: a global-conformance item settles unsupported with a pending obligation instead of being decided"]
+fn global_conformance_is_decided_over_every_behaviour() {
+    for (receive, expected) in [(true, "proved"), (false, "refuted")] {
+        let ws = Workspace::new(&format!("cli-conformance-{receive}"));
+        let run = analyze(&litmus_request(
+            &ws,
+            &order_protocol(receive),
+            json!({"items": [{"claim": "Flow", "kind": "global-conformance"}]}),
+        ));
+        assert_eq!(label(&run.item(0)), expected, "receive {receive}");
+    }
+}
+
+/// FR-895-AC-2, FR-894-AC-5 (TC-2530): in replay mode a recording whose
+/// `Seller` receives `Got` before `Buyer` sends `Placed` violates the
+/// causal-order obligation of that pair, and the item settles `refuted`
+/// rather than declining the recording.
+#[trace("TC-2530", "FR-895-AC-2", "FSpec-FR-737-AC-1")]
+#[test]
+#[ignore = "QSL-2210: no replay-mode executor assesses a recorded protocol execution"]
+fn a_receive_recorded_before_its_send_fails_its_causal_order_obligation() {
+    let ws = Workspace::new("cli-replay-mode");
+    let recording = json!({
+        "format": "filament.protocol-recording/1",
+        "protocol": "Flow",
+        "observations": [
+            {"kind": "receive", "node": "Flow::Main::Got", "role": "Seller",
+             "instance": "w-1", "keys": {"message": "m-1", "delivery": "d-1"},
+             "record": {"ok": true}},
+            {"kind": "send", "node": "Flow::Main::Placed", "role": "Buyer",
+             "instance": "w-1", "keys": {"message": "m-1", "delivery": "d-1"},
+             "record": {"ok": true}}
+        ],
+        "local_order": {"Seller": [0], "Buyer": [1]},
+        "correlations": [{"send": 1, "receive": 0}],
+        "closure": {"state": "closed", "premises": []}
+    });
+    ws.write("recording.json", recording.to_string().as_bytes());
+    let run = analyze(&litmus_request(
+        &ws,
+        &order_protocol(true),
+        json!({"items": [{"claim": "Flow", "kind": "global-conformance",
+                          "recording": {"authority": "test", "identity": "recording"}}],
+               "documents": [{"file": "recording.json"}]}),
+    ));
+    let item = run.item(0);
+    assert_eq!(label(&item), "refuted", "{item}");
+    let verdicts = item["obligations"]
+        .as_array()
+        .expect("one verdict per obligation");
+    assert!(
+        verdicts
+            .iter()
+            .any(|verdict| verdict["verdict"] == "violated" && verdict["cause"] == "misordered"),
+        "{item}"
+    );
 }

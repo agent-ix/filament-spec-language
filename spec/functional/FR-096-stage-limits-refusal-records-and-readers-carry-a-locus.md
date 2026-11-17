@@ -340,6 +340,13 @@ A linked `sum` whose prefixes are not all proved members is refused at
 checking (FSpec FR-145, `undefined_expression`/`unproved-range`), so only a
 `sum` checked under `CheckMode::Kernel` meets this outcome.
 
+A `count<N>` is proved the same way at checking
+([FR-766](FR-766-prove-the-result-range-of-count-at-check.md)), but its S6a
+outcome differs: a count has no running total in `N`, only a final count
+retained into `N`, so a kernel-mode count outside `N` is the kernel refusal
+`IntegerOutOfDomain` (`integer_out_of_domain`/`outside-domain`, AC-8), not an
+undefined outcome.
+
 `RefusalRecord` SHALL carry the `CatalogCode`, the O-16 category, an
 optional `Locus`, and the catalog fields. It is built from a `CatalogCoded`
 cause and a locus. Its code is the cause's `catalog_code()`, its category

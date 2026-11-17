@@ -322,7 +322,7 @@ fn required_identity_handoff_preserves_original_record_keys_and_native_views() {
         );
     }
     let encoded: Value = serde_json::from_slice(&bytes).unwrap();
-    assert_eq!(encoded["format"], "filament.checked-handoff.identities/3");
+    assert_eq!(encoded["format"], "filament.checked-handoff.identities/4");
     assert!(encoded["source_records"][0]["record_key"]["path"].is_array());
     let tagged = read
         .source_records()

@@ -25,12 +25,12 @@
 
 mod counterexample;
 pub use counterexample::{
-    assignments_wire, probabilistic_wire, protocol_temporal_wire, temporal_wire,
-    CounterexampleWireError, ProtocolWire,
+    CounterexampleWireError, ProtocolWire, assignments_wire, graph_evidence_wire,
+    probabilistic_wire, protocol_temporal_wire, temporal_wire,
 };
 
 use crate::hybrid::{BoundDimension, SolverHorizon};
-use filament_exact::{CancelCause, NodeKey};
+use filament_exact::{CancelCause, Integer, NodeKey};
 use filament_semantic_value::catalog::Category;
 use fsl_cst::format::FormatRefusal;
 use fsl_foundation::diagnostic::{Code, Locus, StageFailure, Staged, Stopped};
@@ -42,6 +42,7 @@ use serde::ser::SerializeStruct;
 use serde::{Serialize, Serializer};
 use std::collections::{BTreeMap, BTreeSet};
 
+use crate::ReplayRefusal;
 use crate::certificate::{CertificateLocus, CertificateRule};
 use crate::model_check::state_graph::WitnessSource;
 use crate::proof_result::{
@@ -52,12 +53,11 @@ use crate::proof_result::{
 use crate::result::ReplayResult;
 use crate::spine::kernel_undefined_reason;
 use crate::spine::{
-    classify_clause_run, item_record, CallIncomplete, CallOutcome, CallRefusal, CallValue,
-    CheckedUnit, ClauseDisposition, ClauseRunReport, CompileRefusal, EmittedUnit, FrontEndFailure,
-    ParsedUnitSource, ReasonWire, RunRefusal, SpineStage, TemporalUndefinedCause, TemporalVerdict,
+    CallIncomplete, CallOutcome, CallRefusal, CheckedUnit, ClauseDisposition, ClauseRunReport,
+    CompileRefusal, EmittedUnit, FrontEndFailure, ParsedUnitSource, ReasonWire, RunRefusal,
+    SpineStage, TemporalUndefinedCause, TemporalVerdict, classify_clause_run, item_record,
 };
 use crate::statistical::{self, Decision, StatisticalVerdict};
-use crate::ReplayRefusal;
 use filament_semantic_value::fairness::PropertyForm;
 use fsl_eval::temporal::UndefinedCause;
 
@@ -324,6 +324,46 @@ impl WireLocus {
     }
 }
 
+/// The FSpec FR-331 `{node, occurrence}` locus of `claim`, the spelling a
+/// request item's `claim` member takes.
+///
+/// # Errors
+///
+/// When the node key has no wire spelling.
+pub fn claim_locus_wire(
+    claim: &fsl_foundation::source::provenance::OccurrenceKey,
+) -> Result<serde_json::Value, serde_json::Error> {
+    serde_json::to_value(WireLocus::of(claim))
+}
+
+/// FSpec FR-412's structural `CertificateIdentity` `{node_id, model,
+/// ordinal}` of the obligation `claim` names over the subject model
+/// `model`: `node_id` the claim's node, `model` the owning model's identity
+/// text and `ordinal` the claim
+/// occurrence's ordinal (FSpec FR-418-AC-9), the identity
+/// [`crate::ObligationIdentity`] mints for a claim occurrence.
+///
+/// # Errors
+///
+/// When the node key has no wire spelling.
+pub fn certificate_identity_wire(
+    claim: &fsl_foundation::source::provenance::OccurrenceKey,
+    model: &str,
+) -> Result<serde_json::Value, serde_json::Error> {
+    #[derive(Serialize)]
+    struct Identity<'a> {
+        node_id: WireNode,
+        model: &'a str,
+        ordinal: u32,
+    }
+    let identity = crate::ObligationIdentity::from_claim_occurrence(claim);
+    serde_json::to_value(Identity {
+        node_id: WireNode::of(identity.node()),
+        model,
+        ordinal: identity.ordinal(),
+    })
+}
+
 /// The value of an item cause's `limit` member.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
 #[serde(untagged)]
@@ -354,9 +394,10 @@ pub struct ItemCause {
     #[serde(skip_serializing_if = "Option::is_none")]
     locus: Option<WireLocus>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    cause: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
     code: Option<String>,
+    /// A refusal's action-oriented explanation, when the source provides one.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    message: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     parity: Option<ParityReason>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -391,6 +432,9 @@ pub struct ItemCause {
     defect: Option<&'static str>,
     #[serde(skip_serializing_if = "Option::is_none")]
     value: Option<u64>,
+    /// An accounting limit's attempted counter value, as a decimal string.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    counter: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     lower: Option<crate::proof_result::ExactRational>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -427,7 +471,10 @@ pub struct ItemCause {
     /// A `memory-bound-reached` or `instance-bound-reached` cause's request
     /// member (FSpec FR-439, FR-428).
     #[serde(skip_serializing_if = "Option::is_none")]
-    bound: Option<&'static str>,
+    bound: Option<String>,
+    /// An accounting limit's `filament.value.accounting/v1` field.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    field: Option<&'static str>,
     /// A `memory-bound-reached` or `instance-bound-reached` cause's count of
     /// limited states.
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -597,8 +644,8 @@ impl ItemCause {
             kind: Some(kind),
             at: None,
             locus: None,
-            cause: None,
             code: None,
+            message: None,
             parity: None,
             depth: None,
             horizon: None,
@@ -612,6 +659,7 @@ impl ItemCause {
             limit: None,
             defect: None,
             value: None,
+            counter: None,
             lower: None,
             upper: None,
             setting: None,
@@ -626,6 +674,7 @@ impl ItemCause {
             refusal: None,
             total: None,
             bound: None,
+            field: None,
             states: None,
             failures: None,
             predicate: None,
@@ -643,7 +692,7 @@ impl ItemCause {
     pub fn undefined_evaluation(at: impl Into<String>, cause: impl Into<String>) -> Self {
         Self {
             at: Some(at.into()),
-            cause: Some(cause.into()),
+            code: Some(cause.into()),
             ..Self::kind("undefined-evaluation")
         }
     }
@@ -739,7 +788,7 @@ impl ItemCause {
                 bound,
                 states,
             }) => {
-                item.bound = Some(bound.member.as_str());
+                item.bound = Some(bound.member.as_str().to_owned());
                 item.value = Some(bound.value);
                 item.states = Some(ItemCauseStates::Count(*states));
             }
@@ -747,7 +796,7 @@ impl ItemCause {
                 bound,
                 states,
             }) => {
-                item.bound = Some(InstanceBound::MEMBER);
+                item.bound = Some(InstanceBound::MEMBER.to_owned());
                 item.value = Some(bound.value);
                 item.states = Some(ItemCauseStates::Count(*states));
             }
@@ -797,12 +846,19 @@ enum ItemCauseMember {
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
 pub struct OutcomeItem {
     request_index: usize,
-    result: ItemLabel,
+    /// The record's `result`; absent on a record settled by an
+    /// `invalid-request` disposition, which carries no result (FSpec
+    /// FR-331, FR-621).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    result: Option<ItemLabel>,
+    /// The item's result label, which an `invalid-request` disposition
+    /// record does not write.
+    #[serde(skip)]
+    label: ItemLabel,
     #[serde(flatten)]
     cause: ItemCauseMember,
     /// The FR-272 diagnostic of a record settled by an `unsupported` or
-    /// `invalid-request` disposition (FR-286). An `unsupported` item carries
-    /// it and no `cause`; a `declined` item carries both.
+    /// `invalid-request` disposition (FR-286), which carries it and no `cause`.
     #[serde(skip_serializing_if = "Option::is_none")]
     diagnostic: Option<ItemDiagnostic>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -845,6 +901,10 @@ pub struct OutcomeItem {
     /// holds one.
     #[serde(skip_serializing_if = "Option::is_none")]
     witness: Option<serde_json::Value>,
+    /// A state-graph item's FSpec FR-393 witness evidence and its sampled
+    /// witnesses (FR-628).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    evidence: Option<serde_json::Value>,
     /// The values an insufficient-data window held.
     #[serde(skip_serializing_if = "Option::is_none")]
     count: Option<u64>,
@@ -854,6 +914,10 @@ pub struct OutcomeItem {
     /// The qualified name of the clause a clause run settled (FR-286).
     #[serde(skip_serializing_if = "Option::is_none")]
     clause: Option<String>,
+    /// FR-622: the four outcome axes of a `monitor` item, copied from its
+    /// clause run; absent on every item not built from a clause run.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    axes: Option<crate::OutcomeAxes>,
     #[serde(serialize_with = "category_str")]
     category: Category,
 }
@@ -1058,7 +1122,12 @@ impl OutcomeItem {
             | TerminalValue::Failed
             | TerminalValue::ToolFailed(_) => None,
         };
-        let diagnostic = match (record.disposition_detail(), record.diagnostic()) {
+        let diagnostic = match (
+            record
+                .disposition_detail()
+                .or_else(|| record.diagnostic_detail()),
+            record.diagnostic(),
+        ) {
             (Some(detail), Some(code)) => Some(ItemDiagnostic {
                 code: code.code(),
                 cause: code.cause(),
@@ -1066,13 +1135,19 @@ impl OutcomeItem {
             }),
             _ => None,
         };
+        // FR-286, FR-621: a record settled by an `invalid-request`
+        // disposition carries its diagnostic, and no `result` and no `cause`.
+        let invalid_request = matches!(value, TerminalValue::Declined { .. })
+            && record.disposition_detail().is_some();
         Self {
             request_index: record.request_index().get(),
-            result,
-            cause: if matches!(
-                value,
-                TerminalValue::Unsupported(UnavailabilityCause::Disposition)
-            ) {
+            result: (!invalid_request).then_some(result),
+            label: result,
+            cause: if invalid_request
+                || matches!(
+                    value,
+                    TerminalValue::Unsupported(UnavailabilityCause::Disposition)
+                ) {
                 ItemCauseMember::Omitted {}
             } else {
                 ItemCauseMember::Present {
@@ -1093,9 +1168,11 @@ impl OutcomeItem {
             counterexample: None,
             decisive: None,
             witness: None,
+            evidence: None,
             count: None,
             min_count: None,
             clause: None,
+            axes: None,
             category: value.category(),
         }
     }
@@ -1122,7 +1199,7 @@ impl OutcomeItem {
             }
             _ => Self::from_terminal(record),
         };
-        if item.result == ItemLabel::Refuted {
+        if item.label == ItemLabel::Refuted {
             item.counterexample =
                 Some(counterexample.ok_or(OutcomeItemError::MissingCounterexample)?);
         }
@@ -1153,6 +1230,19 @@ impl OutcomeItem {
         item
     }
 
+    /// This state-graph item carrying the FR-393 spelling of its refuting
+    /// evidence as `counterexample` and of its witnesses as `evidence`.
+    #[must_use]
+    pub fn with_graph_evidence(
+        mut self,
+        counterexample: Option<serde_json::Value>,
+        evidence: Option<serde_json::Value>,
+    ) -> Self {
+        self.counterexample = counterexample;
+        self.evidence = evidence;
+        self
+    }
+
     /// The item whose claim evaluated to an undefined value at `at` for
     /// `cause`: refuted, category violation, never labelled `undefined`.
     pub fn undefined_evaluation(
@@ -1162,7 +1252,8 @@ impl OutcomeItem {
     ) -> Self {
         Self {
             request_index: request_index.get(),
-            result: ItemLabel::Refuted,
+            result: Some(ItemLabel::Refuted),
+            label: ItemLabel::Refuted,
             cause: ItemCauseMember::Present {
                 cause: Some(Box::new(ItemCause::undefined_evaluation(at, cause))),
             },
@@ -1180,9 +1271,11 @@ impl OutcomeItem {
             counterexample: None,
             decisive: None,
             witness: None,
+            evidence: None,
             count: None,
             min_count: None,
             clause: None,
+            axes: None,
             category: Category::Violation,
         }
     }
@@ -1219,13 +1312,14 @@ impl OutcomeItem {
             Category::Refusal => ItemLabel::Declined,
             Category::Undefined => ItemLabel::Undefined,
             Category::Inconclusive | Category::InternalFailure => {
-                return Err(ClauseRunNotAnItem::Category(category))
+                return Err(ClauseRunNotAnItem::Category(category));
             }
         };
         let record = item_record(report)?;
         Ok(Self {
             request_index: request_index.get(),
-            result,
+            result: Some(result),
+            label: result,
             diagnostic: None,
             cause: ItemCauseMember::Present {
                 cause: clause_run_cause(report).map(Box::new),
@@ -1234,6 +1328,7 @@ impl OutcomeItem {
             counterexample: record.counterexample,
             decisive: record.decisive,
             witness: record.witness,
+            evidence: None,
             count: record.count,
             min_count: record.min_count,
             basis: None,
@@ -1246,6 +1341,7 @@ impl OutcomeItem {
             limits: None,
             limit_reached: None,
             clause: Some(clause.to_owned()),
+            axes: Some(report.axes()),
             category,
         })
     }
@@ -1258,7 +1354,7 @@ impl OutcomeItem {
 
     /// The item's result label.
     pub fn result(&self) -> ItemLabel {
-        self.result
+        self.label
     }
 
     /// The zero-based index of the request this item settles.
@@ -1312,11 +1408,9 @@ fn clause_run_cause(report: &ClauseRunReport) -> Option<ItemCause> {
                 "unsupported_projection",
                 "missing-fairness-premise",
             )),
-            TemporalVerdict::Incomplete(incomplete) => Some(limit(
-                incomplete.limit_kind.as_str(),
-                incomplete.limit,
-                incomplete.limit_kind.as_str(),
-            )),
+            TemporalVerdict::Incomplete(incomplete) => {
+                Some(accounting_limit_cause(incomplete, "limit-reached", None))
+            }
             TemporalVerdict::ActivationIncomplete { at, .. } => Some(ItemCause {
                 at: Some(format!("position {at}")),
                 ..ItemCause::kind("activation-incomplete")
@@ -1329,11 +1423,20 @@ fn clause_run_cause(report: &ClauseRunReport) -> Option<ItemCause> {
             TemporalVerdict::ProgressLimitReached(reached) => {
                 Some(limit(reached.limit, reached.value, reached.setting))
             }
+            TemporalVerdict::ExpansionLimitReached(reached) => Some(limit(
+                reached.limit.as_str(),
+                reached.value,
+                reached.limit.setting(),
+            )),
         },
         ClauseDisposition::TemporalRefusal(refusal) => {
             let code = refusal.catalog_code();
             Some(catalog(code.code(), code.cause()))
         }
+        ClauseDisposition::TraceRefused(refusal) => Some(ItemCause {
+            message: Some(refusal.message.clone()),
+            ..catalog("invalid_runtime_input", "invalid-value")
+        }),
         ClauseDisposition::ProgressContradiction(refusal) => {
             let code = &refusal.record.catalog;
             Some(catalog(code.code(), code.cause()))
@@ -1341,10 +1444,45 @@ fn clause_run_cause(report: &ClauseRunReport) -> Option<ItemCause> {
         ClauseDisposition::FrameViolation(witness) => {
             Some(catalog(witness.code.as_str(), witness.cause))
         }
+        ClauseDisposition::Admit(
+            AdmissionFailure::Incomplete(record) | AdmissionFailure::Refused(record),
+        ) if record.fields.get("setting").map(String::as_str)
+            == Some("observation.input_bytes") =>
+        {
+            let bound = record.fields.get("bound")?;
+            let actual = record.fields.get("actual")?;
+            Some(ItemCause {
+                code: Some(record.catalog.code().to_owned()),
+                limit: Some(CauseLimit::Name("input-bytes-exceeded")),
+                value: bound.parse().ok(),
+                counter: Some(actual.clone()),
+                setting: Some("observation.input_bytes"),
+                bound: Some(bound.clone()),
+                ..ItemCause::kind("input-bytes-exceeded")
+            })
+        }
         ClauseDisposition::Evaluate(CallOutcome::Undefined { reason }) => Some(ItemCause {
-            cause: Some((*reason).to_owned()),
+            code: Some((*reason).to_owned()),
             ..ItemCause::kind("undefined-evaluation")
         }),
+        ClauseDisposition::Compile(refusal) if has_timed_trace_subject_refusal(refusal) => {
+            classify_clause_run(report)
+                .classification
+                .causes
+                .first()
+                .map(|cause| ItemCause {
+                    code: Some(cause.code.as_str().to_owned()),
+                    message: Some(refusal.to_string()),
+                    ..ItemCause::kind(cause.cause.unwrap_or_else(|| cause.code.as_str()))
+                })
+        }
+        ClauseDisposition::Evaluate(CallOutcome::Incomplete(incomplete)) => {
+            Some(accounting_limit_cause(
+                &incomplete.record,
+                "resource_exhausted",
+                Some("resource_exhausted"),
+            ))
+        }
         _ => classify_clause_run(report)
             .classification
             .causes
@@ -1353,6 +1491,45 @@ fn clause_run_cause(report: &ClauseRunReport) -> Option<ItemCause> {
                 code: Some(cause.code.as_str().to_owned()),
                 ..ItemCause::kind(cause.cause.unwrap_or_else(|| cause.code.as_str()))
             }),
+    }
+}
+
+fn has_timed_trace_subject_refusal(refusal: &CompileRefusal) -> bool {
+    let CompileRefusal::Check { refusals, .. } = refusal else {
+        return false;
+    };
+    refusals.iter().any(|refusal| {
+        matches!(
+            &refusal.cause,
+            fsl_semantics::check::CheckCause::Temporal(cause)
+                if matches!(
+                    cause.as_ref(),
+                    fsl_semantics::check::TemporalCause::TimedTraceSubject { .. }
+                )
+        )
+    })
+}
+
+fn accounting_limit_cause(
+    incomplete: &filament_exact::Incomplete,
+    kind: &'static str,
+    code: Option<&'static str>,
+) -> ItemCause {
+    let counter = if incomplete.limit_kind.is_cumulative() {
+        Integer::from(incomplete.consumed).add(&incomplete.next_charge)
+    } else {
+        incomplete.next_charge.clone()
+    };
+    let setting = crate::limits::AccountingLimits::setting_of(incomplete.limit_kind).name();
+    ItemCause {
+        code: code.map(str::to_owned),
+        limit: Some(CauseLimit::Name(incomplete.limit_kind.as_str())),
+        value: Some(incomplete.limit),
+        counter: Some(counter.to_string()),
+        bound: Some(incomplete.limit.to_string()),
+        field: Some(incomplete.limit_kind.as_str()),
+        setting: Some(setting),
+        ..ItemCause::kind(kind)
     }
 }
 
@@ -1414,11 +1591,22 @@ pub struct OutcomeDiagnostic {
     code: String,
     locus: Option<OutcomeLocus>,
     message: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    construct: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    text: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    declaration: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    profile: Option<String>,
     #[serde(
         skip_serializing_if = "Option::is_none",
         serialize_with = "serialize_source_label"
     )]
     label: Option<SourceLabel>,
+    /// FR-286 "Diagnostic details": `null`, or the closed object that locates
+    /// the refusal inside the request and the call.
+    details: Option<serde_json::Map<String, serde_json::Value>>,
 }
 
 fn serialize_source_label<S>(label: &Option<SourceLabel>, serializer: S) -> Result<S::Ok, S::Error>
@@ -1442,8 +1630,24 @@ impl OutcomeDiagnostic {
             code: code.into(),
             locus,
             message: message.into(),
+            construct: None,
+            text: None,
+            declaration: None,
+            profile: None,
             label: None,
+            details: None,
         }
+    }
+
+    /// This diagnostic with `details` (FR-286 "Diagnostic details"): the closed
+    /// object that locates the refusal, never empty.
+    #[must_use]
+    pub fn with_details(
+        mut self,
+        details: Option<serde_json::Map<String, serde_json::Value>>,
+    ) -> Self {
+        self.details = details.filter(|members| !members.is_empty());
+        self
     }
 
     /// Project a source diagnostic without bytes or an admitted source.
@@ -1475,14 +1679,71 @@ impl OutcomeDiagnostic {
         if let CompileRefusal::Source(diagnostic) = refusal {
             return Self::project_source_diagnostic(diagnostic);
         }
-        Self::new(
+        let mut diagnostic = Self::new(
             refusal.cause(),
             refusal.code().as_str(),
             refusal
                 .region()
                 .map(|region| OutcomeLocus::from(&Locus::Region(region.clone()))),
             refusal.to_string(),
-        )
+        );
+        if let CompileRefusal::Forms { failure, .. } = refusal {
+            match &failure.cause {
+                fsl_forms::FormsCause::NoDispatchEntry {
+                    construct,
+                    text,
+                    declaration,
+                    profile,
+                    ..
+                }
+                | fsl_forms::FormsCause::UnrepresentedConstruct {
+                    construct,
+                    text,
+                    declaration,
+                    profile,
+                    ..
+                } => {
+                    diagnostic.construct = Some(construct.as_str().to_owned());
+                    diagnostic.text = Some(text.clone());
+                    diagnostic.declaration = declaration.clone();
+                    diagnostic.profile = profile.clone();
+                }
+                _ => {}
+            }
+        }
+        diagnostic
+    }
+
+    /// Project a compile refusal with only the limit-setting mechanism the
+    /// named operation accepts. Replay also accepts request `stage_limits`.
+    fn from_compile_refusal_for_operation(operation: Operation, refusal: &CompileRefusal) -> Self {
+        let diagnostic = Self::from_compile_refusal(refusal);
+        Self::for_operation(operation, diagnostic)
+    }
+
+    /// Project every retained compile diagnostic with only the limit-setting
+    /// mechanism the named operation accepts.
+    fn from_compile_refusal_diagnostics_for_operation(
+        operation: Operation,
+        refusal: &CompileRefusal,
+    ) -> Vec<Self> {
+        refusal
+            .outcome_diagnostics()
+            .into_iter()
+            .map(|diagnostic| Self::for_operation(operation, diagnostic))
+            .collect()
+    }
+
+    fn for_operation(operation: Operation, mut diagnostic: Self) -> Self {
+        if operation != Operation::Replay {
+            if let Some((message, _)) = diagnostic
+                .message
+                .split_once(" or the request's `stage_limits` entry ")
+            {
+                diagnostic.message = message.to_owned();
+            }
+        }
+        diagnostic
     }
 
     /// The diagnostic of a refused call: its catalog code and cause, and
@@ -1522,30 +1783,16 @@ impl OutcomeDiagnostic {
     }
 }
 
-/// A completed call's value, in FR-100's rendering.
+/// A completed call's value, in FR-650's run value form.
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
-#[serde(tag = "kind", rename_all = "snake_case")]
-pub enum ResultValue {
-    /// A `Boolean` value.
-    Boolean {
-        /// The value.
-        value: bool,
-    },
-    /// An integer value, in FR-038's ASCII decimal spelling.
-    Integer {
-        /// The decimal digits.
-        decimal: String,
-    },
-    /// An exact model reference identity triple.
-    Reference {
-        /// The object universe identity.
-        universe: String,
-        /// The most-specific object type identity.
-        #[serde(rename = "type")]
-        object_type: String,
-        /// The authored object identity.
-        object_identity: String,
-    },
+#[serde(transparent)]
+pub struct ResultValue(serde_json::Value);
+
+impl ResultValue {
+    /// The value's JSON form.
+    pub fn form(&self) -> &serde_json::Value {
+        &self.0
+    }
 }
 
 /// The evaluation result of an `execute` outcome (FR-286's `result`).
@@ -1602,6 +1849,8 @@ impl From<&CallIncomplete> for ResultLimit {
 /// as an empty array.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct OutcomeDocument {
+    #[cfg(feature = "quire-extraction")]
+    native_fences: Option<crate::spine::NativeFenceReport>,
     format: &'static str,
     operation: Operation,
     last_stage: Option<OutcomeStage>,
@@ -1609,19 +1858,43 @@ pub struct OutcomeDocument {
     items: Vec<OutcomeItem>,
     diagnostics: Vec<OutcomeDiagnostic>,
     result: Option<ExecuteResult>,
+    requirements: Option<Box<RequirementItems>>,
+}
+
+/// The settled requirement items of an `execute` call (FR-963): one FR-621
+/// item entry per item, written in place of `items`, and FR-635's `registry`.
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct RequirementItems {
+    entries: Vec<serde_json::Value>,
+    registry: serde_json::Value,
 }
 
 impl Serialize for OutcomeDocument {
     fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
-        let mut document = serializer.serialize_struct("OutcomeDocument", 8)?;
+        let fields = if self.requirements.is_some() { 9 } else { 8 };
+        let mut document = serializer.serialize_struct("OutcomeDocument", fields)?;
         document.serialize_field("format", &self.format)?;
         document.serialize_field("operation", &self.operation)?;
         document.serialize_field("last_stage", &self.last_stage)?;
         document.serialize_field("category", self.category.as_str())?;
-        document.serialize_field("items", &self.items)?;
+        if let Some(requirements) = &self.requirements {
+            document.serialize_field("items", &requirements.entries)?;
+        } else {
+            #[cfg(feature = "quire-extraction")]
+            if let Some(report) = &self.native_fences {
+                document.serialize_field("items", &report.fences)?;
+            } else {
+                document.serialize_field("items", &self.items)?;
+            }
+            #[cfg(not(feature = "quire-extraction"))]
+            document.serialize_field("items", &self.items)?;
+        }
         document.serialize_field("diagnostics", &self.diagnostics)?;
         document.serialize_field("artifacts", &[(); 0])?;
         document.serialize_field("result", &self.result)?;
+        if let Some(requirements) = &self.requirements {
+            document.serialize_field("registry", &requirements.registry)?;
+        }
         document.end()
     }
 }
@@ -1632,10 +1905,35 @@ impl Serialize for OutcomeDocument {
 pub struct OutcomeWriteError(#[from] serde_json::Error);
 
 impl OutcomeDocument {
+    /// This document with `last_stage` (FR-286): the greatest stage it entered.
+    #[must_use]
+    pub fn with_last_stage(mut self, last_stage: Option<OutcomeStage>) -> Self {
+        self.last_stage = last_stage;
+        self
+    }
+
+    /// One check document carrying an independent result for every native fence.
+    #[cfg(feature = "quire-extraction")]
+    pub fn from_native_fences(report: &crate::spine::NativeFenceReport) -> Self {
+        let category =
+            Category::most_severe(report.fences.iter().map(|fence| fence.category.exit_code()))
+                .and_then(|worst| {
+                    report
+                        .fences
+                        .iter()
+                        .find(|fence| fence.category.exit_code() == worst)
+                })
+                .map_or(Category::Success, |fence| fence.category);
+        let mut document = Self::new(Operation::Check, Some(OutcomeStage::S4), category);
+        document.native_fences = Some(report.clone());
+        document
+    }
     /// A document of `operation` that last reached `last_stage` with the
     /// outcome's `category`, and no items, diagnostics or artifacts.
     pub fn new(operation: Operation, last_stage: Option<OutcomeStage>, category: Category) -> Self {
         Self {
+            #[cfg(feature = "quire-extraction")]
+            native_fences: None,
             format: OUTCOME_FORMAT,
             operation,
             last_stage,
@@ -1643,6 +1941,7 @@ impl OutcomeDocument {
             items: Vec::new(),
             diagnostics: Vec::new(),
             result: None,
+            requirements: None,
         }
     }
 
@@ -1689,6 +1988,10 @@ impl OutcomeDocument {
     /// This document with one entry per requested item, in request order.
     #[must_use]
     pub fn with_items(mut self, items: Vec<OutcomeItem>) -> Self {
+        #[cfg(feature = "quire-extraction")]
+        {
+            self.native_fences = None;
+        }
         self.items = items;
         self
     }
@@ -1700,14 +2003,38 @@ impl OutcomeDocument {
         self
     }
 
+    /// This `execute` document with the settled requirement items of its
+    /// call (FR-963): `items` holds one FR-621 item `entries` entry per item,
+    /// in package order, `registry` is FR-635's `{backend, tool}` list the
+    /// items were negotiated against, and `category` is the most severe of
+    /// the call's and the items' categories. `result` stays the call's.
+    #[must_use]
+    pub fn with_requirement_items(
+        mut self,
+        category: Category,
+        entries: Vec<serde_json::Value>,
+        registry: serde_json::Value,
+    ) -> Self {
+        self.category = category;
+        self.requirements = Some(Box::new(RequirementItems { entries, registry }));
+        self
+    }
+
     /// The outcome's O-16 category, from which FR-285 derives the exit code.
     pub fn category(&self) -> Category {
         self.category
     }
 
-    /// The document's items, in request order.
+    /// The document's terminal-record items, in request order.
+    /// Native fence check items are available through `native_fences`.
     pub fn items(&self) -> &[OutcomeItem] {
         &self.items
+    }
+
+    /// Native fence check items, when this is a Markdown check document.
+    #[cfg(feature = "quire-extraction")]
+    pub fn native_fences(&self) -> Option<&crate::spine::NativeFenceReport> {
+        self.native_fences.as_ref()
     }
 
     /// The document's diagnostics.
@@ -1750,8 +2077,8 @@ impl OutcomeDocument {
     }
 
     /// The document of a `check` outcome: success at S4, which mints no
-    /// identity, so no artifact; a failure names its category and one
-    /// diagnostic.
+    /// identity, so no artifact; a failure names its category and retains
+    /// every diagnostic the refused stage reported.
     pub fn from_check(result: &Result<Staged<CheckedUnit>, FrontEndFailure>) -> Self {
         match result {
             Ok(_) => Self::new(Operation::Check, Some(OutcomeStage::S4), Category::Success),
@@ -1779,13 +2106,21 @@ impl OutcomeDocument {
                 Some(refusal.stage().into()),
                 refusal.code().category(),
             )
-            .with_diagnostics(vec![OutcomeDiagnostic::from_compile_refusal(refusal)]),
+            .with_diagnostics(
+                OutcomeDiagnostic::from_compile_refusal_diagnostics_for_operation(
+                    operation, refusal,
+                ),
+            ),
             StageFailure::RefusedWithPayload(refusal, _) => Self::new(
                 operation,
                 Some(refusal.stage().into()),
                 refusal.code().category(),
             )
-            .with_diagnostics(vec![OutcomeDiagnostic::from_compile_refusal(refusal)]),
+            .with_diagnostics(
+                OutcomeDiagnostic::from_compile_refusal_diagnostics_for_operation(
+                    operation, refusal,
+                ),
+            ),
             StageFailure::Limit(limit) => {
                 let refusal = CompileRefusal::Limit(limit.clone());
                 Self::new(
@@ -1793,7 +2128,9 @@ impl OutcomeDocument {
                     Some(refusal.stage().into()),
                     Category::Incomplete,
                 )
-                .with_diagnostics(vec![OutcomeDiagnostic::from_compile_refusal(&refusal)])
+                .with_diagnostics(vec![
+                    OutcomeDiagnostic::from_compile_refusal_for_operation(operation, &refusal),
+                ])
             }
             StageFailure::LimitWithPayload(limit, _) => {
                 let refusal = CompileRefusal::Limit(limit.clone());
@@ -1802,7 +2139,9 @@ impl OutcomeDocument {
                     Some(refusal.stage().into()),
                     Category::Incomplete,
                 )
-                .with_diagnostics(vec![OutcomeDiagnostic::from_compile_refusal(&refusal)])
+                .with_diagnostics(vec![
+                    OutcomeDiagnostic::from_compile_refusal_for_operation(operation, &refusal),
+                ])
             }
             StageFailure::Cancelled(cause) => Self::cancelled(operation, *cause),
             StageFailure::Fault(fault) => Self::faulted(operation, fault),
@@ -1822,7 +2161,9 @@ impl OutcomeDocument {
                     Some(refusal.stage().into()),
                     Category::Incomplete,
                 )
-                .with_diagnostics(vec![OutcomeDiagnostic::from_compile_refusal(&refusal)])
+                .with_diagnostics(vec![
+                    OutcomeDiagnostic::from_compile_refusal_for_operation(operation, &refusal),
+                ])
             }
             Stopped::Cancelled(cause) => Self::cancelled(operation, cause),
             Stopped::Fault(fault) => Self::faulted(operation, &fault),
@@ -1926,17 +2267,7 @@ impl OutcomeDocument {
             }
             CallOutcome::Completed(value) => {
                 document.result = Some(ExecuteResult::Completed {
-                    value: match value {
-                        CallValue::Boolean(value) => ResultValue::Boolean { value: *value },
-                        CallValue::Integer(value) => ResultValue::Integer {
-                            decimal: value.to_string(),
-                        },
-                        CallValue::Reference(reference) => ResultValue::Reference {
-                            universe: reference.universe().root_type().to_string(),
-                            object_type: crate::spine::effective_spelling(reference.object_type()),
-                            object_identity: reference.object().as_str().to_owned(),
-                        },
-                    },
+                    value: ResultValue(value.form()),
                 });
             }
             CallOutcome::Undefined { reason } => {
@@ -1954,8 +2285,8 @@ impl OutcomeDocument {
     /// The document of a `run`: a call that ran is [`Self::from_call`]'s
     /// document; a refusal is an
     /// `execute` document at the stage it reached with the refusal's
-    /// category and one diagnostic; a cancel is incomplete; a fault is
-    /// internal failure with its catalog code.
+    /// category and every retained diagnostic; a cancel is incomplete; a
+    /// fault is internal failure with its catalog code.
     pub fn from_run(result: &Result<CallOutcome, Box<RunRefusal>>) -> Self {
         match result {
             Ok(outcome) => Self::from_call(outcome),
@@ -1966,10 +2297,24 @@ impl OutcomeDocument {
     /// Project an existing run refusal without taking ownership or executing it.
     /// The caller names the operation whose pipeline produced the refusal.
     pub fn from_run_refusal(operation: Operation, refusal: &RunRefusal) -> Self {
+        let mut document = Self::run_refusal_document(operation, refusal);
+        if let Some(details) = refusal.details() {
+            document.diagnostics = std::mem::take(&mut document.diagnostics)
+                .into_iter()
+                .map(|diagnostic| diagnostic.with_details(Some(details.clone())))
+                .collect();
+        }
+        document
+    }
+
+    fn run_refusal_document(operation: Operation, refusal: &RunRefusal) -> Self {
         match refusal {
             RunRefusal::Compile(compile) => {
-                Self::new(operation, Some(compile.stage().into()), refusal.category())
-                    .with_diagnostics(vec![OutcomeDiagnostic::from_compile_refusal(compile)])
+                Self::new(operation, Some(compile.stage().into()), refusal.category()).with_diagnostics(
+                    OutcomeDiagnostic::from_compile_refusal_diagnostics_for_operation(
+                        operation, compile,
+                    ),
+                )
             }
             RunRefusal::Cancelled(cause) => Self::cancelled(operation, *cause),
             RunRefusal::Fault(fault) => Self::faulted(operation, fault),
@@ -2029,8 +2374,27 @@ impl OutcomeDocument {
                     )],
                 )
             }
+            RunRefusal::Argument { defect, .. } => {
+                Self::new(operation, Some(OutcomeStage::S6a), refusal.category()).with_diagnostics(
+                    vec![OutcomeDiagnostic::new(
+                        Some(defect.cause),
+                        refusal.code().as_str(),
+                        None,
+                        refusal.to_string(),
+                    )],
+                )
+            }
+            RunRefusal::UnsupportedResult { .. } | RunRefusal::UnsupportedParameter { .. } => {
+                Self::new(operation, Some(OutcomeStage::S6a), refusal.category()).with_diagnostics(
+                    vec![OutcomeDiagnostic::new(
+                        Some("unsupported-feature"),
+                        refusal.code().as_str(),
+                        None,
+                        refusal.to_string(),
+                    )],
+                )
+            }
             RunRefusal::MissingDeclaration { .. }
-            | RunRefusal::UnsupportedResult { .. }
             | RunRefusal::UnknownParameter { .. }
             | RunRefusal::DuplicateArgument { .. }
             | RunRefusal::UnboundParameter { .. }
@@ -2140,11 +2504,35 @@ mod tests {
 
     use filament_exact::{Cancel, CancelCause, Identifier, ScalarLimits};
     use filament_semantic_value::catalog::{CatalogCode, InternalFault};
+    use fsl_foundation::diagnostic::LimitExceeded;
+    use fsl_foundation::Setting;
     use fsl_semantics::model::object_environment::ObjectEnvironment;
-    use serde_json::{json, Value};
+    use serde_json::{Value, json};
 
     use super::*;
     use crate::identity::QualifiedName;
+
+    /// Trace: FR-255-AC-3, the operation hint follows the entry point's accepted inputs.
+    #[trace("TC-931", "FR-255-AC-3")]
+    #[test]
+    fn run_limit_message_omits_stage_limits_while_replay_keeps_it() {
+        let run_refusal = RunRefusal::Compile(Box::new(CompileRefusal::Limit(LimitExceeded::new(
+            Setting::S1Tokens,
+            3,
+            4,
+        ))));
+        let run = OutcomeDocument::from_run_refusal(Operation::Execute, &run_refusal);
+        let run_message = run.diagnostics()[0].message();
+        assert!(run_message.contains("--limit s1.tokens"), "{run_message}");
+        assert!(!run_message.contains("stage_limits"), "{run_message}");
+
+        let replay_refusal = ReplayRefusal::Recompile(Box::new(CompileRefusal::Limit(
+            LimitExceeded::new(Setting::S1Tokens, 3, 4),
+        )));
+        let replay = OutcomeDocument::from_replay(&Err(replay_refusal));
+        let replay_message = replay.diagnostics()[0].message();
+        assert!(replay_message.contains("stage_limits"), "{replay_message}");
+    }
 
     #[test]
     fn timed_statistical_refusal_carries_typed_state_and_transition() {
@@ -2261,8 +2649,8 @@ mod tests {
     use crate::proof_result::{IncompleteCause, ProofRefusalCause, UnavailabilityCause};
     use crate::result::{DisagreementCause, EvaluatedValue, InputArmResult, Verdict, WitnessCheck};
     use crate::spine::{
-        check, default_accounting, package, parse, run, select, Call, CallLocus, DependencyInput,
-        PackageLimits, ParseRequest, SpineLimits,
+        Call, CallLocus, DependencyInput, PackageLimits, ParseRequest, SpineLimits, check,
+        default_accounting, package, parse, run, select,
     };
 
     const FIXTURE: &str = include_str!("../../tests/fixtures/spine-compile.native");
@@ -2374,6 +2762,7 @@ mod tests {
                 "diagnostics": [{
                     "cause": "ambiguous-literal",
                     "code": "ill_typed",
+                    "details": null,
                     "locus": {
                         "kind": "region",
                         "source": serde_json::to_value(region.source()).expect("a source ref"),
@@ -3116,7 +3505,7 @@ mod tests {
                         "cause": {
                             "kind": "undefined-evaluation",
                             "where": "position 1",
-                            "cause": "division-by-zero",
+                            "code": "division-by-zero",
                         },
                         "category": "violation",
                     }],
@@ -3157,6 +3546,9 @@ mod tests {
                 .accounting
                 .0;
             let call = Call {
+                clocks: Default::default(),
+                wire_arguments: Vec::new(),
+                snapshot: None,
                 function: "seven".to_owned(),
                 arguments: Vec::new(),
                 accounting,
@@ -3186,7 +3578,7 @@ mod tests {
         );
         assert_eq!(
             run_under("accounting.work_units=1000000"),
-            json!({"kind": "completed", "value": {"kind": "integer", "decimal": "7"}})
+            json!({"kind": "completed", "value": {"integer": "7"}})
         );
     }
 
@@ -3197,6 +3589,9 @@ mod tests {
     #[test]
     fn execute_result_and_cancelled_check_documents() {
         let call = Call {
+            clocks: Default::default(),
+            wire_arguments: Vec::new(),
+            snapshot: None,
             function: "seven".to_owned(),
             arguments: Vec::new(),
             accounting: default_accounting(1_000_000),
@@ -3226,7 +3621,7 @@ mod tests {
                 "items": [],
                 "diagnostics": [],
                 "artifacts": [],
-                "result": {"kind": "completed", "value": {"kind": "integer", "decimal": "7"}},
+                "result": {"kind": "completed", "value": {"integer": "7"}},
             })
         );
 
@@ -3481,6 +3876,9 @@ mod tests {
             &DependencyInput::default(),
             SpineLimits::default(),
             &Call {
+                clocks: Default::default(),
+                wire_arguments: Vec::new(),
+                snapshot: None,
                 function: function.to_owned(),
                 arguments: Vec::new(),
                 accounting: default_accounting(1_000_000),
@@ -3510,7 +3908,7 @@ mod tests {
                 "items": [],
                 "diagnostics": [],
                 "artifacts": [],
-                "result": {"kind": "completed", "value": {"kind": "integer", "decimal": "7"}},
+                "result": {"kind": "completed", "value": {"integer": "7"}},
             })
         );
         assert_eq!(

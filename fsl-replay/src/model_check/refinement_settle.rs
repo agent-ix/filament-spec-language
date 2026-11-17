@@ -239,6 +239,8 @@ fn record_of(
         warnings: Vec::new(),
         memory_bound: None,
         instance_bound: None,
+        exploration: None,
+        checker: None,
     }
 }
 

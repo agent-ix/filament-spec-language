@@ -17,13 +17,15 @@ use fsl_cst::{CstNode, CstToken, LosslessCst, Production, TokenKind};
 use fsl_foundation::Spanned;
 
 use super::dispatch::{Construct, FormsRefusal};
+use super::spans::ExpressionSpans;
 use super::syntax::ActivationForm;
 use super::syntax::{
     BoundOp, ConfidenceItemForm, ConfidenceKey, DeclarationForm, DeclaredName,
-    DelayDistributionForm, DelayForm, EventForm, ExactValueForm, ExpectedQuantity, FractionForm,
-    HorizonForm, MeasureForm, MeasureWindowForm, ProbabilisticBody, ProbabilisticForm, RandomForm,
-    RewardForm, SchedulerForm, SignificantContent, UsingAlias, WeightedDelayForm,
-    WeightedValueForm, WeightingForm, WorkloadForm, WorkloadWeightForm,
+    DelayDistributionForm, DelayForm, EventForm, ExactValueForm, ExactValueKind, ExpectedQuantity,
+    Expression, ExpressionForm, FractionForm, HorizonForm, MeasureForm, MeasureWindowForm,
+    ProbabilisticBody, ProbabilisticForm, RandomForm, RewardForm, SchedulerForm,
+    SignificantContent, UsingAlias, WeightedDelayForm, WeightedValueForm, WeightingForm,
+    WorkloadForm, WorkloadWeightForm,
 };
 use super::temporal_clause::{expression_form, fairness_form, formula_form, parameter_form};
 use super::value::{
@@ -365,15 +367,44 @@ fn probabilistic_body(
                 [_, elapsed] if elapsed.spelling() == b"elapsed" => ExpectedQuantity::Elapsed,
                 _ => return Err(unexpected(form)),
             };
+            let threshold = match nodes_of(&form_items, Production::ExactValue).as_slice() {
+                [value] => expected_threshold_expression(cst, value)?,
+                [] => expression(1)?,
+                _ => return Err(unexpected(form)),
+            };
             Ok(ProbabilisticBody::ExpectedUntil {
                 quantity,
                 target: expression(0)?,
                 op,
-                threshold: expression(1)?,
+                threshold,
             })
         }
         _ => Err(unexpected(form)),
     }
+}
+
+/// An exact-value spelling used as an `expected` bound, as its equivalent
+/// literal expression. Decimal literals are exact values only in this
+/// position; expression parsing elsewhere continues to refuse them.
+fn expected_threshold_expression(
+    cst: &LosslessCst,
+    node: &CstNode,
+) -> Result<ExpressionForm, FormsRefusal> {
+    let value = exact_value(cst, node)?;
+    let expression = match value.kind {
+        ExactValueKind::Natural => Expression::integer(value.first),
+        ExactValueKind::DecimalLiteral | ExactValueKind::Decimal => {
+            let scale = value
+                .second
+                .to_string()
+                .parse::<u32>()
+                .map_err(|_| unexpected(node))?;
+            Expression::decimal(value.first, scale)
+        }
+        ExactValueKind::Rational => Expression::rational(value.first, value.second),
+    };
+    let spans = ExpressionSpans::new(value.span).map_err(|_| unexpected(node))?;
+    Ok(ExpressionForm { expression, spans })
 }
 
 /// A temporal formula, or `measure op threshold`.

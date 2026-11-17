@@ -24,12 +24,24 @@ relationships:
 
 ## Description
 
-FSL SHALL decide projection and realizability only in the single profile
-`bounded-static`, and SHALL answer `unsupported`, naming a located construct
-cause under the existing `unsupported_projection` code, for every construct
-outside it, with no substitute graph and no guess. It implements ADR-036
-PA-21 and PA-22 and FSpec FR-174-AC-3, and fixes the open item that ADR-036
-left to the requirements: the profile word and the cause slugs.
+FSL SHALL admit two projection and realizability profiles. Under `bounded`
+it SHALL decide every construct a checked protocol holds (FR-890, FR-891,
+ADR-036 §7). Under `bounded-static` it SHALL decide only the fragment below,
+and SHALL answer `unsupported` for every construct outside it, naming a
+located construct cause under the existing `unsupported_projection` code,
+with no substitute graph and no guess. It implements ADR-036 PA-21, PA-22
+and PA-26 and FSpec FR-174-AC-3, and fixes the open item that ADR-036 left
+to the requirements: the profile words and the cause slugs.
+
+### Decision: the fragment stays selectable, and nothing is out of reach
+
+A consumer that built its corpora against the fragment keeps a request
+word whose answers do not change. A consumer that needs loops, every join
+policy, replicated roles, per-trigger activation, symbolic capacity,
+compensation or timed awaits names `bounded`, and gets a decision for each
+of them. No construct is unavailable to a corpus: the slugs below are the
+answer to a request that asked for the fragment, and their remedy is the
+`bounded` profile.
 
 ## Inputs
 
@@ -40,11 +52,11 @@ checked protocol.
 
 An `unsupported` result (FR-573) carrying `unsupported_projection` with one
 cause slug and the checked node id of the construct; or, for a profile word
-other than `bounded-static`, a refusal.
+other than `bounded` or `bounded-static`, a refusal.
 
 ## Behavior
 
-The profile is `bounded-static`: activation `on origin`, static roles,
+The fragment profile is `bounded-static`: activation `on origin`, static roles,
 literal queue capacities, sequence, send, receive, `choice`, and `parallel`
 with `join all`. The
 causes, each a slug of `unsupported_projection` in the style of
@@ -74,31 +86,36 @@ construct, so a corpus author reads the construct from the slug; `join any`,
 `quorum`, `predicate` and `outstanding` share `unsupported-join` because the
 remedy is the same (a `join all`) and the named policy distinguishes them.
 
-- FSL shall refuse a profile word other than `bounded-static` at admission,
+- FSL shall refuse a profile word other than `bounded` or `bounded-static` at admission,
   before any analysis, `invalid_runtime_input`/`invalid-value` naming the
   member `profile`; it is a request value, not a construct, so it is not an
   `unsupported` result.
 - The engine shall never answer a located unsupported construct with a
   projected graph, a strategy, a sampled result or a guessed one (PA-22).
-- FSL shall make `repeat` and non-`all` joins unavailable to corpora under
-  projection and realizability in this profile; a corpus that needs a retry
-  loop or such a join receives the cause above.
+- Under `bounded-static`, FSL shall answer `repeat` and non-`all` joins under
+  projection and realizability with the causes above; a corpus that needs a retry
+  loop or such a join names `bounded`, which decides it (FR-890, FR-891).
 - When a construct is both in a row above and refused by `fsl-eval`, the
   engine shall report that row's own slug; `evaluator-unsupported` is
   reported only for a `fsl-eval` cause that has no row above.
+- Under `bounded`, the only `unsupported` answer is `evaluator-unsupported`,
+  for the two `fsl-eval` limits `UnenumerableRecord` and `WeakMemory`
+  (FR-882, ADR-036 PA-33); no row above arises.
 
 ## Acceptance Criteria
 
 | ID | Criteria | Verification |
 | --- | --- | --- |
 | FR-575-AC-1 | For each construct row other than `evaluator-unsupported`, a protocol using it yields `unsupported`, `unsupported_projection` with exactly that slug and the construct's checked node id, for projection and for realizability, and returns no local graph, strategy or counterexample (implements FR-174-AC-3). | Test (TC-1415) |
-| FR-575-AC-2 | A construct `fsl-eval` refuses (a protocol capture or guard undecided at an initial state, an unordered channel with a head or tail loss selector, an unenumerable step binder) yields `evaluator-unsupported` for realizability carrying the `fsl-eval` cause, except that a refused construct that has a row above (a symbolic capacity, `activation on each`, compensation) reports that row's slug. | Test (TC-1415) |
-| FR-575-AC-3 | A request with profile `bounded-static` over a protocol using only the profile's constructs is decided, and a request with any other profile word is refused `invalid_runtime_input`/`invalid-value` naming `profile` before any analysis. | Test (TC-1415) |
+| FR-575-AC-2 | A construct `fsl-eval` refuses (an unenumerable step binder, FR-882) yields `evaluator-unsupported` for realizability carrying the `fsl-eval` cause, except that a refused construct that has a row above (a symbolic capacity, `activation on each`, compensation) reports that row's slug. | Test (TC-1415) |
+| FR-575-AC-3 | A request with profile `bounded-static` over a protocol using only the profile's constructs is decided, a request with profile `bounded` over the same protocol gives the same result in every member but the key's profile, and a request with any other profile word is refused `invalid_runtime_input`/`invalid-value` naming `profile` before any analysis. | Test (TC-1415) |
 | FR-575-AC-4 | A `NegotiationCause` has exactly its three existing variants and a kind with no candidate still negotiates `unsupported_projection`/`unsupported-requested-capability`; the slugs above arise only from an engine result and add no code family. | Test (TC-1415) |
+| FR-575-AC-5 | For each construct row other than `evaluator-unsupported`, the protocol of AC-1 under profile `bounded` yields no `unsupported` result for projection or realizability; a protocol whose binder type has a `String` field and one whose resolved memory model the system does not implement each yield `evaluator-unsupported` under `bounded`, carrying `UnenumerableRecord` and `WeakMemory`. | Test (TC-2520) |
 
 ## Dependencies
 
-- ADR-036 PA-4, PA-21, PA-22.
+- ADR-036 PA-4, PA-21, PA-22, PA-26 and PA-33.
+- [FR-890](FR-890-project-every-protocol-construct-under-the-bounded-profile.md) and [FR-891](FR-891-decide-realizability-over-every-protocol-construct-under-the-bounded-profile.md): the `bounded` profile.
 - [FR-057](FR-057-admit-shared-capability-kinds.md): `unsupported_projection` and its slugs.
 - [FR-570](FR-570-project-a-global-protocol-onto-one-role.md), [FR-571](FR-571-decide-whether-local-strategies-realize-a-global-protocol.md), [FR-573](FR-573-settle-protocol-analysis-results-with-the-fr-360-labels.md).
 - FSpec FR-174, FR-175.

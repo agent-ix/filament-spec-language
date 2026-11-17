@@ -389,6 +389,7 @@ fn case_requests(
     }
     let build = |revision: &Revision| {
         read_clause_run_request(ClauseRequestParts {
+            clocks: Default::default(),
             source: revision.source(),
             package_name: super::layering::package_name_of(&revision.identity),
             packages: packages.clone(),
@@ -401,6 +402,7 @@ fn case_requests(
             limits: limits.spine,
             observation_limits: limits.observation,
             accounting: limits.accounting(),
+            ledger: None,
         })
         .map_err(|error| at(&error.member, error.reason))
     };

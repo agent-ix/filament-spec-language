@@ -96,7 +96,6 @@ fn assert_call_refusal(function: &str, argument: Value, code: &str, cause: &str,
 
 #[test]
 #[trace("TC-1700", "FR-650-AC-1")]
-#[ignore = "QSL-1988: Boolean arguments in the run value form not implemented yet"]
 fn boolean_round_trips() {
     assert_round_trip(
         "id_bool",
@@ -108,7 +107,6 @@ fn boolean_round_trips() {
 
 #[test]
 #[trace("TC-1700", "FR-650-AC-1")]
-#[ignore = "QSL-1988: integer arguments beyond i64 in the run value form not implemented yet"]
 fn integer_round_trips() {
     let big = "1267650600228229401496703205376";
     assert_round_trip("id_big", json!({"integer": big}), json!({"integer": big}));
@@ -117,7 +115,6 @@ fn integer_round_trips() {
 
 #[test]
 #[trace("TC-1700", "FR-650-AC-1")]
-#[ignore = "QSL-2182: Rational arguments and results in the run value form not implemented yet"]
 fn rational_round_trips_normalized() {
     assert_round_trip(
         "id_rat",
@@ -128,7 +125,6 @@ fn rational_round_trips_normalized() {
 
 #[test]
 #[trace("TC-1700", "FR-650-AC-1")]
-#[ignore = "QSL-2182: Decimal arguments and results in the run value form not implemented yet"]
 fn decimal_round_trips_retained() {
     let value = json!({"kind": "decimal", "coefficient": "150", "scale": "2"});
     assert_round_trip("id_dec", value.clone(), value);
@@ -136,7 +132,6 @@ fn decimal_round_trips_retained() {
 
 #[test]
 #[trace("TC-1700", "FR-650-AC-1")]
-#[ignore = "QSL-2182: Float arguments and results in the run value form not implemented yet"]
 fn float_round_trips_by_bits() {
     let value = json!({"kind": "float64", "bits": "3ff0000000000000"});
     assert_round_trip("id_flt", value.clone(), value);
@@ -144,7 +139,6 @@ fn float_round_trips_by_bits() {
 
 #[test]
 #[trace("TC-1700", "FR-650-AC-1")]
-#[ignore = "QSL-2182: String arguments and results in the run value form not implemented yet"]
 fn string_round_trips() {
     let value = json!({"kind": "string", "text": "abc"});
     assert_round_trip("id_str", value.clone(), value);
@@ -152,7 +146,6 @@ fn string_round_trips() {
 
 #[test]
 #[trace("TC-1700", "FR-650-AC-1")]
-#[ignore = "QSL-2182: Text arguments and results in the run value form not implemented yet"]
 fn text_round_trips_normalized() {
     assert_round_trip(
         "id_txt",
@@ -163,7 +156,6 @@ fn text_round_trips_normalized() {
 
 #[test]
 #[trace("TC-1700", "FR-650-AC-1")]
-#[ignore = "QSL-2182: enum arguments and results in the run value form not implemented yet"]
 fn enum_round_trips() {
     let value = json!({"variant": {"type": "Color", "case": "Green"}});
     assert_round_trip("id_enum", value.clone(), value);
@@ -171,7 +163,6 @@ fn enum_round_trips() {
 
 #[test]
 #[trace("TC-1700", "FR-650-AC-1")]
-#[ignore = "QSL-2182: record arguments and results in the run value form not implemented yet"]
 fn record_round_trips() {
     let value =
         json!({"record": {"type": "P", "fields": {"x": {"integer": "1"}, "y": {"integer": "2"}}}});
@@ -180,7 +171,6 @@ fn record_round_trips() {
 
 #[test]
 #[trace("TC-1700", "FR-650-AC-1")]
-#[ignore = "QSL-2182: tuple arguments and results in the run value form not implemented yet"]
 fn tuple_round_trips() {
     let value =
         json!({"tuple": {"type": "Tp", "components": [{"integer": "2"}, {"integer": "1"}]}});
@@ -189,7 +179,6 @@ fn tuple_round_trips() {
 
 #[test]
 #[trace("TC-1700", "FR-650-AC-1")]
-#[ignore = "QSL-2182: Sequence arguments and results in the run value form not implemented yet"]
 fn sequence_round_trips() {
     let value = json!({"sequence": [{"integer": "1"}, {"integer": "1"}]});
     assert_round_trip("id_seq", value.clone(), value);
@@ -197,7 +186,6 @@ fn sequence_round_trips() {
 
 #[test]
 #[trace("TC-1700", "FR-650-AC-1")]
-#[ignore = "QSL-2182: Set arguments and results in the run value form not implemented yet"]
 fn set_round_trips_in_canonical_order() {
     assert_round_trip(
         "id_set",
@@ -208,7 +196,6 @@ fn set_round_trips_in_canonical_order() {
 
 #[test]
 #[trace("TC-1700", "FR-650-AC-1")]
-#[ignore = "QSL-2182: Option arguments and results in the run value form not implemented yet"]
 fn option_round_trips() {
     let present = json!({"present": {"integer": "3"}});
     assert_round_trip("id_opt", present.clone(), present);
@@ -217,7 +204,6 @@ fn option_round_trips() {
 
 #[test]
 #[trace("TC-1701", "FR-650-AC-2")]
-#[ignore = "QSL-1988: integers beyond i64 as tagged decimal strings not implemented yet"]
 fn integer_above_i64_passes_as_a_tagged_decimal_string() {
     assert_round_trip(
         "id_big",
@@ -230,7 +216,6 @@ fn integer_above_i64_passes_as_a_tagged_decimal_string() {
 /// refuse at the request stage naming the value.
 #[test]
 #[trace("TC-1701", "FR-650-AC-2")]
-#[ignore = "QSL-1988: request-stage refusal naming the argument value not implemented yet"]
 fn integer_above_i64_in_the_wrong_form_refuses_at_the_request() {
     for value in [
         json!(9_223_372_036_854_775_808_u64),
@@ -256,7 +241,6 @@ fn integer_above_i64_in_the_wrong_form_refuses_at_the_request() {
 /// Negative: an argument that is not a value of its declared type.
 #[test]
 #[trace("TC-1702", "FR-650-AC-3")]
-#[ignore = "QSL-1988: typed argument refusals with cause and path not implemented yet"]
 fn mistyped_arguments_refuse_with_cause_and_path() {
     let record = |fields: Value| json!({"record": {"type": "P", "fields": fields}});
     assert_call_refusal(
@@ -328,7 +312,6 @@ fn mistyped_arguments_refuse_with_cause_and_path() {
 /// unsupported-type refusal names the function.
 #[test]
 #[trace("TC-1705", "FR-650-AC-6")]
-#[ignore = "QSL-2182: every result kind with an FR-181 form completes; unsupported_construct removed, not implemented yet"]
 fn no_identity_function_refuses_unsupported() {
     for (function, argument) in [
         (
@@ -361,7 +344,6 @@ fn no_identity_function_refuses_unsupported() {
 /// FR-650-AC-8: the `execute` outcome carries the run value form.
 #[test]
 #[trace("TC-1707", "FR-650-AC-8")]
-#[ignore = "QSL-2182: execute outcome in the run value form not implemented yet"]
 fn seven_completes_as_a_tagged_integer() {
     let directory = tempfile::tempdir().unwrap();
     std::fs::write(
@@ -392,7 +374,6 @@ fn seven_completes_as_a_tagged_integer() {
 /// typed form, normalized where the form normalizes.
 #[test]
 #[trace("FSpec-TC-1200", "FSpec-FR-550-AC-1")]
-#[ignore = "QSL-2182: every value kind as argument and result not implemented yet"]
 fn fspec_values_round_trip_in_one_form() {
     let big = "1267650600228229401496703205376";
     assert_round_trip("id_big", json!({"integer": big}), json!({"integer": big}));
@@ -415,7 +396,6 @@ fn fspec_values_round_trip_in_one_form() {
 /// refuses with its cause, naming the parameter and the location.
 #[test]
 #[trace("FSpec-TC-1201", "FSpec-FR-550-AC-2")]
-#[ignore = "QSL-1988: typed argument refusals with cause and path not implemented yet"]
 fn fspec_mistyped_arguments_refuse_with_cause_and_location() {
     assert_call_refusal(
         "id_rec",
@@ -441,4 +421,47 @@ fn completed_run_document_carries_no_axes() {
     assert_eq!(output.status.code(), Some(0), "{output:?}");
     let document: Value = serde_json::from_slice(&output.stdout).unwrap();
     assert!(document.get("axes").is_none(), "{document}");
+}
+
+/// A unit's source: `Quantity` has a run value form (FR-650).
+const QUANTITY_FIXTURE: &str = r#"language "ix:native" edition "1-draft";
+profile v = "filament.value.complete/v1";
+dimension Time;
+unit s: Time = rational(1, 1);
+function take using v(a: Quantity<s>): Boolean pure { true }
+function give using v(): Quantity<s> pure { 2 s }
+"#;
+
+fn run_quantity(function: &str, arguments: Value) -> Output {
+    let directory = tempfile::tempdir().unwrap();
+    std::fs::write(directory.path().join("program.native"), QUANTITY_FIXTURE).unwrap();
+    let request = json!({"format":"native-run/1","request":{
+        "models":[],
+        "program":{"source":program_source()},
+        "call":{"function":function,"arguments":arguments},
+    }});
+    std::fs::write(
+        directory.path().join("request.json"),
+        serde_json::to_vec(&request).unwrap(),
+    )
+    .unwrap();
+    run_file(&directory.path().join("request.json"))
+}
+
+/// FR-650-AC-10: `Quantity` has a run value form, so a bare integer for a
+/// quantity parameter is a wrong value kind at the call, never exit 21, and
+/// a quantity result completes. A type with no form (a collection over a
+/// population) is covered by the `run_value` unit tests.
+#[test]
+#[trace("TC-1705", "FR-650-AC-6")]
+fn quantity_has_a_form_so_it_is_not_refused_unsupported() {
+    for value in [json!(2), json!({"integer": "2"})] {
+        let output = run_quantity("take", json!([{"parameter":"a","value":value}]));
+        assert_eq!(output.status.code(), Some(20), "{output:?}");
+        let failure: Value = serde_json::from_slice(&output.stderr).unwrap();
+        assert_eq!(failure["code"], "invalid_runtime_input", "{failure}");
+        assert_eq!(failure["cause"], "wrong-value-kind", "{failure}");
+    }
+    let output = run_quantity("give", json!([]));
+    assert_eq!(output.status.code(), Some(0), "{output:?}");
 }

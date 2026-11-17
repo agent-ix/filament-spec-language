@@ -491,7 +491,9 @@ fn encode_expression(
                 out.write_str(&numerator.to_string());
                 out.write_str(&denominator.to_string());
             }
-            ExprNode::DecimalValue { coefficient, scale } => {
+            ExprNode::DecimalValue {
+                coefficient, scale, ..
+            } => {
                 out.write_str("decimal");
                 out.write_str(&coefficient.to_string());
                 out.write_str(&scale.to_string());
@@ -562,7 +564,7 @@ fn encode_expression(
                 out.write_str("not");
                 pending.push(expr.at(*operand));
             }
-            ExprNode::Field { operand, field } => {
+            ExprNode::Field { operand, field, .. } => {
                 out.write_str("field");
                 out.write_str(field);
                 pending.push(expr.at(*operand));
@@ -1573,7 +1575,11 @@ pub(crate) fn check_declaration_body(
             .with_named_populations(model_scope.clone());
     }
     bind_parameters(&mut typer, parameters, input.location)?;
-    typer.check_declared_type(result, input.location)?;
+    // A population is a result type of FSL source at the top level only
+    // (FR-650 "Types with no form"), as it is a parameter type only there.
+    if !matches!(result, ValueType::Population(_)) {
+        typer.check_declared_type(result, input.location)?;
+    }
     let body = typer.check_as(&form.body, result, input.location)?;
     let slots = typer.slots();
     let slot_names = typer.slot_names().to_vec();

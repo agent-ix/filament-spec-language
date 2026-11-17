@@ -33,14 +33,15 @@ fn probabilistic_package() -> CheckedPackage {
 #[test]
 fn a_checked_probabilistic_model_refuses_emission() {
     let refusal = emit_checked(&probabilistic_package()).expect_err("emission refuses");
-    assert_eq!(
-        refusal,
+    assert!(matches!(
+        &refusal,
         EmitRefusal::ProbabilisticModelNotEmitted {
-            declaration: "Steady".to_owned(),
+            declaration,
             feature: fsl_semantics::check::ProbabilisticFeature::Workload,
             profile: Some("filament.model.complete/v1"),
-        }
-    );
+            region,
+        } if declaration == "Steady" && region.start() < region.end()
+    ));
     assert_eq!(
         (refusal.code(), refusal.cause()),
         (Code::UnsupportedConstruct, Some("not-yet-implemented"))
@@ -69,6 +70,14 @@ fn claims_package(declarations: &[&str]) -> CheckedPackage {
 fn claim(name: &str, threshold: &str) -> String {
     format!(
         "probabilistic {name} using ev on Config under every scheduler on origin \
+         {{ probability >= {threshold} [ holds(true) ] }}"
+    )
+}
+
+fn claim_each(name: &str, threshold: &str) -> String {
+    format!(
+        "probabilistic {name} using ev on Config under every scheduler \
+         on each (m: Config::ConfigVersion) \
          {{ probability >= {threshold} [ holds(true) ] }}"
     )
 }
@@ -140,14 +149,35 @@ fn a_checked_claim_is_emitted_and_a_reward_still_refuses() {
         "reward cost on ConfigVersion::attemptUpdate = 1;",
     ]);
     let refusal = emit_checked(&package).expect_err("the reward refuses emission");
-    assert_eq!(
+    assert!(matches!(
         refusal,
         EmitRefusal::ProbabilisticModelNotEmitted {
-            declaration: "cost".to_owned(),
+            declaration,
             feature: fsl_semantics::check::ProbabilisticFeature::Reward,
             profile: Some("filament.model.complete/v1"),
-        }
+            region,
+        } if declaration == "cost" && region.start() < region.end()
+    ));
+}
+
+/// FR-186 Activation and FR-498: the checked package retains the `on each`
+/// claim as one declaration whose activation ranges over its population.
+#[trace("TC-2166", "FR-186-AC-8")]
+#[test]
+fn probabilistic_on_each_emits_per_member() {
+    let package = claims_package(&[&claim_each("PerVersion", "0.5")]);
+    let [checked] = package.graph().probabilistic_model().claims() else {
+        panic!("one checked claim per source declaration");
+    };
+    assert!(
+        matches!(
+            &checked.activation,
+            fsl_semantics::check::ClaimActivation::Each { .. }
+        ),
+        "activation is carried by the checked claim"
     );
+    let (rows, nodes) = emitted_claims(&package);
+    assert_eq!((rows.len(), nodes.len()), (1, 1));
 }
 
 /// FR-498 (TC-1288): two claims sharing a name, and a third, emit one

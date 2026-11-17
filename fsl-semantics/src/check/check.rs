@@ -51,12 +51,15 @@ use filament_checked::node::{
 use fsl_foundation::source::node_table::{
     standalone, DebugTable, DebugWith, NodeKeyDebug, NodeList,
 };
+use fsl_foundation::Span;
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::ops::ControlFlow;
 use std::sync::Arc;
 
 #[cfg(test)]
 mod declared_type_tests;
+mod integer_division_range;
+mod modulo_interval;
 mod native_literal;
 mod typing;
 use typing::TypedOperand;
@@ -416,6 +419,10 @@ pub struct PackageDeclarations {
     /// The span of the unit's first source `object` declaration, which the
     /// package emitter refuses until it can write source object types.
     pub first_source_object: Option<(RawSourceRef, fsl_foundation::Span)>,
+    /// Authored identity-field names for each checked source object type,
+    /// keyed by the source model's declaration key.
+    pub(crate) source_object_identity_fields:
+        BTreeMap<filament_checked::key::DeclarationKey, Vec<String>>,
     /// Record, tuple and model object-type declarations.
     pub types: TypeEnvironment,
     /// Where each record keeps the fields its ancestors name (FR-359).
@@ -726,6 +733,30 @@ impl PackageDeclarations {
         self
     }
 
+    /// These declarations with the clock configuration of each clock role
+    /// `clocks` names, keyed by clock name as a request's `clocks` member is
+    /// (FR-640): every `temporal` clause that writes that role reads it. An
+    /// in-process caller passes the configurations the request path takes, so
+    /// a role-clock timed clause has the same binding unit either way (FR-933).
+    #[must_use]
+    pub fn with_clock_configurations(
+        self,
+        clocks: &BTreeMap<String, filament_contract_model::ClockConfiguration>,
+    ) -> Self {
+        let units = self
+            .temporal_clauses
+            .iter()
+            .filter_map(|clause| {
+                let clock = clocks.get(&clause.form.clock.as_ref()?.text)?;
+                Some(super::temporal_clause::ClockUnitSelection {
+                    declaration_span: clause.span,
+                    clock: clock.clone(),
+                })
+            })
+            .collect();
+        self.with_clock_units(units)
+    }
+
     /// These declarations, to be checked as a build that has built only
     /// `support` (FR-135).
     #[cfg(any(test, feature = "test-support"))]
@@ -784,6 +815,7 @@ impl PackageDeclarations {
             protocol_profile: None,
             header_layers: Vec::new(),
             first_source_object: None,
+            source_object_identity_fields: BTreeMap::new(),
             types: TypeEnvironment::default(),
             model_records: ModelRecords::default(),
             relationships: Relationships::default(),
@@ -2238,6 +2270,10 @@ pub(crate) struct Typer<'a> {
     context: Option<crate::family::CheckContext<'a, Scope>>,
     limits: CheckingLimits,
     nodes: &'a mut u64,
+    integer_division_work: u64,
+    /// Let slots whose bound integer value lowers at Integer despite a
+    /// bounded checked type. Slots are unique throughout this typing pass.
+    integer_lowered_locals: BTreeSet<Slot>,
     /// The caller's cancellation handle, polled at every node charge
     /// (FR-276).
     cancel: Option<&'a Cancel>,
@@ -2581,6 +2617,21 @@ fn is_integer(value_type: &ValueType) -> bool {
     matches!(value_type, ValueType::Integer | ValueType::Int(_))
 }
 
+/// A comparison of a guarded clock place with `absent`, read as the place's
+/// presence (FR-230 "Presence and element members").
+pub(super) struct AbsentComparison<'e> {
+    /// The place's owner `r` of `r.f` or `r.f.c`.
+    pub(super) owner: ExprRef<'e>,
+    /// The owner's location.
+    pub(super) owner_location: Location,
+    /// The place's field.
+    pub(super) field: &'e str,
+    /// The union case of the place, when it is one.
+    pub(super) case: Option<&'e str>,
+    /// Whether the comparison requires the place present (`!=`).
+    pub(super) present: bool,
+}
+
 /// Whether `expression`'s own syntax contains a form `pre(...)`'s anchor can
 /// act on: `allInstances`/`lookup` (the only reads FR-153 anchors), or a
 /// nested `pre(...)` (idempotent by construction: a nested `pre` with no
@@ -2705,6 +2756,21 @@ impl Typer<'_> {
         required: &ValueType,
     ) -> Result<Node, CheckRefusal> {
         if &node.value_type == required {
+            if let (NodeKind::IntegerDivision { .. } | NodeKind::Local(_), ValueType::Int(target)) =
+                (&node.kind, required)
+            {
+                if self.lowers_as_integer(&node) {
+                    let location = node.location.clone();
+                    return Ok(Node {
+                        kind: NodeKind::Coerce(self.push(node), target.clone()),
+                        value_type: required.clone(),
+                        location,
+                        equality_producer: None,
+                        ordering_part: false,
+                        field_population: None,
+                    });
+                }
+            }
             return Ok(node);
         }
         match (&node.value_type, required) {
@@ -2722,6 +2788,24 @@ impl Typer<'_> {
                 Ok(node)
             }
             (ValueType::Integer | ValueType::Int(_), ValueType::Integer) => Ok(node),
+            (ValueType::Int(source), ValueType::Int(target))
+                if matches!(
+                    node.kind,
+                    NodeKind::IntegerDivision { .. } | NodeKind::Local(_)
+                ) && target.lower() <= source.lower()
+                    && source.upper() <= target.upper()
+                    && self.lowers_as_integer(&node) =>
+            {
+                let location = node.location.clone();
+                Ok(Node {
+                    kind: NodeKind::Coerce(self.push(node), target.clone()),
+                    value_type: required.clone(),
+                    location,
+                    equality_producer: None,
+                    ordering_part: false,
+                    field_population: None,
+                })
+            }
             (ValueType::Int(source), ValueType::Int(target))
                 if target.lower() <= source.lower() && source.upper() <= target.upper() =>
             {
@@ -2769,6 +2853,8 @@ impl<'a> Typer<'a> {
             context: None,
             limits,
             nodes,
+            integer_division_work: 0,
+            integer_lowered_locals: BTreeSet::new(),
             cancel: None,
             locals: Vec::new(),
             local_names: HashMap::new(),
@@ -2822,6 +2908,31 @@ impl<'a> Typer<'a> {
                 .get(id)
                 .map(|found| (&found.kind, &found.value_type))
         })
+    }
+
+    /// Whether an integer argument already has the catalog's Integer type
+    /// when lowered, so its call needs no synthetic widening conversion.
+    fn lowers_as_integer(&self, root: &Node) -> bool {
+        let mut pending = vec![root];
+        while let Some(node) = pending.pop() {
+            match &node.value_type {
+                ValueType::Integer => return true,
+                ValueType::Int(_) => {}
+                _ => continue,
+            }
+            let children = match &node.kind {
+                NodeKind::IntegerDivision { .. } => return true,
+                NodeKind::Local(slot) if self.integer_lowered_locals.contains(slot) => return true,
+                NodeKind::If {
+                    then, otherwise, ..
+                } => vec![*then, *otherwise],
+                NodeKind::Let { body, .. } => vec![*body],
+                NodeKind::Case { arms, .. } => arms.iter().map(|arm| arm.body).collect(),
+                _ => Vec::new(),
+            };
+            pending.extend(children.into_iter().filter_map(|id| self.body.get(id)));
+        }
+        false
     }
 
     /// This pass reading the concrete populations `populations` as a
@@ -4109,7 +4220,22 @@ impl<'a> Typer<'a> {
                     ValueType::Quantity(self.units.form(unit)),
                 )
             }
-            _ => return Err(mismatch(location)),
+            _ => {
+                let operator = match operator {
+                    ArithmeticOperator::Add => BinaryOperator::Add,
+                    ArithmeticOperator::Subtract => BinaryOperator::Subtract,
+                    ArithmeticOperator::Multiply => BinaryOperator::Multiply,
+                    ArithmeticOperator::Divide => BinaryOperator::Divide,
+                };
+                return Err(CheckRefusal {
+                    location: location.clone(),
+                    cause: CheckCause::OperandTypeMismatch {
+                        operator,
+                        left_type,
+                        right_type,
+                    },
+                });
+            }
         };
         Ok(node(kind, value_type, location))
     }
@@ -4278,6 +4404,7 @@ impl<'a> Typer<'a> {
         let fsl_forms::ExprNode::Field {
             operand: owner,
             field,
+            ..
         } = operand.node()
         else {
             return None;
@@ -4293,6 +4420,7 @@ impl<'a> Typer<'a> {
         let fsl_forms::ExprNode::Field {
             operand: object,
             field: union,
+            ..
         } = operand.at(*owner).node()
         else {
             return None;
@@ -4300,6 +4428,63 @@ impl<'a> Typer<'a> {
         names(union, Some(field)).then(|| {
             let owner = operand.at(*owner);
             (owner.at(*object), union.as_str(), Some(field.as_str()), 2)
+        })
+    }
+
+    /// Whether `operand`, the operand of a field read `operand.op`, is
+    /// `t.step` over a name `t` this scope does not resolve: the read is
+    /// then the step label `t.step.op` of a trace variable (FR-612).
+    pub(super) fn unbound_step_label(&self, operand: fsl_forms::ExprRef<'_>) -> bool {
+        let fsl_forms::ExprNode::Field {
+            operand: trace,
+            field,
+            ..
+        } = operand.node()
+        else {
+            return false;
+        };
+        let fsl_forms::ExprNode::Name(name) = operand.at(*trace).node() else {
+            return false;
+        };
+        field == "step"
+            && self
+                .name(&name.name, None, &Location::root(Origin::Expression))
+                .is_err_and(|refusal| matches!(refusal.cause, CheckCause::MissingName(_)))
+    }
+
+    /// `comparison`, located at `location`, when it is `p = absent` or `p
+    /// != absent` (either operand order) of a guarded clock place `p` this
+    /// pass reads the presence of.
+    pub(super) fn absent_comparison<'e>(
+        &self,
+        comparison: fsl_forms::ExprRef<'e>,
+        location: &Location,
+    ) -> Option<AbsentComparison<'e>> {
+        let fsl_forms::ExprNode::Binary {
+            operator,
+            left,
+            right,
+        } = comparison.node()
+        else {
+            return None;
+        };
+        let present = match operator {
+            fsl_forms::BinaryOperator::Equal => false,
+            fsl_forms::BinaryOperator::NotEqual => true,
+            _ => return None,
+        };
+        let (place, side) = match (comparison.at(*left).node(), comparison.at(*right).node()) {
+            (_, fsl_forms::ExprNode::Absent) => (comparison.at(*left), 0),
+            (fsl_forms::ExprNode::Absent, _) => (comparison.at(*right), 1),
+            _ => return None,
+        };
+        let (owner, field, case, depth) = self.place_operand(place)?;
+        Some(AbsentComparison {
+            owner,
+            owner_location: (0..depth).fold(location.child(side), |at, _| at.child(0)),
+            field,
+            case,
+            present,
         })
     }
 
@@ -4313,7 +4498,7 @@ impl<'a> Typer<'a> {
     ) -> Option<(fsl_forms::ExprRef<'e>, &'e str, bool)> {
         let (all, source, _) = super::timed_model::slot_presence_query(query)?;
         let source = query.at(source);
-        let fsl_forms::ExprNode::Field { operand, field } = source.node() else {
+        let fsl_forms::ExprNode::Field { operand, field, .. } = source.node() else {
             return None;
         };
         self.presence_places
@@ -4401,12 +4586,13 @@ impl<'a> Typer<'a> {
                 self.attribute(
                     owner,
                     field,
+                    None,
                     &field_location.child(0),
                     &field_location,
                     false,
                 )?
             } else {
-                self.field(owner, field, &field_location)?
+                self.field(owner, field, None, &field_location)?
             };
             if !matches!(read.value_type, ValueType::Option(_)) {
                 return Err(mismatch(location));
@@ -4572,6 +4758,7 @@ impl<'a> Typer<'a> {
         &mut self,
         reference: Node,
         field: &str,
+        member_span: Option<Span>,
         operand_location: &Location,
         location: &Location,
         derefed: bool,
@@ -4609,6 +4796,7 @@ impl<'a> Typer<'a> {
                 reference,
                 value_type,
                 field: field.to_owned(),
+                member_span,
                 operand_location: operand_location.clone(),
                 derefed,
                 field_reads,
@@ -4783,23 +4971,31 @@ impl<'a> Typer<'a> {
         &mut self,
         operand: Node,
         field: &str,
+        member_span: Option<Span>,
         location: &Location,
     ) -> Result<Node, CheckRefusal> {
         let ValueType::Composite(key) = &operand.value_type else {
             return Err(mismatch(location));
         };
-        let Some(CompositeShape::Record(fields)) = self
-            .scope
-            .types
-            .composite(key.clone())
-            .map(|declaration| declaration.shape())
-        else {
+        let Some(declaration) = self.scope.types.composite(key.clone()) else {
+            return Err(mismatch(location));
+        };
+        let CompositeShape::Record(fields) = declaration.shape() else {
             return Err(mismatch(location));
         };
         let declared = fields
             .iter()
             .find(|declared| declared.name() == field)
-            .ok_or_else(|| mismatch(location))?;
+            .ok_or_else(|| {
+                refuse(
+                    location,
+                    CheckCause::UnknownField {
+                        owner: declaration.name().to_owned(),
+                        field: field.to_owned(),
+                        span: member_span,
+                    },
+                )
+            })?;
         let optional = declared.presence() == Presence::Optional;
         let value_type = if optional {
             ValueType::option(declared.value_type().clone())
@@ -4876,17 +5072,38 @@ impl<'a> Typer<'a> {
     /// the value an argument's branches yield reaches this.
     fn upcast(
         &mut self,
-        mut typed: Node,
+        typed: Node,
         required: &ValueType,
         location: &Location,
     ) -> Result<Node, CheckRefusal> {
-        typed.value_type = self.model_type(
+        let upcast_type = self.model_type(
             super::state_model::Form::Argument {
                 actual: typed.value_type.clone(),
                 required: required.clone(),
             },
             location,
         )?;
+        if matches!(typed.value_type, ValueType::Integer | ValueType::Int(_))
+            && matches!(
+                typed.kind,
+                NodeKind::IntegerDivision { .. } | NodeKind::Local(_)
+            )
+        {
+            if let ValueType::Int(target) = required {
+                let location = typed.location.clone();
+                return Ok(Node {
+                    kind: NodeKind::Coerce(self.push(typed), target.clone()),
+                    value_type: required.clone(),
+                    location,
+                    equality_producer: None,
+                    ordering_part: false,
+                    field_population: None,
+                });
+            }
+            return Ok(typed);
+        }
+        let mut typed = typed;
+        typed.value_type = upcast_type;
         Ok(typed)
     }
 
