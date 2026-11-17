@@ -3559,12 +3559,30 @@ impl<'a> Typer<'a> {
                 ))
             }
             Unary::OptionSome(payload_hint) => {
-                if let Some(expected) = payload_hint {
-                    if &operand.value_type != expected.as_ref() {
+                let operand = if let Some(ref expected) = payload_hint {
+                    if &operand.value_type == expected.as_ref() {
+                        operand
+                    } else if let (
+                        NodeKind::Literal(CheckedLiteral(Value::Integer(value))),
+                        ValueType::Int(interval),
+                    ) = (&operand.kind, expected.as_ref())
+                    {
+                        if !interval.contains(value) {
+                            return Err(mismatch(&location));
+                        }
+                        self.coerce(operand, expected.as_ref())?
+                    } else {
                         return Err(mismatch(&location));
                     }
-                }
-                let value_type = ValueType::Option(Arc::new(operand.value_type.clone()));
+                } else {
+                    operand
+                };
+                let value_type = ValueType::Option(Arc::new(
+                    payload_hint
+                        .as_deref()
+                        .cloned()
+                        .unwrap_or_else(|| operand.value_type.clone()),
+                ));
                 Ok(node(
                     NodeKind::OptionSome(self.push(operand)),
                     value_type,
