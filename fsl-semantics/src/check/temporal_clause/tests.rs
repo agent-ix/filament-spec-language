@@ -1015,7 +1015,10 @@ fn a_converted_duration_bound_past_the_rational_bits_ceiling_is_a_limit() {
 fn an_on_each_guard_is_kept_with_the_emitted_clause() {
     let origin = source(&[INFINITE], "Counter", "eventually holds(c.level = 3)");
     for (activation, guarded) in [
-        ("on each (d: Counter) when (6 mod (2 - c.level) = 0)", true),
+        (
+            "on each (d: Counter) when (c.level != 0 and 6 mod c.level = 0)",
+            true,
+        ),
         ("on each (d: Counter) when (d.level = c.level)", true),
         ("on each (d: Counter)", false),
         ("on origin", false),
