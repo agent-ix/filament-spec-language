@@ -18,6 +18,7 @@ fn node_of_wire(tag: CheckedNodeTag, form: &str) -> CheckedSemanticNodeV2 {
     let id = crate::emit::checked_node_id_of(&key());
     CheckedSemanticNodeV2 {
         owner_model: None,
+        check_mode: None,
         node_id: crate::emit::checked_node_id_of(&key()),
         schema_version: GRAPH_V2.into(),
         node_tag: tag.as_wire().into(),

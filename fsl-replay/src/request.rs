@@ -605,6 +605,10 @@ pub enum PackageMemberCause {
     /// The member has the wrong JSON kind.
     #[error("wrong-value-kind")]
     WrongKind,
+    /// A function node records a `check_mode` other than the one its
+    /// recompile gives (FR-098-AC-34).
+    #[error("check-mode-mismatch")]
+    CheckModeMismatch,
 }
 
 impl PackageMemberCause {
@@ -614,13 +618,14 @@ impl PackageMemberCause {
         match self {
             Self::Missing => "missing-member",
             Self::WrongKind => "wrong-value-kind",
+            Self::CheckModeMismatch => "check-mode-mismatch",
         }
     }
 
     /// Every structural-input cause in catalog order.
     #[must_use]
     pub fn all() -> &'static [Self] {
-        &[Self::Missing, Self::WrongKind]
+        &[Self::Missing, Self::WrongKind, Self::CheckModeMismatch]
     }
 
     /// Resolve only a catalogued spelling.
