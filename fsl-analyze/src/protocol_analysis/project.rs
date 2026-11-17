@@ -10,11 +10,10 @@ use fsl_package::protocol_view::{
 use fsl_replay::protocol_analysis::{
     node_text, replay_projection_counterexample, Action, AnalysisOutcome, AssessedRoot,
     AssessedRootDraft, BranchMerge, ChoiceBasis, Correspondence, DecisionOwner, GlobalEventKind,
-    GlobalStructure, InconclusiveCause, JoinPolicy, LocalEvent, LocalEventId, LocalEventKind,
-    LocalGraph, MergeEvidence, MissingMember, OutstandingPolicy, PremiseRefusal,
-    ProjectionBoundsDraft, ProjectionCounterexample, ProjectionDecision, ProjectionKeyDraft,
-    ProjectionWitness, ProtocolAnalysisKey, ProtocolAnalysisResult, ProtocolPremises, RunBudget,
-    RunLimit,
+    GlobalStructure, InconclusiveCause, LocalEvent, LocalEventId, LocalEventKind, LocalGraph,
+    MergeEvidence, MissingMember, PremiseRefusal, ProjectionBoundsDraft, ProjectionCounterexample,
+    ProjectionDecision, ProjectionKeyDraft, ProjectionWitness, ProtocolAnalysisKey,
+    ProtocolAnalysisResult, ProtocolPremises, RunBudget, RunLimit,
 };
 use fsl_replay::spine::StructureError;
 use fsl_replay::ModelCheckLimit;
@@ -378,7 +377,13 @@ fn witness(
     merge_evidence: Vec<MergeEvidence>,
     activation: Option<CheckedNodeId>,
 ) -> Result<ProjectionWitness, RunLimit> {
-    let kept = structure.role_events(role);
+    let mut kept = structure.role_events(role);
+    kept.sort_by(|left, right| {
+        structure
+            .depth(&left.at)
+            .cmp(&structure.depth(&right.at))
+            .then_with(|| left.at.cmp(&right.at))
+    });
     let mut correspondence = BTreeMap::new();
     let mut events = Vec::new();
     for (position, event) in kept.iter().enumerate() {
@@ -447,7 +452,7 @@ fn witness(
         for event in &mut events {
             shift(&mut event.id);
         }
-        for id in correspondence.0.values_mut() {
+        for id in correspondence.values_mut() {
             shift(id);
         }
         for (from, to) in &mut edges {

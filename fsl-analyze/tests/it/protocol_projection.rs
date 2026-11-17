@@ -1085,7 +1085,7 @@ fn a_replicated_role_projects() {
     let package = admitted_source(&source(
         members,
         "sequence Main { send J via Job as (j: Ack) { true }; \
-         receive K via Job of J as (k: Ack) { true }; \
+         receive K via Job of J as (got_job: Ack) { true }; \
          send D via Done as (d: Ack) { true }; \
          receive R via Done of D as (r: Ack) { true }; }",
     ));
@@ -1169,6 +1169,7 @@ fn join_any_projects() {
         "join any [a] outstanding cancel;",
         JoinPolicy::Any,
         Some(OutstandingPolicy::Cancel),
+        &["a"],
     );
 }
 
@@ -1179,6 +1180,7 @@ fn join_quorum_projects() {
         "join quorum(1) [a] outstanding continue;",
         JoinPolicy::Quorum { count: 1 },
         Some(OutstandingPolicy::Continue),
+        &["a"],
     );
 }
 
@@ -1189,6 +1191,7 @@ fn outstanding_projects() {
         "join all [a, b] outstanding continue;",
         JoinPolicy::All,
         Some(OutstandingPolicy::Continue),
+        &["a", "b"],
     );
 }
 
@@ -1196,6 +1199,7 @@ fn join_projects(
     join: &str,
     expected_policy: JoinPolicy,
     expected_outstanding: Option<OutstandingPolicy>,
+    expected_joined: &[&str],
 ) {
     let run = format!(
         "sequence Main {{ parallel Par {{ \
@@ -1213,7 +1217,7 @@ fn join_projects(
             &event.kind,
             LocalEventKind::ParallelJoin { policy, joined, outstanding }
                 if policy == &expected_policy
-                    && joined == &["a".to_owned()]
+                    && joined.iter().map(String::as_str).eq(expected_joined.iter().copied())
                     && outstanding == &expected_outstanding
         )));
 }
@@ -1249,7 +1253,7 @@ fn a_replicated_role_that_sends_first_is_refuted() {
     let package = admitted_source(&source(
         members,
         "sequence Main { send J via Job as (j: Ack) { true }; \
-         receive K via Job of J as (got: Ack) { true }; }",
+          receive K via Job of J as (got_job: Ack) { true }; }",
     ));
     let mut request = request(&package, "Pool");
     request.profile = Some("bounded".to_owned());
@@ -1288,7 +1292,7 @@ fn a_bounded_spawn_projects_to_one_local_role_class() {
     let package = admitted_source(&source(
         members,
         "sequence Main { send J via Job as (j: Ack) { true }; \
-         receive K via Job of J as (got: Ack) { true }; \
+          receive K via Job of J as (got_job: Ack) { true }; \
          send D via Done as (d: Ack) { true }; \
          receive R via Done of D as (r: Ack) { true }; }",
     ));

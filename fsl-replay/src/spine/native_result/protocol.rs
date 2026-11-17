@@ -84,6 +84,11 @@ pub enum ProtocolInconclusiveCause {
     CutCount {},
     /// Realizability only: an evaluation was left undecided.
     UndecidedEvaluation {},
+    /// Realizability only: exploration reached the authored instance cap.
+    InstanceBoundReached {
+        /// The `max_live_instances` request bound.
+        max_live_instances: u64,
+    },
 }
 
 impl ProtocolInconclusiveCause {

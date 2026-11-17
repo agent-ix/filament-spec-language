@@ -29,9 +29,15 @@ pub enum JoinPolicy {
     /// One joined branch must finish.
     Any,
     /// At least `count` joined branches must finish.
-    Quorum { count: u64 },
+    Quorum {
+        /// The minimum number of finished branches.
+        count: u64,
+    },
     /// The named predicate decides when the join fires.
-    Predicate { function: CheckedNodeId },
+    Predicate {
+        /// The predicate function node.
+        function: CheckedNodeId,
+    },
 }
 
 /// What happens to branches outside the join's winning disposition.
