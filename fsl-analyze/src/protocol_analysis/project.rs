@@ -10,9 +10,9 @@ use fsl_package::protocol_view::{
 use fsl_replay::ModelCheckLimit;
 use fsl_replay::protocol_analysis::{
     Action, AnalysisOutcome, AssessedRoot, AssessedRootDraft, BranchMerge, ChoiceBasis,
-    Correspondence, DecisionOwner, GlobalEventKind, GlobalStructure, InconclusiveCause, JoinPolicy,
-    LocalEvent, LocalEventId, LocalEventKind, LocalGraph, MergeEvidence, MissingMember,
-    OutstandingPolicy, PremiseRefusal, ProjectionBoundsDraft, ProjectionCounterexample,
+    Correspondence, DecisionOwner, GlobalEventKind, GlobalStructure, InconclusiveCause, LocalEvent,
+    LocalEventId, LocalEventKind, LocalGraph, MergeEvidence, MissingMember, PremiseRefusal,
+    ProjectionBoundsDraft, ProjectionCounterexample,
     ProjectionDecision, ProjectionKeyDraft, ProjectionWitness, ProtocolAnalysisKey,
     ProtocolAnalysisResult, ProtocolPremises, RunBudget, RunLimit, node_text,
     replay_projection_counterexample,
