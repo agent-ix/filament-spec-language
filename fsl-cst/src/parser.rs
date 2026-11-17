@@ -15,7 +15,7 @@ use crate::lexer::Limits;
 use crate::token::{Kind, LexError};
 use filament_exact::Cancel;
 use fsl_foundation::selection::{
-    ImportSelection, ModelSelection, ProfileSelection, SourceSelections, valid_selection_identity,
+    valid_selection_identity, ImportSelection, ModelSelection, ProfileSelection, SourceSelections,
 };
 use fsl_foundation::{Phase, Source, Span, SyntaxLimit};
 
@@ -44,6 +44,7 @@ type Scan = (
 );
 
 const SYNTAX_DIAGNOSTIC_BOUND: usize = 100;
+const EXPECTED_ALTERNATIVE_BOUND: usize = 12;
 
 #[derive(Clone, Debug)]
 struct Failure {
@@ -69,6 +70,68 @@ impl Failure {
             std::cmp::Ordering::Less => self,
         }
     }
+}
+
+fn format_expected(
+    tokens: &[Significant],
+    position: usize,
+    expected: &BTreeSet<String>,
+    reserved_words: &BTreeSet<&'static str>,
+) -> String {
+    if let Some(token) = tokens.get(position) {
+        if reserved_words.contains(token.spelling.as_ref())
+            && expected.iter().any(|item| {
+                item == "identifier"
+                    || item.starts_with("identifier or ")
+                    || item.starts_with("type name other than ")
+            })
+        {
+            return format!("`{}` is a reserved word", token.spelling);
+        }
+    }
+
+    let lowercase_hex_digits = (b'0'..=b'9')
+        .chain(b'a'..=b'f')
+        .map(|byte| format!("`{}`", byte as char))
+        .collect::<BTreeSet<_>>();
+    if expected == &lowercase_hex_digits
+        && tokens.get(position).is_some_and(|token| {
+            token.spelling.len() == 1
+                && token
+                    .spelling
+                    .chars()
+                    .next()
+                    .is_some_and(|character| ('A'..='F').contains(&character))
+        })
+    {
+        return "expected a lowercase hex digit".into();
+    }
+
+    if expected.len() > EXPECTED_ALTERNATIVE_BOUND {
+        return if expected.contains("decimal literal") || expected.contains("quoted string") {
+            "expected an expression".into()
+        } else {
+            "expected a declaration".into()
+        };
+    }
+
+    let expression_start = expected.contains("true")
+        || expected.contains("false")
+        || expected.contains("decimal literal") && expected.contains("quoted string")
+        || expected.contains("identifier")
+        || expected
+            .iter()
+            .any(|item| item.starts_with("identifier or "));
+    let mut alternatives = expected
+        .iter()
+        .filter(|item| !item.starts_with("one of `"))
+        .filter(|item| !(expression_start && item.as_str() == "decimal literal"))
+        .cloned()
+        .collect::<Vec<_>>();
+    if alternatives.is_empty() {
+        alternatives.push("an expression".into());
+    }
+    format!("expected {}", alternatives.join(" or "))
 }
 
 pub(super) fn parse(
@@ -209,6 +272,7 @@ fn parse_with_declaration_recovery(
     ),
     Box<CompleteDiagnostic>,
 > {
+    let reserved_words = grammar::complete_reserved_words(grammar);
     let lexical_spans: Vec<_> = scanned
         .iter()
         .filter(|diagnostic| diagnostic.phase == Phase::Lex)
@@ -376,7 +440,8 @@ fn parse_with_declaration_recovery(
                     };
                     let expected = failure
                         .expected
-                        .into_iter()
+                        .iter()
+                        .cloned()
                         .collect::<Vec<_>>()
                         .join(" or ");
                     let message = tokens
@@ -388,7 +453,17 @@ fn parse_with_declaration_recovery(
                                 &tokens,
                                 &Failure::expected(failure.position, expected.clone()),
                             )
-                            .map_or_else(|| format!("expected {expected}"), str::to_owned)
+                            .map_or_else(
+                                || {
+                                    format_expected(
+                                        &tokens,
+                                        failure.position,
+                                        &failure.expected,
+                                        &reserved_words,
+                                    )
+                                },
+                                str::to_owned,
+                            )
                         });
                     diagnostics.push(*super::diagnostic::error(
                         source,
@@ -466,14 +541,25 @@ fn parse_with_declaration_recovery(
                         let span = failure_span(source, &tokens, failure.position);
                         let expected = failure
                             .expected
-                            .into_iter()
+                            .iter()
+                            .cloned()
                             .collect::<Vec<_>>()
                             .join(" or ");
                         let message = derived_form(
                             &tokens,
                             &Failure::expected(failure.position, expected.clone()),
                         )
-                        .map_or_else(|| format!("expected {expected}"), str::to_owned);
+                        .map_or_else(
+                            || {
+                                format_expected(
+                                    &tokens,
+                                    failure.position,
+                                    &failure.expected,
+                                    &reserved_words,
+                                )
+                            },
+                            str::to_owned,
+                        );
                         if scanned.len().saturating_add(diagnostics.len()) < SYNTAX_DIAGNOSTIC_BOUND
                         {
                             diagnostics.push(*super::diagnostic::error(
@@ -510,14 +596,25 @@ fn parse_with_declaration_recovery(
                     let span = failure_span(source, &tokens, failure.position);
                     let expected = failure
                         .expected
-                        .into_iter()
+                        .iter()
+                        .cloned()
                         .collect::<Vec<_>>()
                         .join(" or ");
                     let message = derived_form(
                         &tokens,
                         &Failure::expected(failure.position, expected.clone()),
                     )
-                    .map_or_else(|| format!("expected {expected}"), str::to_owned);
+                    .map_or_else(
+                        || {
+                            format_expected(
+                                &tokens,
+                                failure.position,
+                                &failure.expected,
+                                &reserved_words,
+                            )
+                        },
+                        str::to_owned,
+                    );
                     if scanned.len().saturating_add(diagnostics.len()) < SYNTAX_DIAGNOSTIC_BOUND {
                         diagnostics.push(*super::diagnostic::error(
                             source,

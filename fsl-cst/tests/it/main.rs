@@ -28,5 +28,6 @@ mod reserved_declaration_names;
 mod selection;
 mod source_refusal;
 mod standard_forms;
+mod syntax_messages;
 mod taskset;
 mod terminal_declaration;

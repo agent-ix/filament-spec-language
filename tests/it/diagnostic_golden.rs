@@ -308,3 +308,57 @@ fn check_refusal_json_and_text_include_every_diagnostic() {
     assert_eq!(rendered.matches("unproved-range").count(), 3, "{rendered}");
     assert!(!rendered.contains(", and 2 more"), "{rendered}");
 }
+
+#[test]
+#[trace("TC-2198", "FR-762-AC-7")]
+fn syntax_messages_match_the_diagnostic_goldens() {
+    let cases = [
+        (
+            "long-expected-set",
+            format!("{HEADER}{{\n"),
+            include_str!("../fixtures/diagnostics/long-expected-set.expected"),
+        ),
+        (
+            "population-peek",
+            format!("{HEADER}function f using v(x: Integer): Integer pure {{ count + }}\n"),
+            include_str!("../fixtures/diagnostics/population-peek.expected"),
+        ),
+        (
+            "expression-start",
+            format!("{HEADER}function f using v(): Integer pure {{ ) }}\n"),
+            include_str!("../fixtures/diagnostics/expression-start.expected"),
+        ),
+        (
+            "uppercase-hex",
+            format!("{HEADER}function f using v(): Float32 pure {{ float32(bits: 0xFF000000) }}\n"),
+            include_str!("../fixtures/diagnostics/uppercase-hex.expected"),
+        ),
+        (
+            "reserved-first",
+            format!("{HEADER}record first {{ datum: Integer; }}\n"),
+            include_str!("../fixtures/diagnostics/reserved-first.expected"),
+        ),
+        (
+            "reserved-bounded",
+            format!("{HEADER}record bounded {{ datum: Integer; }}\n"),
+            include_str!("../fixtures/diagnostics/reserved-bounded.expected"),
+        ),
+        (
+            "missing-semicolon",
+            format!("{HEADER}record R {{ datum: Integer }}\n"),
+            include_str!("../fixtures/diagnostics/missing-semicolon.expected"),
+        ),
+    ];
+
+    for (name, source, expected) in cases {
+        let (document, rendered) = parsed_document(&source);
+        let value = json(&document);
+        let diagnostics = value["diagnostics"].as_array().expect("diagnostics list");
+        let message = diagnostics
+            .iter()
+            .find_map(|diagnostic| diagnostic["message"].as_str())
+            .unwrap_or_else(|| panic!("{name}: no diagnostic in {document:?}"));
+        assert_eq!(message, expected.trim(), "{name}");
+        assert!(rendered.contains(expected.trim()), "{name}: {rendered}");
+    }
+}
