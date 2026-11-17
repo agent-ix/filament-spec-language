@@ -1351,6 +1351,7 @@ pub fn run_clause_with_temporal_selections(
     run_clause_reading(request, temporal_selections, false, None)
 }
 
+#[cfg(test)]
 pub(crate) fn run_clause_with_function_modes(
     request: ClauseRunRequest,
     temporal_selections: &[fsl_package::TemporalClockSelection],

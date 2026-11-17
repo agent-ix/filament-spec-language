@@ -2127,6 +2127,10 @@ pub fn check_with_refinement_internals(
 
 /// Check one unit while honoring the recorded check mode for named function
 /// bodies (FR-098-AC-34).
+#[allow(
+    clippy::too_many_arguments,
+    reason = "one source's check inputs plus its per-function mode record"
+)]
 pub(crate) fn check_with_refinement_internals_and_function_modes(
     parsed: &ParsedUnitSource,
     package_name: String,
