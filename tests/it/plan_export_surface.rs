@@ -614,55 +614,316 @@ fn a_hybrid_model_plans_through_its_provider() {
     names(&value, "dwell_grid");
 }
 
-// ---- QSL-2247: previous through a step-for-step refinement ----------------
+// ---- QSL-2247: refinement transfer through a native run -------------------
 
-const COUNTER_REFINEMENT: &str = "language \"ix:native\" edition \"1-draft\";\n\
-     profile t = \"filament.temporal.infinite-trace/v1\";\n\
-     model Spec = \"example/spec-counter\";\n\
-     model Impl = \"example/impl-counter\";\n\
-     temporal PrevSafe using t over (c: Spec::Counter) clock \"model-steps\" \
+/// The clauses to transfer, the contracts of the third counter model and the
+/// identity refinement `ThirdRefinesSpec`, which maps the one concrete
+/// operation to the one abstract operation and so is step-for-step.
+const TRANSFER_DECLARATIONS: &str =
+    "pre ThirdCanInc using v on Third::Counter::inc { self.value < 2 }\n\
+     post ThirdInc using v on Third::Counter::inc \
+     { pre(self.value) < 2 and self.value = pre(self.value) + 1 }\n\
+     temporal PrevSafe using inf over (c: Spec::Counter) clock \"model-steps\" \
      on origin { always (holds(c.value = 2) implies once[1,1] holds(c.value = 1)) }\n\
-     refinement R using t abstract Spec::Counter concrete Impl::Counter {\n\
-       step Impl::Counter::inc -> Spec::Counter::inc(self);\n\
+     temporal SoonTwo using inf over (c: Spec::Counter) clock \"model-steps\" \
+     on origin { always (holds(c.value = 1) implies eventually[0,2] holds(c.value = 2)) }\n\
+     temporal AtMostTwo using inf over (c: Spec::Counter) clock \"model-steps\" \
+     on origin { always holds(c.value <= 2) }\n\
+     temporal OverThird using inf over (c: Third::Counter) clock \"model-steps\" \
+     on origin { always holds(c.value <= 2) }\n\
+     refinement ThirdRefinesSpec using inf abstract Spec concrete Third {\n\
+       population Spec::counters from Third::counters;\n\
+       object Spec::Counter from Third::Counter { value = self.value; }\n\
+       step Third::Counter::inc -> Spec::Counter::inc(self);\n\
      }\n";
 
-/// FR-1020-AC-1/AC-2, FSpec FR-380-AC-9: a proved `once[1,1]` clause
-/// transfers through a step-for-step refinement, and not through one that
-/// maps a concrete step to `stutter`.
+/// An initialization snapshot of the one counter `c` of `package`.
+fn counter_snapshot(package: &str, fields: Value) -> Value {
+    json!({
+        "format": "filament.state.snapshot/v1",
+        "identity": {"authority": "test", "identity": format!("{package}/start")},
+        "observation": "current", "model": {"identity": package},
+        "anchor": {"kind": "initialization", "name": "start"},
+        "populations": [{"population": format!("ix://{package}/counters"), "complete": true,
+            "objects": [{"key": "c", "type": format!("ix://{package}/Counter"), "fields": fields}]}],
+    })
+}
+
+/// A `refinement_transfer` member over `refinement` between `abstract` and
+/// `concrete` for `clauses`, with the fixture's initial snapshots.
+fn transfer_member(
+    refinement: &str,
+    (abstract_model, concrete): (&str, &str),
+    clauses: &[&str],
+) -> Value {
+    let initial = |model: &str| match model {
+        "Spec" => "spec-0",
+        "Impl" => "cas-0",
+        _ => "third-0",
+    };
+    json!({
+        "refinement": refinement,
+        "abstract": {"model": abstract_model, "initial": [initial(abstract_model)]},
+        "concrete": {"model": concrete, "initial": [initial(concrete)]},
+        "clauses": clauses,
+        "observations": {"spec-0": "spec-0.json", "cas-0": "cas-0.json", "third-0": "third-0.json"},
+    })
+}
+
+/// Writes ADR-020 §8's counter models, a unit with `CasRefinesCounter` and
+/// [`TRANSFER_DECLARATIONS`], the initial snapshots and a `native-run/1`
+/// request carrying `members` (with the `Spec` model's entry dropped when
+/// `supply_spec` is false), runs it and returns its exit code and document.
+fn transfer_run(members: &[(&str, Value)], supply_spec: bool) -> (u8, Value) {
+    use crate::support::refinement_cas::{self, Variant};
+    let directory = tempfile::tempdir().unwrap();
+    let declarations = format!(
+        "{TRANSFER_DECLARATIONS}{}",
+        refinement_cas::cas_refines_counter()
+    );
+    let unit = refinement_cas::unit_text(
+        &refinement_cas::packages(Variant::CAS),
+        &declarations,
+        Variant::CAS,
+    );
+    std::fs::write(directory.path().join("unit.native"), unit).unwrap();
+    let identities = [
+        refinement_cas::SPEC,
+        refinement_cas::CAS,
+        refinement_cas::THIRD,
+    ];
+    let mut models = Vec::new();
+    for (index, document) in refinement_cas::documents(Variant::CAS).iter().enumerate() {
+        let file = format!("model-{index}.json");
+        std::fs::write(directory.path().join(&file), document).unwrap();
+        if index > 0 || supply_spec {
+            models.push(
+                json!({"format": "semantic-ir/2.0.0", "source": {"file": file,
+                "authority": "agent-ix", "identity": identities[index],
+                "document": format!("Model{index}"), "formal_revision": 1}}),
+            );
+        }
+    }
+    let zero = json!({"integer": "0"});
+    let snapshots = [
+        (
+            "spec-0.json",
+            counter_snapshot(refinement_cas::SPEC, json!({"value": zero})),
+        ),
+        (
+            "third-0.json",
+            counter_snapshot(refinement_cas::THIRD, json!({"value": zero})),
+        ),
+        (
+            "cas-0.json",
+            counter_snapshot(
+                refinement_cas::CAS,
+                json!({"value": zero, "tmpA": zero, "busyA": {"boolean": false},
+                    "tmpB": zero, "busyB": {"boolean": false}}),
+            ),
+        ),
+    ];
+    for (file, snapshot) in snapshots {
+        std::fs::write(directory.path().join(file), snapshot.to_string()).unwrap();
+    }
+    let mut request = json!({"models": models, "program": {"source": source("unit.native")}});
+    for (name, member) in members {
+        request[*name] = member.clone();
+    }
+    write_request(
+        directory.path(),
+        &json!({"format": "native-run/1", "request": request}),
+    )
+}
+
+/// The transfer result of `clause` in a `refinement_transfer` outcome.
+fn transfer<'a>(value: &'a Value, clause: &str) -> &'a Value {
+    value["refinement_transfer"]["transfers"]
+        .as_array()
+        .and_then(|transfers| transfers.iter().find(|entry| entry["clause"] == clause))
+        .map(|entry| &entry["result"])
+        .unwrap_or_else(|| panic!("a transfer of {clause}: {value}"))
+}
+
+/// FR-1030-AC-1/AC-2, FR-1020-AC-1/AC-2, FSpec FR-380-AC-9, FSpec
+/// FR-820-AC-1/AC-2: `once[1,1]` and `eventually[0,2]` clauses transfer
+/// `proved` through the step-for-step `ThirdRefinesSpec`, and settle
+/// `transfer-not-preserving` through `CasRefinesCounter`, whose step map
+/// sends concrete operations to `stutter`; a fragment clause still transfers.
 #[test]
+#[trace("TC-2920", "FR-1030-AC-1")]
+#[trace("TC-2920", "FR-1030-AC-2")]
 #[trace("TC-2870", "FR-1020-AC-1")]
 #[trace("TC-2870", "FR-1020-AC-2")]
 #[trace("FSpec-TC-1042", "FSpec-FR-380-AC-9")]
-#[ignore = "QSL-2247: step-for-step transfer of previous through a model refinement is not implemented yet"]
+#[trace("FSpec-TC-2000", "FSpec-FR-820-AC-1")]
+#[trace("FSpec-TC-2000", "FSpec-FR-820-AC-2")]
+#[ignore = "QSL-2247: the refinement_transfer request member and step-for-step transfer are not implemented yet"]
 fn previous_transfers_only_through_a_step_for_step_refinement() {
-    let transfer = |unit: &str| {
-        run(
-            unit,
-            false,
+    let (exit, value) = transfer_run(
+        &[(
+            "refinement_transfer",
+            transfer_member(
+                "ThirdRefinesSpec",
+                ("Spec", "Third"),
+                &["PrevSafe", "SoonTwo"],
+            ),
+        )],
+        true,
+    );
+    assert_eq!(exit, 0, "{value}");
+    assert_eq!(
+        value["refinement_transfer"]["refinement"]["step_for_step"]["holds"], true,
+        "{value}"
+    );
+    for clause in ["PrevSafe", "SoonTwo"] {
+        let result = transfer(&value, clause);
+        assert_eq!(result["value"], "proved", "{value}");
+        assert_eq!(result["basis"], "decisive-witness", "{value}");
+        assert_eq!(
+            result["transfer"]["premises"].as_array().map(Vec::len),
+            Some(2),
+            "{value}"
+        );
+    }
+
+    let (exit, value) = transfer_run(
+        &[(
+            "refinement_transfer",
+            transfer_member(
+                "CasRefinesCounter",
+                ("Spec", "Impl"),
+                &["PrevSafe", "SoonTwo", "AtMostTwo"],
+            ),
+        )],
+        true,
+    );
+    assert_eq!(exit, 22, "{value}");
+    let step_for_step = &value["refinement_transfer"]["refinement"]["step_for_step"];
+    assert_eq!(step_for_step["holds"], false, "{value}");
+    assert_eq!(
+        step_for_step["row"]["operation"], "Impl::Counter::beginA",
+        "{value}"
+    );
+    assert_eq!(step_for_step["row"]["arm"], "stutter", "{value}");
+    for (clause, operator) in [("PrevSafe", "once[1,1]"), ("SoonTwo", "eventually[0,2]")] {
+        let result = transfer(&value, clause);
+        assert_eq!(result["value"], "inconclusive", "{value}");
+        assert_eq!(
+            result["cause"]["type"], "transfer-not-preserving",
+            "{value}"
+        );
+        assert_eq!(result["cause"]["reason"], "fragment", "{value}");
+        assert_eq!(result["cause"]["operator"], operator, "{value}");
+    }
+    assert_eq!(transfer(&value, "AtMostTwo")["value"], "proved", "{value}");
+}
+
+/// FR-1031-AC-1 to AC-3: conflicting selection members, a duplicate clause,
+/// a missing model, a subject that is not the refinement's and clauses
+/// outside the transferable family each refuse at their stage and pointer.
+#[test]
+#[trace("TC-2921", "FR-1031-AC-1")]
+#[trace("TC-2921", "FR-1031-AC-2")]
+#[trace("TC-2921", "FR-1031-AC-3")]
+#[ignore = "QSL-2247: refinement_transfer request refusals are not implemented yet"]
+fn a_refinement_transfer_request_is_refused_by_stage() {
+    let member = |abstract_model: &str, concrete: &str, clauses: &[&str]| {
+        transfer_member("ThirdRefinesSpec", (abstract_model, concrete), clauses)
+    };
+    let refused = |members: &[(&str, Value)], supply_spec: bool, stage: &str, code: &str| {
+        let (exit, value) = transfer_run(members, supply_spec);
+        assert_eq!(exit, 20, "{value}");
+        names(&value, stage);
+        names(&value, code);
+        value
+    };
+
+    let call = json!({"function": "f", "arguments": []});
+    let value = refused(
+        &[
             (
                 "refinement_transfer",
-                json!({"claim": "PrevSafe", "refinement": "R"}),
+                member("Spec", "Third", &["PrevSafe"]),
             ),
-        )
-        .1
-    };
-    let value = transfer(COUNTER_REFINEMENT);
-    assert_eq!(value["refinement_transfer"]["value"], "proved", "{value}");
-    assert_eq!(
-        value["refinement_transfer"]["basis"], "decisive-witness",
-        "{value}"
+            ("call", call),
+        ],
+        true,
+        "request",
+        "invalid-request",
     );
-    let stuttering = COUNTER_REFINEMENT.replace(
-        "Spec::Counter::inc(self);\n",
-        "Spec::Counter::inc(self);\nstep Impl::Counter::retry -> stutter;\n",
+    names(&value, "refinement_transfer");
+    names(&value, "call");
+    let value = refused(
+        &[
+            (
+                "refinement_transfer",
+                member("Spec", "Third", &["PrevSafe"]),
+            ),
+            ("items", json!([])),
+        ],
+        true,
+        "request",
+        "invalid-request",
     );
-    let value = transfer(&stuttering);
-    assert_eq!(
-        value["refinement_transfer"]["value"], "inconclusive",
-        "{value}"
+    names(&value, "items");
+    let value = refused(
+        &[(
+            "refinement_transfer",
+            member("Spec", "Third", &["PrevSafe", "PrevSafe"]),
+        )],
+        true,
+        "request",
+        "invalid-request",
     );
-    names(&value, "transfer-not-preserving");
-    names(&value, "once[1,1]");
+    names(&value, "/refinement_transfer/clauses/1");
+
+    let value = refused(
+        &[(
+            "refinement_transfer",
+            member("Ghost", "Third", &["PrevSafe"]),
+        )],
+        true,
+        "select",
+        "missing-name",
+    );
+    names(&value, "/refinement_transfer/abstract/model");
+    refused(
+        &[(
+            "refinement_transfer",
+            member("Spec", "Third", &["PrevSafe"]),
+        )],
+        false,
+        "compile",
+        "missing-selection",
+    );
+    let value = refused(
+        &[("refinement_transfer", member("Spec", "Impl", &["PrevSafe"]))],
+        true,
+        "select",
+        "invalid-value",
+    );
+    names(&value, "/refinement_transfer/concrete/model");
+    names(&value, "Third");
+
+    // `CanInc` is a state precondition, not an infinite-trace clause.
+    let value = refused(
+        &[("refinement_transfer", member("Spec", "Third", &["CanInc"]))],
+        true,
+        "select",
+        "type-mismatch",
+    );
+    names(&value, "/refinement_transfer/clauses/0");
+    let value = refused(
+        &[(
+            "refinement_transfer",
+            member("Spec", "Third", &["OverThird"]),
+        )],
+        true,
+        "select",
+        "invalid-value",
+    );
+    names(&value, "/refinement_transfer/clauses/0");
 }
 
 // ---- QSL-1979: target results as trusted evidence -------------------------
