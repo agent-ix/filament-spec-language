@@ -36,6 +36,7 @@ filament-contract-model = { workspace = true }
 # The observation owner admits progress associations independently of FSL.
 filament-observation = { git = "https://github.com/agent-ix/filament-observation", branch = "main" }
 filament-exact = { workspace = true }
+filament-eval = { workspace = true }
 num-bigint = "0.4.8"
 num-integer = "0.1.47"
 num-traits = "0.2.19"

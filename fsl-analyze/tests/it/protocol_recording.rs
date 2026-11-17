@@ -2,10 +2,10 @@
 //! FR-895: replay-mode reading and obligation assessment of protocol recordings.
 
 use fsl_analyze::protocol_analysis::recording::{
-    assess_recording, RecordingFact, RecordingVerdict,
+    RecordingFact, RecordingVerdict, assess_recording,
 };
 use ix_trace_rs::trace;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
 use crate::analyze_cli_support::order_protocol;
 
@@ -28,12 +28,31 @@ fn paid_protocol() -> fsl_package::CheckedPackage {
     crate::fill::package(&crate::protocol_compensation::pay("true"))
 }
 
+fn paid_protocol_window() -> fsl_package::CheckedPackage {
+    let protocol =
+        crate::protocol_compensation::pay("true").replace("within [0, 10]", "within [0, 120]");
+    crate::fill::package(&protocol)
+}
+
 fn delivery_protocol(policy: &str) -> fsl_package::CheckedPackage {
     let protocol = crate::analyze_cli_support::order_protocol(true).replace(
         "delivery exactly-once-premise",
         &format!("delivery {policy}"),
     );
     crate::litmus::package_called("analysis-unit", &protocol)
+}
+
+fn told_protocol() -> fsl_package::CheckedPackage {
+    let source = crate::analyze_cli_support::order_protocol(true)
+        .replace(
+            "run sequence Main {",
+            "channel Tell from Seller to Buyer carries Ack ordering unordered delivery exactly-once-premise capacity 4 overflow reject;\nrun sequence Main {",
+        )
+        .replace(
+            "sequence Ship { }",
+            "sequence Ship { send Told via Tell as (told: Ack) { true }; }",
+        );
+    crate::litmus::package_called("analysis-unit", &source)
 }
 
 fn paid_recording(observations: Value) -> Value {
@@ -74,9 +93,8 @@ fn assess_duplicate_delivery(
     policy: &str,
 ) -> fsl_analyze::protocol_analysis::recording::RecordingAssessment {
     let package = delivery_protocol(policy);
-    let checked = package.graph().protocol("Flow").expect("Flow is checked");
     let run = duplicate_delivery_recording();
-    assess_recording(checked, run.to_string().as_bytes()).expect("readable delivery recording")
+    assess_recording(&package, run.to_string().as_bytes()).expect("readable delivery recording")
 }
 
 fn compensation_attempt(identity: &str, outcome: &str, retry_of: Option<&str>) -> Value {
@@ -131,9 +149,8 @@ fn assess_paid(
     observations: Value,
 ) -> fsl_analyze::protocol_analysis::recording::RecordingAssessment {
     let package = paid_protocol();
-    let checked = package.graph().protocol("Pay").expect("Pay is checked");
     let run = paid_recording(observations);
-    assess_recording(checked, run.to_string().as_bytes()).expect("readable paid recording")
+    assess_recording(&package, run.to_string().as_bytes()).expect("readable paid recording")
 }
 
 fn complete_observations() -> Value {
@@ -156,23 +173,28 @@ fn complete_observations() -> Value {
 #[test]
 fn a_closed_recording_assesses_observed_and_unobserved_obligations() {
     let package = protocol();
-    let checked = package.graph().protocol("Flow").expect("Flow is checked");
     let closed = recording(
         complete_observations(),
         json!({"Buyer": [0], "Seller": [1, 2, 3]}),
         "closed",
     );
-    let assessed = assess_recording(checked, closed.to_string().as_bytes()).expect("readable run");
-    assert_eq!(assessed.global.label, "proved");
-    assert!(assessed
-        .obligations
-        .iter()
-        .all(|entry| entry.verdict == RecordingVerdict::Satisfied));
+    let assessed = assess_recording(&package, closed.to_string().as_bytes()).expect("readable run");
+    assert_eq!(
+        assessed.global.label, "proved",
+        "{:#?}",
+        assessed.obligations
+    );
+    assert!(
+        assessed
+            .obligations
+            .iter()
+            .all(|entry| entry.verdict == RecordingVerdict::Satisfied)
+    );
 
     let mut cut = complete_observations();
     cut.as_array_mut().expect("array").truncate(2);
     let open = recording(cut, json!({"Buyer": [0], "Seller": [1]}), "open");
-    let assessed = assess_recording(checked, open.to_string().as_bytes()).expect("readable run");
+    let assessed = assess_recording(&package, open.to_string().as_bytes()).expect("readable run");
     assert_eq!(assessed.global.label, "inconclusive");
     assert!(assessed.obligations.iter().any(|entry| {
         entry.obligation.kind == "control" && entry.verdict == RecordingVerdict::Pending
@@ -187,7 +209,6 @@ fn a_closed_recording_assesses_observed_and_unobserved_obligations() {
 #[test]
 fn an_undeclared_role_is_a_correspondence_refusal() {
     let package = protocol();
-    let checked = package.graph().protocol("Flow").expect("Flow is checked");
     let run = recording(
         json!([{
             "kind": "send", "node": "Flow::Main::Placed", "role": "Courier",
@@ -197,9 +218,221 @@ fn an_undeclared_role_is_a_correspondence_refusal() {
         "open",
     );
     let refusal =
-        assess_recording(checked, run.to_string().as_bytes()).expect_err("role is absent");
+        assess_recording(&package, run.to_string().as_bytes()).expect_err("role is absent");
     assert_eq!(refusal.code().cause(), "missing-name");
     assert_eq!(refusal.position(), Some(0));
+}
+
+/// Trace: FR-895-AC-5.
+#[trace("FR-895-AC-5")]
+#[test]
+fn a_declared_but_wrongly_owned_role_is_an_unexpected_observation() {
+    let package = protocol();
+    let run = json!({
+        "format": "filament.protocol-recording/1",
+        "protocol": "Flow",
+        "observations": [{
+            "kind": "send", "node": "Flow::Main::Placed", "role": "Seller",
+            "instance": "w-1", "keys": {"message": "m-1", "delivery": "d-1"},
+            "record": {"ok": true}
+        }],
+        "local_order": {"Seller": [0]},
+        "correlations": [],
+        "closure": {"state": "open", "premises": []}
+    });
+    let assessed =
+        assess_recording(&package, run.to_string().as_bytes()).expect("known role and node");
+    assert!(
+        assessed.obligations.iter().any(|entry| {
+            entry.obligation.kind == "enabledness"
+                && entry.verdict == RecordingVerdict::Violated
+                && entry.cause
+                    == Some(fsl_analyze::protocol_analysis::recording::RecordingCause::Unexpected)
+                && entry.witness == [0]
+        }),
+        "{:#?}",
+        assessed.obligations
+    );
+}
+
+/// Trace: FR-895-AC-5.
+#[trace("FR-895-AC-5")]
+#[test]
+fn a_send_in_an_unselected_choice_branch_is_unexpected() {
+    let package = told_protocol();
+    let run = json!({
+        "format": "filament.protocol-recording/1",
+        "protocol": "Flow",
+        "observations": [{
+            "kind": "send", "node": "Flow::Main::Decide::yes::Ship::Told", "role": "Seller",
+            "instance": "w-1", "keys": {"message": "m-1", "delivery": "d-1"},
+            "record": {"ok": true}
+        }],
+        "local_order": {"Seller": [0]},
+        "correlations": [],
+        "closure": {"state": "open", "premises": []}
+    });
+    let assessed = assess_recording(&package, run.to_string().as_bytes()).expect("known send node");
+    assert_eq!(assessed.global.label, "refuted");
+    assert!(
+        assessed.obligations.iter().any(|entry| {
+            entry.obligation.kind == "enabledness"
+                && entry.verdict == RecordingVerdict::Violated
+                && entry.cause
+                    == Some(fsl_analyze::protocol_analysis::recording::RecordingCause::Unexpected)
+                && entry.witness == [0]
+        }),
+        "{:#?}",
+        assessed.obligations
+    );
+}
+
+/// Trace: TC-2530.
+#[trace("TC-2530")]
+#[test]
+fn a_false_bound_event_constraint_is_a_violated_obligation() {
+    let source = crate::analyze_cli_support::order_protocol(true).replace(
+        "send Placed via Order as (placed: Ack) { true };",
+        "send Placed via Order as (placed: Ack) { placed.ok };",
+    );
+    let package = crate::litmus::package_called("analysis-unit", &source);
+    let run = json!({
+        "format": "filament.protocol-recording/1",
+        "protocol": "Flow",
+        "observations": [{
+            "kind": "send", "node": "Flow::Main::Placed", "role": "Buyer",
+            "instance": "w-1", "keys": {"message": "m-1", "delivery": "d-1"},
+            "record": {"ok": false}
+        }],
+        "local_order": {"Buyer": [0]},
+        "correlations": [],
+        "closure": {"state": "open", "premises": []}
+    });
+    let assessed =
+        assess_recording(&package, run.to_string().as_bytes()).expect("known event node");
+    assert!(
+        assessed.obligations.iter().any(|entry| {
+            entry.obligation.kind == "constraint"
+                && entry.obligation.node.as_deref() == Some("Flow::Main::Placed")
+                && entry.verdict == RecordingVerdict::Violated
+                && entry.cause
+                    == Some(fsl_analyze::protocol_analysis::recording::RecordingCause::Unexpected)
+                && entry.witness == [0]
+        }),
+        "{:#?}",
+        assessed.obligations
+    );
+}
+
+/// Trace: FR-895-AC-2.
+#[trace("FR-895-AC-2")]
+#[test]
+fn receive_before_send_is_a_causal_order_violation() {
+    let source = crate::analyze_cli_support::order_protocol(true)
+        .replace(
+            "channel Order from Buyer to Seller carries Ack ordering unordered delivery exactly-once-premise capacity 4 overflow reject;",
+            "channel Order from Buyer to Seller carries Ack ordering unordered delivery exactly-once-premise capacity 4 overflow reject;\nchannel Return from Seller to Buyer carries Ack ordering unordered delivery exactly-once-premise capacity 4 overflow reject;",
+        )
+        .replace(
+            "receive Got via Order of Placed as (got: Ack) { true };",
+            "receive Got via Order of Placed as (got: Ack) { true };\nsend Confirm via Return as (confirm: Ack) { true };\nreceive Confirmed via Return of Confirm as (confirmed: Ack) { true };",
+        );
+    let package = crate::litmus::package_called("analysis-unit", &source);
+    let run = json!({
+        "format": "filament.protocol-recording/1",
+        "protocol": "Flow",
+        "observations": [
+            {"kind": "receive", "node": "Flow::Main::Got", "role": "Seller",
+             "instance": "w-1", "keys": {"message": "m-1", "delivery": "d-1"},
+             "record": {"ok": true}},
+            {"kind": "send", "node": "Flow::Main::Confirm", "role": "Seller",
+             "instance": "w-1", "keys": {"message": "m-2", "delivery": "d-2"},
+             "record": {"ok": true}},
+            {"kind": "receive", "node": "Flow::Main::Confirmed", "role": "Buyer",
+             "instance": "w-1", "keys": {"message": "m-2", "delivery": "d-2"},
+             "record": {"ok": true}},
+            {"kind": "send", "node": "Flow::Main::Placed", "role": "Buyer",
+             "instance": "w-1", "keys": {"message": "m-1", "delivery": "d-1"},
+             "record": {"ok": true}}
+        ],
+        "local_order": {"Seller": [0, 1], "Buyer": [2, 3]},
+        "correlations": [{"send": 1, "receive": 2}, {"send": 3, "receive": 0}],
+        "closure": {"state": "closed", "premises": []}
+    });
+    let assessed =
+        assess_recording(&package, run.to_string().as_bytes()).expect("well-formed recording");
+    assert_eq!(assessed.global.label, "refuted");
+    assert_eq!(
+        assessed.trace_position,
+        Some(0),
+        "{:#?}",
+        assessed.obligations
+    );
+    assert!(
+        assessed.obligations.iter().any(|entry| {
+            entry.obligation.kind == "causal-order"
+                && entry.verdict == RecordingVerdict::Violated
+                && entry.cause
+                    == Some(fsl_analyze::protocol_analysis::recording::RecordingCause::Misordered)
+                && entry.witness == [0, 3]
+        }),
+        "{:#?}",
+        assessed.obligations
+    );
+}
+
+/// Trace: FR-895-AC-6.
+#[trace("FR-895-AC-6")]
+#[test]
+fn compensation_windows_use_declared_clock_and_remain_pending_without_a_reading() {
+    let package = paid_protocol_window();
+    let assess = |clocks: Value, closure: &str| {
+        let mut attempt = compensation_attempt("comp-1", "successful", None);
+        attempt["clocks"] = clocks;
+        let observations = json!([attempt]);
+        let mut run = paid_recording(observations.clone());
+        run["closure"]["state"] = json!(closure);
+        assess_recording(&package, run.to_string().as_bytes()).expect("readable recording")
+    };
+
+    let out_of_window = assess(json!({"c": 130}), "open");
+    assert!(
+        out_of_window.obligations.iter().any(|entry| {
+            entry.obligation.kind == "window"
+                && entry.verdict == RecordingVerdict::Violated
+                && entry.witness == [0]
+        }),
+        "{:#?}",
+        out_of_window.obligations
+    );
+
+    let missing_reading = assess(json!({}), "open");
+    assert!(
+        missing_reading.obligations.iter().any(|entry| {
+            entry.obligation.kind == "window" && entry.verdict == RecordingVerdict::Pending
+        }),
+        "{:#?}",
+        missing_reading.obligations
+    );
+
+    let assert_batch_incremental_parity = |clocks: Value| {
+        let mut observation = compensation_attempt("comp-1", "successful", None);
+        observation["clocks"] = clocks;
+        let recording = paid_recording(json!([observation]));
+        let batch =
+            assess_recording(&package, recording.to_string().as_bytes()).expect("batch assessment");
+        let mut incremental = None;
+        for observations in recording["observations"].as_array().expect("observations") {
+            let prefix = paid_recording(json!([observations]));
+            incremental = Some(
+                assess_recording(&package, prefix.to_string().as_bytes())
+                    .expect("incremental assessment"),
+            );
+        }
+        assert_eq!(incremental.expect("one recorded attempt"), batch);
+    };
+    assert_batch_incremental_parity(json!({"c": 130}));
+    assert_batch_incremental_parity(json!({}));
 }
 
 /// Trace: FR-894-AC-2, TC-2528.
@@ -207,10 +440,10 @@ fn an_undeclared_role_is_a_correspondence_refusal() {
 #[test]
 fn two_effect_keys_for_one_paid_occurrence_report_a_duplicate_fact() {
     let assessed = assess_paid(json!([
-        compensation_attempt("comp-1", "successful", None),
-        recovery("successful"),
         paid_effect("effect-1", "operation-1"),
-        paid_effect("effect-2", "operation-1")
+        paid_effect("effect-2", "operation-1"),
+        compensation_attempt("comp-1", "successful", None),
+        recovery("successful")
     ]));
 
     let duplicates: Vec<_> = assessed
@@ -247,16 +480,18 @@ fn two_effect_keys_for_one_paid_occurrence_report_a_duplicate_fact() {
 #[test]
 fn failed_attempt_then_successful_retry_has_one_effect_and_no_duplicate() {
     let assessed = assess_paid(json!([
+        paid_effect("effect-2", "operation-2"),
         compensation_attempt("comp-1", "failed", None),
         compensation_attempt("comp-2", "successful", Some("comp-1")),
-        recovery("successful"),
-        paid_effect("effect-2", "operation-2")
+        recovery("successful")
     ]));
 
-    assert!(!assessed
-        .facts
-        .iter()
-        .any(|fact| matches!(fact, RecordingFact::DuplicateBusinessEffect { .. })));
+    assert!(
+        !assessed
+            .facts
+            .iter()
+            .any(|fact| matches!(fact, RecordingFact::DuplicateBusinessEffect { .. }))
+    );
     let attempts: Vec<_> = assessed
         .facts
         .iter()
@@ -283,11 +518,11 @@ fn failed_attempt_then_successful_retry_has_one_effect_and_no_duplicate() {
 #[test]
 fn two_successful_attempt_effects_keep_outcomes_beside_the_duplicate_fact() {
     let assessed = assess_paid(json!([
+        paid_effect("effect-1", "operation-1"),
+        paid_effect("effect-2", "operation-2"),
         compensation_attempt("comp-1", "successful", None),
         compensation_attempt("comp-2", "successful", Some("comp-1")),
-        recovery("successful"),
-        paid_effect("effect-1", "operation-1"),
-        paid_effect("effect-2", "operation-2")
+        recovery("successful")
     ]));
 
     assert_eq!(
@@ -330,17 +565,21 @@ fn distinct_effect_occurrences_and_repeated_effect_keys_are_not_duplicates() {
         paid_effect_at("effect-1", "operation-1", 0),
         paid_effect_at("effect-2", "operation-2", 1)
     ]));
-    assert!(!distinct
-        .facts
-        .iter()
-        .any(|fact| matches!(fact, RecordingFact::DuplicateBusinessEffect { .. })));
+    assert!(
+        !distinct
+            .facts
+            .iter()
+            .any(|fact| matches!(fact, RecordingFact::DuplicateBusinessEffect { .. }))
+    );
 
     let repeated_effect = paid_effect("effect-replayed", "operation-replayed");
     let replayed = assess_paid(json!([repeated_effect.clone(), repeated_effect]));
-    assert!(!replayed
-        .facts
-        .iter()
-        .any(|fact| matches!(fact, RecordingFact::DuplicateBusinessEffect { .. })));
+    assert!(
+        !replayed
+            .facts
+            .iter()
+            .any(|fact| matches!(fact, RecordingFact::DuplicateBusinessEffect { .. }))
+    );
     assert_eq!(
         replayed
             .facts
@@ -374,10 +613,12 @@ fn duplicate_delivery_is_classified_against_the_channel_premise() {
     }));
 
     let refused = assess_duplicate_delivery("exactly-once-premise");
-    assert!(refused
-        .facts
-        .iter()
-        .any(|fact| matches!(fact, RecordingFact::DuplicateDelivery { .. })));
+    assert!(
+        refused
+            .facts
+            .iter()
+            .any(|fact| matches!(fact, RecordingFact::DuplicateDelivery { .. }))
+    );
     assert!(refused.obligations.iter().any(|entry| {
         entry.obligation.kind == "channel-premise"
             && entry.obligation.node.as_deref() == Some("Order")
