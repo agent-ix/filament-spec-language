@@ -247,7 +247,7 @@ fn assert_outcome_witness_names_history(item: &serde_json::Value) {
     let witness = item
         .get("witness")
         .expect("refuted state item has a witness");
-    assert_eq!(witness["deciding_element"]["integer"], "600", "{witness}");
+    assert_eq!(witness["deciding_element"]["decimal"], "600", "{witness}");
     assert!(witness.get("quantifier").is_some(), "{witness}");
     assert_eq!(witness["index"], 1, "{witness}");
     assert_eq!(
@@ -258,7 +258,11 @@ fn assert_outcome_witness_names_history(item: &serde_json::Value) {
         witness["value_path"]["steps"][0]["name"], "history",
         "{witness}"
     );
-    assert_eq!(witness["value_path"]["steps"][1]["index"], 1, "{witness}");
+    assert_eq!(
+        witness["value_path"]["steps"].as_array().unwrap().len(),
+        1,
+        "{witness}"
+    );
 }
 
 /// FR-286-AC-10: a state-clause outcome keeps the selected object and its
