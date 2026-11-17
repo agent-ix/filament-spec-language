@@ -51,10 +51,9 @@ use std::collections::{BTreeMap, VecDeque};
 
 use filament_exact::Cancel;
 use filament_semantic_value::catalog::InternalFault;
-use filament_semantic_value::fairness::FairnessKind;
 use fsl_eval::simulation::model::{
     check_model_bounds, GuardedStep, ModelSimState, ModelSimulationRequest, ModelSystem,
-    TimedSubjectRefusal, TimedSystem,
+    PlaceConstraint, TimedSubjectRefusal, TimedSystem,
 };
 use fsl_eval::simulation::BOUND_POSITIONS;
 use fsl_package::CheckedPackage;
@@ -65,7 +64,7 @@ use fsl_replay::{
     UndefinedEvaluation, Undetermined, ZoneCertificate,
 };
 use fsl_route::deadlock::ItemObligation;
-use fsl_semantics::check::CheckedRefinement;
+use fsl_semantics::check::{CheckedRefinement, ClockOp};
 use fsl_semantics::model::observation::DocumentRef;
 
 use super::certificate::Proof;
@@ -75,7 +74,7 @@ use super::search::{
     not_simulated, widen, Arrival, Halt, Inserted, Judged, Run, Searched, ZoneCheckLimits,
     ZoneCheckRefusal, ZoneStats, ZoneStop, ZoneUndecided,
 };
-use super::Dbm;
+use super::{Bound, Dbm};
 
 mod live;
 
@@ -165,8 +164,8 @@ pub struct TimedRefinementOutcome<S> {
     /// The safety half.
     pub safety: TimedSafetyOutcome<S>,
     /// The liveness half: `None` with `F_A` empty. With a non-empty `F_A`
-    /// it is `Unsupported` for a refinement with a hidden abstract field or
-    /// a strong `F_A` constraint, whatever the safety half is; otherwise it
+    /// it is `Unsupported` for a refinement with a hidden abstract field,
+    /// whatever the safety half is; otherwise it
     /// is `None` when the safety half is other than `Holds`, and `Checked`
     /// when it holds.
     pub liveness: Option<TimedLivenessHalf>,
@@ -195,8 +194,9 @@ pub enum TimedLivenessOutcome {
         stats: ZoneStats,
     },
     /// A timed lasso with positive loop delay, fair under `F_C`, on which a
-    /// class of `F_A` is enabled throughout and never taken: its failure is
-    /// `Divergence` or `AbstractUnfair` (FR-143, FR-241).
+    /// class of `F_A` is enabled as required by its weak or strong fairness
+    /// and never taken: its failure is `Divergence` or `AbstractUnfair`
+    /// (FR-143, FR-241).
     Violated {
         /// The counterexample.
         counterexample: Box<TemporalCounterexample>,
@@ -258,6 +258,25 @@ pub fn check_timed_refinement<S>(
     request: TimedRefinementRequest<'_, S>,
     cancel: &Cancel,
 ) -> Result<TimedRefinementOutcome<S>, TimedRefinementRefusal> {
+    check_refinement_with_time_source(request, cancel, false)
+}
+
+/// EN-6's refinement product for an untimed concrete model with arbitrary
+/// nonnegative delays between discrete steps (FSpec FR-900-AC-5). The
+/// concrete side contributes zero clock placements; timed abstract clocks
+/// occupy the auxiliary zone dimensions.
+pub fn check_free_delay_refinement<S>(
+    request: TimedRefinementRequest<'_, S>,
+    cancel: &Cancel,
+) -> Result<TimedRefinementOutcome<S>, TimedRefinementRefusal> {
+    check_refinement_with_time_source(request, cancel, true)
+}
+
+fn check_refinement_with_time_source<S>(
+    request: TimedRefinementRequest<'_, S>,
+    cancel: &Cancel,
+    free_delay: bool,
+) -> Result<TimedRefinementOutcome<S>, TimedRefinementRefusal> {
     let refinement = request.refinement;
     let RefinementSystems {
         concrete,
@@ -272,11 +291,28 @@ pub fn check_timed_refinement<S>(
     .map_err(TimedRefinementRefusal::Subject)?;
     check_model_bounds(&concrete, BOUND_POSITIONS).map_err(not_simulated)?;
     check_model_bounds(&abstract_system, BOUND_POSITIONS).map_err(not_simulated)?;
-    let timed = TimedSystem::new(&concrete, refinement.concrete_model())
-        .map_err(TimedRefinementRefusal::Timed)?;
+    let timed = if free_delay {
+        TimedSystem::free_delay(&concrete, fsl_eval::simulation::model::DEFAULT_MAX_CLOCKS)
+    } else {
+        TimedSystem::new(&concrete, refinement.concrete_model())
+    }
+    .map_err(TimedRefinementRefusal::Timed)?;
     if timed.carries_clocks() {
         return Err(ZoneCheckRefusal::CarriedClocks.into());
     }
+    let auxiliary_timed = if abstract_system
+        .package()
+        .graph()
+        .timed_model(refinement.abstract_model())
+        .is_some()
+    {
+        Some(
+            TimedSystem::new(&abstract_system, refinement.abstract_model())
+                .map_err(TimedRefinementRefusal::Timed)?,
+        )
+    } else {
+        None
+    };
     let mut run = Run::new(
         &timed,
         Judged::Refinement,
@@ -285,6 +321,9 @@ pub fn check_timed_refinement<S>(
         request.limits,
         cancel,
     );
+    if let Some(auxiliary_timed) = &auxiliary_timed {
+        run.include_auxiliary_timed(auxiliary_timed);
+    }
     let mut product = Product {
         refinement,
         abstract_system: &abstract_system,
@@ -292,6 +331,8 @@ pub fn check_timed_refinement<S>(
         known: BTreeMap::new(),
         depth: Vec::new(),
         taken: Vec::new(),
+        auxiliary_transforms: Vec::new(),
+        initial_invariant_failures: BTreeMap::new(),
     };
     let ended = product.search(&mut run).and_then(|ended| match ended {
         Ended::Outcome(outcome) => Ok(outcome),
@@ -331,7 +372,7 @@ pub fn check_timed_refinement<S>(
                 stats,
             },
             Searched::Holds { .. } | Searched::HoldsReduced { .. } | Searched::Violated { .. } => {
-                return Err(ZoneCheckRefusal::Fault("refinement-halt").into())
+                return Err(ZoneCheckRefusal::Fault("refinement-halt").into());
             }
         },
     };
@@ -364,13 +405,6 @@ fn unsupported_liveness(refinement: &CheckedRefinement) -> Option<TimedLivenessH
         Some(TimedLivenessHalf::Unsupported(
             UnavailabilityCause::HiddenFieldLiveness,
         ))
-    } else if refinement
-        .abstract_operation_fairness()
-        .any(|constraint| constraint.kind() == FairnessKind::Strong)
-    {
-        Some(TimedLivenessHalf::Unsupported(
-            UnavailabilityCause::StrongAbstractFairness,
-        ))
     } else {
         None
     }
@@ -398,7 +432,7 @@ fn liveness(
             }
             TimedSafetyOutcome::Fault { fault, .. } => TimedLivenessOutcome::Fault { fault, stats },
             TimedSafetyOutcome::Holds { .. } | TimedSafetyOutcome::Violated { .. } => {
-                return Err(ZoneCheckRefusal::Fault("liveness-end").into())
+                return Err(ZoneCheckRefusal::Fault("liveness-end").into());
             }
         },
         Err(Halt::Refusal(refusal)) => return Err(refusal.into()),
@@ -412,7 +446,7 @@ fn liveness(
                 stats,
             },
             Searched::Holds { .. } | Searched::HoldsReduced { .. } | Searched::Violated { .. } => {
-                return Err(ZoneCheckRefusal::Fault("liveness-halt").into())
+                return Err(ZoneCheckRefusal::Fault("liveness-halt").into());
             }
         },
     })
@@ -436,6 +470,11 @@ struct Product<'p, 'a> {
     /// run's edge index; `None` for an edge into or inside the locked
     /// region.
     taken: Vec<Option<Taken>>,
+    /// Auxiliary abstract clock operations, aligned to retained run edges.
+    auxiliary_transforms: Vec<Option<super::concretise::ClockTransform>>,
+    /// Auxiliary invariant-violating parts of each initial state's delay
+    /// zone, retained until a discrete step can witness the timed prefix.
+    initial_invariant_failures: BTreeMap<usize, Dbm>,
 }
 
 /// The position index of a `locked` entry node: the post-state of a step,
@@ -543,6 +582,7 @@ impl Product<'_, '_> {
                         zone,
                         Some(index),
                         None,
+                        None,
                         &mut queue,
                     )?;
                     initials.push(node);
@@ -550,10 +590,14 @@ impl Product<'_, '_> {
                 }
                 Judgement::Ends(outcome) => return Ok(Ended::Outcome(outcome)),
             };
+            if let Some(failure) = self.auxiliary_invariant_failure(run, q, &zone)? {
+                self.initial_invariant_failures.insert(index, failure);
+            }
+            self.auxiliary_invariants(run, q, &mut zone)?;
             if zone.is_empty() {
                 continue;
             }
-            let node = self.store(run, discrete, q, zone, Some(index), None, &mut queue)?;
+            let node = self.store(run, discrete, q, zone, Some(index), None, None, &mut queue)?;
             initials.push(node);
             if !roots.contains(&node) {
                 roots.push(node);
@@ -609,6 +653,7 @@ impl Product<'_, '_> {
         zone: Dbm,
         initial: Option<usize>,
         arrival: Option<(Arrival, Option<Taken>)>,
+        auxiliary_transform: Option<super::concretise::ClockTransform>,
         queue: &mut VecDeque<usize>,
     ) -> Result<usize, Halt> {
         let (arrival, taken) = match arrival {
@@ -621,6 +666,7 @@ impl Product<'_, '_> {
         let inserted = run.insert_at(state, q, zone, initial, arrival)?;
         if let Some(taken) = taken {
             self.taken.push(taken);
+            self.auxiliary_transforms.push(auxiliary_transform);
         }
         Ok(match inserted {
             Inserted::Covered(node) => node,
@@ -651,6 +697,37 @@ impl Product<'_, '_> {
         let steps = run.steps_for(&state)?;
         let scale = run.scale.clone();
         let (lower, upper) = (run.lower.clone(), run.upper.clone());
+        if let Some(initial) = run.nodes[node].initial {
+            if let Some(failed_zone) = self.initial_invariant_failures.get(&initial).cloned() {
+                for successor in run.positions(&state, &failed_zone, &scale)? {
+                    let escape =
+                        run.escape(&successor.state, &successor.zone, &scale, &lower, &upper)?;
+                    if !escape.diverges {
+                        continue;
+                    }
+                    let step = steps
+                        .get(successor.step)
+                        .ok_or(ZoneCheckRefusal::Fault("refinement-step"))?;
+                    let failure = RefinementFailure::AbstractTimeInvariant {
+                        position: 1,
+                        model: self.refinement.abstract_model().to_owned(),
+                    };
+                    let counterexample = self.counterexample(
+                        run,
+                        node,
+                        (step, successor.part),
+                        (failure, CounterexampleKind::Formula),
+                        &escape,
+                        None,
+                        Some(failed_zone),
+                    )?;
+                    return Ok(Some(TimedSafetyOutcome::Violated {
+                        counterexample: Box::new(counterexample),
+                        stats: run.stats(),
+                    }));
+                }
+            }
+        }
         if q == LOCKED_ENTRY || q == LOCKED_INTERIOR {
             // The locked region, on concrete steps only: no `check_step`.
             for successor in run.successors(&state, &zone, &scale)? {
@@ -666,6 +743,7 @@ impl Product<'_, '_> {
                     successor.zone,
                     None,
                     Some((arrival, None)),
+                    None,
                     queue,
                 )?;
             }
@@ -674,7 +752,13 @@ impl Product<'_, '_> {
         // Each step's verdict, judged once: the position after it, or its
         // failure.
         let mut judged: BTreeMap<usize, Edge> = BTreeMap::new();
-        for successor in run.successors(&state, &zone, &scale)? {
+        let successors = if run.auxiliary_timed.is_some() {
+            run.positions(&state, &zone, &scale)?
+        } else {
+            run.successors(&state, &zone, &scale)?
+        };
+        for mut successor in successors {
+            let mut auxiliary_transform = None;
             let step = steps
                 .get(successor.step)
                 .ok_or(ZoneCheckRefusal::Fault("refinement-step"))?;
@@ -703,7 +787,52 @@ impl Product<'_, '_> {
                 piece: None,
             };
             let (next, taken) = match judged.get(&successor.step) {
-                Some(Edge::Passes(next, taken)) => (*next, Some(taken.clone())),
+                Some(Edge::Passes(next, taken)) => {
+                    if run.auxiliary_timed.is_some() {
+                        let (failure, transform) =
+                            self.auxiliary_step(run, q, *next, taken, &mut successor.zone)?;
+                        auxiliary_transform = transform;
+                        if let Some((failed_zone, operation)) = failure {
+                            let escape =
+                                run.escape(&successor.state, &failed_zone, &scale, &lower, &upper)?;
+                            if escape.diverges {
+                                let failure = RefinementFailure::AbstractClockGuard {
+                                    position: widen(depth.saturating_add(1)),
+                                    operation,
+                                };
+                                let counterexample = self.counterexample(
+                                    run,
+                                    node,
+                                    (step, successor.part),
+                                    (failure, CounterexampleKind::Formula),
+                                    &escape,
+                                    None,
+                                    Some(failed_zone),
+                                )?;
+                                return Ok(Some(TimedSafetyOutcome::Violated {
+                                    counterexample: Box::new(counterexample),
+                                    stats: run.stats(),
+                                }));
+                            }
+                            self.store(
+                                run,
+                                successor.state.clone(),
+                                LOCKED_ENTRY,
+                                failed_zone,
+                                None,
+                                Some((arrival, None)),
+                                None,
+                                queue,
+                            )?;
+                        }
+                        if successor.zone.is_empty() {
+                            continue;
+                        }
+                        run.settle_at(&successor.state, &mut successor.zone, &scale)?;
+                        self.auxiliary_invariants(run, *next, &mut successor.zone)?;
+                    }
+                    (*next, Some(taken.clone()))
+                }
                 Some(Edge::Fails(failed)) => {
                     // ADR-026 TV-1 and TS-4: the failing step refutes only
                     // when the behaviour can go on from it, time diverging:
@@ -721,13 +850,21 @@ impl Product<'_, '_> {
                             successor.zone,
                             None,
                             Some((arrival, None)),
+                            None,
                             queue,
                         )?;
                         continue;
                     }
                     let failed = (**failed).clone();
-                    let counterexample =
-                        self.counterexample(run, node, (step, successor.part), failed, &escape)?;
+                    let counterexample = self.counterexample(
+                        run,
+                        node,
+                        (step, successor.part),
+                        failed,
+                        &escape,
+                        None,
+                        None,
+                    )?;
                     return Ok(Some(TimedSafetyOutcome::Violated {
                         counterexample: Box::new(counterexample),
                         stats: run.stats(),
@@ -742,10 +879,224 @@ impl Product<'_, '_> {
                 successor.zone,
                 None,
                 Some((arrival, taken)),
+                auxiliary_transform,
                 queue,
             )?;
         }
         Ok(None)
+    }
+
+    /// Read the auxiliary model's state invariants over the product clocks.
+    fn auxiliary_invariants(
+        &self,
+        run: &Run<'_, '_, '_>,
+        q: usize,
+        zone: &mut Dbm,
+    ) -> Result<(), Halt> {
+        let Some(timed) = run.auxiliary_timed else {
+            return Ok(());
+        };
+        let position = self
+            .positions
+            .get(q)
+            .ok_or(ZoneCheckRefusal::Fault("auxiliary-position"))?;
+        for candidate in &position.abstract_states {
+            let state = timed
+                .system()
+                .pre_state(candidate.clone(), timed.system().declared_anchor());
+            let constraints = run.timed(timed.invariants(&state))?;
+            let shifted = auxiliary_constraints(run.timed.places().len(), &constraints);
+            run.constrain(zone, &shifted)?;
+        }
+        Ok(())
+    }
+
+    /// A point in `zone` at which the mapped abstract invariant is false.
+    fn auxiliary_invariant_failure(
+        &self,
+        run: &Run<'_, '_, '_>,
+        q: usize,
+        zone: &Dbm,
+    ) -> Result<Option<Dbm>, Halt> {
+        let Some(timed) = run.auxiliary_timed else {
+            return Ok(None);
+        };
+        let position = self
+            .positions
+            .get(q)
+            .ok_or(ZoneCheckRefusal::Fault("auxiliary-position"))?;
+        let offset = run.timed.places().len();
+        for candidate in &position.abstract_states {
+            let state = timed
+                .system()
+                .pre_state(candidate.clone(), timed.system().declared_anchor());
+            let invariants = auxiliary_constraints(offset, &run.timed(timed.invariants(&state))?);
+            let mut prefix = zone.clone();
+            for constraint in &invariants {
+                for op in negations(constraint.op()) {
+                    let mut branch = prefix.clone();
+                    run.constrain(
+                        &mut branch,
+                        &[PlaceConstraint::new(
+                            constraint.place(),
+                            op,
+                            constraint.bound().clone(),
+                        )],
+                    )?;
+                    if !branch.is_empty() {
+                        return Ok(Some(branch));
+                    }
+                }
+                run.constrain(&mut prefix, std::slice::from_ref(constraint))?;
+                if prefix.is_empty() {
+                    break;
+                }
+            }
+        }
+        Ok(None)
+    }
+
+    /// Apply the timed abstract operation selected by the row, then read
+    /// invariants at its mapped target.
+    fn auxiliary_step(
+        &self,
+        run: &Run<'_, '_, '_>,
+        source: usize,
+        target: usize,
+        taken: &Taken,
+        zone: &mut Dbm,
+    ) -> Result<
+        (
+            Option<(Dbm, String)>,
+            Option<super::concretise::ClockTransform>,
+        ),
+        Halt,
+    > {
+        let Some(timed) = run.auxiliary_timed else {
+            return Ok((None, None));
+        };
+        if let Taken::Abstract(transitions) = taken {
+            let source_position = self
+                .positions
+                .get(source)
+                .ok_or(ZoneCheckRefusal::Fault("auxiliary-source"))?;
+            let mut matched = None;
+            'candidates: for candidate in &source_position.abstract_states {
+                let state = timed
+                    .system()
+                    .pre_state(candidate.clone(), timed.system().declared_anchor());
+                for step in run.timed(timed.guarded_steps(&state))? {
+                    if transitions.contains(step.transition()) {
+                        matched = Some(step);
+                        break 'candidates;
+                    }
+                }
+            }
+            if let Some(step) = matched {
+                let concrete_places = run.timed.places().len();
+                let failed = self
+                    .auxiliary_guard_complement(run, zone, &step)?
+                    .map(|failed| (failed, step.operation().to_owned()));
+                let transform = super::concretise::ClockTransform {
+                    carries: step
+                        .carries()
+                        .iter()
+                        .map(|(to, from)| (concrete_places + to, concrete_places + from))
+                        .collect(),
+                    resets: step
+                        .resets()
+                        .iter()
+                        .map(|(place, value)| (concrete_places + place, value.clone()))
+                        .collect(),
+                };
+                let original = zone.clone();
+                let mut admitted = None;
+                for part in step.parts() {
+                    let shifted = auxiliary_constraints(concrete_places, part);
+                    let mut candidate = original.clone();
+                    run.constrain(&mut candidate, &shifted)?;
+                    if candidate.is_empty() {
+                        continue;
+                    }
+                    let carries: Vec<_> = step
+                        .carries()
+                        .iter()
+                        .map(|(to, from)| (concrete_places + to + 1, concrete_places + from + 1))
+                        .collect();
+                    let resets: Vec<_> = step
+                        .resets()
+                        .iter()
+                        .map(|(place, value)| (concrete_places + place + 1, run.scaled(value)))
+                        .collect();
+                    candidate.assign_clocks(&carries, &resets)?;
+                    admitted = Some(candidate);
+                    break;
+                }
+                if let Some(mut admitted) = admitted {
+                    self.auxiliary_invariants(run, target, &mut admitted)?;
+                    *zone = admitted;
+                } else {
+                    zone.constrain(0, 0, Bound::lt(0.into()))?;
+                }
+                return Ok((failed, Some(transform)));
+            } else {
+                return Ok((Some((zone.clone(), "mapped-operation".to_owned())), None));
+            }
+        }
+        self.auxiliary_invariants(run, target, zone)?;
+        Ok((None, None))
+    }
+
+    /// Find a zone point outside every convex part of an abstract guard.
+    fn auxiliary_guard_complement(
+        &self,
+        run: &Run<'_, '_, '_>,
+        zone: &Dbm,
+        step: &GuardedStep,
+    ) -> Result<Option<Dbm>, Halt> {
+        let offset = run.timed.places().len();
+        let mut residuals = vec![zone.clone()];
+        for part in step.parts() {
+            let mut outside = Vec::new();
+            for residual in residuals {
+                let mut prefix = residual;
+                for constraint in part {
+                    let place = offset + constraint.place();
+                    for op in negations(constraint.op()) {
+                        let mut branch = prefix.clone();
+                        run.constrain(
+                            &mut branch,
+                            &[PlaceConstraint::new(
+                                constraint.place() + offset,
+                                op,
+                                constraint.bound().clone(),
+                            )],
+                        )?;
+                        if !branch.is_empty() {
+                            outside.push(branch);
+                        }
+                    }
+                    run.constrain(
+                        &mut prefix,
+                        &[PlaceConstraint::new(
+                            place,
+                            constraint.op(),
+                            constraint.bound().clone(),
+                        )],
+                    )?;
+                    if prefix.is_empty() {
+                        break;
+                    }
+                }
+                // `prefix` satisfies this whole part and is removed from
+                // the residual set for the next convex part.
+            }
+            residuals = outside;
+            if residuals.is_empty() {
+                return Ok(None);
+            }
+        }
+        Ok(residuals.into_iter().next())
     }
 
     /// FR-244's refinement form of the run's certificate: the run's proof
@@ -906,9 +1257,18 @@ impl Product<'_, '_> {
         (step, part): (&GuardedStep, usize),
         (failure, kind): (RefinementFailure, CounterexampleKind),
         escape: &Escape,
+        before: Option<Dbm>,
+        after: Option<Dbm>,
     ) -> Result<TemporalCounterexample, Halt> {
         let lifted = run.lifted_to(node)?;
         let mut stages = lifted.stages;
+        for (stage, edge) in stages.iter_mut().zip(&lifted.edge_indices) {
+            let Some(Some(transform)) = self.auxiliary_transforms.get(*edge) else {
+                continue;
+            };
+            stage.auxiliary_carries.clone_from(&transform.carries);
+            stage.auxiliary_resets.clone_from(&transform.resets);
+        }
         let state: &ModelSimState = &lifted.state;
         stages.push(Stage {
             invariants: run.timed(run.timed.invariants(state))?,
@@ -917,7 +1277,10 @@ impl Product<'_, '_> {
             step: Some((step.clone(), part)),
             position: Vec::new(),
             position_resets: Vec::new(),
-            before: None,
+            before,
+            after,
+            auxiliary_carries: Vec::new(),
+            auxiliary_resets: Vec::new(),
             piece: None,
             silent: false,
             fixed: None,
@@ -952,6 +1315,31 @@ impl Product<'_, '_> {
             }
         };
         Ok(refuted(lifted.initial, concrete.prefix, failure, kind))
+    }
+}
+
+/// Move auxiliary-place constraints after the concrete model's places.
+fn auxiliary_constraints(offset: usize, constraints: &[PlaceConstraint]) -> Vec<PlaceConstraint> {
+    constraints
+        .iter()
+        .map(|constraint| {
+            PlaceConstraint::new(
+                offset + constraint.place(),
+                constraint.op(),
+                constraint.bound().clone(),
+            )
+        })
+        .collect()
+}
+
+/// The convex branches that negate one atomic clock comparison.
+fn negations(op: ClockOp) -> Vec<ClockOp> {
+    match op {
+        ClockOp::Less => vec![ClockOp::GreaterOrEqual],
+        ClockOp::LessOrEqual => vec![ClockOp::Greater],
+        ClockOp::Equal => vec![ClockOp::Less, ClockOp::Greater],
+        ClockOp::GreaterOrEqual => vec![ClockOp::Less],
+        ClockOp::Greater => vec![ClockOp::LessOrEqual],
     }
 }
 

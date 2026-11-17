@@ -469,12 +469,12 @@ fn an_idle_tail_that_never_takes_an_enabled_class_refutes() {
     ));
 }
 
-/// FR-143 on the timed path: a strong `F_A` constraint leaves the liveness
-/// half `Unsupported(StrongAbstractFairness)`, and a hidden abstract field
-/// `Unsupported(HiddenFieldLiveness)`, whatever the safety half is.
-#[trace("TC-1170", "FR-430-AC-5")]
+/// FR-899-AC-3 on the timed path: strong abstract fairness refutes a
+/// time-divergent loop that leaves the class enabled and untaken. A hidden
+/// abstract field remains unsupported.
+#[trace("TC-1170", "FR-430-AC-5", "FR-899-AC-3")]
 #[test]
-fn the_timed_liveness_half_is_unsupported_as_for_an_untimed_subject() {
+fn the_timed_liveness_half_honours_strong_abstract_fairness() {
     let rows = "step M::Call::poll -> stutter;\nensure fair strong A::Call::send;";
     let strong = world_of(
         &["x"],
@@ -484,14 +484,30 @@ fn the_timed_liveness_half_is_unsupported_as_for_an_untimed_subject() {
         POLL,
         rows,
     );
-    assert_eq!(
-        format!("{:?}", check(&strong).liveness),
-        format!(
-            "{:?}",
-            Some(TimedLivenessHalf::Unsupported(
-                UnavailabilityCause::StrongAbstractFairness
-            ))
-        )
+    let Some(TimedLivenessHalf::Checked(TimedLivenessOutcome::Violated { counterexample, .. })) =
+        check(&strong).liveness
+    else {
+        panic!("strong fairness refutes the timed liveness half");
+    };
+    assert!(
+        matches!(
+            counterexample.refinement.as_ref(),
+            Some(RefinementFailure::AbstractUnfair { constraint })
+                if constraint.kind() == filament_semantic_value::fairness::FairnessKind::Strong
+        ),
+        "strong fairness failure: {:?}",
+        counterexample.refinement
+    );
+    let replayed = replay(&strong, &counterexample);
+    assert!(
+        matches!(
+            replayed,
+            RefinementTraceSettlement::Reproduced {
+                failure: RefinementFailure::AbstractUnfair { .. },
+                ..
+            }
+        ),
+        "strong fairness replay: {replayed:?}"
     );
     let model = document(&["x"], &[("send", &["inflight"]), ("poll", &["x"])]);
     let body = refinement("self.inflight")
@@ -513,6 +529,51 @@ fn the_timed_liveness_half_is_unsupported_as_for_an_untimed_subject() {
             ))
         )
     );
+}
+
+/// FR-900-AC-6: the timed abstract `send` guard holds at every instant of a
+/// positive-delay concrete poll loop, so weak abstract fairness refutes it.
+#[trace("TC-2539", "FR-900-AC-6")]
+#[test]
+fn timed_abstract_enabledness_is_read_over_the_positive_delay_loop() {
+    let abstract_model = renamed_package(
+        &document(&["y"], &[("send", &["inflight"])]),
+        "test/timed-req",
+    );
+    let concrete = document(&["x"], &[("send", &["inflight"]), ("poll", &["x"])]);
+    let body = refinement("self.inflight")
+        .replace("late = self.late", "late = false")
+        .replace("retried = self.retried", "retried = false")
+        .replace(
+            "step M::Call::send -> A::Call::send(self);",
+            "step M::Call::send -> A::Call::send(self);\n\
+             step M::Call::poll -> stutter;\n\
+             ensure fair weak A::Call::send;",
+        );
+    let world = refining(
+        &abstract_model,
+        &concrete,
+        &format!(
+            "{DENSE}time A dense unit ms;\n{ASEND}\
+             pre AClockGuard using v on A::Call::send {{ self.y >= 0 ms }}\n\
+             {POLL}{body}"
+        ),
+    )
+    .unwrap_or_else(|refusals| panic!("{refusals:?}"));
+    let counterexample = violation(check(&world));
+    assert!(counterexample
+        .prefix
+        .iter()
+        .filter(|step| step.transition.operation().contains("/Call/poll\""))
+        .any(|step| {
+            step.delay
+                .as_ref()
+                .is_some_and(|delay| delay > &Rational::from_integer(Integer::zero()))
+        }));
+    assert!(matches!(
+        replay(&world, &counterexample),
+        RefinementTraceSettlement::Reproduced { .. }
+    ));
 }
 
 /// FR-241-AC-4's drift under refinement: `a` (to `late`, guard `x >= 1`,

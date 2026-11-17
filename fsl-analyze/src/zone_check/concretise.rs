@@ -45,6 +45,16 @@ pub(super) struct Stage {
     /// the cell of the liveness product's symbolic state the step leaves
     /// (FR-240).
     pub before: Option<Dbm>,
+    /// The zone over clock places after the position's discrete resets.
+    /// Timed auxiliary systems can reject a concrete edge at its mapped
+    /// target, after the concrete step has already updated its clocks.
+    pub after: Option<Dbm>,
+    /// Auxiliary timed-system carries at this same post-discrete boundary,
+    /// over the combined concrete-then-auxiliary clock-place vector.
+    pub auxiliary_carries: Vec<(usize, usize)>,
+    /// Auxiliary timed-system resets at this same post-discrete boundary,
+    /// over the combined concrete-then-auxiliary clock-place vector.
+    pub auxiliary_resets: Vec<(usize, Rational)>,
     /// The zone over clock places, in units of the concretisation's scale,
     /// the valuation after the position lies in: the cell of the symbolic
     /// state a liveness product enters there (FR-240).
@@ -57,6 +67,15 @@ pub(super) struct Stage {
     /// copies repeat the loop's solved delays (FR-241), in units of the
     /// concretisation's scale.
     pub fixed: Option<BigInt>,
+}
+
+/// The clock-place operation of a mapped auxiliary timed step.
+#[derive(Clone, Debug, Default)]
+pub(super) struct ClockTransform {
+    /// Carried target and source indices in the combined place vector.
+    pub carries: Vec<(usize, usize)>,
+    /// Reset place and value in the combined place vector.
+    pub resets: Vec<(usize, Rational)>,
 }
 
 /// Where the path's last valuation must lie.
@@ -233,6 +252,20 @@ pub(super) fn concretise(
                 }
             }
         }
+        let before = resets.0.clone();
+        for &(target, source) in &stage.auxiliary_carries {
+            if let (Some(slot), Some(value)) = (resets.0.get_mut(target), before.get(source)) {
+                *slot = value.clone();
+            }
+        }
+        for (place, value) in &stage.auxiliary_resets {
+            if let Some(slot) = resets.0.get_mut(*place) {
+                *slot = (at, value.clone());
+            }
+        }
+        if let Some(after) = &stage.after {
+            resets.within(&mut times, at, after, scale)?;
+        }
         for constraint in stage.target.iter().chain(&stage.position) {
             resets.constrain(&mut times, at, constraint, scale)?;
         }
@@ -335,6 +368,31 @@ pub(super) fn concretise(
                     reset_value.clone_from(reset);
                 }
                 last_reset[*place] = at;
+            }
+            let before = values.clone();
+            for &(target, source) in &stage.auxiliary_carries {
+                if let (Some(value), Some(source_value)) =
+                    (values.get_mut(target), before.get(source))
+                {
+                    value.clone_from(source_value);
+                    if let Some(slot) = reset_values.get_mut(target) {
+                        slot.clone_from(source_value);
+                    }
+                    if let Some(slot) = last_reset.get_mut(target) {
+                        *slot = at;
+                    }
+                }
+            }
+            for (place, reset) in &stage.auxiliary_resets {
+                if let Some(slot) = values.get_mut(*place) {
+                    slot.clone_from(reset);
+                    if let Some(reset_value) = reset_values.get_mut(*place) {
+                        reset_value.clone_from(reset);
+                    }
+                    if let Some(slot) = last_reset.get_mut(*place) {
+                        *slot = at;
+                    }
+                }
             }
         }
         // The post-state key names the model's clock places only.

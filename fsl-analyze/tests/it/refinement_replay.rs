@@ -941,22 +941,28 @@ fn a_loop_open_in_the_concrete_model_is_refused() {
     assert_eq!(*refusal, ModelTraceRefusal::LoopOpen { entry: 0, steps: 1 });
 }
 
-/// FR-145 "Lasso" (TC-550): replay reads an `F_A` constraint as weak, so a
-/// lasso that records a strong one is never reproduced.
-#[trace("TC-550")]
+/// FR-899-AC-5 (TC-2537): replay reproduces a strong-fairness lasso when the
+/// abstract class is enabled at some loop state and no loop edge takes it.
+#[trace("TC-2537", "FR-899-AC-5")]
 #[test]
-fn a_lasso_of_a_strong_constraint_is_not_reproduced() {
+fn a_lasso_of_a_strong_constraint_replays_when_enabled_at_some_loop_state() {
     let unit = Unit::probe_pair(
         probe_contracts(["", NEVER, NEVER, ""], ["", "", ""]),
         &[(0, 0)],
     );
     let strong = "ensure fair strong whole Spec::Pair::flipB;";
+    assert!(agrees(replay_probe(&unit, &[strong], &["peek"], 0, unfair)));
+
+    let taking = Unit::probe_pair(
+        probe_contracts(["", "", NEVER, ""], ["", "", ""]),
+        &[(0, 0)],
+    );
     assert!(!agrees(replay_probe(
-        &unit,
+        &taking,
         &[strong],
-        &["peek"],
+        &["flipB", "flipB"],
         0,
-        divergence
+        unfair
     )));
 }
 

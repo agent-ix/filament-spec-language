@@ -765,6 +765,47 @@ pub fn check_zone_certificate<O: Clone + Eq>(
     limits: CertificateCheckLimits,
     cancel: &Cancel,
 ) -> Result<ZoneCertificateVerdict, ZoneCertificateRefusal<O>> {
+    check_zone_certificate_with_time_source(
+        request,
+        item,
+        item_of,
+        certificate,
+        limits,
+        cancel,
+        false,
+    )
+}
+
+/// FR-245: check a refinement certificate whose concrete subject admits
+/// arbitrary free delays and has no concrete clock placements (FR-900-AC-5).
+pub fn check_free_delay_zone_certificate<O: Clone + Eq>(
+    request: ZoneCertificateRequest<'_>,
+    item: &O,
+    item_of: impl Fn(&O) -> CertificateItem<'_>,
+    certificate: &ZoneCertificate<O>,
+    limits: CertificateCheckLimits,
+    cancel: &Cancel,
+) -> Result<ZoneCertificateVerdict, ZoneCertificateRefusal<O>> {
+    check_zone_certificate_with_time_source(
+        request,
+        item,
+        item_of,
+        certificate,
+        limits,
+        cancel,
+        true,
+    )
+}
+
+fn check_zone_certificate_with_time_source<O: Clone + Eq>(
+    request: ZoneCertificateRequest<'_>,
+    item: &O,
+    item_of: impl Fn(&O) -> CertificateItem<'_>,
+    certificate: &ZoneCertificate<O>,
+    limits: CertificateCheckLimits,
+    cancel: &Cancel,
+    free_delay: bool,
+) -> Result<ZoneCertificateVerdict, ZoneCertificateRefusal<O>> {
     let mismatch = || ZoneCertificateRefusal::ObligationMismatch {
         certificate: Box::new(certificate.obligation.clone()),
         item: Box::new(item.clone()),
@@ -831,19 +872,32 @@ pub fn check_zone_certificate<O: Clone + Eq>(
                     .map(|emission| emission.package().clone())
                     .map_err(|refusal| ZoneCertificateRefusal::Package(Box::new(refusal)))
             };
-            let recompiled = RefinementIdentity {
-                refinement_node: occurrence.node().clone(),
-                abstract_package: emitted(abstract_package)?,
-            };
-            let listed = RefinementIdentity {
-                refinement_node: part.refinement_node.clone(),
-                abstract_package: emitted(request.simulation.package)?,
-            };
-            if listed != recompiled {
-                return Err(ZoneCertificateRefusal::RefinementMismatch {
-                    certificate: Box::new(listed),
-                    recompiled: Box::new(recompiled),
-                });
+            // When both roles name the exact same checked package object,
+            // its abstract-package identity is identical by construction.
+            // Avoid emitting it twice: multi-model timed packages can have
+            // a source map that the emitter cannot re-key independently.
+            if std::ptr::eq(abstract_package, request.simulation.package) {
+                if part.refinement_node != *occurrence.node() {
+                    return Ok(ZoneCertificateVerdict::Rejected(CertificateRejection {
+                        rule: CertificateRule::ShapeMismatch,
+                        at: CertificateLocus::CertificateMember(CertificateMember::Refinement),
+                    }));
+                }
+            } else {
+                let recompiled = RefinementIdentity {
+                    refinement_node: occurrence.node().clone(),
+                    abstract_package: emitted(abstract_package)?,
+                };
+                let listed = RefinementIdentity {
+                    refinement_node: part.refinement_node.clone(),
+                    abstract_package: emitted(request.simulation.package)?,
+                };
+                if listed != recompiled {
+                    return Err(ZoneCertificateRefusal::RefinementMismatch {
+                        certificate: Box::new(listed),
+                        recompiled: Box::new(recompiled),
+                    });
+                }
             }
             opened = open_systems(
                 refinement,
@@ -867,8 +921,31 @@ pub fn check_zone_certificate<O: Clone + Eq>(
             (&system, None)
         }
     };
-    let timed = TimedSystem::with_max_clocks(concrete, request.model, request.max_clocks)
-        .map_err(|refusal| ZoneCertificateRefusal::TimedSubject(Box::new(refusal)))?;
+    if free_delay && refined.is_none() {
+        return Err(ZoneCertificateRefusal::UnsupportedItem);
+    }
+    let timed = if free_delay {
+        TimedSystem::free_delay(concrete, request.max_clocks)
+    } else {
+        TimedSystem::with_max_clocks(concrete, request.model, request.max_clocks)
+    }
+    .map_err(|refusal| ZoneCertificateRefusal::TimedSubject(Box::new(refusal)))?;
+    let auxiliary_timed = match refined.as_ref() {
+        Some(refined)
+            if refined
+                .abstract_system
+                .package()
+                .graph()
+                .timed_model(refined.refinement.abstract_model())
+                .is_some() =>
+        {
+            Some(
+                TimedSystem::new(refined.abstract_system, refined.refinement.abstract_model())
+                    .map_err(|refusal| ZoneCertificateRefusal::TimedSubject(Box::new(refusal)))?,
+            )
+        }
+        _ => None,
+    };
     let mut live = None;
     let (claim, window) = match request.item {
         CertifiedItem::Clause { clause, letters } => {
@@ -967,6 +1044,7 @@ pub fn check_zone_certificate<O: Clone + Eq>(
     let count = certificate.nodes.len();
     let mut checker = Checker {
         timed: &timed,
+        auxiliary_timed: auxiliary_timed.as_ref(),
         claim,
         window,
         live,
@@ -1049,6 +1127,7 @@ fn equivalent_successor(left: &Successor, right: &Successor) -> bool {
 
 struct Checker<'c, 'a, O> {
     timed: &'c TimedSystem<'c, 'a>,
+    auxiliary_timed: Option<&'c TimedSystem<'c, 'a>>,
     claim: Option<Claim<'c>>,
     window: Option<Window>,
     /// A clause decided on FR-240's liveness product.
@@ -1187,6 +1266,7 @@ impl<O> Checker<'_, '_, O> {
     fn dim(&self) -> usize {
         let z = self.live.is_some() && self.timed.tick_period().is_none();
         self.timed.places().len()
+            + self.auxiliary_timed.map_or(0, |timed| timed.places().len())
             + 1
             + usize::from(self.window.is_some())
             + self.automaton_clocks()
@@ -1213,6 +1293,15 @@ impl<O> Checker<'_, '_, O> {
         else {
             return malformed(CertificateMember::Scale);
         };
+        if let Some(auxiliary) = self.auxiliary_timed {
+            let Some((mut auxiliary_lower, mut auxiliary_upper)) =
+                computed_bounds(auxiliary, None, &certificate.scale)
+            else {
+                return malformed(CertificateMember::Scale);
+            };
+            lower.append(&mut auxiliary_lower);
+            upper.append(&mut auxiliary_upper);
+        }
         if self.live.is_some() {
             // The liveness product's cells compare clocks with guard
             // constants from both sides, which the aLU simulation keeps
@@ -1573,6 +1662,19 @@ impl<O> Checker<'_, '_, O> {
             if zone.is_empty() {
                 continue;
             }
+            let verdict = check_initial(
+                refinement,
+                self.timed.system(),
+                abstract_system,
+                index,
+                state.state(),
+            );
+            if let StepVerdict::Passes { post, .. } = &verdict {
+                self.auxiliary_invariants(post, &mut zone)?;
+            }
+            if zone.is_empty() {
+                continue;
+            }
             let covering = match listed.next() {
                 Some(&node) => {
                     let entry = &certificate.nodes[node];
@@ -1589,13 +1691,6 @@ impl<O> Checker<'_, '_, O> {
                 );
             };
             let entry = &certificate.nodes[node];
-            let verdict = check_initial(
-                refinement,
-                self.timed.system(),
-                abstract_system,
-                index,
-                state.state(),
-            );
             let holds = match verdict {
                 StepVerdict::Passes { post, .. } => {
                     let holds = !entry.locked
@@ -1617,6 +1712,132 @@ impl<O> Checker<'_, '_, O> {
             self.states[node].get_or_insert(state);
         }
         Ok(())
+    }
+
+    /// Intersect a product zone with the invariants of the mapped abstract
+    /// states, whose clock places follow the concrete places.
+    fn auxiliary_invariants(&self, position: &RefinementPosition, zone: &mut Zone) -> Step<(), O> {
+        let Some(timed) = self.auxiliary_timed else {
+            return Ok(());
+        };
+        let offset = self.timed.places().len();
+        for candidate in &position.abstract_states {
+            let state = timed
+                .system()
+                .pre_state(candidate.clone(), timed.system().declared_anchor());
+            let invariants = timed.invariants(&state).or_else(undecided)?;
+            let shifted = invariants
+                .iter()
+                .map(|constraint| {
+                    PlaceConstraint::new(
+                        offset + constraint.place(),
+                        constraint.op(),
+                        constraint.bound().clone(),
+                    )
+                })
+                .collect::<Vec<_>>();
+            self.constrain(zone, &shifted)?;
+        }
+        Ok(())
+    }
+
+    /// Recompute the mapped abstract operation, constrain its clock guard,
+    /// and apply its clock updates before the target's common delay.
+    fn auxiliary_step(
+        &self,
+        q: usize,
+        concrete_step: &GuardedStep,
+        zone: &mut Zone,
+    ) -> Step<(), O> {
+        let Some(timed) = self.auxiliary_timed else {
+            return Ok(());
+        };
+        let Some(Refined {
+            refinement,
+            abstract_system,
+            ..
+        }) = self.refined
+        else {
+            return Ok(());
+        };
+        let Some(pre) = self.known.get(q).cloned().flatten() else {
+            return Ok(());
+        };
+        let verdict = check_step(
+            refinement,
+            self.timed.system(),
+            abstract_system,
+            &pre,
+            &ConcreteStep {
+                position: 1,
+                transition: Some(concrete_step.transition()),
+                post: concrete_step.post(),
+            },
+        )
+        .verdict;
+        let StepVerdict::Passes { post, taken } = verdict else {
+            return Ok(());
+        };
+        let transitions = match *taken {
+            Taken::Abstract(transitions) => transitions,
+            Taken::Stutter | Taken::Protocol(_) | Taken::ProtocolTraces(_) => {
+                self.auxiliary_invariants(&post, zone)?;
+                return Ok(());
+            }
+        };
+        let offset = self.timed.places().len();
+        let mut matched = None;
+        'candidates: for candidate in &pre.abstract_states {
+            let state = timed
+                .system()
+                .pre_state(candidate.clone(), timed.system().declared_anchor());
+            for step in timed.guarded_steps(&state).or_else(undecided)? {
+                if transitions.contains(step.transition()) {
+                    matched = Some(step);
+                    break 'candidates;
+                }
+            }
+        }
+        if let Some(step) = matched {
+            let mut admitted = false;
+            for part in step.parts() {
+                let shifted = part
+                    .iter()
+                    .map(|constraint| {
+                        PlaceConstraint::new(
+                            offset + constraint.place(),
+                            constraint.op(),
+                            constraint.bound().clone(),
+                        )
+                    })
+                    .collect::<Vec<_>>();
+                let mut candidate = zone.clone();
+                self.constrain(&mut candidate, &shifted)?;
+                if candidate.is_empty() {
+                    continue;
+                }
+                let carries: Vec<_> = step
+                    .carries()
+                    .iter()
+                    .map(|(to, from)| (offset + to + 1, offset + from + 1))
+                    .collect();
+                let resets: Vec<_> = step
+                    .resets()
+                    .iter()
+                    .map(|(place, value)| Ok((offset + place + 1, self.scaled(value)?)))
+                    .collect::<Step<Vec<_>, O>>()?;
+                candidate.assign_clocks(&carries, &resets)?;
+                *zone = candidate;
+                admitted = true;
+                break;
+            }
+            if !admitted {
+                zone.constrain(0, 0, &Integer::zero(), true)?;
+            }
+        } else {
+            zone.constrain(0, 0, &Integer::zero(), true)?;
+        }
+        self.auxiliary_invariants(&post, zone)
     }
 
     /// A refinement form's judgement of edge `index` out of `node`, by
@@ -1900,6 +2121,10 @@ impl<O> Checker<'_, '_, O> {
                     }
                     self.apply_clock_updates(&mut next, &step)?;
                     self.constrain(&mut next, &target)?;
+                    if next.is_empty() {
+                        continue;
+                    }
+                    self.auxiliary_step(q, &step, &mut next)?;
                     if next.is_empty() {
                         continue;
                     }
@@ -2701,7 +2926,9 @@ fn computed_bounds(
     constants: Option<&[Rational]>,
     scale: &Integer,
 ) -> Option<(Vec<Option<Integer>>, Vec<Option<Integer>>)> {
-    let model = timed.model();
+    let Some(model) = timed.timed_model() else {
+        return Some((Vec::new(), Vec::new()));
+    };
     let fields = model.clocks().len();
     let mut lower: Vec<Vec<Rational>> = vec![Vec::new(); fields];
     let mut upper: Vec<Vec<Rational>> = vec![Vec::new(); fields];

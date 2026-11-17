@@ -27,9 +27,9 @@ mod time_lock;
 
 pub use certificate::certificate_item;
 pub use refine::{
-    check_timed_refinement, TimedLivenessHalf, TimedLivenessOutcome, TimedRefinementOutcome,
-    TimedRefinementRefusal, TimedRefinementRequest, TimedRefinementStop, TimedRefinementUndecided,
-    TimedSafetyOutcome,
+    check_free_delay_refinement, check_timed_refinement, TimedLivenessHalf, TimedLivenessOutcome,
+    TimedRefinementOutcome, TimedRefinementRefusal, TimedRefinementRequest, TimedRefinementStop,
+    TimedRefinementUndecided, TimedSafetyOutcome,
 };
 pub mod manifest;
 pub use dbm::{Bound, Dbm, DbmError};

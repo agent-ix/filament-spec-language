@@ -216,7 +216,7 @@ fn check_with(
             )
         }
         (fsl_semantics::check::AbstractSide::Protocol { .. }, None) => {
-            return Err(ModelCheckRefusal::ProtocolAbstractSide)
+            return Err(ModelCheckRefusal::ProtocolAbstractSide);
         }
     };
     let systems = opened.map_err(|refusal| match refusal {
@@ -351,17 +351,6 @@ fn check_with(
     {
         Some(LivenessHalf::Unsupported(
             UnavailabilityCause::HiddenFieldLiveness,
-        ))
-    } else if refinement
-        .abstract_operation_fairness()
-        .any(|constraint| constraint.kind() == FairnessKind::Strong)
-    {
-        // A hidden field is reported first (above), so a refinement with
-        // both gets `HiddenFieldLiveness`. The second phase reads a class as weak (enabled at every state of
-        // the loop); a strong class needs another reading the spec has not
-        // given, so the half is not decided.
-        Some(LivenessHalf::Unsupported(
-            UnavailabilityCause::StrongAbstractFairness,
         ))
     } else if matches!(safety, SafetyOutcome::Holds { .. }) {
         Some(LivenessHalf::Checked(run.liveness()?))
@@ -2189,7 +2178,7 @@ impl Run<'_, '_> {
                         return Err(End::Fault(InternalFault::new(
                             "refinement-check",
                             "an-undefined-mapping-names-its-row",
-                        )))
+                        )));
                     }
                 };
                 let failure = RefinementFailure::Undefined {
@@ -2437,13 +2426,21 @@ impl Run<'_, '_> {
         let constraints =
             fairness_constraints(self.concrete, &concrete_fairness, &transitions, identity)?;
         for class in &classes {
-            let (graph, vertices) = self.fair_graph(class, &identity)?;
-            let within: BTreeSet<Vertex> = vertices
-                .iter()
-                .zip(&enabled)
-                .filter(|(_, here)| class.is_enabled_in(here))
-                .map(|(vertex, _)| *vertex)
-                .collect();
+            let constraint = abstract_fairness
+                .get(class.constraint())
+                .ok_or_else(|| fault("an-abstract-class-names-its-constraint"))?;
+            let strong = constraint.kind() == FairnessKind::Strong;
+            let (graph, vertices) = self.fair_graph(class, &identity, &enabled, strong)?;
+            let within: BTreeSet<Vertex> = if strong {
+                vertices.iter().copied().collect()
+            } else {
+                vertices
+                    .iter()
+                    .zip(&enabled)
+                    .filter(|(_, here)| class.is_enabled_in(here))
+                    .map(|(vertex, _)| *vertex)
+                    .collect()
+            };
             let analyses = match analyze(&graph, &within, &constraints, self.cancel) {
                 Ok(analyses) => analyses,
                 Err(FairnessError::Cancelled) => {
@@ -2454,7 +2451,7 @@ impl Run<'_, '_> {
                     )));
                 }
                 Err(FairnessError::UnknownVertex { .. } | FairnessError::EmptyLoop) => {
-                    return Err(fault("the-fairness-graph-is-built-from-the-product").into())
+                    return Err(fault("the-fairness-graph-is-built-from-the-product").into());
                 }
             };
             if let Some(passing) = Analysis::first_fair_in(&analyses) {
@@ -2471,10 +2468,14 @@ impl Run<'_, '_> {
     /// The retained graph as the fairness kernels read it for `class`: a
     /// vertex per product state holding the concrete identities enabled
     /// there, and an edge per retained edge that does not take `class`.
+    /// Strong classes add their enabled vertices as a Büchi acceptance set;
+    /// weak classes are restricted to vertices that enable the class.
     fn fair_graph(
         &self,
         class: &AbstractClass,
         identity: &impl Fn(&ModelTransition) -> Result<Identity, ModelCheckRefusal>,
+        enabled: &[Vec<ModelTransition>],
+        strong: bool,
     ) -> Result<(Graph, Vec<Vertex>), ModelCheckRefusal> {
         let mut graph = Graph::new();
         let mut vertices = Vec::with_capacity(self.nodes.len());
@@ -2509,6 +2510,16 @@ impl Run<'_, '_> {
                     .add_edge(vertex(source)?, vertex(target)?, label)
                     .map_err(|_| fault("an-edge-joins-two-vertices"))?;
             }
+        }
+        if strong {
+            let enabled_for_class = vertices
+                .iter()
+                .zip(enabled)
+                .filter(|(_, transitions)| class.is_enabled_in(transitions))
+                .map(|(vertex, _)| *vertex);
+            graph
+                .add_acceptance_set(enabled_for_class)
+                .map_err(|_| fault("strong-abstract-acceptance-uses-existing-vertices"))?;
         }
         Ok((graph, vertices))
     }

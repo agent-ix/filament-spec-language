@@ -65,6 +65,22 @@ pub enum RefinementFailure {
         /// The position of the step's post-state.
         position: u64,
     },
+    /// FR-900: no auxiliary-clock valuation satisfies the mapped
+    /// abstract operation's guard.
+    AbstractClockGuard {
+        /// The position of the concrete step's post-state.
+        position: u64,
+        /// The abstract operation whose clock guard is false.
+        operation: String,
+    },
+    /// FR-900: the mapped abstract state leaves a time invariant during a
+    /// concrete delay.
+    AbstractTimeInvariant {
+        /// The concrete step whose delay crosses the invariant boundary.
+        position: u64,
+        /// The abstract model whose mapped state violates the invariant.
+        model: String,
+    },
     /// A mapping row or step-row argument evaluated undefined (RE-5;
     /// FSpec FR-379's seventh kind).
     Undefined {
@@ -144,6 +160,8 @@ impl RefinementFailure {
             Self::StutterChanged { position }
             | Self::AbstractStepRejected { position, .. }
             | Self::NoAbstractMatch { position }
+            | Self::AbstractClockGuard { position, .. }
+            | Self::AbstractTimeInvariant { position, .. }
             | Self::Undefined { position, .. }
             | Self::RefusalNotPermitted { position, .. }
             | Self::TerminalSuccessMismatch { position, .. } => Some(*position),

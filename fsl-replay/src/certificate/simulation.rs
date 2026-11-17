@@ -276,6 +276,19 @@ impl FailedStep {
             Self::Fails(RefinementFailure::NoAbstractMatch { position }) => {
                 json!({"kind": "NoAbstractMatch", "position": decimal(*position)})
             }
+            Self::Fails(RefinementFailure::AbstractClockGuard {
+                position,
+                operation,
+            }) => json!({
+                "kind": "AbstractClockGuard",
+                "position": decimal(*position),
+                "operation": operation,
+            }),
+            Self::Fails(RefinementFailure::AbstractTimeInvariant { position, model }) => json!({
+                "kind": "AbstractTimeInvariant",
+                "position": decimal(*position),
+                "model": model,
+            }),
             // `check_step` never returns this form; the engine writes it.
             Self::Fails(RefinementFailure::Undefined { position, .. }) => {
                 json!({"kind": "Undefined", "position": decimal(*position)})

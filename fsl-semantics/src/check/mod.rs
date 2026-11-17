@@ -3830,7 +3830,6 @@ impl PackageDeclarations {
                     lists: &internal_lists,
                     protocols: $views,
                     defer_abstract_protocol_resolution: $defer_abstract,
-                    time_sources: &self.time_sources,
                     clock_reading: &self.clock_reading,
                 };
                 let (checked, used) = refinement::check_refinement(

@@ -414,7 +414,9 @@ impl TimedSystem<'_, '_> {
     /// The largest constant any guard, time invariant or reset of the model
     /// compares a clock with (FR-236 "Timed lasso").
     pub fn max_constant(&self) -> Rational {
-        let model = self.model;
+        let Some(model) = self.timed_model() else {
+            return zero();
+        };
         let guards = model
             .guards()
             .iter()

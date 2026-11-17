@@ -33,7 +33,7 @@
 use std::collections::{BTreeMap, VecDeque};
 
 use filament_checked::key::DeclarationKey;
-use filament_exact::{Cancel, Meter, Rational};
+use filament_exact::{Cancel, Integer, Meter, Rational};
 use fsl_eval::model_subject::{ModelInstance, ModelLetters};
 use fsl_eval::simulation::model::{
     GuardedStep, ModelSimState, PlaceConstraint, TerminalClass, TimedStop, TimedSystem,
@@ -564,19 +564,19 @@ pub fn check_timed_model<S: Clone>(
                 return Ok(ZoneCheckOutcome::Violated {
                     counterexample,
                     stats: total.plus(stats),
-                })
+                });
             }
             Searched::Undecided { cause, stats } => {
                 return Ok(ZoneCheckOutcome::Undecided {
                     cause,
                     stats: total.plus(stats),
-                })
+                });
             }
             Searched::Stopped { cause, stats } => {
                 return Ok(ZoneCheckOutcome::Stopped {
                     cause,
                     stats: total.plus(stats),
-                })
+                });
             }
         }
     }
@@ -805,6 +805,9 @@ pub(super) struct Claim<'r> {
 
 pub(super) struct Run<'r, 's, 'a> {
     pub(super) timed: &'r TimedSystem<'s, 'a>,
+    /// The abstract model's clocks, which share every delay with the
+    /// concrete clocks and follow them in each product zone.
+    pub(super) auxiliary_timed: Option<&'r TimedSystem<'s, 'a>>,
     judged: Judged<'r>,
     /// A TT-2 clause's automaton, whose horizon clock is the last clock of
     /// every zone.
@@ -876,6 +879,7 @@ impl<'r, 's, 'a> Run<'r, 's, 'a> {
         };
         Self {
             timed,
+            auxiliary_timed: None,
             judged,
             window,
             live: None,
@@ -900,6 +904,34 @@ impl<'r, 's, 'a> Run<'r, 's, 'a> {
             group: SymmetryGroup::default(),
             reduced: false,
         }
+    }
+
+    /// Add the abstract model's clocks to the common product-zone scale.
+    pub(super) fn include_auxiliary_timed(&mut self, auxiliary: &'r TimedSystem<'s, 'a>) {
+        let (auxiliary_scale, auxiliary_lower, auxiliary_upper) =
+            scaled_bounds(auxiliary, None, &[]);
+        let common_scale = scale_constants(&[
+            Rational::from_integer(Integer::from_big(self.scale.clone())),
+            Rational::from_integer(Integer::from_big(auxiliary_scale.clone())),
+        ])
+        .factor()
+        .clone();
+        let concrete_multiplier = &common_scale / &self.scale;
+        let auxiliary_multiplier = &common_scale / auxiliary_scale;
+        let scale_bounds = |bounds: Vec<Option<BigInt>>, multiplier: &BigInt| {
+            bounds
+                .into_iter()
+                .map(|bound| bound.map(|bound| bound * multiplier))
+                .collect::<Vec<_>>()
+        };
+        self.lower = scale_bounds(std::mem::take(&mut self.lower), &concrete_multiplier);
+        self.lower
+            .extend(scale_bounds(auxiliary_lower, &auxiliary_multiplier));
+        self.upper = scale_bounds(std::mem::take(&mut self.upper), &concrete_multiplier);
+        self.upper
+            .extend(scale_bounds(auxiliary_upper, &auxiliary_multiplier));
+        self.scale = common_scale;
+        self.auxiliary_timed = Some(auxiliary);
     }
 
     /// The authored clause the run judges, if any.
@@ -959,7 +991,10 @@ impl<'r, 's, 'a> Run<'r, 's, 'a> {
     /// The dimension of every zone: the reference clock, the clock places
     /// and, for a TT-2 clause, the horizon clock.
     pub(super) fn dim(&self) -> usize {
-        self.timed.places().len() + 1 + usize::from(self.window.is_some())
+        self.timed.places().len()
+            + self.auxiliary_timed.map_or(0, |timed| timed.places().len())
+            + 1
+            + usize::from(self.window.is_some())
     }
 
     /// Intersect `zone` with `constraints`.
@@ -1010,7 +1045,7 @@ impl<'r, 's, 'a> Run<'r, 's, 'a> {
         factor: &BigInt,
     ) -> Result<Vec<Successor>, Halt> {
         let mut found = Vec::new();
-        for mut successor in self.positions(state, zone, factor)? {
+        for mut successor in self.positions_raw(state, zone, factor)? {
             self.settle_at(&successor.state, &mut successor.zone, factor)?;
             if !successor.zone.is_empty() {
                 found.push(successor);
@@ -1019,10 +1054,22 @@ impl<'r, 's, 'a> Run<'r, 's, 'a> {
         Ok(found)
     }
 
+    /// The concrete steps at their post-instant, before a common delay at
+    /// the target. Timed refinement applies its mapped abstract clock
+    /// guards and resets at this boundary before settling the target zone.
+    pub(super) fn positions(
+        &mut self,
+        state: &ModelSimState,
+        zone: &Dbm,
+        factor: &BigInt,
+    ) -> Result<Vec<Successor>, Halt> {
+        self.positions_raw(state, zone, factor)
+    }
+
     /// [`Self::successors`] at the instant of each step: the valuations
     /// the step reaches before time elapses at its target, which a claim
     /// automaton reads at the step's position.
-    fn positions(
+    fn positions_raw(
         &mut self,
         state: &ModelSimState,
         zone: &Dbm,
@@ -1675,7 +1722,7 @@ impl<'r, 's, 'a> Run<'r, 's, 'a> {
                         instance.clone(),
                         cause,
                         UndefinedLocus::Atom(atom),
-                    ))))
+                    ))));
                 }
             }
         }
@@ -1707,7 +1754,7 @@ impl<'r, 's, 'a> Run<'r, 's, 'a> {
                 Err(stop) => {
                     return Err(self.undecided(ZoneUndecided::UndecidedSuccessor(
                         TimedStop::Expansion(stop),
-                    )))
+                    )));
                 }
             });
         }
@@ -1909,12 +1956,12 @@ impl<'r, 's, 'a> Run<'r, 's, 'a> {
     pub(super) fn lifted_to(&mut self, node: usize) -> Result<LiftedPath, Halt> {
         let mut chain = Vec::new();
         let mut at = node;
-        while let Some(edge) = self.parent[at] {
-            let edge = self.edges[edge].clone();
+        while let Some(edge_index) = self.parent[at] {
+            let edge = self.edges[edge_index].clone();
             if edge.covering {
                 return Err(ZoneCheckRefusal::Fault("covering-parent").into());
             }
-            chain.push((edge.from, at, edge.step, edge.piece));
+            chain.push((edge_index, edge.from, at, edge.step, edge.piece));
             at = edge.from;
         }
         chain.reverse();
@@ -1927,7 +1974,9 @@ impl<'r, 's, 'a> Run<'r, 's, 'a> {
         let pieces = self.window.as_ref().map(|_| self.pieces.clone());
         let mut stages = Vec::with_capacity(chain.len());
         let mut stutters = 0_usize;
-        for (from, to, step, piece) in chain {
+        let mut edge_indices = Vec::with_capacity(chain.len());
+        for (edge_index, from, to, step, piece) in chain {
+            edge_indices.push(edge_index);
             let step = match step {
                 Some((index, part)) => {
                     let steps = self.steps_of(from)?;
@@ -1972,6 +2021,9 @@ impl<'r, 's, 'a> Run<'r, 's, 'a> {
                 position,
                 position_resets: Vec::new(),
                 before: None,
+                after: None,
+                auxiliary_carries: Vec::new(),
+                auxiliary_resets: Vec::new(),
                 piece: None,
                 silent: false,
                 fixed: None,
@@ -1984,6 +2036,7 @@ impl<'r, 's, 'a> Run<'r, 's, 'a> {
         Ok(LiftedPath {
             initial,
             stages,
+            edge_indices,
             stutters,
             sigma,
             state: concrete,
@@ -2016,6 +2069,7 @@ impl<'r, 's, 'a> Run<'r, 's, 'a> {
         let LiftedPath {
             initial,
             stages,
+            edge_indices: _,
             stutters,
             sigma,
             state,
@@ -2171,6 +2225,8 @@ pub(super) struct LiftedPath {
     pub(super) initial: usize,
     /// Its stages, over concrete states.
     pub(super) stages: Vec<super::concretise::Stage>,
+    /// The retained edge index for each stage, in path order.
+    pub(super) edge_indices: Vec<usize>,
     /// The idle-tail stutters among them.
     pub(super) stutters: usize,
     /// The permutation from the node's canonical state to the concrete one.
@@ -2339,8 +2395,21 @@ fn scaled_bounds(
     window: Option<&WindowClaim>,
     automaton_constants: &[Rational],
 ) -> (BigInt, Vec<Option<BigInt>>, Vec<Option<BigInt>>) {
-    let model = timed.model();
     let mut constants = vec![Rational::from_integer(filament_exact::Integer::one())];
+    let Some(model) = timed.timed_model() else {
+        constants.extend(automaton_constants.iter().cloned());
+        let factor = scale_constants(&constants).factor().clone();
+        let horizon: Vec<Rational> =
+            window.map_or_else(Vec::new, |window| window.constants().to_vec());
+        let max = |values: &[Rational]| values.iter().max().map(|value| scaled(value, &factor));
+        let mut lower = Vec::new();
+        let mut upper = Vec::new();
+        if window.is_some() {
+            lower.push(max(&horizon));
+            upper.push(max(&horizon));
+        }
+        return (factor, lower, upper);
+    };
     // Per clock field: (lower, upper) constants compared with it.
     let fields = model.clocks().len();
     let mut lower: Vec<Vec<Rational>> = vec![Vec::new(); fields];
