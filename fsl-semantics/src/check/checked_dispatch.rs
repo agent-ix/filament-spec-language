@@ -1863,7 +1863,7 @@ mod tests {
                 Some(boxed()),
             ),
             Expression::seq(bound(), boxed(), boxed(), boxed()),
-            Expression::size(boxed()),
+            Expression::size(boxed(), None),
             Expression::contains(boxed(), boxed()),
             Expression::drop_first(boxed()),
             Expression::remove_one(boxed(), boxed()),

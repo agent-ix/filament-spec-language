@@ -716,8 +716,18 @@ fn encode_expression(
                 out.write_str(binder);
                 pending.extend([expr.at(*low), expr.at(*high), expr.at(*body)]);
             }
-            ExprNode::Size { operand, .. } => {
+            ExprNode::Size {
+                operand,
+                type_argument,
+            } => {
                 out.write_str("size");
+                match type_argument {
+                    Some(type_argument) => {
+                        out.write_str("typed");
+                        measure_model_target(out, type_argument);
+                    }
+                    None => out.write_str("untyped"),
+                }
                 pending.push(expr.at(*operand));
             }
             ExprNode::Contains { collection, item } => {
@@ -4090,10 +4100,15 @@ mod locus_tests {
 
     /// [`UNIT`] through S1, S2 and the assembler.
     fn unit() -> PackageDeclarations {
+        unit_from_text(UNIT)
+    }
+
+    /// `text` through S1, S2 and the assembler.
+    fn unit_from_text(text: &str) -> PackageDeclarations {
         let parsed = fsl_cst::parse(
             SourceIdentity::new("a", "u"),
             "unit.native",
-            UNIT.as_bytes(),
+            text.as_bytes(),
             fsl_cst::Limits::default(),
         )
         .expect("S1 reads the unit");
@@ -4437,6 +4452,43 @@ mod locus_tests {
         );
         assert_eq!(work.kind, CheckingLimitKind::WorkBudget);
         assert_eq!(unit_text(region), declaration);
+    }
+
+    /// The optional type form of `size<N>` is included in both the declaration
+    /// input-byte limit and its work budget before the declaration is typed.
+    #[trace("TC-427", "FR-096-AC-4", "FR-096-AC-5")]
+    #[test]
+    fn typed_size_type_argument_counts_toward_declaration_limits() {
+        let source = |body: &str| {
+            format!(
+                "language \"ix:native\" edition \"1-draft\";\n\
+                 profile v = \"filament.value.complete/v1\";\n\
+                 function f using v(c: Sequence<Integer>[0, 4]): Int[0, 4] pure {{ {body} }}\n"
+            )
+        };
+        let untyped = unit_from_text(&source("size(c)"));
+        let typed_text = source("size<Int[0, 4]>(c)");
+        let typed = unit_from_text(&typed_text);
+        let untyped_metrics = measure_resolved(&empty_scope(), &untyped.functions[0]);
+        let typed_metrics = measure_resolved(&empty_scope(), &typed.functions[0]);
+        assert!(typed_metrics.input_bytes > untyped_metrics.input_bytes);
+        assert!(typed_metrics.work_budget > untyped_metrics.work_budget);
+
+        let (input, input_region) = package_limit(
+            unit_from_text(&typed_text),
+            CheckingLimits::default().with_input_bytes(untyped_metrics.input_bytes),
+        );
+        assert_eq!(input.kind, CheckingLimitKind::InputBytes);
+        assert_eq!(input.actual, u128::from(typed_metrics.input_bytes));
+        assert!(input_region.is_some(), "the refusal is at the declaration");
+
+        let (work, work_region) = package_limit(
+            unit_from_text(&typed_text),
+            CheckingLimits::default().with_work_budget(untyped_metrics.work_budget),
+        );
+        assert_eq!(work.kind, CheckingLimitKind::WorkBudget);
+        assert_eq!(work.actual, u128::from(typed_metrics.work_budget));
+        assert!(work_region.is_some(), "the refusal is at the declaration");
     }
 
     /// FR-096 through package checking: a function with no form spans (one

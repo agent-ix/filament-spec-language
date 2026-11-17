@@ -705,7 +705,7 @@ mod tests {
     fn size_read() -> Expression {
         Expression::binary(
             BinaryOperator::Equal,
-            Expression::size(Expression::field(Expression::self_ref(), "ts")),
+            Expression::size(Expression::field(Expression::self_ref(), "ts"), None),
             Expression::integer(0_u64),
         )
     }
