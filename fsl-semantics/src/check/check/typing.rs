@@ -2702,7 +2702,7 @@ impl<'a> Typer<'a> {
                     },
                     &location,
                 )
-                    .map(Step::Typed)
+                .map(Step::Typed)
             }
         }
     }
