@@ -160,7 +160,11 @@ never from a bare label or a reference to another result.
   item to `proved`, and no guarantee item is `refuted`.
 - Before any slot, a clause outside FSpec FR-380's stuttering-invariant
   fragment settles the item `Inconclusive(TransferNotPreserving { reason:
-  Fragment { operator } })` (FSpec FR-488 "Settlement").
+  Fragment { operator } })` (FSpec FR-488 "Settlement"). FSpec
+  FR-380-AC-9's step-for-step exception does not apply: FSpec FR-488's
+  transition simulation always admits allowed stutters, so an implementation
+  abstraction is never step-for-step. Transfer of previous through a
+  model-to-model refinement is FR-1020's.
 - Settlement of one item settles every other item of the package unchanged.
 
 ### Closed causes
@@ -195,7 +199,7 @@ plugin's entry as FSL-only causes (`unknown-cause`), not as `Unsupported`.
 | FR-529-AC-8 | A finite implementation trace result (`tested`) over which the clause holds does not settle the item `proved`, and no guarantee item settles `refuted`. | Test (TC-1329) |
 | FR-529-AC-9 | A unit with an abstraction relation and no `guarantee-decl` has the requirement records and `route` results it has without the relation (FR-306-AC-3 unchanged). | Test (TC-1329) |
 | FR-529-AC-10 | `read_plugin_inconclusive_cause` refuses `premise-unproved` and `transfer-not-preserving` with their valid payloads as FSL-only causes (`unknown-cause` at `/cause/type`), and `planner` writes them with FSpec FR-331's spellings. | Test (TC-1329) |
-| FR-529-AC-11 | A clause nesting an interval operator under an unbounded one, and one using previous, settle `inconclusive`, `transfer-not-preserving{reason: fragment}` naming the operator, with every slot proved. | Test (TC-1329) |
+| FR-529-AC-11 | A clause nesting an interval operator under an unbounded one, and one using previous, settle `inconclusive`, `transfer-not-preserving{reason: fragment}` naming the operator, with every slot proved, because an implementation abstraction always admits allowed stutters and so is never step-for-step (FSpec FR-380-AC-9). | Test (TC-1329) |
 | FR-529-AC-12 | Admission refuses `invalid_runtime_input`/`invalid-value` a model-claim result without `stutter_closure`, one under another fairness set and a frame result in the transition-simulation slot; a `certified` entry read from the request settles its slot `uncertified`, so the item is never `certified` from request bytes. | Test (TC-1329) |
 | FR-529-AC-13 | Every derived item written by `fsl-route`'s request writer reads back through `planner::read_premise_item` with an equal slot key, and `planner::read_result_entry` refuses each FSpec FR-331 result-entry defect in its reading order. | Test (TC-1329) |
 
