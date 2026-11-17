@@ -2906,6 +2906,19 @@ pub struct PreparedLowering {
     source: String,
 }
 
+/// Execute a prepared FR-931 TL lowering and retain the standard run error
+/// envelope used by the command API.
+///
+/// Request and dependent-file limits are enforced while constructing the
+/// `PreparedLowering` through [`prepare_run`] or
+/// [`prepare_run_with_overrides`]. This function executes only that admitted
+/// value.
+pub fn execute_tl_lowering(
+    prepared: PreparedLowering,
+) -> std::result::Result<RunResult, Box<RunError>> {
+    execute_lowering(prepared).map_err(|cause| Box::new(RunError { cause }))
+}
+
 fn execute_lowering(prepared: PreparedLowering) -> Result<RunResult> {
     let PreparedLowering {
         request,
