@@ -5,8 +5,8 @@ mod types;
 
 use super::{LimitKind, RunCause, RunError, RunResult};
 use crate::formal_source::FormalSource;
-use fsl_foundation::source::SourceReadCause;
 use fsl_foundation::Diagnostic;
+use fsl_foundation::source::SourceReadCause;
 use serde_json::Value;
 
 /// Immutable JSON produced from the typed native result schema.
@@ -816,6 +816,7 @@ mod tests {
                     detail: "foreign model".to_owned(),
                 },
             })),
+            sources: crate::Sources::default(),
         };
         let model_value = error(&model, false).unwrap();
         assert_eq!(
@@ -842,6 +843,7 @@ mod tests {
                     detail: "foreign type".to_owned(),
                 },
             })),
+            sources: crate::Sources::default(),
         };
         let type_value = error(&type_refusal, false).unwrap();
         assert_eq!(

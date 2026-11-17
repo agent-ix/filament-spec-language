@@ -2,10 +2,10 @@
 //! FR-651: read several independent selections through the public run command.
 
 use super::{
-    output::NativeResult, prepare_run_bytes, RequestOverrides, Result, RunCause, RunError,
-    RunLimits, RunResult,
+    RequestOverrides, Result, RunCause, RunError, RunLimits, RunResult, output::NativeResult,
+    prepare_run_bytes,
 };
-use serde_json::{json, Map, Value};
+use serde_json::{Map, Value, json};
 use std::path::Path;
 
 const FORMAT: &str = "native-run-items/1";
@@ -361,7 +361,7 @@ pub(super) fn run_bytes(
             let snapshot_bytes = super::read_file(&directory.join(file), limits.dependent_bytes)?;
             match prepare_run_bytes(directory, &single_bytes, limits.dependent_bytes, overrides)? {
                 super::PreparedRun::Clause(request) => {
-                    let request = *request;
+                    let request = *request.into_request();
                     let candidate = compilation_from_clause(&request)?;
                     set_compilation(&mut compilation, candidate)?;
                     let reference =
@@ -410,7 +410,7 @@ pub(super) fn run_bytes(
         } else {
             match prepare_run_bytes(directory, &single_bytes, limits.dependent_bytes, overrides) {
                 Ok(super::PreparedRun::Clause(request)) => {
-                    let request = *request;
+                    let request = *request.into_request();
                     let candidate = compilation_from_clause(&request)?;
                     set_compilation(&mut compilation, candidate)?;
                     ItemExecution::Batch {
@@ -622,14 +622,17 @@ pub(super) fn run_bytes(
                     {
                         return Err(cause);
                     }
-                    let error = RunError { cause };
+                    let error = RunError {
+                        cause,
+                        sources: crate::Sources::default(),
+                    };
                     let value = error.value().map_err(RunCause::Output)?;
                     (value, error.category().exit_code())
                 }
             },
             ItemExecution::Run(result) => match result {
                 Ok(result) if is_internal_item_failure(&result) => {
-                    return Err(RunCause::ItemsFault)
+                    return Err(RunCause::ItemsFault);
                 }
                 Ok(result) => (result.value.as_value().clone(), result.exit_code),
                 Err(cause) => {
@@ -641,7 +644,10 @@ pub(super) fn run_bytes(
                     {
                         return Err(cause);
                     }
-                    let error = RunError { cause };
+                    let error = RunError {
+                        cause,
+                        sources: crate::Sources::default(),
+                    };
                     let value = error.value().map_err(RunCause::Output)?;
                     (value, error.category().exit_code())
                 }

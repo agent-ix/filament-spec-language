@@ -15,13 +15,13 @@ mod tl;
 mod wire;
 
 pub use analyze::{
-    analyze, analyze_with_limits, analyze_with_providers, analyze_with_providers_and_limits,
-    prepare_analyze, AnalyzeInput, PreparedAnalyze,
+    AnalyzeInput, PreparedAnalyze, analyze, analyze_with_limits, analyze_with_providers,
+    analyze_with_providers_and_limits, prepare_analyze,
 };
-pub use flow::{analyze_flow_report, FlowAnalyzeError};
-pub use monitor::{monitor, MonitorEvent, MonitorSummary};
+pub use flow::{FlowAnalyzeError, analyze_flow_report};
+pub use monitor::{MonitorEvent, MonitorSummary, monitor};
 pub use output::NativeResult;
-pub use tl::{record as tl_record, AtomMapping, TlRecord};
+pub use tl::{AtomMapping, TlRecord, record as tl_record};
 
 use crate::formal_source::FormalSource;
 use filament_contract_model as ir;
@@ -274,7 +274,11 @@ pub fn check_outcome(source_path: &Path, inputs: &CheckInputs) -> CheckOutcome {
     match result {
         Ok((document, sources)) => CheckOutcome { document, sources },
         Err((cause, sources)) => {
-            let document = RunError { cause }.outcome_document(fsl_replay::Operation::Check);
+            let document = RunError {
+                cause,
+                sources: sources.clone(),
+            }
+            .outcome_document(fsl_replay::Operation::Check);
             CheckOutcome { document, sources }
         }
     }
@@ -602,10 +606,63 @@ pub enum PreparedRun {
     /// A function selection for the existing execution pipeline.
     Function(PreparedFunctionRun),
     /// A clause selection for the existing clause runner.
-    Clause(Box<fsl_replay::spine::ClauseRunRequest>),
+    Clause(Box<PreparedClauseRun>),
     /// FR-931: a `tl_lowering` request: the clause's valuation run, the
     /// lowering it asks for, and the program text its atoms are named in.
     TlLowering(Box<PreparedLowering>),
+}
+
+/// A typed clause request together with every source admitted to prepare it.
+pub struct PreparedClauseRun {
+    request: Box<fsl_replay::spine::ClauseRunRequest>,
+    sources: crate::Sources,
+}
+
+impl PreparedClauseRun {
+    /// Transfer the typed clause request to the existing runner.
+    pub fn into_request(self) -> Box<fsl_replay::spine::ClauseRunRequest> {
+        self.request
+    }
+}
+
+impl std::ops::Deref for PreparedClauseRun {
+    type Target = fsl_replay::spine::ClauseRunRequest;
+
+    fn deref(&self) -> &Self::Target {
+        &self.request
+    }
+}
+
+impl std::ops::DerefMut for PreparedClauseRun {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.request
+    }
+}
+
+impl PreparedRun {
+    fn admitted_sources(&self) -> crate::Sources {
+        match self {
+            Self::Function(prepared) => crate::Sources::from_sources(
+                std::iter::once(prepared.data.source.source().clone())
+                    .chain(
+                        prepared
+                            .data
+                            .models
+                            .iter()
+                            .map(|source| source.source().clone()),
+                    )
+                    .chain(
+                        prepared
+                            .data
+                            .libraries
+                            .iter()
+                            .map(|source| source.source().clone()),
+                    ),
+            ),
+            Self::Clause(request) => request.sources.clone(),
+            Self::TlLowering(prepared) => prepared.sources.clone(),
+        }
+    }
 }
 
 /// Original intake failure, without recovering typed data from display messages.
@@ -977,9 +1034,15 @@ pub struct RunError {
     /// Original typed failure.
     #[source]
     pub cause: RunCause,
+    /// Sources admitted while producing this failure (FR-865).
+    pub sources: crate::Sources,
 }
 
 impl RunError {
+    /// Sources admitted while producing this failure (FR-865).
+    pub fn sources(&self) -> &crate::Sources {
+        &self.sources
+    }
     /// The cause's ADR-013 O-16 category (FR-285).
     pub fn category(&self) -> filament_semantic_value::catalog::Category {
         self.cause.category()
@@ -1128,7 +1191,9 @@ impl RunError {
                 format!("dependent_bytes limit {maximum} exceeded")
             }
             RunCause::Limit(LimitKind::ObservationDocumentBytes { maximum }) => {
-                format!("observation.document_bytes limit {maximum} exceeded; raise --limit observation.document_bytes")
+                format!(
+                    "observation.document_bytes limit {maximum} exceeded; raise --limit observation.document_bytes"
+                )
             }
             RunCause::Limit(LimitKind::SelectedFiles {
                 category,
@@ -1427,8 +1492,12 @@ fn run_configured(
     } = settlement;
     // FR-961 step 2: the registry is fixed before any stage runs, so a
     // provider that cannot register refuses the request first.
-    let engines =
-        analyze::engines_with(providers, options).map_err(|cause| Box::new(RunError { cause }))?;
+    let engines = analyze::engines_with(providers, options).map_err(|cause| {
+        Box::new(RunError {
+            cause,
+            sources: crate::Sources::default(),
+        })
+    })?;
     let settle = Settle {
         negotiate,
         engines: &engines,
@@ -1456,7 +1525,8 @@ fn run_configured(
         return Ok(result);
     }
     let prepared = prepare_run_with_overrides(path, limits, overrides)?;
-    execute_prepared(prepared, &settle).map_err(|cause| Box::new(RunError { cause }))
+    let sources = prepared.admitted_sources();
+    execute_prepared(prepared, &settle).map_err(|cause| Box::new(RunError { cause, sources }))
 }
 
 /// FR-661: handle the driver's in-process `version` invocation used by the
@@ -1679,8 +1749,19 @@ pub fn prepare_run_with_overrides(
     limits: RunLimits,
     overrides: &RequestOverrides<'_>,
 ) -> std::result::Result<PreparedRun, Box<RunError>> {
+    let mut sources = crate::Sources::default();
     with_request_limits(path, limits.request_bytes, |directory, bytes| {
-        prepare_run_bytes(directory, bytes, limits.dependent_bytes, overrides)
+        prepare_run_bytes_with_sources(
+            directory,
+            bytes,
+            limits.dependent_bytes,
+            overrides,
+            &mut sources,
+        )
+    })
+    .map_err(|mut error| {
+        error.sources = sources;
+        error
     })
 }
 
@@ -2558,10 +2639,17 @@ fn with_request_limits<T>(
             }),
             cause => cause,
         };
-        Box::new(RunError { cause })
+        Box::new(RunError {
+            cause,
+            sources: crate::Sources::default(),
+        })
     })?;
-    action(path.parent().unwrap_or(Path::new(".")), &bytes)
-        .map_err(|cause| Box::new(RunError { cause }))
+    action(path.parent().unwrap_or(Path::new(".")), &bytes).map_err(|cause| {
+        Box::new(RunError {
+            cause,
+            sources: crate::Sources::default(),
+        })
+    })
 }
 
 /// Request settings a caller supplies beside the request file rather than
@@ -2682,6 +2770,17 @@ fn prepare_run_bytes(
     dependent_bytes: usize,
     overrides: &RequestOverrides<'_>,
 ) -> Result<PreparedRun> {
+    let mut sources = crate::Sources::default();
+    prepare_run_bytes_with_sources(directory, bytes, dependent_bytes, overrides, &mut sources)
+}
+
+fn prepare_run_bytes_with_sources(
+    directory: &Path,
+    bytes: &[u8],
+    dependent_bytes: usize,
+    overrides: &RequestOverrides<'_>,
+    admitted_sources: &mut crate::Sources,
+) -> Result<PreparedRun> {
     let request: wire::Request = request_with_overrides(bytes, overrides)?;
     validate_extension_entries(&request.extensions)?;
     // FR-931: a malformed `tl_lowering` member refuses before any source
@@ -2719,12 +2818,16 @@ fn prepare_run_bytes(
         },
         dependent_bytes,
     )?;
-    reject_current_parameters_before_sources(&mut intake, request.clause.as_ref())?;
-    // The program source is read exactly once; its declared edition decides
-    // the runner before any model or library source is read (FR-100).
-    let source = intake.source(&request.program.source, "program.source")?;
-    require_complete_edition(source.source())?;
-    prepare_complete_run(&mut intake, &request, source)
+    let prepared = (|| {
+        reject_current_parameters_before_sources(&mut intake, request.clause.as_ref())?;
+        // The program source is read exactly once; its declared edition decides
+        // the runner before any model or library source is read (FR-100).
+        let source = intake.source(&request.program.source, "program.source")?;
+        require_complete_edition(source.source())?;
+        prepare_complete_run(&mut intake, &request, source)
+    })();
+    *admitted_sources = crate::Sources::from_sources(intake.sources.iter().cloned());
+    prepared
 }
 
 /// FR-931: prepare a `tl_lowering` request. Its clause is read through
@@ -2752,10 +2855,12 @@ fn prepare_lowering(
     let clause: wire::ClauseRun = serde_json::from_value(tl::selection(&lowering))?;
     let text = source.source().text().to_owned();
     let run = clause::read(intake, request, &clause, source)?;
+    let sources = crate::Sources::from_sources(intake.sources.iter().cloned());
     Ok(PreparedRun::TlLowering(Box::new(PreparedLowering {
         request: run,
         lowering,
         source: text,
+        sources,
     })))
 }
 
@@ -2776,8 +2881,12 @@ fn prepare_complete_run(
                 reason: "call and clause are mutually exclusive".to_owned(),
             });
         }
-        return clause::read(intake, request, clause, source)
-            .map(|request| PreparedRun::Clause(Box::new(request)));
+        let request = clause::read(intake, request, clause, source)?;
+        let sources = crate::Sources::from_sources(intake.sources.iter().cloned());
+        return Ok(PreparedRun::Clause(Box::new(PreparedClauseRun {
+            request: Box::new(request),
+            sources,
+        })));
     }
     if request.models.iter().any(|model| !is_domain_package(model)) {
         return Err(RunCause::CompleteRunSelection(
@@ -2904,6 +3013,7 @@ pub struct PreparedLowering {
     request: fsl_replay::spine::ClauseRunRequest,
     lowering: tl::TlLowering,
     source: String,
+    sources: crate::Sources,
 }
 
 /// Execute a prepared FR-931 TL lowering and retain the standard run error
@@ -2916,7 +3026,8 @@ pub struct PreparedLowering {
 pub fn execute_tl_lowering(
     prepared: PreparedLowering,
 ) -> std::result::Result<RunResult, Box<RunError>> {
-    execute_lowering(prepared).map_err(|cause| Box::new(RunError { cause }))
+    let sources = prepared.sources.clone();
+    execute_lowering(prepared).map_err(|cause| Box::new(RunError { cause, sources }))
 }
 
 fn execute_lowering(prepared: PreparedLowering) -> Result<RunResult> {
@@ -2924,6 +3035,7 @@ fn execute_lowering(prepared: PreparedLowering) -> Result<RunResult> {
         request,
         lowering,
         source,
+        sources,
     } = prepared;
     let selection = request.selection.clone();
     let report = fsl_replay::spine::run_temporal_valuation(request).map_err(|error| {
@@ -2945,7 +3057,7 @@ fn execute_lowering(prepared: PreparedLowering) -> Result<RunResult> {
         value: NativeResult::lowering_document(tl::document(record.record)),
         outcome: None,
         requirements: None,
-        sources: crate::Sources::default(),
+        sources,
     })
 }
 
@@ -2955,12 +3067,13 @@ fn execute_prepared(prepared: PreparedRun, settle: &settle::Settle<'_>) -> Resul
         PreparedRun::TlLowering(prepared) => return execute_lowering(*prepared),
         PreparedRun::Clause(request) => {
             let selection = request.selection.clone();
-            let report = fsl_replay::spine::run_clause(*request).map_err(|error| {
-                RunCause::ClauseRequest {
-                    member: "clause".to_owned(),
-                    reason: error.to_string(),
-                }
-            })?;
+            let report =
+                fsl_replay::spine::run_clause(*request.into_request()).map_err(|error| {
+                    RunCause::ClauseRequest {
+                        member: "clause".to_owned(),
+                        reason: error.to_string(),
+                    }
+                })?;
             return output::clause_report(report, &selection);
         }
     };
@@ -3155,6 +3268,7 @@ mod tests {
             cause: RunCause::SpineRun(Box::new(fsl_replay::spine::RunRefusal::Fault(
                 InternalFault::new(stage, invariant),
             ))),
+            sources: crate::Sources::default(),
         }
     }
 

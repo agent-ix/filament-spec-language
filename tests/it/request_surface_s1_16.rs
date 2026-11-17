@@ -6,9 +6,9 @@
 //! adapter (`fsl_command::command::run`) and asserts on the output document,
 //! because the engines' own entry points do not exist yet.
 
-use crate::support::config_version_spine::{spine, Case};
+use crate::support::config_version_spine::{Case, spine};
 use ix_trace_rs::trace;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use std::path::Path;
 
 const MODEL_HEADER: &str = "language \"ix:native\" edition \"1-draft\";\n\
@@ -272,7 +272,9 @@ fn the_planner_returns_optimal_and_infeasible_with_certificates() {
 #[trace("FSpec-TC-1604", "FSpec-FR-651-AC-1")]
 #[ignore = "QSL-1979: TLA+ and Lean output profiles not implemented yet"]
 fn tla_and_lean_exports_echo_their_profile_and_preserve_a_finite_invariant() {
-    let unit = format!("{MODEL_HEADER}invariant Low using v on Config::ConfigVersion at current {{ self.versionNumber >= 0 }}\n");
+    let unit = format!(
+        "{MODEL_HEADER}invariant Low using v on Config::ConfigVersion at current {{ self.versionNumber >= 0 }}\n"
+    );
     for (profile, family) in [
         ("filament.output.tla2/v1", "tla"),
         ("filament.output.lean4/v1", "lean"),
@@ -892,7 +894,9 @@ fn a_plan_with_a_disabled_invocation_is_a_method_failure() {
 #[trace("FSpec-TC-1604", "FSpec-FR-297-AC-5")]
 #[ignore = "QSL-1979: Lean profile, obligation refusal and family check not implemented yet"]
 fn lean_export_refusals_and_family_check() {
-    let unit = format!("{MODEL_HEADER}invariant Low using v on Config::ConfigVersion at current {{ self.versionNumber >= 0 }}\n");
+    let unit = format!(
+        "{MODEL_HEADER}invariant Low using v on Config::ConfigVersion at current {{ self.versionNumber >= 0 }}\n"
+    );
     let (_, lean) = run(
         &unit,
         true,
@@ -938,7 +942,9 @@ fn lean_export_refusals_and_family_check() {
 #[trace("FSpec-TC-1604", "FSpec-FR-651-AC-5")]
 #[ignore = "QSL-1979: TLA+ export conformance with an observer not implemented yet"]
 fn tla_export_agrees_with_fsl_exploration() {
-    let unit = format!("{MODEL_HEADER}invariant Low using v on Config::ConfigVersion at current {{ self.versionNumber >= 0 }}\n");
+    let unit = format!(
+        "{MODEL_HEADER}invariant Low using v on Config::ConfigVersion at current {{ self.versionNumber >= 0 }}\n"
+    );
     let (_, value) = run(
         &unit,
         true,
@@ -1117,7 +1123,7 @@ fn a_tl_lowering_request_selects_its_correspondence() {
 /// Provenance: QSL-2348.
 #[test]
 #[trace("TC-2601", "FR-931-AC-1")]
-#[trace("FR-312-AC-3")]
+#[trace("FR-312-AC-3", "TC-2455", "FR-865-AC-5")]
 fn a_prepared_tl_lowering_uses_the_public_executor_and_keeps_limits() {
     let directory = tempfile::tempdir().unwrap();
     spine::write(directory.path(), Case::Healthy).unwrap();
@@ -1146,6 +1152,29 @@ fn a_prepared_tl_lowering_uses_the_public_executor_and_keeps_limits() {
 
     assert_eq!(actual.exit_code, expected.exit_code);
     assert_eq!(actual.value.to_string(), expected.value.to_string());
+
+    let mut failing_request = request.clone();
+    failing_request["request"]["tl_lowering"]["clause"] = json!("Missing");
+    let failing_path = directory.path().join("failing-lowering.json");
+    std::fs::write(&failing_path, serde_json::to_vec(&failing_request).unwrap()).unwrap();
+    let prepared = fsl_command::command::prepare_run(
+        &failing_path,
+        fsl_command::command::RunLimits::default(),
+    )
+    .unwrap_or_else(|error| panic!("the failing clause still prepares: {error}"));
+    let fsl_command::command::PreparedRun::TlLowering(prepared) = prepared else {
+        panic!("the request must prepare a TL lowering")
+    };
+    let error = fsl_command::command::execute_tl_lowering(*prepared)
+        .expect_err("the absent clause fails during lowering");
+    let paths = error
+        .sources()
+        .as_slice()
+        .iter()
+        .map(fsl_foundation::Source::path)
+        .collect::<Vec<_>>();
+    assert!(paths.contains(&"unit.native"), "{paths:?}");
+    assert!(paths.contains(&"spine-model.semantic-ir.json"), "{paths:?}");
 
     let limited = fsl_command::command::prepare_run(
         &path,

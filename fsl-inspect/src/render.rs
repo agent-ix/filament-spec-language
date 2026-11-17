@@ -9,8 +9,8 @@ use fsl_foundation::{
     diagnostic::{LimitExceeded, StageFailure, Staged},
     setting::Setting,
     source::{
-        provenance::{RawSourceRef, SourceRegion},
         Source,
+        provenance::{RawSourceRef, SourceRegion},
     },
 };
 use fsl_replay::{Certification, OutcomeDocument, RenderLimits};
@@ -327,7 +327,7 @@ where
         (RenderForm::Dot, View::Node(_)) => return Err(unsupported("node", form)),
         (RenderForm::Dot, View::Outcome(_)) => return Err(unsupported("outcome", form)),
         (RenderForm::Dot, View::Counterexample(_)) => {
-            return Err(unsupported("counterexample", form))
+            return Err(unsupported("counterexample", form));
         }
     }
     Ok(writer.finish())
@@ -353,9 +353,25 @@ fn outcome_text(
             return Err(fault("outcome loci do not align with its diagnostics"));
         }
     }
-    if document.diagnostics().is_empty() {
-        writer.unit(|| format!("Outcome: {}\n", document.category().as_str()))?;
-    }
+    let wire: serde_json::Value = serde_json::from_slice(
+        &document
+            .to_bytes()
+            .map_err(|_| fault("outcome JSON serialization failed"))?,
+    )
+    .map_err(|_| fault("outcome JSON is not valid"))?;
+    let operation = wire
+        .get("operation")
+        .and_then(serde_json::Value::as_str)
+        .ok_or_else(|| fault("outcome document has no operation"))?;
+    let last_stage = wire.get("last_stage").and_then(serde_json::Value::as_str);
+    writer.unit(|| {
+        format!(
+            "{operation}: {} (exit {}){}\n",
+            document.category().as_str(),
+            document.category().exit_code(),
+            last_stage.map_or_else(String::new, |stage| format!(" at {stage}"))
+        )
+    })?;
     for (index, diagnostic) in document.diagnostics().iter().enumerate() {
         let region = view
             .and_then(|view| view.loci.get(index))
@@ -396,23 +412,89 @@ fn outcome_text(
                 diagnostic.message()
             )
         })?;
+        if let Some(cause) = diagnostic.cause() {
+            writer.unit(|| format!("  cause: {cause}\n"))?;
+        }
+        if let Some(label) = wire
+            .get("diagnostics")
+            .and_then(|items| items.get(index))
+            .and_then(|item| item.get("label"))
+            .and_then(serde_json::Value::as_str)
+        {
+            writer.unit(|| format!("  label: {label}\n"))?;
+        }
     }
-    for item in document.items() {
+    for (index, item) in document.items().iter().enumerate() {
         writer.try_unit(|| {
+            let item_wire = wire
+                .get("items")
+                .and_then(|items| items.get(index))
+                .ok_or_else(|| fault("outcome item serialization failed"))?;
+            let category = item_wire
+                .get("category")
+                .and_then(serde_json::Value::as_str)
+                .ok_or_else(|| fault("outcome item has no category"))?;
             let mut line = format!(
-                "Item {}: {}",
+                "item {}: {} ({category})",
                 item.request_index().get(),
                 wire_label(&item.result())?
             );
+            if let Some(clause) = item.clause() {
+                line.push_str(&format!(" clause {clause}"));
+            }
             if let Some(certification) = item.certification() {
-                line.push(' ');
-                line.push_str(&wire_label(&certification)?);
+                line.push_str(&format!(" {}", wire_label(&certification)?));
             }
             line.push('\n');
             Ok(line)
         })?;
+        let item_wire = wire
+            .get("items")
+            .and_then(|items| items.get(index))
+            .ok_or_else(|| fault("outcome item serialization failed"))?;
+        if let Some(cause) = item_wire.get("cause").filter(|cause| !cause.is_null()) {
+            let kind = cause
+                .get("kind")
+                .and_then(serde_json::Value::as_str)
+                .unwrap_or("cause");
+            let detail = cause
+                .get("code")
+                .or_else(|| cause.get("reason"))
+                .or_else(|| cause.get("cause"))
+                .and_then(serde_json::Value::as_str);
+            let rendered =
+                detail.map_or_else(|| kind.to_owned(), |detail| format!("{kind} ({detail})"));
+            writer.unit(|| format!("  cause: {rendered}\n"))?;
+        }
+        for key in ["counterexample", "trace"] {
+            if let Some(value) = item_wire.get(key).filter(|value| !value.is_null()) {
+                writer.unit(|| format!("  {key}: {}\n", canonical_json(value)))?;
+            }
+        }
+    }
+    if let Some(result) = wire.get("result").filter(|result| !result.is_null()) {
+        let kind = result
+            .get("kind")
+            .and_then(serde_json::Value::as_str)
+            .ok_or_else(|| fault("outcome result has no kind"))?;
+        let mut members = result
+            .as_object()
+            .cloned()
+            .ok_or_else(|| fault("outcome result is not an object"))?;
+        members.remove("kind");
+        let suffix = if members.is_empty() {
+            String::new()
+        } else {
+            format!(" {}", canonical_json(&serde_json::Value::Object(members)))
+        };
+        writer.unit(|| format!("result: {kind}{suffix}\n"))?;
     }
     Ok(())
+}
+
+fn canonical_json(value: &serde_json::Value) -> String {
+    // serde_json's map representation orders keys, yielding stable compact JSON.
+    value.to_string()
 }
 
 // ---- JSON ---------------------------------------------------------------
@@ -1227,12 +1309,12 @@ fn source_label(source: &RawSourceRef) -> String {
 mod tests {
     use super::*;
     use crate::{
-        inspect_node, inspect_package, inspect_state_graph, tests::emitted_spine_package,
-        AssignmentView, InspectLimits, NodeSelector, OutcomeView, TracePositionView,
+        AssignmentView, InspectLimits, NodeSelector, OutcomeView, TracePositionView, inspect_node,
+        inspect_package, inspect_state_graph, tests::emitted_spine_package,
     };
     use filament_exact::CancelCause;
     use filament_semantic_value::catalog::Category;
-    use fsl_foundation::{diagnostic::LimitKind, source::SourceIdentity, Span};
+    use fsl_foundation::{Span, diagnostic::LimitKind, source::SourceIdentity};
     use ix_trace_rs::trace;
 
     const EXPECTED_JSON: &[&str] = &[
@@ -1438,7 +1520,7 @@ mod tests {
         // Column 2: the scalar column, not the byte-based 3.
         assert_eq!(
             text_of(&document, &RenderSources::from_sources([input.clone()])),
-            "src/inv.fsl:2:2: ill_typed: bad value\n"
+            "analyze: refusal (exit 20)\nsrc/inv.fsl:2:2: ill_typed: bad value\n"
         );
 
         let fallback_label = format!(
@@ -1451,7 +1533,7 @@ mod tests {
             RenderSources::from_sources([source_under("ref-other", "src/other.fsl", "zzz\n")]);
         for sources in [RenderSources::from_sources([]), unrelated] {
             let text = text_of(&document, &sources);
-            assert!(text.starts_with(&fallback_label), "{text}");
+            assert!(text.contains(&fallback_label), "{text}");
             assert!(!text.contains("src/"), "{text}");
         }
 
@@ -1462,14 +1544,15 @@ mod tests {
         assert_eq!(
             text,
             format!(
-                "{}:4-{past_end_by_one}: ill_typed: bad range\n",
+                "analyze: refusal (exit 20)\n{}:4-{past_end_by_one}: ill_typed: bad range\n",
                 source_label(region.source())
             )
         );
         // The region's end exactly at the source's length still resolves.
         let at_end = refusal_over(&region, u64::try_from(text_source.len()).unwrap(), "edge");
         assert!(
-            text_of(&at_end, &RenderSources::from_sources([input])).starts_with("src/inv.fsl:2:2:")
+            text_of(&at_end, &RenderSources::from_sources([input]))
+                .contains("src/inv.fsl:2:2: ill_typed: edge")
         );
     }
 
@@ -1640,12 +1723,16 @@ mod tests {
             assignments: Vec::new(),
             certification: Some(fsl_replay::Certification::Uncertified),
         });
-        assert!(render_default(&view, RenderForm::Json)
-            .as_str()
-            .contains(r#""certification":"uncertified""#));
-        assert!(render_default(&view, RenderForm::Text)
-            .as_str()
-            .contains("Certification: uncertified\n"));
+        assert!(
+            render_default(&view, RenderForm::Json)
+                .as_str()
+                .contains(r#""certification":"uncertified""#)
+        );
+        assert!(
+            render_default(&view, RenderForm::Text)
+                .as_str()
+                .contains("Certification: uncertified\n")
+        );
     }
 
     #[trace("TC-783", "FR-298-AC-3", "FR-298-AC-5")]
@@ -2147,7 +2234,6 @@ mod tests {
     /// each diagnostic with a cause is followed by its `cause` line.
     #[test]
     #[trace("TC-2455", "FR-865-AC-1")]
-    #[ignore = "QSL-1973: the complete text outcome is not implemented yet"]
     fn text_outcome_names_operation_category_exit_stage_and_cause() {
         let refusal = OutcomeDocument::new(
             fsl_replay::Operation::Check,
@@ -2186,5 +2272,78 @@ mod tests {
             text_of(&packaged, &RenderSources::from_sources([])),
             "package: success (exit 0) at S4\n"
         );
+    }
+
+    #[test]
+    #[trace("TC-2455", "FR-865-AC-2")]
+    fn text_outcome_renders_monitor_item_category_clause_and_inner_cause() {
+        let document = OutcomeDocument::settled(
+            fsl_replay::Operation::Monitor,
+            Some(fsl_replay::OutcomeStage::S6c),
+            vec![fsl_replay::OutcomeItem::undefined_evaluation(
+                fsl_foundation::RequestIndex::new(0),
+                "position 1",
+                "division-by-zero",
+            )],
+        );
+        let text = text_of(&document, &RenderSources::from_sources([]));
+        assert!(
+            text.contains("monitor: violation (exit 10) at S6c"),
+            "{text}"
+        );
+        assert!(text.contains("item 0: refuted (violation)"), "{text}");
+        assert!(
+            text.contains("  cause: undefined-evaluation (division-by-zero)"),
+            "{text}"
+        );
+    }
+
+    #[test]
+    #[trace("TC-2455", "FR-865-AC-2")]
+    fn text_outcome_renders_execute_results_and_indeterminate_exit_code() {
+        use fsl_replay::spine::{CallIncomplete, CallOutcome, CallValue};
+
+        let completed = OutcomeDocument::from_call(&CallOutcome::Completed(CallValue::Written(
+            serde_json::json!({"integer": "7"}),
+        )));
+        let undefined = OutcomeDocument::from_call(&CallOutcome::Undefined {
+            reason: "sum-out-of-domain",
+        });
+        let incomplete = OutcomeDocument::from_call(&CallOutcome::Incomplete(CallIncomplete {
+            record: filament_exact::Incomplete {
+                limit_kind: filament_exact::LimitKind::WorkUnits,
+                limit: 0,
+                consumed: 0,
+                next_charge: filament_exact::Integer::from(1_u64),
+                charge_point: filament_exact::ChargePoint::FunctionCall,
+            },
+            location: None,
+        }));
+        let render =
+            |document: &OutcomeDocument| text_of(document, &RenderSources::from_sources([]));
+
+        assert!(
+            render(&completed).ends_with("result: completed {\"value\":{\"integer\":\"7\"}}\n")
+        );
+        assert!(
+            render(&undefined).ends_with("result: undefined {\"reason\":\"sum-out-of-domain\"}\n")
+        );
+        let incomplete_text = render(&incomplete);
+        assert!(incomplete_text.starts_with("execute: incomplete (exit 22) at S6a\n"));
+        assert!(
+            incomplete_text.contains("result: incomplete "),
+            "{incomplete_text}"
+        );
+        assert!(
+            incomplete_text.contains("accounting.work_units"),
+            "{incomplete_text}"
+        );
+
+        let indeterminate = OutcomeDocument::new(
+            fsl_replay::Operation::Analyze,
+            None,
+            Category::Indeterminate,
+        );
+        assert!(render(&indeterminate).starts_with("analyze: indeterminate (exit 11)\n"));
     }
 }
