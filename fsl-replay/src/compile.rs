@@ -329,6 +329,7 @@ pub(crate) fn recompile_with_integer_division<'a>(
         execution_points,
         temporal_selections,
         integer_division,
+        None,
         limits.spine,
     )
 }

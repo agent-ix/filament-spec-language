@@ -2289,6 +2289,8 @@ pub(crate) struct ContinuationInputs<'a> {
     /// The semantic owner's admitted law for this compile's unit.
     pub(crate) integer_division:
         Option<filament_checked::integer_division::AdmittedIntegerDivision>,
+    /// Recorded function-body check modes, keyed by authored function name.
+    pub(crate) function_modes: Option<&'a BTreeMap<String, CheckMode>>,
 }
 
 /// S3 continuation for the compiler: keep an attributable protocol refusal
@@ -2310,7 +2312,7 @@ pub(crate) fn check_for_continuation(
         None,
         inputs.integer_division,
         None,
-        None,
+        inputs.function_modes,
         models,
         dependencies,
         limits,

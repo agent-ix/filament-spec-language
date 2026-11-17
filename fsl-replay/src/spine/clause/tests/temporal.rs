@@ -1343,6 +1343,27 @@ fn observed_replay_request(
     let header = "profile v = \"filament.value.complete/v1\";\n";
     let mut text = base.replacen(header, &format!("{header}{}", unit.profile()), 1);
     text.push_str(unit.clauses());
+    let mut function_modes = BTreeMap::new();
+    if text.contains("3 mod (2 - c.value) >= 0")
+        || text.contains("3 mod (2 - q.value) >= 0")
+    {
+        text = text
+            .replace(
+                "3 mod (2 - c.value) >= 0",
+                "temporal_mod_undefined(c.value)",
+            )
+            .replace(
+                "3 mod (2 - q.value) >= 0",
+                "temporal_mod_undefined(q.value)",
+            );
+        text.push_str(
+            "\nfunction temporal_mod_undefined using v(n: Integer): Boolean pure { 3 mod (2 - n) >= 0 }\n",
+        );
+        function_modes.insert(
+            "temporal_mod_undefined".to_owned(),
+            filament_semantic_value::checking::CheckMode::Kernel,
+        );
+    }
     let source_bytes = text.into_bytes();
     let source_identity = fsl_foundation::SourceIdentity::new("agent-ix", "clause-run-fixture");
     let path = "counter-temporal.native";
@@ -1362,6 +1383,7 @@ fn observed_replay_request(
         &execution_points,
         &temporal_selections,
         None,
+        (!function_modes.is_empty()).then_some(&function_modes),
         crate::spine::SpineLimits::default(),
     )
     .expect("the temporal fixture compiles with its explicit clock selection");
