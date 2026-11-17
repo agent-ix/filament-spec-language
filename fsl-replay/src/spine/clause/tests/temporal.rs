@@ -354,7 +354,7 @@ impl Unit {
                  on origin { always[2,3] holds(c.value > 0) }\n"
             }
             Self::DifferentialEvent => differential_clauses!("\"model-steps\""),
-            Self::DifferentialWindow => differential_clauses!("\"ms\""),
+            Self::DifferentialWindow => differential_clauses!("\"model-steps\""),
             Self::TimestampedUndefinedThenRefused => concat!(
                 "type Zero = Int[0, 0];\n",
                 "function ints using v(xs: Sequence<Integer>[0, 3]): Sequence<Integer>[0, 3] \
