@@ -5221,10 +5221,27 @@ pub struct SynthesisForm {
     pub name: DeclaredName,
     /// The selected profile alias.
     pub profile: UsingAlias,
+    /// The candidate grammar name.
+    pub grammar: NameForm,
+    /// The finite candidate domain name.
+    pub domain: NameForm,
+    /// The optional optimization objective.
+    pub objective: Option<SynthesisObjectiveForm>,
+    /// The predicate that validates each candidate.
+    pub satisfies: ExpressionForm,
     /// The complete source spelling retained for later stages.
     pub source: String,
     /// The declaration's source span.
     pub span: Span,
+}
+
+/// The direction and value name of a synthesis optimization objective.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum SynthesisObjectiveForm {
+    /// Select the least satisfying value.
+    Minimize(NameForm),
+    /// Select the greatest satisfying value.
+    Maximize(NameForm),
 }
 
 /// The S2 source identity of a verification plan (FR-753).

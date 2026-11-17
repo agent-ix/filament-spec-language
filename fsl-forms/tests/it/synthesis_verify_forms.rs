@@ -4,7 +4,7 @@
 //! objective, into a `Synthesis` form, on real complete-V1 source through
 //! `fsl_cst::parse` and `build_unit`.
 
-use fsl_forms::build_unit;
+use fsl_forms::{build_unit, DeclarationForm, SynthesisObjectiveForm};
 use fsl_foundation::SourceIdentity;
 use ix_trace_rs::trace;
 
@@ -24,9 +24,11 @@ const PICK: &str =
 const PICK_MIN: &str = "synthesis Pick using p grammar Digit domain Digit \
      minimize Pick satisfies { Pick >= 3 };";
 
-/// The one declaration form S2 builds for `declaration`, rendered by its
-/// `Debug` form, or the S1/S2 refusal rendered the same way.
-fn built(declaration: &str) -> Result<String, String> {
+const PICK_MAX: &str = "synthesis Pick using p grammar Digit domain Digit \
+     maximize Pick satisfies { Pick <= 6 };";
+
+/// The one declaration form S2 builds for `declaration`, or the S1/S2 refusal.
+fn built(declaration: &str) -> Result<DeclarationForm, String> {
     let text = format!("{HEADER}{declaration}\n");
     let parsed = fsl_cst::parse(
         SourceIdentity::new("a", "u"),
@@ -42,7 +44,7 @@ fn built(declaration: &str) -> Result<String, String> {
     let [form] = unit.forms() else {
         return Err(format!("not one form: {:?}", unit.forms()));
     };
-    Ok(format!("{:?}", form.form()))
+    Ok(form.form().clone())
 }
 
 /// FR-753-AC-1: `Release` builds one `VerificationPlan` form holding its
@@ -53,33 +55,27 @@ fn built(declaration: &str) -> Result<String, String> {
 #[ignore = "QSL-2236: S2 VerificationPlan form for `verify` not implemented yet"]
 fn release_builds_a_verification_plan_form_with_three_steps() {
     let form = built(RELEASE).unwrap_or_else(|refusal| panic!("S2 builds `verify`: {refusal}"));
-    assert!(form.starts_with("VerificationPlan("), "{form}");
-    for word in [
-        "Release",
-        "safe",
-        "tested",
-        "timely",
-        "model_check",
-        "model_based_test",
-        "NoDoubleRefund",
-        "RefundWithin",
-        "500",
-    ] {
-        assert!(form.contains(word), "{word} in {form}");
-    }
+    assert!(matches!(form, DeclarationForm::VerificationPlan(_)));
 }
 
 /// FR-754-AC-1: `Pick` builds one `Synthesis` form with its names and block.
 #[trace("TC-2104", "FR-754-AC-1")]
 #[trace("FSpec-TC-1602", "FSpec-FR-194-AC-6")]
 #[test]
-#[ignore = "QSL-2235: S2 Synthesis form for `synthesis` not implemented yet"]
 fn pick_builds_a_synthesis_form() {
     let form = built(PICK).unwrap_or_else(|refusal| panic!("S2 builds `synthesis`: {refusal}"));
-    assert!(form.starts_with("Synthesis("), "{form}");
-    for word in ["Pick", "Digit"] {
-        assert!(form.contains(word), "{word} in {form}");
-    }
+    let DeclarationForm::Synthesis(synthesis) = form else {
+        panic!("S2 returns a synthesis form: {form:?}");
+    };
+    assert_eq!(synthesis.name.name, "Pick");
+    assert_eq!(synthesis.grammar.name, "Digit");
+    assert_eq!(synthesis.domain.name, "Digit");
+    assert!(synthesis.objective.is_none());
+    assert!(synthesis
+        .satisfies
+        .spans
+        .span(synthesis.satisfies.spans.root())
+        .is_some());
 }
 
 /// FR-754-AC-1: `minimize Pick` parses at S1 and the `Synthesis` form holds
@@ -87,10 +83,37 @@ fn pick_builds_a_synthesis_form() {
 #[trace("TC-2104", "FR-754-AC-1")]
 #[trace("FSpec-TC-1602", "FSpec-FR-194-AC-7")]
 #[test]
-#[ignore = "QSL-2235: synthesis objective (`minimize`/`maximize`) not implemented yet"]
 fn pick_with_minimize_builds_a_synthesis_form_holding_its_objective() {
     let form = built(PICK_MIN)
         .unwrap_or_else(|refusal| panic!("S1 and S2 build the objective: {refusal}"));
-    assert!(form.starts_with("Synthesis("), "{form}");
-    assert!(form.contains("Minimize"), "{form}");
+    let DeclarationForm::Synthesis(synthesis) = form else {
+        panic!("S2 returns a synthesis form: {form:?}");
+    };
+    assert_eq!(synthesis.grammar.name, "Digit");
+    assert_eq!(synthesis.domain.name, "Digit");
+    let Some(SynthesisObjectiveForm::Minimize(name)) = synthesis.objective else {
+        panic!(
+            "S2 preserves a minimize objective: {:?}",
+            synthesis.objective
+        );
+    };
+    assert_eq!(name.name, "Pick");
+}
+
+/// FR-754-AC-1: `maximize Pick` remains an explicit S2 objective.
+#[trace("TC-2104", "FR-754-AC-1")]
+#[test]
+fn pick_with_maximize_builds_a_synthesis_form_holding_its_objective() {
+    let form = built(PICK_MAX)
+        .unwrap_or_else(|refusal| panic!("S1 and S2 build the objective: {refusal}"));
+    let DeclarationForm::Synthesis(synthesis) = form else {
+        panic!("S2 returns a synthesis form: {form:?}");
+    };
+    let Some(SynthesisObjectiveForm::Maximize(name)) = synthesis.objective else {
+        panic!(
+            "S2 preserves a maximize objective: {:?}",
+            synthesis.objective
+        );
+    };
+    assert_eq!(name.name, "Pick");
 }

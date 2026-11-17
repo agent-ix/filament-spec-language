@@ -2747,10 +2747,15 @@ fn analysis(g: &mut Grammar) {
             r(P::QualifiedName),
             x("domain"),
             r(P::QualifiedName),
+            opt(r(P::SynthesisObjective)),
             x("satisfies"),
             r(P::Block),
             x(";"),
         ]),
+    );
+    g.insert(
+        P::SynthesisObjective,
+        s(vec![c(vec![x("minimize"), x("maximize")]), ident()]),
     );
     g.insert(
         P::VerificationStep,

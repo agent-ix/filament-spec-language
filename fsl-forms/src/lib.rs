@@ -112,6 +112,7 @@ pub use syntax::{
     RewardForm, RoleForm, RoleLifetime, SchedulableForm, SchedulerForm, ScopeEntry, ScopeId,
     ScopeName, ScopedAnchorForm, ShapeChanged, SignedQuantityForm, SignificantContent, Spellings,
     StateClauseForm, StateClauseKind, StateGraphClaimForm, StateGraphClaimKind, SynthesisForm,
+    SynthesisObjectiveForm,
     StateGraphPredicateForm, StepLabelForm, StringLiteral, TaskForm, TasksetForm,
     TemporalClauseForm, TemporalFormulaForm, TemporalNodeForm, TemporalNodeId, TemporalOperator,
     TemporalOperatorForm, TemporalOperatorUse, TermOperator, TerminalDeclarationForm,

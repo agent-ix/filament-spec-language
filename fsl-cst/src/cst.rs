@@ -305,7 +305,7 @@ productions! {
     HybridInitial,
     #[doc = "`mode <identifier> when <block> ;`: one initial entry of a `hybrid` declaration."]
     InitialEntry,
-    HybridMode, Equation, SynthesisDeclaration,
+    HybridMode, Equation, SynthesisDeclaration, SynthesisObjective,
     VerificationPlan, VerificationStep,
     #[doc = "`abstraction <identifier> using <identifier> { <binding>+ }`: a model-to-implementation abstraction relation."]
     AbstractionDeclaration,

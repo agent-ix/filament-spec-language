@@ -1544,6 +1544,7 @@ impl<'c> Mapping<'c> {
             | Production::HybridMode
             | Production::Equation
             | Production::SynthesisDeclaration
+            | Production::SynthesisObjective
             | Production::VerificationPlan
             | Production::VerificationStep
             | Production::AbstractionDeclaration
@@ -2340,6 +2341,7 @@ impl<'c> Mapping<'c> {
             | Production::HybridMode
             | Production::Equation
             | Production::SynthesisDeclaration
+            | Production::SynthesisObjective
             | Production::VerificationPlan
             | Production::VerificationStep
             | Production::AbstractionDeclaration
