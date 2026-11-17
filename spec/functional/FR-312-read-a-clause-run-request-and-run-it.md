@@ -70,18 +70,19 @@ place of `call`. `clause` is a closed object:
     `value` in FR-650's run value form;
   - `{"context": {...}}`, FR-652's state-machine context selection
     (FR-106 `Context`);
-  - `{"temporal": {"name": N, "trace": T, "over": R}}`, FR-330's
+  - `{"temporal": {"name": N, "trace": T, "over": R, ...}}`, FR-330's
     `Temporal` selection. `T` is exactly one of FR-641's trace kinds:
     `{"finite": [K, ...]}` (`TraceInput::Finite`), `{"lasso": {"prefix": [K,
     ...], "loop": [K, ...]}}` (`TraceInput::Lasso`), `model`, `progressed`,
     `timestamped` and `timed` ([FR-641](FR-641-carry-every-temporal-trace-kind-and-the-progress-ledger-on-the-run-request.md),
     [FR-642](FR-642-run-a-timed-clause-over-a-recorded-timed-trace.md)), each
     position `K` an `observations` key or an FR-641 record sample, in
-    position order. The selection may also carry FR-641's `ledger`. `R` is FR-330's `{"reference": {"population": P,
+    position order. The selection may also carry FR-641's `ledger` and FR-985's correction members `relation`, `evidence_ledger` and `admit_late`. `R` is FR-330's `{"reference": {"population": P,
     "key": K}}`, with `P` the population's declaration identity text and
     `K` the object's key. The permitted member sets are exactly
-    `{name, trace, over, ledger}` (`over` as FR-641 requires it, `ledger`
-    optional), one FR-641 member for `trace`, and `{prefix, loop}` for
+    `{name, trace, over, ledger, relation, evidence_ledger, admit_late}`
+    (`over` as FR-641 requires it, the others optional, the last three on a
+    `timestamped` trace only, FR-985), one FR-641 member for `trace`, and `{prefix, loop}` for
     `lasso`;
 - `observations`: an object mapping each key to the file of a
   `filament.state.snapshot/v1` or `filament.state.invocation/v1` document

@@ -69,7 +69,7 @@ fn ensures_unchanged(selection: ClauseRunSelection) -> ClauseRunRequest {
 fn ensures_incremented(selection: ClauseRunSelection) -> ClauseRunRequest {
     contract_request(
         &[],
-        &["self.versionNumber = pre(self.versionNumber) + 1"],
+        &["pre(self.versionNumber) < self.versionNumber"],
         selection,
     )
 }

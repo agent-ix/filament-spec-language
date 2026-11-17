@@ -147,6 +147,7 @@ mod temporal_package_route;
 mod temporal_package_route_formula;
 #[cfg(feature = "checked-handoff")]
 mod temporal_result_evidence;
+mod temporal_selection_members;
 mod temporal_uncertain_late;
 mod temporal_v1_retired;
 mod text_enum_identity;

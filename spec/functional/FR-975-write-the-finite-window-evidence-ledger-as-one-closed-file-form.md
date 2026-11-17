@@ -56,7 +56,11 @@ the entry's `lineage`, which FR-523's `lineage` counter bounds.
 
 The `evidence_ledger` member of a run request's temporal selection: the
 relative path of the file, read once under FR-100's `dependent_bytes` limit
-and relative to the request file.
+and relative to the request file. It is one of the three correction members
+(`relation`, `evidence_ledger`, `admit_late`) of the closed temporal selection
+that FR-641 and FR-312 list and FR-985 decodes; the run request carries no
+trigger delivery or origin, so a key written through a run has `trigger`
+`null`.
 
 ## Outputs
 
