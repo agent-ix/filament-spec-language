@@ -17,7 +17,7 @@ use std::sync::Arc;
 
 use super::causes::{
     HistoryUnresolved, ModelQueryRefusal, NamedPopulationIncomplete, NavigationRefusal,
-    ObjectFieldIllTyped, ProtocolClauseSnapshot,
+    ObjectFieldIllTyped, ProtocolClauseSnapshot, UnsupportedConstruct,
 };
 use super::protocol_slot::charges::{BinderCharges, ChargeRouting, Owner, Owners};
 use super::s6a::separation::{
@@ -304,6 +304,9 @@ fn bounded_result_interval(bounded: &BoundedQuantityType) -> Result<QuantityResu
 fn size_of(operand: Value) -> Result<Integer, Halt> {
     match operand {
         Value::Text(text) => Ok(Integer::from(text.length())),
+        Value::Map(_) => Err(Halt::Family(FamilyResult::Refused(Box::new(
+            UnsupportedConstruct { what: "map" },
+        )))),
         Value::Boolean(_)
         | Value::Integer(_)
         | Value::Rational(_)

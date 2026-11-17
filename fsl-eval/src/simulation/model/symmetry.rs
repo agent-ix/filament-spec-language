@@ -13,8 +13,8 @@ use std::collections::BTreeMap;
 
 use filament_checked::key::DeclarationKey;
 use filament_exact::{
-    compare_keys, from_admitted, from_admitted_slots, CollectionKind, FieldValue, ObjectId,
-    ObjectReference, OptionValue, UnionValue, UniverseId, Value,
+    compare_keys, from_admitted, from_admitted_map, from_admitted_slots, CollectionKind,
+    FieldValue, ObjectId, ObjectReference, OptionValue, UnionValue, UniverseId, Value,
 };
 use filament_semantic_value::model_transition::ModelTransition;
 use fsl_semantics::model::state::{ModelState, StateObject};
@@ -118,6 +118,14 @@ impl Renaming<'_> {
                     .map(|value| self.value(value))
                     .collect::<Result<Vec<Value>, _>>()?,
             ),
+            Value::Map(map) => {
+                let entries = map
+                    .entries()
+                    .iter()
+                    .map(|(key, value)| Ok((key.clone(), self.value(value)?)))
+                    .collect::<Result<Vec<_>, ExpansionStop>>()?;
+                from_admitted_map(map.map_type().clone(), entries).map_err(|_| stop(BROKEN))?
+            }
             Value::Boolean(_)
             | Value::Integer(_)
             | Value::Rational(_)

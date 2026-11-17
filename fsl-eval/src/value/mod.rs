@@ -15,6 +15,33 @@ pub mod composite;
 mod expression;
 pub(crate) use expression::evaluate_clause_set_with_cancel;
 
+/// Map entries in FSpec FR-144 canonical key order. Float keys use their
+/// membership identity's IEEE total order; integer and decimal keys use their
+/// mathematical ordering through `compare_keys`.
+pub(crate) fn ordered_map_entries(
+    map: &filament_exact::MapValue,
+) -> Option<Vec<&(filament_exact::Value, filament_exact::Value)>> {
+    use std::cmp::Ordering;
+
+    let mut entries = Vec::new();
+    entries.try_reserve(map.entries().len()).ok()?;
+    entries.extend(map.entries().iter());
+    let mut incomparable = false;
+    entries.sort_unstable_by(|(left, _), (right, _)| {
+        let order = match (left, right) {
+            (filament_exact::Value::Float(left), filament_exact::Value::Float(right)) => {
+                Some(left.total_order_key().cmp(&right.total_order_key()))
+            }
+            _ => filament_exact::compare_keys(left, right),
+        };
+        order.unwrap_or_else(|| {
+            incomparable = true;
+            Ordering::Equal
+        })
+    });
+    (!incomparable).then_some(entries)
+}
+
 // `CheckedPackageEvaluation` is the trait that carries `call` and `evaluate`
 // over the foreign-to-`value` `CheckedPackage` typestate, since an inherent
 // impl here is E0116: `CheckedPackage` is `fsl-package`'s own type (X-7).

@@ -12,7 +12,7 @@ filament-specification-qualification = { git = "https://github.com/agent-ix/fila
 quire-canonical = { git = "https://github.com/agent-ix/quire-canonical", tag = "v0.3.1", default-features = false }
 # The shared no_std exact-value kernel and the semantic-value leaf above it,
 # each its own repository so IR, RT and CG depend on them without the FSL repo.
-filament-exact = { git = "https://github.com/agent-ix/filament-exact", tag = "v0.2.0" }
+filament-exact = { git = "https://github.com/agent-ix/filament-exact", tag = "v0.3.0", features = ["json"] }
 filament-semantic-value = { git = "https://github.com/agent-ix/filament-semantic-value", tag = "v0.1.2" }
 # ADR-011 §6.1 layer W: the shared no_std walker toolkit (ADR-030 D-1 item 2),
 # its own repository so IR, RT and CG depend on it without the FSL repo.

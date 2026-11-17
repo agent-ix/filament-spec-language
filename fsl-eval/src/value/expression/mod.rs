@@ -114,6 +114,23 @@ fn protocol_reference_failure(
     }))
 }
 
+pub(crate) fn unsupported_construct_failure(
+    what: &'static str,
+    locus: CallAdmissionLocus,
+) -> CallFailure {
+    CallFailure::Admission(Box::new(CallAdmissionFailure::Refused(
+        filament_eval::CallAdmissionRecord {
+            record: AdmissionRecord {
+                catalog: CatalogCode::new("unsupported_construct", "not-yet-implemented"),
+                fields: std::collections::BTreeMap::from([("what", what.to_owned())]),
+                path: Vec::new(),
+                kernel: None,
+            },
+            locus,
+        },
+    )))
+}
+
 fn occurrence_record(
     code: &'static str,
     cause: &'static str,
@@ -760,6 +777,15 @@ fn admit_argument_values(
                     }));
                 }
                 Value::Collection(collection) => pending.extend(collection.elements()),
+                Value::Map(map) => {
+                    let Some(entries) = crate::value::ordered_map_entries(map) else {
+                        return Err(CallFailure::Fault(InternalFault::new(
+                            "FR-650",
+                            "admitted-map-key-has-canonical-order",
+                        )));
+                    };
+                    pending.extend(entries.into_iter().rev().map(|(_, value)| value));
+                }
                 Value::Union(union) => pending.extend(union.payload()),
                 Value::Boolean(_)
                 | Value::Integer(_)

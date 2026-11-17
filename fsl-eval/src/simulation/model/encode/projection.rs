@@ -1057,6 +1057,26 @@ pub(super) fn project_value<'a, S: ValueSink>(
                 sink.pending(&mut pending, ValueTask::BeginObject)?;
                 Ok(())
             }
+            Value::Map(value) => {
+                sink.pending(&mut pending, ValueTask::EndObject)?;
+                sink.pending(&mut pending, ValueTask::Scalar(Scalar::Text("map")))?;
+                sink.pending(&mut pending, ValueTask::Name("type"))?;
+                sink.pending(&mut pending, ValueTask::EndArray)?;
+                for (key, value) in value.entries().iter().rev() {
+                    sink.pending(&mut pending, ValueTask::EndObject)?;
+                    sink.pending(&mut pending, ValueTask::Value(value, normalize_decimal))?;
+                    sink.pending(&mut pending, ValueTask::Name("value"))?;
+                    // FSpec FR-650 retains a normalized Decimal key and sorts
+                    // entries by the RFC 8785 bytes of the key's run form.
+                    sink.pending(&mut pending, ValueTask::Value(key, true))?;
+                    sink.pending(&mut pending, ValueTask::Name("key"))?;
+                    sink.pending(&mut pending, ValueTask::BeginObject)?;
+                }
+                sink.pending(&mut pending, ValueTask::BeginArray(ArrayOrder::MapKeys))?;
+                sink.pending(&mut pending, ValueTask::Name("entries"))?;
+                sink.pending(&mut pending, ValueTask::BeginObject)?;
+                Ok(())
+            }
             Value::Collection(value) => {
                 let (tag, order) = match value.collection_type().kind() {
                     CollectionKind::Sequence => ("sequence", ArrayOrder::Retained),
