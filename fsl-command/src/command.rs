@@ -1364,7 +1364,7 @@ fn require_complete_edition(source: &Source) -> Result<()> {
                 declared.span.start,
                 declared.span.end,
                 format!(
-                    "{} declares edition {:?}; compile reads {:?}",
+                    "{} declares edition {:?}; this command reads {:?}",
                     source.path(),
                     declared.edition,
                     fsl_cst::EDITION
