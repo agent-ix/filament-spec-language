@@ -2822,6 +2822,27 @@ pub(super) fn unit_bound_refusal(
         })
 }
 
+/// Escape one JSON Pointer segment.
+fn json_pointer_segment(segment: &str) -> String {
+    segment.replace('~', "~0").replace('/', "~1")
+}
+
+/// The JSON pointer to an object's member in its source snapshot.
+fn snapshot_member_path(population: usize, object: usize, member: &str) -> String {
+    format!(
+        "/populations/{population}/objects/{object}/{}",
+        json_pointer_segment(member)
+    )
+}
+
+/// The JSON pointer to an object's field value in its source snapshot.
+fn snapshot_field_path(population: usize, object: usize, field: &str) -> String {
+    format!(
+        "/populations/{population}/objects/{object}/fields/{}",
+        json_pointer_segment(field)
+    )
+}
+
 pub(super) fn admit_population_values<'t>(
     views: &[ModelView],
     types: &'t TypeEnvironment,
@@ -2846,7 +2867,7 @@ pub(super) fn admit_population_values<'t>(
         PostStateRange::Witness => Vec::new(),
     };
 
-    for entry in populations {
+    for (population_index, entry) in populations.iter().enumerate() {
         completeness.insert(entry.population.clone(), entry.complete);
         let Some((population_view, population_info)) = find_population(views, &entry.population)
         else {
@@ -2858,7 +2879,7 @@ pub(super) fn admit_population_values<'t>(
         let seen = keys_by_population
             .entry(entry.population.clone())
             .or_default();
-        for object in &entry.objects {
+        for (object_index, object) in entry.objects.iter().enumerate() {
             // 6.1: type/population membership, before anything else in this
             // check (SR-750 FND-005 round 2's own numbered order).
             let Some((_, object_key)) = find_declaration(views, object.type_identity.as_str())
@@ -2941,7 +2962,12 @@ pub(super) fn admit_population_values<'t>(
             if is_duplicate {
                 return Err(refuse(
                     admission_record(Code::InvalidRuntimeInput, "conflicting-identity")
-                        .with("object", object.key.clone()),
+                        .with("object", object.key.clone())
+                        .with("field", "key")
+                        .with(
+                            "path",
+                            snapshot_member_path(population_index, object_index, "key"),
+                        ),
                 ));
             }
             // 6.4: a declared field missing (`missing-member`), then an
@@ -2953,7 +2979,11 @@ pub(super) fn admit_population_values<'t>(
                     return Err(refuse(
                         admission_record(Code::InvalidRuntimeInput, "missing-member")
                             .with("object", object.key.clone())
-                            .with("field", name.to_owned()),
+                            .with("field", name.to_owned())
+                            .with(
+                                "path",
+                                snapshot_field_path(population_index, object_index, name),
+                            ),
                     ));
                 }
             }
@@ -2973,13 +3003,21 @@ pub(super) fn admit_population_values<'t>(
                         return Err(refuse(
                             record
                                 .with("object", object.key.clone())
-                                .with("field", name.clone()),
+                                .with("field", name.clone())
+                                .with(
+                                    "path",
+                                    snapshot_field_path(population_index, object_index, name),
+                                ),
                         ));
                     }
                     return Err(refuse(
                         admission_record(Code::InvalidRuntimeInput, "unknown-member")
                             .with("object", object.key.clone())
-                            .with("field", name.clone()),
+                            .with("field", name.clone())
+                            .with(
+                                "path",
+                                snapshot_field_path(population_index, object_index, name),
+                            ),
                     ));
                 }
             }
@@ -2998,7 +3036,11 @@ pub(super) fn admit_population_values<'t>(
                     return Err(refuse(
                         admission_record(Code::InvalidRuntimeInput, "wrong-value-kind")
                             .with("object", object.key.clone())
-                            .with("field", name.to_owned()),
+                            .with("field", name.to_owned())
+                            .with(
+                                "path",
+                                snapshot_field_path(population_index, object_index, name),
+                            ),
                     ));
                 }
                 let mut found = Vec::new();
@@ -3012,7 +3054,11 @@ pub(super) fn admit_population_values<'t>(
                             refuse(
                                 record
                                     .with("object", object.key.clone())
-                                    .with("field", name.to_owned()),
+                                    .with("field", name.to_owned())
+                                    .with(
+                                        "path",
+                                        snapshot_field_path(population_index, object_index, name),
+                                    ),
                             )
                         })?;
                 if let (false, FieldValue::Present(value)) = (bounds.is_empty(), &field_value) {
@@ -3021,7 +3067,11 @@ pub(super) fn admit_population_values<'t>(
                         return Err(refuse(
                             record
                                 .with("object", object.key.clone())
-                                .with("field", name.to_owned()),
+                                .with("field", name.to_owned())
+                                .with(
+                                    "path",
+                                    snapshot_field_path(population_index, object_index, name),
+                                ),
                         ));
                     }
                 }

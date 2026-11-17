@@ -235,6 +235,146 @@ pub(super) fn run(
         .expect("a well-formed request always reports")
 }
 
+/// Run the witness unit after editing its current snapshot document.
+fn run_with_snapshot_edit(
+    edit: impl FnOnce(&mut serde_json::Value),
+) -> crate::spine::ClauseRunReport {
+    let mut request = clause_request("AllBelow", Snapshot::Low, "child", 1_000_000);
+    let (label, bytes) = request
+        .snapshots
+        .iter()
+        .next()
+        .expect("the witness request has one snapshot");
+    let label = label.clone();
+    let mut document: serde_json::Value = serde_json::from_slice(bytes).unwrap();
+    edit(&mut document);
+    request
+        .snapshots
+        .insert(label, serde_json::to_vec(&document).unwrap());
+    run_clause(request).expect("a well-formed request always reports")
+}
+
+/// Assert one admission refusal's catalog, object, member and source path,
+/// including the fields retained by the native result reader.
+fn assert_snapshot_refusal(
+    cause: &str,
+    object: &str,
+    member: &str,
+    path: &str,
+    edit: impl FnOnce(&mut serde_json::Value),
+) {
+    let report = run_with_snapshot_edit(edit);
+    assert_eq!(
+        report.disposition.stage(),
+        crate::spine::ClauseRunStage::Admit
+    );
+    let crate::spine::ClauseDisposition::Admit(
+        fsl_semantics::model::observation::AdmissionFailure::Refused(record),
+    ) = &report.disposition
+    else {
+        panic!(
+            "expected the {cause} snapshot refusal, got {:?}",
+            report.disposition
+        );
+    };
+    assert_eq!(record.catalog.cause(), cause);
+    assert_eq!(
+        record.fields.get("object").map(String::as_str),
+        Some(object)
+    );
+    assert_eq!(record.fields.get("field").map(String::as_str), Some(member));
+    assert_eq!(record.fields.get("path").map(String::as_str), Some(path));
+
+    let bytes = crate::spine::write_clause_run_result(&report).unwrap();
+    let value: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+    assert_eq!(
+        value.pointer("/disposition/refusal/fields/path"),
+        Some(&json!(path)),
+        "the native result retains the snapshot JSON pointer for {cause}"
+    );
+    let read = crate::spine::read_native_run_result(&bytes).unwrap();
+    let crate::spine::NativeRunResult::Clause(read) = read else {
+        panic!("the report must read as a clause-run document");
+    };
+    assert_eq!(
+        read.fields().and_then(|fields| fields.get("path")),
+        Some(&path.to_owned())
+    );
+}
+
+/// FR-106-AC-3: admission items identify the object, member and source JSON
+/// pointer for snapshot defects; a valid snapshot has no admission item.
+#[trace("TC-465", "FR-106-AC-3")]
+#[test]
+fn snapshot_admission_refusal_witnesses_name_object_member_and_path() {
+    assert_snapshot_refusal(
+        "missing-member",
+        "root",
+        "versionNumber",
+        "/populations/0/objects/0/fields/versionNumber",
+        |document| {
+            document["populations"][0]["objects"][0]["fields"]
+                .as_object_mut()
+                .unwrap()
+                .remove("versionNumber");
+        },
+    );
+    assert_snapshot_refusal(
+        "unknown-member",
+        "root",
+        "extra",
+        "/populations/0/objects/0/fields/extra",
+        |document| document["populations"][0]["objects"][0]["fields"]["extra"] = json!(true),
+    );
+    assert_snapshot_refusal(
+        "invalid-value",
+        "root",
+        "versionNumber",
+        "/populations/0/objects/0/fields/versionNumber",
+        |document| {
+            document["populations"][0]["objects"][0]["fields"]["versionNumber"] =
+                json!({"integer":"1001"});
+        },
+    );
+    assert_snapshot_refusal(
+        "wrong-value-kind",
+        "root",
+        "versionNumber",
+        "/populations/0/objects/0/fields/versionNumber",
+        |document| {
+            document["populations"][0]["objects"][0]["fields"]["versionNumber"] =
+                json!({"boolean":true});
+        },
+    );
+    assert_snapshot_refusal(
+        "conflicting-identity",
+        "root",
+        "key",
+        "/populations/0/objects/1/key",
+        |document| {
+            let duplicate = document["populations"][0]["objects"][0].clone();
+            document["populations"][0]["objects"]
+                .as_array_mut()
+                .unwrap()
+                .push(duplicate);
+        },
+    );
+
+    let report = run("AllBelow", Snapshot::Low, "child");
+    assert_ne!(
+        report.disposition.stage(),
+        crate::spine::ClauseRunStage::Admit
+    );
+    let bytes = crate::spine::write_clause_run_result(&report).unwrap();
+    let value: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+    assert!(value.pointer("/disposition/refusal").is_none());
+    let read = crate::spine::read_native_run_result(&bytes).unwrap();
+    let crate::spine::NativeRunResult::Clause(read) = read else {
+        panic!("the report must read as a clause-run document");
+    };
+    assert!(read.fields().is_none());
+}
+
 pub(super) fn decisive_witness_wire() -> serde_json::Value {
     let report = run("AllBelow", Snapshot::High, "mid");
     let bytes = crate::spine::write_clause_run_result(&report).unwrap();
