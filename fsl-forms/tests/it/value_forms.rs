@@ -127,6 +127,40 @@ fn refusal(declarations: &str) -> (String, FormsCause, Option<Span>) {
     }
 }
 
+/// Provenance: QSL-2006.
+#[trace("TC-113", "FR-035-AC-7")]
+#[test]
+fn collection_constructor_names_never_reach_an_invalid_forms_shape() {
+    for name in ["set", "bag", "orderedSet"] {
+        for declaration in [
+            format!("function f using v({name}: Integer): Boolean pure {{ true }}"),
+            format!(
+                "function f using v(x: Integer): Boolean pure {{ let {name} = x in true }}"
+            ),
+        ] {
+            let (text, parsed) = parse(&declaration);
+            assert!(!parsed.is_admissible(), "{text}");
+            let [diagnostic] = parsed.diagnostics() else {
+                panic!("one refusal for {text}: {:?}", parsed.diagnostics());
+            };
+            assert_eq!(diagnostic.code, fsl_cst::CompleteCode::InvalidSyntax, "{text}");
+            assert!(diagnostic.message.contains(name), "{text}: {diagnostic:?}");
+            assert!(
+                build_unit(&parsed).is_err(),
+                "a refused source must not produce a forms tree: {text}"
+            );
+        }
+    }
+
+    for declaration in [
+        "function f using v(n: Integer, setting: Integer): Boolean pure { let ok = n in set[ok, setting] }",
+        "record R { values: Set<Integer>; }",
+    ] {
+        let (_, unit) = build(declaration);
+        assert!(!unit.forms().is_empty(), "{declaration}");
+    }
+}
+
 /// The first `len` bytes of a span.
 trait Prefix {
     fn prefix(self, len: usize) -> Span;

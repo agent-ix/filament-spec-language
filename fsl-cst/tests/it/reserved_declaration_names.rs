@@ -142,6 +142,7 @@ fn collection_constructor_words_are_refused_as_parameter_names() {
         };
         assert_eq!(refusal.code, CompleteCode::InvalidSyntax, "{text}");
         assert_eq!(refusal.cause, CompleteCause::UnexpectedToken, "{text}");
+        assert!(refusal.message.contains(name), "{text}: {refusal:?}");
         assert_eq!(
             refusal.byte_span().expect("located").start,
             text.find(name).expect("parameter name"),
