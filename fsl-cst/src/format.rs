@@ -154,15 +154,17 @@ pub fn format_with_limits(
         .filter(|node| node.production() == Production::PopulationBound)
         .map(|node| node.span().end)
         .collect();
-    let mut indent = 0_usize;
-    let mut previous: Option<&CstToken> = None;
-    let mut closed_declaration = false;
-    for token in parsed
+    let tokens: Vec<_> = parsed
         .cst()
         .tokens()
         .iter()
         .filter(|token| token.class() != TokenClass::Whitespace)
-    {
+        .collect();
+    let generic_angles = generic_angles(&tokens);
+    let mut indent = 0_usize;
+    let mut previous: Option<&CstToken> = None;
+    let mut square_depth = 0_usize;
+    for (index, token) in tokens.iter().copied().enumerate() {
         let span = token.span();
         let text = output.token_text(token)?;
         if token.class() == TokenClass::Comment {
@@ -178,27 +180,47 @@ pub fn format_with_limits(
             continue;
         }
         let spelling = token.spelling();
+        let next = tokens.get(index + 1).copied();
         if spelling == b"}" {
             indent = indent.saturating_sub(1);
             output.newline(span)?;
             output.begin_line(indent, span)?;
-        } else if closed_declaration && !completes_block(spelling) {
+        } else if previous.is_some_and(|previous| previous.spelling() == b"}") && is_word(token) {
             output.newline(span)?;
             output.begin_line(indent, span)?;
         } else if output.text.ends_with('\n') {
             output.begin_line(indent, span)?;
         }
-        if needs_space(previous, token, &output.text) {
+        if needs_space(
+            previous,
+            token,
+            &output.text,
+            generic_angles[index],
+            index
+                .checked_sub(1)
+                .is_some_and(|previous| generic_angles[previous]),
+        ) {
             output.push(" ", span)?;
         }
         output.push(text, span)?;
         if spelling == b"{" {
             indent = indent.saturating_add(1);
             output.newline(span)?;
-        } else if spelling == b";" || bound_ends.contains(&span.end) {
+        } else if (spelling == b";" && square_depth == 0) || bound_ends.contains(&span.end) {
+            output.newline(span)?;
+        } else if spelling == b";" {
+            output.push(" ", span)?;
+        }
+        if spelling == b"[" {
+            square_depth = square_depth.saturating_add(1);
+        } else if spelling == b"]" {
+            square_depth = square_depth.saturating_sub(1);
+        }
+        if spelling == b"}" && next.is_some_and(|next| next.spelling() == b"{") {
+            // Keep `match { ... } { ... }` together at the brace boundary.
+        } else if spelling == b"}" && next.is_some_and(is_word) {
             output.newline(span)?;
         }
-        closed_declaration = spelling == b"}" && indent == 0;
         previous = Some(token);
     }
     if !output.text.ends_with('\n') {
@@ -243,17 +265,25 @@ fn whole_source_error(
 
 /// Whether a token completes the braced construct before it and so stays
 /// on the line of a declaration-level closing brace.
-fn completes_block(current: &[u8]) -> bool {
-    matches!(current, b";" | b"," | b")" | b"]")
-}
-
 /// Whether a space separates `current` from the previous significant token.
-fn needs_space(previous: Option<&CstToken>, current: &CstToken, output: &str) -> bool {
+fn needs_space(
+    previous: Option<&CstToken>,
+    current: &CstToken,
+    output: &str,
+    current_is_generic_angle: bool,
+    previous_is_generic_angle: bool,
+) -> bool {
     let Some(previous) = previous else {
         return false;
     };
     if output.ends_with([' ', '\n']) {
         return false;
+    }
+    if current_is_generic_angle {
+        return false;
+    }
+    if previous_is_generic_angle {
+        return previous.spelling() == b">" && (is_word(current) || current.spelling() == b"{");
     }
     if previous.span().end == current.span().start
         && matches!(
@@ -268,11 +298,64 @@ fn needs_space(previous: Option<&CstToken>, current: &CstToken, output: &str) ->
     }
     if matches!(
         current.spelling(),
-        b")" | b"]" | b"," | b";" | b"." | b"::" | b"?"
+        b")" | b"]" | b"[" | b"," | b";" | b"." | b"::" | b"?" | b":"
     ) {
         return false;
     }
-    !matches!(previous.spelling(), b"(" | b"[" | b"." | b"::" | b"^")
+    if current.spelling() == b"(" {
+        return matches!(previous.spelling(), b"over" | b"as" | b"when" | b"each");
+    }
+    if current.spelling() == b"@" || previous.spelling() == b"@" {
+        return true;
+    }
+    !matches!(
+        previous.spelling(),
+        b"(" | b"[" | b"." | b"::" | b"^" | b":"
+    )
+}
+
+fn is_word(token: &CstToken) -> bool {
+    matches!(token.kind(), TokenKind::Grammar | TokenKind::Identifier)
+}
+
+fn generic_angles(tokens: &[&CstToken]) -> Vec<bool> {
+    let mut generic = vec![false; tokens.len()];
+    let mut depth = 0_usize;
+    for (index, token) in tokens.iter().enumerate() {
+        match token.spelling() {
+            b"<" if depth > 0
+                || index > 0
+                    && matches!(
+                        tokens[index - 1].spelling(),
+                        b"Option"
+                            | b"Sequence"
+                            | b"Set"
+                            | b"Bag"
+                            | b"OrderedSet"
+                            | b"Reference"
+                            | b"Population"
+                            | b"Quantity"
+                            | b"convert"
+                            | b"allInstances"
+                            | b"lookup"
+                            | b"size"
+                            | b"count"
+                            | b"sum"
+                            | b"fold"
+                            | b"reduce"
+                    ) =>
+            {
+                generic[index] = true;
+                depth = depth.saturating_add(1);
+            }
+            b">" if depth > 0 => {
+                generic[index] = true;
+                depth -= 1;
+            }
+            _ => {}
+        }
+    }
+    generic
 }
 
 /// The output under construction and its inclusive byte ceiling.
@@ -438,13 +521,13 @@ mod tests {
 
     #[trace("TC-013", "FR-003-AC-3")]
     #[test]
-    fn only_a_declaration_level_closing_brace_ends_its_line() {
+    fn a_closing_brace_before_a_word_starts_a_new_line() {
         let parsed = parse(&format!(
             "{HEADER}record P {{ x: Int[0, 9]; }} function f using v(b: Boolean): Int[0, 9] pure {{ if b then P {{ x: 1 }}.x else 0 }}\n"
         ));
         let formatted = format(&parsed).expect("admissible source formats");
         let expected = format!(
-            "{HEADER}record P {{\n  x : Int [0, 9];\n}}\nfunction f using v (b : Boolean) : Int [0, 9] pure {{\n  if b then P {{\n    x : 1\n  }}.x else 0\n}}\n"
+            "{HEADER}record P {{\n  x: Int[0, 9];\n}}\nfunction f using v(b: Boolean): Int[0, 9] pure {{\n  if b then P {{\n    x: 1\n  }}.x else 0\n}}\n"
         );
         assert_eq!(formatted, expected);
         assert_eq!(

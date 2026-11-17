@@ -169,6 +169,11 @@ fn assert_format_identity(
         formatted,
         "{path}: formatted source retained"
     );
+    assert_eq!(
+        original.package(),
+        checked.package(),
+        "{path}: formatted source preserves checked package identity"
+    );
 }
 
 fn emitted_once(

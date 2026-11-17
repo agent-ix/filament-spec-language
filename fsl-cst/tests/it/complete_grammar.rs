@@ -2,7 +2,10 @@
 //! The complete-V1 `Production` inventory against the accepted EBNF grammar.
 use std::collections::BTreeMap;
 
-use fsl_cst::{CompleteCause, CompleteCode, HostCause, Limits, ParsedSource, Production};
+use fsl_cst::{
+    CompleteCause, CompleteCode, CstElement, HostCause, Limits, ParsedSource, Production,
+    TokenClass,
+};
 use fsl_foundation::{SourceIdentity, Span};
 use ix_trace_rs::trace;
 
@@ -260,6 +263,49 @@ fn parse(id: &str, text: &str) -> ParsedSource {
     .unwrap()
 }
 
+fn significant_tokens(parsed: &ParsedSource) -> Vec<Vec<u8>> {
+    parsed
+        .cst()
+        .tokens()
+        .iter()
+        .filter(|token| token.class() == TokenClass::Token)
+        .map(|token| token.spelling().to_vec())
+        .collect()
+}
+
+#[derive(Debug, Eq, PartialEq)]
+struct ProductionTree {
+    production: Production,
+    children: Vec<ProductionChild>,
+}
+
+#[derive(Debug, Eq, PartialEq)]
+enum ProductionChild {
+    Token,
+    Node(ProductionTree),
+}
+
+fn production_tree(parsed: &ParsedSource) -> ProductionTree {
+    fn visit(parsed: &ParsedSource, node: &fsl_cst::CstNode) -> ProductionTree {
+        let children = node
+            .children()
+            .iter()
+            .map(|child| match child {
+                CstElement::Token(_) => ProductionChild::Token,
+                CstElement::Node(index) => {
+                    ProductionChild::Node(visit(parsed, &parsed.cst().nodes()[*index]))
+                }
+            })
+            .collect();
+        ProductionTree {
+            production: node.production(),
+            children,
+        }
+    }
+
+    visit(parsed, parsed.cst().root())
+}
+
 fn corpus() -> Vec<(&'static str, String)> {
     vec![
         // The last quoted string of the unit is a `ParameterBinding`'s, so its
@@ -454,7 +500,12 @@ fn corpus() -> Vec<(&'static str, String)> {
     ]
 }
 
-#[trace("FSpec-TC-180", "FSpec-FR-339-AC-1", "FSpec-FR-339-AC-2")]
+#[trace(
+    "FSpec-TC-180",
+    "FSpec-FR-339-AC-1",
+    "FSpec-FR-339-AC-2",
+    "FR-003-AC-14"
+)]
 #[test]
 fn every_named_production_has_positive_boundary_and_located_negative_vectors() {
     assert_eq!(Production::all(), ACCEPTED_PRODUCTIONS);
@@ -465,6 +516,25 @@ fn every_named_production_has_positive_boundary_and_located_negative_vectors() {
             parsed.diagnostics().is_empty(),
             "{id}: {:?}",
             parsed.diagnostics()
+        );
+        let formatted = fsl_cst::format::format(&parsed)
+            .unwrap_or_else(|refusal| panic!("{id}: format refusal: {refusal}"));
+        let reparsed = parse(id, &formatted);
+        assert!(
+            reparsed.diagnostics().is_empty(),
+            "{id}: formatted parse: {:?}",
+            reparsed.diagnostics()
+        );
+        assert_eq!(
+            significant_tokens(&parsed),
+            significant_tokens(&reparsed),
+            "{id}"
+        );
+        assert_eq!(production_tree(&parsed), production_tree(&reparsed), "{id}");
+        assert_eq!(
+            fsl_cst::format::format(&reparsed).expect("idempotent format"),
+            formatted,
+            "{id}"
         );
         for node in parsed.cst().nodes() {
             let span = node.span();
