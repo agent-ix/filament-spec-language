@@ -14,10 +14,10 @@ use std::path::Path;
 use std::process::ExitCode;
 
 use xtask::{
-    canonical_types, checked_input, conformance,
+    Outcome, canonical_types, checked_input, conformance, consumer_facades,
     error::{Error, Result},
     examples_check, pin_check, qualification, refinement, route_lint, seam_probe, string_edge,
-    test_suites, Outcome,
+    test_suites,
 };
 
 const USAGE: &str = "usage: cargo xtask seam-probe\n       cargo xtask string-edge\n       \
@@ -27,8 +27,9 @@ const USAGE: &str = "usage: cargo xtask seam-probe\n       cargo xtask string-ed
                      cargo xtask ci\n       cargo xtask examples-check\n       cargo xtask refinement versioning <corpus>\n       \
                      cargo xtask pin-check [--manifest <Cargo.toml-or-directory>]\n       cargo xtask refinement layering <corpus>\n       \
                      cargo xtask refinement layering <corpus>\n       \
-                     cargo xtask qualify --corpus <dir> [--capability <id>]... [--limit <setting>=<value>]... [--text]\n       \\
-                     cargo xtask canonical-types [<workspace>]";
+                     cargo xtask qualify --corpus <dir> [--capability <id>]... [--limit <setting>=<value>]... [--text]\n       \
+                     cargo xtask canonical-types [<workspace>]\n       \
+                     cargo xtask consumer-facades [--bindings <file>] [--inventory <file>]";
 
 #[ix_trace_rs::string_edge]
 fn run(arguments: &[OsString]) -> Result<Outcome> {
@@ -65,6 +66,7 @@ fn run(arguments: &[OsString]) -> Result<Outcome> {
         "canonical-types" => {
             canonical_types::run(workspace_operand.as_deref().unwrap_or(&workspace_root))
         }
+        "consumer-facades" => consumer_facades::run(&workspace_root, operands),
         "conformance-input" => conformance::check_input(&workspace_root),
         "conformance" => conformance::run(&workspace_root),
         "ci" => conformance::run_ci(&workspace_root),

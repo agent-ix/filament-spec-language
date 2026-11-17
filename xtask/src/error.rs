@@ -35,6 +35,8 @@ pub enum Code {
     Metadata,
     /// The local FSpec conformance gate failed.
     Conformance,
+    /// FR-761 consumer-facade input or metadata error.
+    ConsumerFacades,
     /// QSL#157: `cargo xtask test-suites` found an undeclared empty suite or
     /// a wrong declaration, or `cargo` itself failed.
     TestSuites,
@@ -63,6 +65,7 @@ impl Code {
             Self::CanonicalTypes => "canonical-types",
             Self::Metadata => "metadata",
             Self::Conformance => "conformance",
+            Self::ConsumerFacades => "consumer-facades",
             Self::TestSuites => "test-suites",
             Self::Refinement => "refinement",
             Self::Qualification => "qualify",
@@ -315,6 +318,48 @@ pub enum Error {
         /// The missing member.
         what: &'static str,
     },
+    /// FR-761: an input file could not be read.
+    #[error("consumer-facades: cannot read {path}: {source}")]
+    ConsumerFacadesRead {
+        /// The path that could not be read.
+        path: String,
+        /// The read failure.
+        #[source]
+        source: io::Error,
+    },
+    /// FR-761: the pinned standard did not publish the inventory file.
+    #[error("consumer-facades: pinned standard has no {0}")]
+    ConsumerFacadesInventoryMissing(&'static str),
+    /// FR-761: a JSON input was invalid.
+    #[error("consumer-facades: input is not JSON: {source}")]
+    ConsumerFacadesJson {
+        /// The parse failure.
+        #[source]
+        source: serde_json::Error,
+    },
+    /// FR-761: Cargo metadata could not be launched.
+    #[error("consumer-facades: cannot spawn cargo metadata: {source}")]
+    ConsumerFacadesMetadataSpawn {
+        /// The underlying spawn failure.
+        #[source]
+        source: io::Error,
+    },
+    /// FR-761: Cargo metadata failed.
+    #[error("consumer-facades: cargo metadata failed. stderr:\n{stderr}")]
+    ConsumerFacadesMetadataFailed {
+        /// Captured standard error.
+        stderr: String,
+    },
+    /// FR-761: Cargo metadata output is not JSON.
+    #[error("consumer-facades: cargo metadata output is not JSON: {source}")]
+    ConsumerFacadesMetadataJson {
+        /// The parse failure.
+        #[source]
+        source: serde_json::Error,
+    },
+    /// FR-761: Cargo metadata omitted a required field.
+    #[error("consumer-facades: cargo metadata output has no {0}")]
+    ConsumerFacadesMetadataMissing(&'static str),
     /// `xtask::canonical_types` found one or more violations; `summary`
     /// lists them.
     #[error("{summary}")]
@@ -454,6 +499,13 @@ impl Error {
             | Self::CanonicalTypesCargoMetadata { .. }
             | Self::CanonicalTypesMetadataJson { .. }
             | Self::CanonicalTypesMetadata { .. } => Code::Metadata,
+            Self::ConsumerFacadesRead { .. }
+            | Self::ConsumerFacadesInventoryMissing(_)
+            | Self::ConsumerFacadesJson { .. }
+            | Self::ConsumerFacadesMetadataSpawn { .. }
+            | Self::ConsumerFacadesMetadataFailed { .. }
+            | Self::ConsumerFacadesMetadataJson { .. }
+            | Self::ConsumerFacadesMetadataMissing(_) => Code::ConsumerFacades,
             Self::TestSuitesUnknownLane { .. }
             | Self::TestSuitesLaneMismatch { .. }
             | Self::TestSuitesUnsupportedSelection { .. }
@@ -501,6 +553,7 @@ impl Error {
             | Code::TestSuites
             | Code::ExamplesCheck => 1,
             Code::Usage | Code::Io | Code::Metadata | Code::StringEdgeScan => 2,
+            Code::ConsumerFacades => 2,
             Code::Qualification => 2,
             Code::ExamplesCheckInput => 2,
             // FSpec FR-301's tool-failure code: the gate could not report.

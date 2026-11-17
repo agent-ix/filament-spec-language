@@ -14,6 +14,7 @@
 pub mod canonical_types;
 pub mod checked_input;
 pub mod conformance;
+pub mod consumer_facades;
 pub mod definition_scan;
 pub mod error;
 pub mod examples_check;
