@@ -5,8 +5,9 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use fsl_semantic_value::catalog::CatalogCode;
+use filament_semantic_value::catalog::CatalogCode;
 use fsl_semantics::check::CheckedProtocol;
+use fsl_semantics::check::ProtocolNodeId;
 use serde::{Deserialize, Serialize};
 
 const FORMAT: &str = "filament.protocol-recording/1";
@@ -595,14 +596,19 @@ fn assess_obligations(
             .entry(observation.node.clone())
             .or_default()
             .push(position);
+        let enabled = observation_enabled(protocol, document, position);
         obligations.push(RecordingObligation {
             obligation: RecordingObligationId {
                 kind: "enabledness".to_owned(),
                 node: Some(observation.node.clone()),
                 instance: observation.instance.clone(),
             },
-            verdict: RecordingVerdict::Satisfied,
-            cause: None,
+            verdict: if enabled {
+                RecordingVerdict::Satisfied
+            } else {
+                RecordingVerdict::Violated
+            },
+            cause: (!enabled).then_some(RecordingCause::Unexpected),
             witness: vec![position],
         });
     }
@@ -633,11 +639,8 @@ fn assess_obligations(
 
     for control in &protocol.controls.controls {
         let is_decision = matches!(
-            control.kind,
-            fsl_forms::ProtocolNodeKind::Choice
-                | fsl_forms::ProtocolNodeKind::Repeat
-                | fsl_forms::ProtocolNodeKind::Parallel
-                | fsl_forms::ProtocolNodeKind::Check
+            control.kind.label(),
+            "choice" | "repeat" | "parallel" | "check"
         );
         if !is_decision {
             continue;
@@ -775,6 +778,84 @@ fn causally_after(document: &RecordingDocument, later: usize, earlier: usize) ->
             pending.extend(edges[at].iter().copied());
         }
     }
+    false
+}
+
+/// Whether a recorded action has the branch decision required by its checked
+/// control ancestry before it occurs.
+fn observation_enabled(
+    protocol: &CheckedProtocol,
+    document: &RecordingDocument,
+    position: usize,
+) -> bool {
+    let observation = &document.observations[position];
+    if observation.kind == ObservationKind::Case {
+        return true;
+    }
+    if observation.kind == ObservationKind::Finish {
+        return protocol
+            .finish
+            .as_ref()
+            .is_some_and(|(_, name)| format!("{}::{}", protocol.name, name) == observation.node);
+    }
+    let Some(target) = protocol.controls.controls.iter().find(|control| {
+        format!("{}::{}", protocol.name, control.path.join("::")) == observation.node
+    }) else {
+        return false;
+    };
+    let Some(root) = protocol.controls.root() else {
+        return false;
+    };
+    let mut ancestry = Vec::new();
+    if !control_path(protocol, root.node, target.node, &mut ancestry) {
+        return false;
+    }
+    for (index, ancestor) in ancestry.iter().enumerate() {
+        if ancestor.kind.label() != "choice" {
+            continue;
+        }
+        let selected_case = ancestry[index + 1..]
+            .iter()
+            .find(|entry| entry.kind.label() == "case");
+        let Some(selected_case) = selected_case else {
+            continue;
+        };
+        let case_name = format!("{}::{}", protocol.name, selected_case.path.join("::"));
+        let Some((case_position, _)) =
+            document.observations.iter().enumerate().find(|(_, entry)| {
+                entry.kind == ObservationKind::Case
+                    && entry.node == case_name
+                    && entry.instance == observation.instance
+            })
+        else {
+            return false;
+        };
+        if !causally_after(document, position, case_position) {
+            return false;
+        }
+    }
+    true
+}
+
+fn control_path<'protocol>(
+    protocol: &'protocol CheckedProtocol,
+    current: ProtocolNodeId,
+    target: ProtocolNodeId,
+    path: &mut Vec<&'protocol fsl_semantics::check::CheckedControl>,
+) -> bool {
+    let Some(control) = protocol.controls.control(current) else {
+        return false;
+    };
+    path.push(control);
+    if current == target {
+        return true;
+    }
+    for child in &control.children {
+        if control_path(protocol, *child, target, path) {
+            return true;
+        }
+    }
+    path.pop();
     false
 }
 
