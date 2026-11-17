@@ -211,7 +211,8 @@ frame clauses, its `redefines`, its `requires` and `ensures` as below, and
 `has_body` set from the unit's `body` declarations as it is for a model
 operation) and one `PopulationRecord` per population (member type the
 declaring type, extent `closed`, the `symmetric` marker). Their declaration
-keys belong to the unit's source owner, never to a domain package, and
+keys belong to the unit's source owner, never to a domain package (the
+spelling is "Source declaration keys" below), and
 no ModelSelection, domain package bytes, FR-154 admission or `ModelOwner`
 takes part. The source model is one closed declaration set: FR-081's
 effective view, FR-103's operations and frames, FSpec FR-150 and FR-151
@@ -468,12 +469,45 @@ is a source-declared object type, the target emission SHALL write the FR-494
 `checked_term_data.dispatch_tables` row exactly as FR-494 states, with the
 receiver context the source-declared `model`/`object_type` node, each
 candidate's `EffectiveId` the source declaration key the check selected it
-by, its declaring type the candidate's source-declared node, and its
+by (spelled as "Source declaration keys" states, FR-995), its declaring type the candidate's source-declared node, and its
 operation-body and effective-precondition identities the source clause
 function nodes below. Candidate order and witnesses are FR-494's. A reader
 joins the context and each candidate's declaring family through the nodes'
 `SourceOwner` and source-object identity rows, not through a selected model
 row (QC-30 items (2f) and (4)).
+
+**Source declaration keys.** A source declaration key is an FSpec FR-150
+original declaration key `{package, node}` whose `package` is the `identity`
+of the declaring unit's `SourceOwner`, the same string an `operation_effects`
+row of the type carries as `document`, and whose `node` is spelled as a
+domain package spells an IR node identity under its package identity:
+`ix://{identity}/{type}` for an object type or a native record `{type}`, and
+`ix://{identity}/{type}/{member}` for its field or operation `{member}`.
+An `EffectiveId` over such a key is FSpec FR-150's `{owner_effective_type,
+original}`: `owner_effective_type` is `null` for a type and the owning type's
+`EffectiveId` for a member. Every emitted member that holds a source
+declaration key or identity (a dispatch candidate's `selection_key`, a
+clock place's `resolved_path` rows, an effect entry naming a source type)
+SHALL spell it this way, and none SHALL spell it from another string, such as the
+checked package's name or a position among the package's units, because a reader holds
+only the `SourceOwner` and the `declaration` to recompute it. The key is
+derived, so it is never a second identity: a reader recomputes it from the
+node's `SourceOwner` `identity` and qualified name and compares it with the
+emitted one (FR-995).
+
+**Timed source models.** A unit whose source model is timed (FR-230 "The
+source model's time member") SHALL be emitted with the FSpec FR-322 timed
+nodes exactly as a selected timed model is, its `timed_model` root's `model`
+the node of the source object type its time member names and each
+`clock_place`'s `resolved_path` rows naming source declarations by their
+source declaration keys, as FR-996 states (QC-30 items (2g) and (4)).
+
+**Operation bodies.** The FR-576 `operation_bodies` carrier SHALL hold one
+row per operation a source object type declares, keyed by the type's
+`SourceOwner` `identity` as `document` and its node as `declaring`, whose
+`body` names the source body clause function `[<type>, <operation>,
+"body"]` when the unit gives the operation a `body`, as FR-997 states (QC-30
+items (2h) and (4)).
 
 S4 SHALL build the clause functions of a source-declared operation exactly
 when FR-094 builds them for a model operation, that is for a
