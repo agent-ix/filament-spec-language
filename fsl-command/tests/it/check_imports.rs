@@ -63,7 +63,7 @@ fn check_rejects_an_unselected_model_before_reading_its_file() {
 
     let document = document(&command::check_outcome(&path, &inputs));
     assert_eq!(document["operation"], "check", "{document}");
-    assert_eq!(document["category"], "refused", "{document}");
+    assert_eq!(document["category"], "refusal", "{document}");
     assert_eq!(
         document["diagnostics"][0]["code"], "invalid-request",
         "{document}"
@@ -84,7 +84,7 @@ fn check_reports_a_missing_model_selection_at_admission() {
     let (_directory, path) = source(text);
     let document = document(&command::check_outcome(&path, &CheckInputs::default()));
 
-    assert_eq!(document["category"], "refused", "{document}");
+    assert_eq!(document["category"], "refusal", "{document}");
     assert_eq!(document["last_stage"], "I1", "{document}");
     assert_eq!(
         document["diagnostics"][0]["code"], "missing_import",
