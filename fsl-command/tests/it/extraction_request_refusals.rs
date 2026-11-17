@@ -1,0 +1,111 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+#![cfg(feature = "quire-extraction")]
+
+use fsl_command::command::{read_clause_run_request, RunCause};
+use fsl_replay::Operation;
+use serde_json::{json, Value};
+use std::fs;
+
+fn write_request(directory: &std::path::Path, request: Value) -> std::path::PathBuf {
+    let path = directory.join("request.json");
+    fs::write(
+        &path,
+        serde_json::to_vec(&request).expect("request serializes"),
+    )
+    .expect("request writes");
+    path
+}
+
+fn request(binding_count: usize) -> Value {
+    json!({
+        "models": [],
+        "program": {
+            "source": {
+                "file": "original.md",
+                "authority": "agent-ix",
+                "identity": "original",
+                "document": "Original",
+                "formal_revision": 1
+            },
+            "extraction": {
+                "body": {"authority": "agent-ix", "identity": "body", "document": "Body"}
+            },
+            "clauses": (0..binding_count)
+                .map(|index| json!({"clause": format!("clause-{index}"), "package": ""}))
+                .collect::<Vec<_>>()
+        },
+        "clause": {
+            "selection": {"function": {"name": "healthy", "arguments": [], "snapshot": "s"}},
+            "observations": {}
+        }
+    })
+}
+
+fn outcome(error: &fsl_command::command::RunError) -> Value {
+    serde_json::from_slice(
+        &error
+            .outcome_document(Operation::Execute)
+            .to_bytes()
+            .expect("outcome serializes"),
+    )
+    .expect("outcome is JSON")
+}
+
+/// Trace: TC-109, FR-031-AC-6.
+#[test]
+fn extraction_and_package_conflict_refuses_before_reading_files() {
+    let directory = tempfile::tempdir().expect("temporary directory");
+    let mut request = request(1);
+    request["package"] = json!({"file": "absent-package.json"});
+    let path = write_request(directory.path(), request);
+
+    let error = read_clause_run_request(&path).expect_err("conflicting request refuses");
+    assert!(matches!(&error.cause, RunCause::ExtractionPackageConflict));
+    let outcome = outcome(&error);
+    assert_eq!(outcome["stage"], "request");
+    assert_eq!(outcome["exit_code"], 20);
+    assert_eq!(
+        outcome["diagnostics"][0]["code"],
+        "extraction-package-conflict"
+    );
+}
+
+/// Trace: TC-109, FR-031-AC-6.
+#[test]
+fn extraction_requires_one_clause_binding_and_reports_the_actual_count() {
+    for actual in [0, 2] {
+        let directory = tempfile::tempdir().expect("temporary directory");
+        let path = write_request(directory.path(), request(actual));
+
+        let error = read_clause_run_request(&path).expect_err("wrong binding count refuses");
+        assert!(
+            matches!(&error.cause, RunCause::ExtractionClauseCount { actual: count } if *count == actual)
+        );
+        let outcome = outcome(&error);
+        assert_eq!(outcome["stage"], "request");
+        assert_eq!(outcome["exit_code"], 20);
+        assert_eq!(outcome["diagnostics"][0]["code"], "extraction-clause-count");
+        assert_eq!(outcome["diagnostics"][0]["details"]["actual"], actual);
+    }
+}
+
+/// Trace: TC-109, FR-031-AC-7.
+#[test]
+fn quire_context_refusal_preserves_its_diagnostics() {
+    let directory = tempfile::tempdir().expect("temporary directory");
+    fs::write(directory.path().join("original.md"), "# Clause\n").expect("source writes");
+    let path = write_request(directory.path(), request(1));
+
+    let error = read_clause_run_request(&path).expect_err("invalid Quire context refuses");
+    let RunCause::InvalidQuireContext { diagnostics } = &error.cause else {
+        panic!("expected invalid Quire context, got {:?}", error.cause);
+    };
+    let outcome = outcome(&error);
+    assert_eq!(outcome["stage"], "quire-context");
+    assert_eq!(outcome["exit_code"], 20);
+    assert_eq!(outcome["diagnostics"][0]["code"], "invalid-quire-context");
+    assert_eq!(
+        outcome["diagnostics"][0]["details"]["diagnostics"],
+        json!(diagnostics)
+    );
+}
