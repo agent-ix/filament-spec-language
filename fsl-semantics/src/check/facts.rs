@@ -336,6 +336,19 @@ pub(super) fn rational_result_of(
     RationalDomain::new(numerator, denominator).unwrap_or_else(|_| left.result_of(operator, right))
 }
 
+fn interval_text(interval: &Interval) -> String {
+    let end_text = |end: &End| match end {
+        End::Finite(value) => value.to_string(),
+        End::NegativeInfinity => "-∞".to_owned(),
+        End::PositiveInfinity => "∞".to_owned(),
+    };
+    format!(
+        "[{}, {}]",
+        end_text(&interval.lower),
+        end_text(&interval.upper)
+    )
+}
+
 fn declared(value_type: &ValueType) -> Interval {
     match value_type {
         ValueType::Int(domain) => Interval::of_domain(domain),
@@ -1384,14 +1397,26 @@ impl<'a> Definedness<'a> {
                 if proved.within(&required) {
                     Ok(())
                 } else {
-                    Err(Self::refuse(
-                        node,
-                        Obligation::Range {
-                            required: Box::new(required.proved()),
-                            proved: Box::new(proved.proved()),
-                            operand: Default::default(),
+                    let cause = node.equality_range_context().map_or_else(
+                        || {
+                            CheckCause::Unproved(Obligation::Range {
+                                required: Box::new(required.proved()),
+                                proved: Box::new(proved.proved()),
+                                operand: Default::default(),
+                            })
                         },
-                    ))
+                        |context| {
+                            CheckCause::Unproved(Obligation::EqualityRange {
+                                expected: context.expected.clone(),
+                                operand: context.operand.clone(),
+                                proved: interval_text(&proved),
+                            })
+                        },
+                    );
+                    Err(CheckRefusal {
+                        location: node.location().clone(),
+                        cause,
+                    })
                 }
             }
             NodeKind::IntegerDivision { right, .. } => {

@@ -2605,6 +2605,16 @@ pub enum Obligation {
         /// available at the compile boundary.
         operand: OperandText,
     },
+    /// An equality's integer arithmetic operand exceeded its peer's bounded
+    /// type, with enough context to explain the expected type and peer name.
+    EqualityRange {
+        /// The expected type supplied by the peer operand.
+        expected: String,
+        /// The peer operand's authored name.
+        operand: String,
+        /// The interval established for the arithmetic expression.
+        proved: String,
+    },
     /// A rational quotient may lie outside its `Rational[..]` domain:
     /// `unproved-range`.
     RationalRange,
@@ -3760,6 +3770,7 @@ impl CheckCause {
             Self::Unproved(Obligation::Presence) => Some("unproved-presence"),
             Self::Unproved(
                 Obligation::Range { .. }
+                | Obligation::EqualityRange { .. }
                 | Obligation::RationalRange
                 | Obligation::NonemptyReduction { .. },
             ) => Some("unproved-range"),

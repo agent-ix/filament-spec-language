@@ -81,6 +81,16 @@ pub struct Node {
     /// reachability"); `None` on every other node. `NodeKind::Reaches`
     /// has no population field of its own.
     pub(in crate::check) field_population: Option<Box<AuthoredBound>>,
+    /// Equality operand context used to explain an unproved contextual
+    /// integer range refusal.
+    pub(in crate::check) equality_range_context: Option<EqualityRangeContext>,
+}
+
+/// The peer that supplied a bounded integer type to an equality operand.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct EqualityRangeContext {
+    pub(crate) expected: String,
+    pub(crate) operand: String,
 }
 
 /// FSL's pre-wire equality facts, retained from typing through lowering.
@@ -672,6 +682,10 @@ impl<'a> CheckedNode<'a> {
     /// The node's source location.
     pub fn location(self) -> &'a Location {
         &self.node().location
+    }
+
+    pub(crate) fn equality_range_context(self) -> Option<&'a EqualityRangeContext> {
+        self.node().equality_range_context.as_ref()
     }
 
     /// Whether the node is a numeric-equality part of a float ordering's
