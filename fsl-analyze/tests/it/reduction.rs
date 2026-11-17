@@ -14,6 +14,7 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use filament_exact::Cancel;
 use filament_semantic_value::catalog::Category;
+use filament_semantic_value::checking::CheckMode;
 use filament_semantic_value::fairness::PropertyForm;
 use fsl_analyze::model_check::{
     admit, generators, instance_groups, not_preserving, preserves, unoffered, ModelCheckRefusal,
@@ -53,7 +54,8 @@ const COUNT: &str = "pre Below using v on M::Counter::bump { self.v < 3 }\n\
      invariant Low using v on M::Counter at current { self.v <= 1 }\n\
      invariant Wide using v on M::Counter at current { self.v <= 3 }\n\
      invariant Started using v on M::Counter at current { self.v >= 1 }\n\
-     invariant Odd using v on M::Counter at current { 6 mod (2 - self.v) >= 0 }\n";
+     invariant Odd using v on M::Counter at current { odd_value(self.v) }\n\
+     function odd_value using v(n: Int[0, 3]): Boolean pure { 6 mod (2 - n) >= 0 }\n";
 
 const KEYS: [&str; 3] = ["a", "b", "c"];
 
@@ -73,7 +75,14 @@ pub(crate) fn cycle(symmetric: bool, starts: &[[i64; 3]], clauses: &[Clause<'_>]
 
 /// §7.3's subject, all counters at 0, with `clauses`.
 pub(crate) fn count(clauses: &[Clause<'_>]) -> World {
-    World::new(shape(false, 3), COUNT, clauses, &[start([0, 0, 0])], &KEYS)
+    World::new_with_mode(
+        shape(false, 3),
+        COUNT,
+        clauses,
+        &[start([0, 0, 0])],
+        &KEYS,
+        CheckMode::Kernel,
+    )
 }
 
 pub(crate) fn infinite(formula: &str) -> Clause<'_> {

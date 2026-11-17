@@ -837,12 +837,19 @@ enum ItemCauseMember {
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
 pub struct OutcomeItem {
     request_index: usize,
-    result: ItemLabel,
+    /// The record's `result`; absent on a record settled by an
+    /// `invalid-request` disposition, which carries no result (FSpec
+    /// FR-331, FR-621).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    result: Option<ItemLabel>,
+    /// The item's result label, which an `invalid-request` disposition
+    /// record does not write.
+    #[serde(skip)]
+    label: ItemLabel,
     #[serde(flatten)]
     cause: ItemCauseMember,
     /// The FR-272 diagnostic of a record settled by an `unsupported` or
-    /// `invalid-request` disposition (FR-286). An `unsupported` item carries
-    /// it and no `cause`; a `declined` item carries both.
+    /// `invalid-request` disposition (FR-286), which carries it and no `cause`.
     #[serde(skip_serializing_if = "Option::is_none")]
     diagnostic: Option<ItemDiagnostic>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -1106,7 +1113,12 @@ impl OutcomeItem {
             | TerminalValue::Failed
             | TerminalValue::ToolFailed(_) => None,
         };
-        let diagnostic = match (record.disposition_detail(), record.diagnostic()) {
+        let diagnostic = match (
+            record
+                .disposition_detail()
+                .or_else(|| record.diagnostic_detail()),
+            record.diagnostic(),
+        ) {
             (Some(detail), Some(code)) => Some(ItemDiagnostic {
                 code: code.code(),
                 cause: code.cause(),
@@ -1114,13 +1126,19 @@ impl OutcomeItem {
             }),
             _ => None,
         };
+        // FR-286, FR-621: a record settled by an `invalid-request`
+        // disposition carries its diagnostic, and no `result` and no `cause`.
+        let invalid_request = matches!(value, TerminalValue::Declined { .. })
+            && record.disposition_detail().is_some();
         Self {
             request_index: record.request_index().get(),
-            result,
-            cause: if matches!(
-                value,
-                TerminalValue::Unsupported(UnavailabilityCause::Disposition)
-            ) {
+            result: (!invalid_request).then_some(result),
+            label: result,
+            cause: if invalid_request
+                || matches!(
+                    value,
+                    TerminalValue::Unsupported(UnavailabilityCause::Disposition)
+                ) {
                 ItemCauseMember::Omitted {}
             } else {
                 ItemCauseMember::Present {
@@ -1172,7 +1190,7 @@ impl OutcomeItem {
             }
             _ => Self::from_terminal(record),
         };
-        if item.result == ItemLabel::Refuted {
+        if item.label == ItemLabel::Refuted {
             item.counterexample =
                 Some(counterexample.ok_or(OutcomeItemError::MissingCounterexample)?);
         }
@@ -1225,7 +1243,8 @@ impl OutcomeItem {
     ) -> Self {
         Self {
             request_index: request_index.get(),
-            result: ItemLabel::Refuted,
+            result: Some(ItemLabel::Refuted),
+            label: ItemLabel::Refuted,
             cause: ItemCauseMember::Present {
                 cause: Some(Box::new(ItemCause::undefined_evaluation(at, cause))),
             },
@@ -1290,7 +1309,8 @@ impl OutcomeItem {
         let record = item_record(report)?;
         Ok(Self {
             request_index: request_index.get(),
-            result,
+            result: Some(result),
+            label: result,
             diagnostic: None,
             cause: ItemCauseMember::Present {
                 cause: clause_run_cause(report).map(Box::new),
@@ -1325,7 +1345,7 @@ impl OutcomeItem {
 
     /// The item's result label.
     pub fn result(&self) -> ItemLabel {
-        self.result
+        self.label
     }
 
     /// The zero-based index of the request this item settles.
@@ -1685,19 +1705,35 @@ pub struct OutcomeDocument {
     items: Vec<OutcomeItem>,
     diagnostics: Vec<OutcomeDiagnostic>,
     result: Option<ExecuteResult>,
+    requirements: Option<Box<RequirementItems>>,
+}
+
+/// The settled requirement items of an `execute` call (FR-963): one FR-621
+/// item entry per item, written in place of `items`, and FR-635's `registry`.
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct RequirementItems {
+    entries: Vec<serde_json::Value>,
+    registry: serde_json::Value,
 }
 
 impl Serialize for OutcomeDocument {
     fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
-        let mut document = serializer.serialize_struct("OutcomeDocument", 8)?;
+        let fields = if self.requirements.is_some() { 9 } else { 8 };
+        let mut document = serializer.serialize_struct("OutcomeDocument", fields)?;
         document.serialize_field("format", &self.format)?;
         document.serialize_field("operation", &self.operation)?;
         document.serialize_field("last_stage", &self.last_stage)?;
         document.serialize_field("category", self.category.as_str())?;
-        document.serialize_field("items", &self.items)?;
+        match &self.requirements {
+            Some(requirements) => document.serialize_field("items", &requirements.entries)?,
+            None => document.serialize_field("items", &self.items)?,
+        }
         document.serialize_field("diagnostics", &self.diagnostics)?;
         document.serialize_field("artifacts", &[(); 0])?;
         document.serialize_field("result", &self.result)?;
+        if let Some(requirements) = &self.requirements {
+            document.serialize_field("registry", &requirements.registry)?;
+        }
         document.end()
     }
 }
@@ -1726,6 +1762,7 @@ impl OutcomeDocument {
             items: Vec::new(),
             diagnostics: Vec::new(),
             result: None,
+            requirements: None,
         }
     }
 
@@ -1780,6 +1817,23 @@ impl OutcomeDocument {
     #[must_use]
     pub fn with_diagnostics(mut self, diagnostics: Vec<OutcomeDiagnostic>) -> Self {
         self.diagnostics = diagnostics;
+        self
+    }
+
+    /// This `execute` document with the settled requirement items of its
+    /// call (FR-963): `items` holds one FR-621 item `entries` entry per item,
+    /// in package order, `registry` is FR-635's `{backend, tool}` list the
+    /// items were negotiated against, and `category` is the most severe of
+    /// the call's and the items' categories. `result` stays the call's.
+    #[must_use]
+    pub fn with_requirement_items(
+        mut self,
+        category: Category,
+        entries: Vec<serde_json::Value>,
+        registry: serde_json::Value,
+    ) -> Self {
+        self.category = category;
+        self.requirements = Some(Box::new(RequirementItems { entries, registry }));
         self
     }
 
@@ -2477,6 +2531,7 @@ mod tests {
                 "diagnostics": [{
                     "cause": "ambiguous-literal",
                     "code": "ill_typed",
+                    "details": null,
                     "locus": {
                         "kind": "region",
                         "source": serde_json::to_value(region.source()).expect("a source ref"),

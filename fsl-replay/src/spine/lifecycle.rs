@@ -2008,6 +2008,36 @@ pub fn check_with_temporal_selections_and_execution_points(
     )
 }
 
+/// S3 and S4 with accepted execution points, refinement internals and the
+/// request's clock configurations carried together.
+#[allow(clippy::too_many_arguments)]
+pub fn check_with_execution_points_and_source_inputs(
+    parsed: &ParsedUnitSource,
+    package_name: String,
+    execution_points: &super::StateClauseExecutionPoints,
+    inputs: SourceInputs<'_>,
+    models: &AdmittedModels,
+    dependencies: &DependencyInput,
+    limits: SpineLimits,
+    cancel: &Cancel,
+) -> Result<Staged<CheckedUnit>, FrontEndFailure> {
+    check_with_context_and_temporal_selections(
+        parsed,
+        package_name,
+        execution_points,
+        inputs.refinement_internals,
+        inputs.temporal_selections,
+        inputs.clocks,
+        None,
+        None,
+        models,
+        dependencies,
+        limits,
+        cancel,
+        false,
+    )
+}
+
 /// The per-unit inputs of [`check_for_continuation`].
 pub(crate) struct ContinuationInputs<'a> {
     /// The package name the unit checks under.
@@ -3134,22 +3164,17 @@ fn temporal_selections_for_source(
         .collect()
 }
 
-/// The timestamped-event clock unit of each selection, for S3's `duration`
-/// window conversion (FR-337 "Aggregate formula emission").
+/// The clock configuration of each selection, for S3's `duration` window
+/// conversion (FR-337 "Aggregate formula emission") and a role-clock timed
+/// clause's binding unit (FR-933).
 fn clock_units(
     selections: &[fsl_package::TemporalClockSelection],
 ) -> Vec<fsl_semantics::check::ClockUnitSelection> {
     selections
         .iter()
-        .filter_map(|selection| match &selection.clock {
-            filament_contract_model::ClockConfiguration::TimestampedEvent { timestamp_unit } => {
-                Some(fsl_semantics::check::ClockUnitSelection {
-                    declaration_span: selection.declaration_span,
-                    timestamp_unit: timestamp_unit.to_string(),
-                })
-            }
-            filament_contract_model::ClockConfiguration::EventPosition { .. }
-            | filament_contract_model::ClockConfiguration::FixedSample { .. } => None,
+        .map(|selection| fsl_semantics::check::ClockUnitSelection {
+            declaration_span: selection.declaration_span,
+            clock: selection.clock.clone(),
         })
         .collect()
 }
@@ -3754,6 +3779,13 @@ impl<'a> Resolution<'a> {
             })
         })?;
         let regions = declarations.regions();
+        // FR-640, FR-933: a role clock's `timed` configuration the request's
+        // `clocks` member does not supply, or supplies with a unit that is no
+        // declared time unit, is the request's fault, refused at stage `emit`
+        // as the other clock-selection faults are.
+        let by_name_clocks = self
+            .clocks
+            .filter(|_| self.temporal_selections_for(&frame.raw).is_empty());
         let graph = charged(cancel, &mut self.work.s3, || {
             if frame.raw == self.continuation_source {
                 declarations.check_with_protocol_continuation_and_cancel(
@@ -3767,6 +3799,13 @@ impl<'a> Resolution<'a> {
         })
         .map_err(|refusals| {
             let refusals = pending.report(refusals);
+            if let Some(clocks) = by_name_clocks {
+                if let Some(refusal) = refusals.iter().find_map(|refusal| {
+                    super::clocks::check_clock_refusal(clocks, refusal, &regions)
+                }) {
+                    return refusal;
+                }
+            }
             let region = refusals.first().and_then(|refusal| {
                 regions
                     .refusal_region(refusal)

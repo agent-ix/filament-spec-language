@@ -70,7 +70,7 @@ pub(crate) fn try_fixture_within(
          profile t0 = \"{profile}\";\n\
          record Counter {{ level: Int[0, 9]; }}\n\
          record Config {{ versionNumber: Int[0, 9]; }}\n\
-         temporal C using t0 over ({over}) clock \"model-steps\" {activation} {{ {body} }}\n"
+         temporal C using t0 over ({over}) clock \"events\" {activation} {{ {body} }}\n"
     );
     let parsed = fsl_cst::parse(
         SourceIdentity::new("a", "u"),

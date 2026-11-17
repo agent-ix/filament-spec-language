@@ -25,6 +25,8 @@ relationships:
     type: depends_on
   - target: "ix://agent-ix/filament-specification/FR-331"
     type: depends_on
+  - target: ix://agent-ix/filament-spec-language/FR-968
+    type: depends_on
 ---
 # FR-281: Analyze claims over every behaviour with FSL's in-process engines
 
@@ -210,16 +212,24 @@ counterexample assignment, or `unknown`; its types are FSL's own, so FSL
 depends on no CG crate for it (FR-280).
 
 - An engine is built from a provider only with a descriptor that advertises
-  `value-validity` in the `unbounded` mode. A descriptor that does not is
-  refused, naming its `BackendId`, and no engine is made. The provider is
+  at least one (kind, mode) pair, and, when it advertises `value-validity`,
+  advertises it in the `unbounded` mode (FR-968): the value-validity arm
+  exists for unbounded operands no in-process engine decides, and a provider
+  for another kind, such as `operation-contract`, registers for the kinds it
+  advertises. A descriptor that breaks either rule is refused, naming its
+  `BackendId`, and no engine is made. The provider is
   registered beside the in-process engines under its own `BackendId`; it never
   replaces one, and `Engines::with` keeps FR-281's one-engine-per-`BackendId`
   rule for it.
 - A provider item runs on its provider only when it reaches `analyze` settled
   `Supported` on that provider's `BackendId`. Registering a provider does not
-  change any other item: an item settled for a bounded engine runs on that
-  engine and no other, and a bounded engine's item whose operands are
-  unbounded settles as it would with no provider registered.
+  change an item whose (kind, mode) the provider does not advertise: such an
+  item settled for a bounded engine runs on that engine and no other, and a
+  bounded engine's item whose operands are unbounded settles as it would with
+  no provider registered. An item the provider also matches has the provider
+  among its candidates, and its candidate set is settled as FR-962 states (an
+  unnamed item whose matching set no tie rule decides settles
+  `ambiguous-backend`; naming a backend selects it).
 - The verdict is the provider's; FSL adds no verdict route of its own. A
   `proved` verdict settles the item `proved`, proof basis `inductive` at depth
   0, naming the provider, with certification `uncertified` for a provider

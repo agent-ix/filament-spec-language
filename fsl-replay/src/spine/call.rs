@@ -743,12 +743,62 @@ pub(crate) fn run_reading<T>(
         front_end::package_with_temporal_selections(&checked, &selections, limits.package, cancel)
             .map_err(refusal)?
             .into_value();
+    let outcome = run_compiled(
+        &checked,
+        &models,
+        CallSources {
+            package_name: &own_package,
+            packages,
+            model_limits: limits.model,
+        },
+        call,
+        objects,
+        backends,
+        prepare,
+        cancel,
+    )?;
+    let read = read(&checked, &emitted, &models)?;
+    Ok((outcome, read))
+}
+
+/// The compile inputs a call over an already compiled program still reads
+/// (FR-650): the package it was compiled as, and the model packages and
+/// limits its call snapshot and population universes are admitted against.
+#[derive(Clone, Copy)]
+pub(crate) struct CallSources<'a> {
+    pub(crate) package_name: &'a str,
+    pub(crate) packages: &'a fsl_semantics::model::intake::PackageInput,
+    pub(crate) model_limits: fsl_semantics::model::accounting::ModelNormalizationLimits,
+}
+
+/// Run a call against one already compiled program. The call gets fresh
+/// argument admission and evaluation accounting while reusing the checked
+/// package, emitted package and admitted model set.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn run_compiled(
+    checked: &super::CheckedUnit,
+    models: &super::AdmittedModels,
+    sources: CallSources<'_>,
+    call: &Call,
+    objects: &ObjectEnvironment,
+    backends: &SuppliedBackends<'_>,
+    prepare: &PrepareLimits,
+    cancel: &Cancel,
+) -> Result<CallOutcome, Box<RunRefusal>> {
+    backends
+        .member(call.backend)
+        .map_err(|entry| Box::new(RunRefusal::Unsupported(entry)))?;
     let package = checked.package();
+    let CallSources {
+        package_name: own_package,
+        packages,
+        model_limits,
+    } = sources;
     let selected = select(package, &call.function)?;
     let admitted_world;
     let objects = match &call.snapshot {
         Some(snapshot) => {
-            admitted_world = admit_call_snapshot(package, packages, limits.model, snapshot)?;
+            admitted_world = admit_call_snapshot(package, packages, model_limits, snapshot)?;
             &admitted_world
         }
         None => objects,
@@ -765,7 +815,7 @@ pub(crate) fn run_reading<T>(
         fsl_semantics::model::observation::population_universe_for(
             package.graph().model_inputs(),
             packages,
-            limits.model,
+            model_limits,
             declared.clone(),
         )
         .ok()
@@ -778,7 +828,7 @@ pub(crate) fn run_reading<T>(
         package.graph().scope().types(),
         package.graph().scope().enums(),
     )
-    .in_world(&own_package, world.as_ref());
+    .in_world(own_package, world.as_ref());
     let supplied = admit_wire_arguments(&forms, selected.parameters, call)?;
     let arguments = bind_arguments(selected.parameters, &supplied)?;
     admit_model_arguments(
@@ -841,8 +891,7 @@ pub(crate) fn run_reading<T>(
         }
         _ => convert_outcome(evaluation, package.graph(), &sources)?,
     };
-    let read = read(&checked, &emitted, &models)?;
-    Ok((outcome, read))
+    Ok(outcome)
 }
 
 /// FR-650 "Population argument": FR-084 admission binds each population the

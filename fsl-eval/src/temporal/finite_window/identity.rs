@@ -57,6 +57,10 @@ impl Encode for Preimage<'_> {
                 writer.string("counter")?;
                 count(writer, u128::from(uncertainty))?;
             }
+            ClockCover::Bounded { uncertainty } => {
+                writer.string("bounded")?;
+                count(writer, u128::from(uncertainty))?;
+            }
         }
         writer.begin_array()?;
         for position in &trace.positions {

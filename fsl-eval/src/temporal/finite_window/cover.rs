@@ -22,6 +22,13 @@ pub enum ClockCover {
         /// The widening `u`, in ticks.
         uncertainty: u64,
     },
+    /// FR-501 "Bounded cover and interval stamps": a point stamp `t` covers
+    /// the closed interval `[t-u, t+u]` (FSpec FR-160 "Timestamp uncertainty
+    /// beyond counter ticks").
+    Bounded {
+        /// The widening `u`, in ticks.
+        uncertainty: u64,
+    },
 }
 
 /// The answer of a comparison over covers: every pair of instants agrees, or
@@ -50,7 +57,8 @@ impl Containment {
 }
 
 /// A difference of two covers: `lo < d < hi` for an interval whose ends are
-/// both open (a counter cover) or `d == lo == hi` for an exact difference.
+/// both open (a counter cover), `lo <= d <= hi` for a closed one (a bounded
+/// cover) or `d == lo == hi` for an exact difference.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 struct Difference {
     lo: i128,
@@ -86,12 +94,14 @@ impl Difference {
 
 impl ClockCover {
     /// The margin `m` an establishment adds to a clause's future reach:
-    /// `2u` under a counter cover, 0 under an exact one (FR-501 "Established
-    /// window").
+    /// `2u` under a counter cover, `u` under a bounded one and 0 under an
+    /// exact one (FR-501 "Established window", "Bounded cover and interval
+    /// stamps").
     pub fn margin(self) -> i128 {
         match self {
             Self::Exact => 0,
             Self::Counter { uncertainty } => 2 * i128::from(uncertainty),
+            Self::Bounded { uncertainty } => i128::from(uncertainty),
         }
     }
 
@@ -109,6 +119,14 @@ impl ClockCover {
                     lo: later - earlier - spread,
                     hi: later - earlier + spread,
                     open: true,
+                }
+            }
+            Self::Bounded { uncertainty } => {
+                let spread = 2 * i128::from(uncertainty);
+                Difference {
+                    lo: later - earlier - spread,
+                    hi: later - earlier + spread,
+                    open: false,
                 }
             }
         }
@@ -130,6 +148,9 @@ impl ClockCover {
             Self::Counter { uncertainty } => {
                 i128::from(a) + 1 + i128::from(uncertainty)
                     <= i128::from(b) - i128::from(uncertainty)
+            }
+            Self::Bounded { uncertainty } => {
+                i128::from(a) + i128::from(uncertainty) < i128::from(b) - i128::from(uncertainty)
             }
         }
     }

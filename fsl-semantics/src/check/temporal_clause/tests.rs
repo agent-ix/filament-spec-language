@@ -34,7 +34,7 @@ fn source(temporal: &[&str], over: &str, formula: &str) -> String {
     text.push_str(&format!(
         "record Counter {{ level: Int[0, 9]; }}\n\
          record Loose {{ n: Integer; }}\n\
-         temporal C using {using} over (c: {over}) clock \"model-steps\" on origin \
+         temporal C using {using} over (c: {over}) clock \"events\" on origin \
          {{ {formula} }}\n"
     ));
     text
@@ -1094,7 +1094,7 @@ fn a_holds_condition_is_typed_over_the_over_parameter() {
 }
 
 /// FR-233 and FR-326: a timed interval (FR-393) where the clause counts
-/// steps, here under `model-steps` with infinite-trace and event-position,
+/// steps, here a trace subject's role with infinite-trace and event-position,
 /// refuses `ill_typed`/`type-mismatch` at the interval, rather than being
 /// checked as a step interval or dropped.
 #[trace("TC-1078", "TC-688", "FR-233-AC-2")]
@@ -1183,8 +1183,7 @@ fn the_finite_window_profile_admits_only_integral_closed_tick_intervals() {
 
 /// The unit of [`source`] with its clause's clock written `clock "{clock}"`.
 fn with_clock(temporal: &[&str], clock: &str, formula: &str) -> String {
-    source(temporal, "Counter", formula)
-        .replace("clock \"model-steps\"", &format!("clock \"{clock}\""))
+    source(temporal, "Counter", formula).replace("clock \"events\"", &format!("clock \"{clock}\""))
 }
 
 /// FR-610-AC-1: over the record trace subject a free clock role checks under
@@ -1223,7 +1222,6 @@ fn a_free_clock_role_over_a_trace_subject_checks_and_counts_by_the_profile() {
     "FSpec-FR-090-AC-12"
 )]
 #[test]
-#[ignore = "QSL-2141: a unit-spelled or model-binding clock role over a trace subject is not refused yet"]
 fn a_unit_spelled_or_model_binding_role_over_a_trace_subject_is_refused() {
     let formula = "eventually[0,3] holds(c.level = 3)";
     for profile in [INFINITE, EVENT, FIXED, TIMESTAMPED] {
@@ -1295,12 +1293,10 @@ fn a_retired_temporal_profile_spelling_is_an_unknown_profile() {
 /// as the same clause written `clock "default"`.
 #[trace("TC-2388", "FR-610-AC-5")]
 #[test]
-#[ignore = "QSL-2140: the default clock role of a trace-subject clause with no clock is not built yet"]
 fn an_unwritten_clock_is_the_default_role() {
     let formula = "eventually[0,3] holds(c.level = 3)";
     for profile in [INFINITE, EVENT, FIXED] {
-        let unwritten =
-            source(&[profile], "Counter", formula).replace("clock \"model-steps\" ", "");
+        let unwritten = source(&[profile], "Counter", formula).replace("clock \"events\" ", "");
         assert!(!unwritten.contains("clock \""), "{unwritten}");
         let clause = check(&assemble(&unwritten))
             .unwrap_or_else(|failure| panic!("{profile}: checks, not {failure:?}"));

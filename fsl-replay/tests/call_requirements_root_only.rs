@@ -48,18 +48,18 @@ fn run(source: &str, cancel: &Cancel) -> Result<fsl_replay::RunWithRequirements,
         supplied: SuppliedLimits::default(),
         backend: filament_eval::ExecutionBackendChoice::Interpreter,
     };
-    run_with_requirements(
-        SourceIdentity::new("a", "u"),
-        "fixture".to_owned(),
-        "unit.native",
-        source.as_bytes(),
-        &BTreeMap::new(),
-        &DependencyInput::default(),
-        SpineLimits::default(),
-        &call,
-        &ObjectEnvironment::default(),
+    run_with_requirements(&fsl_replay::RequirementsRun {
+        source: SourceIdentity::new("a", "u"),
+        package_name: "fixture".to_owned(),
+        path: "unit.native",
+        bytes: source.as_bytes(),
+        packages: &BTreeMap::new(),
+        dependencies: &DependencyInput::default(),
+        limits: SpineLimits::default(),
+        call: &call,
+        objects: &ObjectEnvironment::default(),
         cancel,
-    )
+    })
 }
 
 /// The whole consumer path: call, read the id, the outcome's payloads and the

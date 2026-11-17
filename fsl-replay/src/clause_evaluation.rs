@@ -400,7 +400,8 @@ fn settle(disposition: ClauseDisposition) -> ClauseEvaluation {
         | ClauseDisposition::Temporal(_)
         | ClauseDisposition::TemporalRefusal(_)
         | ClauseDisposition::TraceRefused(_)
-        | ClauseDisposition::ProgressContradiction(_) => unreachable_disposition(),
+        | ClauseDisposition::ProgressContradiction(_)
+        | ClauseDisposition::TemporalValuation(_) => unreachable_disposition(),
     }
 }
 

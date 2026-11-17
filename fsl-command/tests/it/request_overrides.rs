@@ -121,12 +121,17 @@ fn run_entries_take_the_override_as_the_member() {
         ..Default::default()
     };
 
-    let expected = refusal_of(&command::run(&member).unwrap_err());
+    let expected = refusal_of(&command::run(&member, &crate::negotiation::Fr290).unwrap_err());
     assert_eq!(expected["cause"], "unused-clock-selection", "{expected}");
     for error in [
-        command::run_with_overrides(&bare, &overrides).unwrap_err(),
-        command::run_with_limits_and_overrides(&bare, RunLimits::default(), &overrides)
-            .unwrap_err(),
+        command::run_with_overrides(&bare, &overrides, &crate::negotiation::Fr290).unwrap_err(),
+        command::run_with_limits_and_overrides(
+            &bare,
+            RunLimits::default(),
+            &overrides,
+            &crate::negotiation::Fr290,
+        )
+        .unwrap_err(),
     ] {
         assert_eq!(refusal_of(&error), expected);
     }
@@ -146,7 +151,12 @@ fn run_entries_take_the_override_as_the_member() {
     .unwrap();
     assert_eq!(refusal_of(&refused)["stage"], "request");
     // Without the override the bare request runs.
-    assert_eq!(command::run(&bare).unwrap().exit_code, 0);
+    assert_eq!(
+        command::run(&bare, &crate::negotiation::Fr290)
+            .unwrap()
+            .exit_code,
+        0
+    );
 }
 
 /// FR-640: both the member and the override refuse `invalid-request` at
@@ -177,7 +187,7 @@ fn a_member_and_an_override_together_refuse() {
         command::compile_outcome_with_overrides(&compile, &overrides)
             .err()
             .unwrap(),
-        command::run_with_overrides(&run, &overrides).unwrap_err(),
+        command::run_with_overrides(&run, &overrides, &crate::negotiation::Fr290).unwrap_err(),
         command::prepare_run_with_overrides(&run, RunLimits::default(), &overrides)
             .err()
             .unwrap(),

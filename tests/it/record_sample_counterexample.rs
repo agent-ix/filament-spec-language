@@ -106,11 +106,9 @@ fn a_record_sample_counterexample_names_positions_by_index() {
 
 /// FR-641-AC-8: a `model` trace's effective candidate bound, default
 /// included, is the result's `limits` member; a sample trace writes none.
-/// The model half needs a model subject whose trace runs to a result; the
-/// coder builds it over the FR-330-AC-16 subject, as FR-641-AC-7's test notes.
 #[test]
 #[trace("TC-2299", "FR-641-AC-8", "FSpec-TC-1701", "FSpec-FR-352-AC-19")]
-#[ignore = "QSL-2303: the run result does not write its limits member yet"]
+#[ignore = "QSL-2303: the request names no over and no model, so the run refuses `a model trace needs an over` before any result; it needs an FR-330-AC-16 model-subject fixture through command::run (the writer is covered in fsl-analyze model_trace_run::a_model_trace_result_writes_its_limits)"]
 fn a_model_trace_run_writes_its_limits() {
     let directory = tempfile::tempdir().unwrap();
     let model = |bound: Option<u64>| {
@@ -140,6 +138,15 @@ fn a_model_trace_run_writes_its_limits() {
         json!({"expansion.max_candidates": "5"}),
         "{five}"
     );
+    // Otherwise equal: the bound is the only difference between the two.
+    let without_limits = |document: &Value| {
+        let mut document = document.clone();
+        if let Some(members) = document.as_object_mut() {
+            members.remove("limits");
+        }
+        document
+    };
+    assert_eq!(without_limits(&default), without_limits(&five));
     let finite = result(&run_file(&write(
         directory.path(),
         "finite.json",

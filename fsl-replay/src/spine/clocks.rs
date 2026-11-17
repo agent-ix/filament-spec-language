@@ -64,11 +64,20 @@ impl RequestClocks {
         self.members.get(name)
     }
 
+    /// The named clock configurations in request order.
+    pub fn iter(&self) -> impl Iterator<Item = (&str, &ClockConfiguration)> {
+        self.members
+            .iter()
+            .map(|(name, clock)| (name.as_str(), clock))
+    }
+
     /// The selections S3 reads before the checked graph exists: each
     /// `temporal` clause of `parsed` whose clock name has a timestamped-event
-    /// member, so S3 converts its `duration` windows to that clock's unit
-    /// (FR-337 "Aggregate formula emission"). Whether the selection fits is
-    /// decided after the check, by [`Self::package_selections`].
+    /// or `timed` member, so S3 converts its `duration` windows to the
+    /// timestamped-event clock's unit (FR-337 "Aggregate formula emission")
+    /// and reads a role-clock timed clause's bounds in its `timed` unit
+    /// (FR-933). Whether the selection fits is decided after the check, by
+    /// [`Self::package_selections`].
     pub fn check_selections(&self, parsed: &ParsedUnitSource) -> Vec<TemporalClockSelection> {
         let source = parsed.source().reference();
         parsed
@@ -79,10 +88,20 @@ impl RequestClocks {
                 let fsl_forms::DeclarationForm::Temporal(clause) = form.form() else {
                     return None;
                 };
-                let clock = self.get(&clause.clock.as_ref()?.text)?;
-                matches!(clock, ClockConfiguration::TimestampedEvent { .. }).then(|| {
-                    TemporalClockSelection::new(source.clone(), form.span(), clock.clone())
-                })
+                // FR-610 "Unwritten clock": a clause with no `clock` reads the
+                // role `default`.
+                let role = clause
+                    .clock
+                    .as_ref()
+                    .map_or(fsl_semantics::check::DEFAULT_CLOCK_ROLE, |clock| {
+                        clock.text.as_str()
+                    });
+                let clock = self.get(role)?;
+                matches!(
+                    clock,
+                    ClockConfiguration::TimestampedEvent { .. } | ClockConfiguration::Timed { .. }
+                )
+                .then(|| TemporalClockSelection::new(source.clone(), form.span(), clock.clone()))
             })
             .collect()
     }
@@ -125,6 +144,7 @@ impl RequestClocks {
                     clock: name.clone(),
                     declaration: None,
                     supplied: None,
+                    unit: None,
                 },
                 None,
             ));
@@ -159,6 +179,7 @@ impl RequestClocks {
                     clock: name.clone(),
                     declaration: None,
                     supplied: None,
+                    unit: None,
                 },
                 None,
             ));
@@ -193,6 +214,7 @@ impl RequestClocks {
                             clock: declaration.clock.to_owned(),
                             declaration: Some(at_fault()),
                             supplied: None,
+                            unit: None,
                         },
                         locus,
                     ));
@@ -204,6 +226,7 @@ impl RequestClocks {
                             clock: declaration.clock.to_owned(),
                             declaration: Some(at_fault()),
                             supplied: Some(clock_kind(clock)),
+                            unit: None,
                         },
                         locus,
                     ));
@@ -265,7 +288,7 @@ fn emit_refusal(
     region: Option<SourceRegion>,
 ) -> Box<CompileRefusal> {
     Box::new(CompileRefusal::Emit(
-        EmitRefusal::ClockSelection(refusal),
+        EmitRefusal::ClockSelection(Box::new(refusal)),
         region,
     ))
 }
@@ -430,15 +453,11 @@ fn per_trace_clocks(declaration: &Declaration<'_>) -> Box<CompileRefusal> {
 }
 
 /// The `kind` of the configuration a declaration under `profile` takes a
-/// selection for. A timed declaration takes none yet: the binding rows carry
-/// no `timed` configuration until the contract's `ClockConfiguration` has the
-/// variant (QSL-2254), so the emitter writes no timed row and a timed clause
-/// or `compensate` template compiles, and replays, as it did before FR-640.
+/// selection for: a timed declaration over a record trace subject takes a
+/// `timed` one (FR-640, FR-933); over a model it binds `model-time` and
+/// derives none.
 fn configured_kind(profile: TemporalProfile) -> Option<&'static str> {
-    match profile {
-        TemporalProfile::Timed => None,
-        other => profile_clock_kind(other),
-    }
+    profile_clock_kind(profile)
 }
 
 /// The sequence authority of a temporal clause over the model object type
@@ -488,4 +507,69 @@ fn model_configuration(
         }
         _ => None,
     }
+}
+
+/// FR-640, FR-933: the stage-`emit` clock-selection refusal of a check
+/// refusal `refusal` that S3 gave a role-clock timed clause for want of a
+/// fitting `timed` configuration, when the request's `clocks` member is the
+/// configuration's source; `None` for any other refusal. A member S3 did not
+/// read (of another kind) is the declaration's kind mismatch.
+pub(crate) fn check_clock_refusal(
+    clocks: &RequestClocks,
+    refusal: &fsl_semantics::check::CheckRefusal,
+    regions: &fsl_semantics::check::DeclarationRegions,
+) -> Option<Box<CompileRefusal>> {
+    use fsl_semantics::check::{CheckCause, ClockSelectionFault, TemporalCause};
+
+    let CheckCause::Temporal(cause) = &refusal.cause else {
+        return None;
+    };
+    let TemporalCause::ClockSelection {
+        fault,
+        clock,
+        declaration,
+        profile,
+        ..
+    } = &**cause
+    else {
+        return None;
+    };
+    let (cause, supplied, unit) = match fault {
+        ClockSelectionFault::MissingClockSelection => match clocks.get(clock) {
+            Some(member) => (
+                ClockSelectionCause::ClockKindMismatch,
+                Some(clock_kind(member)),
+                None,
+            ),
+            None => (ClockSelectionCause::MissingClockSelection, None, None),
+        },
+        ClockSelectionFault::ClockKindMismatch { supplied } => (
+            ClockSelectionCause::ClockKindMismatch,
+            Some(*supplied),
+            None,
+        ),
+        ClockSelectionFault::UnknownClockUnit { unit } => (
+            ClockSelectionCause::UnknownClockUnit,
+            None,
+            Some(unit.clone()),
+        ),
+        ClockSelectionFault::ClockUnitDimension { unit } => (
+            ClockSelectionCause::ClockUnitDimension,
+            None,
+            Some(unit.clone()),
+        ),
+    };
+    Some(emit_refusal(
+        ClockSelectionRefusal {
+            cause,
+            clock: clock.clone(),
+            declaration: Some(ClockSelectionDeclaration {
+                name: declaration.clone(),
+                profile: *profile,
+            }),
+            supplied,
+            unit,
+        },
+        regions.refusal_region(refusal),
+    ))
 }

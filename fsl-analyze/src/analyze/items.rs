@@ -928,7 +928,7 @@ fn timed_refinement_refusal(refusal: &TimedRefinementRefusal) -> Refusal {
     }
 }
 
-pub(super) fn admission(failure: &AdmissionFailure) -> Refusal {
+pub(crate) fn admission(failure: &AdmissionFailure) -> Refusal {
     let declined = |cause, record: &fsl_semantics::model::observation::AdmissionRecord| {
         Refusal::Declined(
             cause,
@@ -1063,7 +1063,10 @@ mod tests {
             Refusal::Declined(_, _, code) | Refusal::Unsupported(code) | Refusal::Failed(code) => {
                 Some(code.to_string())
             }
-            Refusal::RequiresBound | Refusal::NotStatistical | Refusal::Incomplete(_) => None,
+            Refusal::RequiresBound
+            | Refusal::NotStatistical
+            | Refusal::NotEmitted
+            | Refusal::Incomplete(_) => None,
         }
     }
 

@@ -551,7 +551,7 @@ fn clause() -> CheckedTemporalClause {
          profile v = \"filament.value.complete/v1\";\n\
          profile t0 = \"{EVENT}\";\n\
          record Counter {{ level: Int[0, 9]; }}\n\
-         temporal C using t0 over (c: Counter) clock \"model-steps\" on origin {{ \
+         temporal C using t0 over (c: Counter) clock \"events\" on origin {{ \
          always[0,3] holds(c.level <= 9) }}\n"
     );
     let parsed = fsl_cst::parse(

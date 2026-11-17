@@ -21,8 +21,86 @@ impl NativeResult {
         Self(document)
     }
 
+    /// Mark generated flow items whose bounded tuple expansion stopped
+    /// before analysis. The result remains the ordinary analyze document;
+    /// only those item records and their aggregate gaps change.
+    pub(super) fn mark_flow_items_incomplete(
+        &mut self,
+        claim_names: &std::collections::BTreeSet<String>,
+    ) {
+        let Some(items) = self.0.get_mut("items").and_then(Value::as_array_mut) else {
+            return;
+        };
+        let mut stopped = std::collections::BTreeSet::new();
+        for item in items {
+            if !item
+                .get("claim_name")
+                .and_then(Value::as_str)
+                .is_some_and(|name| claim_names.contains(name))
+            {
+                continue;
+            }
+            let Some(index) = item.get("request_index").and_then(Value::as_u64) else {
+                continue;
+            };
+            stopped.insert(index);
+            item["category"] = Value::String("incomplete".to_owned());
+            let Some(record) = item.get_mut("record").and_then(Value::as_object_mut) else {
+                continue;
+            };
+            let request_index = record.get("request_index").cloned();
+            record.clear();
+            if let Some(request_index) = request_index {
+                record.insert("request_index".to_owned(), request_index);
+            }
+            record.insert("result".to_owned(), Value::String("incomplete".to_owned()));
+            record.insert(
+                "cause".to_owned(),
+                serde_json::json!({"kind": "limit-reached"}),
+            );
+            record.insert(
+                "category".to_owned(),
+                Value::String("incomplete".to_owned()),
+            );
+        }
+        if stopped.is_empty() {
+            return;
+        }
+        if let Some(gaps) = self
+            .0
+            .pointer_mut("/aggregate/gaps")
+            .and_then(Value::as_array_mut)
+        {
+            for gap in gaps {
+                if gap
+                    .get("request_index")
+                    .and_then(Value::as_u64)
+                    .is_some_and(|i| stopped.contains(&i))
+                {
+                    gap["result"] = Value::String("incomplete".to_owned());
+                }
+            }
+        }
+        self.0["category"] = Value::String("incomplete".to_owned());
+    }
+
     /// The FR-644 `filament.monitor-run/1` document.
     pub(super) fn monitor_document(document: Value) -> Self {
+        Self(document)
+    }
+
+    /// The FR-931 lowering document, its `tl_lowering` record.
+    pub(super) fn lowering_document(document: Value) -> Self {
+        Self(document)
+    }
+
+    /// The FR-862 replay result: FR-323's `results` disposition.
+    pub(super) fn replay_document(document: Value) -> Self {
+        Self(document)
+    }
+
+    /// The FR-651 result document for several independently settled items.
+    pub(super) fn items_document(document: Value) -> Self {
         Self(document)
     }
 
@@ -137,12 +215,32 @@ pub(super) fn error(error: &RunError, artifact: bool) -> Result<Value, serde_jso
         | RunCause::EmptyCompileProgram
         | RunCause::AnalyzeRequest { .. }
         | RunCause::AnalyzeUniverse(_)
+        | RunCause::AnalyzePackage { .. }
         | RunCause::AnalyzeNotYetImplemented { .. }
         | RunCause::AnalyzeRefused(_)
-        | RunCause::MonitorRefused(_) => (types::Stage::Request, types::Details::None),
+        | RunCause::MonitorRefused(_)
+        | RunCause::TlCorrespondence { .. }
+        | RunCause::TlClause { .. }
+        | RunCause::TlNotYetImplemented { .. } => (types::Stage::Request, types::Details::None),
+        RunCause::TlFault(_) => (types::Stage::Output, types::Details::None),
         RunCause::AnalyzeFault | RunCause::MonitorFault | RunCause::MonitorCancelled => {
             (types::Stage::Output, types::Details::None)
         }
+        RunCause::ReplayRequest(_) | RunCause::ReplayBytes { .. } => {
+            (types::Stage::Request, types::Details::None)
+        }
+        RunCause::ReplayOutput(_) => (types::Stage::Output, types::Details::None),
+        RunCause::Replay(failure) => (
+            match &failure.refusal {
+                fsl_replay::ReplayRefusal::Recompile(refusal)
+                | fsl_replay::ReplayRefusal::RecompileWithProtocolResults { refusal, .. } => {
+                    types::Stage::Spine(refusal.stage())
+                }
+                _ => types::Stage::Request,
+            },
+            types::Details::None,
+        ),
+        RunCause::ItemsFault => (types::Stage::Output, types::Details::None),
         RunCause::Spine(failure) => (
             types::Stage::Spine(failure.refusal.stage()),
             match clock_selection_refusal(&failure.refusal) {
@@ -161,6 +259,10 @@ pub(super) fn error(error: &RunError, artifact: bool) -> Result<Value, serde_jso
                     span: failure.span,
                 },
             },
+        ),
+        RunCause::UnknownRequirementClaim { claim } => (
+            types::Stage::SpineRun("call"),
+            types::Details::Claim { claim },
         ),
         RunCause::SpineRun(refusal) => (
             // A cancel has no stage (FR-286); the command never cancels its
@@ -191,6 +293,7 @@ pub(super) fn error(error: &RunError, artifact: bool) -> Result<Value, serde_jso
         code: error.cause.code().as_str(),
         cause: match &error.cause {
             RunCause::Spine(failure) => failure.refusal.cause(),
+            RunCause::Replay(failure) => failure.refusal.cause(),
             RunCause::SpineRun(refusal) => match refusal.as_ref() {
                 fsl_replay::spine::RunRefusal::Compile(refusal) => refusal.cause(),
                 fsl_replay::spine::RunRefusal::Argument { defect, .. } => Some(defect.cause),
@@ -219,6 +322,9 @@ pub(super) fn error(error: &RunError, artifact: bool) -> Result<Value, serde_jso
                 }
                 _ => None,
             },
+            RunCause::TlCorrespondence { .. } => Some("unsupported-selection"),
+            RunCause::TlClause { .. } => Some("missing-name"),
+            RunCause::TlNotYetImplemented { .. } => Some("not-yet-implemented"),
             _ => None,
         },
         message: error.to_string(),
@@ -270,6 +376,7 @@ pub(super) fn clause_report(
         exit_code: report.disposition.exit_code(),
         value: NativeResult(value),
         outcome: Some(outcome),
+        requirements: None,
     })
 }
 
@@ -347,10 +454,66 @@ pub(super) fn spine_run_result(
     source: &FormalSource,
     function: &str,
     outcome: fsl_replay::spine::CallOutcome,
+    settled: Option<fsl_analyze::analyze::document::SettledRun>,
+) -> super::Result<RunResult> {
+    spine_run_result_for_source(source.source(), function, outcome, settled)
+}
+
+pub(super) fn spine_run_result_for_source(
+    source: &fsl_foundation::Source,
+    function: &str,
+    outcome: fsl_replay::spine::CallOutcome,
+    settled: Option<fsl_analyze::analyze::document::SettledRun>,
 ) -> super::Result<RunResult> {
     use fsl_replay::spine::{CallOutcome, CallRefusal};
-    let exit_code = outcome.category().exit_code();
+    let call_category = outcome.category();
     let lifecycle = fsl_replay::OutcomeDocument::from_call(&outcome);
+    // FR-963: the run's category is the most severe of the call's and
+    // every settled item's, the call's on a tie.
+    let category = settled.as_ref().map_or(call_category, |settled| {
+        let categories: Vec<filament_semantic_value::catalog::Category> =
+            std::iter::once(call_category)
+                .chain(
+                    settled
+                        .records
+                        .iter()
+                        .map(|record| record.value().category()),
+                )
+                .collect();
+        filament_semantic_value::catalog::Category::most_severe(
+            categories.iter().map(|category| category.exit_code()),
+        )
+        .and_then(|worst| {
+            categories
+                .iter()
+                .copied()
+                .find(|category| category.exit_code() == worst)
+        })
+        .unwrap_or(call_category)
+    });
+    let exit_code = category.exit_code();
+    let (lifecycle, requirements, registry, results) = match settled {
+        None => (lifecycle, None, None, None),
+        Some(settled) => {
+            let registry = serde_json::Value::Array(
+                settled
+                    .registry
+                    .iter()
+                    .map(fsl_analyze::analyze::document::RegistryEntry::wire)
+                    .collect(),
+            );
+            (
+                lifecycle.with_requirement_items(category, settled.items.clone(), registry.clone()),
+                Some(settled.items),
+                Some(registry),
+                Some(super::RequirementResults {
+                    records: settled.records,
+                    counterexamples: settled.counterexamples,
+                    registry: settled.registry,
+                }),
+            )
+        }
+    };
     let outcome = match outcome {
         CallOutcome::Completed(value) => types::SpineOutcome::Completed {
             value: value.form(),
@@ -384,16 +547,19 @@ pub(super) fn spine_run_result(
     let document = types::SpineRunReport {
         format: types::Format::SpineRunResult,
         source: types::RunSource {
-            identity: source.source().identity(),
-            path: source.source().path(),
+            identity: source.identity(),
+            path: source.path(),
         },
         function,
         outcome,
+        requirements,
+        registry,
     };
     Ok(RunResult {
         exit_code,
         value: NativeResult(serde_json::to_value(document).map_err(RunCause::Output)?),
         outcome: Some(lifecycle),
+        requirements: results,
     })
 }
 
@@ -406,7 +572,7 @@ fn clock_selection_refusal(
         fsl_replay::spine::CompileRefusal::Emit(
             fsl_replay::spine::EmitRefusal::ClockSelection(refusal),
             _,
-        ) => Some(refusal),
+        ) => Some(refusal.as_ref()),
         fsl_replay::spine::CompileRefusal::Dependency { refusal, .. } => {
             clock_selection_refusal(refusal)
         }
@@ -450,7 +616,8 @@ mod tests {
     /// tests cover that distinction.
     fn assert_undefined_renders(reason: &'static str) {
         let source = formal_source();
-        let result = spine_run_result(&source, "seven", CallOutcome::Undefined { reason }).unwrap();
+        let result =
+            spine_run_result(&source, "seven", CallOutcome::Undefined { reason }, None).unwrap();
         assert_eq!(result.exit_code, 10, "{reason}");
         assert_eq!(
             result.value.as_value(),
@@ -509,7 +676,7 @@ mod tests {
     }
 
     fn render(outcome: CallOutcome) -> RunResult {
-        spine_run_result(&formal_source(), "seven", outcome).unwrap()
+        spine_run_result(&formal_source(), "seven", outcome, None).unwrap()
     }
 
     /// FR-100-AC-9 (TC-452 step 4, FND-013): a record refusal renders every

@@ -2,14 +2,17 @@
 //! The protocol analysis engine's FR-331 provider manifest (ADR-036 PA-4).
 //!
 //! The engine advertises `local-projection` and `realizability`, each in
-//! the `unbounded` mode: a `bounded-static` protocol has static roles,
+//! the `unbounded` mode, and `finite-replay` in the `bounded` mode, since a
+//! supplied trace is finite and is replayed step by step. A `bounded-static` protocol has static roles,
 //! literal capacities and no loop, so the engine decides it without
 //! substituting a bound for any domain, and the horizon `max_depth` is a key
 //! member whose cut settles `inconclusive`, never a domain bound. It names
-//! no `domains`, which FR-290 lets an `unbounded`-only registration omit.
+//! the `population` domain, which bounds the subject a supplied trace replays
+//! over.
 //! FR-290's evidence kinds belong to `probabilistic-satisfaction` alone, so
 //! it advertises none, and it adds no `NegotiationCause` (FR-057-AC-15).
 
+use fsl_foundation::bound::DomainKind;
 use fsl_route::{
     descriptor_from_manifest, BackendDescriptor, Candidate, ManifestMembers, Mode, ProviderOrigin,
     RegistrationRefusal,
@@ -19,8 +22,16 @@ use fsl_semantics::check::Capability;
 /// The engine's backend identity, the identity its terminal records name.
 pub const BACKEND_ID: &str = "protocol-analysis";
 
+/// The boundable domains a supplied trace's replay is bounded by: the
+/// populations of the subject's universes.
+pub const DOMAINS: [&str; 1] = [DomainKind::Population.to_wire()];
+
 /// The (kind, mode) pairs the engine advertises.
-pub const ADVERTISED: [(Option<&str>, Option<&str>); 2] = [
+pub const ADVERTISED: [(Option<&str>, Option<&str>); 3] = [
+    (
+        Some(Capability::FiniteReplay.to_wire()),
+        Some(Mode::Bounded.to_wire()),
+    ),
     (
         Some(Capability::LocalProjection.to_wire()),
         Some(Mode::Unbounded.to_wire()),
@@ -44,7 +55,7 @@ pub fn descriptor(origin: ProviderOrigin) -> Result<BackendDescriptor, Registrat
         origin,
         ADVERTISED,
         ManifestMembers {
-            domains: None,
+            domains: Some(&DOMAINS),
             fairness_kinds: None,
             evidence_kinds: None,
             memory_models: None,

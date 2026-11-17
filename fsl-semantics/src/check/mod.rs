@@ -418,6 +418,9 @@ pub use checked_dispatch::{
     checked_dispatch_operation, object_type_supertypes, DispatchBridgeRefusal, DispatchRoot,
     MissingClauseField, OperationClauses,
 };
+/// A clock role's configuration, as a request's `clocks` member writes it and
+/// [`PackageDeclarations::with_clock_configurations`] takes it (FR-640).
+pub use filament_contract_model::ClockConfiguration;
 use filament_semantic_value::checking::{CheckMode, CheckingLimits};
 use filament_semantic_value::location::{
     ExpressionLocation as Location, ExpressionOwner as Origin,
@@ -500,7 +503,7 @@ pub use protocol_slots::{
 };
 pub use refusal::{
     AliasKind, AmbiguousMember, AmbiguousQualified, ArmFault, ChannelEnd, CheckCause, CheckRefusal,
-    CheckingLimitKind, CheckingStage, DispatchFunctionRole, DispatchLinkCause,
+    CheckingLimitKind, CheckingStage, ClockSelectionFault, DispatchFunctionRole, DispatchLinkCause,
     DispatchSubtypeFailure, ExcludedClauseForm, ExecutionPointRefusal, IdentityForm, IdentityNode,
     IdentityObserving, InvalidDispatchDeclaration, JoinFault, KeyFault, MeasureObligation,
     MemberCandidate, NavigationBound, Obligation, ObservationReason, PredicateRole,
@@ -524,7 +527,7 @@ pub use temporal_clause::{
     CheckedProtocolTarget, CheckedTemporalClause, ClockUnitSelection, DurationWindow, FormulaNode,
     FormulaNodeId, ModelTimeBinding, ModelTimeSource, TemporalClaim, TemporalDeclaration,
     TemporalDeclarations, TemporalSelection, TemporalTraceFamily, TimeNominalForm, TimeNominalNode,
-    TimeNominalOrigin, TimeSourceKind, TimedPropertyForm, UnaryTemporal,
+    TimeNominalOrigin, TimeSourceKind, TimedPropertyForm, UnaryTemporal, DEFAULT_CLOCK_ROLE,
 };
 pub use timed_model::{
     CheckedTimedPredicate, ClockConstraint, ClockField, ClockGuard, ClockId, ClockOp,
@@ -1971,11 +1974,15 @@ impl PackageDeclarations {
                             // FR-480 "Selections and imports": the model the
                             // time source's own unit binds its alias to.
                             let alias = source.model.name.as_str();
-                            let timed = self.model_spellings.model(
-                                &self.models,
-                                self.source_owners.get(owner),
-                                alias,
-                            );
+                            let timed = self
+                                .model_spellings
+                                .model(&self.models, self.source_owners.get(owner), alias)
+                                .or_else(|| {
+                                    self.models.iter().find(|model| {
+                                        model.visible_in(self.source_owners.get(owner))
+                                            && model.source_object_time_node(alias).is_some()
+                                    })
+                                });
                             // FR-230: at most one `time` member per state model, so
                             // two aliases of one package are one key; an alias
                             // that did not resolve keys by its spelling.
@@ -1995,7 +2002,10 @@ impl PackageDeclarations {
                             }
                             seen_time_sources.insert(key, source.span);
                             if let Some(model) = timed {
-                                let model_nodes = model.object_type_model_node_keys();
+                                let model_nodes = model.source_object_time_node(alias).map_or_else(
+                                    || model.object_type_model_node_keys(),
+                                    |node| vec![node],
+                                );
                                 let [model_node] = model_nodes.as_slice() else {
                                     let cause = if model_nodes.is_empty() {
                                         TemporalCause::MissingTimedModel {

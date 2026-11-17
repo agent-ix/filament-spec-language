@@ -13,7 +13,7 @@ use super::checked_handoff::{admitted, request, tree, KINDS};
 use super::temporal_package_route::{
     clause_ids, event_clauses, event_clauses_over, recipe, request as evidence_request, run,
 };
-use filament_spec_language::checked_handoff::{evidence, write, Corpus};
+use fsl_command::checked_handoff::{evidence, write, Corpus};
 
 use super::bare_equality::tc1070 as population_fixture;
 
@@ -357,8 +357,8 @@ fn a_public_record_projection_requires_its_original_carried_native_witness() {
         serde_json::to_vec(&population_fixture::document()).unwrap(),
     )
     .unwrap();
-    let asked = filament_spec_language::checked_handoff::CheckedHandoffRequest {
-        emit: filament_spec_language::emit_checked_v2::Request {
+    let asked = fsl_command::checked_handoff::CheckedHandoffRequest {
+        emit: fsl_command::emit_checked_v2::Request {
             source,
             package_name: "record-handoff".into(),
             models: vec![model],
@@ -1802,7 +1802,7 @@ fn the_view_the_constructors_and_the_writer_refuse_a_budget_one_short() {
 #[test]
 fn the_writer_refuses_native_join_limits_that_cannot_pay_for_the_identity_join() {
     use filament_contract_model::ExactTypeProjectionErrorCode as Code;
-    use filament_spec_language::checked_handoff::{Error, ErrorCode};
+    use fsl_command::checked_handoff::{Error, ErrorCode};
     let scratch = tempfile::tempdir().expect("tempdir");
     let built = recipe("event_position");
     let read = built.read(&built.emission);
@@ -1812,7 +1812,7 @@ fn the_writer_refuses_native_join_limits_that_cannot_pay_for_the_identity_join()
     let mut same_request = request("event_position", Corpus::None);
     same_request.emit.package_name = package_name.clone();
     assert_eq!(
-        filament_spec_language::emit_checked_v2::emit(&same_request.emit)
+        fsl_command::emit_checked_v2::emit(&same_request.emit)
             .expect("actual public writer emission"),
         built.emission.package().bytes(),
         "the budget oracle and writer must use exactly the same producer package",

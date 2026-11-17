@@ -76,12 +76,22 @@ struct PackageRows {
     package_name: String,
     /// The unit's file under `sources/`.
     unit: String,
+    /// The unit's caller-selected identity, retained for byte-identical
+    /// command-handoff recompilation.
+    source_identity: SourceIdentityRow,
     /// The accepted state-clause execution points, by authored clause name.
     execution_points: BTreeMap<String, ExecutionPoint>,
     read_limits: LimitRows,
     evidence: EvidenceRows,
     /// Nodes by form, for the forms the checked unit names.
     node_counts: BTreeMap<String, u64>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct SourceIdentityRow {
+    authority: String,
+    identity: String,
 }
 
 /// A protocol requirement entry that names a clause.
@@ -316,6 +326,7 @@ impl Selection {
         compiled: &Compiled,
         request: &Request,
         bytes: &[u8],
+        command_source_file: Option<&str>,
     ) -> Result<Self, Error> {
         let graph = compiled.checked.package().graph();
         let wire = fsl_semantics::check::wire_id::WireGraph::of_package_bytes(bytes)
@@ -462,7 +473,14 @@ impl Selection {
             package: PackageRows {
                 contract_version: text(filament_contract_model::CHECKED_PACKAGE_V2),
                 package_name: text(&request.package_name),
-                unit: format!("sources/{}", compiled.checked.source().identity().identity),
+                unit: command_source_file.map_or_else(
+                    || format!("sources/{}", compiled.checked.source().identity().identity),
+                    |file| format!("sources/source:{file}"),
+                ),
+                source_identity: SourceIdentityRow {
+                    authority: compiled.checked.source().identity().authority.clone(),
+                    identity: compiled.checked.source().identity().identity.clone(),
+                },
                 execution_points: compiled.points.clone(),
                 read_limits: super::READ_LIMITS.into(),
                 evidence: EvidenceRows { models, libraries },
@@ -525,6 +543,10 @@ impl Selection {
             .collect();
         Ok(Inputs {
             source_path: labelled(&rows.unit, "source:")?,
+            source_identity: Some(fsl_foundation::SourceIdentity::new(
+                rows.source_identity.authority.clone(),
+                rows.source_identity.identity.clone(),
+            )),
             source: read(&rows.unit)?,
             models,
             libraries,

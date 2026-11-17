@@ -515,7 +515,7 @@ fn activation_rows_ignore_unrequired_temporals_and_source_trivia() {
             unit.replace(';', ";\n\n")
         ),
         format!(
-            "temporal RefundBounded using t over (c: M::Order) clock \"refund-clock\" \
+            "temporal RefundBounded using t over (c: M::Order) clock \"model-steps\" \
                  on origin {{ eventually false }}\n{unit}"
         ),
         format!(

@@ -35,6 +35,7 @@ use fsl_eval::simulation::model::{
 };
 use fsl_eval::simulation::Limits;
 use fsl_eval::temporal::AtomReading;
+use fsl_foundation::diagnostic::StageFailure;
 use fsl_foundation::IdentityLimits;
 use fsl_foundation::SourceIdentity;
 use fsl_package::CheckedPackage;
@@ -44,7 +45,7 @@ use fsl_replay::{
 };
 use fsl_route::reductions::Reductions;
 use fsl_semantics::check::{
-    check_hyper_clauses, CheckedHyper, CheckedHyperClause, FormulaNode, FormulaNodeId,
+    check_hyper_clauses, CheckCause, CheckedHyper, CheckedHyperClause, FormulaNode, FormulaNodeId,
     PackageDeclarations,
 };
 use fsl_semantics::model::accounting::ModelNormalizationLimits;
@@ -441,6 +442,42 @@ pub(crate) struct World {
     /// The keys of the universe of the second model's `vaults`, when it has
     /// one.
     pub(crate) other_universe: Option<Vec<String>>,
+}
+
+/// A hyper declaration whose divisor cannot be proved nonzero is refused by
+/// S3 at the divisor expression (FR-495).
+pub(crate) fn assert_hyper_division_refused(declaration: &str, divisor: &str) {
+    assert_hyper_division_refused_in(Vault::Secure, false, declaration, divisor);
+}
+
+pub(crate) fn assert_hyper_division_refused_in(
+    vault: Vault,
+    reset: bool,
+    declaration: &str,
+    divisor: &str,
+) {
+    let document = document(vault.busy(), reset);
+    let documents = [document.as_slice()];
+    let text = unit_text(None, vault, reset, &format!("{declaration}\n"));
+    let package = declarations(&documents, &text);
+    let mut checked = check_hyper_clauses(&package);
+    let refusal = match checked.pop() {
+        Some(Err(StageFailure::Refused(refusal))) if checked.is_empty() => refusal,
+        Some(Err(StageFailure::RefusedWithPayload(refusal, _))) if checked.is_empty() => *refusal,
+        other => panic!("{declaration}: expected one S3 refusal, got {other:?}"),
+    };
+
+    assert_eq!(refusal.cause.code().as_str(), "undefined_expression");
+    assert_eq!(refusal.cause.cause(), Some("unproved-nonzero"));
+    let span = match &refusal.cause {
+        CheckCause::Hyper(cause) => cause.span().expect("the refusal has an expression span"),
+        other => panic!("expected a hyper refusal, got {other:?}"),
+    };
+    assert_eq!(
+        &text[span.start as usize..span.end as usize],
+        divisor,
+        "the refusal is located at the divisor"
+    );
 }
 
 impl World {

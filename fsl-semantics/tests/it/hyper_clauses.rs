@@ -1973,3 +1973,62 @@ fn a_relation_body_reading_a_member_of_no_checked_type_refuses_operator_ineligib
         (Code::IllTyped, "operator-ineligible")
     );
 }
+
+/// The finite trace-set clause of FR-898: `Obs` is the record of one trace
+/// state, and the traces come with the request.
+const FINITE_DET: &str = "record Obs { inp: Int[0, 3]; out: Int[0, 3]; }\n\
+    hyper Det using inf over t in Obs bounded 3 forall trace a forall trace b \
+    { (a.inp = b.inp) -> (a.out = b.out) }";
+
+/// FR-898-AC-1 (TC-2534): a `hyper` clause over a declared finite trace
+/// domain checks under a finite-trace profile; S3 never answers it with the
+/// blanket `FiniteDomain` refusal.
+#[trace("TC-2534", "FR-898-AC-1")]
+#[test]
+#[ignore = "QSL-2239: a hyper clause over a finite trace domain refuses FiniteDomain instead of checking"]
+fn a_finite_trace_set_hyperproperty_checks() {
+    let (_, outcome) = check_under(&[], EVENT, FINITE_DET);
+    assert!(outcome.is_ok(), "the finite clause checks: {outcome:?}");
+}
+
+/// FR-898-AC-2 (TC-2534): each defect of a finite clause refuses with its
+/// own named cause at its own span, never `FiniteDomain`.
+#[trace("TC-2534", "FR-898-AC-2")]
+#[test]
+#[ignore = "QSL-2239: finite trace-set clause defects refuse FiniteDomain instead of their named causes"]
+fn a_finite_trace_set_defect_refuses_with_its_named_cause() {
+    let cases = [
+        (
+            FINITE_DET.replace("bounded 3", "bounded 0"),
+            Code::InvalidPackage,
+            "0",
+        ),
+        (
+            FINITE_DET.replace("in Obs", "in Nowhere"),
+            Code::MissingDeclaration,
+            "Nowhere",
+        ),
+        (
+            FINITE_DET.replace("b.out)", "c.out)"),
+            Code::MissingDeclaration,
+            "c.out",
+        ),
+    ];
+    for (declaration, code, at) in cases {
+        let (text, outcome) = check_under(&[], EVENT, &declaration);
+        let Err(StageFailure::Refused(refusal)) = outcome else {
+            panic!("{declaration}: a refusal, not {outcome:?}");
+        };
+        assert!(
+            !matches!(&refusal.cause, CheckCause::Hyper(cause) if matches!(**cause, HyperCause::FiniteDomain { .. })),
+            "{declaration}: {refusal:?}"
+        );
+        assert_eq!(refusal.cause.code(), code, "{declaration}");
+        assert!(text.contains(at));
+    }
+    let (_, outcome) = check_under(&[], INFINITE, FINITE_DET);
+    let Err(StageFailure::Refused(refusal)) = outcome else {
+        panic!("an infinite-trace profile refuses: {outcome:?}");
+    };
+    assert_eq!(refusal.cause.code(), Code::IllTyped);
+}

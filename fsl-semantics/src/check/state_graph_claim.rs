@@ -672,6 +672,15 @@ fn check_claim<'a>(
     cx: &mut CheckContext<'a, ClauseDeclarations<'a>>,
 ) -> Result<CheckedStateGraphClaim, StageFailure<CheckRefusal>> {
     let form = &declaration.form;
+    // FR-165-AC-7: the alias precedes every predicate and constraint, so a
+    // temporal profile is the claim's first refusal.
+    if super::profile::TemporalProfile::from_identity(&declaration.selection.identity).is_some() {
+        return Err(refuse(StateGraphCause::TemporalProfile {
+            alias: form.profile.alias.clone(),
+            identity: declaration.selection.identity.clone(),
+            span: form.profile.span,
+        }));
+    }
     if let Some(cause) = syntactic_refusal(form) {
         let cause = unresolved_name(declaration, declarations, cx).unwrap_or(cause);
         return Err(refuse(cause));

@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //! TC-419: a selected model's otherwise unused type positions root nominal units.
 
-use filament_spec_language::checked_handoff::{write, CheckedHandoffRequest, Corpus};
-use filament_spec_language::emit_checked_v2::Request;
+use fsl_command::checked_handoff::{write, CheckedHandoffRequest, Corpus};
+use fsl_command::emit_checked_v2::Request;
 use ix_trace_rs::trace;
 use serde_json::{json, Value};
 

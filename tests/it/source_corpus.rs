@@ -209,7 +209,7 @@ fn execute_request(
             let ran = if format == "native-analyze/1" {
                 fsl_command::command::analyze(request, &OneCandidate, &Cancel::new())
             } else {
-                fsl_command::command::run(request)
+                fsl_command::command::run(request, &crate::negotiation::Fr290)
             };
             match ran {
                 Ok(result) => {

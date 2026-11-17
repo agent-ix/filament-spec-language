@@ -68,7 +68,7 @@ pub(crate) fn run_file(path: &Path) -> Output {
 
 /// `command::run_with_limits` over the request file at `path`.
 pub(crate) fn run_file_with_limits(path: &Path, limits: RunLimits) -> Output {
-    match command::run_with_limits(path, limits) {
+    match command::run_with_limits(path, limits, &crate::negotiation::Fr290) {
         Ok(result) => Output {
             status: Status(result.exit_code),
             stdout: format!("{}\n", result.value).into_bytes(),

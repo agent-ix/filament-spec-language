@@ -52,7 +52,7 @@ fn refused(unit: &str, function: &str, arguments: Value) -> (Value, Value) {
     }});
     let path = directory.path().join("request.json");
     std::fs::write(&path, serde_json::to_vec(&request).unwrap()).unwrap();
-    let error = command::run_with_limits(&path, RunLimits::default())
+    let error = command::run_with_limits(&path, RunLimits::default(), &crate::negotiation::Fr290)
         .err()
         .unwrap_or_else(|| panic!("{function} refuses"));
     let document = error

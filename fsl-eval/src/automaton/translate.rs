@@ -1281,9 +1281,9 @@ impl Translator {
         Ok(cores)
     }
 
-    /// The state before position 0: `root` must hold there, and every past
-    /// operator remembers the stationary history before it, in which every
-    /// atom reads false (FSpec FR-092).
+    /// The state before position 0: `root` must hold there. Closed past
+    /// intervals remember the stationary false extension (FSpec FR-092),
+    /// while an unbounded past operator starts with the empty trace history.
     fn initial(&self, root: NodeId) -> Result<Config, AutomatonError> {
         let mut values = vec![false; self.ir.len()];
         let mut memory = BTreeMap::new();
@@ -1307,11 +1307,17 @@ impl Translator {
                 } => {
                     let witness = value_of(right);
                     let guard = left.is_some_and(value_of);
-                    memory.insert(
-                        *id,
-                        Past::new(kind, window, self.subject).stationary(guard, witness),
-                    );
-                    witness
+                    let past = Past::new(kind, window, self.subject);
+                    match window {
+                        Window::From { .. } => {
+                            memory.insert(*id, past.empty());
+                            false
+                        }
+                        Window::Closed { .. } => {
+                            memory.insert(*id, past.stationary(guard, witness));
+                            witness
+                        }
+                    }
                 }
                 Node::Future { .. } => return Err(invariant("state-formula-has-no-future")),
             };

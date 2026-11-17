@@ -104,7 +104,9 @@ API and dependency changes, not claims about existing code.
   starts from its provider configuration joins only an analyze run's
   registry, through FR-635, and never this snapshot.
 - `fsl_route::Registry` SHALL admit each descriptor and compute candidates
-  under FR-075; this requirement adds no candidate-matching rule.
+  under FR-075; this requirement adds no candidate-matching rule. FR-962
+  applies this requirement's `operation-contract` tie table when it computes
+  an unnamed item's candidates.
 - A test-only factory constructor SHALL accept an injectable registration
   source and registry-registration operation so tests can cause, separately,
   a descriptor-source error and a refused registration without changing the

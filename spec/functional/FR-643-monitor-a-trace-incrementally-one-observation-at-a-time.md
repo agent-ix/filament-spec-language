@@ -184,6 +184,22 @@ spine APIs rather than a first sketch, and are accepted as its contract:
     that decided it is its `Settlement` ("Settlement"), never part of its
     report. A clause settled on a limit reports the limit report
     ("Settlement").
+  - "Exactly" here and "member for member" in FR-820 cover every verdict
+    member of the report: category, truth, disposition, counterexample or
+    witness, settlement and positions. They do not cover `usage`, which
+    reports the session's own incremental work, not a batch run's.
+- **Usage.** Each clause report's `usage` SHALL be a closed object with
+  exactly two members, `cumulative` and `step`, each one FR-109
+  `ClauseRunUsage` (the admission work and the evaluation meter's charges,
+  separately), the usage FR-283's batch report carries:
+  `cumulative` the work the session charged that clause since it opened,
+  `step` the work charged in the latest counted call. A settled clause
+  charges nothing more, so its `step` is zero after the call that settled
+  it. Meter limits SHALL be charged per advance: each counted call checks
+  its own `step` against the limit, which bounds each step's work, and
+  `retained_positions` stays the memory bound. A clause that exhausts a
+  per-step limit settles `incomplete` with `trigger` `limit`, exempt as
+  "Settlement" states.
   A settled verdict is sound (see "Settling"), so its category and truth are
   the same over every longer prefix; its other members are not. The batch
   counterexample of a bad prefix lists every position of the prefix it was
@@ -364,6 +380,7 @@ spine APIs rather than a first sketch, and are accepted as its contract:
 | FR-643-AC-9 | A `Finite` session over 1,000 samples whose `level` cycles 0 to 8, with `retained_positions` 4, keeps the infinite-trace `Below` (`always holds(r.level < 9)`) and `Nine` (`eventually holds(r.level = 9)`) `Pending` to the end with no `incomplete`; `Recent` (at most one 2 in any four consecutive samples, which holds here) settles `success` at step 10, its state holding `min(k, 4)` values after step `k` until then; over levels 2, 0, 2 `Recent` settles `violation` at step 3. The checkpoint after the last sample holds no admitted value. | Test (TC-2322) |
 | FR-643-AC-10 | In a `Timed` session of FR-642's `Ack` (`always (holds(r.req) implies eventually[0 ms, 200 ms] holds(r.ack))`): with `req` at 0 and `ack` at 250, `Ack` settles `violation` at position 0 at the `ack` step, the stamp 250 having passed the window `[0, 200]`; with `req` at 0 and no further observation it stays `Pending` until `assert_through(250)`, which settles `violation` at position 0 with `Settlement` `{step: "2", trigger: "decided", basis: "closed-scope", horizon: "250", position: "0", through: "250"}`; with `req` at 0, `ack` at 150 and `assert_through(300)` it stays `Pending`, and `finish` returns `pending` for it, the unbounded `always` reading positions the recording does not hold (FR-642-AC-2). The bounded `Bound` (`always[0 ms, 300 ms] (holds(r.req) implies eventually[0 ms, 200 ms] holds(r.ack))`) over `req` at 0, `ack` at 150 and `assert_through(500)` stays `Pending` until `finish`, which returns `success`. `assert_through(100)` after a stamp 150 refuses `timed-through-before-last-stamp`; `assert_through(250)` after `assert_through(300)` refuses `timed-stamps-decrease`; after `assert_through(300)`, an observation stamped 260, and one stamped 300, each refuse `timed-stamps-decrease`; each refusal leaves the session unchanged, and `assert_through` on a `Finite` session refuses `invalid-request` naming `through`. | Test (TC-2324) |
 | FR-643-AC-11 | A `Finite` session with `retained_identities` 3 over levels 0, 0, 2, 0: `Never` settles `violation` at step 3 citing three positions, and at step 4 `Below` settles `incomplete` naming `monitor.retained_identities`, its state dropped, while `Never` keeps its settled report; a further observation leaves `Below`'s report unchanged. | Test (TC-2324) |
+| FR-643-AC-12 | In a `Finite` session over `always holds(c.value <= 1)` and `c.value` 0, 1, 1, each report's `usage` has exactly the members `cumulative` and `step`, each one FR-109 `ClauseRunUsage` (admission work and evaluation meter charges); after each counted call `step` is that call's charge and `cumulative` is the sum of the `step` values so far; every other member equals `B(k)`. With a per-step work limit one unit below the second call's `step`, the clause settles `incomplete` with `trigger` `limit` at the second call while a first call within the limit is unaffected. | Test (TC-2628) |
 
 ## Dependencies
 

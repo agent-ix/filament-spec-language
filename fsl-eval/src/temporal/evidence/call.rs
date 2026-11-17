@@ -877,6 +877,9 @@ fn identity_of(
         ClockCover::Counter { uncertainty } => {
             MemberEncoder::new().u64(1).u64(uncertainty).finish()
         }
+        ClockCover::Bounded { uncertainty } => {
+            MemberEncoder::new().u64(2).u64(uncertainty).finish()
+        }
     };
     let relation = match &request.relation {
         Relation::Original => MemberEncoder::new().u64(0),
@@ -1409,7 +1412,8 @@ fn admit_trace(
             timestamp_unit.to_string()
         }
         fsl_package::ClockConfiguration::EventPosition { .. }
-        | fsl_package::ClockConfiguration::FixedSample { .. } => String::new(),
+        | fsl_package::ClockConfiguration::FixedSample { .. }
+        | fsl_package::ClockConfiguration::Timed { .. } => String::new(),
     };
     TimestampedTrace::admit(
         clause_facts.name(),
@@ -1632,7 +1636,9 @@ fn run_instance(
     }
     let uncertainty = match request.cover {
         ClockCover::Exact => None,
-        ClockCover::Counter { uncertainty } => Some(uncertainty),
+        ClockCover::Counter { uncertainty } | ClockCover::Bounded { uncertainty } => {
+            Some(uncertainty)
+        }
     };
     match call.admit_work(subject.facts.formula().work(), uncertainty, [*anchor_tick]) {
         Ok(_) => {}

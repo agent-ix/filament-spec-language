@@ -757,3 +757,79 @@ fn claim_construction_resolves_the_complete_checked_occurrence() {
         .any(|(node, _, _)| node == *absent.node()));
     assert!(matches!(build(absent), Err(ClaimRefusal::UnknownClaim)));
 }
+
+/// FR-621 "The record's `backend` member": a provider item declined at
+/// admission, before any engine ran, is settled by disposition. Its record
+/// names no backend, and the backend the item was negotiated to does not
+/// stand in for one.
+#[trace("TC-2296", "FR-621-AC-10")]
+#[test]
+fn a_provider_admission_failure_is_settled_by_disposition() {
+    let world = counter();
+    let items = vec![temporal(&world)];
+    let served = provider::run(
+        &world.package,
+        &world.binding(&["c"]),
+        &SourceProvision::default(),
+        &items,
+        &Engines::fsl().expect("the manifests register"),
+        &AnalyzeLimits::unbounded(),
+        &Cancel::new(),
+    );
+    let [record] = served.records.as_slice() else {
+        panic!("one record: {:?}", served.records)
+    };
+    assert!(matches!(record.value(), TerminalValue::Declined { .. }));
+    assert!(record.settled_by_disposition(), "{record:?}");
+    let negotiated = BackendId::new("en-1");
+    assert_eq!(record.producer(Some(&negotiated)), None, "{record:?}");
+}
+
+/// FR-621 "The record's `backend` member": a call item whose claim names no
+/// requirement record of the package faults before any engine runs, so its
+/// item is `settled_by` `disposition` with no `backend`.
+#[trace("TC-2296", "FR-621-AC-10")]
+#[test]
+fn a_call_item_fault_is_settled_by_disposition() {
+    use fsl_analyze::analyze::document::{
+        resolve_call_items, settle_run, AnalyzeRun, CallItem, ResolvedItem,
+    };
+    let world = counter();
+    let engines = Engines::fsl().expect("the manifests register");
+    let mut registry = fsl_route::Registry::new();
+    for descriptor in engines.registrations() {
+        registry
+            .register(descriptor.clone())
+            .expect("a registered backend");
+    }
+    let node = &world.package.graph().temporal_clauses()[0];
+    let call_item = CallItem {
+        claim: OccurrenceKey::generated(node.identity()),
+        request_index: RequestIndex::new(0),
+        backend: None,
+        options: std::collections::BTreeMap::new(),
+    };
+    let resolved = resolve_call_items(&world.package, "sq", &[call_item], &registry);
+    assert!(
+        matches!(&resolved[..], [ResolvedItem::Settled { record, .. }]
+            if record.value() == &TerminalValue::Failed),
+        "the call item faults"
+    );
+    let settled = settle_run(
+        AnalyzeRun {
+            package: &world.package,
+            binding: world.binding(&["c"]),
+            provision: SourceProvision::single(world.package.graph().source(), &world.unit),
+            items: resolved,
+            engines: &engines,
+            limits: AnalyzeLimits::unbounded(),
+        },
+        &crate::analyze_cli_support::Fr290,
+        &Cancel::new(),
+    )
+    .expect("a settled run");
+    let record = &settled.items[0]["record"];
+    assert_eq!(record["result"], "failed", "{record}");
+    assert_eq!(record["settled_by"], "disposition", "{record}");
+    assert!(record.get("backend").is_none(), "{record}");
+}

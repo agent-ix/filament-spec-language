@@ -4,7 +4,7 @@
 use filament_contract_model::{
     CheckedNodeKind, CheckedOccurrenceRole, ClockConfiguration, TemporalForm,
 };
-use filament_spec_language::emit_checked_v2::{emit, ClockSelection, Request};
+use fsl_command::emit_checked_v2::{emit, ClockSelection, Request};
 use fsl_package::checked_views::{mapping_support, temporal_subject, Closure, Support, Unmatched};
 use ix_trace_rs::trace;
 
@@ -27,10 +27,10 @@ profile t = "filament.temporal.event-position.false-extension/v1";
 model Alpha = "example/config-version";
 model Zeta = "example/auxiliary";
 invariant Auxiliary using v on Zeta::ConfigVersion at current { self.versionNumber >= 0 }
-temporal First using t over (c: Alpha::ConfigVersion) clock "events" on origin {
+temporal First using t over (c: Alpha::ConfigVersion) clock "model-steps" on origin {
     eventually[0,2] holds(c.versionNumber = 2)
 }
-temporal Second using t over (c: Alpha::ConfigVersion) clock "events" on origin {
+temporal Second using t over (c: Alpha::ConfigVersion) clock "model-steps" on origin {
     eventually[0,2] holds(c.versionNumber = 2)
 }
 "#,

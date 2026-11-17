@@ -53,7 +53,8 @@ the same document (FSpec FR-300-AC-3). The document's members are:
 - `category`: the ADR-013 O-16 category of the whole outcome, as the one
   `Category` type (FR-285); each item's category is the same type.
 - `items`: for `prove`, `analyze` and `monitor`, one entry per requested item
-  with its category. The member is always present;
+  with its category, and for an `execute` outcome of a call carrying
+  `requirements`, one entry per settled requirement item of the call (FR-963). The member is always present;
   it is an empty array for every other operation and for an outcome with no
   items. Each item that has a terminal record, every proof result, carries its
   FSpec FR-331 terminal record with its label
@@ -94,8 +95,12 @@ the same document (FSpec FR-300-AC-3). The document's members are:
   a `format` outcome whose formatting completes, which carries
   `{"kind": "formatted", "text": T}` with `T` the exact formatted source as a
   JSON string (FR-003), so the JSON form of a format run holds the same text
-  its plain-text form writes, and
-  for an `execute` outcome that is refused (its refusal record is a
+  its plain-text form writes. The library's format outcome owns this member:
+  `OutcomeDocument::from_format` builds it from the completed format before
+  serialization, and the CLI writes the document unchanged, adding no member
+  (driver FR-002-AC-3). Formatting is idempotent, so formatting `T` gives
+  `T` again. A refused format outcome carries `null`, and so does an
+  `execute` outcome that is refused (its refusal record is a
   diagnostic), cancelled or a fault. Otherwise it is exactly one of:
   - `{"kind": "completed", "value": V}`, where `V` is the completed value
     in FR-650's run value form, the form FR-100's `spine-run-result/1`

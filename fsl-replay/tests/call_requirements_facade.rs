@@ -69,18 +69,18 @@ fn with_requirements(
     call: &Call,
     cancel: &Cancel,
 ) -> Result<RunWithRequirements, Box<RunRefusal>> {
-    run_with_requirements(
-        identity(),
-        "fixture".to_owned(),
-        "unit.native",
-        source.as_bytes(),
-        &BTreeMap::new(),
-        &DependencyInput::default(),
-        SpineLimits::default(),
+    run_with_requirements(&fsl_replay::RequirementsRun {
+        source: identity(),
+        package_name: "fixture".to_owned(),
+        path: "unit.native",
+        bytes: source.as_bytes(),
+        packages: &BTreeMap::new(),
+        dependencies: &DependencyInput::default(),
+        limits: SpineLimits::default(),
         call,
-        &ObjectEnvironment::default(),
+        objects: &ObjectEnvironment::default(),
         cancel,
-    )
+    })
 }
 
 fn members(source: &str, call: &Call) -> Vec<(OccurrenceKey, usize)> {

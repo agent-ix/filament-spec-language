@@ -1476,9 +1476,31 @@ fn nested_timer_document() -> Vec<u8> {
 #[test]
 #[ignore = "QSL-2144: an element reset no single binder selects is refused TimedModelNotEmitted, not written"]
 fn a_reset_below_two_collections_holds_a_slot_per_level() {
+    const RESET: &str =
+        "post R using v on Config::ConfigVersion::attemptUpdate { self.ts[0].ys[1] = 0 ms }\n";
+    let pre = |condition: &str| {
+        format!("pre S using v on Config::ConfigVersion::attemptUpdate {{ {condition} }}\n{RESET}")
+    };
+    // Each slot keeps its own presence obligation (FR-230 "Selection").
+    for (body, at) in [(RESET.to_owned(), "0"), (pre("size(self.ts) >= 1"), "1")] {
+        let (unit, checked) = checked(&nested_timer_document(), &body);
+        let refusals = checked.expect_err("an unproved slot is refused");
+        let [refusal] = refusals.as_slice() else {
+            panic!("one refusal: {refusals:?}");
+        };
+        assert!(
+            format!("{refusal:?}").contains("nproved"),
+            "unproved-presence: {refusal:?}"
+        );
+        let fsl_semantics::check::CheckCause::Temporal(cause) = &refusal.cause else {
+            panic!("a timed refusal: {refusal:?}");
+        };
+        let span = cause.span();
+        assert_eq!(&unit[span.start..span.end], at, "refused at the slot {at}");
+    }
     let (_, wire) = emitted(
         &nested_timer_document(),
-        "post R using v on Config::ConfigVersion::attemptUpdate { self.ts[0].ys[1] = 0 ms }\n",
+        &pre("size(self.ts) >= 1 and size(self.ts[0].ys) >= 2"),
     );
     let [reset] = timed(&wire, "clock_reset")[..] else {
         panic!("one reset");
@@ -1564,4 +1586,240 @@ fn a_point_bound_clock_clause_names_its_point_anchor() {
         !operation["body"].to_string().contains("execution_point"),
         "{operation}"
     );
+}
+
+/// Reads `bytes`, an emitted package over `document`, through I2.
+fn read_presence_package(document: &[u8], bytes: &[u8], wire: &Value) -> Result<(), String> {
+    let mut evidence = CheckedPackageEvidence::new();
+    for feature in wire["lock"]["required_features"]
+        .as_array()
+        .expect("features")
+    {
+        evidence.support_feature(feature.as_str().expect("a feature"));
+    }
+    evidence
+        .insert_domain_package_document(package_identity(document), document.to_vec())
+        .expect("a fresh evidence key");
+    crate::checked_v2::read_checked_package_v2(bytes, library(), V2ReadLimits::fixture(), &evidence)
+        .map(|_| ())
+        .map_err(|failure| format!("{failure:?}"))
+}
+
+/// The members of a clause body or guard part named `name`.
+fn members_named<'v>(aggregate: &'v Value, name: &str) -> Vec<&'v Value> {
+    aggregate["members"]
+        .as_array()
+        .expect("an aggregate")
+        .iter()
+        .filter(|member| member["name"] == name)
+        .collect()
+}
+
+/// The node a predicate reference names, followed through an
+/// `expression`/`reference` wrapper to its application.
+fn predicate_operation(wire: &Value, reference: &Value) -> String {
+    let node = target(wire, &reference["value"]);
+    node["body"]["operation"]["identity"]
+        .as_str()
+        .map(str::to_owned)
+        .unwrap_or_else(|| node["body"].to_string())
+}
+
+/// FR-930-AC-1 to AC-4, FSpec FR-760-AC-1 to AC-3: a quantifier that reads
+/// only element presences is written in the clause predicate with its own
+/// binder, beside an unquantified constraint, and its binder is never a part
+/// or invariant binder.
+#[trace("TC-2600", "FR-930-AC-1", "FR-930-AC-2", "FR-930-AC-3", "FR-930-AC-4")]
+#[trace(
+    "FSpec-TC-1830",
+    "FSpec-FR-760-AC-1",
+    "FSpec-FR-760-AC-2",
+    "FSpec-FR-760-AC-3"
+)]
+#[test]
+#[ignore = "QSL-2144: an element-presence quantifier is not yet written in its clause predicate with its own binder"]
+fn an_element_presence_quantifier_is_scoped_in_its_predicate() {
+    let document = slot_presence_document();
+    let emit = |body: &str| {
+        let (unit, checked) = checked(&document, &format!("{body}\n"));
+        let graph = checked.unwrap_or_else(|refusals| panic!("{body}: checks: {refusals:?}"));
+        let emission = emit_checked(&CheckedPackage::link(graph)).expect("the package emits");
+        let wire = wire(&emission);
+        (unit, emission, wire)
+    };
+    let guard = |quantifier: &str| {
+        format!(
+            "pre HasElement using v on Config::ConfigVersion::attemptUpdate {{ \
+             self.x >= 1 ms and {quantifier}(e in self.q: present(e)) }}"
+        )
+    };
+    for (quantifier, operation) in [
+        ("forall", "filament.op.collection.forall"),
+        ("exists", "filament.op.collection.exists"),
+    ] {
+        let (_, emission, wire) = emit(&guard(quantifier));
+        let [clock_guard] = timed(&wire, "clock_guard")[..] else {
+            panic!("one guard");
+        };
+        let parts = member(&clock_guard["body"], "parts")["members"]
+            .as_array()
+            .expect("parts");
+        assert_eq!(
+            parts.len(),
+            1,
+            "{quantifier}: one part, never one per size or slot"
+        );
+        let part = &parts[0];
+        assert!(
+            members_named(part, "binders").is_empty(),
+            "{quantifier}: no binders"
+        );
+        let [predicate] = members_named(part, "predicate")[..] else {
+            panic!("one predicate");
+        };
+        assert_eq!(predicate_operation(&wire, predicate), operation);
+        assert!(
+            !presence_read_bodies(&wire).is_empty(),
+            "a presence_read at the binder"
+        );
+        read_presence_package(&document, emission.package.bytes(), &wire)
+            .unwrap_or_else(|failure| panic!("{quantifier}: I2 admits: {failure}"));
+    }
+
+    let quantifier = "forall(e in self.q: present(e))";
+    let (_, emission, wire) = emit(&format!(
+        "time invariant HasElement when {{ {quantifier} }} {{ self.x <= 9 ms }}"
+    ));
+    let [invariant] = timed(&wire, "time_invariant")[..] else {
+        panic!("one invariant");
+    };
+    assert!(members_named(&invariant["body"], "binders").is_empty());
+    let [predicate] = members_named(&invariant["body"], "predicate")[..] else {
+        panic!("one predicate");
+    };
+    assert_eq!(
+        predicate_operation(&wire, predicate),
+        "filament.op.collection.forall"
+    );
+    read_presence_package(&document, emission.package.bytes(), &wire)
+        .unwrap_or_else(|failure| panic!("the invariant reads back: {failure}"));
+
+    let (_, emission, wire) = emit(&format!("urgent HasElement when {{ {quantifier} }};"));
+    let [urgency] = timed(&wire, "urgency")[..] else {
+        panic!("one urgency");
+    };
+    assert!(members_named(&urgency["body"], "binders").is_empty());
+    read_presence_package(&document, emission.package.bytes(), &wire)
+        .unwrap_or_else(|failure| panic!("the urgency reads back: {failure}"));
+
+    // FR-930-AC-3: a body that constrains its binder's clock is a quantified
+    // part whose binders hold the binder (FR-230-AC-55).
+    let (_, _, wire) = emit(
+        "pre Shared using v on Config::ConfigVersion::attemptUpdate { \
+         forall(e in self.q: present(e) implies e >= 1 ms) }",
+    );
+    let [shared] = timed(&wire, "clock_guard")[..] else {
+        panic!("one guard");
+    };
+    assert!(
+        member(&shared["body"], "parts")["members"]
+            .as_array()
+            .expect("parts")
+            .iter()
+            .any(|part| !members_named(part, "binders").is_empty()),
+        "a constrained binder is a part binder"
+    );
+
+    // FR-930-AC-4, FSpec FR-760-AC-2: lifting the presence binder into the
+    // part's binders is refused at the binder target.
+    let (_, _, mut wire) = emit(&guard("forall"));
+    let parameter = nodes(&wire)
+        .iter()
+        .find(|node| node["semantic_form"] == "parameter" && node.to_string().contains("\"e\""))
+        .map(|node| node["node_id"].clone())
+        .expect("the quantifier's parameter");
+    let guard_id = timed(&wire, "clock_guard")[0]["node_id"].clone();
+    let node = wire["semantic_graph"]["nodes"]
+        .as_array_mut()
+        .expect("nodes")
+        .iter_mut()
+        .find(|node| node["node_id"] == guard_id)
+        .expect("the guard");
+    let part = &mut node["body"]["members"]
+        .as_array_mut()
+        .expect("members")
+        .iter_mut()
+        .find(|member| member["name"] == "parts")
+        .expect("parts")["value"]["members"][0];
+    part["members"]
+        .as_array_mut()
+        .expect("part members")
+        .insert(
+            1,
+            json!({"name": "binders", "value": {"term": "aggregate",
+            "members": [{"term": "reference", "target": parameter}]}}),
+        );
+    let bytes = crate::emit::tests::wire_bytes(&wire).expect("JSON");
+    let failure = read_presence_package(&document, &bytes, &wire)
+        .expect_err("a binder no constraint reads is refused");
+    assert!(failure.contains("timed-node-reference"), "{failure}");
+}
+
+/// FR-953-AC-1, FSpec FR-772-AC-1: a presence-only quantifier ranges over
+/// its collection's slot domain, the `filament.op.option.slots` node, whose
+/// derived path names the clock place by an operand segment and never by an
+/// embedded `node_id`; the guard, invariant and urgency share that node.
+#[trace("TC-2663", "FR-953-AC-1")]
+#[trace("FSpec-TC-1862", "FSpec-FR-772-AC-1")]
+#[test]
+#[ignore = "QSL-2144: the presence quantifier's first operand is not written as the slot-domain node yet"]
+fn a_presence_quantifier_is_emitted_over_its_slot_domain() {
+    let document = slot_presence_document();
+    let body = "pre HasElement using v on Config::ConfigVersion::attemptUpdate { \
+                self.x >= 1 ms and forall(e in self.q: present(e)) }\n\
+                time invariant Held when { forall(e in self.q: present(e)) } { self.x <= 9 ms }\n\
+                urgent Soon when { exists(e in self.q: present(e)) };\n";
+    let (_, checked) = checked(&document, body);
+    let graph = checked.unwrap_or_else(|refusals| panic!("checks: {refusals:?}"));
+    let emission = emit_checked(&CheckedPackage::link(graph)).expect("the package emits");
+    let wire = wire(&emission);
+    let domains: Vec<&Value> = nodes(&wire)
+        .iter()
+        .filter(|node| node["body"]["operation"]["identity"] == "filament.op.option.slots")
+        .collect();
+    let [domain] = domains[..] else {
+        panic!("one slot-domain node shared by the three clauses: {domains:?}");
+    };
+    assert_eq!(domain["semantic_form"], "presence_read", "{domain}");
+    let path = domain["node_id"]["path"].as_array().expect("a path");
+    assert_eq!(
+        path.len(),
+        7,
+        "two arguments, identity, operator, result: {domain}"
+    );
+    assert_eq!(
+        path[..2],
+        [json!("expression"), json!("presence_read")],
+        "{domain}"
+    );
+    assert!(path[2].get("operand").is_some() && path[3].get("operand").is_some());
+    assert_eq!(
+        path[4..6],
+        [json!("filament.op.option.slots"), json!("slots")],
+        "{domain}"
+    );
+    assert!(
+        path[6].get("operand").is_some(),
+        "the result type segment: {domain}"
+    );
+    assert!(
+        domain["node_id"]["path"]
+            .as_array()
+            .expect("a path")
+            .iter()
+            .all(|segment| segment.get("package").is_none()),
+        "the path holds no node_id object: {domain}"
+    );
+    read_presence_package(&document, emission.package.bytes(), &wire)
+        .unwrap_or_else(|failure| panic!("I2 admits the slot domain: {failure}"));
 }

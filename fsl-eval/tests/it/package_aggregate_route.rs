@@ -37,7 +37,7 @@ fn with_routes<R>(
         EVENT,
         json!({"kind": "event_position", "sequence_authority": "order-events"}),
     )
-    .with_clock_name("model-steps");
+    .with_clock_name("events");
     let parsed = fsl_cst::parse(
         SourceIdentity::new("a", "aggregate-route"),
         "aggregate-route.native",

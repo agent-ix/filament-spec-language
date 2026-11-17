@@ -343,7 +343,290 @@ fn an_item_naming_a_registered_provider_settles_on_it() {
         .collect();
     assert!(registry.contains(&json!(provider)));
     assert!(registry.contains(&json!("en-1")) && registry.contains(&json!("en-7")));
+    // FR-635 "Outputs": each entry carries its backend's FSpec FR-331 tool.
+    assert!(run.document()["registry"]
+        .as_array()
+        .expect("registry")
+        .iter()
+        .all(|entry| entry["tool"]["name"]
+            .as_str()
+            .is_some_and(|name| !name.is_empty())));
     assert_eq!(label(&run.item(1)), "proved");
+}
+
+/// A process provider double: a `Process`-origin descriptor advertising
+/// (`value-validity`, `unbounded`) over `Integer`, whose handle always
+/// answers `verdict`. It stands where the driver passes a started plugin
+/// session; the real plugin process is the driver's test (QSL-2283).
+#[derive(Debug)]
+struct AnsweringProvider(fsl_analyze::provider::ProviderVerdict);
+
+impl fsl_analyze::provider::ExternalProvider for AnsweringProvider {
+    fn settle(
+        &self,
+        request: &fsl_analyze::provider::ProviderRequest<'_>,
+        _cancel: &filament_exact::Cancel,
+    ) -> Vec<fsl_analyze::provider::ProviderVerdict> {
+        assert_eq!(request.backend().as_str(), PROCESS_PROVIDER);
+        for (item, target) in request.items().iter().zip(request.targets()) {
+            assert_eq!(item.occurrence(), target.claim());
+        }
+        vec![self.0.clone(); request.items().len()]
+    }
+}
+
+const PROCESS_PROVIDER: &str = "fsl.test-process-provider";
+
+fn process_descriptor(backend: &str) -> fsl_route::BackendDescriptor {
+    use fsl_semantics::check::Capability;
+    fsl_route::descriptor_from_manifest(
+        fsl_route::Candidate::new(fsl_foundation::BackendId::new(backend)),
+        fsl_route::ProviderOrigin::Process,
+        vec![(
+            Some(Capability::ValueValidity.to_wire()),
+            Some(fsl_route::Mode::Unbounded.to_wire()),
+        )],
+        fsl_route::ManifestMembers {
+            domains: Some(&[fsl_foundation::bound::DomainKind::Integer.to_wire()]),
+            fairness_kinds: None,
+            evidence_kinds: None,
+            memory_models: None,
+            reductions: None,
+        },
+    )
+    .expect("the descriptor advertises the external value arm")
+}
+
+fn process_provider(
+    backend: &str,
+    verdict: fsl_analyze::provider::ProviderVerdict,
+) -> fsl_analyze::analyze::Engine {
+    fsl_analyze::analyze::Engine::external(
+        process_descriptor(backend),
+        fsl_analyze::analyze::BackendTool::new("test-provider", "1").expect("a tool"),
+        Box::new(AnsweringProvider(verdict)),
+    )
+    .expect("the descriptor is unbounded")
+}
+
+/// FR-635 "One rule for every provider-routing entry": a process provider
+/// handed to `analyze_with_providers` registers beside `Engines::fsl()`, an
+/// item naming it settles on it with certification `trusted`, the registry
+/// lists it, and an item that does not negotiate to it is unchanged.
+#[trace("TC-1595", "FR-635-AC-2")]
+#[test]
+fn analyze_with_providers_registers_a_process_provider() {
+    use fsl_analyze::provider::ProviderVerdict;
+    let body = "function Even using v(n: Integer): Boolean pure { n * 2 - n = n }\n".to_owned()
+        + &crate::analyze_cli_support::bounded();
+    let ws = Workspace::new("family-process-provider");
+    let request = counter_request(
+        &ws,
+        &body,
+        json!([{"claim": "Even", "kind": "value-validity", "backend": PROCESS_PROVIDER},
+            {"claim": "Bounded"}]),
+    );
+    let run = crate::analyze_cli_support::analyze_with_providers(
+        &request,
+        vec![process_provider(PROCESS_PROVIDER, ProviderVerdict::Proved)],
+    );
+    let item = run.item(0);
+    assert_eq!(label(&item), "proved", "{item}");
+    assert_eq!(item["record"]["certification"], "trusted", "{item}");
+    // FR-635 "Outputs": the sorted `{backend, tool}` of every registered
+    // backend, the provider's with the tool it was registered with.
+    let entries = run.document()["registry"]
+        .as_array()
+        .expect("registry")
+        .clone();
+    let registry: Vec<Value> = entries
+        .iter()
+        .map(|entry| entry["backend"].clone())
+        .collect();
+    assert!(registry.contains(&json!(PROCESS_PROVIDER)), "{registry:?}");
+    assert!(registry.contains(&json!("en-1")), "{registry:?}");
+    let mut sorted: Vec<&str> = registry.iter().filter_map(Value::as_str).collect();
+    sorted.sort_unstable();
+    let listed: Vec<&str> = registry.iter().filter_map(Value::as_str).collect();
+    assert_eq!(listed, sorted, "the registry is sorted by backend");
+    let provider = entries
+        .iter()
+        .find(|entry| entry["backend"] == PROCESS_PROVIDER)
+        .expect("the provider is listed");
+    assert_eq!(
+        provider["tool"],
+        json!({"name": "test-provider", "version": "1"}),
+        "{provider}"
+    );
+    let en1 = entries
+        .iter()
+        .find(|entry| entry["backend"] == "en-1")
+        .expect("en-1 is listed");
+    assert_eq!(en1["tool"]["name"], "fsl-analyze", "{en1}");
+    let without = analyze(&request);
+    assert_eq!(run.item(1), without.item(1));
+}
+
+/// A provider that records the FSpec FR-331 `request` member `analyze`
+/// built for it, as the typed request serializes it, with the negotiated
+/// manifest entry's backend, and answers `proved`.
+#[derive(Debug, Default)]
+struct RecordingProvider(std::sync::Arc<std::sync::Mutex<Vec<(Value, String)>>>);
+
+impl fsl_analyze::provider::ExternalProvider for RecordingProvider {
+    fn settle(
+        &self,
+        request: &fsl_analyze::provider::ProviderRequest<'_>,
+        _cancel: &filament_exact::Cancel,
+    ) -> Vec<fsl_analyze::provider::ProviderVerdict> {
+        // The package member is the v2 document's own bytes.
+        let document: Value =
+            serde_json::from_slice(request.package().bytes()).expect("the package is JSON");
+        assert!(document.is_object());
+        // The manifest is the registry snapshot, and the negotiated entry is
+        // one of its descriptors.
+        let snapshot: Vec<&str> = request
+            .manifest()
+            .iter()
+            .map(|descriptor| descriptor.id().as_str())
+            .collect();
+        assert!(
+            snapshot.contains(&request.backend().as_str()),
+            "{snapshot:?}"
+        );
+        assert!(snapshot.contains(&"en-1"), "{snapshot:?}");
+        let wire = serde_json::to_value(request).expect("the request serializes");
+        self.0
+            .lock()
+            .expect("the record")
+            .push((wire, request.descriptor().id().to_string()));
+        vec![fsl_analyze::provider::ProviderVerdict::Proved; request.items().len()]
+    }
+}
+
+/// FSpec FR-331's `Request` definition, read in place from `$FSPEC_DIR`
+/// with the checked-package schema it refers to.
+fn fr331_request_schema() -> jsonschema::JSONSchema {
+    let fspec = std::env::var_os("FSPEC_DIR")
+        .expect("FSPEC_DIR names the FSpec checkout whose schema this reads");
+    let read = |relative: &str| -> Value {
+        let path = std::path::PathBuf::from(&fspec).join(relative);
+        serde_json::from_slice(&std::fs::read(&path).expect("the schema reads"))
+            .expect("the schema is JSON")
+    };
+    let schema = read("proposals/backend-provider-v1/schema.json");
+    let package = read("proposals/checked-package-v2/schema.json");
+    let request = json!({
+        "$schema": schema["$schema"],
+        "$defs": schema["$defs"],
+        "$ref": "#/$defs/Request",
+    });
+    jsonschema::JSONSchema::options()
+        .with_draft(jsonschema::Draft::Draft202012)
+        .with_document("urn:filament:checked-package:v2".to_owned(), package)
+        .compile(&request)
+        .expect("the schema compiles")
+}
+
+/// FR-635 "How a process provider runs an item", FSpec FR-331: for the
+/// `Boolean` value clause `Even`, which has no requirement record, the
+/// request `analyze` builds carries the package's emitted bytes, the
+/// caller's `deadline_ms`, and one item at the analyze request index whose
+/// claim is the clause occurrence, whose extent is unbounded over the
+/// parameter's integer domain, and whose backend is the negotiated
+/// provider, its one candidate; the request validates against FSpec's
+/// `Request` schema, and the negotiated manifest entry is the provider's.
+#[trace("TC-1595", "FR-635-AC-1")]
+#[test]
+fn analyze_builds_the_fr331_request_for_a_boolean_value_clause() {
+    let body = "function Even using v(n: Integer): Boolean pure { n * 2 - n = n }\n".to_owned()
+        + &crate::analyze_cli_support::bounded();
+    let ws = Workspace::new("family-provider-request");
+    let request = counter_request(
+        &ws,
+        &body,
+        json!([{"claim": "Bounded"},
+            {"claim": "Even", "kind": "value-validity", "backend": PROCESS_PROVIDER}]),
+    );
+    let recording = RecordingProvider::default();
+    let sent = std::sync::Arc::clone(&recording.0);
+    let limits = fsl_analyze::provider::ProviderLimits {
+        deadline_ms: 250,
+        ..fsl_analyze::provider::ProviderLimits::default()
+    };
+    let engine = fsl_analyze::analyze::Engine::external(
+        process_descriptor(PROCESS_PROVIDER),
+        fsl_analyze::analyze::BackendTool::new("test-provider", "1").expect("a tool"),
+        Box::new(recording),
+    )
+    .expect("the descriptor is unbounded");
+    let options = fsl_analyze::provider::ProviderOptions {
+        provider_limits: limits,
+    };
+    let run =
+        crate::analyze_cli_support::analyze_with_providers_under(&request, vec![engine], &options);
+    assert_eq!(label(&run.item(1)), "proved", "{}", run.document());
+    let sent = sent.lock().expect("the record").clone();
+    let [(sent, manifest_entry)] = sent.as_slice() else {
+        panic!("one request: {sent:?}");
+    };
+    assert_eq!(manifest_entry, PROCESS_PROVIDER);
+    let schema = fr331_request_schema();
+    if let Err(errors) = schema.validate(sent) {
+        let errors: Vec<_> = errors.map(|error| error.to_string()).collect();
+        panic!("the request violates FR-331: {errors:?}\n{sent}");
+    }
+    assert_eq!(sent["deadline_ms"], 250);
+    let items = sent["items"].as_array().expect("items");
+    assert_eq!(items.len(), 1, "{sent}");
+    let item = &items[0];
+    // The item's position in this one-item request, not its analyze index
+    // (1), which the verdict is joined back to.
+    assert_eq!(item["request_index"], 0);
+    assert_eq!(item["kind"], "value-validity");
+    assert_eq!(item["backend"], PROCESS_PROVIDER);
+    assert_eq!(
+        item["candidates"],
+        json!({"type": "set", "backends": [PROCESS_PROVIDER]})
+    );
+    assert_eq!(item["extent"]["classification"], "unbounded", "{item}");
+    let domains = item["extent"]["domains"].as_array().expect("domains");
+    assert_eq!(domains.len(), 1, "{item}");
+    assert_eq!(domains[0]["kind"], "integer", "{item}");
+    // The claim is the clause occurrence: `Even`'s body at its declaration.
+    assert!(
+        matches!(
+            item["claim"]["occurrence"]["role"].as_str(),
+            Some("claim" | "declaration")
+        ),
+        "{item}"
+    );
+    // A request whose item has lost its domain is not an FR-331 request,
+    // so the validation above is not vacuous.
+    let mut defective = sent.clone();
+    defective["items"][0]["extent"]["domains"] = json!([]);
+    assert!(!schema.is_valid(&defective));
+}
+
+/// A process provider repeating a linked `BackendId` refuses the request
+/// `invalid-request` naming `providers` before any item runs.
+#[test]
+fn analyze_with_providers_refuses_a_repeated_backend() {
+    use fsl_analyze::provider::ProviderVerdict;
+    let ws = Workspace::new("family-provider-repeat");
+    let request = counter_request(
+        &ws,
+        &crate::analyze_cli_support::bounded(),
+        json!([{"claim": "Bounded"}]),
+    );
+    let run = crate::analyze_cli_support::analyze_with_providers(
+        &request,
+        vec![process_provider("en-1", ProviderVerdict::Proved)],
+    );
+    assert_eq!(run.exit, 20);
+    let document = run.document();
+    assert_eq!(document["items"], json!([]), "{document}");
+    assert!(document.to_string().contains("providers"), "{document}");
 }
 
 /// The `Rpc` request at timeout `t` with `claim` and the request members

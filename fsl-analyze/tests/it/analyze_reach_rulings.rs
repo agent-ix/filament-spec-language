@@ -125,9 +125,9 @@ fn digital_clocks_refuse_strict_constraints_and_intervals() {
 #[test]
 #[ignore = "QSL-2296 (from QSL-2125): the fixture's `Ratio` claim divides, and the checker refuses `/` with unsupported_construct/expression-form, so the undefined arm has no checked claim to run (spec question open); the typed instance key and the budget stops are untested until it is rewritten"]
 fn state_graph_evidence_keys_loci_and_budget_stops() {
-    let body = "possible ReachThree using t0 over (c: M::Counter) { c.value = 3 }\n\
-                possible Ratio using t0 over (c: M::Counter) { 3 / (3 - c.value) = 1 }\n\
-                always possible BackToZero using t0 over (c: M::Counter) { c.value = 0 }\n";
+    let body = "possible ReachThree using v over (c: M::Counter) { c.value = 3 }\n\
+                possible Ratio using v over (c: M::Counter) { 3 / (3 - c.value) = 1 }\n\
+                always possible BackToZero using v over (c: M::Counter) { c.value = 0 }\n";
     let ws = Workspace::new("rulings-evidence");
     let run = analyze(&counter_request(
         &ws,
@@ -203,7 +203,7 @@ fn several_instances_report_the_first_refuted_and_state_graph_replay_names_the_c
     let ws = Workspace::new("rulings-replay-target");
     let run = analyze(&counter_request(
         &ws,
-        "always possible BackToZero using t0 over (c: M::Counter) { c.value = 0 }\n",
+        "always possible BackToZero using v over (c: M::Counter) { c.value = 0 }\n",
         json!([{"claim": "BackToZero"}]),
     ));
     let item = run.item(0);
@@ -314,7 +314,6 @@ fn a_misadvertising_plugin_is_refused_and_never_joins_the_layering_snapshot() {
 /// the record.
 #[trace("TC-2296", "FR-621-AC-10")]
 #[test]
-#[ignore = "QSL-2304: the analyze record does not write backend by settled_by yet"]
 fn a_record_names_its_backend_exactly_when_a_result_settles_it() {
     let ws = Workspace::new("rulings-backend");
     let body = format!("{}{}", bounded(), below_three());
@@ -358,4 +357,60 @@ fn the_linked_registrations_include_en7() {
             "value-checker"
         ]
     );
+}
+
+/// FR-967-AC-1: an option EN-1's manifest does not publish settles that
+/// item `invalid-request` `invalid_capability`/`unknown-option`, naming the
+/// least unpublished name, and leaves the other item as it is alone.
+#[trace("TC-2724", "FR-967-AC-1")]
+#[test]
+#[ignore = "QSL-2192: an unpublished option does not settle invalid_capability/unknown-option yet"]
+fn an_unpublished_option_settles_unknown_option() {
+    let ws = Workspace::new("rulings-unknown-option");
+    let run = analyze(&counter_request(
+        &ws,
+        &bounded(),
+        json!([
+            {"claim": "Bounded", "backend": "en-1", "options": {"zeta": "1", "alpha": "2"}},
+            {"claim": "Bounded", "backend": "en-1"},
+        ]),
+    ));
+    let refused = run.item(0);
+    let text = refused.to_string();
+    for needle in ["invalid-request", "invalid_capability", "unknown-option"] {
+        assert!(text.contains(needle), "{needle}: {refused}");
+    }
+    assert!(!text.contains("invalid_runtime_input"), "{refused}");
+    assert_eq!(find(&refused, "option"), Some(&json!("alpha")), "{refused}");
+    assert_eq!(
+        find(&refused, "backend").map(decimal).as_deref(),
+        Some("en-1"),
+        "{refused}"
+    );
+    let ws_alone = Workspace::new("rulings-unknown-option-alone");
+    let alone = analyze(&counter_request(
+        &ws_alone,
+        &bounded(),
+        json!([{"claim": "Bounded", "backend": "en-1"}]),
+    ));
+    assert_eq!(run.item(1)["record"], alone.item(0)["record"]);
+}
+
+/// FR-967-AC-2, its first half: an unregistered named backend settles
+/// `unknown-backend` and its options are not checked. The published-option
+/// half needs the workspace test plugin publishing `depth`, which the coder
+/// adds.
+#[trace("TC-2724", "FR-967-AC-2")]
+#[test]
+#[ignore = "QSL-2192: an unpublished option does not settle invalid_capability/unknown-option yet"]
+fn an_unknown_backend_wins_and_a_published_option_reaches_the_provider() {
+    let ws = Workspace::new("rulings-unknown-backend-option");
+    let run = analyze(&counter_request(
+        &ws,
+        &bounded(),
+        json!([{"claim": "Bounded", "backend": "fsl.absent", "options": {"k": "v"}}]),
+    ));
+    let text = run.item(0).to_string();
+    assert!(text.contains("unknown-backend"), "{text}");
+    assert!(!text.contains("unknown-option"), "{text}");
 }

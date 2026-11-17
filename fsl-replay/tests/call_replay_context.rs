@@ -161,18 +161,18 @@ fn the_entry_returns_what_run_with_requirements_returns() {
     let call = call("q", integer(3), 1_000_000);
     let limits = CallerLimits::default();
     let result = run(&source, &call, limits, &Cancel::new()).expect("runs");
-    let plain = run_with_requirements(
-        identity(),
-        "fixture".to_owned(),
-        "unit.native",
-        source.as_bytes(),
-        &BTreeMap::new(),
-        &DependencyInput::default(),
-        limits.spine,
-        &call,
-        &ObjectEnvironment::default(),
-        &Cancel::new(),
-    )
+    let plain = run_with_requirements(&fsl_replay::RequirementsRun {
+        source: identity(),
+        package_name: "fixture".to_owned(),
+        path: "unit.native",
+        bytes: source.as_bytes(),
+        packages: &BTreeMap::new(),
+        dependencies: &DependencyInput::default(),
+        limits: limits.spine,
+        call: &call,
+        objects: &ObjectEnvironment::default(),
+        cancel: &Cancel::new(),
+    })
     .expect("runs");
     assert!(matches!(
         result.outcome(),
@@ -450,18 +450,18 @@ fn only_the_spine_limits_bound_the_run() {
         format!("{compile:?}").contains("setting: S1Tokens, configured_bound: 1"),
         "{compile:?}"
     );
-    run_with_requirements(
-        identity(),
-        "fixture".to_owned(),
-        "unit.native",
-        source.as_bytes(),
-        &BTreeMap::new(),
-        &DependencyInput::default(),
-        SpineLimits::default(),
-        &call,
-        &ObjectEnvironment::default(),
-        &Cancel::new(),
-    )
+    run_with_requirements(&fsl_replay::RequirementsRun {
+        source: identity(),
+        package_name: "fixture".to_owned(),
+        path: "unit.native",
+        bytes: source.as_bytes(),
+        packages: &BTreeMap::new(),
+        dependencies: &DependencyInput::default(),
+        limits: SpineLimits::default(),
+        call: &call,
+        objects: &ObjectEnvironment::default(),
+        cancel: &Cancel::new(),
+    })
     .expect("the same inputs under the default SpineLimits complete");
     let roomy = CallerLimits::from_operands([
         "s1.tokens=200000",
@@ -550,18 +550,18 @@ fn refusals_are_run_with_requirements_refusals() {
     ];
     for (source, call, cancel) in &cases {
         let ours = run(source, call, limits, cancel).expect_err("refuses");
-        let theirs = run_with_requirements(
-            identity(),
-            "fixture".to_owned(),
-            "unit.native",
-            source.as_bytes(),
-            &BTreeMap::new(),
-            &DependencyInput::default(),
-            limits.spine,
+        let theirs = run_with_requirements(&fsl_replay::RequirementsRun {
+            source: identity(),
+            package_name: "fixture".to_owned(),
+            path: "unit.native",
+            bytes: source.as_bytes(),
+            packages: &BTreeMap::new(),
+            dependencies: &DependencyInput::default(),
+            limits: limits.spine,
             call,
-            &ObjectEnvironment::default(),
+            objects: &ObjectEnvironment::default(),
             cancel,
-        )
+        })
         .expect_err("refuses");
         assert_eq!(format!("{ours:?}"), format!("{theirs:?}"));
     }

@@ -2485,11 +2485,7 @@ fn tc_792_reference_completions_serialize_the_returned_reference() {
         assert_eq!(document["artifacts"], serde_json::json!([]));
         assert_eq!(
             document["result"],
-            serde_json::json!({"kind": "completed", "value": {"reference": {
-                "universe": expected.universe().root_type().to_string(),
-                "type": crate::spine::effective_spelling(expected.object_type()),
-                "object_identity": expected.object().as_str(),
-            }}})
+            serde_json::json!({"kind": "completed", "value": crate::spine::run_value::reference_form(expected)})
         );
     };
 

@@ -542,3 +542,81 @@ fn a_collection_over_a_population_refuses_at_check_and_every_other_type_has_a_fo
     );
     assert_ne!(output.status.code(), Some(21), "{output:?}");
 }
+
+/// The package fixture whose `gives` result and `takes` parameter are a
+/// collection over a population, as an IR producer can write them.
+const POPULATION_COLLECTION: &str = "tests/fixtures/population-collection.checked-package.json";
+
+#[test]
+#[trace("TC-1705", "FR-650-AC-6")]
+#[ignore = "QSL-2182: a selected package declaring a collection over a population is not refused unknown_required_feature at stage call yet"]
+fn a_selected_package_with_a_population_collection_type_refuses_unsupported() {
+    let fixture = std::fs::canonicalize(POPULATION_COLLECTION)
+        .unwrap_or_else(|error| panic!("the fixture {POPULATION_COLLECTION} exists: {error}"));
+    for (function, arguments, details) in [
+        ("gives", json!([]), json!({"function": "gives"})),
+        (
+            "takes",
+            json!([{"parameter": "a", "value": {"sequence": []}}]),
+            json!({"position": 0}),
+        ),
+    ] {
+        let directory = tempfile::tempdir().unwrap();
+        let request = json!({"format": "native-run/1", "request": {
+            "models": [{"format": "semantic-ir/2.0.0", "source":
+                spine_source("spine-model.semantic-ir.json", "SpineModel")}],
+            "package": {"file": fixture.to_string_lossy()},
+            "call": {"function": function, "arguments": arguments},
+        }});
+        spine::write(directory.path(), Case::Healthy).unwrap();
+        let path = directory.path().join("request.json");
+        std::fs::write(&path, serde_json::to_vec(&request).unwrap()).unwrap();
+        let output = run_file(&path);
+        assert_eq!(output.status.code(), Some(21), "{function}: {output:?}");
+        let failure: Value = serde_json::from_slice(&output.stderr).unwrap();
+        assert_eq!(failure["stage"], "call", "{failure}");
+        assert_eq!(failure["code"], "unknown_required_feature", "{failure}");
+        assert_eq!(failure["cause"], "unsupported-feature", "{failure}");
+        assert_eq!(failure["details"], details, "{failure}");
+    }
+}
+
+/// FR-945-AC-1 and AC-2: a native-run/1 call over a `package` selection
+/// resolves its function in the package; a missing function refuses at the
+/// call, and `program` beside `package` refuses at the request.
+#[test]
+#[trace("TC-2625", "FR-945-AC-1")]
+#[trace("TC-2625", "FR-945-AC-2")]
+#[ignore = "QSL-2182: native-run/1 does not run a function of a selected checked package yet"]
+fn a_run_resolves_its_function_in_a_selected_package() {
+    let fixture = std::fs::canonicalize(POPULATION_COLLECTION)
+        .unwrap_or_else(|error| panic!("the fixture {POPULATION_COLLECTION} exists: {error}"));
+    let directory = tempfile::tempdir().unwrap();
+    spine::write(directory.path(), Case::Healthy).unwrap();
+    let models = json!([{"format": "semantic-ir/2.0.0", "source":
+        spine_source("spine-model.semantic-ir.json", "SpineModel")}]);
+    let run = |request: Value| {
+        let path = directory.path().join("request.json");
+        std::fs::write(
+            &path,
+            serde_json::to_vec(&json!({"format": "native-run/1", "request": request})).unwrap(),
+        )
+        .unwrap();
+        let output = run_file(&path);
+        let failure: Value = serde_json::from_slice(&output.stderr).unwrap_or(Value::Null);
+        (output.status.code(), failure)
+    };
+    let (code, failure) = run(json!({"models": models,
+        "package": {"file": fixture.to_string_lossy()},
+        "call": {"function": "missing", "arguments": []}}));
+    assert_eq!(code, Some(20), "{failure}");
+    assert_eq!(failure["stage"], "call", "{failure}");
+    assert_eq!(failure["code"], "missing_declaration", "{failure}");
+    let (code, failure) = run(json!({"models": models,
+        "package": {"file": fixture.to_string_lossy()},
+        "program": {"source": {"file": "spine-unit.native"}},
+        "call": {"function": "gives", "arguments": []}}));
+    assert_eq!(code, Some(20), "{failure}");
+    assert_eq!(failure["stage"], "request", "{failure}");
+    assert!(failure.to_string().contains("program"), "{failure}");
+}

@@ -740,3 +740,106 @@ mod tests {
         ));
     }
 }
+
+/// What [`observed_valuation`] returns: the reading of every `holds` atom of
+/// a clause at each represented position of a closed finite trace, and the
+/// clause formula's native value at each activation position (FR-757
+/// "Cross-evaluation").
+#[derive(Debug)]
+pub struct ObservedValuation {
+    /// The clause's `holds` atoms, in arena order.
+    pub atoms: Vec<FormulaNodeId>,
+    /// For each represented position, each atom's reading, in the order of
+    /// [`Self::atoms`].
+    pub readings: Vec<Vec<AtomReading>>,
+    /// Each activation position, in order, with the formula's native value
+    /// there.
+    pub activations: Vec<(TemporalPosition, TemporalOutcome)>,
+}
+
+/// Why [`observed_valuation`] has no valuation.
+#[derive(Debug)]
+pub enum ValuationStop {
+    /// The trace is not a closed finite trace.
+    NotFinite,
+    /// A letter stopped: a condition refused or failed, a meter stopped, or
+    /// an internal invariant broke.
+    Letter(LetterStop),
+    /// The evaluator refused the trace at an activation position.
+    Refused(TemporalRefusal),
+}
+
+/// The valuation FR-757's cross-evaluation compares: each `holds` atom of
+/// `clause` read by the one clause evaluator at every position of the
+/// closed finite `trace`, the activation positions (position 0 `on origin`;
+/// every position `on each` whose `when` condition, if any, holds) and the
+/// formula's value at each, as [`evaluate_observed_at`] reads it.
+pub fn observed_valuation(
+    package: &CheckedPackage,
+    clause: &TemporalClauseNode,
+    positions: ObservedPositions<'_>,
+    trace: TemporalTrace,
+    meter: &mut Meter,
+) -> Result<ObservedValuation, ValuationStop> {
+    let TemporalTrace::Finite { len } = trace else {
+        return Err(ValuationStop::NotFinite);
+    };
+    let checked = clause.clause();
+    let atoms: Vec<FormulaNodeId> = checked
+        .formula()
+        .nodes()
+        .iter()
+        .enumerate()
+        .filter(|(_, node)| matches!(node, fsl_semantics::check::FormulaNode::Holds { .. }))
+        .map(|(index, _)| FormulaNodeId::from_arena_index(index))
+        .collect();
+    let mut letters = ObservedLetters {
+        package,
+        clause,
+        positions,
+        empty: ObjectEnvironment::default(),
+        trace,
+        stopped: None,
+        undefined: None,
+        absent: &[],
+        classes: &[],
+        silent_from: None,
+    };
+    let mut readings = Vec::new();
+    let mut activations = Vec::new();
+    for index in 0..len {
+        let position = TemporalPosition::new(index);
+        let row = atoms
+            .iter()
+            .map(|atom| letters.atom(*atom, position, meter))
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(ValuationStop::Letter)?;
+        readings.push(row);
+        let active = match checked.activation() {
+            fsl_semantics::check::Activation::Origin => index == 0,
+            fsl_semantics::check::Activation::Each { guarded: false } => true,
+            fsl_semantics::check::Activation::Each { guarded: true } => matches!(
+                letters
+                    .activation(position, meter)
+                    .map_err(ValuationStop::Letter)?,
+                AtomReading::True
+            ),
+        };
+        if active {
+            let (result, _) = super::engine::run_seeking(
+                super::engine::Subject::of_clause(checked),
+                trace,
+                super::engine::Goal::At(position),
+                false,
+                &mut letters,
+                meter,
+            );
+            activations.push((position, result.map_err(ValuationStop::Refused)?));
+        }
+    }
+    Ok(ObservedValuation {
+        atoms,
+        readings,
+        activations,
+    })
+}

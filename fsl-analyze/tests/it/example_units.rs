@@ -16,6 +16,7 @@
 //! verified here with letters that can read an atom undefined.
 
 use filament_exact::{Cancel, CancelCause, Incomplete, Meter, ScalarLimits};
+use filament_semantic_value::checking::CheckMode;
 use fsl_analyze::model_check::{check_model, ModelCheckRefusal, ModelCheckRequest};
 use fsl_eval::model_subject::{AtomStop, ModelInstance, ModelLetters};
 use fsl_eval::simulation::model::{ModelSimState, ModelSystem};
@@ -61,7 +62,13 @@ pub(crate) fn config_over(
     // Both units reach versions 0 to 2 only (`CYCLES` wraps at 2; the shipped
     // unit keeps the version).
     let domain = Domain::config_version().with_versions_up_to(2);
-    let clause = clause(OVER, fairness, formula);
+    let formula = formula.replace(
+        "6 mod (2 - c.versionNumber) >= 0",
+        "mod_defined(c.versionNumber)",
+    );
+    let clause = clause(OVER, fairness, &formula);
+    let function =
+        "function mod_defined using v(n: Int[0, 2]): Boolean pure { 6 mod (2 - n) >= 0 }\n";
     let text = if shipped {
         let header = "profile v = \"filament.model.complete/v1\";\n";
         let shipped = shipped_unit_text();
@@ -70,17 +77,18 @@ pub(crate) fn config_over(
             header,
             &format!("{header}profile t0 = \"filament.temporal.infinite-trace/v1\";\n"),
         );
-        format!("{shipped}{clause}")
+        format!("{shipped}{function}{clause}")
     } else {
-        unit(&domain, "Config", &format!("{CYCLES}{clause}"))
+        unit(&domain, "Config", &format!("{CYCLES}{function}{clause}"))
     };
-    World::new(
+    World::new_with_mode(
         domain,
         &text,
         &[
             ("a", config_object(versions.0)),
             ("b", config_object(versions.1)),
         ],
+        CheckMode::Kernel,
     )
 }
 

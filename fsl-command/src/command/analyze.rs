@@ -13,7 +13,8 @@ use fsl_analyze::analyze::document::{
     analyze_document, resolve_items, AnalyzeDocumentError, AnalyzeRun, ItemSelection, Negotiate,
     SubjectSelection,
 };
-use fsl_analyze::analyze::{AnalyzeLimits, DeadlineSupply, Engines, SourceProvision};
+use fsl_analyze::analyze::{AnalyzeLimits, DeadlineSupply, Engine, Engines, SourceProvision};
+use fsl_analyze::provider::ProviderOptions;
 use fsl_semantics::model::observation::DocumentProvision;
 
 use super::{
@@ -99,11 +100,17 @@ fn read<'d>(
         RunCause::Json(error) => invalid("request", error.to_string()),
         cause => cause,
     })?;
-    if request.package.is_some() {
-        // FR-620 admits a checked-package selection, but the engines analyze
-        // an in-process checked package that only a source compile builds:
-        // an implementation gap (QSL-2271), not a refused request.
+    if let Some(package) = &request.package {
+        admit_package(directory, dependent_bytes, &request, package)?;
+        // The engines analyze an in-process checked package that only a
+        // source compile builds, so an admitted package stops here.
         return Err(RunCause::AnalyzeNotYetImplemented { member: "package" });
+    }
+    if request.integer_division.is_some() {
+        return Err(invalid(
+            "integer_division",
+            "an integer-division law is not read by this build",
+        ));
     }
     let Some(program) = &request.program else {
         return Err(invalid("program", "a program or package is required"));
@@ -141,6 +148,24 @@ fn read<'d>(
             ));
         }
     }
+    // FR-636: a `trace` naming no provisioned document refuses the request.
+    for (position, trace) in request
+        .items
+        .iter()
+        .flatten()
+        .enumerate()
+        .filter_map(|(position, item)| item.trace.as_ref().map(|trace| (position, trace)))
+    {
+        if !documents.contains_key(&trace.reference()) {
+            return Err(invalid(
+                "items",
+                format!(
+                    "items[{position}].trace {{{}, {}}} names no provisioned document",
+                    trace.authority, trace.identity
+                ),
+            ));
+        }
+    }
     let mut limits = AnalyzeLimits::unbounded();
     let mut accounting = fsl_replay::AccountingLimits(limits.accounting);
     for (setting, bound) in request.limits.accounting.entries() {
@@ -174,6 +199,7 @@ fn read<'d>(
         libraries: request.libraries,
         clocks: Default::default(),
         output: None,
+        handoff: None,
     };
     Ok((
         AnalyzeInput {
@@ -217,18 +243,96 @@ pub fn analyze_with_limits(
     negotiate: &dyn Negotiate,
     cancel: &Cancel,
 ) -> std::result::Result<RunResult, Box<RunError>> {
+    analyze_with_providers_and_limits(
+        path,
+        limits,
+        negotiate,
+        Vec::new(),
+        &ProviderOptions::default(),
+        cancel,
+    )
+}
+
+/// [`analyze`] with the caller's started process providers (FR-635 "One rule
+/// for every provider-routing entry"): each an [`Engine::external`] engine
+/// over its `Process` descriptor and the handle its items are sent over.
+/// They register beside `Engines::fsl()` before any item is negotiated, so
+/// an item reaches one only by negotiation. An empty `providers` is
+/// [`analyze`]. `options` carries the run's FSpec FR-462 limits, which every
+/// provider request carries (FR-964).
+///
+/// # Errors
+///
+/// As [`analyze`]; and `invalid-request` naming `providers` when a provider
+/// repeats a registered `BackendId`, before any item runs.
+pub fn analyze_with_providers(
+    path: &Path,
+    negotiate: &dyn Negotiate,
+    providers: Vec<Engine>,
+    options: &ProviderOptions,
+    cancel: &Cancel,
+) -> std::result::Result<RunResult, Box<RunError>> {
+    analyze_with_providers_and_limits(
+        path,
+        RunLimits::default(),
+        negotiate,
+        providers,
+        options,
+        cancel,
+    )
+}
+
+/// [`analyze_with_providers`] under the caller's request and dependent-file
+/// byte ceilings.
+///
+/// # Errors
+///
+/// As [`analyze_with_providers`].
+pub fn analyze_with_providers_and_limits(
+    path: &Path,
+    limits: RunLimits,
+    negotiate: &dyn Negotiate,
+    providers: Vec<Engine>,
+    options: &ProviderOptions,
+    cancel: &Cancel,
+) -> std::result::Result<RunResult, Box<RunError>> {
     super::with_request_limits(path, limits.request_bytes, |directory, bytes| {
         let (input, mut intake) = read(directory, bytes, limits.dependent_bytes)?;
-        run_input(&mut intake, input, negotiate, cancel)
+        run_input(&mut intake, input, negotiate, providers, options, cancel)
     })
+}
+
+/// FSL's engines with the caller's process providers registered beside them,
+/// under the run's provider `options`.
+pub(super) fn engines_with(providers: Vec<Engine>, options: &ProviderOptions) -> Result<Engines> {
+    let mut engines = Engines::fsl()
+        .map_err(|_| RunCause::AnalyzeFault)?
+        .under(*options);
+    for provider in providers {
+        engines.with(provider).map_err(|duplicate| {
+            invalid(
+                "providers",
+                format!(
+                    "a configured provider repeats the registered backend {}",
+                    duplicate.backend.as_str()
+                ),
+            )
+        })?;
+    }
+    Ok(engines)
 }
 
 fn run_input(
     intake: &mut super::Intake<'_>,
     input: AnalyzeInput,
     negotiate: &dyn Negotiate,
+    providers: Vec<Engine>,
+    options: &ProviderOptions,
     cancel: &Cancel,
 ) -> Result<RunResult> {
+    // The registry is fixed before the program is read, so a provider that
+    // cannot register refuses the request before any stage runs.
+    let engines = engines_with(providers, options)?;
     let AnalyzeInput {
         source,
         compile,
@@ -244,7 +348,7 @@ fn run_input(
         intake,
         sources,
         false,
-        |checked, _, packages, libraries, _| {
+        |checked, _, _, packages, libraries, _, _, _, _| {
             let package = checked.package();
             let mut provision = SourceProvision::default();
             // FR-620: the request's units in request order, the program then
@@ -257,7 +361,6 @@ fn run_input(
                     read.source().text().as_bytes().to_vec(),
                 );
             }
-            let engines = Engines::fsl().map_err(|_| RunCause::AnalyzeFault)?;
             let mut registry = fsl_route::Registry::new();
             for descriptor in engines.registrations() {
                 registry
@@ -281,6 +384,7 @@ fn run_input(
                     exit_code,
                     value: NativeResult::analyze_document(document),
                     outcome: None,
+                    requirements: None,
                 }),
                 Err(AnalyzeDocumentError::Refused(refusal)) => {
                     Err(RunCause::AnalyzeRefused(Box::new(refusal)))
@@ -316,5 +420,127 @@ fn with_deadline<T>(cancel: &Cancel, deadline_ms: Option<u64>, work: impl FnOnce
             let _ = done.send(());
             value
         }),
+    }
+}
+
+/// FR-850 "Admission": a request that selects `package` is read by the strict
+/// checked-package reader against the supplied domain packages, and refuses
+/// before any item resolves when a compile member sits beside it, the reader
+/// refuses the bytes, a recorded domain package is not supplied, or a
+/// supplied one is not recorded.
+fn admit_package(
+    directory: &Path,
+    dependent_bytes: usize,
+    request: &wire::AnalyzeRequest,
+    package: &wire::FileSelection,
+) -> Result<()> {
+    if request.program.is_some() {
+        return Err(invalid(
+            "program",
+            "a program cannot be selected beside a package",
+        ));
+    }
+    if !request.libraries.is_empty() {
+        return Err(invalid(
+            "libraries",
+            "a package already holds its dependency selections",
+        ));
+    }
+    if request.refinement_internals.is_some() {
+        return Err(invalid(
+            "refinement_internals",
+            "a package is already compiled",
+        ));
+    }
+    if request.integer_division.is_some() {
+        return Err(invalid("integer_division", "a package is already compiled"));
+    }
+    let mut intake = intake_with_bytes(
+        directory,
+        FileCounts {
+            programs: 1,
+            models: request.models.len(),
+            observations: request.documents.len(),
+        },
+        dependent_bytes,
+    )?;
+    let bytes = intake.file(&package.file, intake.remaining)?;
+    if request
+        .models
+        .iter()
+        .any(|model| !super::is_domain_package(model))
+    {
+        return Err(RunCause::CompleteSelection(
+            super::CompleteSelection::NativeModels,
+        ));
+    }
+    let documents = request
+        .models
+        .iter()
+        .map(|model| intake.source(&model.source))
+        .collect::<Result<Vec<_>>>()?;
+    let supplied = fsl_semantics::model::intake::package_input(
+        documents
+            .iter()
+            .map(|document| document.source().text().as_bytes()),
+    )
+    .map_err(|refusal| match refusal.cause {
+        fsl_semantics::model::refusal::ModelRefusalCause::ConflictingPackage { identity } => {
+            conflicting_model(&identity)
+        }
+        _ => RunCause::ClauseRequest {
+            member: "models".to_owned(),
+            reason: refusal.detail,
+        },
+    })?;
+    let limits =
+        fsl_package::V2ReadLimits::bounded(fsl_replay::spine::I2_NATIVE_JOIN_STORAGE_DEFAULT);
+    let admitted =
+        fsl_package::admit_checked_package(&bytes, &supplied, limits).map_err(package_refusal)?;
+    for identity in supplied.keys() {
+        if !admitted
+            .selected_model_packages()
+            .any(|recorded| recorded == identity)
+        {
+            return Err(conflicting_model(identity));
+        }
+    }
+    Ok(())
+}
+
+fn conflicting_model(identity: &str) -> RunCause {
+    RunCause::AnalyzePackage {
+        code: fsl_foundation::Code::InvalidPackage,
+        cause: Some("conflicting-definition".to_owned()),
+        pointer: None,
+        message: format!(
+            "invalid_package/conflicting-definition: the models entry {identity} is not a domain \
+             package the package records, or repeats one"
+        ),
+    }
+}
+
+/// The request-stage refusal of a package the strict reader refused.
+fn package_refusal(refusal: fsl_package::PackageAdmissionRefusal) -> RunCause {
+    let fsl_package::PackageAdmissionRefusal {
+        code,
+        cause,
+        pointer,
+        identity,
+    } = refusal;
+    let named = match (&identity, &pointer) {
+        (Some(identity), _) => format!(": no models entry supplies {identity}"),
+        (None, Some(pointer)) => format!(" at {pointer}"),
+        (None, None) => String::new(),
+    };
+    let label = match &cause {
+        Some(cause) => format!("{}/{cause}", code.as_str()),
+        None => code.as_str().to_owned(),
+    };
+    RunCause::AnalyzePackage {
+        code,
+        cause,
+        pointer,
+        message: format!("{label}{named}"),
     }
 }

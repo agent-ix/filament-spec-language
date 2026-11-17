@@ -37,6 +37,7 @@ mod source_corpus;
 #[cfg(feature = "checked-handoff")]
 mod selected_object_closure;
 
+pub(crate) mod negotiation;
 #[path = "../support/mod.rs"]
 pub(crate) mod support;
 
@@ -107,6 +108,7 @@ mod limit_name_patterns;
 #[cfg(feature = "checked-handoff")]
 mod mapping_support;
 mod mapping_support_occurrences;
+mod mltl_differential;
 #[cfg(feature = "checked-handoff")]
 mod model_type_unit_roots;
 mod modulo_claim_bounds;
@@ -148,6 +150,7 @@ mod temporal_uncertain_late;
 mod temporal_v1_retired;
 mod text_enum_identity;
 mod text_size_v2;
+mod timed_clock_unit;
 mod unbounded_declarations;
 mod union_nodes;
 mod value_invariants_run;

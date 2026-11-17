@@ -5,8 +5,8 @@
 //! read back with the reader, while each retains its own admission binding.
 
 use filament_contract_model::{CheckedNodeId, CheckedNodeKind, CheckedPackageV2, TemporalForm};
-use filament_spec_language::checked_handoff::{evidence, write, Corpus};
-use filament_spec_language::emit_checked_v2;
+use fsl_command::checked_handoff::{evidence, write, Corpus};
+use fsl_command::emit_checked_v2;
 use fsl_package::checked_views::{
     mapping_support, temporal_subject, Classification, Closure, Support, Target, Unmatched,
 };

@@ -268,7 +268,7 @@ pub fn mapping_support(
         }
     }
     Ok(Classification {
-        support: support(profile, future, past, surrounding),
+        support: support_of(profile, future, past, surrounding),
         retained: Retained {
             declaration: subject.declaration().clone(),
             profile: subject.profile().clone(),
@@ -284,8 +284,17 @@ pub fn mapping_support(
     })
 }
 
-/// FR-045's table, in row order.
-fn support(profile: TemporalProfile, future: bool, past: bool, surrounding: Closure) -> Support {
+/// FR-045's table, in row order: the disposition of a clause under
+/// `profile` whose reachable operators include a future one (`future`) and a
+/// past one (`past`), under the surrounding-execution closure `surrounding`.
+/// [`mapping_support`] reads the operator directions from the checked view;
+/// a caller holding the checked clause reads them from its formula.
+pub fn support_of(
+    profile: TemporalProfile,
+    future: bool,
+    past: bool,
+    surrounding: Closure,
+) -> Support {
     let mut dimensions = Vec::new();
     match profile {
         TemporalProfile::InfiniteTrace => dimensions.push(Unmatched::InfiniteTrace),

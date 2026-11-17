@@ -4,13 +4,13 @@
 //! comprehension, evaluated through the bare route over the handoff files.
 
 use filament_exact::{FieldValue, Meter, NodeKey, Value, ValueType};
-use filament_spec_language::checked_handoff::Corpus;
+use fsl_command::checked_handoff::Corpus;
 use fsl_eval::value::{CheckedPackageEvaluation, ProtocolSlot, ProtocolSupply, SuppliedValue};
 use fsl_package::{BarePackage, BareSupply, ProtocolSlotDescriptor};
 use ix_trace_rs::trace;
 
 use super::checked_handoff::{admitted, request, tree};
-use filament_spec_language::checked_handoff::{evidence, write};
+use fsl_command::checked_handoff::{evidence, write};
 
 const UNLIMITED: filament_exact::ScalarLimits = filament_exact::ScalarLimits {
     integer_bits: u64::MAX,
@@ -72,7 +72,7 @@ fn recipe_with_declarations(condition: Option<&str>, declarations: &str) -> Reci
 
 fn read_recipe(
     holder: tempfile::TempDir,
-    request: &filament_spec_language::checked_handoff::CheckedHandoffRequest,
+    request: &fsl_command::checked_handoff::CheckedHandoffRequest,
 ) -> Recipe {
     let out = holder.path().join("handoff");
     write(request, &out).expect("the handoff is written");

@@ -289,7 +289,8 @@ A native-run/1 request (FR-026's closed envelope and shared limits). For a
   driver's `run` verb always reaches this mode ([FR-662](FR-662-check-every-native-fence-of-a-markdown-specification.md)).
 - `package`: an optional closed selection of an existing `filament.checked-package/v2`
   artifact by package-file path. When present, FR-027's strict package reader
-  admits and executes that package without fallback to source compilation.
+  admits and executes that package without fallback to source compilation,
+  as FR-945 states.
 - `models`: zero or more `semantic-ir/2.0.0` domain package documents, each
   read and handed to spine `compile` as FR-056's
   package input, exactly as FR-027 does for compile.
@@ -330,6 +331,9 @@ A native-run/1 request (FR-026's closed envelope and shared limits). For a
     NFR-130 live-occurrence limit of the call's evaluation; omitted, it is
     the FR-255 default 1048576. It is not an accounting counter: it bounds the
     frames and argument values the evaluation holds at once, not work done.
+  - `requirements`: optional, the closed object FR-960 gives, which asks the
+    run to settle the requirement items of the call and names their backends;
+    FR-961 settles them and FR-963 adds their members to this document.
 
 ## Outputs
 

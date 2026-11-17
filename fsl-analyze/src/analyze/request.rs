@@ -86,6 +86,8 @@ pub struct ItemOptions {
     pub required: bool,
     /// Optional finite assignment/case budget of the native check arms.
     pub max_cases: Option<std::num::NonZeroU64>,
+    /// The provisioned document a `finite-replay` item replays.
+    pub trace: Option<fsl_semantics::model::observation::DocumentRef>,
 }
 
 /// One claim occurrence and its kind-specific, subject-free settings.
@@ -609,12 +611,24 @@ fn work<'a>(
                     .get(backend.id())
                     .is_some_and(|engine| engine.provider().is_some())
             }) {
-                crate::external_provider::provider_item(
-                    item.request_index,
+                let routed = crate::provider::routed_item(
                     package,
+                    engines.registrations(),
+                    item.request_index,
                     &item.claim,
+                    item.backend.as_ref(),
+                );
+                crate::provider::provider_item(
+                    item.request_index,
                     backend.id(),
-                    selection,
+                    crate::provider::ProviderItemInput {
+                        package,
+                        packages: binding.packages,
+                        claim: &item.claim,
+                        routed,
+                        emit: limits.emit,
+                        selection,
+                    },
                 )
             } else {
                 let selection = selection.map(|target| crate::value_check::ValueRequest {
@@ -623,6 +637,37 @@ fn work<'a>(
                     reported: None,
                 });
                 super::value_item(item.request_index, package, &item.claim, selection)
+            }
+        }
+        None if item.kind == Capability::FiniteReplay => {
+            let protocol = package.graph().protocols().iter().find(|protocol| {
+                package
+                    .graph()
+                    .protocol_node_keys(&protocol.name)
+                    .and_then(|keys| keys.clause.as_ref())
+                    == Some(item.claim.node())
+            });
+            match protocol {
+                Some(protocol) => {
+                    let trace = item
+                        .options
+                        .trace
+                        .as_ref()
+                        .and_then(|reference| binding.snapshots.get(reference))
+                        .map_or(
+                            Err(crate::protocol_analysis::TraceDefect::unreadable()),
+                            |bytes| crate::protocol_analysis::SuppliedTrace::read(bytes),
+                        );
+                    crate::protocol_analysis::finite_replay_item(
+                        item.request_index,
+                        package,
+                        binding.clone(),
+                        *limits,
+                        protocol,
+                        trace,
+                    )
+                }
+                None => absent(),
             }
         }
         None if item.kind == Capability::OperationContract => {
@@ -659,11 +704,11 @@ fn work<'a>(
         (expected, &negotiated.disposition)
     {
         if candidate.id().as_str() != expected {
-            built.work = Some(Box::new(move |_, _| {
+            built.work = Some(super::ItemWork::Engine(Box::new(move |_, _| {
                 super::EngineReport::Refused(super::Refusal::Unsupported(
                     fsl_route::NegotiationOutcome::UnsupportedRequestedCapability.code(),
                 ))
-            }));
+            })));
         }
     }
     built.kind = item.kind;

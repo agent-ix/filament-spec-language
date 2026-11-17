@@ -99,8 +99,12 @@ impl<'a> Forms<'a> {
         self.has_form_visiting(value_type, true, &mut BTreeSet::new())
     }
 
-    /// One exhaustive mapping from the checked type to its form: only a
-    /// population below the top level has none (FR-650 "Types with no form").
+    /// One exhaustive mapping from the checked type to its form: a
+    /// population below the top level has none (FR-650 "Types with no form"),
+    /// and neither has a map: FR-650 gives Map the form `{"map": [{key,
+    /// value}]}`, but `filament_exact::Value` has no map value to read it
+    /// into or write it from, so a map parameter or result refuses as
+    /// unsupported rather than being advertised and never read.
     fn has_form_visiting(
         &self,
         value_type: &ValueType,
@@ -150,10 +154,7 @@ impl<'a> Forms<'a> {
             | ValueType::CarriedQuantity(_)
             | ValueType::Reference(_) => true,
             ValueType::Population(_) => top,
-            ValueType::Map(map) => {
-                self.has_form_visiting(map.key(), false, seen)
-                    && self.has_form_visiting(map.values(), false, seen)
-            }
+            ValueType::Map(_) => false,
         }
     }
 
@@ -1462,6 +1463,8 @@ mod tests {
         )));
         assert!(!forms.has_form(&sequence));
         assert!(forms.has_form(&ValueType::option(ValueType::Boolean)));
+        // A map has no kernel value yet, so it advertises no form.
+        assert!(!forms.has_form(&map));
         let form = serde_json::json!({"boolean": true});
         assert!(matches!(
             forms.read(&form, &map),

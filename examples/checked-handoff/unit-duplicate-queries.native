@@ -19,10 +19,10 @@ type Count = Int[0, 5];
 pre BeforeApply using v on M::Workflow::apply { amount >= 1 U }
 post AfterApply using v on M::Workflow::apply { result }
 
-temporal Due using t over (view: M::Workflow) clock "events" on origin {
+temporal Due using t over (view: M::Workflow) clock "model-steps" on origin {
     always[0,30] holds(L::Ready(view.ready))
 }
-temporal DueLate using t over (view: M::Workflow) clock "events" on origin {
+temporal DueLate using t over (view: M::Workflow) clock "model-steps" on origin {
     always[0,60] holds(L::Ready(view.ready))
 }
 

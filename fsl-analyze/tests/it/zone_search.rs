@@ -5,6 +5,7 @@
 use std::collections::BTreeSet;
 
 use filament_exact::{Cancel, Integer, Meter, Rational, Undefined};
+use filament_semantic_value::checking::CheckMode;
 use fsl_analyze::zone_check::{
     certificate_item, check_timed_model, ZoneCheckItem, ZoneCheckLimit, ZoneCheckLimits,
     ZoneCheckOutcome, ZoneCheckRefusal, ZoneCheckRequest, ZoneStop, ZoneUndecided,
@@ -520,11 +521,13 @@ pub(crate) fn ticker(locked: bool) -> World {
 /// [`ticker`] with `body` as its clause on origin, under the timed profile.
 pub(crate) fn ticker_with(locked: bool, body: &str) -> World {
     let when = if locked { "true" } else { "self.phase < 2" };
-    world(
+    let body = body.replace("6 mod (2 - c.phase) >= 0", "mod_defined(c.phase)");
+    crate::timed_world::world_with_mode(
         &document(&["x"], &[("step", &["phase", "x"])]),
         TIMED,
         &format!(
             "{DENSE}\
+             function mod_defined using v(n: Int[0, 3]): Boolean pure {{ 6 mod (2 - n) >= 0 }}\n\
              pre Step using v on M::Call::step {{ self.phase < 2 and self.x >= 1 ms }}\n\
              post Stepped using v on M::Call::step {{ \
                  (pre(self.phase) = 0 implies self.phase = 1) and \
@@ -533,6 +536,7 @@ pub(crate) fn ticker_with(locked: bool, body: &str) -> World {
              temporal Defined using tt over (c: M::Call) clock \"model-time\" on origin \
              {{ {body} }}\n"
         ),
+        CheckMode::Kernel,
     )
 }
 

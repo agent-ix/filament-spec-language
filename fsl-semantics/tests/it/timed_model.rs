@@ -1672,4 +1672,32 @@ fn a_measured_recursive_clock_reading_unfolds() {
             "loop(self.x, self.n)"
         )
     );
+    // Each unfolding is one work unit: the smallest budget that admits the
+    // constant call, less one, refuses `work-budget-exceeded` at the call.
+    let unit = declarations("loop(self.x, 3)");
+    let with_budget = |budget: u64| {
+        admit_and_assemble_with_profiles(&document, TEMPORAL, &unit)
+            .expect("S2 builds every timed form")
+            .with_unwritten_timed_members()
+            .check(
+                CheckMode::Linked,
+                filament_semantic_value::checking::CheckingLimits::default()
+                    .with_work_budget(budget),
+            )
+    };
+    let (mut low, mut high) = (0_u64, 1_u64 << 32);
+    while low + 1 < high {
+        let middle = low + (high - low) / 2;
+        if with_budget(middle).is_ok() {
+            high = middle;
+        } else {
+            low = middle;
+        }
+    }
+    let refusals = with_budget(high - 1).expect_err("one unit short refuses");
+    let text = format!("{refusals:?}");
+    assert!(
+        text.contains("WorkBudget"),
+        "work-budget-exceeded at the call: {text}"
+    );
 }
