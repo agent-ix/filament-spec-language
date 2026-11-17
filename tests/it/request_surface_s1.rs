@@ -352,7 +352,6 @@ fn the_run_command_reaches_markdown_extraction_by_default() {
 /// `parsed` report of the labels, path, byte count and S1 usage.
 #[test]
 #[trace("TC-1745", "FR-663-AC-1")]
-#[ignore = "QSL-2191: the parse outcome's `parsed` result is not implemented yet"]
 fn the_parse_outcome_reports_the_parsed_unit() {
     const FIXTURE: &[u8] = include_bytes!("../fixtures/spine-compile.native");
     let identity = SourceIdentity::new("agent-ix", "test:parent");
@@ -375,6 +374,7 @@ fn the_parse_outcome_reports_the_parsed_unit() {
     );
     assert_eq!(report["path"], "tests/fixtures/spine-compile.native");
     assert_eq!(report["bytes"], FIXTURE.len().to_string());
+    assert_eq!(report["usage"].as_array().unwrap().len(), 4);
     let settings: Vec<&str> = report["usage"]
         .as_array()
         .expect("usage is an array")
@@ -386,6 +386,47 @@ fn the_parse_outcome_reports_the_parsed_unit() {
         ["s1.input_bytes", "s1.tokens", "s1.nodes", "s1.work_units"]
     );
     assert_eq!(report["usage"][0]["used"], FIXTURE.len().to_string());
+
+    let malformed = format!(
+        "{}\nfunction Broken using v(): Boolean pure {{ a < b < c }}\n",
+        std::str::from_utf8(FIXTURE).unwrap()
+    );
+    let malformed = parse(
+        &ParseRequest {
+            source: &identity,
+            path: "tests/fixtures/broken.native",
+            bytes: malformed.as_bytes(),
+        },
+        Limits::default(),
+        &Cancel::new(),
+    );
+    let document: Value = serde_json::from_slice(
+        &OutcomeDocument::from_parse(&malformed).to_bytes().unwrap(),
+    )
+    .unwrap();
+    assert_eq!(document["result"]["kind"], "parsed", "{document}");
+    assert!(
+        document["diagnostics"].as_array().unwrap().iter().any(|diagnostic| {
+            diagnostic["code"] == "invalid_syntax"
+        }),
+        "{document}"
+    );
+
+    let blank = SourceIdentity::new("", "test:parent");
+    let refused = parse(
+        &ParseRequest {
+            source: &blank,
+            path: "tests/fixtures/spine-compile.native",
+            bytes: FIXTURE,
+        },
+        Limits::default(),
+        &Cancel::new(),
+    );
+    let document: Value = serde_json::from_slice(
+        &OutcomeDocument::from_parse(&refused).to_bytes().unwrap(),
+    )
+    .unwrap();
+    assert!(document["result"].is_null(), "{document}");
 }
 
 fn handoff_request(directory: &Path, handoff: Value) -> std::path::PathBuf {
@@ -883,7 +924,6 @@ fn check_without_markdown_reads_native_source() {
 /// equal to the count reached reports `used` equal to `bound`.
 #[test]
 #[trace("TC-1745", "FR-663-AC-2")]
-#[ignore = "QSL-2191: the parse outcome's `parsed` result is not implemented yet"]
 fn the_parsed_report_is_stable_and_reports_a_reached_bound() {
     let bytes = std::fs::read(SPINE_FIXTURE).unwrap();
     let identity = SourceIdentity::new("agent-ix", "test:parent");

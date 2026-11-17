@@ -1816,6 +1816,63 @@ pub enum ExecuteResult {
     },
 }
 
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+#[serde(untagged)]
+enum OutcomeResult {
+    Execute(ExecuteResult),
+    Parsed(ParsedOutcome),
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+struct ParsedOutcome {
+    kind: &'static str,
+    source: fsl_foundation::source::provenance::RawSourceRef,
+    path: String,
+    bytes: String,
+    usage: Vec<ParseUsage>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+struct ParseUsage {
+    setting: &'static str,
+    bound: String,
+    used: String,
+}
+
+impl From<&crate::spine::ParseReport> for ParsedOutcome {
+    fn from(report: &crate::spine::ParseReport) -> Self {
+        let count = |value: usize| value.to_string();
+        Self {
+            kind: "parsed",
+            source: report.source.clone(),
+            path: report.path.clone(),
+            bytes: count(report.bytes),
+            usage: vec![
+                ParseUsage {
+                    setting: "s1.input_bytes",
+                    bound: count(report.limits.source_bytes),
+                    used: count(report.bytes),
+                },
+                ParseUsage {
+                    setting: "s1.tokens",
+                    bound: count(report.limits.tokens),
+                    used: count(report.tokens),
+                },
+                ParseUsage {
+                    setting: "s1.nodes",
+                    bound: count(report.limits.nodes),
+                    used: count(report.nodes),
+                },
+                ParseUsage {
+                    setting: "s1.work_units",
+                    bound: count(report.limits.work_units),
+                    used: report.work_units.to_string(),
+                },
+            ],
+        }
+    }
+}
+
 /// The exhausted limit of an incomplete `execute` result (FR-277): bound and
 /// counter (FR-277's counter at the failed charge) are
 /// ASCII decimal strings.
@@ -1857,7 +1914,7 @@ pub struct OutcomeDocument {
     category: Category,
     items: Vec<OutcomeItem>,
     diagnostics: Vec<OutcomeDiagnostic>,
-    result: Option<ExecuteResult>,
+    result: Option<OutcomeResult>,
     requirements: Option<Box<RequirementItems>>,
 }
 
@@ -2042,13 +2099,37 @@ impl OutcomeDocument {
         &self.diagnostics
     }
 
-    /// The document of a `parse` outcome: success at S2, with no items,
-    /// diagnostics, artifacts or evaluation result; a failure uses the
-    /// front-end's category, stage and diagnostic without running a stage.
+    /// The document of a `parse` outcome. Completed S1/S2 work carries its
+    /// parsed report, including when S2 later refuses recovered syntax.
     pub fn from_parse(result: &Result<Staged<ParsedUnitSource>, FrontEndFailure>) -> Self {
         match result {
-            Ok(_) => Self::new(Operation::Parse, Some(OutcomeStage::S2), Category::Success),
-            Err(failure) => Self::from_failure(Operation::Parse, failure),
+            Ok(staged) => {
+                let parsed = crate::spine::ParseReport {
+                    source: staged.value().source().reference().clone(),
+                    path: staged.value().source().path().to_owned(),
+                    bytes: staged.value().source().text().len(),
+                    limits: staged.value().syntax().effective_limits(),
+                    tokens: staged.value().syntax().cst().tokens().len(),
+                    nodes: staged.value().syntax().cst().nodes().len(),
+                    work_units: staged.work().s1,
+                };
+                let mut document =
+                    Self::new(Operation::Parse, Some(OutcomeStage::S2), Category::Success);
+                document.result = Some(OutcomeResult::Parsed(ParsedOutcome::from(&parsed)));
+                document
+            }
+            Err(failure) => {
+                let mut document = Self::from_failure(Operation::Parse, failure);
+                let parsed = match failure {
+                    StageFailure::RefusedWithPayload(_, payload)
+                    | StageFailure::LimitWithPayload(_, payload) => payload.parsed.as_ref(),
+                    _ => None,
+                };
+                document.result = parsed.map(|parsed| {
+                    OutcomeResult::Parsed(ParsedOutcome::from(parsed))
+                });
+                document
+            }
         }
     }
 
@@ -2266,17 +2347,17 @@ impl OutcomeDocument {
                 document.diagnostics = vec![OutcomeDiagnostic::from_call_refusal(refusal)];
             }
             CallOutcome::Completed(value) => {
-                document.result = Some(ExecuteResult::Completed {
+                document.result = Some(OutcomeResult::Execute(ExecuteResult::Completed {
                     value: ResultValue(value.form()),
-                });
+                }));
             }
             CallOutcome::Undefined { reason } => {
-                document.result = Some(ExecuteResult::Undefined { reason });
+                document.result = Some(OutcomeResult::Execute(ExecuteResult::Undefined { reason }));
             }
             CallOutcome::Incomplete(incomplete) => {
-                document.result = Some(ExecuteResult::Incomplete {
+                document.result = Some(OutcomeResult::Execute(ExecuteResult::Incomplete {
                     limit: ResultLimit::from(incomplete),
-                });
+                }));
             }
         }
         document

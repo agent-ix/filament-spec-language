@@ -317,7 +317,7 @@ fn parse_carries_protocol_results_for_a_confined_syntax_refusal() {
     };
     assert_eq!(refusal.code(), Code::InvalidSyntax);
     assert!(matches!(
-        results.as_slice(),
+        results.protocol_results.as_slice(),
         [
             crate::spine::ProtocolResult::Cleared { declaration: w, stage: SpineStage::Forms },
             crate::spine::ProtocolResult::Refused { declaration: x, source_index: 1, .. },
@@ -375,7 +375,7 @@ fn bounded_nonprotocol_error_after_single_protocol_keeps_it_cleared() {
         .payload()
         .expect("the bounded protocol retains its reached-stage result");
     assert!(matches!(
-        results.as_slice(),
+        results.protocol_results.as_slice(),
         [crate::spine::ProtocolResult::Cleared {
             declaration,
             stage: SpineStage::Forms
@@ -403,7 +403,7 @@ fn protocol_expression_is_not_counted_as_a_declaration() {
         .payload()
         .expect("W remains the only actual protocol declaration");
     assert!(matches!(
-        results.as_slice(),
+        results.protocol_results.as_slice(),
         [crate::spine::ProtocolResult::Cleared {
             declaration,
             stage: SpineStage::Forms
@@ -448,7 +448,7 @@ fn non_protocol_unterminated_state_clause_has_no_protocol_results() {
         .payload()
         .expect("bounded protocols retain their reached-stage results");
     assert!(matches!(
-        results.as_slice(),
+        results.protocol_results.as_slice(),
         [
             crate::spine::ProtocolResult::Cleared { declaration: w, stage: SpineStage::Forms },
             crate::spine::ProtocolResult::Cleared { declaration: z, stage: SpineStage::Forms },

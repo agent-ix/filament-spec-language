@@ -82,6 +82,7 @@ pub use lifecycle::{
     CheckedUnit, EmittedUnit, FrontEndFailure, ObligationState, PackageLimits, ParseRequest,
     ParsedUnitSource, PendingObligation, ProfileCatalogInput, ProfileCheckFailure,
     ProtocolCheckSite, SourceInputs, TypeDeclaration, TypeReport, TypeRequirement,
+    FrontEndFailurePayload, ParseReport,
 };
 pub(crate) use lifecycle::{
     check_for_continuation, check_units_with_options, parse_for_continuation, ContinuationInputs,
