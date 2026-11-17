@@ -1854,10 +1854,9 @@ fn compound_quantity_type_products_remain_subject_to_the_existing_syntax_node_ce
     );
 }
 
-/// FR-091-AC-7 (second half) and FR-230 "Selection": the selectors of a clock
-/// place expression build as `Select` nodes, and the same unit with the
-/// function body `xs[0]` added refuses naming that `xs[0]` only.
-#[trace("FR-091-AC-7")]
+/// FR-091-AC-7 (second half), FR-230 "Selection", and FR-680: clock-place
+/// bracket selectors and ordinary indexed reads build as `Index` nodes.
+#[trace("FR-091-AC-7", "FR-680-AC-2")]
 #[test]
 fn a_selector_of_a_clock_place_expression_builds() {
     let clauses = "post A using v on M::Call::bump { self.ts[1].x = 0 ms }\n\
@@ -1866,7 +1865,7 @@ fn a_selector_of_a_clock_place_expression_builds() {
          pre D using v on M::Call::bump { ref(self.q[0]) = ref(self.q[1]) }\n";
     let (_, parsed) = admissible(clauses);
     let unit = build_unit(&parsed).expect("S2 builds the three place expressions");
-    let selects = unit
+    let indexes = unit
         .forms()
         .iter()
         .filter_map(|declaration| match declaration.form() {
@@ -1874,36 +1873,36 @@ fn a_selector_of_a_clock_place_expression_builds() {
             _ => None,
         })
         .flat_map(|clause| clause.body.iter().collect::<Vec<_>>())
-        .filter(|node| matches!(node.node(), ExprNode::Select { .. }))
+        .filter(|node| matches!(node.node(), ExprNode::Index { .. }))
         .count();
-    assert_eq!(selects, 5);
+    assert_eq!(indexes, 5);
 
     let with_function = format!("{clauses}function f using v(): Boolean pure {{ xs[0] }}\n");
-    let (text, cause, span) = refusal(&with_function);
+    let (_, built) = build(&with_function);
+    let indexed_function = built
+        .forms()
+        .iter()
+        .find_map(|form| match form.form() {
+            DeclarationForm::Function(function) => Some(function),
+            _ => None,
+        })
+        .expect("the function form builds");
     assert!(matches!(
-        &cause,
-        FormsCause::UnrepresentedConstruct {
-            production: Production::Postfix,
-            ..
-        }
+        indexed_function.body.root_node(),
+        ExprNode::Index { .. }
     ));
-    assert_eq!(span, Some(span_of(&text, "xs[0]")));
 }
 
-/// A selector builds only directly after a field access or another selector:
-/// after a call it is unrepresented, at the span through that selector.
-#[trace("FR-091-AC-7")]
+/// FR-680: indexing after a call also builds as an `Index` node.
+#[trace("FR-680-AC-2")]
 #[test]
-fn a_selector_after_a_call_is_refused_at_its_own_span() {
-    let (text, cause, span) = refusal("function f using v(): Boolean pure { self.ts[0].n()[1] }");
-    assert!(matches!(
-        &cause,
-        FormsCause::UnrepresentedConstruct {
-            production: Production::Postfix,
-            ..
-        }
-    ));
-    assert_eq!(span, Some(span_of(&text, "self.ts[0].n()[1]")));
+fn a_selector_after_a_call_builds_as_an_index() {
+    let (_, function) = body("self.ts[0].n()[1]");
+    let root = function.body.root();
+    let ExprNode::Index { operand, .. } = root.node() else {
+        panic!("index after a call builds as Index: {:?}", root.node());
+    };
+    assert!(matches!(root.at(*operand).node(), ExprNode::Dispatch { .. }));
 }
 
 /// FR-764-AC-2: a bare decimal literal builds the `DecimalValue` of the
