@@ -123,6 +123,10 @@ fn a_bare_decimal_in_a_primary_parses_as_a_decimal_literal() {
             parsed.diagnostics()
         );
         assert!(parsed.diagnostics().is_empty(), "{expression}");
+        assert!(
+            parsed.cst().recoveries().is_empty(),
+            "{expression}: an admitted primary has no refusal or expected-token recovery"
+        );
         let start = text.rfind(literal).expect("in the unit");
         assert!(
             parsed.cst().nodes().iter().any(|node| {

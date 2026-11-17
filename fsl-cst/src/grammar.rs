@@ -2988,8 +2988,6 @@ fn probabilistic(g: &mut Grammar) {
                 bound_op(),
                 // Parse a full expression first: an exact-value prefix such
                 // as `5` must not steal a quantity expression such as `5 ms`.
-                // The exact-value alternative still admits bare decimal
-                // thresholds that are not general primaries yet.
                 c(vec![r(P::Expression), r(P::ExactValue)]),
             ]),
         ]),
