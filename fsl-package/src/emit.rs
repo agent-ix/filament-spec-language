@@ -298,6 +298,14 @@ pub enum EmitRefusal {
         /// The exact checked application key retained by FSL lowering.
         application: NodeKey,
     },
+    /// The v2 contract has no checked equality schedule for float values.
+    #[error(
+        "float equality application {application:?} cannot be written to checked-package/v2 yet"
+    )]
+    FloatEqualityNotEmitted {
+        /// The exact checked application key retained by FSL lowering.
+        application: NodeKey,
+    },
     /// A temporal declaration whose selected profile requires a clock
     /// configuration has no exact producer selection.
     #[error(
@@ -483,6 +491,7 @@ impl EmitRefusal {
             Self::ProbabilisticModelNotEmitted { .. }
             | Self::TimedModelNotEmitted { .. }
             | Self::SourceObjectEmission { .. } => Code::UnsupportedConstruct,
+            Self::FloatEqualityNotEmitted { .. } => Code::UnsupportedConstruct,
             Self::MonitorPlanAmbiguous { .. } => Code::InvalidProjectionCorrespondence,
             Self::MonitorBaseRefused(read) => read.code(),
             Self::ClockSelection(_) => Code::InvalidRequest,
@@ -541,6 +550,7 @@ impl EmitRefusal {
             | Self::UnresolvedNodeReference
             | Self::OperandNotInGraph { .. }
             | Self::MissingEqualityIdentityContext { .. } => None,
+            Self::FloatEqualityNotEmitted { .. } => Some("not-yet-implemented"),
             Self::MissingTemporalClockSelection { .. } => Some("missing-selection"),
             Self::SurplusTemporalClockSelection { .. }
             | Self::DuplicateTemporalClockSelection { .. }
@@ -3889,6 +3899,11 @@ fn checked_equality_term_data(
             }
             filament_semantic_value::declaration::EqualitySchedule::Plan => {
                 filament_contract_model::CheckedEqualitySchedule::Plan
+            }
+            filament_semantic_value::declaration::EqualitySchedule::Float => {
+                return Err(EmitRefusal::FloatEqualityNotEmitted {
+                    application: row.application.clone(),
+                });
             }
         };
         let enum_members = if row.producer_data.schedule()
