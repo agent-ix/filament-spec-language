@@ -127,6 +127,28 @@ fn a_tuple_position_is_read_with_a_literal_index() {
 
 #[trace("TC-1821", "FR-680-AC-2", "FSpec-FR-143-AC-22")]
 #[test]
+fn tuple_position_index_checks_static_type_constraints() {
+    assert_refused(
+        "tuple Pair(Boolean, Integer);\n\
+         function f using v(p: Pair): Integer pure { p[2] }",
+        Code::IllTyped,
+        "operator-ineligible",
+    );
+    assert_refused(
+        "tuple Pair(Boolean, Integer);\n\
+         function f using v(p: Pair, i: Int[0, 1]): Integer pure { p[i] }",
+        Code::IllTyped,
+        "operator-ineligible",
+    );
+    assert_refused(
+        "function f using v(n: Integer): Integer pure { n[0] }",
+        Code::IllTyped,
+        "operator-ineligible",
+    );
+}
+
+#[trace("TC-1821", "FR-680-AC-2", "FSpec-FR-143-AC-22")]
+#[test]
 fn a_dotted_tuple_position_is_a_syntax_error() {
     let text = unit_text(
         "tuple Pair(Boolean, Integer);\n\

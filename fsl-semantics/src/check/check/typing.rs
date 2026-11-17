@@ -272,6 +272,10 @@ enum Frame<'e, 'r> {
     Unary(Box<UnaryFrame<'r>>),
     /// `e.f`: the field name and the form's location.
     Field(&'e str, Option<Span>, Location),
+    /// `tuple[index]` or `map[key]` after its source has been typed.
+    Index(Box<IndexFrame<'e>>),
+    /// The key type of a map index after its key expression is typed.
+    IndexKey(Location),
     /// `present(r.f)` or `present(r.f.c)` of a guarded clock place: the
     /// field's name, the union case, and the `present` node's location;
     /// admits the typed owner `r` (FR-230 "Presence is derived").
@@ -469,6 +473,12 @@ impl TypedOperand {
 /// typed.
 struct UnaryFrame<'r> {
     form: Unary<'r>,
+    location: Location,
+}
+
+/// A bracket read waiting on its source expression.
+struct IndexFrame<'e> {
+    index: ExprRef<'e>,
     location: Location,
 }
 
@@ -1579,6 +1589,18 @@ impl<'a> Typer<'a> {
                 frames.push(Frame::Field(field, *member_span, location));
                 return Ok(Step::Descend(Goal::Infer(operand, None, operand_location)));
             }
+            ExprNode::Index { operand, index } => {
+                let operand_location = location.child(0);
+                frames.push(Frame::Index(Box::new(IndexFrame {
+                    index: expression.at(*index),
+                    location,
+                })));
+                return Ok(Step::Descend(Goal::Infer(
+                    expression.at(*operand),
+                    None,
+                    operand_location,
+                )));
+            }
             ExprNode::Present(operand) => {
                 // `present(r.f)` / `present(r.f.c)` of a guarded clock
                 // place: its owner `r` is typed, the place is no value.
@@ -1634,7 +1656,7 @@ impl<'a> Typer<'a> {
                 })));
                 return Ok(Step::Descend(Goal::Infer(base, None, at)));
             }
-            ExprNode::Select { .. } | ExprNode::Index { .. } => {
+            ExprNode::Select { .. } => {
                 // A selector is part of a clock place expression (FR-230
                 // "Selection"); only `ref` checks one so far, and a place
                 // read or reset by selection is not checked yet.
@@ -2683,6 +2705,81 @@ impl<'a> Typer<'a> {
         }
     }
 
+    /// Type the index form's source and static selector constraints. The
+    /// checked IR currently has no tuple projection or map lookup node, so a
+    /// well-typed read remains unsupported after its source-level type checks.
+    fn accept_index<'e, 'r>(
+        &mut self,
+        frame: Box<IndexFrame<'e>>,
+        source: Node,
+        frames: &mut Vec<Frame<'e, 'r>>,
+    ) -> Result<Step<'e, 'r>, CheckRefusal>
+    where
+        'a: 'r,
+    {
+        let IndexFrame { index, location } = *frame;
+        match &source.value_type {
+            ValueType::Composite(declaration) => {
+                let positions =
+                    self.scope
+                        .types()
+                        .composite(declaration.clone())
+                        .and_then(|declaration| match declaration.shape() {
+                            filament_semantic_value::declaration::CompositeShape::Tuple(
+                                positions,
+                            ) => Some(positions),
+                            filament_semantic_value::declaration::CompositeShape::Record(_)
+                            | filament_semantic_value::declaration::CompositeShape::Union(_) => {
+                                None
+                            }
+                        });
+                let Some(positions) = positions else {
+                    return Err(CheckRefusal::ill_typed(
+                        &location,
+                        IllTypedCause::OperatorIneligible,
+                    ));
+                };
+                let ExprNode::Integer(position) = index.node() else {
+                    return Err(CheckRefusal::ill_typed(
+                        &location,
+                        IllTypedCause::OperatorIneligible,
+                    ));
+                };
+                let position = position
+                    .to_u64()
+                    .and_then(|position| usize::try_from(position).ok());
+                if position
+                    .and_then(|position| positions.get(position))
+                    .is_none()
+                {
+                    return Err(CheckRefusal::ill_typed(
+                        &location,
+                        IllTypedCause::OperatorIneligible,
+                    ));
+                }
+                Err(refuse(
+                    &location,
+                    CheckCause::UnsupportedFeature {
+                        loci: vec![location.clone()],
+                    },
+                ))
+            }
+            ValueType::Map(map_type) => {
+                let key_location = location.child(1);
+                frames.push(Frame::IndexKey(location));
+                Ok(Step::Descend(Goal::Expect(
+                    index,
+                    Expected::Checked(Cow::Owned(map_type.key().clone())),
+                    key_location,
+                )))
+            }
+            _ => Err(CheckRefusal::ill_typed(
+                &location,
+                IllTypedCause::OperatorIneligible,
+            )),
+        }
+    }
+
     /// Hand the node `typed` to `frame`, which types its next operand or
     /// finishes its own node.
     fn accept<'e, 'r>(
@@ -2728,6 +2825,13 @@ impl<'a> Typer<'a> {
             Frame::Field(field, member_span, location) => self
                 .field(typed, field, member_span, &location)
                 .map(Step::Typed),
+            Frame::Index(frame) => self.accept_index(frame, typed, frames),
+            Frame::IndexKey(location) => Err(refuse(
+                &location,
+                CheckCause::UnsupportedFeature {
+                    loci: vec![location.clone()],
+                },
+            )),
             Frame::SlotPresence(field, all, location) => self
                 .slot_presence(typed, field, all, &location)
                 .map(Step::Typed),
