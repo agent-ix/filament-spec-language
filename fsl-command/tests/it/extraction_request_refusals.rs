@@ -44,6 +44,13 @@ fn outcome(error: &fsl_command::command::RunError) -> Value {
     error.value().expect("error envelope serializes")
 }
 
+fn refusal(path: &std::path::Path) -> Box<fsl_command::command::RunError> {
+    match read_clause_run_request(path) {
+        Err(error) => error,
+        Ok(_) => panic!("request unexpectedly produced a successful clause run"),
+    }
+}
+
 /// Trace: TC-109, FR-031-AC-6.
 #[test]
 fn extraction_and_package_conflict_refuses_before_reading_files() {
@@ -52,7 +59,7 @@ fn extraction_and_package_conflict_refuses_before_reading_files() {
     request["package"] = json!({"file": "absent-package.json"});
     let path = write_request(directory.path(), request);
 
-    let error = read_clause_run_request(&path).expect_err("conflicting request refuses");
+    let error = refusal(&path);
     assert!(matches!(&error.cause, RunCause::ExtractionPackageConflict));
     let outcome = outcome(&error);
     assert_eq!(outcome["stage"], "request");
@@ -70,7 +77,7 @@ fn extraction_requires_one_clause_binding_and_reports_the_actual_count() {
         let directory = tempfile::tempdir().expect("temporary directory");
         let path = write_request(directory.path(), request(actual));
 
-        let error = read_clause_run_request(&path).expect_err("wrong binding count refuses");
+        let error = refusal(&path);
         assert!(
             matches!(&error.cause, RunCause::ExtractionClauseCount { actual: count } if *count == actual)
         );
@@ -89,7 +96,7 @@ fn quire_context_refusal_preserves_its_diagnostics() {
     fs::write(directory.path().join("original.md"), "# Clause\n").expect("source writes");
     let path = write_request(directory.path(), request(1));
 
-    let error = read_clause_run_request(&path).expect_err("invalid Quire context refuses");
+    let error = refusal(&path);
     let RunCause::InvalidQuireContext { diagnostics } = &error.cause else {
         panic!("expected invalid Quire context, got {:?}", error.cause);
     };
