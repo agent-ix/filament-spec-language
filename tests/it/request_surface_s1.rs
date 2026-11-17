@@ -14,7 +14,7 @@ use fsl_replay::spine::{parse, ParseRequest};
 use fsl_replay::OutcomeDocument;
 use ix_trace_rs::trace;
 use serde_json::{json, Value};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 const HEADER: &str =
     "language \"ix:native\" edition \"1-draft\";\nprofile v = \"filament.value.complete/v1\";\n";
@@ -57,6 +57,71 @@ fn extension_request(directory: &Path, extensions: Value) -> std::path::PathBuf 
 fn compile_refusal(path: &Path) -> (u8, Value) {
     let error = fsl_command::command::compile(path).expect_err("the request refuses");
     (error.category().exit_code(), error.value().unwrap())
+}
+
+fn extension_source_and_request(directory: &Path) -> (PathBuf, PathBuf) {
+    retention_definition(directory, "retention.json", "retention");
+    std::fs::write(
+        directory.join("unit.native"),
+        format!(
+            "{HEADER}profile r = \"ext.retention\";\n{FORM}\nprofile v = \"filament.value.complete/v1\";\nfunction seven using v(): Int[0, 9] pure {{ 7 }}\n"
+        ),
+    )
+    .unwrap();
+    let source = directory.join("unit.native");
+    let request = directory.join("run.json");
+    std::fs::write(
+        &request,
+        serde_json::to_vec(&json!({"format": "native-run/1", "request": {
+            "models": [],
+            "program": {"source": {"file": "unit.native", "authority": "agent-ix",
+                "identity": "test:extension-run", "document": "Ext", "formal_revision": 1}},
+            "extensions": [{"authority": "agent-ix", "identity": "ext.retention",
+                "file": "retention.json"}],
+            "call": {"function": "seven", "arguments": []}
+        }}))
+        .unwrap(),
+    )
+    .unwrap();
+    (source, request)
+}
+
+/// FR-660: native-run/1 reads its request-owned extension catalog before
+/// parsing the selected form and executes the request.
+#[test]
+#[trace("TC-1740", "FR-660-AC-1")]
+fn run_applies_request_extension_definitions() {
+    let directory = tempfile::tempdir().unwrap();
+    let (_, request) = extension_source_and_request(directory.path());
+    let result = fsl_command::command::run(&request, &crate::negotiation::Fr290)
+        .unwrap_or_else(|error| panic!("{}", error.value().unwrap()));
+    assert_eq!(result.exit_code, 0, "{}", result.value);
+    assert!(result.value.to_string().contains("\"integer\":\"7\""));
+}
+
+/// FR-660: source-only check admits the extension form supplied in its check
+/// inputs and reaches S4.
+#[test]
+#[trace("TC-1740", "FR-660-AC-1")]
+fn check_applies_request_extension_definitions() {
+    let directory = tempfile::tempdir().unwrap();
+    let (source, _) = extension_source_and_request(directory.path());
+    let outcome = fsl_command::command::check_outcome(
+        &source,
+        &fsl_command::command::CheckInputs {
+            extensions: vec![fsl_command::command::CheckExtensionInput {
+                authority: "agent-ix".to_owned(),
+                identity: "ext.retention".to_owned(),
+                file: directory.path().join("retention.json"),
+                depends_on: Vec::new(),
+                capabilities: Vec::new(),
+            }],
+            ..fsl_command::command::CheckInputs::default()
+        },
+    );
+    let document: Value = serde_json::from_slice(&outcome.document().to_bytes().unwrap()).unwrap();
+    assert_eq!(document["category"], "success", "{document}");
+    assert_eq!(document["last_stage"], "S4", "{document}");
 }
 
 /// FR-660-AC-2 (TC-1741): a header selecting an identity the request's

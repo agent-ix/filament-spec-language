@@ -319,7 +319,6 @@ fn a_leading_keyword_is_an_ordinary_identifier_outside_a_top_level_declaration_s
 /// from, and the compile admits the `retention` form.
 #[test]
 #[trace("TC-1740", "FR-660-AC-1")]
-#[ignore = "QSL-2189: the request `extensions` member is not implemented yet"]
 fn compile_applies_request_extension_definitions() {
     let directory = tempfile::tempdir().unwrap();
     let definition = serde_json::json!({
