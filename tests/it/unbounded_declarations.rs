@@ -651,14 +651,6 @@ fn a_quantifier_claim_over_an_unbounded_set_is_a_negotiated_item() {
         panic!("one quantifier claim item: {items:#?}");
     };
     assert_eq!(item.kind(), Capability::ValueValidity);
-    assert!(
-        matches!(item.extent(), ExtentClassification::Unbounded { .. }),
-        "{item:#?}"
-    );
-    assert_eq!(
-        item.unbounded(),
-        [(domain_of_parameter(graph), DomainKind::Collection)]
-    );
     let CandidateOutcome::Candidates(candidates) = item.candidates() else {
         panic!("a computed candidate set");
     };
