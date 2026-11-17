@@ -4,6 +4,8 @@
 //! `tests/it/`. One binary, one link step, the same shape as the root
 //! crate's `it` target.
 
+#[path = "../../../tests/support/published_fspec.rs"]
+pub(crate) mod published_fspec;
 pub(crate) mod support;
 
 /// The package name test fixtures assemble under.

@@ -433,7 +433,7 @@ Other directories:
 
 `make ci` is the local gate: formatting, clippy, tests across feature
 combinations, docs and the architecture lints. It reads the standard's test
-vectors from a sibling `filament-specification` checkout (`FSPEC_DIR`). The hosted
+vectors from the version-pinned `filament-specification` Cargo package. The hosted
 native compiler CI runs only on manual dispatch, so run the gate before opening
 a pull request.
 See [CONTRIBUTING.md](CONTRIBUTING.md) and [AGENTS.md](AGENTS.md).

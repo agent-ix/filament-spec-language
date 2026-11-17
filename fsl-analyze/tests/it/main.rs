@@ -2,6 +2,8 @@
 //! Public API tests for the unreduced graph core and the model checker.
 
 mod analysis_view;
+#[path = "../../../tests/support/published_fspec.rs"]
+pub(crate) mod published_fspec;
 mod analyze;
 mod analyze_cli;
 mod analyze_cli_support;

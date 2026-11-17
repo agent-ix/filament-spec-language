@@ -722,18 +722,10 @@ impl fsl_analyze::provider::ExternalProvider for RecordingProvider {
     }
 }
 
-/// FSpec FR-331's `Request` definition, read in place from `$FSPEC_DIR`
-/// with the checked-package schema it refers to.
+/// FSpec FR-331's `Request` definition with the checked-package schema it refers to.
 fn fr331_request_schema() -> jsonschema::JSONSchema {
-    let fspec = std::env::var_os("FSPEC_DIR")
-        .expect("FSPEC_DIR names the FSpec checkout whose schema this reads");
-    let read = |relative: &str| -> Value {
-        let path = std::path::PathBuf::from(&fspec).join(relative);
-        serde_json::from_slice(&std::fs::read(&path).expect("the schema reads"))
-            .expect("the schema is JSON")
-    };
-    let schema = read("proposals/backend-provider-v1/schema.json");
-    let package = read("proposals/checked-package-v2/schema.json");
+    let schema = crate::published_fspec::json("proposals/backend-provider-v1/schema.json");
+    let package = crate::published_fspec::json("proposals/checked-package-v2/schema.json");
     let request = json!({
         "$schema": schema["$schema"],
         "$defs": schema["$defs"],

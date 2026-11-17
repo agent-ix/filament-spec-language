@@ -84,14 +84,6 @@ pub enum Error {
     /// A command-line invocation was malformed.
     #[error("usage: {0}")]
     Usage(&'static str),
-    /// The FSpec checkout is absent, missing vectors, or cannot be resolved.
-    #[error("conformance: invalid FSPEC_DIR {path:?}: {reason}")]
-    ConformanceInput {
-        /// The caller's unmodified path.
-        path: PathBuf,
-        /// Why it cannot be used.
-        reason: String,
-    },
     /// A required conformance cargo invocation could not be spawned.
     #[error("conformance: cannot spawn cargo for {selection}: {source}")]
     ConformanceSpawn {
@@ -431,7 +423,6 @@ impl Error {
     pub fn code(&self) -> Code {
         match self {
             Self::Usage(_) => Code::Usage,
-            Self::ConformanceInput { .. } => Code::Usage,
             Self::ConformanceSpawn { .. }
             | Self::ConformanceCheck { .. }
             | Self::ConformanceCiSpawn { .. }

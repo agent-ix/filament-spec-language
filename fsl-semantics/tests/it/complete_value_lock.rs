@@ -1,11 +1,10 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //! The `Value` family's local definition admission and selection-vector
 //! behavior. The tests that need FSpec vectors read those vectors from the
-//! checkout named by `FSPEC_DIR`; role identities are resolved by closed
+//! published FSpec definitions; role identities are resolved by closed
 //! typed enums, without a copied catalog.
 
 use std::collections::BTreeSet;
-use std::path::Path;
 
 use filament_semantic_value::definition::SelectionRefusalCode;
 use fsl_semantics::value::{
@@ -15,18 +14,10 @@ use fsl_semantics::value::{
 use ix_trace_rs::trace;
 use serde_json::Value;
 
-/// The FSpec definitions directory inside a filament-specification checkout.
-const DEFINITIONS: &str = "proposals/filament-v1/definitions";
-
 fn fspec_document(name: &str) -> Option<Value> {
-    let fspec = std::env::var_os("FSPEC_DIR")?;
-    let path = Path::new(&fspec).join(DEFINITIONS).join(name);
-    let bytes =
-        std::fs::read(&path).unwrap_or_else(|error| panic!("reading {}: {error}", path.display()));
-    Some(
-        serde_json::from_slice(&bytes)
-            .unwrap_or_else(|error| panic!("parsing {}: {error}", path.display())),
-    )
+    Some(crate::published_fspec::json(&format!(
+        "proposals/filament-v1/definitions/{name}"
+    )))
 }
 
 fn strings(value: &Value) -> Vec<&str> {
@@ -73,13 +64,12 @@ fn vector_roles<'a>(vectors: &'a Value, vector: &'a Value) -> Vec<&'a str> {
 /// and a division law exactly when `integer_div_rem` is present. Every
 /// refused vector, including the two ordering vectors, refuses with exactly
 /// its `expected_code`, and the refused vectors together reach every closed
-/// refusal code. Fails when `FSPEC_DIR` is unset; `make
-/// conformance` sets it.
+/// refusal code. The cases come from the pinned standard package.
 #[trace("FSpec-TC-192")]
 #[test]
 fn conformance_admit_selection_matches_fspec_vectors() {
     let vectors = fspec_document("complete-value-selection-vectors.json")
-        .expect("FSPEC_DIR must name a filament-specification checkout");
+        .expect("pinned FSpec publishes the complete-value vectors");
     let accepted = vectors["accepted"].as_array().unwrap();
     assert!(!accepted.is_empty());
     for vector in accepted {

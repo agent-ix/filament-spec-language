@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //! TC-416 step 7 (FR-093-AC-13): the emitter's application nodes against
 //! FSpec's v2 positive fixtures `positive-operation-identities.json` and
-//! `positive-control-operations.json`, read from `$FSPEC_DIR` at run time
+//! `positive-control-operations.json`, read from `$pinned FSpec fixture view` at run time
 //! under `make conformance`. Nothing of FSpec is copied into this repository.
 
 use super::*;
@@ -386,14 +386,14 @@ const NOT_LOWERED: [&str; 7] = [
 /// Plan rows and names exact missing per-fact witnesses for Text, Enum, and
 /// Quantity schedules.
 ///
-/// Fails when `FSPEC_DIR` is unset; `make conformance`
+/// Fails when `pinned FSpec fixture view` is unset; `make conformance`
 /// requires it.
 #[trace("FR-093-AC-13", "TC-416")]
 #[test]
 fn conformance_emitted_application_nodes_match_fspec_positive_fixtures() {
-    let fspec = std::env::var_os("FSPEC_DIR")
-        .expect("FSPEC_DIR must name a filament-specification checkout");
-    let directory = std::path::Path::new(&fspec).join("proposals/checked-package-v2/fixtures");
+    let directory = crate::checked_v2::tests::fspec_directory()
+        .expect("pinned FSpec publishes positive fixtures")
+        .join("proposals/checked-package-v2/fixtures");
     let cases = cases();
     let mut hit = vec![false; cases.len()];
     let mut emitted = Vec::new();

@@ -2019,14 +2019,13 @@ fn timestamped_counter_cover_uses_half_open_boundary_rules() {
     // expected value of each is the file's.
     // A required input: the conformance vectors are FSpec's, and a run
     // without them proves nothing.
-    let fspec = std::env::var_os("FSPEC_DIR").expect(
-        "FSPEC_DIR names the filament-specification checkout the tick-cover vectors live in",
-    );
-    let path =
-        std::path::Path::new(&fspec).join("proposals/checked-package-v2/tick-cover-vectors.json");
-    let document: serde_json::Value =
-        serde_json::from_str(&std::fs::read_to_string(path).expect("the vectors read"))
-            .expect("the vectors parse");
+    let document: serde_json::Value = serde_json::from_slice(
+        filament_specification::published_file(
+            "proposals/checked-package-v2/tick-cover-vectors.json",
+        )
+        .expect("pinned FSpec publishes tick-cover vectors"),
+    )
+    .expect("the vectors parse");
     let cases = document["cases"].as_array().expect("cases");
     assert_eq!(cases.len(), 15);
     for case in cases {
