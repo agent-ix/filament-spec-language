@@ -1,26 +1,26 @@
 ---
 id: SR-2026111612172400000005
-title: "Code review — QSL-2314 source member conformance and clock handling"
+title: "Code review — QSL-2314 source time declaration key assertion"
 type: SpecReview
 analysis: code-review
-scope: "agent-ix/filament-spec-language; fsl-semantics/src/check/assemble.rs, fsl-semantics/src/check/assemble/clock_forms.rs, fsl-semantics/src/check/assemble/clock_forms/source_places.rs, fsl-semantics/src/check/assemble/source_spellings.rs, fsl-semantics/src/check/lowering.rs, fsl-semantics/src/check/lowering/model.rs, fsl-semantics/src/check/mod.rs, fsl-semantics/src/check/temporal_clause/timed.rs, fsl-semantics/src/check/timed_model.rs, fsl-semantics/src/model/conformance.rs, fsl-semantics/src/model/domain_package.rs, fsl-semantics/src/model/index.rs, fsl-semantics/src/model/mod.rs, fsl-semantics/src/model/normalize.rs, fsl-semantics/src/model/spelling.rs, fsl-semantics/tests/it/source_objects.rs, xtask/src/typestate_scan.rs"
+scope: "agent-ix/filament-spec-language; PR #2843; fsl-semantics/tests/it/source_objects.rs"
 review_set: subset
 relationships:
-  - target: ix://agent-ix/filament-spec-language/FR-088
-    type: references
   - target: ix://agent-ix/filament-spec-language/FR-230
     type: references
-  - target: ix://agent-ix/filament-spec-language/FR-569
+  - target: ix://agent-ix/filament-spec-language/FR-995
+    type: references
+  - target: ix://agent-ix/filament-spec-language/FR-996
     type: references
 ---
 
 ## Summary
 
-Reviewed PR #2775 at frozen head `d193bd91ea6a60f54812ce95461b3b1435b73ee8` against its scoped acceptance, the merged spec changes, repository conventions, and the Rust implementation. No code correctness, safety, API, or test defects were found in the reviewed diff; QC-30-dependent intake and byte-invariance obligations remain explicitly outside this PR.
+Reviewed PR #2843 at frozen head `49c8dd055c6cf3144f969d7715626fbe3106b757`. The test-only change now derives the checked source object's declaration key from its SourceOwner and asserts that the checked time source retains that key.
 
 ## Verdict
 
-**PASS** — the implementation and targeted evidence align with the accepted PR scope. The separate gap-analysis review records one missing exact identity assertion in the PlaceRow test.
+**PASS** — the assertion fails if the checked time source is keyed to the selected model's `model/object_type` node instead of the source-owner declaration key required by amended FR-230-AC-65.
 
 ## Findings
 
@@ -30,13 +30,13 @@ Reviewed PR #2775 at frozen head `d193bd91ea6a60f54812ce95461b3b1435b73ee8` agai
 
 ## Review notes
 
-The review checked the new resolved conformance relation, source spelling registry and formatter, source clock layout propagation, source time member resolution, and affected tests. Reported evidence was source_objects filter 57/57, TC-260 2/2, focused library checks 10/10 and 5/5, workspace check, default-feature workspace Clippy, formatting, and qualified-core architecture lint. No Cargo command was run during this review. The repository's aggregate gate was not run per the direct owner instruction.
+The change leaves production code and emitted output untouched. `a_source_object_type_name_times_the_source_model` obtains the source object's domain declaration, derives the SourceOwner identity and declared type name, constructs `{package: I, node: "ix://I/O"}`, then compares its NodeKey to `graph.time_sources()[0].model_node`. A selected-model node, wrong owner, or wrong type name makes the equality assertion fail. The test retains `FR-230-AC-65` and `TC-2361` trace tags.
+
+The exact affected test passed (1/1). The changed file passed rustfmt, and `git diff --check origin/main...HEAD` passed. Manual requirement-to-assertion alignment was done against FR-230-AC-65; Quoin gap-analysis was not applicable because the only changed file is a test and no production behavior changed. No aggregate gate was run during this review.
 
 ## Examined acceptance scope
 
-- FR-088-AC-8: `ValueTypeRef` is exactly the five-member union; resolved display is the `resolved:` identity form.
-- FR-088-AC-13: formatter output, alias preservation, and resolved member `PlaceRow` identity behavior; QC-30 intake and byte invariance excluded by ruling.
-- FR-088-AC-14: `Population` fallback spelling and refusal for source object members.
-- FR-230-AC-65: source object time name resolution, dense/tick/missing-time cases, refusal spans; emitted root reference excluded by QC-30.
-- FR-569-AC-12/13: source object member type parity and unsupported-type refusals, as related behavior.
-- FR-569-AC-15: outer collection representation, closed conformance cases, and source clock paths.
+- FR-230-AC-65 (examined): the source time source retains the source declaration key `{package: I, node: "ix://I/O"}`, where `I` is the `SourceOwner` identity, and remains a timed model with clock places `w.c` and `d`.
+- TC-2361 (examined): the source-route test for dense time identity, clock places, missing names, duplicate time sources, tick refusal and missing dense time.
+- FR-995-AC-1 (context only): source declaration keys use the `SourceOwner` identity and `ix://I/<Type>` spelling.
+- FR-996-AC-1 (context only): emitted clock-place rows join through source declaration keys.
