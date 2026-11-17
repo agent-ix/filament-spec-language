@@ -52,6 +52,13 @@ impl SourceProvision {
             .map(Vec::as_slice)
     }
 
+    /// Every entry as `(authority, identity, bytes)`, in label order.
+    pub fn entries(&self) -> impl Iterator<Item = (&str, &str, &[u8])> + '_ {
+        self.entries.iter().map(|((authority, identity), bytes)| {
+            (authority.as_str(), identity.as_str(), bytes.as_slice())
+        })
+    }
+
     pub(super) fn wire_entries(&self) -> Vec<(String, String, Vec<u8>)> {
         self.entries
             .iter()
@@ -341,12 +348,22 @@ pub(crate) fn analyze_bound(
     let settled = super::analyze_items(engines, items, cancel);
     let aggregate = super::aggregate(&requirements, &settled);
     let details = settled.iter().map(super::ItemDetail::of).collect();
+    let protocol_conformance = settled
+        .iter()
+        .filter_map(|record| {
+            record
+                .protocol_conformance
+                .clone()
+                .map(|output| (record.request_index, output))
+        })
+        .collect();
     let (records, counterexamples) = super::split_records(settled, package);
     Ok(Staged::new(super::AnalyzeOutcome {
         records,
         counterexamples,
         aggregate,
         details,
+        protocol_conformance,
     }))
 }
 
@@ -730,4 +747,25 @@ fn work<'a>(
         negotiated.disposition.clone(),
         negotiated.diagnostic.clone(),
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use ix_trace_rs::trace;
+
+    use super::SourceProvision;
+    use fsl_foundation::source::provenance::RawSourceRef;
+
+    #[trace("TC-2804", "FR-992-AC-1")]
+    #[test]
+    fn source_provision_entries_are_in_label_order() {
+        let mut provision = SourceProvision::default();
+        let z = RawSourceRef::new("b", "z").expect("valid source label");
+        let a = RawSourceRef::new("a", "a").expect("valid source label");
+        provision.insert(&z, b"z".to_vec());
+        provision.insert(&a, b"a".to_vec());
+
+        let entries: Vec<_> = provision.entries().collect();
+        assert_eq!(entries, vec![("a", "a", &b"a"[..]), ("b", "z", &b"z"[..])]);
+    }
 }

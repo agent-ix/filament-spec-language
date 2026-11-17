@@ -8,6 +8,7 @@
 //! provider manifest ([`manifest`]) and its `analyze` item adapters, which
 //! settle each result by the FR-573 map (PA-4, PA-20).
 
+pub mod conformance;
 mod finite_replay;
 mod item;
 pub mod manifest;

@@ -468,6 +468,9 @@ pub struct AnalyzeOutcome {
     /// What each record's engine reported beside its terminal record, in
     /// request order (FR-621 `exploration` and `certificate`).
     pub details: Vec<ItemDetail>,
+    /// The FR-990 global-conformance output for each settled conformance item.
+    pub protocol_conformance:
+        std::collections::BTreeMap<RequestIndex, fsl_replay::ProtocolConformanceOutput>,
 }
 
 /// What an item's engine reported beside its terminal record (FR-621).
@@ -668,7 +671,12 @@ impl AnalyzeOutcome {
     /// [`OutcomeItemError`] for a `refuted` record without its counterexample
     /// or whose counterexample has no wire spelling.
     pub fn document(&self) -> Result<OutcomeDocument, OutcomeItemError> {
-        analyze_document(&self.records, &self.counterexamples)
+        analyze_document_routed_with_conformance(
+            &self.records,
+            &self.counterexamples,
+            &std::collections::BTreeMap::new(),
+            &self.protocol_conformance,
+        )
     }
 }
 
@@ -714,9 +722,28 @@ pub fn analyze_document_routed(
     counterexamples: &[ItemCounterexample],
     routes: &std::collections::BTreeMap<RequestIndex, ItemRoute>,
 ) -> Result<OutcomeDocument, OutcomeItemError> {
+    analyze_document_routed_with_conformance(
+        records,
+        counterexamples,
+        routes,
+        &std::collections::BTreeMap::new(),
+    )
+}
+
+fn analyze_document_routed_with_conformance(
+    records: &[TerminalRecord],
+    counterexamples: &[ItemCounterexample],
+    routes: &std::collections::BTreeMap<RequestIndex, ItemRoute>,
+    conformance: &std::collections::BTreeMap<RequestIndex, fsl_replay::ProtocolConformanceOutput>,
+) -> Result<OutcomeDocument, OutcomeItemError> {
     let items = records
         .iter()
-        .map(|record| analyze_item(record, counterexamples))
+        .map(|record| {
+            let item = analyze_item(record, counterexamples)?;
+            Ok(conformance.get(&record.request_index()).map_or(item.clone(), |output| {
+                item.with_protocol_conformance(output.clone())
+            }))
+        })
         .collect::<Result<Vec<_>, _>>()?;
     // FR-286: a cancelled request names no stage.
     let cancelled = records.iter().any(|record| {
@@ -1077,6 +1104,8 @@ pub(crate) enum EngineReport {
     ProtocolAnalysis(Box<crate::protocol_analysis::ProtocolAnalysisArtifact>),
     /// The protocol analysis engine's replay of a supplied finite trace.
     FiniteReplay(crate::protocol_analysis::FiniteReplayReport),
+    /// FR-896's result with the typed FR-990 item output.
+    GlobalConformance(crate::protocol_analysis::conformance::ConformanceReport),
     /// The engine refused the item, and its settlement map gives the refusal
     /// no terminal record.
     Refused(Refusal),
@@ -1371,6 +1400,8 @@ pub struct AnalyzeRecord {
     /// The protocol analysis result: its key, and the witness or the
     /// counterexample with its FR-351 record (ADR-036 PA-24, PA-25).
     pub protocol_analysis: Option<Box<crate::protocol_analysis::ProtocolAnalysisArtifact>>,
+    /// The FR-990 per-obligation, closure and global conformance result.
+    pub protocol_conformance: Option<fsl_replay::ProtocolConformanceOutput>,
     /// The state-graph engine's report (FR-628).
     pub state_graph: Option<Box<GraphReport>>,
     /// The number of steps of a supplied trace a `finite-replay` item
@@ -1405,6 +1436,7 @@ impl AnalyzeRecord {
             protocol_subject: None,
             replayed_steps: None,
             protocol_analysis: None,
+            protocol_conformance: None,
             state_graph: None,
         }
     }
@@ -2019,6 +2051,10 @@ fn settle(
             settled.protocol_analysis = Some(Box::new(artifact));
             settled
         }
+        EngineReport::GlobalConformance(report) => AnalyzeRecord {
+            protocol_conformance: Some(report.output),
+            ..record(terminal(report.terminal), None)
+        },
         EngineReport::Exact(exact) => {
             let (settled_record, evidence, counterexample) = exact.settle(index, backend);
             let mut settled = record(terminal(settled_record), None);
@@ -2152,6 +2188,55 @@ mod tests {
             )
             .expect("a well-formed test engine that advertises every capability"),
         )
+    }
+
+    #[trace("TC-2801", "FR-990-AC-1")]
+    #[test]
+    fn global_conformance_survives_analyze_document_settlement() {
+        let index = RequestIndex::new(0);
+        let terminal = TerminalRecord::proved(index, BackendId::new("conformance"), 1);
+        let output = fsl_replay::ProtocolConformanceOutput {
+            obligations: vec![fsl_replay::ConformanceObligationOutput {
+                obligation: serde_json::json!({"kind": "closure"}),
+                verdict: "satisfied".to_owned(),
+                cause: None,
+                basis: "explored".to_owned(),
+                witness: None,
+            }],
+            closure: fsl_replay::ConformanceClosureOutput {
+                state: "closed".to_owned(),
+                premises: vec![serde_json::json!({"kind": "execution"})],
+                producer: "engine".to_owned(),
+            },
+            global: fsl_replay::ConformanceGlobalOutput {
+                label: "proved".to_owned(),
+                basis: "closed-scope".to_owned(),
+                complete: true,
+                cause: None,
+            },
+            projections: Some(vec![fsl_replay::ConformanceProjectionOutput {
+                role: "Buyer".to_owned(),
+                label: "proved".to_owned(),
+                counterexample: None,
+            }]),
+        };
+        let document = analyze_document_routed_with_conformance(
+            &[terminal],
+            &[],
+            &std::collections::BTreeMap::new(),
+            &[(index, output)].into_iter().collect(),
+        )
+        .expect("the settled item serializes");
+        let wire: serde_json::Value = serde_json::from_slice(
+            &document.to_bytes().expect("the document encodes"),
+        )
+        .expect("the document is JSON");
+
+        assert_eq!(wire["items"][0]["result"], "proved");
+        assert_eq!(wire["items"][0]["obligations"][0]["verdict"], "satisfied");
+        assert_eq!(wire["items"][0]["closure"]["state"], "closed");
+        assert_eq!(wire["items"][0]["global"]["complete"], true);
+        assert_eq!(wire["items"][0]["projections"][0]["role"], "Buyer");
     }
 
     fn item<'a>(

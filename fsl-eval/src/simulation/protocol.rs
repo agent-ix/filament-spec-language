@@ -661,7 +661,10 @@ pub fn protocol_domains(
                 .binders
                 .iter()
                 .find(|key| key.introducing == Some(introducing) && key.name == binder.name)?;
-            Some((key.node.clone(), binder.value_type.clone()))
+            Some((
+                key.node.clone(),
+                super::model::root_classification_type(&binder.value_type),
+            ))
         });
     // A `cattempt` takes one record of its template's attempt type (ST-11).
     let attempts = protocol
@@ -671,7 +674,10 @@ pub fn protocol_domains(
         .enumerate()
         .filter_map(|(index, template)| {
             let node = keys.compensations.get(&index)?;
-            Some((node.clone(), template.attempt_type.clone()))
+            Some((
+                node.clone(),
+                super::model::root_classification_type(&template.attempt_type),
+            ))
         });
     binders.chain(attempts).collect()
 }

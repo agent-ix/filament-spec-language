@@ -1227,11 +1227,12 @@ impl<'a> ModelSystem<'a> {
             let Some(node) = node else {
                 return;
             };
-            let bounded = if matches!(value_type, ValueType::Population(_))
-                || domain::enumerable(value_type)
+            let value_type = root_classification_type(value_type);
+            let bounded = if matches!(&value_type, ValueType::Population(_))
+                || domain::enumerable(&value_type)
             {
-                value_type.clone()
-            } else if domain::finite(value_type, self.types) {
+                value_type
+            } else if domain::finite(&value_type, self.types) {
                 // A finite enum, record or tuple (STD-508), its extent
                 // read whole.
                 ValueType::Boolean
@@ -1585,6 +1586,17 @@ impl<'a> ModelSystem<'a> {
         }
         creatable.sort();
         creatable
+    }
+}
+
+/// The classify_extent input for a rooted quantity: quantity domains are
+/// integral before the classifier decides whether the root is bounded.
+pub(crate) fn root_classification_type(value_type: &ValueType) -> ValueType {
+    match value_type {
+        ValueType::Quantity(_) | ValueType::BoundedQuantity(_) | ValueType::CarriedQuantity(_) => {
+            ValueType::Integer
+        }
+        other => other.clone(),
     }
 }
 

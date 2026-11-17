@@ -28,7 +28,7 @@ use fsl_route::{CandidateOutcome, Registry};
 use fsl_semantics::check::Capability;
 use fsl_semantics::model::observation::{DocumentProvision, DocumentRef};
 use serde::Deserialize;
-use serde_json::{json, Map, Value};
+use serde_json::{Map, Value, json};
 
 use super::{
     AnalyzeLimits, ClaimItem, Diagnostic, Engines, ItemForm, ItemOptions, NegotiatedItem,
@@ -1954,8 +1954,15 @@ pub fn settle_run(
     let written: Vec<Value> = document["items"].as_array().cloned().unwrap_or_default();
     let mut items = Vec::with_capacity(records.len());
     let mut gaps = Vec::new();
-    for (record, written) in records.iter().zip(written) {
+    for (record, mut written) in records.iter().zip(written) {
         let index = record.request_index();
+        if let Some(output) = outcome.protocol_conformance.get(&index) {
+            if let (Some(record), Ok(Value::Object(members))) =
+                (written.as_object_mut(), serde_json::to_value(output))
+            {
+                record.extend(members);
+            }
+        }
         let detail = outcome
             .details
             .iter()
@@ -2195,6 +2202,11 @@ fn item_document(written: Value, members: ItemMembers) -> Value {
             );
         }
         item.insert("counterexample".to_owned(), counterexample);
+    }
+    for member in ["obligations", "closure", "global", "projections"] {
+        if let Some(value) = record.get(member) {
+            item.insert(member.to_owned(), value.clone());
+        }
     }
     if let Some(stats) = detail.and_then(|detail| detail.exploration) {
         item.insert(
