@@ -32,24 +32,53 @@ mod code_generation {
 
     const LIBRARY: &str = "language \"ix:native\" edition \"1-draft\";\nprofile v = \"filament.value.complete/v1\";\nfunction increment using v(x: Integer): Integer pure { x + 1 }\n";
 
-    fn model_with_touch() -> Vec<u8> {
+    pub(super) fn model_with_touch() -> Vec<u8> {
         let mut model: serde_json::Value =
             serde_json::from_slice(include_bytes!("../../../spine-model.semantic-ir.json"))
                 .expect("model fixture JSON");
         let operation = "ix://acme/orders/Widget/touch";
-        let origin = serde_json::json!({"generated": {
-            "generatorIdentity": operation, "generatorVersion": "1.0.0",
-            "inputIdentities": [operation],
+        let origin = serde_json::json!({"source": {
+            "sourceIdentity": "ix://acme/orders/spec", "path": "domain.fspec",
+            "startLine": 1, "startColumn": 1,
         }});
-        model["types"]
-            .as_array_mut()
-            .expect("types")
+        let types = model["types"].as_array_mut().expect("types");
+        let widget = types
             .iter_mut()
             .find(|ty| ty["identity"] == "ix://acme/orders/Widget")
-            .expect("Widget")["operations"] = serde_json::json!([{
-            "identity": operation, "name": "touch", "params": [], "pre": [], "post": [],
-            "origin": origin, "frame": {"modifies": [], "creates": [], "deletes": []},
+            .expect("Widget");
+        widget["operations"] = serde_json::json!([{
+            "identity": operation, "name": "touch", "params": [],
+            "returns": {"typeRef": "ix://acme/orders/Widget",
+                "multiplicity": {"lower": 1, "upper": 1, "ordered": false, "unique": true},
+                "nullable": false},
+            "pre": [], "post": [], "origin": origin,
+            "frame": {"modifies": [], "creates": [], "deletes": []},
         }]);
+        let mut attempt = widget.clone();
+        attempt["identity"] = serde_json::json!("ix://acme/orders/Attempt");
+        attempt["displayName"] = serde_json::json!("Attempt");
+        attempt["kind"]["name"] = serde_json::json!("record");
+        attempt["origin"] = serde_json::json!({"source": {
+            "sourceIdentity": "ix://acme/orders/spec", "path": "domain.fspec",
+            "startLine": 1, "startColumn": 1,
+        }});
+        attempt["operations"] = serde_json::json!([]);
+        let attempt_origin = attempt["origin"].clone();
+        for field in attempt["fields"].as_array_mut().expect("fields") {
+            let name = field["name"].as_str().expect("field name");
+            field["identity"] = serde_json::json!(format!("ix://acme/orders/Attempt/{name}"));
+            field["origin"] = attempt_origin.clone();
+        }
+        types.push(attempt);
+        model["constructs"]
+            .as_array_mut()
+            .expect("constructs")
+            .push(serde_json::json!({
+                "kind": {"module": "acme/orders", "name": "record"},
+                "moduleVersion": "1.0.0",
+                "construct": {"identity": "none", "shape": "record", "members": {},
+                    "meaning": "filament.meaning.model.record-value-type/v1"},
+            }));
         serde_json::to_vec(&model).expect("fixture serializes")
     }
 
@@ -128,7 +157,7 @@ mod code_generation {
     fn cf_cg_01_01_call_site_returns_the_selected_function_and_package() {
         let source = fsl_replay::SourceIdentity::new("consumer", "call-site");
         let selected = fsl_replay::QualifiedName::new(vec![
-            filament_exact::Identifier::new("f").expect("identifier")
+            filament_exact::Identifier::new("f").expect("identifier"),
         ])
         .expect("qualified name");
         let site = fsl_replay::call_site(
@@ -202,7 +231,7 @@ mod code_generation {
             object: filament_exact::Identifier::new("Widget").expect("object type"),
             operation: filament_exact::Identifier::new("touch").expect("operation"),
         };
-        let unit = "language \"ix:native\" edition \"1-draft\";\nprofile v = \"filament.value.complete/v1\";\nmodel M = \"acme/orders\";\nfunction f using v(): Boolean pure { true }\n";
+        let unit = "language \"ix:native\" edition \"1-draft\";\nprofile m = \"filament.model.complete/v1\";\nmodel M = \"acme/orders\";\npost Touch using m on M::Widget::touch { true }\n";
         let site = fsl_replay::call_site(
             fsl_replay::SourceIdentity::new("consumer", "operation-call-site"),
             "consumer".into(),
@@ -362,17 +391,17 @@ protocol Flow using p over (input: M::Widget) on origin {\n\
   role Buyer on M::Widget;\n\
   role Seller on M::Widget;\n\
   channel Ch from Buyer to Seller carries Boolean ordering unordered delivery at-least-once capacity 4 overflow block;\n\
-  compensate Full for Main::Applied as (fwd: M::Widget) by Buyer on M::Widget::touch using t clock \"wall\" {\n\
+  compensate Full for Main::Applied as (fwd: M::Widget) by Buyer on M::Widget::touch using t clock \"model-steps\" {\n\
     activate first (trig: M::Widget) when { true } {}\n\
-    within [0, 10]; attempts 2 of M::Widget;\n\
-    retry (early: M::Widget, late: M::Widget) { false };\n\
+    within [0, 10]; attempts 2 of M::Attempt;\n\
+    retry (early: M::Attempt, late: M::Attempt) { false };\n\
     commit never; recover (rec: M::Widget) { true };\n\
   }\n\
   run sequence Main {\n\
     attempt Update by Buyer on M::Widget::touch contracts [] as (tried: M::Widget) { true };\n\
     effect Applied of Update as (applied: M::Widget) { true };\n\
     event Done by Buyer as (done: Boolean) { true };\n\
-    await Wait after Done using t clock \"wall\" within [0, 1] match event Seen by Seller as (seen: Boolean) { true }; then sequence Then {} timeout sequence Late {}\n\
+    await Wait after Done using t clock \"model-steps\" within [0, 1] match event Seen by Seller as (seen: Boolean) { true }; then sequence Then {} timeout sequence Late {}\n\
     choice Pick by Seller visible () { case yes when { true } sequence Yes {} case no when { false } sequence No {} }\n\
   }\n\
   finish End as (outcome: Boolean) { true };\n\
@@ -380,29 +409,7 @@ protocol Flow using p over (input: M::Widget) on origin {\n\
 
     fn checked_protocol() -> filament_contract_model::CheckedPackageV2 {
         let source = fsl_replay::SourceIdentity::new("consumer", "protocol-contract");
-        let mut model: serde_json::Value =
-            serde_json::from_slice(include_bytes!("../../../spine-model.semantic-ir.json"))
-                .expect("model fixture JSON");
-        let operation = "ix://acme/orders/Widget/touch";
-        let origin = serde_json::json!({"generated": {
-            "generatorIdentity": operation, "generatorVersion": "1.0.0",
-            "inputIdentities": [operation],
-        }});
-        model["types"]
-            .as_array_mut()
-            .expect("types")
-            .iter_mut()
-            .find(|ty| ty["identity"] == "ix://acme/orders/Widget")
-            .expect("Widget")["operations"] = serde_json::json!([{
-            "identity": operation, "name": "touch", "params": [], "pre": [], "post": [],
-            "origin": origin, "frame": {"modifies": [], "creates": [], "deletes": []},
-        }]);
-        let model = serde_json::to_vec(&model).expect("fixture serializes");
-        let await_start = UNIT.find("await Wait").expect("await");
-        let await_end = UNIT[await_start..]
-            .find("timeout sequence Late {}")
-            .map(|end| await_start + end + "timeout sequence Late {}".len())
-            .expect("await end");
+        let model = super::code_generation::model_with_touch();
         let compensate_start = UNIT.find("compensate Full").expect("compensation");
         let compensate_end = UNIT[compensate_start..]
             .find("\nrun sequence Main")
@@ -411,27 +418,16 @@ protocol Flow using p over (input: M::Widget) on origin {\n\
         let source_ref =
             fsl_foundation::source::provenance::RawSourceRef::new("consumer", "protocol-contract")
                 .expect("source reference");
-        let clock = filament_contract_model::ClockConfiguration::EventPosition {
-            sequence_authority: "protocol-events".into(),
-        };
-        let selections = [
-            fsl_package::TemporalClockSelection::new(
-                source_ref.clone(),
-                fsl_foundation::Span {
-                    start: await_start,
-                    end: await_end,
-                },
-                clock.clone(),
-            ),
-            fsl_package::TemporalClockSelection::new(
-                source_ref,
-                fsl_foundation::Span {
-                    start: compensate_start,
-                    end: compensate_end,
-                },
-                clock,
-            ),
-        ];
+        let selection = fsl_package::TemporalClockSelection::new(
+            source_ref,
+            fsl_foundation::Span {
+                start: compensate_start,
+                end: compensate_end,
+            },
+            filament_contract_model::ClockConfiguration::EventPosition {
+                sequence_authority: "protocol-events".into(),
+            },
+        );
         let emitted = fsl_replay::compile_package_with_temporal_selections(
             fsl_replay::CompileUnit {
                 source,
@@ -441,7 +437,7 @@ protocol Flow using p over (input: M::Widget) on origin {\n\
             },
             [&model[..]],
             &fsl_replay::DependencyInput::default(),
-            &selections,
+            &[selection],
             fsl_replay::StageLimits::default(),
             fsl_replay::ReplayLimits::default(),
         )
@@ -484,10 +480,11 @@ protocol Flow using p over (input: M::Widget) on origin {\n\
         let view = fsl_package::protocol_view::protocol_view(package, &id).expect("protocol view");
         assert_eq!(view.roles().len(), 2);
         assert_eq!(view.channels().len(), 1);
-        assert!(view
-            .queues()
-            .iter()
-            .all(|queue| graph.nodes.iter().any(|node| &node.node_id == *queue)));
+        assert!(
+            view.queues()
+                .iter()
+                .all(|queue| graph.nodes.iter().any(|node| &node.node_id == *queue))
+        );
         assert!(!view.controls().is_empty());
         assert_eq!(view.compensations().len(), 1);
         assert!(!format!("{:?}", view.run()).is_empty());
@@ -664,9 +661,12 @@ mod runtime {
         let package_name = fsl_replay::LibraryName::new("consumer").expect("library name");
         let packages = fsl_semantics::model::intake::PackageInput::new();
         let unit = "language \"ix:native\" edition \"1-draft\";\n\
-profile t = \"filament.temporal.event-position.false-extension/v1\";\n\
+profile v = \"filament.value.complete/v1\";\n\
+profile t = \"filament.temporal.infinite-trace/v1\";\n\
 record Reading { level: Int[0, 9]; }\n\
-temporal T using t over (r: Reading) clock \"events\" on origin { eventually[0, 1] holds(r.level > 0) }\n";
+dimension Positions;\n\
+unit position : Positions = rational(1, 1);\n\
+temporal T using t over (r: Reading) clock \"positions\" on origin { eventually[0, 1] holds(r.level > 0) }\n";
         let one = filament_exact::Rational::new(
             filament_exact::Integer::from(1_u64),
             filament_exact::Integer::from(1_u64),
@@ -679,11 +679,11 @@ temporal T using t over (r: Reading) clock \"events\" on origin { eventually[0, 
         .expect("nonzero denominator");
         let target = fsl_replay::MonitorTarget {
             counter: "counter".into(),
-            unit: "event".into(),
+            unit: "position".into(),
             width_bits: 8,
             uncertainty: zero,
             max_event_rate: Some(one),
-            max_reading_gap: 2,
+            max_reading_gap: 1,
             max_activations: 8,
         };
         let settings = fsl_replay::TimingObligationSettings::default();
