@@ -64,7 +64,7 @@ fn extension_source_and_request(directory: &Path) -> (PathBuf, PathBuf) {
     std::fs::write(
         directory.join("unit.native"),
         format!(
-            "{HEADER}profile r = \"ext.retention\";\n{FORM}\nprofile v = \"filament.value.complete/v1\";\nfunction seven using v(): Int[0, 9] pure {{ 7 }}\n"
+            "{HEADER}profile r = \"ext.retention\";\n{FORM}\nfunction seven using v(): Int[0, 9] pure {{ 7 }}\n"
         ),
     )
     .unwrap();
