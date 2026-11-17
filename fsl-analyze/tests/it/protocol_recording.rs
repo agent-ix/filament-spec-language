@@ -2,6 +2,7 @@
 //! FR-895: replay-mode reading and obligation assessment of protocol recordings.
 
 use fsl_analyze::protocol_analysis::recording::{assess_recording, RecordingVerdict};
+use ix_trace_rs::trace;
 use serde_json::{json, Value};
 
 use crate::analyze_cli_support::order_protocol;
