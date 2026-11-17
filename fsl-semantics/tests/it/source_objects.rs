@@ -2061,15 +2061,25 @@ fn a_source_object_type_name_times_the_source_model() {
             _ => None,
         })
         .expect("O declaration");
+    let source_owner = object
+        .package
+        .strip_prefix("source/")
+        .expect("source package identity");
+    let type_name = object.node.rsplit('/').next().expect("object type name");
+    let source_declaration = filament_checked::key::DeclarationKey {
+        package: source_owner.to_owned(),
+        node: format!("ix://{source_owner}/{type_name}"),
+    };
+    let type_name = source_declaration
+        .node
+        .strip_prefix(&format!("ix://{source_owner}/"))
+        .expect("source-owner object type key");
     let expected_node = filament_exact::NodeKey::new(
-        object.package.clone(),
-        ["model", "object_type", &object.node]
-            .into_iter()
-            .map(|segment| filament_exact::PathSegment::Text(segment.to_owned()))
-            .collect(),
+        source_declaration.package,
+        [filament_exact::PathSegment::Text(type_name.to_owned())].to_vec(),
         0,
     )
-    .expect("O object type node");
+    .expect("source-owner object type node");
     let graph = finish(declarations)
         .unwrap_or_else(|refusals| panic!("time O dense unit ms checks: {refusals:?}"));
     assert_eq!(graph.time_sources()[0].model, "O");
