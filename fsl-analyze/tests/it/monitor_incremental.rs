@@ -436,6 +436,7 @@ fn a_regressing_stamp_is_refused_and_the_ledger_equals_the_batch_run() {
             authoritative_origin: true,
             cover: None,
             missing_valuations: Vec::new(),
+            late: Default::default(),
         }),
     };
     let batch = run_package_temporal(&PackageTemporalRequest {

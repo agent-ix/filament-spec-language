@@ -194,6 +194,7 @@ fn a_trace_of_the_wrong_shape_for_the_profile_is_refused_at_admit() {
                     authoritative_origin: true,
                     cover: None,
                     missing_valuations: Vec::new(),
+                    late: Default::default(),
                 }),
             },
             over: over("c1"),
