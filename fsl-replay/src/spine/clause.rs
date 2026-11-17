@@ -1041,6 +1041,9 @@ pub struct ClauseRunReport {
     /// FR-122's typed state-clause counterexample, retaining the selected
     /// observation with its witness for a refuted invariant or operation rule.
     pub state_clause_counterexample: Option<crate::StateClauseCounterexample>,
+    /// The admitted before/after field slots for an unauthorized frame write,
+    /// retained for the FR-286 outcome item's frame witness.
+    pub frame_field_values: Option<(String, String)>,
     /// Per-implication consequent observations from a completed native
     /// Boolean clause evaluation, in checked expression order.
     pub consequent_source_events: ConsequentSourceEvents,
@@ -1314,6 +1317,7 @@ fn run_clause_reading(
         basis: undecided_basis(&disposition),
         witness: None,
         state_clause_counterexample: None,
+        frame_field_values: None,
         disposition,
         usage: ClauseRunUsage::default(),
         consequent_source_events: ConsequentSourceEvents::Unavailable,
@@ -1909,6 +1913,7 @@ fn compile_program_parts(
         basis: undecided_basis(&disposition),
         witness: None,
         state_clause_counterexample: None,
+        frame_field_values: None,
         disposition,
         usage: ClauseRunUsage::default(),
         consequent_source_events: ConsequentSourceEvents::Unavailable,
@@ -2032,6 +2037,7 @@ fn run_compiled_clause_selection(
         basis: undecided_basis(&disposition),
         witness: None,
         state_clause_counterexample: None,
+        frame_field_values: None,
         disposition,
         usage: ClauseRunUsage::default(),
         consequent_source_events: ConsequentSourceEvents::Unavailable,
@@ -2177,6 +2183,7 @@ impl CompiledRun<'_> {
             basis: undecided_basis(&disposition),
             witness: None,
             state_clause_counterexample: None,
+            frame_field_values: None,
             disposition,
             usage: ClauseRunUsage::default(),
             consequent_source_events: ConsequentSourceEvents::Unavailable,
@@ -2474,7 +2481,44 @@ fn run_frame(
             }
         }
     }
+    if let (ClauseDisposition::FrameViolation(witness), Some(admitted)) =
+        (&checked.report.disposition, checked.admitted.as_ref())
+    {
+        if let fsl_semantics::model::observation::FrameChange::FieldWrite {
+            object, field, ..
+        } = &witness.change
+        {
+            let observations = admitted.operation_contract_observations();
+            let slot = |observation: &fsl_semantics::model::observation::Observation| {
+                observation
+                    .environment
+                    .objects()
+                    .iter()
+                    .find(|(reference, _)| reference.object().as_str() == object)
+                    .and_then(|(reference, _)| observation.environment.objects().object(reference))
+                    .and_then(|attributes| attributes.get(field))
+                    .map(frame_field_value_text)
+            };
+            checked.report.frame_field_values =
+                slot(&observations.pre).zip(slot(&observations.post));
+        }
+    }
     checked.report
+}
+
+fn frame_field_value_text(value: &filament_exact::FieldValue) -> String {
+    use filament_exact::{FieldValue, Value};
+
+    match value {
+        FieldValue::Absent => "absent".to_owned(),
+        FieldValue::Null => "null".to_owned(),
+        FieldValue::Present(Value::Boolean(value)) => value.to_string(),
+        FieldValue::Present(Value::Integer(value)) => value.to_string(),
+        FieldValue::Present(Value::Reference(reference)) => reference.object().to_string(),
+        FieldValue::Present(Value::String(value)) => value.clone(),
+        FieldValue::Present(Value::Text(value)) => value.retained().to_owned(),
+        other => format!("{other:?}"),
+    }
 }
 
 /// FR-104's Resolution of a `Frame` selection: `M` and `T` resolve to a
@@ -2718,6 +2762,7 @@ fn run_function(
         basis: undecided_basis(&disposition),
         witness: None,
         state_clause_counterexample: None,
+        frame_field_values: None,
         disposition,
         usage: ClauseRunUsage::default(),
         consequent_source_events: ConsequentSourceEvents::Unavailable,

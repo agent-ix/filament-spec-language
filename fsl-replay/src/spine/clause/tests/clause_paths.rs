@@ -332,6 +332,7 @@ fn a_kernel_refusal_record_names_its_cause_on_the_run_item() {
         basis: crate::proof_result::SettlementBasis::Unavailable,
         witness: None,
         state_clause_counterexample: None,
+        frame_field_values: None,
         consequent_source_events: Default::default(),
         finite_window: None,
         counterexample: None,

@@ -1210,6 +1210,7 @@ fn the_native_result_renders_the_unsupported_and_prepare_limit_refusals() {
         basis: crate::proof_result::SettlementBasis::Unavailable,
         witness: None,
         state_clause_counterexample: None,
+        frame_field_values: None,
         consequent_source_events: Default::default(),
         finite_window: None,
         counterexample: None,

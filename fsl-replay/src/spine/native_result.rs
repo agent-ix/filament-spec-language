@@ -2916,14 +2916,25 @@ pub(crate) struct ItemRecord {
 
 pub(crate) fn item_record(report: &ClauseRunReport) -> Result<ItemRecord, NativeRunResultError> {
     use super::{TemporalIndeterminateReason as Reason, TemporalUndefinedCause, TemporalVerdict};
-    let base = ItemRecord {
-        witness: report
+    let witness = match &report.disposition {
+        ClauseDisposition::FrameViolation(frame_witness) => {
+            let mut witness = serde_json::to_value(FrameWitnessWire::from(frame_witness.as_ref()))?;
+            if let Some((before, after)) = &report.frame_field_values {
+                witness["before"] = serde_json::Value::String(before.clone());
+                witness["after"] = serde_json::Value::String(after.clone());
+            }
+            Some(witness)
+        }
+        _ => report
             .state_clause_counterexample
             .as_ref()
             .and_then(|counterexample| counterexample.witness.as_ref())
             .or(report.witness.as_ref())
             .map(|witness| RecordWire::of(witness).and_then(|wire| Ok(serde_json::to_value(wire)?)))
             .transpose()?,
+    };
+    let base = ItemRecord {
+        witness,
         ..ItemRecord::default()
     };
     let ClauseDisposition::Temporal(verdict) = &report.disposition else {

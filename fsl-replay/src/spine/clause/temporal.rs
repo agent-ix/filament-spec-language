@@ -822,6 +822,7 @@ pub(super) fn run_temporal(run: &CompiledRun<'_>, request: &TemporalRun<'_>) -> 
         },
         witness: None,
         state_clause_counterexample: None,
+        frame_field_values: None,
         // A completed temporal verdict names no consequent events: it
         // refuses typed rather than reporting an empty list.
         consequent_source_events: if disposition.truth().is_some() {
