@@ -2388,7 +2388,7 @@ fn check_retains_the_owning_protocol_locus() {
     let with_payload_category = with_payload_code.category();
     let with_payload_exit = with_payload_category.exit_code();
     assert!(matches!(
-        results.as_slice(),
+        results.protocol_results.as_slice(),
         [
             ProtocolResult::Cleared {
                 declaration: w,
@@ -2458,7 +2458,7 @@ fn check_limit_retains_completed_and_incomplete_protocol_results() {
     };
     assert_eq!(limit.setting(), Setting::S3WorkUnits);
     assert!(matches!(
-        results.as_slice(),
+        results.protocol_results.as_slice(),
         [
             ProtocolResult::Cleared { declaration: first, stage: SpineStage::Check },
             ProtocolResult::Incomplete { declaration: second, limit: second_limit },
@@ -2516,7 +2516,7 @@ fn state_clause_refusal_keeps_protocol_result_cleared() {
     assert_eq!(with_payload_category, Category::Refusal);
     assert_eq!(with_payload_exit, 20);
     assert!(matches!(
-        results.as_slice(),
+        results.protocol_results.as_slice(),
         [ProtocolResult::Cleared { declaration, stage: SpineStage::Check }]
             if declaration == "W"
     ));

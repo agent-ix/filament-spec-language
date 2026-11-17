@@ -952,6 +952,7 @@ fn run_clause_evaluates_a_function_selection_with_an_integer_argument() {
             value: ClauseArgumentValue::Integer(5),
         }],
         snapshot: label,
+        snapshot_path: None,
     });
     request.snapshots.insert(
         fsl_semantics::model::observation::document_reference(&bytes)
@@ -991,6 +992,7 @@ fn run_clause_evaluates_a_function_selection_with_a_reference_argument() {
             },
         }],
         snapshot: label,
+        snapshot_path: None,
     });
     request.snapshots.insert(
         fsl_semantics::model::observation::document_reference(&bytes)
@@ -1030,6 +1032,7 @@ fn run_clause_refuses_an_unresolved_reference_argument() {
             },
         }],
         snapshot: label,
+        snapshot_path: None,
     });
     request.snapshots.insert(
         fsl_semantics::model::observation::document_reference(&bytes)
@@ -1067,6 +1070,7 @@ fn run_clause_reports_not_a_predicate_for_an_integer_function() {
         name: "seven".to_owned(),
         arguments: Vec::new(),
         snapshot: label,
+        snapshot_path: None,
     });
     request.snapshots.insert(
         fsl_semantics::model::observation::document_reference(&bytes)
@@ -1095,6 +1099,7 @@ fn run_clause_refuses_an_empty_source() {
             authority: "test".to_owned(),
             identity: "snap".to_owned(),
         },
+        snapshot_path: None,
     });
     request.source = ClauseRunSource::Program {
         identity: source(),
@@ -1121,6 +1126,7 @@ fn run_clause_reports_missing_import_when_no_package_bytes_are_supplied() {
         name: "seven".to_owned(),
         arguments: Vec::new(),
         snapshot: label,
+        snapshot_path: None,
     });
     // No snapshot bytes are inserted either: the request never gets past
     // compile, so nothing would be read even if a snapshot were named.
@@ -1159,6 +1165,7 @@ fn run_clause_writes_the_caller_budget_fields_of_a_compile_ceiling() {
         name: "seven".to_owned(),
         arguments: Vec::new(),
         snapshot: label.clone(),
+        snapshot_path: None,
     };
     let refusal_of = |request: ClauseRunRequest| {
         let report = run_clause(request).unwrap();
@@ -1829,6 +1836,7 @@ fn config_version_function_request(name: &str, arguments: Vec<ClauseArgument>) -
         name: name.to_owned(),
         arguments,
         snapshot: label,
+        snapshot_path: None,
     });
     request.snapshots.insert(
         fsl_semantics::model::observation::document_reference(&bytes)

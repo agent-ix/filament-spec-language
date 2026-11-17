@@ -637,6 +637,7 @@ fn a_compile_refusal_classifies_as_fr_341_does() {
         name: "seven".to_owned(),
         arguments: Vec::new(),
         snapshot: config_version_document_ref("snap"),
+        snapshot_path: None,
     });
     request.packages = BTreeMap::new();
     let report = run_clause(request).unwrap();

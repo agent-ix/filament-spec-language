@@ -2945,12 +2945,13 @@ fn execute_prepared(prepared: PreparedRun, settle: &settle::Settle<'_>) -> Resul
             objects: &objects,
             cancel: &call_cancel,
         },
-        prepared.extension_catalog.as_ref().map(|catalog| {
-            fsl_replay::spine::ProfileCatalogInput {
+        prepared
+            .extension_catalog
+            .as_ref()
+            .map(|catalog| fsl_replay::spine::ProfileCatalogInput {
                 catalog,
                 limits: fsl_semantics::library::bundle::PackageLimits::default(),
-            }
-        }),
+            }),
         |checked, members| {
             settle::settle_call(checked, members, selection, &prepared.packages, settle)
         },

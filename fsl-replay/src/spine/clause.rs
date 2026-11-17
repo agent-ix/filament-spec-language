@@ -119,6 +119,13 @@ pub struct ClauseArgument {
 pub enum ClauseRunSelection {
     /// A state clause, admitted per FR-106.
     Clause(ClauseSelection),
+    /// A state clause with its selected current snapshot's caller path.
+    ClauseWithPath {
+        /// The selected state clause.
+        selection: ClauseSelection,
+        /// The caller's path for its current snapshot, when retained.
+        snapshot_path: Option<String>,
+    },
     /// A function, called as a claim (FR-109's own `Function` selection).
     Function {
         /// The function's name (FR-100's `function` rule; one segment,
@@ -128,6 +135,8 @@ pub enum ClauseRunSelection {
         arguments: Vec<ClauseArgument>,
         /// The current snapshot each object argument resolves against.
         snapshot: DocumentRef,
+        /// The caller's path for the snapshot, when retained by its adapter.
+        snapshot_path: Option<String>,
     },
     /// FR-115: an operation's frame, checked over one invocation. The
     /// request carries no frame and no permission: the frame comes only from
@@ -173,7 +182,9 @@ impl ClauseRunSelection {
     #[must_use]
     pub fn clause_name(&self) -> String {
         match self {
-            Self::Clause(selection) => selection.name.clone(),
+            Self::Clause(selection) | Self::ClauseWithPath { selection, .. } => {
+                selection.name.clone()
+            }
             Self::Function { name, .. }
             | Self::Temporal { name, .. }
             | Self::SampledTemporal { name, .. } => name.clone(),
@@ -194,7 +205,10 @@ impl ClauseRunSelection {
             Self::Temporal { trace, .. } | Self::SampledTemporal { trace, .. } => {
                 Some(trace.request_pointer(reason))
             }
-            Self::Clause(_) | Self::Function { .. } | Self::Frame { .. } => None,
+            Self::Clause(_)
+            | Self::ClauseWithPath { .. }
+            | Self::Function { .. }
+            | Self::Frame { .. } => None,
         }
     }
 }
@@ -391,13 +405,15 @@ pub enum ClauseDisposition {
     /// Stage `admit`: FR-106 admission's own failure, or (for a `Function`
     /// selection) the analogous snapshot-only admission failure.
     Admit(AdmissionFailure),
-    /// Stage `admit`: a function claim's current-snapshot refusal, with the
-    /// selected document identity retained for FR-663's locus.
+    /// Stage `admit`: a current-snapshot refusal, with the selected document
+    /// identity retained for FR-663's locus.
     SnapshotAdmission {
         /// The admission failure.
         failure: AdmissionFailure,
         /// The snapshot's document labels.
         document: DocumentRef,
+        /// The caller's path for the snapshot, when retained by its adapter.
+        path: Option<String>,
     },
     /// Stage `admit`: a `Function` selection's argument refused before any
     /// call (FR-100's own refusal, reused).
@@ -1514,11 +1530,28 @@ fn run_clause_reading(
             };
             Ok(check_clause(&run, clause, selection))
         }
+        ClauseRunSelection::ClauseWithPath {
+            ref selection,
+            ref snapshot_path,
+        } => {
+            let Some(clause) = package.graph().state_clause(&selection.name) else {
+                return Ok(run.report(ClauseDisposition::MissingName {
+                    name: selection.name.clone(),
+                }));
+            };
+            Ok(check_clause_with_path(
+                &run,
+                clause,
+                selection,
+                snapshot_path.as_deref(),
+            ))
+        }
         ClauseRunSelection::Function {
             ref name,
             ref arguments,
             ref snapshot,
-        } => run_function(&run, name, arguments, snapshot),
+            ref snapshot_path,
+        } => run_function(&run, name, arguments, snapshot, snapshot_path.as_deref()),
         ClauseRunSelection::Frame {
             ref operation,
             ref invocation,
@@ -2119,18 +2152,31 @@ fn run_compiled_clause_selection(
             };
             check_clause(&run, clause, selection)
         }
+        ClauseRunSelection::ClauseWithPath {
+            selection,
+            snapshot_path,
+        } => {
+            let Some(clause) = package.graph().state_clause(&selection.name) else {
+                return run.report(ClauseDisposition::MissingName {
+                    name: selection.name.clone(),
+                });
+            };
+            check_clause_with_path(&run, clause, selection, snapshot_path.as_deref())
+        }
         ClauseRunSelection::Function {
             name,
             arguments,
             snapshot,
-        } => run_function(&run, name, arguments, snapshot).unwrap_or_else(|_| {
-            report(ClauseDisposition::EvaluateFault(
-                filament_semantic_value::catalog::InternalFault::new(
-                    "FR-050",
-                    "compiled-function-selection-runs",
-                ),
-            ))
-        }),
+            snapshot_path,
+        } => run_function(&run, name, arguments, snapshot, snapshot_path.as_deref())
+            .unwrap_or_else(|_| {
+                report(ClauseDisposition::EvaluateFault(
+                    filament_semantic_value::catalog::InternalFault::new(
+                        "FR-050",
+                        "compiled-function-selection-runs",
+                    ),
+                ))
+            }),
         ClauseRunSelection::Frame {
             operation,
             invocation,
@@ -2256,7 +2302,29 @@ pub(crate) fn check_clause(
     clause: &CheckedStateClause,
     selection: &ClauseSelection,
 ) -> ClauseRunReport {
-    check_clause_admitted(run, clause, selection).report
+    check_clause_with_path(run, clause, selection, None)
+}
+
+fn check_clause_with_path(
+    run: &CompiledRun<'_>,
+    clause: &CheckedStateClause,
+    selection: &ClauseSelection,
+    snapshot_path: Option<&str>,
+) -> ClauseRunReport {
+    let mut checked = check_clause_admitted(run, clause, selection);
+    if let ClauseDisposition::Admit(failure) = checked.report.disposition {
+        if let ClauseSelectionInput::Current { snapshot, .. } = &selection.input {
+            checked.report.disposition = ClauseDisposition::SnapshotAdmission {
+                failure,
+                document: snapshot.clone(),
+                path: snapshot_path.map(str::to_owned),
+            };
+        } else {
+            checked.report.disposition = ClauseDisposition::Admit(failure);
+        }
+        checked.report.basis = undecided_basis(&checked.report.disposition);
+    }
+    checked.report
 }
 
 /// Derive the source event for every authored implication consequent from
@@ -2797,6 +2865,7 @@ fn run_function(
     name: &str,
     arguments: &[ClauseArgument],
     snapshot: &DocumentRef,
+    snapshot_path: Option<&str>,
 ) -> Result<ClauseRunReport, ClauseRunRefusal> {
     use fsl_eval::value::CheckedPackageEvaluation;
     let packages = run.packages;
@@ -2881,6 +2950,7 @@ fn run_function(
             return Ok(report(ClauseDisposition::SnapshotAdmission {
                 failure,
                 document: snapshot.clone(),
+                path: snapshot_path.map(str::to_owned),
             }))
         }
     };

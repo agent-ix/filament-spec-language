@@ -231,6 +231,7 @@ fn write_function(
             },
         ],
         snapshot: label.clone(),
+        snapshot_path: None,
     };
     Ok(Written {
         snapshots: BTreeMap::from([(label.clone(), bytes)]),
@@ -265,7 +266,10 @@ pub fn write(directory: &Path, case: Case) -> io::Result<()> {
     )?;
     let written = written(directory, case)?;
     let selection = match &written.selection {
-        ClauseRunSelection::Clause(clause) => json!({
+        ClauseRunSelection::Clause(clause)
+        | ClauseRunSelection::ClauseWithPath {
+            selection: clause, ..
+        } => json!({
             "kind": "clause",
             "name": clause.name,
             "input": match &clause.input {

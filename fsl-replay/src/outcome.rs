@@ -392,7 +392,7 @@ pub struct ItemCause {
     /// A `timed-form-shape` cause's claim: its checked-package
     /// `{declaration, occurrence}` (FR-498).
     #[serde(skip_serializing_if = "Option::is_none")]
-    locus: Option<WireLocus>,
+    locus: Option<ItemLocus>,
     #[serde(skip_serializing_if = "Option::is_none")]
     code: Option<String>,
     /// A refusal's action-oriented explanation, when the source provides one.
@@ -504,6 +504,13 @@ pub struct ItemCause {
     /// own spelling; it supplies the cause's `kind`.
     #[serde(flatten)]
     reason: Option<ReasonWire>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+#[serde(untagged)]
+enum ItemLocus {
+    Claim(WireLocus),
+    Outcome(OutcomeLocus),
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
@@ -1024,7 +1031,7 @@ impl OutcomeItem {
                         item.states = Some(ItemCauseStates::Cycle(states.clone()));
                     }
                     UnavailabilityCause::TimedFormShape { span, claim } => match claim {
-                        Some(claim) => item.locus = Some(WireLocus::of(claim)),
+                        Some(claim) => item.locus = Some(ItemLocus::Claim(WireLocus::of(claim))),
                         None => item.at = Some(format!("{}..{}", span.start, span.end)),
                     },
                     UnavailabilityCause::ValueCheck { reason, .. } => {
@@ -1461,6 +1468,19 @@ fn clause_run_cause(report: &ClauseRunReport) -> Option<ItemCause> {
                 ..ItemCause::kind("input-bytes-exceeded")
             })
         }
+        ClauseDisposition::SnapshotAdmission {
+            failure:
+                fsl_semantics::model::observation::AdmissionFailure::Refused(record)
+                | fsl_semantics::model::observation::AdmissionFailure::Incomplete(record),
+            document,
+            path,
+        } => Some(ItemCause {
+            kind: Some(record.catalog.cause()),
+            code: Some(record.catalog.code().to_owned()),
+            locus: snapshot_admission_locus(record, document, path.as_deref())
+                .map(ItemLocus::Outcome),
+            ..ItemCause::kind("")
+        }),
         ClauseDisposition::Evaluate(CallOutcome::Undefined { reason }) => Some(ItemCause {
             code: Some((*reason).to_owned()),
             ..ItemCause::kind("undefined-evaluation")
@@ -1584,6 +1604,51 @@ pub struct DocumentObjectLocus {
     pub population: String,
     /// The snapshot object key.
     pub key: String,
+}
+
+pub(crate) fn snapshot_admission_locus(
+    record: &fsl_semantics::model::observation::AdmissionRecord,
+    document: &fsl_semantics::model::observation::DocumentRef,
+    path: Option<&str>,
+) -> Option<OutcomeLocus> {
+    if !matches!(record.catalog.cause(), "missing-member" | "unknown-member") {
+        return None;
+    }
+    use filament_semantic_value::admission::PathStep;
+    let pointer = record.path.iter().fold(String::new(), |mut pointer, step| {
+        match step {
+            PathStep::Field(member) => {
+                pointer.push('/');
+                pointer.push_str(&member.replace('~', "~0").replace('/', "~1"));
+            }
+            PathStep::Index(index) => {
+                pointer.push('/');
+                pointer.push_str(&index.to_string());
+            }
+            PathStep::OptionValue => {}
+        }
+        pointer
+    });
+    let identity = fsl_foundation::source::provenance::RawSourceRef::new(
+        document.authority.clone(),
+        document.identity.clone(),
+    )
+    .ok();
+    let object = record
+        .fields
+        .get("object")
+        .zip(record.fields.get("population"))
+        .map(|(key, population)| DocumentObjectLocus {
+            population: population.clone(),
+            key: key.clone(),
+        });
+    Some(OutcomeLocus::Document {
+        document: identity,
+        path: path.map(str::to_owned),
+        pointer,
+        object,
+        member: record.fields.get("member").cloned(),
+    })
 }
 
 impl From<&Locus> for OutcomeLocus {

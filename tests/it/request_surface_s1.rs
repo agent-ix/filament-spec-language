@@ -964,6 +964,7 @@ fn snapshot_refusals_carry_a_document_locus() {
     let snapshot_path = directory.path().join("spine-snapshot.json");
     let healthy_snapshot = std::fs::read(&snapshot_path).unwrap();
     let mut snapshot: Value = serde_json::from_slice(&healthy_snapshot).unwrap();
+    let snapshot_labels = snapshot["identity"].clone();
     for object in snapshot["populations"][0]["objects"]
         .as_array_mut()
         .unwrap()
@@ -984,18 +985,25 @@ fn snapshot_refusals_carry_a_document_locus() {
         Err(error) => error.value().unwrap().to_string(),
     };
     assert!(text.contains("missing-member"), "{text}");
-    for fragment in [
-        "\"kind\":\"document\"",
-        "\"authority\":\"agent-ix\"",
-        "\"identity\":\"ix://example/config-version/spine/snapshot/",
-        "\"population\":\"ix://example/config-version/config_history\"",
-        "\"key\":\"child\"",
-        "\"member\":\"parent\"",
-    ] {
-        assert!(text.contains(fragment), "{fragment}: {text}");
-    }
-    assert!(text.contains("/populations/"), "{text}");
-    assert!(!text.contains("\"pointer\":\"/child\""), "{text}");
+    let result: Value = serde_json::from_str(&text).unwrap();
+    let locus = &result["disposition"]["refusal"]["locus"];
+    assert_eq!(locus["kind"], "document", "{result}");
+    assert_eq!(locus["document"], snapshot_labels, "{result}");
+    assert_eq!(locus["path"], "spine-snapshot.json", "{result}");
+    assert_eq!(
+        locus["object"]["population"], "ix://example/config-version/config_history",
+        "{result}"
+    );
+    assert_eq!(locus["object"]["key"], "child", "{result}");
+    assert_eq!(locus["member"], "parent", "{result}");
+    assert!(
+        locus["pointer"]
+            .as_str()
+            .unwrap()
+            .starts_with("/populations/"),
+        "{result}"
+    );
+    assert_ne!(locus["pointer"], "/child", "{result}");
 
     let mut snapshot: Value = serde_json::from_slice(&healthy_snapshot).unwrap();
     for object in snapshot["populations"][0]["objects"]
@@ -1003,26 +1011,30 @@ fn snapshot_refusals_carry_a_document_locus() {
         .unwrap()
     {
         if object["key"] == "child" {
-            object["fields"]["unexpected"] = json!(true);
+            object["fields"]["unexpected"] = json!({"integer": "1"});
         }
     }
     std::fs::write(&snapshot_path, snapshot.to_string()).unwrap();
-    let unknown = fsl_command::command::run(&path, &crate::negotiation::Fr290)
-        .expect_err("an unknown snapshot member refuses");
-    let text = unknown.value().unwrap().to_string();
-    for fragment in [
-        "unknown-member",
-        "\"kind\":\"document\"",
-        "\"authority\":\"agent-ix\"",
-        "\"identity\":\"ix://example/config-version/spine/snapshot/",
-        "\"population\":\"ix://example/config-version/config_history\"",
-        "\"key\":\"child\"",
-        "\"member\":\"unexpected\"",
-    ] {
-        assert!(text.contains(fragment), "{fragment}: {text}");
-    }
-    assert!(text.contains("/fields/unexpected"), "{text}");
-    assert!(!text.contains("\"pointer\":\"/child\""), "{text}");
+    let text = match fsl_command::command::run(&path, &crate::negotiation::Fr290) {
+        Ok(result) => result.value.to_string(),
+        Err(error) => error.value().unwrap().to_string(),
+    };
+    assert!(text.contains("unknown-member"), "{text}");
+    let result: Value = serde_json::from_str(&text).unwrap();
+    let locus = &result["disposition"]["refusal"]["locus"];
+    assert_eq!(locus["kind"], "document", "{result}");
+    assert_eq!(locus["document"], snapshot_labels, "{result}");
+    assert_eq!(locus["path"], "spine-snapshot.json", "{result}");
+    assert_eq!(locus["object"]["key"], "child", "{result}");
+    assert_eq!(locus["member"], "unexpected", "{result}");
+    assert!(
+        locus["pointer"]
+            .as_str()
+            .unwrap()
+            .ends_with("/fields/unexpected"),
+        "{result}"
+    );
+    assert_ne!(locus["pointer"], "/child", "{result}");
 
     let absent = fsl_command::command::run(
         &directory.path().join("absent.json"),
