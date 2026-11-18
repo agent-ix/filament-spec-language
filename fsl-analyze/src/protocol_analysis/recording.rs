@@ -434,7 +434,7 @@ pub fn assess_recording_with_population(
             None,
         ));
     }
-    validate_population(protocol, population)?;
+    validate_population(protocol, &document, population)?;
     let closure_scope_complete = validate_closure_premises(protocol, &document, population)?;
 
     let roles: BTreeSet<&str> = protocol
@@ -498,6 +498,7 @@ pub fn assess_recording_with_population(
     validate_local_order(protocol, &document)?;
     validate_correlations(&document)?;
     validate_identities(&document)?;
+    validate_observed_population_members(protocol, &document, population)?;
 
     let mut obligations = assess_obligations(package, protocol, &document, closure_scope_complete);
     add_fanout_control_obligations(protocol, &document, population, &mut obligations);
@@ -573,8 +574,13 @@ fn recording_member(member: &ActivatedRoleMember) -> RecordingRoleInstance {
     }
 }
 
+fn population_instance(group: &ActivatedRolePopulation) -> Option<&str> {
+    group.instance.as_ref().and_then(serde_json::Value::as_str)
+}
+
 fn validate_population(
     protocol: &CheckedProtocol,
+    document: &RecordingDocument,
     population: Option<&[ActivatedRolePopulation]>,
 ) -> Result<(), RecordingRefusal> {
     let Some(population) = population else {
@@ -607,7 +613,10 @@ fn validate_population(
             ));
         }
         if group.role.is_empty()
-            || group.instance.as_deref().is_some_and(str::is_empty)
+            || group
+                .instance
+                .as_ref()
+                .is_some_and(|instance| instance.as_str().is_none_or(str::is_empty))
             || group
                 .members
                 .iter()
@@ -626,7 +635,7 @@ fn validate_population(
                 None,
             ));
         }
-        if !groups.insert((group.role.as_str(), group.instance.as_deref())) {
+        if !groups.insert((group.role.as_str(), population_instance(group))) {
             return Err(RecordingRefusal::new(
                 "invalid-value",
                 format!("activated population repeats role `{}`", group.role),
@@ -660,11 +669,100 @@ fn validate_population(
             })
         })
         .collect::<BTreeSet<_>>();
-    for role in required_roles {
-        if !population.iter().any(|group| group.role == role) {
+    let recorded_instances = document
+        .observations
+        .iter()
+        .filter_map(|observation| observation.instance.clone())
+        .collect::<BTreeSet<_>>();
+    if on_each
+        && document
+            .observations
+            .iter()
+            .any(|observation| observation.instance.is_none())
+    {
+        return Err(RecordingRefusal::new(
+            "invalid-value",
+            "an on-each recording observation has no instance key",
+            None,
+        ));
+    }
+    for group in population {
+        if let Some(instance) = population_instance(group) {
+            if !recorded_instances.contains(instance) {
+                return Err(RecordingRefusal::new(
+                    "invalid-value",
+                    format!(
+                        "activated population for role `{}` names unrecorded instance `{instance}`",
+                        group.role
+                    ),
+                    None,
+                ));
+            }
+        }
+    }
+    let instance_groups: BTreeSet<Option<&str>> = if on_each {
+        recorded_instances
+            .iter()
+            .map(|instance| Some(instance.as_str()))
+            .collect()
+    } else {
+        BTreeSet::from([None])
+    };
+    for instance in instance_groups {
+        for role in &required_roles {
+            if !population
+                .iter()
+                .any(|group| group.role.as_str() == *role && population_instance(group) == instance)
+            {
+                let detail = instance.map_or_else(
+                    || format!("activated population has no entry for fan-out role `{role}`"),
+                    |instance| {
+                        format!(
+                            "activated population has no entry for fan-out role `{role}` in instance `{instance}`"
+                        )
+                    },
+                );
+                return Err(RecordingRefusal::new("missing-member", detail, None));
+            }
+        }
+    }
+    Ok(())
+}
+
+fn validate_observed_population_members(
+    protocol: &CheckedProtocol,
+    document: &RecordingDocument,
+    population: Option<&[ActivatedRolePopulation]>,
+) -> Result<(), RecordingRefusal> {
+    let Some(population) = population else {
+        return Ok(());
+    };
+    for observation in &document.observations {
+        let Some(member) = &observation.role_instance else {
+            continue;
+        };
+        let replicated = protocol
+            .roles
+            .iter()
+            .find(|role| role.name == observation.role)
+            .is_some_and(|role| role.replicated);
+        if !replicated {
+            continue;
+        }
+        let listed = population.iter().any(|group| {
+            group.role == observation.role
+                && population_instance(group) == observation.instance.as_deref()
+                && group.members.iter().any(|candidate| {
+                    candidate.authority == member.authority && candidate.identity == member.identity
+                })
+        });
+        if !listed {
             return Err(RecordingRefusal::new(
-                "missing-member",
-                format!("activated population has no entry for fan-out role `{role}`"),
+                "invalid-value",
+                format!(
+                    "recording observation at `{}` names role `{}` member {}:{} outside the activated population",
+                    observation.node, observation.role, member.authority, member.identity
+                ),
                 None,
             ));
         }
@@ -767,7 +865,7 @@ fn validate_closure_premises(
                 if let Some(population) = population {
                     for role in &fanout_roles {
                         for entry in population.iter().filter(|entry| {
-                            entry.role == *role && entry.instance.as_deref() == instance.as_deref()
+                            entry.role == *role && population_instance(entry) == instance.as_deref()
                         }) {
                             role_instances.extend(entry.members.iter().map(recording_member));
                         }
@@ -2637,7 +2735,7 @@ fn add_fanout_control_obligations(
                 let mut members = BTreeSet::new();
                 if let Some(population) = population {
                     for group in population.iter().filter(|group| {
-                        group.role == *role && group.instance.as_deref() == instance.as_deref()
+                        group.role == *role && population_instance(group) == instance.as_deref()
                     }) {
                         members.extend(group.members.iter().map(recording_member));
                     }

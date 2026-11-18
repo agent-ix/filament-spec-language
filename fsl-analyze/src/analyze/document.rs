@@ -62,8 +62,8 @@ pub struct ActivatedRolePopulation {
     /// The checked protocol role whose activated members are listed.
     pub role: String,
     /// The protocol activation instance, when the protocol is `on each`.
-    #[serde(default)]
-    pub instance: Option<String>,
+    #[serde(default, deserialize_with = "present_json_value")]
+    pub instance: Option<Value>,
     /// The activated role members.
     pub members: Vec<ActivatedRoleMember>,
 }

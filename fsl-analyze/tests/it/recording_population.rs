@@ -63,12 +63,81 @@ fn recording(observed: &[&str], premised: &[&str], state: &str) -> Value {
     })
 }
 
+fn recording_for_instance(
+    instance: &str,
+    observed: &[&str],
+    premised: &[&str],
+    state: &str,
+) -> Value {
+    let mut recording = recording(observed, premised, state);
+    for observation in recording["observations"]
+        .as_array_mut()
+        .expect("observations")
+    {
+        observation["instance"] = json!(instance);
+    }
+    for premise in recording["closure"]["premises"]
+        .as_array_mut()
+        .expect("closure premises")
+    {
+        premise["instance"] = json!(instance);
+    }
+    recording
+}
+
+fn recordings(mut recordings: Vec<Value>) -> Value {
+    let mut combined = recordings.remove(0);
+    let mut observations = combined["observations"]
+        .as_array()
+        .expect("observations")
+        .clone();
+    let mut premises = combined["closure"]["premises"]
+        .as_array()
+        .expect("closure premises")
+        .clone();
+    for recording in recordings {
+        observations.extend(
+            recording["observations"]
+                .as_array()
+                .expect("observations")
+                .iter()
+                .cloned(),
+        );
+        premises.extend(
+            recording["closure"]["premises"]
+                .as_array()
+                .expect("closure premises")
+                .iter()
+                .cloned(),
+        );
+    }
+    let mut local_order = serde_json::Map::new();
+    for (position, observation) in observations.iter().enumerate() {
+        let role = observation["role"].as_str().expect("observation role");
+        let order = local_order
+            .entry(role.to_owned())
+            .or_insert_with(|| Value::Array(Vec::new()));
+        order
+            .as_array_mut()
+            .expect("role order")
+            .push(json!(position));
+    }
+    combined["observations"] = Value::Array(observations);
+    combined["local_order"] = Value::Object(local_order);
+    combined["closure"]["premises"] = Value::Array(premises);
+    combined
+}
+
 fn known() -> Value {
     json!([{"role": "r", "members": [member("x"), member("y")]}])
 }
 
 /// Analyze `recording` with the item's `population` member, when given.
 fn run(name: &str, recording: &Value, population: Option<Value>) -> Run {
+    run_protocol(name, FANOUT, recording, population)
+}
+
+fn run_protocol(name: &str, protocol: &str, recording: &Value, population: Option<Value>) -> Run {
     let ws = Workspace::new(name);
     ws.write("recording.json", recording.to_string().as_bytes());
     let mut item = json!({"claim": "R", "kind": "global-conformance",
@@ -78,7 +147,7 @@ fn run(name: &str, recording: &Value, population: Option<Value>) -> Run {
     }
     analyze(&litmus_request(
         &ws,
-        FANOUT,
+        protocol,
         json!({"items": [item],
                "documents": [{"file": "recording.json",
                               "identity": {"authority": "test", "identity": "recording"}}]}),
@@ -203,6 +272,10 @@ fn defective_populations_refuse_the_item_or_the_request() {
             "invalid-value",
         ),
         (
+            json!([{"role": "r", "instance": null, "members": [member("x"), member("y")]}]),
+            "invalid-value",
+        ),
+        (
             json!([{"role": "r", "members": [member("x"), member("x"), member("y")]}]),
             "invalid-value",
         ),
@@ -230,9 +303,20 @@ fn defective_populations_refuse_the_item_or_the_request() {
         assert!(item.get("obligations").is_none(), "{item}");
     }
 
-    for (index, population) in [
-        json!({"role": "r"}),
-        json!([{"role": "r", "members": [{"authority": "test"}]}]),
+    for (index, (population, expected_pointer)) in [
+        (json!({"role": "r"}), "/items/0/population"),
+        (
+            json!([{"role": "r", "members": [{"authority": "test"}]}]),
+            "/items/0/population/0/members/0/identity",
+        ),
+        (
+            json!([{"role": "r", "members": [{"authority": "", "identity": "x"}]}]),
+            "/items/0/population/0/members/0/authority",
+        ),
+        (
+            json!([{"role": "r", "members": [{"authority": "test", "identity": ""}]}]),
+            "/items/0/population/0/members/0/identity",
+        ),
     ]
     .into_iter()
     .enumerate()
@@ -249,7 +333,7 @@ fn defective_populations_refuse_the_item_or_the_request() {
             "{document}"
         );
         assert!(
-            document.to_string().contains("/items/0/population"),
+            document.to_string().contains(expected_pointer),
             "{document}"
         );
     }
@@ -262,4 +346,86 @@ fn defective_populations_refuse_the_item_or_the_request() {
     ));
     assert_eq!(run.exit, 20);
     assert!(run.document().to_string().contains("/items/0/population"));
+
+    let open_with_out_of_population_member = run_protocol(
+        "population-open-outside-declaration",
+        FANOUT,
+        &recording(&["x", "z"], &["x", "z"], "open"),
+        Some(known()),
+    );
+    let item = open_with_out_of_population_member.item(0);
+    assert_eq!(
+        item["record"]["diagnostic"]["code"], "invalid_runtime_input",
+        "{item}"
+    );
+    assert_eq!(
+        item["record"]["diagnostic"]["cause"], "invalid-value",
+        "{item}"
+    );
+    assert!(
+        item["record"]["diagnostic"]["detail"]
+            .to_string()
+            .contains("z"),
+        "{item}"
+    );
+}
+
+/// FR-990-AC-10: on-each activated groups exactly cover recorded instances.
+#[trace("TC-2955", "FR-990-AC-10")]
+#[test]
+fn on_each_population_groups_match_recorded_instances() {
+    let protocol = FANOUT.replace("on origin", "on each (t: M::Cell)");
+    let recording = recordings(vec![
+        recording_for_instance("a", &["x"], &["x"], "closed"),
+        recording_for_instance("b", &["x"], &["x"], "closed"),
+    ]);
+    let missing_instance_group = run_protocol(
+        "population-on-each-missing-group",
+        &protocol,
+        &recording,
+        Some(json!([
+            {"role": "r", "instance": "a", "members": [member("x")]}
+        ])),
+    );
+    let item = missing_instance_group.item(0);
+    assert_eq!(
+        item["record"]["diagnostic"]["code"], "invalid_runtime_input",
+        "{item}"
+    );
+    assert_eq!(
+        item["record"]["diagnostic"]["cause"], "missing-member",
+        "{item}"
+    );
+    assert!(
+        item["record"]["diagnostic"]["detail"]
+            .to_string()
+            .contains("b"),
+        "{item}"
+    );
+
+    let extra_instance_group = run_protocol(
+        "population-on-each-extra-group",
+        &protocol,
+        &recording,
+        Some(json!([
+            {"role": "r", "instance": "a", "members": [member("x")]},
+            {"role": "r", "instance": "b", "members": [member("x")]},
+            {"role": "r", "instance": "extra", "members": [member("x")]}
+        ])),
+    );
+    let item = extra_instance_group.item(0);
+    assert_eq!(
+        item["record"]["diagnostic"]["code"], "invalid_runtime_input",
+        "{item}"
+    );
+    assert_eq!(
+        item["record"]["diagnostic"]["cause"], "invalid-value",
+        "{item}"
+    );
+    assert!(
+        item["record"]["diagnostic"]["detail"]
+            .to_string()
+            .contains("extra"),
+        "{item}"
+    );
 }

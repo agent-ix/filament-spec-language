@@ -29,6 +29,84 @@ fn invalid(member: &str, reason: impl Into<String>) -> RunCause {
     }
 }
 
+fn validate_activated_population(
+    position: usize,
+    population: &serde_json::Value,
+) -> std::result::Result<(), (String, String)> {
+    let base = format!("/items/{position}/population");
+    let invalid_at = |pointer: String, reason: String| Err((pointer, reason));
+    let Some(groups) = population.as_array() else {
+        return invalid_at(base, "population must be an array".to_owned());
+    };
+    for (group_index, group) in groups.iter().enumerate() {
+        let group_pointer = format!("{base}/{group_index}");
+        let Some(group) = group.as_object() else {
+            return invalid_at(
+                group_pointer,
+                "population entry must be an object".to_owned(),
+            );
+        };
+        for key in group.keys() {
+            if !matches!(key.as_str(), "role" | "instance" | "members") {
+                return invalid_at(
+                    format!("{group_pointer}/{}", pointer_token(key)),
+                    format!("unknown population entry member `{key}`"),
+                );
+            }
+        }
+        let role_pointer = format!("{group_pointer}/role");
+        let Some(role) = group.get("role").and_then(serde_json::Value::as_str) else {
+            return invalid_at(role_pointer, "role must be a string".to_owned());
+        };
+        if role.is_empty() {
+            return invalid_at(role_pointer, "role must be nonempty".to_owned());
+        }
+        if let Some(instance) = group.get("instance") {
+            if !instance.is_null() && !instance.is_string() {
+                return invalid_at(
+                    format!("{group_pointer}/instance"),
+                    "instance must be a string or null".to_owned(),
+                );
+            }
+        }
+        let members_pointer = format!("{group_pointer}/members");
+        let Some(members) = group.get("members").and_then(serde_json::Value::as_array) else {
+            return invalid_at(members_pointer, "members must be an array".to_owned());
+        };
+        for (member_index, member) in members.iter().enumerate() {
+            let member_pointer = format!("{members_pointer}/{member_index}");
+            let Some(member) = member.as_object() else {
+                return invalid_at(
+                    member_pointer,
+                    "population member must be an object".to_owned(),
+                );
+            };
+            for key in member.keys() {
+                if !matches!(key.as_str(), "authority" | "identity") {
+                    return invalid_at(
+                        format!("{member_pointer}/{}", pointer_token(key)),
+                        format!("unknown population member field `{key}`"),
+                    );
+                }
+            }
+            for field in ["authority", "identity"] {
+                let pointer = format!("{member_pointer}/{field}");
+                let Some(value) = member.get(field).and_then(serde_json::Value::as_str) else {
+                    return invalid_at(pointer, format!("{field} must be a string"));
+                };
+                if value.is_empty() {
+                    return invalid_at(pointer, format!("{field} must be nonempty"));
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
+fn pointer_token(value: &str) -> String {
+    value.replace('~', "~0").replace('/', "~1")
+}
+
 /// A read `native-analyze/1` request: its compiled-from sources, supplied
 /// documents, subject, items and limits, with no compiler, evaluator or
 /// engine call made.
@@ -125,6 +203,8 @@ fn read<'d>(
                     "population requires a recording",
                 ));
             }
+            validate_activated_population(position, population)
+                .map_err(|(pointer, reason)| invalid(&pointer, reason))?;
             serde_json::from_value::<Vec<fsl_analyze::analyze::document::ActivatedRolePopulation>>(
                 population.clone(),
             )
