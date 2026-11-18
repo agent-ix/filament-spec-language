@@ -247,7 +247,16 @@ pub(super) fn lower_package(
                         ) => filament_contract_model::ClockConfiguration::TimestampedEvent {
                             timestamp_unit: "test-rfc3339".into(),
                         },
-                        _ => unreachable!("the filter selected a clocked temporal profile"),
+                        Some(fsl_semantics::check::TemporalProfile::FixedSampleFalseExtension) => {
+                            unreachable!("the filter selected a clocked temporal profile")
+                        }
+                        Some(fsl_semantics::check::TemporalProfile::InfiniteTrace) => {
+                            unreachable!("the filter selected a clocked temporal profile")
+                        }
+                        Some(fsl_semantics::check::TemporalProfile::Timed) => {
+                            unreachable!("the filter selected a clocked temporal profile")
+                        }
+                        None => unreachable!("the filter selected a clocked temporal profile"),
                     };
                     crate::emit::TemporalClockSelection::new(
                         graph.source().clone(),
