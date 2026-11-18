@@ -6089,6 +6089,7 @@ pub fn emit_timed_models(
                 checked_term_data: None,
                 temporal_bindings: base.temporal_bindings(),
                 temporal_clause_names: base.temporal_clause_names(),
+                claim_names: base.claim_names(),
                 operation_effects: operation_effects.as_deref(),
                 schedulability_claims: None,
                 operation_bodies: base.operation_body_rows(),
@@ -7071,6 +7072,7 @@ fn emit_package_inner(
         keyed: temporal_binding_rows,
         refs: temporal_clause_refs,
     } = temporal_binding_rows(graph, &emitted_node_ids, &nodes, temporal_selections)?;
+    let claim_names = claim_name_rows(graph, &emitted_node_ids)?;
     let equality_producer_identity_rows = equality_producer_emission_rows_excluding(
         graph,
         &emitted_node_ids,
@@ -7197,6 +7199,7 @@ fn emit_package_inner(
                     .then_some(temporal_bindings.as_slice()),
                 temporal_clause_names: (!temporal_clause_names.is_empty())
                     .then_some(temporal_clause_names.as_slice()),
+                claim_names: (!claim_names.is_empty()).then_some(claim_names.as_slice()),
                 operation_effects,
                 operation_bodies: operation_body_rows.as_deref(),
                 schedulability_claims: (!schedulability_claim_rows.is_empty())
@@ -8338,6 +8341,106 @@ fn validate_temporal_clock(
     Ok(())
 }
 
+/// FSpec FR-322 "Claim declaration names": one `claim_names` row for each
+/// `declaration` or `claim` occurrence through which a source declaration
+/// introduces a `state`/`state_clause`, `relation`/`refinement` or `claim`
+/// node, with the declared name, its package-local path and the whole
+/// declaration's region, sorted by node then occurrence. The rows are
+/// written from the checked unit's declarations, never derived from a
+/// region, a node path or the clause body.
+fn claim_name_rows(
+    graph: &CheckedGraph,
+    emitted_node_ids: &HashMap<NodeKey, CheckedNodeId>,
+) -> Result<Vec<filament_contract_model::ClaimNameRow>, EmitRefusal> {
+    let mut sites: Vec<(&OccurrenceKey, &str, fsl_foundation::Span)> = Vec::new();
+    let mut owned: Vec<(OccurrenceKey, &str, fsl_foundation::Span)> = Vec::new();
+    for clause in graph.state_clauses() {
+        owned.push((
+            OccurrenceKey::new(clause.identity(), clause.claim().clone()),
+            clause.name(),
+            clause.declaration_span(),
+        ));
+    }
+    for refinement in graph.refinements() {
+        let occurrence = refinement
+            .requirement_occurrence()
+            .ok_or(EmitRefusal::SourceMapInvariant)?;
+        sites.push((occurrence, refinement.name(), refinement.declaration_span()));
+    }
+    for claim in graph.state_graph_claims() {
+        let occurrence = claim.occurrence().ok_or(EmitRefusal::SourceMapInvariant)?;
+        sites.push((occurrence, claim.name(), claim.span()));
+    }
+    for claim in graph.probabilistic_model().claims() {
+        let occurrence = claim.occurrence().ok_or(EmitRefusal::SourceMapInvariant)?;
+        sites.push((occurrence, claim.name.as_str(), claim.span));
+    }
+    for claim in graph.task_sets().claims() {
+        // A claim whose task set did not convert has no node.
+        if let Some(occurrence) = claim.occurrence() {
+            owned.push((occurrence, claim.name.as_str(), claim.span));
+        }
+    }
+    for relation in graph.step_relations() {
+        if let Some(occurrence) = relation.occurrence() {
+            sites.push((occurrence, relation.name(), relation.span()));
+        }
+    }
+    let mut rows = Vec::with_capacity(sites.len() + owned.len());
+    for (occurrence, name, span) in sites
+        .into_iter()
+        .chain(owned.iter().map(|(occurrence, name, span)| (occurrence, *name, *span)))
+    {
+        let Some(declaration) = emitted_node_ids.get(occurrence.node()).cloned() else {
+            continue;
+        };
+        rows.push(filament_contract_model::ClaimNameRow {
+            declaration,
+            occurrence: CheckedOccurrence {
+                role: occurrence_role(occurrence.node(), occurrence.origin())?,
+                ordinal: occurrence.origin().ordinal(),
+            },
+            name: name.into(),
+            qualified_name: vec![name.into()],
+            declaration_region: declaration_region(
+                graph,
+                occurrence.node().clone(),
+                occurrence.origin(),
+                span,
+            )?,
+        });
+    }
+    rows.sort_by(|left, right| {
+        (&left.declaration, &left.occurrence).cmp(&(&right.declaration, &right.occurrence))
+    });
+    rows.dedup_by(|later, earlier| {
+        later.declaration == earlier.declaration && later.occurrence == earlier.occurrence
+    });
+    Ok(rows)
+}
+
+/// A name row's `declaration_region` (FSpec FR-322 "Clause declaration
+/// regions"): the whole declaration's span, under the source of the
+/// occurrence's own `source_map` region.
+fn declaration_region(
+    graph: &CheckedGraph,
+    node: NodeKey,
+    origin: &filament_exact::Origin,
+    span: fsl_foundation::Span,
+) -> Result<CheckedSourceRegion, EmitRefusal> {
+    let location = graph
+        .occurrence(node, origin)
+        .ok_or(EmitRefusal::SourceMapInvariant)?;
+    let region = graph
+        .region(location)
+        .ok_or(EmitRefusal::SourceMapInvariant)?;
+    Ok(CheckedSourceRegion {
+        source: source_artifact(region.source()),
+        start: span.start as u64,
+        end: span.end as u64,
+    })
+}
+
 /// The temporal rows one emission writes.
 struct WrittenTemporalRows {
     bindings: Vec<filament_contract_model::TemporalBinding>,
@@ -8387,6 +8490,7 @@ fn temporal_binding_rows(
                 .ok_or(EmitRefusal::SourceMapInvariant)?,
             occurrence: site.claim.ordinal(),
             name: site.name.as_str().into(),
+            declaration_region: declaration_region(graph, site.identity.clone(), &site.claim, site.span)?,
         });
     }
     let mut refs = Vec::new();
@@ -8412,6 +8516,12 @@ fn temporal_binding_rows(
             declaration,
             occurrence: temporal.claim().ordinal(),
             name: clause.name().into(),
+            declaration_region: declaration_region(
+                graph,
+                temporal.identity(),
+                temporal.claim(),
+                clause.span(),
+            )?,
         });
         // A timed clause over a record trace subject binds its clock role
         // through a `timed` configuration (FR-640, FR-933); over a model it
@@ -8494,6 +8604,12 @@ fn temporal_binding_rows(
                 .ok_or(EmitRefusal::SourceMapInvariant)?,
             occurrence: occurrence.origin().ordinal(),
             name: hyper.name().into(),
+            declaration_region: declaration_region(
+                graph,
+                occurrence.node().clone(),
+                &occurrence.origin(),
+                hyper.span(),
+            )?,
         });
         let profile = hyper.profile();
         if !matches!(
