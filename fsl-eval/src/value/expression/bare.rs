@@ -10,10 +10,12 @@
 
 use std::collections::BTreeMap;
 
-use filament_eval::{CallAdmissionFailure, CallAdmissionLocus, CallFailure, Evaluation, FamilyOutcome};
+use filament_eval::{
+    CallAdmissionFailure, CallAdmissionLocus, CallFailure, Evaluation, FamilyOutcome,
+};
 use filament_exact::{Charge, ChargePoint, Meter, NodeKey, Outcome, Value};
-use filament_semantic_value::catalog::InternalFault;
 use filament_semantic_value::call::InputRefusal;
+use filament_semantic_value::catalog::InternalFault;
 use fsl_package::{BarePackage, BareSelectionFailure, BareSlot, BareWorld, ProtocolSlotDescriptor};
 use fsl_semantics::model::object_environment::ObjectEnvironment;
 
@@ -240,9 +242,12 @@ impl CheckedPackageEvaluation for BarePackage<'_> {
         let mut function_case_limit_reached = false;
         let evaluation = (|| {
             let projection = function_projection(self, function)?;
-            let selected = projection
-                .selected_function()
-                .ok_or_else(|| CallFailure::Fault(InternalFault::new("FR-945", "bare-call-has-selected-function")))?;
+            let selected = projection.selected_function().ok_or_else(|| {
+                CallFailure::Fault(InternalFault::new(
+                    "FR-945",
+                    "bare-call-has-selected-function",
+                ))
+            })?;
             let parameters = selected
                 .parameters
                 .iter()
@@ -316,9 +321,12 @@ impl CheckedPackageEvaluation for BarePackage<'_> {
         run: &mut SuppliedRun,
     ) -> Result<Evaluation, CallFailure> {
         let projection = function_projection(self, function)?;
-        let selected = projection
-            .selected_function()
-            .ok_or_else(|| CallFailure::Fault(InternalFault::new("FR-945", "bare-call-has-selected-function")))?;
+        let selected = projection.selected_function().ok_or_else(|| {
+            CallFailure::Fault(InternalFault::new(
+                "FR-945",
+                "bare-call-has-selected-function",
+            ))
+        })?;
         let parameters = selected
             .parameters
             .iter()
@@ -513,8 +521,8 @@ impl CheckedPackageEvaluation for BarePackage<'_> {
 mod tests {
     use super::*;
     use filament_exact::{Integer, LimitKind, ScalarLimits};
-    use fsl_forms::{DeclarationSpans, Expression, ExpressionSpans, FunctionDeclaration, TypeForm};
     use filament_semantic_value::checking::{CheckMode, CheckingLimits};
+    use fsl_forms::{DeclarationSpans, Expression, ExpressionSpans, FunctionDeclaration, TypeForm};
     use fsl_semantics::check::PackageDeclarations;
     use ix_trace_rs::trace;
 
@@ -579,8 +587,7 @@ mod tests {
             .expect("the package selects no models");
         let read = fsl_package::read_evaluation_package(
             &source,
-            fsl_semantics::library::LibraryName::new("bare-call-test")
-                .expect("library identity"),
+            fsl_semantics::library::LibraryName::new("bare-call-test").expect("library identity"),
             &models,
             fsl_package::V2ReadLimits::fixture(),
             fsl_package::EmitLimits::fixture(),
@@ -638,11 +645,8 @@ mod tests {
                 max_size_requests: 32,
             },
         );
-        let observed_value = completed_integer(
-            observed
-                .evaluation
-                .expect("observed bytes call evaluates"),
-        );
+        let observed_value =
+            completed_integer(observed.evaluation.expect("observed bytes call evaluates"));
         assert_eq!(observed_value, Integer::from(17_i64));
         assert_eq!(observed.function_evaluations, 1);
         assert_eq!(

@@ -97,7 +97,7 @@ impl ReaderProtocolProjection {
             body: function.body,
             slots: function.slots,
             parameters: &function.parameters,
-            result_type: &function.result_type,
+            result_type: function.result_type.as_ref()?,
         })
     }
 
@@ -1318,7 +1318,7 @@ impl<'wire> ReaderBuilder<'_, 'wire> {
                         value_type: parameter.value_type.clone(),
                     })
                     .collect(),
-                result_type: ValueType::Boolean,
+                result_type: None,
             });
         }
         for (index, (_, _, parameter_ids, _, body)) in declarations.iter().enumerate() {
@@ -1333,12 +1333,13 @@ impl<'wire> ReaderBuilder<'_, 'wire> {
                 locals: std::rc::Rc::new(locals),
             })?;
             self.functions[index].body = body;
-            self.functions[index].result_type = self
-                .nodes
-                .get(body)
-                .ok_or_else(|| fault("reader-function-body-is-projected"))?
-                .value_type
-                .clone();
+            self.functions[index].result_type = Some(
+                self.nodes
+                    .get(body)
+                    .ok_or_else(|| fault("reader-function-body-is-projected"))?
+                    .value_type
+                    .clone(),
+            );
         }
         Ok(())
     }
@@ -3274,7 +3275,7 @@ struct ReaderFunction {
     body: usize,
     slots: usize,
     parameters: Vec<ReaderProtocolParameter>,
-    result_type: ValueType,
+    result_type: Option<ValueType>,
 }
 
 fn fault(invariant: &'static str) -> InternalFault {

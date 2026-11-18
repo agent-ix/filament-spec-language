@@ -658,11 +658,13 @@ impl<'p> BarePackage<'p> {
             self.exact_type_projections(),
         )
         .map_err(SlotSelectionFailure::Fault)?;
-        let projection = walker.project_function(name).map_err(|failure| match failure {
-            WalkFailure::Unsupported(view) => BareSelectionFailure::Unsupported(Box::new(view)),
-            WalkFailure::Equality(refusal) => BareSelectionFailure::Equality(refusal),
-            WalkFailure::Fault(failure) => SlotSelectionFailure::Fault(failure).into(),
-        })?;
+        let projection = walker
+            .project_function(name)
+            .map_err(|failure| match failure {
+                WalkFailure::Unsupported(view) => BareSelectionFailure::Unsupported(Box::new(view)),
+                WalkFailure::Equality(refusal) => BareSelectionFailure::Equality(refusal),
+                WalkFailure::Fault(failure) => SlotSelectionFailure::Fault(failure).into(),
+            })?;
         let Some(projection) = projection else {
             return Ok(None);
         };
