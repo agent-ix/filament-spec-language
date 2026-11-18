@@ -614,3 +614,21 @@ fn a_channel_names_its_connection_with_via() {
     assert!(text.contains("via Link"));
     assert!(parsed.is_admissible());
 }
+
+/// FR-218-AC-44 (TC-2964): an attempt without its `as (x: T)` result binder
+/// parses, and the formatter prints both forms back to a stable text.
+#[trace("FR-218-AC-44", "TC-2964")]
+#[test]
+fn an_attempt_without_a_binder_parses_and_formats() {
+    let run = "sequence Main {\n\
+         attempt Bare by R on M::Actor::act contracts [];\n\
+         attempt Bound by R on M::Actor::act contracts [] as (b: Boolean) { true };\n\
+         }";
+    let (text, parsed) = parse_admitted(&protocol("on origin", "", run));
+    assert_eq!(texts(&text, &parsed, Production::EventNode).len(), 2);
+    let once = fsl_cst::format::format(&parsed).expect("formats");
+    assert!(once.contains("attempt Bare by R on M::Actor::act contracts[];"), "{once}");
+    assert!(once.contains("as (b: Boolean) {"), "{once}");
+    let reparsed = parse(&once);
+    assert_eq!(fsl_cst::format::format(&reparsed).expect("formats"), once);
+}

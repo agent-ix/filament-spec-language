@@ -111,6 +111,13 @@ protocol system only ever runs a protocol whose meaning is fixed.
   Description against FSpec's grammar and contracts for it (FSpec FR-052,
   FR-053, FR-170, FR-171, FR-228), and SHALL record each in the checked
   clause.
+- An `attempt` MAY omit its `as (x: T) { e }` result binder and body, written
+  `attempt N by R on M::T::op contracts [..];`. Over an operation that returns
+  nothing the attempt SHALL omit it (a binder there refuses per FR-882-AC-4);
+  over an operation that returns a value, omitting it discards the result. A
+  binder-less attempt declares no binder and no body, and its node-row binder
+  record is the receiver followed by the operation's parameters, so a row
+  `node A::P::N(self)` over a parameterless void operation has arity 1.
 - S3 SHALL check each body (event, send, receive, finish and capture
   constraints, guards, activation guards, retry relations and recovery
   predicates) through the one clause checker (FR-104) over its declared
@@ -662,6 +669,8 @@ one protocol declared in the same unit. It carries no package selector.
 | FR-218-AC-41 | In a protocol over `(input: M::Actor)`, `role W on M` beside `role R on M::Actor` checks, `W` recording the identity of the package `M` selects; `role r each M from pop max 2 lifetime workflow` refuses `invalid_model_binding`/`malformed-declaration` with a refusal region whose text is exactly `M`, and gives no refusal for `pop`. | Test (TC-2020) |
 | FR-218-AC-42 | With `capture ready: Boolean = input.ready;`, a `choice` by `R` with `visible ()` whose guards are `ready` and `not ready` checks, and its guards read the capture. The same `choice` with guards `input.ready` and `not input.ready` refuses twice with `ill_typed`/`operator-ineligible`, naming the guard slot, and each refusal region's text is exactly `input.ready`; no refusal region covers the guard block, the `choice` or the protocol declaration. | Test (TC-2021) |
 | FR-218-AC-43 | A `repeat` with `invariant { true } variant { n }` checks when `n` has an integer type and when the variant is a tuple of two integer-typed terms; a variant of type `Boolean` and a variant of a record type each refuse `ill_typed`/`type-mismatch` at the variant, retaining `expected` and `actual`. | Test (TC-2022) |
+| FR-218-AC-44 | `protocol Twice` whose attempts `a1` and `a2` apply the void `Spec::Counter::inc` and are written without a binder (`attempt a1 by w on Spec::Counter::inc contracts [];`) checks, and the formatter reproduces the source byte for byte; the same attempt written with `as (r: Boolean) { true }` refuses `ill_typed`/`type-mismatch` at the binder (FR-882-AC-4). | Test (TC-2964) |
+| FR-218-AC-45 | An attempt over an operation that returns `Boolean`, written without a binder, checks and discards the result: no binder is declared, and a later guard that names the attempt's would-be binder refuses `missing_declaration`/`missing-name`. | Test (TC-2964) |
 
 ## Dependencies
 

@@ -508,12 +508,22 @@ pub(crate) fn record_binder(
     declaration: usize,
 ) -> Option<&BinderForm> {
     let declaration = protocol.declarations.get(declaration)?;
+    // A binder-less `attempt` (FR-218) owns none: the binder must precede the
+    // next declaration's name.
+    let next = protocol
+        .declarations
+        .iter()
+        .map(|other| other.name.span.start)
+        .filter(|start| *start >= declaration.name.span.end)
+        .min()
+        .unwrap_or(usize::MAX);
     protocol
         .binders
         .iter()
         .filter(|binder| {
             binder.kind == BinderKind::RecordBinder
                 && binder.name.span.start >= declaration.name.span.end
+                && binder.name.span.start < next
         })
         .min_by_key(|binder| binder.name.span.start)
 }

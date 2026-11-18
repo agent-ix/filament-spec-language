@@ -2264,6 +2264,15 @@ fn protocol(g: &mut Grammar) {
             x(";"),
         ])
     };
+    // An `attempt` may omit its `as (x: T)` result binder (FR-218): over an
+    // operation that returns nothing it must, and over a valued operation
+    // omitting it discards the result.
+    let attempt_tail = || {
+        c(vec![
+            event_tail(),
+            s(vec![x(";")]),
+        ])
+    };
     g.insert(
         P::EventNode,
         c(vec![
@@ -2289,7 +2298,7 @@ fn protocol(g: &mut Grammar) {
                 x("["),
                 opt(list(ident)),
                 x("]"),
-                event_tail(),
+                attempt_tail(),
             ]),
             s(vec![
                 x("effect"),

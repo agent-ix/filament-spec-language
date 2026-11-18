@@ -45,7 +45,9 @@ pub(super) fn bind_attempts(
     for (index, attempt_decl) in attempts.iter().enumerate() {
         let form = &protocol.attempts[index];
         if let Some(binder) = super::record_binder(protocol, attempt_decl.declaration) {
-            if binder.kind == BinderKind::RecordBinder {
+            if binder.kind == BinderKind::RecordBinder
+                && !binder.name.name.starts_with(fsl_forms::OMITTED_ATTEMPT_BINDER)
+            {
                 if let Ok(actual_result) =
                     crate::check::type_form::resolve_form(type_names, &binder.value_type)
                 {

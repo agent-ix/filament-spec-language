@@ -565,10 +565,16 @@ pub(crate) fn attempt(
     binder: &str,
     constraint: &str,
 ) -> String {
-    format!(
-        "attempt {node} by w on M::Cell::{operation} contracts [{contracts}] \
-         as ({binder}: Boolean) {{ {constraint} }};"
-    )
+    // Only `flag` returns a value, so only it carries a result binder
+    // (FR-882-AC-4); the others are attempted binder-less.
+    if operation == "flag" || constraint != "true" {
+        format!(
+            "attempt {node} by w on M::Cell::{operation} contracts [{contracts}] \
+             as ({binder}: Boolean) {{ {constraint} }};"
+        )
+    } else {
+        format!("attempt {node} by w on M::Cell::{operation} contracts [{contracts}];")
+    }
 }
 
 /// ADR-027 §7's `run` control: `fork Both` of `A` (`inc`) and `B`

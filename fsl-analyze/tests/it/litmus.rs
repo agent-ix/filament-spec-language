@@ -172,8 +172,8 @@ pub(crate) fn document() -> Vec<u8> {
                 "supertypes": [],
                 "fields": fields("Cell", &["id", "v", "w"]),
                 "operations": [
-                    returning(operation("Cell", "set", &[], &["v"])),
-                    returning(operation("Cell", "add", &[], &["v"])),
+                    operation("Cell", "set", &[], &["v"]),
+                    operation("Cell", "add", &[], &["v"]),
                     operation("Cell", "both", &[], &["v", "w"]),
                     operation("Cell", "setw", &[], &["w"]),
                 ],
@@ -189,10 +189,10 @@ pub(crate) fn document() -> Vec<u8> {
                 "supertypes": [],
                 "fields": fields("Core", &["r1", "r2", "r3", "r4"]),
                 "operations": [
-                    returning(operation("Core", "read1", &["c"], &["r1"])),
-                    returning(operation("Core", "read2", &["c"], &["r2"])),
-                    returning(operation("Core", "read3", &["c"], &["r3"])),
-                    returning(operation("Core", "read4", &["c"], &["r4"])),
+                    operation("Core", "read1", &["c"], &["r1"]),
+                    operation("Core", "read2", &["c"], &["r2"]),
+                    operation("Core", "read3", &["c"], &["r3"]),
+                    operation("Core", "read4", &["c"], &["r4"]),
                     returning(operation("Core", "look", &["c"], &["r1"])),
                     operation("Core", "copy", &[], &["r3"]),
                 ],
@@ -496,10 +496,14 @@ pub(crate) fn attempt(
     } else {
         format!(" ordering {ordering}")
     };
-    format!(
-        "attempt {node} by {role} on M::{target}{ordering} contracts [{contracts}] \
-         as (b{node}: Boolean) {{ true }};"
-    )
+    // Only `look` returns a value, so only it carries a result binder
+    // (FR-882-AC-4); every other operation is attempted binder-less.
+    let binder = if target == "Core::look" {
+        format!(" as (b{node}: Boolean) {{ true }}")
+    } else {
+        String::new()
+    };
+    format!("attempt {node} by {role} on M::{target}{ordering} contracts [{contracts}]{binder};")
 }
 
 /// A protocol `name` over the core with roles `w` (cells) and `c` (cores)

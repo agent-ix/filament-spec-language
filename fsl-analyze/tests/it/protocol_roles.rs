@@ -448,8 +448,7 @@ fn statuses(system: &System<'_>, state: &Reached) -> BTreeMap<String, String> {
 #[trace("TC-653", "FR-208-AC-1")]
 #[test]
 fn a_retired_role_instance_is_never_spawned_again() {
-    let run = "sequence Main { attempt Work by r on M::Cell::inc contracts [IncPre, IncPost] \
-               as (worked: Boolean) { true }; }";
+    let run = "sequence Main { attempt Work by r on M::Cell::inc contracts [IncPre, IncPost]; }";
     let world = World::new(
         &unit(ORIGIN, &role(1, "until(r.v >= 1)"), "", run),
         &["c", "d"],
@@ -742,8 +741,7 @@ fn retired_role_world(members: &str, run: &str) -> World {
 fn an_attempt_and_a_send_owned_by_a_role_with_no_instance_give_no_role_instance() {
     let attempt = retired_role_world(
         "",
-        "sequence Main { attempt Work by r on M::Cell::inc contracts [IncPre, IncPost] \
-         as (worked: Boolean) { true }; }",
+        "sequence Main { attempt Work by r on M::Cell::inc contracts [IncPre, IncPost]; }",
     );
     let subject = attempt.subject();
     let system = sc_system(&subject);
@@ -778,7 +776,7 @@ fn a_receive_with_nothing_queued_owned_by_a_role_with_no_instance_gives_no_role_
     let channel = "channel ch from w to r carries Boolean ordering unordered \
                    delivery exactly-once-premise capacity 1 overflow block;";
     let run = "parallel Both { branch s sequence S { attempt Stuck by w on M::Cell::bump \
-               contracts [StuckPre] as (st: Boolean) { true }; \
+               contracts [StuckPre]; \
                send Tx via ch as (tx: Boolean) { tx }; } \
                branch q receive Rx via ch of s::S::Tx as (rx: Boolean) { true }; } \
                join all [s, q];";
@@ -876,8 +874,7 @@ fn stuck() -> String {
         EACH,
         "",
         "",
-        "sequence Main { attempt Stuck by w on M::Cell::bump contracts [StuckPre] \
-         as (stuck: Boolean) { true }; }",
+        "sequence Main { attempt Stuck by w on M::Cell::bump contracts [StuckPre]; }",
     )
 }
 
@@ -974,7 +971,7 @@ fn an_on_each_state_that_can_only_activate_is_a_deadlock() {
 #[trace("TC-654", "FR-209-AC-3")]
 #[test]
 fn an_instance_takes_the_smallest_free_ordinal_and_the_bound_is_no_deadlock() {
-    let run = "sequence Main { attempt T by w on M::Cell::touch contracts [TouchPre] \
+    let run = "sequence Main { attempt T by w on M::Cell::flag contracts [FlagPre, FlagPost] \
                as (t: Boolean) { x = 0 }; }";
     let world = World::new(
         &unit("on each (x: M::Level) when (x = 0)", "", "", run),
@@ -1256,8 +1253,7 @@ fn a_run_with_no_activation_proves_and_a_counterexample_is_real_under_any_bound(
         })
     );
 
-    let bump = "sequence Main { attempt A by w on M::Cell::inc contracts [IncPre, IncPost] \
-                as (a: Boolean) { true }; }";
+    let bump = "sequence Main { attempt A by w on M::Cell::inc contracts [IncPre, IncPost]; }";
     let always = World::new(
         &(unit(&each_when("true"), "", "", bump) + &claim("k.v = 0")),
         &["c"],
@@ -1485,8 +1481,7 @@ fn an_on_each_repeat_self_loop_is_fair_at_the_instance_bound() {
 /// target through S4.
 #[test]
 fn an_each_fairness_member_over_a_role_owned_node_emits_as_over_any_node() {
-    let run = "sequence Main { attempt Work by r on M::Cell::inc contracts [IncPre, IncPost] \
-               as (worked: Boolean) { true }; }";
+    let run = "sequence Main { attempt Work by r on M::Cell::inc contracts [IncPre, IncPost]; }";
     let claim = "temporal Live using t0 over (k: M::Cell) clock \"model-steps\" \
                  on origin { fair weak each R::Work; eventually holds(k.v = 1) }\n";
     let body = unit(ORIGIN, &role(1, "workflow"), "", run) + claim;
@@ -1533,7 +1528,7 @@ fn after_in(
 #[trace("TC-653", "FR-208-AC-4")]
 #[test]
 fn spawn_and_retire_identities_carry_the_protocol_instance() {
-    let run = "sequence Main { attempt T by w on M::Cell::touch contracts [TouchPre] \
+    let run = "sequence Main { attempt T by w on M::Cell::flag contracts [FlagPre, FlagPost] \
                as (t: Boolean) { x = 0 }; }";
     let world = World::new(
         &unit(
@@ -1895,8 +1890,7 @@ fn protocol_captures_are_evaluated_in_source_order_when_an_instance_starts_and_f
                     capture big: Boolean = not lower;\n\
                     capture fresh: Boolean = k.v = 0;";
     let run = "sequence Main { \
-               attempt T by w on M::Cell::inc contracts [IncPre, IncPost] \
-               as (t: Boolean) { true }; \
+               attempt T by w on M::Cell::inc contracts [IncPre, IncPost]; \
                event E by w as (e: Boolean) { big and not lower and fresh }; }";
     let world = World::new(
         &with_captures(&unit(EACH, "", "", run), captures),
@@ -2077,8 +2071,7 @@ fn a_retire_predicate_reads_a_protocol_capture() {
         }
         found
     };
-    let work = "sequence Main { attempt Bump by w on M::Cell::inc contracts [IncPre, IncPost] \
-                as (b: Boolean) { true }; }";
+    let work = "sequence Main { attempt Bump by w on M::Cell::inc contracts [IncPre, IncPost]; }";
     assert_eq!(
         retire_at(1, work)[0].1,
         BTreeSet::from(["c".to_owned()]),
@@ -2109,8 +2102,7 @@ fn a_retire_predicate_reads_a_protocol_capture() {
 #[test]
 fn a_retire_predicate_reads_a_named_population() {
     let capture = "capture j: Reference<M::Cell> = k;";
-    let work = "sequence Main { attempt Bump by w on M::Cell::inc contracts [IncPre, IncPost] \
-                as (b: Boolean) { true }; }";
+    let work = "sequence Main { attempt Bump by w on M::Cell::inc contracts [IncPre, IncPost]; }";
     let unit_with = |membership: &str| {
         let until = format!("until(r.v >= 2 and {membership})");
         with_captures(&unit(ORIGIN, &role(2, &until), "", work), capture)
@@ -2188,8 +2180,7 @@ fn a_retire_predicate_reads_a_named_population() {
 #[ignore = "QSL-1903: the legacy inline mod capture is refused by S3 before the stepper; AC-2 uses the Kernel-function fixture below"]
 fn an_undecided_protocol_capture_is_a_finding_on_each() {
     let capture = "capture z: Boolean = 6 mod (1 - 1) >= 0;";
-    let run = "sequence Main { attempt T by w on M::Cell::inc contracts [IncPre, IncPost] \
-               as (t: Boolean) { true }; }";
+    let run = "sequence Main { attempt T by w on M::Cell::inc contracts [IncPre, IncPost]; }";
     let each = World::new(
         &with_captures(&unit(EACH, "", "", run), capture),
         &["c"],
@@ -2467,6 +2458,18 @@ fn attempt_result_binders_must_match_the_operation_result_at_s3() {
     };
     assert_eq!(expected_result, &None);
     assert_eq!(actual_result.as_ref(), &ValueType::Boolean);
+}
+
+/// FR-218-AC-44 and AC-45 (TC-2964): an attempt may omit its result binder.
+/// Over a void operation it must; over a valued operation it discards the
+/// result.
+#[trace("TC-2964", "FR-218-AC-44", "FR-218-AC-45")]
+#[test]
+fn an_attempt_may_omit_its_result_binder() {
+    let void = "sequence Main { attempt T by w on M::Cell::touch contracts [TouchPre]; }";
+    World::new(&unit(ORIGIN, "", "", void), &["c"], &[0]);
+    let valued = "sequence Main { attempt T by w on M::Cell::flag contracts [FlagPre, FlagPost]; }";
+    World::new(&unit(ORIGIN, "", "", valued), &["c"], &[0]);
 }
 
 /// FR-882-AC-7 (TC-2505): every remaining `Unsupported` variant has an

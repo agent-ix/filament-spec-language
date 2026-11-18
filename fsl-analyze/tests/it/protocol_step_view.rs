@@ -329,7 +329,7 @@ fn undetermined_cut_and_unnamed_steps_refuse_the_view() {
             "",
             &format!(
                 "sequence Main {{ {} }}",
-                fill::attempt("X", "bump", "BumpPost", "x", "6 mod (2 - k.v) >= 0")
+                fill::attempt("X", "flag", "FlagPost", "x", "6 mod (2 - k.v) >= 0")
             ),
             "d",
         );

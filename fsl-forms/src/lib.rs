@@ -39,6 +39,7 @@ mod hyper_clause;
 mod object_declaration;
 mod probabilistic;
 mod protocol_clause;
+pub use protocol_clause::OMITTED_ATTEMPT_BINDER;
 mod protocol_control;
 mod refinement;
 mod spans;

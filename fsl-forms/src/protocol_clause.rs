@@ -1187,10 +1187,40 @@ fn event_node_anchors(
     // Every event node kind (`send` and `attempt` included) carries its own
     // `as (x: T)` record binder (FR-113 "Refusals"), its own body block and
     // zero or more `related by` clauses.
-    collector
-        .binders
-        .push(record_binder(cst, &event_items, node, scope)?);
-    collector.body(cst, &event_items, node, declaration_index)?;
+    let binderless = kind == ProtocolNodeKind::Attempt
+        && !event_items
+            .iter()
+            .any(|item| matches!(item, Item::Node(child) if child.production() == Production::Parameter));
+    if binderless {
+        // A binder-less `attempt` (FR-218) is carried as an unnameable
+        // `Boolean` binder with a `true` body: it never binds a value and no
+        // source text can read it, so every later stage keeps its one shape.
+        let end = node.span().end;
+        let span = Span { start: end.saturating_sub(1), end };
+        collector.binders.push(BinderForm {
+            kind: BinderKind::RecordBinder,
+            name: DeclaredName {
+                name: format!("{OMITTED_ATTEMPT_BINDER}{}", collector.declarations[declaration_index].name.name),
+                span,
+            },
+            scope,
+            value_type: TypeForm::builtin(super::syntax::BuiltinType::Boolean, span),
+        });
+        collector.bodies.push(ProtocolBodyForm {
+            owner: declaration_index,
+            expression: ExpressionForm {
+                expression: super::syntax::Expression::boolean(true),
+                spans: super::spans::ExpressionSpans::new(span)
+                    .map_err(|_| unexpected(node))?,
+            },
+            span,
+        });
+    } else {
+        collector
+            .binders
+            .push(record_binder(cst, &event_items, node, scope)?);
+        collector.body(cst, &event_items, node, declaration_index)?;
+    }
     for related in nodes_of(&event_items, Production::Related) {
         collector.constructs.push(ProtocolConstructForm {
             kind: ProtocolConstructKind::Related,
@@ -1386,3 +1416,7 @@ fn scoped_anchor(
         owner,
     })
 }
+
+/// The name prefix of the unnameable binder a binder-less `attempt` carries
+/// (FR-218): reserved, so no source binder is named with it.
+pub const OMITTED_ATTEMPT_BINDER: &str = "__omitted_attempt_binder_";
