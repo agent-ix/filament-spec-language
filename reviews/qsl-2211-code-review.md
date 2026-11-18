@@ -31,3 +31,9 @@ Reviewed the QSL-2211 diff at the frozen head. The changed semantics and evaluat
 ## Rust review
 
 The Rust review found no additional ownership, panic, unsafe-code, concurrency, or resource-management issue in the changed code. The targeted semantic and evaluator tests passed as reported; the strict package-reader test fails at `/semantic_graph/nodes/3` with the known contract-ir v0.1.4 `MalformedWire` associated with QSL-2449. Changed-file rustfmt check passed. No aggregate gate was run.
+
+## Dispositions
+
+| FND | outcome | reason |
+| --- | --- | --- |
+| FND-001 | fixed | The fix uses role-prefix position for the role name and recognizes `recommend` only as the first event-form token; regression coverage exercises role `observe`, event `recommend`, and recommendation `recommend`. |

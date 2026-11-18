@@ -37,3 +37,12 @@ Mapped the changed observe-only implementation and its tagged tests to the accep
 ## Evidence limits
 
 FR-383-AC-69 is tagged to the package test and the expected assertions are present, so this is not an implementation-to-test binding gap. However, the required strict-reader success is not demonstrated on this head: the targeted test fails in the external contract-ir v0.1.4 reader at `/semantic_graph/nodes/3`. QSL-2449 tracks that dependency issue; no workaround was inferred or attempted. The repo-wide Quoin matrix has no run-evidence records, so the direct focused test outcomes above are the available execution evidence.
+
+## Dispositions
+
+| FND | outcome | reason |
+| --- | --- | --- |
+| FND-001 | fixed | The test now checks duplicate-marker refusal at the second marker and compares marked/unmarked role and control forms after clearing only the marker field. |
+| FND-002 | fixed | The test now covers nested-choice attempt and commit in source order, role-level compensation/attempt/effect/event-for/commit refusals, and checks the recovery flow without an observe role; the send test also checks the unmarked control case. |
+| FND-003 | fixed | The test now covers unknown recommended operation, a recommendation with a foreign contract, and a while-guard read of the recommendation binder. |
+| FND-004 | fixed | The evaluator tests compare registration keys and values for observe-only transitions, demonstrate the unobserved role's write, and assert observe-attempt checking refuses before evaluator subject construction. |
