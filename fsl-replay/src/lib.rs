@@ -259,6 +259,7 @@ pub use model_check::counterexample::{
     TemporalCounterexample, TimedPoint, UndefinedEvaluation, UndefinedLocus, UndefinedSite,
 };
 pub use model_check::existential_outcome::{ExistentialInstanceOutcome, ExistentialOutcome};
+pub use model_check::finite_hyper_replay::replay_finite_hyper_refutation;
 pub use model_check::graph_replay::{
     replay_model_graph, replay_model_graph_from_package, replay_model_graph_with_cancel,
     replay_model_graph_with_cancel_and_temporal_selections,
