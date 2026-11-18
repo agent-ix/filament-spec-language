@@ -332,7 +332,7 @@ fn the_run_command_reaches_markdown_extraction_by_default() {
     let directory = tempfile::tempdir().unwrap();
     let mut request = current_clause_request();
     request["request"]["program"] = json!({
-        "source": {"file": "spec.md", "authority": "agent-ix", "identity": "doc",
+        "source": {"file": "spec.md", "authority": "agent-ix", "identity": "ix://agent-ix/spec",
             "document": "Doc", "formal_revision": 1},
         "extraction": {"body": {"authority": "agent-ix", "identity": "b", "document": "B"}},
         "clauses": [
@@ -383,7 +383,7 @@ fn the_run_command_preserves_a_missing_markdown_clause_selection() {
     .unwrap();
     let mut request = current_clause_request();
     request["request"]["program"] = json!({
-        "source": {"file": "spec.md", "authority": "agent-ix", "identity": "doc",
+        "source": {"file": "spec.md", "authority": "agent-ix", "identity": "ix://agent-ix/spec",
             "document": "Doc", "formal_revision": 1},
         "extraction": {"body": {"authority": "agent-ix", "identity": "body",
             "document": "Body"}},
@@ -396,7 +396,7 @@ fn the_run_command_preserves_a_missing_markdown_clause_selection() {
     assert_eq!(
         value["details"]["original"],
         json!({
-            "authority": "agent-ix", "identity": "doc"
+            "authority": "agent-ix", "identity": "ix://agent-ix/spec"
         }),
         "{value}"
     );
@@ -427,7 +427,7 @@ fn the_run_command_preserves_an_unavailable_markdown_extraction() {
     .unwrap();
     let mut request = current_clause_request();
     request["request"]["program"] = json!({
-        "source": {"file": "spec.md", "authority": "agent-ix", "identity": "doc",
+        "source": {"file": "spec.md", "authority": "agent-ix", "identity": "ix://agent-ix/spec",
             "document": "Doc", "formal_revision": 1},
         "extraction": {"body": {"authority": "agent-ix", "identity": "body",
             "document": "Body"}},
@@ -437,7 +437,11 @@ fn the_run_command_preserves_an_unavailable_markdown_extraction() {
     let (exit, value) = run_refusal(directory.path(), &request);
     assert_eq!(exit, 20, "{value}");
     assert_eq!(value["stage"], "quire", "{value}");
-    assert_eq!(value["details"]["original"]["identity"], "doc", "{value}");
+    assert_eq!(
+        value["details"]["original"]["identity"],
+        "ix://agent-ix/spec",
+        "{value}"
+    );
     assert_eq!(
         value["details"]["binding"]["clause"], "ParentOrder",
         "{value}"
@@ -467,7 +471,7 @@ fn the_run_command_writes_a_strictly_readable_markdown_extraction_record() {
     .unwrap();
     let mut request = current_clause_request();
     request["request"]["program"] = json!({
-        "source": {"file": "spec.md", "authority": "agent-ix", "identity": "doc",
+        "source": {"file": "spec.md", "authority": "agent-ix", "identity": "ix://agent-ix/spec",
             "document": "Doc", "formal_revision": 1},
         "extraction": {"body": {"authority": "agent-ix", "identity": "body",
             "document": "Body"}},
@@ -480,7 +484,7 @@ fn the_run_command_writes_a_strictly_readable_markdown_extraction_record() {
         .unwrap_or_else(|error| panic!("{}", error.value().unwrap()));
     assert_eq!(result.exit_code, 0, "{}", result.value);
     let extraction = &result.value.as_value()["extraction"];
-    assert_eq!(extraction["original"]["identity"], "doc");
+    assert_eq!(extraction["original"]["identity"], "ix://agent-ix/spec");
     assert_eq!(extraction["body"]["identity"], "body");
     assert_eq!(extraction["body"]["document"], "Body");
     assert_eq!(extraction["binding"]["clause"], "parent_order");
