@@ -70,6 +70,10 @@ FR-489's rule selects.
   state clause in a request naming a model subject; `contract-checker` for an
   `invariant` state clause with no model subject, and for an operation's `pre`
   or `post` contract or a frame obligation.
+- For `schedulability`, the tied providers are `en-6` and `en-7` (a
+  release-backed claim, FR-075, FR-246), and the row selects `en-7` for every
+  claim form: the closed-form analysis is the default answer and the
+  task-product check runs only when the request names `en-6` (FR-249).
 - A matching set that no row decides SHALL stay whole: a set holding a third
   backend that also matches (such as a process provider advertising
   `operation-contract`), and a set of an item kind the rule has no row for
@@ -92,6 +96,7 @@ FR-489's rule selects.
 | FR-962-AC-3 | Negative: with a process provider advertising `operation-contract` registered beside `Engines::fsl()`, AC-1's first unnamed item has candidates `[contract-checker, en-1, <provider>]` in candidate order and settles `invalid-request` `invalid_capability`/`ambiguous-backend` naming all three; naming `en-1` settles it on `en-1`. | Test (TC-2702) |
 | FR-962-AC-4 | Negative: with a process provider advertising `value-validity` `unbounded` registered, an unnamed run requirement item of `sq` whose matching set is `value-checker` and the provider settles `invalid-request` `ambiguous-backend` naming both; the same item with `call.requirements` `{"backend": "value-checker"}` settles on `value-checker`. | Test (TC-2702) |
 | FR-962-AC-5 | Over a registry holding `en-1` and an SMT backend advertising `operation-contract` in `bounded` mode, each FR-146 per-step simulation record item of the `cas_refines_counter` refinement matches exactly `[smt]`; an unnamed `operation-contract` item for the `invariant` state clause `self.value <= 3` in a request naming a model subject still matches `en-1`. | Test (TC-2702) |
+| FR-962-AC-6 | An unnamed `schedulability` item whose matching set is `[en-6, en-7]` gets the candidate set `[en-7]`, writes `candidates` `{type: "set", backends: ["en-7"]}` with `backend` absent, and settles through EN-7, never `ambiguous-backend`; over a registry that also holds a process provider advertising `schedulability`, the three-member set stays whole and settles `ambiguous-backend`. | Test (TC-3009) |
 
 ## Dependencies
 
