@@ -22,7 +22,12 @@ source = "git+https://github.com/agent-ix/filament-core-data?tag=agent-ix-semant
 [[package]]
 name = "agent-ix-semantic-schema"
 version = "0.3.0"
-source = "git+https://github.com/agent-ix/filament-core-data?branch=main#dd3485073737e6a892b96042123fe2ad4acfe1e9"
+source = "git+https://github.com/agent-ix/filament-core-data?tag=semantic-schema-v0.6.0#327a49ca9d7ab2c12269a8db65b75f1331e165bd"
+
+[[package]]
+name = "agent-ix-semantic-schema"
+version = "0.3.0"
+source = "git+https://github.com/agent-ix/filament-core-data?branch=main#c23980ea9943fc61a1c2b489322e77dec85f3d9d"
 
 [[package]]
 name = "ahash"
@@ -542,8 +547,8 @@ checksum = "da7c62ceae207dd37ea5b845da6a0696c799f85e97da1ab5b7910be3c1c80223"
 
 [[package]]
 name = "filament-checked"
-version = "0.1.4"
-source = "git+https://github.com/agent-ix/filament-eval?tag=v0.1.4#dd9f701f4996a673f397795cbf52995f083837f6"
+version = "0.1.6"
+source = "git+https://github.com/agent-ix/filament-eval?tag=v0.1.6#0fae05c379f9100c7c660244692e2eab1a6fcf25"
 dependencies = [
  "filament-exact",
  "filament-semantic-value",
@@ -581,8 +586,8 @@ dependencies = [
 
 [[package]]
 name = "filament-eval"
-version = "0.1.4"
-source = "git+https://github.com/agent-ix/filament-eval?tag=v0.1.4#dd9f701f4996a673f397795cbf52995f083837f6"
+version = "0.1.6"
+source = "git+https://github.com/agent-ix/filament-eval?tag=v0.1.6#0fae05c379f9100c7c660244692e2eab1a6fcf25"
 dependencies = [
  "filament-exact",
  "filament-semantic-value",
@@ -1061,7 +1066,7 @@ version = "0.1.0"
 dependencies = [
  "fsl-foundation",
  "ix-trace-rs",
- "quire-rs 0.62.2",
+ "quire-rs 0.62.3",
  "serde",
  "serde_json",
  "thiserror",
@@ -1918,7 +1923,7 @@ name = "quire-rs"
 version = "0.53.0"
 source = "git+https://github.com/agent-ix/quire-rs?rev=71a1f970bebc8d7267424dda26cf4c665bcc5ae5#71a1f970bebc8d7267424dda26cf4c665bcc5ae5"
 dependencies = [
- "agent-ix-semantic-schema",
+ "agent-ix-semantic-schema 0.3.0 (git+https://github.com/agent-ix/filament-core-data?branch=main)",
  "globset",
  "ignore",
  "indexmap",
@@ -1935,10 +1940,10 @@ dependencies = [
 
 [[package]]
 name = "quire-rs"
-version = "0.62.2"
-source = "git+https://github.com/agent-ix/quire-rs?tag=v0.62.2#335be94e8490b1d186a4d168eb5b2e7bab9a4f68"
+version = "0.62.3"
+source = "git+https://github.com/agent-ix/quire-rs?tag=v0.62.3#0c9dcc838055c9289caf86b9b0665ce8cfcd00e8"
 dependencies = [
- "agent-ix-semantic-schema",
+ "agent-ix-semantic-schema 0.3.0 (git+https://github.com/agent-ix/filament-core-data?tag=semantic-schema-v0.6.0)",
  "globset",
  "ignore",
  "indexmap",
