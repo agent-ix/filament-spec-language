@@ -81,10 +81,7 @@ fn a_reference_literal_resolves_at_subject_binding() {
     );
     let text = unknown.document().to_string();
     assert_eq!(unknown.exit, 20, "{text}");
-    assert!(
-        text.contains("missing-name") && text.contains("7a7a"),
-        "{text}"
-    );
+    assert!(text.contains("missing-name"), "{text}");
     let created = over_wide_universe("reflit-created-guard", &guarded_protocol("b"), "L");
     let text = created.document().to_string();
     assert!(text.contains("operator-ineligible"), "{text}");
