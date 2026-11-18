@@ -112,6 +112,13 @@ they are today.
   role or ordinal differs SHALL return the lookup refusal
   `hyper-root-unresolved` at the triple. It is an FSL lookup result, not a
   package refusal, as `clause-root-unresolved` is (FR-337).
+  A package whose `claim`/`hyperproperty` node holds two quantifier Groups
+  with one `variable` text is FSpec FR-402's Shape refusal
+  `ambiguous_declaration`/`ambiguous-name` at the later Group's `variable`
+  binding, which the I2 reader reports unchanged. The emitter never writes
+  such a node, because S3 refuses a source clause that names one trace
+  variable twice (ADR-023 HS-2), so each Group's variable keys exactly one
+  clock row.
 
 ## Behavior
 
@@ -474,6 +481,7 @@ in FR-487. "Admitted" means FSL's I2 admission of the emitted package
 | FR-488-AC-24 | `NonInterference` emits one `temporal_clause_names` row keyed by its body wrapper's NodeId, at the ordinal of its assembled `claim` occurrence, with the name `NonInterference`; the `hyperproperty` node has no row; two structurally equal hyper clauses with different names share one wrapper and carry two rows at distinct ordinals; renaming one changes no NodeId; and the rows sort with the unit's temporal-clause rows by (NodeId, occurrence). | Test (TC-1327) |
 | FR-488-AC-25 | Under event-position false-extension, `NonInterference` emits two `temporal_bindings` rows at the `hyperproperty` node's NodeId and the ordinal of its `claim` occurrence, `trace` `a` then `b`, each with `clock_name` `model-steps` (the wrapper's clock text) and the configuration FR-640 derives from `V`; no `temporal_bindings` row names the body wrapper; under infinite-trace the clause has a name row and no binding. | Test (TC-1327) |
 | FR-488-AC-26 | Two hyper clauses with equal bodies, `Fwd` over `forall trace a of V forall trace b of V` and `Rev` over `forall trace b of V forall trace a of V`, emit two `hyperproperty` nodes whose `body` references one wrapper, and binding rows `a`, `b` at `Fwd`'s node and `b`, `a` at `Rev`'s node, none at the wrapper; the package is admitted. | Test (TC-3000) |
+| FR-488-AC-27 | The package FSL emits for `hyper Same using inf over behaviours (c: Config::ConfigVersion) forall trace a of Config forall trace b of Config { always holds(c.versionNumber @ a = c.versionNumber @ b) }`, edited so its second quantifier Group's `variable` is `a`, is refused by the reader with `ambiguous_declaration`/`ambiguous-name` at that Group's `variable` binding, `/semantic_graph/nodes/{n}/body/members/3/value/members/1/members/0`; the unedited package is admitted. | Test (TC-3007) |
 
 ## Open FSpec questions
 
