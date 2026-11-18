@@ -603,8 +603,8 @@ impl World {
 /// called function body contains a reference literal that I2 cannot encode.
 #[test]
 fn called_function_reference_literals_keep_temporal_and_hyper_identities() {
-    use filament_exact::{Cancel, Meter};
-    use fsl_replay::{ClauseIdentity, HyperProductIdentity, HyperQueryRequest, SmtEncodingLimits};
+    use filament_exact::Cancel;
+    use fsl_replay::{ClauseIdentity, HyperIdentity};
 
     let function = "function reference using v(): Reference<V::Vault> pure { V::Vault#\"v\" }";
     let temporal = "temporal Literal using inf over (v: V::Vault) clock \"model-steps\" on origin { always holds(reference() = reference()) }";
@@ -630,16 +630,15 @@ fn called_function_reference_literals_keep_temporal_and_hyper_identities() {
     )
     .expect("the temporal source identity bypasses unsupported I2 function literals");
 
-    let subjects = [subject];
-    let mut meter = Meter::new(UNLIMITED);
-    HyperProductIdentity::of(&HyperQueryRequest {
-        clause: world.clause(),
-        subjects: &subjects,
-        instance: &[("v".to_owned(), "v".to_owned())],
-        meter: &mut meter,
-        encoding: SmtEncodingLimits::default(),
-    })
-    .expect("the hyper source identity bypasses unsupported I2 function literals");
+    HyperIdentity::resolve(
+        world.package(),
+        &world.packages,
+        world.clause(),
+        &[],
+        &Cancel::new(),
+        fsl_package::EmitLimits::fixture(),
+    )
+    .expect("HyperIdentity::resolve preserves the checked source occurrence");
 }
 
 /// The TP-4 closure replay fixtures (FR-338-AC-24, FR-338-AC-25).
