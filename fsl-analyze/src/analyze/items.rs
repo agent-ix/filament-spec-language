@@ -124,6 +124,13 @@ pub fn model_item<'a>(
 ) -> Result<AnalyzeItem<'a>, DerivedItemMismatch> {
     match item.request.item {
         ModelCheckItem::Clause { .. } => Ok(run_model_item(index, CLAUSE_FAMILY, item)),
+        // FR-625, FR-951: an invariant runs on EN-1 as its `state-model`
+        // family's `operation-contract` item.
+        ModelCheckItem::Invariant { .. } => Ok(run_model_item(
+            index,
+            Some(DeclarationFamily::StateModel),
+            item,
+        )),
         ModelCheckItem::DeadlockFreedom | ModelCheckItem::RaceFreedom => {
             Err(DerivedItemMismatch::DerivedRun { index })
         }
@@ -137,16 +144,24 @@ pub(super) fn run_model_item(
     family: Option<DeclarationFamily>,
     item: ModelItem<'_>,
 ) -> AnalyzeItem<'_> {
+    let kind = match item.request.item {
+        ModelCheckItem::Invariant { .. } => Capability::OperationContract,
+        ModelCheckItem::Clause { .. }
+        | ModelCheckItem::DeadlockFreedom
+        | ModelCheckItem::RaceFreedom => Capability::TemporalSatisfaction,
+    };
     AnalyzeItem::new(
         index,
-        Capability::TemporalSatisfaction,
+        kind,
         family,
         Mode::Bounded,
         en1::BACKEND_ID,
         move |cancel| {
             let clause = match &item.request.item {
                 ModelCheckItem::Clause { clause, .. } => Some(*clause),
-                ModelCheckItem::DeadlockFreedom | ModelCheckItem::RaceFreedom => None,
+                ModelCheckItem::DeadlockFreedom
+                | ModelCheckItem::RaceFreedom
+                | ModelCheckItem::Invariant { .. } => None,
             };
             let simulation = item.request.subject.simulation.clone();
             match settle_model_item(item, cancel) {
@@ -238,9 +253,9 @@ pub fn protocol_item<'a>(
 ) -> Result<AnalyzeItem<'a>, DerivedItemMismatch> {
     match item.request.item {
         ModelCheckItem::Clause { .. } => Ok(run_protocol_item(index, CLAUSE_FAMILY, item)),
-        ModelCheckItem::DeadlockFreedom | ModelCheckItem::RaceFreedom => {
-            Err(DerivedItemMismatch::DerivedRun { index })
-        }
+        ModelCheckItem::DeadlockFreedom
+        | ModelCheckItem::RaceFreedom
+        | ModelCheckItem::Invariant { .. } => Err(DerivedItemMismatch::DerivedRun { index }),
     }
 }
 
@@ -1009,6 +1024,7 @@ pub(super) fn model_refusal(refusal: &ModelCheckRefusal) -> Refusal {
         // A request defect: an operation or subject count the request names
         // wrongly, or the race-freedom item over a model subject.
         ModelCheckRefusal::RaceOverModel
+        | ModelCheckRefusal::InvariantOverProtocol
         | ModelCheckRefusal::Liveness(LivenessRefusal::UnknownOperation { .. })
         | ModelCheckRefusal::Hyper(
             HyperRefusal::UnknownOperation { .. } | HyperRefusal::SubjectCount { .. },

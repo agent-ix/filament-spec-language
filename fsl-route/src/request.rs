@@ -1158,7 +1158,15 @@ pub fn items_with_reductions(
                 // evidence kind; one without has no backend to settle it.
                 CandidateOutcome::Candidates(CandidateSet::none(requirements.kind(), named))
             } else {
-                reduced_candidates(requirements, evidence, registry, named, &selected)
+                // FR-962: EN-1 matches an `operation-contract` record only
+                // when it is an `invariant` state clause's; whether the
+                // request names a model subject is the tie rule's to read.
+                crate::tie::exclude_en1(
+                    reduced_candidates(requirements, evidence, registry, named, &selected),
+                    requirements.kind(),
+                    named,
+                    requirements.invariant_clause(),
+                )
             },
             unsupported: requirements.unsupported().cloned(),
             evidence,

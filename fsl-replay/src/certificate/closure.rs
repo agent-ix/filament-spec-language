@@ -76,8 +76,9 @@ use fsl_eval::simulation::protocol::{
 };
 use fsl_eval::simulation::StateKey;
 use fsl_eval::simulation::{
-    ConstraintError, Cut, EncodingRefusal, Expansion, ExpansionStop, NotSimulated, SubjectSystem,
-    SubjectTransition, TransitionSystem, ZeroProgress, ZeroProgressError, BOUND_POSITIONS,
+    ConstraintError, ConstraintValue, Cut, EncodingRefusal, Expansion, ExpansionStop, NotSimulated,
+    SubjectSystem, SubjectTransition, TransitionSystem, ZeroProgress, ZeroProgressError,
+    BOUND_POSITIONS,
 };
 use fsl_eval::temporal::{AtomReading, CaptureReading};
 use fsl_semantics::model::observation::AdmissionFailure;
@@ -610,6 +611,7 @@ fn check_system<S: SubjectSystem>(
 
     let mut check = Check {
         system,
+        model,
         item,
         limits,
         meter,
@@ -736,6 +738,9 @@ type SubjectExpansion<S> = (
 
 struct Check<'c, S: SubjectSystem> {
     system: &'c S,
+    /// The subject's model system, which reads an invariant item's letter
+    /// over each reached state's model state (FR-951).
+    model: &'c ModelSystem<'c>,
     item: &'c ModelCheckItem<'c>,
     limits: &'c ModelCheckLimits,
     meter: ScalarLimits,
@@ -1539,6 +1544,25 @@ impl<S: SubjectSystem> Check<'_, S> {
                 }
             }
             SafetyItem::RaceFreedom => (translation.read(before, true), None),
+            // FR-338 and FR-951: `I` is the invariant's body over every
+            // object of the state's model state that conforms to its context
+            // type; a false or undefined `I` makes the product state bad.
+            SafetyItem::StateInvariant => {
+                let ModelCheckItem::Invariant { clause } = self.item else {
+                    return Err(fault("invariant-item-translation").into());
+                };
+                let value = self
+                    .model
+                    .constraint_value(&self.system.atom_state(&state), clause.name())
+                    .map_err(|stop| self.expansion_stop(stop))?;
+                match value {
+                    ConstraintValue::Holds => (translation.read(before, true), None),
+                    ConstraintValue::Boundary | ConstraintValue::Undefined { .. } => {
+                        let at = self.product(translation, state_key, SafetyState::Rejected)?;
+                        return Err(Self::reject(CertificateRule::BadState, at));
+                    }
+                }
+            }
             SafetyItem::DeadlockFreedom => {
                 if !self.models.contains(&state_key) {
                     let at = self.product(translation, state_key.clone(), SafetyState::Carried)?;
