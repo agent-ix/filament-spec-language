@@ -3619,6 +3619,10 @@ pub(crate) struct ComposedUnit {
     pub(crate) emitted: pkg::EmittedPackage,
     /// The unit's own source.
     pub(crate) source: Source,
+    /// The checked unit returned by S3 and S4.
+    pub(crate) checked: CheckedUnit,
+    /// The admitted model set selected for this unit.
+    pub(crate) models: AdmittedModels,
 }
 
 /// [`ComposedUnit`] of `bytes` under `limits`.
@@ -3732,8 +3736,10 @@ pub(crate) fn compose_in_mode(
     record_declarations(&checked.package);
     Ok(ComposedUnit {
         emitted: emitted.package().clone(),
-        source: checked.source,
-        package: checked.package,
+        source: checked.source.clone(),
+        package: checked.package.clone(),
+        checked,
+        models,
     })
 }
 

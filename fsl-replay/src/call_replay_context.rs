@@ -255,50 +255,27 @@ mod tests {
             .expect("no model packages");
         let dependencies = DependencyInput::default();
         let cancel = Cancel::new();
-        let parsed = spine::parse_for_continuation(
-            &ParseRequest {
-                source: &identity,
-                path: "unit.native",
-                bytes: source.as_bytes(),
-            },
-            limits.spine.source,
-            &cancel,
-        )
-        .expect("parses")
-        .into_value();
-        let admitted = spine::admit_parsed_unit_list(vec![parsed], &dependencies).expect("admits");
-        let models = spine::select_units(
-            &admitted,
+        let function_modes = BTreeMap::new();
+        let modes = spine::ComposeModes {
+            check_mode: Some(CheckMode::Kernel),
+            function_modes: &function_modes,
+        };
+        let composed = spine::compose_in_mode(
+            identity,
+            "unit.native",
+            source.as_bytes(),
             &packages,
-            limits.spine.model,
-            limits.spine.source,
-            &cancel,
-        )
-        .expect("selects")
-        .into_value();
-        let checked = spine::check_units_with_options(
-            &admitted,
-            "fixture".to_owned(),
-            &models,
             &dependencies,
-            spine::UnitCheckOptions {
-                check_mode: Some(CheckMode::Kernel),
-                ..spine::UnitCheckOptions::default()
-            },
             limits.spine,
-            &cancel,
+            modes,
         )
-        .expect("checks under Kernel")
-        .into_value()
-        .into_iter()
-        .next()
-        .expect("one admitted unit checks to one unit");
-        let emitted = spine::package(&checked, spine::PackageLimits::default(), &cancel)
-            .expect("packages")
-            .into_value();
+        .expect("composes under Kernel");
+        let checked = &composed.checked;
+        let models = &composed.models;
+        let emitted = &composed.emitted;
         let outcome = spine::run_compiled(
-            &checked,
-            &models,
+            checked,
+            models,
             spine::CallSources {
                 package_name: "fixture",
                 packages: &packages,
@@ -318,7 +295,7 @@ mod tests {
             &call.function,
         )
         .expect("requirements associate with the call");
-        let context = PluginReplayContext::new(&checked, &emitted, &models, limits);
+        let context = PluginReplayContext::new(checked, emitted, models, limits);
         RunWithReplayContext {
             package_name: library_name.clone(),
             outcome,
