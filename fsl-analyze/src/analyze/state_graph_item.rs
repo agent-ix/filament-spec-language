@@ -176,6 +176,7 @@ fn run(read: &Run<'_, '_>, cancel: &Cancel) -> EngineReport {
             parameter,
             instance.over.as_ref(),
             &instance.sampled,
+            claim.occurrence(),
         )
     });
     let refuted = matches!(record.value, TerminalValue::Refuted);
