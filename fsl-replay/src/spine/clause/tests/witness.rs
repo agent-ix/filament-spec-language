@@ -3109,6 +3109,19 @@ fn tc_2981_a_path_ending_at_a_comparison_records_the_comparison_and_its_operands
         read.witness(&unit.compiled.package).unwrap(),
         report.witness
     );
+    let replay = replay_with(
+        &unit,
+        "MatchesParent",
+        Some(record.clone()),
+        witness_source(),
+    )
+    .expect("the authored comparison record replays");
+    let arm = witness_arm(&replay);
+    assert_eq!(
+        arm.settlement(),
+        WitnessSettlement::ReproducedWithEvaluatedWitness
+    );
+    assert_eq!(arm.record(), Some(&record));
     assert!(
         matches!(derive(&unit, "AtLeastParent", Snapshot::High, "mid"), Some(Derived {
             basis: SettlementBasis::DecisiveWitness,
