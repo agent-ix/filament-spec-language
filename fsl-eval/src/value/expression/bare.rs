@@ -423,6 +423,7 @@ impl CheckedPackageEvaluation for BarePackage<'_> {
         _clause: &fsl_semantics::check::TemporalClauseNode,
         _atom: fsl_semantics::check::FormulaNodeId,
         _over: Value,
+        _captures: &[Value],
         _objects: &ObjectEnvironment,
         _meter: &mut Meter,
     ) -> Result<Evaluation, CallFailure> {

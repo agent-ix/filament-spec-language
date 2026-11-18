@@ -573,6 +573,17 @@ macro_rules! ready {
 /// What reading the clause's letters over the read positions found: the
 /// first undefined atom or the first refused condition, in evaluation order
 /// (never both), and the first atom short of data.
+/// What reading one activation's capture atoms found (FR-860).
+#[derive(Default)]
+struct ActivationRead {
+    /// The first atom undefined for the activation.
+    undefined: Option<UndefinedEvaluation>,
+    /// Whether an atom was short of data.
+    short: bool,
+    /// The first atom short of data.
+    insufficient: Option<InsufficientDataEvaluation>,
+}
+
 struct LettersRead {
     undefined: Option<UndefinedEvaluation>,
     refused: Option<TemporalPosition>,
@@ -635,6 +646,9 @@ pub(super) struct PositionReader<'a> {
     pub(super) atoms: &'a [usize],
     pub(super) guarded: bool,
     pub(super) captured: CaptureSite,
+    /// The atoms read per activation instead (FR-860): they read a capture
+    /// of an `on each` clause, so their value depends on the activation.
+    pub(super) deferred: &'a [usize],
 }
 
 impl PositionReader<'_> {
@@ -698,6 +712,9 @@ impl PositionReader<'_> {
         }
         let mut undefined_here = None;
         for &node in self.atoms {
+            if self.deferred.contains(&node) {
+                continue;
+            }
             meter.charge(Charge::new(VISIT))?;
             let id = self
                 .formula
@@ -829,6 +846,7 @@ impl<'a> Evaluator<'a> {
         read: u64,
         guarded: bool,
         captured: CaptureSite,
+        deferred: &[usize],
         whens: &mut HashMap<u64, bool>,
     ) -> Result<LettersRead, Stop> {
         let mut insufficient = None;
@@ -837,6 +855,7 @@ impl<'a> Evaluator<'a> {
             atoms: &self.plan.atoms,
             guarded,
             captured,
+            deferred,
         };
         for position in 0..read {
             let at = TemporalPosition::new(position);
@@ -870,6 +889,75 @@ impl<'a> Evaluator<'a> {
         })
     }
 
+    /// FR-860: read each `deferred` atom, which reads a capture, at
+    /// positions `0..read` with the captures the activation at the
+    /// represented `activation` fixed, and forget every node value an earlier
+    /// activation's captures decided. An atom undefined there makes the
+    /// positions from it on unknown for this activation, as an undefined atom
+    /// does for the clause; a refused one stops the run there.
+    fn read_activation<L: TemporalLetters>(
+        &mut self,
+        source: &mut L,
+        activation: u64,
+        read: u64,
+        deferred: &[usize],
+    ) -> Result<ActivationRead, Stop> {
+        source.select_activation(TemporalPosition::new(activation))?;
+        self.memo.clear();
+        self.unknown_from = Some(read);
+        let mut own = ActivationRead::default();
+        for position in 0..read {
+            let at = TemporalPosition::new(position);
+            let mut undefined_here = None;
+            for &node in deferred {
+                self.meter.charge(Charge::new(VISIT))?;
+                let id = self
+                    .formula
+                    .node_id(node)
+                    .ok_or_else(|| fault("atom-has-node-id"))?;
+                let reading = match source.atom(id, at, &mut *self.meter) {
+                    Err(LetterStop::Refused) => match undefined_here {
+                        // An atom undefined earlier at the same position is
+                        // returned in place of the refused one.
+                        Some(cause) => {
+                            self.unknown_from = Some(position);
+                            own.undefined = Some(UndefinedEvaluation { at, cause });
+                            return Ok(own);
+                        }
+                        None => return Err(Stop::ConditionRefused(at)),
+                    },
+                    other => other?,
+                };
+                let value = match reading {
+                    AtomReading::True => Tri::True,
+                    AtomReading::False => Tri::False,
+                    AtomReading::Undefined(UndefinedCause::InsufficientData(data)) => {
+                        own.short = true;
+                        if own.insufficient.is_none() {
+                            own.insufficient = Some(InsufficientDataEvaluation {
+                                at,
+                                atom: id,
+                                data,
+                            });
+                        }
+                        Tri::Unknown
+                    }
+                    AtomReading::Undefined(cause) => {
+                        undefined_here.get_or_insert(cause);
+                        Tri::Unknown
+                    }
+                };
+                self.letters.insert((node, position), value);
+            }
+            if let Some(cause) = undefined_here {
+                self.unknown_from = Some(position);
+                own.undefined = Some(UndefinedEvaluation { at, cause });
+                break;
+            }
+        }
+        Ok(own)
+    }
+
     fn execute<L: TemporalLetters>(
         &mut self,
         clause: Subject<'_>,
@@ -891,11 +979,28 @@ impl<'a> Evaluator<'a> {
         } else {
             CaptureSite::Never
         };
+        // FR-860: an atom that reads a capture of an `on each` clause has a
+        // value per activation, read for each activation in turn below.
+        let deferred: Vec<usize> = if matches!(captured, CaptureSite::Activations) {
+            let formula = self.formula;
+            self.plan
+                .atoms
+                .iter()
+                .copied()
+                .filter(|node| {
+                    formula
+                        .node_id(*node)
+                        .is_some_and(|id| source.reads_captures(id))
+                })
+                .collect()
+        } else {
+            Vec::new()
+        };
         let LettersRead {
             undefined,
             refused,
-            insufficient,
-        } = self.read_letters(source, read, guarded, captured, &mut whens)?;
+            mut insufficient,
+        } = self.read_letters(source, read, guarded, captured, &deferred, &mut whens)?;
         // No later position is read: a refused condition stops the reading
         // as an undefined atom does.
         let stopped_at = undefined
@@ -967,7 +1072,37 @@ impl<'a> Evaluator<'a> {
                     position += 1;
                     continue;
                 }
-                match self.solve(self.plan.root, position)? {
+                let activation_undefined = if deferred.is_empty() {
+                    None
+                } else {
+                    let own = self.read_activation(
+                        source,
+                        represented_position,
+                        stopped_at.unwrap_or(read),
+                        &deferred,
+                    )?;
+                    if insufficient.is_none() {
+                        insufficient = own.insufficient;
+                    }
+                    // An activation short of data has no truth value
+                    // (FR-327 "Undefined evaluation").
+                    if own.short && own.undefined.is_none() {
+                        every_activation_true = false;
+                        position += 1;
+                        continue;
+                    }
+                    own.undefined
+                };
+                let value = self.solve(self.plan.root, position)?;
+                // The activation's own undefined atom: positions from it on
+                // read unknown, and only a false activation is returned
+                // before it (FR-327 "Undefined evaluation").
+                if let Some(undefined) = activation_undefined {
+                    if value != Tri::False {
+                        return Ok(TemporalOutcome::Undefined(undefined));
+                    }
+                }
+                match value {
                     Tri::True => {}
                     Tri::False => {
                         let at = u64::try_from(position).map_err(|_| fault("position-in-u64"))?;

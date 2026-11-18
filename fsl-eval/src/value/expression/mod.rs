@@ -415,6 +415,23 @@ pub fn evaluate_activation_guard(
     )
 }
 
+/// The slot bindings of a `holds` condition of `clause` (FR-337 "Captures at
+/// S3"): `over` at slot 0, the hidden trigger slot of an `on each` clause
+/// bound to `over` as well (no condition reads it), then the activation's
+/// `captures` in source order (FR-860).
+fn holds_bindings(
+    clause: &fsl_semantics::check::TemporalClauseNode,
+    over: Value,
+    captures: &[Value],
+) -> Vec<Value> {
+    let mut bindings = vec![over.clone()];
+    if clause.clause().trigger().is_some() {
+        bindings.push(over);
+    }
+    bindings.extend(captures.iter().cloned());
+    bindings
+}
+
 /// FR-337 "Capture observation": evaluate a capture's initializer `capture`
 /// over `current`, the observation at the activation position, with the
 /// binders in scope bound to `bindings` in slot order: the `over` parameter,
@@ -990,12 +1007,17 @@ pub trait CheckedPackageEvaluation: family::sealed::Sealed {
     /// `pre` observation. The result is S6a's, unchanged, as
     /// [`Self::evaluate`] returns it.
     ///
+    /// `captures` are the values the activation the atom is read for fixed
+    /// for the clause's captures, in source order (FR-860); the hidden
+    /// trigger slot of an `on each` clause is bound to `over`.
+    ///
     /// A node that is no `holds` atom of `clause` is an `Err` fault.
     fn evaluate_holds(
         &self,
         clause: &fsl_semantics::check::TemporalClauseNode,
         atom: fsl_semantics::check::FormulaNodeId,
         over: Value,
+        captures: &[Value],
         objects: &ObjectEnvironment,
         meter: &mut Meter,
     ) -> Result<Evaluation, CallFailure>;
@@ -1889,6 +1911,7 @@ impl CheckedPackageEvaluation for CheckedPackage {
         clause: &fsl_semantics::check::TemporalClauseNode,
         atom: fsl_semantics::check::FormulaNodeId,
         over: Value,
+        captures: &[Value],
         objects: &ObjectEnvironment,
         meter: &mut Meter,
     ) -> Result<Evaluation, CallFailure> {
@@ -1905,7 +1928,7 @@ impl CheckedPackageEvaluation for CheckedPackage {
             meter,
             self.graph().dispatch_tables(),
         )
-        .run(condition, slots, vec![over])
+        .run(condition, slots, holds_bindings(clause, over, captures))
         .map_err(CallFailure::Fault)
     }
 

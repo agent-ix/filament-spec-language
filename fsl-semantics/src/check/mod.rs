@@ -1415,6 +1415,34 @@ impl TemporalClauseNode {
             .map(|(body, slots)| (body.root(), *slots))
     }
 
+    /// Whether the `holds` or aggregate atom `atom` reads one of the clause's
+    /// captures (FR-337 "Captures at S3": the captures take the slots after
+    /// `over` and the trigger binder), so that its value depends on the
+    /// activation it is read for (FR-860).
+    pub fn atom_reads_captures(&self, atom: FormulaNodeId) -> bool {
+        let clause = self.clause();
+        let first = 1 + usize::from(clause.trigger().is_some());
+        let captures = first..first + clause.captures().len();
+        if captures.is_empty() {
+            return false;
+        }
+        let reads = |root: CheckedNode<'_>| {
+            root.descendants()
+                .into_iter()
+                .any(|node| matches!(node.kind(), NodeKind::Local(slot) if captures.contains(&slot)))
+        };
+        if let Some((condition, _)) = self.condition(atom) {
+            return reads(condition);
+        }
+        self.aggregate_conditions(atom).is_some_and(|aggregate| {
+            [aggregate.value, aggregate.filter, aggregate.predicate]
+                .into_iter()
+                .flatten()
+                .chain([aggregate.threshold])
+                .any(|(root, _)| reads(root))
+        })
+    }
+
     /// The aggregate atom's typed expressions and their evaluation slots.
     pub fn aggregate_conditions(
         &self,
