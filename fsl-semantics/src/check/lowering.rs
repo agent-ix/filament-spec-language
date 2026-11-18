@@ -4364,29 +4364,34 @@ impl<'a> Lowering<'a> {
         operation: Operation,
         arguments: Vec<MemberTerm>,
     ) -> Result<LeafTerm, CheckRefusal> {
-        // Retain the checked interval's type node for the requirement bound,
-        // even where the catalog application itself returns Integer.
-        let checked_type = self.type_ref(node.value_type(), node.location())?;
-        if matches!(node.kind(), NodeKind::IntegerDivision { .. })
-            && matches!(node.value_type(), ValueType::Int(_))
-        {
-            if let Some(key) = checked_type.admitted() {
-                if !self.occurrences.has(key.clone()) {
-                    // An inferred interval may have no incoming graph edge:
-                    // its requirement record alone names it. Give that type
-                    // node the division's source anchor before emission.
-                    self.record(
-                        key.clone(),
-                        OccurrenceRole::Generated,
-                        node.location().clone(),
-                    );
-                }
-            }
-        }
         let lowered_type = node.lowered_value_type();
         let result_type = if lowered_type.as_ref() == node.value_type() {
-            checked_type
+            self.type_ref(node.value_type(), node.location())?
         } else {
+            // The application lowers at the Integer node, so its checked
+            // interval has no edge from it. Only an integer division keeps
+            // that interval, for its requirement bound; any other node
+            // (an `if`, a `case`, a read of a division-bound local) must not
+            // build an interval type node nothing names, for no occurrence
+            // places it (FR-495-AC-25).
+            if matches!(node.kind(), NodeKind::IntegerDivision { .. })
+                && matches!(node.value_type(), ValueType::Int(_))
+            {
+                let checked_type = self.type_ref(node.value_type(), node.location())?;
+                if let Some(key) = checked_type.admitted() {
+                    if !self.occurrences.has(key.clone()) {
+                        // An inferred interval may have no incoming graph
+                        // edge: its requirement record alone names it. Give
+                        // that type node the division's source anchor before
+                        // emission.
+                        self.record(
+                            key.clone(),
+                            OccurrenceRole::Generated,
+                            node.location().clone(),
+                        );
+                    }
+                }
+            }
             self.type_ref(&lowered_type, node.location())?
         };
         self.typed_application(node.location(), result_type, operator, operation, arguments)
@@ -5935,13 +5940,20 @@ impl<'a> Lowering<'a> {
             .operand_type_facts()
             .iter()
             .map(|fact| {
-                self.type_node(&fact.value_type, &location).map(|node| {
-                    super::ir::EqualityOperandTypeIdentity {
+                // An operand that lowers at `Integer` (an integer division,
+                // or a control node over one) is compared at that node's type
+                // as emitted, never at its checked interval (FR-495-AC-24).
+                let lowered = (fact.role == super::ir::EqualityUnitOperandRole::Source)
+                    .then(|| node.children().into_iter().nth(fact.operand_position))
+                    .flatten()
+                    .filter(|child| child.value_type() == &fact.value_type)
+                    .map(|child| child.lowered_value_type().into_owned());
+                self.type_node(lowered.as_ref().unwrap_or(&fact.value_type), &location)
+                    .map(|node| super::ir::EqualityOperandTypeIdentity {
                         operand_position: fact.operand_position,
                         role: fact.role,
                         node,
-                    }
-                })
+                    })
             })
             .collect::<Result<Vec<_>, _>>()?;
         let mut unit_facts = Vec::with_capacity(data.unit_type_facts().len());
@@ -6110,7 +6122,7 @@ impl<'a> Lowering<'a> {
                 .into_iter()
                 .enumerate()
                 .map(|(position, child)| {
-                    self.type_node(child.value_type(), &location)
+                    self.type_node(&child.lowered_value_type(), &location)
                         .map(|key| (position, key))
                 })
                 .collect::<Result<Vec<_>, _>>()?
