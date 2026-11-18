@@ -14,8 +14,8 @@ Verify that the `examples/hybrid-braking/` request documents reach a verdict thr
 
 ## Test Procedure
 
-1. Read `examples/hybrid-braking/slow-enough.analyze.json` through `fsl_command::command::analyze`.
-2. Read `examples/hybrid-braking/too-slow.analyze.json` the same way.
+1. Read `examples/hybrid-braking/slow-enough.analyze.json` through `fsl_command::command::analyze_with_providers` with `Engine::hybrid_reference()` as the one provider.
+2. Read `examples/hybrid-braking/too-slow.analyze.json` through `fsl_command::command::analyze_with_providers` with the same provider.
 
 ## Expected Results
 

@@ -413,9 +413,10 @@ fn braking_flowpipe(jump_time: (&str, &str)) -> Value {
 }
 
 /// FSpec FR-652-AC-5: a flowpipe whose `Moving` boxes stop at the boundary
-/// invariant and whose one jump step carries the exact jump times is
-/// accepted; a jump step omitting time 0 is rejected at that step; against
-/// a violated claim it is rejected naming the claim rule.
+/// invariant and whose one jump step carries the narrowed jump time
+/// `[0, 10]` is accepted; a jump step omitting time 0 is rejected with rule
+/// `jump`; one with time `[0, 20]` contains the narrowed jump time and is
+/// accepted; against a violated claim it is rejected with rule `claim`.
 #[test]
 #[trace("FSpec-TC-1605", "FSpec-FR-652-AC-5")]
 #[ignore = "QSL-2234: flowpipe guard and boundary-invariant check not implemented yet"]
@@ -445,16 +446,21 @@ fn a_flowpipe_jump_step_carries_the_guarded_part_and_its_jump_times() {
         late["certificate"]["at"], "/certificate/steps/160",
         "{late}"
     );
+    assert_eq!(late["certificate"]["rule"], "jump", "{late}");
+    let wide = check("hybrid-652-5d", "SlowEnough", ("0", "20"));
+    assert_eq!(wide["record"]["certification"], "certified", "{wide}");
     let violated = check("hybrid-652-5c", "TooSlow", ("0", "10"));
     assert_eq!(violated["certificate"]["accepted"], false, "{violated}");
     assert_eq!(violated["certificate"]["rule"], "claim", "{violated}");
 }
 
 /// FSpec FR-193-AC-23: a trace cut by `end` inside its last dwell replays
-/// exactly to the bad prefix; a wrong `end` does not reproduce; `end` with
-/// `loop` refuses at `/end`.
+/// exactly to the bad prefix; a wrong `end` does not reproduce at `/end`; an
+/// `end` outside the invariant fails static check 6; `end` with `loop`
+/// refuses at `/end` (FR-450-AC-10).
 #[test]
 #[trace("FSpec-TC-373", "FSpec-FR-193-AC-23")]
+#[trace("TC-1221", "FR-450-AC-10")]
 #[ignore = "QSL-2234: hybrid trace `end` replay not implemented yet"]
 fn a_trace_cut_by_end_replays_to_its_bad_prefix() {
     let unit = braking(&claim("TooSlow", "always [0, 10] holds(h.v > 5)"));
@@ -478,6 +484,22 @@ fn a_trace_cut_by_end_replays_to_its_bad_prefix() {
     assert_eq!(reproduced["record"]["result"], "refuted", "{reproduced}");
     let wrong = run("hybrid-193-23b", trace("5"));
     assert_eq!(wrong["record"]["result"], "inconclusive", "{wrong}");
+    assert!(wrong.to_string().contains("/end"), "{wrong}");
+    let outside = first_item(
+        "hybrid-193-23d",
+        &unit,
+        named("TooSlow", "hybrid-fixture"),
+        json!({}),
+        vec![hybrid_fixture(
+            "hybrid-fixture",
+            &json!({"request_index": 0, "result": "inconclusive",
+                "cause": {"type": "solver-inconclusive", "trace": trace("25")}}),
+        )],
+    )
+    .1;
+    let static_outcome = find(&outside["record"], "static").expect("a static replay outcome");
+    assert_eq!(static_outcome["outcome"], "inconsistent", "{outside}");
+    assert_eq!(static_outcome["check"], 6, "{outside}");
     let mut looped = trace("4");
     looped["loop"] = json!(0);
     let refused = run("hybrid-193-23c", looped);

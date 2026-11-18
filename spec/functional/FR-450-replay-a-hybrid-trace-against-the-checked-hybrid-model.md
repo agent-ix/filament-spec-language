@@ -72,7 +72,7 @@ pub enum StaticReplay {
     Consistent,
     Inconsistent { at: JsonPointer, check: StaticCheck }, // the first failing check
 }
-pub enum StaticCheck { Initial, Invariant, Time, Jump, Loop } // FSpec FR-193 static checks 1 to 5
+pub enum StaticCheck { Initial, Invariant, Time, Jump, Loop, End } // FSpec FR-193 static checks 1 to 6
 pub struct ReplayRecord {
     pub static_outcome: StaticReplay, // written as `replay.static`
     pub exact: Option<ExactRecord>,   // written as `replay.exact` when present
@@ -94,7 +94,7 @@ pub struct HybridReplayMeter {
     pub work_units: u64, // caller's configured bound
     pub consumed: u64,   // successfully charged work units
 }
-pub enum ExactCheck { Initial, Dwell, Jump, Loop, Claim } // FSpec FR-193 exact checks 1 to 5
+pub enum ExactCheck { Initial, Dwell, Jump, Loop, Claim } // FSpec FR-193 exact checks 1 to 5; check 4 also holds the `end` dwell
 pub struct HybridCounterexample {
     pub kind: HybridCounterexampleKind,         // Formula | UndefinedEvaluation{where, cause}
     pub trace: HybridTrace,
@@ -130,12 +130,14 @@ item's `Counterexample`.
   carries, and SHALL read no source.
 - A negative `delta` SHALL refuse the result `invalid_result`/`invalid-value`
   at `/delta`, and a `loop_to` past the trace's last state SHALL refuse it
-  at `/loop` (FSpec FR-193).
+  at `/loop` (FSpec FR-193). A trace carrying both `end` and `loop_to` SHALL
+  refuse it `invalid_result`/`invalid-value` at `/end`, since a lasso has no
+  last dwell to cut.
 
 ### Static replay
 
 - FSL SHALL run static replay on every trace by FSpec FR-193 "Trace replay"
-  checks 1 to 5, in exact rational interval arithmetic over the trace's
+  checks 1 to 6, in exact rational interval arithmetic over the trace's
   intervals, each comparison widened by `delta` (0 when `None`), and SHALL
   return `Consistent` or `Inconsistent` at the first failing check in trace
   order, with the member's pointer. `static_replay` and `exact_replay` take
@@ -192,7 +194,12 @@ item's `Counterexample`.
   the state's point, and SHALL decide FSpec FR-193's exact checks 1 to 5 over
   the reals exactly: an atom along a dwell is a univariate rational function
   of time, and FSL SHALL decide its sign on an interval by exact real root
-  isolation, with no floating-point step.
+  isolation, with no floating-point step. For a trace with `end`, the last
+  dwell, of length `d = end.time - last.time >= 0`, SHALL be decided as check
+  2 decides a dwell to a `before`: the solution at `d` equals `end` and the
+  mode's invariant holds on `[0, d]`, a failure giving `NotReproduced` at
+  check `Loop` with the pointer `/end`; check 5 then reads the prefix ending
+  at `end`.
 - Exact replay SHALL not substitute an approximate evaluation or a verdict
   when its meter denies a charge.
 - Check 5 SHALL evaluate the `CheckedHybridClaim` over the replayed
@@ -258,6 +265,7 @@ item's `Counterexample`.
 | FR-450-AC-6 | Over `Bounce`, `hybrid Bounce using p { mode Up invariant { x >= 0 and x <= 1 } flow { x' = 1; } transition to Down when { x = 1 } reset { true }; mode Down invariant { x >= 0 and x <= 1 } flow { x' = -1; } transition to Up when { x = 0 } reset { true }; }`, whose initial states are `Up` with `x` in `[0, 1]` at time 0, against `eventually always holds(h.x < 1)` under the infinite-trace profile, the point trace from `(Up, x = 0)` through `Down` at time 1 back to `(Up, x = 0)` at time 2 with `loop_to` 0 reproduces as a periodic behaviour, also with `fair Up;`; the same trace with `loop_to` 1, whose last state `(Up, x = 0)` is not the `Down` state it names, gives `NotReproduced` at check `Loop`; the same trace whose last state has `x = 1/2` gives `NotReproduced` at check `Jump`, the reset `true` keeping `x = 0`; and a `loop_to` 2, naming the last state, is refused `invalid_result`/`invalid-value` at `/loop`. | Test (TC-1221) |
 | FR-450-AC-7 | Over `Bounce` and its `Up`/`Down` point lasso from FR-450-AC-6 with `loop_to` 0, a provider's `refuted` trace against `eventually [999999, 1000000] holds(h.x = 2)` needs at least 500,000 `ClaimSegment`s to evaluate the finite interval because the lasso repeats every 2 seconds and replay reaches the 1,000,000-second upper bound; with `work_units` 100,000, the meter cannot cover all required segment charges and exhausts deterministically before deciding the formula, so replay returns `HybridReplayRefusal::ResourceExhausted{counter: WorkUnits}` and settles `incomplete`, `LimitReached{limit: work_units, value: 100000, setting: accounting.work_units}`, with no verdict or `counterexamples` entry. | Test (TC-1221) |
 | FR-450-AC-8 | In a `Bounce` variant whose `Up` transition guard is `descending(x) and x = 1`, define the nonrecursive pure Boolean wrapper `descending(s: Rational[0, 20000]): Boolean pure { descend(20000) }` and the recursive pure Boolean function `descend(n: Int[0, 20000]): Boolean pure decreases(n) { if n = 0 then true else descend(n - 1) }`. S3 admits the guard call to `descending` because its argument and parameter are rational, while the `Int` recursion stays in the wrapper body outside the hybrid-term call boundary; FSpec FR-146 admits `n` as an integer measure. Static replay evaluates 20,000 recursive edges, making 20,001 recursive `descend` calls plus the one `descending` wrapper call, on an explicit stack; with `work_units` 100, the meter exhausts while evaluating the guard and replay returns `HybridReplayRefusal::ResourceExhausted{counter: WorkUnits}`, settling `incomplete`, `LimitReached{limit: work_units, value: 100, setting: accounting.work_units}`, with no verdict or counterexample; with `work_units` `u64::MAX`, it returns `Consistent` without stack overflow. | Test (TC-1221) |
+| FR-450-AC-10 | Over FR-447's `Braking` without `t`, against `always [0, 10] holds(h.v > 5)`, the point trace from `(Moving, v = 20, a = 2, time 0)` with no jump and `end` `(time 8, v = 4, a = 2)` replays statically `Consistent` and exactly `Reproduced` with kind `Formula`, the bad prefix ending at `end`; with `end` `v = 5` it gives `NotReproduced` at `/end`; with `end` `v = 25` static replay gives `Inconsistent` at check `End`; a trace carrying `end` and `loop_to` 0 refuses `invalid_result`/`invalid-value` at `/end`. | Test (TC-1221) |
 
 ## Dependencies
 
