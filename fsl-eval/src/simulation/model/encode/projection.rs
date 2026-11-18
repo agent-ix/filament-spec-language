@@ -1249,6 +1249,7 @@ pub(super) fn project_value<'a, S: ValueSink>(
 #[cfg(test)]
 mod tests {
     use filament_exact::{Integer, JsonObject, MapType, ValueType};
+    use ix_trace_rs::trace;
 
     use super::*;
 
@@ -1268,7 +1269,7 @@ mod tests {
         }
     }
 
-    #[ix_trace_rs::trace("FR-106-AC-61", "FR-650-AC-1")]
+    #[trace("FR-106-AC-61", "FR-650-AC-1")]
     #[test]
     fn native_bytes_and_json_use_their_admitted_run_forms() {
         let bytes = Value::Bytes(vec![0, 255]);
@@ -1294,7 +1295,7 @@ mod tests {
     /// FR-106-AC-61 / FR-650-AC-1: a Map projection orders entries by the
     /// RFC 8785 bytes of each normalized key run form, so integer 10 precedes
     /// integer 9 lexicographically.
-    #[ix_trace_rs::trace("FR-106-AC-61", "FR-650-AC-1")]
+    #[trace("FR-106-AC-61", "FR-650-AC-1")]
     #[test]
     fn map_projection_uses_canonical_run_key_order() {
         let map_type = MapType::new(ValueType::Integer, ValueType::Boolean, None)
