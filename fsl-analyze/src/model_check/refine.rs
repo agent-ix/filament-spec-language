@@ -53,10 +53,11 @@ use fsl_replay::{
     check_protocol_step, check_step, open_protocol_systems, open_systems, AbstractClass,
     AbstractProtocolSystem, CertifiedEdge, CertifiedPosition, ConcreteStep, CounterexampleKind,
     IncompleteCause, Lasso, LivenessHalf, ModelCheckLimit, ModelCheckLimits, ModelCheckOutcome,
-    ModelStep, ProtocolRelationError, ProtocolSystemsRefusal, ProtocolStateRelation, ReachedLimit, RefinementFailure,
-    RefinementOutcome, RefinementPosition, RefinementSystems, RunStats, SafetyOutcome,
-    SafetyUndecided, SimulationCertificate, StepResult, StepVerdict, SubjectRefusal, Taken,
-    TemporalCounterexample, UnavailabilityCause, UndecidedCause, UndefinedEvaluation, Undetermined,
+    ModelStep, ProtocolRelationError, ProtocolStateRelation, ProtocolSystemsRefusal, ReachedLimit,
+    RefinementFailure, RefinementOutcome, RefinementPosition, RefinementSystems, RunStats,
+    SafetyOutcome, SafetyUndecided, SimulationCertificate, StepResult, StepVerdict, SubjectRefusal,
+    Taken, TemporalCounterexample, UnavailabilityCause, UndecidedCause, UndefinedEvaluation,
+    Undetermined,
 };
 use fsl_semantics::check::CheckedRefinement;
 use fsl_semantics::model::observation::DocumentRef;

@@ -318,10 +318,10 @@ pub use refinement::{
     MappingUndetermined, ObjectKey, ObservationField, ObservationLabel, PairedAssumptionPath,
     PairedAssumptionStep, ProtocolAssumptionFairness, ProtocolAssumptionReason,
     ProtocolAssumptionWitness, ProtocolCandidate, ProtocolRelationError, ProtocolStateRelation,
-    ProtocolStep, ProtocolStepView, ProtocolSteps, ProtocolTrace, RefinementFailure,
-    RefinementOutcome, RefinementPosition, RefinementSystems, RefinementWitness,
+    ProtocolStep, ProtocolStepView, ProtocolSteps, ProtocolSystemsRefusal, ProtocolTrace,
+    RefinementFailure, RefinementOutcome, RefinementPosition, RefinementSystems, RefinementWitness,
     RefinementWitnessError, RequiredTemporalFairness, SafetyOutcome, SafetyUndecided, StateIndex,
-    StepArgument, StepRejection, StepResult, StepVerdict, StepViewRefusal, SubjectRefusal, Taken, ProtocolSystemsRefusal,
+    StepArgument, StepRejection, StepResult, StepVerdict, StepViewRefusal, SubjectRefusal, Taken,
     TerminalSuccessDirection, Undetermined, UnsteppedConstruct,
 };
 // The equality operator a composite parity claim names (FR-358).
