@@ -167,7 +167,6 @@ fn a_checked_package_of_another_document_type_is_refused() {
 
 #[test]
 #[trace("TC-2143", "FR-760-AC-5")]
-#[ignore = "facade crate version alignment is not part of QSL-2227 AC-3"]
 fn facade_crates_carry_the_workspace_version() {
     let metadata = metadata(true);
     let packages = metadata["packages"].as_array().expect("packages array");
