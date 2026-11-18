@@ -87,6 +87,8 @@ fn statistical_items_settle_measured_from_source() {
             first["verdict"]["basis"]["draws"].as_str().is_some(),
             "{first}"
         );
+        assert_eq!(first["request"]["probabilistic"]["workers"], 1);
+        assert_eq!(four["items"][0]["request"]["probabilistic"]["workers"], 4);
         assert_eq!(
             first["verdict"], four["items"][0]["verdict"],
             "workers do not change the measurement"
