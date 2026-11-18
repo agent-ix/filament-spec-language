@@ -741,11 +741,19 @@ pub(crate) struct PendingDependencyReference {
     pub(crate) target: PendingDependencyTarget,
 }
 
-/// A [`CheckedGraph`]'s occurrences by location, filled on first read.
-#[derive(Default)]
-struct OccurrencesByLocation(
-    std::sync::OnceLock<HashMap<Location, Vec<(filament_exact::NodeKey, filament_exact::Origin)>>>,
-);
+/// A [`CheckedGraph`]'s occurrences by location, each location's in
+/// [`CheckedGraph::occurrences`] order.
+type OccurrencesByLocation =
+    HashMap<Location, Vec<(filament_exact::NodeKey, filament_exact::Origin)>>;
+
+/// `occurrences` by location.
+fn occurrences_by_location(occurrences: &family::OccurrenceMap<Location>) -> OccurrencesByLocation {
+    let mut index = OccurrencesByLocation::new();
+    for (key, origin, at) in occurrences.iter() {
+        index.entry(at.clone()).or_default().push((key, origin));
+    }
+    index
+}
 
 /// S3's stage output (ADR-013 T-1): a package whose every function is
 /// admitted. Its constructor and every field are private to this module
@@ -803,9 +811,9 @@ pub struct CheckedGraph {
     /// declaration and function-application occurrence this package
     /// checked.
     occurrences: family::OccurrenceMap<Location>,
-    /// [`Self::occurrences`] by location, in that order, built on the first
-    /// [`Self::occurrences_at`] read: an evaluation reads the occurrence of
-    /// each comparison it reports by its location (ADR-013 O-07).
+    /// [`Self::occurrences`] by location, in that order, indexed once every
+    /// occurrence is recorded: an evaluation reads the occurrence of each
+    /// comparison it reports by its location (ADR-013 O-07).
     occurrences_by_location: OccurrencesByLocation,
     parameter_spans:
         BTreeMap<(filament_exact::NodeKey, filament_exact::Origin), fsl_foundation::Span>,
@@ -7875,6 +7883,8 @@ impl PackageDeclarations {
             }
         }
         finish_step_relations(&mut graph, checked_relations, lowered_relations)?;
+        // Every occurrence is recorded by now.
+        graph.occurrences_by_location = occurrences_by_location(&graph.occurrences);
         Ok(graph)
     }
 }
@@ -7963,7 +7973,6 @@ fn finish_step_relations(
             family::OccurrenceRole::Declaration,
             location.clone(),
         );
-        graph.occurrences_by_location = OccurrencesByLocation::default();
         let claim_origin =
             graph
                 .occurrences
@@ -9636,21 +9645,12 @@ impl CheckedGraph {
     }
 
     /// The occurrences [`Self::occurrences`] yields at `location`, as
-    /// (node, origin), in its order. The index is built once, on the first
-    /// read.
+    /// (node, origin), in its order.
     pub fn occurrences_at(
         &self,
         location: &Location,
     ) -> &[(filament_exact::NodeKey, filament_exact::Origin)] {
         self.occurrences_by_location
-            .0
-            .get_or_init(|| {
-                let mut index: HashMap<Location, Vec<_>> = HashMap::new();
-                for (key, origin, at) in self.occurrences.iter() {
-                    index.entry(at.clone()).or_default().push((key, origin));
-                }
-                index
-            })
             .get(location)
             .map_or(&[], Vec::as_slice)
     }
