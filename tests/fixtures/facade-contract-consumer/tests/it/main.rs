@@ -418,8 +418,10 @@ protocol Flow using p over (input: M::Widget) on origin {\n\
     attempt Update by Buyer on M::Widget::touch contracts [] as (tried: M::Widget) { true };\n\
     effect Applied of Update as (applied: M::Widget) { true };\n\
     event Done by Buyer as (done: Boolean) { true };\n\
-    await Wait after Done using t clock \"model-steps\" within [0, 1] match event Seen by Seller as (seen: Boolean) { true }; then sequence Then {} timeout sequence Late {}\n\
-  choice Pick by Seller visible (applied) { case yes when { true } sequence Yes {} case no when { false } sequence No {} }\n\
+    send Offer via Ch as (sent: Boolean) { true };\n\
+    receive Seen via Ch of Offer as (received: Boolean) { true };\n\
+    await Wait after Done using t clock \"model-steps\" within [0, 1] match event Arrived by Seller as (arrived: Boolean) { true }; then sequence Then {} timeout sequence Late {}\n\
+  choice Pick by Seller visible (received) { case yes when { true } sequence Yes {} case no when { false } sequence No {} }\n\
   }\n\
   finish End as (outcome: Boolean) { true };\n\
 }\n";
