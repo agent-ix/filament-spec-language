@@ -4,9 +4,9 @@
 //! `Link` model (random losses on two sends, a `cost` reward and the
 //! workload `Even`), which S4 emits as a checked package (FR-740).
 
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
-use crate::analyze_cli_support::{analyze, label, request_over, Workspace};
+use crate::analyze_cli_support::{Workspace, analyze, label, request_over};
 
 const LINK_UNIT: &str =
     include_str!("../../../tools/fsl-probability-check/tests/fixtures/link.native");
@@ -31,19 +31,16 @@ fn unit(claims: &str) -> String {
 
 /// `Delivered`: delivery within two steps under `Even`, true probability
 /// `391/400`, at `0.9` with stated confidence parameters.
-const DELIVERED: &str =
-    "probabilistic Delivered using ev on M over (m: M::Msg) under Even on origin \
+const DELIVERED: &str = "probabilistic Delivered using ev on M over (m: M::Msg) under Even on origin \
      with alpha 0.01, beta 0.01, indifference 0.05 \
      { probability >= 0.9 [ eventually[0,2] holds(m.delivered) ] }";
 
 /// `Eventually`: unbounded delivery under `Even`, exact value `391/400`.
-const EVENTUALLY: &str =
-    "probabilistic Eventually using inf on M over (m: M::Msg) under Even on origin \
+const EVENTUALLY: &str = "probabilistic Eventually using inf on M over (m: M::Msg) under Even on origin \
      { probability >= rational(9, 10) [ eventually holds(m.delivered) ] }";
 
 /// `TooLikely`: the same event at a threshold its exact value misses.
-const TOO_LIKELY: &str =
-    "probabilistic TooLikely using inf on M over (m: M::Msg) under Even on origin \
+const TOO_LIKELY: &str = "probabilistic TooLikely using inf on M over (m: M::Msg) under Even on origin \
      { probability >= rational(99, 100) [ eventually holds(m.delivered) ] }";
 
 fn run(name: &str, claims: &str, items: Value) -> Value {
@@ -65,7 +62,6 @@ fn run(name: &str, claims: &str, items: Value) -> Value {
 #[ix_trace_rs::trace("TC-2066", "FR-741-AC-1")]
 #[ix_trace_rs::trace("FSpec-TC-1564", "FSpec-FR-641-AC-1")]
 #[test]
-#[ignore = "QSL-2158: statistical probability items from source through fsl analyze not implemented yet"]
 fn statistical_items_settle_measured_from_source() {
     for method in ["okamoto", "sprt", "clopper-pearson"] {
         let item = |workers: u64| {
@@ -90,7 +86,6 @@ fn statistical_items_settle_measured_from_source() {
 #[ix_trace_rs::trace("FSpec-TC-1564", "FSpec-FR-641-AC-2")]
 #[ix_trace_rs::trace("TC-2065", "FR-203-AC-8")]
 #[test]
-#[ignore = "QSL-2158: exact probability items from source through fsl analyze not implemented yet"]
 fn an_exact_item_settles_proved_with_its_certificate() {
     let document = run(
         "exact-eventually",
@@ -111,7 +106,6 @@ fn an_exact_item_settles_proved_with_its_certificate() {
 #[ix_trace_rs::trace("TC-2066", "FR-741-AC-3")]
 #[ix_trace_rs::trace("TC-2065", "FR-203-AC-8")]
 #[test]
-#[ignore = "QSL-2158: refuted exact probability items from source through fsl analyze not implemented yet"]
 fn an_exact_item_below_its_threshold_is_refuted_with_a_replayed_witness() {
     let document = run(
         "exact-refuted",
@@ -132,7 +126,6 @@ fn an_exact_item_below_its_threshold_is_refuted_with_a_replayed_witness() {
 #[ix_trace_rs::trace("TC-2066", "FR-741-AC-4")]
 #[ix_trace_rs::trace("FSpec-TC-1564", "FSpec-FR-641-AC-3")]
 #[test]
-#[ignore = "QSL-2158: probability item refusals from source through fsl analyze not implemented yet"]
 fn an_exact_only_claim_with_statistical_evidence_is_unsupported() {
     let document = run(
         "exact-only-statistical",
@@ -287,8 +280,7 @@ fn probabilistic_on_each_names_first_failing_instance() {
 }
 
 /// `Every`: delivery under every scheduler at `9/10` (FR-876's use case).
-const EVERY: &str =
-    "probabilistic Every using inf on M over (m: M::Msg) under every scheduler on origin \
+const EVERY: &str = "probabilistic Every using inf on M over (m: M::Msg) under every scheduler on origin \
      { probability >= rational(9, 10) [ eventually holds(m.delivered) ] }";
 
 /// The `Link` unit with `Every` and without its two `random` lines, so the
