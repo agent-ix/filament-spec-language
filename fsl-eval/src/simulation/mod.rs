@@ -43,7 +43,9 @@ pub use discovery::{
     EnumerationEnd, EnumerationRequest, FrontierPosition,
 };
 pub use expansion::{Expansion, ExpansionLimit, ExpansionStop, StateFindings};
-pub use explore::{explore_request, Exploration, Limits, Outcome, Stats, TransitionSystem};
+pub use explore::{
+    explore_request, Exploration, Limits, Outcome, Stats, TransitionSystem, CANCELLED_STOP,
+};
 pub use footprint::{any_affects, independent, Footprint, Location};
 pub use frontier::{Frontier, Limit};
 pub use key::{EncodingRefusal, StateKey};

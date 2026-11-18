@@ -19,7 +19,7 @@ pub use analyze::{
     prepare_analyze, AnalyzeInput, PreparedAnalyze,
 };
 pub use flow::{analyze_flow_report, FlowAnalyzeError};
-pub use monitor::{monitor, MonitorEvent, MonitorSummary};
+pub use monitor::{monitor, MonitorEvent, MonitorProviders, MonitorSummary};
 pub use output::NativeResult;
 pub use tl::{record as tl_record, AtomMapping, TlRecord};
 
@@ -1561,7 +1561,7 @@ fn run_configured(
     // stream.
     let special = with_request_limits(path, limits.request_bytes, |directory, bytes| {
         if monitor::is_monitor_request(bytes) {
-            monitor::run_bytes(directory, bytes, limits.dependent_bytes).map(Some)
+            monitor::run_bytes(directory, bytes, limits.dependent_bytes, &settle).map(Some)
         } else if replay::is_replay_request(bytes) {
             // FR-862: a `native-replay/1` request replays its FR-336 request.
             replay::run_bytes(directory, bytes, limits.dependent_bytes).map(Some)

@@ -252,6 +252,8 @@ pub enum ModelCheckLimit {
     MaxWitnessSet,
     /// `ModelCheckLimits::max_relation_tuples` (FR-184).
     MaxRelationTuples,
+    /// FR-636's per-channel `temporal.limits.max_messages` bound.
+    ProtocolMaxMessages,
     /// FR-194: the values a window aggregate of a required clause may hold
     /// (FR-941); setting `monitor.max_window_values`.
     MaxWindowValues,
@@ -333,6 +335,7 @@ impl ModelCheckLimit {
             Self::MaxWalkSteps => "max_walk_steps",
             Self::MaxWitnessSet => "max_witness_set",
             Self::MaxRelationTuples => "max_relation_tuples",
+            Self::ProtocolMaxMessages => "max_messages",
             Self::MaxWindowValues => "max_window_values",
             Self::Statistical(limit) => limit.as_str(),
             Self::ZoneMaxSymbolicStates => "max_symbolic_states",
@@ -382,6 +385,7 @@ impl ModelCheckLimit {
             Self::MaxWalkSteps => "model_check.max_walk_steps",
             Self::MaxWitnessSet => "model_check.max_witness_set",
             Self::MaxRelationTuples => "model_check.max_relation_tuples",
+            Self::ProtocolMaxMessages => "temporal.limits.max_messages",
             Self::MaxWindowValues => "monitor.max_window_values",
             Self::Statistical(limit) => limit.setting(),
             Self::ZoneMaxSymbolicStates => "zone_check.max_symbolic_states",
@@ -612,6 +616,9 @@ mod tests {
             ModelCheckLimit::MaxWitnessSet => ("max_witness_set", "model_check.max_witness_set"),
             ModelCheckLimit::MaxRelationTuples => {
                 ("max_relation_tuples", "model_check.max_relation_tuples")
+            }
+            ModelCheckLimit::ProtocolMaxMessages => {
+                ("max_messages", "temporal.limits.max_messages")
             }
             ModelCheckLimit::MaxWindowValues => ("max_window_values", "monitor.max_window_values"),
             ModelCheckLimit::Statistical(budget) => match budget {

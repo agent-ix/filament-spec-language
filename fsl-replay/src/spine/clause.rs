@@ -685,6 +685,9 @@ pub enum TemporalVerdict {
     },
     /// The work budget ran out; no truth value (ADR-014 TR-5).
     Incomplete(filament_exact::Incomplete),
+    /// FR-853: the caller cancelled a stepping monitor while the clause was
+    /// still open, with the handle's FR-276 cause; no truth value.
+    Cancelled(filament_exact::CancelCause),
     /// An `on each` activation guard could not be established, so no
     /// temporal instance was evaluated (FR-044-AC-7); no truth value.
     ActivationIncomplete {
@@ -732,6 +735,7 @@ impl TemporalVerdict {
             Self::Indeterminate { .. } => Category::Indeterminate,
             Self::MissingFairnessPremise { .. } => Category::Unsupported,
             Self::Incomplete(_)
+            | Self::Cancelled(_)
             | Self::ActivationIncomplete { .. }
             | Self::WindowLimitReached { .. }
             | Self::ProgressLimitReached(_)
@@ -741,9 +745,13 @@ impl TemporalVerdict {
 
     /// FR-266's Temporal row: `closed-scope` for `Completed(true)`,
     /// `Completed(false)` and an `Undefined` that is a violation, `unsettled`
-    /// for a pending result and `unavailable` for every other verdict.
+    /// for a pending result and a cancelled one (FR-853: the trace may still
+    /// decide it), and `unavailable` for every other verdict.
     pub fn basis(&self) -> SettlementBasis {
         use filament_semantic_value::catalog::Category;
+        if let Self::Cancelled(_) = self {
+            return SettlementBasis::Unsettled;
+        }
         match self.category() {
             Category::Success | Category::Violation => SettlementBasis::ClosedScope,
             Category::Pending => SettlementBasis::Unsettled,
@@ -1191,9 +1199,9 @@ impl ClauseRunReport {
             | ClauseDisposition::ProgressContradiction(_)
             | ClauseDisposition::EvaluateFault(_)
             | ClauseDisposition::TemporalValuation(_)
-            | ClauseDisposition::Temporal(TemporalVerdict::Incomplete(_)) => {
-                ActivationAxis::Unavailable
-            }
+            | ClauseDisposition::Temporal(
+                TemporalVerdict::Incomplete(_) | TemporalVerdict::Cancelled(_),
+            ) => ActivationAxis::Unavailable,
             ClauseDisposition::Temporal(TemporalVerdict::ActivationIncomplete { .. }) => {
                 ActivationAxis::Unknown
             }
@@ -1206,6 +1214,7 @@ impl ClauseRunReport {
             &self.disposition,
             ClauseDisposition::Temporal(
                 TemporalVerdict::Incomplete(_)
+                    | TemporalVerdict::Cancelled(_)
                     | TemporalVerdict::WindowLimitReached { .. }
                     | TemporalVerdict::ProgressLimitReached(_)
                     | TemporalVerdict::ExpansionLimitReached(_)

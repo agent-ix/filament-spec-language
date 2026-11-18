@@ -502,6 +502,7 @@ pub(super) fn item_counterexample(
         | TemporalVerdict::Indeterminate { .. }
         | TemporalVerdict::MissingFairnessPremise { .. }
         | TemporalVerdict::Incomplete(_)
+        | TemporalVerdict::Cancelled(_)
         | TemporalVerdict::ActivationIncomplete { .. }
         | TemporalVerdict::WindowLimitReached { .. }
         | TemporalVerdict::ProgressLimitReached(_)
@@ -588,6 +589,9 @@ pub(super) fn verdict_wire(
                 limit: incomplete.limit_kind.as_str(),
             }),
         ),
+        // FR-853: a cancelled open clause is FSpec FR-352's `incomplete`
+        // row; no limit ran out, so its outcome names none.
+        TemporalVerdict::Cancelled(_) => (TemporalWire::Incomplete, None),
         TemporalVerdict::ActivationIncomplete { at, guard } => (
             TemporalWire::ActivationIncomplete {
                 position: *at,

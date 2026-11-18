@@ -798,6 +798,20 @@ pub(super) struct MonitorRequest {
     /// The relative path of a JSON Lines record file (the batch form).
     #[serde(default)]
     pub records: Option<String>,
+    /// The provider-routed FSpec FR-520 analysis items (FR-644
+    /// "Provider-routed items"), read as a `native-analyze/1` request reads
+    /// them.
+    #[serde(default)]
+    pub items: Option<Vec<fsl_analyze::analyze::document::ItemSelection>>,
+    /// The items' model subject, as FR-620 reads it.
+    #[serde(default, deserialize_with = "from_object_opt")]
+    pub subject: Option<fsl_analyze::analyze::document::SubjectSelection>,
+    /// The documents the items read, as FR-620 reads them.
+    #[serde(default, deserialize_with = "deserialize_objects")]
+    pub documents: Vec<DocumentFileSelection>,
+    /// The items' deadline in milliseconds, as FR-620 reads it.
+    #[serde(default, deserialize_with = "deadline")]
+    pub deadline_ms: Option<u64>,
 }
 
 /// One selected clause: its name and, for a snapshot trace, its `over`.

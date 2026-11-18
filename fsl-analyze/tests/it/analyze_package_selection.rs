@@ -696,9 +696,9 @@ fn a_package_request_settles_temporal_and_deadlock_items_as_the_source_route() {
 /// FR-940 "Package forms of the source-checked evaluators" (QSL-2406,
 /// QSL-2432): a request whose item names a family the package route has
 /// no form of yet is refused whole, typed and naming the family, never
-/// settled from source or `unsupported`: a derived item naming its model by
-/// the alias the package does not carry, a clause with a fairness set
-/// (naming the fact and its node), and the default items.
+/// settled from source or `unsupported`: a clause with a fairness set (naming
+/// the fact and its node) and the default items. A model alias settles its
+/// own item `model-alias` instead (FR-850-AC-9).
 #[trace("TC-2958", "FR-940-AC-6")]
 #[test]
 fn a_pending_package_family_refuses_typed_naming_it() {
@@ -708,16 +708,10 @@ fn a_pending_package_family_refuses_typed_naming_it() {
         "eventually holds(c.value = 3)",
     );
     let unit = crate::counter::unit_text(&format!("{}{fair}", bounded()));
-    for (items, expected) in [
-        (
-            json!([deadlock_item("M")]),
-            "items[0] names the model-alias family",
-        ),
-        (
-            json!([{"claim": "Bounded"}, {"claim": "Fair"}]),
-            "items[1] names a temporal clause whose fairness has no package form yet at",
-        ),
-    ] {
+    for (items, expected) in [(
+        json!([{"claim": "Bounded"}, {"claim": "Fair"}]),
+        "items[1] names a temporal clause whose fairness has no package form yet at",
+    )] {
         let (_, package) = both_routes(
             "package-route-pending",
             &unit,
@@ -734,4 +728,89 @@ fn a_pending_package_family_refuses_typed_naming_it() {
         );
         assert_eq!(package.document()["items"], json!([]));
     }
+}
+
+/// FR-850-AC-9 (TC-2987): on the package route a derived item names its
+/// model by the package identity its model selection records; the source
+/// alias `M` settles that item `invalid-request` `model-alias` naming the
+/// identity to use, never refusing the request as not implemented, and a
+/// unit importing the model as `N` writes the same package bytes.
+#[trace("TC-2987", "FR-850-AC-9")]
+#[test]
+fn a_package_request_names_its_model_by_identity_and_settles_an_alias_model_alias() {
+    let unit = crate::counter::unit_text(&bounded());
+    let identity = json!([{"claim": "Bounded"}, deadlock_item("test/counter")]);
+    let (source, package) = both_routes(
+        "package-model-identity",
+        &unit,
+        &crate::counter::document(false),
+        &identity,
+    );
+    for index in 0..2 {
+        assert_eq!(
+            package.item(index)["record"],
+            source.item(index)["record"],
+            "{index}"
+        );
+    }
+
+    let aliased = json!([{"claim": "Bounded"}, deadlock_item("M")]);
+    let (source_alias, package_alias) = both_routes(
+        "package-model-alias",
+        &unit,
+        &crate::counter::document(false),
+        &aliased,
+    );
+    assert_eq!(
+        source_alias.item(1)["record"],
+        source.item(1)["record"],
+        "{}",
+        source_alias.document()
+    );
+    assert_eq!(
+        package_alias.item(0)["record"],
+        source.item(0)["record"],
+        "{}",
+        package_alias.document()
+    );
+    let item = package_alias.item(1);
+    assert_eq!(item["category"], "refusal", "{item}");
+    assert_eq!(
+        item["record"]["diagnostic"]["code"], "invalid_capability",
+        "{item}"
+    );
+    assert_eq!(
+        item["record"]["diagnostic"]["cause"], "model-alias",
+        "{item}"
+    );
+    let text = item["record"]["diagnostic"].to_string();
+    assert!(
+        text.contains("\"M\"") || text.contains("`M`"),
+        "names the alias: {item}"
+    );
+    assert!(
+        text.contains("test/counter"),
+        "names the identity to use: {item}"
+    );
+    let document = package_alias.document().to_string();
+    assert!(!document.contains("not-yet-implemented"), "{document}");
+    assert!(!document.contains("\"unsupported\""), "{document}");
+
+    let package_bytes = |name: &str, unit: &str| {
+        let ws = Workspace::new(name);
+        let path = crate::analyze_cli_support::request_over(
+            &ws,
+            unit,
+            &crate::counter::document(false),
+            &[crate::analyze_cli_support::counter_snapshot(&[("a", 0)])],
+            json!({ "items": identity.clone() }),
+        );
+        package_selection(&ws, &request_of(&path)).1
+    };
+    let renamed = unit.replace("model M =", "model N =").replace("M::", "N::");
+    assert_eq!(
+        package_bytes("package-model-m", &unit),
+        package_bytes("package-model-n", &renamed),
+        "units importing one model as M and as N write equal package bytes"
+    );
 }

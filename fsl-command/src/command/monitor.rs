@@ -8,6 +8,8 @@ use std::collections::BTreeMap;
 use std::path::{Component, Path};
 
 use filament_exact::Cancel;
+use fsl_analyze::analyze::document::{Negotiate, RegistryEntry, SettledRun};
+use fsl_analyze::analyze::Engine;
 use fsl_analyze::monitor::{
     MonitorClause, MonitorLimits, MonitorRefusal, SettleTrigger, Settlement,
 };
@@ -25,6 +27,7 @@ use fsl_replay::spine::{
 };
 use serde_json::{json, Value};
 
+use super::settle::Settle;
 use super::{
     check_sources, intake_with_bytes, request, require_complete_edition, wire, FileCounts,
     NativeResult, Result, RunCause, RunError, RunLimits, RunResult,
@@ -67,6 +70,21 @@ pub struct MonitorSummary {
 }
 
 impl MonitorSummary {
+    /// FR-644: the summary of a request carrying `items`, with each item's
+    /// FR-621 record and the FR-635 registry, and the exit code counting a
+    /// settled item's category beside the clauses'.
+    fn with_items(mut self, settled: &SettledRun) -> Self {
+        if let Some(members) = self.value.as_object_mut() {
+            members.insert("items".to_owned(), Value::Array(settled.items.clone()));
+            members.insert(
+                "registry".to_owned(),
+                Value::Array(settled.registry.iter().map(RegistryEntry::wire).collect()),
+            );
+        }
+        self.exit_code = severity_exit([self.exit_code, settled.exit_code].into_iter());
+        self
+    }
+
     /// The FR-286 `monitor` outcome document of the run (category and last
     /// stage).
     pub fn outcome(&self) -> &fsl_replay::OutcomeDocument {
@@ -135,6 +153,9 @@ fn settlement_value(settlement: &Settlement) -> Value {
     let mut members = serde_json::Map::new();
     members.insert("step".to_owned(), json!(settlement.step.to_string()));
     members.insert("trigger".to_owned(), json!(settlement.trigger.as_str()));
+    if let SettleTrigger::Cancelled(cause) = settlement.trigger {
+        members.insert("cause".to_owned(), json!(cancel_cause(cause)));
+    }
     if let (SettleTrigger::Decided, Some(reading)) = (settlement.trigger, &settlement.reading) {
         members.insert("basis".to_owned(), json!(reading.basis.as_str()));
         members.insert("horizon".to_owned(), json!(reading.horizon.to_string()));
@@ -144,6 +165,14 @@ fn settlement_value(settlement: &Settlement) -> Value {
         );
     }
     Value::Object(members)
+}
+
+/// FR-276's wire spelling of a cancellation cause.
+fn cancel_cause(cause: filament_exact::CancelCause) -> &'static str {
+    match cause {
+        filament_exact::CancelCause::Requested => "requested",
+        filament_exact::CancelCause::Deadline => "deadline",
+    }
 }
 
 /// The event of a session refusal: FR-643's record as the disposition.
@@ -338,6 +367,44 @@ fn read_record(
     }
 }
 
+/// FR-644 "Provider-routed items": the request's `items` with the
+/// `subject`, `documents` and `deadline_ms` beside them, each read as FR-620
+/// reads it in a `native-analyze/1` request; `None` for a request without
+/// `items`, which carries none of the three.
+fn read_routed(
+    intake: &mut super::Intake<'_>,
+    request: &mut wire::MonitorRequest,
+) -> Result<Option<super::analyze::RoutedItems>> {
+    let Some(items) = request.items.take() else {
+        let beside = [
+            ("subject", request.subject.is_some()),
+            ("documents", !request.documents.is_empty()),
+            ("deadline_ms", request.deadline_ms.is_some()),
+        ];
+        return match beside.iter().find(|(_, present)| *present) {
+            Some((member, _)) => Err(invalid(member, "is read only beside items")),
+            None => Ok(None),
+        };
+    };
+    if items.is_empty() {
+        return Err(invalid("items", "is a non-empty array of analysis items"));
+    }
+    super::analyze::validate_items(Some(&items))?;
+    let documents = super::analyze::read_documents(intake, &request.documents, Some(&items))?;
+    let subject = super::analyze::read_subject(request.subject.take(), &documents)?;
+    Ok(Some(super::analyze::RoutedItems {
+        documents,
+        subject,
+        memory: Vec::new(),
+        items: Some(items),
+        limits: super::analyze::analyze_limits(
+            &wire::AnalyzeLimits::default(),
+            request.deadline_ms,
+        ),
+        deadline_ms: request.deadline_ms,
+    }))
+}
+
 /// What a monitor run needs besides the compiled unit.
 struct Inputs {
     clauses: Vec<MonitorClause>,
@@ -349,9 +416,16 @@ struct Inputs {
     state: Option<MonitorState>,
     snapshots: BTreeMap<String, Vec<u8>>,
     compile: wire::CompileRequest,
+    /// The provider-routed `items` and what they read, when the request
+    /// carries `items` (FR-644 "Provider-routed items").
+    routed: Option<super::analyze::RoutedItems>,
 }
 
-fn read_inputs(intake: &mut super::Intake<'_>, request: wire::MonitorRequest) -> Result<Inputs> {
+fn read_inputs(
+    intake: &mut super::Intake<'_>,
+    mut request: wire::MonitorRequest,
+) -> Result<Inputs> {
+    let routed = read_routed(intake, &mut request)?;
     let kind = match request.trace.kind {
         wire::MonitorKindWire::Finite => MonitorTraceKind::Finite,
         wire::MonitorKindWire::Progressed => MonitorTraceKind::Progressed,
@@ -409,6 +483,7 @@ fn read_inputs(intake: &mut super::Intake<'_>, request: wire::MonitorRequest) ->
         ledger,
         state,
         snapshots,
+        routed,
         compile: wire::CompileRequest {
             models: request.models,
             program: wire::CompileProgram {
@@ -439,14 +514,14 @@ fn drive(
     directory: &Path,
     bytes: &[u8],
     dependent_bytes: usize,
-    batch: bool,
     source: Records<'_>,
     sink: &mut dyn FnMut(&MonitorEvent),
+    settle: &Settle<'_>,
     cancel: &Cancel,
 ) -> Result<MonitorSummary> {
     let request: wire::MonitorRequest = request(bytes)?;
     let records_file = request.records.clone();
-    match (batch, &records_file) {
+    match (matches!(source, Records::Batch), &records_file) {
         (true, None) => {
             return Err(invalid(
                 "records",
@@ -466,7 +541,10 @@ fn drive(
         FileCounts {
             programs: request.libraries.len().saturating_add(1),
             models: request.models.len(),
-            observations: request.observations.len(),
+            observations: request
+                .observations
+                .len()
+                .saturating_add(request.documents.len()),
             extensions: 0,
         },
         dependent_bytes,
@@ -488,6 +566,42 @@ fn drive(
         None,
         None,
         |checked, selections, _, packages, libraries, _, _, _, _| {
+            // FR-644 "Provider-routed items": the items settle after the
+            // program compiles and before the first record is read.
+            let items = inputs
+                .routed
+                .as_ref()
+                .map(|routed| {
+                    // FR-644: the items settle under their own handle, which the
+                    // stream's cancellation reaches, so their `deadline_ms` stops
+                    // the items alone and every event stays the stream's.
+                    chained(settle.cancel, |items_cancel| {
+                        let settle = Settle {
+                            negotiate: settle.negotiate,
+                            engines: settle.engines,
+                            cancel: items_cancel,
+                        };
+                        // FR-635: a provider's `package` is this compile's own
+                        // emission, under the request's clock selections. The
+                        // emission is remembered so the provider request reads
+                        // these bytes; an emission the selections refuse leaves
+                        // the provider items `package-not-emitted` (FSpec FR-331).
+                        let _ = fsl_package::emit_dependency_with_temporal_selections_and_cancel(
+                            checked.package(),
+                            selections,
+                            settle.cancel,
+                            routed.limits.emit,
+                        );
+                        super::analyze::settle_items(
+                            checked.package(),
+                            &packages,
+                            std::iter::once(&program).chain(libraries.iter().copied()),
+                            routed,
+                            &settle,
+                        )
+                    })
+                })
+                .transpose()?;
             let mut sources: Vec<Source> = vec![program.source().clone()];
             sources.extend(libraries.iter().map(|library| library.source().clone()));
             let limits = MonitorLimits {
@@ -498,7 +612,7 @@ fn drive(
                 retained_positions: fsl_analyze::monitor::DEFAULT_RETAINED_POSITIONS,
                 retained_identities: fsl_analyze::monitor::DEFAULT_RETAINED_IDENTITIES,
             };
-            let open = MonitorOpen {
+            let open = || MonitorOpen {
                 clauses: inputs.clauses.clone(),
                 kind: inputs.kind,
                 lower_boundary: inputs.lower_boundary,
@@ -510,9 +624,16 @@ fn drive(
                 temporal_selections: selections,
             };
             let package = checked.package();
-            let session = match &inputs.state {
-                Some(state) => MonitorSession::resume(package, state, open, &limits, cancel),
-                None => MonitorSession::open(package, open, &limits, cancel),
+            let start = |under: &Cancel| match &inputs.state {
+                Some(state) => MonitorSession::resume(package, state, open(), &limits, under),
+                None => MonitorSession::open(package, open(), &limits, under),
+            };
+            // FR-853: a tripped handle still opens the session, so an `open`
+            // or `resume` refusal wins over the cancellation; the stream then
+            // reads no record and returns the cancelled summary.
+            let session = match start(cancel) {
+                Err(StageFailure::Cancelled(_)) => start(&Cancel::new()),
+                started => started,
             }
             .map_err(cause_of)?;
             stream(
@@ -528,6 +649,10 @@ fn drive(
                 sink,
                 cancel,
             )
+            .map(|summary| match &items {
+                Some(settled) => summary.with_items(settled),
+                None => summary,
+            })
         },
     )
 }
@@ -548,7 +673,19 @@ fn stream(
     let mut emit = |value: Value| {
         sink(&MonitorEvent { value });
     };
-    for (index, line) in records.enumerate() {
+    let mut records = records.enumerate();
+    // FR-853: the handle is read before each record, after each step and when
+    // the iterator ends; a tripped handle wins over the end of the iterator.
+    let mut stopped = None;
+    loop {
+        if let Some(cause) = cancel.cause() {
+            stopped = Some(cause);
+            break;
+        }
+        let Some((index, line)) = records.next() else {
+            stopped = cancel.cause();
+            break;
+        };
         let line = line?;
         if line.iter().all(u8::is_ascii_whitespace) {
             continue;
@@ -605,10 +742,24 @@ fn stream(
                 refused += 1;
                 emit(session_refusal_event(index, position, &refusal)?);
             }
+            // FR-853: a step the cancellation interrupts is atomic: the
+            // session is unchanged, and the record is not counted as read.
+            Err(StageFailure::Cancelled(cause)) => {
+                read -= 1;
+                stopped = Some(cause);
+                break;
+            }
             Err(other) => return Err(cause_of(other)),
         }
     }
-    let outcome = session.finish(cancel).map_err(cause_of)?;
+    if stopped.is_none() {
+        stopped = cancel.cause();
+    }
+    let outcome = match stopped {
+        Some(cause) => session.cancelled(cause),
+        None => session.finish(cancel),
+    }
+    .map_err(cause_of)?;
     let mut clauses = Vec::new();
     let mut codes = Vec::new();
     for (name, (record, settlement)) in names
@@ -620,7 +771,10 @@ fn stream(
         codes.push(record.category.exit_code());
         clauses.push(json!({
             "clause": name,
-            "settled": settlement.trigger != SettleTrigger::Finish,
+            "settled": !matches!(
+                settlement.trigger,
+                SettleTrigger::Finish | SettleTrigger::Cancelled(_)
+            ),
             "category": disposition.get("category").cloned().unwrap_or(Value::Null),
             "basis": basis,
             "disposition": disposition,
@@ -640,13 +794,16 @@ fn stream(
             filament_semantic_value::catalog::Category::InternalFailure,
         )
     });
-    let value = json!({
+    let mut value = json!({
         "format": SUMMARY_FORMAT,
         "clauses": clauses,
         "records": read,
         "refused": refused,
         "ledger": ledger,
     });
+    if let (Some(cause), Some(members)) = (stopped, value.as_object_mut()) {
+        members.insert("cancelled".to_owned(), json!(cancel_cause(cause)));
+    }
     Ok(MonitorSummary {
         value,
         outcome: lifecycle,
@@ -673,43 +830,72 @@ fn file_lines(intake: &mut super::Intake<'_>, path: Option<&str>) -> Result<Vec<
         .collect())
 }
 
+/// How `command::monitor` settles a request's provider-routed `items`
+/// (FR-644 "Provider-routed items", FR-635 "One rule for every
+/// provider-routing entry"): the caller's negotiator, the started process
+/// providers and the run's provider limits. An empty `providers` is the
+/// entry with no plugin configured.
+pub struct MonitorProviders<'a> {
+    /// The caller's negotiator, the one `analyze_with_providers` and
+    /// `run_with_providers` take (FR-961).
+    pub negotiate: &'a dyn Negotiate,
+    /// The driver's started process providers, each its `Process`
+    /// descriptor and transport.
+    pub providers: Vec<Engine>,
+    /// The run's FSpec FR-462 provider limits (FR-964).
+    pub options: &'a ProviderOptions,
+}
+
 /// FR-644: run the `native-monitor/1` request at `path` over `records`,
 /// handing each event to `sink` before the next record is read. It writes
 /// nothing to the process streams.
 ///
-/// FR-635 "One rule for every provider-routing entry": `providers` are the
-/// driver's started process providers and `options` the run's provider
-/// limits; the registry is built from `Engines::fsl()` and them before the
-/// request is read, as every provider-routing verb builds it, and an empty
-/// `providers` is the entry with no plugin configured.
+/// FR-635 "One rule for every provider-routing entry": the registry is
+/// built from `Engines::fsl()` and `routing`'s providers, under its
+/// provider limits, before the request is read. The request's `items`, and
+/// never its monitored `clauses`, settle over that registry as
+/// `analyze_with_providers` settles them, negotiated by `routing`'s
+/// negotiator under `cancel`, after the program compiles and before the
+/// first record is read; the summary then carries their records and the
+/// registry. A request without `items` calls neither the negotiator nor any
+/// provider.
 ///
 /// # Errors
 ///
 /// `invalid-request` naming `providers` when a provider repeats a registered
 /// `BackendId`, before the request is read; the command-error envelope's
-/// cause for a request-file defect, a compile refusal, an `open` or `resume`
-/// refusal, before any record is read.
+/// cause for a request-file defect, a compile refusal, a whole-request item
+/// refusal (FR-624), an `open` or `resume` refusal, before any record is
+/// read.
 pub fn monitor(
     path: &Path,
     records: impl Iterator<Item = std::io::Result<Vec<u8>>>,
     sink: &mut dyn FnMut(&MonitorEvent),
-    providers: Vec<fsl_analyze::analyze::Engine>,
-    options: &ProviderOptions,
+    routing: MonitorProviders<'_>,
     limits: RunLimits,
     cancel: &Cancel,
 ) -> std::result::Result<MonitorSummary, Box<RunError>> {
-    super::analyze::engines_with(providers, options).map_err(|cause| {
+    let MonitorProviders {
+        negotiate,
+        providers,
+        options,
+    } = routing;
+    let engines = super::analyze::engines_with(providers, options).map_err(|cause| {
         Box::new(RunError {
             cause,
             sources: crate::Sources::default(),
         })
     })?;
+    let settle = Settle {
+        negotiate,
+        engines: &engines,
+        cancel,
+    };
     super::with_request_limits(path, limits.request_bytes, |directory, bytes| {
         drive(
             directory,
             bytes,
             limits.dependent_bytes,
-            false,
             Records::Stream(Box::new(records.map(|line| {
                 line.map_err(|error| RunCause::Io {
                     path: path.to_path_buf(),
@@ -717,26 +903,29 @@ pub fn monitor(
                 })
             }))),
             sink,
+            &settle,
             cancel,
         )
     })
 }
 
 /// FR-644 batch form: a `native-monitor/1` request whose `records` file is the
-/// whole stream, run to its end as one `filament.monitor-run/1` document.
+/// whole stream, run to its end as one `filament.monitor-run/1` document. Its
+/// `items` settle through the run's registry and negotiator (`settle`).
 pub(super) fn run_bytes(
     directory: &Path,
     bytes: &[u8],
     dependent_bytes: usize,
+    settle: &Settle<'_>,
 ) -> Result<RunResult> {
     let mut events = Vec::new();
     let summary = drive(
         directory,
         bytes,
         dependent_bytes,
-        true,
         Records::Batch,
         &mut |event| events.push(event.as_value().clone()),
+        settle,
         &Cancel::new(),
     )?;
     Ok(RunResult {
@@ -760,5 +949,39 @@ pub(super) fn is_monitor_request(bytes: &[u8]) -> bool {
     }
     serde_json::from_slice::<Peek>(bytes).is_ok_and(|peek| {
         peek.format == fsl_foundation::wire_format::WireFormat::MonitorRequest.as_str()
+    })
+}
+
+/// Run `work` under a fresh handle that `outer`'s cancellation reaches, with
+/// its cause, while `work` runs; cancelling the fresh handle leaves `outer`
+/// live. A monitor's items settle under it (FR-644 "Provider-routed items"),
+/// so their deadline stops the items and never the stream.
+fn chained<T>(outer: &Cancel, work: impl FnOnce(&Cancel) -> T) -> T {
+    /// How often the forwarding thread reads `outer`.
+    const POLL: std::time::Duration = std::time::Duration::from_millis(5);
+    let inner = Cancel::new();
+    if let Some(cause) = outer.cause() {
+        inner.cancel(cause);
+    }
+    std::thread::scope(|scope| {
+        let (done, finished) = std::sync::mpsc::channel::<()>();
+        let (watched, forwarded) = (outer.clone(), inner.clone());
+        scope.spawn(move || loop {
+            if let Some(cause) = watched.cause() {
+                forwarded.cancel(cause);
+                break;
+            }
+            // The thread ends on `work`'s end, or when the channel closes.
+            if !matches!(
+                finished.recv_timeout(POLL),
+                Err(std::sync::mpsc::RecvTimeoutError::Timeout)
+            ) {
+                break;
+            }
+        });
+        let value = work(&inner);
+        // A closed channel also ends the thread.
+        let _ = done.send(());
+        value
     })
 }

@@ -5,10 +5,11 @@
 
 use filament_eval::{FamilyOutcome, FamilyResult};
 use filament_exact::{Outcome, Value};
+use filament_semantic_value::catalog::CatalogCode;
 use fsl_semantics::model::observation::{AdmissionUsage, AdmittedObservations, SelfKind};
 
-use super::walk::{exhausted, stop, Walk};
-use super::{ClauseInfo, ClauseOutcome, ModelFinding, BROKEN};
+use super::walk::{exhausted, rows_of, stop, Row, Walk};
+use super::{ClauseInfo, ClauseOutcome, ModelFinding, ModelSimState, ModelSystem, BROKEN};
 use crate::simulation::expansion::{ExpansionLimit, ExpansionStop};
 use crate::value::ClauseSetOutcome;
 
@@ -79,9 +80,30 @@ pub(super) fn invariant_observations(
 /// of the state whose most-specific type conforms to the clause's context, in
 /// ascending reference-key order (FR-120 "Invariants").
 pub(super) fn invariants(walk: &Walk<'_, '_>) -> Result<Vec<ModelFinding>, ExpansionStop> {
+    evaluate_invariants(walk, false)
+}
+
+/// [`invariants`] for a state evaluated for its findings alone (FR-634
+/// "Invariant findings"): a clause evaluation that breaks reports that
+/// invariant undetermined for that object, with the broken evaluation's
+/// cause, and the other clauses and objects are still evaluated.
+pub(super) fn invariants_alone(walk: &Walk<'_, '_>) -> Result<Vec<ModelFinding>, ExpansionStop> {
+    evaluate_invariants(walk, true)
+}
+
+/// The rows of `walk` in ascending reference order.
+fn reference_order(rows: &[Row]) -> Vec<usize> {
+    let mut order: Vec<usize> = (0..rows.len()).collect();
+    order.sort_by(|left, right| rows[*left].reference.cmp(&rows[*right].reference));
+    order
+}
+
+fn evaluate_invariants(
+    walk: &Walk<'_, '_>,
+    alone: bool,
+) -> Result<Vec<ModelFinding>, ExpansionStop> {
     let system = walk.system;
-    let mut order: Vec<usize> = (0..walk.rows.len()).collect();
-    order.sort_by(|left, right| walk.rows[*left].reference.cmp(&walk.rows[*right].reference));
+    let order = reference_order(&walk.rows);
     let mut findings = Vec::new();
     for clause in &system.clauses.invariants {
         for row in &order {
@@ -93,10 +115,23 @@ pub(super) fn invariants(walk: &Walk<'_, '_>) -> Result<Vec<ModelFinding>, Expan
                 continue;
             }
             let observations = invariant_observations(walk, clause, *row);
-            let evaluation = system
-                .evaluator()
-                .evaluate_clause(&clause.qualified, &observations, &mut walk.meter())
-                .map_err(|_| stop(BROKEN))?;
+            let evaluation = match system.evaluator().evaluate_clause(
+                &clause.qualified,
+                &observations,
+                &mut walk.meter(),
+            ) {
+                Ok(evaluation) => evaluation,
+                Err(_) if alone => {
+                    findings.push(ModelFinding::InvariantUndetermined {
+                        clause: clause.name.clone(),
+                        self_object: reference.clone(),
+                        anchor: walk.state.anchor.clone(),
+                        evaluation: ClauseOutcome::Stopped(BROKEN),
+                    });
+                    continue;
+                }
+                Err(_) => return Err(stop(BROKEN)),
+            };
             if walk
                 .cancel
                 .as_ref()
@@ -122,13 +157,61 @@ pub(super) fn invariants(walk: &Walk<'_, '_>) -> Result<Vec<ModelFinding>, Expan
             }
         }
     }
-    // FSpec FR-154 "Unit bounds": a state whose value violates a bound
-    // violates the constraint as an invariant, recorded rather than pruned.
-    for bound in &system.member_bounds {
+    findings.extend(bound_findings(system, walk.state, &walk.rows, &order));
+    Ok(findings)
+}
+
+/// FR-634 "Invariant findings": the findings of `state` when its evaluation
+/// for findings alone stopped with `cause` before deciding: each invariant
+/// undetermined, with `cause`, for each object its context admits, in
+/// [`invariants`]' order, then the member-bound findings, which read the
+/// state's values and evaluate no clause.
+///
+/// # Errors
+///
+/// `runtime_invariant`/`established-invariant-broken` when the state's
+/// objects cannot be referenced, so no object can be named.
+pub(super) fn stopped_invariants(
+    system: &ModelSystem<'_>,
+    state: &ModelSimState,
+    cause: CatalogCode,
+) -> Result<Vec<ModelFinding>, ExpansionStop> {
+    let rows = rows_of(system, &state.state)?;
+    let order = reference_order(&rows);
+    let mut findings = Vec::new();
+    for clause in &system.clauses.invariants {
         for row in &order {
-            let row = &walk.rows[*row];
-            let violated = walk
-                .state
+            let reference = &rows[*row].reference;
+            if system
+                .types
+                .conforms(reference.object_type().clone(), clause.context.clone())
+            {
+                findings.push(ModelFinding::InvariantUndetermined {
+                    clause: clause.name.clone(),
+                    self_object: reference.clone(),
+                    anchor: state.anchor.clone(),
+                    evaluation: ClauseOutcome::Stopped(cause),
+                });
+            }
+        }
+    }
+    findings.extend(bound_findings(system, state, &rows, &order));
+    Ok(findings)
+}
+
+/// FSpec FR-154 "Unit bounds": a state whose value violates a bound
+/// violates the constraint as an invariant, recorded rather than pruned.
+fn bound_findings(
+    system: &ModelSystem<'_>,
+    state: &ModelSimState,
+    rows: &[Row],
+    order: &[usize],
+) -> Vec<ModelFinding> {
+    let mut findings = Vec::new();
+    for bound in &system.member_bounds {
+        for row in order {
+            let row = &rows[*row];
+            let violated = state
                 .state
                 .populations
                 .get(&row.population)
@@ -140,12 +223,12 @@ pub(super) fn invariants(walk: &Walk<'_, '_>) -> Result<Vec<ModelFinding>, Expan
                 findings.push(ModelFinding::InvariantViolated {
                     clause: bound.constraint.node.clone(),
                     self_object: row.reference.clone(),
-                    anchor: walk.state.anchor.clone(),
+                    anchor: state.anchor.clone(),
                 });
             }
         }
     }
-    Ok(findings)
+    findings
 }
 
 /// The conjunction of a set of clauses of one kind (FR-120 "Contract

@@ -278,6 +278,9 @@ pub enum SettleTrigger {
     Limit,
     /// It settled at `finish`.
     Finish,
+    /// FR-853: the caller cancelled the stream while it was open, with the
+    /// handle's cause; used only in a cancelled stream's summary.
+    Cancelled(filament_exact::CancelCause),
 }
 
 impl SettleTrigger {
@@ -287,6 +290,7 @@ impl SettleTrigger {
             Self::Decided => "decided",
             Self::Limit => "limit",
             Self::Finish => "finish",
+            Self::Cancelled(_) => "cancelled",
         }
     }
 }
@@ -949,6 +953,7 @@ pub(crate) fn verdict_of(
             V::Indeterminate { .. } => MonitorVerdict::Indeterminate,
             V::MissingFairnessPremise { .. } => MonitorVerdict::MissingFairnessPremise,
             V::Incomplete(_)
+            | V::Cancelled(_)
             | V::ActivationIncomplete { .. }
             | V::ProgressLimitReached(_)
             | V::ExpansionLimitReached(_) => MonitorVerdict::Incomplete,
