@@ -8,7 +8,7 @@ use filament_exact::{Meter, NodeKey, ScalarLimits, ValueType};
 use filament_semantic_value::declaration::TypeEnvironment;
 use fsl_eval::simulation::{
     enumerate_request, EnumerationBounds, EnumerationEnd, EnumerationRequest, Expansion,
-    ExpansionStop, TransitionSystem,
+    ExpansionStop, TransitionSystem, CANCELLED_STOP,
 };
 use fsl_foundation::IdentityLimits;
 use ix_trace_rs::trace;
@@ -27,6 +27,8 @@ struct Step {
 /// encoding (`2^53 + 1`), and `state_findings` reports `evaluate` for it.
 struct Chain {
     evaluate: bool,
+    /// The stop `state_findings` returns instead of findings, when set.
+    stops: Option<ExpansionStop>,
 }
 
 impl TransitionSystem for Chain {
@@ -62,8 +64,14 @@ impl TransitionSystem for Chain {
     }
 
     fn state_findings(&self, state: &u64) -> Option<Result<Vec<String>, ExpansionStop>> {
-        self.evaluate
-            .then(|| Ok(vec![format!("evaluated {state}")]))
+        self.evaluate.then(|| match self.stops {
+            Some(stop) => Err(stop),
+            None => Ok(vec![format!("evaluated {state}")]),
+        })
+    }
+
+    fn stopped_findings(&self, state: &u64, stop: ExpansionStop) -> Vec<String> {
+        vec![format!("undetermined {state}: {}", stop.cause.code())]
     }
 }
 
@@ -81,6 +89,14 @@ const UNLIMITED: ScalarLimits = ScalarLimits {
 };
 
 fn walk(system: &Chain, max_steps: usize) -> fsl_eval::simulation::Enumeration<Step, String> {
+    walk_polled(system, max_steps, || false)
+}
+
+fn walk_polled(
+    system: &Chain,
+    max_steps: usize,
+    poll: impl FnMut() -> bool,
+) -> fsl_eval::simulation::Enumeration<Step, String> {
     let domains: [(NodeKey, &ValueType); 0] = [];
     let types = TypeEnvironment::new([], []).expect("an empty type environment admits");
     let mut meter = Meter::new(UNLIMITED);
@@ -98,7 +114,7 @@ fn walk(system: &Chain, max_steps: usize) -> fsl_eval::simulation::Enumeration<S
             identity: IdentityLimits::default(),
         },
         &mut meter,
-        || false,
+        poll,
     )
     .expect("a hostile key past the horizon is never encoded")
 }
@@ -109,7 +125,13 @@ fn walk(system: &Chain, max_steps: usize) -> fsl_eval::simulation::Enumeration<S
 #[trace("TC-2976", "FR-634-AC-7")]
 #[test]
 fn a_system_with_no_invariants_keeps_the_end_of_a_horizon_limited_walk() {
-    let run = walk(&Chain { evaluate: false }, 1);
+    let run = walk(
+        &Chain {
+            evaluate: false,
+            stops: None,
+        },
+        1,
+    );
     assert_eq!(run.end, EnumerationEnd::MaxSteps);
     assert_eq!(run.states.len(), 2);
     assert_eq!(run.states[0].findings, ["expanded 0"]);
@@ -121,7 +143,62 @@ fn a_system_with_no_invariants_keeps_the_end_of_a_horizon_limited_walk() {
 #[trace("TC-2976", "FR-634-AC-6")]
 #[test]
 fn the_state_at_the_horizon_is_evaluated_without_expanding_it() {
-    let run = walk(&Chain { evaluate: true }, 1);
+    let run = walk(
+        &Chain {
+            evaluate: true,
+            stops: None,
+        },
+        1,
+    );
     assert_eq!(run.end, EnumerationEnd::MaxSteps);
     assert_eq!(run.states[1].findings, ["evaluated 1"]);
+}
+
+/// FR-634 "Invariant findings" (QSL-2427): a horizon state whose evaluation
+/// stops reports each invariant undetermined with the stop as its cause, and
+/// a cancellation that fires before the horizon state is evaluated reports
+/// it undetermined with the cancellation stop; neither changes how the walk
+/// ended.
+#[trace("TC-2976", "FR-634-AC-6")]
+#[test]
+fn a_stopped_or_cancelled_horizon_evaluation_is_reported_undetermined() {
+    let broken = ExpansionStop {
+        cause: filament_semantic_value::catalog::CatalogCode::new(
+            "runtime_invariant",
+            "established-invariant-broken",
+        ),
+        limit: None,
+    };
+    let run = walk(
+        &Chain {
+            evaluate: true,
+            stops: Some(broken),
+        },
+        1,
+    );
+    assert_eq!(run.end, EnumerationEnd::MaxSteps);
+    assert_eq!(run.states[0].findings, ["expanded 0"]);
+    assert_eq!(
+        run.states[1].findings,
+        ["undetermined 1: runtime_invariant"]
+    );
+
+    // The walk polls once before expanding state 0; the second poll, before
+    // the horizon state is evaluated, reports the cancellation.
+    let mut polls = 0;
+    let run = walk_polled(
+        &Chain {
+            evaluate: true,
+            stops: None,
+        },
+        1,
+        || {
+            polls += 1;
+            polls > 1
+        },
+    );
+    assert_eq!(run.end, EnumerationEnd::MaxSteps);
+    assert_eq!(run.states[0].findings, ["expanded 0"]);
+    assert_eq!(run.states[1].findings, ["undetermined 1: cancelled"]);
+    assert_eq!(CANCELLED_STOP.cause.code(), "cancelled");
 }

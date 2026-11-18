@@ -82,7 +82,9 @@ impl ModelSystem<'_> {
                         ClauseOutcome::Incomplete(incomplete) => {
                             exhausted(ExpansionLimit::EvaluationMeter(incomplete.limit_kind))
                         }
-                        ClauseOutcome::FamilyRefused(code) => stop(code),
+                        ClauseOutcome::FamilyRefused(code) | ClauseOutcome::Stopped(code) => {
+                            stop(code)
+                        }
                         ClauseOutcome::KernelRefused(_)
                         | ClauseOutcome::NotBoolean
                         | ClauseOutcome::KernelUndefined(_)

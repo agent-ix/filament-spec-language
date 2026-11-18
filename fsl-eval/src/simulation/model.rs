@@ -271,6 +271,12 @@ pub enum ClauseOutcome {
     Incomplete(Incomplete),
     /// The clause completed a value that is no Boolean.
     NotBoolean,
+    /// The evaluation stopped before deciding, with this cause: a broken
+    /// evaluation call (`runtime_invariant`/`established-invariant-broken`)
+    /// or the run's cancellation (`cancelled`/`caller-cancelled`). Only a
+    /// state evaluated for its invariant findings alone reports it (FR-634
+    /// "Invariant findings"); an expansion stops instead.
+    Stopped(CatalogCode),
 }
 
 impl ClauseOutcome {
@@ -296,7 +302,8 @@ impl ClauseOutcome {
             Self::KernelRefused(_)
             | Self::FamilyRefused(_)
             | Self::Incomplete(_)
-            | Self::NotBoolean => None,
+            | Self::NotBoolean
+            | Self::Stopped(_) => None,
         }
     }
 }
@@ -1760,7 +1767,14 @@ impl TransitionSystem for ModelSystem<'_> {
         state: &Self::State,
     ) -> Option<Result<Vec<Self::Finding>, ExpansionStop>> {
         (!self.clauses.invariants.is_empty() || !self.member_bounds.is_empty())
-            .then(|| self.invariant_findings(state))
+            .then(|| self.invariant_findings_alone(state))
+    }
+
+    /// FR-634: every invariant of `state` undetermined with `stop`'s cause,
+    /// and its member-bound findings; empty when its objects cannot be
+    /// referenced, so no object can be named.
+    fn stopped_findings(&self, state: &Self::State, stop: ExpansionStop) -> Vec<Self::Finding> {
+        contracts::stopped_invariants(self, state, stop.cause).unwrap_or_default()
     }
 
     /// FR-162: [`ModelSystem::footprint`], which reads the transition alone.

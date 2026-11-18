@@ -123,6 +123,7 @@ pub fn refused_invariant(outcome: &ClauseOutcome) -> &'static str {
         ClauseOutcome::KernelRefused(_) => "a-holds-atom-is-not-kernel-refused",
         ClauseOutcome::FamilyRefused(_) => "a-holds-atom-is-not-family-refused",
         ClauseOutcome::NotBoolean => "a-holds-atom-completes-a-boolean",
+        ClauseOutcome::Stopped(_) => "a-holds-atom-evaluation-completes",
         ClauseOutcome::KernelUndefined(_)
         | ClauseOutcome::FamilyUndefined(_)
         | ClauseOutcome::Incomplete(_) => "a-holds-atom-refusal-is-a-refusal",

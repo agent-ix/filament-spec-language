@@ -31,7 +31,7 @@ use std::rc::Rc;
 use filament_exact::{length_amount, Charge, ChargePoint, Incomplete, Meter};
 use fsl_foundation::IdentityLimits;
 
-use crate::simulation::explore::TransitionSystem;
+use crate::simulation::explore::{TransitionSystem, CANCELLED_STOP};
 use crate::simulation::key::{canonical_bytes, EncodingRefusal, StateKey};
 use crate::simulation::not_simulated::{check_requires_bound, NotSimulated, Root};
 use crate::simulation::order::{expand, sorted_initial, Expanded, OrderedSuccessor};
@@ -251,7 +251,8 @@ impl<T, F> Store<T, F> {
 /// first refusing an unbounded `domains` request before any
 /// `TransitionSystem` method is called. `poll` is called once per state the
 /// walk attempts to expand; returning `true` cancels the walk before that
-/// state is touched.
+/// state is touched; it is also called before each state left unexpanded is
+/// evaluated for its findings alone (FR-634 "Invariant findings").
 ///
 /// # Errors
 ///
@@ -391,12 +392,18 @@ pub fn enumerate_request<S: TransitionSystem, R: Root>(
         for (at, state) in horizon.iter().chain(queue.iter()) {
             // Only the invariants are evaluated, under the evaluator's own
             // FR-109 budget: no successor is computed or keyed, and nothing
-            // here changes how the walk ended. A stopped evaluation reports
-            // no finding for that state.
-            if let Some(Ok(findings)) = system.state_findings(state) {
-                if let Some(entry) = store.states.get_mut(*at) {
-                    entry.findings = findings;
-                }
+            // here changes how the walk ended. An evaluation that stops, or
+            // that the run's cancellation forestalls, reports each invariant
+            // undetermined with that stop as its cause.
+            let findings = if poll() {
+                Some(system.stopped_findings(state, CANCELLED_STOP))
+            } else {
+                system.state_findings(state).map(|evaluated| {
+                    evaluated.unwrap_or_else(|stop| system.stopped_findings(state, stop))
+                })
+            };
+            if let (Some(findings), Some(entry)) = (findings, store.states.get_mut(*at)) {
+                entry.findings = findings;
             }
         }
     }
