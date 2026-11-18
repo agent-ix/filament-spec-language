@@ -868,6 +868,41 @@ struct AbsentParameter {
 }
 
 impl<'a, 'm, N: NodeSource<'a>> Machine<'a, 'm, N> {
+    /// A value-family evaluator over the declarations held by a bytes-only
+    /// package and the caller's admitted object environment.
+    pub(crate) fn from_bare_package(
+        world: &'a fsl_package::BareWorld,
+        objects: &'a ObjectEnvironment,
+        meter: &'m mut Meter,
+    ) -> Self {
+        Self::build(
+            World::Bytes(world),
+            objects,
+            None,
+            None,
+            meter,
+            &[],
+            EvaluationFamily::Value,
+        )
+    }
+
+    /// The bytes-only counterpart of [`Self::observing_applications`].
+    pub(crate) fn observing_bare_package(
+        world: &'a fsl_package::BareWorld,
+        objects: &'a ObjectEnvironment,
+        meter: &'m mut Meter,
+        observation: super::ApplicationObserver<'m>,
+    ) -> Self {
+        let mut machine = Self::from_bare_package(world, objects, meter);
+        machine.observed_applications = Some(observation.observed);
+        machine.operation_capture = Some(observation.capture);
+        machine.unavailable_imported_call = Some(observation.unavailable_imported_call);
+        machine.function_case_limit = Some(observation.function_case_limit);
+        machine.function_evaluations = Some(observation.function_evaluations);
+        machine.function_case_limit_reached = Some(observation.function_case_limit_reached);
+        machine
+    }
+
     pub(crate) fn new(
         scope: &'a Scope,
         graph: &'a CheckedGraph,
@@ -5107,10 +5142,13 @@ mod tests {
                 )],
                 TypeForm::builtin(fsl_forms::BuiltinType::Integer, SPAN),
                 None,
-                Expression::size(Expression::all_instances(
-                    TypeForm::name("M::A", SPAN),
-                    Expression::name("p".to_owned()),
-                )),
+                Expression::size(
+                    Expression::all_instances(
+                        TypeForm::name("M::A", SPAN),
+                        Expression::name("p".to_owned()),
+                    ),
+                    None,
+                ),
             )];
             declarations
         }

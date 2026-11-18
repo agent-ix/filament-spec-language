@@ -136,8 +136,8 @@ pub use protocol_occurrence_key::{
 pub use protocol_selection::{ProtocolSlotDescriptor, SlotSelectionFailure};
 #[cfg(feature = "std")]
 pub use reader_protocol_projection::{
-    MissingLocation, ReaderProtocolFunction, ReaderProtocolProjection, ReaderSlot,
-    UnsupportedReason, UnsupportedView, ViewLocus,
+    MissingLocation, ReaderProtocolFunction, ReaderProtocolParameter, ReaderProtocolProjection,
+    ReaderSlot, UnsupportedReason, UnsupportedView, ViewLocus,
 };
 
 #[cfg(feature = "std")]

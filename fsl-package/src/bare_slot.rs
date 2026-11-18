@@ -17,6 +17,7 @@ use filament_contract_model::{
 };
 use filament_exact::{NodeKey, ValueType};
 use filament_semantic_value::catalog::InternalFault;
+use filament_semantic_value::declaration::{CompositeShape, TypeEnvironment};
 use fsl_semantics::check::{protocol_site, ProtocolSite, RelatedSide};
 
 use crate::bare::{BarePackage, IdentityWitnessRefusal};
@@ -34,6 +35,43 @@ use crate::wire_form::{has_tag, WireTag};
 
 type Node = CheckedSemanticNodeV2;
 
+/// Whether a type contains a population under a value wrapper. FR-650 gives
+/// the top-level population form a native value, but no form to a population
+/// nested in an option, collection, record, tuple, or union payload.
+fn contains_nested_population(value_type: &ValueType, types: &TypeEnvironment) -> bool {
+    let mut pending = vec![(value_type, false)];
+    let mut visited = BTreeSet::new();
+    while let Some((value_type, nested)) = pending.pop() {
+        match value_type {
+            ValueType::Population(_) if nested => return true,
+            ValueType::Population(_) => {}
+            ValueType::Option(inner) => pending.push((inner, true)),
+            ValueType::Collection(collection) => pending.push((collection.element(), true)),
+            ValueType::Composite(key) if visited.insert(key.clone()) => {
+                let Some(declaration) = types.composite(key.clone()) else {
+                    continue;
+                };
+                match declaration.shape() {
+                    CompositeShape::Record(fields) => {
+                        pending.extend(fields.iter().map(|field| (field.value_type(), true)))
+                    }
+                    CompositeShape::Tuple(slots) => {
+                        pending.extend(slots.iter().map(|slot| (slot, true)));
+                    }
+                    CompositeShape::Union(members) => pending.extend(
+                        members
+                            .iter()
+                            .flat_map(|member| member.positions())
+                            .map(|slot| (slot, true)),
+                    ),
+                }
+            }
+            _ => {}
+        }
+    }
+    false
+}
+
 /// Why a bare selection produced no slot.
 #[derive(Debug)]
 pub enum BareSelectionFailure {
@@ -48,6 +86,20 @@ pub enum BareSelectionFailure {
     Slot(SlotSelectionFailure),
     /// A binder type has no kernel representation in the admitted closure.
     Unsupported(Box<UnsupportedView>),
+    /// A function parameter has no native run value form.
+    FunctionParameterType {
+        /// The parameter's zero-based position in declaration order.
+        position: usize,
+        /// The typed projection refusal at the function's type node.
+        view: Box<UnsupportedView>,
+    },
+    /// A function result has no native run value form.
+    FunctionResultType {
+        /// The selected function's unqualified declaration name.
+        function: String,
+        /// The typed projection refusal at the function's type node.
+        view: Box<UnsupportedView>,
+    },
 }
 
 impl BareSelectionFailure {
@@ -65,6 +117,9 @@ impl BareSelectionFailure {
             Self::Equality(refusal) => Ok(UnsupportedView::witness(package, refusal.into())),
             Self::Slot(failure) => Err(failure),
             Self::Unsupported(view) => Ok(*view),
+            Self::FunctionParameterType { view, .. } | Self::FunctionResultType { view, .. } => {
+                Ok(*view)
+            }
         }
     }
 }
@@ -518,6 +573,10 @@ impl<'p> BarePackage<'p> {
                     WalkFailure::Unsupported(view) => {
                         BareSelectionFailure::Unsupported(Box::new(view))
                     }
+                    WalkFailure::FunctionParameterType { view, .. }
+                    | WalkFailure::FunctionResultType { view, .. } => {
+                        BareSelectionFailure::Unsupported(Box::new(view))
+                    }
                     WalkFailure::Equality(refusal) => BareSelectionFailure::Equality(refusal),
                     WalkFailure::Fault(failure) => SlotSelectionFailure::Fault(failure).into(),
                 })
@@ -627,6 +686,10 @@ impl<'p> BarePackage<'p> {
             .project(slot.root(), slot.origin(), &binders)
             .map_err(|failure| match failure {
                 WalkFailure::Unsupported(view) => BareSelectionFailure::Unsupported(Box::new(view)),
+                WalkFailure::FunctionParameterType { view, .. }
+                | WalkFailure::FunctionResultType { view, .. } => {
+                    BareSelectionFailure::Unsupported(Box::new(view))
+                }
                 WalkFailure::Equality(refusal) => BareSelectionFailure::Equality(refusal),
                 WalkFailure::Fault(failure) => SlotSelectionFailure::Fault(failure).into(),
             })?;
@@ -637,6 +700,115 @@ impl<'p> BarePackage<'p> {
             )));
         }
         Ok(projection)
+    }
+
+    /// The projection of a named pure function, its checked parameter and
+    /// result types, and the pure functions its body calls. Charges nothing.
+    ///
+    /// # Errors
+    ///
+    /// [`BareSelectionFailure`] when the identity/equality supply or a type,
+    /// equality decision, or checked body cannot be projected.
+    pub fn project_function(
+        &self,
+        name: &str,
+    ) -> Result<Option<ReaderProtocolProjection>, BareSelectionFailure> {
+        let (_, identities) = self.witness()?;
+        let walker = BareWalker::new(
+            self.package(),
+            identities,
+            self.equality_decisions(),
+            self.exact_type_projections(),
+        )
+        .map_err(SlotSelectionFailure::Fault)?;
+        if let Some(result) =
+            walker
+                .function_result_type(name)
+                .map_err(|failure| match failure {
+                    WalkFailure::Unsupported(view) => {
+                        BareSelectionFailure::Unsupported(Box::new(view))
+                    }
+                    WalkFailure::FunctionParameterType { position, view } => {
+                        BareSelectionFailure::FunctionParameterType {
+                            position,
+                            view: Box::new(view),
+                        }
+                    }
+                    WalkFailure::FunctionResultType { function, view } => {
+                        BareSelectionFailure::FunctionResultType {
+                            function,
+                            view: Box::new(view),
+                        }
+                    }
+                    WalkFailure::Equality(refusal) => BareSelectionFailure::Equality(refusal),
+                    WalkFailure::Fault(failure) => SlotSelectionFailure::Fault(failure).into(),
+                })?
+        {
+            let world = self.world()?;
+            if contains_nested_population(&result.value_type, world.types())
+                || world.types().runtime_type(&result.value_type).is_none()
+            {
+                return Err(BareSelectionFailure::FunctionResultType {
+                    function: name.to_owned(),
+                    view: Box::new(UnsupportedView::missing_type(
+                        self.package().name(),
+                        result.function_node,
+                    )),
+                });
+            }
+        }
+        let projection = walker
+            .project_function(name)
+            .map_err(|failure| match failure {
+                WalkFailure::Unsupported(view) => BareSelectionFailure::Unsupported(Box::new(view)),
+                WalkFailure::FunctionParameterType { position, view } => {
+                    BareSelectionFailure::FunctionParameterType {
+                        position,
+                        view: Box::new(view),
+                    }
+                }
+                WalkFailure::FunctionResultType { function, view } => {
+                    BareSelectionFailure::FunctionResultType {
+                        function,
+                        view: Box::new(view),
+                    }
+                }
+                WalkFailure::Equality(refusal) => BareSelectionFailure::Equality(refusal),
+                WalkFailure::Fault(failure) => SlotSelectionFailure::Fault(failure).into(),
+            })?;
+        let Some(projection) = projection else {
+            return Ok(None);
+        };
+        let world = self.world()?;
+        let selected = projection
+            .selected_function_node()
+            .ok_or_else(|| fault("bare-function-projection-has-entry"))?;
+        if let Some(function) = projection.selected_function() {
+            if let Some((position, _)) =
+                function
+                    .parameters
+                    .iter()
+                    .enumerate()
+                    .find(|(_, parameter)| {
+                        contains_nested_population(&parameter.value_type, world.types())
+                            || world.types().runtime_type(&parameter.value_type).is_none()
+                    })
+            {
+                return Err(BareSelectionFailure::FunctionParameterType {
+                    position,
+                    view: Box::new(UnsupportedView::missing_type(
+                        self.package().name(),
+                        selected.clone(),
+                    )),
+                });
+            }
+        }
+        if projection.has_unrepresented_types(world.types()) {
+            return Err(BareSelectionFailure::Unsupported(Box::new(
+                UnsupportedView::missing_type(self.package().name(), selected.clone()),
+            )));
+        }
+        Ok(Some(projection))
     }
 }
 
