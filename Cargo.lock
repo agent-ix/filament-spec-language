@@ -143,7 +143,7 @@ dependencies = [
 name = "arch-lint"
 version = "0.1.0"
 dependencies = [
- "ix-trace-rs",
+ "ix-trace-rs 0.1.2 (git+https://github.com/agent-ix/ix-trace-rs?tag=v0.1.2)",
  "proc-macro2",
  "serde_json",
  "syn 2.0.119",
@@ -284,7 +284,7 @@ dependencies = [
  "filament-exact",
  "filament-semantic-value",
  "fsl-replay",
- "ix-trace-rs",
+ "ix-trace-rs 0.1.2 (git+https://github.com/agent-ix/ix-trace-rs?tag=v0.1.2)",
 ]
 
 [[package]]
@@ -527,7 +527,7 @@ dependencies = [
  "fsl-package",
  "fsl-replay",
  "fsl-semantics",
- "ix-trace-rs",
+ "ix-trace-rs 0.1.2 (git+https://github.com/agent-ix/ix-trace-rs?branch=main)",
  "serde_json",
 ]
 
@@ -580,7 +580,7 @@ dependencies = [
  "filament-semantic-value",
  "filament-verification-contracts",
  "filament-walk",
- "ix-trace-rs",
+ "ix-trace-rs 0.1.2 (git+https://github.com/agent-ix/ix-trace-rs?tag=v0.1.2)",
  "jsonschema 0.17.1",
  "num-bigint",
  "num-integer",
@@ -670,7 +670,7 @@ dependencies = [
  "fsl-replay",
  "fsl-route",
  "fsl-semantics",
- "ix-trace-rs",
+ "ix-trace-rs 0.1.2 (git+https://github.com/agent-ix/ix-trace-rs?tag=v0.1.2)",
  "jsonschema 0.17.1",
  "logos",
  "num-bigint",
@@ -793,7 +793,7 @@ dependencies = [
  "fsl-replay",
  "fsl-route",
  "fsl-semantics",
- "ix-trace-rs",
+ "ix-trace-rs 0.1.2 (git+https://github.com/agent-ix/ix-trace-rs?tag=v0.1.2)",
  "jsonschema 0.17.1",
  "num-bigint",
  "num-integer",
@@ -822,7 +822,7 @@ dependencies = [
  "fsl-replay",
  "fsl-route",
  "fsl-semantics",
- "ix-trace-rs",
+ "ix-trace-rs 0.1.2 (git+https://github.com/agent-ix/ix-trace-rs?tag=v0.1.2)",
  "nix",
  "quire-canonical",
  "serde_json",
@@ -848,7 +848,7 @@ dependencies = [
  "fsl-route",
  "fsl-semantics",
  "fsl-source",
- "ix-trace-rs",
+ "ix-trace-rs 0.1.2 (git+https://github.com/agent-ix/ix-trace-rs?tag=v0.1.2)",
  "quire-canonical",
  "serde",
  "serde_json",
@@ -876,7 +876,7 @@ dependencies = [
  "fsl-replay",
  "fsl-route",
  "fsl-semantics",
- "ix-trace-rs",
+ "ix-trace-rs 0.1.2 (git+https://github.com/agent-ix/ix-trace-rs?tag=v0.1.2)",
  "jsonschema 0.17.1",
  "serde_json",
  "tempfile",
@@ -889,7 +889,7 @@ version = "0.1.0"
 dependencies = [
  "filament-exact",
  "fsl-foundation",
- "ix-trace-rs",
+ "ix-trace-rs 0.1.2 (git+https://github.com/agent-ix/ix-trace-rs?tag=v0.1.2)",
  "logos",
  "serde_json",
 ]
@@ -907,7 +907,7 @@ dependencies = [
  "fsl-foundation",
  "fsl-package",
  "fsl-semantics",
- "ix-trace-rs",
+ "ix-trace-rs 0.1.2 (git+https://github.com/agent-ix/ix-trace-rs?tag=v0.1.2)",
  "quire-canonical",
  "serde",
  "serde_json",
@@ -924,7 +924,7 @@ dependencies = [
  "filament-walk",
  "fsl-cst",
  "fsl-foundation",
- "ix-trace-rs",
+ "ix-trace-rs 0.1.2 (git+https://github.com/agent-ix/ix-trace-rs?tag=v0.1.2)",
  "proc-macro2",
  "syn 2.0.119",
 ]
@@ -936,7 +936,7 @@ dependencies = [
  "filament-exact",
  "filament-semantic-value",
  "hashbrown 0.17.1",
- "ix-trace-rs",
+ "ix-trace-rs 0.1.2 (git+https://github.com/agent-ix/ix-trace-rs?tag=v0.1.2)",
  "quire-canonical",
  "serde",
  "serde_json",
@@ -958,7 +958,7 @@ dependencies = [
  "fsl-package",
  "fsl-replay",
  "fsl-semantics",
- "ix-trace-rs",
+ "ix-trace-rs 0.1.2 (git+https://github.com/agent-ix/ix-trace-rs?tag=v0.1.2)",
  "quire-canonical",
  "serde",
  "serde_json",
@@ -977,7 +977,7 @@ dependencies = [
  "fsl-forms",
  "fsl-foundation",
  "fsl-semantics",
- "ix-trace-rs",
+ "ix-trace-rs 0.1.2 (git+https://github.com/agent-ix/ix-trace-rs?tag=v0.1.2)",
  "jsonschema 0.17.1",
  "quire-canonical",
  "serde",
@@ -997,7 +997,7 @@ dependencies = [
  "fsl-foundation",
  "fsl-replay",
  "fsl-semantics",
- "ix-trace-rs",
+ "ix-trace-rs 0.1.2 (git+https://github.com/agent-ix/ix-trace-rs?tag=v0.1.2)",
  "serde",
  "serde_json",
 ]
@@ -1020,7 +1020,7 @@ dependencies = [
  "fsl-route",
  "fsl-semantics",
  "fsl-source",
- "ix-trace-rs",
+ "ix-trace-rs 0.1.2 (git+https://github.com/agent-ix/ix-trace-rs?tag=v0.1.2)",
  "num-bigint",
  "num-integer",
  "quire-canonical",
@@ -1039,7 +1039,7 @@ dependencies = [
  "filament-semantic-value",
  "fsl-foundation",
  "fsl-semantics",
- "ix-trace-rs",
+ "ix-trace-rs 0.1.2 (git+https://github.com/agent-ix/ix-trace-rs?tag=v0.1.2)",
  "tempfile",
  "thiserror",
 ]
@@ -1059,7 +1059,7 @@ dependencies = [
  "fsl-forms",
  "fsl-foundation",
  "fsv-failing-allocator",
- "ix-trace-rs",
+ "ix-trace-rs 0.1.2 (git+https://github.com/agent-ix/ix-trace-rs?tag=v0.1.2)",
  "num-bigint",
  "num-traits",
  "proc-macro2",
@@ -1078,7 +1078,7 @@ name = "fsl-source"
 version = "0.1.0"
 dependencies = [
  "fsl-foundation",
- "ix-trace-rs",
+ "ix-trace-rs 0.1.2 (git+https://github.com/agent-ix/ix-trace-rs?tag=v0.1.2)",
  "quire-rs 0.62.2",
  "serde",
  "serde_json",
@@ -1089,7 +1089,7 @@ dependencies = [
 name = "fsl-string-edge"
 version = "0.1.0"
 dependencies = [
- "ix-trace-rs",
+ "ix-trace-rs 0.1.2 (git+https://github.com/agent-ix/ix-trace-rs?tag=v0.1.2)",
  "proc-macro2",
  "serde",
  "serde_json",
@@ -1102,7 +1102,7 @@ dependencies = [
 name = "fsl-walk-grow"
 version = "0.1.0"
 dependencies = [
- "ix-trace-rs",
+ "ix-trace-rs 0.1.2 (git+https://github.com/agent-ix/ix-trace-rs?tag=v0.1.2)",
  "stacker",
 ]
 
@@ -1256,7 +1256,7 @@ version = "0.1.0"
 dependencies = [
  "filament-exact",
  "fsl-replay",
- "ix-trace-rs",
+ "ix-trace-rs 0.1.2 (git+https://github.com/agent-ix/ix-trace-rs?tag=v0.1.2)",
 ]
 
 [[package]]
@@ -1425,6 +1425,11 @@ checksum = "8f42a60cbdf9a97f5d2305f08a87dc4e09308d1276d28c869c684d7777685682"
 name = "ix-trace-rs"
 version = "0.1.2"
 source = "git+https://github.com/agent-ix/ix-trace-rs?tag=v0.1.2#e29cc07f70394ff018884d12406c1e150bded5f4"
+
+[[package]]
+name = "ix-trace-rs"
+version = "0.1.2"
+source = "git+https://github.com/agent-ix/ix-trace-rs?branch=main#3cd3285055e32e4c08fb124d76e489b9dd412b6b"
 
 [[package]]
 name = "js-sys"
@@ -2956,7 +2961,7 @@ dependencies = [
  "fsl-route",
  "fsl-semantics",
  "fsl-string-edge",
- "ix-trace-rs",
+ "ix-trace-rs 0.1.2 (git+https://github.com/agent-ix/ix-trace-rs?tag=v0.1.2)",
  "jsonschema 0.17.1",
  "logos",
  "proc-macro2",
