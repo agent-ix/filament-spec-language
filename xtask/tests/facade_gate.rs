@@ -114,6 +114,57 @@ fn gate_over(directory: &Path) -> Output {
     ])
 }
 
+fn pending_inventory(fact: &str, ticket: &str) -> tempfile::TempDir {
+    let scratch = tempfile::tempdir().expect("scratch inventory directory");
+    let facts = inventory_facts()
+        .into_iter()
+        .map(|id| {
+            if id == fact {
+                serde_json::json!({"id": id, "pending_ticket": ticket})
+            } else {
+                serde_json::json!({"id": id})
+            }
+        })
+        .collect::<Vec<_>>();
+    fs::write(
+        scratch.path().join("inventory.json"),
+        serde_json::to_vec(&serde_json::json!({"consumers": [{"facts": facts}]}))
+            .expect("serialize inventory"),
+    )
+    .expect("write scratch inventory");
+    scratch
+}
+
+fn scratch_tests_with_pending(fact: &str, ticket: &str) -> tempfile::TempDir {
+    let scratch = tempfile::tempdir().expect("scratch directory");
+    let mut source = String::new();
+    for id in inventory_facts() {
+        if id == fact {
+            source.push_str(&format!(
+                "#[test]\n#[ignore = \"{ticket}\"]\nfn {}pending_contract() {{}}\n",
+                test_prefix(&id)
+            ));
+        } else {
+            source.push_str(&format!(
+                "#[test]\nfn {}reads_the_fact() {{}}\n",
+                test_prefix(&id)
+            ));
+        }
+    }
+    fs::write(scratch.path().join("contract.rs"), source).expect("write the scratch tests");
+    scratch
+}
+
+fn gate_over_inventory(directory: &Path, inventory: &Path) -> Output {
+    xtask(&[
+        "facade-tests",
+        "--tests",
+        directory.to_str().expect("UTF-8 path"),
+        "--inventory",
+        inventory.to_str().expect("UTF-8 path"),
+    ])
+}
+
 #[test]
 #[trace("TC-2578", "FR-912-AC-1")]
 fn test_prefix_is_the_lowercase_fact_id() {
@@ -148,10 +199,12 @@ fn the_contract_consumer_sees_only_default_features() {
         .iter()
         .find(|package| package["name"] == CONSUMER)
         .unwrap_or_else(|| panic!("{CONSUMER} is not a workspace package"));
-    assert!(package["manifest_path"]
-        .as_str()
-        .expect("manifest path")
-        .contains(CONSUMER_DIR));
+    assert!(
+        package["manifest_path"]
+            .as_str()
+            .expect("manifest path")
+            .contains(CONSUMER_DIR)
+    );
     for dependency in package["dependencies"].as_array().expect("dependencies") {
         let name = dependency["name"].as_str().expect("dependency name");
         if name.starts_with("fsl-") {
@@ -286,4 +339,38 @@ fn gate_fails_on_test_for_unlisted_fact() {
     assert!(text.contains("CF-PR-99"));
     let makefile = fs::read_to_string(workspace_root().join("Makefile")).expect("Makefile");
     assert!(makefile.contains("xtask facade-tests"));
+}
+
+#[test]
+#[trace("TC-2582", "FR-912-AC-5")]
+fn gate_allows_an_issue_keyed_test_only_for_its_pending_fact() {
+    let fact = "CF-CG-04";
+    let ticket = "QSL-1109";
+    let inventory = pending_inventory(fact, ticket);
+    let tests = scratch_tests_with_pending(fact, ticket);
+    let output = gate_over_inventory(tests.path(), &inventory.path().join("inventory.json"));
+    assert_eq!(output.status.code(), Some(0), "{}", report(&output));
+    assert!(report(&output).contains("CF-CG-04: pending by QSL-1109"));
+}
+
+#[test]
+#[trace("TC-2583", "FR-912-AC-5")]
+fn gate_rejects_a_pending_test_with_the_wrong_issue_key() {
+    let fact = "CF-CG-04";
+    let inventory = pending_inventory(fact, "QSL-1109");
+    let tests = scratch_tests_with_pending(fact, "QSL-9999");
+    let output = gate_over_inventory(tests.path(), &inventory.path().join("inventory.json"));
+    assert_eq!(output.status.code(), Some(1), "{}", report(&output));
+    assert!(report(&output).contains("does not match its authorized pending_ticket"));
+}
+
+#[test]
+#[trace("TC-2584", "FR-912-AC-5")]
+fn gate_rejects_a_pending_ticket_not_in_the_authorized_map() {
+    let fact = "CF-CG-04";
+    let inventory = pending_inventory(fact, "QSL-9999");
+    let tests = scratch_tests_with_pending(fact, "QSL-9999");
+    let output = gate_over_inventory(tests.path(), &inventory.path().join("inventory.json"));
+    assert_eq!(output.status.code(), Some(1), "{}", report(&output));
+    assert!(report(&output).contains("not an authorized pending fact"));
 }

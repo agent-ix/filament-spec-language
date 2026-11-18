@@ -7,8 +7,8 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use crate::{
-    error::{Error, Result},
     Outcome,
+    error::{Error, Result},
 };
 use serde::Deserialize;
 use syn::{Attribute, Item, ItemMod};
@@ -27,6 +27,8 @@ struct Consumer {
 #[derive(Deserialize)]
 struct Fact {
     id: String,
+    #[serde(default)]
+    pending_ticket: Option<String>,
 }
 
 #[derive(Debug)]
@@ -35,6 +37,32 @@ struct ContractFunction {
     path: PathBuf,
     live: bool,
     reason: Option<&'static str>,
+    ignored_by: Option<String>,
+}
+
+const ALLOWED_PENDING_FACTS: [(&str, &str); 4] = [
+    ("CF-CG-04", "QSL-1109"),
+    ("CF-IR-04", "QSL-1109"),
+    ("CF-OB-01", "OBS-1"),
+    ("CF-RT-02", "QSL-1867"),
+];
+
+fn pending_ticket(attributes: &[Attribute]) -> Option<String> {
+    attributes.iter().find_map(|attribute| {
+        if !attribute.path().is_ident("ignore") {
+            return None;
+        }
+        let syn::Meta::NameValue(value) = &attribute.meta else {
+            return None;
+        };
+        let syn::Expr::Lit(expression) = &value.value else {
+            return None;
+        };
+        let syn::Lit::Str(ticket) = &expression.lit else {
+            return None;
+        };
+        Some(ticket.value())
+    })
 }
 
 fn has_attribute(attributes: &[Attribute], name: &str) -> bool {
@@ -95,10 +123,24 @@ fn collect_items(
                     continue;
                 };
                 let has_test = has_attribute(&function.attrs, "test");
+                let ignored_by = if !module_disabled
+                    && has_test
+                    && has_attribute(&function.attrs, "ignore")
+                    && !has_attribute(&function.attrs, "cfg")
+                    && !has_attribute(&function.attrs, "cfg_attr")
+                {
+                    pending_ticket(&function.attrs)
+                } else {
+                    None
+                };
                 let reason = if module_disabled {
                     Some("enclosing module is conditional")
                 } else if has_attribute(&function.attrs, "ignore") {
-                    Some("function is ignored")
+                    Some(if ignored_by.is_some() {
+                        "function is ignored pending its issue"
+                    } else {
+                        "function is ignored without an issue key"
+                    })
                 } else if has_attribute(&function.attrs, "cfg")
                     || has_attribute(&function.attrs, "cfg_attr")
                 {
@@ -113,6 +155,7 @@ fn collect_items(
                     path: source_file.to_path_buf(),
                     live: reason.is_none(),
                     reason,
+                    ignored_by,
                 });
             }
             Item::Mod(module) => {
@@ -230,7 +273,7 @@ fn scan_sources(directory: &Path) -> Result<Vec<ContractFunction>> {
     Ok(functions)
 }
 
-fn inventory_ids(override_path: Option<&Path>, workspace_root: &Path) -> Result<Vec<String>> {
+fn inventory_facts(override_path: Option<&Path>, workspace_root: &Path) -> Result<Vec<Fact>> {
     let bytes = match override_path {
         Some(path) => fs::read(path).map_err(|error| Error::io(path, error))?,
         None => filament_specification::published_file(INVENTORY)
@@ -249,7 +292,6 @@ fn inventory_ids(override_path: Option<&Path>, workspace_root: &Path) -> Result<
         .consumers
         .into_iter()
         .flat_map(|consumer| consumer.facts)
-        .map(|fact| fact.id)
         .collect())
 }
 
@@ -275,7 +317,7 @@ pub fn run(workspace_root: &Path, arguments: &[OsString]) -> Result<Outcome> {
             _ => {
                 return Err(Error::Usage(
                     "cargo xtask facade-tests [--tests <dir>] [--inventory <file>]",
-                ))
+                ));
             }
         }
     }
@@ -287,12 +329,28 @@ pub fn run(workspace_root: &Path, arguments: &[OsString]) -> Result<Outcome> {
             *path = workspace_root.join(&*path);
         }
     }
-    let known: std::collections::BTreeSet<_> = inventory_ids(inventory.as_deref(), workspace_root)?
-        .into_iter()
-        .collect();
+    let facts = inventory_facts(inventory.as_deref(), workspace_root)?;
+    let mut known = std::collections::BTreeMap::<String, Option<String>>::new();
+    let mut failures = Vec::new();
+    for fact in facts {
+        if let Some(ticket) = &fact.pending_ticket {
+            if !ALLOWED_PENDING_FACTS
+                .iter()
+                .any(|(id, allowed)| *id == fact.id && *allowed == ticket)
+            {
+                failures.push(format!(
+                    "{}: pending_ticket {ticket} is not an authorized pending fact",
+                    fact.id
+                ));
+            }
+        }
+        if known.insert(fact.id.clone(), fact.pending_ticket).is_some() {
+            failures.push(format!("{}: duplicate inventory fact id", fact.id));
+        }
+    }
     let functions = scan_sources(&tests)?;
     let mut seen = std::collections::BTreeMap::<String, Vec<String>>::new();
-    let mut failures = Vec::new();
+    let mut pending_seen = std::collections::BTreeSet::<String>::new();
     for function in &functions {
         let Some(id) = fact_id(&function.name) else {
             failures.push(format!(
@@ -302,7 +360,7 @@ pub fn run(workspace_root: &Path, arguments: &[OsString]) -> Result<Outcome> {
             ));
             continue;
         };
-        if !known.contains(&id) {
+        if !known.contains_key(&id) {
             failures.push(format!(
                 "{}: {} names unknown inventory fact {id}",
                 function.path.display(),
@@ -310,6 +368,22 @@ pub fn run(workspace_root: &Path, arguments: &[OsString]) -> Result<Outcome> {
             ));
         } else if function.live {
             seen.entry(id).or_default().push(function.name.clone());
+        } else if let Some(ticket) = &function.ignored_by {
+            if known.get(&id).and_then(Option::as_deref) == Some(ticket.as_str())
+                && ALLOWED_PENDING_FACTS
+                    .iter()
+                    .any(|(allowed_id, allowed_ticket)| {
+                        *allowed_id == id && *allowed_ticket == ticket
+                    })
+            {
+                pending_seen.insert(id);
+            } else {
+                failures.push(format!(
+                    "{}: {} ignored for {id} by {ticket}, which does not match its authorized pending_ticket",
+                    function.path.display(),
+                    function.name
+                ));
+            }
         } else {
             failures.push(format!(
                 "{}: {} for {id} is not live: {}",
@@ -320,9 +394,14 @@ pub fn run(workspace_root: &Path, arguments: &[OsString]) -> Result<Outcome> {
         }
     }
     let mut output = String::new();
-    for id in &known {
+    for (id, pending_ticket) in &known {
         if let Some(names) = seen.get(id) {
             output.push_str(&format!("{id}: {}\n", names.join(", ")));
+        } else if pending_ticket.is_some() && pending_seen.contains(id) {
+            output.push_str(&format!(
+                "{id}: pending by {}\n",
+                pending_ticket.as_deref().unwrap_or("unknown issue")
+            ));
         } else {
             failures.push(format!("{id}: no live contract test"));
         }
