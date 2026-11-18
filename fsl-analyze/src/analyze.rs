@@ -36,6 +36,7 @@ mod clause_item;
 mod derived_item;
 pub mod document;
 mod exact;
+mod invariant_item;
 mod items;
 mod reduction_item;
 mod request;

@@ -757,6 +757,31 @@ fn work<'a>(
                 None => absent(),
             }
         }
+        // FR-489's tie-break routed an invariant over the request's model
+        // subject to EN-1 (FR-625, FR-951).
+        _ if item.kind == Capability::OperationContract
+            && negotiated
+                .disposition
+                .target()
+                .is_some_and(|backend| backend.id().as_str() == crate::model_check::manifest::BACKEND_ID) =>
+        {
+            let form = match &item.form {
+                Some(ItemForm::Temporal(form)) => form.clone(),
+                Some(ItemForm::Probabilistic(_) | ItemForm::Hybrid(_)) | None => {
+                    TemporalItem::default()
+                }
+            };
+            super::invariant_item::invariant_item(
+                package,
+                binding,
+                *limits,
+                provision,
+                &item.claim,
+                item.request_index,
+                &form,
+            )
+            .unwrap_or_else(absent)
+        }
         None if item.kind == Capability::OperationContract => {
             let selection =
                 fsl_replay::contract_check::select_contract(package, &item.claim).map(|claim| {
