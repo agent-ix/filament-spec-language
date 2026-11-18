@@ -476,13 +476,17 @@ mod tests {
         let (_, parameters) = declaration(&source, "r");
         let member = result.requirements().members()[0].clone();
         let bounds = parameters.iter().cloned().map(bound_at).collect::<Vec<_>>();
+        let assignments = input(parameters[0].clone(), 7)
+            .into_iter()
+            .chain(input(parameters[1].clone(), 0))
+            .collect();
         let wire = result
             .context()
             .request(
                 member.request_index(),
                 &bounds,
                 &plugin(),
-                vec![input(parameters[0].clone(), 7), input(parameters[1].clone(), 0)],
+                assignments,
             )
             .expect("an application item");
         let expected = crate::execute::process_provider_obligation(
