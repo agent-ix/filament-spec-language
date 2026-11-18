@@ -3390,7 +3390,7 @@ fn check_names(
                 | BuiltinType::Rational
                 | BuiltinType::Decimal
                 | BuiltinType::Text
-                | BuiltinType::Option
+                | BuiltinType::Option,
             )
             | TypeFormHead::Collection(_)
             | TypeFormHead::Population

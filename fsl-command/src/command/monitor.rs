@@ -8,7 +8,6 @@ use std::collections::BTreeMap;
 use std::path::{Component, Path};
 
 use filament_exact::Cancel;
-use fsl_analyze::provider::ProviderOptions;
 use fsl_analyze::monitor::{
     MonitorClause, MonitorLimits, MonitorRefusal, SettleTrigger, Settlement,
 };
@@ -16,6 +15,7 @@ use fsl_analyze::monitor_session::{
     ClauseStatus, MonitorObservation, MonitorOpen, MonitorPosition, MonitorSession, MonitorStamp,
     MonitorState, MonitorStep, MonitorTraceKind,
 };
+use fsl_analyze::provider::ProviderOptions;
 use fsl_foundation::diagnostic::StageFailure;
 use fsl_foundation::source::Source;
 use fsl_replay::spine::{
