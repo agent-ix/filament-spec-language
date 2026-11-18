@@ -500,14 +500,14 @@ fn finding_value(
 
 /// The typed cause of an invariant clause evaluation that decided no Boolean.
 fn clause_cause(outcome: &ClauseOutcome) -> Value {
+    if let Some(cause) = outcome.undefined_cause() {
+        return json!({"kind": "undefined-evaluation", "code": fsl_replay::undefined_reason(&cause)});
+    }
     match outcome {
-        ClauseOutcome::KernelUndefined(undefined) => {
-            json!({"kind": "undefined", "reason": format!("{undefined:?}")})
+        ClauseOutcome::KernelUndefined(_) | ClauseOutcome::FamilyUndefined(_) => {
+            json!({"kind": "undefined-evaluation"})
         }
-        ClauseOutcome::KernelRefused(_) => json!({"kind": "refused"}),
-        ClauseOutcome::FamilyUndefined(reason) => {
-            json!({"kind": "undefined", "reason": reason.as_str()})
-        }
+        ClauseOutcome::KernelRefused(refusal) => json!({"kind": "refused", "code": refusal.code()}),
         ClauseOutcome::FamilyRefused(code) => json!({"code": code.code(), "kind": code.cause()}),
         ClauseOutcome::Incomplete(incomplete) => meter_cause(incomplete),
         ClauseOutcome::NotBoolean => json!({"kind": "not-boolean"}),

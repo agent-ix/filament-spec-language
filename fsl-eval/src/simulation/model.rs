@@ -678,7 +678,8 @@ impl<'a> ModelSystem<'a> {
     /// [`Self::typing`] for values alone, which hold no element-count
     /// member: it lives as long as the package.
     pub(crate) fn value_typing(&self) -> encode::Typing<'a> {
-        encode::Typing::with_variants(self.types, self.input.variant_types).with_enums(self.input.enums)
+        encode::Typing::with_variants(self.types, self.input.variant_types)
+            .with_enums(self.input.enums)
     }
 
     /// Check the universes, then admit each initial document in the given
@@ -1750,6 +1751,16 @@ impl TransitionSystem for ModelSystem<'_> {
         constraint: &str,
     ) -> Option<Result<ConstraintValue, ExpansionStop>> {
         Some(self.constraint_value(state, constraint))
+    }
+
+    /// FR-634: the invariant findings of `state` alone, `None` for a package
+    /// declaring no invariant and no member bound.
+    fn state_findings(
+        &self,
+        state: &Self::State,
+    ) -> Option<Result<Vec<Self::Finding>, ExpansionStop>> {
+        (!self.clauses.invariants.is_empty() || !self.member_bounds.is_empty())
+            .then(|| self.invariant_findings(state))
     }
 
     /// FR-162: [`ModelSystem::footprint`], which reads the transition alone.

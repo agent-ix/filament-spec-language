@@ -383,19 +383,17 @@ pub fn enumerate_request<S: TransitionSystem, R: Root>(
     }
     // FR-634 "Invariant findings": the last state of a reported trace is
     // evaluated too, so each state the walk left unexpanded is evaluated for
-    // its findings, charged as an expansion.
+    // its findings alone.
     if matches!(
         end,
         None | Some(EnumerationEnd::MaxSteps | EnumerationEnd::MaxStates)
     ) {
         for (at, state) in horizon.iter().chain(queue.iter()) {
-            if let Err(incomplete) = meter.charge(Charge::new(ChargePoint::GraphExpand)) {
-                end = Some(EnumerationEnd::Meter(incomplete));
-                break;
-            }
-            if let Expanded::Successors { findings, .. } =
-                expand(system, state, identity).map_err(NotSimulated::from)?
-            {
+            // Only the invariants are evaluated, under the evaluator's own
+            // FR-109 budget: no successor is computed or keyed, and nothing
+            // here changes how the walk ended. A stopped evaluation reports
+            // no finding for that state.
+            if let Some(Ok(findings)) = system.state_findings(state) {
                 if let Some(entry) = store.states.get_mut(*at) {
                     entry.findings = findings;
                 }
