@@ -1252,12 +1252,21 @@ fn enabled_sharing_is_recomputed_after_a_guarded_store() {
 /// checking that the item explores (FR-902: a reader loads `relaxed`).
 fn tso_reads(case: &Case, site: &str) -> Vec<(String, String)> {
     let selection = [select("SB::Both", MemoryModelName::Tso)];
-    assert!(explores(case, MemoryModelName::Tso), "{site}");
-    let accesses = case.accesses(&selection);
+    let system = case
+        .system(&selection, Tso::default())
+        .expect("builds under tso");
+    assert!(
+        reachable(&system).iter().any(|state| state
+            .steps
+            .iter()
+            .any(|(step, _)| step.node() == Some(site))),
+        "{site} steps under tso"
+    );
+    let accesses = system.weak_accesses();
     accesses
         .node_reads(site)
         .iter()
-        .map(|location| named(&accesses, location))
+        .map(|location| named(accesses, location))
         .collect()
 }
 
@@ -1270,7 +1279,7 @@ fn tso_reads(case: &Case, site: &str) -> Vec<(String, String)> {
 fn an_effect_commit_send_or_receive_constraint_reads_toward_sharing() {
     let store = attempt("Sx", "w", "Cell::set", "", "IsX, StoreOne");
     let channel = "channel ch from w to w carries Boolean ordering unordered \
-                   delivery unknown capacity 2 overflow block;";
+                   delivery exactly-once-premise capacity 2 overflow block;";
     let cases = [
         (
             "Both/left/L/Eff",
@@ -2848,18 +2857,22 @@ fn tso_forbids_the_weak_outcomes_of_mp_lb_iriw_2_2w_and_corr() {
 }
 
 /// A `send` after a store, beside a branch that receives it and then
-/// loads the stored location.
-fn send_unit() -> String {
+/// loads the stored location, with a third branch independent of the queue.
+/// Each delivery premise bounds the number of fresh delivery identities.
+fn send_unit(delivery: &str) -> String {
     let run = format!(
         "parallel Both {{ branch s sequence Sender {{ {} send Tx via ch as (tx: Boolean) {{ tx }}; }} \
-         branch r sequence Recv {{ receive Rx via ch of s::Sender::Tx as (rx: Boolean) {{ true }}; {} }} }} \
-         join all [s, r];",
+         branch r sequence Recv {{ receive Rx via ch of s::Sender::Tx as (rx: Boolean) {{ true }}; {} }} \
+         branch marker event Mark by c as (marked: Boolean) {{ marked }}; }} \
+         join all [s, r, marker];",
         store("Sx", "x", "StoreOne"),
         load("Lx", "x", 2),
     );
-    let channel = "channel ch from w to w carries Boolean \
-                   ordering unordered delivery unknown capacity 2 overflow block;";
-    contracts() + &protocol_with("SB", channel, &run) + NO_BOTH_ZERO
+    let channel = format!(
+        "channel ch from w to w carries Boolean \
+         ordering unordered delivery {delivery} capacity 2 overflow block;"
+    );
+    contracts() + &protocol_with("SB", &channel, &run) + NO_BOTH_ZERO
 }
 
 /// FR-221-AC-4's `send` half (TC-666): a `send` by a thread whose buffer
@@ -2867,12 +2880,13 @@ fn send_unit() -> String {
 #[trace("TC-666", "FR-221-AC-4")]
 #[test]
 fn a_send_waits_for_its_threads_buffer() {
-    let case = Case::new(&send_unit());
+    let case = Case::new(&send_unit("at-least-once"));
     let tso = [select("SB::Both", MemoryModelName::Tso)];
     let system = case.system(&tso, Tso::default()).expect("builds");
+    let reached = reachable(&system);
+    let sender = ThreadPath::root(0).child("Both", "s", 0);
     let mut waited = 0;
-    for state in reachable(&system) {
-        let sender = ThreadPath::root(0).child("Both", "s", 0);
+    for state in &reached {
         let buffered = !state
             .state
             .memory()
@@ -2900,13 +2914,11 @@ fn a_send_waits_for_its_threads_buffer() {
                 .find(|(transition, _)| transition.memory_step().is_some())
                 .map(|(_, next)| *next)
                 .expect("a flush");
-            let after = &reachable(&system)[flushed];
-            assert!(
-                after
-                    .steps
-                    .iter()
-                    .any(|(transition, _)| transition.kind() == StepKind::Send)
-            );
+            let after = &reached[flushed];
+            assert!(after
+                .steps
+                .iter()
+                .any(|(transition, _)| transition.kind() == StepKind::Send));
         }
     }
     assert!(waited > 0);
@@ -3037,7 +3049,8 @@ fn every_independent_pair_of_tso_steps_commutes() {
         (sb_unit(&sb_run("", "release", "acquire")), "SB::Both"),
         (contracts() + &protocol("SB", &fifo), "SB::Both"),
         (contracts() + &protocol("SB", &mp), "SB::Main::Both"),
-        (send_unit(), "SB::Both"),
+        (send_unit("at-most-once"), "SB::Both"),
+        (send_unit("at-least-once"), "SB::Both"),
         (sb_unit(&fenced_sb("seq_cst", "acquire")), "SB::Both"),
         // A replicated role's event, `spawn` and `finish` beside the
         // `parallel`'s stores and flushes (ADR-027 RR-2, FT-1).
@@ -3055,32 +3068,24 @@ fn every_independent_pair_of_tso_steps_commutes() {
             "SB::Main::Both",
         ),
     ];
-    let mut flushes = 0;
+    let mut paired_kinds = BTreeSet::new();
     for (body, parallel) in &units {
         let case = Case::new(body);
         let system = case
             .system(&[select(parallel, MemoryModelName::Tso)], Tso::default())
             .expect("builds");
         let reached = reachable(&system);
-        assert!(
-            crate::protocol_footprints::assert_independent_steps_commute(&system, &reached) > 0,
-            "{body}"
-        );
-        for state in &reached {
-            for (first, _) in &state.steps {
-                for (second, _) in &state.steps {
-                    if first.memory_step().is_some() && second.memory_step().is_none() {
-                        let left = system.footprint(&state.state, first).expect("a footprint");
-                        let right = system.footprint(&state.state, second).expect("a footprint");
-                        if independent(&left, &right) {
-                            flushes += 1;
-                        }
-                    }
-                }
+        let pairs = crate::protocol_footprints::commuting_pairs(&system, &reached);
+        assert!(!pairs.is_empty(), "{body}");
+        for (first, second) in pairs {
+            if first != second {
+                paired_kinds.extend([first, second]);
             }
         }
     }
-    assert!(flushes > 0);
+    for kind in [StepKind::Memory, StepKind::Lose, StepKind::Duplicate] {
+        assert!(paired_kinds.contains(&kind), "no independent pair with {kind:?}");
+    }
 }
 
 /// SR-12239 FND-001 (FR-225, ADR-025 MB-4; TC-670): the closure checker
