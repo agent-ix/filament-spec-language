@@ -210,6 +210,12 @@ impl ReferenceBindings {
             }
         }
 
+        // The package graph can contain literals for several selected model
+        // aliases. A subject binds only literals whose type its admitted
+        // model declares; model-independent clause admission handles the
+        // remaining cases.
+        literals.retain(|literal| model.type_key(literal.object_type.clone()).is_some());
+        barred.retain(|literal| literals.contains(literal));
         Ok(Self(resolve_literals(
             literals,
             &barred,
