@@ -6,22 +6,22 @@
 
 use filament_semantic_value::catalog::CatalogCode;
 use fsl_eval::model_subject::ModelInstance;
-use fsl_eval::simulation::model::{ClauseOutcome, DEFAULT_MAX_CLOCKS, ModelSystem};
+use fsl_eval::simulation::model::{ClauseOutcome, ModelSystem, DEFAULT_MAX_CLOCKS};
 use fsl_eval::simulation::protocol::{ProtocolRefusal, ProtocolTransition};
-use fsl_foundation::RequestIndex;
 use fsl_foundation::source::provenance::OccurrenceKey;
+use fsl_foundation::RequestIndex;
 use fsl_package::CheckedPackage;
-use fsl_replay::statistical::{SubjectLimits, settle_statistical, settle_statistical_refusal};
+use fsl_replay::statistical::{settle_statistical, settle_statistical_refusal, SubjectLimits};
 use fsl_replay::{
-    CertificateCheckLimits, CertificateRequest, DeclineCode, ModelTraceRefusal,
-    ModelTraceReplayResult, ProofRefusalCause, RefinementTraceSettlement, ReplayRefusal,
-    SubjectRefusal, TemporalCounterexample, TerminalValue, UnavailabilityCause,
-    ZoneCertificateRequest, check_zone_certificate, settle_hyper_form,
+    check_zone_certificate, settle_hyper_form, CertificateCheckLimits, CertificateRequest,
+    DeclineCode, ModelTraceRefusal, ModelTraceReplayResult, ProofRefusalCause,
+    RefinementTraceSettlement, ReplayRefusal, SubjectRefusal, TemporalCounterexample,
+    TerminalValue, UnavailabilityCause, ZoneCertificateRequest,
 };
 use fsl_replay::{ModelCheckItem, ModelCheckLimits, ProtocolCertificateRequest, SubjectIdentity};
-use fsl_route::Mode;
 use fsl_route::deadlock::{ItemObligation, ObligationKind};
 use fsl_route::request::{DerivedLimit, DerivedLimits, ItemKind, RequestItem, RequirementItem};
+use fsl_route::Mode;
 use fsl_semantics::check::{
     Capability, CheckedTemporalClause, DeclarationFamily, HyperForm, TerminalKeys, TerminalMismatch,
 };
@@ -33,14 +33,14 @@ use filament_exact::{Cancel, ObjectReference, ValueType};
 use super::{AnalyzeItem, EngineReport, Refusal};
 use crate::claim_family::{claim_family, kind_family};
 use crate::model_check::{
-    HyperRefusal, LivenessRefusal, ModelCheckRefusal, ModelCheckRequest, ProtocolCheckRequest,
-    check_model, check_protocol_constrained, manifest as en1,
+    check_model, check_protocol_constrained, manifest as en1, HyperRefusal, LivenessRefusal,
+    ModelCheckRefusal, ModelCheckRequest, ProtocolCheckRequest,
 };
-use crate::statistical::{StatisticalRequest, check_statistical, manifest as en4};
+use crate::statistical::{check_statistical, manifest as en4, StatisticalRequest};
 use crate::zone_check::{
-    TimedRefinementRefusal, TimedRefinementRequest, ZoneCheckItem, ZoneCheckLimits,
-    ZoneCheckRefusal, ZoneCheckRequest, ZoneItem, certificate_item, check_timed_model,
-    check_timed_refinement, manifest as en6, settle_timed_refinement, settle_zone_check,
+    certificate_item, check_timed_model, check_timed_refinement, manifest as en6,
+    settle_timed_refinement, settle_zone_check, TimedRefinementRefusal, TimedRefinementRequest,
+    ZoneCheckItem, ZoneCheckLimits, ZoneCheckRefusal, ZoneCheckRequest, ZoneItem,
 };
 
 /// The FR-396/FR-399 negotiation seam for a routed hyper item. HP-4 calls
@@ -506,9 +506,7 @@ pub enum DerivedItemMismatch {
     /// A derived item's run handed to [`model_item`], [`protocol_item`] or
     /// [`zone_item`], which settle it with no join to its request item: a
     /// derived item settles only through its derived adapter (FR-411).
-    #[error(
-        "request item {index:?}'s run is a derived item's; it settles only through its derived adapter"
-    )]
+    #[error("request item {index:?}'s run is a derived item's; it settles only through its derived adapter")]
     DerivedRun {
         /// The request item's index.
         index: RequestIndex,
@@ -517,9 +515,7 @@ pub enum DerivedItemMismatch {
     /// `model_root` anchor equal to the derived request item's claim, the
     /// node of its obligation identity (FSpec FR-368, ADR-013 O-09): the
     /// run answers another subject's item.
-    #[error(
-        "stale_dependency/content-mismatch: no model_root of the run's package anchors request item {index:?} at {occurrence}"
-    )]
+    #[error("stale_dependency/content-mismatch: no model_root of the run's package anchors request item {index:?} at {occurrence}")]
     OtherAnchor {
         /// The request item's index.
         index: RequestIndex,
@@ -777,7 +773,7 @@ pub fn derived_protocol_item<'a, S>(
         ItemKind::DeadlockFreedom => |run| matches!(run, ModelCheckItem::DeadlockFreedom),
         ItemKind::RaceFreedom => |run| matches!(run, ModelCheckItem::RaceFreedom),
         ItemKind::Formula | ItemKind::TimeLockFreedom | ItemKind::Refinement => {
-            return Err(DerivedItemMismatch::NotDerived { index });
+            return Err(DerivedItemMismatch::NotDerived { index })
         }
     };
     let models = match (&obligation.kind, kind) {
@@ -860,7 +856,7 @@ pub fn derived_zone_item<'a, S: Clone + Eq + 'a>(
                 && item.request.obligation.kind == ObligationKind::TimeLockFreedom
         }
         ItemKind::Formula | ItemKind::RaceFreedom | ItemKind::Refinement => {
-            return Err(DerivedItemMismatch::NotDerived { index });
+            return Err(DerivedItemMismatch::NotDerived { index })
         }
     };
     if !runs {
@@ -1254,7 +1250,9 @@ mod tests {
     #[test]
     fn admission_preserves_reference_literal_type_and_key_details() {
         let mut admission_record = record(Code::IllTyped, "operator-ineligible");
-        admission_record.fields.insert("type", "Counter".to_owned());
+        admission_record
+            .fields
+            .insert("type", "Counter".to_owned());
         admission_record.fields.insert("key", "62".to_owned());
         let failure = AdmissionFailure::Refused(Box::new(admission_record));
         let Refusal::DeclinedWithDetail(_, _, diagnostic, details) = admission(&failure) else {
