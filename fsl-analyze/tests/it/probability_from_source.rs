@@ -88,6 +88,8 @@ fn statistical_items_settle_measured_from_source() {
         };
         let one = run(&format!("stat-{method}-1"), claim, item(1));
         let four = run(&format!("stat-{method}-4"), claim, item(4));
+        assert!(one["items"][0].is_object(), "{one}");
+        assert!(four["items"][0].is_object(), "{four}");
         let first = &one["items"][0];
         assert_eq!(label(first), "measured", "{first}");
         assert_eq!(
