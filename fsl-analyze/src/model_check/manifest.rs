@@ -22,7 +22,7 @@ use fsl_route::{
 use fsl_semantics::check::Capability;
 
 /// EN-1's backend identity, the identity its terminal records name.
-pub const BACKEND_ID: &str = "en-1";
+pub const BACKEND_ID: &str = fsl_route::tie::EN1;
 
 /// The (kind, mode) pairs EN-1 advertises: both temporal extent modes, for
 /// `temporal-satisfaction` and for an invariant's `operation-contract`.
