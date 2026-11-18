@@ -101,7 +101,8 @@ fn superseded_fr982_ac4_unbounded_always_fixture_refuses_missing_interval() {
 #[trace("TC-2777", "FR-982-AC-4", "FSpec-TC-1901", "FSpec-FR-784-AC-3")]
 #[test]
 fn a_parenthesized_threshold_is_typed_against_the_aggregate() {
-    let cases: [(&str, fn(&str) -> String, &str); 2] = [
+    type Case<'a> = (&'a str, fn(&str) -> String, &'a str);
+    let cases: [Case<'_>; 2] = [
         (EVENTS, clause, "past[0,1]"),
         (TIMESTAMPED, timestamped_clause, "past[0 ms, 1000 ms]"),
     ];

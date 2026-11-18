@@ -131,7 +131,7 @@ pub(crate) fn unrepresented(
         FormsCause::UnrepresentedConstruct {
             production,
             construct,
-            text,
+            text: text.into(),
             declaration: None,
             profile: None,
         },

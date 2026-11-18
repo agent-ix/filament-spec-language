@@ -2713,14 +2713,14 @@ impl<'a> Typer<'a> {
     /// type checks.
     fn accept_index<'e, 'r>(
         &mut self,
-        frame: Box<IndexFrame<'e>>,
+        frame: IndexFrame<'e>,
         source: Node,
         frames: &mut Vec<Frame<'e, 'r>>,
     ) -> Result<Step<'e, 'r>, CheckRefusal>
     where
         'a: 'r,
     {
-        let IndexFrame { index, location } = *frame;
+        let IndexFrame { index, location } = frame;
         match &source.value_type {
             ValueType::Composite(declaration) => {
                 let positions =
@@ -2843,7 +2843,7 @@ impl<'a> Typer<'a> {
             Frame::Field(field, member_span, location) => self
                 .field(typed, field, member_span, &location)
                 .map(Step::Typed),
-            Frame::Index(frame) => self.accept_index(frame, typed, frames),
+            Frame::Index(frame) => self.accept_index(*frame, typed, frames),
             Frame::IndexKey(location) => Err(refuse(
                 &location,
                 CheckCause::UnsupportedFeature {

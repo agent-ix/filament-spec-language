@@ -127,7 +127,7 @@ pub struct FrontEndFailurePayload {
     /// Independent protocol results reached before the refusing stage ended.
     pub protocol_results: Vec<super::ProtocolResult>,
     /// Parse report retained when S1 and S2 completed before an S2 refusal.
-    pub parsed: Option<ParseReport>,
+    pub parsed: Option<Box<ParseReport>>,
 }
 
 /// FR-663's report of a completed S1 parse, including a later S2 refusal.
@@ -185,7 +185,7 @@ pub enum ProfileCheckFailure {
 struct StageError {
     refusal: Box<CompileRefusal>,
     protocol_results: Option<Vec<super::ProtocolResult>>,
-    parsed: Option<ParseReport>,
+    parsed: Option<Box<ParseReport>>,
 }
 
 #[derive(Clone, Debug)]
@@ -276,7 +276,7 @@ impl StageError {
     }
 
     fn with_parsed_report(mut self, parsed: ParseReport) -> Self {
-        self.parsed = Some(parsed);
+        self.parsed = Some(Box::new(parsed));
         self
     }
 }
@@ -1802,6 +1802,7 @@ pub fn check_with_profile_catalog(
 
 /// S3 and S4 with the caller's exact profile-definition registry and
 /// per-source refinement and clock inputs.
+#[allow(clippy::too_many_arguments)]
 pub fn check_with_profile_catalog_and_inputs(
     parsed: &ParsedUnitSource,
     package_name: String,
@@ -3607,6 +3608,7 @@ pub(crate) fn compose(
 /// [`compose`] with every function body checked under `check_mode` (`None`
 /// is `Linked`), the way a `Kernel` package is produced.
 #[cfg(test)]
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn compose_in_mode(
     source: SourceIdentity,
     path: &str,

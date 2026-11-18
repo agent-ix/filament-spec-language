@@ -1326,6 +1326,7 @@ impl ReadIdentityRows {
     /// one-for-one with `source_objects` and with each object's members. These
     /// checked facts supply the FR-531 original member identity and type data
     /// that [`SelectedSourceObjectRow`] does not retain.
+    #[allow(clippy::too_many_arguments)]
     pub fn of_rows_with_source_rows(
         package: &CheckedPackageV2,
         declarations: Vec<SelectedExactDeclarationRow>,

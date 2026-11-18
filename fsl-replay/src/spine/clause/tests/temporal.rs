@@ -4557,7 +4557,7 @@ fn valid_temporal_reports_have_no_witness_item_member() {
 
     for run in [&held, &pending, &pending_window, &undefined] {
         assert!(run.witness.is_none());
-        let item = item_json("V", &run);
+        let item = item_json("V", run);
         assert!(item.get("witness").is_none());
     }
     for run in [&held, &pending] {

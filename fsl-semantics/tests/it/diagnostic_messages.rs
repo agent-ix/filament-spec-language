@@ -45,8 +45,8 @@ fn arithmetic_type_mismatch_retains_operator_and_operand_types() {
         refusals[0].cause,
         CheckCause::OperandTypeMismatch {
             operator: BinaryOperator::Add,
-            left_type: filament_exact::ValueType::Integer,
-            right_type: filament_exact::ValueType::String,
+            left_type: Box::new(filament_exact::ValueType::Integer),
+            right_type: Box::new(filament_exact::ValueType::String),
         }
     );
 }

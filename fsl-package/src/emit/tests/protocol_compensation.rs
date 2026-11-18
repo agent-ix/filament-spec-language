@@ -89,21 +89,26 @@ fn emitted_text(unit: &str) -> Result<(Emission, Value, Read), Vec<CheckRefusal>
             })
         })
     }));
-    selections.extend(graph.temporal_clauses().iter().filter_map(|temporal| {
-        matches!(
-            temporal.clause().profile(),
-            fsl_semantics::check::TemporalProfile::EventPositionFalseExtension
-                | fsl_semantics::check::TemporalProfile::FixedSampleFalseExtension
-                | fsl_semantics::check::TemporalProfile::TimestampedEventFiniteWindow
-        )
-        .then(|| {
-            crate::emit::TemporalClockSelection::new(
-                graph.source().clone(),
-                temporal.clause().span(),
-                clock.clone(),
-            )
-        })
-    }));
+    selections.extend(
+        graph
+            .temporal_clauses()
+            .iter()
+            .filter(|temporal| {
+                matches!(
+                    temporal.clause().profile(),
+                    fsl_semantics::check::TemporalProfile::EventPositionFalseExtension
+                        | fsl_semantics::check::TemporalProfile::FixedSampleFalseExtension
+                        | fsl_semantics::check::TemporalProfile::TimestampedEventFiniteWindow
+                )
+            })
+            .map(|temporal| {
+                crate::emit::TemporalClockSelection::new(
+                    graph.source().clone(),
+                    temporal.clause().span(),
+                    clock.clone(),
+                )
+            }),
+    );
     let emission = crate::emit::emit_checked_with_temporal_selections(
         &CheckedPackage::link(graph),
         &selections,
@@ -277,21 +282,26 @@ fn a_missing_await_clock_names_the_await() {
             )
         })
         .collect::<Vec<_>>();
-    selections.extend(graph.temporal_clauses().iter().filter_map(|temporal| {
-        matches!(
-            temporal.clause().profile(),
-            fsl_semantics::check::TemporalProfile::EventPositionFalseExtension
-                | fsl_semantics::check::TemporalProfile::FixedSampleFalseExtension
-                | fsl_semantics::check::TemporalProfile::TimestampedEventFiniteWindow
-        )
-        .then(|| {
-            crate::emit::TemporalClockSelection::new(
-                graph.source().clone(),
-                temporal.clause().span(),
-                clock.clone(),
-            )
-        })
-    }));
+    selections.extend(
+        graph
+            .temporal_clauses()
+            .iter()
+            .filter(|temporal| {
+                matches!(
+                    temporal.clause().profile(),
+                    fsl_semantics::check::TemporalProfile::EventPositionFalseExtension
+                        | fsl_semantics::check::TemporalProfile::FixedSampleFalseExtension
+                        | fsl_semantics::check::TemporalProfile::TimestampedEventFiniteWindow
+                )
+            })
+            .map(|temporal| {
+                crate::emit::TemporalClockSelection::new(
+                    graph.source().clone(),
+                    temporal.clause().span(),
+                    clock.clone(),
+                )
+            }),
+    );
     let refusal = crate::emit::emit_checked_with_temporal_selections(
         &CheckedPackage::link(graph),
         &selections,

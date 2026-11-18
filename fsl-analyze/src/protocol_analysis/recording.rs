@@ -1356,12 +1356,6 @@ fn assess_obligations(
                 };
                 if policy_holds == Some(true) {
                     (RecordingVerdict::Satisfied, None, Vec::new())
-                } else if policy_holds == Some(false) && closure_closed {
-                    (
-                        RecordingVerdict::Violated,
-                        Some(RecordingCause::Missing),
-                        Vec::new(),
-                    )
                 } else if closure_closed {
                     (
                         RecordingVerdict::Violated,
@@ -2229,7 +2223,7 @@ fn correlation_matches(
     send: &Observation,
     receive: &Observation,
 ) -> bool {
-    let same_message = send.keys.get("message").is_some()
+    let same_message = send.keys.contains_key("message")
         && send.keys.get("message") == receive.keys.get("message");
     let same_instance = send.instance.is_some() && send.instance == receive.instance;
     let send_channel = channel_for_send(protocol, send);

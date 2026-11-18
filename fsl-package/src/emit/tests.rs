@@ -3834,9 +3834,9 @@ fn e4_refuses_a_conflicting_diamond() {
         matches!(
             &unplaced,
             crate::LinkRefusal::DependencyEmission {
-                refusal: Some(EmitRefusal::UnlocatedOccurrence { .. }),
+                refusal: Some(refusal),
                 ..
-            }
+            } if matches!(**refusal, EmitRefusal::UnlocatedOccurrence { .. })
         ),
         "{unplaced:?}"
     );

@@ -127,12 +127,12 @@ fn assert_region_locus(diagnostic: &OutcomeDiagnostic, start: usize, end: usize)
 }
 
 fn temporal_unit() -> String {
-    format!(
+    String::from(
         "language \"ix:native\" edition \"1-draft\";\n\
          profile v = \"filament.model.complete/v1\";\n\
          profile t = \"filament.temporal.event-position.false-extension/v1\";\n\
          model Config = \"example/config-version\";\n\
-         temporal Due using t over (c: Config::ConfigVersion) clock \"model-steps\" on origin {{ eventually[0,1] holds(c.versionNumber <= 1) }}\n"
+         temporal Due using t over (c: Config::ConfigVersion) clock \"model-steps\" on origin { eventually[0,1] holds(c.versionNumber <= 1) }\n"
     )
 }
 

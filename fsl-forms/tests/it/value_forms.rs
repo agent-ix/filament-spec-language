@@ -290,7 +290,7 @@ fn show(expression: ExprRef<'_>) -> String {
 #[test]
 fn tuple_and_map_index_forms_preserve_operand_and_index() {
     for expression in ["p[0]", "m[k]"] {
-        let (text, function) = body(&format!("{expression}"));
+        let (text, function) = body(expression);
         let root = function.body.root();
         let ExprNode::Index { operand, index } = root.node() else {
             panic!("{expression} did not build as an index: {:?}", root.node());

@@ -64,8 +64,8 @@ fn guarded_integer_division_in_and_or_and_implies_compiles_and_runs() {
             let program = format!(
                 "{HEADER}function {function} using v(x: Int[0, 9], y: Int[0, 9]): Boolean pure {{ {guarded} x {operator} y = {expected} }}\n"
             );
-            assert_boolean(&directory.path(), &program, &function, 7, 0, zero_value);
-            assert_boolean(&directory.path(), &program, &function, 7, 2, true);
+            assert_boolean(directory.path(), &program, &function, 7, 0, zero_value);
+            assert_boolean(directory.path(), &program, &function, 7, 2, true);
         }
     }
 }

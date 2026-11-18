@@ -686,6 +686,7 @@ impl World {
         )
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn assemble_with_mode(
         vault: Vault,
         reset: bool,

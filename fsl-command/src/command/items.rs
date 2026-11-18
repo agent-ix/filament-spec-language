@@ -11,7 +11,7 @@ use std::path::Path;
 const FORMAT: &str = "native-run-items/1";
 
 enum ItemExecution {
-    Run(Result<RunResult>),
+    Run(Box<Result<RunResult>>),
     Batch {
         selection: Option<Box<fsl_replay::spine::ProgramBatchSelection>>,
         call_output: Option<CallOutput>,
@@ -529,13 +529,15 @@ pub(super) fn run_bytes(
                     fsl_replay::spine::ProgramBatchItemResult::Clause(report),
                     None,
                     Some(selection),
-                ) => ItemExecution::Run(super::output::clause_report(*report, &selection)),
+                ) => {
+                    ItemExecution::Run(Box::new(super::output::clause_report(*report, &selection)))
+                }
                 (
                     fsl_replay::spine::ProgramBatchItemResult::Call(result),
                     Some(call_output),
                     None,
-                ) => {
-                    ItemExecution::Run(result.map_err(RunCause::SpineRun).and_then(|batch_call| {
+                ) => ItemExecution::Run(Box::new(result.map_err(RunCause::SpineRun).and_then(
+                    |batch_call| {
                         let settled = match (call_output.requirements, batch_call.requirements) {
                             (Some(selection), Some(requirements)) => {
                                 Some(super::settle::settle_call(
@@ -555,8 +557,8 @@ pub(super) fn run_bytes(
                             batch_call.outcome,
                             settled,
                         )
-                    }))
-                }
+                    },
+                ))),
                 (
                     fsl_replay::spine::ProgramBatchItemResult::ValueInvariants(result),
                     None,
@@ -569,9 +571,10 @@ pub(super) fn run_bytes(
     }
 
     if let Some(result) = prepared.iter().find_map(|(_, _, item)| match item {
-        ItemExecution::Run(Ok(result)) if is_compile_refusal(result.value.as_value()) => {
-            Some(result)
-        }
+        ItemExecution::Run(run) => match run.as_ref() {
+            Ok(result) if is_compile_refusal(result.value.as_value()) => Some(result),
+            _ => None,
+        },
         _ => None,
     }) {
         return Err(RunCause::ClauseRequest {
@@ -630,7 +633,7 @@ pub(super) fn run_bytes(
                     (value, error.category().exit_code())
                 }
             },
-            ItemExecution::Run(result) => match result {
+            ItemExecution::Run(result) => match *result {
                 Ok(result) if is_internal_item_failure(&result) => {
                     return Err(RunCause::ItemsFault);
                 }

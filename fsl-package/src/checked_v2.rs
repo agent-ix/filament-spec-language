@@ -919,7 +919,7 @@ pub enum ImportViewRefusal {
         /// The library identity of the package that did not emit.
         package: LibraryName,
         /// The emitter's refusal, or `None` when the emission omits nodes.
-        refusal: Option<EmitRefusal>,
+        refusal: Option<Box<EmitRefusal>>,
     },
     /// A closure entry names a library no package of the closure has.
     /// A broken invariant of `CheckedPackage::link_with`, which records
@@ -1038,7 +1038,7 @@ pub fn read_evaluation_package<'package>(
 ) -> Result<AdmittedPackageRead<'package>, ImportViewRefusal> {
     let emission = emit_checked(package, emit).map_err(|refusal| ImportViewRefusal::Emission {
         package: identity.clone(),
-        refusal: Some(refusal),
+        refusal: Some(Box::new(refusal)),
     })?;
     read_evaluation_emission(
         package,
@@ -1501,7 +1501,7 @@ impl ClosureReader<'_> {
         let emission =
             emit_checked(package, self.emit).map_err(|refusal| ImportViewRefusal::Emission {
                 package: identity.clone(),
-                refusal: Some(refusal),
+                refusal: Some(Box::new(refusal)),
             })?;
         self.read_emitted(package, &emission, identity)
     }

@@ -311,8 +311,8 @@ impl FamilyContract for StateModelFamily {
                                                 .rsplit('/')
                                                 .next()
                                                 .unwrap_or(object.original().node())
-                                                .to_owned(),
-                                            field: field.clone(),
+                                                .into(),
+                                            field: field.as_str().into(),
                                             span: *member_span,
                                         },
                                     ),

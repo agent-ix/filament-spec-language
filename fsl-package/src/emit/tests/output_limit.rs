@@ -38,10 +38,12 @@ fn nested_not_package(depth: usize) -> CheckedPackage {
     }
     source.push_str("true }\n");
 
-    let mut source_limits = fsl_cst::Limits::default();
-    source_limits.source_bytes = source.len();
-    source_limits.tokens = source.len();
-    source_limits.nodes = source.len().saturating_mul(16);
+    let source_limits = fsl_cst::Limits {
+        source_bytes: source.len(),
+        tokens: source.len(),
+        nodes: source.len().saturating_mul(16),
+        ..fsl_cst::Limits::default()
+    };
     let parsed = fsl_cst::parse(
         fsl_foundation::SourceIdentity::new("test", "nested-not.native"),
         "nested-not.native",
@@ -158,7 +160,7 @@ fn a_link_refuses_a_dependency_whose_emission_exceeds_the_ceiling() {
         panic!("expected a dependency emission refusal, got {refused:?}");
     };
     assert_eq!(identity, lib("test/units"));
-    let limit = limit_of(refusal);
+    let limit = limit_of(*refusal);
     assert_eq!(limit.configured_bound(), 1);
     CheckedPackage::link_with(
         root_graph(),

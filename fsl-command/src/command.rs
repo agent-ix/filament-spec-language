@@ -273,7 +273,8 @@ pub fn check_outcome(source_path: &Path, inputs: &CheckInputs) -> CheckOutcome {
     let result = check_outcome_inner(source_path, inputs);
     match result {
         Ok((document, sources)) => CheckOutcome { document, sources },
-        Err((cause, sources)) => {
+        Err(failure) => {
+            let (cause, sources) = *failure;
             let document = RunError {
                 cause,
                 sources: sources.clone(),
@@ -287,8 +288,10 @@ pub fn check_outcome(source_path: &Path, inputs: &CheckInputs) -> CheckOutcome {
 fn check_outcome_inner(
     source_path: &Path,
     inputs: &CheckInputs,
-) -> std::result::Result<(fsl_replay::OutcomeDocument, crate::Sources), (RunCause, crate::Sources)>
-{
+) -> std::result::Result<
+    (fsl_replay::OutcomeDocument, crate::Sources),
+    Box<(RunCause, crate::Sources)>,
+> {
     let mut intake = intake_with_bytes(
         Path::new("."),
         FileCounts {
@@ -299,7 +302,7 @@ fn check_outcome_inner(
         },
         inputs.dependent_bytes,
     )
-    .map_err(|cause| (cause, crate::Sources::default()))?;
+    .map_err(|cause| Box::new((cause, crate::Sources::default())))?;
     let run = (|| -> Result<fsl_replay::OutcomeDocument> {
         validate_check_selections(&inputs.models, "--model")?;
         validate_check_selections(&inputs.libraries, "--library")?;
@@ -446,7 +449,7 @@ fn check_outcome_inner(
     })();
     let sources = crate::Sources::from_sources(intake.sources);
     run.map(|document| (document, sources.clone()))
-        .map_err(|cause| (cause, sources))
+        .map_err(|cause| Box::new((cause, sources)))
 }
 
 fn check_missing_model_help(
@@ -2271,6 +2274,7 @@ fn handoff_clock_selections(
 /// The pipeline of [`complete_sources`] through S4: the checked unit is
 /// handed to `finish` with the admitted domain packages, the library
 /// sources and the map from a spine failure to its located cause.
+#[allow(clippy::too_many_arguments)]
 fn check_sources<T>(
     request: &wire::CompileRequest,
     intake: &mut Intake<'_>,

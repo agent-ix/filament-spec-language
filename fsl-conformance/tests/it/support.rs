@@ -25,7 +25,7 @@ pub fn outcome_of(verb: Verb, kind: OutcomeKind) -> CaseOutcome {
 /// The document of an outcome that is one.
 pub fn document(outcome: &CaseOutcome) -> &OutcomeDocument {
     match outcome.report() {
-        Report::Document(document) => document,
+        Report::Document(document) => document.as_ref(),
         Report::Item(item) => panic!("expected a document, got the item {item:?}"),
     }
 }

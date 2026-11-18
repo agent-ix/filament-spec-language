@@ -364,7 +364,7 @@ impl Candidate {
                 owner,
                 cases: [self.a.case, self.b.case],
                 paths: [self.a.path, self.b.path],
-                actions: [self.a.action, self.b.action],
+                actions: Box::new([self.a.action, self.b.action]),
             },
             separating_witness,
         })
@@ -504,15 +504,12 @@ fn witness(
         .events()
         .iter()
         .filter_map(|event| match &event.kind {
-            GlobalEventKind::Control { operation, .. }
-                if matches!(
-                    operation,
+            GlobalEventKind::Control {
+                operation:
                     fsl_package::protocol_view::ControlOperation::Check
-                        | fsl_package::protocol_view::ControlOperation::Fence
-                ) =>
-            {
-                Some(event.at.clone())
-            }
+                    | fsl_package::protocol_view::ControlOperation::Fence,
+                ..
+            } => Some(event.at.clone()),
             _ => None,
         })
         .collect();

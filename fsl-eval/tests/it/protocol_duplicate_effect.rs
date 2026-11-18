@@ -221,9 +221,7 @@ fn duplicate_then_effect(
                     duplicated = true;
                 }
                 StepKind::Receive => {
-                    let Some(delivery) = transition.delivery().cloned() else {
-                        return None;
-                    };
+                    let delivery = transition.delivery().cloned()?;
                     if Some(delivery.message()) != message.as_ref() {
                         continue;
                     }

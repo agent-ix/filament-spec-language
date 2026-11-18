@@ -479,15 +479,15 @@ pub enum FormsCause {
     /// A declaration's leading token has no entry in the dispatch table.
     NoDispatchEntry {
         /// The leading token's spelling.
-        spelling: String,
+        spelling: Box<str>,
         /// The closed construct kind.
         construct: ConstructKind,
         /// The bounded source text that names the construct.
-        text: String,
+        text: Box<str>,
         /// The owning declaration, when it has a name.
-        declaration: Option<String>,
+        declaration: Option<Box<str>>,
         /// The selected profile identity, when present.
-        profile: Option<String>,
+        profile: Option<Box<str>>,
     },
     /// A construct no family's `Expression` variant represents (FR-091
     /// "Expression mapping").
@@ -497,11 +497,11 @@ pub enum FormsCause {
         /// The closed construct kind.
         construct: ConstructKind,
         /// The bounded source text that names the construct.
-        text: String,
+        text: Box<str>,
         /// The owning declaration, when it has a name.
-        declaration: Option<String>,
+        declaration: Option<Box<str>>,
         /// The selected profile identity, when present.
-        profile: Option<String>,
+        profile: Option<Box<str>>,
     },
     /// The CST does not have the shape its production's grammar rule
     /// gives it: a broken invariant between `fsl-cst` and this stage, never
@@ -694,9 +694,9 @@ pub fn build_unit_with_protocol_results(
             let refusal = with_declaration_context(
                 FormsRefusal::at(
                     FormsCause::NoDispatchEntry {
-                        spelling: String::from_utf8_lossy(spelling).into_owned(),
+                        spelling: String::from_utf8_lossy(spelling).into(),
                         construct: ConstructKind::Declaration,
-                        text: bounded_text(&String::from_utf8_lossy(spelling)),
+                        text: bounded_text(&String::from_utf8_lossy(spelling)).into(),
                         declaration: None,
                         profile: None,
                     },
@@ -799,9 +799,9 @@ fn build_forms(
             return Err(with_declaration_context(
                 FormsRefusal::at(
                     FormsCause::NoDispatchEntry {
-                        spelling: String::from_utf8_lossy(spelling).into_owned(),
+                        spelling: String::from_utf8_lossy(spelling).into(),
                         construct: ConstructKind::Declaration,
-                        text: bounded_text(&String::from_utf8_lossy(spelling)),
+                        text: bounded_text(&String::from_utf8_lossy(spelling)).into(),
                         declaration: None,
                         profile: None,
                     },
@@ -840,7 +840,7 @@ fn with_declaration_context(
         .filter(|token| token.kind() == TokenKind::Identifier)
         .filter_map(|token| std::str::from_utf8(token.spelling()).ok())
         .next()
-        .map(str::to_owned);
+        .map(Box::from);
     let mut after_using = false;
     let profile_alias = tokens.iter().find_map(|token| {
         if after_using && token.kind() == TokenKind::Identifier {
@@ -854,7 +854,7 @@ fn with_declaration_context(
             .profiles
             .iter()
             .find(|selection| selection.alias == alias)
-            .map(|selection| selection.identity.clone())
+            .map(|selection| selection.identity.as_str().into())
     });
     match &mut refusal.cause {
         FormsCause::NoDispatchEntry {
@@ -1373,7 +1373,7 @@ mod tests {
         let failure = build(&cst).expect_err("no entry matches \"unclaimed\"");
         assert!(matches!(
             cause(failure),
-            FormsCause::NoDispatchEntry { spelling, .. } if spelling == "unclaimed"
+            FormsCause::NoDispatchEntry { spelling, .. } if spelling.as_ref() == "unclaimed"
         ));
     }
 }

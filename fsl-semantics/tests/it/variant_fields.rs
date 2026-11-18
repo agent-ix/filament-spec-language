@@ -938,8 +938,8 @@ fn unknown_record_and_model_fields_name_their_owner_and_keep_type_mismatches() {
     assert_eq!(
         record.cause,
         CheckCause::UnknownField {
-            owner: "Config::Settings".to_owned(),
-            field: "paid".to_owned(),
+            owner: "Config::Settings".into(),
+            field: "paid".into(),
             span: Some(fsl_foundation::Span {
                 start: record_start,
                 end: record_start + "paid".len(),
@@ -957,7 +957,7 @@ fn unknown_record_and_model_fields_name_their_owner_and_keep_type_mismatches() {
             &object.cause,
             CheckCause::StateModel(cause)
                 if matches!(&cause.cause, CheckCause::UnknownField { owner, field, span }
-                    if owner == "Account" && field == "paid"
+                    if &**owner == "Account" && &**field == "paid"
                         && *span == Some(fsl_foundation::Span {
                             start: model_start,
                             end: model_start + "paid".len(),

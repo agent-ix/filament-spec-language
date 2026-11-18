@@ -1106,9 +1106,9 @@ pub(crate) enum EngineReport {
     /// The protocol analysis engine's report, settled by FR-573's map.
     ProtocolAnalysis(Box<crate::protocol_analysis::ProtocolAnalysisArtifact>),
     /// The protocol analysis engine's replay of a supplied finite trace.
-    FiniteReplay(crate::protocol_analysis::FiniteReplayReport),
+    FiniteReplay(Box<crate::protocol_analysis::FiniteReplayReport>),
     /// FR-896's result with the typed FR-990 item output.
-    GlobalConformance(crate::protocol_analysis::conformance::ConformanceReport),
+    GlobalConformance(Box<crate::protocol_analysis::conformance::ConformanceReport>),
     /// The engine refused the item, and its settlement map gives the refusal
     /// no terminal record.
     Refused(Refusal),
@@ -2036,7 +2036,7 @@ fn settle(
         }
         EngineReport::FiniteReplay(report) => {
             let mut replayed = None;
-            let settled_record = match report {
+            let settled_record = match *report {
                 crate::protocol_analysis::FiniteReplayReport::Replayed(steps) => {
                     replayed = Some(steps);
                     TerminalRecord::proved_by_replay(index, backend, steps)
@@ -2077,11 +2077,14 @@ fn settle(
             settled.protocol_analysis = Some(Box::new(artifact));
             settled
         }
-        EngineReport::GlobalConformance(report) => AnalyzeRecord {
-            protocol_conformance: Some(report.output),
-            protocol_conformance_counterexample: report.counterexample,
-            ..record(terminal(report.terminal), None)
-        },
+        EngineReport::GlobalConformance(report) => {
+            let report = *report;
+            AnalyzeRecord {
+                protocol_conformance: Some(report.output),
+                protocol_conformance_counterexample: report.counterexample,
+                ..record(terminal(report.terminal), None)
+            }
+        }
         EngineReport::Exact(exact) => {
             let (settled_record, evidence, counterexample) = exact.settle(index, backend);
             let mut settled = record(terminal(settled_record), None);

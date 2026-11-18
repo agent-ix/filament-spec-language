@@ -170,9 +170,11 @@ pub(super) fn check(
             &protocol.name.name,
             channel,
             &roles,
-            relationships,
-            checked_roles,
-            models,
+            ChannelModels {
+                relationships,
+                checked_roles,
+                models,
+            },
             &mut keys,
             &mut refusals,
         ) {
@@ -197,18 +199,30 @@ pub(super) fn check(
     Err(refusals.into_iter().map(|(_, refusal)| refusal).collect())
 }
 
+/// The relationships, checked roles and admitted models a channel's
+/// connection is checked against.
+#[derive(Clone, Copy)]
+struct ChannelModels<'a> {
+    relationships: &'a [super::protocol_relationship::CheckedRelationship],
+    checked_roles: &'a [super::protocol_clause::CheckedRole],
+    models: &'a [super::lowering::AdmittedModel],
+}
+
 /// One channel's roles and payload type. `None` when any part refuses; the
 /// refusals are pushed to `refusals`, the `from` role first.
 fn check_channel(
     protocol: &str,
     channel: &ChannelForm,
     roles: &BTreeSet<&str>,
-    relationships: &[super::protocol_relationship::CheckedRelationship],
-    checked_roles: &[super::protocol_clause::CheckedRole],
-    models: &[super::lowering::AdmittedModel],
+    channel_models: ChannelModels<'_>,
     keys: &mut Keys<'_, '_, '_>,
     refusals: &mut Vec<(Span, CheckRefusal)>,
 ) -> Option<CheckedChannel> {
+    let ChannelModels {
+        relationships,
+        checked_roles,
+        models,
+    } = channel_models;
     let scope = keys.declarations.scope;
     let before = refusals.len();
     for (end, role) in [
@@ -291,9 +305,7 @@ fn check_channel(
         } => check_fifo(
             protocol,
             channel,
-            binder,
-            key,
-            key_text,
+            (binder, key, key_text),
             carries.as_ref(),
             keys,
             refusals,
@@ -374,12 +386,8 @@ fn check_channel_connection(
             }
             Some(role)
         };
-    let Some(from) = endpoint_role(&channel.from.name, channel.from.span) else {
-        return None;
-    };
-    let Some(to) = endpoint_role(&channel.to.name, channel.to.span) else {
-        return None;
-    };
+    let from = endpoint_role(&channel.from.name, channel.from.span)?;
+    let to = endpoint_role(&channel.to.name, channel.to.span)?;
     let (expected, source_interface) = match connection.direction {
         crate::model::domain_package::RelationshipDirection::SourceToTarget => (
             [connection.ports[0].clone(), connection.ports[1].clone()],
@@ -398,12 +406,8 @@ fn check_channel_connection(
             connection.interfaces[0].clone(),
         ),
     };
-    let Some(actual_from) = from.model_member.as_ref() else {
-        return None;
-    };
-    let Some(actual_to) = to.model_member.as_ref() else {
-        return None;
-    };
+    let actual_from = from.model_member.as_ref()?;
+    let actual_to = to.model_member.as_ref()?;
     let actual = [actual_from.clone(), actual_to.clone()];
     let forward = actual == expected;
     let reverse = connection.direction
@@ -467,9 +471,7 @@ fn check_channel_connection(
 fn check_fifo(
     protocol: &str,
     channel: &ChannelForm,
-    binder: &ParameterForm,
-    key: &ExpressionForm,
-    key_text: &str,
+    (binder, key, key_text): (&ParameterForm, &ExpressionForm, &str),
     carries: Option<&ValueType>,
     keys: &mut Keys<'_, '_, '_>,
     refusals: &mut Vec<(Span, CheckRefusal)>,

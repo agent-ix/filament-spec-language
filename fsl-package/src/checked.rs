@@ -329,7 +329,7 @@ pub enum LinkRefusal {
         /// The library identity.
         identity: LibraryName,
         /// The emitter's refusal, or `None` when the emission omits nodes.
-        refusal: Option<EmitRefusal>,
+        refusal: Option<Box<EmitRefusal>>,
     },
 }
 
@@ -712,7 +712,7 @@ fn check_dependency_emission(import: &Import, emit: EmitLimits) -> Result<(), Li
             fresh = emit_checked(&import.package, emit).map_err(|refusal| {
                 LinkRefusal::DependencyEmission {
                     identity: import.identity.clone(),
-                    refusal: Some(refusal),
+                    refusal: Some(Box::new(refusal)),
                 }
             })?;
             &fresh
@@ -746,7 +746,7 @@ fn same_package(
     let emit = |package: &CheckedPackage| {
         emit_checked(package, emit_limits).map_err(|refusal| LinkRefusal::DependencyEmission {
             identity: identity.clone(),
-            refusal: Some(refusal),
+            refusal: Some(Box::new(refusal)),
         })
     };
     let left = emit(left)?;

@@ -2953,9 +2953,9 @@ pub enum CheckCause {
         /// The source operator.
         operator: BinaryOperator,
         /// The left operand's checked type.
-        left_type: ValueType,
+        left_type: Box<ValueType>,
         /// The right operand's checked type.
-        right_type: ValueType,
+        right_type: Box<ValueType>,
     },
     /// `refused { code: wrong_snapshot }` with its FR-272 cause: `pre(...)`
     /// written outside its admitted clause, or over an ineligible operand.
@@ -2966,9 +2966,9 @@ pub enum CheckCause {
     /// explain which type does not declare it.
     UnknownField {
         /// The type whose declaration was searched.
-        owner: String,
+        owner: Box<str>,
         /// The field name as written.
-        field: String,
+        field: Box<str>,
         /// The field token's source span when it was read from source.
         span: Option<Span>,
     },

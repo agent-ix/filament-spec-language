@@ -522,11 +522,11 @@ pub(crate) fn finite_replay_item<'a>(
             let trace = match trace {
                 Ok(trace) => trace,
                 Err(defect) => {
-                    return EngineReport::FiniteReplay(FiniteReplayReport::Declined {
+                    return EngineReport::FiniteReplay(Box::new(FiniteReplayReport::Declined {
                         cause: defect.cause(),
                         position: defect.position(),
                         path: Some(defect.path().to_owned()).filter(|path| !path.is_empty()),
-                    });
+                    }));
                 }
             };
             let subject = ReplaySubject {
@@ -536,22 +536,22 @@ pub(crate) fn finite_replay_item<'a>(
                 protocol,
             };
             match subject.replay(&trace) {
-                Ok(ReplayVerdict::Replayed(steps)) => EngineReport::FiniteReplay(
+                Ok(ReplayVerdict::Replayed(steps)) => EngineReport::FiniteReplay(Box::new(
                     FiniteReplayReport::Replayed(u64::try_from(steps).unwrap_or(u64::MAX)),
-                ),
+                )),
                 Ok(ReplayVerdict::StaleStep(position)) => {
-                    EngineReport::FiniteReplay(FiniteReplayReport::Declined {
+                    EngineReport::FiniteReplay(Box::new(FiniteReplayReport::Declined {
                         cause: "invalid-value",
                         position: Some(position),
                         path: None,
-                    })
+                    }))
                 }
                 Ok(ReplayVerdict::NoInitialState) => {
-                    EngineReport::FiniteReplay(FiniteReplayReport::Declined {
+                    EngineReport::FiniteReplay(Box::new(FiniteReplayReport::Declined {
                         cause: "invalid-value",
                         position: None,
                         path: Some("/initial_state".to_owned()),
-                    })
+                    }))
                 }
                 Err(ReplayFault::Admission(failure)) => {
                     EngineReport::Refused(crate::analyze::admission(&failure))

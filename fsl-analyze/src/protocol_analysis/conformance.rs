@@ -243,7 +243,7 @@ fn recording_result(
             InconclusiveCause::OpenHistory,
         ),
     };
-    crate::analyze::EngineReport::GlobalConformance(ConformanceReport {
+    crate::analyze::EngineReport::GlobalConformance(Box::new(ConformanceReport {
         terminal,
         output,
         counterexample: (assessment.global.label == "refuted").then(|| {
@@ -253,7 +253,7 @@ fn recording_result(
                 "trace_position": assessment.trace_position,
             })
         }),
-    })
+    }))
 }
 
 /// The recording arm of one global-conformance request.
@@ -447,26 +447,32 @@ fn behavior_report(
             witness: witness.clone(),
         })
         .collect();
-    obligations.extend(protocol.controls.controls.iter().filter_map(|control| {
-        matches!(
-            control.kind,
-            fsl_forms::ProtocolNodeKind::Send
-                | fsl_forms::ProtocolNodeKind::Receive
-                | fsl_forms::ProtocolNodeKind::Attempt
-                | fsl_forms::ProtocolNodeKind::Effect
-                | fsl_forms::ProtocolNodeKind::Event
-        )
-        .then(|| ConformanceObligationOutput {
-            obligation: serde_json::json!({
-                "kind": "enabledness",
-                "node": format!("{}::{}", protocol.name, control.path.join("::")),
+    obligations.extend(
+        protocol
+            .controls
+            .controls
+            .iter()
+            .filter(|control| {
+                matches!(
+                    control.kind,
+                    fsl_forms::ProtocolNodeKind::Send
+                        | fsl_forms::ProtocolNodeKind::Receive
+                        | fsl_forms::ProtocolNodeKind::Attempt
+                        | fsl_forms::ProtocolNodeKind::Effect
+                        | fsl_forms::ProtocolNodeKind::Event
+                )
+            })
+            .map(|control| ConformanceObligationOutput {
+                obligation: serde_json::json!({
+                    "kind": "enabledness",
+                    "node": format!("{}::{}", protocol.name, control.path.join("::")),
+                }),
+                verdict: verdict.to_owned(),
+                cause: cause.clone(),
+                basis: "by-construction".to_owned(),
+                witness: witness.clone(),
             }),
-            verdict: verdict.to_owned(),
-            cause: cause.clone(),
-            basis: "by-construction".to_owned(),
-            witness: witness.clone(),
-        })
-    }));
+    );
     obligations.extend(
         protocol
             .channels
@@ -479,26 +485,32 @@ fn behavior_report(
                 witness: None,
             }),
     );
-    obligations.extend(protocol.controls.controls.iter().filter_map(|control| {
-        matches!(
-            control.kind,
-            fsl_forms::ProtocolNodeKind::Choice
-                | fsl_forms::ProtocolNodeKind::Parallel
-                | fsl_forms::ProtocolNodeKind::Repeat
-                | fsl_forms::ProtocolNodeKind::Await
-                | fsl_forms::ProtocolNodeKind::Check
-        )
-        .then(|| ConformanceObligationOutput {
-            obligation: serde_json::json!({
-                "kind": "control",
-                "node": format!("{}::{}", protocol.name, control.path.join("::")),
+    obligations.extend(
+        protocol
+            .controls
+            .controls
+            .iter()
+            .filter(|control| {
+                matches!(
+                    control.kind,
+                    fsl_forms::ProtocolNodeKind::Choice
+                        | fsl_forms::ProtocolNodeKind::Parallel
+                        | fsl_forms::ProtocolNodeKind::Repeat
+                        | fsl_forms::ProtocolNodeKind::Await
+                        | fsl_forms::ProtocolNodeKind::Check
+                )
+            })
+            .map(|control| ConformanceObligationOutput {
+                obligation: serde_json::json!({
+                    "kind": "control",
+                    "node": format!("{}::{}", protocol.name, control.path.join("::")),
+                }),
+                verdict: verdict.to_owned(),
+                cause: cause.clone(),
+                basis: "explored".to_owned(),
+                witness: witness.clone(),
             }),
-            verdict: verdict.to_owned(),
-            cause: cause.clone(),
-            basis: "explored".to_owned(),
-            witness: witness.clone(),
-        })
-    }));
+    );
     obligations.extend(
         protocol
             .awaits
@@ -576,7 +588,7 @@ fn behavior_report(
                 fsl_foundation::BackendId::new(super::manifest::BACKEND_ID),
             )
         });
-    crate::analyze::EngineReport::GlobalConformance(ConformanceReport {
+    crate::analyze::EngineReport::GlobalConformance(Box::new(ConformanceReport {
         terminal,
         output: ProtocolConformanceOutput {
             obligations,
@@ -638,7 +650,7 @@ fn behavior_report(
             replay: refuted.then_some(fsl_replay::ConformanceReplayOutput { reproduced: true }),
         },
         counterexample,
-    })
+    }))
 }
 
 fn internal_fault() -> crate::analyze::EngineReport {
@@ -750,6 +762,7 @@ fn pending_finish_in<M: fsl_eval::simulation::protocol::MemoryModel>(
     None
 }
 
+#[allow(clippy::too_many_arguments)]
 fn every_behavior_result(
     index: fsl_foundation::RequestIndex,
     protocol: &fsl_semantics::check::CheckedProtocol,
@@ -807,7 +820,7 @@ fn every_behavior_result(
     };
     let replay_limits = ReplayLimits::default();
     let replay = |counterexample: &TemporalCounterexample<ProtocolTransition>| {
-        let payload = ConformanceCounterexample::Protocol(counterexample.clone());
+        let payload = ConformanceCounterexample::Protocol(Box::new(counterexample.clone()));
         match replay_counterexample(&replay_subject, &payload, replay_limits, cancel) {
             Ok(ConformanceReplay::Reproduced) => Ok(fsl_replay::ModelTraceReplayResult {
                 settlement: fsl_replay::ModelTraceSettlement::Reproduced {
@@ -857,7 +870,7 @@ fn every_behavior_result(
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum ConformanceCounterexample {
     /// A protocol-system counterexample over every behaviour.
-    Protocol(TemporalCounterexample<ProtocolTransition>),
+    Protocol(Box<TemporalCounterexample<ProtocolTransition>>),
     /// The recording bytes and index of the first violating observation.
     Recording {
         /// The FSpec FR-737 recording document bytes.
@@ -1114,52 +1127,6 @@ pub(crate) fn recording_output(
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use ix_trace_rs::trace;
-
-    use super::*;
-
-    #[trace("TC-2805", "FR-990-AC-1")]
-    #[test]
-    fn recording_assessment_maps_to_the_shared_conformance_output() {
-        let output = recording_output(super::super::recording::RecordingAssessment {
-            obligations: vec![super::super::recording::RecordingObligation {
-                obligation: super::super::recording::RecordingObligationId {
-                    kind: "enabledness".to_owned(),
-                    node: Some("Flow::Main::Ship".to_owned()),
-                    instance: Some("w-1".to_owned()),
-                },
-                verdict: super::super::recording::RecordingVerdict::Violated,
-                cause: Some(super::super::recording::RecordingCause::Unexpected),
-                witness: vec![3],
-            }],
-            closure: super::super::recording::RecordingClosure {
-                state: "open".to_owned(),
-                premises: Vec::new(),
-                producer: "recording",
-            },
-            facts: Vec::new(),
-            global: super::super::recording::RecordingGlobalResult {
-                label: "refuted".to_owned(),
-                basis: "violation".to_owned(),
-                complete: false,
-                cause: Some("violation".to_owned()),
-            },
-            trace_position: Some(3),
-        });
-
-        assert_eq!(output.obligations[0].verdict, "violated");
-        assert_eq!(output.obligations[0].cause.as_deref(), Some("unexpected"));
-        assert_eq!(output.obligations[0].witness, Some(serde_json::json!([3])));
-        assert_eq!(output.closure.state, "open");
-        assert_eq!(output.closure.producer, "recording");
-        assert_eq!(output.global.label, "refuted");
-        assert!(!output.global.complete);
-        assert!(output.projections.is_none());
-    }
-}
-
 fn protocol_refusal(refusal: ProtocolRefusal) -> ConformanceReplayRefusal {
     ConformanceReplayRefusal::invalid(format!("protocol admission: {refusal:?}"), None)
 }
@@ -1230,4 +1197,50 @@ fn replay_protocol<M: fsl_eval::simulation::protocol::MemoryModel>(
     Ok(ConformanceReplay::ReplayParity {
         detail: "the counterexample refutation kind is not supported by this replay arm".to_owned(),
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use ix_trace_rs::trace;
+
+    use super::*;
+
+    #[trace("TC-2805", "FR-990-AC-1")]
+    #[test]
+    fn recording_assessment_maps_to_the_shared_conformance_output() {
+        let output = recording_output(super::super::recording::RecordingAssessment {
+            obligations: vec![super::super::recording::RecordingObligation {
+                obligation: super::super::recording::RecordingObligationId {
+                    kind: "enabledness".to_owned(),
+                    node: Some("Flow::Main::Ship".to_owned()),
+                    instance: Some("w-1".to_owned()),
+                },
+                verdict: super::super::recording::RecordingVerdict::Violated,
+                cause: Some(super::super::recording::RecordingCause::Unexpected),
+                witness: vec![3],
+            }],
+            closure: super::super::recording::RecordingClosure {
+                state: "open".to_owned(),
+                premises: Vec::new(),
+                producer: "recording",
+            },
+            facts: Vec::new(),
+            global: super::super::recording::RecordingGlobalResult {
+                label: "refuted".to_owned(),
+                basis: "violation".to_owned(),
+                complete: false,
+                cause: Some("violation".to_owned()),
+            },
+            trace_position: Some(3),
+        });
+
+        assert_eq!(output.obligations[0].verdict, "violated");
+        assert_eq!(output.obligations[0].cause.as_deref(), Some("unexpected"));
+        assert_eq!(output.obligations[0].witness, Some(serde_json::json!([3])));
+        assert_eq!(output.closure.state, "open");
+        assert_eq!(output.closure.producer, "recording");
+        assert_eq!(output.global.label, "refuted");
+        assert!(!output.global.complete);
+        assert!(output.projections.is_none());
+    }
 }

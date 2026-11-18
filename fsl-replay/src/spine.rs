@@ -930,7 +930,7 @@ fn forms_message(refusal: &FormsRefusal) -> String {
                     format!("the index selection `{text}` is not supported here yet")
                 }
                 fsl_forms::ConstructKind::SizeOfType => {
-                    let type_call = text.split_once('(').map_or(text.as_str(), |(head, _)| head);
+                    let type_call = text.split_once('(').map_or(&**text, |(head, _)| head);
                     format!("`{type_call}` is not supported in expressions yet")
                 }
                 fsl_forms::ConstructKind::QualifiedReachesEdge => {

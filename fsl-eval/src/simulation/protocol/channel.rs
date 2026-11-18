@@ -942,6 +942,16 @@ impl<M: MemoryModel> ProtocolSystem<'_, M> {
     }
 }
 
+/// Set the queue `key` of `instance` to `queue`; an empty queue leaves the
+/// state (PS-8).
+fn store(instance: &mut Instance, key: QueueKey, queue: Vec<Entry>) {
+    if queue.is_empty() {
+        instance.queues.remove(&key);
+    } else {
+        instance.queues.insert(key, queue);
+    }
+}
+
 #[cfg(test)]
 mod delivery_index_tests {
     use super::resume_delivery_index;
@@ -961,15 +971,5 @@ mod delivery_index_tests {
         assert_eq!(duplicate.index(), 2);
         assert_eq!(resumed_delivery.index(), 3);
         assert_ne!(duplicate, resumed_delivery);
-    }
-}
-
-/// Set the queue `key` of `instance` to `queue`; an empty queue leaves the
-/// state (PS-8).
-fn store(instance: &mut Instance, key: QueueKey, queue: Vec<Entry>) {
-    if queue.is_empty() {
-        instance.queues.remove(&key);
-    } else {
-        instance.queues.insert(key, queue);
     }
 }

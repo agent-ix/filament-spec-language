@@ -1882,9 +1882,9 @@ impl OutcomeDiagnostic {
                     ..
                 } => {
                     diagnostic.construct = Some(construct.as_str().to_owned());
-                    diagnostic.text = Some(text.clone());
-                    diagnostic.declaration = declaration.clone();
-                    diagnostic.profile = profile.clone();
+                    diagnostic.text = Some(text.to_string());
+                    diagnostic.declaration = declaration.as_deref().map(str::to_owned);
+                    diagnostic.profile = profile.as_deref().map(str::to_owned);
                 }
                 _ => {}
             }
@@ -2300,7 +2300,7 @@ impl OutcomeDocument {
                 let mut document = Self::from_failure(Operation::Parse, failure);
                 let parsed = match failure {
                     StageFailure::RefusedWithPayload(_, payload)
-                    | StageFailure::LimitWithPayload(_, payload) => payload.parsed.as_ref(),
+                    | StageFailure::LimitWithPayload(_, payload) => payload.parsed.as_deref(),
                     _ => None,
                 };
                 document.result =

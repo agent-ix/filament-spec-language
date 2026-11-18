@@ -12,7 +12,7 @@ use filament_contract_model::{
 };
 
 use super::population_bound::document;
-use super::protocol_graph::{checked, flow_over, PROFILES};
+use super::protocol_graph::{flow_over, PROFILES};
 use super::protocol_reference::node_of;
 use super::reachability::{lower_with, model_node, Lowered};
 use super::*;

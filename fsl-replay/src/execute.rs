@@ -2040,6 +2040,7 @@ enum RecompileClocks<'a> {
     ByName(&'a spine::RequestClocks),
 }
 
+#[allow(clippy::too_many_arguments)]
 fn run_spine_units(
     units: &[(SourceIdentity, String, &[u8])],
     package: &LibraryName,
@@ -2721,6 +2722,31 @@ fn charges(consumed: impl IntoIterator<Item = (LimitKind, u64)>) -> ScalarLimits
 #[cfg(test)]
 pub(crate) mod tests;
 
+/// FR-098-AC-34: every function the proving package records is rechecked
+/// under exactly the mode it records; a function whose recompile records
+/// another mode, or none, is refused at its node.
+fn check_recorded_modes(recorded: &[u8], recompiled: &[u8]) -> Result<(), ReplayRefusal> {
+    let recompiled_modes: std::collections::BTreeMap<String, Option<String>> =
+        crate::ReplayPackage::function_records(recompiled)
+            .into_iter()
+            .map(|record| (record.node_id, record.mode))
+            .collect();
+    for record in crate::ReplayPackage::function_records(recorded) {
+        if recompiled_modes.get(&record.node_id) != Some(&record.mode) {
+            return Err(ReplayRefusal::Request(
+                crate::ReplayRequestRefusal::PackageMember {
+                    pointer: format!(
+                        "/package/semantic_graph/nodes/{}/check_mode",
+                        record.position
+                    ),
+                    cause: crate::PackageMemberCause::CheckModeMismatch,
+                },
+            ));
+        }
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod carried_quantity_tests {
     use super::{witness_type, InputRefusal, ReplayRefusal};
@@ -2762,29 +2788,4 @@ mod carried_quantity_tests {
             }))
         ));
     }
-}
-
-/// FR-098-AC-34: every function the proving package records is rechecked
-/// under exactly the mode it records; a function whose recompile records
-/// another mode, or none, is refused at its node.
-fn check_recorded_modes(recorded: &[u8], recompiled: &[u8]) -> Result<(), ReplayRefusal> {
-    let recompiled_modes: std::collections::BTreeMap<String, Option<String>> =
-        crate::ReplayPackage::function_records(recompiled)
-            .into_iter()
-            .map(|record| (record.node_id, record.mode))
-            .collect();
-    for record in crate::ReplayPackage::function_records(recorded) {
-        if recompiled_modes.get(&record.node_id) != Some(&record.mode) {
-            return Err(ReplayRefusal::Request(
-                crate::ReplayRequestRefusal::PackageMember {
-                    pointer: format!(
-                        "/package/semantic_graph/nodes/{}/check_mode",
-                        record.position
-                    ),
-                    cause: crate::PackageMemberCause::CheckModeMismatch,
-                },
-            ));
-        }
-    }
-    Ok(())
 }

@@ -212,12 +212,15 @@ fn fault(fault: SourceObjectFault, span: Span) -> AssemblyError {
     }
 }
 
+/// A synthetic domain package and the identity fields of each declaration.
+type SourceModel = (DomainPackage, BTreeMap<DeclarationKey, Vec<String>>);
+
 /// The unit's object declarations as a synthetic domain package, or every
 /// refusal the declarations earn.
 pub(super) fn build(
     objects: &[ObjectForm],
     context: &Context<'_>,
-) -> Result<(DomainPackage, BTreeMap<DeclarationKey, Vec<String>>), Vec<AssemblyError>> {
+) -> Result<SourceModel, Vec<AssemblyError>> {
     let mut errors = Vec::new();
     let mut by_name = BTreeMap::new();
     for (index, object) in objects.iter().enumerate() {

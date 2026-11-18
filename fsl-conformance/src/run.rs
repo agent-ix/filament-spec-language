@@ -50,7 +50,7 @@ use crate::matrix::{
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum Report {
     /// The operation's outcome document.
-    Document(OutcomeDocument),
+    Document(Box<OutcomeDocument>),
     /// The one item a `prove` case yields.
     Item(Box<OutcomeItem>),
 }
@@ -376,7 +376,9 @@ fn front_end(
             FrontEndLimit::Default | FrontEndLimit::OutputBytes(_) => defaults,
         };
         let checked = prepared.check(limits, cancel);
-        return Ok(Report::Document(OutcomeDocument::from_check(&checked)));
+        return Ok(Report::Document(Box::new(OutcomeDocument::from_check(
+            &checked,
+        ))));
     }
     let (checked, _) = prepared.checked()?;
     let limits = match input.limit {
@@ -384,7 +386,9 @@ fn front_end(
         FrontEndLimit::Default | FrontEndLimit::S3Nodes(_) => PackageLimits::default(),
     };
     let emitted = package(&checked, limits, cancel);
-    Ok(Report::Document(OutcomeDocument::from_package(&emitted)))
+    Ok(Report::Document(Box::new(OutcomeDocument::from_package(
+        &emitted,
+    ))))
 }
 
 /// `execute` over the case's unit: the typed result of
@@ -473,7 +477,9 @@ fn run_execute(
         &PrepareLimits::default(),
         cancel,
     );
-    Ok(Report::Document(OutcomeDocument::from_run(&result)))
+    Ok(Report::Document(Box::new(OutcomeDocument::from_run(
+        &result,
+    ))))
 }
 
 /// The snapshot documents by the reference each names itself with.
@@ -731,7 +737,7 @@ fn run_analyze(
             }
         }
     };
-    Ok(Report::Document(document))
+    Ok(Report::Document(Box::new(document)))
 }
 
 fn run_monitor(
@@ -775,7 +781,7 @@ fn run_monitor(
             .map_err(|_| CaseError::at(CaseStage::Document))?,
         Err(failure) => stopped_document(Operation::Monitor, failure, |refusal| refusal.document()),
     };
-    Ok(Report::Document(document))
+    Ok(Report::Document(Box::new(document)))
 }
 
 fn run_prove(
