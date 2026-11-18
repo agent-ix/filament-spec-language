@@ -10,8 +10,8 @@
 
 use std::collections::BTreeMap;
 
-use filament_eval::{CallAdmissionFailure, CallAdmissionLocus, CallFailure, Evaluation};
-use filament_exact::{Meter, NodeKey, Value};
+use filament_eval::{CallAdmissionFailure, CallAdmissionLocus, CallFailure, Evaluation, FamilyOutcome};
+use filament_exact::{Charge, ChargePoint, Meter, NodeKey, Outcome, Value};
 use filament_semantic_value::catalog::InternalFault;
 use fsl_package::{BarePackage, BareSelectionFailure, BareSlot, BareWorld, ProtocolSlotDescriptor};
 use fsl_semantics::model::object_environment::ObjectEnvironment;
@@ -35,6 +35,19 @@ fn refusal(package: &BarePackage<'_>, failure: BareSelectionFailure) -> CallFail
         Ok(view) => unsupported_projection(&view),
         Err(failure) => resolve::selection_failure(failure),
     }
+}
+
+fn function_projection(
+    package: &BarePackage<'_>,
+    function: &QualifiedName,
+) -> Result<fsl_package::ReaderProtocolProjection, CallFailure> {
+    let name = function
+        .as_unqualified()
+        .ok_or_else(|| InputRefusal::UnknownFunction(function.to_string()))?;
+    package
+        .project_function(name)
+        .map_err(|failure| refusal(package, failure))?
+        .ok_or_else(|| InputRefusal::UnknownFunction(function.to_string()).into())
 }
 
 /// What supply admission reads from a bytes-only package: the bare
@@ -197,45 +210,130 @@ const SOURCE_CHECKED_FORM: &str = "needs-source-checked-form";
 impl CheckedPackageEvaluation for BarePackage<'_> {
     fn call(
         &self,
-        _function: &QualifiedName,
-        _arguments: Vec<Value>,
-        _objects: &ObjectEnvironment,
-        _meter: &mut Meter,
+        function: &QualifiedName,
+        arguments: Vec<Value>,
+        objects: &ObjectEnvironment,
+        meter: &mut Meter,
     ) -> Result<Evaluation, CallFailure> {
-        Err(unmet(self, SOURCE_DECLARATION))
+        let cancel = meter.cancel().cloned().unwrap_or_default();
+        let mut run = SuppliedRun::new(SuppliedLimits::default(), cancel)
+            .map_err(|stop| CallFailure::from(SuppliedFailure::Stop(stop)))?;
+        self.call_supplied(function, arguments, objects, meter, &mut run)
     }
 
     fn call_observing_applications(
         &self,
-        _function: &QualifiedName,
-        _arguments: Vec<Value>,
-        _objects: &ObjectEnvironment,
+        function: &QualifiedName,
+        arguments: Vec<Value>,
+        objects: &ObjectEnvironment,
         meter: &mut Meter,
         options: ApplicationObservationOptions,
     ) -> ApplicationObservation {
         let displaced_capture = meter.disable_charge_capture();
-        let capture = super::OperationCapture::new(options);
+        let mut capture = super::OperationCapture::new(options);
+        capture.start(meter);
+        let mut observed = Vec::new();
+        let mut unavailable_imported_call = false;
+        let mut function_evaluations = 0;
+        let mut function_case_limit_reached = false;
+        let evaluation = (|| {
+            let projection = function_projection(self, function)?;
+            let selected = projection
+                .selected_function()
+                .ok_or_else(|| CallFailure::Fault(InternalFault::new("FR-945", "bare-call-has-selected-function")))?;
+            let parameters = selected
+                .parameters
+                .iter()
+                .map(|parameter| (parameter.name.clone(), parameter.value_type.clone()))
+                .collect::<Vec<_>>();
+            let world = self.world().map_err(|failure| refusal(self, failure))?;
+            let cancel = meter.cancel().cloned().unwrap_or_default();
+            let mut run = SuppliedRun::new(SuppliedLimits::default(), cancel)
+                .map_err(|stop| CallFailure::from(SuppliedFailure::Stop(stop)))?;
+            super::admit_arguments(&parameters, &arguments, objects, world.types(), &mut run)?;
+            if let Err(incomplete) = meter.charge(Charge::new(ChargePoint::FunctionCall)) {
+                return Ok(Evaluation {
+                    outcome: FamilyOutcome::Evaluated(Outcome::Incomplete(incomplete)),
+                    location: None,
+                    losses: Vec::new(),
+                });
+            }
+            capture.drain(meter, projection.location(selected.body));
+            if options.function_case_limit == 0 {
+                function_case_limit_reached = true;
+                return Ok(Evaluation {
+                    outcome: FamilyOutcome::Evaluated(Outcome::Incomplete(
+                        filament_exact::Incomplete {
+                            limit_kind: filament_exact::LimitKind::WorkUnits,
+                            limit: 0,
+                            consumed: 0,
+                            next_charge: filament_exact::Integer::from(1_u64),
+                            charge_point: ChargePoint::FunctionCall,
+                        },
+                    )),
+                    location: projection.location(selected.body).cloned(),
+                    losses: Vec::new(),
+                });
+            }
+            function_evaluations = 1;
+            Ok(Machine::observing_bare_package(
+                &world,
+                objects,
+                meter,
+                super::ApplicationObserver {
+                    observed: &mut observed,
+                    unavailable_imported_call: &mut unavailable_imported_call,
+                    function_case_limit: options.function_case_limit,
+                    function_evaluations: &mut function_evaluations,
+                    function_case_limit_reached: &mut function_case_limit_reached,
+                    capture: &mut capture,
+                },
+            )
+            .run(ReaderNode::root(&projection), selected.slots, arguments)
+            .map_err(CallFailure::Fault)?)
+        })();
+        let ledger = capture.finish(meter);
         ApplicationObservation {
-            evaluation: Err(unmet(self, SOURCE_DECLARATION)),
-            observed: Vec::new(),
-            unavailable_imported_call: false,
-            function_evaluations: 0,
-            function_case_limit_reached: false,
+            evaluation,
+            observed,
+            unavailable_imported_call,
+            function_evaluations,
+            function_case_limit_reached,
             meter_totals: super::ChargeAmounts::from_meter(meter),
-            ledger: capture.finish(meter),
+            ledger,
             displaced_capture,
         }
     }
 
     fn call_supplied(
         &self,
-        _function: &QualifiedName,
-        _arguments: Vec<Value>,
-        _objects: &ObjectEnvironment,
-        _meter: &mut Meter,
-        _run: &mut SuppliedRun,
+        function: &QualifiedName,
+        arguments: Vec<Value>,
+        objects: &ObjectEnvironment,
+        meter: &mut Meter,
+        run: &mut SuppliedRun,
     ) -> Result<Evaluation, CallFailure> {
-        Err(unmet(self, SOURCE_DECLARATION))
+        let projection = function_projection(self, function)?;
+        let selected = projection
+            .selected_function()
+            .ok_or_else(|| CallFailure::Fault(InternalFault::new("FR-945", "bare-call-has-selected-function")))?;
+        let parameters = selected
+            .parameters
+            .iter()
+            .map(|parameter| (parameter.name.clone(), parameter.value_type.clone()))
+            .collect::<Vec<_>>();
+        let world = self.world().map_err(|failure| refusal(self, failure))?;
+        super::admit_arguments(&parameters, &arguments, objects, world.types(), run)?;
+        if let Err(incomplete) = meter.charge(Charge::new(ChargePoint::FunctionCall)) {
+            return Ok(Evaluation {
+                outcome: FamilyOutcome::Evaluated(Outcome::Incomplete(incomplete)),
+                location: None,
+                losses: Vec::new(),
+            });
+        }
+        Machine::from_bare_package(&world, objects, meter)
+            .run(ReaderNode::root(&projection), selected.slots, arguments)
+            .map_err(CallFailure::Fault)
     }
 
     fn evaluate(
