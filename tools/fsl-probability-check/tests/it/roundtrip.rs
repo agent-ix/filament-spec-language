@@ -4,6 +4,7 @@
 
 use base64::Engine;
 use std::io::Write;
+use std::path::Path;
 use std::process::{Command, Stdio};
 
 use filament_checked::key::DeclarationKey;
@@ -533,6 +534,61 @@ fn an_actual_en5_proof_is_checked_in_a_fresh_process_using_its_source() {
         result["value"],
         json!({"numerator":"24", "denominator":"25"})
     );
+}
+
+#[trace("TC-764", "FR-282-AC-1", "FR-201-AC-11")]
+#[test]
+fn certificate_checks_independently() {
+    let scratch = std::env::temp_dir().join(format!("qsl-2158-certificate-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&scratch);
+    std::fs::create_dir_all(&scratch).unwrap();
+    std::fs::write(scratch.join("program.fsl"), format!("{SOURCE}{CLAIM}")).unwrap();
+    std::fs::write(scratch.join("model.json"), DOMAIN).unwrap();
+    std::fs::write(scratch.join("snapshot.json"), SNAPSHOT).unwrap();
+    let analyze_request = json!({
+        "format": "native-analyze/1",
+        "request": {
+            "program": {"source": {"file": "program.fsl", "authority": "test",
+                "identity": "certificate-fixture", "document": "CertificateFixture",
+                "formal_revision": 1}},
+            "models": [{"format": "semantic-ir/2.0.0", "source": {
+                "file": "model.json", "authority": "test", "identity": "link-model",
+                "document": "Link", "formal_revision": 1}}],
+            "documents": [{"file": "snapshot.json"}],
+            "items": [{"claim": "Likely", "probabilistic": {"evidence": "exact"}}]
+        }
+    });
+    let analyze_path = scratch.join("analyze.json");
+    std::fs::write(&analyze_path, analyze_request.to_string()).unwrap();
+    let analyzed = fsl_command::command::analyze(
+        Path::new(&analyze_path),
+        &Engines::fsl().expect("the linked engines register"),
+        &Cancel::new(),
+    )
+    .expect("fsl analyze runs from source");
+    assert_eq!(analyzed.exit_code, 0);
+    let outcome = serde_json::to_value(analyzed.value).expect("the analyze document is JSON");
+    let item = &outcome["items"][0];
+    assert_eq!(item["record"]["result"], "proved", "{item}");
+    let certificate = &item["certificate"]["document"]["document"];
+    assert!(certificate.is_object(), "{item}");
+
+    let mut checker_request = proof_request(CLAIM);
+    let certificate_text = serde_json::to_string(certificate).unwrap();
+    assert_eq!(
+        serde_json::from_str::<Value>(&checker_request["certificate"].as_str().unwrap()).unwrap(),
+        *certificate,
+        "the verb emits the source certificate checked by this process"
+    );
+    checker_request["certificate"] = json!(certificate_text);
+    let (code, result) = run(&checker_request, &[]);
+    assert_eq!(code, 0, "{result}");
+    assert_eq!(result["status"], "accepted");
+    assert_eq!(
+        result["value"],
+        json!({"numerator":"24", "denominator":"25"})
+    );
+    std::fs::remove_dir_all(scratch).unwrap();
 }
 
 #[trace("TC-764", "FR-282-AC-1", "FR-282-AC-2", "FR-282-AC-11", "FR-201-AC-10")]
