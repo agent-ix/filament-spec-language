@@ -45,3 +45,9 @@ Round 1, verified against fix commit `f1111b5cb`.
 | FND-001 | still-open | Fixture S part fixed: `source_object_rows_carry_their_own_operations_and_query_flag` now emits TC-1408 fixture S's object block verbatim and asserts Order size/count/scaled/bump, Sub size/scaled, Shape []. Still missing: AC-16's "D's emission has none" is asserted by no test (one emit of the `orders_model` fixture D with `source_object_operations().is_empty()` closes it). |
 
 The coder flagged that the file-level `S` constant in `source_objects.rs` names `measure`/`tally` where TC-1408 fixture S says `size`/`count`. Acceptable for this PR, not a finding against it: the new AC-16 test uses the TC text, and the drift comes from #2826 (fc5ada4e8, QSL-2340) on main, outside this diff. It is worth a separate ticket to realign the constant with TC-1408 or the reverse.
+
+Round 2, verified against fix commit `bcf04ba96` (head `bcf04ba96905dc75ceb75b4d6657aecd4591f1ca`). `fixture_d_emission_has_no_source_object_operations` passes (fsl-package `source_objects`: 16 passed, 8 ignored on QSL-2347); clippy on fsl-package clean.
+
+| FND | outcome | reason |
+| --- | --- | --- |
+| FND-001 | fixed | New test `fixture_d_emission_has_no_source_object_operations` emits fixture D (`model M = "test/orders"`, no source object) and asserts `selected_source_object_rows()` and `source_object_operations()` are empty. |
