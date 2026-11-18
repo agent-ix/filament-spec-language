@@ -45,6 +45,7 @@ const TOO_LIKELY: &str = "probabilistic TooLikely using inf on M over (m: M::Msg
 
 /// `LongRun`: the long-run fraction of delivered messages under `Even`.
 const LONG_RUN: &str = "probabilistic LongRun using inf on M over (m: M::Msg) under Even on origin \
+     with alpha 0.1, beta 0.1, indifference 0.1 \
      { long_run_fraction holds(m.delivered) >= rational(9, 10) }";
 
 fn run(name: &str, claims: &str, items: Value) -> Value {
