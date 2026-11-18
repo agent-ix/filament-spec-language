@@ -8,15 +8,28 @@
 //! `fsl-eval` protocol system steps the trace.
 
 use base64::Engine as _;
-use fsl_eval::model_subject::{ModelInstance, ModelSubject, ProtocolSubject, RoleBinding};
+use filament_exact::{Identifier, ScalarLimits};
+use fsl_eval::model_subject::{
+    ModelInstance, ModelLetters, ModelSubject, ProtocolSubject, RoleBinding,
+};
 use fsl_eval::simulation::model::{ExpansionLimits, ModelSimulationRequest, ModelSystem};
 use fsl_eval::simulation::protocol::{
-    Capacities, MemoryModel, ProtocolRefusal, ProtocolSystem, ResolvedMemory, SubjectMemory,
-    live_instance_bound, send_record_json, transition_json,
+    Capacities, MemoryModel, ProtocolFairness, ProtocolRefusal, ProtocolSystem, ProtocolTransition,
+    ResolvedMemory, SubjectMemory, live_instance_bound, over_reference, send_record_json,
+    transition_json,
 };
+use fsl_eval::temporal::{TemporalOutcome, TemporalRefusal};
 use fsl_eval::simulation::{StateKey, TransitionSystem};
 use fsl_package::CheckedPackage;
-use fsl_semantics::check::CheckedProtocol;
+use fsl_foundation::source::provenance::OccurrenceKey;
+use fsl_replay::{
+    evaluate_protocol_trace, settle_protocol_check, undefined_finding, CounterexampleKind,
+    ModelCheckItem, ModelCheckLimits, ModelCheckOutcome, ModelCheckRecord, ModelStep,
+    ModelTraceSubject, ProtocolCertificateRequest, ProtocolTraceEnd, ProtocolTraceSubject,
+    ProtocolWire, QualifiedName, ReplayTargetMembers, RequestTargetWire, TemporalCounterexample,
+    UndefinedEvaluation, UndefinedLocus, UndefinedSite,
+};
+use fsl_semantics::check::{CheckedProtocol, TemporalClauseNode};
 use serde_json::Value;
 
 use filament_semantic_value::catalog::CatalogCode;
@@ -25,7 +38,10 @@ use fsl_route::Mode;
 use fsl_semantics::check::{Capability, DeclarationFamily};
 
 use super::manifest::BACKEND_ID;
-use crate::analyze::{AnalyzeItem, AnalyzeLimits, EngineReport, Refusal, SubjectBinding};
+use crate::analyze::{
+    derived_target, replay_protocol_over, AnalyzeItem, AnalyzeLimits, EngineReport,
+    NoLetters, ProtocolReplayInputs, Refusal, ReplayShape, SourceProvision, SubjectBinding,
+};
 
 /// The FSpec FR-433 trace document a `finite-replay` item names: a format
 /// word, its declared `{authority, identity}` (the request selects the
@@ -254,15 +270,51 @@ impl SuppliedStep {
 }
 
 /// How a supplied trace settled over the protocol.
-#[derive(Debug, Eq, PartialEq)]
+#[derive(Debug)]
 pub(crate) enum ReplayVerdict {
-    /// Every step replayed; the count of steps.
+    /// Every step replayed and no expression was undefined at a replayed
+    /// state; the count of steps, for a claim with no required clause.
     Replayed(usize),
     /// The step at this position is not enabled at the replayed state, or
     /// reaches another post-state than it records.
     StaleStep(usize),
     /// The trace names an initial state the subject does not have.
     NoInitialState,
+    /// A protocol expression was undefined at a replayed state (FR-941
+    /// "Undefined steps").
+    Undefined(Box<UndefinedStep>),
+    /// Every step replayed and the claim's required clauses were read over
+    /// the replayed behaviour (FR-941 "Formula claims").
+    Claimed(Box<Claimed>),
+}
+
+/// The first protocol expression that evaluated undefined at a replayed
+/// state, and the counterexample that names it.
+#[derive(Debug)]
+pub(crate) struct UndefinedStep {
+    /// The supplied trace's steps up to that state, with the undefined
+    /// evaluation at its position.
+    counterexample: TemporalCounterexample<ProtocolTransition>,
+    /// The object the protocol's `over` input was bound to.
+    over: ModelInstance,
+}
+
+/// The reading of the claim's required clauses over a replayed behaviour.
+#[derive(Debug)]
+pub(crate) struct Claimed {
+    /// The index, among the required clauses, of the clause that decides:
+    /// the first violated or undefined, else the first not `holds`; `None`
+    /// when every clause holds.
+    deciding: Option<usize>,
+    /// The deciding clause's reading, or `holds`.
+    evaluation: Result<TemporalOutcome, TemporalRefusal>,
+    /// The number of steps replayed.
+    steps: usize,
+    /// The counterexample of a violated or undefined reading: the supplied
+    /// trace through the position the evaluator names.
+    counterexample: Option<TemporalCounterexample<ProtocolTransition>>,
+    /// The object the protocol's `over` input was bound to.
+    over: ModelInstance,
 }
 
 /// Why a replay reached no verdict.
@@ -288,17 +340,251 @@ fn state_wire(key: &StateKey) -> PostState {
     }
 }
 
-/// Re-execute `trace` through `system` from the initial state it names.
+/// What a claim's required clauses add to a replay (FR-941 "Formula claims").
+struct Formula<'c, 'a> {
+    /// The required clauses, in `requires` order.
+    required: &'c [&'a TemporalClauseNode],
+    /// The object the protocol's `over` input is bound to, which each
+    /// required clause's `over` parameter is bound to.
+    instance: &'c ModelInstance,
+    /// The evaluation budget.
+    accounting: ScalarLimits,
+}
+
+/// The counterexample over the first `steps` steps of a replay, of `kind`.
+fn behaviour(
+    initial_state: usize,
+    steps: &[ModelStep<ProtocolTransition>],
+    over_binding: Option<ModelInstance>,
+    fairness: Vec<ProtocolFairness>,
+    kind: CounterexampleKind,
+) -> TemporalCounterexample<ProtocolTransition> {
+    TemporalCounterexample {
+        initial_state,
+        prefix: steps.to_vec(),
+        over_binding,
+        fairness,
+        kind,
+        lasso: None,
+        blocked: Vec::new(),
+        refinement: None,
+        final_delay: None,
+    }
+}
+
+/// One required clause's reading over the replayed behaviour.
+struct Reading {
+    evaluation: Result<TemporalOutcome, TemporalRefusal>,
+    /// The position and locus of the first undefined letter.
+    undefined: Option<(u64, UndefinedLocus)>,
+}
+
+/// FR-941 "Formula claims": `clause` read over the finite behaviour
+/// `payload` replays, by the one temporal evaluator.
+fn read_clause<M: MemoryModel>(
+    system: &ProtocolSystem<'_, M>,
+    node: &TemporalClauseNode,
+    payload: &TemporalCounterexample<ProtocolTransition>,
+    accounting: ScalarLimits,
+) -> Result<Reading, ReplayFault> {
+    let letters = system
+        .model()
+        .clause_letters(node)
+        .map_err(|_| ReplayFault::Broken)?;
+    match evaluate_protocol_trace(system, payload, node.clause(), &letters, accounting)
+        .map_err(|_| ReplayFault::Broken)?
+    {
+        ProtocolTraceEnd::Evaluated(run) => Ok(Reading {
+            evaluation: run.outcome,
+            undefined: run.undefined,
+        }),
+        ProtocolTraceEnd::Stopped(stop) => Err(ReplayFault::Stopped(stop)),
+    }
+}
+
+/// The fairness set the clause carries over the protocol system, which a
+/// replayed counterexample of the clause must record (FR-212).
+fn fairness_of<M: MemoryModel>(
+    system: &ProtocolSystem<'_, M>,
+    node: &TemporalClauseNode,
+) -> Result<Vec<ProtocolFairness>, ReplayFault> {
+    let clause = node.clause();
+    let protocol_fairness: Vec<_> = clause
+        .protocol_fairness()
+        .map(|(fairness, _)| fairness.clone())
+        .collect();
+    system
+        .fairness_set_with_targets(clause.fairness(), &protocol_fairness)
+        .map_err(|_| ReplayFault::Broken)
+}
+
+/// Whether the reading refutes its clause: violated, or undefined.
+fn refutes(reading: &Reading) -> bool {
+    matches!(
+        reading.evaluation,
+        Ok(TemporalOutcome::Violated { .. } | TemporalOutcome::Undefined(_))
+    )
+}
+
+/// FR-941 "Formula claims": each required clause in `requires` order over the
+/// replayed behaviour; the first violated or undefined clause decides, else
+/// the first that is not `holds`, else the claim holds.
+fn read_claim<M: MemoryModel>(
+    system: &ProtocolSystem<'_, M>,
+    trace: &SuppliedTrace,
+    steps: &[ModelStep<ProtocolTransition>],
+    keys: &[StateKey],
+    formula: &Formula<'_, '_>,
+) -> Result<Claimed, ReplayFault> {
+    let over = formula.instance.clone();
+    let mut decided: Option<(usize, Reading, Vec<ProtocolFairness>)> = None;
+    for (index, node) in formula.required.iter().enumerate() {
+        let fairness = fairness_of(system, node)?;
+        let payload = behaviour(
+            trace.initial_state,
+            steps,
+            Some(over.clone()),
+            fairness.clone(),
+            CounterexampleKind::Formula,
+        );
+        let reading = read_clause(system, node, &payload, formula.accounting)?;
+        let holds = matches!(reading.evaluation, Ok(TemporalOutcome::Holds));
+        let replace = match &decided {
+            None => !holds,
+            Some((_, held, _)) => refutes(&reading) && !refutes(held),
+        };
+        if replace {
+            decided = Some((index, reading, fairness));
+        }
+    }
+    let Some((index, reading, fairness)) = decided else {
+        return Ok(Claimed {
+            deciding: None,
+            evaluation: Ok(TemporalOutcome::Holds),
+            steps: steps.len(),
+            counterexample: None,
+            over,
+        });
+    };
+    let node = formula
+        .required
+        .get(index)
+        .ok_or(ReplayFault::Broken)?;
+    let counterexample = match &reading.evaluation {
+        Ok(TemporalOutcome::Violated { at }) => {
+            // The counterexample is the supplied trace through the first false
+            // activation, as long as that prefix still violates the clause
+            // there; otherwise it is the whole trace.
+            let through = usize::try_from(at.index())
+                .ok()
+                .and_then(|at| steps.get(..at))
+                .ok_or(ReplayFault::Broken)?;
+            let shortened = behaviour(
+                trace.initial_state,
+                through,
+                Some(over.clone()),
+                fairness.clone(),
+                CounterexampleKind::Formula,
+            );
+            let shortest = read_clause(system, node, &shortened, formula.accounting)?;
+            Some(if matches!(
+                &shortest.evaluation,
+                Ok(TemporalOutcome::Violated { at: held }) if held == at
+            ) {
+                shortened
+            } else {
+                behaviour(
+                    trace.initial_state,
+                    steps,
+                    Some(over.clone()),
+                    fairness,
+                    CounterexampleKind::Formula,
+                )
+            })
+        }
+        Ok(TemporalOutcome::Undefined(undefined)) => {
+            let position = undefined.at.index();
+            let (named, locus) = reading.undefined.clone().ok_or(ReplayFault::Broken)?;
+            if named != position {
+                return Err(ReplayFault::Broken);
+            }
+            let at = usize::try_from(position).map_err(|_| ReplayFault::Broken)?;
+            let through = steps.get(..at).ok_or(ReplayFault::Broken)?;
+            let state_key = keys.get(at).ok_or(ReplayFault::Broken)?.clone();
+            Some(behaviour(
+                trace.initial_state,
+                through,
+                Some(over.clone()),
+                fairness,
+                CounterexampleKind::UndefinedEvaluation(UndefinedEvaluation {
+                    site: UndefinedSite {
+                        position,
+                        state_key,
+                        locus,
+                        transition: None,
+                        time: None,
+                    },
+                    cause: undefined.cause.clone(),
+                }),
+            ))
+        }
+        _ => None,
+    };
+    Ok(Claimed {
+        deciding: Some(index),
+        evaluation: reading.evaluation,
+        steps: steps.len(),
+        counterexample,
+        over,
+    })
+}
+
+/// Re-execute `trace` through `system` from the initial state it names, then
+/// read the claim's required clauses over the replayed behaviour.
+///
+/// At each replayed state, position 0 through the last, the protocol
+/// expressions the system evaluates when it expands the state are read first
+/// (FR-941 "Undefined steps"): the first undefined one refutes the item
+/// there, before a later stale step is reached.
 fn replay_steps<M: MemoryModel>(
     system: &ProtocolSystem<'_, M>,
     trace: &SuppliedTrace,
+    formula: &Formula<'_, '_>,
 ) -> Result<ReplayVerdict, ReplayFault> {
     use fsl_eval::simulation::SubjectSystem;
     let Some(mut state) = system.initial().into_iter().nth(trace.initial_state) else {
         return Ok(ReplayVerdict::NoInitialState);
     };
-    for (position, step) in trace.steps.iter().enumerate() {
+    let key_of = |state: &_| system.canonical_state_key(state).map_err(|_| ReplayFault::Broken);
+    let mut keys = vec![key_of(&state)?];
+    let mut steps: Vec<ModelStep<ProtocolTransition>> = Vec::with_capacity(trace.steps.len());
+    for position in 0..=trace.steps.len() {
         let expansion = system.successors(&state).map_err(ReplayFault::Stopped)?;
+        if let Some((locus, guard_of, cause)) = undefined_finding(&expansion.findings) {
+            let state_key = keys.get(position).ok_or(ReplayFault::Broken)?.clone();
+            return Ok(ReplayVerdict::Undefined(Box::new(UndefinedStep {
+                counterexample: behaviour(
+                    trace.initial_state,
+                    &steps,
+                    None,
+                    Vec::new(),
+                    CounterexampleKind::UndefinedEvaluation(UndefinedEvaluation {
+                        site: UndefinedSite {
+                            position: u64::try_from(position).map_err(|_| ReplayFault::Broken)?,
+                            state_key,
+                            locus,
+                            transition: guard_of,
+                            time: None,
+                        },
+                        cause,
+                    }),
+                ),
+                over: formula.instance.clone(),
+            })));
+        }
+        let Some(step) = trace.steps.get(position) else {
+            break;
+        };
         let mut reached = None;
         for (transition, post) in expansion.successors {
             if transition_json(&transition).as_ref() != Some(&step.transition)
@@ -306,20 +592,29 @@ fn replay_steps<M: MemoryModel>(
             {
                 continue;
             }
-            let key = system
-                .canonical_state_key(&post)
-                .map_err(|_| ReplayFault::Broken)?;
+            let key = key_of(&post)?;
             if state_wire(&key) == step.post_state {
-                reached = Some(post);
+                reached = Some((transition, post, key));
                 break;
             }
         }
         match reached {
-            Some(post) => state = post,
+            Some((transition, post, key)) => {
+                steps.push(ModelStep {
+                    transition,
+                    post_state: key.clone(),
+                    delay: None,
+                });
+                keys.push(key);
+                state = post;
+            }
             None => return Ok(ReplayVerdict::StaleStep(position)),
         }
     }
-    Ok(ReplayVerdict::Replayed(trace.steps.len()))
+    if formula.required.is_empty() {
+        return Ok(ReplayVerdict::Replayed(steps.len()));
+    }
+    read_claim(system, trace, &steps, &keys, formula).map(|claimed| ReplayVerdict::Claimed(Box::new(claimed)))
 }
 
 /// The bindings the claim's protocol subject is over: the model simulation
@@ -427,35 +722,60 @@ impl<'a> ReplaySubject<'a, '_> {
             .map_err(|_| ReplayFault::Broken)
     }
 
+    /// The temporal clauses the protocol requires (FR-218), in `requires`
+    /// order.
+    pub(crate) fn required(&self) -> Result<Vec<&'a TemporalClauseNode>, ReplayFault> {
+        self.protocol
+            .requirements
+            .iter()
+            .map(|requirement| {
+                self.package
+                    .graph()
+                    .temporal_clauses()
+                    .get(requirement.temporal)
+                    .ok_or(ReplayFault::Broken)
+            })
+            .collect()
+    }
+
     /// Replay `trace` with `over` bound to `instance`.
     fn replay_over(
         &self,
         instance: ModelInstance,
         trace: &SuppliedTrace,
     ) -> Result<ReplayVerdict, ReplayFault> {
-        let subject = self.subject(instance)?;
+        let subject = self.subject(instance.clone())?;
         let model = ModelSystem::new(self.simulation())
             .map_err(|failure| ReplayFault::Admission(Box::new(failure)))?;
         let built = |_refusal: ProtocolRefusal| ReplayFault::Protocol;
         let live = live_instance_bound(None);
+        let required = self.required()?;
+        let formula = Formula {
+            required: &required,
+            instance: &instance,
+            accounting: self.limits.accounting,
+        };
         match SubjectMemory::of(&subject.memory, None, None) {
             SubjectMemory::Sc => replay_steps(
                 &ProtocolSystem::new(model, &subject, fsl_eval::simulation::protocol::Sc)
                     .map_err(built)?
                     .with_max_live_instances(live),
                 trace,
+                &formula,
             ),
             SubjectMemory::Tso(memory) => replay_steps(
                 &ProtocolSystem::new(model, &subject, memory)
                     .map_err(built)?
                     .with_max_live_instances(live),
                 trace,
+                &formula,
             ),
             SubjectMemory::Ra(memory) => replay_steps(
                 &ProtocolSystem::new(model, &subject, memory)
                     .map_err(built)?
                     .with_max_live_instances(live),
                 trace,
+                &formula,
             ),
         }
     }
@@ -464,26 +784,45 @@ impl<'a> ReplaySubject<'a, '_> {
     /// bound to. The trace replays when any binding replays it; otherwise
     /// the verdict is the stale step that came furthest.
     pub(crate) fn replay(&self, trace: &SuppliedTrace) -> Result<ReplayVerdict, ReplayFault> {
-        let mut furthest: Option<ReplayVerdict> = None;
+        let mut furthest: Option<usize> = None;
+        let mut no_initial = false;
         for instance in self.instances()? {
             match self.replay_over(instance, trace)? {
-                replayed @ ReplayVerdict::Replayed(_) => return Ok(replayed),
                 ReplayVerdict::StaleStep(position) => {
-                    let ahead = match furthest {
-                        Some(ReplayVerdict::StaleStep(held)) => position > held,
-                        _ => true,
-                    };
-                    if ahead {
-                        furthest = Some(ReplayVerdict::StaleStep(position));
-                    }
+                    furthest = Some(furthest.map_or(position, |held| held.max(position)));
                 }
-                ReplayVerdict::NoInitialState => {
-                    furthest.get_or_insert(ReplayVerdict::NoInitialState);
-                }
+                ReplayVerdict::NoInitialState => no_initial = true,
+                decided @ (ReplayVerdict::Replayed(_)
+                | ReplayVerdict::Undefined(_)
+                | ReplayVerdict::Claimed(_)) => return Ok(decided),
             }
         }
-        Ok(furthest.unwrap_or(ReplayVerdict::NoInitialState))
+        Ok(match furthest {
+            Some(position) => ReplayVerdict::StaleStep(position),
+            None => {
+                let _ = no_initial;
+                ReplayVerdict::NoInitialState
+            }
+        })
     }
+}
+
+/// A refuted `finite-replay` claim settled as an EN-1 record over the
+/// protocol subject: the record carries the counterexample and its replay.
+pub(crate) struct RefutedClaim {
+    pub(crate) record: Box<ModelCheckRecord<ProtocolTransition>>,
+    pub(crate) subject: Option<ProtocolWire>,
+}
+
+/// FR-941's reading of a formula claim, beside the terminal record its kind
+/// settles.
+pub(crate) struct ClaimReport {
+    /// The number of steps replayed.
+    pub(crate) steps: u64,
+    /// The deciding clause's reading: `holds`, or the evaluator's result.
+    pub(crate) evaluation: Result<TemporalOutcome, TemporalRefusal>,
+    /// The refutation, for a violated or undefined reading.
+    pub(crate) refuted: Option<RefutedClaim>,
 }
 
 /// What a `finite-replay` item reports.
@@ -502,6 +841,17 @@ pub(crate) enum FiniteReplayReport {
         /// document (FR-941 "Read").
         path: Option<String>,
     },
+    /// A required clause was read over the replayed behaviour (FR-941
+    /// "Formula claims").
+    Claim(Box<ClaimReport>),
+    /// A protocol expression was undefined at a replayed state (FR-941
+    /// "Undefined steps"): the refutation, and where the expression is.
+    UndefinedStep {
+        /// The refutation.
+        refuted: Box<RefutedClaim>,
+        /// `{position, state_key, locus, node}` of the undefined expression.
+        at: Value,
+    },
 }
 
 fn fault() -> EngineReport {
@@ -509,6 +859,208 @@ fn fault() -> EngineReport {
         "runtime_invariant",
         "established-invariant-broken",
     )))
+}
+
+/// The replay transcript a finite-replay counterexample carries: the claim's
+/// own, with no values (FR-128).
+const TRANSCRIPT: &str = "<<<assertion|model_check|clause|>>>";
+
+/// FR-941 "Undefined steps": the `where` of the undefined expression the
+/// counterexample names, `{position, state_key, locus, node}`.
+fn undefined_where(counterexample: &TemporalCounterexample<ProtocolTransition>) -> Option<Value> {
+    let CounterexampleKind::UndefinedEvaluation(evaluation) = &counterexample.kind else {
+        return None;
+    };
+    let site = &evaluation.site;
+    let (locus, node) = match &site.locus {
+        UndefinedLocus::Protocol(node) => ("protocol", Some(node.clone())),
+        UndefinedLocus::Contract(clause) => ("contract", Some(clause.clone())),
+        _ => ("expression", None),
+    };
+    let mut at = serde_json::json!({
+        "position": site.position,
+        "state_key": {"key": state_wire(&site.state_key).key},
+        "locus": locus,
+    });
+    if let (Some(node), Some(members)) = (node, at.as_object_mut()) {
+        members.insert("node".to_owned(), Value::String(node));
+    }
+    Some(at)
+}
+
+/// Everything a finite-replay item needs once its trace has been read.
+struct Run<'a, 'b> {
+    package: &'a CheckedPackage,
+    binding: &'b SubjectBinding<'a>,
+    limits: &'b AnalyzeLimits,
+    provision: &'a SourceProvision,
+    protocol: &'a CheckedProtocol,
+    subject: &'b ReplaySubject<'a, 'b>,
+}
+
+impl Run<'_, '_> {
+    /// Settle `counterexample`, found with the protocol's `over` bound to
+    /// `over`, for the required `clause` (`None` for a protocol expression
+    /// undefined at a replayed state), as an EN-1 record over the protocol
+    /// subject whose replay is FR-217's.
+    fn refute(
+        &self,
+        over: ModelInstance,
+        counterexample: TemporalCounterexample<ProtocolTransition>,
+        clause: Option<&TemporalClauseNode>,
+        cancel: &filament_exact::Cancel,
+    ) -> Result<RefutedClaim, ReplayFault> {
+        let subject = self.subject.subject(over.clone())?;
+        let roles: Vec<(String, String)> = subject
+            .roles
+            .iter()
+            .map(|binding| (binding.role.clone(), binding.model.clone()))
+            .collect();
+        let trace_subject = ProtocolTraceSubject {
+            model: ModelTraceSubject {
+                timed: None,
+                initial: self.binding.initial.clone(),
+                universes: self.binding.universes.clone(),
+                expansion: ExpansionLimits {
+                    max_candidates: u64::MAX,
+                },
+            },
+            protocol: self.protocol.name.clone(),
+            over: over.clone(),
+            roles: subject.roles.clone(),
+            capacities: Vec::new(),
+            memory: subject.memory.clone(),
+            max_store_buffer: None,
+            max_messages: None,
+            max_live_instances: None,
+        };
+        let model = ModelSystem::new(self.subject.simulation())
+            .map_err(|failure| ReplayFault::Admission(Box::new(failure)))?;
+        let clause_letters = match clause {
+            Some(node) => Some(
+                model
+                    .clause_letters(node)
+                    .map_err(|_| ReplayFault::Broken)?,
+            ),
+            None => None,
+        };
+        let letters: &dyn ModelLetters = match &clause_letters {
+            Some(letters) => letters,
+            None => &NoLetters,
+        };
+        let item = match (&clause_letters, clause) {
+            (Some(letters), Some(node)) => ModelCheckItem::Clause {
+                clause: node.clause(),
+                letters,
+            },
+            _ => ModelCheckItem::DeadlockFreedom,
+        };
+        let certificate = ProtocolCertificateRequest {
+            subject: self.subject.subject(over.clone())?,
+            temporal_clock_selections: &[],
+            item,
+            max_store_buffer: None,
+            max_messages: None,
+            max_live_instances: None,
+        };
+        let shape = match clause {
+            Some(node) => {
+                let name = QualifiedName::new(vec![
+                    Identifier::new(node.clause().name()).map_err(|_| ReplayFault::Broken)?,
+                ])
+                .map_err(|_| ReplayFault::Broken)?;
+                ReplayShape {
+                    target: RequestTargetWire::state_clause(name.clone()),
+                    members: ReplayTargetMembers::state_clause(name),
+                    node: node.identity(),
+                    occurrence: OccurrenceKey::new(node.identity(), node.claim().clone()),
+                    transcript: TRANSCRIPT,
+                }
+            }
+            None => {
+                let anchor = self
+                    .package
+                    .graph()
+                    .protocol_node_keys(&self.protocol.name)
+                    .and_then(|keys| keys.clause.clone())
+                    .ok_or(ReplayFault::Broken)?;
+                let target = derived_target().ok_or(ReplayFault::Broken)?;
+                let occurrence = OccurrenceKey::new(
+                    anchor.clone(),
+                    filament_exact::Origin::new(filament_exact::Role::new("declaration"), 0),
+                );
+                ReplayShape {
+                    target: RequestTargetWire::function(target.clone(), occurrence.clone()),
+                    members: ReplayTargetMembers::function(target),
+                    node: anchor,
+                    occurrence,
+                    transcript: TRANSCRIPT,
+                }
+            }
+        };
+        let inputs = ProtocolReplayInputs {
+            package: self.package,
+            binding: self.binding,
+            limits: self.limits,
+            provision: self.provision,
+            subject: trace_subject,
+            backend: BACKEND_ID,
+        };
+        let outcome = ModelCheckOutcome::Violated {
+            counterexample: Box::new(counterexample),
+            stats: Default::default(),
+        };
+        let record = settle_protocol_check(
+            &outcome,
+            &ModelCheckLimits::default(),
+            &certificate,
+            cancel,
+            move |payload| replay_protocol_over(&inputs, shape, payload, letters),
+        );
+        let on_each = self
+            .protocol_activates_on_each();
+        let wire = record.counterexample.as_ref().and_then(|_| {
+            over_reference(self.subject.simulation(), &self.protocol.name, &over).map(|over| {
+                ProtocolWire {
+                    protocol: self.protocol.name.clone(),
+                    over,
+                    roles,
+                    capacities: Vec::new(),
+                    max_live_instances: on_each.then_some(live_instance_bound(None)),
+                }
+            })
+        });
+        Ok(RefutedClaim {
+            record: Box::new(record),
+            subject: wire,
+        })
+    }
+
+    fn protocol_activates_on_each(&self) -> bool {
+        fsl_eval::simulation::protocol::activates_on_each(self.protocol)
+    }
+}
+
+/// The engine report of a fault of the replay.
+fn report_fault(error: ReplayFault) -> EngineReport {
+    match error {
+        ReplayFault::Admission(failure) => EngineReport::Refused(crate::analyze::admission(&failure)),
+        ReplayFault::Stopped(stop) => EngineReport::Refused(Refusal::Failed(stop.cause)),
+        ReplayFault::UnboundCapacity => EngineReport::Refused(Refusal::RequiresBound),
+        ReplayFault::Protocol | ReplayFault::Broken => fault(),
+    }
+}
+
+fn declined(
+    cause: &'static str,
+    position: Option<usize>,
+    path: Option<String>,
+) -> EngineReport {
+    EngineReport::FiniteReplay(FiniteReplayReport::Declined {
+        cause,
+        position,
+        path,
+    })
 }
 
 /// The `finite-replay` item at `index` that replays `trace` over the
@@ -519,6 +1071,7 @@ pub(crate) fn finite_replay_item<'a>(
     package: &'a CheckedPackage,
     binding: SubjectBinding<'a>,
     limits: AnalyzeLimits,
+    provision: &'a SourceProvision,
     protocol: &'a CheckedProtocol,
     trace: Result<SuppliedTrace, TraceDefect>,
 ) -> AnalyzeItem<'a> {
@@ -528,15 +1081,15 @@ pub(crate) fn finite_replay_item<'a>(
         Some(DeclarationFamily::Protocol),
         Mode::Bounded,
         BACKEND_ID,
-        move |_| {
+        move |cancel| {
             let trace = match trace {
                 Ok(trace) => trace,
                 Err(defect) => {
-                    return EngineReport::FiniteReplay(FiniteReplayReport::Declined {
-                        cause: defect.cause(),
-                        position: defect.position(),
-                        path: Some(defect.path().to_owned()).filter(|path| !path.is_empty()),
-                    });
+                    return declined(
+                        defect.cause(),
+                        defect.position(),
+                        Some(defect.path().to_owned()).filter(|path| !path.is_empty()),
+                    );
                 }
             };
             let subject = ReplaySubject {
@@ -545,32 +1098,69 @@ pub(crate) fn finite_replay_item<'a>(
                 limits: &limits,
                 protocol,
             };
+            let run = Run {
+                package,
+                binding: &binding,
+                limits: &limits,
+                provision,
+                protocol,
+                subject: &subject,
+            };
             match subject.replay(&trace) {
                 Ok(ReplayVerdict::Replayed(steps)) => EngineReport::FiniteReplay(
                     FiniteReplayReport::Replayed(u64::try_from(steps).unwrap_or(u64::MAX)),
                 ),
                 Ok(ReplayVerdict::StaleStep(position)) => {
-                    EngineReport::FiniteReplay(FiniteReplayReport::Declined {
-                        cause: "invalid-value",
-                        position: Some(position),
-                        path: None,
-                    })
+                    declined("invalid-value", Some(position), None)
                 }
                 Ok(ReplayVerdict::NoInitialState) => {
-                    EngineReport::FiniteReplay(FiniteReplayReport::Declined {
-                        cause: "invalid-value",
-                        position: None,
-                        path: Some("/initial_state".to_owned()),
-                    })
+                    declined("invalid-value", None, Some("/initial_state".to_owned()))
                 }
-                Err(ReplayFault::Admission(failure)) => {
-                    EngineReport::Refused(crate::analyze::admission(&failure))
+                Ok(ReplayVerdict::Undefined(step)) => {
+                    let UndefinedStep {
+                        counterexample,
+                        over,
+                    } = *step;
+                    let Some(at) = undefined_where(&counterexample) else {
+                        return fault();
+                    };
+                    match run.refute(over, counterexample, None, cancel) {
+                        Ok(refuted) => EngineReport::FiniteReplay(FiniteReplayReport::UndefinedStep {
+                            refuted: Box::new(refuted),
+                            at,
+                        }),
+                        Err(error) => report_fault(error),
+                    }
                 }
-                Err(ReplayFault::Stopped(stop)) => {
-                    EngineReport::Refused(Refusal::Failed(stop.cause))
+                Ok(ReplayVerdict::Claimed(claimed)) => {
+                    let Claimed {
+                        deciding,
+                        evaluation,
+                        steps,
+                        counterexample,
+                        over,
+                    } = *claimed;
+                    let refuted = match counterexample {
+                        Some(counterexample) => {
+                            let required = match subject.required() {
+                                Ok(required) => required,
+                                Err(error) => return report_fault(error),
+                            };
+                            let node = deciding.and_then(|index| required.get(index)).copied();
+                            match run.refute(over, counterexample, node, cancel) {
+                                Ok(refuted) => Some(refuted),
+                                Err(error) => return report_fault(error),
+                            }
+                        }
+                        None => None,
+                    };
+                    EngineReport::FiniteReplay(FiniteReplayReport::Claim(Box::new(ClaimReport {
+                        steps: u64::try_from(steps).unwrap_or(u64::MAX),
+                        evaluation,
+                        refuted,
+                    })))
                 }
-                Err(ReplayFault::UnboundCapacity) => EngineReport::Refused(Refusal::RequiresBound),
-                Err(ReplayFault::Protocol | ReplayFault::Broken) => fault(),
+                Err(error) => report_fault(error),
             }
         },
     )

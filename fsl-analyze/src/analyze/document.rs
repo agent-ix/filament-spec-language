@@ -2370,7 +2370,7 @@ fn write_run(
                 request: echo.map(|echo| echo.request.clone()),
                 identity: echo.and_then(|echo| echo.identity.clone()),
                 target,
-                detail: detail.copied(),
+                detail: detail.cloned(),
                 scoped: echo.is_some_and(|echo| echo.scoped),
                 axes: OutcomeAxes::of_record(record.value(), disposed),
                 producer: record
@@ -2563,7 +2563,7 @@ fn item_document(written: Value, members: ItemMembers) -> Value {
     item.insert("request".to_owned(), request.unwrap_or(Value::Null));
     item.insert("category".to_owned(), category);
     if let (Some(checker), Some(identity), Some("proved")) = (
-        detail.and_then(|detail| detail.checker),
+        detail.as_ref().and_then(|detail| detail.checker),
         identity,
         record.get("result").and_then(Value::as_str),
     ) {
@@ -2572,8 +2572,10 @@ fn item_document(written: Value, members: ItemMembers) -> Value {
             json!({"identity": identity, "checker": checker.as_str(), "accepted": true}),
         );
     }
+    let mut spelled = None;
     if let Some(mut counterexample) = counterexample {
         spell_states(&mut counterexample);
+        spelled = Some(counterexample.clone());
         if let Some(target) = target {
             item.insert(
                 "replay".to_owned(),
@@ -2593,7 +2595,7 @@ fn item_document(written: Value, members: ItemMembers) -> Value {
             item.insert(member.to_owned(), value.clone());
         }
     }
-    if let Some(stats) = detail.and_then(|detail| detail.exploration) {
+    if let Some(stats) = detail.as_ref().and_then(|detail| detail.exploration) {
         item.insert(
             "exploration".to_owned(),
             json!({
@@ -2614,11 +2616,27 @@ fn item_document(written: Value, members: ItemMembers) -> Value {
     }
     // FR-941 "Bare claim": a proof over a supplied trace names the trace and
     // the steps it replayed; it is about that trace only.
-    if let Some(steps) = detail.and_then(|detail| detail.replayed_steps) {
+    if let Some(steps) = detail.as_ref().and_then(|detail| detail.replayed_steps) {
         if let Some(trace) = item.get("request").and_then(|request| request.get("trace")) {
             record.insert("trace".to_owned(), trace.clone());
         }
         record.insert("steps".to_owned(), json!(steps));
+    }
+    // FR-941: a claim's required clauses are read by the temporal evaluator,
+    // whose reading is the item's FSpec FR-352 `disposition.temporal`; a
+    // protocol expression undefined at a replayed state names where.
+    if let Some(finite) = detail.as_ref().and_then(|detail| detail.finite_replay.as_ref()) {
+        if let Some(evaluation) = &finite.evaluation {
+            if let Ok(disposition) = fsl_replay::temporal_disposition_json(evaluation.as_ref(), spelled.clone()) {
+                if let (Some(axes), Some(basis)) = (item.get_mut("axes"), disposition.get("basis")) {
+                    axes["settlement"] = basis.clone();
+                }
+                item.insert("disposition".to_owned(), disposition);
+            }
+        }
+        if let (Some(at), Some(Value::Object(cause))) = (&finite.undefined_where, record.get_mut("cause")) {
+            cause.insert("where".to_owned(), at.clone());
+        }
     }
     // FR-621: `settled_by`, and `backend` exactly when a result settled
     // the record.
