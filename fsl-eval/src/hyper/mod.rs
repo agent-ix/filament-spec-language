@@ -35,8 +35,9 @@ pub use crate::simulation::model::CheckedHyperLetters;
 pub use checked::CheckedStepMatch;
 pub use copy_swap::{copy_population, copy_symmetry, CopySwapInputs};
 pub use finite::{
-    FiniteFalseTuple, FiniteHyperOutcome, FinitePopulationError, FiniteTrace, FiniteTraceClosure,
-    FiniteTracePopulation, FiniteTupleOutcome, evaluate_finite_hyper, replays_finite_refutation,
+    evaluate_finite_hyper, replays_finite_refutation, FiniteFalseTuple, FiniteHyperOutcome,
+    FinitePopulationError, FiniteQuantifier, FiniteTrace, FiniteTraceClosure,
+    FiniteTracePopulation, FiniteTupleOutcome,
 };
 pub use joint::cartesian;
 pub use product::{

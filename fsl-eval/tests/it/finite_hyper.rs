@@ -2,15 +2,16 @@
 //! FR-898's finite trace population quantifier core.
 
 use fsl_eval::hyper::{
-    FiniteFalseTuple, FiniteHyperOutcome, FiniteTrace, FiniteTraceClosure, FiniteTracePopulation,
-    FiniteTupleOutcome, evaluate_finite_hyper, replays_finite_refutation,
+    evaluate_finite_hyper, replays_finite_refutation, FiniteFalseTuple, FiniteHyperOutcome,
+    FiniteQuantifier::{Exists, Forall},
+    FiniteTrace, FiniteTraceClosure, FiniteTracePopulation, FiniteTupleOutcome,
 };
-use fsl_forms::QuantifierKind::{Exists, Forall};
 use ix_trace_rs::trace;
 
 fn population() -> FiniteTracePopulation<i32> {
     FiniteTracePopulation::new(
         "population-1",
+        "example/Obs",
         FiniteTraceClosure::Closed,
         vec![
             FiniteTrace {
@@ -24,6 +25,37 @@ fn population() -> FiniteTracePopulation<i32> {
         ],
     )
     .expect("distinct identities form a population")
+}
+
+#[trace("TC-1786", "FR-739-AC-1")]
+#[test]
+fn finite_population_rejects_empty_and_duplicate_trace_identities() {
+    let row = |identity: &str| FiniteTrace {
+        identity: identity.into(),
+        records: vec![1],
+    };
+    assert_eq!(
+        FiniteTracePopulation::new(
+            "population-1",
+            "example/Obs",
+            FiniteTraceClosure::Closed,
+            vec![row(""), row("b")],
+        ),
+        Err(fsl_eval::hyper::FinitePopulationError::EmptyTraceIdentity)
+    );
+    assert_eq!(
+        FiniteTracePopulation::new(
+            "population-1",
+            "example/Obs",
+            FiniteTraceClosure::Closed,
+            vec![row("a"), row("a")],
+        ),
+        Err(
+            fsl_eval::hyper::FinitePopulationError::DuplicateTraceIdentity {
+                identity: "a".into(),
+            }
+        )
+    );
 }
 
 #[trace("TC-2535", "FR-898-AC-4")]

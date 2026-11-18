@@ -1,8 +1,16 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //! FR-898 finite trace-set quantification.
 
-use fsl_forms::QuantifierKind;
 use std::collections::BTreeMap;
+
+/// A quantifier in a finite trace population prefix.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum FiniteQuantifier {
+    /// Every trace in the population must satisfy the remaining prefix.
+    Forall,
+    /// At least one trace in the population must satisfy the remaining prefix.
+    Exists,
+}
 
 /// Whether a supplied trace population is closed to additional traces.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -27,6 +35,8 @@ pub struct FiniteTrace<T> {
 pub struct FiniteTracePopulation<T> {
     /// Stable identity of this population document.
     pub identity: String,
+    /// Qualified record type declared by the finite hyper clause.
+    pub record_type: String,
     /// Whether this document closes the population.
     pub closure: FiniteTraceClosure,
     /// Traces in their input order, with repeated identical identities folded.
@@ -36,34 +46,45 @@ pub struct FiniteTracePopulation<T> {
 /// Why population admission rejected its trace identities.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum FinitePopulationError {
-    /// One identity was supplied with two different record sequences.
-    ConflictingTraceIdentity { identity: String },
+    /// A trace identity is empty.
+    EmptyTraceIdentity,
+    /// A trace has no states.
+    EmptyTrace { identity: String },
+    /// One identity occurs more than once in the population document.
+    DuplicateTraceIdentity { identity: String },
 }
 
 impl<T: Eq> FiniteTracePopulation<T> {
-    /// Construct a population, rejecting identity collisions with differing
-    /// records and collapsing repeated identical rows to one identity.
+    /// Construct a population, rejecting empty identities, empty traces, and
+    /// every repeated identity in the source document.
     pub fn new(
         identity: impl Into<String>,
+        record_type: impl Into<String>,
         closure: FiniteTraceClosure,
         traces: Vec<FiniteTrace<T>>,
     ) -> Result<Self, FinitePopulationError> {
         let mut indices = BTreeMap::new();
         let mut unique: Vec<FiniteTrace<T>> = Vec::with_capacity(traces.len());
         for trace in traces {
-            if let Some(index) = indices.get(&trace.identity).copied() {
-                if unique[index].records != trace.records {
-                    return Err(FinitePopulationError::ConflictingTraceIdentity {
-                        identity: trace.identity,
-                    });
-                }
-                continue;
+            if trace.identity.is_empty() {
+                return Err(FinitePopulationError::EmptyTraceIdentity);
+            }
+            if trace.records.is_empty() {
+                return Err(FinitePopulationError::EmptyTrace {
+                    identity: trace.identity,
+                });
+            }
+            if indices.contains_key(&trace.identity) {
+                return Err(FinitePopulationError::DuplicateTraceIdentity {
+                    identity: trace.identity,
+                });
             }
             indices.insert(trace.identity.clone(), unique.len());
             unique.push(trace);
         }
         Ok(Self {
             identity: identity.into(),
+            record_type: record_type.into(),
             closure,
             traces: unique,
         })
@@ -117,7 +138,7 @@ enum Truth {
 pub fn evaluate_finite_hyper<T>(
     population: &FiniteTracePopulation<T>,
     bound: u64,
-    quantifiers: &[(QuantifierKind, String)],
+    quantifiers: &[(FiniteQuantifier, String)],
     mut body: impl FnMut(&[&FiniteTrace<T>]) -> FiniteTupleOutcome,
 ) -> FiniteHyperOutcome {
     if population.traces.len() as u128 > u128::from(bound) {
@@ -142,7 +163,7 @@ pub fn evaluate_finite_hyper<T>(
 pub fn replays_finite_refutation<T>(
     population: &FiniteTracePopulation<T>,
     bound: u64,
-    quantifiers: &[(QuantifierKind, String)],
+    quantifiers: &[(FiniteQuantifier, String)],
     counterexample: &[FiniteFalseTuple],
     body: impl FnMut(&[&FiniteTrace<T>]) -> FiniteTupleOutcome,
 ) -> bool {
@@ -155,7 +176,7 @@ pub fn replays_finite_refutation<T>(
 
 fn quantify<T>(
     population: &FiniteTracePopulation<T>,
-    quantifiers: &[(QuantifierKind, String)],
+    quantifiers: &[(FiniteQuantifier, String)],
     level: usize,
     selected: &mut Vec<usize>,
     body: &mut impl FnMut(&[&FiniteTrace<T>]) -> FiniteTupleOutcome,
@@ -171,23 +192,23 @@ fn quantify<T>(
         let truth = quantify(population, quantifiers, level + 1, selected, body);
         selected.pop();
         match (kind, truth) {
-            (QuantifierKind::Forall, Truth::False(false_tuples)) => {
+            (FiniteQuantifier::Forall, Truth::False(false_tuples)) => {
                 return Truth::False(false_tuples);
             }
-            (QuantifierKind::Exists, Truth::True) => return Truth::True,
+            (FiniteQuantifier::Exists, Truth::True) => return Truth::True,
             (_, Truth::True) => any_true = true,
             (_, Truth::Incomplete) => any_incomplete = true,
-            (QuantifierKind::Exists, Truth::False(mut tuples)) => {
+            (FiniteQuantifier::Exists, Truth::False(mut tuples)) => {
                 false_tuples.append(&mut tuples);
             }
         }
     }
     match kind {
-        QuantifierKind::Forall if any_incomplete => Truth::Incomplete,
-        QuantifierKind::Forall => Truth::True,
-        QuantifierKind::Exists if any_true => Truth::True,
-        QuantifierKind::Exists if any_incomplete => Truth::Incomplete,
-        QuantifierKind::Exists => Truth::False(false_tuples),
+        FiniteQuantifier::Forall if any_incomplete => Truth::Incomplete,
+        FiniteQuantifier::Forall => Truth::True,
+        FiniteQuantifier::Exists if any_true => Truth::True,
+        FiniteQuantifier::Exists if any_incomplete => Truth::Incomplete,
+        FiniteQuantifier::Exists => Truth::False(false_tuples),
     }
 }
 
