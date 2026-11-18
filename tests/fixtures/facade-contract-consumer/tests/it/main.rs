@@ -746,11 +746,11 @@ protocol Flow using p over (input: M::Widget) on origin {\n\
         let buyer_node = node_for_id(package, buyer);
         assert!(matches!(
             fsl_package::protocol_view::protocol_view(package, buyer),
-            Err(fsl_package::protocol_view::ViewRefusal::UnknownProtocol { .. })
+            Err(fsl_package::protocol_view::ViewRefusal::NotAProtocolClause { .. })
         ));
         assert!(matches!(
             fsl_package::protocol_view::causal_relation(package, buyer),
-            Err(fsl_package::protocol_view::ViewRefusal::UnknownProtocol { .. })
+            Err(fsl_package::protocol_view::ViewRefusal::NotAProtocolClause { .. })
         ));
         assert!(matches!(
             fsl_package::protocol_view::channel_endpoints(buyer_node),
@@ -936,14 +936,15 @@ mod runtime {
     fn cf_rt_01_01_emit_plan_root_exposes_plan_emission_and_checked_unit() {
         let source = fsl_replay::SourceIdentity::new("consumer", "plan-root");
         let package_name = fsl_replay::LibraryName::new("consumer").expect("library name");
-        let packages = fsl_semantics::model::intake::PackageInput::new();
+        let model = code_generation::model_with_touch();
+        let packages =
+            fsl_semantics::model::intake::package_input([model.as_slice()]).expect("model intake");
         let unit = "language \"ix:native\" edition \"1-draft\";\n\
 profile v = \"filament.value.complete/v1\";\n\
-profile t = \"filament.temporal.event-position.false-extension/v1\";\n\
-record Reading { level: Int[0, 9]; }\n\
-dimension Positions;\n\
-unit position : Positions = rational(1, 1);\n\
-temporal T using t over (r: Reading) clock \"positions\" on origin { eventually[0, 1] holds(r.level > 0) }\n";
+profile t = \"filament.temporal.timed/v1\";\n\
+model M = \"acme/orders\";\n\
+time M dense unit ms;\n\
+temporal T using t over (r: M::Widget) clock \"model-time\" on origin { eventually[0, 1] holds(r.code > 0) }\n";
         let one = filament_exact::Rational::new(
             filament_exact::Integer::from(1_u64),
             filament_exact::Integer::from(1_u64),
@@ -956,7 +957,7 @@ temporal T using t over (r: Reading) clock \"positions\" on origin { eventually[
         .expect("nonzero denominator");
         let target = fsl_replay::MonitorTarget {
             counter: "counter".into(),
-            unit: "event".into(),
+            unit: "ms".into(),
             width_bits: 8,
             uncertainty: zero,
             max_event_rate: Some(one),
