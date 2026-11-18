@@ -38,6 +38,7 @@ pub mod document;
 mod exact;
 mod invariant_item;
 mod items;
+mod protocol_item;
 mod reduction_item;
 mod refinement_item;
 mod request;
@@ -505,6 +506,10 @@ pub struct ItemDetail {
     pub checker: Option<fsl_replay::CertificateChecker>,
     /// The steps of the supplied trace a `finite-replay` proof replayed.
     pub replayed_steps: Option<u64>,
+    /// The memory bound a weak-memory protocol run used and whether it was
+    /// reached (FSpec FR-439, FR-225); `None` under `sc` and for a model
+    /// subject.
+    pub memory_bound: Option<fsl_replay::StatedMemoryBound>,
     /// What a `finite-replay` item reports of a protocol claim beyond its
     /// terminal record (FR-941).
     pub finite_replay: Option<FiniteReplayDetail>,
@@ -537,6 +542,7 @@ impl ItemDetail {
                 .and_then(|model| model.checker)
                 .or_else(|| protocol.and_then(|protocol| protocol.checker)),
             replayed_steps: record.replayed_steps,
+            memory_bound: protocol.and_then(|protocol| protocol.memory_bound),
             finite_replay: record.finite_replay.clone(),
         }
     }
@@ -618,6 +624,9 @@ pub enum Counterexample {
     StateGraph(Box<GraphReport>),
     /// A global-conformance recording prefix, already replayed in process.
     GlobalConformance(Box<serde_json::Value>),
+    /// An EN-7 closed-form miss in FSpec FR-419's `schedulability-miss`
+    /// spelling, typed and not replayed.
+    ScheduleMiss(Box<serde_json::Value>),
 }
 
 /// What a state-graph engine run reports for one item (FR-628): the record of
@@ -834,7 +843,10 @@ fn item_stage(
         .iter()
         .find(|found| found.request_index == record.request_index())
     {
-        return if matches!(found.counterexample, Counterexample::StateGraph(_)) {
+        return if matches!(
+            found.counterexample,
+            Counterexample::StateGraph(_) | Counterexample::ScheduleMiss(_)
+        ) {
             OutcomeStage::S7
         } else {
             OutcomeStage::S8
@@ -1467,6 +1479,10 @@ pub struct AnalyzeRecord {
     /// EN-7's closed-form outcome with its evidence (FR-247): the miss of a
     /// `refuted` item, the fixpoints or demand points of a `proved` one.
     pub closed_form: Option<Box<fsl_replay::ClosedFormOutcome>>,
+    /// FSpec FR-419's `schedulability-miss` counterexample of a refuted
+    /// EN-7 item (FSL FR-621): recomputed by the closed-form check, so it has
+    /// no replay.
+    pub schedule_miss: Option<Box<serde_json::Value>>,
     /// The number of steps of a supplied trace a `finite-replay` item
     /// replayed to its proof (FR-941).
     pub replayed_steps: Option<u64>,
@@ -1506,6 +1522,7 @@ impl AnalyzeRecord {
             protocol_conformance: None,
             protocol_conformance_counterexample: None,
             closed_form: None,
+            schedule_miss: None,
             state_graph: None,
         }
     }
@@ -1561,6 +1578,15 @@ impl AnalyzeRecord {
         if let Some(found) = &self.contract_check {
             return Some(found.wire.clone());
         }
+        if let Some(found) = &self.schedule_miss {
+            // FSpec FR-331's counterexample entry around FR-419's miss object.
+            let backend = self.terminal().and_then(|terminal| terminal.backend());
+            return Some(Ok(serde_json::json!({
+                "request_index": self.request_index.get(),
+                "backend": backend.map(BackendId::as_str),
+                "counterexample": (**found).clone(),
+            })));
+        }
         self.probabilistic_counterexample
             .as_ref()
             .map(|found| found.wire.clone())
@@ -1605,6 +1631,9 @@ impl AnalyzeRecord {
         }
         if let Some(found) = self.contract_check.take() {
             return Some(Counterexample::Contract(found.found));
+        }
+        if let Some(found) = self.schedule_miss.take() {
+            return Some(Counterexample::ScheduleMiss(found));
         }
         self.probabilistic_counterexample
             .take()
@@ -1719,7 +1748,8 @@ impl Counterexample {
             Self::Probabilistic(_)
             | Self::Contract(_)
             | Self::StateGraph(_)
-            | Self::GlobalConformance(_) => None,
+            | Self::GlobalConformance(_)
+            | Self::ScheduleMiss(_) => None,
         }
     }
 }
@@ -2273,7 +2303,11 @@ fn settle(
             settled
         }
         EngineReport::ClosedForm(report) => {
-            let schedule_item::ClosedFormReport { value, outcome } = *report;
+            let schedule_item::ClosedFormReport {
+                value,
+                outcome,
+                miss,
+            } = *report;
             // A refuted value without its miss evidence is an engine fault,
             // never a verdict.
             let settlement = terminal(
@@ -2282,6 +2316,7 @@ fn settle(
             );
             AnalyzeRecord {
                 closed_form: Some(Box::new(outcome)),
+                schedule_miss: miss.map(Box::new),
                 ..AnalyzeRecord::of(index, settlement)
             }
         }

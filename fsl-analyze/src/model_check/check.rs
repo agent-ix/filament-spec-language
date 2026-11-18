@@ -73,23 +73,23 @@ use filament_semantic_value::catalog::InternalFault;
 use filament_semantic_value::fairness::{FairnessConstraint, PropertyForm};
 use filament_semantic_value::model_transition::ModelTransition;
 use fsl_eval::automaton::{
-    Atom, AutomatonError, AutomatonKind, BoundedState, BoundedTranslation, Gba, GbaBuilder, Guard,
-    KeyRefusal, Letter, Monitor, SafetyAutomaton, SafetyState, StateId, bounded_shape, translate,
-    translate_counted,
+    bounded_shape, translate, translate_counted, Atom, AutomatonError, AutomatonKind, BoundedState,
+    BoundedTranslation, Gba, GbaBuilder, Guard, KeyRefusal, Letter, Monitor, SafetyAutomaton,
+    SafetyState, StateId,
 };
 use fsl_eval::fairness::{EdgeLabel, Vertex};
 use fsl_eval::model_subject::{
     AtomStop, ModelInstance, ModelLetters, ModelSubject, ProtocolSubject,
 };
-use fsl_eval::simulation::StateKey;
 use fsl_eval::simulation::model::{
-    ClauseOutcome, ModelFinding, ModelSimState, ModelSystem, TerminalClass, check_model_bounds,
+    check_model_bounds, ClauseOutcome, ModelFinding, ModelSimState, ModelSystem, TerminalClass,
 };
 use fsl_eval::simulation::protocol::{
     activates_on_each, check_protocol_bounds, live_instance_bound, Capacities, DataRace,
-    MemoryModel, ProtocolFairnessError, ProtocolRefusal, ProtocolSystem, ProtocolTransition, Sc,
-    SubjectMemory, UnboundCapacity, WeakAccessShape,
+    MemoryModel, ProtocolFairnessError, ProtocolRefusal, ProtocolState, ProtocolSystem,
+    ProtocolTransition, Sc, SubjectMemory, UnboundCapacity, WeakAccessShape,
 };
+use fsl_eval::simulation::StateKey;
 use fsl_eval::simulation::{
     ConstraintValue, Cut, EncodingRefusal, Expansion, ExpansionLimit, ExpansionStop, FairLoop,
     Location, NotSimulated, Permutation, RequiresBound, SubjectSystem, SubjectTransition,
@@ -699,11 +699,32 @@ pub fn check_protocol(
     request: ProtocolCheckRequest<'_>,
     cancel: &Cancel,
 ) -> Result<ModelCheckOutcome<ProtocolTransition>, ModelCheckRefusal> {
+    check_protocol_constrained(request, None, cancel)
+}
+
+/// [`check_protocol`] under the state constraint `constraint` (FR-158, FSL
+/// FR-225-AC-4): a state where the constraint is false is stored and read but
+/// never expanded, and a run that reached one settles `ConstraintReached`
+/// before any memory bound it also reached. A liveness clause under a state
+/// constraint is not decided.
+///
+/// # Errors
+///
+/// As [`check_protocol`], and [`ModelCheckRefusal::UnknownConstraint`] when the
+/// package declares no `at current` state clause named `constraint`.
+pub fn check_protocol_constrained(
+    request: ProtocolCheckRequest<'_>,
+    constraint: Option<&str>,
+    cancel: &Cancel,
+) -> Result<ModelCheckOutcome<ProtocolTransition>, ModelCheckRefusal> {
     if matches!(request.item, ModelCheckItem::Invariant { .. }) {
         return Err(ModelCheckRefusal::InvariantOverProtocol);
     }
     if let ModelCheckItem::Clause { clause, .. } = request.item {
         if clause.property_form() == Some(PropertyForm::Liveness) {
+            if constraint.is_some() {
+                return Err(ModelCheckRefusal::ReducedLiveness);
+            }
             return check_protocol_liveness(request, cancel);
         }
     }
@@ -717,6 +738,13 @@ pub fn check_protocol(
     let no_initial = simulation.initial.is_empty();
     let model = ModelSystem::new(simulation)
         .map_err(|failure| ModelCheckRefusal::Admission(Box::new(failure)))?;
+    if let Some(name) = constraint {
+        if !model.has_constraint(name) {
+            return Err(ModelCheckRefusal::UnknownConstraint {
+                name: name.to_owned(),
+            });
+        }
+    }
     let protocol = subject
         .model
         .simulation
@@ -793,6 +821,7 @@ pub fn check_protocol(
         cancel,
         max_automaton_states,
         instance_bound,
+        constraint,
     };
     let memory = SubjectMemory::of(
         &subject.memory,
@@ -992,11 +1021,14 @@ struct ProtocolRun<'r> {
     max_automaton_states: u64,
     /// The instance bound of an `activation on each` protocol.
     instance_bound: Option<InstanceBound>,
+    /// The request's state constraint (FR-158).
+    constraint: Option<&'r str>,
 }
 
 impl ProtocolRun<'_> {
-    /// The unreduced run over `system`, under the memory bound `bound`
-    /// when its memory model has one (ADR-025 MB-3, MB-4).
+    /// The run over `system`, under the memory bound `bound` when its memory
+    /// model has one (ADR-025 MB-3, MB-4), and the state constraint when the
+    /// request names one.
     fn decide<M: MemoryModel>(
         &self,
         system: &ProtocolSystem<'_, M>,
@@ -1013,7 +1045,9 @@ impl ProtocolRun<'_> {
         let mut run = Run {
             system,
             fairness: &fairness,
-            reducer: None,
+            reducer: self
+                .constraint
+                .map(|_| system as &dyn Reducer<ProtocolState<M>>),
             item: self.item,
             limits: self.limits,
             max_depth: self.max_depth,
@@ -1035,7 +1069,7 @@ impl ProtocolRun<'_> {
             monitor: Monitor::bad_prefix(automaton, self.max_automaton_states)
                 .map_err(|_| fault("a-safety-item-has-a-safety-automaton"))?,
             group: SymmetryGroup::default(),
-            constraint: None,
+            constraint: self.constraint,
             boundary: 0,
             chooser: None,
             memory_bound: bound,
@@ -1597,7 +1631,7 @@ trait Reducer<State> {
     ) -> Result<(State, Permutation), ExpansionStop>;
 
     fn constraint_value(&self, state: &State, name: &str)
-    -> Result<ConstraintValue, ExpansionStop>;
+        -> Result<ConstraintValue, ExpansionStop>;
 }
 
 impl Reducer<ModelSimState> for ModelSystem<'_> {
@@ -1615,6 +1649,26 @@ impl Reducer<ModelSimState> for ModelSystem<'_> {
         name: &str,
     ) -> Result<ConstraintValue, ExpansionStop> {
         ModelSystem::constraint_value(self, state, name)
+    }
+}
+
+impl<M: MemoryModel> Reducer<ProtocolState<M>> for ProtocolSystem<'_, M> {
+    // A protocol subject offers no symmetry reduction: its group is trivial and
+    // a run never canonicalises under it.
+    fn canonicalise(
+        &self,
+        state: &ProtocolState<M>,
+        _group: &SymmetryGroup,
+    ) -> Result<(ProtocolState<M>, Permutation), ExpansionStop> {
+        Ok((state.clone(), Permutation::identity()))
+    }
+
+    fn constraint_value(
+        &self,
+        state: &ProtocolState<M>,
+        name: &str,
+    ) -> Result<ConstraintValue, ExpansionStop> {
+        self.model().constraint_value(state.model(), name)
     }
 }
 
@@ -1878,42 +1932,50 @@ impl<S: SubjectSystem> Run<'_, S> {
             }
         }
         match explored {
-            // ADR-025 MB-4: a bound-limited state settles first.
-            Ok(()) => Ok(
-                if let (Some(bound), true) = (self.memory_bound, !self.bound_limited.is_empty()) {
-                    ModelCheckOutcome::Memory {
-                        cause: MemoryCause::BoundReached {
-                            bound,
-                            states: widen(self.bound_limited.len()),
-                        },
-                        stats: self.stats(),
-                    }
-                } else if let (Some(bound), true) =
-                    (self.instance_bound, !self.instance_limited.is_empty())
-                {
-                    // ADR-027 AE-4: an instance-limited state settles before
-                    // the horizon, after a bound-limited one.
-                    ModelCheckOutcome::Undecided {
-                        cause: UndecidedCause::InstanceBoundReached {
-                            bound,
-                            states: widen(self.instance_limited.len()),
-                        },
-                        stats: self.stats(),
-                    }
-                } else if self.horizon_cut {
-                    ModelCheckOutcome::BoundReached {
-                        depth: widen(self.max_depth.unwrap_or(0)),
-                        stats: self.stats(),
-                    }
-                } else if let Some(outcome) = self.zero_progress_outcome()? {
-                    outcome
-                } else {
-                    ModelCheckOutcome::Holds {
-                        certificate: ProofCertificate::Closure(self.certificate(instances)?),
-                        stats: self.stats(),
-                    }
-                },
-            ),
+            // FR-158: a boundary state of the state constraint settles before
+            // any bound (ADR-021 RV-4), then ADR-025 MB-4: a bound-limited
+            // state settles first.
+            Ok(()) => Ok(if self.constraint.is_some() && self.boundary > 0 {
+                ModelCheckOutcome::Reduction {
+                    cause: ReductionCause::ConstraintReached {
+                        boundary_states: widen(self.boundary),
+                    },
+                    stats: self.stats(),
+                }
+            } else if let (Some(bound), true) = (self.memory_bound, !self.bound_limited.is_empty())
+            {
+                ModelCheckOutcome::Memory {
+                    cause: MemoryCause::BoundReached {
+                        bound,
+                        states: widen(self.bound_limited.len()),
+                    },
+                    stats: self.stats(),
+                }
+            } else if let (Some(bound), true) =
+                (self.instance_bound, !self.instance_limited.is_empty())
+            {
+                // ADR-027 AE-4: an instance-limited state settles before
+                // the horizon, after a bound-limited one.
+                ModelCheckOutcome::Undecided {
+                    cause: UndecidedCause::InstanceBoundReached {
+                        bound,
+                        states: widen(self.instance_limited.len()),
+                    },
+                    stats: self.stats(),
+                }
+            } else if self.horizon_cut {
+                ModelCheckOutcome::BoundReached {
+                    depth: widen(self.max_depth.unwrap_or(0)),
+                    stats: self.stats(),
+                }
+            } else if let Some(outcome) = self.zero_progress_outcome()? {
+                outcome
+            } else {
+                ModelCheckOutcome::Holds {
+                    certificate: ProofCertificate::Closure(self.certificate(instances)?),
+                    stats: self.stats(),
+                }
+            }),
             Err(Halt::Refusal(refusal)) => Err(refusal),
             Err(Halt::Finish(Finish::Undecided(cause))) => Ok(ModelCheckOutcome::Undecided {
                 cause,
