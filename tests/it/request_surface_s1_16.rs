@@ -1267,7 +1267,7 @@ fn a_malformed_tl_lowering_member_is_refused() {
 /// FR-931-AC-4: cross-evaluation agrees on the spine's behaviours.
 #[test]
 #[trace("TC-2603", "FR-931-AC-4")]
-#[ignore = "QSL-2147: cross_evaluate.initial (behaviour enumeration from a snapshot) is not implemented yet"]
+#[ignore = "QSL-2147: FR-931-AC-4 cross-evaluation from AC-6's initialization-anchored two-version snapshot over versionNumber Int[0, 3] with max_steps 2 not implemented yet"]
 fn tl_cross_evaluation_agrees_on_the_spine_behaviours() {
     let unit = low(EVENT_POSITION, LOW_BODY);
     let (code, value) = run(

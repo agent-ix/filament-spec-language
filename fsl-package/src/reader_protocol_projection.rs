@@ -119,6 +119,89 @@ impl ReaderProtocolProjection {
         self.frame_slots
     }
 
+    /// Locate every node of the root context under `owner`, by its
+    /// child-index path from the root: a clause term is checked as its own
+    /// expression rooted at the term, owned by its clause site (FR-337), so
+    /// this is the location the source route's checked term gives each node.
+    /// A node reached twice keeps the location of its first walk position.
+    fn locate_under(&mut self, owner: Origin) {
+        self.locate_from(self.root, owner);
+    }
+
+    /// Locate each called function's body under its own `Body` owner, its
+    /// declaration index the one `indices` gives its name: the location the
+    /// source route's checked body gives each of its nodes.
+    fn locate_functions(&mut self, indices: &BTreeMap<String, usize>) {
+        let bodies: Vec<(usize, Origin)> = self
+            .functions
+            .iter()
+            .filter_map(|function| {
+                let index = *indices.get(&function.name)?;
+                Some((
+                    function.body,
+                    Origin::Body {
+                        function: function.name.clone(),
+                        index,
+                    },
+                ))
+            })
+            .collect();
+        for (body, owner) in bodies {
+            self.locate_from(body, owner);
+        }
+    }
+
+    fn locate_from(&mut self, root: usize, owner: Origin) {
+        let mut pending = vec![(root, Location::root(owner))];
+        while let Some((index, location)) = pending.pop() {
+            let Some(node) = self.nodes.get_mut(index) else {
+                continue;
+            };
+            if node.location.is_some() {
+                continue;
+            }
+            let children = node.children.clone();
+            let coerced = matches!(node.kind, NodeKind::Coerce(..));
+            node.location = Some(location.clone());
+            if coerced {
+                // The checker locates an implicit coercion at its operand's
+                // position, so the operand shares the coercion's location.
+                pending.extend(children.into_iter().map(|child| (child, location.clone())));
+                continue;
+            }
+            pending.extend(
+                children
+                    .into_iter()
+                    .enumerate()
+                    .rev()
+                    .map(|(position, child)| (child, location.child(position))),
+            );
+        }
+    }
+
+    /// The location of every node of the root context a `pre(..)` reads
+    /// (FR-104): each node below a `Pre` node, which observes the pre
+    /// snapshot. Empty for a projection with no location.
+    pub fn pre_read_locations(&self) -> Vec<Location> {
+        let mut found = Vec::new();
+        let mut pending = vec![(self.root, false)];
+        let mut seen = BTreeSet::new();
+        while let Some((index, under_pre)) = pending.pop() {
+            if !seen.insert((index, under_pre)) {
+                continue;
+            }
+            let Some(node) = self.nodes.get(index) else {
+                continue;
+            };
+            if under_pre {
+                found.extend(node.location.clone());
+            }
+            let below = under_pre || matches!(node.kind, NodeKind::Pre(_));
+            pending.extend(node.children.iter().map(|child| (*child, below)));
+        }
+        found
+    }
+
     /// The local slot a supplied binder is read through.
     pub fn local_slot(&self, binder: &NodeKey) -> Option<usize> {
         self.locals.get(binder).copied()
@@ -1245,6 +1328,67 @@ impl<'wire> BareWalker<'wire> {
         }
     }
 
+    /// The projection of the clause term rooted at `root` over `binders`
+    /// (FR-940 "Package forms of the source-checked evaluators"): a temporal
+    /// clause's `holds` condition or activation guard. The package writes no
+    /// `protocol_locations` row for a clause term (FR-383 rows are written for
+    /// protocol slots only), so each node is located under `owner`, the
+    /// term's clause site.
+    pub(crate) fn project_term(
+        &self,
+        root: &NodeKey,
+        binders: &[NodeKey],
+        owner: Origin,
+    ) -> Result<ReaderProtocolProjection, WalkFailure> {
+        let mut projection = self.slot(&SlotRequest {
+            root: root.clone(),
+            origin: String::new(),
+            binders: binders.to_vec(),
+        })?;
+        projection.locate_under(owner);
+        projection.locate_functions(&self.function_indices());
+        Ok(projection)
+    }
+
+    /// Each pure function's declaration index among the package's functions
+    /// in source order, by its name: the rank of its `declaration`
+    /// occurrence among every pure function's, by the start of their
+    /// source-map regions.
+    fn function_indices(&self) -> BTreeMap<String, usize> {
+        let admitted = self.index.admitted;
+        let mut declared: Vec<(u64, String)> = admitted
+            .resolved_graph()
+            .nodes
+            .iter()
+            .filter(|node| has_form(node, WireTag::Function, WireForm::PureFunction))
+            .filter_map(|node| {
+                let name = node
+                    .declaration
+                    .as_ref()?
+                    .qualified_name
+                    .last()?
+                    .to_string();
+                let start = admitted
+                    .source_map()
+                    .iter()
+                    .filter(|entry| {
+                        entry.node_id == node.node_id
+                            && entry.role
+                                == filament_contract_model::CheckedOccurrenceRole::Declaration
+                    })
+                    .filter_map(|entry| entry.regions.first().map(|region| region.start))
+                    .min()?;
+                Some((start, name))
+            })
+            .collect();
+        declared.sort();
+        declared
+            .into_iter()
+            .enumerate()
+            .map(|(index, (_, name))| (name, index))
+            .collect()
+    }
+
     /// The number of rows each type-declaration origin holds for each
     /// application, by origin name.
     pub(crate) fn origin_rows(&self) -> BTreeMap<&'wire str, BTreeMap<CheckedNodeId, usize>> {
@@ -2133,6 +2277,15 @@ impl<'wire> ReaderBuilder<'_, 'wire> {
                     return Err(fault("reader-decimal-negation-has-decimal-result").into());
                 };
                 Ok((NodeKind::DecimalNegate(*operand, target.clone()), children))
+            }
+            Some("filament.op.state.pre") => {
+                // FR-104: `pre(e)` reads `e` at the pre observation; its
+                // value is the operand's own.
+                let children = self.project_arguments(id, Some(arguments), context, locals)?;
+                let [operand] = children.as_slice() else {
+                    return Err(fault("reader-pre-read-has-one-operand").into());
+                };
+                Ok((NodeKind::Pre(*operand), children))
             }
             Some("filament.op.option.present") => {
                 let children = self.project_arguments(id, Some(arguments), context, locals)?;

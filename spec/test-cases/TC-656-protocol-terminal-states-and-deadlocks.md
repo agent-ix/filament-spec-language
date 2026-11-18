@@ -48,7 +48,10 @@ Tag the tests `#[trace("TC-656", "FR-211-AC-n")]`.
   (after a loss then a `receive`, and with nothing sent), each naming the
   channel in its qualified name, one cause per thread. The compensation
   thread `(0, Refund, 0)` is `CommitClosed{Refund}` and the root `(0)` is
-  `FinishWaiting` naming it; `NoRoleInstance{r}` for each of the five node
+  `FinishWaiting` naming it when the cause function is called on the
+  post-commit state, which is not terminal because `cexpire(Refund)` is
+  enabled; after it the registration is `timed-out`, `finish` is enabled and
+  that Pay variant has no deadlock; `NoRoleInstance{r}` for each of the five node
   kinds with the population empty or retired, and for a `receive` instead of
   `EmptyQueue`. The cause function called on the `spawn`-enabled state gives
   no `NoRoleInstance`, and on the `fence` state gives `Gate` and no other

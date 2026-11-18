@@ -36,6 +36,6 @@ Test: `fsl-analyze/tests/it/analyze_protocol_subject.rs`.
 - Step 4: `invalid-request`, exit 20, naming the pointer or entries.
 - Step 5: `declined` `invalid-input` with the named codes; unknown member
   refuses the request.
-- Step 6: `ConstraintReached{boundary_states: 8}`, 20 states, bound reached;
+- Step 6: `ConstraintReached{boundary_states: 8}`, 21 states (one pre-fork, 12 expanded, 8 boundary), bound reached;
   then `MemoryBoundReached`.
 - Assertions compare typed members and exit codes, never message text.

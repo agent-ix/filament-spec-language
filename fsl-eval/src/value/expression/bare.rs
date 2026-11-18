@@ -16,7 +16,10 @@ use filament_eval::{
 use filament_exact::{Charge, ChargePoint, Meter, NodeKey, Outcome, Value};
 use filament_semantic_value::call::InputRefusal;
 use filament_semantic_value::catalog::InternalFault;
-use fsl_package::{BarePackage, BareSelectionFailure, BareSlot, BareWorld, ProtocolSlotDescriptor};
+use fsl_package::{
+    BareClauseTerm, BarePackage, BareSelectionFailure, BareSlot, BareWorld, ClauseBinder,
+    ProtocolSlotDescriptor,
+};
 use fsl_semantics::model::object_environment::ObjectEnvironment;
 
 use super::evaluate::reader_source::ReaderNode;
@@ -239,8 +242,223 @@ fn unmet(package: &BarePackage<'_>, reason: &'static str) -> CallFailure {
     )))
 }
 
+/// The values of a clause term's local slots, in slot order (FR-337
+/// "Captures at S3"): `over` and the trigger binder, which the source route
+/// binds to the same object, and each capture the term reads. The slots are
+/// the term's own binder positions, so every one is given.
+fn clause_arguments(
+    term: &BareClauseTerm,
+    over: &Value,
+    captures: &[Value],
+) -> Result<Vec<Value>, CallFailure> {
+    let mut arguments = vec![None; term.binders().len()];
+    for (slot, binder) in term.binders() {
+        let value = match binder {
+            ClauseBinder::Over | ClauseBinder::Trigger => over.clone(),
+            ClauseBinder::Capture(index) => captures.get(*index).cloned().ok_or_else(|| {
+                CallFailure::Fault(InternalFault::new(
+                    "FR-860",
+                    "clause-term-capture-is-supplied",
+                ))
+            })?,
+        };
+        let entry = arguments.get_mut(*slot).ok_or_else(|| {
+            CallFailure::Fault(InternalFault::new("FR-940", "clause-binder-slot-in-frame"))
+        })?;
+        *entry = Some(value);
+    }
+    arguments
+        .into_iter()
+        .map(|value| {
+            value.ok_or_else(|| {
+                CallFailure::Fault(InternalFault::new("FR-940", "clause-binder-slot-is-bound"))
+            })
+        })
+        .collect()
+}
+
+/// The operation table a package-route model-check input carries (FR-940;
+/// the seam QSL-2404's input struct implements): the declared frame effect of
+/// an operation by its declaring object type's effective identity and its
+/// name. The source route reads the effect from its checked frame; the
+/// package's frame node carries its grants in canonical order but not the
+/// declared order a frame witness lists, so the package form reads the
+/// declared effect from the input's operation table.
+pub trait PackageOperations {
+    /// The declared effect of `operation` declared by `declaring`; `None`
+    /// when the type declares no such operation.
+    fn declared_effect(
+        &self,
+        declaring: &filament_exact::EffectiveId,
+        operation: &str,
+    ) -> Option<&fsl_semantics::model::domain_package::OperationEffect>;
+}
+
+impl PackageOperations for fsl_semantics::model::operation::OperationTable {
+    fn declared_effect(
+        &self,
+        declaring: &filament_exact::EffectiveId,
+        operation: &str,
+    ) -> Option<&fsl_semantics::model::domain_package::OperationEffect> {
+        self.declared_by(declaring.clone())
+            .iter()
+            .find(|declared| declared.name() == operation)
+            .map(fsl_semantics::model::operation::OperationDeclaration::effect)
+    }
+}
+
+/// FR-940 package form of [`CheckedPackageEvaluation::evaluate_frame`]: check
+/// `invocation` against the operation frame whose frame node key is `frame`,
+/// the operation read from the package's anchor node and its declared effect
+/// from `operations`. Returns the source form's value: the same verdict,
+/// witness and (empty) location and losses, charging nothing.
+///
+/// # Errors
+///
+/// `InputRefusal::ObservationsMismatch` when `invocation` was admitted for
+/// another frame, a selection refusal at its locus for a frame the package
+/// does not bind, and a fault for an operation `operations` does not declare.
+pub fn evaluate_frame(
+    package: &BarePackage<'_>,
+    operations: &impl PackageOperations,
+    frame: &NodeKey,
+    invocation: &fsl_semantics::model::observation::AdmittedInvocation<'_>,
+) -> Result<FrameEvaluation, CallFailure> {
+    if invocation.frame != *frame {
+        return Err(InputRefusal::ObservationsMismatch.into());
+    }
+    let bound = package
+        .frame_operation(frame)
+        .map_err(|failure| refusal(package, failure))?;
+    let effect = operations
+        .declared_effect(&bound.declaring, &bound.operation)
+        .ok_or_else(|| {
+            CallFailure::Fault(InternalFault::new(
+                "S6a",
+                "checked-identity-not-resolved-by-package",
+            ))
+        })?;
+    let (outcome, witness) = super::s6a::protocol_clause::frame_outcome(invocation, effect)
+        .map_err(CallFailure::Fault)?;
+    Ok(FrameEvaluation {
+        evaluation: Evaluation {
+            outcome: outcome.into(),
+            location: None,
+            losses: Vec::new(),
+            frame_depth: 0,
+        },
+        witness,
+    })
+}
+
+/// The state clause `name` names over `observations`, read from the node the
+/// observations were admitted for. The package carries no state clause name
+/// until FSpec FR-322 `claim_names` is admitted (QSL-2410): the node is the
+/// one `observations` names, `name` locates its body, and a node that is no
+/// state clause is `ObservationsMismatch`.
+fn state_clause(
+    package: &BarePackage<'_>,
+    name: &QualifiedName,
+    observations: &fsl_semantics::model::observation::AdmittedObservations,
+) -> Result<fsl_package::BareStateClause, CallFailure> {
+    let declared = name
+        .as_unqualified()
+        .ok_or_else(|| InputRefusal::UnknownClause(name.to_string()))?;
+    package
+        .project_state_clause(&observations.clause, declared)
+        .map_err(|failure| match failure {
+            BareSelectionFailure::Slot(
+                fsl_package::SlotSelectionFailure::MissingNode(_)
+                | fsl_package::SlotSelectionFailure::MalformedNode(_),
+            ) => InputRefusal::ObservationsMismatch.into(),
+            other => refusal(package, other),
+        })
+}
+
+/// FR-940 package form of [`CheckedPackageEvaluation::evaluate_clause`]: the
+/// clause body read from its admitted node, bound over `observations` as the
+/// source form binds it, and run through the shared evaluator with its
+/// trail. A `pre(..)` read observes the pre snapshot. `result` is bound
+/// exactly when the clause is a postcondition, takes it in slot 1 and the
+/// admitted observations carry the invocation's result, which they carry
+/// only for an operation that declares one (FR-104).
+fn evaluate_state_clause(
+    package: &BarePackage<'_>,
+    name: &QualifiedName,
+    observations: &fsl_semantics::model::observation::AdmittedObservations,
+    meter: &mut Meter,
+) -> Result<ClauseEvaluation, CallFailure> {
+    use fsl_semantics::model::clause_observation::Observation;
+    let clause = state_clause(package, name, observations)?;
+    let world = package
+        .world()
+        .map_err(|failure| refusal(package, failure))?;
+    let names: Vec<String> = clause
+        .parameters()
+        .iter()
+        .map(|(parameter, _)| parameter.clone())
+        .collect();
+    if clause
+        .parameters()
+        .iter()
+        .enumerate()
+        .any(|(position, (_, slot))| position != *slot)
+    {
+        return Err(CallFailure::Fault(InternalFault::new(
+            "FR-940",
+            "state-clause-parameters-take-their-slots-in-order",
+        )));
+    }
+    let binds_result = clause.observation() == Observation::Post
+        && names.len() > 1
+        && observations.result.is_some();
+    let super::ClauseBinding {
+        current,
+        pre,
+        bindings,
+        trail,
+        receiver_path,
+    } = super::bind_clause(clause.observation(), &names, binds_result, observations)?;
+    let reads: BTreeMap<filament_semantic_value::location::ExpressionLocation, Observation> =
+        clause
+            .projection()
+            .pre_read_locations()
+            .into_iter()
+            .map(|location| (location, Observation::Pre))
+            .collect();
+    let (evaluation, trail) =
+        Machine::with_world(World::Bytes(&world), current, pre, Some(&reads), meter, &[])
+            .with_trail(trail)
+            .run_traced(
+                ReaderNode::root(clause.projection()),
+                clause.projection().frame_slots(),
+                bindings,
+            )
+            .map_err(CallFailure::Fault)?;
+    Ok(ClauseEvaluation::new(evaluation, trail, receiver_path))
+}
+
+impl super::clause_set::ClauseHost for BarePackage<'_> {
+    fn clause_observation(
+        &self,
+        name: &QualifiedName,
+        observations: &fsl_semantics::model::observation::AdmittedObservations,
+    ) -> Result<fsl_semantics::model::clause_observation::Observation, CallFailure> {
+        Ok(state_clause(self, name, observations)?.observation())
+    }
+
+    fn clause(
+        &self,
+        name: &QualifiedName,
+        observations: &fsl_semantics::model::observation::AdmittedObservations,
+        meter: &mut Meter,
+    ) -> Result<ClauseEvaluation, CallFailure> {
+        evaluate_state_clause(self, name, observations, meter)
+    }
+}
 const SOURCE_DECLARATION: &str = "needs-source-declaration";
 const SOURCE_CHECKED_FORM: &str = "needs-source-checked-form";
+const OPERATION_TABLE: &str = "needs-operation-table";
 
 impl CheckedPackageEvaluation for BarePackage<'_> {
     fn call(
@@ -423,36 +641,98 @@ impl CheckedPackageEvaluation for BarePackage<'_> {
 
     fn evaluate_holds(
         &self,
-        _clause: &fsl_semantics::check::TemporalClauseNode,
-        _atom: fsl_semantics::check::FormulaNodeId,
-        _over: Value,
-        _captures: &[Value],
-        _objects: &ObjectEnvironment,
-        _meter: &mut Meter,
+        atom: &super::HoldsAtom,
+        over: Value,
+        captures: &[Value],
+        objects: &ObjectEnvironment,
+        meter: &mut Meter,
     ) -> Result<Evaluation, CallFailure> {
-        Err(unmet(self, SOURCE_CHECKED_FORM))
+        let world = self.world().map_err(|failure| refusal(self, failure))?;
+        let term = self
+            .project_holds(&atom.clause, atom.position)
+            .map_err(|failure| refusal(self, failure))?;
+        let arguments = clause_arguments(&term, &over, captures)?;
+        Machine::from_bare_package(&world, objects, meter)
+            .run(
+                ReaderNode::root(term.projection()),
+                term.projection().frame_slots(),
+                arguments,
+            )
+            .map_err(CallFailure::Fault)
     }
 
     fn evaluate_holds_traced(
         &self,
-        _clause: &fsl_semantics::check::TemporalClauseNode,
-        _atom: fsl_semantics::check::FormulaNodeId,
-        _binders: super::HoldsBinders<'_>,
-        _objects: &ObjectEnvironment,
-        _observation: super::ObservationIdentity,
-        _meter: &mut Meter,
+        atom: &super::HoldsAtom,
+        binders: super::HoldsBinders<'_>,
+        objects: &ObjectEnvironment,
+        observation: super::ObservationIdentity,
+        meter: &mut Meter,
     ) -> Result<ClauseEvaluation, CallFailure> {
-        Err(unmet(self, SOURCE_CHECKED_FORM))
+        let super::HoldsBinders { over, captures } = binders;
+        let world = self.world().map_err(|failure| refusal(self, failure))?;
+        let term = self
+            .project_holds(&atom.clause, atom.position)
+            .map_err(|failure| refusal(self, failure))?;
+        let arguments = clause_arguments(&term, &Value::Reference(over.clone()), captures)?;
+        // `over` is the condition's receiver: a value read from it is rooted
+        // at its declared object identity (FR-107 "The receiver path"), at
+        // whichever local slot the projection gave it.
+        let subject = super::s6a::separation::ValuePathSubject::Object(over.clone());
+        let mut trail = super::s6a::separation::Trail::new(observation.clone(), None);
+        trail.receiver = Some(over.clone());
+        trail.bindings = term.binders().iter().fold(
+            vec![None; arguments.len()],
+            |mut bindings, (slot, binder)| {
+                if *binder == ClauseBinder::Over {
+                    if let Some(entry) = bindings.get_mut(*slot) {
+                        *entry = Some(subject.clone());
+                    }
+                }
+                bindings
+            },
+        );
+        let (evaluation, trail) = Machine::from_bare_package(&world, objects, meter)
+            .with_trail(trail)
+            .run_traced(
+                ReaderNode::root(term.projection()),
+                term.projection().frame_slots(),
+                arguments,
+            )
+            .map_err(CallFailure::Fault)?;
+        Ok(ClauseEvaluation::new(
+            evaluation,
+            trail,
+            Some(super::RuntimeValuePath {
+                observation,
+                subject,
+                steps: Vec::new(),
+            }),
+        ))
     }
 
     fn evaluate_guard(
         &self,
-        _clause: &fsl_semantics::check::TemporalClauseNode,
-        _over: Value,
-        _objects: &ObjectEnvironment,
-        _meter: &mut Meter,
+        clause: &NodeKey,
+        over: Value,
+        objects: &ObjectEnvironment,
+        meter: &mut Meter,
     ) -> Result<Evaluation, CallFailure> {
-        Err(unmet(self, SOURCE_CHECKED_FORM))
+        let world = self.world().map_err(|failure| refusal(self, failure))?;
+        let term = self
+            .project_guard(clause)
+            .map_err(|failure| refusal(self, failure))?
+            .ok_or_else(|| {
+                CallFailure::Fault(InternalFault::new("S6a", "guard-resolved-by-clause"))
+            })?;
+        let arguments = clause_arguments(&term, &over, &[])?;
+        Machine::from_bare_package(&world, objects, meter)
+            .run(
+                ReaderNode::root(term.projection()),
+                term.projection().frame_slots(),
+                arguments,
+            )
+            .map_err(CallFailure::Fault)
     }
 
     fn evaluate_hyper_holds(
@@ -479,22 +759,22 @@ impl CheckedPackageEvaluation for BarePackage<'_> {
 
     fn evaluate_clause(
         &self,
-        _clause: &QualifiedName,
-        _observations: &fsl_semantics::model::observation::AdmittedObservations,
-        _meter: &mut Meter,
+        clause: &QualifiedName,
+        observations: &fsl_semantics::model::observation::AdmittedObservations,
+        meter: &mut Meter,
     ) -> Result<ClauseEvaluation, CallFailure> {
-        Err(unmet(self, SOURCE_DECLARATION))
+        evaluate_state_clause(self, clause, observations, meter)
     }
 
     fn evaluate_clause_set(
         &self,
-        _clauses: &[(
+        clauses: &[(
             QualifiedName,
             &fsl_semantics::model::observation::AdmittedObservations,
         )],
-        _limits: filament_exact::ScalarLimits,
+        limits: filament_exact::ScalarLimits,
     ) -> Result<ClauseSetEvaluation, CallFailure> {
-        Err(unmet(self, SOURCE_DECLARATION))
+        super::clause_set::evaluate(self, clauses, limits)
     }
 
     fn evaluate_value_invariants(
@@ -537,7 +817,10 @@ impl CheckedPackageEvaluation for BarePackage<'_> {
         _invocation: &fsl_semantics::model::observation::AdmittedInvocation<'_>,
         _meter: &mut Meter,
     ) -> Result<FrameEvaluation, CallFailure> {
-        Err(unmet(self, SOURCE_CHECKED_FORM))
+        // The frame's declared effect is the model-check input's operation
+        // table, which this call does not take: the package form is
+        // [`evaluate_frame`] over that table.
+        Err(unmet(self, OPERATION_TABLE))
     }
 
     fn evaluate_collection_write(

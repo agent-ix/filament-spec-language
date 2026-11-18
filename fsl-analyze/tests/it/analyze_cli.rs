@@ -299,20 +299,26 @@ fn liveness_over_a_ra_parallel_is_settled_by_name() {
     }
 }
 
-/// FR-629-AC-1: the store-buffering claim holds under SC and fails under TSO.
+/// FR-629-AC-1 through FR-1033: the store-buffering claim holds under SC and
+/// fails under TSO, the protocol subject named by `subject.protocol` and the
+/// model by the request's `memory`.
 #[trace("TC-1589", "FR-629-AC-1")]
 #[test]
-#[ignore = "QSL-2126: weak-memory items are not reachable through fsl analyze yet"]
 fn store_buffering_separates_sc_and_tso() {
-    for (memory, expected) in [("memory sc", "proved"), ("memory tso", "refuted")] {
-        let body = crate::litmus::sb_unit(&crate::litmus::sb_run(memory, "release", "acquire"));
-        let ws = Workspace::new(&format!("cli-sb-{}", memory.replace(' ', "-")));
+    let binding = json!({"type": "model-binding", "selection": "test/litmus"});
+    let subject = json!({"protocol": {"protocol": "SB",
+        "over": {"reference": {"population": "ix://test/litmus/cores", "key": "core"}},
+        "roles": {"w": binding, "c": binding}}});
+    for (model, expected) in [("sc", "proved"), ("tso", "refuted")] {
+        let body = crate::litmus::sb_unit(&crate::litmus::sb_run("", "release", "acquire"));
+        let ws = Workspace::new(&format!("cli-sb-{model}"));
         let run = analyze(&litmus_request(
             &ws,
             &body,
-            json!({"items": [{"claim": "NoBothZero"}]}),
+            json!({"subject": subject, "memory": [{"parallel": "SB::Both", "model": model}],
+                "items": [{"claim": "NoBothZero"}]}),
         ));
-        assert_eq!(label(&run.item(0)), expected, "{memory}");
+        assert_eq!(label(&run.item(0)), expected, "{model}: {}", run.document());
     }
 }
 

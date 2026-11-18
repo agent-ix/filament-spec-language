@@ -547,3 +547,51 @@ fn an_absent_handoff_or_package_file_refuses_missing_file() {
         assert_eq!(run.exit, 20, "{name}");
     }
 }
+
+/// FR-940-AC-8 and FSpec FR-322-AC-459: claim names and temporal clause
+/// names are one namespace. A source unit declaring the temporal clause
+/// `Bounded` and the state-graph claim `Bounded` is refused
+/// `ambiguous_declaration`/`ambiguous-name` before any item is analyzed; a
+/// package whose `claim_names` row is renamed to a `temporal_clause_names`
+/// row's name is refused the same at that row before any engine runs; with
+/// distinct names both resolve.
+#[trace("TC-2970", "FR-940-AC-8", "FSpec-TC-2012", "FSpec-FR-322-AC-459")]
+#[test]
+#[ignore = "QSL-2402: one claim namespace across claim_names and temporal_clause_names not implemented yet"]
+fn a_name_in_both_name_tables_is_refused() {
+    let items = json!([{"claim": "Bounded"}]);
+    let ws = Workspace::new("claim-name-namespace-source");
+    let colliding = format!(
+        "{}possible Bounded using v over (c: M::Counter) {{ c.value = 3 }}\n",
+        bounded()
+    );
+    let run = analyze(&counter_request(&ws, &colliding, items.clone()));
+    let diagnostic = first_diagnostic(&run);
+    assert_eq!(diagnostic["code"], "ambiguous_declaration", "{}", run.document());
+    assert_eq!(diagnostic["cause"], "ambiguous-name", "{}", run.document());
+
+    let items = json!([{"claim": "Bounded"}, {"claim": "ReachThree"}]);
+    let ws = Workspace::new("claim-name-namespace-package");
+    let body = format!("{}{}", bounded(), reach_three());
+    let source = analyze(&counter_request(&ws, &body, items.clone()));
+    let (members, _) = package_request(&ws, &body, items);
+    let run = analyze_members(&ws, "analyze-distinct.json", &members);
+    for index in 0..2 {
+        assert_eq!(run.item(index)["record"], source.item(index)["record"], "{index}");
+    }
+    let package_path = ws.path(&handoff_file("checked-package.json"));
+    let mut package: Value =
+        serde_json::from_slice(&std::fs::read(&package_path).expect("package")).expect("JSON");
+    for row in package["claim_names"].as_array_mut().expect("claim_names rows") {
+        if row["name"] == json!("ReachThree") {
+            row["name"] = json!("Bounded");
+            row["qualified_name"] = json!(["Bounded"]);
+        }
+    }
+    std::fs::write(&package_path, package.to_string()).expect("write");
+    let run = analyze_members(&ws, "analyze-colliding.json", &members);
+    let diagnostic = first_diagnostic(&run);
+    assert_eq!(diagnostic["code"], "ambiguous_declaration", "{diagnostic}");
+    assert_eq!(diagnostic["cause"], "ambiguous-name", "{diagnostic}");
+    assert_eq!(run.document()["items"], json!([]));
+}

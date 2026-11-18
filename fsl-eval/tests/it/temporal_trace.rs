@@ -1773,3 +1773,28 @@ fn a_refused_capture_is_a_refused_condition_at_its_position() {
     assert_eq!(run(&[0, 0, 0]), refused_at(1));
     assert_eq!(run(&[2, 0, 0]), Ok(violated(0)));
 }
+
+/// FR-328-AC-7 (TC-2974): over the prefix 0, 1, 2 under infinite-trace, a
+/// good prefix settles holds whatever the fragment, and a prefix that settles
+/// nothing, or a bad prefix outside the safety fragment, stays pending.
+#[trace("TC-2974", "FR-328-AC-7")]
+#[test]
+#[ignore = "QSL-2419: a good prefix of an infinite-trace clause settles holds not implemented yet"]
+fn a_good_prefix_holds_and_the_rest_pends() {
+    for formula in [
+        "eventually holds(c.level = 2)",
+        "eventually holds(c.level = 1)",
+        "holds(c.level <= 1) until holds(c.level = 2)",
+        "eventually[0,2] holds(c.level = 2)",
+    ] {
+        assert_eq!(prefix(formula), TemporalOutcome::Holds, "{formula}");
+    }
+    for formula in [
+        "always eventually holds(c.level = 2)",
+        "eventually always holds(c.level = 2)",
+        "eventually holds(c.level = 9) or always holds(c.level <= 1)",
+        "always holds(c.level <= 5)",
+    ] {
+        assert_eq!(prefix(formula), TemporalOutcome::Pending, "{formula}");
+    }
+}
