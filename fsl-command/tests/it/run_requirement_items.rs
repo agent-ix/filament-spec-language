@@ -11,7 +11,7 @@ use std::sync::{Arc, Mutex};
 
 use crate::negotiation::Fr290;
 use ix_trace_rs::trace;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
 const SQ: &str = "language \"ix:native\" edition \"1-draft\";\n\
     profile v = \"filament.value.complete/v1\";\n\
@@ -410,6 +410,16 @@ fn run_with_providers(request: &Path, scenario: Scenario) -> Option<ProviderRun>
                 ))],
             },
         )],
+        Scenario::FrameFailure => vec![recording_provider(
+            &seen,
+            ProviderVerdict::Failed {
+                limit: fsl_analyze::provider::ProviderLimit::MaxFrameBytes,
+                cause: fsl_replay::ToolFailure::FrameLength {
+                    limit: 1_048_576,
+                    value: 1_048_577,
+                },
+            },
+        )],
         Scenario::Cancelled => {
             cancel.cancel(filament_exact::CancelCause::Requested);
             vec![recording_provider(&seen, ProviderVerdict::Proved)]
@@ -450,6 +460,8 @@ enum Scenario {
     RepeatedProvider,
     /// The provider reports `refuted` at `n = 4`, which the evaluator does not violate.
     UnreproducedRefutation,
+    /// The provider reports an oversize transport frame.
+    FrameFailure,
     /// The handle is cancelled before the run.
     Cancelled,
     /// The provider's manifest publishes the option `depth`.
@@ -677,6 +689,15 @@ fn run_with_providers_refuses_and_settles_the_negative_cases() {
     for item in entries(&parity.document) {
         assert_eq!(item["record"]["result"], "inconclusive", "{item}");
         assert!(item.to_string().contains("replay-parity"), "{item}");
+    }
+
+    let failed = run_with_providers(&request, Scenario::FrameFailure).expect("the run-side entry");
+    for item in entries(&failed.document) {
+        assert_eq!(item["record"]["result"], "failed", "{item}");
+        assert_eq!(item["record"]["cause"]["kind"], "tool-failure", "{item}");
+        assert_eq!(item["record"]["cause"]["defect"], "frame-length", "{item}");
+        assert_eq!(item["record"]["cause"]["limit"], 1_048_576, "{item}");
+        assert_eq!(item["record"]["cause"]["value"], 1_048_577, "{item}");
     }
 
     let cancelled = run_with_providers(&request, Scenario::Cancelled).expect("the run-side entry");
