@@ -4346,19 +4346,7 @@ impl<'a> Resolution<'a> {
                         }
                         CheckCause::EmptyPackage { .. } => {
                             frame.source_units.first().and_then(|unit| {
-                                let source = unit.source();
-                                let header_end = source
-                                    .text()
-                                    .as_bytes()
-                                    .iter()
-                                    .position(|byte| *byte == b';')?
-                                    + 1;
-                                SourceRegion::new(
-                                    source.reference().clone(),
-                                    0,
-                                    u64::try_from(header_end).ok()?,
-                                )
-                                .ok()
+                                region(unit.source().reference(), header_span(unit))
                             })
                         }
                         _ => None,

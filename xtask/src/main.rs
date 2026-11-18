@@ -52,7 +52,7 @@ fn run(arguments: &[OsString]) -> Result<Outcome> {
         return refinement::run(&workspace_root, operands);
     }
     if command == "qualify" {
-        return qualification::run(&workspace_root, operands);
+        return qualification::run(operands);
     }
     if command == "pin-check" {
         return pin_check::run(&workspace_root, operands);

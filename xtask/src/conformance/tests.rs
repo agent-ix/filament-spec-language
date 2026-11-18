@@ -47,6 +47,20 @@ fn cargo_double() -> PathBuf {
         .clone()
 }
 
+fn run_case(workspace: &Path, mode: &str, fail_at: usize) -> Result<String, Error> {
+    let log = workspace.join("calls");
+    let index = fail_at.to_string();
+    run_with(
+        &cargo_double(),
+        workspace,
+        &[
+            ("CONFORMANCE_DOUBLE_LOG", log.as_os_str()),
+            ("CONFORMANCE_DOUBLE_MODE", OsStr::new(mode)),
+            ("CONFORMANCE_DOUBLE_FAIL_AT", OsStr::new(&index)),
+        ],
+    )
+}
+
 #[test]
 fn each_pinned_vector_selection_requires_success_and_its_summary() {
     let root = crate::test_support::tempdir();
@@ -67,17 +81,37 @@ fn each_pinned_vector_selection_requires_success_and_its_summary() {
 #[test]
 fn a_failed_cargo_selection_stops_the_gate() {
     let root = crate::test_support::tempdir();
-    let log = root.path().join("calls");
     assert!(matches!(
-        run_with(
-            &cargo_double(),
-            root.path(),
-            &[
-                ("CONFORMANCE_DOUBLE_LOG", log.as_os_str()),
-                ("CONFORMANCE_DOUBLE_FAIL_AT", OsStr::new("2")),
-            ],
-        ),
+        run_case(root.path(), "nonzero", 2),
         Err(Error::ConformanceCheck { .. })
     ));
-    assert_eq!(fs::read_to_string(log).unwrap().lines().count(), 3);
+    assert_eq!(fs::read_to_string(root.path().join("calls")).unwrap().lines().count(), 3);
+}
+
+#[test]
+fn each_selection_refuses_missing_evidence_or_failure() {
+    for (index, _) in CHECKS.iter().enumerate() {
+        for mode in ["zero-tests", "ignored", "skip", "no-summary", "nonzero"] {
+            let root = crate::test_support::tempdir();
+            assert!(matches!(
+                run_case(root.path(), mode, index),
+                Err(Error::ConformanceCheck { .. })
+            ));
+            assert_eq!(
+                fs::read_to_string(root.path().join("calls")).unwrap().lines().count(),
+                index + 1,
+                "{mode} at {}",
+                CHECKS[index].selection
+            );
+        }
+    }
+}
+
+#[test]
+fn zero_source_map_entries_refuse() {
+    let root = crate::test_support::tempdir();
+    assert!(matches!(
+        run_case(root.path(), "zero-vectors", 0),
+        Err(Error::ConformanceCheck { .. })
+    ));
 }

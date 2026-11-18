@@ -578,11 +578,7 @@ fn scan_item(crate_name: &str, module: &str, visible: bool, item: Item, api: &mu
             for (source, alias) in exported {
                 if source.ends_with("::*") {
                     let source_module = source.trim_end_matches("::*");
-                    let destination = if module == crate_name {
-                        alias
-                    } else {
-                        format!("{module}::{alias}")
-                    };
+                    let destination = module.to_owned();
                     api.wildcard_reexports
                         .push((module.to_owned(), destination, source_module.to_owned()));
                 } else {
@@ -711,6 +707,33 @@ fn accessor_resolves(api: &PublicApi, module: &str, accessor: &str) -> bool {
                 .contains(&(module.to_owned(), type_name.to_owned(), member.to_owned()))
     } else {
         api.paths.contains(&format!("{module}::{accessor}"))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use ix_trace_rs::trace;
+
+    #[test]
+    #[trace("TC-2145", "FR-761-AC-2")]
+    fn glob_reexports_resolve_public_members_at_the_export_path() {
+        let directory = tempfile::tempdir().expect("fixture directory");
+        let root = directory.path().join("lib.rs");
+        fs::write(
+            &root,
+            "pub mod owners { pub mod inner { pub struct Thing { pub field: u8 } impl Thing { pub fn act() {} } } }\n\
+             pub mod facade { pub use crate::owners::inner::*; }\n\
+             mod private { pub struct Hidden; }\n\
+             pub mod visible { use crate::private::*; }\n",
+        )
+        .expect("write crate fixture");
+
+        let api = public_api("sample", &root);
+
+        assert!(accessor_resolves(&api, "sample::facade", "Thing::field"));
+        assert!(accessor_resolves(&api, "sample::facade", "Thing::act"));
+        assert!(!api.paths.contains("sample::visible::Hidden"));
     }
 }
 
