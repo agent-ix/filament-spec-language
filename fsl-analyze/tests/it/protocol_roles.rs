@@ -2515,7 +2515,10 @@ fn an_attempt_binder_read_is_checked_against_the_record() {
     for (run, reads) in [
         (flag("Integer", " check Gate using v { t = 1 };"), 1),
         (touch(" check Gate using v { t };"), 1),
-        (flag("Integer", " check Gate using v { t = 1 and t = 2 };"), 2),
+        (
+            flag("Integer", " check Gate using v { t = 1 and t = 2 };"),
+            2,
+        ),
     ] {
         let refusals = check_refusals(&unit(ORIGIN, "", "", &run));
         assert_eq!(refusals.len(), reads, "{run}: {refusals:?}");

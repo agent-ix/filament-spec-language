@@ -7690,10 +7690,8 @@ impl PackageDeclarations {
                 }]
             };
             let boolean = builtin_boolean_type_key(&package_name).map_err(|_| unkeyable())?;
-            let record = claims::RequirementRecord::model_claim(
-                claim.requirements(),
-                claims::wire(boolean),
-            );
+            let record =
+                claims::RequirementRecord::model_claim(claim.requirements(), claims::wire(boolean));
             match requirements.entry(occurrence) {
                 std::collections::hash_map::Entry::Vacant(slot) => {
                     slot.insert(record);

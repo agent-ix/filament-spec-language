@@ -246,7 +246,10 @@ fn release_acquire_races_and_selections() {
             "items": [{"claim": "NoBothZero"}]}),
     ));
     assert_eq!(run.exit, 20);
-    assert_eq!(run.document()["diagnostics"][0]["code"], "invalid_runtime_input");
+    assert_eq!(
+        run.document()["diagnostics"][0]["code"],
+        "invalid_runtime_input"
+    );
 }
 
 /// FR-631-AC-2, AC-3: copy-swap reduction and the witness-set budget.

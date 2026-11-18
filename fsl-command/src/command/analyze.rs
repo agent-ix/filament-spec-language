@@ -1081,12 +1081,16 @@ fn check_memory(
             .filter(|entry| entry.parallel.split("::").next() == Some(protocol))
             .cloned()
             .collect();
-        if let Err(refusal) = fsl_eval::simulation::protocol::ResolvedMemory::resolve(checked, &entries)
+        if let Err(refusal) =
+            fsl_eval::simulation::protocol::ResolvedMemory::resolve(checked, &entries)
         {
             let member = memory
                 .iter()
                 .position(|entry| entries.first().is_some_and(|first| first == entry))
-                .map_or_else(|| "/memory".to_owned(), |position| format!("/memory/{position}"));
+                .map_or_else(
+                    || "/memory".to_owned(),
+                    |position| format!("/memory/{position}"),
+                );
             return Err(refused(member, refusal.to_string()));
         }
     }

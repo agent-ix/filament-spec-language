@@ -1097,11 +1097,14 @@ fn add_elapsed(ws: &Workspace, path: &str, package: &str, bounded: bool) {
             "origin": origin,
         }));
         if bounded {
-            node["constraints"].as_array_mut().expect("constraints").push(json!({
-                "identity": format!("{counter}/constraints/elapsedMax"), "keyword": "max",
-                "operands": {"value": "3"}, "appliesTo": "ix://filament/unit/ms",
-                "diagnosticCode": "bound.elapsed", "origin": origin,
-            }));
+            node["constraints"]
+                .as_array_mut()
+                .expect("constraints")
+                .push(json!({
+                    "identity": format!("{counter}/constraints/elapsedMax"), "keyword": "max",
+                    "operands": {"value": "3"}, "appliesTo": "ix://filament/unit/ms",
+                    "diagnosticCode": "bound.elapsed", "origin": origin,
+                }));
         }
     }
     std::fs::write(&file, document.to_string()).expect("write");
@@ -1131,24 +1134,27 @@ fn set_elapsed(ws: &Workspace, path: &str, ms: i64) {
 #[test]
 #[ignore = "QSL-2407: an image outside an abstract unit bound settled InitialNotAbstract not implemented yet"]
 fn an_image_outside_an_abstract_unit_bound_is_initial_not_abstract() {
-    let body = format!(
-        "dimension Time;\nunit s : Time = rational(1, 1);\nunit ms : Time = rational(1, 1000) * s;\n\
-         refinement Late using t0 abstract Spec concrete M {{\n\
+    let body = "dimension Time;\nunit s : Time = rational(1, 1);\nunit ms : Time = rational(1, 1000) * s;\n\
+         refinement Late using t0 abstract Spec concrete M {\n\
          population Spec::counters from M::counters;\n\
-         object Spec::Counter from M::Counter {{ value = self.value; elapsed = self.elapsed + 2 ms; }}\n\
-         step M::Counter::inc -> stutter;\n}}\n"
-    );
+         object Spec::Counter from M::Counter { value = self.value; elapsed = self.elapsed + 2 ms; }\n\
+         step M::Counter::inc -> stutter;\n}\n";
     for (elapsed, expected) in [(2, "refuted"), (1, "proved")] {
         let ws = Workspace::new(&format!("family-refinement-unit-bound-{elapsed}"));
         let request = refinement_request_without_abstract(
             &ws,
-            &body,
+            body,
             json!([default_initial_item("Late", None)]),
             &[0],
         );
         add_elapsed(&ws, "model.json", "test/counter", false);
         add_elapsed(&ws, "spec.json", SPEC, true);
-        for snapshot in ["start.json", "start-0.json", "spec-start.json", "spec-start-one.json"] {
+        for snapshot in [
+            "start.json",
+            "start-0.json",
+            "spec-start.json",
+            "spec-start-one.json",
+        ] {
             if ws.path(snapshot).exists() {
                 set_elapsed(&ws, snapshot, elapsed);
             }

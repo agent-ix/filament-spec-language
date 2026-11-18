@@ -567,7 +567,12 @@ fn a_name_in_both_name_tables_is_refused() {
     );
     let run = analyze(&counter_request(&ws, &colliding, items.clone()));
     let diagnostic = first_diagnostic(&run);
-    assert_eq!(diagnostic["code"], "ambiguous_declaration", "{}", run.document());
+    assert_eq!(
+        diagnostic["code"],
+        "ambiguous_declaration",
+        "{}",
+        run.document()
+    );
     assert_eq!(diagnostic["cause"], "ambiguous-name", "{}", run.document());
 
     let items = json!([{"claim": "Bounded"}, {"claim": "ReachThree"}]);
@@ -577,12 +582,19 @@ fn a_name_in_both_name_tables_is_refused() {
     let (members, _) = package_request(&ws, &body, items);
     let run = analyze_members(&ws, "analyze-distinct.json", &members);
     for index in 0..2 {
-        assert_eq!(run.item(index)["record"], source.item(index)["record"], "{index}");
+        assert_eq!(
+            run.item(index)["record"],
+            source.item(index)["record"],
+            "{index}"
+        );
     }
     let package_path = ws.path(&handoff_file("checked-package.json"));
     let mut package: Value =
         serde_json::from_slice(&std::fs::read(&package_path).expect("package")).expect("JSON");
-    for row in package["claim_names"].as_array_mut().expect("claim_names rows") {
+    for row in package["claim_names"]
+        .as_array_mut()
+        .expect("claim_names rows")
+    {
         if row["name"] == json!("ReachThree") {
             row["name"] = json!("Bounded");
             row["qualified_name"] = json!(["Bounded"]);
