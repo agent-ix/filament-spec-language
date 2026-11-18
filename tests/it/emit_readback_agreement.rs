@@ -3,8 +3,6 @@
 //! original's semantic graph, apart from source regions, and the strict
 //! reader gives both packages the same verdict.
 
-use std::collections::BTreeMap;
-
 use fsl_foundation::SourceIdentity;
 use fsl_replay::spine::DependencyInput;
 use ix_trace_rs::trace;

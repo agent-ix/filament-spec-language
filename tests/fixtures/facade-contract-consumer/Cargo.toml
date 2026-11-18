@@ -14,7 +14,9 @@ filament-semantic-value = { workspace = true }
 fsl-foundation = { path = "../../../fsl-foundation" }
 fsl-cst = { path = "../../../fsl-cst" }
 filament-contract-model = { workspace = true }
+filament-observation = { git = "https://github.com/agent-ix/filament-observation", tag = "v0.1.1" }
 filament-exact = { workspace = true }
+quire-canonical = { git = "https://github.com/agent-ix/quire-canonical", tag = "v0.3.1" }
 serde_json = { version = "1.0.151", features = ["raw_value"] }
 
 [dev-dependencies]

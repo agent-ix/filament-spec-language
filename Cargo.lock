@@ -524,6 +524,7 @@ version = "0.1.0"
 dependencies = [
  "filament-contract-model",
  "filament-exact",
+ "filament-observation",
  "filament-semantic-value",
  "fsl-analyze",
  "fsl-cst",
@@ -533,6 +534,7 @@ dependencies = [
  "fsl-replay",
  "fsl-semantics",
  "ix-trace-rs",
+ "quire-canonical",
  "serde_json",
 ]
 

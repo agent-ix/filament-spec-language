@@ -83,7 +83,6 @@ mod code_generation {
     }
 
     #[test]
-    #[trace("TC-2582", "FR-913-AC-1")]
     fn fr_913_01_format_emit_graph_and_reader_verdict_agree() {
         let source = fsl_foundation::SourceIdentity::new("consumer", "format-readback");
         let parsed = fsl_cst::parse(
@@ -572,7 +571,93 @@ temporal T using t over (r: M::Widget) clock \"model-time\" on origin { eventual
     #[test]
     #[trace("TC-2575", "FR-911-AC-2")]
     fn cf_rt_02_01_admitted_progress_view_exposes_plan_authority() {
-        panic!("QSL-1867: CF-RT-02 admit_progress_view consumer contract");
+        let source = fsl_replay::SourceIdentity::new("consumer", "plan-root");
+        let package_name = fsl_replay::LibraryName::new("consumer").expect("library name");
+        let mut model: serde_json::Value =
+            serde_json::from_slice(include_bytes!("../../../spine-model.semantic-ir.json"))
+                .expect("model fixture JSON");
+        model["types"]
+            .as_array_mut()
+            .expect("model types")
+            .retain(|ty| ty["identity"] == "ix://acme/orders/Widget");
+        let model = serde_json::to_vec(&model).expect("single-object model serializes");
+        let packages = fsl_semantics::model::intake::package_input([model.as_slice()])
+            .expect("model intake");
+        let unit = "language \"ix:native\" edition \"1-draft\";\n\
+profile v = \"filament.value.complete/v1\";\n\
+profile t = \"filament.temporal.timed/v1\";\n\
+model M = \"acme/orders\";\n\
+dimension Time;\n\
+unit ms : Time = rational(1, 1);\n\
+time M dense unit ms;\n\
+temporal T using t over (r: M::Widget) clock \"model-time\" on origin { eventually[0 ms, 1 ms] holds(r.code > 0) }\n";
+        let zero = filament_exact::Rational::new(
+            filament_exact::Integer::from(0_u64),
+            filament_exact::Integer::from(1_u64),
+        )
+        .expect("nonzero denominator");
+        let target = fsl_replay::MonitorTarget {
+            counter: "counter".into(),
+            unit: "ms".into(),
+            width_bits: 8,
+            uncertainty: zero,
+            max_event_rate: None,
+            max_reading_gap: 1,
+            max_activations: 8,
+        };
+        let settings = fsl_replay::TimingObligationSettings::default();
+        let request = fsl_analyze::monitor_root::PlanRootRequest {
+            source: &source,
+            path: "unit.native",
+            bytes: unit.as_bytes(),
+            packages: &packages,
+            package_name: &package_name,
+            limits: fsl_replay::spine::SpineLimits::default(),
+            clause: "T",
+            target: &target,
+            settings: &settings,
+        };
+        let root = fsl_analyze::monitor_root::emit_plan_root(
+            &request,
+            &filament_exact::Cancel::new(),
+        )
+        .expect("plan root emits");
+        let selected_source = root.checked_unit().source().identity().clone();
+        let claim = root.plan().subject().clone();
+        let observation_subject = filament_observation::authority::SubjectSelection {
+            scope_identity: filament_observation::Identity::new("scope:consumer"),
+            population_identity: filament_observation::Identity::new("population:consumer"),
+        };
+        let observation_clock = filament_observation::authority::clock::Selection::new(
+            filament_observation::Identity::new("clock:consumer"),
+            filament_observation::Identity::new("revision:consumer"),
+        );
+        let observation_source = filament_observation::Identity::new("source:consumer");
+        let mut budget = filament_contract_model::NativeJoinBudget::new(100, 100);
+        let result = fsl_analyze::monitor_root::admit_progress_view(
+            root,
+            fsl_analyze::monitor_root::PlanAuthoritySelection {
+                source: &selected_source,
+                claim: &claim,
+                observation_subject: &observation_subject,
+                observation_clock: &observation_clock,
+                observation_source: &observation_source,
+            },
+            None,
+            fsl_analyze::monitor_root::PlanAuthorityValidationCaps {
+                read: filament_contract_model::CheckedPackageReadLimits::bounded(),
+                order: quire_canonical::Limits::new(1 << 20),
+            },
+            &mut budget,
+            filament_contract_model::NativeJoinLocus {
+                source: filament_contract_model::NativeJoinLocusSource::ReachedRow(0),
+                form: "consumer_progress_view",
+            },
+        );
+        assert!(matches!(
+            result,
+            Err(fsl_analyze::monitor_root::PlanAuthorityRefusal::MissingProgress)
+        ));
     }
 }
 
@@ -587,8 +672,13 @@ mod observation {
         assert!(requirements.iter().any(|requirement| {
             requirement.kind == fsl_package::checked_views::SubjectKind::WorkflowInstance
         }));
-        assert!(requirements
+        let workflows = requirements
             .iter()
-            .all(|requirement| requirement.scope == requirement.subject || !format!("{:?}", requirement.scope).is_empty()));
+            .filter(|requirement| {
+                requirement.kind == fsl_package::checked_views::SubjectKind::WorkflowInstance
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(workflows.len(), 1);
+        assert_eq!(workflows[0].scope, workflows[0].subject);
     }
 }
