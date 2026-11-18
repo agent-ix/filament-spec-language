@@ -44,7 +44,7 @@ const TOO_LIKELY: &str = "probabilistic TooLikely using inf on M over (m: M::Msg
      { probability >= rational(99, 100) [ eventually holds(m.delivered) ] }";
 
 /// `LongRun`: the long-run fraction of healthy ticks under `Steady`.
-const LONG_RUN: &str = "probabilistic LongRun using inf on M over (m: M::Msg) under Even on origin \
+const LONG_RUN: &str = "probabilistic LongRun using inf on M over (n: M::Node) under Steady on origin \
      with alpha 0.1, beta 0.1, indifference 0.1 \
      { long_run_fraction holds(n.healthy) >= 0.3 }";
 
