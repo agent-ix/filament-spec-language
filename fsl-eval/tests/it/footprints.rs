@@ -990,6 +990,8 @@ fn gates_subject() -> Subject {
                     ],
                     vec![
                         operation("Gate", "disarm", &[], None, &gate_frame("Gate/armed")),
+                        operation("Gate", "literal", &[], None, &gate_frame("Gate/alarm")),
+                        operation("Gate", "literalFixed", &[], None, &gate_frame("Gate/alarm")),
                         operation("Gate", "boom", &[], None, &gate_frame("Gate/alarm")),
                         operation("Gate", "boomNav", &[], None, &gate_frame("Gate/alarm")),
                         operation("Gate", "point", &[], None, &gate_frame("Gate/cell")),
@@ -1008,6 +1010,8 @@ fn gates_subject() -> Subject {
         ),
         &[
             "post Disarmed using v on M::Gate::disarm { not self.armed }",
+            "pre LiteralIsCreated using v on M::Gate::literal { self.cell = M::Cell#\"b\" }",
+            "pre LiteralIsFixed using v on M::Gate::literalFixed { self.cell = M::Cell#\"a\" }",
             "pre BoomArmed using v on M::Gate::boom { self.armed }",
             "post BoomRaised using v on M::Gate::boom { self.alarm and pre(self.cell.v) = 1 }",
             "pre NavArmed using v on M::Gate::boomNav { self.armed and self.cell.v = 1 }",
@@ -1020,6 +1024,43 @@ fn gates_subject() -> Subject {
             "post SetOne using v on M::Cell::set { self.v = 1 }",
         ],
     )
+}
+
+/// FR-1000 literals resolve to fixed or created objects per subject. A
+/// created lookup reads its selected population membership; a fixed literal
+/// is a constant and adds no membership location.
+#[trace("TC-589", "FR-155-AC-5", "FSpec-FR-480-AC-5")]
+#[test]
+fn a_reference_literal_in_a_clause_reads_related_population_membership() {
+    let mut subject = gates_subject();
+    let cell = Obj {
+        population: "cells",
+        key: "a",
+        object_type: "Cell",
+        fields: json!({"v": integer(0)}),
+    };
+    let start = subject.start(
+        "literal-s0",
+        &["cells", "gates"],
+        &[
+            cell,
+            Obj {
+                population: "gates",
+                key: "g",
+                object_type: "Gate",
+                fields: json!({"armed": boolean(true), "alarm": boolean(false),
+                    "cell": reference("cells", "a"), "alt": reference("cells", "a")}),
+            },
+        ],
+    );
+    let system = subject.system(start, &[("cells", &["a", "b"]), ("gates", &["g"])]);
+    let receiver = subject.reference("Gate", "g");
+    let created = footprint_on(&system, "Gate", "literal", &receiver);
+    assert!(created.reads.contains(&any_membership("cells")));
+    assert!(created.enabling.contains(&any_membership("cells")));
+    let fixed = footprint_on(&system, "Gate", "literalFixed", &receiver);
+    assert!(!fixed.reads.contains(&any_membership("cells")));
+    assert!(!fixed.enabling.contains(&any_membership("cells")));
 }
 
 fn gates_start(subject: &mut Subject) -> DocumentRef {

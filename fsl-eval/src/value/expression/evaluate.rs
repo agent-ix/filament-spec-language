@@ -2285,17 +2285,22 @@ impl<'a, 'm, N: NodeSource<'a>> Machine<'a, 'm, N> {
                         population,
                     } => {
                         let objects = self.objects_for(node)?;
-                        let reference = objects.references().iter().find(|reference| {
-                            reference.object().as_str() == identity
-                                && self
-                                    .world
-                                    .types()
-                                    .conforms(reference.object_type().clone(), object_type.clone())
-                        });
+                        self.log_reference_membership_read(node, objects, population);
+                        let reference = objects
+                            .population_members(&population.node)
+                            .into_iter()
+                            .flatten()
+                            .find(|reference| {
+                                reference.object().as_str() == identity
+                                    && self.world.types().conforms(
+                                        reference.object_type().clone(),
+                                        object_type.clone(),
+                                    )
+                            });
                         let Some(reference) = reference else {
                             return Err(Halt::Family(FamilyResult::Undefined(Box::new(
                                 StateModelUndefined::AbsentKey {
-                                    binding: population.clone(),
+                                    binding: population.node.clone(),
                                     key: render_identity(identity.as_bytes()),
                                 },
                             ))));
@@ -3750,6 +3755,33 @@ impl<'a, 'm, N: NodeSource<'a>> Machine<'a, 'm, N> {
             },
             population: key.clone(),
             object,
+        });
+    }
+
+    /// Records a created-object reference literal's lookup in the population
+    /// selected during subject binding. The graph stays subject-independent;
+    /// footprint derivation admits all populations related to its type.
+    fn log_reference_membership_read(
+        &self,
+        node: N,
+        objects: &ObjectEnvironment,
+        population: &DeclarationKey,
+    ) {
+        let Some(log) = objects.read_log() else {
+            return;
+        };
+        let observation = self
+            .reads
+            .and_then(|reads| node.location().and_then(|location| reads.get(location)))
+            .copied()
+            .unwrap_or(match self.anchor {
+                Anchor::Pre => fsl_semantics::model::clause_observation::Observation::Pre,
+                Anchor::Post => fsl_semantics::model::clause_observation::Observation::Post,
+            });
+        log.record(ObservedRead::Membership {
+            observation,
+            population: population.clone(),
+            object: None,
         });
     }
 

@@ -19,6 +19,8 @@ use filament_semantic_value::declaration::{CompositeDeclaration, CompositeShape,
 use filament_semantic_value::model_transition::ModelTransition;
 use fsl_semantics::check::footprint::{
     FootprintObject, FootprintRefusal, SymbolicFootprint, SymbolicLocation,
+    derive_attempt_footprint_fallback_with_reference_literals,
+    derive_selected_footprint_with_reference_literals,
 };
 use fsl_semantics::check::CheckedNode;
 use fsl_semantics::model::clause_observation::Observation;
@@ -433,6 +435,7 @@ impl<'a> ModelSystem<'a> {
             types,
             selected.cloned(),
         );
+        let reference_literals = self.reference_bindings.created_for_footprints();
         let mut cache = self
             .footprints
             .0
@@ -442,23 +445,50 @@ impl<'a> ModelSystem<'a> {
             .entry(key)
             .or_insert_with_key(|(_, _, types, selected)| {
                 let select = |clause| selected.as_ref().is_none_or(|set| set.contains(&clause));
-                match self.evaluator().selected_footprint(
-                    &self.model,
-                    receiver.object_type().clone(),
-                    application.declaring.clone(),
-                    &application.declaration,
-                    types,
-                    &select,
-                ) {
+                let selected = if let Some(package) = self.source_package() {
+                    derive_selected_footprint_with_reference_literals(
+                        package.graph(),
+                        &self.model,
+                        receiver.object_type().clone(),
+                        application.declaring.clone(),
+                        &application.declaration,
+                        types,
+                        &reference_literals,
+                        &select,
+                    )
+                } else {
+                    self.evaluator().selected_footprint(
+                        &self.model,
+                        receiver.object_type().clone(),
+                        application.declaring.clone(),
+                        &application.declaration,
+                        types,
+                        &select,
+                    )
+                };
+                match selected {
                     Err(FootprintRefusal::UnsupportedForm { .. }) => {
-                        self.evaluator().attempt_footprint_fallback(
-                            &self.model,
-                            receiver.object_type().clone(),
-                            application.declaring.clone(),
-                            &application.declaration,
-                            types,
-                            &select,
-                        )
+                        if let Some(package) = self.source_package() {
+                            derive_attempt_footprint_fallback_with_reference_literals(
+                                package.graph(),
+                                &self.model,
+                                receiver.object_type().clone(),
+                                application.declaring.clone(),
+                                &application.declaration,
+                                types,
+                                &reference_literals,
+                                &select,
+                            )
+                        } else {
+                            self.evaluator().attempt_footprint_fallback(
+                                &self.model,
+                                receiver.object_type().clone(),
+                                application.declaring.clone(),
+                                &application.declaration,
+                                types,
+                                &select,
+                            )
+                        }
                     }
                     derived => derived,
                 }

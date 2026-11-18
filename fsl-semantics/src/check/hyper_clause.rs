@@ -2855,6 +2855,7 @@ fn is_opaque(node: &ExprNode) -> bool {
         | ExprNode::Lookup { .. }
         | ExprNode::Dispatch { .. }
         | ExprNode::Quantity(_)
+        | ExprNode::ReferenceLiteral { .. }
         | ExprNode::Power { .. }
         | ExprNode::Reaches { .. }
         | ExprNode::ProtocolReference { .. } => true,
@@ -3096,6 +3097,7 @@ fn leaf_payload(node: &ExprNode, swap: Swap<'_>) -> (Vec<u8>, Vec<u8>) {
             text_segment(&format!("{coefficient}e-{scale}")),
         ),
         ExprNode::Binary { .. }
+        | ExprNode::ReferenceLiteral { .. }
         | ExprNode::Quantity(_)
         | ExprNode::Power { .. }
         | ExprNode::Case(_)
