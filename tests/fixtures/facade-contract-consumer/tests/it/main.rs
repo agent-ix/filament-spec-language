@@ -476,7 +476,6 @@ protocol Flow using p over (input: M::Widget) on origin {\n\
   run sequence Main {\n\
     attempt Update by Buyer on M::Widget::touch contracts [] as (tried: M::Widget) { true };\n\
     effect Applied of Update as (applied: M::Widget) { true };\n\
-
     send Offer via Ch as (sent: Boolean) { true };\n\
     receive Seen via Ch of Offer as (received: Boolean) { true };\n\
     await Wait after Main::Applied using t clock \"ticks\" within [0, 1] match event Arrived by Seller as (arrived: Boolean) { true }; then sequence Then {} timeout sequence Late {}\n\
