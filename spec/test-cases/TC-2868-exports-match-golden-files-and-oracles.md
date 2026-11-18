@@ -14,10 +14,10 @@ Verify the golden comparison and the optional TLC oracle. Scope: FR-1018-AC-1 an
 
 ## Test Procedure
 
-1. Export the counter and compare with its golden files.
-2. Run TLC on it when present.
+1. Export FR-756-AC-1's counter (`inc`, `value <= 5`) under both profiles and compare with its golden files.
+2. Run TLC on the TLA+ export when present, and `analyze` the same model.
 
 ## Expected Results
 
 - Step 1: byte-equal.
-- Step 2: equal state count and verdict, or `tlc not found`.
+- Step 2: TLC's state count and verdict equal the analyze run's `exploration.states` (six) and verdict, or `tlc not found` with step 1 still run.

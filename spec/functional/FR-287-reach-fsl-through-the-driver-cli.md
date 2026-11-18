@@ -68,8 +68,8 @@ neither it nor the driver reads back native JSON or branches on a human
 diagnostic message.
 
 The verbs are `parse`, `format`, `check`, `compile`, `run`, `analyze`,
-`monitor`, `prove`, `replay`, `generate`, `inspect` and `version` (ADR-029
-CB-5). Every verb takes `--format json|text`, and `inspect` also takes
+`monitor`, `prove`, `replay`, `generate`, `export`, `inspect` and `version`
+(ADR-029 CB-5). Every verb takes `--format json|text`, and `inspect` also takes
 `dot`.
 
 ## Inputs
@@ -102,8 +102,25 @@ FR-298) and takes FR-285's exit code.
 - The driver shall hand `--output <file>` on `compile` to
   `fsl_command::command::compile_outcome_with_overrides` as `RequestOverrides::output`, which writes
   the checked package to that file as FR-810 states; the driver writes no
-  package bytes of its own for it, and `--output` on any other verb is an
-  unknown option (FSpec FR-301).
+  package bytes of its own for it. The driver shall hand `--output <file>`
+  on `export` to FSL's export entry the same way, as
+  `RequestOverrides::output`, which writes the TLA+ or Lean target file as
+  FR-1015 states; the driver writes no target bytes of its own. `--output` on
+  any verb other than `compile` and `export` is an unknown option (FSpec
+  FR-301).
+- `fsl export <request>` shall hand one `native-run/1` request carrying an
+  `export` member to FSL's export entry and write the FR-286 outcome document
+  with operation `export` it returns (FR-286 "Export outcomes"), unchanged in
+  machine mode and in FR-865's text form in text mode, exiting with its
+  FR-285 code. `--limit <name>=<value>` on `export` takes the `export.*`
+  settings and every setting `compile` takes (FR-869), through FR-255's
+  settings operation.
+- `fsl export --evidence <request>` shall hand one `native-run/1` request
+  carrying an `export_evidence` member to FSL's evidence intake (FR-1022) and
+  write the outcome document it returns. `--evidence` is accepted on
+  `export` only; with `--output` or with a positional request operand it
+  refuses `invalid-request` naming `--evidence` and the other argument, exit
+  20, before any file is read.
 - `--provider-config <file>` on the verbs that route items to providers
   (`analyze`, `prove`, `monitor`, `run`, `replay`, `generate`) shall read FSpec
   FR-561's `filament.provider-config/v1` document: its shape (`format`,
@@ -200,6 +217,7 @@ FR-298) and takes FR-285's exit code.
 | FR-287-AC-11 | Missing request files and malformed request JSON produce the command owner's outcome document with the original catalog code and category and `last_stage` null; source, check and emit refusals retain their owning typed cause, category, reached stage and available region. A source identity refusal retains its exact typed label with no fabricated locus. The command's existing native library result and refusal behavior remain unchanged. | Test |
 | FR-287-AC-12 | `quire prove --provider-config providers.json` with no `--provider-limit` sends the fixture plugin a request whose `deadline_ms` is 600000 and enforces a 67108864-byte frame limit; with `--provider-limit deadline_ms=250 --provider-limit max_frame_bytes=1048576` the request carries `deadline_ms` 250 and a 1048577-byte result frame settles the item `failed` with `{"type": "tool-failure", "defect": "frame-length", "limit": 1048576, "value": 1048577}`. `--provider-limit max_frames=4`, `deadline_ms`, `deadline_ms=0`, `deadline_ms=10s`, `deadline_ms=010`, `max_total_bytes=9007199254740992` and `deadline_ms=5` given twice each refuse `invalid-request` naming `--provider-limit` and the argument, exit 20 with empty stdout, and start no plugin; `quire parse --provider-limit deadline_ms=5` refuses the option as unknown, exit 20. | Test (TC-2626) |
 | FR-287-AC-13 | `fsl run req.json --limit observation.input_bytes=N` over FR-312-AC-9's request without `observation_limits` and with its snapshot one byte over `N` writes the same outcome document as FR-312-AC-9's request with `clause.observation_limits.document_bytes` `N`, exit 22, its item cause `stage_limit_exceeded` naming `observation.input_bytes`; `fsl run req.json --limit observation.document_bytes=N` exits 20 with the settings operation's unknown-setting refusal naming the operand; FR-312-AC-9's request with `--limit observation.input_bytes=N` as well refuses `invalid-request` naming `observation_limits`, exit 20. | Test (TC-2985) |
+| FR-287-AC-14 | `fsl export req.json --output m.tla` over FR-756-AC-1's counter request exits 0 and writes a file byte-identical to the one FSL writes for the same request carrying `export.output` naming `m.tla`, and stdout is the FR-286 document with operation `export` that FSL returns, unchanged in machine mode; `fsl export req.json --limit export.output_bytes=1` exits 22 naming `export.output_bytes`; `fsl export --evidence e.json` writes FSL's evidence outcome document with operation `export`; `fsl export --evidence e.json --output m.tla` and `fsl export req.json --evidence e.json` each refuse `invalid-request` naming `--evidence`, exit 20, reading no file; `--evidence` on `compile` refuses as an unknown option, exit 20. | Driver test (TC-2995): the `fsl` binary parses the options and hands the path, so the code ticket adds the test in the filament-driver repository. |
 
 ## Dependencies
 

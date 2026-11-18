@@ -243,10 +243,81 @@ mod tests {
         .expect("the call runs")
     }
 
+    fn run_with_replay_context_kernel(
+        source: &str,
+        limits: CallerLimits,
+        call: &Call,
+    ) -> RunWithReplayContext {
+        use filament_semantic_value::checking::CheckMode;
+
+        let identity = SourceIdentity::new("agent-ix", "test:lifecycle");
+        let packages = fsl_semantics::model::intake::package_input([]).expect("no model packages");
+        let dependencies = DependencyInput::default();
+        let cancel = Cancel::new();
+        let function_modes = BTreeMap::new();
+        let modes = spine::ComposeModes {
+            check_mode: Some(CheckMode::Kernel),
+            function_modes: &function_modes,
+        };
+        let composed = spine::compose_in_mode(
+            identity,
+            "unit.native",
+            source.as_bytes(),
+            &packages,
+            &dependencies,
+            limits.spine,
+            modes,
+        )
+        .expect("composes under Kernel");
+        let checked = &composed.checked;
+        let models = &composed.models;
+        let emitted = &composed.emitted_unit;
+        let outcome = spine::run_compiled(
+            checked,
+            models,
+            spine::CallSources {
+                package_name: "fixture",
+                packages: &packages,
+                model_limits: limits.spine.model,
+            },
+            call,
+            &ObjectEnvironment::default(),
+            &fsl_eval::execution::SuppliedBackends::default(),
+            &fsl_eval::execution::PrepareLimits::default(),
+            &cancel,
+        )
+        .expect("the call runs");
+        let library_name = package_name_of("fixture").expect("library name");
+        let members = crate::call_requirements::associate(
+            checked.package().graph().requirements(),
+            checked.package().graph(),
+            &call.function,
+        )
+        .expect("requirements associate with the call");
+        let context = PluginReplayContext::new(checked, emitted, models, limits);
+        RunWithReplayContext {
+            package_name: library_name.clone(),
+            outcome,
+            requirements: CallRequirements::new(call, members.clone()),
+            context: CallReplayContext {
+                package_name: library_name,
+                context,
+                members,
+            },
+        }
+    }
+
     /// `p`'s declaration occurrence and its parameter's node, read through
     /// a separate compile of `source`.
-    fn declaration(source: &str, function: &str) -> (OccurrenceKey, NodeKey) {
-        let identity = SourceIdentity::new("a", "u");
+    fn declaration(source: &str, function: &str) -> (OccurrenceKey, Vec<NodeKey>) {
+        declaration_for(source, function, SourceIdentity::new("a", "u"))
+    }
+
+    fn declaration_for(
+        source: &str,
+        function: &str,
+        identity: SourceIdentity,
+    ) -> (OccurrenceKey, Vec<NodeKey>) {
         let limits = CallerLimits::default().spine;
         let cancel = Cancel::new();
         let parsed = spine::parse(
@@ -278,15 +349,56 @@ mod tests {
             .graph()
             .callable(function)
             .expect("declared");
-        let parameter = callable_parameter_keys(checked.package(), &callable)
-            .expect("a function node")[0]
-            .clone();
+        let parameters = callable_parameter_keys(checked.package(), &callable)
+            .expect("a function node");
         (
             OccurrenceKey::new(
                 callable.identity.clone(),
                 Origin::new(Role::new("declaration"), 0),
             ),
-            parameter,
+            parameters,
+        )
+    }
+
+    fn kernel_declaration_for(
+        source: &str,
+        function: &str,
+        identity: SourceIdentity,
+    ) -> (OccurrenceKey, Vec<NodeKey>) {
+        use filament_semantic_value::checking::CheckMode;
+
+        let limits = CallerLimits::default().spine;
+        let packages = fsl_semantics::model::intake::package_input([])
+            .expect("no model packages");
+        let dependencies = DependencyInput::default();
+        let function_modes = BTreeMap::new();
+        let composed = spine::compose_in_mode(
+            identity,
+            "unit.native",
+            source.as_bytes(),
+            &packages,
+            &dependencies,
+            limits,
+            spine::ComposeModes {
+                check_mode: Some(CheckMode::Kernel),
+                function_modes: &function_modes,
+            },
+        )
+        .expect("the unit composes under Kernel");
+        let callable = composed
+            .checked
+            .package()
+            .graph()
+            .callable(function)
+            .expect("declared");
+        let parameters = callable_parameter_keys(composed.checked.package(), &callable)
+            .expect("a function node");
+        (
+            OccurrenceKey::new(
+                callable.identity.clone(),
+                Origin::new(Role::new("declaration"), 0),
+            ),
+            parameters,
         )
     }
 
@@ -317,7 +429,8 @@ mod tests {
         ])
         .unwrap();
         let result = run(SOURCE, limits);
-        let (_, parameter) = declaration(SOURCE, "q");
+        let (_, parameters) = declaration(SOURCE, "q");
+        let parameter = parameters[0].clone();
         let member = result.requirements().members()[0].clone();
         let key = member.occurrence().clone();
         let context = result.into_parts().2;
@@ -360,10 +473,11 @@ mod tests {
     #[trace("TC-1173", "FR-404-AC-3")]
     #[test]
     fn a_member_request_carries_the_process_provider_identity() {
-        let source = SOURCE.replace(
-            "function q",
-            "function r using v(x: Int[0, 9]): Integer pure { 10 mod x }\nfunction q",
-        );
+        let source = "language \"ix:native\" edition \"1-draft\";\n\
+            profile v = \"filament.value.complete/v1\";\n\
+            profile Complete = \"filament.protocol.finite-global/v1\";\n\
+            function r using v(x: Int[0, 9]): Integer pure { 10 mod x }\n"
+            .to_owned();
         let call = Call {
             clocks: Default::default(),
             wire_arguments: Vec::new(),
@@ -377,30 +491,22 @@ mod tests {
             supplied: filament_semantic_value::supplied_stop::SuppliedLimits::default(),
             backend: filament_eval::ExecutionBackendChoice::Interpreter,
         };
-        let result = run_with_replay_context(
-            SourceIdentity::new("a", "u"),
-            "fixture".to_owned(),
-            "unit.native",
-            source.as_bytes(),
-            &BTreeMap::new(),
-            &DependencyInput::default(),
-            CallerLimits::default(),
-            &call,
-            &ObjectEnvironment::default(),
-            &Cancel::new(),
-        )
-        .expect("the call runs");
+        let result = run_with_replay_context_kernel(&source, CallerLimits::default(), &call);
         assert!(matches!(result.outcome(), CallOutcome::Undefined { .. }));
-        let (_, parameter) = declaration(&source, "r");
+        let (_, parameters) = kernel_declaration_for(
+            &source,
+            "r",
+            SourceIdentity::new("agent-ix", "test:lifecycle"),
+        );
         let member = result.requirements().members()[0].clone();
-        let bounds = [bound_at(parameter.clone())];
+        let bounds = [bound_at(parameters[0].clone())];
         let wire = result
             .context()
             .request(
                 member.request_index(),
                 &bounds,
                 &plugin(),
-                input(parameter, 0),
+                input(parameters[0].clone(), 0),
             )
             .expect("an application item");
         let expected = crate::execute::process_provider_obligation(

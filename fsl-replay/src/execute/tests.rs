@@ -1432,7 +1432,10 @@ fn call_site_refusal_codes_are_the_replay_refusal_codes() {
     )
     .expect_err("the unit does not parse");
     assert!(
-        matches!(replayed, ReplayRefusal::Recompile(_)),
+        matches!(
+            replayed,
+            ReplayRefusal::Recompile(_) | ReplayRefusal::RecompileWithProtocolResults { .. }
+        ),
         "{replayed:?}"
     );
     assert_eq!(refusal.code(), replayed.code());

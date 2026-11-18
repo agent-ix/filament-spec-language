@@ -5,12 +5,12 @@ use std::path::Path;
 
 use filament_exact::Cancel;
 use fsl_command::command::{self, PreparedRun, RunLimits};
-use fsl_foundation::source::Source;
 use fsl_foundation::SourceIdentity;
+use fsl_foundation::source::Source;
 use fsl_replay::spine::{self, DependencyInput, ParseRequest, SpineLimits};
 use fsl_replay::{Operation, OutcomeDocument};
 use ix_trace_rs::trace;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
 const PROGRAM: &[u8] = include_bytes!("../../../tests/fixtures/spine-run.native");
 const DOMAIN: &[u8] = include_bytes!("../../../examples/config-version/model.semantic-ir.json");
@@ -513,6 +513,174 @@ fn clause_preparation_failure_retains_all_admitted_sources() {
     assert!(paths.contains(&"program.native"), "{paths:?}");
     assert!(paths.contains(&"model.semantic-ir.json"), "{paths:?}");
     assert!(paths.contains(&"library.native"), "{paths:?}");
+}
+
+#[test]
+#[trace("TC-2982", "FR-312-AC-10")]
+fn observation_override_conflict_refuses_before_observation_read() {
+    let directory = tempfile::tempdir().unwrap();
+    std::fs::write(directory.path().join("program.native"), PROGRAM).unwrap();
+    std::fs::write(directory.path().join("model.semantic-ir.json"), DOMAIN).unwrap();
+    let request = json!({
+        "format": "native-run/1",
+        "request": {
+            "models": [{"format": "semantic-ir/2.0.0", "source": {
+                "file": "model.semantic-ir.json", "authority": "tests",
+                "identity": "test:prepared-model", "document": "PreparedModel",
+                "formal_revision": 1
+            }}],
+            "program": {"source": source()},
+            "clause": {
+                "selection": {"temporal": {"name": "Reaches",
+                    "trace": {"lasso": {"prefix": [], "loop": []}}}},
+                "observations": {"missing": "missing-observation.json"},
+                "observation_limits": {"document_bytes": 100}
+            }
+        }
+    });
+    let path = write_request(directory.path(), "clause.json", request);
+    let limits = fsl_semantics::model::observation::ObservationLimits::default();
+    let error = command::prepare_run_with_overrides(
+        &path,
+        RunLimits::default(),
+        &command::RequestOverrides {
+            observation: Some(&limits),
+            ..Default::default()
+        },
+    )
+    .err()
+    .expect("the duplicate setting refuses before reading the missing observation");
+    let envelope = error.value().expect("refusal envelope");
+    assert_eq!(envelope["stage"], "request", "{envelope}");
+    assert_eq!(envelope["code"], "invalid-request", "{envelope}");
+    assert!(
+        envelope["message"]
+            .as_str()
+            .unwrap()
+            .contains("observation_limits")
+    );
+}
+
+#[test]
+#[trace("TC-2982", "FR-312-AC-10")]
+fn observation_override_matches_the_in_request_limit() {
+    let directory = tempfile::tempdir().unwrap();
+    crate::config_version_spine::spine::write(
+        directory.path(),
+        crate::config_version_spine::Case::Healthy,
+    )
+    .unwrap();
+    let bytes = std::fs::read(directory.path().join("spine-snapshot.json")).unwrap();
+    let maximum = (bytes.len() - 1) as u64;
+    let request = |with_limit| {
+        let mut clause = json!({
+            "selection": {"clause": {
+                "name": "ParentOrder",
+                "observation": "current",
+                "self": {"population": "ix://example/config-version/config_history", "key": "child"},
+                "anchor": {"kind": "handler", "name": "validate"}
+            }},
+            "observations": {"current": "spine-snapshot.json"}
+        });
+        if with_limit {
+            clause["observation_limits"] = json!({"document_bytes": maximum});
+        }
+        json!({
+            "format": "native-run/1",
+            "request": {
+                "models": [{"format": "semantic-ir/2.0.0", "source": {
+                    "file": "spine-model.semantic-ir.json", "authority": "agent-ix",
+                    "identity": "example:spine-model.semantic-ir.json", "document": "SpineModel",
+                    "formal_revision": 1
+                }}],
+                "program": {"source": {
+                    "file": "spine-unit.native", "authority": "agent-ix",
+                    "identity": "example:spine-unit.native", "document": "SpineUnit",
+                    "formal_revision": 1
+                }},
+                "clause": clause
+            }
+        })
+    };
+    let member = write_request(directory.path(), "member.json", request(true));
+    let bare = write_request(directory.path(), "bare.json", request(false));
+    let expected = command::run(&member, &crate::negotiation::Fr290).unwrap();
+    let limits = fsl_semantics::model::observation::ObservationLimits::default()
+        .with_document_bytes(maximum);
+    let actual = command::run_with_overrides(
+        &bare,
+        &command::RequestOverrides {
+            observation: Some(&limits),
+            ..Default::default()
+        },
+        &crate::negotiation::Fr290,
+    )
+    .unwrap();
+    assert_eq!(actual.value.as_value(), expected.value.as_value());
+    assert_eq!(actual.exit_code, expected.exit_code);
+}
+
+#[cfg(feature = "quire-extraction")]
+#[test]
+#[trace("TC-2982", "FR-312-AC-10")]
+fn extracted_clause_observation_override_conflict_refuses_before_observation_read() {
+    let directory = tempfile::tempdir().unwrap();
+    crate::config_version_spine::spine::write(
+        directory.path(),
+        crate::config_version_spine::Case::Healthy,
+    )
+    .unwrap();
+    let body = crate::config_version_spine::spine::unit_text();
+    std::fs::write(
+        directory.path().join("spec.md"),
+        format!("# Doc\n\n## Invariants\n\n### ParentOrder\n```ix:native\n{body}```\n"),
+    )
+    .unwrap();
+    let request = json!({
+        "format": "native-run/1",
+        "request": {
+            "models": [{"format": "semantic-ir/2.0.0", "source": {
+                "file": "spine-model.semantic-ir.json", "authority": "agent-ix",
+                "identity": "example:spine-model.semantic-ir.json", "document": "SpineModel",
+                "formal_revision": 1
+            }}],
+            "program": {
+                "source": {"file": "spec.md", "authority": "agent-ix",
+                    "identity": "ix://agent-ix/spec", "document": "Doc", "formal_revision": 1},
+                "extraction": {"body": {"authority": "agent-ix", "identity": "body", "document": "Body"}},
+                "clauses": [{"clause": "ParentOrder", "package": "example/config-version"}]
+            },
+            "clause": {
+                "selection": {"clause": {
+                    "name": "ParentOrder", "observation": "current",
+                    "self": {"population": "ix://example/config-version/config_history", "key": "child"},
+                    "anchor": {"kind": "handler", "name": "validate"}
+                }},
+                "observations": {"current": "missing-observation.json"},
+                "observation_limits": {"document_bytes": 100}
+            }
+        }
+    });
+    let path = write_request(directory.path(), "extracted.json", request);
+    let limits = fsl_semantics::model::observation::ObservationLimits::default();
+    let error = command::run_with_overrides(
+        &path,
+        &command::RequestOverrides {
+            observation: Some(&limits),
+            ..Default::default()
+        },
+        &crate::negotiation::Fr290,
+    )
+    .unwrap_err();
+    let envelope = error.value().expect("refusal envelope");
+    assert_eq!(envelope["stage"], "request", "{envelope}");
+    assert_eq!(envelope["code"], "invalid-request", "{envelope}");
+    assert!(
+        envelope["message"]
+            .as_str()
+            .unwrap()
+            .contains("observation_limits")
+    );
 }
 
 #[test]

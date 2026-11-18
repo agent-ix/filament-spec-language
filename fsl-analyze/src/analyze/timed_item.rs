@@ -42,7 +42,7 @@ use crate::zone_check::{manifest as en6, ZoneCheckItem, ZoneCheckLimits, ZoneChe
 
 /// The alias of the model whose time source the package declares, which the
 /// timed subject is read under (FR-230); `None` for an untimed package.
-fn timed_model(package: &CheckedPackage) -> Option<String> {
+pub(super) fn timed_model(package: &CheckedPackage) -> Option<String> {
     package
         .graph()
         .time_sources()
@@ -215,7 +215,7 @@ fn run(read: &Run<'_, '_>, cancel: &filament_exact::Cancel) -> EngineReport {
 /// limit is a resource stop (`incomplete`). Only the refusals the package and the
 /// checker rule out (a missing timed model, a broken extent check) stay an
 /// engine fault.
-fn subject_refusal(refusal: &TimedSubjectRefusal) -> Refusal {
+pub(super) fn subject_refusal(refusal: &TimedSubjectRefusal) -> Refusal {
     match refusal {
         TimedSubjectRefusal::NotSimulated(NotSimulated::RequiresBound(_)) => Refusal::RequiresBound,
         TimedSubjectRefusal::Unbounded { .. } => Refusal::Failed(INVALID_VALUE),
@@ -243,7 +243,7 @@ fn zone_limits(form: &TemporalItem) -> ZoneCheckLimits {
     limits
 }
 
-fn certificate_simulation<'a>(
+pub(super) fn certificate_simulation<'a>(
     input: &ModelCheckInput<'a>,
     binding: &SubjectBinding<'a>,
     limits: AnalyzeLimits,

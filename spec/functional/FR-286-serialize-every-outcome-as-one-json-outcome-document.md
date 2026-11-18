@@ -238,6 +238,35 @@ clause run. An item of any result but `refuted` carries no `counterexample`.
 spelling serves the document `analyze` writes and the item `prove` writes, so
 the same item through either gives the same bytes.
 
+## Export outcomes
+
+The `export` operation (FR-1015, FSpec FR-817) writes one outcome document
+with `operation` `export` and FR-285's standard categories, read from the
+export outcome's `status`:
+
+| Export outcome | `category` | Exit |
+| --- | --- | --- |
+| `assembled` | success | `0` |
+| `refused` by admission (a malformed member, an unknown profile or limit, a family mismatch, a duplicate obligation, an existing output path, a doubled destination) | refusal | `20` |
+| `refused` with `below-fidelity-floor` | unsupported | `21` |
+| `incomplete` (an `export.*` limit) | incomplete | `22` |
+| a mapper failure | internal-failure | `30` |
+
+Its `result` is `{"kind": "exported", "export": E}`, `E` the FSpec FR-817
+`filament.export-outcome/v1` document exactly as the run outcome's `export`
+member carries it, for every status the mapper reports. A refusal before the
+mapper runs carries `result` `null` and its diagnostic, as every other
+refused operation does. `last_stage` is the greatest compile stage the
+export's program reached (S4 for an export of a checked package), or `null`
+for a refusal of the request itself, an existing output path included.
+`items` is empty and `artifacts` is `[]`: the target file is the caller's
+named output, never an artifact identity.
+
+An evidence intake through the same verb (`fsl export --evidence`, FR-1022)
+writes a document with `operation` `export`, one item per named obligation
+carrying its FSpec FR-331 terminal record in the item spelling `prove`
+writes, the category the items rank to, and `result` `null`.
+
 ## Inputs
 
 A lifecycle operation's outcome value.
@@ -392,6 +421,7 @@ FR-634's members. A clause-run and a `monitor` item carry FR-622's `axes`.
 | FR-286-AC-19 | The `execute` outcome document of a run whose unit S3 refuses `ill_typed` (`function bad using v(): Int[0, 9] pure { true }`) and the `parse` outcome document of FR-763-AC-2's unit each hold diagnostics whose `details` is `null`; no diagnostic of any document holds a `details` member outside the closed vocabulary or an empty `details` object. | Test (TC-2379) |
 | FR-286-AC-20 | A `monitor` document of settled clause runs (`MonitorOutcome::document`, here with no records) has `last_stage` `S6a`; the whole-request refusal document of `MonitorRefusal::UnknownClause` has `S4` and of `MonitorRefusal::Observation` `S6a`, each with its refusal category. | Test (TC-2383) |
 | FR-286-AC-21 | The `replay` outcome of FR-862-AC-2's replay of `entry` serializes with `result` `{"kind": "replayed", "results": [R]}`, `R` equal to the one row of the `results` document `command::run` returns (`arm` `input`, `settlement` `reproduced-without-witness`); FR-862-AC-1's refused request serializes with `result` `null`. | Test (TC-2963) |
+| FR-286-AC-22 | The `export` outcome of FR-756-AC-1's counter serializes with `operation` `export`, `category` success, `last_stage` S4, `items` `[]`, `artifacts` `[]` and `result` `{"kind": "exported", "export": E}` with `E` equal to the run outcome's `export` member; the below-floor export of FR-1015-AC-1 serializes with category unsupported and the same `result` kind, the export under `export.output_bytes` 1 with category incomplete, and the export naming an existing output path with category refusal, `last_stage` `null` and `result` `null`. | Test (TC-2994) |
 
 ## Status
 

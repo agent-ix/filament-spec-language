@@ -266,28 +266,19 @@ fn the_planner_returns_optimal_and_infeasible_with_certificates() {
 // ---- FR-756: TLA+ and Lean export --------------------------------------
 
 /// FR-756-AC-1: each profile echoes its id and family and classifies the
-/// finite invariant `preserved`; two exports are byte-equal.
+/// counter's state clause `value <= 5` `preserved`; two exports are byte-equal.
 #[test]
 #[trace("TC-2106", "FR-756-AC-1")]
 #[trace("FSpec-TC-1604", "FSpec-FR-651-AC-1")]
 #[ignore = "QSL-1979: TLA+ and Lean output profiles not implemented yet"]
 fn tla_and_lean_exports_echo_their_profile_and_preserve_a_finite_invariant() {
-    let unit = format!(
-        "{MODEL_HEADER}invariant Low using v on Config::ConfigVersion at current {{ self.versionNumber >= 0 }}\n"
-    );
     for (profile, family) in [
         ("filament.output.tla2/v1", "tla"),
         ("filament.output.lean4/v1", "lean"),
     ] {
         let export = || {
-            run(
-                &unit,
-                true,
-                (
-                    "export",
-                    json!({
-            "profile": profile, "obligations": ["Low"]}),
-                ),
+            crate::plan_export_surface::counter_export(
+                json!({"profile": profile, "obligations": ["Bounded"]}),
             )
         };
         let (_, first) = export();
@@ -296,7 +287,7 @@ fn tla_and_lean_exports_echo_their_profile_and_preserve_a_finite_invariant() {
         assert_eq!(first["export"]["mapping_profile_id"], profile, "{first}");
         assert_eq!(first["export"]["target_family"], family, "{first}");
         assert_eq!(
-            first["export"]["records"][0]["obligation"], "Low",
+            first["export"]["records"][0]["obligation"], "Bounded",
             "{first}"
         );
         assert_eq!(
@@ -937,34 +928,18 @@ fn lean_export_refusals_and_family_check() {
 }
 
 /// FSpec FR-651-AC-5: TLC's reachable state count and verdict over the
-/// TLA+ export equal FSL's exploration of the same model.
+/// counter's TLA+ export equal FSL's exploration of the same model, six
+/// states with `Bounded` holding; the export reports no native count.
 #[test]
 #[trace("FSpec-TC-1604", "FSpec-FR-651-AC-5")]
 #[ignore = "QSL-1979: TLA+ export conformance with an observer not implemented yet"]
 fn tla_export_agrees_with_fsl_exploration() {
-    let unit = format!(
-        "{MODEL_HEADER}invariant Low using v on Config::ConfigVersion at current {{ self.versionNumber >= 0 }}\n"
-    );
-    let (_, value) = run(
-        &unit,
-        true,
-        (
-            "export",
-            json!({
-        "profile": "filament.output.tla2/v1", "obligations": ["Low"], "observer": "tlc",
-        "initial": "spine-snapshot.json"}),
-        ),
-    );
+    let (_, value) = crate::plan_export_surface::counter_export(json!({
+        "profile": "filament.output.tla2/v1", "obligations": ["Bounded"], "observer": "tlc"}));
     let export = &value["export"];
-    assert!(export["observer"]["reachable_states"].is_u64(), "{value}");
-    assert_eq!(
-        export["observer"]["reachable_states"], export["native"]["reachable_states"],
-        "{value}"
-    );
-    assert_eq!(
-        export["observer"]["verdict"], export["native"]["verdict"],
-        "{value}"
-    );
+    assert!(export.get("native").is_none(), "{value}");
+    assert_eq!(export["observer"]["reachable_states"], 6, "{value}");
+    assert_eq!(export["observer"]["verdict"], "holds", "{value}");
 }
 
 /// FR-757-AC-2 and AC-3: native and `tl-mltl` verdicts agree at every

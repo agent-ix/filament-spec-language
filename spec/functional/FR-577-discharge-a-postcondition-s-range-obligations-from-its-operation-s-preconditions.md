@@ -187,6 +187,28 @@ transferred fact matches a read under `pre(e)` in `Q` and never one of `Q`'s
 
 FR-121 carries the region on `CallSiteRefusal::Compile`.
 
+### Node-meter order
+
+- The `s3.nodes` meter SHALL be one running count over the package: the
+  function bodies are charged first, then the unit's `pre` clauses in
+  declaration order, then its other state clauses (`post` and `invariant`) in
+  declaration order, each clause adding its expression nodes one at a time.
+- The checker SHALL check before each node charge: when the running count
+  already equals the `s3.nodes` limit, it SHALL refuse `stage_limit_exceeded`
+  naming `s3.nodes` (FR-255) with bound the limit and `actual` the limit
+  plus one, located in the clause being charged, and SHALL charge no later
+  clause. The refusal therefore names the first clause in that order whose
+  nodes take the count past the limit: a `pre` clause when the preconditions
+  alone exceed it, whether or not the unit has a `post` clause, and
+  otherwise the first `post` or `invariant` clause, in declaration order,
+  that does.
+
+The order follows the facts: a `post` walk begins with the facts of every
+`pre` clause on its operation, so the preconditions are checked and metered
+first. A `pre` clause declared after a `post` clause is therefore charged
+before it, and equal units under an equal limit always trip at the same
+clause.
+
 ## Acceptance Criteria
 
 The bank fixture: domain package `test/bank` with model `Bank`, object type
@@ -234,6 +256,7 @@ the refusal located at the node `D`.
 | FR-577-AC-31 | `function f using v(a: Int[0, 100], b: Int[0, 100], r: Int[0, 100]): Boolean pure { a <= b implies r = b - a }` checks. | Test (TC-1416) |
 | FR-577-AC-32 | `fsl_replay::replay_state_clause` over a `Debited` envelope (FR-122) of the bank unit's package whose invocation has pre `balance = 3`, `amount = 5` and post `balance = 0` refuses `IntegerOutOfDomain` at `pre(self.balance) - amount` and settles `inconclusive` with cause `NoValue`, not a reproduced violation. | Test (TC-1416) |
 | FR-577-AC-33 | A protocol over the bank package whose attempt of `withdraw` lists `contracts` `[Debited]` only, applied at a state with `balance = 3` and `limit = 0` and the argument `amount = 5`, records one `ModelFinding::ContractUndetermined` for `Debited` per candidate post-state of the frame, 101 findings (one per `balance` value in `[0, 100]`), and gives that application no successor. | Test (TC-1416) |
+| FR-577-AC-36 | A bank unit declaring the postcondition `Credit` on `deposit` before a `pre` clause `Big` of 200 conjuncts, checked with `s3.nodes` at 160, refuses `stage_limit_exceeded` naming `s3.nodes`, bound 160, `actual` 161, with a region inside `Big`: `Big` is charged before `Credit` although declared after it, and its nodes alone pass the limit, so `Credit` is never charged (`the_node_meter_trips_at_a_later_declared_precondition_before_any_postcondition`). | Test (TC-1416) |
 
 ## Dependencies
 

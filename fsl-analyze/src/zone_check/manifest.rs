@@ -39,6 +39,12 @@ pub const FAIRNESS_KINDS: [FairnessLabel<'static>; 2] =
 /// The reductions EN-6 applies: symmetry only (FSpec FR-430).
 pub const REDUCTIONS: [&str; 1] = [ReductionKind::Symmetry.as_str()];
 
+/// The provider option that selects a timed route (FR-243, FR-632).
+pub const METHOD: &str = "method";
+
+/// EN-6's one `method` value, its default: zone search (FR-239).
+pub const METHOD_ZONES: &str = "zones";
+
 /// EN-6's routed descriptor, converted from [`ADVERTISED`], [`DOMAINS`],
 /// [`FAIRNESS_KINDS`] and [`REDUCTIONS`] by FR-288's conversion, and
 /// marked as deciding a `time dense` subject, so an item over one routes to
@@ -61,5 +67,9 @@ pub fn descriptor(origin: ProviderOrigin) -> Result<BackendDescriptor, Registrat
             reductions: Some(&REDUCTIONS),
         },
     )
-    .map(BackendDescriptor::with_timed)
+    .map(|descriptor| {
+        descriptor
+            .with_timed()
+            .with_option_values(METHOD, [METHOD_ZONES.to_owned()])
+    })
 }

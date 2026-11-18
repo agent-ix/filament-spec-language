@@ -1247,14 +1247,17 @@ fn run_clause_reports_the_document_order_first_unknown_member_not_the_alphabetic
     );
     let report = run_clause(request).expect("a well-formed request always reports");
     match report.disposition {
-        ClauseDisposition::Admit(super::AdmissionFailure::Refused(record)) => {
+        ClauseDisposition::SnapshotAdmission {
+            failure: super::AdmissionFailure::Refused(record),
+            ..
+        } => {
             assert_eq!(record.catalog.cause(), "unknown-member");
             assert_eq!(
                 record.fields.get("field").map(String::as_str),
                 Some("zzz_unknown")
             );
         }
-        other => panic!("expected Admit(Refused(unknown-member)), got {other:?}"),
+        other => panic!("expected snapshot-admission Refused(unknown-member), got {other:?}"),
     }
 }
 
@@ -1943,15 +1946,16 @@ fn run_clause_refuses_a_dangling_parent_reference() {
     let report = run_clause(request).unwrap();
     assert_eq!(report.disposition.stage(), ClauseRunStage::Admit);
     match &report.disposition {
-        ClauseDisposition::Admit(fsl_semantics::model::observation::AdmissionFailure::Refused(
-            record,
-        )) => {
+        ClauseDisposition::SnapshotAdmission {
+            failure: fsl_semantics::model::observation::AdmissionFailure::Refused(record),
+            ..
+        } => {
             assert_eq!(
                 record.catalog.code(),
                 fsl_foundation::diagnostic::Code::DanglingReference.as_str()
             );
         }
-        other => panic!("expected Admit(Refused(dangling_reference)), got {other:?}"),
+        other => panic!("expected snapshot-admission Refused(dangling_reference), got {other:?}"),
     }
     assert_eq!(report.disposition.category().exit_code(), 20);
 }
@@ -1999,15 +2003,16 @@ fn run_clause_reports_incomplete_for_an_incomplete_population() {
     let report = run_clause(request).unwrap();
     assert_eq!(report.disposition.stage(), ClauseRunStage::Admit);
     match &report.disposition {
-        ClauseDisposition::Admit(
-            fsl_semantics::model::observation::AdmissionFailure::Incomplete(record),
-        ) => {
+        ClauseDisposition::SnapshotAdmission {
+            failure: fsl_semantics::model::observation::AdmissionFailure::Incomplete(record),
+            ..
+        } => {
             assert_eq!(
                 record.catalog.code(),
                 fsl_foundation::diagnostic::Code::IncompletePopulation.as_str()
             );
         }
-        other => panic!("expected Admit(Incomplete(incomplete_population)), got {other:?}"),
+        other => panic!("expected snapshot-admission Incomplete(incomplete_population), got {other:?}"),
     }
     assert_eq!(
         report.disposition.category(),

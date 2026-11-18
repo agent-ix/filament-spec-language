@@ -1625,9 +1625,12 @@ fn run_configured(
                     Ok(Some(result))
                 } else {
                     #[cfg(feature = "quire-extraction")]
-                    if let Some(result) =
-                        run_extracted_clause_bytes(directory, bytes, limits.dependent_bytes)?
-                    {
+                    if let Some(result) = run_extracted_clause_bytes(
+                        directory,
+                        bytes,
+                        limits.dependent_bytes,
+                        overrides.observation.copied(),
+                    )? {
                         return Ok(Some(result));
                     }
                     Ok(None)
@@ -1648,6 +1651,7 @@ fn run_extracted_clause_bytes(
     directory: &Path,
     bytes: &[u8],
     dependent_bytes: usize,
+    observation_override: Option<fsl_semantics::model::observation::ObservationLimits>,
 ) -> Result<Option<RunResult>> {
     let value: serde_json::Value = serde_json::from_slice(bytes).map_err(RunCause::Json)?;
     if !value
@@ -1656,7 +1660,12 @@ fn run_extracted_clause_bytes(
     {
         return Ok(None);
     }
-    let request = read_clause_run_request_bytes(directory, bytes, Some(dependent_bytes))?;
+    let request = read_clause_run_request_bytes(
+        directory,
+        bytes,
+        Some(dependent_bytes),
+        observation_override,
+    )?;
     let (extraction, map) = extraction_record(&request, &value)?;
     let selection = request.selection.clone();
     let report =
@@ -1912,7 +1921,7 @@ pub fn read_clause_run_request(
     path: &Path,
 ) -> std::result::Result<fsl_replay::spine::ClauseRunRequest, ClauseRunRequestRefusal> {
     with_request(path, |directory, bytes| {
-        read_clause_run_request_bytes(directory, bytes, None)
+        read_clause_run_request_bytes(directory, bytes, None, None)
     })
 }
 
@@ -1920,6 +1929,7 @@ fn read_clause_run_request_bytes(
     directory: &Path,
     bytes: &[u8],
     dependent_bytes: Option<usize>,
+    observation_override: Option<fsl_semantics::model::observation::ObservationLimits>,
 ) -> Result<fsl_replay::spine::ClauseRunRequest> {
     let request: wire::Request = request(bytes)?;
     #[cfg(feature = "quire-extraction")]
@@ -1987,13 +1997,20 @@ fn read_clause_run_request_bytes(
             Ok(extracted) => extracted,
             Err(error) => return Err(extraction_failure(error)?),
         };
-        return clause::read_extracted(&mut intake, &request, clause, source, extracted);
+        return clause::read_extracted(
+            &mut intake,
+            &request,
+            clause,
+            source,
+            extracted,
+            observation_override,
+        );
     } else {
         require_complete_edition(source.source())?;
     }
     #[cfg(not(feature = "quire-extraction"))]
     require_complete_edition(source.source())?;
-    clause::read(&mut intake, &request, clause, source)
+    clause::read(&mut intake, &request, clause, source, observation_override)
 }
 
 #[cfg(feature = "quire-extraction")]
@@ -3034,6 +3051,10 @@ pub struct RequestOverrides<'a> {
     /// Compile-stage limits supplied by the caller (FR-869). `None` uses the
     /// published defaults.
     pub limits: Option<&'a fsl_replay::spine::SpineLimits>,
+    /// Clause observation limits supplied by the caller (FR-312). A request
+    /// that also carries `clause.observation_limits` is refused at request
+    /// stage before any observation file is read.
+    pub observation: Option<&'a fsl_semantics::model::observation::ObservationLimits>,
 }
 
 fn request_with_overrides<T: wire::ClocksRequest>(
@@ -3226,6 +3247,7 @@ fn prepare_run_bytes_with_sources(
             source,
             integer_division,
             library_integer_division,
+            overrides.observation.copied(),
         )
     })();
     *admitted_sources = crate::Sources::from_sources(intake.sources.iter().cloned());
@@ -3241,6 +3263,7 @@ fn prepare_lowering(
     request: &wire::Request,
     member: &serde_json::Value,
     source: FormalSource,
+    observation_override: Option<fsl_semantics::model::observation::ObservationLimits>,
 ) -> Result<PreparedRun> {
     if request.call.is_some() || request.clause.is_some() {
         return Err(RunCause::ClauseRequest {
@@ -3251,7 +3274,7 @@ fn prepare_lowering(
     let lowering = tl::decode(member)?;
     let clause: wire::ClauseRun = serde_json::from_value(tl::selection(&lowering))?;
     let text = source.source().text().to_owned();
-    let run = clause::read(intake, request, &clause, source)?;
+    let run = clause::read(intake, request, &clause, source, observation_override)?;
     let behaviours = match &lowering.cross {
         Some(tl::CrossEvaluate::Initial { max_steps, .. }) => {
             Some(initial_subject(&run, *max_steps)?)
@@ -3340,9 +3363,10 @@ fn prepare_complete_run(
     source: FormalSource,
     integer_division: Option<fsl_replay::AdmittedIntegerDivision>,
     library_integer_division: Vec<(String, fsl_replay::AdmittedIntegerDivision)>,
+    observation_override: Option<fsl_semantics::model::observation::ObservationLimits>,
 ) -> Result<PreparedRun> {
     if let Some(member) = &request.tl_lowering {
-        return prepare_lowering(intake, request, member, source);
+        return prepare_lowering(intake, request, member, source, observation_override);
     }
     if let Some(clause) = &request.clause {
         if request.call.is_some() {
@@ -3351,7 +3375,7 @@ fn prepare_complete_run(
                 reason: "call and clause are mutually exclusive".to_owned(),
             });
         }
-        let request = clause::read(intake, request, clause, source)?;
+        let request = clause::read(intake, request, clause, source, observation_override)?;
         let sources = crate::Sources::from_sources(intake.sources.iter().cloned());
         return Ok(PreparedRun::Clause(Box::new(PreparedClauseRun {
             request: Box::new(request),

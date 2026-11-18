@@ -223,6 +223,8 @@ pub use call::{
     DEFAULT_WORK_UNITS,
 };
 pub(crate) use call::{run_reading, run_reading_with_integer_division};
+#[cfg(test)]
+pub(crate) use call::{run_compiled, CallSources};
 pub use identity_form::{effective_form, node_key_form, universe_form};
 pub use run_value::ArgumentDefect;
 
