@@ -32,7 +32,7 @@ use crate::check::hyper_clause::{
     CheckedFiniteHyperClause, CheckedHyperClause, CheckedModelRelation, MatchPart,
 };
 use crate::check::node_key::{
-    AggregateTerm, Binding, BindingValue, BodyTerm, GroupMember, GroupTerm, LawRole, LeafTerm,
+    AggregateTerm, Binding, BindingValue, BodyTerm, GroupMember, GroupTerm, LawRole, LeafTerm, NodeRef,
     MemberTerm, NodeTag, Operation, OperationLaw, Operator, TupleMember, TupleTerm,
 };
 use crate::check::refusal::CheckRefusal;
@@ -421,7 +421,7 @@ impl Lowering<'_> {
         let over = scope
             .first()
             .map(|binder| binder.parameter.clone())
-            .or_else(|| input.subject_roots.first().cloned())
+            .or_else(|| input.subject_roots.first().cloned().map(NodeRef::from))
             .ok_or_else(|| stage_fault(&claim, "clause-has-a-subject"))?;
 
         // The body wrapper over the clause's formula.
