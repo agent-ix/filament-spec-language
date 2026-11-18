@@ -1020,9 +1020,9 @@ fn invalid_holds_handles_fault_without_spending_the_meter() {
     );
     for atom in [non_holds, beyond] {
         let mut meter = Meter::new(UNLIMITED);
-        let result = unit
-            .package
-            .evaluate_holds(clause, atom, over.clone(), &[], &objects, &mut meter);
+        let result =
+            unit.package
+                .evaluate_holds(clause, atom, over.clone(), &[], &objects, &mut meter);
         let filament_eval::CallFailure::Fault(fault) =
             result.expect_err("invalid atom must not yield an Evaluation")
         else {

@@ -934,11 +934,8 @@ impl<'a> Evaluator<'a> {
                     AtomReading::Undefined(UndefinedCause::InsufficientData(data)) => {
                         own.short = true;
                         if own.insufficient.is_none() {
-                            own.insufficient = Some(InsufficientDataEvaluation {
-                                at,
-                                atom: id,
-                                data,
-                            });
+                            own.insufficient =
+                                Some(InsufficientDataEvaluation { at, atom: id, data });
                         }
                         Tri::Unknown
                     }

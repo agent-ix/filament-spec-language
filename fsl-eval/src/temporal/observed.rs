@@ -286,7 +286,9 @@ fn evaluate_observed_goal(
         (stopped, _) => stopped,
     };
     let captures = match &result {
-        Ok(TemporalOutcome::Violated { at }) => letters.fixed.remove(&at.index()).unwrap_or_default(),
+        Ok(TemporalOutcome::Violated { at }) => {
+            letters.fixed.remove(&at.index()).unwrap_or_default()
+        }
         _ => Vec::new(),
     };
     ObservedRun {
@@ -808,9 +810,9 @@ impl TemporalLetters for ObservedLetters<'_> {
         }
         let (objects, over) = self.subject(position)?;
         let captures = self.active_captures()?;
-        let evaluation = self
-            .package
-            .evaluate_holds(self.clause, atom, over, captures, objects, meter);
+        let evaluation =
+            self.package
+                .evaluate_holds(self.clause, atom, over, captures, objects, meter);
         let reading = Self::reading(&mut self.stopped, position, evaluation, HOLDS_CODES)?;
         if let AtomReading::Undefined(cause) = &reading {
             self.note(|| ObservedLocus::Atom(atom), position, cause);

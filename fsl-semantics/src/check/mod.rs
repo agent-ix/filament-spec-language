@@ -1427,9 +1427,9 @@ impl TemporalClauseNode {
             return false;
         }
         let reads = |root: CheckedNode<'_>| {
-            root.descendants()
-                .into_iter()
-                .any(|node| matches!(node.kind(), NodeKind::Local(slot) if captures.contains(&slot)))
+            root.descendants().into_iter().any(
+                |node| matches!(node.kind(), NodeKind::Local(slot) if captures.contains(&slot)),
+            )
         };
         if let Some((condition, _)) = self.condition(atom) {
             return reads(condition);
@@ -3266,10 +3266,7 @@ impl PackageDeclarations {
                     .function_selections
                     .get(&index)
                     .is_some_and(state_clause::is_complete_value),
-                mode: function_check_modes
-                    .get(&index)
-                    .copied()
-                    .unwrap_or(mode),
+                mode: function_check_modes.get(&index).copied().unwrap_or(mode),
                 model_scope: model_function_bodies
                     .get(index)
                     .copied()
