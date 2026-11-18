@@ -439,7 +439,7 @@ fn clause_report_with_record(
     let report = &*report;
     let extraction = extraction
         .map(|(mut record, map)| {
-            if let Some(regions) = extraction_original_regions(report, selection, map)? {
+            if let Some(regions) = extraction_original_regions(report, selection, &record, map)? {
                 record["original_regions"] = Value::Array(regions);
             }
             Ok::<_, RunCause>(record)
@@ -467,25 +467,36 @@ fn clause_report_with_record(
 fn extraction_original_regions(
     report: &fsl_replay::spine::ClauseRunReport,
     selection: &fsl_replay::spine::ClauseRunSelection,
+    record: &Value,
     map: &fsl_foundation::source_map::SourceMap,
 ) -> super::Result<Option<Vec<Value>>> {
-    use fsl_replay::spine::RefusalLocusRead;
-
     let bytes = fsl_replay::spine::write_clause_run_result_for(report, Some(selection))
         .map_err(RunCause::ClauseOutput)?;
     let document: Value = serde_json::from_slice(&bytes).map_err(RunCause::Output)?;
     let Some(locus) = document.pointer("/disposition/refusal/locus").cloned() else {
         return Ok(None);
     };
-    let locus: RefusalLocusRead = serde_json::from_value(locus).map_err(RunCause::Output)?;
+    extraction_regions_for_locus(locus, record, map)
+}
+
+#[cfg(feature = "quire-extraction")]
+fn extraction_regions_for_locus(
+    locus: Value,
+    record: &Value,
+    map: &fsl_foundation::source_map::SourceMap,
+) -> super::Result<Option<Vec<Value>>> {
+    use fsl_replay::spine::RefusalLocusRead;
+
+    let decoded: RefusalLocusRead =
+        serde_json::from_value(locus.clone()).map_err(RunCause::Output)?;
     let body = map.body();
-    let span = match locus {
+    let span = match decoded {
         RefusalLocusRead::Region { source, start, end }
             if source.authority == body.identity().authority
                 && source.identity == body.identity().identity =>
         {
             let (Ok(start), Ok(end)) = (usize::try_from(start), usize::try_from(end)) else {
-                return Ok(None);
+                return Err(invalid_extraction_source_map(record, locus));
             };
             fsl_foundation::Span { start, end }
         }
@@ -496,7 +507,7 @@ fn extraction_original_regions(
         _ => return Ok(None),
     };
     let Some(regions) = map.map_regions(body, span) else {
-        return Ok(None);
+        return Err(invalid_extraction_source_map(record, locus));
     };
     let original = map.original();
     let mapped = regions
@@ -508,7 +519,42 @@ fn extraction_original_regions(
             Some(serde_json::json!({"start": span.start, "end": span.end}))
         })
         .collect::<Option<Vec<_>>>();
-    Ok(mapped.filter(|regions| !regions.is_empty()))
+    match mapped.filter(|regions| !regions.is_empty()) {
+        Some(regions) => Ok(Some(regions)),
+        None => Err(invalid_extraction_source_map(record, locus)),
+    }
+}
+
+#[cfg(feature = "quire-extraction")]
+fn invalid_extraction_source_map(record: &Value, locus: Value) -> RunCause {
+    let mut details = serde_json::Map::from_iter([
+        (
+            "original".to_owned(),
+            serde_json::json!({
+                "authority": record["original"]["authority"],
+                "identity": record["original"]["identity"],
+            }),
+        ),
+        ("path".to_owned(), record["original"]["path"].clone()),
+        (
+            "body".to_owned(),
+            serde_json::json!({
+                "authority": record["body"]["authority"],
+                "identity": record["body"]["identity"],
+            }),
+        ),
+        ("binding".to_owned(), record["binding"].clone()),
+        ("locus".to_owned(), locus),
+    ]);
+    if let Some(outcome) = record.get("outcome") {
+        details.insert("outcome".to_owned(), outcome.clone());
+    }
+    RunCause::ExtractionFailure {
+        code: fsl_foundation::Code::InvalidSourceMap,
+        stage: super::ExtractionFailureStage::Selection,
+        details,
+        message: "a body refusal span is outside the verified source map".to_owned(),
+    }
 }
 
 /// FR-096/FR-100: `Evaluation.location`'s `origin`, rendered by kind.
@@ -557,6 +603,98 @@ fn spine_origin(origin: &filament_semantic_value::location::ExpressionOwner) -> 
             },
             position: *position,
         },
+    }
+}
+
+#[cfg(all(test, feature = "quire-extraction"))]
+mod extraction_tests {
+    use super::{RunCause, extraction_regions_for_locus};
+    use crate::command::ExtractionFailureStage;
+    use fsl_foundation::{Source, SourceIdentity};
+    use serde_json::{Value, json};
+
+    fn verified_map() -> fsl_foundation::source_map::SourceMap {
+        let markdown = "# Doc\n\n## Invariants\n\n### valid_clause\n```ix:native\nopaque\n```\n";
+        let original = Source::read(
+            SourceIdentity::new("agent-ix", "ix://agent-ix/spec"),
+            "spec.md",
+            markdown.as_bytes(),
+            markdown.len(),
+        )
+        .unwrap();
+        let context = fsl_source::clause_context("agent-ix/spec", &original).unwrap();
+        fsl_source::extract(
+            original,
+            &context,
+            fsl_source::Selection {
+                clause_id: "valid_clause".to_owned(),
+                package: "agent-ix/spec".to_owned(),
+                body: SourceIdentity::new("agent-ix", "body"),
+            },
+            fsl_source::Limits::default(),
+        )
+        .unwrap()
+        .map()
+        .clone()
+    }
+
+    fn record() -> Value {
+        json!({
+            "original": {"authority": "agent-ix", "identity": "ix://agent-ix/spec", "path": "spec.md"},
+            "body": {"authority": "agent-ix", "identity": "body"},
+            "binding": {"clause": "valid_clause", "package": "agent-ix/spec"},
+            "outcome": {"availability": {"state": "available"}}
+        })
+    }
+
+    #[test]
+    fn unmappable_body_locus_fails_closed_and_foreign_loci_remain_unmapped() {
+        let map = verified_map();
+        let record = record();
+        let start = map.body().text().len() + 1;
+        let body_locus = json!({
+            "kind": "region",
+            "source": {"authority": "agent-ix", "identity": "body"},
+            "start": start,
+            "end": start + 1
+        });
+        let error = extraction_regions_for_locus(body_locus.clone(), &record, &map)
+            .expect_err("an out-of-map body span refuses");
+        let RunCause::ExtractionFailure {
+            code,
+            stage,
+            details,
+            ..
+        } = error
+        else {
+            panic!("expected extraction failure");
+        };
+        assert_eq!(code.as_str(), "invalid_source_map");
+        assert!(matches!(stage, ExtractionFailureStage::Selection));
+        assert_eq!(details["locus"], body_locus);
+
+        let dependency_locus = json!({
+            "kind": "region",
+            "source": {"authority": "agent-ix", "identity": "ix://agent-ix/dependency"},
+            "start": start,
+            "end": start + 1
+        });
+        assert_eq!(
+            extraction_regions_for_locus(dependency_locus, &record, &map).unwrap(),
+            None
+        );
+        let dependency_path_locus = json!({
+            "kind": "located",
+            "file": "dependency.native",
+            "span": {
+                "start": {"byte": 0, "line": 1, "column": 1},
+                "end": {"byte": 1, "line": 1, "column": 2}
+            }
+        });
+        assert_eq!(
+            extraction_regions_for_locus(dependency_path_locus, &record, &map).unwrap(),
+            None
+        );
     }
 }
 
