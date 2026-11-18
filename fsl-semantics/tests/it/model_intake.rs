@@ -751,6 +751,42 @@ fn rational_intake_document() -> Value {
     )
 }
 
+fn assemble_model_document(
+    package: &str,
+    document: &Value,
+    source_name: &str,
+) -> Result<fsl_semantics::check::PackageDeclarations, fsl_semantics::check::AssemblyRefusal> {
+    let bytes = serde_json::to_vec(document).expect("serialize package");
+    let packages = package_input([bytes.as_slice()]).expect("package input");
+    let source = format!(
+        "language \"ix:native\" edition \"1-draft\";\n\
+         profile v = \"filament.value.complete/v1\";\n\
+         model M = {package:?};\n"
+    );
+    let parsed = fsl_cst::parse(
+        fsl_foundation::SourceIdentity::new("test", source_name),
+        &format!("{source_name}.native"),
+        source.as_bytes(),
+        fsl_cst::Limits::default(),
+    )
+    .expect("S1 reads the unit");
+    assert!(parsed.is_admissible(), "{:?}", parsed.diagnostics());
+    let unit = fsl_forms::build_unit(&parsed).expect("S2 builds the unit");
+    let selected = admit_unit(
+        &unit.selections().models,
+        &packages,
+        ModelNormalizationLimits::default(),
+    )
+    .expect("I1 admits the package");
+    fsl_semantics::check::PackageDeclarations::assemble(
+        parsed.source().reference().clone(),
+        crate::TEST_PACKAGE_NAME.to_owned(),
+        unit,
+        selected,
+        Vec::new(),
+    )
+}
+
 /// FR-505-AC-1: a bounded Rational value type is admitted through Semantic IR
 /// validation and package reading, and its typed field retains that identity.
 #[trace("FR-505-AC-1", "TC-1300")]
@@ -3194,6 +3230,55 @@ mod float_members {
             );
         }
     }
+/// FR-056-AC-10 and FSpec FR-322's model-owned-member rule: an unbounded
+/// collection with a positive lower bound has no kernel type and is refused
+/// at the selected model with the typed unsupported-feature cause.
+#[trace("FR-056-AC-10")]
+#[test]
+fn unbounded_multiplicity_with_nonzero_lower_bound_is_unsupported_feature() {
+    let package = "test/rational-value-type";
+    let mut document = rational_intake_document();
+    document["types"][1]["fields"][0]["multiplicity"] =
+        serde_json::json!({"lower": 1, "ordered": false, "unique": true});
+    let refusal = assemble_model_document(package, &document, "unbounded-positive-lower")
+        .expect_err("an unbounded positive lower bound has no kernel collection type");
+    let [error] = refusal.errors.as_slice() else {
+        panic!("one unsupported model field refusal: {:?}", refusal.errors);
+    };
+    assert_eq!(
+        error.cause.catalog_code().to_string(),
+        "unknown_required_feature/unsupported-feature"
+    );
+    assert!(matches!(
+        error.cause,
+        fsl_semantics::check::AssemblyCause::UnsupportedModelMember { .. }
+    ));
+}
+
+/// FR-056 and FR-103: a model containing systems part and port records is
+/// retained by package intake, then refused by assembly as an unsupported
+/// model feature until the kernel represents those declarations.
+#[trace("FR-056-AC-10")]
+#[test]
+fn systems_part_and_port_records_are_unsupported_features() {
+    let package = "test/systems-records";
+    let document: Value = serde_json::from_slice(&port_document(package)).expect("JSON");
+    let refusal = assemble_model_document(package, &document, "systems-records")
+        .expect_err("systems part and port records are not kernel model declarations");
+    assert!(
+        refusal.errors.iter().any(|error| {
+            error.cause.catalog_code().to_string()
+                == "unknown_required_feature/unsupported-feature"
+                && matches!(
+                    error.cause,
+                    fsl_semantics::check::AssemblyCause::UnsupportedModelMember { .. }
+                )
+        }),
+        "typed unsupported-feature refusal: {:?}",
+        refusal.errors
+    );
+}
+
 /// FR-056-AC-43: bare native Text, Rational and Decimal members remain in an
 /// admitted model package even though they have no checked value type. The
 /// assembler records them as untyped members rather than rejecting the model.
