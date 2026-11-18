@@ -8,6 +8,7 @@ mod compile_limits;
 pub mod config_version_spine;
 mod extraction_request_refusals;
 mod integer_division_request;
+mod model_unit_request;
 mod native_source_projection;
 mod negotiation;
 mod prepared_command;
