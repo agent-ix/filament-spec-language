@@ -250,8 +250,9 @@ mod tests {
     ) -> RunWithReplayContext {
         use filament_semantic_value::checking::CheckMode;
 
-        let identity = SourceIdentity::new("a", "u");
-        let packages = BTreeMap::new();
+        let identity = SourceIdentity::new("agent-ix", "test:lifecycle");
+        let packages = fsl_semantics::model::intake::package_input([])
+            .expect("no model packages");
         let dependencies = DependencyInput::default();
         let cancel = Cancel::new();
         let parsed = spine::parse_for_continuation(
@@ -333,7 +334,14 @@ mod tests {
     /// `p`'s declaration occurrence and its parameter's node, read through
     /// a separate compile of `source`.
     fn declaration(source: &str, function: &str) -> (OccurrenceKey, Vec<NodeKey>) {
-        let identity = SourceIdentity::new("a", "u");
+        declaration_for(source, function, SourceIdentity::new("a", "u"))
+    }
+
+    fn declaration_for(
+        source: &str,
+        function: &str,
+        identity: SourceIdentity,
+    ) -> (OccurrenceKey, Vec<NodeKey>) {
         let limits = CallerLimits::default().spine;
         let cancel = Cancel::new();
         let parsed = spine::parse(
@@ -467,7 +475,11 @@ mod tests {
         };
         let result = run_with_replay_context_kernel(&source, CallerLimits::default(), &call);
         assert!(matches!(result.outcome(), CallOutcome::Undefined { .. }));
-        let (_, parameters) = declaration(&source, "r");
+        let (_, parameters) = declaration_for(
+            &source,
+            "r",
+            SourceIdentity::new("agent-ix", "test:lifecycle"),
+        );
         let member = result.requirements().members()[0].clone();
         let bounds = [bound_at(parameters[0].clone())];
         let wire = result
