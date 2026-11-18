@@ -305,6 +305,39 @@ mod tests {
     }
 
     #[test]
+    fn names_profile_family_and_limit_admission_failures() {
+        assert_eq!(
+            ExportRequest::read(json!({
+                "profile": "unknown",
+                "obligations": ["Low"]
+            }))
+            .unwrap_err()
+            .member(),
+            "profile"
+        );
+        assert_eq!(
+            ExportRequest::read(json!({
+                "profile": "filament.output.lean4/v1",
+                "target_family": "tla",
+                "obligations": ["Low"]
+            }))
+            .unwrap_err()
+            .member(),
+            "target_family"
+        );
+        assert_eq!(
+            ExportRequest::read(json!({
+                "profile": "filament.output.tla2/v1",
+                "obligations": ["Low"],
+                "limits": {"nodes": 0}
+            }))
+            .unwrap_err()
+            .member(),
+            "limits"
+        );
+    }
+
+    #[test]
     fn export_outcome_omits_target_bytes_until_assembled() {
         let outcome = ExportOutcome::new(
             "filament.output.tla2/v1".to_owned(),
