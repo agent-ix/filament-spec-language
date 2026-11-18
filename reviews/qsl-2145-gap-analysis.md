@@ -54,3 +54,18 @@ The delivered slice is backed: FR-944-AC-1 runs (with weak independence) and
 FR-861-AC-4's agreement cases are asserted. FND-001 should be fixed by
 scoping the tag or adding the source scan before the AC reads as covered.
 FND-002 is a cheap pair of boundary cases.
+
+## New findings (disposition pass 1)
+
+| ID | Severity | Summary | Refs |
+| --- | --- | --- | --- |
+| FND-003 | low | The un-ignored W49 stubs `a_doubly_open_difference_stays_indeterminate_in_quarter_ticks` (FR-944-AC-5) and `one_sided_eligibility_reads_the_scaled_endpoints` (FR-944-AC-6) never call fsl-eval: they check their own `quarter`/`at_least`/`at_most` closures plus a source substring scan for `EventTimeInterval` and `"/4"`. They would pass with a wrong `Extent::eligible` or `within_bound`. Real backing for both ACs exists elsewhere (cover.rs unit tests and the finite_window AC-5 verdict test), so the cost is matrix inflation, not a missing check | fsl-eval/tests/it/observation_owner.rs:97-171 |
+
+## Dispositions
+
+Round 1, at head ae7af5d2ea85052c5c1f6f3881454ba0685ec2ea.
+
+| FND | outcome | reason |
+| --- | --- | --- |
+| FND-001 | fixed | The completeness test now carries `#[trace("TC-2442")]` only, so FR-861-AC-4 is not shown as backed; the four-owner source-scan stub stays ignored |
+| FND-002 | fixed | Uncovered positions at stamps 80 and 100 are refused and 101 is accepted, against a boundary of 100 |

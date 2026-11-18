@@ -1016,7 +1016,7 @@ impl<L: TemporalLetters> Run<'_, L> {
         let tied = if uncertain {
             self.extent(before.position)?.overlaps(
                 self.extent(after.position)?,
-                &self.trace.clock.unit,
+                super::cover::Domain::of(&self.trace.clock),
             )
         } else {
             self.stamp(before.position)? == self.stamp(after.position)?

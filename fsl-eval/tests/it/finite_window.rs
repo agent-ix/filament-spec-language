@@ -121,6 +121,8 @@ impl Request {
             lower_boundary: self.lower,
         };
         let clock = WindowClock {
+            name: "clock".to_owned(),
+            profile: "profile".to_owned(),
             unit: self.unit.to_owned(),
             cover: self.cover,
         };
@@ -1852,5 +1854,87 @@ fn a_doubly_open_difference_straddling_the_bound_is_indeterminate() {
         verdict(&clause, &with_ack(2, interval(2, 3, false, true))),
         WindowVerdict::Holds,
         "an acknowledgement stamped 2 with interval [2, 3)"
+    );
+}
+
+/// FR-944-AC-6 (TC-2624): the one-sided bounds of a scan, decided on the
+/// scaled endpoints, read through the verdict. The anchor is a `p = F`
+/// position at stamp 0 with its own interval; the candidate is the `p = T`
+/// position that the bound selects or does not.
+#[trace("TC-2624", "FR-944-AC-6")]
+#[test]
+fn one_sided_bounds_decide_eligibility_on_the_scaled_endpoints() {
+    let straddles = IndeterminateReason::StraddlesBound;
+    let interval = |earliest, latest, earliest_open, latest_open| {
+        Some(StampInterval {
+            earliest,
+            latest,
+            earliest_open,
+            latest_open,
+        })
+    };
+    let scan = |bound: &str,
+                anchor: (u64, Option<StampInterval>),
+                candidate: (u64, Option<StampInterval>),
+                counter: u64| {
+        let clause = origin(&format!("eventually[{bound}] holds(p)"));
+        let keyed = |row: Row, key| Row {
+            key: Some(("order", key)),
+            ..row
+        };
+        let mut request = request(
+            vec![keyed(p(anchor.0, "F"), 0), keyed(p(candidate.0, "T"), 1)],
+            2000,
+            Some(2000),
+        )
+        .counter(counter);
+        request.intervals = vec![anchor.1, candidate.1];
+        verdict(&clause, &request)
+    };
+    let exact_anchor = (0, interval(0, 0, false, false));
+    // at_least 2: reading 2 is eligible, reading 1 is not, reading 2 under
+    // a counter cover of uncertainty 1 straddles.
+    assert_eq!(
+        scan("2,1000", exact_anchor, (2, None), 0),
+        WindowVerdict::Holds
+    );
+    assert_eq!(scan("2,1000", exact_anchor, (1, None), 0), violated(0));
+    assert_eq!(
+        scan("2,1000", exact_anchor, (2, None), 1),
+        indeterminate(0, straddles.clone())
+    );
+    // at_most 2: reading 1 is eligible, reading 3 is not, reading 2
+    // straddles.
+    assert_eq!(
+        scan("0,2", exact_anchor, (1, None), 0),
+        WindowVerdict::Holds
+    );
+    assert_eq!(scan("0,2", exact_anchor, (3, None), 0), violated(0));
+    assert_eq!(
+        scan("0,2", exact_anchor, (2, None), 0),
+        indeterminate(0, straddles.clone())
+    );
+    // Candidates of interval (1, 2] and [0, 1).
+    assert_eq!(
+        scan("1,1000", exact_anchor, (2, interval(1, 2, true, false)), 0),
+        WindowVerdict::Holds
+    );
+    assert_eq!(
+        scan("1,1000", exact_anchor, (0, interval(0, 1, false, true)), 0),
+        violated(0)
+    );
+    // `at_most 0` of a candidate of interval [0, 1) is decided on the extents
+    // in the `cover.rs` test of this AC: the anchor itself lies at distance 0,
+    // so the verdict would read the anchor, not the candidate.
+    // An anchor of interval (0, 1] and a candidate of interval [3, 4).
+    let open_anchor = (1, interval(0, 1, true, false));
+    let open_candidate = (3, interval(3, 4, false, true));
+    assert_eq!(
+        scan("0,3", open_anchor, open_candidate, 0),
+        indeterminate(0, straddles)
+    );
+    assert_eq!(
+        scan("2,1000", open_anchor, open_candidate, 0),
+        WindowVerdict::Holds
     );
 }

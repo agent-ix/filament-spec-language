@@ -97,3 +97,29 @@ no longer catch a mapping error (FND-001), the Bounded arm is untested
 (FND-002), and the PR body overstates what moved to the owner (FND-003). As
 a partial delivery it can merge once FND-002 is covered by a Bounded case
 and FND-001/FND-003 are fixed or deferred to the remaining QSL-2145 scope.
+
+## Dispositions
+
+Round 1, at head ae7af5d2ea85052c5c1f6f3881454ba0685ec2ea. The fix round also
+replaces the half-tick mapping with W49's quarter-tick mapping (FR-944-AC-5..7,
+spec #2939). I checked it against FR-944 on main: closed `c` -> `4c`, open
+lower `4a+1`, open upper `4b-1`, Counter `[4(k-u), 4(k+1+u)-1]`, Exact
+`[4k, 4k]`, Bounded closed, bounds `4b` in `i128`, unit + `/4`. The new
+`Extent::before`, `overlaps` and `eligible` are algebraically equal to the old
+whole-tick `Extent`/`Difference` rules, so verdicts do not change. Focused tests
+pass: cover 3, ledger 10, observation_owner 4 (+1 ignored), finite_window 36,
+observation_mapping 1. Clippy's only reds come from main or other crates:
+`reference_bindings.rs:233,303` `too_many_arguments` (it reproduces on the
+pristine merge base d4a20c8), nine `result_large_err` errors in fsl-eval
+tests/it files the PR does not touch (collection_algebra, collection_queries,
+composite_values, dispatch_calls, equality_matrix, inherited_attributes; the
+same set appears on d4a20c8), fsl-command `wire.rs:458` and
+`analyze_package_selection.rs:711`. No lint points at a file in the diff.
+
+| FND | outcome | reason |
+| --- | --- | --- |
+| FND-001 | fixed | TC-2624 now checks `ClockCover` against a lattice oracle in eighths of a tick that imports nothing from the mapping |
+| FND-002 | fixed | The oracle covers Bounded 0-2 (plus Exact and Counter 0-2, bounds -1..7); Bounded is now in FR-944's text; the AC-5 verdict test runs under Bounded |
+| FND-003 | fixed | `within_bound`, `definitely_before` and `overlaps` (run.rs:1017) read the owner's `relation_to`. `eligible` decides on scaled endpoints as FR-944-AC-6 requires. The canonical-order sort key (`order_span`, trace.rs) stays local; it is a total sort key, not an order relation of two covers, which is acceptable. The PR body now states this |
+| FND-004 | deferred | The fixed identities are a departure the code documents, and the code lead has asked arch for a ruling. Severity stays low: the identities are only compared within one call and never reach a document or output |
+| FND-005 | deferred | Allocation is inherent to the owner's API (owned `Identity`, `validate_limits` formatting); `eligible`, the per-candidate path, is now allocation-free; the remaining cost is confined to `overlaps` on uncertain ties and needs an owner API change, outside this PR |

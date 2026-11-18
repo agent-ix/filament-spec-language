@@ -18,6 +18,8 @@ use filament_observation::authority::partial::EventTimeInterval;
 use filament_observation::authority::Limits;
 use filament_observation::Identity;
 
+use super::trace::WindowClock;
+
 /// What a clock binding declares a stamp to cover (FR-501 Inputs).
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub enum ClockCover {
@@ -67,18 +69,66 @@ impl Containment {
 /// quarter-tick scale, in which a stamp `k` of the clock unit is `4k`.
 const QUARTER_SUFFIX: &str = "/4";
 
-/// The unit a cover compared without a trace's clock reads.
-const BARE_UNIT: &str = "tick";
+/// The identity every part of a [`Domain`] takes when nothing is bound to
+/// it, which the owner would otherwise refuse as blank.
+const UNBOUND: &str = "tick";
 
-/// The clock identity of an owner interval built here. A `WindowClock`
-/// carries the unit and the cover only, not FR-944's clock binding name or
-/// profile identity, so the two identities are fixed and every interval of
-/// one comparison shares them; the unit identity is the clock unit with
-/// [`QUARTER_SUFFIX`].
-const CLOCK_IDENTITY: &str = "fsl-eval/finite-window-clock";
+/// The owner domain of the intervals of one comparison (FR-944 "Partial
+/// values and interval order"): the clock binding name, the profile identity
+/// and the clock unit, whose identity takes the suffix [`QUARTER_SUFFIX`].
+/// Intervals of two clocks, profiles or units are different domains, which the
+/// owner refuses to order, so a comparison across them is not made.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(super) struct Domain<'a> {
+    clock: &'a str,
+    profile: &'a str,
+    unit: &'a str,
+}
 
-/// The profile identity of an owner interval built here.
-const PROFILE_IDENTITY: &str = "fsl-eval/finite-window-profile";
+impl<'a> Domain<'a> {
+    /// The domain of the clock binding `clock`.
+    pub(super) fn of(clock: &'a WindowClock) -> Self {
+        Self {
+            clock: &clock.name,
+            profile: &clock.profile,
+            unit: &clock.unit,
+        }
+    }
+
+    /// The domain of a cover compared where no clock is bound: every
+    /// identity is `tick`. Only [`ClockCover`]'s own comparison methods,
+    /// which take no clock, read it; a trace always reads its own clock.
+    const UNBOUND: Domain<'static> = Domain {
+        clock: UNBOUND,
+        profile: UNBOUND,
+        unit: UNBOUND,
+    };
+
+    /// An interval of the quarter-tick endpoints `earliest` and `latest` in
+    /// this domain.
+    fn interval(self, earliest: i128, latest: i128) -> EventTimeInterval {
+        let identity = |text: &str| {
+            Identity::new(if text.trim().is_empty() {
+                UNBOUND
+            } else {
+                text
+            })
+        };
+        // The endpoints are ordered (an open end moves inward by one quarter
+        // tick and an extent spans at least one whole tick or is closed) and
+        // below 2^68 in magnitude, far inside the owner's string bound; the
+        // identities are non-blank.
+        EventTimeInterval::new(
+            identity(self.clock),
+            identity(self.profile),
+            Identity::new(format!("{}{QUARTER_SUFFIX}", self.unit)),
+            earliest,
+            latest,
+            Limits::owner_max(),
+        )
+        .expect("a quarter-tick extent is a valid owner interval")
+    }
+}
 
 impl ClockCover {
     /// The margin `m` an establishment adds to a clause's future reach:
@@ -146,21 +196,25 @@ impl ClockCover {
     /// FSpec FR-160's `within_bound`: whether `ack - request <= bound` holds
     /// for every pair of instants in the covers of the readings `request_tick`
     /// and `ack_tick`, for none, or for some. It reads the owner's order of
-    /// `ack` against `request` shifted by the bound (FR-944).
+    /// `ack` against `request` shifted by the bound (FR-944). No clock is bound here, so the
+    /// owner intervals take the `tick` domain (`tick/4`); a trace compares its
+    /// extents in its own clock's domain.
     pub fn within_bound(self, bound: i64, request_tick: u64, ack_tick: u64) -> Containment {
         Extent::within_bound(
             self.extent(request_tick),
             self.extent(ack_tick),
             bound,
-            BARE_UNIT,
+            Domain::UNBOUND,
         )
     }
 
     /// FSpec FR-160's `definitely_before`: whether every instant in the cover
     /// of the reading `a` lies below every instant in the cover of `b`,
-    /// as the owner's `relation_to` answers it (FR-944).
+    /// as the owner's `relation_to` answers it (FR-944). As for
+    /// [`Self::within_bound`], the `tick` domain stands in where no clock is
+    /// bound.
     pub fn definitely_before(self, a: u64, b: u64) -> bool {
-        self.extent(a).before(self.extent(b), BARE_UNIT)
+        self.extent(a).before(self.extent(b), Domain::UNBOUND)
     }
 }
 
@@ -252,23 +306,10 @@ impl Extent {
     }
 
     /// The owner interval of this extent, its quarter-tick endpoints moved
-    /// by `shift` quarter ticks, in the domain of the clock unit `unit`
-    /// (FR-944 "Partial values and interval order"). Nothing writes it into
+    /// by `shift` quarter ticks, in `domain` (FR-944). Nothing writes it into
     /// an owner document.
-    fn owner_interval(self, unit: &str, shift: i128) -> EventTimeInterval {
-        // The identities are non-empty, the endpoints are ordered (an open
-        // end moves inward by one quarter tick and an extent spans at least
-        // one whole tick or is closed) and every endpoint is below 2^68 in
-        // magnitude, far inside the owner's string bound.
-        EventTimeInterval::new(
-            Identity::new(CLOCK_IDENTITY),
-            Identity::new(PROFILE_IDENTITY),
-            Identity::new(format!("{unit}{QUARTER_SUFFIX}")),
-            self.earliest + shift,
-            self.latest + shift,
-            Limits::owner_max(),
-        )
-        .expect("a quarter-tick extent is a valid owner interval")
+    fn owner_interval(self, domain: Domain<'_>, shift: i128) -> EventTimeInterval {
+        domain.interval(self.earliest + shift, self.latest + shift)
     }
 
     /// The owner's answer for the order of `left` against `right`.
@@ -285,10 +326,15 @@ impl Extent {
     /// `bound` whole ticks (FR-944): `True` when it admits no `after`,
     /// `False` when it admits neither `before` nor `equal`, and
     /// `Indeterminate` otherwise.
-    pub(super) fn within_bound(request: Self, ack: Self, bound: i64, unit: &str) -> Containment {
+    pub(super) fn within_bound(
+        request: Self,
+        ack: Self,
+        bound: i64,
+        domain: Domain<'_>,
+    ) -> Containment {
         let order = Self::relation(
-            &ack.owner_interval(unit, 0),
-            &request.owner_interval(unit, 4 * i128::from(bound)),
+            &ack.owner_interval(domain, 0),
+            &request.owner_interval(domain, 4 * i128::from(bound)),
         );
         if !order.after() {
             Containment::True
@@ -300,20 +346,20 @@ impl Extent {
     }
 
     /// Whether every instant of `self` lies below every instant of `other`.
-    pub(super) fn before(self, other: Self, unit: &str) -> bool {
+    pub(super) fn before(self, other: Self, domain: Domain<'_>) -> bool {
         Self::relation(
-            &self.owner_interval(unit, 0),
-            &other.owner_interval(unit, 0),
+            &self.owner_interval(domain, 0),
+            &other.owner_interval(domain, 0),
         )
         .definitely_before()
     }
 
     /// Whether the two extents share an instant: neither lies wholly before
     /// the other, which is the owner's `equal`.
-    pub(super) fn overlaps(self, other: Self, unit: &str) -> bool {
+    pub(super) fn overlaps(self, other: Self, domain: Domain<'_>) -> bool {
         Self::relation(
-            &self.owner_interval(unit, 0),
-            &other.owner_interval(unit, 0),
+            &self.owner_interval(domain, 0),
+            &other.owner_interval(domain, 0),
         )
         .equal()
     }
@@ -452,11 +498,11 @@ mod tests {
     fn a_doubly_open_difference_is_indeterminate_at_the_bound_plus_one() {
         let request = interval(0, 1, true, false);
         assert_eq!(
-            Extent::within_bound(request, interval(3, 4, false, true), 3, "ms"),
+            Extent::within_bound(request, interval(3, 4, false, true), 3, Domain::UNBOUND),
             Containment::Indeterminate
         );
         assert_eq!(
-            Extent::within_bound(request, interval(2, 3, false, true), 3, "ms"),
+            Extent::within_bound(request, interval(2, 3, false, true), 3, Domain::UNBOUND),
             Containment::True
         );
     }
@@ -487,5 +533,44 @@ mod tests {
             let _ = cover.within_bound(bound, 0, max);
         }
         assert!(!cover.definitely_before(0, max));
+    }
+
+    fn clock(name: &str, profile: &str, unit: &str) -> WindowClock {
+        WindowClock {
+            name: name.to_owned(),
+            profile: profile.to_owned(),
+            unit: unit.to_owned(),
+            cover: ClockCover::Exact,
+        }
+    }
+
+    /// FR-944: an owner interval is in its clock's own domain (clock binding
+    /// name, profile identity and the unit with `/4`), so the intervals of
+    /// two different clocks are not comparable, and the bare `tick` domain
+    /// is no clock's.
+    #[trace("TC-2624", "FR-944-AC-1")]
+    #[test]
+    fn intervals_of_different_clocks_are_different_owner_domains() {
+        let extent = ClockCover::Exact.extent(3);
+        let base = clock("c", "p", "ms");
+        let own = |clock: &WindowClock| extent.owner_interval(Domain::of(clock), 0);
+        let comparable = |left: &WindowClock, right: &WindowClock| {
+            own(left)
+                .relation_to(&own(right), Limits::owner_max())
+                .is_ok()
+        };
+        assert!(comparable(&base, &clock("c", "p", "ms")));
+        assert!(!comparable(&base, &clock("d", "p", "ms")), "another clock");
+        assert!(
+            !comparable(&base, &clock("c", "q", "ms")),
+            "another profile"
+        );
+        assert!(!comparable(&base, &clock("c", "p", "us")), "another unit");
+        let bare = extent.owner_interval(Domain::UNBOUND, 0);
+        assert!(own(&base).relation_to(&bare, Limits::owner_max()).is_err());
+        assert_eq!(own(&base).unit().as_str(), "ms/4");
+        assert_eq!(own(&base).clock_identity().as_str(), "c");
+        assert_eq!(own(&base).clock_revision().as_str(), "p");
+        assert_eq!(bare.unit().as_str(), "tick/4");
     }
 }
