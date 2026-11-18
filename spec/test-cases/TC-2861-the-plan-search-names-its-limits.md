@@ -22,4 +22,4 @@ Verify the plan search limits and the evaluation meter. Scope: FR-1011-AC-1 to A
 
 - Step 1: `incomplete` naming `plan_search.max_work`, then `plan_search.max_states`, exit 22.
 - Step 2: `incomplete` naming `accounting.work_units`.
-- Step 3: `unknown-member` and `invalid-value` at their pointers, exit 20; the defaults listed.
+- Step 3: `unknown-member` at `/synthesis/limits/max_steps` and `invalid-value` at `/synthesis/limits/max_work`, exit 20; the defaults listed.

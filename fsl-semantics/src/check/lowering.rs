@@ -4547,6 +4547,11 @@ impl<'a> Lowering<'a> {
             NodeKind::Literal(CheckedLiteral(value)) => {
                 return self.literal(node, value).map(LowerStep::Lowered);
             }
+            NodeKind::ReferenceLiteral { identity, .. } => {
+                return self
+                    .reference_literal(node, identity)
+                    .map(LowerStep::Lowered);
+            }
             NodeKind::Local(slot) => {
                 let key = binders
                     .find(*slot)
@@ -6824,6 +6829,36 @@ impl<'a> Lowering<'a> {
         self.literal_as(node, value, node.value_type(), None)
     }
 
+    /// A reference literal's canonical typed leaf, retaining its decoded key
+    /// as a string value under the declared reference type.
+    fn reference_literal(
+        &mut self,
+        node: CheckedNode<'_>,
+        identity: &[u8],
+    ) -> Result<LeafTerm, CheckRefusal> {
+        let identity = std::str::from_utf8(identity).map_err(|_| {
+            fault(
+                node.location(),
+                KeyFault::StageFault(filament_semantic_value::catalog::InternalFault::new(
+                    "FR-1000",
+                    "reference-literal-identity-is-utf8",
+                )),
+            )
+        })?;
+        let ty = self.type_ref(node.value_type(), node.location())?;
+        self.value_node(
+            node,
+            "literal",
+            ty.clone(),
+            BodyTerm::literal_node(
+                ty,
+                LiteralValue::Reference(
+                    identity.bytes().map(|byte| format!("{byte:02x}")).collect(),
+                ),
+            ),
+        )
+    }
+
     /// [`Self::literal`] typed at the bare `scalar` type node when one is
     /// given, else at the node of `declared`, which a literal
     /// admitted into a declared type (an extension clause's `Int[1, 3650]`)
@@ -7774,9 +7809,10 @@ fn literal_operand_text(value: &LiteralValue) -> String {
         LiteralValue::Decimal(text) => text.clone(),
         LiteralValue::Float32Bits(bits) => format!("{bits:08x}"),
         LiteralValue::Float64Bits(bits) => format!("{bits:016x}"),
-        LiteralValue::Text(text) | LiteralValue::String(text) | LiteralValue::Enum(text) => {
-            text.clone()
-        }
+        LiteralValue::Text(text)
+        | LiteralValue::String(text)
+        | LiteralValue::Reference(text)
+        | LiteralValue::Enum(text) => text.clone(),
         LiteralValue::Uuid(value) => value.to_string(),
         LiteralValue::Timestamp(value) => value.to_string(),
         LiteralValue::Bytes(value) | LiteralValue::JsonObject(value) => value.clone(),

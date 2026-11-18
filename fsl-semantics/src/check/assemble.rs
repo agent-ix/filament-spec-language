@@ -3218,6 +3218,7 @@ fn expression_type_forms<'e>(roots: impl IntoIterator<Item = &'e Expression>) ->
                 | ExprNode::DecimalValue { .. }
                 | ExprNode::Quantity(_)
                 | ExprNode::String(_)
+                | ExprNode::ReferenceLiteral { .. }
                 | ExprNode::Name(_)
                 | ExprNode::Let { .. }
                 | ExprNode::Case(_)

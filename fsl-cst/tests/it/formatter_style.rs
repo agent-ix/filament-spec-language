@@ -175,7 +175,6 @@ fn annotated_let_type_arguments_print_canonically() {
 /// the literal prints as written and formats idempotently.
 #[trace("TC-2954", "FR-003-AC-16", "FR-1000-AC-1")]
 #[test]
-#[ignore = "QSL-2166: the reference-literal production is not in the grammar yet, so the formatter cannot print it"]
 fn a_reference_literal_prints_with_its_hash_touching_both_neighbours() {
     let header = header("filament.model.complete/v1");
     let out = formatted(&format!(

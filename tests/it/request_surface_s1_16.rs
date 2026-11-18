@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-//! Request-surface stubs for model-based testing (FR-752), hybrid
-//! certificates (FR-751), the planner (FR-755), TLA+ and Lean export
+//! Request-surface stubs for model-based testing (FR-752), the planner
+//! (FR-755), TLA+ and Lean export
 //! (FR-756), the TL lowering (FR-757) and the layering CI gate (FR-345).
 //! Each feeds source and a `native-run/1` request through the command
 //! adapter (`fsl_command::command::run`) and asserts on the output document,
@@ -158,72 +158,15 @@ fn a_passing_run_records_tested_and_never_proved() {
     );
 }
 
-// ---- FR-751: hybrid certificates --------------------------------------
-
-fn certified_entry(moving_v_upper: u32) -> Value {
-    let interval =
-        |lower: u32, upper: u32| json!({"lower": lower.to_string(), "upper": upper.to_string()});
-    json!({"request_index": 0, "result": "proved", "certification": "uncertified",
-        "basis": {"type": "inductive-solver", "method": "inductive-enclosure"},
-        "certificate": {"type": "inductive-enclosure", "boxes": {
-            "Moving": {"v": interval(0, moving_v_upper), "a": interval(1, 2)},
-            "Stopped": {"v": interval(0, 0), "a": interval(1, 2)}}}})
-}
-
-/// FR-751-AC-1: an accepted `inductive-enclosure` settles the proof
-/// `certified`; one whose `Moving` box excludes the initial `v = 20` is
-/// rejected at rule (a) and the proof stays `uncertified`.
-#[test]
-#[trace("TC-2101", "FR-751-AC-1")]
-#[trace("FSpec-TC-1605", "FSpec-FR-652-AC-1")]
-#[ignore = "QSL-2234: core check of hybrid provider certificates not implemented yet"]
-fn an_inductive_enclosure_certificate_is_checked_in_the_core() {
-    let (_, accepted) = run(
-        BRAKING,
-        false,
-        (
-            "hybrid_result",
-            json!({
-        "claim": "SlowEnough", "entry": certified_entry(20)}),
-        ),
-    );
-    assert_eq!(accepted["hybrid_result"]["value"], "proved", "{accepted}");
-    assert_eq!(
-        accepted["hybrid_result"]["certification"], "certified",
-        "{accepted}"
-    );
-    let (_, rejected) = run(
-        BRAKING,
-        false,
-        (
-            "hybrid_result",
-            json!({
-        "claim": "SlowEnough", "entry": certified_entry(19)}),
-        ),
-    );
-    assert_eq!(
-        rejected["hybrid_result"]["certification"], "uncertified",
-        "{rejected}"
-    );
-    assert_eq!(
-        rejected["hybrid_result"]["certificate"]["outcome"], "rejected",
-        "{rejected}"
-    );
-    assert_eq!(
-        rejected["hybrid_result"]["certificate"]["rule"], "a",
-        "{rejected}"
-    );
-}
-
 // ---- FR-755: planner ---------------------------------------------------
 
-/// FR-755-AC-1/AC-2: minimizing length to reach `length >= 1` gives an
-/// `optimal` one-step plan with an accepted `potential` certificate; plan
-/// lengths `Int[0, 0]` make the goal `infeasible` with a closure certificate.
+/// FR-1010-AC-3 and FSpec FR-805-AC-6: minimizing length to reach
+/// `length >= 1` gives an `optimal` one-step plan whose objective value is
+/// `{"type": "integer", "value": "1"}`; plan lengths `Int[0, 0]` make the goal `infeasible`
+/// with a closure certificate and every no-plan member present and `null`.
 #[test]
-#[trace("TC-2105", "FR-755-AC-1")]
-#[trace("TC-2105", "FR-755-AC-2")]
-#[trace("FSpec-TC-1603", "FSpec-FR-650-AC-1")]
+#[trace("TC-2860", "FR-1010-AC-3")]
+#[trace("FSpec-TC-1955", "FSpec-FR-805-AC-6")]
 #[ignore = "QSL-1978: planner and optimizer not implemented yet"]
 fn the_planner_returns_optimal_and_infeasible_with_certificates() {
     let unit = |lengths: &str| {
@@ -244,7 +187,11 @@ fn the_planner_returns_optimal_and_infeasible_with_certificates() {
     );
     let result = &value["synthesis"];
     assert_eq!(result["status"], "optimal", "{value}");
-    assert_eq!(result["objective"], 1, "{value}");
+    assert_eq!(
+        result["objective"]["value"],
+        json!({"type": "integer", "value": "1"}),
+        "{value}"
+    );
     assert_eq!(result["certificate"]["type"], "potential", "{value}");
     assert_eq!(result["certification"], "certified", "{value}");
     let (_, value) = run(
@@ -261,6 +208,15 @@ fn the_planner_returns_optimal_and_infeasible_with_certificates() {
         value["synthesis"]["certificate"]["type"], "closure",
         "{value}"
     );
+    let infeasible = &value["synthesis"];
+    for member in ["plan", "replay", "bound"] {
+        assert!(
+            infeasible.get(member).is_some_and(Value::is_null),
+            "{member}: {value}"
+        );
+    }
+    assert!(infeasible["objective"]["value"].is_null(), "{value}");
+    assert_eq!(infeasible["objective"]["expression"], "length", "{value}");
 }
 
 // ---- FR-756: TLA+ and Lean export --------------------------------------
@@ -372,255 +328,10 @@ fn ci_checks_include_the_layering_gate() {
 const VALUE_HEADER: &str = "language \"ix:native\" edition \"1-draft\";\n\
      profile v = \"filament.value.complete/v1\";\n";
 
-/// `SlowEnough10` over `Braking` without `t`: horizon 10 seconds.
-fn braking_with_horizon() -> String {
-    BRAKING.replace("always holds(h.v < 30)", "always [0, 10] holds(h.v < 30)")
-}
-
 fn refusal_names(value: &Value, member: &str) {
     assert!(
         value.to_string().contains(member),
         "names {member}: {value}"
-    );
-}
-
-/// FR-750-AC-1: a provider's `delta-complete` `unsat` covering horizon 10
-/// settles `proved`, `bounded-solver`, `uncertified`, naming the provider.
-#[test]
-#[trace("TC-2100", "FR-750-AC-1")]
-#[ignore = "QSL-2234: analyze dispatch of a hybrid item to its provider not implemented yet"]
-fn a_covering_delta_complete_proof_settles_proved_bounded_solver() {
-    let entry = json!({"request_index": 0, "result": "proved", "certification": "uncertified",
-        "basis": {"type": "bounded-solver", "method": "delta-complete",
-            "horizon": "10", "jumps": 1, "exhaustive": ["time"]}});
-    let (_, value) = run(
-        &braking_with_horizon(),
-        false,
-        (
-            "hybrid_result",
-            json!({
-        "claim": "SlowEnough", "backend": "hybrid-fixture", "entry": entry}),
-        ),
-    );
-    let result = &value["hybrid_result"];
-    assert_eq!(result["value"], "proved", "{value}");
-    assert_eq!(result["basis"]["type"], "bounded-solver", "{value}");
-    assert_eq!(result["certification"], "uncertified", "{value}");
-    assert_eq!(result["backend"], "hybrid-fixture", "{value}");
-}
-
-/// FR-750-AC-2: a hybrid provider registration whose `dynamics` lacks
-/// `hybrid` is refused naming the backend, and no provider is made.
-#[test]
-#[trace("TC-2100", "FR-750-AC-2")]
-#[ignore = "QSL-2234: hybrid provider registration (`Engine::hybrid`) not implemented yet"]
-fn a_hybrid_provider_without_hybrid_dynamics_is_refused() {
-    let (exit, value) = run(
-        &braking_with_horizon(),
-        false,
-        (
-            "hybrid_providers",
-            json!([{
-        "backend": "discrete-only", "dynamics": ["discrete"],
-        "advertises": [{"kind": "temporal-satisfaction", "mode": "bounded"}]}]),
-        ),
-    );
-    assert_eq!(exit, 20, "{value}");
-    refusal_names(&value, "discrete-only");
-    refusal_names(&value, "invalid-dynamics");
-}
-
-fn point_trace(before_v: u32) -> Value {
-    let state = |mode: &str, time: &str, v: u32| {
-        json!({"mode": mode,
-        "time": {"lower": time, "upper": time},
-        "enclosure": {"v": {"lower": v.to_string(), "upper": v.to_string()},
-            "a": {"lower": "2", "upper": "2"}}})
-    };
-    json!({"start": state("Moving", "0", 20), "jumps": [{"transition": 0,
-        "before": {"time": {"lower": "10", "upper": "10"},
-            "enclosure": {"v": {"lower": before_v.to_string(), "upper": before_v.to_string()},
-                "a": {"lower": "2", "upper": "2"}}},
-        "state": state("Stopped", "10", 0)}]})
-}
-
-/// FR-750-AC-5: a process provider's `refuted` point trace that exact
-/// replay reproduces settles `refuted` with one `HybridCounterexample`; one
-/// that does not reproduce settles `inconclusive`, `replay-parity`.
-#[test]
-#[trace("TC-2100", "FR-750-AC-5")]
-#[ignore = "QSL-2234: process-provider composition for hybrid clause requests not implemented yet"]
-fn a_process_provider_refutation_settles_by_exact_replay() {
-    let unit = BRAKING.replace("always holds(h.v < 30)", "always [0, 12] holds(h.v > 0)");
-    let entry = |before_v: u32| {
-        json!({"request_index": 0, "result": "refuted",
-        "counterexample": 0, "counterexamples": [{"type": "hybrid-counterexample",
-            "kind": "formula", "trace": point_trace(before_v)}]})
-    };
-    let (_, value) = run(
-        &unit,
-        false,
-        (
-            "hybrid_result",
-            json!({
-        "claim": "SlowEnough", "provider": "process", "entry": entry(0)}),
-        ),
-    );
-    assert_eq!(value["hybrid_result"]["value"], "refuted", "{value}");
-    assert_eq!(
-        value["hybrid_result"]["counterexamples"]
-            .as_array()
-            .map(Vec::len),
-        Some(1),
-        "{value}"
-    );
-    let (_, value) = run(
-        &unit,
-        false,
-        (
-            "hybrid_result",
-            json!({
-        "claim": "SlowEnough", "provider": "process", "entry": entry(1)}),
-        ),
-    );
-    assert_eq!(value["hybrid_result"]["value"], "inconclusive", "{value}");
-    assert_eq!(
-        value["hybrid_result"]["cause"]["type"], "replay-parity",
-        "{value}"
-    );
-}
-
-/// FR-751-AC-2: a `flowpipe` step violating the Picard condition is
-/// rejected at that step's pointer and the proof stays `uncertified`.
-#[test]
-#[trace("TC-2101", "FR-751-AC-2")]
-#[trace("FSpec-TC-1605", "FSpec-FR-652-AC-2")]
-#[ignore = "QSL-2234: core check of flowpipe certificates not implemented yet"]
-fn a_flowpipe_step_violating_picard_is_rejected() {
-    let interval = |lower: &str, upper: &str| json!({"lower": lower, "upper": upper});
-    let entry = json!({"request_index": 0, "result": "proved", "certification": "uncertified",
-        "basis": {"type": "bounded-solver", "method": "flowpipe-outward-rounded",
-            "horizon": "10", "jumps": 1, "exhaustive": ["time"]},
-        "certificate": {"type": "flowpipe", "steps": [{"mode": "Moving",
-            "time": interval("0", "10"), "step": "10",
-            "box": {"v": interval("0", "20"), "a": interval("1", "2")},
-            "apriori": {"v": interval("19", "20"), "a": interval("1", "2")}}]}});
-    let (_, value) = run(
-        &braking_with_horizon(),
-        false,
-        (
-            "hybrid_result",
-            json!({
-        "claim": "SlowEnough", "entry": entry}),
-        ),
-    );
-    let result = &value["hybrid_result"];
-    assert_eq!(result["certification"], "uncertified", "{value}");
-    assert_eq!(result["certificate"]["outcome"], "rejected", "{value}");
-    assert_eq!(
-        result["certificate"]["at"], "/certificate/steps/0",
-        "{value}"
-    );
-}
-
-/// FR-751-AC-3: a certificate check given a work limit of one box
-/// evaluation is rejected `work-limit`, never accepted.
-#[test]
-#[trace("TC-2101", "FR-751-AC-3")]
-#[trace("FSpec-TC-1605", "FSpec-FR-652-AC-4")]
-#[ignore = "QSL-2234: work-limited certificate check not implemented yet"]
-fn a_work_limited_certificate_check_is_rejected() {
-    let (_, value) = run(
-        BRAKING,
-        false,
-        (
-            "hybrid_result",
-            json!({
-        "claim": "SlowEnough", "entry": certified_entry(20), "limits": {"work": 1}}),
-        ),
-    );
-    assert_eq!(
-        value["hybrid_result"]["certificate"]["outcome"], "rejected",
-        "{value}"
-    );
-    assert_eq!(
-        value["hybrid_result"]["certificate"]["rule"], "work-limit",
-        "{value}"
-    );
-}
-
-/// FSpec FR-652-AC-4: a `flowpipe` certificate on an `inductive-solver`
-/// entry refuses `invalid_result`/`invalid-value` at `/certificate`.
-#[test]
-#[trace("FSpec-TC-1605", "FSpec-FR-652-AC-4")]
-#[ignore = "QSL-2234: certificate form check not implemented yet"]
-fn a_mismatched_certificate_form_refuses_at_certificate() {
-    let mut entry = certified_entry(20);
-    entry["certificate"] = json!({"type": "flowpipe", "steps": []});
-    let (_, value) = run(
-        BRAKING,
-        false,
-        (
-            "hybrid_result",
-            json!({
-        "claim": "SlowEnough", "entry": entry}),
-        ),
-    );
-    refusal_names(&value, "invalid_result");
-    refusal_names(&value, "/certificate");
-}
-
-/// FSpec FR-652-AC-3 and FR-193-AC-22: a point trace through a mode whose
-/// flow is not polynomial refutes with an accepted `validated-witness`, and
-/// without one stays `inconclusive`.
-#[test]
-#[trace("FSpec-TC-1605", "FSpec-FR-652-AC-3")]
-#[trace("FSpec-TC-1605", "FSpec-FR-193-AC-22")]
-#[ignore = "QSL-2234: validated-witness refutation not implemented yet"]
-fn a_validated_witness_refutes_through_a_non_polynomial_flow() {
-    let unit = "language \"ix:native\" edition \"1-draft\";\n\
-         profile p = \"filament.temporal.infinite-trace/v1\";\n\
-         hybrid Grow using p {\n\
-           mode Up invariant { v >= 1 and v <= 100 } flow { v' = v * v / (1 + v * v); }\n\
-         }\n\
-         temporal Below using p over (h: Grow) clock \"model-time\" \
-         on origin { always [0, 40] holds(h.v < 30) }\n";
-    let trace = json!({"start": {"mode": "Up", "time": {"lower": "0", "upper": "0"},
-        "enclosure": {"v": {"lower": "1", "upper": "1"}}}, "jumps": []});
-    let witness = json!({"type": "validated-witness", "dwells": [[{"mode": "Up",
-        "time": {"lower": "0", "upper": "40"}, "step": "40",
-        "box": {"v": {"lower": "1", "upper": "1"}},
-        "apriori": {"v": {"lower": "1", "upper": "41"}}}]]});
-    let entry = |certificate: Option<Value>| {
-        let mut entry = json!({"request_index": 0, "result": "inconclusive",
-            "cause": {"type": "solver-inconclusive", "trace": trace.clone()}});
-        if let Some(certificate) = certificate {
-            entry["certificate"] = certificate;
-        }
-        entry
-    };
-    let (_, with) = run(
-        unit,
-        false,
-        (
-            "hybrid_result",
-            json!({
-        "claim": "Below", "entry": entry(Some(witness))}),
-        ),
-    );
-    assert_eq!(with["hybrid_result"]["value"], "refuted", "{with}");
-    let (_, without) = run(
-        unit,
-        false,
-        (
-            "hybrid_result",
-            json!({
-        "claim": "Below", "entry": entry(None)}),
-        ),
-    );
-    assert_eq!(
-        without["hybrid_result"]["value"], "inconclusive",
-        "{without}"
     );
 }
 
@@ -809,18 +520,21 @@ fn the_planner_keeps_plans_within_policy() {
 fn the_planner_minimizes_a_per_step_cost_sum() {
     let value = reach("minimize Reach.steps.sum(s => 2)", json!([]));
     assert_eq!(value["synthesis"]["status"], "optimal", "{value}");
-    assert_eq!(value["synthesis"]["objective"], 2, "{value}");
+    assert_eq!(
+        value["synthesis"]["objective"]["value"],
+        json!({"type": "integer", "value": "2"}),
+        "{value}"
+    );
     assert_eq!(
         value["synthesis"]["certificate"]["type"], "potential",
         "{value}"
     );
 }
 
-/// FSpec FR-650-AC-3 and AC-5: plan lengths admitting no goal give
-/// `infeasible`; a run stopped by its work limit is `incomplete` naming it.
+/// FSpec FR-650-AC-3: plan lengths admitting no goal give `infeasible`; a
+/// run stopped by its work limit is `incomplete` naming it.
 #[test]
 #[trace("FSpec-TC-1603", "FSpec-FR-650-AC-3")]
-#[trace("FSpec-TC-1603", "FSpec-FR-650-AC-5")]
 #[ignore = "QSL-1978: planner infeasibility and work limits not implemented yet"]
 fn the_planner_reports_infeasible_and_incomplete() {
     let unit = format!(
@@ -851,29 +565,35 @@ fn the_planner_reports_infeasible_and_incomplete() {
     assert_eq!(value["synthesis"]["status"], "incomplete", "{value}");
 }
 
-/// FSpec FR-650-AC-6: a supplied plan with a disabled invocation is never
-/// reported; replaying it is a method failure naming that step.
+/// FR-755-AC-4 and FSpec FR-650-AC-7: the planner's test seams are library
+/// parameters, never request members, so a `synthesis` member naming one
+/// refuses `unknown-member` at its `/synthesis` pointer before any search.
+/// The replay failure itself runs through the plan substitution seam in
+/// `plan_export_surface.rs`.
 #[test]
-#[trace("FSpec-TC-1603", "FSpec-FR-650-AC-6")]
-#[ignore = "QSL-1978: native replay of planner plans not implemented yet"]
-fn a_plan_with_a_disabled_invocation_is_a_method_failure() {
+#[trace("TC-2105", "FR-755-AC-4")]
+#[trace("FSpec-TC-1603", "FSpec-FR-650-AC-7")]
+#[ignore = "QSL-1978: the closed synthesis member list is not implemented yet"]
+fn a_test_seam_named_on_the_wire_is_an_unknown_member() {
     let unit = format!(
         "{MODEL_HEADER}type Lengths = Int[0, 3];\n\
          synthesis Reach using v grammar Config::ConfigVersion domain Lengths \
          satisfies {{ Reach.length >= 1 }};\n"
     );
-    let (_, value) = run(
+    let (exit, value) = run(
         &unit,
         true,
         (
             "synthesis",
             json!({"declaration": "Reach",
         "initial": "spine-snapshot.json",
-        "replay_plan": [{"operation": "noSuchOperation"}]}),
+        "replay_plan": [{"operation": "double"}]}),
         ),
     );
-    refusal_names(&value, "method-failure");
-    refusal_names(&value, "noSuchOperation");
+    assert_eq!(exit, 20, "{value}");
+    refusal_names(&value, "unknown-member");
+    refusal_names(&value, "/synthesis/replay_plan");
+    assert!(value["synthesis"].get("status").is_none(), "{value}");
 }
 
 /// FSpec FR-651-AC-2, AC-4 and FR-297-AC-5: the Lean export preserves the
@@ -1357,7 +1077,7 @@ fn snapshot_of(directory: &Path, keys: &[&str], complete: bool) -> Value {
         .map(|key| {
             let mut object = template.clone();
             object["key"] = json!(key);
-            object["fields"]["versionNumber"] = json!({"integer": "0"});
+            object["fields"]["versionNumber"] = json!({"type": "integer", "value": "0"});
             object["fields"]["parent"] = json!({"absent": {}});
             object
         })

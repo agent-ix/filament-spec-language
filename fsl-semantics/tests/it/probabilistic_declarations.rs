@@ -636,13 +636,10 @@ fn a_precondition_that_reads_a_random_parameter_refuses_at_the_read() {
     );
 }
 
-/// TC-620 step 9, the ill-typed clause only: an integer support value for a
-/// random parameter typed as a reference to `Server` is refused
-/// `value-outside-type`, naming the parameter, and the `Int[1, 12]` variant
-/// checks. FR-185-AC-9's refused case is a reference *literal* naming a
-/// `Server` key; S3 has no reference-literal form yet, so that clause is
-/// untested (QSL-971).
-#[trace("TC-620")]
+/// FR-185-AC-9 / TC-620: a reference literal naming a Server key is refused
+/// `value-outside-type`, naming the random parameter; the integer variant
+/// remains a passing control.
+#[trace("TC-620", "FR-185-AC-9")]
 #[test]
 fn a_reference_valued_random_parameter_refuses_value_outside_type() {
     let document = service_document_full(
@@ -660,6 +657,19 @@ fn a_reference_valued_random_parameter_refuses_value_outside_type() {
     let refusals = assemble_over(&document, &refused)
         .check(CheckMode::Linked, CheckingLimits::default())
         .expect_err("a reference-typed support is refused");
+    let [refusal] = &refusals[..] else {
+        panic!("one refusal: {refusals:?}");
+    };
+    assert_eq!(refusal.cause.cause(), Some("value-outside-type"));
+    let CheckCause::Probabilistic(cause) = &refusal.cause else {
+        panic!("a probabilistic refusal: {refusal:?}");
+    };
+    assert!(names_parameter(cause, "target"), "{cause:?}");
+
+    let reference = body("random Server::assign(target) ~ { Service::Server#\"s1\": 1 };");
+    let refusals = assemble_over(&document, &reference)
+        .check(CheckMode::Linked, CheckingLimits::default())
+        .expect_err("FR-185 refuses reference-literal support values");
     let [refusal] = &refusals[..] else {
         panic!("one refusal: {refusals:?}");
     };

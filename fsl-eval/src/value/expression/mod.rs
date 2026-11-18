@@ -322,8 +322,25 @@ pub fn evaluate_state_predicate_with(
     further: Vec<Value>,
     meter: &mut Meter,
 ) -> Result<Evaluation, InternalFault> {
+    evaluate_state_predicate_with_reference_bindings(
+        package, predicate, current, over, further, None, meter,
+    )
+}
+
+/// [`evaluate_state_predicate_with`] with the model subject's FR-1000
+/// reference-literal decisions. A fixed literal is constant; a created-object
+/// literal is resolved against `current` at this state.
+pub(crate) fn evaluate_state_predicate_with_reference_bindings(
+    package: &CheckedPackage,
+    predicate: &(impl fsl_semantics::check::StatePredicate + ?Sized),
+    current: &ObjectEnvironment,
+    over: Option<filament_exact::ObjectReference>,
+    further: Vec<Value>,
+    reference_bindings: Option<&crate::simulation::model::ReferenceBindings>,
+    meter: &mut Meter,
+) -> Result<Evaluation, InternalFault> {
     let reads = std::collections::BTreeMap::new();
-    Machine::with_pre(
+    let machine = Machine::with_pre(
         package.graph().scope(),
         package.graph(),
         current,
@@ -331,8 +348,12 @@ pub fn evaluate_state_predicate_with(
         Some(&reads),
         meter,
         package.graph().dispatch_tables(),
-    )
-    .run(
+    );
+    let machine = match reference_bindings {
+        Some(bindings) => machine.with_reference_bindings(bindings),
+        None => machine,
+    };
+    machine.run(
         predicate.body(),
         predicate.slots(),
         over.map(Value::Reference)
@@ -655,8 +676,24 @@ pub fn evaluate_state_predicate_at_absent_key(
     binding: String,
     meter: &mut Meter,
 ) -> Result<Evaluation, InternalFault> {
+    evaluate_state_predicate_at_absent_key_with_reference_bindings(
+        package, predicate, current, key, binding, None, meter,
+    )
+}
+
+/// [`evaluate_state_predicate_at_absent_key`] with the subject's FR-1000
+/// reference-literal decisions.
+pub(crate) fn evaluate_state_predicate_at_absent_key_with_reference_bindings(
+    package: &CheckedPackage,
+    predicate: &(impl fsl_semantics::check::StatePredicate + ?Sized),
+    current: &ObjectEnvironment,
+    key: filament_exact::ObjectReference,
+    binding: String,
+    reference_bindings: Option<&crate::simulation::model::ReferenceBindings>,
+    meter: &mut Meter,
+) -> Result<Evaluation, InternalFault> {
     let reads = std::collections::BTreeMap::new();
-    Machine::with_pre(
+    let machine = Machine::with_pre(
         package.graph().scope(),
         package.graph(),
         current,
@@ -664,9 +701,12 @@ pub fn evaluate_state_predicate_at_absent_key(
         Some(&reads),
         meter,
         package.graph().dispatch_tables(),
-    )
-    .with_absent_parameter(0, binding)
-    .run(
+    );
+    let machine = match reference_bindings {
+        Some(bindings) => machine.with_reference_bindings(bindings),
+        None => machine,
+    };
+    machine.with_absent_parameter(0, binding).run(
         predicate.body(),
         predicate.slots(),
         vec![Value::Reference(key)],
@@ -1816,6 +1856,83 @@ pub(crate) fn evaluate_over_admitted_environment(
     evaluate_expression(package, expression, arguments, objects, meter, false)
 }
 
+/// Evaluate one hyper atom with the model subject's reference table for each
+/// trace component. The component table is selected by the checked
+/// `component_reads` entry of a reference-literal location.
+pub(crate) fn evaluate_hyper_holds_with_component_bindings(
+    package: &CheckedPackage,
+    clause: &fsl_semantics::check::CheckedHyperClause,
+    atom: fsl_semantics::check::FormulaNodeId,
+    slots: Vec<crate::hyper::HyperSlot>,
+    components: &[&ObjectEnvironment],
+    reference_bindings: &[&crate::simulation::model::ReferenceBindings],
+    meter: &mut Meter,
+) -> Result<Evaluation, CallFailure> {
+    evaluate_hyper_holds_inner(
+        package,
+        clause,
+        atom,
+        slots,
+        components,
+        Some(reference_bindings),
+        meter,
+    )
+}
+
+fn evaluate_hyper_holds_inner(
+    package: &CheckedPackage,
+    clause: &fsl_semantics::check::CheckedHyperClause,
+    atom: fsl_semantics::check::FormulaNodeId,
+    slots: Vec<crate::hyper::HyperSlot>,
+    components: &[&ObjectEnvironment],
+    reference_bindings: Option<&[&crate::simulation::model::ReferenceBindings]>,
+    meter: &mut Meter,
+) -> Result<Evaluation, CallFailure> {
+    let fault = |invariant| CallFailure::Fault(InternalFault::new("S6a", invariant));
+    let (condition, count) = clause
+        .condition(atom)
+        .ok_or_else(|| fault("hyper-atom-resolved-by-clause"))?;
+    let reads = clause
+        .component_reads(atom)
+        .ok_or_else(|| fault("hyper-atom-resolved-by-clause"))?;
+    if slots.len() != clause.atom_slots().len() {
+        return Err(fault("hyper-atom-binds-one-value-per-slot"));
+    }
+    if components.len() != clause.quantifiers().len() {
+        return Err(fault("hyper-atom-observes-one-state-per-trace"));
+    }
+    let Some(first) = components.first().copied() else {
+        return Err(fault("hyper-atom-observes-one-state-per-trace"));
+    };
+    let mut machine = Machine::new(
+        package.graph().scope(),
+        package.graph(),
+        first,
+        meter,
+        package.graph().dispatch_tables(),
+    )
+    .with_components(evaluate::ComponentReads {
+        environments: components,
+        reads,
+    });
+    if let Some(reference_bindings) = reference_bindings {
+        machine = machine.with_component_reference_bindings(reference_bindings);
+    }
+    let mut values = Vec::with_capacity(slots.len());
+    for (slot, binding) in slots.into_iter().enumerate() {
+        match binding {
+            crate::hyper::HyperSlot::Bound(value) => values.push(value),
+            crate::hyper::HyperSlot::Absent { key, population } => {
+                machine = machine.with_absent_key(slot, population, key.clone());
+                values.push(Value::Reference(key));
+            }
+        }
+    }
+    machine
+        .run(condition, count, values)
+        .map_err(CallFailure::Fault)
+}
+
 impl CheckedPackageEvaluation for CheckedPackage {
     fn call(
         &self,
@@ -2204,46 +2321,7 @@ impl CheckedPackageEvaluation for CheckedPackage {
         components: &[&ObjectEnvironment],
         meter: &mut Meter,
     ) -> Result<Evaluation, CallFailure> {
-        let fault = |invariant| CallFailure::Fault(InternalFault::new("S6a", invariant));
-        let (condition, count) = clause
-            .condition(atom)
-            .ok_or_else(|| fault("hyper-atom-resolved-by-clause"))?;
-        let reads = clause
-            .component_reads(atom)
-            .ok_or_else(|| fault("hyper-atom-resolved-by-clause"))?;
-        if slots.len() != clause.atom_slots().len() {
-            return Err(fault("hyper-atom-binds-one-value-per-slot"));
-        }
-        if components.len() != clause.quantifiers().len() {
-            return Err(fault("hyper-atom-observes-one-state-per-trace"));
-        }
-        let Some(first) = components.first().copied() else {
-            return Err(fault("hyper-atom-observes-one-state-per-trace"));
-        };
-        let mut machine = Machine::new(
-            self.graph().scope(),
-            self.graph(),
-            first,
-            meter,
-            self.graph().dispatch_tables(),
-        )
-        .with_components(evaluate::ComponentReads {
-            environments: components,
-            reads,
-        });
-        let mut values = Vec::with_capacity(slots.len());
-        for (slot, binding) in slots.into_iter().enumerate() {
-            match binding {
-                crate::hyper::HyperSlot::Bound(value) => values.push(value),
-                crate::hyper::HyperSlot::Absent { key, population } => {
-                    machine = machine.with_absent_key(slot, population, key.clone());
-                    values.push(Value::Reference(key));
-                }
-            }
-        }
-        machine
-            .run(condition, count, values)
-            .map_err(CallFailure::Fault)
+        evaluate_hyper_holds_inner(self, clause, atom, slots, components, None, meter)
     }
 
     fn evaluate_step_predicate(

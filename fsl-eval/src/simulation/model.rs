@@ -34,6 +34,7 @@ mod letters;
 pub use behaviours::{model_behaviours, BehaviourState, BehavioursEnd};
 pub use key_budget::{ModelKeyBudget, ModelKeyError, ModelKeyExpansionError};
 pub(crate) mod probabilistic;
+mod reference_bindings;
 mod refine;
 mod state_predicate;
 mod symbolic;
@@ -98,6 +99,7 @@ pub use footprints::{FootprintError, FootprintViolation, WithinStop};
 pub use frames::judge::{
     operation_identity_text, AbstractApplication, Judged, Judgement, Rejection, ResolvedStep,
 };
+pub(crate) use reference_bindings::{ReferenceBinding, ReferenceBindings};
 mod hyper_letters;
 pub use hyper_letters::CheckedHyperLetters;
 pub use letters::{ClauseLetters, DecisiveObservation, LettersRefusal};
@@ -530,6 +532,8 @@ pub struct ModelSystem<'a> {
     model: StateModel,
     universes: BTreeMap<DeclarationKey, Vec<String>>,
     initial: Vec<ModelSimState>,
+    /// FR-1000: subject-specific resolutions for checked reference literals.
+    reference_bindings: ReferenceBindings,
     clauses: Clauses,
     applications: BTreeMap<EffectiveId, Vec<Application>>,
     fields: BTreeMap<DeclarationKey, Vec<StateField>>,
@@ -859,6 +863,19 @@ impl<'a> ModelSystem<'a> {
             });
         }
 
+        let reference_bindings = if let Some(package) = input.source_package() {
+            ReferenceBindings::bind(
+                package.graph(),
+                &model,
+                types,
+                &populations,
+                &universes,
+                &initial,
+            )?
+        } else {
+            ReferenceBindings::default()
+        };
+
         let mut fields = BTreeMap::new();
         let mut applications = BTreeMap::new();
         for declaration in types.object_types() {
@@ -1031,6 +1048,7 @@ impl<'a> ModelSystem<'a> {
             model,
             universes,
             initial,
+            reference_bindings,
             applications,
             fields,
             populations,

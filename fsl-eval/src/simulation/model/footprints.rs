@@ -14,11 +14,14 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::sync::{Arc, Mutex, PoisonError};
 
 use filament_checked::key::DeclarationKey;
+use filament_checked::node::NodeKind;
 use filament_exact::{EffectiveId, NodeKey, ObjectReference, Value, ValueType};
 use filament_semantic_value::declaration::{CompositeDeclaration, CompositeShape, TypeEnvironment};
 use filament_semantic_value::model_transition::ModelTransition;
 use fsl_semantics::check::footprint::{
     FootprintObject, FootprintRefusal, SymbolicFootprint, SymbolicLocation,
+    derive_attempt_footprint_fallback_with_reference_literals,
+    derive_selected_footprint_with_reference_literals,
 };
 use fsl_semantics::check::CheckedNode;
 use fsl_semantics::model::clause_observation::Observation;
@@ -30,7 +33,7 @@ use crate::model_subject::ModelInstance;
 
 use super::encode::{parse_optional_reference, parse_reference};
 use super::walk::stop;
-use super::{Application, ModelSimState, ModelSystem, BROKEN};
+use super::{Application, ModelSimState, ModelSystem, ReferenceBinding, BROKEN};
 use crate::simulation::expansion::{Expansion, ExpansionStop};
 use crate::simulation::footprint::{Footprint, Location};
 
@@ -433,6 +436,7 @@ impl<'a> ModelSystem<'a> {
             types,
             selected.cloned(),
         );
+        let reference_literals = self.reference_bindings.created_for_footprints();
         let mut cache = self
             .footprints
             .0
@@ -442,23 +446,50 @@ impl<'a> ModelSystem<'a> {
             .entry(key)
             .or_insert_with_key(|(_, _, types, selected)| {
                 let select = |clause| selected.as_ref().is_none_or(|set| set.contains(&clause));
-                match self.evaluator().selected_footprint(
-                    &self.model,
-                    receiver.object_type().clone(),
-                    application.declaring.clone(),
-                    &application.declaration,
-                    types,
-                    &select,
-                ) {
+                let selected = if let Some(package) = self.source_package() {
+                    derive_selected_footprint_with_reference_literals(
+                        package.graph(),
+                        &self.model,
+                        receiver.object_type().clone(),
+                        application.declaring.clone(),
+                        &application.declaration,
+                        types,
+                        &reference_literals,
+                        &select,
+                    )
+                } else {
+                    self.evaluator().selected_footprint(
+                        &self.model,
+                        receiver.object_type().clone(),
+                        application.declaring.clone(),
+                        &application.declaration,
+                        types,
+                        &select,
+                    )
+                };
+                match selected {
                     Err(FootprintRefusal::UnsupportedForm { .. }) => {
-                        self.evaluator().attempt_footprint_fallback(
-                            &self.model,
-                            receiver.object_type().clone(),
-                            application.declaring.clone(),
-                            &application.declaration,
-                            types,
-                            &select,
-                        )
+                        if let Some(package) = self.source_package() {
+                            derive_attempt_footprint_fallback_with_reference_literals(
+                                package.graph(),
+                                &self.model,
+                                receiver.object_type().clone(),
+                                application.declaring.clone(),
+                                &application.declaration,
+                                types,
+                                &reference_literals,
+                                &select,
+                            )
+                        } else {
+                            self.evaluator().attempt_footprint_fallback(
+                                &self.model,
+                                receiver.object_type().clone(),
+                                application.declaring.clone(),
+                                &application.declaration,
+                                types,
+                                &select,
+                            )
+                        }
                     }
                     derived => derived,
                 }
@@ -599,7 +630,8 @@ impl<'a> ModelSystem<'a> {
         let clause = evaluator
             .state_clause(name)
             .ok_or(FootprintError::UnknownConstraint)?;
-        let symbolic = evaluator.constraint_reads(&self.model, clause)?;
+        let mut symbolic = evaluator.constraint_reads(&self.model, clause)?;
+        self.add_reference_literal_memberships(clause.body(), &mut symbolic);
         Ok(symbolic
             .iter()
             .filter_map(|location| lower(location, &|_| None))
@@ -622,9 +654,10 @@ impl<'a> ModelSystem<'a> {
         parameters: &[(String, ValueType)],
         body: &fsl_semantics::check::CheckedBody,
     ) -> Result<BTreeSet<Location>, FootprintError> {
-        let symbolic = self
+        let mut symbolic = self
             .evaluator()
             .slot_reads(&self.model, name, parameters, body.root())?;
+        self.add_reference_literal_memberships(body.root(), &mut symbolic);
         Ok(symbolic
             .iter()
             .filter_map(|location| lower(location, &|_| None))
@@ -662,9 +695,10 @@ impl<'a> ModelSystem<'a> {
         body: &fsl_semantics::check::CheckedBody,
         over: Option<&ObjectReference>,
     ) -> Result<Option<BTreeSet<Location>>, FootprintError> {
-        let symbolic = self
+        let mut symbolic = self
             .evaluator()
             .node_reads(&self.model, name, parameters, body.root())?;
+        self.add_reference_literal_memberships(body.root(), &mut symbolic);
         if over.is_none() && !symbolic.is_empty() {
             return Ok(None);
         }
@@ -710,7 +744,9 @@ impl<'a> ModelSystem<'a> {
         over: &(String, ValueType),
         condition: CheckedNode<'_>,
     ) -> Result<BTreeSet<SymbolicLocation>, FootprintRefusal> {
-        self.evaluator().atom_reads(&self.model, over, condition)
+        let mut reads = self.evaluator().atom_reads(&self.model, over, condition)?;
+        self.add_reference_literal_memberships(condition, &mut reads);
+        Ok(reads)
     }
 
     /// FR-125-AC-18, FR-337: the symbolic locations the activation's
@@ -728,8 +764,41 @@ impl<'a> ModelSystem<'a> {
         condition: CheckedNode<'_>,
         binders: &[(String, ValueType)],
     ) -> Result<BTreeSet<SymbolicLocation>, FootprintRefusal> {
-        self.evaluator()
-            .guard_reads(&self.model, binders, condition)
+        let mut reads = self
+            .evaluator()
+            .guard_reads(&self.model, binders, condition)?;
+        self.add_reference_literal_memberships(condition, &mut reads);
+        Ok(reads)
+    }
+
+    /// Adds the subject-dependent membership reads of created reference
+    /// literals. Fixed literals are constants; their bound value contributes
+    /// no model-state location.
+    fn add_reference_literal_memberships(
+        &self,
+        root: CheckedNode<'_>,
+        reads: &mut BTreeSet<SymbolicLocation>,
+    ) {
+        let mut pending = vec![root];
+        while let Some(node) = pending.pop() {
+            pending.extend(node.children());
+            if let NodeKind::ReferenceLiteral {
+                object_type,
+                identity,
+            } = node.kind()
+            {
+                if let Some(ReferenceBinding::CreatedObject { populations, .. }) =
+                    self.reference_bindings.get(object_type, identity)
+                {
+                    reads.extend(
+                        populations
+                            .iter()
+                            .cloned()
+                            .map(|population| SymbolicLocation::AnyMembership { population }),
+                    );
+                }
+            }
+        }
     }
 
     /// FR-156 "Atom footprints": the locations an atom reads for `instance`

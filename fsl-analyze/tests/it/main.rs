@@ -46,6 +46,8 @@ mod free_delays;
 mod graph_core;
 mod graph_world;
 mod hybrid_provider;
+mod hybrid_reference;
+mod hybrid_requests;
 mod hyper;
 mod hyper_lowering;
 mod hyper_projected;

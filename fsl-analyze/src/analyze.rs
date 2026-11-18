@@ -720,19 +720,30 @@ pub(crate) fn refusal_document(
     failure: &AdmissionFailure,
     message: String,
 ) -> OutcomeDocument {
-    let (catalog, category) = match failure {
-        AdmissionFailure::Refused(record) | AdmissionFailure::Incomplete(record) => (
-            record.catalog,
-            category_of(&record.catalog).unwrap_or(Category::Refusal),
-        ),
-        AdmissionFailure::Fault(fault) => (fault.catalog_code(), fault.category()),
+    let (catalog, category, details) = match failure {
+        AdmissionFailure::Refused(record) | AdmissionFailure::Incomplete(record) => {
+            let details = (!record.fields.is_empty()).then(|| {
+                record
+                    .fields
+                    .iter()
+                    .map(|(name, value)| ((*name).to_owned(), serde_json::json!(value)))
+                    .collect()
+            });
+            (
+                record.catalog,
+                category_of(&record.catalog).unwrap_or(Category::Refusal),
+                details,
+            )
+        }
+        AdmissionFailure::Fault(fault) => (fault.catalog_code(), fault.category(), None),
     };
     OutcomeDocument::new(operation, None, category).with_diagnostics(vec![OutcomeDiagnostic::new(
         Some(catalog.cause()),
         catalog.code(),
         None,
         message,
-    )])
+    )
+    .with_details(details)])
 }
 
 impl AnalyzeOutcome {

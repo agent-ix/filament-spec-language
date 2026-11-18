@@ -511,6 +511,11 @@ fn encode_expression(
                 out.write_str("string");
                 out.write_str(text.text());
             }
+            ExprNode::ReferenceLiteral { type_name, key, .. } => {
+                out.write_str("reference_literal");
+                out.write_str(&type_name.name);
+                out.write_str(key.text());
+            }
             ExprNode::Name(name) => {
                 out.write_str("name");
                 out.write_str(&name.name);

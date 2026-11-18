@@ -10,12 +10,12 @@ use filament_checked::node::NodeKind;
 use filament_exact::{NodeKey, PathSegment};
 use filament_semantic_value::checking::CheckMode;
 use filament_semantic_value::checking::CheckingLimits;
-use fsl_foundation::diagnostic::{Code, StageFailure};
 use fsl_foundation::Span;
+use fsl_foundation::diagnostic::{Code, StageFailure};
 use fsl_semantics::check::{
-    check_hyper_clauses, Capability, CheckCause, CheckRefusal, CheckedHyper, CheckedHyperClause,
-    CheckedModelRelation, HyperCause, HyperForm, HyperTraceFamily, HyperUnsupported,
-    PackageDeclarations, StepRead, TemporalCause, TemporalProfile,
+    Capability, CheckCause, CheckRefusal, CheckedHyper, CheckedHyperClause, CheckedModelRelation,
+    HyperCause, HyperForm, HyperTraceFamily, HyperUnsupported, PackageDeclarations, StepRead,
+    TemporalCause, TemporalProfile, check_hyper_clauses,
 };
 use fsl_semantics::family::{ClaimExtent, FamilyContract};
 use fsl_semantics::model::accounting::ModelNormalizationLimits;
@@ -243,8 +243,7 @@ const OPAQUE: &str = "hyper Opaque using inf over behaviours (v: V::ConfigVersio
      { holds(v.versionNumber @ a != v.versionNumber @ b) and \
      always holds(v.versionNumber @ a = v.versionNumber @ b) }";
 
-const DET: &str =
-    "relation Det using v over (x: V::ConfigVersion::step, y: V::ConfigVersion::step) \
+const DET: &str = "relation Det using v over (x: V::ConfigVersion::step, y: V::ConfigVersion::step) \
      { x.i = y.i and pre(x.self.versionNumber) = pre(y.self.versionNumber) \
      implies x.self.versionNumber = y.self.versionNumber }";
 
@@ -896,10 +895,12 @@ fn an_examined_body_refuses_by_its_own_fault_under_either_profile() {
             let refusals = package
                 .check(CheckMode::Linked, CheckingLimits::default())
                 .expect_err("an ill-typed body refuses");
-            let [CheckRefusal {
-                cause: CheckCause::Hyper(cause),
-                ..
-            }] = &refusals[..]
+            let [
+                CheckRefusal {
+                    cause: CheckCause::Hyper(cause),
+                    ..
+                },
+            ] = &refusals[..]
             else {
                 panic!("{layer}: {declaration}: one body fault, not {refusals:?}");
             };
@@ -1458,6 +1459,34 @@ fn an_atom_lowers_to_a_condition_over_per_trace_parameter_slots() {
     assert_eq!(reads.get(right.location()), Some(&1));
 }
 
+/// FR-487-AC-1/W38: an indexed reference literal resolves against the subject
+/// belonging to its innermost trace component.
+#[trace("FR-487-AC-1")]
+#[test]
+fn reference_literals_are_assigned_to_their_indexed_components() {
+    let declaration = "hyper References using inf over behaviours \
+        (v: V::ConfigVersion) forall trace a of V forall trace b of V \
+        { holds(V::ConfigVersion#\"s1\" @ a = V::ConfigVersion#\"s1\" @ b) }";
+    let clause = clause(&["V"], declaration);
+    let atom = the_atom(&clause);
+    let (condition, _) = clause.condition(atom).expect("the holds condition");
+    let components = clause.component_reads(atom).expect("component mapping");
+    let mut literals = Vec::new();
+    let mut pending = vec![condition];
+    while let Some(node) = pending.pop() {
+        pending.extend(node.children());
+        if matches!(node.kind(), NodeKind::ReferenceLiteral { .. }) {
+            literals.push(node.location());
+        }
+    }
+    assert_eq!(literals.len(), 2);
+    let assigned: std::collections::BTreeSet<_> = literals
+        .iter()
+        .map(|location| *components.get(location).expect("literal's trace component"))
+        .collect();
+    assert_eq!(assigned, [0, 1].into());
+}
+
 /// FR-487 "Lowering a match conjunct": a conjunct's slots are its step reads, and a label misused
 /// by the form around it refuses `ill_typed`/`type-mismatch`.
 #[trace("TC-1264")]
@@ -1664,10 +1693,12 @@ fn a_conjunct_s_slots_have_the_types_of_their_labels() {
     let [operations, inputs] = checked.mu_universal() else {
         panic!("two conjuncts");
     };
-    assert!(operations
-        .slots()
-        .iter()
-        .all(|slot| matches!(slot, StepRead::Operation { .. })));
+    assert!(
+        operations
+            .slots()
+            .iter()
+            .all(|slot| matches!(slot, StepRead::Operation { .. }))
+    );
     for slot in inputs.slots() {
         let StepRead::Argument(read) = slot else {
             panic!("an argument read, not {slot:?}");

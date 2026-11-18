@@ -291,9 +291,10 @@ A native-run/1 request (FR-026's closed envelope and shared limits). For a
   artifact by package-file path. When present, FR-027's strict package reader
   admits and executes that package without fallback to source compilation,
   as FR-945 states.
-- `models`: zero or more `semantic-ir/2.0.0` domain package documents, each
-  read and handed to spine `compile` as FR-056's
-  package input, exactly as FR-027 does for compile.
+- `models`: zero or more `{format, source}` entries, each a
+  `semantic-ir/2.0.0` domain package document or a `native-model-unit/1`
+  model unit compiled to its document (FR-710), read and handed to spine
+  `compile` as FR-056's package input, exactly as FR-027 does for compile.
 - `libraries`: zero or more `{identity, source}` objects, read and
   handed to spine `compile` as its dependency input, exactly as FR-027 does
   for compile ([FR-099](FR-099-compile-against-supplied-libraries.md),
@@ -514,7 +515,7 @@ exits with that code's exit status:
 | Refusal | Stage | Code | `details` | Exit |
 |---------|-------|------|-----------|------|
 | A declared edition other than `1-draft`, `0-draft` included | `profile` | `unknown_edition` | as FR-027 | 20 |
-| A `1-draft` function-run request carrying `selection`, `snapshots`, `invocations`, a set `validation_work` or `expression_steps`, `clauses`, `extraction`, or a model in a format other than `semantic-ir/2.0.0`; or carrying none of `call`, `clause` (FR-312) and `items` (FR-651), or more than one | `request` | `invalid-request` | as FR-026 | 20 |
+| A `1-draft` function-run request carrying `selection`, `snapshots`, `invocations`, a set `validation_work` or `expression_steps`, `clauses`, `extraction`, or a model in a format other than `semantic-ir/2.0.0` and `native-model-unit/1`; or carrying none of `call`, `clause` (FR-312) and `items` (FR-651), or more than one | `request` | `invalid-request` | as FR-026 | 20 |
 | A clause-run request carrying `extraction` in a build without `quire-extraction` | `request` | `invalid-request` | names `extraction` | 20 |
 | A feature-enabled extraction request with `call` instead of `clause`, a package selection, or a clause-binding count other than one | `request` | `extraction-requires-run`; `extraction-package-conflict`; `extraction-clause-count` | as FR-031, produced by the FR-312 request reader; `{"actual": n}` for clause count | 20 |
 | A `call` that is not the closed object above; an argument `value` that is neither a JSON object nor a JSON integer in the signed 64-bit range (FR-650), naming `/call/arguments/<index>/value`; an `accounting` member that is not the closed counter object above or has a value that is not a JSON integer from 0 to `u64::MAX` | `request` | `invalid-request` | as FR-026 | 20 |

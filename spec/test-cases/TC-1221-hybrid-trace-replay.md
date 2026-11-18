@@ -18,7 +18,7 @@ Verify static replay, exact replay and the settlement each gives, for a
 trace from a `solver-inconclusive` cause and from a provider's `refuted`
 entry.
 
-Scope: FR-450-AC-1 to FR-450-AC-9, FR-290-AC-19 and FR-269-AC-5.
+Scope: FR-450-AC-1 to FR-450-AC-10, FR-290-AC-19 and FR-269-AC-5.
 
 ## Test Procedure
 
@@ -53,6 +53,8 @@ provider, each returning a scripted entry with a scripted `HybridTrace`.
     hybrid cause through the shared `DisagreementCause` codec with the
     checked `Braking` model, then read each cause with that model and the
     checked package; repeat a read with no model context.
+12. Replay each `end`-cut `Braking` trace FR-450-AC-10 lists, and the trace
+    carrying both `end` and `loop_to`.
 
 Run each step through both fixture providers.
 
@@ -107,4 +109,6 @@ Tag the tests `#[trace("TC-1221", "FR-450-AC-n")]`.
 - Step 11: the two causes round-trip to equal, distinct typed arms; the
   read without a checked model is refused. The existing verdict, no-value
   and witness cause codec round trips remain unchanged.
+- Step 12: `Reproduced` with the bad prefix ending at `end`; `NotReproduced`
+  at `/end`; `Inconsistent` at check `End`; refused at `/end`.
 - Both fixture providers give the same outcomes.

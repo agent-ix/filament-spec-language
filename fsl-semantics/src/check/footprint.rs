@@ -7,7 +7,7 @@
 //! names an object by its role in the operation ([`FootprintObject`]); the
 //! engine instantiates the roles per transition identity.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 
 use filament_exact::{EffectiveId, NodeKey, ValueType};
 use filament_semantic_value::declaration::TypeEnvironment;
@@ -159,10 +159,37 @@ pub fn derive_selected_footprint(
     arguments: &[(String, EffectiveId)],
     select: &dyn Fn(NodeKey) -> bool,
 ) -> Result<SymbolicFootprint, FootprintRefusal> {
+    derive_selected_footprint_with_reference_literals(
+        graph,
+        model,
+        receiver_type,
+        declaring,
+        operation,
+        arguments,
+        &BTreeMap::new(),
+        select,
+    )
+}
+
+/// [`derive_selected_footprint`] with the subject-bound created reference
+/// literals. Fixed literals are constants; each created literal reads the
+/// membership of the population selected during FR-120 subject admission.
+pub fn derive_selected_footprint_with_reference_literals(
+    graph: &CheckedGraph,
+    model: &StateModel,
+    receiver_type: EffectiveId,
+    declaring: EffectiveId,
+    operation: &OperationDeclaration,
+    arguments: &[(String, EffectiveId)],
+    reference_literals: &BTreeMap<(EffectiveId, Vec<u8>), Vec<DeclarationKey>>,
+    select: &dyn Fn(NodeKey) -> bool,
+) -> Result<SymbolicFootprint, FootprintRefusal> {
     derive_from(
         graph.scope().types(),
         graph.state_clauses(),
         model,
+        Some(graph),
+        Some(reference_literals),
         Operation {
             receiver_type,
             declaring,
@@ -187,8 +214,32 @@ pub fn derive_attempt_footprint_fallback(
     arguments: &[(String, EffectiveId)],
     select: &dyn Fn(NodeKey) -> bool,
 ) -> Result<SymbolicFootprint, FootprintRefusal> {
+    derive_attempt_footprint_fallback_with_reference_literals(
+        graph,
+        model,
+        receiver_type,
+        declaring,
+        operation,
+        arguments,
+        &BTreeMap::new(),
+        select,
+    )
+}
+
+/// [`derive_attempt_footprint_fallback`] with the subject-bound created
+/// reference literals.
+pub fn derive_attempt_footprint_fallback_with_reference_literals(
+    graph: &CheckedGraph,
+    model: &StateModel,
+    receiver_type: EffectiveId,
+    declaring: EffectiveId,
+    operation: &OperationDeclaration,
+    arguments: &[(String, EffectiveId)],
+    reference_literals: &BTreeMap<(EffectiveId, Vec<u8>), Vec<DeclarationKey>>,
+    select: &dyn Fn(NodeKey) -> bool,
+) -> Result<SymbolicFootprint, FootprintRefusal> {
     let derivation = Derivation {
-        reader: Reader::for_graph(graph, model)?,
+        reader: Reader::for_graph_with_reference_literals(graph, model, reference_literals)?,
         clauses: graph.state_clauses(),
         receiver_type,
         declaring,
@@ -215,6 +266,8 @@ pub(crate) fn derive_from(
     types: &TypeEnvironment,
     clauses: &[CheckedStateClause],
     model: &StateModel,
+    graph: Option<&CheckedGraph>,
+    reference_literals: Option<&BTreeMap<(EffectiveId, Vec<u8>), Vec<DeclarationKey>>>,
     operation: Operation<'_>,
     select: &dyn Fn(NodeKey) -> bool,
 ) -> Result<SymbolicFootprint, FootprintRefusal> {
@@ -225,7 +278,13 @@ pub(crate) fn derive_from(
         arguments,
     } = operation;
     let derivation = Derivation {
-        reader: Reader::new(types, model)?,
+        reader: match (graph, reference_literals) {
+            (Some(graph), Some(reference_literals)) => {
+                Reader::for_graph_with_reference_literals(graph, model, reference_literals)?
+            }
+            (Some(graph), None) => Reader::for_graph(graph, model)?,
+            _ => Reader::new(types, model)?,
+        },
         clauses,
         receiver_type,
         declaring,
@@ -526,6 +585,7 @@ struct Reader<'a> {
     model: &'a StateModel,
     populations: Vec<PopulationTypes>,
     graph: Option<&'a CheckedGraph>,
+    reference_literals: Option<&'a BTreeMap<(EffectiveId, Vec<u8>), Vec<DeclarationKey>>>,
 }
 
 impl<'a> Reader<'a> {
@@ -535,6 +595,7 @@ impl<'a> Reader<'a> {
             model,
             populations: populations(model)?,
             graph: None,
+            reference_literals: None,
         })
     }
 
@@ -544,6 +605,21 @@ impl<'a> Reader<'a> {
             model,
             populations: populations(model)?,
             graph: Some(graph),
+            reference_literals: None,
+        })
+    }
+
+    fn for_graph_with_reference_literals(
+        graph: &'a CheckedGraph,
+        model: &'a StateModel,
+        reference_literals: &'a BTreeMap<(EffectiveId, Vec<u8>), Vec<DeclarationKey>>,
+    ) -> Result<Self, FootprintRefusal> {
+        Ok(Self {
+            types: graph.scope().types(),
+            model,
+            populations: populations(model)?,
+            graph: Some(graph),
+            reference_literals: Some(reference_literals),
         })
     }
 
@@ -569,6 +645,7 @@ impl<'a> Reader<'a> {
                 | NodeKind::Reaches { .. }
                 | NodeKind::AllInstances { .. }
                 | NodeKind::Lookup { .. }
+                | NodeKind::ReferenceLiteral { .. }
                 | NodeKind::Navigate { .. }
                 | NodeKind::ReachesEnd { .. }
                 | NodeKind::ProtocolReference { .. }
@@ -635,6 +712,24 @@ impl<'a> Reader<'a> {
                     },
                     scope.observation,
                 )),
+                NodeKind::ReferenceLiteral {
+                    object_type,
+                    identity,
+                } => {
+                    if let Some(populations) = self
+                        .reference_literals
+                        .and_then(|literals| literals.get(&(object_type.clone(), identity.clone())))
+                    {
+                        reads.extend(populations.iter().map(|population| {
+                            (
+                                SymbolicLocation::AnyMembership {
+                                    population: population.clone(),
+                                },
+                                scope.observation,
+                            )
+                        }));
+                    }
+                }
                 NodeKind::Call { .. }
                 | NodeKind::ImportedCall { .. }
                 | NodeKind::Dispatch { .. }
@@ -724,6 +819,24 @@ impl<'a> Reader<'a> {
             form,
         };
         match node.kind() {
+            NodeKind::ReferenceLiteral {
+                object_type,
+                identity,
+            } => {
+                if let Some(populations) = self
+                    .reference_literals
+                    .and_then(|literals| literals.get(&(object_type.clone(), identity.clone())))
+                {
+                    reads.extend(populations.iter().map(|population| {
+                        (
+                            SymbolicLocation::AnyMembership {
+                                population: population.clone(),
+                            },
+                            observation,
+                        )
+                    }));
+                }
+            }
             NodeKind::Attribute {
                 reference, field, ..
             } => {
