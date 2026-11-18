@@ -89,21 +89,26 @@ fn emitted_text(unit: &str) -> Result<(Emission, Value, Read), Vec<CheckRefusal>
             })
         })
     }));
-    selections.extend(graph.temporal_clauses().iter().filter_map(|temporal| {
-        matches!(
-            temporal.clause().profile(),
-            fsl_semantics::check::TemporalProfile::EventPositionFalseExtension
-                | fsl_semantics::check::TemporalProfile::FixedSampleFalseExtension
-                | fsl_semantics::check::TemporalProfile::TimestampedEventFiniteWindow
-        )
-        .then(|| {
-            crate::emit::TemporalClockSelection::new(
-                graph.source().clone(),
-                temporal.clause().span(),
-                clock.clone(),
-            )
-        })
-    }));
+    selections.extend(
+        graph
+            .temporal_clauses()
+            .iter()
+            .filter(|temporal| {
+                matches!(
+                    temporal.clause().profile(),
+                    fsl_semantics::check::TemporalProfile::EventPositionFalseExtension
+                        | fsl_semantics::check::TemporalProfile::FixedSampleFalseExtension
+                        | fsl_semantics::check::TemporalProfile::TimestampedEventFiniteWindow
+                )
+            })
+            .map(|temporal| {
+                crate::emit::TemporalClockSelection::new(
+                    graph.source().clone(),
+                    temporal.clause().span(),
+                    clock.clone(),
+                )
+            }),
+    );
     let emission = crate::emit::emit_checked_with_temporal_selections(
         &CheckedPackage::link(graph),
         &selections,
@@ -142,7 +147,7 @@ fn checked_graph(unit: &str) -> Result<fsl_semantics::check::CheckedGraph, Vec<C
 /// awaited event and a required temporal clause to clock configurations.
 #[trace("TC-2525", "FR-892-AC-1")]
 #[test]
-#[ignore = "Blocked by QSL-1964: Contract IR refuses await temporal bindings with InvalidPackage/TimedNodeReference."]
+#[ignore = "Blocked by QSL-2391: Contract IR must admit await-keyed temporal bindings."]
 fn a_compensation_and_a_timed_await_emit_together() {
     let temporal =
         "temporal Due using t over (c: M::Ledger) clock \"model-steps\" on origin { always[0,120] true }\n";
@@ -234,7 +239,7 @@ fn a_timed_unit_without_clock_selection_is_refused_by_declaration_name() {
     ));
     let message = refusal.to_string();
     assert!(
-        message.contains("compensate template Flow::Full"),
+        message.contains("compensate template `Flow::Full`"),
         "{message}"
     );
     assert!(!message.contains("temporal declaration"), "{message}");
@@ -277,21 +282,26 @@ fn a_missing_await_clock_names_the_await() {
             )
         })
         .collect::<Vec<_>>();
-    selections.extend(graph.temporal_clauses().iter().filter_map(|temporal| {
-        matches!(
-            temporal.clause().profile(),
-            fsl_semantics::check::TemporalProfile::EventPositionFalseExtension
-                | fsl_semantics::check::TemporalProfile::FixedSampleFalseExtension
-                | fsl_semantics::check::TemporalProfile::TimestampedEventFiniteWindow
-        )
-        .then(|| {
-            crate::emit::TemporalClockSelection::new(
-                graph.source().clone(),
-                temporal.clause().span(),
-                clock.clone(),
-            )
-        })
-    }));
+    selections.extend(
+        graph
+            .temporal_clauses()
+            .iter()
+            .filter(|temporal| {
+                matches!(
+                    temporal.clause().profile(),
+                    fsl_semantics::check::TemporalProfile::EventPositionFalseExtension
+                        | fsl_semantics::check::TemporalProfile::FixedSampleFalseExtension
+                        | fsl_semantics::check::TemporalProfile::TimestampedEventFiniteWindow
+                )
+            })
+            .map(|temporal| {
+                crate::emit::TemporalClockSelection::new(
+                    graph.source().clone(),
+                    temporal.clause().span(),
+                    clock.clone(),
+                )
+            }),
+    );
     let refusal = crate::emit::emit_checked_with_temporal_selections(
         &CheckedPackage::link(graph),
         &selections,

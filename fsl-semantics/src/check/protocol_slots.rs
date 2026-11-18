@@ -47,7 +47,9 @@ use fsl_foundation::{diagnostic::Locus, Span};
 use super::check::{NamedScope, Scope};
 use super::ir::CheckedBody;
 use super::lowering::{protocol_location, ProtocolSite};
-use super::protocol_clause::{record_binder, written_owner, CheckedProtocol, ProtocolNodeId};
+use super::protocol_clause::{
+    record_binder, written_owner, BoundAttempt, CheckedProtocol, ProtocolNodeId,
+};
 use super::protocol_obligation::{model_state_reads, span_of, type_named_body, wraps, Goal};
 use super::refusal::{
     ArmFault, CheckCause, CheckRefusal, ObservationReason, ProtocolAnchorCause, RelatedEnd,
@@ -303,6 +305,10 @@ struct Binder {
     name: String,
     value_type: ValueType,
     origin: BinderOrigin,
+    /// FR-218 "Attempts": for an attempt binder whose declared type is not
+    /// its operation's result type, that result type (`None` for an
+    /// operation with no result); every read of the binder is refused.
+    unreadable: Option<Option<ValueType>>,
 }
 
 /// Whether a binder is a decision fact of a role (FR-218 "Choice and
@@ -566,10 +572,10 @@ impl Checker<'_, '_> {
         };
         self.formed_units.append(formed_units);
         if slot.bars_model_state {
-            let input = self
-                .binders
-                .iter()
-                .position(|binder| binder.origin == BinderOrigin::Input);
+            let input = self.binders.iter().position(|binder| {
+                binder.origin == BinderOrigin::Input
+                    && matches!(binder.value_type, ValueType::Reference(_))
+            });
             let reads = model_state_reads(&body, slot.form, input);
             if !reads.is_empty() {
                 for span in reads {
@@ -586,6 +592,7 @@ impl Checker<'_, '_> {
             return Some((body, slot_names));
         }
         let mut out_of_scope = Vec::new();
+        let mut unreadable = Vec::new();
         let mut read = BTreeSet::new();
         for checked in body.root().descendants() {
             let NodeKind::Local(local) = checked.kind() else {
@@ -595,10 +602,19 @@ impl Checker<'_, '_> {
                 // A `let` or quantifier local of the slot itself.
                 continue;
             };
-            if slot.readable.contains(local) {
-                read.insert(*local);
-            } else {
+            if !slot.readable.contains(local) {
                 out_of_scope.push((binder.name.clone(), span_of(slot.form, checked.location())));
+            } else if let Some(expected) = &binder.unreadable {
+                // FR-218-AC-44: no value of the binder's type exists in the
+                // record, so the read is refused there.
+                unreadable.push(ProtocolAnchorCause::AttemptBinderRead {
+                    binder: binder.name.clone(),
+                    expected_result: expected.clone().map(Box::new),
+                    actual_result: Box::new(binder.value_type.clone()),
+                    span: span_of(slot.form, checked.location()),
+                });
+            } else {
+                read.insert(*local);
             }
         }
         if !out_of_scope.is_empty() {
@@ -609,6 +625,12 @@ impl Checker<'_, '_> {
                     cause: Box::new(CheckCause::MissingName(name)),
                     span,
                 });
+            }
+            return None;
+        }
+        if !unreadable.is_empty() {
+            for cause in unreadable {
+                self.refuse(cause);
             }
             return None;
         }
@@ -1001,11 +1023,7 @@ fn atoms<'f>(visible: &'f [ExpressionForm], guards: &[&'f ExpressionForm]) -> At
 }
 
 fn insert_atom<'a>(node: ExprRef<'a>, atoms: &mut Atoms<'a>) {
-    if !atoms
-        .expressions
-        .iter()
-        .any(|atom| same_atom(*atom, node))
-    {
+    if !atoms.expressions.iter().any(|atom| same_atom(*atom, node)) {
         atoms.expressions.push(node);
     }
 }
@@ -1044,6 +1062,7 @@ fn atom_indices<'a>(
 pub(crate) fn check(
     protocol: &ProtocolDeclarationForm,
     checked: &CheckedProtocol,
+    attempts: &[BoundAttempt],
     declarations: &ClauseDeclarations<'_>,
     cx: &mut CheckContext<'_, ClauseDeclarations<'_>>,
     regions: &crate::check::DeclarationRegions,
@@ -1062,6 +1081,7 @@ pub(crate) fn check(
                 name: name.to_owned(),
                 value_type,
                 origin,
+                unreadable: None,
             }),
             Err(_) => unresolved = true,
         };
@@ -1118,8 +1138,16 @@ pub(crate) fn check(
             &binder.value_type,
             BinderOrigin::Node(index),
         );
-        if binders.len() > before {
+        if let Some(pushed) = binders.get_mut(before) {
             node_binder.insert(index, before);
+            // FR-218 "Attempts": any declared type is admitted; a read gets
+            // the result only when the type is the operation's result type.
+            if let Some(attempt) = attempts.iter().find(|attempt| attempt.declaration == index) {
+                let result = attempt.operation.declaration.result();
+                if result != Some(&pushed.value_type) {
+                    pushed.unreadable = Some(result.cloned());
+                }
+            }
         }
     }
     if unresolved {
@@ -1240,7 +1268,8 @@ pub(crate) fn check(
             if checked_relationship.connection.is_some() {
                 checker.refuse(ProtocolAnchorCause::RelatedConnection {
                     name: name.name.clone(),
-                    message: "a connection relates ports, not values; bind it to a channel with via",
+                    message:
+                        "a connection relates ports, not values; bind it to a channel with via",
                     span: name.span,
                 });
                 continue;

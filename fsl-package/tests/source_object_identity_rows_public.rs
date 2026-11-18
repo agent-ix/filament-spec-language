@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //! The public source-object identity-row API preserves FR-531 member facts.
 
+#![cfg(feature = "std")]
+
 use filament_contract_model::{
     CheckedPackageEvidence, CheckedPackageReadLimits, CheckedPackageV2, CheckedPackageV2ReadResult,
     NativeJoinBudget,
@@ -8,6 +10,7 @@ use filament_contract_model::{
 use filament_semantic_value::checking::{CheckMode, CheckingLimits};
 use fsl_package::{
     emit_checked, CheckedPackage, EmitLimits, ReadIdentityRows, SourceObjectMemberFacts,
+    SourceObjectOperationFacts,
 };
 use fsl_semantics::{
     check::PackageDeclarations,
@@ -19,11 +22,13 @@ use fsl_semantics::{
 use ix_trace_rs::trace;
 use serde_json::{json, Value};
 
-fn checked_source_object() -> (CheckedPackage, filament_contract_model::CheckedPackageV2) {
-    let source = b"language \"ix:native\" edition \"1-draft\";\n\
-        profile P = \"filament.model.complete/v1\";\n\
-        record Point { x: Integer; }\n\
-        object Order { point: Point; }\n";
+const HEADER: &str = "language \"ix:native\" edition \"1-draft\";\n\
+    profile P = \"filament.model.complete/v1\";\n\
+    record Point { x: Integer; }\n";
+
+fn checked_source_object(
+    source: &[u8],
+) -> (CheckedPackage, filament_contract_model::CheckedPackageV2) {
     let parsed = fsl_cst::parse(
         fsl_foundation::SourceIdentity::new("agent-ix", "test:public-source-object-rows"),
         "program.native",
@@ -72,10 +77,9 @@ fn checked_source_object() -> (CheckedPackage, filament_contract_model::CheckedP
     (package, *checked)
 }
 
-#[trace("FR-531-AC-8", "FR-569-AC-8", "TC-1408")]
-#[test]
-fn public_source_object_rows_constructor_serializes_nonempty_member_facts() {
-    let (source_package, checked_package) = checked_source_object();
+/// The identity file the public constructor serializes for `source`.
+fn serialized_identities(source: &str, objects: usize) -> Value {
+    let (source_package, checked_package) = checked_source_object(source.as_bytes());
     let emission =
         emit_checked(&source_package, EmitLimits::new(10_000_000)).expect("the package emits");
     let rows = emission
@@ -89,8 +93,14 @@ fn public_source_object_rows_constructor_serializes_nonempty_member_facts() {
         .iter()
         .map(Clone::clone)
         .collect();
-    assert_eq!(member_facts.len(), 1);
-    assert_eq!(member_facts[0].len(), 1);
+    let operations: Vec<Vec<SourceObjectOperationFacts>> = emission
+        .source_object_operations()
+        .iter()
+        .map(Clone::clone)
+        .collect();
+    assert_eq!(member_facts.len(), objects);
+    assert!(member_facts.iter().all(|facts| facts.len() == 1));
+    assert_eq!(operations.len(), objects);
 
     let constructed = ReadIdentityRows::of_rows_with_source_rows(
         &checked_package,
@@ -101,11 +111,20 @@ fn public_source_object_rows_constructor_serializes_nonempty_member_facts() {
         rows.source_objects().to_vec(),
         rows.source_operations().to_vec(),
         member_facts,
+        operations,
     );
     let bytes = constructed
         .to_bytes(&checked_package)
         .expect("the public constructor serializes its object member facts");
     let identities: Value = serde_json::from_slice(&bytes).expect("identity JSON");
+    identities
+}
+
+#[trace("FR-531-AC-8", "FR-569-AC-8", "TC-1408")]
+#[test]
+fn public_source_object_rows_constructor_serializes_nonempty_member_facts() {
+    let identities =
+        serialized_identities(&format!("{HEADER}object Order {{ point: Point; }}\n"), 1);
     let member = &identities["source_objects"][0]["members"][0];
     assert_eq!(member["admitted_name"], "point");
     assert_eq!(member["presence"], "required");
@@ -113,4 +132,37 @@ fn public_source_object_rows_constructor_serializes_nonempty_member_facts() {
     assert!(member["value_type"].is_object());
     assert!(member["type_node"].is_object());
     assert_eq!(identities["source_objects"][0]["abstract"], json!(false));
+    assert_eq!(identities["source_objects"][0]["operations"], json!([]));
+}
+
+/// FR-569-AC-16 through the public constructor: own operations only, each
+/// `{identity, query}`. Runs once the reader admits source `operation_bodies`.
+#[trace("FR-531-AC-8", "FR-569-AC-16", "TC-1408")]
+#[test]
+#[ignore = "QSL-2347: the reader admits source operation_bodies rows; not implemented yet"]
+fn public_source_object_rows_constructor_serializes_own_operations() {
+    let identities = serialized_identities(
+        &format!(
+        "{HEADER}object Order {{ point: Point; operation size(): Integer; operation bump(): Boolean modifies self.point; }}\nobject Sub extends Order {{ operation size(): Integer redefines Order::size; }}\n"
+        ),
+        2,
+    );
+    let objects = identities["source_objects"].as_array().expect("rows");
+    let row = |name: &str| {
+        objects
+            .iter()
+            .find(|row| row["source_identity"] == name)
+            .unwrap_or_else(|| panic!("row for {name}"))
+    };
+    assert_eq!(
+        row("Order")["operations"],
+        json!([
+            {"identity": "Order::size", "query": true},
+            {"identity": "Order::bump", "query": false},
+        ])
+    );
+    assert_eq!(
+        row("Sub")["operations"],
+        json!([{"identity": "Sub::size", "query": true}])
+    );
 }

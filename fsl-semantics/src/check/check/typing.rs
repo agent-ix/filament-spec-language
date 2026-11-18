@@ -17,8 +17,8 @@
 //! that typer's.
 
 use filament_checked::node::{
-    CheckedLiteral, Connective, ConnectiveOrigin, IntegerDivisionOperator, NodeKind, RecordSlot,
-    Visit,
+    CheckedLiteral, Connective, ConnectiveOrigin, IndexedKind, IntegerDivisionOperator, NodeKind,
+    RecordSlot, Visit,
 };
 use std::borrow::Cow;
 use std::sync::Arc;
@@ -33,16 +33,16 @@ use crate::check::family::Application;
 use crate::check::ir::{CheckedBody, IntegerRange, Node, NodeId, Slot};
 use crate::check::refusal::{
     CheckCause, CheckRefusal, CheckingLimitKind, CheckingStage, IdentityForm, IdentityNode,
-    KeyFault, Obligation, StageLimitCause,
+    KeyFault, StageLimitCause,
 };
 use crate::check::sum_case::{ArmHead, CaseBuilder, UnionMember, UnionRef};
 use crate::check::type_form::{IntegerOutsideI128, IntegerSite};
 use crate::check::DispatchOperation;
 use filament_exact::Cancel;
 use filament_exact::{
-    ArithmeticOperator, CollectionKind, CollectionType, FloatType, IeeeValue, IeeeWidth,
-    IllTypedCause, Integer, IntegerInterval, NodeKey, OrderingOperator, RoundingMode, Value,
-    ValueType,
+    ArithmeticOperator, CollectionKind, CollectionType, DecimalType, FloatType, IeeeValue,
+    IeeeWidth, IllTypedCause, Integer, IntegerInterval, NodeKey, OrderingOperator, Rational,
+    RationalDomain, RoundingMode, Value, ValueType,
 };
 use filament_semantic_value::absence::AbsenceMode;
 use filament_semantic_value::call::WrongSnapshotCause;
@@ -275,9 +275,15 @@ enum Frame<'e, 'r> {
     /// `operand[index]` after its source expression is typed.
     Index(Box<IndexFrame<'e>>),
     /// The key type of a map index after its key expression is typed.
-    IndexKey(Location),
+    IndexKey(Box<(Node, Location)>),
     /// The element-position obligation after the index has integer type.
-    IndexPosition(u64, ExprRef<'e>, Location),
+    IndexPosition(
+        NodeId,
+        filament_checked::node::IndexedKind,
+        ValueType,
+        ExprRef<'e>,
+        Location,
+    ),
     /// `present(r.f)` or `present(r.f.c)` of a guarded clock place: the
     /// field's name, the union case, and the `present` node's location;
     /// admits the typed owner `r` (FR-230 "Presence is derived").
@@ -863,6 +869,44 @@ fn ordered<T>(right_first: bool, first: T, second: T) -> (T, T) {
     }
 }
 
+/// A decimal literal used as a quantity scale factor has no peer decimal
+/// type to supply its contextual domain. Give it the exact singleton domain
+/// of its written coefficient and scale; FR-142 scaling consumes only its
+/// exact value, not a widened carrier range.
+fn exact_decimal_literal_type(expression: ExprRef<'_>) -> Option<ValueType> {
+    let ExprNode::DecimalValue {
+        coefficient, scale, ..
+    } = expression.node()
+    else {
+        return None;
+    };
+    let domain = DecimalType::new(
+        coefficient.clone(),
+        coefficient.clone(),
+        u64::from(*scale),
+        u64::from(*scale),
+        RoundingMode::Exact,
+    )
+    .ok()?;
+    Some(ValueType::Decimal(domain))
+}
+
+/// A rational literal used as a quantity scale factor has no peer rational
+/// type to supply its contextual range. Give it the singleton range of its
+/// reduced exact value; FR-142 scaling consumes only that value.
+fn exact_rational_literal_type(expression: ExprRef<'_>) -> Option<ValueType> {
+    let ExprNode::Rational(numerator, denominator) = expression.node() else {
+        return None;
+    };
+    let value = Rational::new(numerator.clone(), denominator.clone()).ok()?;
+    let numerator = value.numerator().clone();
+    let denominator = value.denominator().clone();
+    let numerator = IntegerInterval::new(numerator.clone(), numerator).ok()?;
+    let denominator = IntegerInterval::new(denominator.clone(), denominator).ok()?;
+    let domain = RationalDomain::new(numerator, denominator).ok()?;
+    Some(ValueType::Rational(domain))
+}
+
 impl<'a> Typer<'a> {
     /// Type `expression` where `required` is expected. A conditional or `let`
     /// passes the requirement into its branches or body.
@@ -1259,6 +1303,56 @@ impl<'a> Typer<'a> {
                 ValueType::String,
                 &location,
             ),
+            ExprNode::ReferenceLiteral {
+                type_name,
+                key,
+                key_span,
+            } => {
+                let declared = self.type_named(&type_name.name, &location)?;
+                let Some(object_type) = self.source_scope().object_type_named(&type_name.name)
+                else {
+                    return Err(CheckRefusal {
+                        location,
+                        cause: CheckCause::ReferenceLiteralTypeMismatch {
+                            name: type_name.clone(),
+                            actual: declared,
+                        },
+                    });
+                };
+                let identity = key.text().as_bytes().to_vec();
+                let kind = match filament_checked::construct::reference_literal(
+                    object_type.clone(),
+                    identity.clone(),
+                ) {
+                    Ok(_) => NodeKind::ReferenceLiteral {
+                        object_type: object_type.clone(),
+                        identity,
+                    },
+                    Err(filament_checked::construct::ReferenceLiteralError::EmptyIdentity) => {
+                        return Err(CheckRefusal {
+                            location,
+                            cause: CheckCause::EmptyReferenceLiteralKey { span: *key_span },
+                        });
+                    }
+                    Err(
+                        filament_checked::construct::ReferenceLiteralError::InvalidIdentityEncoding,
+                    ) => {
+                        // `key.text()` is a Rust string, so this branch can
+                        // only mean the checked-node constructor violated its
+                        // own UTF-8 contract.
+                        return Err(CheckRefusal {
+                            location,
+                            cause: CheckCause::InternalFault(Box::new(KeyFault::StageFault(
+                                filament_semantic_value::catalog::InternalFault::new(
+                                    "FR-480",
+                                    "decoded-reference-key-is-valid-utf8",
+                                ),
+                            ))),
+                        });
+                    }
+                };
+                node(kind, ValueType::Reference(object_type), &location)
+            }
             ExprNode::Rational(numerator, denominator) => {
                 self.rational_literal(numerator, denominator, hint.as_deref(), &location)?
             }
@@ -1369,7 +1463,7 @@ impl<'a> Typer<'a> {
                     CheckRefusal::ill_typed(&location, IllTypedCause::OperatorIneligible)
                 } else {
                     missing_segment(&name.name, &location)
-                })
+                });
             }
             ExprNode::Name(name) if self.population_named(&name.name).is_some() => {
                 self.population_objects(&name.name, &location)?
@@ -1418,7 +1512,7 @@ impl<'a> Typer<'a> {
                     (expression, case),
                     location,
                     frames,
-                ))
+                ));
             }
             ExprNode::Let {
                 name,
@@ -1961,7 +2055,7 @@ impl<'a> Typer<'a> {
                     (expression.at(*source), expression.at(*predicate)),
                     location,
                     frames,
-                )
+                );
             }
             ExprNode::Sum {
                 result_type_span: _,
@@ -2721,20 +2815,19 @@ impl<'a> Typer<'a> {
         }
     }
 
-    /// Type the index form's source and static selector constraints. The
-    /// checked IR currently has no tuple projection, map lookup, or collection
-    /// index node, so a proved read remains unsupported after its source-level
-    /// type checks.
+    /// Type the index form's source and static selector constraints. Map
+    /// lookup and sequence or ordered-set indexing produce separate checked
+    /// nodes; tuple projection remains unsupported.
     fn accept_index<'e, 'r>(
         &mut self,
-        frame: Box<IndexFrame<'e>>,
+        frame: IndexFrame<'e>,
         source: Node,
         frames: &mut Vec<Frame<'e, 'r>>,
     ) -> Result<Step<'e, 'r>, CheckRefusal>
     where
         'a: 'r,
     {
-        let IndexFrame { index, location } = *frame;
+        let IndexFrame { index, location } = frame;
         match &source.value_type {
             ValueType::Composite(declaration) => {
                 let positions =
@@ -2783,10 +2876,11 @@ impl<'a> Typer<'a> {
             }
             ValueType::Map(map_type) => {
                 let key_location = location.child(1);
-                frames.push(Frame::IndexKey(location));
+                let key = map_type.key().clone();
+                frames.push(Frame::IndexKey(Box::new((source, location))));
                 Ok(Step::Descend(Goal::Expect(
                     index,
-                    Expected::Checked(Cow::Owned(map_type.key().clone())),
+                    Expected::Checked(Cow::Owned(key)),
                     key_location,
                 )))
             }
@@ -2796,9 +2890,26 @@ impl<'a> Typer<'a> {
                     CollectionKind::Sequence | CollectionKind::OrderedSet
                 ) =>
             {
-                let minimum = collection.bound().map_or(0, |bound| bound.minimum());
                 let index_location = location.child(1);
-                frames.push(Frame::IndexPosition(minimum, index, location));
+                let kind = match collection.kind() {
+                    CollectionKind::Sequence => filament_checked::node::IndexedKind::Sequence,
+                    CollectionKind::OrderedSet => filament_checked::node::IndexedKind::OrderedSet,
+                    _ => {
+                        return Err(CheckRefusal::ill_typed(
+                            &location,
+                            IllTypedCause::OperatorIneligible,
+                        ));
+                    }
+                };
+                let value_type = collection.element().clone();
+                let collection_id = self.push(source);
+                frames.push(Frame::IndexPosition(
+                    collection_id,
+                    kind,
+                    value_type,
+                    index,
+                    location,
+                ));
                 Ok(Step::Descend(Goal::Expect(
                     index,
                     Expected::Checked(Cow::Owned(ValueType::Integer)),
@@ -2857,33 +2968,33 @@ impl<'a> Typer<'a> {
             Frame::Field(field, member_span, location) => self
                 .field(typed, field, member_span, &location)
                 .map(Step::Typed),
-            Frame::Index(frame) => self.accept_index(frame, typed, frames),
-            Frame::IndexKey(location) => Err(refuse(
-                &location,
-                CheckCause::UnsupportedFeature {
-                    loci: vec![location.clone()],
-                },
-            )),
-            Frame::IndexPosition(minimum, index, location) => {
-                let proved = match index.node() {
-                    ExprNode::Integer(position) => {
-                        position.to_u64().is_some_and(|position| position < minimum)
-                    }
-                    _ => false,
+            Frame::Index(frame) => self.accept_index(*frame, typed, frames),
+            Frame::IndexKey(frame) => {
+                let (collection, location) = *frame;
+                let ValueType::Map(map_type) = &collection.value_type else {
+                    return Err(mismatch(&location));
                 };
-                let index_location = location.child(1);
-                if !proved {
-                    return Err(refuse(
-                        &index_location,
-                        CheckCause::Unproved(Obligation::Presence),
-                    ));
-                }
-                Err(refuse(
-                    &index_location,
-                    CheckCause::UnsupportedFeature {
-                        loci: vec![index_location.clone()],
+                let value_type = map_type.values().clone();
+                Ok(Step::Typed(node(
+                    NodeKind::Index {
+                        collection: self.push(collection),
+                        index: self.push(typed),
+                        kind: IndexedKind::Map,
                     },
-                ))
+                    value_type,
+                    &location,
+                )))
+            }
+            Frame::IndexPosition(collection, kind, value_type, _index, location) => {
+                Ok(Step::Typed(node(
+                    NodeKind::Index {
+                        collection,
+                        index: self.push(typed),
+                        kind,
+                    },
+                    value_type,
+                    &location,
+                )))
             }
             Frame::SlotPresence(field, all, location) => self
                 .slot_presence(typed, field, all, &location)
@@ -3425,6 +3536,16 @@ impl<'a> Typer<'a> {
             } => match pair {
                 Pair::First(second, second_location) => {
                     let peer = typed.value_type.clone();
+                    let second_hint = if operator == ArithmeticOperator::Multiply
+                        && matches!(&peer, ValueType::Quantity(_))
+                    {
+                        exact_rational_literal_type(second)
+                            .or_else(|| exact_decimal_literal_type(second))
+                            .map(Cow::Owned)
+                            .unwrap_or_else(|| Cow::Owned(peer))
+                    } else {
+                        Cow::Owned(peer)
+                    };
                     frames.push(Frame::Peer(Box::new(PeerFrame {
                         form: PeerForm::Arithmetic {
                             operator,
@@ -3436,7 +3557,7 @@ impl<'a> Typer<'a> {
                     })));
                     Ok(Step::Descend(Goal::Infer(
                         second,
-                        Some(Cow::Owned(peer)),
+                        Some(second_hint),
                         second_location,
                     )))
                 }
@@ -3496,8 +3617,9 @@ impl<'a> Typer<'a> {
                         Ok(Step::Descend(goal))
                     }
                     Pair::Second(first) => {
-                        let (left, right) = ordered(right_first, first, typed);
-                        let (left, right) = self.admit_sum_into_peer(left, right)?;
+                        let (mut left, mut right) = ordered(right_first, first, typed);
+                        (left, right) = self.admit_sum_into_peer(left, right)?;
+                        self.annotate_equality_range_context(&mut left, &mut right);
                         self.equality(operator, left, right, &location)
                             .map(Step::Typed)
                     }
@@ -3539,6 +3661,37 @@ impl<'a> Typer<'a> {
             return Ok((left, right));
         }
         Ok((left, right))
+    }
+
+    fn annotate_equality_range_context(&self, left: &mut TypedOperand, right: &mut TypedOperand) {
+        if let Some(context) = self.equality_range_context(left, right) {
+            left.node.equality_range_context = Some(context);
+        } else if let Some(context) = self.equality_range_context(right, left) {
+            right.node.equality_range_context = Some(context);
+        }
+    }
+
+    fn equality_range_context(
+        &self,
+        arithmetic: &TypedOperand,
+        peer: &TypedOperand,
+    ) -> Option<super::super::ir::EqualityRangeContext> {
+        let NodeKind::Coerce(operand, _) = &arithmetic.node.kind else {
+            return None;
+        };
+        let NodeKind::Arithmetic(..) = &self.body.get(*operand)?.kind else {
+            return None;
+        };
+        let NodeKind::Local(slot) = &peer.node.kind else {
+            return None;
+        };
+        let ValueType::Int(interval) = &peer.node.value_type else {
+            return None;
+        };
+        Some(super::super::ir::EqualityRangeContext {
+            expected: format!("Int[{}, {}]", interval.lower(), interval.upper()),
+            operand: self.slot_names.get(*slot)?.clone(),
+        })
     }
 
     fn accept_unary(&mut self, frame: UnaryFrame<'_>, operand: Node) -> Result<Node, CheckRefusal> {
@@ -3624,7 +3777,9 @@ impl<'a> Typer<'a> {
                         &location,
                     )?
                 } else {
-                    self.element_type(&operand)?;
+                    if !matches!(operand.value_type, ValueType::Map(_)) {
+                        self.element_type(&operand)?;
+                    }
                     ValueType::Integer
                 };
                 let sized = node(NodeKind::Size(self.push(operand)), value_type, &location);
@@ -3975,13 +4130,13 @@ impl<'a> Typer<'a> {
                             population,
                             &location,
                             Some(population_span),
-                        ))
+                        ));
                     }
                     None => {
                         return Err(refuse(
                             &location,
                             CheckCause::PopulationFormOutsideRefinement,
-                        ))
+                        ));
                     }
                 }
             }
@@ -4004,7 +4159,7 @@ impl<'a> Typer<'a> {
                     } else {
                         CheckCause::PopulationFormOutsideRefinement
                     },
-                ))
+                ));
             }
         };
         let element = self.element_type(&source)?;
@@ -4021,7 +4176,7 @@ impl<'a> Typer<'a> {
             (None, None) => {
                 return self
                     .finish_population(form, source, slot, None, None, &location)
-                    .map(Step::Typed)
+                    .map(Step::Typed);
             }
         };
         frames.push(Frame::Population(Box::new(PopulationFrame {
@@ -4288,7 +4443,12 @@ impl<'a> Typer<'a> {
     ) -> Result<Step<'e, 'r>, CheckRefusal> {
         match frame.collection.take() {
             None => {
-                let element = self.element_type(&typed)?;
+                // `contains(m, k)` on a map tests keys only (FSpec FR-144 "Map
+                // values"): its probe type is the key type.
+                let element = match (&typed.value_type, frame.form) {
+                    (ValueType::Map(map_type), ProbeForm::Contains) => map_type.key().clone(),
+                    _ => self.element_type(&typed)?,
+                };
                 let goal = Goal::Expect(
                     frame.item,
                     Expected::Checked(Cow::Owned(element.clone())),

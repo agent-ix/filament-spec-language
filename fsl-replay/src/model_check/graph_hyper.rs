@@ -808,6 +808,8 @@ fn accounting_value(limits: ScalarLimits, counter: LimitKind) -> u64 {
         LimitKind::ValueOccurrences => limits.value_occurrences,
         LimitKind::WorkUnits => limits.work_units,
         LimitKind::ResultUnits => limits.result_units,
+        // The live-occurrence cap is session-level and is not in ScalarLimits.
+        LimitKind::LiveOccurrences => 1_048_576,
     }
 }
 

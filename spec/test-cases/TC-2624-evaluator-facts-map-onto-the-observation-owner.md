@@ -10,16 +10,20 @@ relationships:
 
 ## Description
 
-Verify the half-tick interval mapping, trace admission, partial facts,
-activation and repair mapping, and the completeness revision rule. Scope:
-FR-944-AC-1 to FR-944-AC-4.
+Verify the quarter-tick interval mapping, its doubly-open strictness, the
+one-sided eligibility comparisons and its exactness at the domain edge, trace admission,
+partial facts, activation and repair mapping, and the completeness revision
+rule. Scope: FR-944-AC-1 to FR-944-AC-7.
 
 ## Test Procedure
 
-1. Compare `ClockCover`'s `definitely_before` and `within_bound` with the owner's `relation_to` on half-tick intervals for readings 0 to 6 and bounds 0 to 6, under `Counter { uncertainty: 1 }` and `Exact`.
+1. Compare `ClockCover`'s `definitely_before` and `within_bound` with the owner's `relation_to` on quarter-tick intervals for readings 0 to 6 and bounds 0 to 6, under `Counter { uncertainty: 1 }` and `Exact`.
 2. Admit FR-501-AC-13's trace through `filament_observation::admit` and read the atoms' partial facts.
 3. Derive FR-524-AC-27 to AC-29's activation views and FR-526-AC-2's repair plan.
 4. Apply FR-502-AC-2's cases through `completeness::revise`.
+5. Map FR-944-AC-5's request `(0, 1]` and acks `[3, 4)` and `[2, 3)` to quarter ticks, read `within_bound(3, ...)` through `relation_to`, and run `holds(req) implies eventually[0,3] holds(ack)` over each.
+6. Decide FR-944-AC-6's `at_least` and `at_most` cases on the scaled difference's endpoints and compare each with `ClockCover`'s eligibility.
+7. Map FR-944-AC-7's maximal readings and uncertainty and its extreme bounds, and compare `within_bound` and `definitely_before` with `ClockCover`'s.
 
 Test: `fsl-eval/tests/it/observation_owner.rs`.
 
@@ -29,3 +33,6 @@ Test: `fsl-eval/tests/it/observation_owner.rs`.
 - Step 2: one record per position with its FR-106 identity; possibility sets and reasons of the Kleene values.
 - Step 3: the evaluator's dispositions; exactly the superseded result invalidated.
 - Step 4: the refusals and acceptances FR-502's ledger gives.
+- Step 5: intervals `[1, 4]`, `[12, 15]` and `[8, 11]`; `Indeterminate` and `Indeterminate { reason: StraddlesBound }` for `[3, 4)`, `Completed(true)` for `[2, 3)`.
+- Step 6: each eligible, ineligible and `Indeterminate` (`StraddlesBound`) decision FR-944-AC-6 states, equal to `ClockCover`'s; no unbounded owner interval.
+- Step 7: the exact endpoints and scaled bounds FR-944-AC-7 states, and equal answers.

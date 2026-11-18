@@ -121,8 +121,8 @@ mod navigation;
 // package emitter's tests, so only `test-support` exposes them.
 #[cfg(any(test, feature = "test-support"))]
 pub mod depth_forms;
-// The sealed unions the evaluator's and replay's union tests run over, while
-// no checked package can hold a union (FR-319).
+// The sealed unions the evaluator's and replay's union tests run over,
+// hand-built rather than compiled from a checked package.
 #[cfg(any(test, feature = "test-support"))]
 pub mod union_fixture;
 // `imports` has no production caller yet (E3 imported-name resolution,
@@ -136,7 +136,7 @@ mod ir;
 mod key_order;
 pub use key_order::node_keys_within;
 mod layer;
-mod lowering;
+pub(crate) mod lowering;
 pub(crate) use assemble::variant_type_declarations;
 pub(crate) use lowering::record_node_key;
 pub use lowering::{protocol_site, ProtocolSite, RelatedSide};
@@ -163,7 +163,7 @@ mod refusal;
 mod region;
 mod settings;
 mod source_model;
-mod state_clause;
+pub(crate) mod state_clause;
 mod state_graph_claim;
 mod state_model;
 mod step_simulation;
@@ -181,6 +181,10 @@ pub use probabilistic::{
     PreconditionSite, ProbForm, ProbScheduler, ProbabilisticCause, ProbabilisticDeclaration,
     ProbabilisticFeature, ProbabilisticOperation, QualitativeForm, RandomParameter, ReachTarget,
     Reward, SupportValue, WeightOwner, Workload,
+};
+pub use probabilistic::{
+    PackageLiteral, PackageProbabilistic, PackageProbabilisticRefusal, PackageRandomParameter,
+    PackageSupport, PackageWeight, PackageWorkload,
 };
 pub use state_model::StateModelRefusal;
 pub use sum_case::{mint_union_member_key, ExhaustivenessObligation, SumCaseCause};
@@ -215,7 +219,7 @@ pub use type_invariant::{
 };
 
 use crate::model::domain_package::DomainPackageRef;
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 
 pub use check::FormedUnits;
 use check::{bind_parameters, NamedScope, Typer};
@@ -358,6 +362,19 @@ pub fn builtin_integer_type_key(
     )
 }
 
+/// The structural key of FSpec's built-in Boolean scalar type (FR-092): the
+/// result bound of a task-set claim's requirement record (FSL FR-246-AC-4),
+/// whose claim node sits beside the semantic graph.
+pub fn builtin_boolean_type_key(
+    package_name: &str,
+) -> Result<filament_exact::NodeKey, filament_exact::InvalidNodeKey> {
+    declared_node_key(
+        package_name.to_owned(),
+        vec!["scalar_type".to_owned(), "boolean".to_owned()],
+        0,
+    )
+}
+
 /// The structural key of FSpec's built-in Text scalar type (FR-092).
 /// Timed source metadata uses this primitive even when no source expression
 /// already caused its scalar node to enter the checked graph.
@@ -397,6 +414,7 @@ pub use ir::{
     EqualityUnitIdentityFact, EqualityUnitOperandRole, EqualityUnitTypeFact, Node, NodeId, Slot,
 };
 
+pub use assemble::model_operation_table;
 #[cfg(any(test, feature = "test-support"))]
 pub use assemble::model_type_environment;
 pub use assemble::{
@@ -530,6 +548,7 @@ pub use temporal_clause::{
     TemporalDeclarations, TemporalSelection, TemporalTraceFamily, TimeNominalForm, TimeNominalNode,
     TimeNominalOrigin, TimeSourceKind, TimedPropertyForm, UnaryTemporal, DEFAULT_CLOCK_ROLE,
 };
+pub use temporal_clause::{PackageClauseForm, PackageClauseRefusal, PackageFormulaNode};
 pub use timed_model::{
     CheckedTimedPredicate, ClockConstraint, ClockField, ClockGuard, ClockId, ClockOp,
     ClockParameterRange, ClockReset, ClockResets, CollectionWrite, ConstraintNodes,
@@ -723,6 +742,20 @@ pub(crate) struct PendingDependencyReference {
     pub(crate) target: PendingDependencyTarget,
 }
 
+/// A [`CheckedGraph`]'s occurrences by location, each location's in
+/// [`CheckedGraph::occurrences`] order.
+type OccurrencesByLocation =
+    HashMap<Location, Vec<(filament_exact::NodeKey, filament_exact::Origin)>>;
+
+/// `occurrences` by location.
+fn occurrences_by_location(occurrences: &family::OccurrenceMap<Location>) -> OccurrencesByLocation {
+    let mut index = OccurrencesByLocation::new();
+    for (key, origin, at) in occurrences.iter() {
+        index.entry(at.clone()).or_default().push((key, origin));
+    }
+    index
+}
+
 /// S3's stage output (ADR-013 T-1): a package whose every function is
 /// admitted. Its constructor and every field are private to this module
 /// (ADR-011 §4): `package`'s S4 link step (which builds the *different*
@@ -779,6 +812,10 @@ pub struct CheckedGraph {
     /// declaration and function-application occurrence this package
     /// checked.
     occurrences: family::OccurrenceMap<Location>,
+    /// [`Self::occurrences`] by location, in that order, indexed once every
+    /// occurrence is recorded: an evaluation reads the occurrence of each
+    /// comparison it reports by its location (ADR-013 O-07).
+    occurrences_by_location: OccurrencesByLocation,
     parameter_spans:
         BTreeMap<(filament_exact::NodeKey, filament_exact::Origin), fsl_foundation::Span>,
     /// ADR-012 §13.5, ADR-011 E7: this package's requirement records, one
@@ -894,11 +931,6 @@ pub struct CheckedGraph {
     /// Authored identity-field names for each checked source object type,
     /// keyed by the source model's declaration key.
     source_object_identity_fields: BTreeMap<filament_checked::key::DeclarationKey, Vec<String>>,
-    /// The span of the unit's first source `object` declaration.
-    first_source_object: Option<(
-        fsl_foundation::source::provenance::RawSourceRef,
-        fsl_foundation::Span,
-    )>,
     /// FR-110 "Extension selection": the extension definitions the unit
     /// selects, ascending by `(authority, identity)`.
     extension_selections: Vec<fsl_foundation::selection::DefinitionRef>,
@@ -1077,6 +1109,7 @@ impl DebugWith for CheckedGraph {
             functions,
             dispatch_tables,
             occurrences,
+            occurrences_by_location: _,
             parameter_spans,
             requirements,
             model_correspondence,
@@ -1102,7 +1135,6 @@ impl DebugWith for CheckedGraph {
             protocol_population_types,
             model_roots,
             header_layers,
-            first_source_object,
             source_packages,
             source_object_identity_fields,
             extension_selections,
@@ -1226,7 +1258,6 @@ impl DebugWith for CheckedGraph {
             )
             .field("model_roots", &NodeList(model_roots.iter(), table))
             .field("header_layers", &header_layers)
-            .field("first_source_object", &first_source_object)
             .field("source_packages", &source_packages)
             .field(
                 "source_object_identity_fields",
@@ -1419,6 +1450,34 @@ impl TemporalClauseNode {
         self.conditions
             .get(&atom.index())
             .map(|(body, slots)| (body.root(), *slots))
+    }
+
+    /// Whether the `holds` or aggregate atom `atom` reads one of the clause's
+    /// captures (FR-337 "Captures at S3": the captures take the slots after
+    /// `over` and the trigger binder), so that its value depends on the
+    /// activation it is read for (FR-860).
+    pub fn atom_reads_captures(&self, atom: FormulaNodeId) -> bool {
+        let clause = self.clause();
+        let first = 1 + usize::from(clause.trigger().is_some());
+        let captures = first..first + clause.captures().len();
+        if captures.is_empty() {
+            return false;
+        }
+        let reads = |root: CheckedNode<'_>| {
+            root.descendants()
+                .into_iter()
+                .any(|node| matches!(node.kind(), NodeKind::Local(slot) if captures.contains(slot)))
+        };
+        if let Some((condition, _)) = self.condition(atom) {
+            return reads(condition);
+        }
+        self.aggregate_conditions(atom).is_some_and(|aggregate| {
+            [aggregate.value, aggregate.filter, aggregate.predicate]
+                .into_iter()
+                .flatten()
+                .chain([aggregate.threshold])
+                .any(|(root, _)| reads(root))
+        })
     }
 
     /// The aggregate atom's typed expressions and their evaluation slots.
@@ -2869,7 +2928,6 @@ impl PackageDeclarations {
             .collect();
         let protocol_profile = self.protocol_profile;
         let header_layers = self.header_layers;
-        let first_source_object = self.first_source_object;
         let source_object_identity_fields = self.source_object_identity_fields;
         let source_packages: Vec<_> = self
             .models
@@ -4271,6 +4329,7 @@ impl PackageDeclarations {
                     match protocol_slots::check(
                         protocol,
                         &checked,
+                        &bound,
                         &slot_declarations,
                         &mut slot_cx,
                         &regions,
@@ -6217,6 +6276,11 @@ impl PackageDeclarations {
                 Err(refusal) => refusals.push(refusal),
             }
         }
+        // FSpec FR-640: the nodes each checked random parameter and
+        // workload refers to.
+        if let Err(refusal) = lowering.probabilistic_declarations(&probabilistic_model) {
+            refusals.push(refusal);
+        }
         // FR-498: each checked probabilistic claim's node.
         let lowered_probabilistic =
             match lowering.probabilistic_claims(probabilistic_model.claims()) {
@@ -6398,6 +6462,10 @@ impl PackageDeclarations {
         if let Err(refusal) = lowering
             .model_type_unit_nodes(&check::declared_unit_ids(&self.units, &package_unit_ids))
         {
+            refusals.push(refusal);
+        }
+        let declared_nominal_nodes: Vec<_> = self.nominal_spans.keys().cloned().collect();
+        if let Err(refusal) = lowering.declared_nominal_nodes(&declared_nominal_nodes) {
             refusals.push(refusal);
         }
         // FR-092 rule 1: every admitted enum's declaration and member nodes,
@@ -6758,6 +6826,8 @@ impl PackageDeclarations {
                         scope.types(),
                         &state_clauses,
                         &model,
+                        None,
+                        None,
                         footprint::Operation {
                             receiver_type: binding.receiver.clone(),
                             declaring,
@@ -7685,6 +7755,29 @@ impl PackageDeclarations {
             // refusal. It must not publish a partial package reference set.
             dependency_references.clear();
         }
+        // FSL FR-246-AC-4: one `schedulability` requirement record per
+        // checked task-set claim, keyed by the claim's `claim` occurrence. A
+        // claim of a refused task set has no node and writes none.
+        for claim in checked_task_sets.claims() {
+            let Some(occurrence) = claim.occurrence() else {
+                continue;
+            };
+            let unkeyable = || {
+                vec![CheckRefusal {
+                    location: root(Origin::Expression),
+                    cause: CheckCause::InternalFault(Box::new(KeyFault::UnkeyableRequirements)),
+                }]
+            };
+            let boolean = builtin_boolean_type_key(&package_name).map_err(|_| unkeyable())?;
+            let record =
+                claims::RequirementRecord::model_claim(claim.requirements(), claims::wire(boolean));
+            match requirements.entry(occurrence) {
+                std::collections::hash_map::Entry::Vacant(slot) => {
+                    slot.insert(record);
+                }
+                std::collections::hash_map::Entry::Occupied(_) => return Err(unkeyable()),
+            }
+        }
         let mut graph = CheckedGraph {
             graph_identity: CheckedGraphIdentity::fresh(),
             source,
@@ -7697,6 +7790,7 @@ impl PackageDeclarations {
             functions,
             dispatch_tables,
             occurrences,
+            occurrences_by_location: OccurrencesByLocation::default(),
             parameter_spans,
             requirements: requirements.into(),
             model_correspondence,
@@ -7726,7 +7820,6 @@ impl PackageDeclarations {
             protocol_population_types,
             model_roots,
             header_layers,
-            first_source_object,
             source_packages,
             source_object_identity_fields,
             extension_selections,
@@ -7847,6 +7940,26 @@ impl PackageDeclarations {
             }
         }
         finish_step_relations(&mut graph, checked_relations, lowered_relations)?;
+        // FSpec FR-746 admits no empty checked graph. A type alias is a
+        // name for another node and does not itself populate the wire graph,
+        // so refuse it here at S3 rather than letting E4 report an empty
+        // projection later. Type declarations are kept separately from the
+        // expression semantic graph, which is why both inventories are
+        // checked.
+        if graph.semantic_graph.nodes().next().is_none()
+            && graph.type_nodes.is_empty()
+            && graph.model_roots.is_empty()
+        {
+            return Err(vec![CheckRefusal {
+                location: root(Origin::Expression),
+                cause: CheckCause::EmptyPackage {
+                    package_name: graph.package_name.clone(),
+                    sources: graph.sources.clone(),
+                },
+            }]);
+        }
+        // Every occurrence is recorded by now.
+        graph.occurrences_by_location = occurrences_by_location(&graph.occurrences);
         Ok(graph)
     }
 }
@@ -8765,19 +8878,6 @@ impl CheckedGraph {
         &self.header_layers
     }
 
-    /// The span of the unit's first source `object` declaration, if it
-    /// declares one.
-    pub fn first_source_object(
-        &self,
-    ) -> Option<(
-        &fsl_foundation::source::provenance::RawSourceRef,
-        fsl_foundation::Span,
-    )> {
-        self.first_source_object
-            .as_ref()
-            .map(|(source, span)| (source, *span))
-    }
-
     /// FR-110 "Extension selection": the extension definitions the unit
     /// selects, ascending by `(authority, identity)`. The lock's
     /// `definition_selections` end with these rows.
@@ -9623,6 +9723,17 @@ impl CheckedGraph {
         &self,
     ) -> impl Iterator<Item = (filament_exact::NodeKey, filament_exact::Origin, &Location)> {
         self.occurrences.iter()
+    }
+
+    /// The occurrences [`Self::occurrences`] yields at `location`, as
+    /// (node, origin), in its order.
+    pub fn occurrences_at(
+        &self,
+        location: &Location,
+    ) -> &[(filament_exact::NodeKey, filament_exact::Origin)] {
+        self.occurrences_by_location
+            .get(location)
+            .map_or(&[], Vec::as_slice)
     }
 
     /// This package's requirement records (ADR-012 §13.5, ADR-011 E7): one

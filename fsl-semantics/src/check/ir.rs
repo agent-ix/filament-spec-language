@@ -81,6 +81,18 @@ pub struct Node {
     /// reachability"); `None` on every other node. `NodeKind::Reaches`
     /// has no population field of its own.
     pub(in crate::check) field_population: Option<Box<AuthoredBound>>,
+    /// Equality operand context used to explain an unproved contextual
+    /// integer range refusal.
+    pub(in crate::check) equality_range_context: Option<EqualityRangeContext>,
+}
+
+/// The peer that supplied a bounded integer type to an equality operand.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct EqualityRangeContext {
+    /// The bounded integer type supplied by the peer operand.
+    pub(crate) expected: String,
+    /// The peer operand's authored name.
+    pub(crate) operand: String,
 }
 
 /// FSL's pre-wire equality facts, retained from typing through lowering.
@@ -452,6 +464,7 @@ impl CheckedBody {
                 equality_producer: None,
                 ordering_part: false,
                 field_population: None,
+                equality_range_context: None,
             })
             .collect();
         nodes.push(Node {
@@ -463,6 +476,7 @@ impl CheckedBody {
             equality_producer: None,
             ordering_part: false,
             field_population: None,
+            equality_range_context: None,
         });
         Self::new(nodes)
     }
@@ -499,6 +513,7 @@ impl CheckedBody {
                 equality_producer: None,
                 ordering_part: false,
                 field_population: None,
+                equality_range_context: None,
             })
             .collect::<Vec<_>>();
         Self::new(nodes)
@@ -672,6 +687,10 @@ impl<'a> CheckedNode<'a> {
     /// The node's source location.
     pub fn location(self) -> &'a Location {
         &self.node().location
+    }
+
+    pub(crate) fn equality_range_context(self) -> Option<&'a EqualityRangeContext> {
+        self.node().equality_range_context.as_ref()
     }
 
     /// Whether the node is a numeric-equality part of a float ordering's
@@ -1130,6 +1149,7 @@ pub(crate) fn scalar_conversion_target<'t>(
 pub(crate) fn node_children(kind: &NodeKind<NodeId>) -> Vec<NodeId> {
     match kind {
         NodeKind::Literal(_)
+        | NodeKind::ReferenceLiteral { .. }
         | NodeKind::Local(_)
         | NodeKind::ProtocolReference { .. }
         | NodeKind::PopulationObjects { .. }
@@ -1162,6 +1182,7 @@ pub(crate) fn node_children(kind: &NodeKind<NodeId>) -> Vec<NodeId> {
         | NodeKind::OptionSome(operand)
         | NodeKind::ConvertCollection { operand, .. }
         | NodeKind::ConvertScalar(_, operand)
+        | NodeKind::ConvertText(_, operand)
         | NodeKind::IeeeToRational(operand, _)
         | NodeKind::RationalNegate(operand, _)
         | NodeKind::DecimalNegate(operand, _)
@@ -1190,6 +1211,19 @@ pub(crate) fn node_children(kind: &NodeKind<NodeId>) -> Vec<NodeId> {
         | NodeKind::Decimal { left, right, .. }
         | NodeKind::Ieee(_, _, left, right)
         | NodeKind::Quantity(_, left, right)
+        | NodeKind::QuantityScale {
+            quantity: left,
+            factor: right,
+        }
+        | NodeKind::QuantityScaleDiv {
+            quantity: left,
+            factor: right,
+        }
+        | NodeKind::Index {
+            collection: left,
+            index: right,
+            ..
+        }
         | NodeKind::QuantityPower(left, right)
         | NodeKind::Order(_, _, left, right)
         | NodeKind::Equality(_, _, left, right)
@@ -1209,6 +1243,7 @@ pub(crate) fn node_children(kind: &NodeKind<NodeId>) -> Vec<NodeId> {
             target: right,
             ..
         } => vec![*left, *right],
+        NodeKind::TupleProject { operand, .. } => vec![*operand],
         NodeKind::IeeeSquareRoot(_, operand) => vec![*operand],
         NodeKind::IeeeFloat32Fma(_, first, second, third)
         | NodeKind::IeeeFloat64Fma(_, first, second, third) => vec![*first, *second, *third],
@@ -1282,6 +1317,7 @@ mod tests {
             equality_producer: None,
             ordering_part: false,
             field_population: None,
+            equality_range_context: None,
         };
         let mut builder = BodyBuilder::default();
         let mut operand = builder.push(node(NodeKind::Local(slot)));

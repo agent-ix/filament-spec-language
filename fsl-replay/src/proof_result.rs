@@ -29,10 +29,10 @@ use filament_semantic_value::catalog::{CatalogCode, Category};
 use filament_semantic_value::fairness::{FairnessConstraint, PropertyForm};
 use fsl_eval::simulation::{Permutation, SymmetryClass};
 use fsl_eval::temporal::TemporalOutcome;
-use fsl_foundation::diagnostic::Code;
 use fsl_foundation::BackendId;
 use fsl_foundation::ReductionKind;
 use fsl_foundation::RequestIndex;
+use fsl_foundation::diagnostic::Code;
 use fsl_semantics::check::HyperUnsupported;
 use fsl_semantics::family::UnsupportedItem;
 use fsl_semantics::model::observation::AdmissionFailure;
@@ -43,7 +43,7 @@ mod plugin;
 mod plugin_read;
 mod plugin_replay;
 mod tool_failure;
-pub use plugin::{read_plugin_cause_kind, FslOnlyCause, PluginResultRefusal, ValueFault};
+pub use plugin::{FslOnlyCause, PluginResultRefusal, ValueFault, read_plugin_cause_kind};
 pub(crate) use plugin_read::{child, first_undefined, name_order};
 pub use plugin_read::{
     read_first_party_solver_basis, read_plugin_assignments, read_plugin_basis,
@@ -350,7 +350,9 @@ pub enum SymmetryRefusal {
         population: DeclarationKey,
     },
     /// A class names a key outside the population's universe.
-    #[error("invalid_runtime_input/invalid-value: declaration {declaration}: key {key} is not in the universe")]
+    #[error(
+        "invalid_runtime_input/invalid-value: declaration {declaration}: key {key} is not in the universe"
+    )]
     UnknownKey {
         /// The declaration's index.
         declaration: usize,
@@ -359,7 +361,9 @@ pub enum SymmetryRefusal {
     },
     /// A key appears in two classes of its population, in one declaration
     /// or across two, or twice in one class.
-    #[error("invalid_runtime_input/invalid-value: declaration {declaration}: key {key} is in two classes")]
+    #[error(
+        "invalid_runtime_input/invalid-value: declaration {declaration}: key {key} is in two classes"
+    )]
     RepeatedKey {
         /// The declaration's index.
         declaration: usize,
@@ -886,6 +890,21 @@ pub enum InconclusiveCause {
     RefutedIgnoringConstraints,
     /// The item has zero instances (FR-125).
     NoInstance,
+    /// FR-941: a required temporal clause is neither violated nor satisfied by
+    /// the finite behaviour a supplied trace replays (FSpec FR-352 `pending`,
+    /// `pending-window`, `pending-next-event`): the category is `pending`.
+    TemporalPending,
+    /// FR-941: the finite behaviour does not determine a required clause
+    /// (FSpec FR-352 `indeterminate`): the category is `indeterminate`.
+    TemporalIndeterminate,
+    /// FR-941: a window of a required clause held `count` values, fewer than
+    /// its `min_count` (FSpec FR-352 `insufficient-data`).
+    InsufficientData {
+        /// The values the window held.
+        count: u64,
+        /// The window minimum.
+        min_count: u64,
+    },
     /// `match-undetermined` (ADR-023 HV-4): a hyper item's `match` block was
     /// refused or incomplete at a reachable joint step.
     MatchUndetermined,
@@ -1160,6 +1179,9 @@ impl InconclusiveCause {
             Self::NoInitialState => "no-initial-state",
             Self::RefutedIgnoringConstraints => "refuted-ignoring-constraints",
             Self::NoInstance => "no-instance",
+            Self::TemporalPending => "pending",
+            Self::TemporalIndeterminate => "indeterminate",
+            Self::InsufficientData { .. } => "insufficient-data",
             Self::MatchUndetermined => "match-undetermined",
             Self::VacuousMatch => "vacuous-match",
             Self::MappingUndetermined => "mapping-undetermined",
@@ -1201,6 +1223,9 @@ impl InconclusiveCause {
             | Self::NoInitialState
             | Self::RefutedIgnoringConstraints
             | Self::NoInstance
+            | Self::TemporalPending
+            | Self::TemporalIndeterminate
+            | Self::InsufficientData { .. }
             | Self::MatchUndetermined
             | Self::VacuousMatch
             | Self::MappingUndetermined
@@ -1340,6 +1365,8 @@ impl TerminalValue {
     /// Behavior: "one exhaustive function with no `_` fallback arm").
     pub fn category(&self) -> Category {
         match self {
+            Self::Inconclusive(InconclusiveCause::TemporalPending) => Category::Pending,
+            Self::Inconclusive(InconclusiveCause::TemporalIndeterminate) => Category::Indeterminate,
             Self::Proved {
                 basis: ProofBasis::Checks { success_checks: 0 },
                 ..
@@ -1570,7 +1597,7 @@ impl TerminalRecord {
             | ReplayResult::ObservedTemporal(_)
             | ReplayResult::ModelGraph(_)
             | ReplayResult::ProtocolAnalysis(_) => {
-                return Err(TerminalRecordRefusal::ReplayLacksWitness)
+                return Err(TerminalRecordRefusal::ReplayLacksWitness);
             }
         }
         Ok(Self {
@@ -1930,6 +1957,28 @@ impl TerminalRecord {
         reproduced: Option<&crate::model_check::counterexample::TemporalCounterexample<T>>,
     ) -> Result<Self, TerminalRecordRefusal> {
         if matches!(value, TerminalValue::Refuted) && reproduced.is_none() {
+            return Err(TerminalRecordRefusal::RefutedWithoutCounterexample);
+        }
+        Ok(Self::with_backend(request_index, backend, value))
+    }
+
+    /// The record of `value`, FR-248's settlement of the closed-form
+    /// `outcome` produced by `backend`: a `refuted` value only with the miss
+    /// evidence `outcome` carries.
+    ///
+    /// # Errors
+    ///
+    /// [`TerminalRecordRefusal::RefutedWithoutCounterexample`] for a
+    /// `refuted` value whose outcome is not a miss.
+    pub fn of_closed_form(
+        request_index: RequestIndex,
+        backend: BackendId,
+        value: TerminalValue,
+        outcome: &crate::ClosedFormOutcome,
+    ) -> Result<Self, TerminalRecordRefusal> {
+        if matches!(value, TerminalValue::Refuted)
+            && !matches!(outcome, crate::ClosedFormOutcome::Miss(_))
+        {
             return Err(TerminalRecordRefusal::RefutedWithoutCounterexample);
         }
         Ok(Self::with_backend(request_index, backend, value))
@@ -2662,26 +2711,11 @@ mod tests {
         // Keep this sample map complete against the live FR-331 schema. A
         // newly admitted wire value must get a representative value and an
         // expected O-16 category here before this test can pass.
-        let fspec_dir = std::env::var_os("FSPEC_DIR")
-            .map(std::path::PathBuf::from)
-            .or_else(|| {
-                let sibling = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-                    .join("../../filament-specification");
-                sibling.is_dir().then_some(sibling)
-            })
-            .unwrap_or_else(|| {
-                panic!(
-                    "FR-331 schema unavailable; set FSPEC_DIR to a filament-specification checkout"
-                )
-            });
-        let schema_path = fspec_dir.join("proposals/backend-provider-v1/schema.json");
-        let schema_source = std::fs::read_to_string(&schema_path).unwrap_or_else(|error| {
-            panic!(
-                "read FR-331 schema at {schema_path:?} (set FSPEC_DIR to a filament-specification checkout): {error}"
-            )
-        });
-        let schema: serde_json::Value = serde_json::from_str(&schema_source)
-            .unwrap_or_else(|error| panic!("parse FR-331 schema at {schema_path:?}: {error}"));
+        let schema: serde_json::Value = serde_json::from_slice(
+            filament_specification::published_file("proposals/backend-provider-v1/schema.json")
+                .expect("pinned FSpec publishes FR-331 schema"),
+        )
+        .expect("FR-331 schema is JSON");
         let schema_values: BTreeSet<&str> = schema["$defs"]["ResultValue"]["enum"]
             .as_array()
             .expect("FR-331 ResultValue is an enum")
@@ -3005,12 +3039,14 @@ mod tests {
             vec![region],
             crate::spine::default_accounting(0),
         ));
-        source(vec![TerminalRecord::new(
-            RequestIndex::new(0),
-            BackendId::new("kani-backend-1"),
-            &replay,
-        )
-        .unwrap()])
+        source(vec![
+            TerminalRecord::new(
+                RequestIndex::new(0),
+                BackendId::new("kani-backend-1"),
+                &replay,
+            )
+            .unwrap(),
+        ])
     }
 
     /// FR-069-AC-4 (TC-178): retained replay source identity bytes count at
@@ -3065,6 +3101,9 @@ mod tests {
         );
         let record = crate::SeparatingWitnessRecord {
             quantifier: Some(occurrence.clone()),
+            deciding_comparison: None,
+            operands: None,
+            decision_path: None,
             deciding_element: crate::DecidingElement::Value(Value::Boolean(false)),
             index: Some(0),
             value_path: RuntimeValuePath {
@@ -3087,12 +3126,14 @@ mod tests {
             Vec::new(),
             crate::spine::default_accounting(0),
         ));
-        let provider = source(vec![TerminalRecord::new(
-            RequestIndex::new(0),
-            BackendId::new("kani-backend-1"),
-            &replay,
-        )
-        .unwrap()]);
+        let provider = source(vec![
+            TerminalRecord::new(
+                RequestIndex::new(0),
+                BackendId::new("kani-backend-1"),
+                &replay,
+            )
+            .unwrap(),
+        ]);
         assert!(matches!(
             read_backend_provider_envelope(&provider, ReplayLimits::default()),
             Err(ProofResultRefusal::BoundExceeded(_))
@@ -3118,12 +3159,14 @@ mod tests {
                 charge_point: filament_exact::ChargePoint::TextInputBytes,
             }),
         );
-        let provider = source(vec![TerminalRecord::new(
-            RequestIndex::new(0),
-            BackendId::new("kani-backend-1"),
-            &replay,
-        )
-        .unwrap()]);
+        let provider = source(vec![
+            TerminalRecord::new(
+                RequestIndex::new(0),
+                BackendId::new("kani-backend-1"),
+                &replay,
+            )
+            .unwrap(),
+        ]);
         let base = provider.backend_identity.len()
             + std::mem::size_of::<RequestIndex>()
             + std::mem::size_of::<TerminalValue>()
@@ -3140,12 +3183,14 @@ mod tests {
         let mut huge_limit = replay.limit().unwrap().clone();
         huge_limit.next_charge = filament_exact::Integer::power_of_ten(DEFAULT_INPUT_BYTES as u64);
         let huge_replay = replay.with_limit(huge_limit);
-        let huge_source = source(vec![TerminalRecord::new(
-            RequestIndex::new(0),
-            BackendId::new("kani-backend-1"),
-            &huge_replay,
-        )
-        .unwrap()]);
+        let huge_source = source(vec![
+            TerminalRecord::new(
+                RequestIndex::new(0),
+                BackendId::new("kani-backend-1"),
+                &huge_replay,
+            )
+            .unwrap(),
+        ]);
         assert!(matches!(
             read_backend_provider_envelope(&huge_source, ReplayLimits::default()),
             Err(ProofResultRefusal::BoundExceeded(_))
@@ -3163,12 +3208,14 @@ mod tests {
         use fsl_foundation::witness::{RuntimeValuePath, ValuePathStep, ValuePathSubject};
 
         fn replay_source(replay: ReplayResult) -> BackendProviderSource {
-            source(vec![TerminalRecord::new(
-                RequestIndex::new(0),
-                BackendId::new("kani-backend-1"),
-                &replay,
-            )
-            .unwrap()])
+            source(vec![
+                TerminalRecord::new(
+                    RequestIndex::new(0),
+                    BackendId::new("kani-backend-1"),
+                    &replay,
+                )
+                .unwrap(),
+            ])
         }
 
         fn witness_source(record: crate::SeparatingWitnessRecord) -> BackendProviderSource {
@@ -3189,6 +3236,9 @@ mod tests {
                 OccurrenceKey::new(crate::fixture_node(7), Origin::new(Role::new("q"), 0));
             crate::SeparatingWitnessRecord {
                 quantifier: Some(quantifier.clone()),
+                deciding_comparison: None,
+                operands: None,
+                decision_path: None,
                 deciding_element: crate::DecidingElement::Value(Value::Integer(Integer::from(
                     1_u64,
                 ))),

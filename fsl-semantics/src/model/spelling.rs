@@ -177,6 +177,8 @@ fn render(
             ValueType::String => output.push_str("String"),
             ValueType::Uuid => output.push_str("UUID"),
             ValueType::Timestamp => output.push_str("Timestamp"),
+            ValueType::Bytes => output.push_str("Bytes"),
+            ValueType::JsonObject => output.push_str("JsonObject"),
             ValueType::Int(interval) => {
                 output.push_str(&format!("Int[{}, {}]", interval.lower(), interval.upper()))
             }

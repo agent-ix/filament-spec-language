@@ -124,6 +124,7 @@ fn a_checked_invariant_refused_condition_reports_the_internal_failure() {
         )),
         location: None,
         losses: Vec::new(),
+        frame_depth: 0,
     };
     let at = fsl_eval::temporal::TemporalPosition::new(1);
     let observed = fsl_eval::temporal::ObservedRun {
@@ -131,6 +132,7 @@ fn a_checked_invariant_refused_condition_reports_the_internal_failure() {
         stopped: Some(fsl_eval::temporal::HoldsStop::Refused { at, evaluation }),
         undefined: None,
         decisive: None,
+        captures: Vec::new(),
     };
     let (disposition, refused_at) = crate::spine::clause::temporal::observed_disposition(
         observed.stopped,

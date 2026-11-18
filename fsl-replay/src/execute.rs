@@ -46,7 +46,8 @@ use fsl_semantics::model::object_environment::ObjectEnvironment;
 use fsl_semantics::value::environment_stage::{membership_failure_cause, membership_failure_code};
 
 use crate::bounds::ReplayLimits;
-use crate::identity::{DefinitionSourceRef, ObligationIdentity, ProfileSelection, QualifiedName};
+use crate::identity::{DefinitionSourceRef, ProfileSelection, QualifiedName};
+use fsl_package::ObligationIdentity;
 use crate::limits::CallerLimits;
 use crate::request::StageLimits;
 use crate::request::{ReplayRequest, ReplayRequestRefusal, ReplayRequestWire};
@@ -227,7 +228,9 @@ pub enum ReplayRefusal {
     /// FR-098, FR-121: a `function` request names an owner the unit does not
     /// import directly, so the dependency input holds no package for it
     /// (`missing_import`/`missing-selection` at `/replay/function_owner`).
-    #[error("missing_import/missing-selection at /replay/function_owner: package {package} imports no library {owner}")]
+    #[error(
+        "missing_import/missing-selection at /replay/function_owner: package {package} imports no library {owner}"
+    )]
     UnknownOwner {
         /// The request's `function_owner`.
         owner: LibraryName,
@@ -236,7 +239,9 @@ pub enum ReplayRefusal {
     },
     /// FR-098, FR-121: the owner's function has a package-dependent
     /// signature (ADR-015 D-5), so no importing package may call it.
-    #[error("ill_typed/operator-ineligible: package {package} function {selection} has a package-dependent signature")]
+    #[error(
+        "ill_typed/operator-ineligible: package {package} function {selection} has a package-dependent signature"
+    )]
     NotImportable {
         /// The request's selection.
         selection: QualifiedName,
@@ -245,7 +250,9 @@ pub enum ReplayRefusal {
     },
     /// FR-098: this entry replays the unit's own function and reads no
     /// `function_owner`.
-    #[error("invalid_runtime_input/unknown-member at /replay/function_owner: the request's target is {target}, but `{entry}` replays only the unit's own functions")]
+    #[error(
+        "invalid_runtime_input/unknown-member at /replay/function_owner: the request's target is {target}, but `{entry}` replays only the unit's own functions"
+    )]
     ImportedFunctionTarget {
         /// The request's replay target.
         target: Box<ReplayTarget>,
@@ -259,7 +266,9 @@ pub enum ReplayRefusal {
     /// package does not hold, another function's declaration, an occurrence
     /// holding no record, a record of another kind or owner). Refused before
     /// any call, with no charge.
-    #[error("missing_declaration/missing-name: the occurrence {key} selects no claim of the function {function}")]
+    #[error(
+        "missing_declaration/missing-name: the occurrence {key} selects no claim of the function {function}"
+    )]
     ClaimOccurrence {
         /// The request's occurrence key.
         key: OccurrenceKey,
@@ -301,7 +310,9 @@ pub enum ReplayRefusal {
     /// with the kernel's class beneath it (`refusal.cause`): noncanonical
     /// UUID text, noncanonical Timestamp text, or a canonical Timestamp
     /// outside the signed 128-bit domain. No value is built.
-    #[error("invalid_runtime_input (invalid-value): the argument at position {parameter} is refused: {refusal}")]
+    #[error(
+        "invalid_runtime_input (invalid-value): the argument at position {parameter} is refused: {refusal}"
+    )]
     NativePayload {
         /// The parameter's zero-based declared position.
         parameter: usize,
@@ -338,7 +349,9 @@ pub enum ReplayRefusal {
     /// The selected function's declared result is not `Boolean`, so it
     /// states no property a counterexample refutes. Refused before the
     /// call, from the declaration alone.
-    #[error("the selected function {selection} of package {package} is not a predicate: its declared result is not Boolean")]
+    #[error(
+        "the selected function {selection} of package {package} is not a predicate: its declared result is not Boolean"
+    )]
     NotAPredicate {
         /// The request's selection.
         selection: QualifiedName,
@@ -348,7 +361,9 @@ pub enum ReplayRefusal {
     /// FR-357: the selected function's declared result is `Boolean`, so its
     /// claim is a predicate's, replayed by [`replay`], not a value-parity
     /// claim. Refused before the call, from the declaration alone.
-    #[error("the selected function {selection} of package {package} is a predicate: its declared result is Boolean, so it has no value-parity replay")]
+    #[error(
+        "the selected function {selection} of package {package} is a predicate: its declared result is Boolean, so it has no value-parity replay"
+    )]
     NotAValueFunction {
         /// The request's selection.
         selection: QualifiedName,
@@ -381,34 +396,48 @@ pub enum ReplayRefusal {
     /// FR-331: a temporal counterexample arm requires a `state_clause`
     /// target and reports the observed-counterexample member as the one
     /// this entry cannot read.
-    #[error("invalid_runtime_input/unknown-member at /replay/observed_counterexample: replay target {target} is not a state clause")]
+    #[error(
+        "invalid_runtime_input/unknown-member at /replay/observed_counterexample: replay target {target} is not a state clause"
+    )]
     WrongObservedTemporalTarget {
         /// The request's replay target.
         target: Box<ReplayTarget>,
     },
     /// FR-331: observed temporal replay requires a witness source.
-    #[error("invalid_runtime_input/invalid-value at /replay/source: observed temporal replay requires a Witness source")]
+    #[error(
+        "invalid_runtime_input/invalid-value at /replay/source: observed temporal replay requires a Witness source"
+    )]
     WrongObservedTemporalSource,
     /// FR-170 replay requires its explicit subject argument.
-    #[error("invalid_runtime_input/invalid-value: model-graph replay requires replay_model_graph and its subject")]
+    #[error(
+        "invalid_runtime_input/invalid-value: model-graph replay requires replay_model_graph and its subject"
+    )]
     WrongModelGraphEntry,
     /// FR-170: model-graph envelope metadata differs from the request or
     /// the recompiled claim.
-    #[error("stale_dependency/content-mismatch: model-graph {member} differs from the replay request or recompiled claim")]
+    #[error(
+        "stale_dependency/content-mismatch: model-graph {member} differs from the replay request or recompiled claim"
+    )]
     ModelGraphMismatch {
         /// The mismatching envelope member.
         member: &'static str,
     },
     /// FR-170: the explicit state-graph replay entry received another arm.
-    #[error("invalid_runtime_input/invalid-value at /replay/source: state-graph replay requires a ModelGraph source")]
+    #[error(
+        "invalid_runtime_input/invalid-value at /replay/source: state-graph replay requires a ModelGraph source"
+    )]
     WrongModelGraphSource,
     /// ADR-036 PA-20: a protocol analysis source replays through
     /// `spine::replay_protocol_analysis` and its checked package alone.
-    #[error("invalid_runtime_input/invalid-value at /replay/source: a ProtocolAnalysis source replays through replay_protocol_analysis and its checked package")]
+    #[error(
+        "invalid_runtime_input/invalid-value at /replay/source: a ProtocolAnalysis source replays through replay_protocol_analysis and its checked package"
+    )]
     WrongProtocolAnalysisEntry,
     /// FR-116, FR-122: the envelope's replay target differs from the
     /// request's (`stale_dependency`/`content-mismatch`), naming both.
-    #[error("stale_dependency/content-mismatch: the request's target is {request} but the envelope's is {envelope}")]
+    #[error(
+        "stale_dependency/content-mismatch: the request's target is {request} but the envelope's is {envelope}"
+    )]
     TargetMismatch {
         /// The request's replay target.
         request: Box<ReplayTarget>,
@@ -429,7 +458,9 @@ pub enum ReplayRefusal {
     /// FR-116: the request's `frame_operation` names an object that cannot
     /// be its operation's declaring object (`invalid_model_binding`/
     /// `malformed-declaration`).
-    #[error("invalid_model_binding/malformed-declaration: package {package} cannot select operation {operation}: {reason}")]
+    #[error(
+        "invalid_model_binding/malformed-declaration: package {package} cannot select operation {operation}: {reason}"
+    )]
     MalformedOperationTarget {
         /// The request's operation.
         operation: FrameOperation,
@@ -441,7 +472,9 @@ pub enum ReplayRefusal {
     /// FR-116: two supertypes of the request's `frame_operation` object
     /// expose the operation's name (`ambiguous_declaration`/
     /// `ambiguous-name`).
-    #[error("ambiguous_declaration/ambiguous-name: package {package} exposes operation {operation} through two supertypes")]
+    #[error(
+        "ambiguous_declaration/ambiguous-name: package {package} exposes operation {operation} through two supertypes"
+    )]
     AmbiguousOperation {
         /// The request's operation.
         operation: FrameOperation,
@@ -467,14 +500,18 @@ pub enum ReplayRefusal {
     },
     /// FR-331: an observed trace carries no enabledness with which to check
     /// this fairness constraint, so the formula is not evaluated.
-    #[error("unsupported_projection/missing-fairness-premise: observed trace cannot check {constraint:?}")]
+    #[error(
+        "unsupported_projection/missing-fairness-premise: observed trace cannot check {constraint:?}"
+    )]
     MissingFairnessPremise {
         /// The first member of the checked clause's fairness set.
         constraint: filament_semantic_value::fairness::FairnessConstraint,
     },
     /// FR-331: a profile, interval or checked temporal identity in the
     /// packet differs from the recompiled clause.
-    #[error("stale_dependency/content-mismatch: observed temporal {member} differs from the recompiled clause")]
+    #[error(
+        "stale_dependency/content-mismatch: observed temporal {member} differs from the recompiled clause"
+    )]
     ObservedTemporalMismatch {
         /// The member that differs.
         member: &'static str,
@@ -512,14 +549,18 @@ pub enum ReplayRefusal {
     /// parameter of the selected function holds a `Reference`
     /// (`invalid_runtime_input`/`unknown-member`, naming
     /// `object_environment`).
-    #[error("invalid_runtime_input/unknown-member: `object_environment` is supplied for a function with no Reference parameter")]
+    #[error(
+        "invalid_runtime_input/unknown-member: `object_environment` is supplied for a function with no Reference parameter"
+    )]
     UnusedObjectEnvironment,
     /// FR-484: a function-value parity request carries `profile_selections`.
     /// A value-parity claim has no proving run, so the list is fixed empty
     /// and lock rows bind through the package alone
     /// (`invalid_runtime_input`/`unknown-member`). Refused before the
     /// recompile, with no call and no charge.
-    #[error("invalid_runtime_input/unknown-member: `profile_selections` is supplied for a function-value parity claim, which has no proving run")]
+    #[error(
+        "invalid_runtime_input/unknown-member: `profile_selections` is supplied for a function-value parity claim, which has no proving run"
+    )]
     UnusedProfileSelections {
         /// The request's selections, in request order.
         selections: Vec<ProfileSelection>,
@@ -527,7 +568,9 @@ pub enum ReplayRefusal {
     /// FR-098 step 2, FR-100: a reference argument's universe is not the
     /// universe of its declared `Reference<T>`'s object type
     /// (`foreign_reference`/`foreign-universe`).
-    #[error("foreign_reference/foreign-universe: the reference at position {position} is in universe {supplied:?}, not {required:?}")]
+    #[error(
+        "foreign_reference/foreign-universe: the reference at position {position} is in universe {supplied:?}, not {required:?}"
+    )]
     ForeignReference {
         /// The parameter's zero-based declared position.
         position: usize,
@@ -1060,7 +1103,7 @@ fn replay_observed_temporal(
             return Err(ReplayRefusal::ObservedTemporalInput {
                 pointer: "/replay/observed_counterexample/loop",
                 reason: "an observed lasso must have a non-empty loop",
-            })
+            });
         }
         None => TemporalTrace::Finite { len },
     };
@@ -1306,14 +1349,12 @@ pub fn replay_with_cancel_and_temporal_selections(
     let mut limit = None;
     // FR-098 "Application claim: the observation": the call stopped
     // undefined at the application step of the claim's own site. A stop
-    // inside an operand, in a nested function or at another occurrence of
-    // the node is a different location and no observation. `Location` has
-    // no frame, so in a recursive function a stop at the site may belong to
-    // a nested call of the function itself: it then settles `NoValue`, which
-    // loses a reproduction and never invents one.
+    // inside an operand or at another occurrence is no observation. The
+    // evaluation's frame depth distinguishes a stop at the same source site
+    // in a nested call from the selected call's own stop.
     let failed_at_site = match &claim {
         FunctionClaim::Application(application) => {
-            !application.recursive && evaluation.location.as_ref() == Some(&application.site)
+            evaluation.frame_depth == 0 && evaluation.location.as_ref() == Some(&application.site)
         }
         FunctionClaim::Predicate => false,
     };
@@ -1616,7 +1657,9 @@ pub(crate) fn run_spine_with_temporal_selections_and_execution_points(
     execution_points: &spine::StateClauseExecutionPoints,
     temporal_selections: &[fsl_package::TemporalClockSelection],
     integer_division: Option<filament_checked::integer_division::AdmittedIntegerDivision>,
-    function_modes: Option<&std::collections::BTreeMap<String, filament_semantic_value::checking::CheckMode>>,
+    function_modes: Option<
+        &std::collections::BTreeMap<String, filament_semantic_value::checking::CheckMode>,
+    >,
     limits: SpineLimits,
 ) -> Result<Recompiled, ReplayRefusal> {
     let SpineUnit {
@@ -1829,17 +1872,17 @@ pub(crate) fn recompile_with_temporal_selections(
     } else {
         RecompileClocks::Explicit(temporal_selections)
     };
-    let (compiled, evidence) = run_spine_units(
-        &units,
-        &package_name,
-        &packages,
-        &dependencies,
+    let (compiled, evidence) = run_spine_units(SpineUnitRun {
+        units: &units,
+        package: &package_name,
+        packages: &packages,
+        dependencies: &dependencies,
         clocks,
-        limits.spine,
-        request.refinement_internals(),
-        request.package().check_mode(),
-        &request.package().function_modes(),
-    )
+        limits: limits.spine,
+        refinement_internals: request.refinement_internals(),
+        check_mode: request.package().check_mode(),
+        function_modes: &request.package().function_modes(),
+    })
     .map_err(|failure| locate_refinement_internals(request, failure))?;
     // Rule 6: every entry names a selection of the recompiled closure.
     let selections = compiled.checked.package().dependency_selections();
@@ -1852,7 +1895,10 @@ pub(crate) fn recompile_with_temporal_selections(
             ));
         }
     }
-    check_recorded_modes(request.package().bytes(), compiled.emitted.package().bytes())?;
+    check_recorded_modes(
+        request.package().bytes(),
+        compiled.emitted.package().bytes(),
+    )?;
     request
         .package()
         .admit(&evidence, limits.spine.imports.for_ir())?;
@@ -1895,8 +1941,10 @@ fn refinement_internals_pointer(
         CompileRefusal::Dependency { path, refusal } => (Some(path.last()?), refusal.as_ref()),
         refusal => (None, refusal),
     };
-    let CompileRefusal::Check { refusals, .. } = refusal else {
-        return None;
+    let refusals = match refusal {
+        CompileRefusal::Check { refusals, .. }
+        | CompileRefusal::CheckDiagnostics { refusals, .. } => refusals,
+        _ => return None,
     };
     let fsl_semantics::check::CheckCause::Refinement(refinement) = &refusals.first()?.cause else {
         return None;
@@ -2035,17 +2083,33 @@ enum RecompileClocks<'a> {
     ByName(&'a spine::RequestClocks),
 }
 
-fn run_spine_units(
-    units: &[(SourceIdentity, String, &[u8])],
-    package: &LibraryName,
-    packages: &fsl_semantics::model::intake::PackageInput,
-    dependencies: &DependencyInput,
-    clocks: RecompileClocks<'_>,
+struct SpineUnitRun<'a> {
+    units: &'a [(SourceIdentity, String, &'a [u8])],
+    package: &'a LibraryName,
+    packages: &'a fsl_semantics::model::intake::PackageInput,
+    dependencies: &'a DependencyInput,
+    clocks: RecompileClocks<'a>,
     limits: SpineLimits,
-    refinement_internals: Option<&[filament_contract_model::CheckedRefinementInternal]>,
+    refinement_internals: Option<&'a [filament_contract_model::CheckedRefinementInternal]>,
     check_mode: filament_semantic_value::checking::CheckMode,
-    function_modes: &std::collections::BTreeMap<String, filament_semantic_value::checking::CheckMode>,
+    function_modes:
+        &'a std::collections::BTreeMap<String, filament_semantic_value::checking::CheckMode>,
+}
+
+fn run_spine_units(
+    input: SpineUnitRun<'_>,
 ) -> Result<(Recompiled, filament_contract_model::CheckedPackageEvidence), ReplayRefusal> {
+    let SpineUnitRun {
+        units,
+        package,
+        packages,
+        dependencies,
+        clocks,
+        limits,
+        refinement_internals,
+        check_mode,
+        function_modes,
+    } = input;
     #[cfg(test)]
     SPINE_RUNS.with(|runs| runs.set(runs.get() + 1));
     let cancel = Cancel::new();
@@ -2201,9 +2265,6 @@ struct ApplicationClaim {
     site: Location,
     /// The extent roots that are parameter nodes of the function.
     roots: BTreeSet<NodeKey>,
-    /// The owning function is in a recursion group (FR-092). A stop at the
-    /// site may then be a nested call's, and `Location` carries no frame.
-    recursive: bool,
 }
 
 impl FunctionClaim {
@@ -2277,14 +2338,7 @@ fn function_claim(
                 .ok_or_else(|| fault("extent-root-is-a-node"))
         })
         .collect::<Result<_, _>>()?;
-    let recursive = semantic
-        .node(callable.identity.clone())
-        .is_some_and(|node| node.recursion().is_some());
-    Ok(FunctionClaim::Application(ApplicationClaim {
-        site,
-        roots,
-        recursive,
-    }))
+    Ok(FunctionClaim::Application(ApplicationClaim { site, roots }))
 }
 
 /// A function node's one `declaration` occurrence (ADR-013 O-07): the node,
@@ -2614,19 +2668,19 @@ fn arguments(
             return Err(ReplayRefusal::Fault(InternalFault::new(
                 "replay",
                 "observed-temporal-source-dispatched-by-replay-facade",
-            )))
+            )));
         }
         ReplaySource::ModelGraph(_) => {
             return Err(ReplayRefusal::Fault(InternalFault::new(
                 "replay",
                 "state-graph-source-dispatched-by-replay-facade",
-            )))
+            )));
         }
         ReplaySource::ProtocolAnalysis(_) => {
             return Err(ReplayRefusal::Fault(InternalFault::new(
                 "replay",
                 "protocol-analysis-source-dispatched-by-protocol-replay",
-            )))
+            )));
         }
     };
     Ok(values)
@@ -2657,6 +2711,8 @@ fn witness_type(
         | ValueType::Composite(_)
         | ValueType::Collection(_)
         | ValueType::Reference(_)
+        | ValueType::Bytes
+        | ValueType::JsonObject
         | ValueType::Uuid
         | ValueType::Timestamp => Ok(WitnessValueType::Canonical),
         ValueType::Map(_)
@@ -2704,10 +2760,38 @@ fn charges(consumed: impl IntoIterator<Item = (LimitKind, u64)>) -> ScalarLimits
             LimitKind::ValueOccurrences => &mut charges.value_occurrences,
             LimitKind::WorkUnits => &mut charges.work_units,
             LimitKind::ResultUnits => &mut charges.result_units,
+            // Evaluation-session high-water state is not an FR-255 scalar
+            // accounting counter and has no replay charge field.
+            LimitKind::LiveOccurrences => continue,
         };
         *counter = amount;
     }
     charges
+}
+
+/// FR-098-AC-34: every function the proving package records is rechecked
+/// under exactly the mode it records; a function whose recompile records
+/// another mode, or none, is refused at its node.
+fn check_recorded_modes(recorded: &[u8], recompiled: &[u8]) -> Result<(), ReplayRefusal> {
+    let recompiled_modes: std::collections::BTreeMap<String, Option<String>> =
+        crate::ReplayPackage::function_records(recompiled)
+            .into_iter()
+            .map(|record| (record.node_id, record.mode))
+            .collect();
+    for record in crate::ReplayPackage::function_records(recorded) {
+        if recompiled_modes.get(&record.node_id) != Some(&record.mode) {
+            return Err(ReplayRefusal::Request(
+                crate::ReplayRequestRefusal::PackageMember {
+                    pointer: format!(
+                        "/package/semantic_graph/nodes/{}/check_mode",
+                        record.position
+                    ),
+                    cause: crate::PackageMemberCause::CheckModeMismatch,
+                },
+            ));
+        }
+    }
+    Ok(())
 }
 
 #[cfg(test)]
@@ -2754,29 +2838,4 @@ mod carried_quantity_tests {
             }))
         ));
     }
-}
-
-/// FR-098-AC-34: every function the proving package records is rechecked
-/// under exactly the mode it records; a function whose recompile records
-/// another mode, or none, is refused at its node.
-fn check_recorded_modes(recorded: &[u8], recompiled: &[u8]) -> Result<(), ReplayRefusal> {
-    let recompiled_modes: std::collections::BTreeMap<String, Option<String>> =
-        crate::ReplayPackage::function_records(recompiled)
-            .into_iter()
-            .map(|record| (record.node_id, record.mode))
-            .collect();
-    for record in crate::ReplayPackage::function_records(recorded) {
-        if recompiled_modes.get(&record.node_id) != Some(&record.mode) {
-            return Err(ReplayRefusal::Request(
-                crate::ReplayRequestRefusal::PackageMember {
-                    pointer: format!(
-                        "/package/semantic_graph/nodes/{}/check_mode",
-                        record.position
-                    ),
-                    cause: crate::PackageMemberCause::CheckModeMismatch,
-                },
-            ));
-        }
-    }
-    Ok(())
 }

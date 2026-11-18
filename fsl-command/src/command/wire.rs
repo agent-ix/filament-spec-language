@@ -2,6 +2,7 @@
 //! FR-026–028, FR-031: closed records; existing constructors own identifier validity.
 
 use filament_contract_model as ir;
+use filament_semantic_value::checking::CheckMode;
 use fsl_foundation::serde_object::{deserialize_objects, from_object};
 use fsl_foundation::AccountingSetting;
 use serde::Deserialize;
@@ -56,6 +57,40 @@ pub(super) struct CompileRequest {
     /// FR-665: checked-package handoff written after compilation succeeds.
     #[serde(default, deserialize_with = "from_object_opt")]
     pub handoff: Option<Handoff>,
+    /// FR-952: the mode every function body of the unit is checked under;
+    /// `Linked` when absent.
+    #[serde(default = "linked", deserialize_with = "check_mode")]
+    pub check_mode: CheckMode,
+}
+
+const fn linked() -> CheckMode {
+    CheckMode::Linked
+}
+
+/// FR-952: `"linked"` or `"kernel"`; any other value, a non-string or
+/// `null` included, refuses naming the member.
+fn check_mode<'de, D: serde::Deserializer<'de>>(decoder: D) -> Result<CheckMode, D::Error> {
+    match serde_json::Value::deserialize(decoder)? {
+        serde_json::Value::String(mode) if mode == "linked" => Ok(CheckMode::Linked),
+        serde_json::Value::String(mode) if mode == "kernel" => Ok(CheckMode::Kernel),
+        other => Err(serde::de::Error::custom(format!(
+            "check_mode must be `linked` or `kernel`, found {other}"
+        ))),
+    }
+}
+
+/// FR-767's run-side supplied library: its own law is independent of the
+/// top-level program law.
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(super) struct RunLibrary {
+    pub identity: String,
+    #[serde(default, deserialize_with = "present_json_value")]
+    pub refinement_internals: Option<serde_json::Value>,
+    #[serde(deserialize_with = "from_object")]
+    pub source: SourceFile,
+    #[serde(default, deserialize_with = "present_json_value")]
+    pub integer_division: Option<serde_json::Value>,
 }
 
 /// FR-665's checked-package handoff selection.
@@ -153,7 +188,7 @@ fn compile_program<'de, D: serde::Deserializer<'de>>(
         other => {
             return Err(serde::de::Error::custom(format!(
                 "expected a compile program object or source array, found {other}"
-            )))
+            )));
         }
     };
     Ok(CompileProgram {
@@ -223,6 +258,10 @@ pub(super) struct Request {
     pub models: Vec<Model>,
     #[serde(deserialize_with = "from_object")]
     pub program: Program,
+    /// FR-767/FR-100/FR-031: selected package artifact, mutually exclusive
+    /// with extraction; a precompiled package does not take a request-selected law.
+    #[serde(default, deserialize_with = "from_object_opt")]
+    pub package: Option<FileSelection>,
     #[serde(default, deserialize_with = "from_object")]
     pub limits: Limits,
     /// FR-100: a `1-draft` program's named call. Absent for a `0-draft`
@@ -235,10 +274,14 @@ pub(super) struct Request {
     /// FR-651: several independent call or clause selections in one request.
     #[serde(default, deserialize_with = "from_object_opt")]
     pub items: Option<serde_json::Value>,
+    /// FR-767: an optional caller-selected law for this program's `div` and
+    /// `rem` nodes; imported libraries retain their own selection.
+    #[serde(default, deserialize_with = "present_json_value")]
+    pub integer_division: Option<serde_json::Value>,
     /// FR-100/ADR-015 D-1: a `1-draft` program's supplied libraries; none
     /// when absent.
     #[serde(default, deserialize_with = "deserialize_objects")]
-    pub libraries: Vec<Library>,
+    pub libraries: Vec<RunLibrary>,
     /// FR-660: request supplied extension definitions.
     #[serde(default, deserialize_with = "extensions")]
     pub extensions: Vec<Extension>,
@@ -386,6 +429,42 @@ pub(super) struct Model {
 pub(super) struct Program {
     #[serde(deserialize_with = "from_object")]
     pub source: SourceFile,
+    /// FR-031: extraction body identity selected from the original Markdown document.
+    #[cfg(feature = "quire-extraction")]
+    #[serde(default, deserialize_with = "from_object_opt")]
+    pub extraction: Option<Extraction>,
+    /// FR-031: authored clause bindings for the extraction.
+    #[cfg(feature = "quire-extraction")]
+    #[serde(default, deserialize_with = "deserialize_objects")]
+    pub clauses: Vec<ClauseBinding>,
+}
+
+/// FR-031's extracted body identity.
+#[cfg(feature = "quire-extraction")]
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(super) struct Extraction {
+    #[serde(deserialize_with = "from_object")]
+    pub body: ExtractedBody,
+}
+
+/// Native and formal identity of the body Quire extracts.
+#[cfg(feature = "quire-extraction")]
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(super) struct ExtractedBody {
+    pub authority: String,
+    pub identity: String,
+    pub document: String,
+}
+
+/// One authored clause selection for an extraction.
+#[cfg(feature = "quire-extraction")]
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(super) struct ClauseBinding {
+    pub clause: String,
+    pub package: String,
 }
 
 #[derive(Deserialize)]
@@ -454,7 +533,7 @@ pub(super) struct AnalyzeRequest {
     #[serde(default, deserialize_with = "from_object_opt")]
     pub program: Option<Program>,
     #[serde(default, deserialize_with = "from_object_opt")]
-    pub package: Option<FileSelection>,
+    pub package: Option<HandoffSelection>,
     #[serde(default, deserialize_with = "deserialize_objects")]
     pub models: Vec<Model>,
     #[serde(default, deserialize_with = "deserialize_objects")]
@@ -464,7 +543,7 @@ pub(super) struct AnalyzeRequest {
     #[serde(default, deserialize_with = "present_json_value")]
     pub integer_division: Option<serde_json::Value>,
     #[serde(default, deserialize_with = "deserialize_objects")]
-    pub documents: Vec<FileSelection>,
+    pub documents: Vec<DocumentFileSelection>,
     #[serde(default)]
     pub memory: Vec<serde_json::Value>,
     #[serde(default, deserialize_with = "from_object_opt")]
@@ -477,11 +556,31 @@ pub(super) struct AnalyzeRequest {
     pub deadline_ms: Option<u64>,
 }
 
+/// FR-850's `package` selection: the FR-517 handoff directory, beneath the
+/// request's directory, holding `checked-package.json`, `identities.json`
+/// and, when the unit has equality rows, `equality.json`.
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(super) struct HandoffSelection {
+    pub directory: String,
+}
+
 /// A `{file}` selection of a supplied document or checked package.
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(super) struct FileSelection {
+    /// Deserialized so the selection's shape is validated; no consumer reads it yet.
+    #[allow(dead_code)]
     pub file: String,
+}
+
+/// A supplied document and its optional FR-821 provision identity.
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(super) struct DocumentFileSelection {
+    pub file: String,
+    #[serde(default, deserialize_with = "present_json_value")]
+    pub identity: Option<serde_json::Value>,
 }
 
 /// The request-level `limits`: what every item of the run shares.
@@ -699,6 +798,20 @@ pub(super) struct MonitorRequest {
     /// The relative path of a JSON Lines record file (the batch form).
     #[serde(default)]
     pub records: Option<String>,
+    /// The provider-routed FSpec FR-520 analysis items (FR-644
+    /// "Provider-routed items"), read as a `native-analyze/1` request reads
+    /// them.
+    #[serde(default)]
+    pub items: Option<Vec<fsl_analyze::analyze::document::ItemSelection>>,
+    /// The items' model subject, as FR-620 reads it.
+    #[serde(default, deserialize_with = "from_object_opt")]
+    pub subject: Option<fsl_analyze::analyze::document::SubjectSelection>,
+    /// The documents the items read, as FR-620 reads them.
+    #[serde(default, deserialize_with = "deserialize_objects")]
+    pub documents: Vec<DocumentFileSelection>,
+    /// The items' deadline in milliseconds, as FR-620 reads it.
+    #[serde(default, deserialize_with = "deadline")]
+    pub deadline_ms: Option<u64>,
 }
 
 /// One selected clause: its name and, for a snapshot trace, its `over`.

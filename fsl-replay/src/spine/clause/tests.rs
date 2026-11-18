@@ -275,11 +275,9 @@ fn compiled() -> ComposedUnit {
     .unwrap_or_else(|refusal| panic!("compile refused: {refusal:?}"))
 }
 
+/// FR-868: the closed `model` header, `{"identity": I}`.
 fn model_header_json() -> serde_json::Value {
-    json!({
-        "identity": PACKAGE_IDENTITY,
-        "version": "1.0.0",
-    })
+    json!({ "identity": PACKAGE_IDENTITY })
 }
 
 fn document_identity_json(label: &DocumentRef) -> serde_json::Value {
@@ -1249,14 +1247,17 @@ fn run_clause_reports_the_document_order_first_unknown_member_not_the_alphabetic
     );
     let report = run_clause(request).expect("a well-formed request always reports");
     match report.disposition {
-        ClauseDisposition::Admit(super::AdmissionFailure::Refused(record)) => {
+        ClauseDisposition::SnapshotAdmission {
+            failure: super::AdmissionFailure::Refused(record),
+            ..
+        } => {
             assert_eq!(record.catalog.cause(), "unknown-member");
             assert_eq!(
                 record.fields.get("field").map(String::as_str),
                 Some("zzz_unknown")
             );
         }
-        other => panic!("expected Admit(Refused(unknown-member)), got {other:?}"),
+        other => panic!("expected snapshot-admission Refused(unknown-member), got {other:?}"),
     }
 }
 
@@ -1945,15 +1946,16 @@ fn run_clause_refuses_a_dangling_parent_reference() {
     let report = run_clause(request).unwrap();
     assert_eq!(report.disposition.stage(), ClauseRunStage::Admit);
     match &report.disposition {
-        ClauseDisposition::Admit(fsl_semantics::model::observation::AdmissionFailure::Refused(
-            record,
-        )) => {
+        ClauseDisposition::SnapshotAdmission {
+            failure: fsl_semantics::model::observation::AdmissionFailure::Refused(record),
+            ..
+        } => {
             assert_eq!(
                 record.catalog.code(),
                 fsl_foundation::diagnostic::Code::DanglingReference.as_str()
             );
         }
-        other => panic!("expected Admit(Refused(dangling_reference)), got {other:?}"),
+        other => panic!("expected snapshot-admission Refused(dangling_reference), got {other:?}"),
     }
     assert_eq!(report.disposition.category().exit_code(), 20);
 }
@@ -2001,15 +2003,16 @@ fn run_clause_reports_incomplete_for_an_incomplete_population() {
     let report = run_clause(request).unwrap();
     assert_eq!(report.disposition.stage(), ClauseRunStage::Admit);
     match &report.disposition {
-        ClauseDisposition::Admit(
-            fsl_semantics::model::observation::AdmissionFailure::Incomplete(record),
-        ) => {
+        ClauseDisposition::SnapshotAdmission {
+            failure: fsl_semantics::model::observation::AdmissionFailure::Incomplete(record),
+            ..
+        } => {
             assert_eq!(
                 record.catalog.code(),
                 fsl_foundation::diagnostic::Code::IncompletePopulation.as_str()
             );
         }
-        other => panic!("expected Admit(Incomplete(incomplete_population)), got {other:?}"),
+        other => panic!("expected snapshot-admission Incomplete(incomplete_population), got {other:?}"),
     }
     assert_eq!(
         report.disposition.category(),
@@ -2203,6 +2206,7 @@ fn checked_invariant_and_call_fault_both_report_the_same_internal_failure_shape(
         )),
         location: None,
         losses: Vec::new(),
+        frame_depth: 0,
     };
     let mapped = super::super::call::convert_outcome(
         checked_invariant_evaluation,
@@ -2279,8 +2283,9 @@ fn checked_invariant_and_call_fault_both_report_the_same_internal_failure_shape(
 /// `filament_eval::Evaluation`, run through `super::super::
 /// call::convert_outcome` itself (never a hand-copied expected
 /// `CallOutcome`), and only then checked against
-/// `ClauseDisposition::category`/`exit_code`'s own mapping (FR-301's exit
-/// 0/10, and FR-100-AC-9's 20/22 for `Undefined`/`Incomplete`).
+/// `ClauseDisposition::category`/`truth`/`exit_code`: a typed undefined
+/// evaluates as a refuted claim under FR-301, with the same exit 10 as the
+/// value run; incomplete remains exit 22.
 #[trace("TC-468", "FR-109-AC-5")]
 #[test]
 fn convert_outcome_drives_the_disposition_for_every_general_outcome_kind() {
@@ -2292,6 +2297,7 @@ fn convert_outcome_drives_the_disposition_for_every_general_outcome_kind() {
         outcome,
         location: None,
         losses: Vec::new(),
+        frame_depth: 0,
     };
 
     // Completed(true): success, exit 0.
@@ -2328,7 +2334,7 @@ fn convert_outcome_drives_the_disposition_for_every_general_outcome_kind() {
     assert_eq!(disposition.truth(), Some(false));
     assert_eq!(disposition.category().exit_code(), 10);
 
-    // A kernel `Undefined`: undefined, exit 10 (FR-285).
+    // A kernel `Undefined` is a refuted claim in the clause-run domain.
     let mapped = super::super::call::convert_outcome(
         evaluation(FamilyOutcome::Evaluated(
             filament_exact::Outcome::Undefined(filament_exact::Undefined::DivisionByZero),
@@ -2340,9 +2346,9 @@ fn convert_outcome_drives_the_disposition_for_every_general_outcome_kind() {
     let disposition = ClauseDisposition::Evaluate(mapped);
     assert_eq!(
         disposition.category(),
-        filament_semantic_value::catalog::Category::Undefined
+        filament_semantic_value::catalog::Category::Violation
     );
-    assert_eq!(disposition.truth(), None);
+    assert_eq!(disposition.truth(), Some(false));
     assert_eq!(disposition.category().exit_code(), 10);
 
     // A kernel `Incomplete`: incomplete, exit 22.
@@ -2367,47 +2373,6 @@ fn convert_outcome_drives_the_disposition_for_every_general_outcome_kind() {
     );
     assert_eq!(disposition.truth(), None);
     assert_eq!(disposition.category().exit_code(), 22);
-}
-
-/// TC-2830 step 1 (FR-109-AC-14): a constructed
-/// `Outcome::Undefined(SumOutOfDomain)` maps, as AC-5 checks FR-100-AC-9's
-/// outcomes, to a refuted claim: stage `evaluate`, category `violation`,
-/// `truth` false, cause `sum-out-of-domain` (never null), exit 10.
-#[trace("TC-2830", "FR-109-AC-14")]
-#[test]
-#[ignore = "QSL-2186: an undefined clause evaluation maps to violation/truth false with its cause; not implemented yet"]
-fn sum_out_of_domain_maps_to_a_refuted_claim_with_its_cause() {
-    let compiled = compiled();
-    let sources = std::slice::from_ref(&compiled.source);
-    let mapped = super::super::call::convert_outcome(
-        filament_eval::Evaluation {
-            outcome: FamilyOutcome::Evaluated(filament_exact::Outcome::Undefined(
-                filament_exact::Undefined::SumOutOfDomain,
-            )),
-            location: None,
-            losses: Vec::new(),
-        },
-        compiled.package.graph(),
-        sources,
-    )
-    .expect("Undefined maps to Ok");
-    assert!(
-        matches!(
-            mapped,
-            super::super::call::CallOutcome::Undefined {
-                reason: "sum-out-of-domain"
-            }
-        ),
-        "the cause is present: {mapped:?}"
-    );
-    let disposition = ClauseDisposition::Evaluate(mapped);
-    assert_eq!(disposition.stage(), ClauseRunStage::Evaluate);
-    assert_eq!(
-        disposition.category(),
-        filament_semantic_value::catalog::Category::Violation
-    );
-    assert_eq!(disposition.truth(), Some(false));
-    assert_eq!(disposition.exit_code(), 10);
 }
 
 /// FR-285: an admission refusal exits by its record code's category, so

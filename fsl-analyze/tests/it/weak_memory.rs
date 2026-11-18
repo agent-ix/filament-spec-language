@@ -12,7 +12,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::num::NonZeroUsize;
 
-use fsl_analyze::model_check::{ProtocolCheckRequest, SubjectContext, check_protocol};
+use fsl_analyze::model_check::{check_protocol, ProtocolCheckRequest, SubjectContext};
 use fsl_eval::model_subject::{AtomStop, ModelInstance, ModelLetters, ProtocolSubject};
 use fsl_eval::simulation::model::{ModelFinding, ModelSimState, ModelSystem};
 use ix_trace_rs::trace;
@@ -20,34 +20,34 @@ use ix_trace_rs::trace;
 use filament_exact::{Cancel, Meter};
 use filament_semantic_value::catalog::CatalogCode;
 use fsl_eval::simulation::protocol::{
-    CarriedComponent, ClaimReads, InstanceAccess, MemoryModel, MemorySelection,
-    MemorySelectionRefusal, PositionAnchor, ProtocolLocation, ProtocolRefusal, ProtocolState,
-    ProtocolSystem, ProtocolTransition, Ra, ReachRefusal, RestKind, Sc, StepKind, ThreadPath, Tso,
-    WaitCause, WeakAccesses, classify_accesses, visible,
+    classify_accesses, visible, CarriedComponent, ClaimReads, InstanceAccess, MemoryModel,
+    MemorySelection, MemorySelectionRefusal, PositionAnchor, ProtocolLocation, ProtocolRefusal,
+    ProtocolState, ProtocolSystem, ProtocolTransition, Ra, ReachRefusal, RestKind, Sc, StepKind,
+    ThreadPath, Tso, WaitCause, WeakAccesses,
 };
 use fsl_eval::simulation::{
-    ExpansionLimit, Location, SubjectSystem, TransitionSystem, independent,
+    independent, ExpansionLimit, Location, SubjectSystem, TransitionSystem,
 };
 use fsl_eval::temporal::AtomReading;
-use fsl_foundation::MemoryModelName;
 use fsl_foundation::source::provenance::OccurrenceKey;
+use fsl_foundation::MemoryModelName;
 use fsl_package::CheckedPackage;
 use fsl_replay::{
-    IncompleteCause, InconclusiveCause, MemoryBound, MemoryBoundMember, MemoryCause,
-    ModelCheckItem, ModelCheckLimit, ModelCheckLimits, ModelCheckOutcome, ModelCheckRecord,
-    ModelTraceRefusal, ModelTraceReplayResult, ModelTraceSettlement, ModelTraceSubject,
-    ProtocolCertificateRequest, ProtocolTraceSubject, ReachedLimit, ReplayLimits, ReplayRefusal,
-    ResultLabel, StatedMemoryBound, TemporalCounterexample, TerminalValue, UndecidedCause,
-    replay_protocol_trace, settle_protocol_check,
+    replay_protocol_trace, settle_protocol_check, IncompleteCause, InconclusiveCause, MemoryBound,
+    MemoryBoundMember, MemoryCause, ModelCheckItem, ModelCheckLimit, ModelCheckLimits,
+    ModelCheckOutcome, ModelCheckRecord, ModelTraceRefusal, ModelTraceReplayResult,
+    ModelTraceSettlement, ModelTraceSubject, ProtocolCertificateRequest, ProtocolTraceSubject,
+    ReachedLimit, ReplayLimits, ReplayRefusal, ResultLabel, StatedMemoryBound,
+    TemporalCounterexample, TerminalValue, UndecidedCause,
 };
 use fsl_route::model_request::ModelRequest;
 use fsl_semantics::check::{AccessClass, FormulaNodeId};
-use serde_json::{Value as Json, json};
+use serde_json::{json, Value as Json};
 
-use crate::fill::{Explored, Reached, reachable};
+use crate::fill::{reachable, Explored, Reached};
 use crate::litmus::{
-    Documents, NO_BOTH_ZERO, PROTOCOL_PROFILE, attempt, contracts, core, document, field, key,
-    package, protocol, protocol_profiled_package, protocol_with, sb_run, sb_unit, unit_text_with,
+    attempt, contracts, core, document, field, key, package, protocol, protocol_profiled_package,
+    protocol_with, sb_run, sb_unit, unit_text_with, Documents, NO_BOTH_ZERO, PROTOCOL_PROFILE,
 };
 use crate::model_settle::{envelope_at, request};
 
@@ -899,12 +899,10 @@ fn nested_any_joins_explore_under_a_weak_selection() {
         .successors(&forked)
         .expect("expands the forked state");
     assert!(!after.successors.is_empty());
-    assert!(
-        !after
-            .findings
-            .iter()
-            .any(|finding| matches!(finding, ModelFinding::WeakAccessShape(_)))
-    );
+    assert!(!after
+        .findings
+        .iter()
+        .any(|finding| matches!(finding, ModelFinding::WeakAccessShape(_))));
     assert!(explores(&case, MemoryModelName::Tso));
 }
 
@@ -1032,12 +1030,10 @@ fn en1_classifies_two_relaxed_stores_to_one_shared_location() {
         for node in ["Both/left/L/S1", "Both/right/R/S2"] {
             assert!(classes(&accesses, node).contains(&(AccessClass::Store, name("x", "v"))));
         }
-        assert!(
-            accesses
-                .shared()
-                .iter()
-                .any(|location| named(&accesses, location) == name("x", "v"))
-        );
+        assert!(accesses
+            .shared()
+            .iter()
+            .any(|location| named(&accesses, location) == name("x", "v")));
     }
 }
 
@@ -1148,12 +1144,10 @@ fn a_constraint_reading_a_shared_location_loads_it_relaxed() {
     // The actual `Cell` z that no selected attempt accesses is not shared
     // with the reader.
     let read_z = Case::over_cells(&object_unit("Cell", &sb_with_event(SEEN), "{ d }"), "z");
-    assert!(
-        read_z
-            .accesses(&tso)
-            .node_reads("Both/right/R/Seen")
-            .is_empty()
-    );
+    assert!(read_z
+        .accesses(&tso)
+        .node_reads("Both/right/R/Seen")
+        .is_empty());
     assert!(matches!(
         read_z.check(&tso, ModelCheckItem::DeadlockFreedom, None),
         ModelCheckOutcome::Holds { .. }
@@ -1252,12 +1246,21 @@ fn enabled_sharing_is_recomputed_after_a_guarded_store() {
 /// checking that the item explores (FR-902: a reader loads `relaxed`).
 fn tso_reads(case: &Case, site: &str) -> Vec<(String, String)> {
     let selection = [select("SB::Both", MemoryModelName::Tso)];
-    assert!(explores(case, MemoryModelName::Tso), "{site}");
-    let accesses = case.accesses(&selection);
+    let system = case
+        .system(&selection, Tso::default())
+        .expect("builds under tso");
+    assert!(
+        reachable(&system).iter().any(|state| state
+            .steps
+            .iter()
+            .any(|(step, _)| step.node() == Some(site))),
+        "{site} steps under tso"
+    );
+    let accesses = system.weak_accesses();
     accesses
         .node_reads(site)
         .iter()
-        .map(|location| named(&accesses, location))
+        .map(|location| named(accesses, location))
         .collect()
 }
 
@@ -1270,7 +1273,7 @@ fn tso_reads(case: &Case, site: &str) -> Vec<(String, String)> {
 fn an_effect_commit_send_or_receive_constraint_reads_toward_sharing() {
     let store = attempt("Sx", "w", "Cell::set", "", "IsX, StoreOne");
     let channel = "channel ch from w to w carries Boolean ordering unordered \
-                   delivery unknown capacity 2 overflow block;";
+                   delivery exactly-once-premise capacity 2 overflow block;";
     let cases = [
         (
             "Both/left/L/Eff",
@@ -1369,6 +1372,63 @@ fn a_reader_constraint_with_no_footprint_rule_refuses_with_its_reason() {
     assert_eq!(node, "Both/right/R/Seen");
     assert!(refusal.to_string().contains("function call"), "{refusal}");
     assert!(case.system(&[], Sc).is_ok());
+}
+
+/// FR-882-AC-5 (TC-2506): a pure scalar helper can make an attempt contract
+/// body opaque to ordinary footprint derivation; the attempt still uses its
+/// declared frame and the model read in the call argument.
+#[trace("TC-2506", "FR-882-AC-5")]
+#[test]
+fn an_access_footprint_is_stepped() {
+    let run = format!(
+        "parallel Both {{ branch left sequence L {{ {} }} \
+         branch right sequence R {{ {} }} }} join all [left, right];",
+        attempt("Sx", "c", "Core::look", "", "LooksY, Looked"),
+        attempt("Sy", "c", "Core::look", "", "LooksY, Looked"),
+    );
+    let direct_contracts = contracts().replace(
+        "pre LooksY using v on M::Core::look { c.id = 1 }",
+        "pre LooksY using v on M::Core::look { c.id = 0 }",
+    );
+    let direct = Case::new(&(direct_contracts.clone() + &protocol("SB", &run)));
+    let called_contracts = direct_contracts.replace(
+        "pre LooksY using v on M::Core::look { c.id = 0 }",
+        "pre LooksY using v on M::Core::look { is_zero(c.id) }",
+    );
+    let called = Case::new(&format!(
+        "function is_zero using v(x: Int[0, 3]): Boolean pure {{ x = 0 }}\n{}{}",
+        called_contracts,
+        protocol("SB", &run),
+    ));
+    let selection = [select("SB::Both", MemoryModelName::Tso)];
+    assert!(explores(&called, MemoryModelName::Tso));
+    let direct_accesses = direct.accesses(&selection);
+    let expected = direct_accesses
+        .attempt("Both/left/L/Sx")
+        .expect("direct attempt classified");
+    let called_accesses = called.accesses(&selection);
+    let actual = called_accesses
+        .attempt("Both/left/L/Sx")
+        .expect("fallback attempt classified");
+    assert_eq!(actual.instances, expected.instances);
+}
+
+/// FR-882-AC-3/5: a scalar `over` value is legal for a weak parallel whose
+/// event constraints read no model state; only model reads need a reference
+/// over value for footprint instantiation.
+#[trace("TC-2506", "FR-882-AC-3", "FR-882-AC-5")]
+#[test]
+fn scalar_over_with_model_read_free_weak_constraints_builds() {
+    let run = "parallel Both { branch left sequence L { \
+                event Left by w as (left: Boolean) { true }; } \
+                branch right sequence R { \
+                event Right by w as (right: Boolean) { true }; } } \
+                join all [left, right];";
+    let unit =
+        (contracts() + &protocol("SB", run)).replace("over (k: M::Core)", "over (k: Int[0, 1])");
+    let case = Case::new(&unit);
+    let selection = [select("SB::Both", MemoryModelName::Tso)];
+    assert!(case.system(&selection, Tso::default()).is_ok());
 }
 
 /// FR-220-AC-4 (TC-665 step 4): `SB` under `sc` with every ordering
@@ -1614,12 +1674,10 @@ fn a_seq_cst_fence_waits_for_its_store_buffer_under_tso() {
                 None => {
                     assert!(buffered, "an unbuffered seq_cst fence is enabled");
                     let blocked = system.blocked(&state.state, &[]).expect("blocked");
-                    assert!(
-                        blocked
-                            .iter()
-                            .filter(|thread| thread.path == left)
-                            .all(|thread| thread.cause == WaitCause::Gate)
-                    );
+                    assert!(blocked
+                        .iter()
+                        .filter(|thread| thread.path == left)
+                        .all(|thread| thread.cause == WaitCause::Gate));
                     // `flush(left)` drains the one store, and the fence is
                     // then enabled.
                     let (_, flushed) = state
@@ -1632,14 +1690,12 @@ fn a_seq_cst_fence_waits_for_its_store_buffer_under_tso() {
                         })
                         .expect("a flush of left's buffer");
                     let after = &reached[*flushed];
-                    assert!(
-                        after
-                            .state
-                            .memory()
-                            .buffer(&left)
-                            .unwrap_or_default()
-                            .is_empty()
-                    );
+                    assert!(after
+                        .state
+                        .memory()
+                        .buffer(&left)
+                        .unwrap_or_default()
+                        .is_empty());
                     assert!(fence_step(after, &left).is_some());
                     waited += 1;
                 }
@@ -2232,12 +2288,10 @@ fn a_tso_counterexample_replays_only_under_tso() {
     else {
         panic!("both loads read 0 under sc");
     };
-    assert!(
-        under_sc
-            .prefix
-            .iter()
-            .all(|step| step.transition.memory_component().is_none())
-    );
+    assert!(under_sc
+        .prefix
+        .iter()
+        .all(|step| step.transition.memory_component().is_none()));
     // An `sc` step that carries a component, its post-state key right,
     // is refused on the component alone.
     let mut forged_sc = under_sc.as_ref().clone();
@@ -2791,18 +2845,22 @@ fn tso_forbids_the_weak_outcomes_of_mp_lb_iriw_2_2w_and_corr() {
 }
 
 /// A `send` after a store, beside a branch that receives it and then
-/// loads the stored location.
-fn send_unit() -> String {
+/// loads the stored location, with a third branch independent of the queue.
+/// Each delivery premise bounds the number of fresh delivery identities.
+fn send_unit(delivery: &str) -> String {
     let run = format!(
         "parallel Both {{ branch s sequence Sender {{ {} send Tx via ch as (tx: Boolean) {{ tx }}; }} \
-         branch r sequence Recv {{ receive Rx via ch of s::Sender::Tx as (rx: Boolean) {{ true }}; {} }} }} \
-         join all [s, r];",
+         branch r sequence Recv {{ receive Rx via ch of s::Sender::Tx as (rx: Boolean) {{ true }}; {} }} \
+         branch marker event Mark by c as (marked: Boolean) {{ marked }}; }} \
+         join all [s, r, marker];",
         store("Sx", "x", "StoreOne"),
         load("Lx", "x", 2),
     );
-    let channel = "channel ch from w to w carries Boolean \
-                   ordering unordered delivery unknown capacity 2 overflow block;";
-    contracts() + &protocol_with("SB", channel, &run) + NO_BOTH_ZERO
+    let channel = format!(
+        "channel ch from w to w carries Boolean \
+         ordering unordered delivery {delivery} capacity 2 overflow block;"
+    );
+    contracts() + &protocol_with("SB", &channel, &run) + NO_BOTH_ZERO
 }
 
 /// FR-221-AC-4's `send` half (TC-666): a `send` by a thread whose buffer
@@ -2810,12 +2868,13 @@ fn send_unit() -> String {
 #[trace("TC-666", "FR-221-AC-4")]
 #[test]
 fn a_send_waits_for_its_threads_buffer() {
-    let case = Case::new(&send_unit());
+    let case = Case::new(&send_unit("at-least-once"));
     let tso = [select("SB::Both", MemoryModelName::Tso)];
     let system = case.system(&tso, Tso::default()).expect("builds");
+    let reached = reachable(&system);
+    let sender = ThreadPath::root(0).child("Both", "s", 0);
     let mut waited = 0;
-    for state in reachable(&system) {
-        let sender = ThreadPath::root(0).child("Both", "s", 0);
+    for state in &reached {
         let buffered = !state
             .state
             .memory()
@@ -2843,13 +2902,11 @@ fn a_send_waits_for_its_threads_buffer() {
                 .find(|(transition, _)| transition.memory_step().is_some())
                 .map(|(_, next)| *next)
                 .expect("a flush");
-            let after = &reachable(&system)[flushed];
-            assert!(
-                after
-                    .steps
-                    .iter()
-                    .any(|(transition, _)| transition.kind() == StepKind::Send)
-            );
+            let after = &reached[flushed];
+            assert!(after
+                .steps
+                .iter()
+                .any(|(transition, _)| transition.kind() == StepKind::Send));
         }
     }
     assert!(waited > 0);
@@ -2980,7 +3037,8 @@ fn every_independent_pair_of_tso_steps_commutes() {
         (sb_unit(&sb_run("", "release", "acquire")), "SB::Both"),
         (contracts() + &protocol("SB", &fifo), "SB::Both"),
         (contracts() + &protocol("SB", &mp), "SB::Main::Both"),
-        (send_unit(), "SB::Both"),
+        (send_unit("at-most-once"), "SB::Both"),
+        (send_unit("at-least-once"), "SB::Both"),
         (sb_unit(&fenced_sb("seq_cst", "acquire")), "SB::Both"),
         // A replicated role's event, `spawn` and `finish` beside the
         // `parallel`'s stores and flushes (ADR-027 RR-2, FT-1).
@@ -2998,32 +3056,27 @@ fn every_independent_pair_of_tso_steps_commutes() {
             "SB::Main::Both",
         ),
     ];
-    let mut flushes = 0;
+    let mut paired_kinds = BTreeSet::new();
     for (body, parallel) in &units {
         let case = Case::new(body);
         let system = case
             .system(&[select(parallel, MemoryModelName::Tso)], Tso::default())
             .expect("builds");
         let reached = reachable(&system);
-        assert!(
-            crate::protocol_footprints::assert_independent_steps_commute(&system, &reached) > 0,
-            "{body}"
-        );
-        for state in &reached {
-            for (first, _) in &state.steps {
-                for (second, _) in &state.steps {
-                    if first.memory_step().is_some() && second.memory_step().is_none() {
-                        let left = system.footprint(&state.state, first).expect("a footprint");
-                        let right = system.footprint(&state.state, second).expect("a footprint");
-                        if independent(&left, &right) {
-                            flushes += 1;
-                        }
-                    }
-                }
+        let pairs = crate::protocol_footprints::commuting_pairs(&system, &reached);
+        assert!(!pairs.is_empty(), "{body}");
+        for (first, second) in pairs {
+            if first != second {
+                paired_kinds.extend([first, second]);
             }
         }
     }
-    assert!(flushes > 0);
+    for kind in [StepKind::Memory, StepKind::Lose, StepKind::Duplicate] {
+        assert!(
+            paired_kinds.contains(&kind),
+            "no independent pair with {kind:?}"
+        );
+    }
 }
 
 /// SR-12239 FND-001 (FR-225, ADR-025 MB-4; TC-670): the closure checker
@@ -3233,12 +3286,11 @@ fn reachable_refuses_with_the_expansion_stop_on_any_worker_count() {
             CatalogCode::new("resource_exhausted", "insufficient-next-charge")
         );
     }
-    assert!(
-        case.system(&tso, Tso::default())
-            .expect("builds")
-            .reachable(four)
-            .is_ok()
-    );
+    assert!(case
+        .system(&tso, Tso::default())
+        .expect("builds")
+        .reachable(four)
+        .is_ok());
 }
 
 /// FR-902-AC-1, FR-902-AC-5 (TC-2542, TC-2544): under a `tso` selection, an

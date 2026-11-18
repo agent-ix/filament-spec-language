@@ -539,7 +539,7 @@ fn a_quantity_root_leaves_no_finite_bound_available() {
 
 /// FR-334 AC4: every collection and population vector is compiled and emitted
 /// by FSL, then compared directly by structural node key with FSpec's source
-/// vector. The source vectors remain in the FSpec checkout named by FSPEC_DIR.
+/// vector. Source vectors come from the pinned FSpec package.
 #[trace(
     "TC-844",
     "FR-334-AC-4",
@@ -549,14 +549,9 @@ fn a_quantity_root_leaves_no_finite_bound_available() {
 )]
 #[test]
 fn emitted_collection_and_population_type_keys_match_fspec_vectors() {
-    let fspec = std::env::var_os("FSPEC_DIR")
-        .expect("FSPEC_DIR must name a filament-specification checkout");
-    let path = std::path::PathBuf::from(fspec)
-        .join("proposals/checked-package-v2/collection-population-type-vectors.json");
-    let vectors: serde_json::Value = serde_json::from_slice(
-        &std::fs::read(&path).unwrap_or_else(|error| panic!("{}: {error}", path.display())),
-    )
-    .unwrap_or_else(|error| panic!("{}: {error}", path.display()));
+    let vectors = crate::support::published_fspec::json(
+        "proposals/checked-package-v2/collection-population-type-vectors.json",
+    );
     assert_eq!(
         vectors["version"], "filament.collection-population-type-vectors/v1",
         "the checked vector contract is current"

@@ -527,12 +527,13 @@ fn braking2_slows_and_recent_emit_initial_entries_resets_activation_and_fairness
 #[trace("TC-1220", "FR-447-AC-12", "FSpec-FR-481-AC-8", "FSpec-FR-481-AC-9")]
 #[test]
 fn braking2_restored_nodes_match_fspec_vectors() {
-    let fspec = std::env::var_os("FSPEC_DIR")
-        .expect("FSPEC_DIR must name a filament-specification checkout");
-    let fspec = std::path::PathBuf::from(fspec);
-    let path = fspec.join("proposals/checked-package-v2/hybrid-node-vectors.json");
-    let fixture: Value = serde_json::from_slice(&std::fs::read(path).expect("FSpec vectors"))
-        .expect("FSpec vector JSON");
+    let fixture: Value = serde_json::from_slice(
+        filament_specification::published_file(
+            "proposals/checked-package-v2/hybrid-node-vectors.json",
+        )
+        .expect("pinned FSpec publishes hybrid-node vectors"),
+    )
+    .expect("FSpec vector JSON");
     let expected = fixture["restored_nodes"]
         .as_array()
         .expect("FSpec restored nodes");

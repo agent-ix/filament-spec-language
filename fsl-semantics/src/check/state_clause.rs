@@ -1546,6 +1546,13 @@ pub(crate) fn clause_records(
                     references,
                 )
                 .map_err(classify)?;
+                // FSL FR-962: an `invariant` clause's record is the one
+                // `operation-contract` form EN-1 may decide.
+                let record = if form.kind == fsl_forms::StateClauseKind::Invariant {
+                    record.of_invariant_clause()
+                } else {
+                    record
+                };
                 keyed.push(KeyedClaim {
                     node: lowered.key.clone(),
                     origin: claim.clone(),

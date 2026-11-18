@@ -57,8 +57,8 @@ impl Plan {
             if let Some(CheckedInterval::Timed(interval)) = &operator.interval {
                 let scale = ratio(1000, 1);
                 let lower = interval.lower().mul(&scale);
-                let upper = interval.upper().mul(&scale);
-                if let Some(rate) = &self.capacity_rate {
+                let upper = interval.upper().map(|upper| upper.mul(&scale));
+                if let (Some(rate), Some(upper)) = (&self.capacity_rate, &upper) {
                     // FR-251 "Buffers": the upper bound plus the tick cover.
                     let window = upper
                         .add(&ratio(1, 1))
@@ -91,6 +91,7 @@ impl Plan {
             capacities,
             activation_capacity: 8,
             unprojectable: Default::default(),
+            exact: false,
         })
     }
 }
@@ -335,9 +336,8 @@ fn counter_wraps_and_a_gap_fails_the_open_instance() {
 #[trace("TC-199", "FR-160-AC-7")]
 #[test]
 fn tick_cover_vectors_decide_by_the_endpoint_rule() {
-    let path = std::path::Path::new(&std::env::var("FSPEC_DIR").expect("FSPEC_DIR"))
-        .join("proposals/checked-package-v2/tick-cover-vectors.json");
-    let vectors: serde_json::Value = serde_json::from_slice(&std::fs::read(path).unwrap()).unwrap();
+    let vectors =
+        crate::published_fspec::json("proposals/checked-package-v2/tick-cover-vectors.json");
     for case in vectors["cases"].as_array().unwrap() {
         let u = ratio(case["uncertainty"].as_i64().unwrap(), 1);
         match case["kind"].as_str().unwrap() {

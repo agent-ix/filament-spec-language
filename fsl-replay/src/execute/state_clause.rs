@@ -25,8 +25,9 @@ use fsl_semantics::model::observation::{
 };
 
 use super::{
-    check_envelope_target, consumed, domain_packages, recompile, wrong_target, ReplayRefusal,
+    ReplayRefusal, check_envelope_target, consumed, domain_packages, recompile, wrong_target,
 };
+use crate::WitnessEnvelope;
 use crate::bounds::ReplayLimits;
 use crate::identity::DefinitionSourceRef;
 use crate::request::{ReplayRequest, ReplayRequestWire};
@@ -35,14 +36,13 @@ use crate::result::{
     SeparationReason, SeparationRefusal, Verdict, WitnessArmResult, WitnessCheck, WitnessFailure,
 };
 use crate::spine::{
-    check_clause_admitted, convert_outcome, CallOutcome, CallRefusal, CallValue, ClauseCheck,
-    ClauseDisposition, CompiledRun,
+    CallOutcome, CallRefusal, CallValue, ClauseCheck, ClauseDisposition, CompiledRun,
+    check_clause_admitted, convert_outcome,
 };
 use crate::target::{ReplayEntry, TargetMember};
 use crate::witness::{EnvelopeSource, StateClauseCounterexample};
-use crate::WitnessEnvelope;
-use filament_eval::CallFailure;
-use filament_exact::Meter;
+use filament_eval::{CallFailure, FamilyOutcome};
+use filament_exact::{Meter, Outcome};
 use filament_semantic_value::catalog::Category;
 use fsl_eval::value::{
     CheckedPackageEvaluation, QualifiedName, Separation, SeparationStep, WitnessClaim,
@@ -66,7 +66,9 @@ pub enum ClauseIdentityMismatch {
         recompiled: NodeKey,
     },
     /// The clause declaration's `claim` occurrence.
-    #[error("the envelope names occurrence {envelope:?} but the package recompiles it as {recompiled:?}")]
+    #[error(
+        "the envelope names occurrence {envelope:?} but the package recompiles it as {recompiled:?}"
+    )]
     Occurrence {
         /// The envelope's occurrence key.
         envelope: OccurrenceKey,
@@ -307,7 +309,7 @@ pub fn replay_state_clause(
         ),
         // FR-104: a state clause's body is Boolean.
         ClauseDisposition::Evaluate(CallOutcome::Completed(CallValue::Integer(_))) => {
-            return fault("state-clause-completes-a-boolean")
+            return fault("state-clause-completes-a-boolean");
         }
         ClauseDisposition::Evaluate(CallOutcome::Completed(
             CallValue::Reference(_) | CallValue::Written(_),
@@ -320,7 +322,7 @@ pub fn replay_state_clause(
         }
         ClauseDisposition::Admit(failure) => return Err(ReplayRefusal::Admission(failure)),
         ClauseDisposition::SnapshotAdmission { failure, .. } => {
-            return Err(ReplayRefusal::Admission(failure))
+            return Err(ReplayRefusal::Admission(failure));
         }
         ClauseDisposition::EvaluateFault(fault) => return Err(ReplayRefusal::Fault(fault)),
         // FR-107's `UnknownClause`: the clause was resolved by name above,
@@ -340,7 +342,7 @@ pub fn replay_state_clause(
         | ClauseDisposition::FrameViolation(_)
         | ClauseDisposition::OperationContractViolation(_)
         | ClauseDisposition::TemporalValuation(_) => {
-            return fault("clause-check-reports-admission-or-evaluation")
+            return fault("clause-check-reports-admission-or-evaluation");
         }
     };
     if !range_violations.is_empty() {
@@ -545,6 +547,9 @@ pub(crate) fn separate(
     meter: &mut Meter,
 ) -> Result<SeparationOutcome, ReplayRefusal> {
     let fault = |invariant| ReplayRefusal::Fault(InternalFault::new("replay", invariant));
+    if record.deciding_comparison.is_some() {
+        return separate_comparison(package, clause, observations, record, meter);
+    }
     // A state clause's record always carries its index (ADR-031 SW-5);
     // a record without one names no element to check.
     let Some(index) = record.index else {
@@ -580,28 +585,28 @@ pub(crate) fn separate(
             return Err(ReplayRefusal::Storage {
                 position: parameter,
                 failure,
-            })
+            });
         }
         // The clause was resolved by name and admitted for that clause.
         Err(CallFailure::Input(_)) => {
-            return Err(fault("separation-check-over-the-admitted-clause"))
+            return Err(fault("separation-check-over-the-admitted-clause"));
         }
         // This state-clause path selects no protocol node or supplied binder;
         // checked-package protocol admission cannot be produced here.
         Err(CallFailure::Admission(_)) => {
-            return Err(fault("separation-check-has-no-protocol-slot-admission"))
+            return Err(fault("separation-check-has-no-protocol-slot-admission"));
         }
         // This meter holds no `Cancel` handle, so no charge is cancelled.
         Err(CallFailure::Cancelled(_)) => return Err(fault("cancelled-without-a-handle")),
         // Clause separation admits no supplied-value argument: the admission
         // phase never runs here.
         Err(CallFailure::Supplied(_) | CallFailure::UnsupportedHelper(_)) => {
-            return Err(fault("separation-check-runs-no-supplied-phase"))
+            return Err(fault("separation-check-runs-no-supplied-phase"));
         }
         // Only a prepared entry on another backend or a prepare limit
         // returns these, and the checked interpreter returns neither.
         Err(CallFailure::Unsupported(_) | CallFailure::Limit(_)) => {
-            return Err(fault("interpreter-returns-no-prepare-refusal"))
+            return Err(fault("interpreter-returns-no-prepare-refusal"));
         }
     };
     match separation {
@@ -614,6 +619,75 @@ pub(crate) fn separate(
             })
         }
     }
+}
+
+/// FR-268's comparison-record separation check. It re-evaluates the pure
+/// claim over the admitted observation and compares the derived path, both
+/// operands and the comparison result to the record.
+fn separate_comparison(
+    package: &fsl_package::CheckedPackage,
+    clause: &str,
+    observations: &AdmittedObservations,
+    record: &SeparatingWitnessRecord,
+    meter: &mut Meter,
+) -> Result<SeparationOutcome, ReplayRefusal> {
+    let failed = |step| SeparationOutcome::Failed(step, SeparationReason::Unmet);
+    if record.quantifier.is_some()
+        || record.index.is_some()
+        || record.trace_position.is_some()
+        || record.operands.is_none()
+        || record
+            .decision_path
+            .as_ref()
+            .is_none_or(|path| path.is_empty())
+    {
+        return Ok(failed(SeparationStep::Quantifier));
+    }
+    let name = QualifiedName::unqualified(clause).map_err(|_| {
+        ReplayRefusal::Fault(InternalFault::new("replay", "state-clause-name-qualifies"))
+    })?;
+    let evaluation = match package.evaluate_clause(&name, observations, meter) {
+        Ok(evaluation) => evaluation,
+        Err(CallFailure::Fault(fault)) => return Err(ReplayRefusal::Fault(fault)),
+        Err(_) => return Ok(failed(SeparationStep::Domain)),
+    };
+    if matches!(
+        evaluation.evaluation.outcome,
+        FamilyOutcome::Evaluated(Outcome::Incomplete(_))
+    ) {
+        return Ok(SeparationOutcome::Exhausted);
+    }
+    let Some(declaration) = package.graph().state_clause(clause) else {
+        return Err(ReplayRefusal::Fault(InternalFault::new(
+            "replay",
+            "separation-check-resolves-state-clause",
+        )));
+    };
+    let derived =
+        crate::witness::derive_separating_witness(package.graph(), declaration, &evaluation)
+            .map_err(ReplayRefusal::Fault)?;
+    let Some(expected) = derived.and_then(|derived| derived.record) else {
+        return Ok(failed(SeparationStep::Domain));
+    };
+    if record.deciding_comparison != expected.deciding_comparison
+        || record.decision_path != expected.decision_path
+        || record.value_path != expected.value_path
+    {
+        return Ok(failed(SeparationStep::Quantifier));
+    }
+    let (Some(given_operands), Some(expected_operands)) = (&record.operands, &expected.operands)
+    else {
+        return Ok(failed(SeparationStep::Element));
+    };
+    if !crate::result::same_element(&given_operands[0], &expected_operands[0])
+        || !crate::result::same_element(&given_operands[1], &expected_operands[1])
+    {
+        return Ok(failed(SeparationStep::Element));
+    }
+    if record.deciding_element != expected.deciding_element {
+        return Ok(failed(SeparationStep::Body));
+    }
+    Ok(SeparationOutcome::Holds)
 }
 
 /// FR-269: why a separation-check evaluation that completed no value

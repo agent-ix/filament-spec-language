@@ -113,10 +113,9 @@ fn emitted_source_place_member_type_matches_its_target_node_identity() {
             steps(member(&place["body"], "resolved_path"))
                 .iter()
                 .any(|step| {
-                    step.iter()
-                        .any(|(name, value)| {
-                            name == "member_identity" && value == &wrapper_w_identity
-                        })
+                    step.iter().any(|(name, value)| {
+                        name == "member_identity" && value == &wrapper_w_identity
+                    })
                 })
         })
         .expect("the clock place through Order.nested.Wrapper.w");

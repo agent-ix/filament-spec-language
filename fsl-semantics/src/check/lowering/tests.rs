@@ -24,6 +24,7 @@ use filament_semantic_value::checking::CheckingLimits;
 use filament_semantic_value::declaration::{
     CompositeDeclaration, FieldDeclaration, TypeEnvironment,
 };
+use fsl_foundation::diagnostic::Code;
 use fsl_foundation::source::provenance::RawSourceRef;
 use fsl_foundation::SourceIdentity;
 
@@ -1370,20 +1371,17 @@ fn a_bounded_quantity_has_no_type_node() {
     );
 }
 
-/// A map has no equality (FSpec FR-149 states none): `OperatorIneligible`.
-/// A bounded quantity is compared as `Quantity<u>` (filament-semantic-value
-/// FR-127 item 6), so it lowers to the same equality as the quantity.
+/// A map compares structurally (FR-680-AC-3: `=` over two `Map` operands is
+/// admitted), so it lowers to an equality. A bounded quantity is compared as
+/// `Quantity<u>` (filament-semantic-value FR-127 item 6), so it lowers to the
+/// same equality as the quantity.
 #[test]
-fn equality_refuses_a_map_and_reads_a_bounded_quantity_as_its_quantity() {
+fn equality_admits_a_map_and_reads_a_bounded_quantity_as_its_quantity() {
     with_lowering(|lowering| {
         let location = generated_location();
-        let refusal = lowering
+        lowering
             .equality(&map_of(ValueType::Boolean), "eq", &location)
-            .expect_err("a map has no equality");
-        assert!(matches!(
-            refusal.cause,
-            CheckCause::IllTyped(filament_exact::IllTypedCause::OperatorIneligible)
-        ));
+            .expect("a map compares structurally (FR-680-AC-3)");
         let bounded = lowering
             .equality(&bounded_metre(), "eq", &location)
             .expect("a bounded quantity compares as its quantity");
@@ -2010,6 +2008,47 @@ fn record_projection_and_record_values_name_their_record_node() {
     assert_eq!(held[0].semantic_form(), "option");
 }
 
+/// FR-680-AC-1: proved Sequence and OrderedSet indexes lower through the
+/// existing collection.index operation, without a separate emitter arm.
+#[trace("FR-680-AC-1", "TC-1820")]
+#[test]
+fn sequence_and_ordered_set_indexes_lower_as_collection_index() {
+    let sequence_type = TypeForm::collection(CollectionKind::Sequence, SPAN)
+        .with_arguments(vec![int_form(0, 9)])
+        .with_bounds(vec!["1".into(), "3".into()]);
+    let sequence = function(
+        "sequence_read",
+        &[("s", sequence_type)],
+        int_form(0, 9),
+        None,
+        Expression::index(name_expr("s"), integer_expr(0)),
+    );
+
+    let ordered_set_type = TypeForm::collection(CollectionKind::OrderedSet, SPAN)
+        .with_arguments(vec![int_form(0, 9)])
+        .with_bounds(vec!["0".into(), "3".into()]);
+    let ordered_set = function(
+        "ordered_set_read",
+        &[("o", ordered_set_type)],
+        int_form(0, 9),
+        None,
+        Expression::if_then_else(
+            Expression::binary(
+                BinaryOperator::GreaterOrEqual,
+                Expression::size(name_expr("o"), None),
+                integer_expr(2),
+            ),
+            Expression::index(name_expr("o"), integer_expr(1)),
+            integer_expr(0),
+        ),
+    );
+
+    for checked_function in [sequence, ordered_set] {
+        let graph = check(vec![checked_function]).expect("the checked index lowers");
+        application(graph.semantic_graph(), "filament.op.collection.index");
+    }
+}
+
 /// FR-092 L6: a literal `1` that is not an operand of an FR-357 operator is
 /// a `value`/`literal` node.
 #[trace("FR-092-AC-11", "FR-092-AC-4", "TC-413")]
@@ -2196,4 +2235,21 @@ fn a_mutually_recursive_pair_keys_alike_in_either_order() {
     let ping_first = keys(vec![recursive("ping", "pong"), recursive("pong", "ping")]);
     let pong_first = keys(vec![recursive("pong", "ping"), recursive("ping", "pong")]);
     assert_eq!(ping_first, pong_first);
+}
+
+/// QSL-2341: a Map in a literal position has a typed unsupported-construct
+/// refusal until the checked literal form is specified.
+#[test]
+fn map_literal_refusal_names_the_unbuilt_map_form() {
+    let location = filament_semantic_value::location::ExpressionLocation::root(
+        filament_semantic_value::location::ExpressionOwner::Expression,
+    );
+    let refusal = Lowering::unbuilt_map_literal(&location);
+
+    assert_eq!(refusal.cause.code(), Code::UnsupportedConstruct);
+    assert_eq!(refusal.cause.cause(), Some("not-yet-implemented"));
+    assert!(matches!(
+        &refusal.cause,
+        super::CheckCause::PopulationFormNotChecked { what: "map" }
+    ));
 }

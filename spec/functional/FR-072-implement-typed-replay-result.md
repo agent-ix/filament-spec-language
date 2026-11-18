@@ -105,8 +105,8 @@ type for consumers such as #217's function-application exemplar.
   their category and typed charge point assigned by FR-327, FR-328 and
   FR-329. The result SHALL preserve the undefined value's own position,
   source locus and catalogued cause; it SHALL NOT encode these as a rendered
-  diagnostic string. Its FSpec FR-323 `observed_temporal` encoding SHALL use
-  the closed member set and value union defined by FR-323-AC-24.
+  diagnostic string. Its FSpec FR-323 `results` row SHALL use
+  the closed member set FSpec FR-323 "Replay result rows" gives the `observed-temporal` arm.
 - A `ProtocolAssumption` result SHALL carry
   `ProtocolAssumptionNotEstablished{reason, identities, witness}` and SHALL
   have O-16 category `inconclusive`. Its arm settlement SHALL be

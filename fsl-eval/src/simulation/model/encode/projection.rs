@@ -21,6 +21,7 @@ pub(super) enum Scalar<'a> {
     Null,
     Boolean(bool),
     Text(&'a str),
+    Bytes(&'a [u8]),
     Integer(&'a Integer),
     Hex {
         bits: u64,
@@ -47,6 +48,17 @@ pub(super) enum Scalar<'a> {
     UnitText(&'a UnitId),
     Replacement(Enc),
     Unencodable(&'static str),
+}
+
+/// The canonical lowercase hexadecimal payload of FR-106's Bytes form.
+fn hex_bytes(bytes: &[u8]) -> String {
+    const HEX: &[u8; 16] = b"0123456789abcdef";
+    let mut text = String::with_capacity(bytes.len().saturating_mul(2));
+    for byte in bytes {
+        text.push(char::from(HEX[usize::from(*byte >> 4)]));
+        text.push(char::from(HEX[usize::from(*byte & 0x0f)]));
+    }
+    text
 }
 
 #[derive(Clone, Copy)]
@@ -212,6 +224,7 @@ impl ValueSink for Retained {
             Scalar::Null => Enc::Null,
             Scalar::Boolean(value) => Enc::Bool(value),
             Scalar::Text(value) => Enc::text(value),
+            Scalar::Bytes(value) => Enc::text(hex_bytes(value)),
             Scalar::Integer(value) => Enc::text(value.to_string()),
             Scalar::Hex { bits, digits } => Enc::text(format!("{bits:0digits$x}")),
             Scalar::Scale(value) => Enc::text(value.to_string()),
@@ -1037,6 +1050,14 @@ pub(super) fn project_value<'a, S: ValueSink>(
                 sink.name("value")?;
                 sink.scalar(Scalar::Text(value.retained()))
             }),
+            Value::Bytes(value) => tagged(sink, "bytes", |sink| {
+                sink.name("text")?;
+                sink.scalar(Scalar::Bytes(value))
+            }),
+            Value::JsonObject(value) => tagged(sink, "json_object", |sink| {
+                sink.name("text")?;
+                sink.scalar(Scalar::Text(value.canonical_text()))
+            }),
             Value::String(value) => tagged(sink, "text", |sink| {
                 sink.name("value")?;
                 sink.scalar(Scalar::Text(value.as_str()))
@@ -1054,6 +1075,26 @@ pub(super) fn project_value<'a, S: ValueSink>(
                         }),
                 )?;
                 sink.pending(&mut pending, ValueTask::Name("value"))?;
+                sink.pending(&mut pending, ValueTask::BeginObject)?;
+                Ok(())
+            }
+            Value::Map(value) => {
+                sink.pending(&mut pending, ValueTask::EndObject)?;
+                sink.pending(&mut pending, ValueTask::Scalar(Scalar::Text("map")))?;
+                sink.pending(&mut pending, ValueTask::Name("type"))?;
+                sink.pending(&mut pending, ValueTask::EndArray)?;
+                for (key, value) in value.entries().iter().rev() {
+                    sink.pending(&mut pending, ValueTask::EndObject)?;
+                    sink.pending(&mut pending, ValueTask::Value(value, normalize_decimal))?;
+                    sink.pending(&mut pending, ValueTask::Name("value"))?;
+                    // FSpec FR-650 retains a normalized Decimal key and sorts
+                    // entries by the RFC 8785 bytes of the key's run form.
+                    sink.pending(&mut pending, ValueTask::Value(key, true))?;
+                    sink.pending(&mut pending, ValueTask::Name("key"))?;
+                    sink.pending(&mut pending, ValueTask::BeginObject)?;
+                }
+                sink.pending(&mut pending, ValueTask::BeginArray(ArrayOrder::MapKeys))?;
+                sink.pending(&mut pending, ValueTask::Name("entries"))?;
                 sink.pending(&mut pending, ValueTask::BeginObject)?;
                 Ok(())
             }
@@ -1207,7 +1248,8 @@ pub(super) fn project_value<'a, S: ValueSink>(
 
 #[cfg(test)]
 mod tests {
-    use filament_exact::ValueType;
+    use filament_exact::{Integer, JsonObject, MapType, ValueType};
+    use ix_trace_rs::trace;
 
     use super::*;
 
@@ -1225,6 +1267,80 @@ mod tests {
             value_type: ValueType::Boolean,
             optional: false,
         }
+    }
+
+    #[trace("FR-106-AC-61")]
+    #[test]
+    fn native_bytes_and_json_use_their_admitted_run_forms() {
+        let bytes = Value::Bytes(vec![0, 255]);
+        let bytes = retained(|sink| project_value(sink, &bytes, Typing::none(), None, false));
+        assert_eq!(
+            bytes,
+            Enc::tagged("bytes", vec![("text", Enc::text("00ff"))])
+        );
+
+        let json = Value::JsonObject(
+            JsonObject::from_json_text("{\"b\":2,\"a\":1}").expect("valid JSON object"),
+        );
+        let json = retained(|sink| project_value(sink, &json, Typing::none(), None, false));
+        assert_eq!(
+            json,
+            Enc::tagged(
+                "json_object",
+                vec![("text", Enc::text("{\"a\":1,\"b\":2}"))]
+            )
+        );
+    }
+
+    /// FR-106-AC-61 / FR-650-AC-1: a Map projection orders entries by the
+    /// RFC 8785 bytes of each normalized key run form, so integer 10 precedes
+    /// integer 9 lexicographically.
+    #[trace("FR-106-AC-61")]
+    #[test]
+    fn map_projection_uses_canonical_run_key_order() {
+        let map_type = MapType::new(ValueType::Integer, ValueType::Boolean, None)
+            .expect("integer keys are scalar");
+        let value = filament_exact::from_admitted_map(
+            map_type,
+            vec![
+                (Value::Integer(Integer::from(9_i64)), Value::Boolean(false)),
+                (Value::Integer(Integer::from(10_i64)), Value::Boolean(true)),
+            ],
+        )
+        .expect("distinct integer keys form a map");
+
+        let projected = retained(|sink| project_value(sink, &value, Typing::none(), None, false));
+        assert_eq!(
+            projected,
+            Enc::tagged(
+                "map",
+                vec![(
+                    "entries",
+                    Enc::Array(vec![
+                        Enc::Object(vec![
+                            (
+                                "key",
+                                Enc::tagged("integer", vec![("value", Enc::text("10"))]),
+                            ),
+                            (
+                                "value",
+                                Enc::tagged("boolean", vec![("value", Enc::Bool(true))]),
+                            ),
+                        ]),
+                        Enc::Object(vec![
+                            (
+                                "key",
+                                Enc::tagged("integer", vec![("value", Enc::text("9"))]),
+                            ),
+                            (
+                                "value",
+                                Enc::tagged("boolean", vec![("value", Enc::Bool(false))]),
+                            ),
+                        ]),
+                    ]),
+                )],
+            )
+        );
     }
 
     #[ix_trace_rs::trace("TC-471", "TC-685", "FR-120-AC-4")]

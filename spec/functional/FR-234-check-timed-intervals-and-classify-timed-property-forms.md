@@ -75,8 +75,9 @@ for a clause DF-5 does not admit over a timed subject.
   rational bounds `0 <= a <= b`.
 - If an interval has `a > b`, or has an open end with `a = b`, then the
   checker SHALL refuse `invalid_timed_model`/`invalid-interval` at
-  the interval's span. An interval `[a,*]` SHALL refuse as ADR-014 TR-3
-  states.
+  the interval's span. A timed interval `[q, *]` or `(q, *)` with a lower bound
+  and no upper bound SHALL check as FR-943 states; an unitless `[a, *]` SHALL
+  refuse `ill_typed`/`type-mismatch` as any unitless bound does.
 - The checker SHALL mark an interval with `a = b` and both ends closed as
   punctual.
 - **Forms.** The checker SHALL classify each timed clause, in this order:

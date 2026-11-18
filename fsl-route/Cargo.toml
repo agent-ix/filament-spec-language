@@ -14,7 +14,7 @@ description = "ADR-011 §6.1 layer R: the #185 capability-backend registry and r
 # `tests/it/family_outcome_layering.rs` (TC-390) asserts that this table
 # names no other workspace crate.
 [dependencies]
-ix-trace-rs = { git = "https://github.com/agent-ix/ix-trace-rs", branch = "main" }
+ix-trace-rs = { git = "https://github.com/agent-ix/ix-trace-rs", tag = "v0.1.2" }
 fsl-foundation = { path = "../fsl-foundation" }
 fsl-semantics = { path = "../fsl-semantics" }
 # FR-159: a symmetry declaration names its population by declaration key.

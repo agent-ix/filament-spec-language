@@ -561,8 +561,72 @@ fn clause_run_observation_limit_reports_its_own_bound() {
     );
     assert_eq!(output.status.code(), Some(22), "{output:?}");
     let error: Value = serde_json::from_slice(&output.stderr).unwrap();
-    assert_eq!(error["details"]["limit"], "observation.document_bytes");
+    assert_eq!(error["details"]["limit"], "observation.input_bytes");
     assert_eq!(error["details"]["maximum"], 1_000_000);
+}
+
+/// The first object anywhere in `value` whose `code` is `code`.
+fn coded<'a>(value: &'a Value, code: &str) -> Option<&'a Value> {
+    match value {
+        Value::Object(members) => {
+            if members.get("code").and_then(Value::as_str) == Some(code) {
+                return Some(value);
+            }
+            members.values().find_map(|member| coded(member, code))
+        }
+        Value::Array(items) => items.iter().find_map(|item| coded(item, code)),
+        _ => None,
+    }
+}
+
+/// TC-2982's request path: `document_bytes` settles the native result with an
+/// observation input-byte limit record naming the `observation.input_bytes`
+/// setting. Driver-rendered hints are covered with the driver implementation.
+#[trace("TC-2982", "FR-491-AC-8")]
+#[test]
+fn clause_run_observation_limit_is_one_stage_limit_item_naming_its_setting() {
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("observation-shape");
+    build(&path, Case::Healthy);
+    let snapshot_path = path.join("spine-snapshot.json");
+    let size = std::fs::metadata(&snapshot_path).unwrap().len();
+    let run = |bound: u64| {
+        let mut request = current_clause_request();
+        request["request"]["clause"]["observation_limits"] = json!({"document_bytes": bound});
+        std::fs::write(
+            path.join("request.json"),
+            serde_json::to_vec(&request).unwrap(),
+        )
+        .unwrap();
+        run_file_with_limits(
+            &path.join("request.json"),
+            RunLimits {
+                dependent_bytes: 8_000_000,
+                ..RunLimits::default()
+            },
+        )
+    };
+    let output = run(size - 1);
+    assert_eq!(output.status.code(), Some(22), "{output:?}");
+    let document: Value = serde_json::from_slice(&output.stdout).expect("an outcome document");
+    let limit = coded(&document, "stage_limit_exceeded")
+        .unwrap_or_else(|| panic!("a stage_limit_exceeded item: {document}"));
+    assert_eq!(
+        limit["fields"]["setting"], "observation.input_bytes",
+        "{limit}"
+    );
+    assert_eq!(limit["fields"]["bound"], (size - 1).to_string(), "{limit}");
+    assert_eq!(limit["fields"]["actual"], size.to_string(), "{limit}");
+    assert!(
+        coded(&document, "resource_exhausted").is_none(),
+        "{document}"
+    );
+    assert!(
+        !String::from_utf8_lossy(&output.stdout).contains("observation.document_bytes"),
+        "{}",
+        String::from_utf8_lossy(&output.stdout)
+    );
+    assert_eq!(run(size).status.code(), Some(0));
 }
 
 /// FR-312: a deep pre-call parameter reaches the typed reader without a

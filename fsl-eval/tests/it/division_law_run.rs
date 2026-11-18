@@ -59,7 +59,7 @@ fn check(
     .check(mode, CheckingLimits::default())
 }
 
-fn call(package: &CheckedPackage, name: &str, arguments: &[i64]) -> (Outcome<Value>, bool) {
+fn call(package: &CheckedPackage, name: &str, arguments: &[i64]) -> (Outcome<Value>, bool, u32) {
     let evaluation = package
         .call(
             &QualifiedName::unqualified(name).expect("an identifier"),
@@ -72,8 +72,9 @@ fn call(package: &CheckedPackage, name: &str, arguments: &[i64]) -> (Outcome<Val
         )
         .expect("the call runs");
     let located = evaluation.location.is_some();
+    let frame_depth = evaluation.frame_depth;
     match evaluation.outcome {
-        FamilyOutcome::Evaluated(outcome) => (outcome, located),
+        FamilyOutcome::Evaluated(outcome) => (outcome, located, frame_depth),
         other => panic!("a kernel outcome, not {other:?}"),
     }
 }
@@ -141,11 +142,14 @@ fn a_possibly_zero_mod_divisor_is_refused_under_linked_and_undefined_only_under_
     let package = CheckedPackage::link(
         check("", unit, CheckMode::Kernel).expect("Kernel records no nonzero obligation"),
     );
-    assert_eq!(format!("{:?}", call(&package, "d", &[0]).0), integer(0));
-    for (name, n) in [("d", 1), ("d", 2), ("d", 3), ("e", 1)] {
-        let (outcome, located) = call(&package, name, &[n]);
+    let (outcome, _, frame_depth) = call(&package, "d", &[0]);
+    assert_eq!(format!("{outcome:?}"), integer(0));
+    assert_eq!(frame_depth, 0, "d(0)");
+    for (name, n, expected_depth) in [("d", 1, 0), ("d", 2, 1), ("d", 3, 2), ("e", 1, 1)] {
+        let (outcome, located, frame_depth) = call(&package, name, &[n]);
         assert_eq!(format!("{outcome:?}"), division_by_zero(), "{name}({n})");
         assert!(located, "{name}({n}) is located at the mod");
+        assert_eq!(frame_depth, expected_depth, "{name}({n})");
     }
 }
 
@@ -157,7 +161,7 @@ fn a_divisor_the_checker_cannot_exclude_is_undefined_only_under_kernel() {
     let package = CheckedPackage::link(
         check("", source, CheckMode::Kernel).expect("Kernel records no nonzero obligation"),
     );
-    let (outcome, located) = call(&package, "m0", &[5, 0]);
+    let (outcome, located, _) = call(&package, "m0", &[5, 0]);
     assert_eq!(format!("{outcome:?}"), division_by_zero());
     assert!(located);
     assert_eq!(

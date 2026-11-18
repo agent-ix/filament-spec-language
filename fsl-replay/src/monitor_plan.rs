@@ -131,7 +131,7 @@ impl AtomId {
 pub struct TickInterval {
     lower: Rational,
     lower_closed: bool,
-    upper: Rational,
+    upper: Option<Rational>,
     upper_closed: bool,
 }
 
@@ -141,8 +141,17 @@ impl TickInterval {
         Self {
             lower,
             lower_closed,
-            upper,
+            upper: Some(upper),
             upper_closed,
+        }
+    }
+    /// The interval from `lower` with no upper endpoint (`[a, *]`, FR-943).
+    pub fn unbounded(lower: Rational, lower_closed: bool) -> Self {
+        Self {
+            lower,
+            lower_closed,
+            upper: None,
+            upper_closed: false,
         }
     }
     /// Lower endpoint.
@@ -153,9 +162,9 @@ impl TickInterval {
     pub fn lower_closed(&self) -> bool {
         self.lower_closed
     }
-    /// Upper endpoint.
-    pub fn upper(&self) -> &Rational {
-        &self.upper
+    /// Upper endpoint, or `None` for an interval with no upper end.
+    pub fn upper(&self) -> Option<&Rational> {
+        self.upper.as_ref()
     }
     /// Whether the upper endpoint is closed.
     pub fn upper_closed(&self) -> bool {
@@ -350,6 +359,7 @@ pub struct PlanId {
     intervals: Vec<(SubformulaId, TickInterval)>,
     buffers: Vec<(SubformulaId, u64)>,
     activation_capacity: u64,
+    exact_positions: bool,
 }
 
 /// `Eq` rests on reflexivity of `CheckedBody` equality, which is not total
@@ -387,6 +397,7 @@ pub struct TimedMonitorPlan {
     buffers: Vec<(SubformulaId, u64)>,
     rate_limit: Rational,
     activation_capacity: u64,
+    exact_positions: bool,
 }
 
 impl TimedMonitorPlan {
@@ -413,7 +424,20 @@ impl TimedMonitorPlan {
             buffers,
             rate_limit,
             activation_capacity,
+            exact_positions: false,
         }
+    }
+    /// Mark the plan's counter as a position counter, whose reading is the
+    /// exact instant (FR-251 "Exact position readings"), not a tick covered
+    /// by `[k, k + 1)`.
+    #[must_use]
+    pub fn with_exact_positions(mut self, exact: bool) -> Self {
+        self.exact_positions = exact;
+        self
+    }
+    /// Whether the counter is a position counter read exactly.
+    pub fn exact_positions(&self) -> bool {
+        self.exact_positions
     }
     /// The plan's `activation_capacity` premise.
     pub fn activation_capacity(&self) -> u64 {
@@ -479,6 +503,7 @@ impl TimedMonitorPlan {
             intervals: self.intervals.clone(),
             buffers: self.buffers.clone(),
             activation_capacity: self.activation_capacity,
+            exact_positions: self.exact_positions,
         }
     }
 }
@@ -569,12 +594,6 @@ pub enum MonitorPlanRefusal {
     /// the target states other premises.
     #[error("a position counter has uncertainty 0, event rate 1 and reading gap 1")]
     PositionCounterPremise,
-    /// An open position interval `[a, *]` with `a > 0` has no tick bound.
-    #[error("open interval of operator {node} has a lower bound above 0")]
-    OpenIntervalLowerBound {
-        /// The formula arena index.
-        node: usize,
-    },
     /// The target unit is not a checked exact time unit.
     #[error("target unit is not a checked time unit: {unit}")]
     InvalidTimeUnit {
@@ -613,14 +632,6 @@ pub enum MonitorPlanRefusal {
     /// A premise the plan-root node carries would be refused by its reader.
     #[error("plan-root premise refused: {0}")]
     Premise(PremiseDefect),
-    /// An unbounded operator that looks backwards (`once`, `historically`,
-    /// `since`, `triggered` with no interval) has no program (FR-251 "Fault
-    /// boundary").
-    #[error("unbounded past operator {node} yields no complete program")]
-    UnboundedPast {
-        /// The formula arena index.
-        node: usize,
-    },
     /// An unbounded operator whose operands hold another unbounded operator
     /// has no program (FR-251 "Fault boundary").
     #[error("unbounded operator {node} over an unbounded operator yields no complete program")]

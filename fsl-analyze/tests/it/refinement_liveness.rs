@@ -60,7 +60,7 @@ fn run(
                 proof_bounds: Vec::new(),
             },
             abstract_package: package,
-            abstract_initial: vec![abstract_initial],
+            abstract_initial: vec![abstract_initial].into(),
             abstract_protocol_binding: None,
             max_depth: None,
             limits: ModelCheckLimits::default(),
@@ -387,7 +387,7 @@ fn the_lasso_names_the_initial_state_it_starts_from() {
                 proof_bounds: Vec::new(),
             },
             abstract_package: world.package(),
-            abstract_initial: world.abstract_initials(),
+            abstract_initial: world.abstract_initials().into(),
             abstract_protocol_binding: None,
             max_depth: None,
             limits: ModelCheckLimits::default(),
@@ -414,7 +414,7 @@ fn peeker_run(limits: ModelCheckLimits, cancel: &Cancel) -> RefinementOutcome {
                 proof_bounds: Vec::new(),
             },
             abstract_package: world.package(),
-            abstract_initial: vec![world.abstract_initial()],
+            abstract_initial: vec![world.abstract_initial()].into(),
             abstract_protocol_binding: None,
             max_depth: None,
             limits,
@@ -516,9 +516,9 @@ fn a_cancellation_during_the_second_phase_stops_it() {
 fn an_undecided_abstract_contract_leaves_the_liveness_half_undecided() {
     let contracts = probe_contracts([NEVER, NEVER, NEVER, ""], ["", "", ""]).replace(
         "post SpecFlipB using v on Spec::Pair::flipB { self.b = 1 - pre(self.b) }",
-        "post SpecFlipB using v on Spec::Pair::flipB { 1 mod (1 - pre(self.b)) >= 0 and self.b = 1 - pre(self.b) }",
+        "function mod_defined using v(n: Int[0, 1]): Boolean pure { 1 mod (1 - n) >= 0 }\npost SpecFlipB using v on Spec::Pair::flipB { mod_defined(pre(self.b)) and self.b = 1 - pre(self.b) }",
     );
-    let unit = Unit::probe_pair(contracts, &[(0, 1)]);
+    let unit = Unit::probe_pair(contracts, &[(0, 1)]).kernel();
     let outcome = check_aux(&unit.world(&probe_refinement(&[
         "ensure fair weak whole Spec::Pair::flipB;",
     ])));
@@ -574,7 +574,7 @@ fn run_cancel(world: &AuxWorld<'_>, cancel: &Cancel) -> RefinementOutcome {
                 proof_bounds: Vec::new(),
             },
             abstract_package: world.package(),
-            abstract_initial: vec![world.abstract_initial()],
+            abstract_initial: vec![world.abstract_initial()].into(),
             abstract_protocol_binding: None,
             max_depth: None,
             limits: ModelCheckLimits::default(),

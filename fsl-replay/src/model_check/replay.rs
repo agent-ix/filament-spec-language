@@ -179,6 +179,18 @@ pub enum ModelTraceRefusal {
         /// The envelope's clause node.
         clause_node: NodeKey,
     },
+    /// The counterexample names an authored clause whose package form reads
+    /// a fact the package route does not read yet (FR-940): the replay over
+    /// the package bytes refuses it typed, naming the fact and its node.
+    #[error("unsupported_construct/not-yet-implemented: the package form of temporal clause {clause_node} does not read its {fact} at {node:?} yet")]
+    PendingClauseForm {
+        /// The envelope's clause node.
+        clause_node: NodeKey,
+        /// The fact not read yet.
+        fact: &'static str,
+        /// The node that carries it.
+        node: fsl_package::CheckedNodeId,
+    },
     /// A step carries a `delay`, or the counterexample a `final_delay`, over
     /// a subject this replay reads untimed: the delays are not checked here
     /// (FR-237 replays a timed subject's), so they are refused rather than
@@ -292,6 +304,12 @@ pub enum ModelTraceRefusal {
     /// and so no data race (FR-224).
     #[error("invalid_runtime_input/invalid-value: a race counterexample names a model subject")]
     RaceOverModel,
+    /// A counterexample of an invariant item (FR-951) with a non-empty
+    /// `loop` or a `kind` of `deadlock`: a reachable-state invariant's
+    /// violation is a finite prefix ending at a state where its letter is
+    /// false or undefined (FR-128).
+    #[error("invalid_runtime_input/invalid-value: an invariant counterexample is a finite prefix of kind formula or an undefined evaluation")]
+    InvariantShape,
     /// A formula counterexample names no instance of the clause's `over`
     /// parameter.
     #[error(
@@ -481,7 +499,7 @@ impl ModelTraceRefusal {
             | Self::SendRecord { .. }
             | Self::MemoryComponent { .. } => Code::StaleDependency,
             Self::FairnessSet { .. } | Self::ProtocolFairnessSet { .. } => Code::StaleDependency,
-            Self::HyperProjected => Code::UnsupportedConstruct,
+            Self::HyperProjected | Self::PendingClauseForm { .. } => Code::UnsupportedConstruct,
             Self::Protocol(refusal) => refusal.code(),
             Self::NotSimulated(refusal) => not_simulated_code(refusal),
             Self::Automaton(fsl_eval::automaton::AutomatonError::KeyEncodingLimit { .. })
@@ -517,6 +535,7 @@ impl ModelTraceRefusal {
             | Self::SendRecordShape { .. }
             | Self::OverBinding
             | Self::RaceOverModel
+            | Self::InvariantShape
             | Self::NoRefinementFailure
             | Self::PrefixShort { .. }
             | Self::LoopOpen { .. }
@@ -541,7 +560,7 @@ impl ModelTraceRefusal {
             | Self::PostState { .. }
             | Self::SendRecord { .. }
             | Self::MemoryComponent { .. } => "content-mismatch",
-            Self::HyperProjected => "not-yet-implemented",
+            Self::HyperProjected | Self::PendingClauseForm { .. } => "not-yet-implemented",
             Self::Protocol(refusal) => refusal.cause(),
             Self::NotSimulated(refusal) => match refusal.catalog_code() {
                 Some(code) => code.cause(),
@@ -568,6 +587,7 @@ impl ModelTraceRefusal {
             | Self::SendRecordShape { .. }
             | Self::OverBinding
             | Self::RaceOverModel
+            | Self::InvariantShape
             | Self::NoRefinementFailure
             | Self::PrefixShort { .. }
             | Self::LoopOpen { .. }
@@ -730,6 +750,179 @@ pub fn replay_model_trace(
     )
 }
 
+/// The FR-517 handoff files a package-route replay reads beside the package
+/// bytes (FR-850 "Admission"): the identity rows and, when the handoff holds
+/// them, the equality rows.
+#[derive(Clone, Copy, Debug)]
+pub struct HandoffSupply<'s> {
+    /// The bytes of `identities.json`.
+    pub identities: &'s [u8],
+    /// The bytes of `equality.json`, when present.
+    pub equality: Option<&'s [u8]>,
+}
+
+/// FR-850, FR-940: [`replay_model_trace`] over the package route. The replay
+/// reads the request's package bytes and the handoff `supply`, never a source
+/// provision: the strict reader admits the bytes against the request's domain
+/// packages, the supply is attached to the `BarePackage`, the model system is
+/// built from its model-check input and the envelope's clause is its package
+/// form, read by its `clause_node` (FR-128). An untimed authored clause and a
+/// package-level freedom item over a model subject are replayed; an invariant
+/// and a timed reading have no package form here yet and are refused, never
+/// replayed from source.
+///
+/// # Errors
+///
+/// [`ReplayRefusal`] as [`replay_model_trace`] refuses, and a fault when the
+/// bytes or supply the analysis admitted do not admit again.
+pub fn replay_model_trace_from_package(
+    wire: ReplayRequestWire,
+    supply: HandoffSupply<'_>,
+    subject: &ModelTraceSubject,
+    envelope: &WitnessEnvelope<TemporalCounterexample>,
+    letters: &dyn ModelLetters,
+    replay_limits: ReplayLimits,
+) -> Result<ModelTraceReplayResult, ReplayRefusal> {
+    let fault = |cause: &'static str| ReplayRefusal::Fault(InternalFault::new("FR-850", cause));
+    let request = ReplayRequest::decode_package_route(wire, replay_limits)?;
+    let limits = request_limits(
+        request.stage_limits(),
+        request.accounting_limits(),
+        replay_limits,
+    )?;
+    let packages =
+        fsl_semantics::model::intake::package_input(request.byte_provision().package_documents())
+            .map_err(|refusal| ReplayRefusal::DomainPackages(Box::new(refusal)))?;
+    let read_limits =
+        fsl_package::V2ReadLimits::bounded(crate::spine::I2_NATIVE_JOIN_STORAGE_DEFAULT);
+    let admitted =
+        fsl_package::admit_checked_package(request.package().bytes(), &packages, read_limits)
+            .map_err(|_| fault("package-bytes-admit"))?;
+    let mut budget = read_limits.native_join_limits().budget();
+    let identities = fsl_package::ReadIdentityRows::read(supply.identities, &admitted, &mut budget)
+        .map_err(|_| fault("handoff-identities-admit"))?;
+    let equality = supply
+        .equality
+        .map(|bytes| fsl_package::ReadEqualityRows::read(bytes, &admitted))
+        .transpose()
+        .map_err(|_| fault("handoff-equality-admit"))?;
+    let bare = fsl_package::BarePackage::new(&admitted)
+        .with_supply(
+            fsl_package::BareSupply {
+                identities: &identities,
+                equality: equality.as_ref(),
+            },
+            &mut budget,
+        )
+        .map_err(|_| fault("handoff-supply-joins"))?;
+    let input =
+        fsl_eval::simulation::model::PackageModelInput::of(&bare, &packages, limits.spine.model)
+            .map_err(|_| fault("package-route-input"))?;
+    if subject.timed.is_some() {
+        return Err(fault("package-route-replays-no-timed-reading-yet"));
+    }
+    let payload = envelope.family_payload();
+    let documents = request.byte_provision().snapshots();
+    let meter = request.accounting_limits();
+    let system = ModelSystem::new(ModelSimulationRequest {
+        input: input.input(),
+        packages: &packages,
+        normalization: limits.spine.model,
+        snapshots: &documents,
+        initial: subject.initial.clone(),
+        universes: subject.universes.clone(),
+        observation: limits.observation,
+        expansion: subject.expansion,
+        meter,
+        emit: limits.spine.package.emit(),
+    })
+    .map_err(ReplayRefusal::Admission)?;
+    let (for_deadlock, for_race) = derived_items(payload);
+    if for_deadlock || for_race || matches!(payload.kind, CounterexampleKind::TimeLock) {
+        // A package-level freedom item over a model subject is anchored at
+        // the `model_root` node of a model selection the package records, with
+        // the `generated` occurrence 0, as [`resolve_item`] anchors it.
+        let anchored = fsl_package::AnalysisView::model_selections(&bare)
+            .iter()
+            .filter_map(|selection| fsl_semantics::check::model_root_key(selection).ok())
+            .any(|root| root == *envelope.clause_node());
+        if !anchored {
+            return Err(refused(ModelTraceRefusal::UnknownTemporalClause {
+                clause_node: envelope.clause_node().clone(),
+            }));
+        }
+        let expected = OccurrenceKey::new(
+            envelope.clause_node().clone(),
+            filament_exact::Origin::new(filament_exact::Role::new("generated"), 0),
+        );
+        if expected != *envelope.occurrence_key() {
+            return Err(refused(ModelTraceRefusal::ItemIdentity {
+                clause_node: envelope.clause_node().clone(),
+                occurrence_key: Box::new(envelope.occurrence_key().clone()),
+                expected_node: envelope.clause_node().clone(),
+                expected_key: Box::new(expected),
+            }));
+        }
+        let (settlement, hints) = settle(&system, payload, None)?;
+        return Ok(ModelTraceReplayResult {
+            settlement,
+            hints,
+            terminals: TerminalKeys::default(),
+        });
+    }
+    let clause = input
+        .temporal_clause(
+            envelope.clause_node(),
+            filament_semantic_value::checking::CheckingLimits::default().nodes(),
+        )
+        .map_err(|refusal| {
+            refused(match refusal.pending_fact() {
+                Some((fact, node)) => ModelTraceRefusal::PendingClauseForm {
+                    clause_node: envelope.clause_node().clone(),
+                    fact,
+                    node: node.clone(),
+                },
+                None => ModelTraceRefusal::UnknownTemporalClause {
+                    clause_node: envelope.clause_node().clone(),
+                },
+            })
+        })?;
+    let identity = super::identity::ClauseIdentity::of_admitted(&admitted, &clause)
+        .map_err(|_| fault("package-clause-identity"))?;
+    let expected = OccurrenceKey::new(
+        envelope.clause_node().clone(),
+        identity.occurrence().origin().clone(),
+    );
+    if expected != *envelope.occurrence_key() {
+        return Err(refused(ModelTraceRefusal::ItemIdentity {
+            clause_node: envelope.clause_node().clone(),
+            occurrence_key: Box::new(envelope.occurrence_key().clone()),
+            expected_node: envelope.clause_node().clone(),
+            expected_key: Box::new(expected),
+        }));
+    }
+    if payload.fairness != clause.fairness() {
+        return Err(refused(ModelTraceRefusal::FairnessSet {
+            payload: payload.fairness.clone(),
+            recompiled: clause.fairness().to_vec(),
+        }));
+    }
+    let (settlement, hints) = settle(
+        &system,
+        payload,
+        Some(FormulaReplay {
+            clause: &clause,
+            letters,
+            meter,
+        }),
+    )?;
+    Ok(ModelTraceReplayResult {
+        settlement,
+        hints,
+        terminals: TerminalKeys::default(),
+    })
+}
+
 /// Replay a model trace while recompiling with explicit temporal clock selections.
 pub fn replay_model_trace_with_temporal_selections(
     wire: ReplayRequestWire,
@@ -744,6 +937,12 @@ pub fn replay_model_trace_with_temporal_selections(
         temporal_selections,
         replay_limits,
         |package, simulation, meter| {
+            if let Some(clause) = resolve_invariant(envelope, package.0)? {
+                let system =
+                    ModelSystem::new(simulation(subject)).map_err(ReplayRefusal::Admission)?;
+                return invariant(&system, envelope.family_payload(), clause)
+                    .map(|settlement| (settlement, Vec::new()));
+            }
             let clause = resolve_item(envelope, package.0, DerivedAnchors::Model, |clause| {
                 let payload = envelope.family_payload();
                 if payload.fairness == clause.fairness() {
@@ -771,6 +970,58 @@ pub fn replay_model_trace_with_temporal_selections(
             }
         },
     )
+}
+
+/// Replay a counterexample against an already checked source package whose
+/// temporal clause contains a pending reference literal.
+///
+/// The current I2 expression vocabulary cannot serialize a pending
+/// `ReferenceLiteral` as a `value/literal` string under `Reference<T>`. This
+/// source-backed path therefore validates the checked clause identity and
+/// fairness directly, then independently re-executes the witness against a
+/// fresh model system built from that same immutable checked package. Ordinary
+/// wire replay continues through [`replay_model_trace`].
+///
+/// # Errors
+///
+/// [`ReplayRefusal`] when the envelope names another clause, its fairness
+/// differs, or witness re-execution refuses.
+pub fn replay_checked_source_model_trace(
+    package: &CheckedPackage,
+    system: &ModelSystem<'_>,
+    node: &fsl_semantics::check::TemporalClauseNode,
+    envelope: &WitnessEnvelope<TemporalCounterexample>,
+    letters: &dyn ModelLetters,
+    meter: ScalarLimits,
+) -> Result<ModelTraceReplayResult, ReplayRefusal> {
+    let expected_key = OccurrenceKey::new(node.identity(), node.claim().clone());
+    if envelope.clause_node() != &node.identity() || envelope.occurrence_key() != &expected_key {
+        return Err(refused(ModelTraceRefusal::ItemIdentity {
+            clause_node: envelope.clause_node().clone(),
+            occurrence_key: Box::new(envelope.occurrence_key().clone()),
+            expected_node: node.identity(),
+            expected_key: Box::new(expected_key),
+        }));
+    }
+    let clause = node.clause();
+    let payload = envelope.family_payload();
+    if payload.fairness != clause.fairness() {
+        return Err(refused(ModelTraceRefusal::FairnessSet {
+            payload: payload.fairness.clone(),
+            recompiled: clause.fairness().to_vec(),
+        }));
+    }
+    let formula = Some(FormulaReplay {
+        clause,
+        letters,
+        meter,
+    });
+    let (settlement, hints) = settle(system, payload, formula)?;
+    Ok(ModelTraceReplayResult {
+        settlement,
+        hints,
+        terminals: package.graph().terminal_keys(),
+    })
 }
 
 /// FR-237: the replay of a counterexample over the timed subject `timed`,
@@ -900,14 +1151,8 @@ pub fn replay_protocol_trace_with_temporal_selections(
                     }),
                 )));
             }
-            check_protocol_bounds(
-                &model,
-                protocol,
-                &capacities,
-                package.0.graph(),
-                BOUND_POSITIONS,
-            )
-            .map_err(|refusal| refused(ModelTraceRefusal::NotSimulated(Box::new(refusal))))?;
+            check_protocol_bounds(&model, protocol, &capacities, package.0, BOUND_POSITIONS)
+                .map_err(|refusal| refused(ModelTraceRefusal::NotSimulated(Box::new(refusal))))?;
             let protocol_subject = ProtocolSubject {
                 model: ModelSubject {
                     simulation,
@@ -1102,7 +1347,7 @@ fn replay_on(
     let meter = request.accounting_limits();
     let package = compiled.checked.package();
     let simulation = |subject: &ModelTraceSubject| ModelSimulationRequest {
-        package,
+        input: fsl_eval::simulation::model::ModelCheckInput::source(package),
         packages: &compiled.packages,
         normalization: limits.spine.model,
         snapshots: &documents,
@@ -1239,6 +1484,109 @@ fn derived_items<T: SubjectTransition>(payload: &TemporalCounterexample<T>) -> (
         }
         CounterexampleKind::Formula | CounterexampleKind::TimeLock => (false, false),
     }
+}
+
+/// The `invariant` state clause the envelope's clause node names, when it
+/// names one (FR-128, FR-951): its occurrence key must be the clause's
+/// `state_clause` node and `claim` occurrence.
+fn resolve_invariant<'p, T: SubjectTransition>(
+    envelope: &WitnessEnvelope<TemporalCounterexample<T>>,
+    package: &'p CheckedPackage,
+) -> Result<Option<&'p fsl_semantics::check::CheckedStateClause>, ReplayRefusal> {
+    let Some(clause) = package
+        .graph()
+        .state_clauses()
+        .iter()
+        .find(|clause| clause.is_invariant() && clause.identity() == *envelope.clause_node())
+    else {
+        return Ok(None);
+    };
+    let expected = OccurrenceKey::new(clause.identity(), clause.claim().clone());
+    if expected != *envelope.occurrence_key() {
+        return Err(refused(ModelTraceRefusal::ItemIdentity {
+            clause_node: envelope.clause_node().clone(),
+            occurrence_key: Box::new(envelope.occurrence_key().clone()),
+            expected_node: clause.identity(),
+            expected_key: Box::new(expected),
+        }));
+    }
+    Ok(Some(clause))
+}
+
+/// FR-128's replay of an invariant item's counterexample (FR-951): a finite
+/// prefix with no loop and no fairness set, refused before any step replays
+/// otherwise. The invariant's letter, FR-158's truth of its body over every
+/// conforming object of the state, is read at every replayed state in
+/// order: it reproduces when it is true at every state before the last and,
+/// at the last, false for a `formula` counterexample or undefined at the
+/// claimed locus with the claimed cause for an undefined evaluation.
+fn invariant(
+    system: &ModelSystem<'_>,
+    payload: &TemporalCounterexample,
+    clause: &fsl_semantics::check::CheckedStateClause,
+) -> Result<ModelTraceSettlement, ReplayRefusal> {
+    if payload.lasso.is_some()
+        || !matches!(
+            payload.kind,
+            CounterexampleKind::Formula | CounterexampleKind::UndefinedEvaluation(_)
+        )
+    {
+        return Err(refused(ModelTraceRefusal::InvariantShape));
+    }
+    if !payload.fairness.is_empty() {
+        return Err(refused(ModelTraceRefusal::FairnessSet {
+            payload: payload.fairness.clone(),
+            recompiled: Vec::new(),
+        }));
+    }
+    let Some((positions, _)) = replay_prefix(system, payload, &MODEL_STEPS)? else {
+        return Ok(no_value());
+    };
+    let last = positions.len().saturating_sub(1);
+    for (index, position) in positions.iter().enumerate() {
+        let value = match system.constraint_value(&position.state, clause.name()) {
+            Ok(value) => value,
+            Err(stop) if stop.is_internal_failure() => return Err(fault("invariant-letter")),
+            Err(_) => return Ok(no_value()),
+        };
+        let at_last = index == last;
+        match (value, &payload.kind) {
+            (ConstraintValue::Holds, _) if !at_last => {}
+            (ConstraintValue::Holds, _) => return Ok(disagrees(Category::Success)),
+            (ConstraintValue::Boundary, CounterexampleKind::Formula) if at_last => {
+                return Ok(ModelTraceSettlement::Reproduced {
+                    value: ModelTraceValue::Truth(false),
+                    trace_position: payload.trace_position(),
+                });
+            }
+            (
+                ConstraintValue::Undefined { cause, .. },
+                CounterexampleKind::UndefinedEvaluation(claimed),
+            ) if at_last
+                && claimed.cause == cause
+                && claimed.site.position == position_of(index)
+                && claimed.site.locus == UndefinedLocus::Invariant(clause.name().to_owned()) =>
+            {
+                return Ok(ModelTraceSettlement::Reproduced {
+                    value: ModelTraceValue::Undefined(UndefinedEvaluation {
+                        site: UndefinedSite {
+                            position: position_of(index),
+                            state_key: position.state_key.clone(),
+                            locus: UndefinedLocus::Invariant(clause.name().to_owned()),
+                            transition: None,
+                            time: None,
+                        },
+                        cause,
+                    }),
+                    trace_position: payload.trace_position(),
+                });
+            }
+            (ConstraintValue::Boundary | ConstraintValue::Undefined { .. }, _) => {
+                return Ok(disagrees(Category::Violation));
+            }
+        }
+    }
+    Ok(no_value())
 }
 
 pub(super) fn fault(invariant: &'static str) -> ReplayRefusal {
@@ -1882,6 +2230,203 @@ pub fn evaluate_model_trace(
     })))
 }
 
+/// FR-931 "Cross-evaluation" from a snapshot: the native valuation of every
+/// (instance, behaviour) closed trace, in instance order then behaviour
+/// order, and how the enumeration ended.
+#[derive(Debug)]
+pub struct BehaviourValuations {
+    /// One valuation per trace.
+    pub traces: Vec<fsl_eval::temporal::ObservedValuation>,
+    /// Whether every behaviour was read, or the work budget or an expansion
+    /// stopped the enumeration first.
+    pub end: BehaviourValuationEnd,
+}
+
+/// How [`behaviour_valuations`] ended.
+#[derive(Debug)]
+pub enum BehaviourValuationEnd {
+    /// Every behaviour of every instance was read.
+    Complete,
+    /// The work budget ran out; the traces read so far are kept.
+    Meter(filament_exact::Incomplete),
+    /// An expansion stopped; the traces read so far are kept.
+    Stopped(ExpansionStop),
+}
+
+/// FR-931: read `clause` over every behaviour of `system` of 1 to
+/// `max_steps` steps for each of `instances`, each behaviour of `j` steps a
+/// closed finite trace of `j + 1` positions read on the one clause
+/// evaluator through `letters`, under one meter of `limits`.
+///
+/// # Errors
+///
+/// [`ReplayRefusal`] when the system is not simulated (an unbounded root or
+/// an unencodable key) or the evaluator broke an invariant or refused a
+/// trace.
+pub fn behaviour_valuations(
+    system: &ModelSystem<'_>,
+    clause: &CheckedTemporalClause,
+    letters: &dyn ModelLetters,
+    instances: &[ModelInstance],
+    max_steps: usize,
+    limits: ScalarLimits,
+) -> Result<BehaviourValuations, ReplayRefusal> {
+    let mut meter = Meter::new(limits);
+    let mut traces = Vec::new();
+    for instance in instances {
+        let end = fsl_eval::simulation::model::model_behaviours(
+            system,
+            max_steps,
+            &mut meter,
+            |states, transitions, meter| {
+                let positions: Vec<Position> = states
+                    .iter()
+                    .map(|state| Position {
+                        state: state.state.clone(),
+                        state_key: state.key.clone(),
+                    })
+                    .collect();
+                let prefix: Vec<crate::ModelStep> = transitions
+                    .iter()
+                    .zip(states.iter().skip(1))
+                    .map(|(transition, post)| crate::ModelStep {
+                        transition: transition.clone(),
+                        post_state: post.key.clone(),
+                        delay: None,
+                    })
+                    .collect();
+                let mut replayed = ReplayedLetters {
+                    system,
+                    letters,
+                    instance,
+                    positions: &positions,
+                    prefix: &prefix,
+                    loop_edge_counts: false,
+                    undefined: None,
+                };
+                let trace = TemporalTrace::Finite {
+                    len: position_of(positions.len()),
+                };
+                match fsl_eval::temporal::letters_valuation(clause, &mut replayed, trace, meter) {
+                    Ok(valuation) => {
+                        // A meter stop inside the evaluator is an
+                        // `Incomplete` activation, not a verdict: the
+                        // work budget ended the enumeration there.
+                        let stopped =
+                            valuation
+                                .activations
+                                .iter()
+                                .find_map(|(_, outcome)| match outcome {
+                                    TemporalOutcome::Incomplete(incomplete) => {
+                                        Some(incomplete.clone())
+                                    }
+                                    _ => None,
+                                });
+                        match stopped {
+                            Some(incomplete) => std::ops::ControlFlow::Break(
+                                fsl_eval::temporal::ValuationStop::Letter(LetterStop::Incomplete(
+                                    incomplete,
+                                )),
+                            ),
+                            None => {
+                                traces.push(valuation);
+                                std::ops::ControlFlow::Continue(())
+                            }
+                        }
+                    }
+                    Err(stop) => std::ops::ControlFlow::Break(stop),
+                }
+            },
+        )
+        .map_err(|_| fault("behaviour-enumeration-is-simulated"))?;
+        match end {
+            fsl_eval::simulation::model::BehavioursEnd::Exhausted => {}
+            fsl_eval::simulation::model::BehavioursEnd::Meter(incomplete)
+            | fsl_eval::simulation::model::BehavioursEnd::Broken(
+                fsl_eval::temporal::ValuationStop::Letter(LetterStop::Incomplete(incomplete)),
+            ) => {
+                return Ok(BehaviourValuations {
+                    traces,
+                    end: BehaviourValuationEnd::Meter(incomplete),
+                })
+            }
+            fsl_eval::simulation::model::BehavioursEnd::Stopped(stop) => {
+                return Ok(BehaviourValuations {
+                    traces,
+                    end: BehaviourValuationEnd::Stopped(stop),
+                })
+            }
+            fsl_eval::simulation::model::BehavioursEnd::Broken(_) => {
+                return Err(fault("behaviour-valuation-reads-every-atom-and-activation"))
+            }
+        }
+    }
+    Ok(BehaviourValuations {
+        traces,
+        end: BehaviourValuationEnd::Complete,
+    })
+}
+
+/// FR-941: the evaluator's reading of one required clause over a replayed
+/// protocol behaviour.
+#[derive(Debug)]
+pub struct ProtocolTraceRun {
+    /// What the FR-327 evaluator (FR-328 for a finite prefix) returned.
+    pub outcome: Result<TemporalOutcome, fsl_eval::temporal::TemporalRefusal>,
+    /// The position and locus of the first undefined letter the evaluator
+    /// read, when it read one.
+    pub undefined: Option<(u64, UndefinedLocus)>,
+    /// The number of replayed positions.
+    pub positions: usize,
+}
+
+/// How [`evaluate_protocol_trace`] ended.
+#[derive(Debug)]
+pub enum ProtocolTraceEnd {
+    /// The behaviour was re-executed and the clause evaluated.
+    Evaluated(Box<ProtocolTraceRun>),
+    /// An expansion stopped before the behaviour was replayed.
+    Stopped(ExpansionStop),
+}
+
+/// FR-941 "Formula claims": re-execute the finite behaviour `payload` names
+/// over the protocol `system`, one position per state, and evaluate `clause`
+/// over those positions with FR-125's letters on the one evaluator a replayed
+/// counterexample uses, counting only the steps FSpec FR-431 counts. A
+/// bounded profile reads the behaviour as a closed trace (FR-327) and the
+/// infinite-trace profile as a finite prefix (FR-328).
+///
+/// # Errors
+///
+/// [`ReplayRefusal`] as [`replay_protocol_trace`] refuses a step that is not
+/// enabled or reaches another post-state, and a payload with a loop.
+pub fn evaluate_protocol_trace<M: MemoryModel>(
+    system: &ProtocolSystem<'_, M>,
+    payload: &TemporalCounterexample<ProtocolTransition>,
+    clause: &CheckedTemporalClause,
+    letters: &dyn ModelLetters,
+    limits: ScalarLimits,
+) -> Result<ProtocolTraceEnd, ReplayRefusal> {
+    if payload.lasso.is_some() {
+        return Err(fault("a-finite-behaviour-has-no-loop"));
+    }
+    let positions = match replay_prefix_stopped(system, payload, &PROTOCOL_STEPS)? {
+        Ok((positions, _)) => positions,
+        Err(stop) => return Ok(ProtocolTraceEnd::Stopped(stop)),
+    };
+    let trace = TemporalTrace::Finite {
+        len: position_of(positions.len()),
+    };
+    let mut replayed = replayed_letters(system, payload, &positions, letters)?;
+    let mut meter = Meter::new(limits);
+    let outcome = evaluate_with_enabledness(clause, trace, &mut replayed, &mut meter);
+    Ok(ProtocolTraceEnd::Evaluated(Box::new(ProtocolTraceRun {
+        outcome,
+        undefined: replayed.undefined.take(),
+        positions: positions.len(),
+    })))
+}
+
 /// The letters of a counterexample's replayed positions, for the instance
 /// its `over` binding names.
 fn replayed_letters<'a, S: SubjectSystem>(
@@ -2389,6 +2934,7 @@ fn undefined<S: SubjectSystem>(
         | UndefinedLocus::Capture(_)
         | UndefinedLocus::Contract(_)
         | UndefinedLocus::Terminal(_)
+        | UndefinedLocus::Invariant(_)
         | UndefinedLocus::Protocol(_)
         | UndefinedLocus::Mapping { .. }
         | UndefinedLocus::ClaimPredicate(_) => None,

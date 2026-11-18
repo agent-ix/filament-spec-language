@@ -57,6 +57,83 @@ fn dimension_key(preimage: &Value) -> NodeKey {
         .unwrap()
 }
 
+fn check_quantity_scale_source(
+    functions: &str,
+) -> Result<fsl_semantics::check::CheckedGraph, Vec<fsl_semantics::check::CheckRefusal>> {
+    use filament_semantic_value::checking::{CheckMode, CheckingLimits};
+    use fsl_semantics::check::PackageDeclarations;
+
+    let source = format!(
+        "language \"ix:native\" edition \"1-draft\";\n\
+         profile v = \"filament.value.complete/v1\";\n\
+         dimension Time;\n\
+         unit s : Time = rational(1, 1);\n\
+         unit ms : Time = rational(1, 1000) * s;\n\
+         {functions}"
+    );
+    let parsed = fsl_cst::parse(
+        fsl_foundation::SourceIdentity::new("test", "quantity-scale"),
+        "quantity-scale.native",
+        source.as_bytes(),
+        fsl_cst::Limits::default(),
+    )
+    .expect("S1 reads the quantity scaling unit");
+    assert!(parsed.is_admissible(), "{:?}", parsed.diagnostics());
+    let unit = fsl_forms::build_unit(&parsed).expect("S2 builds the quantity scaling unit");
+    PackageDeclarations::assemble(
+        parsed.source().reference().clone(),
+        "quantity-scale-test".to_owned(),
+        unit,
+        fsl_semantics::model::intake::SelectedModels::default(),
+        Vec::new(),
+    )
+    .expect("the quantity scaling unit assembles")
+    .check(CheckMode::Linked, CheckingLimits::default())
+}
+
+/// FSpec FR-142-AC-41 (TC-1324): exact numeric scalar multiplication keeps
+/// the written quantity unit for integer literals, bounded integers, decimal
+/// literals, and either source operand order.
+#[trace("FSpec-FR-142-AC-41", "FSpec-TC-1324")]
+#[test]
+fn u12_quantity_times_integer_keeps_the_unit() {
+    let checked = check_quantity_scale_source(
+        "function integer using v(d: Quantity<ms>): Quantity<ms> pure { d * 2 }\n\
+         function bounded_factor using v(d: Quantity<ms>, k: Int[0, 9]): Quantity<ms> pure { d * k }\n\
+         function rational_factor using v(d: Quantity<ms>): Quantity<ms> pure { d * rational(1, 2) }\n\
+         function reversed using v(d: Quantity<ms>): Quantity<ms> pure { 2 * d }\n",
+    );
+    assert!(
+        checked.is_ok(),
+        "exact scalar scaling should check: {checked:?}"
+    );
+}
+
+/// FSpec FR-142-AC-41 (TC-1324): exact decimal multiplication preserves the
+/// author's quantity unit and remains admissible at the declared result type.
+#[trace("FSpec-FR-142-AC-41", "FSpec-TC-1324")]
+#[test]
+fn u12_quantity_times_decimal_keeps_the_unit() {
+    let checked = check_quantity_scale_source(
+        "function decimal_factor using v(d: Quantity<ms>): Quantity<ms> pure { d * decimal(15, 1) }\n",
+    );
+    assert!(checked.is_ok(), "decimal scaling should check: {checked:?}");
+}
+
+/// FSpec FR-142-AC-42 (TC-1324): a nonnumeric factor keeps a typed refusal.
+#[trace("FSpec-FR-142-AC-42", "FSpec-TC-1324")]
+#[test]
+fn quantity_times_text_refuses() {
+    let refusals = check_quantity_scale_source(
+        "function text_factor using v(d: Quantity<ms>): Quantity<ms> pure { d * \"two\" }\n",
+    )
+    .expect_err("text is not an exact quantity scale factor");
+    assert!(matches!(
+        refusals.first().map(|refusal| &refusal.cause),
+        Some(fsl_semantics::check::CheckCause::OperandTypeMismatch { .. })
+    ));
+}
+
 /// The structural key of a unit preimage.
 fn unit_key(preimage: &Value) -> NodeKey {
     UnitPreimage::from_json(preimage.clone())
@@ -739,17 +816,14 @@ fn patched(base: &Value, patch: &Value) -> Value {
 /// FR-142-AC-8: the published `filament.value.compound-unit/v1` vectors are
 /// schema-valid and each authored noncanonical mutation, including a `-0`
 /// exponent, is refused by exactly the check it names (`schema`: the
-/// preimage reader; `semantic`: the unit graph's term check). Fails when
-/// `FSPEC_DIR` is unset; `make conformance` sets it.
+/// preimage reader; `semantic`: the unit graph's term check). The vectors
+/// come from the pinned FSpec package.
 #[trace("FSpec-TC-233", "FSpec-FR-142-AC-8")]
 #[test]
 fn published_compound_unit_vectors_admit_and_each_mutation_is_refused_by_its_named_check() {
-    let fspec = std::env::var_os("FSPEC_DIR")
-        .expect("FSPEC_DIR must name a filament-specification checkout");
-    let path = std::path::Path::new(&fspec)
-        .join("proposals/filament-v1/definitions/value-compound-unit-vectors.json");
-    let bytes = std::fs::read(&path).unwrap_or_else(|error| panic!("reading {path:?}: {error}"));
-    let vectors: Value = serde_json::from_slice(&bytes).expect("the vectors are JSON");
+    let vectors: Value = crate::published_fspec::json(
+        "proposals/filament-v1/definitions/value-compound-unit-vectors.json",
+    );
     let graph = Nodes::default().admit().unwrap();
 
     let admitted = vectors["vectors"].as_array().expect("vectors");

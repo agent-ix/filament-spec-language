@@ -85,6 +85,8 @@ The run result document's `tl_lowering` record, or a request refusal.
   display form and `atoms` the atom table (each TL atom name mapped to the
   identity text of its `holds` leaf). The run exits 0 unless cross-evaluation
   reports a fault.
+- A supported record SHALL also carry `classification`, as "Classification
+  is preserved by lowering" below states.
 - When the classification is unsupported, or is supported under a target other
   than the named correspondence, the record SHALL carry
   `disposition: "unsupported"`, `correspondence` the named or default target
@@ -108,6 +110,34 @@ The run result document's `tl_lowering` record, or a request refusal.
   that snapshot of 1 to `max_steps` steps, in FR-120's enumeration order. Both
   forms, neither form, or `max_steps` 0 SHALL refuse `invalid-request` at stage
   `request`, exit 20, naming the member.
+- In the `initial` form, the subject SHALL be the model subject built from
+  the one snapshot: its initial state is that snapshot, and its universes are
+  the complete populations the snapshot declares, each the set of object keys
+  it holds, as FR-620 builds the default subject's universes and FR-120
+  admits them. A population the snapshot marks incomplete SHALL settle
+  `incomplete_population` at stage `request`, category incomplete, exit 22
+  (ADR-029 CB-4, as FR-109 settles it), naming it, because a universe is a
+  complete population and the run cannot enumerate one it lacks. A snapshot the subject builder refuses
+  (FR-120's admission refusals) SHALL refuse at stage `request` with that
+  refusal, exit 20.
+- In the `initial` form, the clause SHALL be evaluated for every instance of
+  its `over` parameter: for a reference-typed parameter every object key of
+  the universe of a population that admits the parameter's type, in
+  ascending key order, as FR-125's instancing enumerates them; for a finite
+  non-reference type every value of its domain in canonical order. `over` is
+  not admitted beside `initial`, because the instances are the subject's.
+  An `over` population with no object SHALL give zero traces, and the record
+  SHALL report `traces` 0 and `positions` 0, exit 0, never a vacuous
+  agreement over an invented instance.
+- In the `initial` form, each behaviour of `j` steps, for each `j` from 1 to
+  `max_steps` and each path of FR-120's enumeration from the snapshot, SHALL
+  be read as a closed finite trace of `j + 1` states, positions 0 to `j`, the
+  snapshot at position 0, under the lowering's correspondence: a shorter
+  behaviour is its own trace, not a prefix of a longer one, and a state with
+  no successor ends every path through it. One trace is one (instance,
+  behaviour) pair, counted in `traces`, in instance order then FR-120's path
+  order, and the `trace` index of a `correspondence-loss` fault is that
+  position in that order.
 - Cross-evaluation SHALL run only on a supported lowering, and SHALL compare
   the native and `tl-mltl` verdicts at every activation position of every
   trace (FR-757). The record's `cross_evaluation` SHALL hold `traces` (the
@@ -120,6 +150,43 @@ The run result document's `tl_lowering` record, or a request refusal.
   reached and exit 22.
 - On an unsupported lowering `cross_evaluate` SHALL be ignored and the record
   SHALL carry no `cross_evaluation`.
+
+### Classification is preserved by lowering
+
+A clause's classification is the pair FR-932's corpus is organised by: the
+correspondence (the FR-527 target) and the fragment, `bounded-future` for a
+clause whose temporal operators are all future operators and `bounded-past`
+for one whose operators are all past operators, every window bounded. The
+lowered formula has a classification of its own, read from the `tl-syntax`
+formula alone: its semantic profile is the correspondence, and the temporal
+family (future or past) of its temporal nodes, every one with a bounded
+interval, is the fragment. A formula with no temporal node takes, on both
+sides, the fragment its correspondence's direction names: `bounded-past`
+under `mltl.origin-complete-history/v1`, `bounded-future` otherwise.
+
+- On a supported lowering, `fsl-command` SHALL compute the lowered
+  formula's classification from the formula alone, with no reverse lowering
+  and no reference to the native clause, and SHALL compare it with the
+  native classification. When they are equal the record SHALL carry
+  `classification` `{"correspondence": <target>, "fragment":
+  "bounded-future" | "bounded-past"}`.
+- When they differ the record SHALL carry no `classification` and a
+  `classification_fault` `{"kind": "classification-loss", "clause",
+  "native", "lowered"}` naming the clause and both classifications, and the
+  run SHALL exit 30 (internal-failure, FR-285), as a `correspondence-loss`
+  fault does, because a lowering that changes the correspondence
+  or the direction of a formula hands the TL tools a claim the clause did
+  not make.
+- The `fsl-command` library entry SHALL let a library caller replace the
+  lowered formula's correspondence before it is classified, never through
+  the request, so the loss path can be shown, as a mis-mapped atom table
+  shows the cross-evaluation loss.
+- An unsupported record carries no `classification`, since there is no
+  lowered formula to classify.
+
+The lowering is one-way and needs no inverse: each side is classified
+directly, so "the lowered form has the clause's classification" is checked
+without reconstructing the native clause from the TL formula.
 
 ### Placement
 
@@ -134,8 +201,11 @@ The run result document's `tl_lowering` record, or a request refusal.
 | FR-931-AC-1 | For the event-position clause `Low` (`on origin { always [0, 3] holds(c.versionNumber <= 2) }`), `tl_lowering` `{"clause": "Low"}` and `{"clause": "Low", "correspondence": "mltl.closed-trace/v1"}` each return `disposition` `supported`, `correspondence` `mltl.closed-trace/v1`, `formula` `G[0,3] p0` and an `atoms` entry for `p0`, exit 0; the two records are byte-equal. | Test (TC-2601) |
 | FR-931-AC-2 | For `Low`, `"correspondence": "mltl.online-prefix/v1"` returns `supported` under `mltl.online-prefix/v1`; `"correspondence": "mltl.origin-complete-history/v1"` returns `unsupported`, `classified` `mltl.closed-trace/v1`, `dimensions` `["direction"]`, no `formula`, exit 21. For a past-only clause `on origin { historically [0, 2] holds(c.versionNumber <= 2) }` the default is `mltl.origin-complete-history/v1`. The timed form of `Low`, over the ConfigVersion model timed by `dimension Time; unit ms : Time = rational(1, 1); time Config dense unit ms;` (FR-233-AC-5), under `filament.temporal.timed/v1` with no `clock` member (its default binding `model-time`, FR-233) and the body `always [0 ms, 3 ms] holds(c.versionNumber <= 2)`, checks and returns `unsupported` with no `classified` and no `formula`, exit 21. | Test (TC-2601) |
 | FR-931-AC-3 | `"correspondence": "mltl.closed-trace/v2"` refuses `unknown_profile`/`unsupported-selection` naming `tl_lowering.correspondence` and the value, exit 20; `"correspondence": 1`, `"correspondence": null`, a missing `clause`, an unknown member `formula`, `cross_evaluate` with both `trace` and `initial`, with neither, with `max_steps` 0 and with a `lasso` trace each refuse `invalid-request` at stage `request`, exit 20, naming the member; `"clause": "Nothing"` refuses `missing_declaration`/`missing-name` naming `tl_lowering.clause`. No refusal writes a result document. | Test (TC-2602) |
-| FR-931-AC-4 | `Low` with `cross_evaluate` `{"initial": "spine-snapshot.json", "max_steps": 4}` returns `cross_evaluation` with `traces` at least 1, `positions` at least `traces`, `agree` true and `faults` `[]`, exit 0; FR-757-AC-2's deliberately mis-mapped atom table (`p0` mapped to the negated leaf, supplied at the `fsl-command` library entry, never through the request) renders through the same record writer as one `correspondence-loss` fault naming `Low`, the trace index, the position and both verdicts, `agree` false, exit 30. | Test (TC-2603) |
+| FR-931-AC-4 | `Low` with `cross_evaluate` `{"initial": S, "max_steps": 2}`, `S` AC-6's snapshot (config versions `a` and `b`, each with `versionNumber` 0, anchored at an initialization as FR-120 requires of an initial state, over the ConfigVersion model with `versionNumber: Int[0, 3]` and AC-6's `bump`, so each application enumerates at most 16 candidates), returns `cross_evaluation` with `traces` at least 2, `positions` at least `traces`, `agree` true and `faults` `[]`, exit 0; FR-757-AC-2's deliberately mis-mapped atom table (`p0` mapped to the negated leaf, supplied at the `fsl-command` library entry, never through the request) renders through the same record writer as one `correspondence-loss` fault naming `Low`, the trace index, the position and both verdicts, `agree` false, exit 30. | Test (TC-2603) |
 | FR-931-AC-5 | Only `fsl-command`'s manifest among the FSL workspace crates names `tl-syntax` or `tl-mltl` (ADR-011). | Inspection (TC-2603) |
+| FR-931-AC-6 | `Low` with `cross_evaluate` `{"initial": S, "max_steps": 2}`, `S` a snapshot anchored at an initialization holding config versions `a` and `b`, each with `versionNumber` 0, over the ConfigVersion model with `versionNumber: Int[0, 3]`, whose model steps `bump` (`versionNumber + 1`): the run evaluates both instances, `a` then `b`, and each behaviour of 1 and of 2 steps as its own closed trace of 2 and 3 states, so `traces` is the number of instances, 2, times the number of 1- and 2-step paths from `S` in FR-120's order, `positions` at least `traces`, and `agree` true, exit 0. | Test (TC-2962) |
+| FR-931-AC-7 | `cross_evaluate` with `initial` and `over` refuses `invalid-request` naming `tl_lowering.cross_evaluate.over`, exit 20; a snapshot whose `ConfigVersion` population is marked incomplete settles `incomplete_population`, category incomplete, naming it, exit 22 (ADR-029 CB-4); a snapshot whose population holds no object gives `traces` 0, `positions` 0, exit 0. | Test (TC-2962) |
+| FR-931-AC-8 | Over every trace of FR-932's corpus, each past case's supported record carries `classification` `{"correspondence": "mltl.origin-complete-history/v1", "fragment": "bounded-past"}` and each future case's `{"correspondence": "mltl.closed-trace/v1", "fragment": "bounded-future"}`, equal to the native classification of the clause (its record's `correspondence` and its operators' direction); the future clause `always[0,3] holds(c.level <= 2)` over FR-932's `Counter` record under `"correspondence": "mltl.online-prefix/v1"` carries `{"correspondence": "mltl.online-prefix/v1", "fragment": "bounded-future"}`; the mixed case `eventually[1,1] once[1,1] not p` returns `unsupported` with no `classification`. A lowered formula stamped with the wrong correspondence (the future clause `always[0,2] holds(c.level = 1)` lowered with its formula's profile replaced by `mltl.origin-complete-history/v1`, supplied at the `fsl-command` library entry and never through the request) yields a record with no `classification` and a `classification_fault` of kind `classification-loss` naming the clause `C`, the native classification `{"correspondence": "mltl.closed-trace/v1", "fragment": "bounded-future"}` and the lowered one `{"correspondence": "mltl.origin-complete-history/v1", "fragment": "bounded-future"}`, exit 30; the same entry with no replacement gives the native classification, exit 0. | Test (TC-2979) |
 
 ## Dependencies
 

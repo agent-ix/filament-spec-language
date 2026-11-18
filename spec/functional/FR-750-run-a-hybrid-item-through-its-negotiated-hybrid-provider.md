@@ -47,15 +47,43 @@ validated witness reproduces a trace, one `counterexamples` entry.
 
 ### The in-process provider interface
 
-- `fsl-analyze` SHALL export a trait `HybridProvider` with one method that
-  takes the item's typed request (its claim, model, `hybrid.limits` and
-  `deadline_ms`, read from the checked package) and the cancellation token,
-  and returns FR-250's `SolverResult`, optionally with an FSpec FR-652
-  certificate.
+- `fsl-analyze` SHALL export a trait `HybridProvider`, as
+  `fsl_analyze::provider::HybridProvider`, with one method that takes the
+  item's typed request `HybridSolveRequest` (its `CheckedHybridClaim`, its
+  `CheckedHybridModel`, its resolved `hybrid.limits` as FR-250's
+  `SolverBudget`, its FSpec FR-331 `options` and `deadline_ms`, read from the
+  checked package and the item) and the cancellation token, and returns a
+  `HybridAnswer`: FR-250's `SolverResult`, optionally with an FSpec FR-652
+  certificate. The trait, the request and the answer are defined in
+  `fsl-replay`'s `hybrid` module beside `SolverResult` and re-exported by
+  `fsl-analyze`, so a provider crate below layer A, such as
+  `fsl-hybrid-reference` (FR-1019, ADR-011 layer H), implements it without
+  depending on `fsl-analyze`.
+- `HybridAnswer::read_entry` SHALL read one FSpec FR-331 hybrid result entry
+  (its value, basis or cause, trace, counterexamples and `certificate`) into
+  a `HybridAnswer`, refusing an entry FSpec FR-331 refuses with that cause
+  and pointer. The process path below reads a provider's entry through it,
+  and an in-process provider may build its answer through it.
 - `Engine::hybrid(descriptor, provider)` SHALL make an engine from a
   descriptor whose `dynamics` holds `hybrid` and that advertises
   `temporal-satisfaction`. A descriptor that does not is refused with a typed
-  error naming the backend, and no engine is made.
+  error naming the backend and the cause `invalid-dynamics`, and no engine
+  is made.
+- `Engine::hybrid_process(descriptor, tool, exchange)` SHALL make the engine
+  of a process provider from its `Process` descriptor, under the same
+  descriptor rule, and an exchange that takes the FR-447 process request
+  frame bytes and the cancellation token and returns the provider's FSpec
+  FR-331 result frame bytes or a typed tool failure. The driver's plugin host
+  implements the exchange over the child process (FR-635); FSL writes the
+  frame and reads the result, so the transport carries bytes only.
+- `HybridItem`, the `ItemForm::Hybrid` settings, SHALL carry the item's
+  proof bounds, its `hybrid.limits` (`max_solver_steps` and
+  `max_solver_time`, each optional and taking the serving descriptor's
+  `bounds` when absent, FSpec FR-193 "Solver budgets") and its FSpec FR-331
+  `options`. FR-620's item resolution SHALL build `ItemForm::Hybrid` for
+  every item whose claim is a checked hybrid claim, reading the document
+  item's `hybrid` and `options` members, so a `native-analyze/1` item over a
+  hybrid claim reaches the dispatch below.
 
 ### Dispatch
 
@@ -68,9 +96,17 @@ validated witness reproduces a trace, one `counterexamples` entry.
 - For a hybrid item whose candidate is a process provider (FR-404's plugin
   replay context), `analyze` SHALL write the FR-447 process request with the
   emitted package's v2 bytes, read the provider's FR-331 result entry, and
-  settle it by the same rules. A clause request (an `analyze` request that
-  names clauses rather than items) SHALL offer process-provider composition
-  for its hybrid clauses exactly as for an item request.
+  settle it by the same rules. A clause request (a `native-analyze/1`
+  request whose items name hybrid clauses by declared name, FR-620) SHALL
+  offer process-provider composition for its hybrid clauses exactly as for
+  an item request: the process provider is one of the `providers` the
+  command entry takes (FR-635), made by `Engine::hybrid_process`.
+- A settled hybrid item SHALL be written into FR-621's outcome item: its
+  `record` carries `result`, the proof `basis` or the `cause`, the
+  `certification` of a proved record and `backend`; a `refuted` item carries
+  its one `HybridCounterexample` as `counterexample` with `replay`; and an
+  item whose provider returned a certificate carries `certificate`, with
+  `rule` and `at` when the certificate was rejected (FR-621).
 - A hybrid item with an empty candidate set SHALL settle `unsupported`,
   `HybridProviderAbsent` (`unsupported_projection`/
   `unsupported-requested-capability`, its warning naming

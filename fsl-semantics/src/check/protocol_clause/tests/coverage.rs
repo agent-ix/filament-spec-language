@@ -248,7 +248,7 @@ fn every_admitted_temporal_and_state_profile_is_accepted_at_its_use_site() {
 
 /// FR-508-AC-5 (TC-1303): all wrong-kind sites are returned together in
 /// source order, leaving the package rejected.
-#[trace("FR-508-AC-5", "TC-1303")]
+#[trace("FR-508-AC-5", "TC-1303", "FR-884-AC-5")]
 #[test]
 fn wrong_kind_protocol_and_check_aliases_refuse_in_source_order() {
     let source = recovery_flow("Main::Committed", "check Fine using e { true };").replace(
@@ -273,7 +273,7 @@ fn wrong_kind_protocol_and_check_aliases_refuse_in_source_order() {
 }
 
 /// FR-508: an absent alias keeps the existing `MissingProfile` refusal.
-#[trace("FR-508-AC-5", "TC-1303")]
+#[trace("FR-508-AC-5", "TC-1303", "FR-884-AC-5")]
 #[test]
 fn a_missing_protocol_profile_alias_keeps_missing_profile() {
     let source = format!(
@@ -295,7 +295,7 @@ fn a_missing_protocol_profile_alias_keeps_missing_profile() {
 /// with a `related by` clause naming no relationship refuses
 /// `missing_declaration`/`missing-name` at the name (FR-218
 /// "Relationships") rather than compiling with the clause unchecked.
-#[trace("TC-511", "FR-113")]
+#[trace("TC-511", "FR-113", "FR-884-AC-5")]
 #[test]
 fn a_resolving_protocol_with_unchecked_content_still_refuses() {
     let source = recovery_flow("Main::Committed", "");
@@ -325,7 +325,7 @@ fn a_resolving_protocol_with_unchecked_content_still_refuses() {
 /// (a role, a `sequence`, an `attempt` and a `finish`, each body a bare
 /// Boolean literal) checks through the whole pipeline, and its checked
 /// attempt names the resolved operation's own anchor and frame nodes.
-#[trace("TC-513", "FR-114")]
+#[trace("TC-513", "FR-114", "FR-884-AC-5")]
 #[test]
 fn a_fully_covered_attempt_protocol_checks() {
     let graph = checks(&attempt_flow("Flow", ""));

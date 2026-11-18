@@ -21,7 +21,7 @@ change it. Scope: FR-283-AC-17.
 
 ## Expected Results
 
-- Step 1: `Bounded` `violation` at position 0, truth `false`; `Reaches` `pending`, no truth; the repeats give the same records.
+- Step 1: `Bounded` `violation` at position 0, truth `false`; `Reaches` `success`, truth `true` (a good prefix); the repeats give the same records.
 - Step 2: each refused `invalid_runtime_input`/`unknown-member` naming the member, before any position is admitted.
 
 Test: `fsl-analyze/tests/it/monitor_incremental.rs`.

@@ -128,7 +128,12 @@ fn the_incomplete_cells_are_one_below_the_counter_their_input_reaches() {
             ..case
         };
         let outcome = run_case(&counter).expect("the case runs");
-        assert_eq!(outcome.exit_code(), 0, "{verb:?}");
+        assert_eq!(
+            outcome.exit_code(),
+            0,
+            "{verb:?}: {:?}",
+            crate::support::document(&outcome).diagnostics()
+        );
     };
     at_counter(Verb::Check, FrontEndLimit::S3Nodes);
     at_counter(Verb::Package, FrontEndLimit::OutputBytes);

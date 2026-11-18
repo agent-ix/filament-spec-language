@@ -63,6 +63,8 @@ pub const IDENTITIES_FORMAT: &str = "filament.checked-handoff.identities/4";
 #[derive(Debug)]
 pub struct BarePackage<'p> {
     package: &'p CheckedPackageV2,
+    /// The package's identity, its admitted `name()` (FR-940 `identity`).
+    identity: fsl_semantics::library::LibraryName,
     supply: Option<BareSupply<'p>>,
     /// The supply's join, held with the witness defect it found: a missing,
     /// foreign or unknown witness is refused by the stage that reads the
@@ -101,6 +103,7 @@ impl<'p> BarePackage<'p> {
     /// The bare package over `package`, with no supply.
     pub fn new(package: &'p CheckedPackageV2) -> Self {
         Self {
+            identity: fsl_semantics::library::LibraryName::of_package(package),
             package,
             supply: None,
             joined: None,
@@ -111,6 +114,11 @@ impl<'p> BarePackage<'p> {
             objects: Ok(Vec::new()),
             populations: Ok(BTreeMap::new()),
         }
+    }
+
+    /// The admitted package's identity (FR-940 `identity`).
+    pub(crate) fn admitted_identity(&self) -> &fsl_semantics::library::LibraryName {
+        &self.identity
     }
 
     /// The identity of this value as an observation owner.
@@ -489,6 +497,7 @@ pub struct ReadIdentityRows {
     source_unions: Vec<SelectedSourceUnionRow>,
     source_objects: Vec<SelectedSourceObjectRow>,
     source_object_member_facts: Vec<Vec<crate::emit::SourceObjectMemberFacts>>,
+    source_object_operations: Vec<Vec<crate::emit::SourceObjectOperationFacts>>,
     source_operations: Vec<SelectedSourceOperationRow>,
 }
 
@@ -596,6 +605,7 @@ struct SourceObjectJson {
     identity_fields: Vec<String>,
     members: Vec<SourceObjectMemberJson>,
     populations: Vec<SourcePopulationJson>,
+    operations: Vec<SourceObjectOperationJson>,
 }
 
 #[derive(Deserialize, Serialize)]
@@ -624,6 +634,13 @@ struct SourcePopulationJson {
 
 #[derive(Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
+struct SourceObjectOperationJson {
+    identity: String,
+    query: bool,
+}
+
+#[derive(Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
 struct SourceOperationJson {
     source_authority: String,
     source_identity: String,
@@ -635,6 +652,7 @@ impl SourceObjectJson {
     fn of(
         row: &SelectedSourceObjectRow,
         member_facts: &[crate::emit::SourceObjectMemberFacts],
+        operations: &[crate::emit::SourceObjectOperationFacts],
     ) -> Result<Self, IdentityFileRefusal> {
         let malformed = || IdentityFileRefusal::Malformed {
             member: IdentityMember::SourceObjects,
@@ -685,6 +703,13 @@ impl SourceObjectJson {
                     symmetric: population.symmetric,
                 })
                 .collect(),
+            operations: operations
+                .iter()
+                .map(|operation| SourceObjectOperationJson {
+                    identity: operation.identity.to_string(),
+                    query: operation.query,
+                })
+                .collect(),
         })
     }
 
@@ -694,6 +719,7 @@ impl SourceObjectJson {
         (
             SelectedSourceObjectRow,
             Vec<crate::emit::SourceObjectMemberFacts>,
+            Vec<crate::emit::SourceObjectOperationFacts>,
         ),
         IdentityFileRefusal,
     > {
@@ -741,6 +767,13 @@ impl SourceObjectJson {
                     .collect(),
             },
             facts,
+            self.operations
+                .into_iter()
+                .map(|operation| crate::emit::SourceObjectOperationFacts {
+                    identity: operation.identity.into(),
+                    query: operation.query,
+                })
+                .collect(),
         ))
     }
 }
@@ -1108,6 +1141,12 @@ impl ReadIdentityRows {
         &self.source_objects
     }
 
+    /// The operations each source-object row's type declares itself, aligned
+    /// with [`Self::source_objects`].
+    pub fn source_object_operations(&self) -> &[Vec<crate::SourceObjectOperationFacts>] {
+        &self.source_object_operations
+    }
+
     /// Original source-operation rows, with final anchor references.
     pub fn source_operations(&self) -> &[SelectedSourceOperationRow] {
         &self.source_operations
@@ -1274,8 +1313,14 @@ impl ReadIdentityRows {
             .into_iter()
             .map(SourceObjectJson::row)
             .collect::<Result<Vec<_>, _>>()?;
-        let (source_objects, source_object_member_facts): (Vec<_>, Vec<_>) =
-            source_object_pairs.into_iter().unzip();
+        let mut source_objects = Vec::with_capacity(source_object_pairs.len());
+        let mut source_object_member_facts = Vec::with_capacity(source_object_pairs.len());
+        let mut source_object_operations = Vec::with_capacity(source_object_pairs.len());
+        for (row, facts, operations) in source_object_pairs {
+            source_objects.push(row);
+            source_object_member_facts.push(facts);
+            source_object_operations.push(operations);
+        }
         let rows = Self {
             package: package.name().to_owned(),
             declarations,
@@ -1288,6 +1333,7 @@ impl ReadIdentityRows {
                 .collect::<Result<_, _>>()?,
             source_objects,
             source_object_member_facts,
+            source_object_operations,
             source_operations: file
                 .source_operations
                 .into_iter()
@@ -1318,6 +1364,7 @@ impl ReadIdentityRows {
             Vec::new(),
             Vec::new(),
             Vec::new(),
+            Vec::new(),
         )
     }
 
@@ -1326,6 +1373,12 @@ impl ReadIdentityRows {
     /// one-for-one with `source_objects` and with each object's members. These
     /// checked facts supply the FR-531 original member identity and type data
     /// that [`SelectedSourceObjectRow`] does not retain.
+    /// `source_object_operations` aligns one-for-one with `source_objects`,
+    /// each entry the operations that object's type declares itself.
+    #[allow(
+        clippy::too_many_arguments,
+        reason = "mirrors the existing wide signature; a parameter struct is a separate refactor"
+    )]
     pub fn of_rows_with_source_rows(
         package: &CheckedPackageV2,
         declarations: Vec<SelectedExactDeclarationRow>,
@@ -1335,6 +1388,7 @@ impl ReadIdentityRows {
         source_objects: Vec<SelectedSourceObjectRow>,
         source_operations: Vec<SelectedSourceOperationRow>,
         source_object_member_facts: Vec<Vec<crate::SourceObjectMemberFacts>>,
+        source_object_operations: Vec<Vec<crate::SourceObjectOperationFacts>>,
     ) -> Self {
         Self {
             package: package.name().to_owned(),
@@ -1344,6 +1398,7 @@ impl ReadIdentityRows {
             source_unions,
             source_objects,
             source_object_member_facts,
+            source_object_operations,
             source_operations,
         }
     }
@@ -1446,14 +1501,17 @@ impl ReadIdentityRows {
                 },
             });
         }
-        if self.source_objects.len() != self.source_object_member_facts.len() {
+        if self.source_objects.len() != self.source_object_member_facts.len()
+            || self.source_objects.len() != self.source_object_operations.len()
+        {
             return Err(malformed(IdentityMember::SourceObjects));
         }
         let source_objects = self
             .source_objects
             .iter()
             .zip(&self.source_object_member_facts)
-            .map(|(row, facts)| SourceObjectJson::of(row, facts))
+            .zip(&self.source_object_operations)
+            .map(|((row, facts), operations)| SourceObjectJson::of(row, facts, operations))
             .collect::<Result<_, _>>()?;
         let file = File {
             format: IDENTITIES_FORMAT.to_owned(),

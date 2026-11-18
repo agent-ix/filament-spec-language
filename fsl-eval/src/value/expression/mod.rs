@@ -25,6 +25,7 @@ mod closure;
 pub mod collection_write;
 mod evaluate;
 mod family;
+pub mod post_targets;
 mod protocol_slot;
 mod s6a;
 mod slot_admission;
@@ -34,6 +35,8 @@ use slot_supply::SourceView;
 mod value_invariants;
 
 pub use bare::evaluate_selected_protocol_slot as bare_evaluate_selected_protocol_slot;
+pub(crate) use bare::post_targets as bare_post_targets;
+pub use bare::{evaluate_frame as bare_evaluate_frame, PackageOperations};
 use evaluate::Machine;
 use filament_eval::Registry;
 use filament_exact::{FieldValue, Meter, NodeKey, Outcome, Value, ValueType};
@@ -41,6 +44,7 @@ use filament_semantic_value::admission::AdmissionRecord;
 use filament_semantic_value::call::InputRefusal;
 use filament_semantic_value::catalog::InternalFault;
 use filament_semantic_value::declaration::TypeEnvironment;
+use filament_semantic_value::model_transition::ModelTransition;
 use filament_semantic_value::supplied_stop::{
     SuppliedCause, SuppliedFailure, SuppliedLimits, SuppliedPhase, SuppliedRun, SuppliedStop,
 };
@@ -60,8 +64,9 @@ pub use protocol_slot::{
     BINDER_ACCOUNTING_VERSION,
 };
 pub use s6a::separation::{
-    ClauseEvaluation, ClauseRead, InvocationBinding, ObservationIdentity, RuntimeValuePath,
-    Separation, SeparationStep, StopReport, ValuePathStep, ValuePathSubject, WitnessClaim,
+    ClauseEvaluation, ClauseRead, ComparisonReport, InvocationBinding, ObservationIdentity,
+    RuntimeValuePath, Separation, SeparationStep, StopReport, ValuePathStep, ValuePathSubject,
+    WitnessClaim,
 };
 pub use value_invariants::{ValueInvariantEvaluation, ValueInvariantOutcome, ValueInvariantResult};
 
@@ -78,7 +83,7 @@ use filament_eval::{
 };
 use filament_semantic_value::catalog::CatalogCode;
 use fsl_package::CheckedPackage;
-use fsl_semantics::check::{CheckedExpression, CheckedNode, StatePredicate};
+use fsl_semantics::check::{CheckedExpression, CheckedModelRelation, CheckedNode, StatePredicate};
 
 fn protocol_reference_failure(
     authority: &fsl_package::AdmittedProtocolObservation<'_>,
@@ -89,7 +94,7 @@ fn protocol_reference_failure(
         fsl_semantics::model::observation::AdmissionFailure::Refused(record) => (*record, false),
         fsl_semantics::model::observation::AdmissionFailure::Incomplete(record) => (*record, true),
         fsl_semantics::model::observation::AdmissionFailure::Fault(fault) => {
-            return CallFailure::Fault(fault)
+            return CallFailure::Fault(fault);
         }
     };
     let locus = match record.fields.get("population") {
@@ -100,7 +105,7 @@ fn protocol_reference_failure(
                     return CallFailure::Fault(InternalFault::new(
                         "FR-390",
                         "admitted-population-record-has-checked-node",
-                    ))
+                    ));
                 }
             }
         }
@@ -112,6 +117,23 @@ fn protocol_reference_failure(
     } else {
         CallAdmissionFailure::Refused(failure)
     }))
+}
+
+pub(crate) fn unsupported_construct_failure(
+    what: &'static str,
+    locus: CallAdmissionLocus,
+) -> CallFailure {
+    CallFailure::Admission(Box::new(CallAdmissionFailure::Refused(
+        filament_eval::CallAdmissionRecord {
+            record: AdmissionRecord {
+                catalog: CatalogCode::new("unsupported_construct", "not-yet-implemented"),
+                fields: std::collections::BTreeMap::from([("what", what.to_owned())]),
+                path: Vec::new(),
+                kernel: None,
+            },
+            locus,
+        },
+    )))
 }
 
 fn occurrence_record(
@@ -277,6 +299,170 @@ pub fn evaluate_history_update(
     .run(row.body(), row.slots(), bindings)
 }
 
+/// FR-179: evaluate a checked relation body over one transition per execution.
+pub fn evaluate_model_relation(
+    package: &CheckedPackage,
+    relation: &CheckedModelRelation,
+    arguments: Vec<Value>,
+    pre_components: &[&ObjectEnvironment],
+    post_components: &[&ObjectEnvironment],
+    meter: &mut Meter,
+) -> Result<Evaluation, InternalFault> {
+    let fault = |invariant| InternalFault::new("S6a", invariant);
+    let count = relation.executions().len();
+    if pre_components.len() != count || post_components.len() != count {
+        return Err(fault("relation-binds-one-pre-and-post-state-per-execution"));
+    }
+    if arguments.len() != relation.body_parameters().len() {
+        return Err(fault("relation-binds-one-value-per-execution-member"));
+    }
+    let Some(current) = post_components.first().copied() else {
+        return Err(fault("relation-has-at-least-one-execution"));
+    };
+    let reads: std::collections::BTreeMap<_, _> = relation
+        .component_reads()
+        .iter()
+        .map(|(location, (component, _))| (location.clone(), *component))
+        .collect();
+    let observations: std::collections::BTreeMap<_, _> = relation
+        .component_reads()
+        .iter()
+        .map(|(location, (_, observation))| (location.clone(), *observation))
+        .collect();
+    Machine::new(
+        package.graph().scope(),
+        package.graph(),
+        current,
+        meter,
+        package.graph().dispatch_tables(),
+    )
+    .with_components(evaluate::ComponentReads {
+        environments: post_components,
+        pre_environments: Some(pre_components),
+        reads: &reads,
+        observations: Some(&observations),
+    })
+    .run(
+        relation.typed_body().root(),
+        relation.body_parameters().len(),
+        arguments,
+    )
+}
+
+/// FR-179: bind checked execution members from a tuple of model transitions.
+pub fn evaluate_model_relation_transitions(
+    package: &CheckedPackage,
+    relation: &CheckedModelRelation,
+    transitions: &[&ModelTransition],
+    results: &[Option<&str>],
+    pre_components: &[&ObjectEnvironment],
+    post_components: &[&ObjectEnvironment],
+    meter: &mut Meter,
+) -> Result<ModelRelationEvaluation, InternalFault> {
+    let fault = |invariant| InternalFault::new("S6a", invariant);
+    if transitions.len() != relation.executions().len() || results.len() != transitions.len() {
+        return Err(fault(
+            "relation-binds-one-transition-and-result-per-execution",
+        ));
+    }
+    let parameters = relation.body_parameters();
+    let mut arguments = Vec::with_capacity(parameters.len());
+    let mut slot = 0;
+    for (index, ((variable, operation), transition)) in
+        relation.executions().iter().zip(transitions).enumerate()
+    {
+        if transition.operation() != fsl_semantics::check::operation_text(operation) {
+            return Err(fault("relation-transition-matches-its-operation"));
+        }
+        let (self_name, _) = parameters
+            .get(slot)
+            .ok_or_else(|| fault("relation-has-a-self-binder-per-execution"))?;
+        if self_name != &format!("{variable}.self") {
+            return Err(fault("relation-self-binders-follow-execution-order"));
+        }
+        let receiver = transition
+            .receiver()
+            .and_then(crate::simulation::model::encode::parse_reference)
+            .ok_or_else(|| fault("relation-transition-receiver-decodes"))?;
+        arguments.push(Value::Reference(receiver));
+        slot += 1;
+        if parameters
+            .get(slot)
+            .is_some_and(|(name, _)| name == &format!("{variable}.result"))
+        {
+            let (_, result_type) = &parameters[slot];
+            arguments.push(
+                results[index]
+                    .and_then(|text| crate::hyper::decode(text, result_type))
+                    .ok_or_else(|| fault("relation-transition-result-decodes"))?,
+            );
+            slot += 1;
+        }
+        for text in transition.arguments() {
+            let (name, value_type) = parameters
+                .get(slot)
+                .ok_or_else(|| fault("relation-transition-arguments-match-its-operation"))?;
+            if !name.starts_with(&format!("{variable}.")) || name.ends_with(".self") {
+                return Err(fault("relation-argument-binders-follow-execution-order"));
+            }
+            arguments.push(
+                crate::hyper::decode(text, value_type)
+                    .ok_or_else(|| fault("relation-transition-argument-decodes"))?,
+            );
+            slot += 1;
+        }
+    }
+    if slot != parameters.len() {
+        return Err(fault("relation-binds-every-checked-execution-member"));
+    }
+    let evaluation = evaluate_model_relation(
+        package,
+        relation,
+        arguments,
+        pre_components,
+        post_components,
+        meter,
+    )?;
+    match evaluation.outcome {
+        FamilyOutcome::Evaluated(Outcome::Completed(Value::Boolean(true))) => {
+            Ok(ModelRelationEvaluation::Holds)
+        }
+        FamilyOutcome::Evaluated(Outcome::Completed(Value::Boolean(false))) => {
+            Ok(ModelRelationEvaluation::Refuted)
+        }
+        FamilyOutcome::Evaluated(Outcome::Undefined(undefined)) => Ok(
+            ModelRelationEvaluation::Undefined(crate::temporal::UndefinedCause::Kernel(undefined)),
+        ),
+        FamilyOutcome::FamilyEvaluated(filament_eval::FamilyResult::Undefined(cause)) => {
+            Ok(ModelRelationEvaluation::Undefined(
+                crate::temporal::UndefinedCause::Family(cause.undefined_record()),
+            ))
+        }
+        FamilyOutcome::Evaluated(Outcome::Completed(_)) => {
+            Ok(ModelRelationEvaluation::Undetermined(
+                crate::simulation::model::ClauseOutcome::NotBoolean,
+            ))
+        }
+        FamilyOutcome::Evaluated(Outcome::Refused(refusal)) => {
+            Ok(ModelRelationEvaluation::Undetermined(
+                crate::simulation::model::ClauseOutcome::KernelRefused(refusal),
+            ))
+        }
+        FamilyOutcome::Evaluated(Outcome::Incomplete(incomplete)) => {
+            Ok(ModelRelationEvaluation::Undetermined(
+                crate::simulation::model::ClauseOutcome::Incomplete(incomplete),
+            ))
+        }
+        FamilyOutcome::FamilyEvaluated(filament_eval::FamilyResult::Refused(cause)) => {
+            Ok(ModelRelationEvaluation::Undetermined(
+                crate::simulation::model::ClauseOutcome::FamilyRefused(cause.catalog_code()),
+            ))
+        }
+        #[cfg(seam_probe)]
+        FamilyOutcome::__SeamProbe => unreachable!("the seam probe is not a runtime value"),
+    }
+}
+
 /// FR-167 (ADR-022 GM-3): evaluate the state-graph or probabilistic-claim
 /// predicate `predicate` of `package` with its `over` parameter bound to `over` (`None` for a claim
 /// with no `over`) at the state whose objects are `current`, through the one
@@ -284,7 +470,7 @@ pub fn evaluate_history_update(
 /// is, so every read observes `current`.
 pub fn evaluate_state_predicate(
     package: &CheckedPackage,
-    predicate: &impl fsl_semantics::check::StatePredicate,
+    predicate: &(impl fsl_semantics::check::StatePredicate + ?Sized),
     current: &ObjectEnvironment,
     over: Option<filament_exact::ObjectReference>,
     meter: &mut Meter,
@@ -297,14 +483,31 @@ pub fn evaluate_state_predicate(
 /// (FR-230 "Quantified reads").
 pub fn evaluate_state_predicate_with(
     package: &CheckedPackage,
-    predicate: &impl fsl_semantics::check::StatePredicate,
+    predicate: &(impl fsl_semantics::check::StatePredicate + ?Sized),
     current: &ObjectEnvironment,
     over: Option<filament_exact::ObjectReference>,
     further: Vec<Value>,
     meter: &mut Meter,
 ) -> Result<Evaluation, InternalFault> {
+    evaluate_state_predicate_with_reference_bindings(
+        package, predicate, current, over, further, None, meter,
+    )
+}
+
+/// [`evaluate_state_predicate_with`] with the model subject's FR-1000
+/// reference-literal decisions. A fixed literal is constant; a created-object
+/// literal is resolved against `current` at this state.
+pub(crate) fn evaluate_state_predicate_with_reference_bindings(
+    package: &CheckedPackage,
+    predicate: &(impl fsl_semantics::check::StatePredicate + ?Sized),
+    current: &ObjectEnvironment,
+    over: Option<filament_exact::ObjectReference>,
+    further: Vec<Value>,
+    reference_bindings: Option<&crate::simulation::model::ReferenceBindings>,
+    meter: &mut Meter,
+) -> Result<Evaluation, InternalFault> {
     let reads = std::collections::BTreeMap::new();
-    Machine::with_pre(
+    let machine = Machine::with_pre(
         package.graph().scope(),
         package.graph(),
         current,
@@ -312,8 +515,12 @@ pub fn evaluate_state_predicate_with(
         Some(&reads),
         meter,
         package.graph().dispatch_tables(),
-    )
-    .run(
+    );
+    let machine = match reference_bindings {
+        Some(bindings) => machine.with_reference_bindings(bindings),
+        None => machine,
+    };
+    machine.run(
         predicate.body(),
         predicate.slots(),
         over.map(Value::Reference)
@@ -393,7 +600,7 @@ pub fn evaluate_operation_contract(
 /// activation at S3").
 pub fn evaluate_activation_guard(
     package: &CheckedPackage,
-    guard: &impl fsl_semantics::check::StatePredicate,
+    guard: &(impl fsl_semantics::check::StatePredicate + ?Sized),
     current: &ObjectEnvironment,
     bound: filament_exact::ObjectReference,
     meter: &mut Meter,
@@ -415,6 +622,148 @@ pub fn evaluate_activation_guard(
     )
 }
 
+/// The binders a `holds` condition of a temporal clause reads (FR-337,
+/// FR-860): the object the clause's `over` parameter is bound to and the
+/// captures the activation it is read for fixed, in source order.
+#[derive(Clone, Copy, Debug)]
+pub struct HoldsBinders<'a> {
+    /// The `over` object.
+    pub over: &'a filament_exact::ObjectReference,
+    /// The activation's capture values; empty for a clause with none.
+    pub captures: &'a [Value],
+}
+
+/// A `holds` atom of a temporal clause as both routes name it (FR-940
+/// "Package forms of the source-checked evaluators"): the clause node's key
+/// and the atom's use position in the clause formula walked in pre-order,
+/// one position per use of a node. The package's `formula_graph()` lists the
+/// same pre-order (FR-515 "One evaluator formula"), so the position names
+/// one atom on the source route's `CheckedFormula` and on the package's
+/// view alike.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct HoldsAtom {
+    /// The clause's `temporal`/`temporal_clause` node.
+    pub clause: NodeKey,
+    /// The atom's use position in the formula's pre-order.
+    pub position: usize,
+}
+
+/// The most formula uses a pre-order walk of a source formula visits: the
+/// view's own bound (FR-515 `FormulaTooLarge`), so the source route names no
+/// atom the package's view could not list.
+const FORMULA_USES: u64 = fsl_package::checked_views::FORMULA_VISITS;
+
+/// The formula nodes of `formula` in pre-order, one entry per use, until
+/// `stop` accepts an entry or the walk ends; returns the accepted position
+/// and node.
+fn formula_uses(
+    formula: &fsl_semantics::check::CheckedFormula,
+    mut stop: impl FnMut(usize, fsl_semantics::check::FormulaNodeId) -> bool,
+) -> Option<(usize, fsl_semantics::check::FormulaNodeId)> {
+    let mut pending = vec![formula.root()];
+    let mut position = 0_usize;
+    while let Some(id) = pending.pop() {
+        if u64::try_from(position).map_or(true, |visited| visited >= FORMULA_USES) {
+            return None;
+        }
+        if stop(position, id) {
+            return Some((position, id));
+        }
+        let node = formula.nodes().get(id.index())?;
+        let operands: Vec<_> = node.operands().collect();
+        pending.extend(operands.into_iter().rev());
+        position += 1;
+    }
+    None
+}
+
+impl HoldsAtom {
+    /// The atom `atom` of the source clause `clause`: its first use in the
+    /// formula's pre-order. `None` for a node the formula does not use.
+    pub fn of_source(
+        clause: &fsl_semantics::check::TemporalClauseNode,
+        atom: fsl_semantics::check::FormulaNodeId,
+    ) -> Option<Self> {
+        formula_uses(clause.clause().formula(), |_, id| id == atom).map(|(position, _)| Self {
+            clause: clause.identity(),
+            position,
+        })
+    }
+
+    /// The source formula node this atom's position names in `clause`.
+    fn source_node(
+        &self,
+        clause: &fsl_semantics::check::TemporalClauseNode,
+    ) -> Option<fsl_semantics::check::FormulaNodeId> {
+        formula_uses(clause.clause().formula(), |position, _| {
+            position == self.position
+        })
+        .map(|(_, id)| id)
+    }
+}
+
+/// The source clause node whose key is `clause`. Two declarations of one
+/// clause node share its conditions and guard (FR-337), so the first is the
+/// one every evaluator reads.
+fn source_clause<'g>(
+    graph: &'g fsl_semantics::check::CheckedGraph,
+    clause: &NodeKey,
+) -> Result<&'g fsl_semantics::check::TemporalClauseNode, CallFailure> {
+    graph
+        .temporal_clauses()
+        .iter()
+        .find(|found| found.identity() == *clause)
+        .ok_or_else(|| {
+            CallFailure::Fault(InternalFault::new(
+                "S6a",
+                "temporal-clause-resolved-by-package",
+            ))
+        })
+}
+
+/// The source clause, checked condition and slot count of `atom`. A
+/// position that is no `holds` use of the clause is a fault.
+fn source_condition<'g>(
+    graph: &'g fsl_semantics::check::CheckedGraph,
+    atom: &HoldsAtom,
+) -> Result<
+    (
+        &'g fsl_semantics::check::TemporalClauseNode,
+        CheckedNode<'g>,
+        usize,
+    ),
+    CallFailure,
+> {
+    let clause = source_clause(graph, &atom.clause)?;
+    let (condition, slots) = atom
+        .source_node(clause)
+        .and_then(|node| clause.condition(node))
+        .ok_or_else(|| {
+            CallFailure::Fault(
+                InternalFault::new("S6a", "holds-atom-resolved-by-clause")
+                    .with_named(vec![("position", atom.position.to_string())]),
+            )
+        })?;
+    Ok((clause, condition, slots))
+}
+
+/// The slot bindings of a `holds` condition of `clause` (FR-337 "Captures at
+/// S3"): `over` at slot 0, the hidden trigger slot of an `on each` clause
+/// bound to `over` as well (no condition reads it), then the activation's
+/// `captures` in source order (FR-860).
+fn holds_bindings(
+    clause: &fsl_semantics::check::TemporalClauseNode,
+    over: Value,
+    captures: &[Value],
+) -> Vec<Value> {
+    let mut bindings = vec![over.clone()];
+    if clause.clause().trigger().is_some() {
+        bindings.push(over);
+    }
+    bindings.extend(captures.iter().cloned());
+    bindings
+}
+
 /// FR-337 "Capture observation": evaluate a capture's initializer `capture`
 /// over `current`, the observation at the activation position, with the
 /// binders in scope bound to `bindings` in slot order: the `over` parameter,
@@ -425,7 +774,7 @@ pub fn evaluate_activation_guard(
 /// [`evaluate_activation_guard_at_absent_key`]).
 pub fn evaluate_capture(
     package: &CheckedPackage,
-    capture: &impl fsl_semantics::check::StatePredicate,
+    capture: &(impl fsl_semantics::check::StatePredicate + ?Sized),
     current: &ObjectEnvironment,
     bindings: Vec<Value>,
     absent: Option<(Vec<usize>, String)>,
@@ -454,7 +803,7 @@ pub fn evaluate_capture(
 /// `lookup`'s operand (see [`evaluate_state_predicate_at_absent_key`]).
 pub fn evaluate_activation_guard_at_absent_key(
     package: &CheckedPackage,
-    guard: &impl fsl_semantics::check::StatePredicate,
+    guard: &(impl fsl_semantics::check::StatePredicate + ?Sized),
     current: &ObjectEnvironment,
     key: filament_exact::ObjectReference,
     binding: String,
@@ -488,14 +837,30 @@ pub fn evaluate_activation_guard_at_absent_key(
 /// undefined value.
 pub fn evaluate_state_predicate_at_absent_key(
     package: &CheckedPackage,
-    predicate: &impl fsl_semantics::check::StatePredicate,
+    predicate: &(impl fsl_semantics::check::StatePredicate + ?Sized),
     current: &ObjectEnvironment,
     key: filament_exact::ObjectReference,
     binding: String,
     meter: &mut Meter,
 ) -> Result<Evaluation, InternalFault> {
+    evaluate_state_predicate_at_absent_key_with_reference_bindings(
+        package, predicate, current, key, binding, None, meter,
+    )
+}
+
+/// [`evaluate_state_predicate_at_absent_key`] with the subject's FR-1000
+/// reference-literal decisions.
+pub(crate) fn evaluate_state_predicate_at_absent_key_with_reference_bindings(
+    package: &CheckedPackage,
+    predicate: &(impl fsl_semantics::check::StatePredicate + ?Sized),
+    current: &ObjectEnvironment,
+    key: filament_exact::ObjectReference,
+    binding: String,
+    reference_bindings: Option<&crate::simulation::model::ReferenceBindings>,
+    meter: &mut Meter,
+) -> Result<Evaluation, InternalFault> {
     let reads = std::collections::BTreeMap::new();
-    Machine::with_pre(
+    let machine = Machine::with_pre(
         package.graph().scope(),
         package.graph(),
         current,
@@ -503,9 +868,12 @@ pub fn evaluate_state_predicate_at_absent_key(
         Some(&reads),
         meter,
         package.graph().dispatch_tables(),
-    )
-    .with_absent_parameter(0, binding)
-    .run(
+    );
+    let machine = match reference_bindings {
+        Some(bindings) => machine.with_reference_bindings(bindings),
+        None => machine,
+    };
+    machine.with_absent_parameter(0, binding).run(
         predicate.body(),
         predicate.slots(),
         vec![Value::Reference(key)],
@@ -654,6 +1022,19 @@ pub struct FrameEvaluation {
     pub witness: Option<Box<fsl_semantics::model::observation::FrameWitness>>,
 }
 
+/// The three-valued result of evaluating one relation tuple.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum ModelRelationEvaluation {
+    /// The relation body returned true.
+    Holds,
+    /// The relation body returned false.
+    Refuted,
+    /// The relation body was undefined.
+    Undefined(crate::temporal::UndefinedCause),
+    /// Evaluation refused, exhausted its budget, or returned a non-Boolean.
+    Undetermined(crate::simulation::model::ClauseOutcome),
+}
+
 /// Argument admission for [`CheckedPackage::call`] and
 /// [`CheckedPackage::evaluate`]: neither touches `CheckedPackage`'s or
 /// `CheckedExpression`'s private state, so it needs no `check` accessor.
@@ -760,6 +1141,15 @@ fn admit_argument_values(
                     }));
                 }
                 Value::Collection(collection) => pending.extend(collection.elements()),
+                Value::Map(map) => {
+                    let Some(entries) = crate::value::ordered_map_entries(map) else {
+                        return Err(CallFailure::Fault(InternalFault::new(
+                            "FR-650",
+                            "admitted-map-key-has-canonical-order",
+                        )));
+                    };
+                    pending.extend(entries.into_iter().rev().map(|(_, value)| value));
+                }
                 Value::Union(union) => pending.extend(union.payload()),
                 Value::Boolean(_)
                 | Value::Integer(_)
@@ -769,6 +1159,8 @@ fn admit_argument_values(
                 | Value::Quantity(_)
                 | Value::String(_)
                 | Value::Text(_)
+                | Value::Bytes(_)
+                | Value::JsonObject(_)
                 | Value::Enum(_)
                 | Value::Population(_)
                 | Value::Uuid(_)
@@ -821,7 +1213,7 @@ fn evaluate_declaration(
     meter: &mut Meter,
 ) -> Result<Evaluation, InternalFault> {
     let mismatch = || InternalFault::new("S6a", "family-and-evaluation-environment-disagree");
-    let (outcome, location, losses) = match (family, env) {
+    let (outcome, location, losses, frame_depth) = match (family, env) {
         (S6aFamilyKind::Value, EvaluationTarget::Value(env)) => {
             let outcome =
                 fsl_semantics::check::ValueFunctionFamily::evaluate(identity, env, meter)?;
@@ -829,6 +1221,7 @@ fn evaluate_declaration(
                 outcome.into(),
                 env.location.take(),
                 std::mem::take(&mut env.losses),
+                env.frame_depth,
             )
         }
         (S6aFamilyKind::ProtocolClause, EvaluationTarget::ProtocolClause(env)) => {
@@ -838,6 +1231,7 @@ fn evaluate_declaration(
                 outcome.into(),
                 env.location.take(),
                 std::mem::take(&mut env.losses),
+                0,
             )
         }
         (S6aFamilyKind::Value, EvaluationTarget::ProtocolClause(_))
@@ -859,6 +1253,7 @@ fn evaluate_declaration(
         outcome,
         location,
         losses,
+        frame_depth,
     })
 }
 
@@ -990,12 +1385,16 @@ pub trait CheckedPackageEvaluation: family::sealed::Sealed {
     /// `pre` observation. The result is S6a's, unchanged, as
     /// [`Self::evaluate`] returns it.
     ///
+    /// `captures` are the values the activation the atom is read for fixed
+    /// for the clause's captures, in source order (FR-860); the hidden
+    /// trigger slot of an `on each` clause is bound to `over`.
+    ///
     /// A node that is no `holds` atom of `clause` is an `Err` fault.
     fn evaluate_holds(
         &self,
-        clause: &fsl_semantics::check::TemporalClauseNode,
-        atom: fsl_semantics::check::FormulaNodeId,
+        atom: &HoldsAtom,
         over: Value,
+        captures: &[Value],
         objects: &ObjectEnvironment,
         meter: &mut Meter,
     ) -> Result<Evaluation, CallFailure>;
@@ -1003,16 +1402,16 @@ pub trait CheckedPackageEvaluation: family::sealed::Sealed {
     /// FR-330 Outputs, FR-283 `decisive`: [`Self::evaluate_holds`] with
     /// FR-107's witness channel kept: the result carries, beside the
     /// evaluation, each decision and each quantifier stop report on the
-    /// condition's own level ([`ClauseEvaluation`]). `over` is the object the
-    /// clause's `over` parameter is bound to, and `observation` the identity
+    /// condition's own level ([`ClauseEvaluation`]). `binders` are the object
+    /// the clause's `over` parameter is bound to and the captures of the
+    /// activation the atom is read for, and `observation` the identity
     /// of the observation `objects` admitted, which roots every value path.
     ///
     /// A node that is no `holds` atom of `clause` is an `Err` fault.
     fn evaluate_holds_traced(
         &self,
-        clause: &fsl_semantics::check::TemporalClauseNode,
-        atom: fsl_semantics::check::FormulaNodeId,
-        over: &filament_exact::ObjectReference,
+        atom: &HoldsAtom,
+        binders: HoldsBinders<'_>,
         objects: &ObjectEnvironment,
         observation: ObservationIdentity,
         meter: &mut Meter,
@@ -1027,7 +1426,7 @@ pub trait CheckedPackageEvaluation: family::sealed::Sealed {
     /// A clause with no guard is an `Err` fault.
     fn evaluate_guard(
         &self,
-        clause: &fsl_semantics::check::TemporalClauseNode,
+        clause: &NodeKey,
         over: Value,
         objects: &ObjectEnvironment,
         meter: &mut Meter,
@@ -1340,124 +1739,170 @@ impl<'a> ClauseSetup<'a> {
         observations: &'a fsl_semantics::model::observation::AdmittedObservations,
     ) -> Result<Self, CallFailure> {
         let declaration = resolve_clause(package, clause, observations)?;
-        // The clause's own observation (FR-107): `current` for an
-        // invariant, `post` for a postcondition, and `pre` for a
-        // precondition, which reads every model read there and never the
-        // post side (FR-104, FR-106), whether selected by `PreCall` or by
-        // `Invocation`.
-        let current = match declaration.observation() {
-            fsl_semantics::model::clause_observation::Observation::Current => {
-                observations.current.as_ref()
-            }
-            fsl_semantics::model::clause_observation::Observation::Post => {
-                observations.post.as_ref()
-            }
-            fsl_semantics::model::clause_observation::Observation::Pre => observations.pre.as_ref(),
-        }
-        .ok_or_else(|| {
-            CallFailure::Fault(InternalFault::new(
-                "S6a",
-                "clause-observations-missing-the-clause-observation",
-            ))
-        })?;
-
-        let mut bindings = Vec::with_capacity(declaration.parameters().len());
-        bindings.push(Value::Reference(observations.self_object.clone()));
-        let mut remaining = declaration.parameters().get(1..).unwrap_or(&[]).iter();
-        // FR-104 "Behavior": slot 1 is `result` exactly when the checker's
-        // own typed `binds_result` says so (FR-064's string-edge
-        // rule) -- never decided here by comparing a parameter's name.
-        if declaration.binds_result() {
-            remaining.next();
-            let result = observations.result.clone().ok_or_else(|| {
-                CallFailure::Fault(InternalFault::new("S6a", "postcondition-result-missing"))
-            })?;
-            bindings.push(result);
-        }
-        for (parameter, _) in remaining {
-            let value = observations
-                .parameters
-                .iter()
-                .find(|(name, _)| name == parameter)
-                .map(|(_, value)| value.clone())
-                .ok_or_else(|| {
-                    CallFailure::Fault(InternalFault::new("S6a", "clause-parameter-not-admitted"))
-                })?;
-            bindings.push(value);
-        }
-        let pre = observations
-            .pre
-            .as_ref()
-            .map(|observation| s6a::separation::observation_identity(&observation.identity));
-        // The clause's own observation names its value paths: the pre
-        // snapshot for a precondition (FR-104).
-        let own = s6a::separation::observation_identity(&current.identity);
-        let invocation = observations
-            .invocation
-            .as_ref()
-            .map(s6a::separation::observation_identity);
-        let mut trail = s6a::separation::Trail::new(own.clone(), pre);
-        trail.receiver = Some(observations.self_object.clone());
-        trail.receiver_pre = observations.receiver_pre.clone();
-        // FR-107 "The receiver path": `self` is rooted at its declared
-        // object identity when it has one, and at the invocation's receiver
-        // binding when it is a context; a context with no invocation has no
-        // path.
-        let receiver_subject = match observations.self_kind {
-            SelfKind::Object => Some(s6a::separation::ValuePathSubject::Object(
-                observations.self_object.clone(),
-            )),
-            SelfKind::Context => {
-                trail.receiver_invocation = invocation.clone();
-                trail.receiver_unlocated = invocation.is_none();
-                invocation
-                    .clone()
-                    .map(|invocation| s6a::separation::ValuePathSubject::Invocation {
-                        invocation,
-                        binding: s6a::separation::InvocationBinding::Receiver,
-                    })
-            }
-        };
-        let binding = |binding: s6a::separation::InvocationBinding| {
-            invocation
-                .clone()
-                .map(|invocation| s6a::separation::ValuePathSubject::Invocation {
-                    invocation,
-                    binding,
-                })
-        };
-        trail.bindings.push(receiver_subject.clone());
-        let mut remaining_slots = declaration.parameters().get(1..).unwrap_or(&[]).iter();
-        if declaration.binds_result() {
-            remaining_slots.next();
-            trail
-                .bindings
-                .push(binding(s6a::separation::InvocationBinding::Result));
-        }
-        for (parameter, _) in remaining_slots {
-            trail
-                .bindings
-                .push(binding(s6a::separation::InvocationBinding::Parameter(
-                    parameter.clone(),
-                )));
-        }
-        let receiver_path = receiver_subject.map(|subject| s6a::separation::RuntimeValuePath {
-            observation: own,
-            subject,
-            steps: Vec::new(),
-        });
+        let names: Vec<String> = declaration
+            .parameters()
+            .iter()
+            .map(|(name, _)| name.clone())
+            .collect();
+        let ClauseBinding {
+            current,
+            pre,
+            bindings,
+            trail,
+            receiver_path,
+        } = bind_clause(
+            declaration.observation(),
+            &names,
+            declaration.binds_result(),
+            observations,
+        )?;
         Ok(Self {
             declaration,
-            current: &current.environment,
-            pre: observations
-                .pre
-                .as_ref()
-                .map(|observation| &observation.environment),
+            current,
+            pre,
             bindings,
             trail,
             receiver_path,
         })
     }
+}
+
+/// What one state clause's evaluation binds over its admitted observations
+/// (FR-107): the clause's own observation and the pre one, the slot values,
+/// and the trail and receiver path that root its value paths.
+pub(super) struct ClauseBinding<'a> {
+    pub(super) current: &'a ObjectEnvironment,
+    pub(super) pre: Option<&'a ObjectEnvironment>,
+    pub(super) bindings: Vec<Value>,
+    pub(super) trail: s6a::separation::Trail,
+    pub(super) receiver_path: Option<s6a::separation::RuntimeValuePath>,
+}
+
+/// FR-107: bind a state clause whose reads take `observation`, whose slot
+/// names are `parameters` (`self` first, then `result` when
+/// `binds_result`, then the operation's parameters), over `observations`.
+/// Both routes bind through here: the source route from its checked
+/// declaration, the package route from the clause's admitted node (FR-940).
+pub(super) fn bind_clause<'a>(
+    observation: fsl_semantics::model::clause_observation::Observation,
+    parameters: &[String],
+    binds_result: bool,
+    observations: &'a fsl_semantics::model::observation::AdmittedObservations,
+) -> Result<ClauseBinding<'a>, CallFailure> {
+    // The clause's own observation (FR-107): `current` for an
+    // invariant, `post` for a postcondition, and `pre` for a
+    // precondition, which reads every model read there and never the
+    // post side (FR-104, FR-106), whether selected by `PreCall` or by
+    // `Invocation`.
+    let current = match observation {
+        fsl_semantics::model::clause_observation::Observation::Current => {
+            observations.current.as_ref()
+        }
+        fsl_semantics::model::clause_observation::Observation::Post => observations.post.as_ref(),
+        fsl_semantics::model::clause_observation::Observation::Pre => observations.pre.as_ref(),
+    }
+    .ok_or_else(|| {
+        CallFailure::Fault(InternalFault::new(
+            "S6a",
+            "clause-observations-missing-the-clause-observation",
+        ))
+    })?;
+
+    let mut bindings = Vec::with_capacity(parameters.len());
+    bindings.push(Value::Reference(observations.self_object.clone()));
+    let mut remaining = parameters.get(1..).unwrap_or(&[]).iter();
+    // FR-104 "Behavior": slot 1 is `result` exactly when the checker's
+    // own typed `binds_result` says so (FR-064's string-edge
+    // rule) -- never decided here by comparing a parameter's name.
+    if binds_result {
+        remaining.next();
+        let result = observations.result.clone().ok_or_else(|| {
+            CallFailure::Fault(InternalFault::new("S6a", "postcondition-result-missing"))
+        })?;
+        bindings.push(result);
+    }
+    for parameter in remaining {
+        let value = observations
+            .parameters
+            .iter()
+            .find(|(name, _)| name == parameter)
+            .map(|(_, value)| value.clone())
+            .ok_or_else(|| {
+                CallFailure::Fault(InternalFault::new("S6a", "clause-parameter-not-admitted"))
+            })?;
+        bindings.push(value);
+    }
+    let pre = observations
+        .pre
+        .as_ref()
+        .map(|observation| s6a::separation::observation_identity(&observation.identity));
+    // The clause's own observation names its value paths: the pre
+    // snapshot for a precondition (FR-104).
+    let own = s6a::separation::observation_identity(&current.identity);
+    let invocation = observations
+        .invocation
+        .as_ref()
+        .map(s6a::separation::observation_identity);
+    let mut trail = s6a::separation::Trail::new(own.clone(), pre);
+    trail.receiver = Some(observations.self_object.clone());
+    trail.receiver_pre = observations.receiver_pre.clone();
+    // FR-107 "The receiver path": `self` is rooted at its declared
+    // object identity when it has one, and at the invocation's receiver
+    // binding when it is a context; a context with no invocation has no
+    // path.
+    let receiver_subject = match observations.self_kind {
+        SelfKind::Object => Some(s6a::separation::ValuePathSubject::Object(
+            observations.self_object.clone(),
+        )),
+        SelfKind::Context => {
+            trail.receiver_invocation = invocation.clone();
+            trail.receiver_unlocated = invocation.is_none();
+            invocation
+                .clone()
+                .map(|invocation| s6a::separation::ValuePathSubject::Invocation {
+                    invocation,
+                    binding: s6a::separation::InvocationBinding::Receiver,
+                })
+        }
+    };
+    let binding = |binding: s6a::separation::InvocationBinding| {
+        invocation
+            .clone()
+            .map(|invocation| s6a::separation::ValuePathSubject::Invocation {
+                invocation,
+                binding,
+            })
+    };
+    trail.bindings.push(receiver_subject.clone());
+    let mut remaining_slots = parameters.get(1..).unwrap_or(&[]).iter();
+    if binds_result {
+        remaining_slots.next();
+        trail
+            .bindings
+            .push(binding(s6a::separation::InvocationBinding::Result));
+    }
+    for parameter in remaining_slots {
+        trail
+            .bindings
+            .push(binding(s6a::separation::InvocationBinding::Parameter(
+                parameter.clone(),
+            )));
+    }
+    let receiver_path = receiver_subject.map(|subject| s6a::separation::RuntimeValuePath {
+        observation: own,
+        subject,
+        steps: Vec::new(),
+    });
+    Ok(ClauseBinding {
+        current: &current.environment,
+        pre: observations
+            .pre
+            .as_ref()
+            .map(|observation| &observation.environment),
+        bindings,
+        trail,
+        receiver_path,
+    })
 }
 
 /// FR-268 step 1 (ADR-031 SW-13): resolve `quantifier` in `graph` to a
@@ -1591,6 +2036,85 @@ pub(crate) fn evaluate_over_admitted_environment(
     evaluate_expression(package, expression, arguments, objects, meter, false)
 }
 
+/// Evaluate one hyper atom with the model subject's reference table for each
+/// trace component. The component table is selected by the checked
+/// `component_reads` entry of a reference-literal location.
+pub(crate) fn evaluate_hyper_holds_with_component_bindings(
+    package: &CheckedPackage,
+    clause: &fsl_semantics::check::CheckedHyperClause,
+    atom: fsl_semantics::check::FormulaNodeId,
+    slots: Vec<crate::hyper::HyperSlot>,
+    components: &[&ObjectEnvironment],
+    reference_bindings: &[&crate::simulation::model::ReferenceBindings],
+    meter: &mut Meter,
+) -> Result<Evaluation, CallFailure> {
+    evaluate_hyper_holds_inner(
+        package,
+        clause,
+        atom,
+        slots,
+        components,
+        Some(reference_bindings),
+        meter,
+    )
+}
+
+fn evaluate_hyper_holds_inner(
+    package: &CheckedPackage,
+    clause: &fsl_semantics::check::CheckedHyperClause,
+    atom: fsl_semantics::check::FormulaNodeId,
+    slots: Vec<crate::hyper::HyperSlot>,
+    components: &[&ObjectEnvironment],
+    reference_bindings: Option<&[&crate::simulation::model::ReferenceBindings]>,
+    meter: &mut Meter,
+) -> Result<Evaluation, CallFailure> {
+    let fault = |invariant| CallFailure::Fault(InternalFault::new("S6a", invariant));
+    let (condition, count) = clause
+        .condition(atom)
+        .ok_or_else(|| fault("hyper-atom-resolved-by-clause"))?;
+    let reads = clause
+        .component_reads(atom)
+        .ok_or_else(|| fault("hyper-atom-resolved-by-clause"))?;
+    if slots.len() != clause.atom_slots().len() {
+        return Err(fault("hyper-atom-binds-one-value-per-slot"));
+    }
+    if components.len() != clause.quantifiers().len() {
+        return Err(fault("hyper-atom-observes-one-state-per-trace"));
+    }
+    let Some(first) = components.first().copied() else {
+        return Err(fault("hyper-atom-observes-one-state-per-trace"));
+    };
+    let mut machine = Machine::new(
+        package.graph().scope(),
+        package.graph(),
+        first,
+        meter,
+        package.graph().dispatch_tables(),
+    )
+    .with_components(evaluate::ComponentReads {
+        environments: components,
+        pre_environments: None,
+        reads,
+        observations: None,
+    });
+    if let Some(reference_bindings) = reference_bindings {
+        machine = machine.with_component_reference_bindings(reference_bindings);
+    }
+    let mut values = Vec::with_capacity(slots.len());
+    for (slot, binding) in slots.into_iter().enumerate() {
+        match binding {
+            crate::hyper::HyperSlot::Bound(value) => values.push(value),
+            crate::hyper::HyperSlot::Absent { key, population } => {
+                machine = machine.with_absent_key(slot, population, key.clone());
+                values.push(Value::Reference(key));
+            }
+        }
+    }
+    machine
+        .run(condition, count, values)
+        .map_err(CallFailure::Fault)
+}
+
 impl CheckedPackageEvaluation for CheckedPackage {
     fn call(
         &self,
@@ -1650,6 +2174,7 @@ impl CheckedPackageEvaluation for CheckedPackage {
                     outcome: FamilyOutcome::Evaluated(Outcome::Incomplete(incomplete)),
                     location: None,
                     losses: Vec::new(),
+                    frame_depth: 0,
                 });
             }
             capture.drain(meter, Some(state.body.location()));
@@ -1667,6 +2192,7 @@ impl CheckedPackageEvaluation for CheckedPackage {
                     )),
                     location: Some(state.body.location().clone()),
                     losses: Vec::new(),
+                    frame_depth: 0,
                 });
             }
             function_evaluations = 1;
@@ -1886,18 +2412,13 @@ impl CheckedPackageEvaluation for CheckedPackage {
 
     fn evaluate_holds(
         &self,
-        clause: &fsl_semantics::check::TemporalClauseNode,
-        atom: fsl_semantics::check::FormulaNodeId,
+        atom: &HoldsAtom,
         over: Value,
+        captures: &[Value],
         objects: &ObjectEnvironment,
         meter: &mut Meter,
     ) -> Result<Evaluation, CallFailure> {
-        let (condition, slots) = clause.condition(atom).ok_or_else(|| {
-            CallFailure::Fault(
-                InternalFault::new("S6a", "holds-atom-resolved-by-clause")
-                    .with_named(vec![("node", atom.index().to_string())]),
-            )
-        })?;
+        let (clause, condition, slots) = source_condition(self.graph(), atom)?;
         Machine::new(
             self.graph().scope(),
             self.graph(),
@@ -1905,25 +2426,20 @@ impl CheckedPackageEvaluation for CheckedPackage {
             meter,
             self.graph().dispatch_tables(),
         )
-        .run(condition, slots, vec![over])
+        .run(condition, slots, holds_bindings(clause, over, captures))
         .map_err(CallFailure::Fault)
     }
 
     fn evaluate_holds_traced(
         &self,
-        clause: &fsl_semantics::check::TemporalClauseNode,
-        atom: fsl_semantics::check::FormulaNodeId,
-        over: &filament_exact::ObjectReference,
+        atom: &HoldsAtom,
+        binders: HoldsBinders<'_>,
         objects: &ObjectEnvironment,
         observation: ObservationIdentity,
         meter: &mut Meter,
     ) -> Result<ClauseEvaluation, CallFailure> {
-        let (condition, slots) = clause.condition(atom).ok_or_else(|| {
-            CallFailure::Fault(
-                InternalFault::new("S6a", "holds-atom-resolved-by-clause")
-                    .with_named(vec![("node", atom.index().to_string())]),
-            )
-        })?;
+        let HoldsBinders { over, captures } = binders;
+        let (clause, condition, slots) = source_condition(self.graph(), atom)?;
         // `over` is slot 0 and the condition's receiver: a value read from
         // it is rooted at its declared object identity (FR-107 "The
         // receiver path").
@@ -1939,7 +2455,11 @@ impl CheckedPackageEvaluation for CheckedPackage {
             self.graph().dispatch_tables(),
         )
         .with_trail(trail)
-        .run_traced(condition, slots, vec![Value::Reference(over.clone())])
+        .run_traced(
+            condition,
+            slots,
+            holds_bindings(clause, Value::Reference(over.clone()), captures),
+        )
         .map_err(CallFailure::Fault)?;
         Ok(ClauseEvaluation::new(
             evaluation,
@@ -1954,14 +2474,16 @@ impl CheckedPackageEvaluation for CheckedPackage {
 
     fn evaluate_guard(
         &self,
-        clause: &fsl_semantics::check::TemporalClauseNode,
+        clause: &NodeKey,
         over: Value,
         objects: &ObjectEnvironment,
         meter: &mut Meter,
     ) -> Result<Evaluation, CallFailure> {
-        let (guard, slots) = clause.guard().ok_or_else(|| {
-            CallFailure::Fault(InternalFault::new("S6a", "guard-resolved-by-clause"))
-        })?;
+        let (guard, slots) = source_clause(self.graph(), clause)?
+            .guard()
+            .ok_or_else(|| {
+                CallFailure::Fault(InternalFault::new("S6a", "guard-resolved-by-clause"))
+            })?;
         Machine::new(
             self.graph().scope(),
             self.graph(),
@@ -1981,46 +2503,7 @@ impl CheckedPackageEvaluation for CheckedPackage {
         components: &[&ObjectEnvironment],
         meter: &mut Meter,
     ) -> Result<Evaluation, CallFailure> {
-        let fault = |invariant| CallFailure::Fault(InternalFault::new("S6a", invariant));
-        let (condition, count) = clause
-            .condition(atom)
-            .ok_or_else(|| fault("hyper-atom-resolved-by-clause"))?;
-        let reads = clause
-            .component_reads(atom)
-            .ok_or_else(|| fault("hyper-atom-resolved-by-clause"))?;
-        if slots.len() != clause.atom_slots().len() {
-            return Err(fault("hyper-atom-binds-one-value-per-slot"));
-        }
-        if components.len() != clause.quantifiers().len() {
-            return Err(fault("hyper-atom-observes-one-state-per-trace"));
-        }
-        let Some(first) = components.first().copied() else {
-            return Err(fault("hyper-atom-observes-one-state-per-trace"));
-        };
-        let mut machine = Machine::new(
-            self.graph().scope(),
-            self.graph(),
-            first,
-            meter,
-            self.graph().dispatch_tables(),
-        )
-        .with_components(evaluate::ComponentReads {
-            environments: components,
-            reads,
-        });
-        let mut values = Vec::with_capacity(slots.len());
-        for (slot, binding) in slots.into_iter().enumerate() {
-            match binding {
-                crate::hyper::HyperSlot::Bound(value) => values.push(value),
-                crate::hyper::HyperSlot::Absent { key, population } => {
-                    machine = machine.with_absent_key(slot, population, key.clone());
-                    values.push(Value::Reference(key));
-                }
-            }
-        }
-        machine
-            .run(condition, count, values)
-            .map_err(CallFailure::Fault)
+        evaluate_hyper_holds_inner(self, clause, atom, slots, components, None, meter)
     }
 
     fn evaluate_step_predicate(
@@ -2254,6 +2737,50 @@ impl CheckedPackageEvaluation for CheckedPackage {
             witness: env.witness.take(),
         })
     }
+}
+
+/// FR-120 "Directly solved assignments", FR-851: the targets of the
+/// postcondition `clause` of `package` over `observations`, each `e`
+/// evaluated with a meter from `meter`.
+///
+/// # Errors
+///
+/// Refuses as [`CheckedPackageEvaluation::evaluate_clause`] does for an
+/// unknown clause or mismatched observations; a fault of an evaluation.
+pub(crate) fn source_post_targets(
+    package: &CheckedPackage,
+    clause: &QualifiedName,
+    observations: &fsl_semantics::model::observation::AdmittedObservations,
+    meter: &mut dyn FnMut() -> Meter,
+) -> Result<post_targets::PostTargets, CallFailure> {
+    let setup = ClauseSetup::of(package, clause, observations)?;
+    let graph = package.graph();
+    let reads: std::collections::BTreeMap<_, _> = setup
+        .declaration
+        .reads()
+        .map(|(location, observation)| (location.clone(), observation))
+        .collect();
+    let mut frame: Vec<Option<Value>> = setup.bindings.iter().cloned().map(Some).collect();
+    frame.resize(setup.declaration.slots().max(frame.len()), None);
+    post_targets::targets(
+        setup.declaration.body(),
+        setup.declaration.binds_result(),
+        |node| {
+            let mut meter = meter();
+            Machine::with_pre(
+                graph.scope(),
+                graph,
+                setup.current,
+                setup.pre,
+                Some(&reads),
+                &mut meter,
+                graph.dispatch_tables(),
+            )
+            .run_frame(node, frame.clone())
+            .map(|evaluation| evaluation.outcome)
+            .map_err(CallFailure::Fault)
+        },
+    )
 }
 
 #[cfg(test)]

@@ -1057,6 +1057,58 @@ impl<'a> MonitorSession<'a> {
         })
     }
 
+    /// FR-853: end a session whose caller's handle tripped with `cause`,
+    /// without `finish`. A clause settled before keeps its record and
+    /// settlement; a clause still open is `incomplete` with basis `unsettled`,
+    /// settled `cancelled` with `cause` at the number of counted calls.
+    ///
+    /// # Errors
+    ///
+    /// A fault building an open clause's record.
+    pub fn cancelled(
+        self,
+        cause: filament_exact::CancelCause,
+    ) -> Result<crate::monitor::MonitorOutcome, Failure> {
+        let step = self.calls;
+        let mut records = Vec::with_capacity(self.slots.len());
+        let mut settlements = Vec::with_capacity(self.slots.len());
+        for slot in self.slots {
+            if let Some(settlement) = slot.settlement {
+                records.push(slot.record);
+                settlements.push(settlement);
+                continue;
+            }
+            let verdict = TemporalVerdict::Cancelled(cause);
+            let report = ClauseRunReport {
+                basis: verdict.basis(),
+                disposition: ClauseDisposition::Temporal(verdict),
+                ..pending_report()
+            };
+            records.push(record_of(
+                self.package,
+                self.request.sources,
+                &slot.record.clause,
+                report,
+            )?);
+            settlements.push(Settlement {
+                step,
+                trigger: SettleTrigger::Cancelled(cause),
+                reading: None,
+            });
+        }
+        let ledger = self
+            .request
+            .kind
+            .carries_progress()
+            .then(|| self.ledger.clone())
+            .flatten();
+        Ok(crate::monitor::MonitorOutcome {
+            records,
+            settlements,
+            ledger,
+        })
+    }
+
     /// The package as its checkpoint form: each source's identity and each
     /// temporal clause's checked node identity in its closed text spelling.
     fn package_identity(&self) -> Result<Json, Failure> {
@@ -1149,11 +1201,7 @@ impl<'a> MonitorSession<'a> {
                     "state": state,
                     "decided_state": decided,
                     "settled_step": slot.settlement.as_ref().map(|s| s.step),
-                    "trigger": slot.settlement.as_ref().map(|s| match s.trigger {
-                        SettleTrigger::Decided => "decided",
-                        SettleTrigger::Limit => "limit",
-                        SettleTrigger::Finish => "finish",
-                    }),
+                    "trigger": slot.settlement.as_ref().map(|s| s.trigger.as_str()),
                     "reading": slot.settlement.as_ref()
                         .and_then(|s| s.reading.as_ref()).map(reading_json),
                     "limited": slot.limited,

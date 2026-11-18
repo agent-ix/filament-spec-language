@@ -27,6 +27,8 @@ use filament_semantic_value::model_transition::ModelTransition;
 pub struct Cut {
     /// The memory bound left a store of the state unexpanded.
     pub memory: bool,
+    /// A send offered to a full protocol channel was left unexpanded.
+    pub messages: bool,
     /// The state has `max_live_instances` live instances and an `activate`
     /// step enabled.
     pub instances: bool,

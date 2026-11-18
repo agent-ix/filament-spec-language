@@ -56,7 +56,7 @@ use serde_json::{json, Value as Json};
 
 use crate::counter::UNLIMITED;
 
-const PACKAGE: &str = "test/vault";
+pub(crate) const PACKAGE: &str = "test/vault";
 /// The package of the second model of a two-alias world, under alias
 /// [`OTHER_ALIAS`].
 const OTHER: &str = "test/vault-other";
@@ -131,7 +131,7 @@ impl Vault {
     }
 }
 
-fn ident(suffix: &str) -> String {
+pub(crate) fn ident(suffix: &str) -> String {
     format!("ix://{PACKAGE}/{suffix}")
 }
 
@@ -226,7 +226,7 @@ fn operation(name: &str, input: bool, modifies: &[&str]) -> Json {
 
 /// The domain package, with the `busy` field and the `mix` operation when
 /// `busy`.
-fn document(busy: bool, reset: bool) -> Vec<u8> {
+pub(crate) fn document(busy: bool, reset: bool) -> Vec<u8> {
     let vault = ident("Vault");
     let constructs: Vec<Json> = [
         ("object_type", meaning::OBJECT_TYPE),
@@ -283,7 +283,7 @@ fn document(busy: bool, reset: bool) -> Vec<u8> {
 
 /// The unit text: the header selecting the domain package as `V`, the `step`
 /// contract of `vault`, and `body`.
-fn unit_text(other: Option<&[u8]>, vault: Vault, reset: bool, body: &str) -> String {
+pub(crate) fn unit_text(other: Option<&[u8]>, vault: Vault, reset: bool, body: &str) -> String {
     unit_text_with_functions(other, vault, reset, "", body)
 }
 
@@ -321,7 +321,7 @@ fn other_document(document: &[u8]) -> Vec<u8> {
         .into_bytes()
 }
 
-fn declarations(documents: &[&[u8]], text: &str) -> PackageDeclarations {
+pub(crate) fn declarations(documents: &[&[u8]], text: &str) -> PackageDeclarations {
     let packages = package_input(documents.iter().copied()).unwrap();
     let parsed = fsl_cst::parse(
         SourceIdentity::new("agent-ix", "hyper"),
@@ -363,7 +363,7 @@ fn declarations(documents: &[&[u8]], text: &str) -> PackageDeclarations {
 
 /// One snapshot of the vaults `(key, (h, l))`, provisioned in `snapshots`;
 /// each vault of a busy world has `busy` as its flag.
-fn snapshot(
+pub(crate) fn snapshot(
     snapshots: &mut fsl_semantics::model::observation::DocumentProvision,
     name: &str,
     vaults: &[(&str, (i64, i64))],
@@ -686,6 +686,10 @@ impl World {
         )
     }
 
+    #[allow(
+        clippy::too_many_arguments,
+        reason = "mirrors the existing wide signature; a parameter struct is a separate refactor"
+    )]
     fn assemble_with_mode(
         vault: Vault,
         reset: bool,
@@ -759,7 +763,7 @@ impl World {
         ModelSubject {
             simulation: ModelSimulationRequest {
                 emit: fsl_package::EmitLimits::fixture(),
-                package: &self.package,
+                input: fsl_eval::simulation::model::ModelCheckInput::source(&self.package),
                 packages: &self.packages,
                 normalization: ModelNormalizationLimits::default(),
                 snapshots: &self.snapshots,

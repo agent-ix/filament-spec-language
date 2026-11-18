@@ -3,6 +3,7 @@
 
 use std::collections::BTreeMap;
 
+use fsl_foundation::SourceIdentity;
 use fsl_replay::spine::{
     ClauseRequestParts, ClauseRunRequest, ClauseRunSource, DependencyInput, SpineLimits,
     SuppliedLibrary, SuppliedObservation,
@@ -17,14 +18,9 @@ fn invalid(member: impl Into<String>, reason: impl Into<String>) -> RunCause {
     }
 }
 
-fn observation(
-    intake: &mut Intake<'_>,
-    key: &str,
-    file: &str,
-    document_bytes: u64,
-) -> Result<SuppliedObservation> {
-    let bytes =
-        intake.observation_file(file, usize::try_from(document_bytes).unwrap_or(usize::MAX))?;
+fn observation(intake: &mut Intake<'_>, key: &str, file: &str) -> Result<SuppliedObservation> {
+    let remaining = intake.remaining;
+    let bytes = intake.file(file, remaining)?;
     let mut observation = SuppliedObservation::from_document(key, bytes)
         .map_err(|error| invalid(error.member, error.reason))?;
     observation.path = Some(file.to_owned());
@@ -36,7 +32,58 @@ pub(super) fn read(
     request: &wire::Request,
     clause: &wire::ClauseRun,
     source: FormalSource,
+    observation_override: Option<fsl_semantics::model::observation::ObservationLimits>,
 ) -> Result<ClauseRunRequest> {
+    let source_identity = source.source().identity().clone();
+    let run_source = ClauseRunSource::Program {
+        identity: source_identity.clone(),
+        path: source.source().path().to_owned(),
+        bytes: source.source().text().as_bytes().to_vec(),
+    };
+    read_with_source(
+        intake,
+        request,
+        clause,
+        source_identity,
+        run_source,
+        observation_override,
+    )
+}
+
+#[cfg(feature = "quire-extraction")]
+pub(super) fn read_extracted(
+    intake: &mut Intake<'_>,
+    request: &wire::Request,
+    clause: &wire::ClauseRun,
+    source: FormalSource,
+    extracted: fsl_source::ExtractedSource,
+    observation_override: Option<fsl_semantics::model::observation::ObservationLimits>,
+) -> Result<ClauseRunRequest> {
+    let source_identity = source.source().identity().clone();
+    read_with_source(
+        intake,
+        request,
+        clause,
+        source_identity,
+        ClauseRunSource::Extracted(extracted),
+        observation_override,
+    )
+}
+
+fn read_with_source(
+    intake: &mut Intake<'_>,
+    request: &wire::Request,
+    clause: &wire::ClauseRun,
+    source_identity: SourceIdentity,
+    source: ClauseRunSource,
+    observation_override: Option<fsl_semantics::model::observation::ObservationLimits>,
+) -> Result<ClauseRunRequest> {
+    if observation_override.is_some() && clause.observation_limits.is_some() {
+        return Err(invalid(
+            "observation_limits",
+            "request member and RequestOverrides::observation were both supplied",
+        ));
+    }
     if request
         .models
         .iter()
@@ -75,16 +122,20 @@ pub(super) fn read(
             bytes: read.source().text().as_bytes().to_vec(),
         }))
         .map_err(|error| invalid("libraries", error.to_string()))?;
-    let observation_limits =
-        fsl_replay::spine::ObservationLimitsWire::resolve(clause.observation_limits.as_ref())
-            .map_err(|error| invalid(error.member, error.reason))?;
+    let observation_limits = match observation_override {
+        Some(limits) => limits,
+        None => {
+            fsl_replay::spine::ObservationLimitsWire::resolve(clause.observation_limits.as_ref())
+                .map_err(|error| invalid(error.member, error.reason))?
+        }
+    };
     let mut by_file = BTreeMap::<String, SuppliedObservation>::new();
     let mut observations = BTreeMap::new();
     for (key, file) in &clause.observations {
         let observed = if let Some(existing) = by_file.get(file) {
             existing.clone()
         } else {
-            let observed = observation(intake, key, file, observation_limits.document_bytes)?;
+            let observed = observation(intake, key, file)?;
             by_file.insert(file.clone(), observed.clone());
             observed
         };
@@ -99,7 +150,15 @@ pub(super) fn read(
                 .map_err(|error| invalid(error.member, error.reason))
         })
         .transpose()?;
-    // FR-526: the evidence ledger file a prior run wrote, read once here.
+    // The selection is decoded first, so a correction member off a
+    // timestamped trace refuses naming the member before any file is read
+    // (FR-985).
+    let mut selection = clause
+        .selection
+        .into_parts()
+        .map_err(|error| invalid(error.member, error.reason))?;
+    // FR-526, FR-975: the evidence ledger file a prior run wrote, read once
+    // here.
     let evidence_ledger = clause
         .selection
         .correction()
@@ -110,10 +169,6 @@ pub(super) fn read(
                 .map_err(|error| invalid("evidence_ledger", error.to_string()))
         })
         .transpose()?;
-    let mut selection = clause
-        .selection
-        .into_parts()
-        .map_err(|error| invalid(error.member, error.reason))?;
     if let fsl_replay::spine::ClauseSelectionPartsKind::Temporal {
         trace: fsl_replay::spine::TemporalTraceParts::Timestamped(timestamped),
         ..
@@ -121,12 +176,6 @@ pub(super) fn read(
     {
         timestamped.late.evidence_ledger = evidence_ledger;
     }
-    let source_identity = source.source().identity().clone();
-    let source = ClauseRunSource::Program {
-        identity: source.source().identity().clone(),
-        path: source.source().path().to_owned(),
-        bytes: source.source().text().as_bytes().to_vec(),
-    };
     fsl_replay::spine::read_clause_run_request(ClauseRequestParts {
         package_name: super::package_name(&source_identity),
         source,

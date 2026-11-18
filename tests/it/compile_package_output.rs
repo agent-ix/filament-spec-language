@@ -227,3 +227,76 @@ fn output_and_handoff_are_independent_writes() {
     );
     assert!(!directory.path().join("handoff").exists());
 }
+
+/// The `check_mode` values of every node of the package at `path`.
+fn check_modes(path: &Path) -> Vec<String> {
+    let package: Value = serde_json::from_slice(&std::fs::read(path).unwrap()).unwrap();
+    let mut modes = Vec::new();
+    let mut stack = vec![&package];
+    while let Some(value) = stack.pop() {
+        match value {
+            Value::Object(map) => {
+                if let Some(Value::String(mode)) = map.get("check_mode") {
+                    modes.push(mode.clone());
+                }
+                stack.extend(map.values());
+            }
+            Value::Array(items) => stack.extend(items.iter()),
+            _ => {}
+        }
+    }
+    modes.sort();
+    modes
+}
+
+/// FR-952-AC-5 (TC-2975): a compile request's `check_mode` member selects
+/// Kernel checking for the unit's function bodies; absent it is Linked, and
+/// a value other than `"linked"` or `"kernel"` refuses at stage `request`.
+#[test]
+#[trace("TC-2975", "FR-952-AC-5")]
+fn a_compile_request_selects_kernel_checking() {
+    let unit = |with_r: bool| {
+        format!(
+            "language \"ix:native\" edition \"1-draft\";\n\
+             profile v = \"filament.value.complete/v1\";\n\
+             function g using v(x: Int[0, 9], y: Int[1, 9]): Integer pure {{ x mod y }}\n{}",
+            if with_r {
+                "function r using v(x: Int[0, 9]): Integer pure { 10 mod x }\n"
+            } else {
+                ""
+            }
+        )
+    };
+    let compile = |with_r: bool, mode: Option<Value>| {
+        let directory = tempfile::tempdir().unwrap();
+        std::fs::write(directory.path().join("program.native"), unit(with_r)).unwrap();
+        let mut members = json!({
+            "models": [],
+            "program": {"source": {"file": "program.native", "authority": "agent-ix",
+                "identity": "test:modes", "document": "Modes", "formal_revision": 1}},
+            "output": {"package": "modes.package.json"}
+        });
+        if let Some(mode) = mode {
+            members["check_mode"] = mode;
+        }
+        let path = directory.path().join("compile.json");
+        let request = json!({"format": "native-compile/1", "request": members});
+        std::fs::write(&path, serde_json::to_vec(&request).unwrap()).unwrap();
+        let result = fsl_command::command::compile_outcome(&path)
+            .map(|_| check_modes(&directory.path().join("modes.package.json")))
+            .map_err(|error| (error.category().exit_code(), error.value().unwrap()));
+        (directory, result)
+    };
+    let (_kept, kernel) = compile(true, Some(json!("kernel")));
+    assert_eq!(kernel.expect("Kernel admits r"), ["kernel", "kernel"]);
+    let (_kept, linked) = compile(false, None);
+    assert_eq!(linked.expect("Linked by default"), ["linked"]);
+    let (_kept, refused) = compile(true, Some(json!("linked")));
+    assert!(refused.is_err(), "Linked refuses r's 10 mod x");
+    for bad in [json!("Kernel"), json!(1), Value::Null] {
+        let (_kept, refused) = compile(false, Some(bad.clone()));
+        let (exit, value) = refused.expect_err("a malformed check_mode refuses");
+        assert_eq!(exit, 20, "{bad}");
+        assert!(value.to_string().contains("check_mode"), "{bad}: {value}");
+    }
+}

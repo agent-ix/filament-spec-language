@@ -43,8 +43,7 @@ use fsl_semantics::check::{
     AccessClass, AssemblyCause, AssemblyRefusal, CheckCause, CheckRefusal, ClockSelectionFault,
     ExtensionCause, Obligation, ProbabilisticCause, ProfileRefusal, ProtocolAnchorCause,
     ProvedInterval, RefinementCause, RowClass, ShadowedDeclaration, SourceObjectFault,
-    TemporalCause, TimeUnitCause,
-    TopologyRetained,
+    TemporalCause, TimeUnitCause, TopologyRetained,
 };
 use fsl_semantics::library::LibraryName;
 use fsl_semantics::model::accounting::ModelNormalizationLimits;
@@ -76,14 +75,15 @@ pub use lifecycle::{
     check_units_with_refinement_internals, check_with_execution_points,
     check_with_execution_points_and_refinement_internals,
     check_with_execution_points_and_source_inputs, check_with_integer_division,
-    check_with_profile_catalog, check_with_profile_catalog_and_inputs, check_with_refinement_internals,
+    check_with_profile_catalog, check_with_profile_catalog_and_inputs,
+    check_with_refinement_internals, check_with_refinement_internals_and_integer_division,
     check_with_temporal_selections_and_execution_points, core_vocabulary, extension_forms, package,
     package_with_temporal_selections, parse, parse_selecting_extensions, parse_with_extensions,
     preflight_unit_list, refusal_or_fault, select, select_units, AdmittedModels, AdmittedUnitList,
-    CheckedUnit, EmittedUnit, FrontEndFailure, ObligationState, PackageLimits, ParseRequest,
-    ParsedUnitSource, PendingObligation, ProfileCatalogInput, ProfileCheckFailure,
-    ProtocolCheckSite, SourceInputs, TypeDeclaration, TypeReport, TypeRequirement,
-    FrontEndFailurePayload, ParseReport,
+    CheckedUnit, EmittedUnit, FrontEndFailure, FrontEndFailurePayload, ObligationState,
+    PackageLimits, ParseReport, ParseRequest, ParsedUnitSource, PendingObligation,
+    ProfileCatalogInput, ProfileCheckFailure, ProfileCheckInputs, ProtocolCheckSite, SourceInputs,
+    TypeDeclaration, TypeReport, TypeRequirement,
 };
 pub(crate) use lifecycle::{
     check_for_continuation, check_units_with_options, parse_for_continuation, ContinuationInputs,
@@ -203,9 +203,9 @@ pub struct ProfileUseResult {
 }
 
 #[cfg(test)]
-pub(crate) use lifecycle::composed_declaration;
-#[cfg(test)]
-pub(crate) use lifecycle::{compose, compose_in_mode, ComposedUnit};
+pub(crate) use lifecycle::{
+    compose, compose_in_mode, composed_declaration, ComposeModes, ComposedUnit,
+};
 
 mod bind;
 pub use bind::{
@@ -216,12 +216,15 @@ pub use bind::{
 mod call;
 mod identity_form;
 mod run_value;
-pub(crate) use call::run_reading;
 pub use call::{
-    default_accounting, run, run_with_profile_catalog, Call, CallArgument, CallIncomplete,
-    CallLocus, CallOutcome, CallRefusal, CallSnapshot, CallValue, RunRefusal, WireArgument,
+    default_accounting, run, run_with_profile_catalog,
+    run_with_profile_catalog_and_integer_division, Call, CallArgument, CallIncomplete, CallLocus,
+    CallOutcome, CallRefusal, CallSnapshot, CallValue, RunRefusal, WireArgument,
     DEFAULT_WORK_UNITS,
 };
+pub(crate) use call::{run_reading, run_reading_with_integer_division};
+#[cfg(test)]
+pub(crate) use call::{run_compiled, CallSources};
 pub use identity_form::{effective_form, node_key_form, universe_form};
 pub use run_value::ArgumentDefect;
 
@@ -232,29 +235,29 @@ pub use clause::{
     name_clause_atom, pending_report, read_evidence_ledger, read_ledger, run_clause,
     run_clause_batch, run_clause_with_temporal_selections, run_package_temporal,
     run_package_temporal_bounded, run_package_trace_subject, run_program_batch,
-    run_temporal_valuation, run_trace_subject_clause, sample_position, settle_correction,
-    settle_run_correction, temporal_batch_exit_code, temporal_batch_outcome, write_ledger,
-    AdmittedLate, AdmittedPosition, AdmittedValue, Advance, AuthenticatedTemporalSelection,
-    AuthenticationFailure, ClauseArgument, ClauseArgumentValue, ClauseDisposition, ClauseLimits,
-    ClauseMark, ClauseOpen, ClauseRefusal, ClauseRunBatchOutcome, ClauseRunBatchRefusal,
-    ClauseRunRefusal, ClauseRunReport, ClauseRunRequest, ClauseRunSelection, ClauseRunSource,
-    ClauseRunStage, ClauseRunUsage, ClauseState, ClauseTraceKind, ConsequentEventRefusal,
-    ConsequentSourceEvent, ConsequentSourceEvents, ConsequentState, ContradictedDimension,
-    CorrectionRecord, CorrectionRefusal, EvidenceLedgerFile, EvidenceLedgerReadError,
-    FiniteWindowAssessment, FiniteWindowPremises, FiniteWindowReport, FiniteWindowSupport,
-    LateEntry, LateInputs, LedgerBinding, LedgerReadError, ObservedPosition, OperationName,
-    OverObject, PackageAuthentication, PackageTemporalRequest, PackageTraceSubjectRequest,
-    PackagesStage, ProgramBatchCallOutcome, ProgramBatchItemResult, ProgramBatchOutcome,
-    ProgramBatchRefusal, ProgramBatchSelection, ProgramCompilationRequest, ProgressAssertion,
-    ProgressClosure, ProgressCompleteness, ProgressContradiction, ProgressLedger,
-    ProgressLedgerEntry, ProgressLimitReached, ProgressLowerBoundary, ProgressRefusal,
-    ProgressValue, RunRelation, TemporalAuthentication, TemporalIndeterminateReason,
-    TemporalPositionRefusal, TemporalTraceRefusal, TemporalUndefinedCause, TemporalValuation,
-    TemporalVerdict, TemporalWindowRefusal, TimestampedCover, TimestampedMissingValuation,
-    TimestampedObservation, TimestampedOrderKey, TimestampedWindow, TraceBinding, TraceInput,
-    TraceRefusal, TraceSubjectClauseRequest, ValueInvariantsBatchFailure,
-    ValueInvariantsBatchOutcome, ValueInvariantsBatchRequest, CLAUSE_STATE_FORMAT,
-    DEFAULT_MODEL_MAX_CANDIDATES, EVIDENCE_LEDGER_FORMAT,
+    run_temporal_behaviours, run_temporal_valuation, run_trace_subject_clause, sample_position,
+    settle_correction, settle_run_correction, temporal_batch_exit_code, temporal_batch_outcome,
+    write_ledger, AdmittedLate, AdmittedPosition, AdmittedValue, Advance,
+    AuthenticatedTemporalSelection, AuthenticationFailure, ClauseArgument, ClauseArgumentValue,
+    ClauseDisposition, ClauseLimits, ClauseMark, ClauseOpen, ClauseRefusal, ClauseRunBatchOutcome,
+    ClauseRunBatchRefusal, ClauseRunRefusal, ClauseRunReport, ClauseRunRequest, ClauseRunSelection,
+    ClauseRunSource, ClauseRunStage, ClauseRunUsage, ClauseState, ClauseTraceKind,
+    ConsequentEventRefusal, ConsequentSourceEvent, ConsequentSourceEvents, ConsequentState,
+    ContradictedDimension, CorrectionRecord, CorrectionRefusal, EvidenceLedgerFile,
+    EvidenceLedgerReadError, FiniteWindowAssessment, FiniteWindowPremises, FiniteWindowReport,
+    FiniteWindowSupport, LateEntry, LateInputs, LedgerBinding, LedgerReadError, ObservedPosition,
+    OperationName, OverObject, PackageAuthentication, PackageTemporalRequest,
+    PackageTraceSubjectRequest, PackagesStage, ProgramBatchCallOutcome, ProgramBatchItemResult,
+    ProgramBatchOutcome, ProgramBatchRefusal, ProgramBatchSelection, ProgramCompilationRequest,
+    ProgressAssertion, ProgressClosure, ProgressCompleteness, ProgressContradiction,
+    ProgressLedger, ProgressLedgerEntry, ProgressLimitReached, ProgressLowerBoundary,
+    ProgressRefusal, ProgressValue, RunRelation, TemporalAuthentication,
+    TemporalIndeterminateReason, TemporalPositionRefusal, TemporalTraceRefusal,
+    TemporalUndefinedCause, TemporalValuation, TemporalVerdict, TemporalWindowRefusal,
+    TimestampedCover, TimestampedMissingValuation, TimestampedObservation, TimestampedOrderKey,
+    TimestampedWindow, TraceBinding, TraceInput, TraceRefusal, TraceSubjectClauseRequest,
+    ValueInvariantsBatchFailure, ValueInvariantsBatchOutcome, ValueInvariantsBatchRequest,
+    CLAUSE_STATE_FORMAT, DEFAULT_MODEL_MAX_CANDIDATES, EVIDENCE_LEDGER_FORMAT,
 };
 mod refinement;
 pub use refinement::{
@@ -267,15 +270,17 @@ mod protocol_proof;
 mod protocol_structure;
 pub(crate) use native_result::{item_record, ReasonWire};
 pub use native_result::{
-    read_native_run_result, read_native_run_result_bounded, write_clause_run_result,
-    write_clause_run_result_for, CallLocationRead, CallLocusRead, CallOriginRead, ClauseRunRecord,
-    ClosureRead, CommandErrorRecord, CounterexampleRead, DimensionRead, EffectiveIdRead,
-    FairnessGranularityRead, FairnessKindRead, FairnessOperationRead, FairnessRead, GuardRead,
-    IndeterminateReasonRead, NativeRunLimits, NativeRunOutcome, NativeRunReadError,
-    NativeRunResult, NativeRunResultError, PositionRead, ProgressValueRead, ProtocolAnalysisKind,
-    ProtocolAnalysisRecord, ProtocolIncompleteCause, ProtocolInconclusiveCause, ProtocolProofBasis,
-    ProtocolRecordError, ProtocolSettlementEntry, RefusalLocusRead, SourceRefRead, SpanRead,
-    TemporalRecord, UndefinedLocusRead, UnsupportedDiagnostic,
+    read_native_run_result, read_native_run_result_bounded, temporal_disposition_json,
+    write_clause_run_result, write_clause_run_result_for,
+    write_clause_run_result_for_with_extraction, CallLocationRead, CallLocusRead,
+    CallOriginRead, ClauseRunRecord, ClosureRead, CommandErrorRecord, CounterexampleRead,
+    DimensionRead, EffectiveIdRead, FairnessGranularityRead, FairnessKindRead,
+    FairnessOperationRead, FairnessRead, GuardRead, IndeterminateReasonRead, NativeRunLimits,
+    NativeRunOutcome, NativeRunReadError, NativeRunResult, NativeRunResultError, PositionRead,
+    ProgressValueRead, ProtocolAnalysisKind, ProtocolAnalysisRecord, ProtocolIncompleteCause,
+    ProtocolInconclusiveCause, ProtocolProofBasis, ProtocolRecordError, ProtocolSettlementEntry,
+    RefusalLocusRead, SourceRefRead, SpanRead, TemporalRecord, UndefinedLocusRead,
+    UnsupportedDiagnostic,
 };
 pub use protocol_proof::{
     ProtocolProofCause, ProtocolProofCorrespondence, ProtocolProofDisposition,
@@ -929,7 +934,7 @@ fn forms_message(refusal: &FormsRefusal) -> String {
                     format!("the index selection `{text}` is not supported here yet")
                 }
                 fsl_forms::ConstructKind::SizeOfType => {
-                    let type_call = text.split_once('(').map_or(text.as_str(), |(head, _)| head);
+                    let type_call = text.split_once('(').map_or(&**text, |(head, _)| head);
                     format!("`{type_call}` is not supported in expressions yet")
                 }
                 fsl_forms::ConstructKind::QualifiedReachesEdge => {
@@ -1258,6 +1263,19 @@ fn check_message_one(first: &CheckRefusal) -> String {
         );
     }
     match &first.cause {
+        CheckCause::EmptyPackage {
+            package_name,
+            sources,
+        } => {
+            let identities = sources
+                .iter()
+                .map(|source| format!("{}:{}", source.authority(), source.identity()))
+                .collect::<Vec<_>>()
+                .join(", ");
+            message = format!(
+                "{message}: checked package `{package_name}` needs at least one declaration that has a node; a type alias has none (sources: {identities})"
+            );
+        }
         CheckCause::OperandTypeMismatch {
             operator,
             left_type,
@@ -1326,6 +1344,9 @@ fn check_message_one(first: &CheckRefusal) -> String {
         }
         CheckCause::UnknownField { owner, field, .. } => {
             message = format!("{message}: `{owner}` has no field `{field}`");
+        }
+        CheckCause::UndeclaredVariantCase { owner, case } => {
+            message = format!("{message}: `{owner}` has no case `{case}`");
         }
         CheckCause::StateModel(refusal) => {
             if let CheckCause::UnknownField { owner, field, .. } = &refusal.cause {
@@ -1477,6 +1498,14 @@ fn check_message_one(first: &CheckRefusal) -> String {
                 ProtocolAnchorCause::BinderType { binder, fault, .. } => {
                     format!("{message}: binder `{binder}`'s type does not resolve ({fault:?})")
                 }
+                ProtocolAnchorCause::AttemptBinderRead {
+                    binder,
+                    expected_result,
+                    actual_result,
+                    ..
+                } => format!(
+                    "{message}: a read of attempt binder `{binder}` of type {actual_result:?}, operation result is {expected_result:?}"
+                ),
                 ProtocolAnchorCause::ChannelRole {
                     channel, end, name, ..
                 } => format!(
@@ -2409,6 +2438,8 @@ pub struct DependencyInput {
     /// FR-147/FR-099: each supplied library's own unchecked internal-list
     /// value, keyed by the library identity that owns it.
     refinement_internals: BTreeMap<LibraryName, serde_json::Value>,
+    /// FR-767: each supplied library's caller-selected division law.
+    integer_division: BTreeMap<LibraryName, crate::AdmittedIntegerDivision>,
 }
 
 /// Which source of a compile a [`DependencyInputRefusal`] names.
@@ -2470,6 +2501,12 @@ pub enum DependencyInputRefusal {
         /// The unmatched library identity.
         identity: String,
     },
+    /// A caller-selected division law names no supplied library.
+    #[error("invalid_request: integer_division names unsupplied library {identity}")]
+    UnknownIntegerDivision {
+        /// The unmatched library identity.
+        identity: String,
+    },
     /// A multi-source library was supplied without any source units.
     #[error("invalid_package/invalid-value: library {identity} has no source units")]
     EmptyLibraryUnits {
@@ -2501,6 +2538,7 @@ impl DependencyInputRefusal {
             | Self::LibraryIdentityMismatch { .. } => Code::InvalidPackage,
             Self::EmptyLibraryUnits { .. } => Code::InvalidPackage,
             Self::UnknownRefinementInternals { .. } => Code::InvalidRequest,
+            Self::UnknownIntegerDivision { .. } => Code::InvalidRequest,
         }
     }
 
@@ -2512,7 +2550,9 @@ impl DependencyInputRefusal {
             | Self::SharedOwner { .. }
             | Self::LibraryIdentityMismatch { .. }
             | Self::EmptyLibraryUnits { .. } => None,
-            Self::UnknownRefinementInternals { .. } => Some(HostCause::SelectionIdentity),
+            Self::UnknownRefinementInternals { .. } | Self::UnknownIntegerDivision { .. } => {
+                Some(HostCause::SelectionIdentity)
+            }
         }
     }
 
@@ -2523,7 +2563,9 @@ impl DependencyInputRefusal {
             | Self::SharedOwner { .. }
             | Self::LibraryIdentityMismatch { .. } => Some("conflicting-definition"),
             Self::EmptyLibraryUnits { .. } => Some("invalid-value"),
-            Self::EmptyIdentity { .. } | Self::UnknownRefinementInternals { .. } => None,
+            Self::EmptyIdentity { .. }
+            | Self::UnknownRefinementInternals { .. }
+            | Self::UnknownIntegerDivision { .. } => None,
         }
     }
 }
@@ -2569,6 +2611,7 @@ impl DependencyInput {
             libraries: held,
             library_units,
             refinement_internals: BTreeMap::new(),
+            integer_division: BTreeMap::new(),
         })
     }
 
@@ -2659,6 +2702,7 @@ impl DependencyInput {
         dependencies.libraries.remove(identity);
         dependencies.library_units.remove(identity);
         dependencies.refinement_internals.remove(identity);
+        dependencies.integer_division.remove(identity);
         dependencies
     }
 
@@ -2680,6 +2724,34 @@ impl DependencyInput {
             self.refinement_internals.insert(name, value);
         }
         Ok(self)
+    }
+
+    /// The dependency input with caller-selected division laws attached to
+    /// their supplied library identities (FR-767).
+    pub fn with_integer_division(
+        mut self,
+        laws: impl IntoIterator<Item = (String, crate::AdmittedIntegerDivision)>,
+    ) -> Result<Self, DependencyInputRefusal> {
+        for (identity, law) in laws {
+            let name = LibraryName::new(&identity).map_err(|_| {
+                DependencyInputRefusal::UnknownIntegerDivision {
+                    identity: identity.clone(),
+                }
+            })?;
+            if !self.libraries.contains_key(&name) {
+                return Err(DependencyInputRefusal::UnknownIntegerDivision { identity });
+            }
+            self.integer_division.insert(name, law);
+        }
+        Ok(self)
+    }
+
+    /// The caller-selected integer-division law for `identity`, if any.
+    pub(crate) fn integer_division(
+        &self,
+        identity: &LibraryName,
+    ) -> Option<crate::AdmittedIntegerDivision> {
+        self.integer_division.get(identity).copied()
     }
 
     /// The unchecked internal-list value owned by `identity`, if supplied.
@@ -3028,6 +3100,8 @@ fn value_type_source(value_type: &filament_exact::ValueType) -> String {
             text.profile().as_str()
         ),
         ValueType::String => "String".to_owned(),
+        ValueType::Bytes => "Bytes".to_owned(),
+        ValueType::JsonObject => "JsonObject".to_owned(),
         ValueType::Uuid => "Uuid".to_owned(),
         ValueType::Timestamp => "Timestamp".to_owned(),
         ValueType::Enum(_) => "Enum".to_owned(),

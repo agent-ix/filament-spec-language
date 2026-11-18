@@ -445,19 +445,24 @@ fn an_undefined_claim_evaluation_settles_refuted_with_the_undefined_cause() {
 }
 
 /// FR-280-AC-1 (TC-761 step 1) for EN-1: its manifest converts into a
-/// descriptor advertising exactly the claim kind it settles in TC-762,
-/// `temporal-satisfaction` in both extent modes.
+/// descriptor advertising exactly the claim kinds it settles,
+/// `temporal-satisfaction` in both extent modes and, for an `invariant`
+/// state clause over a model subject, `operation-contract` in the same
+/// modes (FR-489, FR-625-AC-4).
 #[trace("TC-761", "FR-280-AC-1")]
+#[trace("TC-1585", "FR-625-AC-4")]
 #[test]
-fn en1_advertises_exactly_the_temporal_satisfaction_pair() {
+fn en1_advertises_exactly_its_temporal_and_invariant_pairs() {
     use fsl_analyze::model_check::manifest;
     let descriptor =
         manifest::descriptor(ProviderOrigin::Linked).expect("EN-1's own manifest is admitted");
     assert_eq!(descriptor.id().as_str(), manifest::BACKEND_ID);
     let advertised = descriptor.advertises().collect::<Vec<_>>();
-    assert_eq!(advertised.len(), 2);
+    assert_eq!(advertised.len(), 4);
     assert!(advertised.contains(&(Capability::TemporalSatisfaction, Mode::Bounded)));
     assert!(advertised.contains(&(Capability::TemporalSatisfaction, Mode::Unbounded)));
+    assert!(advertised.contains(&(Capability::OperationContract, Mode::Bounded)));
+    assert!(advertised.contains(&(Capability::OperationContract, Mode::Unbounded)));
 }
 
 /// FR-226-AC-2 (TC-671 step 2): EN-1's registered provider manifest

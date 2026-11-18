@@ -1897,6 +1897,7 @@ impl<'w> LeafWalk<'w> {
             ValueType::Text(text) => self.append(Leaf::Text(text.profile()), location)?,
             // Native String is not profile-bounded Text and adds no Text leaf.
             ValueType::String => {}
+            ValueType::Bytes | ValueType::JsonObject => {}
             // Rule 2.
             ValueType::Option(payload) => queued.push(LeafVisit::Type {
                 segment: Some(WalkSegment::Inner),
@@ -2038,6 +2039,7 @@ impl<'w> LeafWalk<'w> {
                     | ValueType::Reference(_)
                     | ValueType::Population(_) => {}
                     ValueType::Uuid | ValueType::Timestamp => {}
+                    ValueType::Bytes | ValueType::JsonObject => {}
                 }
             }
             if direct {
@@ -3045,6 +3047,8 @@ impl<'a> Lowering<'a> {
             ValueType::String => self.scalar("string", location).map(NodeRef::from),
             ValueType::Uuid => self.scalar("uuid", location).map(NodeRef::from),
             ValueType::Timestamp => self.scalar("timestamp", location).map(NodeRef::from),
+            ValueType::Bytes => self.scalar("bytes", location).map(NodeRef::from),
+            ValueType::JsonObject => self.scalar("json_object", location).map(NodeRef::from),
         }?;
         Ok(TypeStep::Built(key))
     }
@@ -3271,7 +3275,7 @@ impl<'a> Lowering<'a> {
                 .get(at)
                 .map(|position| (position, Presence::Required)),
             CompositeShape::Union(members) => {
-                return self.advance_union(composite, members, location, frames)
+                return self.advance_union(composite, members, location, frames);
             }
         };
         let Some((value_type, presence)) = next else {
@@ -4365,29 +4369,34 @@ impl<'a> Lowering<'a> {
         operation: Operation,
         arguments: Vec<MemberTerm>,
     ) -> Result<LeafTerm, CheckRefusal> {
-        // Retain the checked interval's type node for the requirement bound,
-        // even where the catalog application itself returns Integer.
-        let checked_type = self.type_ref(node.value_type(), node.location())?;
-        if matches!(node.kind(), NodeKind::IntegerDivision { .. })
-            && matches!(node.value_type(), ValueType::Int(_))
-        {
-            if let Some(key) = checked_type.admitted() {
-                if !self.occurrences.has(key.clone()) {
-                    // An inferred interval may have no incoming graph edge:
-                    // its requirement record alone names it. Give that type
-                    // node the division's source anchor before emission.
-                    self.record(
-                        key.clone(),
-                        OccurrenceRole::Generated,
-                        node.location().clone(),
-                    );
-                }
-            }
-        }
         let lowered_type = node.lowered_value_type();
         let result_type = if lowered_type.as_ref() == node.value_type() {
-            checked_type
+            self.type_ref(node.value_type(), node.location())?
         } else {
+            // The application lowers at the Integer node, so its checked
+            // interval has no edge from it. Only an integer division keeps
+            // that interval, for its requirement bound; any other node
+            // (an `if`, a `case`, a read of a division-bound local) must not
+            // build an interval type node nothing names, for no occurrence
+            // places it (FR-495-AC-25).
+            if matches!(node.kind(), NodeKind::IntegerDivision { .. })
+                && matches!(node.value_type(), ValueType::Int(_))
+            {
+                let checked_type = self.type_ref(node.value_type(), node.location())?;
+                if let Some(key) = checked_type.admitted() {
+                    if !self.occurrences.has(key.clone()) {
+                        // An inferred interval may have no incoming graph
+                        // edge: its requirement record alone names it. Give
+                        // that type node the division's source anchor before
+                        // emission.
+                        self.record(
+                            key.clone(),
+                            OccurrenceRole::Generated,
+                            node.location().clone(),
+                        );
+                    }
+                }
+            }
             self.type_ref(&lowered_type, node.location())?
         };
         self.typed_application(node.location(), result_type, operator, operation, arguments)
@@ -4537,7 +4546,12 @@ impl<'a> Lowering<'a> {
         let plain = Operation::plain;
         let (keyed, operands) = match node.kind() {
             NodeKind::Literal(CheckedLiteral(value)) => {
-                return self.literal(node, value).map(LowerStep::Lowered)
+                return self.literal(node, value).map(LowerStep::Lowered);
+            }
+            NodeKind::ReferenceLiteral { identity, .. } => {
+                return self
+                    .reference_literal(node, identity)
+                    .map(LowerStep::Lowered);
             }
             NodeKind::Local(slot) => {
                 let key = binders
@@ -4667,6 +4681,8 @@ impl<'a> Lowering<'a> {
                 | ValueType::String
                 | ValueType::Uuid
                 | ValueType::Timestamp
+                | ValueType::Bytes
+                | ValueType::JsonObject
                 | ValueType::Enum(_)
                 | ValueType::Option(_)
                 | ValueType::Composite(_)
@@ -4735,6 +4751,42 @@ impl<'a> Lowering<'a> {
             NodeKind::QuantityPower(base, exponent) => (
                 Keyed::Application(Operator::Binary, plain("filament.op.quantity.pow")),
                 Operands::Two(base, exponent),
+            ),
+            NodeKind::QuantityScale { quantity, factor } => (
+                Keyed::Application(Operator::Binary, plain("filament.op.quantity.scale")),
+                Operands::Two(quantity, factor),
+            ),
+            NodeKind::QuantityScaleDiv { quantity, factor } => (
+                Keyed::Application(Operator::Binary, plain("filament.op.quantity.scale_div")),
+                Operands::Two(quantity, factor),
+            ),
+            NodeKind::TupleProject {
+                operand, position, ..
+            } => {
+                let position = u64::try_from(*position)
+                    .map_err(|_| fault(node.location(), KeyFault::UnbuiltLiteral))?;
+                let ValueType::Composite(declaration) = node.at(*operand).value_type() else {
+                    return Err(fault(node.location(), KeyFault::UnbuiltLiteral));
+                };
+                (
+                    Keyed::Application(
+                        Operator::Query,
+                        Operation {
+                            member: Some(Member::Position {
+                                declaration: declaration.clone(),
+                                position,
+                            }),
+                            ..plain("filament.op.tuple.project")
+                        },
+                    ),
+                    Operands::One(operand),
+                )
+            }
+            NodeKind::Index {
+                collection, index, ..
+            } => (
+                Keyed::Application(Operator::Query, plain("filament.op.collection.index")),
+                Operands::Two(collection, index),
             ),
             NodeKind::Ieee(operator, rounding, left, right) => {
                 let ValueType::Float(float) = node.at(*left).value_type() else {
@@ -4821,6 +4873,117 @@ impl<'a> Lowering<'a> {
                 ),
                 Operands::Two(left, right),
             ),
+            NodeKind::ConvertText(target, operand) => {
+                let target_kind = match target {
+                    ValueType::Integer | ValueType::Int(_) => "integer",
+                    ValueType::Decimal(_) => "decimal",
+                    ValueType::Rational(_) => "rational",
+                    ValueType::Float(float) => match float.width() {
+                        filament_exact::IeeeWidth::Binary32 => "float32",
+                        filament_exact::IeeeWidth::Binary64 => "float64",
+                    },
+                    ValueType::Quantity(_) => "quantity",
+                    ValueType::Boolean
+                    | ValueType::CarriedQuantity(_)
+                    | ValueType::Text(_)
+                    | ValueType::String
+                    | ValueType::Bytes
+                    | ValueType::JsonObject
+                    | ValueType::Uuid
+                    | ValueType::Timestamp
+                    | ValueType::Enum(_)
+                    | ValueType::Option(_)
+                    | ValueType::Composite(_)
+                    | ValueType::Collection(_)
+                    | ValueType::Map(_)
+                    | ValueType::BoundedQuantity(_)
+                    | ValueType::Reference(_)
+                    | ValueType::Population(_) => {
+                        return Err(refuse(
+                            node.location(),
+                            CheckCause::IllTyped(filament_exact::IllTypedCause::OperatorIneligible),
+                        ));
+                    }
+                };
+                let source_family = match node.at(*operand).value_type() {
+                    ValueType::String => "string",
+                    ValueType::Text(_) => "text",
+                    ValueType::Boolean
+                    | ValueType::Integer
+                    | ValueType::Int(_)
+                    | ValueType::Rational(_)
+                    | ValueType::Decimal(_)
+                    | ValueType::Float(_)
+                    | ValueType::Quantity(_)
+                    | ValueType::CarriedQuantity(_)
+                    | ValueType::Bytes
+                    | ValueType::JsonObject
+                    | ValueType::Uuid
+                    | ValueType::Timestamp
+                    | ValueType::Enum(_)
+                    | ValueType::Option(_)
+                    | ValueType::Composite(_)
+                    | ValueType::Collection(_)
+                    | ValueType::Map(_)
+                    | ValueType::BoundedQuantity(_)
+                    | ValueType::Reference(_)
+                    | ValueType::Population(_) => {
+                        return Err(refuse(
+                            node.location(),
+                            CheckCause::IllTyped(filament_exact::IllTypedCause::TypeMismatch),
+                        ));
+                    }
+                };
+                let mut laws = Vec::new();
+                if matches!(node.at(*operand).value_type(), ValueType::Text(_)) {
+                    laws.push(self.law(LawRole::TextProfile, node.location())?);
+                }
+                if matches!(target, ValueType::Float(_)) {
+                    laws.push(self.law(LawRole::IeeeProfile, node.location())?);
+                }
+                let mode = match target {
+                    ValueType::Decimal(decimal) => {
+                        Some(OperationMode::Rounding(decimal.rounding()))
+                    }
+                    ValueType::Float(float) => Some(OperationMode::Rounding(float.rounding())),
+                    ValueType::Quantity(_) => {
+                        Some(OperationMode::Rounding(filament_exact::RoundingMode::Exact))
+                    }
+                    ValueType::Boolean
+                    | ValueType::Integer
+                    | ValueType::Int(_)
+                    | ValueType::Rational(_)
+                    | ValueType::CarriedQuantity(_)
+                    | ValueType::Text(_)
+                    | ValueType::String
+                    | ValueType::Bytes
+                    | ValueType::JsonObject
+                    | ValueType::Uuid
+                    | ValueType::Timestamp
+                    | ValueType::Enum(_)
+                    | ValueType::Option(_)
+                    | ValueType::Composite(_)
+                    | ValueType::Collection(_)
+                    | ValueType::Map(_)
+                    | ValueType::BoundedQuantity(_)
+                    | ValueType::Reference(_)
+                    | ValueType::Population(_) => None,
+                };
+                let member = self.type_argument(target, node.location())?;
+                let identity = format!("filament.op.{source_family}.to_{target_kind}");
+                (
+                    Keyed::Application(
+                        Operator::Convert,
+                        Operation {
+                            laws,
+                            mode,
+                            member: Some(member),
+                            ..plain(&identity)
+                        },
+                    ),
+                    Operands::One(operand),
+                )
+            }
             NodeKind::ConvertDecimal(operand, target) => {
                 // FR-149 scale reduction: a decimal of larger maximum scale,
                 // or a rational whose denominators exceed 1.
@@ -4861,7 +5024,7 @@ impl<'a> Lowering<'a> {
                     // The checker lowers a float ordering to
                     // `IeeeTotalOrder` compositions, never to `Order`.
                     OrderedKind::Float => {
-                        return Err(fault(node.location(), KeyFault::UntypedIeeeOperand))
+                        return Err(fault(node.location(), KeyFault::UntypedIeeeOperand));
                     }
                 };
                 let mut operation = plain(&format!(
@@ -5032,7 +5195,7 @@ impl<'a> Lowering<'a> {
                     CheckCause::UnsupportedFeature {
                         loci: vec![node.location().clone()],
                     },
-                ))
+                ));
             }
             NodeKind::Present(operand) => (
                 Keyed::Application(Operator::Present, plain("filament.op.option.present")),
@@ -5370,7 +5533,15 @@ impl<'a> Lowering<'a> {
                                     CheckCause::UnsupportedFeature {
                                         loci: vec![node.location().clone()],
                                     },
-                                ))
+                                ));
+                            }
+                            ValueType::Bytes | ValueType::JsonObject => {
+                                return Err(refuse(
+                                    node.location(),
+                                    CheckCause::IllTyped(
+                                        filament_exact::IllTypedCause::TypeMismatch,
+                                    ),
+                                ));
                             }
                         };
                         (
@@ -5477,15 +5648,35 @@ impl<'a> Lowering<'a> {
                 }
             },
             NodeKind::Contains(collection, item) => {
-                let leaves = if let ValueType::Collection(collection_type) =
-                    node.at(*collection).value_type()
-                {
-                    self.leaves(
+                let leaves = match node.at(*collection).value_type() {
+                    ValueType::Collection(collection_type) => self.leaves(
                         LeafSource::Compared(collection_type.element()),
                         node.location(),
-                    )?
-                } else {
-                    Vec::new()
+                    )?,
+                    // A map is probed by its key type (FSpec FR-144 "Map values").
+                    ValueType::Map(map_type) => {
+                        self.leaves(LeafSource::Compared(map_type.key()), node.location())?
+                    }
+                    ValueType::Boolean
+                    | ValueType::Integer
+                    | ValueType::Int(_)
+                    | ValueType::Rational(_)
+                    | ValueType::Decimal(_)
+                    | ValueType::Float(_)
+                    | ValueType::Quantity(_)
+                    | ValueType::CarriedQuantity(_)
+                    | ValueType::Text(_)
+                    | ValueType::String
+                    | ValueType::Bytes
+                    | ValueType::JsonObject
+                    | ValueType::Uuid
+                    | ValueType::Timestamp
+                    | ValueType::Enum(_)
+                    | ValueType::Option(_)
+                    | ValueType::Composite(_)
+                    | ValueType::BoundedQuantity(_)
+                    | ValueType::Reference(_)
+                    | ValueType::Population(_) => Vec::new(),
                 };
                 (
                     Keyed::Application(
@@ -5506,7 +5697,7 @@ impl<'a> Lowering<'a> {
                     CollectionKind::Sequence => "filament.op.collection.sequence.drop_first",
                     CollectionKind::OrderedSet => "filament.op.collection.ordered_set.drop_first",
                     CollectionKind::Set | CollectionKind::Bag => {
-                        return Err(fault(node.location(), KeyFault::UnorderedFirstOccurrence))
+                        return Err(fault(node.location(), KeyFault::UnorderedFirstOccurrence));
                     }
                 };
                 (
@@ -5754,7 +5945,7 @@ impl<'a> Lowering<'a> {
             NodeKind::ProtocolReference { protocol } => {
                 return self
                     .protocol_reference(node, *protocol)
-                    .map(LowerStep::Lowered)
+                    .map(LowerStep::Lowered);
             }
             // FR-063/S3 seam: no arm for `NodeKind::__SeamProbe`
             // under `--cfg seam_probe` alone -- this match (already
@@ -5936,13 +6127,20 @@ impl<'a> Lowering<'a> {
             .operand_type_facts()
             .iter()
             .map(|fact| {
-                self.type_node(&fact.value_type, &location).map(|node| {
-                    super::ir::EqualityOperandTypeIdentity {
+                // An operand that lowers at `Integer` (an integer division,
+                // or a control node over one) is compared at that node's type
+                // as emitted, never at its checked interval (FR-495-AC-24).
+                let lowered = (fact.role == super::ir::EqualityUnitOperandRole::Source)
+                    .then(|| node.children().into_iter().nth(fact.operand_position))
+                    .flatten()
+                    .filter(|child| child.value_type() == &fact.value_type)
+                    .map(|child| child.lowered_value_type().into_owned());
+                self.type_node(lowered.as_ref().unwrap_or(&fact.value_type), &location)
+                    .map(|node| super::ir::EqualityOperandTypeIdentity {
                         operand_position: fact.operand_position,
                         role: fact.role,
                         node,
-                    }
-                })
+                    })
             })
             .collect::<Result<Vec<_>, _>>()?;
         let mut unit_facts = Vec::with_capacity(data.unit_type_facts().len());
@@ -6111,7 +6309,7 @@ impl<'a> Lowering<'a> {
                 .into_iter()
                 .enumerate()
                 .map(|(position, child)| {
-                    self.type_node(child.value_type(), &location)
+                    self.type_node(&child.lowered_value_type(), &location)
                         .map(|key| (position, key))
                 })
                 .collect::<Result<Vec<_>, _>>()?
@@ -6632,6 +6830,36 @@ impl<'a> Lowering<'a> {
         self.literal_as(node, value, node.value_type(), None)
     }
 
+    /// A reference literal's canonical typed leaf, retaining its decoded key
+    /// as a string value under the declared reference type.
+    fn reference_literal(
+        &mut self,
+        node: CheckedNode<'_>,
+        identity: &[u8],
+    ) -> Result<LeafTerm, CheckRefusal> {
+        let identity = std::str::from_utf8(identity).map_err(|_| {
+            fault(
+                node.location(),
+                KeyFault::StageFault(filament_semantic_value::catalog::InternalFault::new(
+                    "FR-1000",
+                    "reference-literal-identity-is-utf8",
+                )),
+            )
+        })?;
+        let ty = self.type_ref(node.value_type(), node.location())?;
+        self.value_node(
+            node,
+            "literal",
+            ty.clone(),
+            BodyTerm::literal_node(
+                ty,
+                LiteralValue::Reference(
+                    identity.bytes().map(|byte| format!("{byte:02x}")).collect(),
+                ),
+            ),
+        )
+    }
+
     /// [`Self::literal`] typed at the bare `scalar` type node when one is
     /// given, else at the node of `declared`, which a literal
     /// admitted into a declared type (an extension clause's `Int[1, 3650]`)
@@ -6693,8 +6921,13 @@ impl<'a> Lowering<'a> {
             | Value::Reference(_)
             | Value::Population(_)
             | Value::Union(_) => return Err(fault(node.location(), KeyFault::UnbuiltLiteral)),
+            Value::Map(_) => return Err(Self::unbuilt_map_literal(node.location())),
             Value::Uuid(value) => LiteralValue::Uuid(*value),
             Value::Timestamp(value) => LiteralValue::Timestamp(*value),
+            Value::Bytes(value) => {
+                LiteralValue::Bytes(value.iter().map(|byte| format!("{byte:02x}")).collect())
+            }
+            Value::JsonObject(value) => LiteralValue::JsonObject(value.canonical_text().to_owned()),
             // A string written for a `Text` clause is a text literal of the
             // bare `text` scalar (IR joins the two).
             Value::String(value) if scalar == Some("text") => LiteralValue::Text(value.clone()),
@@ -6709,6 +6942,13 @@ impl<'a> Lowering<'a> {
             "literal",
             semantic_type.clone(),
             BodyTerm::literal_node(semantic_type, literal),
+        )
+    }
+
+    fn unbuilt_map_literal(location: &Location) -> CheckRefusal {
+        refuse(
+            location,
+            CheckCause::PopulationFormNotChecked { what: "map" },
         )
     }
 
@@ -6782,20 +7022,25 @@ impl<'a> Lowering<'a> {
             ValueType::Enum(_) => "enum",
             ValueType::Quantity(_) | ValueType::BoundedQuantity(_) => "quantity",
             ValueType::Reference(_) => "reference",
-            // FSpec FR-149 states no map equality relation. FR-497-AC-2: the
-            // checker refuses a carried quantity `=` operand before lowering.
-            ValueType::Map(_) | ValueType::CarriedQuantity(_) => {
+            // FR-497-AC-2: the checker refuses a carried quantity `=` operand
+            // before lowering.
+            ValueType::CarriedQuantity(_) => {
                 return Err(refuse(
                     location,
                     CheckCause::IllTyped(filament_exact::IllTypedCause::OperatorIneligible),
-                ))
+                ));
             }
             // FR-093 "Native scalar equality": no law, mode, member or
             // leaves, and no text-profile selection.
             ValueType::String => "string",
             ValueType::Uuid => "uuid",
             ValueType::Timestamp => "timestamp",
-            ValueType::Option(_) | ValueType::Composite(_) | ValueType::Collection(_) => {
+            ValueType::Bytes => "bytes",
+            ValueType::JsonObject => "json_object",
+            ValueType::Option(_)
+            | ValueType::Composite(_)
+            | ValueType::Collection(_)
+            | ValueType::Map(_) => {
                 let leaves = self.leaves(LeafSource::Compared(compared), location)?;
                 return Ok(Operation {
                     leaves,
@@ -6808,7 +7053,7 @@ impl<'a> Lowering<'a> {
                 return Err(refuse(
                     location,
                     CheckCause::IllTyped(filament_exact::IllTypedCause::OperatorIneligible),
-                ))
+                ));
             }
             // FR-153: a population is never an equality operand; the
             // checker refuses one before lowering.
@@ -7565,11 +7810,13 @@ fn literal_operand_text(value: &LiteralValue) -> String {
         LiteralValue::Decimal(text) => text.clone(),
         LiteralValue::Float32Bits(bits) => format!("{bits:08x}"),
         LiteralValue::Float64Bits(bits) => format!("{bits:016x}"),
-        LiteralValue::Text(text) | LiteralValue::String(text) | LiteralValue::Enum(text) => {
-            text.clone()
-        }
+        LiteralValue::Text(text)
+        | LiteralValue::String(text)
+        | LiteralValue::Reference(text)
+        | LiteralValue::Enum(text) => text.clone(),
         LiteralValue::Uuid(value) => value.to_string(),
         LiteralValue::Timestamp(value) => value.to_string(),
+        LiteralValue::Bytes(value) | LiteralValue::JsonObject(value) => value.clone(),
         LiteralValue::None => "none".to_owned(),
     }
 }

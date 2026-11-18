@@ -27,6 +27,7 @@ fn node(kind: NodeKind<NodeId>, value_type: ValueType) -> Node {
         equality_producer: None,
         ordering_part: false,
         field_population: None,
+        equality_range_context: None,
     }
 }
 

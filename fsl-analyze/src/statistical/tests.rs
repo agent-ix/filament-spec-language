@@ -1979,7 +1979,7 @@ fn an_undefined_sample_settles_measured_rejected() {
             undefined.trace, undefined.evaluation.site.position
         )
     );
-    assert_eq!(json["cause"]["cause"], "division-by-zero");
+    assert_eq!(json["cause"]["code"], "division-by-zero");
     let gate =
         fsl_replay::OutcomeDocument::settled(fsl_replay::Operation::Analyze, None, vec![entry]);
     assert_eq!(

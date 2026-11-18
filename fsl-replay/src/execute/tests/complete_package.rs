@@ -132,7 +132,11 @@ fn supplied_root_internal_lists_reach_the_semantic_owner_before_native_admission
     let request = ReplayRequest::decode(wire.clone(), ReplayLimits::default()).unwrap();
     let error = replay(wire, ReplayLimits::default()).unwrap_err();
     let expected_pointer = "/package/lock/refinement_internals/0/refinement";
-    assert_eq!(error.pointer().as_deref(), Some(expected_pointer));
+    assert_eq!(
+        error.pointer().as_deref(),
+        Some(expected_pointer),
+        "{error:?}"
+    );
     let outcome = crate::OutcomeDocument::from_replay(&Err(error));
     let output: serde_json::Value = serde_json::from_slice(&outcome.to_bytes().unwrap()).unwrap();
     assert_eq!(
@@ -168,8 +172,10 @@ fn supplied_root_internal_lists_reach_the_semantic_owner_before_native_admission
         panic!("located native refusal");
     };
     assert_eq!(format!("{refusal:?}"), native_before);
-    let CompileRefusal::Check { refusals, .. } = *refusal else {
-        panic!("S3 list check: {refusal:?}")
+    let refusals = match *refusal {
+        CompileRefusal::Check { refusals, .. }
+        | CompileRefusal::CheckDiagnostics { refusals, .. } => refusals,
+        other => panic!("S3 list check: {other:?}"),
     };
     let fsl_semantics::check::CheckCause::Refinement(refusal) = &refusals[0].cause else {
         panic!("typed refinement list cause: {refusals:?}")

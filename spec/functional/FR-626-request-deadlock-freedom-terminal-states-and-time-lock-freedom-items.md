@@ -32,7 +32,11 @@ intended.
 ### Request item
 
 - `claim`: the declaration the derived item anchors at (FR-368 "Claim and
-  anchor"): the model alias of the subject for a model subject.
+  anchor"): for a model subject, the model alias of the subject or its
+  package identity (for the Counter, `M` or `test/counter`) on the source
+  route; on the package route, the package identity only (FR-850 "Building
+  the analysis input"), since the package records model selections by
+  identity and carries no alias for them.
 - `temporal.item_kind`: `deadlock-freedom` or `time-lock-freedom`; `kind`
   `temporal-satisfaction`.
 - `temporal.subject` and `temporal.limits` as FR-625; a time-lock item over a

@@ -52,6 +52,7 @@ fn reset_loop(world: &World, variable: &str, initial: usize) -> fsl_replay::Hype
             post_state: key,
             delay: None,
         })],
+        results: Vec::new(),
         marks: Vec::new(),
     }
 }

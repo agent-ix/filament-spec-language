@@ -374,6 +374,14 @@ fn walk(
                     });
                 }
             }
+            // FR-207 has no map-entry value-path step; refusing retains a
+            // typed diagnostic instead of misattributing nested invariants.
+            Value::Map(_) => {
+                return Err(super::unsupported_construct_failure(
+                    "map",
+                    filament_eval::CallAdmissionLocus::Package,
+                ));
+            }
             Value::Reference(_)
             | Value::Boolean(_)
             | Value::Integer(_)
@@ -383,6 +391,8 @@ fn walk(
             | Value::Quantity(_)
             | Value::Text(_)
             | Value::String(_)
+            | Value::Bytes(_)
+            | Value::JsonObject(_)
             | Value::Uuid(_)
             | Value::Timestamp(_)
             | Value::Enum(_)

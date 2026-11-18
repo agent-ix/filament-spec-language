@@ -6,7 +6,7 @@
 //! placeholders before admission. Body terms retain typed semantic content;
 //! they no longer derive identities from canonical preimages or digests.
 
-use fsl_foundation::source::node_table::{standalone, DebugTable, DebugWith, NodeKeyDebug, With};
+use fsl_foundation::source::node_table::{DebugTable, DebugWith, NodeKeyDebug, With, standalone};
 use quire_canonical::FixedShape;
 use serde::Serialize;
 
@@ -1633,11 +1633,17 @@ pub enum LiteralValue {
     /// `string`: the exact scalar sequence as a JSON string, with no
     /// normalization.
     String(String),
+    /// `reference`: a canonical lowercase hexadecimal object identity.
+    Reference(String),
     /// `uuid`: the canonical lowercase `8-4-4-4-12` text.
     Uuid(Uuid),
     /// `timestamp`: the canonical decimal string of the signed 128-bit
     /// nanosecond count.
     Timestamp(Timestamp),
+    /// `bytes`: canonical lowercase hexadecimal octets.
+    Bytes(String),
+    /// `json_object`: canonical RFC 8785 JSON text.
+    JsonObject(String),
     /// `none`: `null`.
     None,
     /// `enum`: the member's case identifier, the body of an enum member's

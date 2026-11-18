@@ -5,15 +5,15 @@
 //! (FR-664) and the compile request's `handoff` member (FR-665). The
 //! driver's verbs over these surfaces are tested in the driver repository.
 
-use crate::command_harness::{run_file, Output};
-use crate::support::config_version_spine::{spine, Case};
+use crate::command_harness::{Output, run_file};
+use crate::support::config_version_spine::{Case, spine};
 use filament_exact::Cancel;
 use fsl_cst::Limits;
 use fsl_foundation::SourceIdentity;
-use fsl_replay::spine::{parse, ParseRequest};
 use fsl_replay::OutcomeDocument;
+use fsl_replay::spine::{ParseRequest, parse};
 use ix_trace_rs::trace;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use std::path::{Path, PathBuf};
 
 const HEADER: &str =
@@ -328,12 +328,11 @@ fn a_current_selection_with_parameters_refuses_naming_parameters() {
 /// refuses `extraction-clause-count`, not `invalid-request`.
 #[test]
 #[trace("TC-1744", "FR-662-AC-3")]
-#[ignore = "QSL-2019: the run command's extraction mode is not in the default build yet"]
 fn the_run_command_reaches_markdown_extraction_by_default() {
     let directory = tempfile::tempdir().unwrap();
     let mut request = current_clause_request();
     request["request"]["program"] = json!({
-        "source": {"file": "spec.md", "authority": "agent-ix", "identity": "doc",
+        "source": {"file": "spec.md", "authority": "agent-ix", "identity": "ix://agent-ix/spec",
             "document": "Doc", "formal_revision": 1},
         "extraction": {"body": {"authority": "agent-ix", "identity": "b", "document": "B"}},
         "clauses": [
@@ -346,6 +345,235 @@ fn the_run_command_reaches_markdown_extraction_by_default() {
     assert_eq!(value["code"], "extraction-clause-count", "{value}");
     assert_eq!(value["stage"], "request", "{value}");
     assert_eq!(value["details"], json!({"actual": 2}), "{value}");
+}
+
+/// FR-031-AC-6 (TC-109): an extracted program cannot use the run command's
+/// function-call mode and refuses before trying to open the Markdown source.
+#[test]
+#[trace("TC-109", "FR-031-AC-6")]
+fn an_extracted_program_with_call_refuses_before_reading_files() {
+    let directory = tempfile::tempdir().unwrap();
+    let mut request = current_clause_request();
+    request["request"]["program"] = json!({
+        "source": {"file": "missing.md", "authority": "agent-ix", "identity": "doc",
+            "document": "Doc", "formal_revision": 1},
+        "extraction": {"body": {"authority": "agent-ix", "identity": "body",
+            "document": "Body"}},
+        "clauses": [{"clause": "ParentOrder", "package": "doc"}]
+    });
+    request["request"].as_object_mut().unwrap().remove("clause");
+    request["request"]["call"] = json!({"function": "seven", "arguments": []});
+
+    let (exit, value) = run_refusal(directory.path(), &request);
+    assert_eq!(exit, 20, "{value}");
+    assert_eq!(value["code"], "extraction-requires-run", "{value}");
+    assert_eq!(value["stage"], "request", "{value}");
+}
+
+/// FR-662-AC-3 / TC-1744 step 2: the command preserves FR-030's missing
+/// clause selection error with the original identity and authored binding.
+#[test]
+#[trace("TC-1744", "FR-662-AC-3")]
+fn the_run_command_preserves_a_missing_markdown_clause_selection() {
+    let directory = tempfile::tempdir().unwrap();
+    std::fs::write(
+        directory.path().join("spec.md"),
+        "# Doc\n\n## Invariants\n\n### present_clause\n```ix:native\nopaque body\n```\n",
+    )
+    .unwrap();
+    let mut request = current_clause_request();
+    request["request"]["program"] = json!({
+        "source": {"file": "spec.md", "authority": "agent-ix", "identity": "ix://agent-ix/spec",
+            "document": "Doc", "formal_revision": 1},
+        "extraction": {"body": {"authority": "agent-ix", "identity": "body",
+            "document": "Body"}},
+        "clauses": [{"clause": "absent_clause", "package": "agent-ix/spec"}]
+    });
+
+    let (exit, value) = run_refusal(directory.path(), &request);
+    assert_eq!(exit, 20, "{value}");
+    assert_eq!(value["stage"], "extraction-selection", "{value}");
+    assert_eq!(
+        value["details"]["original"],
+        json!({
+            "authority": "agent-ix", "identity": "ix://agent-ix/spec"
+        }),
+        "{value}"
+    );
+    assert_eq!(
+        value["details"]["binding"],
+        json!({
+            "clause": "absent_clause", "package": "agent-ix/spec"
+        }),
+        "{value}"
+    );
+    assert_eq!(
+        value["details"]["outcome"]["availability"]["state"], "available",
+        "{value}"
+    );
+    assert!(value["details"]["outcome"]["clauses"].is_array(), "{value}");
+}
+
+/// FR-031-AC-7 (TC-109): unavailable Quire extraction is reported at the
+/// Quire stage and retains the completed extraction outcome.
+#[test]
+#[trace("TC-109", "FR-031-AC-7")]
+fn the_run_command_preserves_an_unavailable_markdown_extraction() {
+    let directory = tempfile::tempdir().unwrap();
+    std::fs::write(
+        directory.path().join("spec.md"),
+        "# Doc\n\nNo clauses here.\n",
+    )
+    .unwrap();
+    let mut request = current_clause_request();
+    request["request"]["program"] = json!({
+        "source": {"file": "spec.md", "authority": "agent-ix", "identity": "ix://agent-ix/spec",
+            "document": "Doc", "formal_revision": 1},
+        "extraction": {"body": {"authority": "agent-ix", "identity": "body",
+            "document": "Body"}},
+        "clauses": [{"clause": "ParentOrder", "package": "agent-ix/spec"}]
+    });
+
+    let (exit, value) = run_refusal(directory.path(), &request);
+    assert_eq!(exit, 20, "{value}");
+    assert_eq!(value["stage"], "quire", "{value}");
+    assert_eq!(
+        value["details"]["original"]["identity"], "ix://agent-ix/spec",
+        "{value}"
+    );
+    assert_eq!(
+        value["details"]["binding"]["clause"], "ParentOrder",
+        "{value}"
+    );
+    assert!(
+        value["details"]["outcome"]["availability"].is_object(),
+        "{value}"
+    );
+    assert!(
+        value["details"]["outcome"]["diagnostics"].is_array(),
+        "{value}"
+    );
+}
+
+/// FR-031-AC-5/10 (TC-109): the command writes the extraction record and
+/// the strict native-result reader returns the same complete member.
+#[test]
+#[trace("TC-109", "FR-031-AC-5", "FR-031-AC-10")]
+fn the_run_command_writes_a_strictly_readable_markdown_extraction_record() {
+    let directory = tempfile::tempdir().unwrap();
+    spine::write(directory.path(), Case::Healthy).unwrap();
+    let body = spine::unit_text();
+    std::fs::write(
+        directory.path().join("spec.md"),
+        format!("# Doc\n\n## Invariants\n\n### parent_order\n```ix:native\n{body}```\n"),
+    )
+    .unwrap();
+    let mut request = current_clause_request();
+    request["request"]["program"] = json!({
+        "source": {"file": "spec.md", "authority": "agent-ix", "identity": "ix://agent-ix/spec",
+            "document": "Doc", "formal_revision": 1},
+        "extraction": {"body": {"authority": "agent-ix", "identity": "body",
+            "document": "Body"}},
+        "clauses": [{"clause": "parent_order", "package": spine::PACKAGE_IDENTITY}]
+    });
+    let path = directory.path().join("request.json");
+    std::fs::write(&path, serde_json::to_vec(&request).unwrap()).unwrap();
+
+    let result = fsl_command::command::run(&path, &crate::negotiation::Fr290)
+        .unwrap_or_else(|error| panic!("{}", error.value().unwrap()));
+    assert_eq!(result.exit_code, 0, "{}", result.value);
+    let extraction = &result.value.as_value()["extraction"];
+    assert_eq!(extraction["original"]["identity"], "ix://agent-ix/spec");
+    assert_eq!(extraction["body"]["identity"], "body");
+    assert_eq!(extraction["body"]["document"], "Body");
+    assert_eq!(extraction["binding"]["clause"], "parent_order");
+    assert!(extraction["outcome"]["clauses"].is_array());
+    assert!(extraction["map"]["segments"].is_array());
+    let encoded = serde_json::to_vec(result.value.as_value()).unwrap();
+    let read = fsl_replay::spine::read_native_run_result(&encoded).unwrap();
+    let fsl_replay::spine::NativeRunResult::Clause(record) = read else {
+        panic!("expected a clause result");
+    };
+    assert_eq!(record.extraction(), Some(extraction));
+}
+
+/// FR-031-AC-8 (TC-109): a compile refusal's body span is mapped into exact
+/// original-document coordinates in the command's extraction record.
+#[test]
+#[trace("TC-109", "FR-031-AC-8")]
+fn the_run_command_maps_a_compile_refusal_to_original_markdown_regions() {
+    let directory = tempfile::tempdir().unwrap();
+    spine::write(directory.path(), Case::Healthy).unwrap();
+    let markdown = "# Ω Doc\n\n## Invariants\n\n### compile_error\n```ix:native\nthis is not an FSL unit\n```\n";
+    std::fs::write(directory.path().join("spec.md"), markdown).unwrap();
+    let mut request = current_clause_request();
+    request["request"]["program"] = json!({
+        "source": {"file": "spec.md", "authority": "agent-ix", "identity": "ix://agent-ix/spec",
+            "document": "Doc", "formal_revision": 1},
+        "extraction": {"body": {"authority": "agent-ix", "identity": "body",
+            "document": "Body"}},
+        "clauses": [{"clause": "compile_error", "package": spine::PACKAGE_IDENTITY}]
+    });
+    let path = directory.path().join("request.json");
+    std::fs::write(&path, serde_json::to_vec(&request).unwrap()).unwrap();
+
+    let result = fsl_command::command::run(&path, &crate::negotiation::Fr290)
+        .unwrap_or_else(|error| panic!("{}", error.value().unwrap()));
+    assert_eq!(result.exit_code, 20, "{}", result.value);
+    let document = result.value.as_value();
+    assert_eq!(document["disposition"]["stage"], "compile", "{document}");
+    let locus = &document["disposition"]["refusal"]["locus"];
+    let (body_start, body_end) = if locus["kind"] == "located" {
+        (
+            locus["span"]["start"]["byte"].as_u64().unwrap() as usize,
+            locus["span"]["end"]["byte"].as_u64().unwrap() as usize,
+        )
+    } else {
+        (
+            locus["start"].as_u64().unwrap() as usize,
+            locus["end"].as_u64().unwrap() as usize,
+        )
+    };
+    let extraction = &document["extraction"];
+    let source = fsl_foundation::Source::read(
+        SourceIdentity::new("agent-ix", "ix://agent-ix/spec"),
+        "spec.md",
+        markdown.as_bytes(),
+        markdown.len(),
+    )
+    .unwrap();
+    let expected: Vec<Value> = extraction["map"]["segments"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter_map(|segment| {
+            let segment_body_start = segment["body_start"].as_u64()? as usize;
+            let segment_body_end = segment["body_end"].as_u64()? as usize;
+            let overlap_start = body_start.max(segment_body_start);
+            let overlap_end = body_end.min(segment_body_end);
+            (overlap_start < overlap_end).then(|| {
+                let segment_original_start = segment["original_start"].as_u64().unwrap() as usize;
+                let original_start = segment_original_start + overlap_start - segment_body_start;
+                let original_end = original_start + overlap_end - overlap_start;
+                let span = source
+                    .locate(fsl_foundation::Span {
+                        start: original_start,
+                        end: original_end,
+                    })
+                    .unwrap();
+                json!({"start": span.start, "end": span.end})
+            })
+        })
+        .collect();
+    assert!(
+        !expected.is_empty(),
+        "body refusal locus maps through the extraction record"
+    );
+    assert_eq!(
+        extraction["original_regions"],
+        json!(expected),
+        "{document}"
+    );
 }
 
 /// FR-663-AC-1 (TC-1745): a completed parse's outcome document carries the
@@ -628,10 +856,12 @@ fn version_emits_the_build_inventory_and_kind_selects_one_list() {
     for list in lists {
         assert!(document[list].is_array(), "{list}: {document}");
     }
-    assert!(document["editions"]
-        .as_array()
-        .unwrap()
-        .contains(&json!("1-draft")));
+    assert!(
+        document["editions"]
+            .as_array()
+            .unwrap()
+            .contains(&json!("1-draft"))
+    );
     let features: Vec<String> = fsl_semantics::library::bundle::CapabilityId::complete_inventory()
         .iter()
         .map(|id| id.as_str().to_owned())
@@ -770,8 +1000,8 @@ fn every_listed_profile_is_accepted_by_a_header() {
 #[test]
 #[trace("TC-1742", "FR-661-AC-3")]
 fn version_includes_provider_backed_registry_consumers() {
-    use fsl_foundation::bound::DomainKind;
     use fsl_foundation::BackendId;
+    use fsl_foundation::bound::DomainKind;
     use fsl_route::{Candidate, ManifestMembers, ProviderOrigin, Registry};
 
     let base = Registry::new();

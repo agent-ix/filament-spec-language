@@ -1,0 +1,8 @@
+{
+  "format": "native-analyze/1",
+  "request": {
+    "program": {"source": {"file": "braking.native", "authority": "agent-ix",
+      "identity": "example:hybrid-braking", "document": "HybridBraking", "formal_revision": 1}},
+    "items": [{"claim": "SlowEnough"}]
+  }
+}

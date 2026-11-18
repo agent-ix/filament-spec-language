@@ -4,6 +4,8 @@
 //! `tests/it/`. One binary, one link step, the same shape as the root
 //! crate's `it` target.
 
+#[path = "../../../tests/support/published_fspec.rs"]
+pub(crate) mod published_fspec;
 pub(crate) mod support;
 
 /// The package name test fixtures assemble under.
@@ -35,6 +37,7 @@ mod decimal_source_forms;
 mod dispatch_calls;
 mod division_law_run;
 mod duplicate_preserving_queries;
+mod enumeration_findings;
 mod equality_matrix;
 mod evaluation_ignores_display_strings;
 mod evaluation_rulings;
@@ -56,6 +59,7 @@ mod mltl_differential;
 mod model_based_tests;
 mod model_reference_queries;
 mod model_simulation;
+mod monitor_vs_infinite_trace;
 mod named_population;
 mod native_literals;
 mod native_scalar_equality;
@@ -66,6 +70,7 @@ mod package_aggregate_route;
 mod property_automata;
 mod protocol_delivery_interval;
 mod protocol_duplicate_effect;
+mod protocol_observe_only;
 mod protocol_reference;
 mod protocol_retry_bound;
 mod protocol_slots;
@@ -86,6 +91,7 @@ mod supplied_phases;
 mod tc235_business_meaning_runtime;
 mod temporal_activation;
 mod temporal_aggregate_precedence;
+mod temporal_capture_activations;
 mod temporal_causes;
 mod temporal_evidence;
 mod temporal_identity;

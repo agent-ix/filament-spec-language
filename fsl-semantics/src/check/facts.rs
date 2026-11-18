@@ -13,7 +13,7 @@
 //! D-1).
 
 use filament_checked::node::{
-    Arithmetic, CheckedLiteral, Connective, NodeKind, OrderedKind, RecordField, Visit,
+    Arithmetic, CheckedLiteral, Connective, IndexedKind, NodeKind, OrderedKind, RecordField, Visit,
 };
 use std::collections::{BTreeMap, BTreeSet};
 use std::convert::Infallible;
@@ -28,11 +28,11 @@ use super::check::{holds_float, DispatchOperation};
 use super::ir::{CheckedNode, DispatchTable, Slot};
 use super::observation::Observations;
 use super::refusal::{
-    CheckCause, CheckRefusal, InvalidDispatchDeclaration, Obligation, ProvedInterval,
+    CheckCause, CheckRefusal, InvalidDispatchDeclaration, Obligation, OperandText, ProvedInterval,
 };
 use crate::model::clause_observation::Observation;
 use filament_exact::{ArithmeticOperator, OrderingOperator};
-use filament_exact::{CollectionType, QuantityCarrier, Value, ValueType};
+use filament_exact::{CollectionType, MapType, QuantityCarrier, Value, ValueType};
 use filament_exact::{
     DecimalType, Integer, IntegerInterval, NonZeroInteger, Rational, RationalDomain,
 };
@@ -336,6 +336,19 @@ pub(super) fn rational_result_of(
     RationalDomain::new(numerator, denominator).unwrap_or_else(|_| left.result_of(operator, right))
 }
 
+fn interval_text(interval: &Interval) -> String {
+    let end_text = |end: &End| match end {
+        End::Finite(value) => value.to_string(),
+        End::NegativeInfinity => "-∞".to_owned(),
+        End::PositiveInfinity => "∞".to_owned(),
+    };
+    format!(
+        "[{}, {}]",
+        end_text(&interval.lower),
+        end_text(&interval.upper)
+    )
+}
+
 fn declared(value_type: &ValueType) -> Interval {
     match value_type {
         ValueType::Int(domain) => Interval::of_domain(domain),
@@ -454,6 +467,21 @@ fn cardinality(collection: &CollectionType) -> Interval {
             upper: End::Finite(Integer::from(bound.maximum())),
         },
         // An unbounded collection (ADR-014 §2) holds any finite count.
+        None => Interval {
+            lower: End::Finite(Integer::zero()),
+            upper: End::PositiveInfinity,
+        },
+    }
+}
+
+/// The entry-count interval a map type declares; an unbounded map holds any
+/// finite count.
+fn map_cardinality(map: &MapType) -> Interval {
+    match map.bound() {
+        Some(bound) => Interval {
+            lower: End::Finite(Integer::from(bound.minimum())),
+            upper: End::Finite(Integer::from(bound.maximum())),
+        },
         None => Interval {
             lower: End::Finite(Integer::zero()),
             upper: End::PositiveInfinity,
@@ -1058,8 +1086,12 @@ impl<'a> Definedness<'a> {
         facts: &Rc<Facts>,
     ) -> Outcomes {
         let unchanged = || Some(Rc::clone(facts));
-        let ValueType::Collection(collection_type) = collection.value_type() else {
-            return (unchanged(), unchanged());
+        let declared = match collection.value_type() {
+            ValueType::Collection(collection_type) => cardinality(collection_type),
+            // `contains(m, k)` over a map is the membership fact that proves
+            // the index obligation of `m[k]` (FSpec FR-144 "Map values").
+            ValueType::Map(map_type) => map_cardinality(map_type),
+            _ => return (unchanged(), unchanged()),
         };
         let (Some(collection), Some(value)) = (
             self.stable_path(collection, facts),
@@ -1071,7 +1103,7 @@ impl<'a> Definedness<'a> {
         let nonempty = facts
             .intervals
             .get(&size)
-            .map_or_else(|| cardinality(collection_type), Interval::of_proved)
+            .map_or_else(|| declared, Interval::of_proved)
             .intersect(&Interval {
                 lower: End::Finite(Integer::one()),
                 upper: End::PositiveInfinity,
@@ -1384,14 +1416,26 @@ impl<'a> Definedness<'a> {
                 if proved.within(&required) {
                     Ok(())
                 } else {
-                    Err(Self::refuse(
-                        node,
-                        Obligation::Range {
+                    let operand = node.equality_range_context().map_or_else(
+                        OperandText::default,
+                        |context| {
+                            let diagnostic = format!(
+                                "proved {}, expected {}, peer operand {}",
+                                interval_text(&proved),
+                                context.expected,
+                                context.operand,
+                            );
+                            OperandText::new(&diagnostic)
+                        },
+                    );
+                    Err(CheckRefusal {
+                        location: node.location().clone(),
+                        cause: CheckCause::Unproved(Obligation::Range {
                             required: Box::new(required.proved()),
                             proved: Box::new(proved.proved()),
-                            operand: Default::default(),
-                        },
-                    ))
+                            operand,
+                        }),
+                    })
                 }
             }
             NodeKind::IntegerDivision { right, .. } => {
@@ -1621,6 +1665,52 @@ impl<'a> Definedness<'a> {
                 Some(path) if facts.present.contains(&path) => Ok(()),
                 _ => Err(Self::refuse(node, Obligation::Presence)),
             },
+            // FSpec FR-144 "Indexing": the index obligation of a map read is
+            // the membership fact `contains(m, k)` over the same stable paths.
+            NodeKind::Index {
+                collection,
+                index,
+                kind: IndexedKind::Map,
+            } => {
+                let proved = match (
+                    self.stable_path(node.at(*collection), facts),
+                    self.stable_path(node.at(*index), facts),
+                ) {
+                    (Some(collection), Some(index)) => facts
+                        .members
+                        .get(&collection)
+                        .is_some_and(|members| members.contains(&index)),
+                    _ => false,
+                };
+                if proved {
+                    Ok(())
+                } else {
+                    Err(Self::refuse(node.at(*index), Obligation::Presence))
+                }
+            }
+            NodeKind::Index {
+                collection,
+                index,
+                kind:
+                    filament_checked::node::IndexedKind::Sequence
+                    | filament_checked::node::IndexedKind::OrderedSet,
+            } => {
+                let collection_node = node.at(*collection);
+                let ValueType::Collection(collection_type) = collection_node.value_type() else {
+                    return Err(Self::refuse(node, Obligation::Presence));
+                };
+                let size = self
+                    .stable_path(collection_node, facts)
+                    .and_then(|path| facts.intervals.get(&Subject::Size(path)))
+                    .map_or_else(|| cardinality(collection_type), Interval::of_proved);
+                let position = self.interval(node.at(*index), facts);
+                let zero = End::Finite(Integer::zero());
+                if position.lower >= zero && position.upper < size.lower {
+                    Ok(())
+                } else {
+                    Err(Self::refuse(node.at(*index), Obligation::Presence))
+                }
+            }
             // A reduction (no identity) of a possibly empty source.
             NodeKind::Fold {
                 source,
@@ -1873,6 +1963,7 @@ impl<'n> filament_walk::Walk for IntervalWalk<'_, '_, '_, 'n> {
                 let operand = node.at(*operand);
                 let bound = match operand.value_type() {
                     ValueType::Collection(collection) => cardinality(collection),
+                    ValueType::Map(map) => map_cardinality(map),
                     // The size of a text is bounded by its declared length.
                     ValueType::Text(text) => Interval {
                         lower: End::Finite(Integer::from(text.min())),

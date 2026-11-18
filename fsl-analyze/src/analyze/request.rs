@@ -99,6 +99,8 @@ pub struct ItemOptions {
     pub traces: Option<fsl_semantics::model::observation::DocumentRef>,
     /// The provisioned FR-737 execution assessed by `global-conformance`.
     pub recording: Option<fsl_semantics::model::observation::DocumentRef>,
+    /// The caller's activated role population for a recording assessment.
+    pub population: Option<serde_json::Value>,
     /// The named backend's options (FSpec FR-196, FR-331 `options`),
     /// each one the backend publishes (FR-967); empty when none are given.
     pub backend_options: std::collections::BTreeMap<String, String>,
@@ -148,9 +150,16 @@ impl ClaimItem {
     ) -> Result<Self, ClaimRefusal> {
         let graph = package.graph();
         let family = crate::claim_family::claim_family(package, ItemKind::Formula, &claim);
+        // A task-set claim's node is minted beside the semantic graph
+        // (FSpec FR-482), so its occurrence is the checked claim's own.
         let occurs = graph
             .occurrences()
-            .any(|(node, origin, _)| node == *claim.node() && origin == *claim.origin());
+            .any(|(node, origin, _)| node == *claim.node() && origin == *claim.origin())
+            || graph
+                .task_sets()
+                .claims()
+                .iter()
+                .any(|checked| checked.occurrence().as_ref() == Some(&claim));
         let wrong_authored_occurrence = graph
             .temporal_clauses()
             .iter()
@@ -190,6 +199,10 @@ impl ClaimItem {
 
 /// The request form of a kind that has one.
 #[derive(Clone)]
+#[allow(
+    clippy::large_enum_variant,
+    reason = "a public request form built by value at many call sites; boxing is an API change"
+)]
 pub enum ItemForm {
     /// An authored temporal clause.
     Temporal(TemporalItem),
@@ -215,6 +228,9 @@ pub struct TemporalItem {
     pub item_kind: ItemKind,
     /// The abstract subject selected by a refinement item.
     pub abstract_subject: Option<fsl_route::request::AbstractSubject>,
+    /// A refinement item's abstract initial snapshots (FR-630); the
+    /// concrete subject's when absent.
+    pub abstract_initial: Option<Vec<fsl_semantics::model::observation::DocumentRef>>,
     /// The resolved fairness constraints of the checked clause.
     pub fairness: Vec<filament_semantic_value::fairness::FairnessConstraint>,
     /// A requested stutter-closure premise, when supplied.
@@ -240,6 +256,32 @@ pub struct TemporalItem {
     pub witness_samples: Option<u64>,
     /// The witness-sampling seed; the published default when absent.
     pub seed: Option<u64>,
+    /// FSL FR-1033: the protocol subject the item is decided over; the model
+    /// subject when absent.
+    pub protocol: Option<ProtocolBinding>,
+    /// FR-225's `max_store_buffer`; EN-1's default when absent.
+    pub max_store_buffer: Option<u64>,
+    /// FR-225's `max_messages`; EN-1's default when absent.
+    pub max_messages: Option<u64>,
+}
+
+/// FSL FR-1033: a protocol subject as a request binds it (FSpec FR-433's
+/// `protocol-subject` spelling), with the request's memory selection.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ProtocolBinding {
+    /// The declared name of the protocol clause.
+    pub protocol: String,
+    /// The `over` object as its population identity and key; `None` when the
+    /// request gives none.
+    pub over: Option<(String, String)>,
+    /// Each static role's binding.
+    pub roles: Vec<fsl_eval::model_subject::RoleBinding>,
+    /// Each symbolic capacity's binding.
+    pub capacities: Vec<fsl_eval::model_subject::CapacityBinding>,
+    /// The request's `memory` selection (FR-219).
+    pub memory: Vec<fsl_eval::simulation::protocol::MemorySelection>,
+    /// The effective model of each outermost `parallel`, by scoped path.
+    pub effective: Vec<(String, fsl_foundation::MemoryModelName)>,
 }
 
 impl Default for TemporalItem {
@@ -248,6 +290,7 @@ impl Default for TemporalItem {
             proof_bounds: Vec::new(),
             item_kind: ItemKind::Formula,
             abstract_subject: None,
+            abstract_initial: None,
             fairness: Vec::new(),
             stutter_closure: None,
             max_depth: None,
@@ -259,6 +302,9 @@ impl Default for TemporalItem {
             pending_reductions: None,
             witness_samples: None,
             seed: None,
+            protocol: None,
+            max_store_buffer: None,
+            max_messages: None,
         }
     }
 }
@@ -319,7 +365,7 @@ pub fn analyze(
     fsl_foundation::diagnostic::StageFailure<super::AnalyzeRefusal>,
 > {
     analyze_bound(
-        package,
+        &super::RunInput::source(package),
         &request.binding,
         &request.provision,
         &request.items,
@@ -329,8 +375,8 @@ pub fn analyze(
     )
 }
 
-pub(crate) fn analyze_bound(
-    package: &fsl_package::CheckedPackage,
+pub(crate) fn analyze_bound<'a>(
+    analysis: &super::RunInput<'a>,
     binding: &super::SubjectBinding<'_>,
     provision: &SourceProvision,
     requested: &[NegotiatedItem],
@@ -341,15 +387,16 @@ pub(crate) fn analyze_bound(
     fsl_foundation::diagnostic::Staged<super::AnalyzeOutcome>,
     fsl_foundation::diagnostic::StageFailure<super::AnalyzeRefusal>,
 > {
+    let (package, input) = (analysis.package, &analysis.model);
     use fsl_foundation::diagnostic::{StageFailure, Staged};
-    let simulation = simulation(package, binding, limits);
+    let simulation = simulation(input, binding, limits);
     fsl_eval::simulation::model::ModelSystem::new(simulation)
         .map_err(|failure| StageFailure::Refused(super::AnalyzeRefusal::Binding(failure)))?;
     check_provision(package, provision)
         .map_err(|failure| StageFailure::Refused(super::AnalyzeRefusal::Provision(failure)))?;
     let items = requested
         .iter()
-        .map(|item| work(package, binding, provision, item, engines, limits))
+        .map(|item| work(analysis, binding, provision, item, engines, limits))
         .collect::<Vec<_>>();
     let requirements = items
         .iter()
@@ -367,6 +414,15 @@ pub(crate) fn analyze_bound(
                 .map(|output| (record.request_index, output))
         })
         .collect();
+    let closed_form = settled
+        .iter()
+        .filter_map(|record| {
+            record
+                .closed_form
+                .as_deref()
+                .map(|outcome| (record.request_index, outcome.clone()))
+        })
+        .collect();
     let (records, counterexamples) = super::split_records(settled, package);
     Ok(Staged::new(super::AnalyzeOutcome {
         records,
@@ -374,6 +430,7 @@ pub(crate) fn analyze_bound(
         aggregate,
         details,
         protocol_conformance,
+        closed_form,
     }))
 }
 
@@ -433,12 +490,12 @@ pub(super) fn dependency_wires(
 }
 
 pub(super) fn simulation<'a>(
-    package: &'a fsl_package::CheckedPackage,
+    input: &fsl_eval::simulation::model::ModelCheckInput<'a>,
     binding: &super::SubjectBinding<'a>,
     limits: &super::AnalyzeLimits,
 ) -> fsl_eval::simulation::model::ModelSimulationRequest<'a> {
     fsl_eval::simulation::model::ModelSimulationRequest {
-        package,
+        input: input.clone(),
         packages: binding.packages,
         normalization: limits.normalization,
         snapshots: binding.snapshots,
@@ -454,20 +511,25 @@ pub(super) fn simulation<'a>(
 }
 
 fn work<'a>(
-    package: &'a fsl_package::CheckedPackage,
+    analysis: &super::RunInput<'a>,
     binding: &super::SubjectBinding<'a>,
     provision: &'a SourceProvision,
     negotiated: &'a NegotiatedItem,
     engines: &super::Engines,
     limits: &super::AnalyzeLimits,
 ) -> super::AnalyzeItem<'a> {
+    let (package, input) = (analysis.package, &analysis.model);
     use super::AnalyzeItem;
     let item = &negotiated.item;
     let temporal_kind = match &item.form {
         Some(ItemForm::Temporal(form)) => form.item_kind,
         Some(ItemForm::Probabilistic(_) | ItemForm::Hybrid(_)) | None => ItemKind::Formula,
     };
-    let family = crate::claim_family::claim_family(package, temporal_kind, &item.claim);
+    let family = if item.kind == Capability::GlobalConformance {
+        Some(fsl_semantics::check::DeclarationFamily::Protocol)
+    } else {
+        crate::claim_family::claim_family(package, temporal_kind, &item.claim)
+    };
     let wrong_occurrence = package
         .graph()
         .temporal_clauses()
@@ -484,64 +546,88 @@ fn work<'a>(
             .is_some_and(|claim| claim != &item.claim);
     let family = if wrong_occurrence { None } else { family };
     let absent = || AnalyzeItem::unadapted(item.request_index, item.kind, family);
+    // FR-243: an item naming `options.method` `digital-clocks` negotiated to
+    // EN-1's digital-clock route; every other timed item is EN-6's.
+    let digital = item
+        .options
+        .backend_options
+        .get(crate::zone_check::manifest::METHOD)
+        .is_some_and(|method| method == crate::model_check::manifest::METHOD_DIGITAL_CLOCKS);
     let mut built = match &item.form {
         Some(ItemForm::Temporal(_form)) if item.kind == Capability::GlobalConformance => {
-            let protocol = package.graph().protocols().iter().find(|protocol| {
-                package
-                    .graph()
-                    .protocol_node_keys(&protocol.name)
-                    .and_then(|keys| keys.clause.as_ref())
-                    == Some(item.claim.node())
-            });
-            match protocol {
-                Some(protocol) => {
-                    let missing_role = if item.options.recording.is_some() {
-                        None
-                    } else {
-                        let selected_model_packages: std::collections::BTreeSet<&str> = binding
-                            .universes
-                            .iter()
-                            .map(|universe| universe.population.package.as_str())
-                            .collect();
-                        protocol.roles.iter().find(|role| {
-                            role.context.as_ref().is_some_and(|context| {
-                                !selected_model_packages.contains(context.original().package())
+            if _form.item_kind == ItemKind::DeadlockFreedom {
+                super::protocol_item::protocol_clause_item(
+                    analysis,
+                    binding,
+                    *limits,
+                    provision,
+                    &item.claim,
+                    item.request_index,
+                    _form,
+                )
+                .unwrap_or_else(absent)
+            } else {
+                let protocol = package.graph().protocols().iter().find(|protocol| {
+                    package
+                        .graph()
+                        .protocol_node_keys(&protocol.name)
+                        .and_then(|keys| keys.clause.as_ref())
+                        == Some(item.claim.node())
+                });
+                match protocol {
+                    Some(protocol) => {
+                        let missing_role = if item.options.recording.is_some() {
+                            None
+                        } else {
+                            let selected_model_packages: std::collections::BTreeSet<&str> = binding
+                                .universes
+                                .iter()
+                                .map(|universe| universe.population.package.as_str())
+                                .collect();
+                            protocol.roles.iter().find(|role| {
+                                role.context.as_ref().is_some_and(|context| {
+                                    !selected_model_packages.contains(context.original().package())
+                                })
                             })
-                        })
-                    };
-                    if let Some(role) = missing_role {
-                        crate::protocol_analysis::conformance::missing_role_item(
-                            item.request_index,
-                            &role.name,
-                        )
-                    } else {
-                        let recording = item
-                            .options
-                            .recording
-                            .as_ref()
-                            .and_then(|reference| binding.snapshots.get(reference));
-                        match recording {
-                            Some(recording) => {
-                                crate::protocol_analysis::conformance::global_recording_item(
-                                    item.request_index,
-                                    package,
-                                    protocol,
-                                    None,
-                                    Some(recording),
-                                )
-                            }
-                            None => crate::protocol_analysis::conformance::global_behavior_item(
+                        };
+                        if let Some(role) = missing_role {
+                            crate::protocol_analysis::conformance::missing_role_item(
                                 item.request_index,
-                                package,
-                                binding.clone(),
-                                *limits,
-                                protocol,
-                                _form,
-                            ),
+                                &role.name,
+                            )
+                        } else {
+                            let recording = item
+                                .options
+                                .recording
+                                .as_ref()
+                                .and_then(|reference| binding.snapshots.get(reference));
+                            let recording_identity = item.options.recording.as_ref().cloned();
+                            match recording {
+                                Some(recording) => {
+                                    crate::protocol_analysis::conformance::global_recording_item(
+                                        item.request_index,
+                                        package,
+                                        None,
+                                        recording_identity,
+                                        Some(recording),
+                                        item.options.population.clone(),
+                                    )
+                                }
+                                None => {
+                                    crate::protocol_analysis::conformance::global_behavior_item(
+                                        item.request_index,
+                                        analysis,
+                                        binding.clone(),
+                                        *limits,
+                                        protocol,
+                                        _form,
+                                    )
+                                }
+                            }
                         }
                     }
+                    None => absent(),
                 }
-                None => absent(),
             }
         }
         Some(ItemForm::Temporal(form))
@@ -549,7 +635,37 @@ fn work<'a>(
                 && super::document::is_state_graph(package, &item.claim) =>
         {
             super::state_graph_item::state_graph_item(
-                package,
+                analysis,
+                binding,
+                *limits,
+                provision,
+                &item.claim,
+                item.request_index,
+                form,
+            )
+            .unwrap_or_else(absent)
+        }
+        Some(ItemForm::Temporal(form))
+            if item.kind == Capability::TemporalSatisfaction
+                && matches!(form.item_kind, ItemKind::Formula | ItemKind::Refinement)
+                && !super::document::timed(package)
+                && super::refinement_item::refinement_at(package, &item.claim).is_some() =>
+        {
+            super::refinement_item::refinement_item(
+                analysis,
+                binding,
+                *limits,
+                &item.claim,
+                item.request_index,
+                form,
+            )
+            .unwrap_or_else(absent)
+        }
+        Some(ItemForm::Temporal(form))
+            if item.kind == Capability::TemporalSatisfaction && form.protocol.is_some() =>
+        {
+            super::protocol_item::protocol_clause_item(
+                analysis,
                 binding,
                 *limits,
                 provision,
@@ -568,7 +684,7 @@ fn work<'a>(
         {
             if super::document::timed(package) {
                 super::timed_item::zone_derived_item(
-                    package,
+                    analysis,
                     binding,
                     *limits,
                     provision,
@@ -579,7 +695,7 @@ fn work<'a>(
                 .unwrap_or_else(absent)
             } else if form.item_kind == ItemKind::DeadlockFreedom {
                 super::derived_item::deadlock_item(
-                    package,
+                    analysis,
                     binding,
                     *limits,
                     provision,
@@ -597,20 +713,33 @@ fn work<'a>(
                 && form.item_kind == ItemKind::Formula
                 && super::document::timed(package) =>
         {
-            super::timed_item::zone_clause_item(
-                package,
-                binding,
-                *limits,
-                provision,
-                &item.claim,
-                item.request_index,
-                form,
-            )
-            .unwrap_or_else(absent)
+            if digital {
+                super::digital_item::digital_clause_item(
+                    analysis,
+                    binding,
+                    *limits,
+                    provision,
+                    &item.claim,
+                    item.request_index,
+                    form,
+                )
+                .unwrap_or_else(absent)
+            } else {
+                super::timed_item::zone_clause_item(
+                    analysis,
+                    binding,
+                    *limits,
+                    provision,
+                    &item.claim,
+                    item.request_index,
+                    form,
+                )
+                .unwrap_or_else(absent)
+            }
         }
         Some(ItemForm::Temporal(form)) if item.kind == Capability::TemporalSatisfaction => {
             match super::ClauseSubject::from_provision(
-                package,
+                analysis,
                 binding.clone(),
                 *limits,
                 provision,
@@ -641,7 +770,7 @@ fn work<'a>(
                         item.request_index,
                         crate::exact_probabilistic::ProductRequest {
                             subject: fsl_eval::model_subject::ModelSubject {
-                                simulation: simulation(package, binding, limits),
+                                simulation: simulation(input, binding, limits),
                                 proof_bounds: Vec::new(),
                             },
                             claim,
@@ -658,7 +787,7 @@ fn work<'a>(
                         item.request_index,
                         crate::statistical::StatisticalRequest {
                             subject: fsl_eval::model_subject::ModelSubject {
-                                simulation: simulation(package, binding, limits),
+                                simulation: simulation(input, binding, limits),
                                 proof_bounds: Vec::new(),
                             },
                             claim,
@@ -750,9 +879,10 @@ fn work<'a>(
                         );
                     crate::protocol_analysis::finite_replay_item(
                         item.request_index,
-                        package,
+                        analysis,
                         binding.clone(),
                         *limits,
+                        provision,
                         protocol,
                         trace,
                     )
@@ -760,18 +890,46 @@ fn work<'a>(
                 None => absent(),
             }
         }
+        // FR-489's tie-break routed an invariant over the request's model
+        // subject to EN-1 (FR-625, FR-951).
+        _ if item.kind == Capability::OperationContract
+            && negotiated.disposition.target().is_some_and(|backend| {
+                backend.id().as_str() == crate::model_check::manifest::BACKEND_ID
+            }) =>
+        {
+            let form = match &item.form {
+                Some(ItemForm::Temporal(form)) => form.clone(),
+                Some(ItemForm::Probabilistic(_) | ItemForm::Hybrid(_)) | None => {
+                    TemporalItem::default()
+                }
+            };
+            super::invariant_item::invariant_item(
+                analysis,
+                binding,
+                *limits,
+                provision,
+                &item.claim,
+                item.request_index,
+                &form,
+            )
+            .unwrap_or_else(absent)
+        }
         None if item.kind == Capability::OperationContract => {
             let selection =
                 fsl_replay::contract_check::select_contract(package, &item.claim).map(|claim| {
                     crate::contract_check::ContractRequest {
                         package,
                         claim,
-                        subject: simulation(package, binding, limits),
+                        subject: simulation(input, binding, limits),
                         abstract_subject: None,
                         max_cases: item.options.max_cases,
                     }
                 });
             super::contract_item(item.request_index, package, &item.claim, selection)
+        }
+        None if item.kind == Capability::Schedulability => {
+            super::schedule_item::schedule_item(package, item.request_index, &item.claim)
+                .unwrap_or_else(absent)
         }
         _ => absent(),
     };
@@ -780,6 +938,13 @@ fn work<'a>(
             Some(crate::protocol_analysis::manifest::BACKEND_ID)
         }
         Some(ItemForm::Temporal(_)) if super::document::is_state_graph(package, &item.claim) => {
+            Some(crate::model_check::manifest::BACKEND_ID)
+        }
+        Some(ItemForm::Temporal(form))
+            if digital
+                && form.item_kind == ItemKind::Formula
+                && super::document::timed(package) =>
+        {
             Some(crate::model_check::manifest::BACKEND_ID)
         }
         Some(ItemForm::Temporal(_)) if super::document::timed(package) => {
@@ -791,6 +956,9 @@ fn work<'a>(
             EvidenceKind::Statistical => Some(crate::statistical::manifest::BACKEND_ID),
         },
         Some(ItemForm::Hybrid(_)) => None,
+        None if item.kind == Capability::Schedulability => {
+            Some(crate::schedulability::manifest::BACKEND_ID)
+        }
         None => None,
     };
     if let (Some(expected), fsl_route::routing::Disposition::Supported(candidate)) =
@@ -808,10 +976,14 @@ fn work<'a>(
     built.family = family;
     built.claim = Some(item.claim.clone());
     // EN-6 decides over the subject's universes alone (FR-239): it advertises
-    // the bounded mode, and an item it runs is read in it.
+    // the bounded mode, and an item it runs is read in it. EN-7 decides a
+    // task set in closed form, which has no bound to ask for, so a
+    // schedulability item is read in the `unbounded` mode it advertises
+    // (FR-247).
     let zone = matches!(&item.form, Some(ItemForm::Temporal(_))) && super::document::timed(package);
     built.mode = match item.extent {
         _ if zone => fsl_route::Mode::Bounded,
+        _ if item.kind == Capability::Schedulability => fsl_route::Mode::Unbounded,
         ExtentClassification::Bounded => fsl_route::Mode::Bounded,
         ExtentClassification::Unbounded { .. } => fsl_route::Mode::Unbounded,
     };

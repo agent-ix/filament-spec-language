@@ -1316,6 +1316,10 @@ impl TypeNames for UnitNames<'_> {
         self.spellings.types(self.unit, name, &self.names.types)
     }
 
+    fn unbounded_rational(&self, name: &str) -> bool {
+        self.spellings.unbounded_rational(self.unit, name)
+    }
+
     fn object_type_named(&self, name: &str) -> Option<EffectiveId> {
         self.spellings.object_type(self.unit, name)
     }
@@ -2662,6 +2666,8 @@ fn model_value_type(
             NativeValueType::Integer => ValueType::Integer,
             NativeValueType::Uuid => ValueType::Uuid,
             NativeValueType::Timestamp => ValueType::Timestamp,
+            NativeValueType::Bytes => ValueType::Bytes,
+            NativeValueType::JsonObject => ValueType::JsonObject,
             NativeValueType::Float32 => return Err(Unmapped::Float(IeeeWidth::Binary32)),
             NativeValueType::Float64 => return Err(Unmapped::Float(IeeeWidth::Binary64)),
             // FR-056 admits these native names at the domain-package boundary,
@@ -2720,6 +2726,8 @@ fn model_value_type(
                 }
                 ScalarValueDomain::Native(NativeValueType::Uuid) => ValueType::Uuid,
                 ScalarValueDomain::Native(NativeValueType::Timestamp) => ValueType::Timestamp,
+                ScalarValueDomain::Native(NativeValueType::Bytes) => ValueType::Bytes,
+                ScalarValueDomain::Native(NativeValueType::JsonObject) => ValueType::JsonObject,
                 ScalarValueDomain::Native(_) => return Err(Unmapped::Unsupported),
             },
             Some(DomainPackageRecord::OptionType(option)) => {
@@ -3210,6 +3218,7 @@ fn expression_type_forms<'e>(roots: impl IntoIterator<Item = &'e Expression>) ->
                 | ExprNode::DecimalValue { .. }
                 | ExprNode::Quantity(_)
                 | ExprNode::String(_)
+                | ExprNode::ReferenceLiteral { .. }
                 | ExprNode::Name(_)
                 | ExprNode::Let { .. }
                 | ExprNode::Case(_)
@@ -3294,6 +3303,26 @@ fn check_names(
                 cause: AssemblyCause::TimedNotChecked(TimedConstruct::Clock),
                 span: form.span,
             }),
+            // FSpec FR-144-AC-33: the unbounded package `Rational` has no
+            // canonical-key row, so it is no map key; it is refused at the key
+            // type rather than as a name with no checked type.
+            TypeFormHead::Builtin(BuiltinType::Map) => {
+                for (index, argument) in form.arguments.iter().enumerate() {
+                    match &argument.head {
+                        TypeFormHead::Name(name)
+                            if index == 0 && spellings.unbounded_rational(source, &name.name) =>
+                        {
+                            errors.push(AssemblyError {
+                                cause: AssemblyCause::IllFormedBounds(
+                                    TypeFormFault::IneligibleMapKey,
+                                ),
+                                span: argument.span,
+                            });
+                        }
+                        _ => stack.push(argument),
+                    }
+                }
+            }
             TypeFormHead::Builtin(BuiltinType::Quantity) => {
                 if let Some(target) = form.arguments.first() {
                     let scope = names.in_unit(spellings, source);
@@ -3362,8 +3391,7 @@ fn check_names(
                 | BuiltinType::Rational
                 | BuiltinType::Decimal
                 | BuiltinType::Text
-                | BuiltinType::Option
-                | BuiltinType::Map,
+                | BuiltinType::Option,
             )
             | TypeFormHead::Collection(_)
             | TypeFormHead::Population
@@ -3830,6 +3858,39 @@ pub fn model_type_environment(
         &Cancel::new(),
     )
     .map(|admitted| admitted.types)
+}
+
+/// FR-940: the operations S3's assembly declares for the selected domain
+/// packages `views` (FR-120 "Operations"), each typed as assembly types it
+/// with `units` the unit names its types may name (FR-505). The package
+/// route reads the operation table of a package's model selections through
+/// this function, so it and the source route build one table.
+///
+/// # Errors
+///
+/// [`AssemblyRefusal`] with assembly's errors for a view whose operations
+/// assembly does not type.
+pub fn model_operation_table<'v>(
+    views: impl IntoIterator<Item = &'v crate::model::normalize::EffectiveView>,
+    units: &BTreeMap<String, filament_exact::UnitId>,
+) -> Result<OperationTable, AssemblyRefusal> {
+    let span = Span { start: 0, end: 0 };
+    let mut table = OperationTable::default();
+    for view in views {
+        // A domain package's alias is the package's spelling in source,
+        // which only names its declarations; it does not enter the table.
+        let alias = view.domain_package().model_selection.identity.clone();
+        let model = crate::model::intake::SelectedModel {
+            alias: alias.clone(),
+            span,
+            view: view.clone(),
+            operation_clauses: Vec::new(),
+            type_invariants: Vec::new(),
+        };
+        model_object_types(&alias, &model, span, &mut table, units, &[])
+            .map_err(|errors| AssemblyRefusal { errors })?;
+    }
+    Ok(table)
 }
 
 /// The type environment the unit's clauses are typed against, with the staged
@@ -4650,6 +4711,26 @@ impl PackageDeclarations {
                         let member = name.strip_prefix(&prefix)?;
                         let id = graph_unit_ids.get(&imported_unit.key)?.clone();
                         Some((member.to_owned(), id))
+                    })
+                    .collect(),
+            );
+            let domain_package = model.view.domain_package();
+            model_spellings.set_unbounded_rationals(
+                package,
+                domain_package
+                    .records
+                    .iter()
+                    .filter_map(|record| match record {
+                        DomainPackageRecord::ScalarType(scalar)
+                            if matches!(
+                                scalar.domain,
+                                ScalarValueDomain::Rational { domain: None, .. }
+                            ) =>
+                        {
+                            type_identity_segment(&scalar.key.package, &scalar.key.node)
+                                .map(str::to_owned)
+                        }
+                        _ => None,
                     })
                     .collect(),
             );
@@ -6034,13 +6115,6 @@ impl PackageDeclarations {
             .collect::<BTreeSet<_>>()
             .into_iter()
             .collect();
-        package.first_source_object = unit.objects.first().map(|object| {
-            let declaring = package
-                .source_owners
-                .get(&object.name.name)
-                .unwrap_or(&package.source);
-            (declaring.clone(), object.span)
-        });
         package.protocols = unit.protocols;
         package.temporal_clauses = unit.temporal_clauses;
         package.timed_forms = unit.timed;

@@ -608,6 +608,8 @@ fn reachable_composites(
             | ValueType::CarriedQuantity(_)
             | ValueType::Text(_)
             | ValueType::String
+            | ValueType::Bytes
+            | ValueType::JsonObject
             | ValueType::Uuid
             | ValueType::Timestamp
             | ValueType::Enum(_)
@@ -958,8 +960,7 @@ mod tests {
     use ix_trace_rs::trace;
     use std::sync::atomic::{AtomicUsize, Ordering};
 
-    const HEADER: &str =
-        "language \"ix:native\" edition \"1-draft\";\nprofile v = \"filament.value.complete/v1\";\n";
+    const HEADER: &str = "language \"ix:native\" edition \"1-draft\";\nprofile v = \"filament.value.complete/v1\";\n";
     const FUNCTIONS: &str = "function f using v(x: Int[0, 9]): Integer pure { x }\nfunction g using v(x: Int[0, 9]): Integer pure { f(x) }\n";
 
     fn identity(name: &str) -> SourceIdentity {
@@ -1044,6 +1045,7 @@ mod tests {
                         outcome: FamilyOutcome::Evaluated(Outcome::Completed(int(7))),
                         location: None,
                         losses: vec![],
+                        frame_depth: 0,
                     }),
                 },
                 Resume::Child(result) => Transition::Done(*result),
@@ -1648,6 +1650,7 @@ mod tests {
                             outcome: FamilyOutcome::Evaluated(Outcome::Completed(int(9))),
                             location: None,
                             losses: vec![],
+                            frame_depth: 0,
                         }))
                     }
                     Resume::Child(_) => unreachable!("this body never requests a child"),
@@ -1941,6 +1944,7 @@ mod tests {
                     outcome: FamilyOutcome::Evaluated(Outcome::Completed(int(7))),
                     location: None,
                     losses: vec![],
+                    frame_depth: 0,
                 }),
                 (Resume::Child(result), _) => Transition::Done(*result),
                 (Resume::Again, _) => Transition::Continue,

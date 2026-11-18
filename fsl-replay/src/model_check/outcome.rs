@@ -33,6 +33,9 @@ pub struct RunStats {
     /// The distinct model states whose expansion cut a store at the memory
     /// bound (ADR-025 MB-3); 0 for a subject with no memory bound.
     pub bound_limited: u64,
+    /// The distinct model states where a send was cut by the per-channel
+    /// `max_messages` bound (FR-225-AC-6).
+    pub message_bound_limited: u64,
     /// The distinct model states left with an `activate` step unexpanded at
     /// `max_live_instances` (ADR-027 AE-4); 0 for a subject with no instance
     /// bound.
@@ -56,6 +59,10 @@ pub enum UndecidedCause {
     /// ADR-023 HM-7: a hyper item's non-empty `μ_U` is matched by no fair
     /// tuple of universal behaviours (FR-176).
     VacuousMatch,
+    /// FR-240 "Vacuity" on EN-1's digital-clock route (FR-243): under the
+    /// clause's fairness the subject admits no fair time-divergent behaviour
+    /// and reaches no quiescent state, so no proof settles.
+    NoAdmittedBehaviour,
     /// ADR-027 AE-4: the run completed with no counterexample and at least
     /// one instance-limited state.
     InstanceBoundReached {
@@ -75,6 +82,7 @@ impl UndecidedCause {
             Self::NoInstance => InconclusiveCause::NoInstance,
             Self::MatchUndetermined => InconclusiveCause::MatchUndetermined,
             Self::VacuousMatch => InconclusiveCause::VacuousMatch,
+            Self::NoAdmittedBehaviour => InconclusiveCause::NoAdmittedBehaviour,
             Self::InstanceBoundReached { bound, states } => {
                 InconclusiveCause::InstanceBoundReached { bound, states }
             }
@@ -135,6 +143,14 @@ pub enum MemoryCause {
         /// The bound.
         bound: MemoryBound,
         /// The bound-limited states.
+        states: u64,
+    },
+    /// FR-225: the per-channel protocol message bound cut a send before the
+    /// channel's overflow policy could be explored (FR-636).
+    ChannelBoundReached {
+        /// The per-channel bound.
+        bound: MemoryBound,
+        /// The states where a send was cut.
         states: u64,
     },
 }

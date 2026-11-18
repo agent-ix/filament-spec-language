@@ -687,6 +687,8 @@ fn value_type(joins: &impl TypeKeys, value: &ValueType) -> Result<Json, Bad> {
         ValueType::String => simple("string"),
         ValueType::Uuid => simple("uuid"),
         ValueType::Timestamp => simple("timestamp"),
+        ValueType::Bytes => simple("bytes"),
+        ValueType::JsonObject => simple("json_object"),
         ValueType::Int(range) => {
             let Json::Object(mut members) = interval(range) else {
                 return malformed("an interval");

@@ -11,7 +11,7 @@
 
 use std::collections::BTreeMap;
 
-use filament_exact::{compare_keys, Incomplete, ScalarLimits, Value};
+use filament_exact::{Incomplete, ScalarLimits, Value, compare_keys};
 use filament_semantic_value::location::{
     ExpressionLocation as Location, ExpressionOwner as Origin,
 };
@@ -34,8 +34,8 @@ use filament_semantic_value::catalog::Category;
 use fsl_foundation::source::provenance::SourceRegion;
 pub use wire::CauseCodecError;
 pub(crate) use wire::{
-    decode_state_value, encode_state_value, validate_state_element, DecisiveWire,
-    ProtocolWitnessWire, RecordWire,
+    DecisiveWire, ProtocolWitnessWire, RecordWire, decode_state_value, encode_state_value,
+    validate_state_element,
 };
 
 /// Serialize FR-207's canonical runtime value path for command result
@@ -404,6 +404,13 @@ pub struct SeparatingWitnessRecord {
     /// The decisive quantifier's occurrence key (ADR-013 O-07); absent for a
     /// family with no quantifier occurrence (a protocol analysis).
     pub quantifier: Option<OccurrenceKey>,
+    /// The deciding authored comparison occurrence, for a comparison-leaf
+    /// witness.
+    pub deciding_comparison: Option<OccurrenceKey>,
+    /// The comparison's left and right operand values.
+    pub operands: Option<[Value; 2]>,
+    /// The claim nodes visited from its root through the deciding comparison.
+    pub decision_path: Option<Vec<OccurrenceKey>>,
     /// The deciding element: the kernel value bound to the quantifier's
     /// binder at the stop, or a protocol element.
     pub deciding_element: DecidingElement,
@@ -420,6 +427,13 @@ pub struct SeparatingWitnessRecord {
 impl PartialEq for SeparatingWitnessRecord {
     fn eq(&self, other: &Self) -> bool {
         self.quantifier == other.quantifier
+            && self.deciding_comparison == other.deciding_comparison
+            && (self.operands.as_ref().is_some_and(|left| {
+                other.operands.as_ref().is_some_and(|right| {
+                    same_element(&left[0], &right[0]) && same_element(&left[1], &right[1])
+                })
+            }) || (self.operands.is_none() && other.operands.is_none()))
+            && self.decision_path == other.decision_path
             && self.deciding_element == other.deciding_element
             && self.index == other.index
             && self.value_path == other.value_path
@@ -535,9 +549,30 @@ impl SeparatingWitnessRecord {
     pub(crate) fn from_stop(report: &StopReport) -> Self {
         Self {
             quantifier: Some(report.quantifier.clone()),
+            deciding_comparison: None,
+            operands: None,
+            decision_path: None,
             deciding_element: DecidingElement::Value(report.element.clone()),
             index: Some(report.index),
             value_path: report.value_path.clone(),
+            trace_position: None,
+        }
+    }
+
+    /// FR-265's state-clause record for a deciding authored comparison.
+    pub(crate) fn from_comparison(
+        comparison: &fsl_eval::value::ComparisonReport,
+        decision_path: Vec<OccurrenceKey>,
+        root: RuntimeValuePath,
+    ) -> Self {
+        Self {
+            quantifier: None,
+            deciding_comparison: Some(comparison.comparison.clone()),
+            operands: Some(comparison.operands.clone()),
+            decision_path: Some(decision_path),
+            deciding_element: DecidingElement::Value(Value::Boolean(comparison.result)),
+            index: None,
+            value_path: root,
             trace_position: None,
         }
     }
@@ -613,6 +648,8 @@ pub(crate) fn value_bytes(value: &Value) -> usize {
             Value::Float(_) => 8,
             Value::Uuid(_) | Value::Timestamp(_) => 16,
             Value::String(text) => text.len(),
+            Value::Bytes(bytes) => bytes.len(),
+            Value::JsonObject(object) => object.canonical_text().len(),
             Value::Quantity(quantity) => {
                 let magnitude = quantity.magnitude();
                 digits(magnitude.numerator()) + digits(magnitude.denominator()) + 32
@@ -627,6 +664,13 @@ pub(crate) fn value_bytes(value: &Value) -> usize {
             Value::Collection(collection) => {
                 pending.extend(collection.elements());
                 8
+            }
+            Value::Map(map) => {
+                for (key, value) in map.entries() {
+                    pending.push(key);
+                    pending.push(value);
+                }
+                map.entries().len().saturating_mul(16)
             }
             Value::Option(option) => {
                 pending.extend(option.payload());
@@ -1321,6 +1365,9 @@ mod tests {
                 crate::fixture_node(7),
                 Origin::new(Role::new("expression"), 0),
             )),
+            deciding_comparison: None,
+            operands: None,
+            decision_path: None,
             deciding_element: DecidingElement::Value(Value::Integer(
                 filament_exact::Integer::from(600_i64),
             )),
@@ -1735,9 +1782,9 @@ mod tests {
     fn tc_192_function_exemplar_reuses_the_four_types_with_none_new() {
         use crate::identity::QualifiedName;
         use crate::proof_result::{
-            read_backend_provider_envelope, BackendProviderSource, TerminalRecord, TerminalValue,
+            BackendProviderSource, TerminalRecord, TerminalValue, read_backend_provider_envelope,
         };
-        use crate::witness::{origin, NoPayload, Witness, WitnessEnvelope, WitnessPacket};
+        use crate::witness::{NoPayload, Witness, WitnessEnvelope, WitnessPacket, origin};
         use filament_exact::Identifier;
         use fsl_foundation::source::provenance::OccurrenceKey;
 

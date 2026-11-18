@@ -10,7 +10,7 @@ use crate::analyze_cli_support::{analyze, label, litmus_request, order_protocol,
 /// FR-636-AC-2: global deadlock freedom agrees with projection.
 #[trace("TC-1596", "FR-636-AC-2")]
 #[test]
-#[ignore = "QSL-2224: protocol analysis items are not reachable through fsl analyze yet"]
+#[ignore = "QSL-2430: local-projection and realizability items are not reachable through fsl analyze yet"]
 fn protocol_deadlock_agrees_with_projection() {
     let root = json!({"observation": {"authority": "test", "identity": "protocol-claim"},
         "subject": {"tag": "object", "universe": "u", "type": "e", "object_identity": "flow-1"}});
@@ -22,8 +22,10 @@ fn protocol_deadlock_agrees_with_projection() {
             json!({"items": [
                 {"claim": "Flow", "temporal": {"item_kind": "deadlock-freedom"}},
                 {"claim": "Flow", "kind": "local-projection", "assessed_root": root,
-                 "options": {"role": "Seller"}},
-                {"claim": "Flow", "kind": "realizability", "assessed_root": root},
+                 "options": {"role": "Seller"},
+                 "temporal": {"profile": "bounded-static", "max_depth": 16}},
+                {"claim": "Flow", "kind": "realizability", "assessed_root": root,
+                 "temporal": {"profile": "bounded-static", "max_depth": 16, "max_history": 16}},
             ]}),
         ));
         let global = label(&run.item(0)) == "proved";
@@ -45,8 +47,8 @@ fn protocol_deadlock_agrees_with_projection() {
 
 /// FR-891-AC-2 (TC-2523): a symbolic capacity takes its value from the
 /// subject's FSpec FR-785 `capacities` binding. Unbound, realizability is
-/// `inconclusive`, `premise-not-stated`, naming the capacity; bound to 1 it
-/// settles as the literal capacity 1 does.
+/// `inconclusive`, `premise-not-stated`, whose FR-331 wire spelling carries
+/// no payload; bound to 1 it settles as the literal capacity 1 does.
 #[trace("TC-2523", "FR-891-AC-2", "FSpec-FR-785-AC-6")]
 #[test]
 #[ignore = "QSL-2212: realizability does not read the subject's capacities binding yet"]
@@ -66,10 +68,7 @@ fn a_symbolic_capacity_settles_from_the_capacities_binding() {
     let unbound = run("capacity-unbound", &symbolic, json!({}));
     assert_eq!(label(&unbound), "inconclusive", "{unbound}");
     let text = unbound.to_string();
-    assert!(
-        text.contains("premise-not-stated") && text.contains("Bound"),
-        "{text}"
-    );
+    assert!(text.contains("premise-not-stated"), "{text}");
     assert!(!text.contains("requires-bound"), "{text}");
     let bound = run(
         "capacity-bound",

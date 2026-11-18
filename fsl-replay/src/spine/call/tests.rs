@@ -234,7 +234,9 @@ pub(in crate::spine) fn lookup_driver_context(
 #[test]
 #[trace("TC-792", "FR-100-AC-14", "FR-100-AC-16", "FR-100-AC-17")]
 fn tc_792_source_compiled_lookup_driver_preserves_present_and_absent_paths() {
-    let fixture = lookup_driver_fixture("function query using v(p: Population<M::Gadget>[1], r: M::Gadget): M::Gadget pure { lookup<M::Gadget>(p, r) absent refused }");
+    let fixture = lookup_driver_fixture(
+        "function query using v(p: Population<M::Gadget>[1], r: M::Gadget): M::Gadget pure { lookup<M::Gadget>(p, r) absent refused }",
+    );
     let (objects, population, present, absent) = lookup_driver_context(&fixture);
     let invoke = |reference| {
         run(
@@ -334,7 +336,9 @@ fn tc_792_source_driver_admits_unused_parameters_before_body_evaluation() {
 #[test]
 #[trace("TC-792", "FR-100-AC-14", "FR-100-AC-16")]
 fn tc_792_source_driver_binding_precedence_precedes_value_admission() {
-    let fixture = lookup_driver_fixture("function query using v(p: Population<M::Gadget>[1], r: M::Gadget): M::Gadget pure { lookup<M::Gadget>(p, r) absent refused }");
+    let fixture = lookup_driver_fixture(
+        "function query using v(p: Population<M::Gadget>[1], r: M::Gadget): M::Gadget pure { lookup<M::Gadget>(p, r) absent refused }",
+    );
     let (objects, _, _, _) = lookup_driver_context(&fixture);
     let refusal = run(
         source(),
@@ -370,7 +374,9 @@ fn tc_792_source_driver_binding_precedence_precedes_value_admission() {
 #[test]
 #[trace("TC-792", "FR-100-AC-14", "FR-100-AC-16")]
 fn tc_792_source_driver_cancellation_returns_no_lookup_result() {
-    let fixture = lookup_driver_fixture("function query using v(p: Population<M::Gadget>[1], r: M::Gadget): M::Gadget pure { lookup<M::Gadget>(p, r) absent refused }");
+    let fixture = lookup_driver_fixture(
+        "function query using v(p: Population<M::Gadget>[1], r: M::Gadget): M::Gadget pure { lookup<M::Gadget>(p, r) absent refused }",
+    );
     let (objects, population, _, _) = lookup_driver_context(&fixture);
     let cancel = Cancel::new();
     cancel.cancel(filament_exact::CancelCause::Requested);
@@ -1431,6 +1437,7 @@ fn evaluation(outcome: FamilyOutcome<Value>) -> filament_eval::Evaluation {
         outcome,
         location: Some(fixture_f_location()),
         losses: Vec::new(),
+        frame_depth: 0,
     }
 }
 
@@ -1771,6 +1778,7 @@ fn tc_452_step_4_outcome_mapping_covers_every_category() {
         (Undefined::IeeeNotFinite, "ieee-not-finite"),
         (Undefined::EmptyReduction, "empty-reduction"),
         (Undefined::NoneValue, "none-value"),
+        (Undefined::NoElement, "no-element"),
         (Undefined::SumOutOfDomain, "sum-out-of-domain"),
     ] {
         match convert(FamilyOutcome::Evaluated(Outcome::Undefined(reason))).unwrap() {

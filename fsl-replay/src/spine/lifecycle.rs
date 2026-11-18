@@ -127,7 +127,7 @@ pub struct FrontEndFailurePayload {
     /// Independent protocol results reached before the refusing stage ended.
     pub protocol_results: Vec<super::ProtocolResult>,
     /// Parse report retained when S1 and S2 completed before an S2 refusal.
-    pub parsed: Option<ParseReport>,
+    pub parsed: Option<Box<ParseReport>>,
 }
 
 /// FR-663's report of a completed S1 parse, including a later S2 refusal.
@@ -176,7 +176,7 @@ pub enum ProfileCheckFailure {
     /// Profile closures completed, but the ordinary spine check refused.
     Check {
         /// The original typed spine failure.
-        failure: FrontEndFailure,
+        failure: Box<FrontEndFailure>,
         /// Every completed profile use, including wrong-kind site outcomes.
         profile_uses: Vec<super::ProfileUseResult>,
     },
@@ -185,7 +185,7 @@ pub enum ProfileCheckFailure {
 struct StageError {
     refusal: Box<CompileRefusal>,
     protocol_results: Option<Vec<super::ProtocolResult>>,
-    parsed: Option<ParseReport>,
+    parsed: Option<Box<ParseReport>>,
 }
 
 #[derive(Clone, Debug)]
@@ -276,7 +276,7 @@ impl StageError {
     }
 
     fn with_parsed_report(mut self, parsed: ParseReport) -> Self {
-        self.parsed = Some(parsed);
+        self.parsed = Some(Box::new(parsed));
         self
     }
 }
@@ -858,14 +858,19 @@ fn name_operand(
     ) else {
         return;
     };
-    if let Some(text) = sources
+    let Some(source_text) = sources
         .iter()
         .map(ParsedUnitSource::source)
         .find(|source| source.render(region).is_some())
         .and_then(|source| source.slice(fsl_foundation::Span { start, end }))
-    {
-        *operand = OperandText::new(text);
-    }
+    else {
+        return;
+    };
+    let text = operand.text().map_or_else(
+        || source_text.to_owned(),
+        |diagnostic| format!("{source_text} ({diagnostic})"),
+    );
+    *operand = OperandText::new(&text);
 }
 
 /// The source that owns an assembler error whose cause names its declaration.
@@ -1053,6 +1058,24 @@ pub struct ProfileCatalogInput<'a> {
     pub catalog: &'a fsl_semantics::library::bundle::DefinitionCatalog,
     /// Resource limits applied to every selected profile closure.
     pub limits: fsl_semantics::library::bundle::PackageLimits,
+}
+
+/// The source, model, dependency, profile and stage inputs for a
+/// profile-aware check.
+#[derive(Clone, Debug)]
+pub struct ProfileCheckInputs<'a> {
+    /// The package identity assigned to the checked unit.
+    pub package_name: String,
+    /// Per-source refinement and clock inputs.
+    pub source: SourceInputs<'a>,
+    /// The selected domain models.
+    pub models: &'a AdmittedModels,
+    /// The selected library dependencies.
+    pub dependencies: &'a DependencyInput,
+    /// The registered profile definitions and their resource limits.
+    pub profile_catalog: ProfileCatalogInput<'a>,
+    /// The stage limits for this check.
+    pub limits: SpineLimits,
 }
 
 /// Type evidence retained by S3 for one source unit.
@@ -1709,6 +1732,7 @@ pub fn check(
             refinement_internals: None,
             temporal_selections: &[],
             clocks: None,
+            check_mode: None,
         },
         models,
         dependencies,
@@ -1736,6 +1760,7 @@ pub fn check_with_integer_division(
         &[],
         None,
         Some(*selection),
+        None,
         None,
         None,
         models,
@@ -1785,28 +1810,37 @@ pub fn check_with_profile_catalog(
 ) -> Result<Staged<CheckedUnit>, ProfileCheckFailure> {
     check_with_profile_catalog_and_inputs(
         parsed,
-        package_name,
-        SourceInputs::default(),
-        models,
-        dependencies,
-        profile_catalog,
-        limits,
+        ProfileCheckInputs {
+            package_name,
+            source: SourceInputs::default(),
+            models,
+            dependencies,
+            profile_catalog,
+            limits,
+        },
         cancel,
     )
 }
 
 /// S3 and S4 with the caller's exact profile-definition registry and
 /// per-source refinement and clock inputs.
+#[allow(
+    clippy::too_many_arguments,
+    reason = "mirrors the existing wide signature; a parameter struct is a separate refactor"
+)]
 pub fn check_with_profile_catalog_and_inputs(
     parsed: &ParsedUnitSource,
-    package_name: String,
-    inputs: SourceInputs<'_>,
-    models: &AdmittedModels,
-    dependencies: &DependencyInput,
-    profile_catalog: ProfileCatalogInput<'_>,
-    limits: SpineLimits,
+    inputs: ProfileCheckInputs<'_>,
     cancel: &Cancel,
 ) -> Result<Staged<CheckedUnit>, ProfileCheckFailure> {
+    let ProfileCheckInputs {
+        package_name,
+        source,
+        models,
+        dependencies,
+        profile_catalog,
+        limits,
+    } = inputs;
     let profile_uses = resolve_protocol_profile_uses(parsed, profile_catalog);
     if profile_uses.iter().any(|profile_use| {
         !matches!(
@@ -1821,11 +1855,12 @@ pub fn check_with_profile_catalog_and_inputs(
         parsed,
         package_name,
         &BTreeMap::new(),
-        inputs.refinement_internals,
-        inputs.temporal_selections,
-        inputs.clocks,
+        source.refinement_internals,
+        source.temporal_selections,
+        source.clocks,
         None,
         Some(profile_catalog),
+        None,
         None,
         models,
         dependencies,
@@ -1841,7 +1876,7 @@ pub fn check_with_profile_catalog_and_inputs(
             Ok(Staged::new(checked).with_work(work))
         }
         Err(failure) => Err(ProfileCheckFailure::Check {
-            failure,
+            failure: Box::new(failure),
             profile_uses,
         }),
     }
@@ -1946,6 +1981,10 @@ pub struct SourceInputs<'a> {
     /// The request's `clocks` member (FR-640), which serves the library
     /// units the check compiles; `None` when the caller selects by locus.
     pub clocks: Option<&'a super::RequestClocks>,
+    /// FR-952 "Selecting the mode in a compile request": the mode every
+    /// function body is checked under; `None` is `Linked`. Declared clauses
+    /// stay under `Linked`.
+    pub check_mode: Option<CheckMode>,
 }
 
 /// S3 and S4 over an admitted source-unit list, with the root request's
@@ -1969,6 +2008,7 @@ pub fn check_units_with_refinement_internals(
             refinement_internals: inputs.refinement_internals.as_ref(),
             temporal_selections: inputs.temporal_selections,
             clocks: inputs.clocks,
+            check_mode: inputs.check_mode,
             ..UnitCheckOptions::default()
         },
         limits,
@@ -2152,15 +2192,50 @@ pub fn check_with_refinement_internals(
     limits: SpineLimits,
     cancel: &Cancel,
 ) -> Result<Staged<CheckedUnit>, FrontEndFailure> {
-    check_with_refinement_internals_and_function_modes(
+    check_with_refinement_internals_and_integer_division(
         parsed,
         package_name,
         inputs,
         models,
         dependencies,
+        None,
         limits,
         cancel,
+    )
+}
+
+/// Check one unit with the caller's integer-division law and the ordinary
+/// refinement and clock inputs. Imported libraries keep their own headers.
+#[allow(
+    clippy::too_many_arguments,
+    reason = "one source's authored inputs, caller-selected division law, and stage context"
+)]
+pub fn check_with_refinement_internals_and_integer_division(
+    parsed: &ParsedUnitSource,
+    package_name: String,
+    inputs: SourceInputs<'_>,
+    models: &AdmittedModels,
+    dependencies: &DependencyInput,
+    integer_division: Option<crate::AdmittedIntegerDivision>,
+    limits: SpineLimits,
+    cancel: &Cancel,
+) -> Result<Staged<CheckedUnit>, FrontEndFailure> {
+    check_with_context_and_temporal_selections(
+        parsed,
+        package_name,
+        &super::StateClauseExecutionPoints::new(),
+        inputs.refinement_internals,
+        inputs.temporal_selections,
+        inputs.clocks,
+        integer_division,
         None,
+        None,
+        None,
+        models,
+        dependencies,
+        limits,
+        cancel,
+        false,
     )
 }
 
@@ -2190,6 +2265,7 @@ pub(crate) fn check_with_refinement_internals_and_function_modes(
         None,
         None,
         function_modes,
+        None,
         models,
         dependencies,
         limits,
@@ -2248,6 +2324,7 @@ pub fn check_with_execution_points_and_refinement_internals(
         None,
         None,
         None,
+        None,
         models,
         dependencies,
         limits,
@@ -2278,6 +2355,7 @@ pub fn check_with_temporal_selections_and_execution_points(
         execution_points,
         None,
         temporal_selections,
+        None,
         None,
         None,
         None,
@@ -2313,6 +2391,7 @@ pub fn check_with_execution_points_and_source_inputs(
         None,
         None,
         None,
+        inputs.check_mode,
         models,
         dependencies,
         limits,
@@ -2356,6 +2435,7 @@ pub(crate) fn check_for_continuation(
         inputs.integer_division,
         None,
         inputs.function_modes,
+        None,
         models,
         dependencies,
         limits,
@@ -2378,6 +2458,7 @@ fn check_with_context_and_temporal_selections(
     integer_division: Option<filament_checked::integer_division::AdmittedIntegerDivision>,
     extension_catalog: Option<ProfileCatalogInput<'_>>,
     function_modes: Option<&BTreeMap<String, CheckMode>>,
+    check_mode: Option<CheckMode>,
     models: &AdmittedModels,
     dependencies: &DependencyInput,
     limits: SpineLimits,
@@ -2410,7 +2491,7 @@ fn check_with_context_and_temporal_selections(
             clocks,
             integer_division,
             extension_catalog,
-            check_mode: CheckMode::Linked,
+            check_mode: check_mode.unwrap_or(CheckMode::Linked),
             function_modes,
             active: Vec::new(),
             compiled: BTreeMap::new(),
@@ -2615,7 +2696,7 @@ pub fn package_with_temporal_selections(
                     limits.emit(),
                 )
             })
-            .map_err(|refusal| emit_refusal(refusal, &checked.package))?;
+            .map_err(emit_refusal)?;
             let results = merge_emission_results(
                 &checked.protocol_results,
                 lifecycle_emission_results(&protocol_emission, &checked.source),
@@ -3157,9 +3238,21 @@ fn protocol_check_outcome(
         {
             let refusal = refused.refusals.first().cloned();
             if let Some(primary) = refusal.clone() {
+                // FR-096 / FR-884: protocol refusals carry the subject span
+                // on their typed cause. Keep the protocol declaration span
+                // only as a fallback for causes without a located subject.
+                let subject_span = match &primary.cause {
+                    CheckCause::ProtocolAnchor(cause) => Some(cause.span()),
+                    CheckCause::ProtocolObligation(cause) => Some(cause.span()),
+                    CheckCause::Temporal(cause) => Some(cause.span()),
+                    CheckCause::StateGraph(cause) => cause.span(),
+                    _ => None,
+                }
+                .unwrap_or(declaration_span);
+                let subject_region = region(parsed.source().reference(), subject_span);
                 if first_failure.is_none() {
                     first_failure = Some(CompileRefusal::Check {
-                        region: region(parsed.source().reference(), declaration_span),
+                        region: subject_region.clone(),
                         refusals: refused.refusals.clone(),
                     });
                 }
@@ -3188,8 +3281,7 @@ fn protocol_check_outcome(
                     cause: catalog
                         .map(|code| code.cause().to_owned())
                         .unwrap_or_else(|| "unknown-cause".to_owned()),
-                    locus: region(parsed.source().reference(), refused.declaration_span)
-                        .map(Locus::Region),
+                    locus: subject_region.map(Locus::Region),
                 });
             } else {
                 results.push(super::ProtocolResult::Refused {
@@ -3429,23 +3521,9 @@ fn parse_operation_clauses(
 
 /// The compile refusal for an emit refusal; a reached `emit.output_bytes`
 /// ceiling is the stage limit outcome (FR-264 Behavior 5).
-fn emit_refusal(
-    refusal: fsl_package::EmitRefusal,
-    package: &pkg::CheckedPackage,
-) -> Box<CompileRefusal> {
+fn emit_refusal(refusal: fsl_package::EmitRefusal) -> Box<CompileRefusal> {
     Box::new(match refusal {
         fsl_package::EmitRefusal::OutputLimit(limit) => CompileRefusal::Limit(limit),
-        fsl_package::EmitRefusal::SourceObjectEmission { span } => {
-            // The declaration's own unit locates it.
-            let region = package
-                .graph()
-                .first_source_object()
-                .and_then(|(source, _)| region(source, span));
-            CompileRefusal::Emit(
-                fsl_package::EmitRefusal::SourceObjectEmission { span },
-                region,
-            )
-        }
         fsl_package::EmitRefusal::MissingTemporalClockSelection {
             source_ref,
             span,
@@ -3494,7 +3572,7 @@ fn emit_unit(
         cancel,
         limits.emit(),
     )
-    .map_err(|refusal| emit_refusal(refusal, package))?;
+    .map_err(emit_refusal)?;
     if !emission.omitted().is_empty() {
         return Err(Box::new(CompileRefusal::Omitted(
             emission.omitted().to_vec(),
@@ -3539,8 +3617,14 @@ pub(crate) struct ComposedUnit {
     pub(crate) package: Arc<pkg::CheckedPackage>,
     /// The emitted wire bytes for the compiled package.
     pub(crate) emitted: pkg::EmittedPackage,
+    /// The source and evidence retained with the emitted package.
+    pub(crate) emitted_unit: EmittedUnit,
     /// The unit's own source.
     pub(crate) source: Source,
+    /// The checked unit returned by S3 and S4.
+    pub(crate) checked: CheckedUnit,
+    /// The admitted model set selected for this unit.
+    pub(crate) models: AdmittedModels,
 }
 
 /// [`ComposedUnit`] of `bytes` under `limits`.
@@ -3560,14 +3644,27 @@ pub(crate) fn compose(
         packages,
         dependencies,
         limits,
-        None,
-        &BTreeMap::new(),
+        ComposeModes {
+            check_mode: None,
+            function_modes: &BTreeMap::new(),
+        },
     )
+}
+
+/// Function-body checking modes for a composed test unit.
+#[cfg(test)]
+pub(crate) struct ComposeModes<'a> {
+    pub check_mode: Option<CheckMode>,
+    pub function_modes: &'a BTreeMap<String, CheckMode>,
 }
 
 /// [`compose`] with every function body checked under `check_mode` (`None`
 /// is `Linked`), the way a `Kernel` package is produced.
 #[cfg(test)]
+#[allow(
+    clippy::too_many_arguments,
+    reason = "mirrors the existing wide signature; a parameter struct is a separate refactor"
+)]
 pub(crate) fn compose_in_mode(
     source: SourceIdentity,
     path: &str,
@@ -3575,9 +3672,12 @@ pub(crate) fn compose_in_mode(
     packages: &fsl_semantics::model::intake::PackageInput,
     dependencies: &DependencyInput,
     limits: SpineLimits,
-    check_mode: Option<CheckMode>,
-    function_modes: &BTreeMap<String, CheckMode>,
+    modes: ComposeModes<'_>,
 ) -> Result<ComposedUnit, Box<CompileRefusal>> {
+    let ComposeModes {
+        check_mode,
+        function_modes,
+    } = modes;
     let cancel = Cancel::new();
     let refusal = |failure| match refusal_or_fault(failure) {
         Ok(refusal) => refusal,
@@ -3598,8 +3698,7 @@ pub(crate) fn compose_in_mode(
         .map_err(refusal)?
         .into_value();
     let checked = if let Some(check_mode) = check_mode {
-        let admitted = admit_parsed_unit_list(vec![parsed], dependencies)
-            ?;
+        let admitted = admit_parsed_unit_list(vec![parsed], dependencies)?;
         let models = select_units(&admitted, packages, limits.model, limits.source, &cancel)
             .map_err(refusal)?
             .into_value();
@@ -3637,10 +3736,14 @@ pub(crate) fn compose_in_mode(
         .map_err(refusal)?
         .into_value();
     record_declarations(&checked.package);
+    let emitted_package = emitted.package().clone();
     Ok(ComposedUnit {
-        emitted: emitted.package().clone(),
-        source: checked.source,
-        package: checked.package,
+        emitted: emitted_package,
+        emitted_unit: emitted,
+        source: checked.source.clone(),
+        package: checked.package.clone(),
+        checked,
+        models,
     })
 }
 
@@ -4136,9 +4239,12 @@ impl<'a> Resolution<'a> {
                 refusal,
             })
         })?;
-        let mut selected = (frame.raw == self.continuation_source)
-            .then_some(self.integer_division)
-            .flatten();
+        let mut selected = if frame.raw == self.continuation_source {
+            self.integer_division
+        } else {
+            let identity = LibraryName::new(&frame.package_name).ok();
+            identity.and_then(|identity| self.dependencies.integer_division(&identity))
+        };
         for source in &source_units {
             selected = fsl_semantics::check::resolve_integer_division(
                 &source.unit().selections().profiles,
@@ -4233,6 +4339,23 @@ impl<'a> Resolution<'a> {
                             if frame.execution_points.contains_key(name) =>
                         {
                             SourceRegion::new(frame.raw.clone(), 0, 0).ok()
+                        }
+                        CheckCause::EmptyPackage { .. } => {
+                            frame.source_units.first().and_then(|unit| {
+                                let source = unit.source();
+                                let header_end = source
+                                    .text()
+                                    .as_bytes()
+                                    .iter()
+                                    .position(|byte| *byte == b';')?
+                                    + 1;
+                                SourceRegion::new(
+                                    source.reference().clone(),
+                                    0,
+                                    u64::try_from(header_end).ok()?,
+                                )
+                                .ok()
+                            })
                         }
                         _ => None,
                     })

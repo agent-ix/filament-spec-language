@@ -496,11 +496,6 @@ fn invalid_native_spec_prevents_actual_cargo_calls_even_in_parallel() {
     let calls = root.join("cargo calls");
     let prechecks = root.join("precheck calls");
     let target = root.join("target");
-    let checkout = root.join("invocation-only FSpec sentinel");
-    let vectors = checkout.join("proposals/checked-package-v2");
-    std::fs::create_dir_all(&vectors).unwrap();
-    // Presence seam only, as in the parent fixture; never vector evidence.
-    std::fs::write(vectors.join("node-identity-vectors.json"), "").unwrap();
     let aggregate = |file: &Path, scheduling: &[&str]| {
         let mut command = make_with_file(root, file);
         command
@@ -508,7 +503,6 @@ fn invalid_native_spec_prevents_actual_cargo_calls_even_in_parallel() {
             .arg("ci")
             .env("PATH", &path)
             .env("CARGO_TARGET_DIR", &target)
-            .env("FSPEC_DIR", &checkout)
             .env_remove("CI_DEFAULT_TARGET_DIR")
             .env_remove("CI_ALL_TARGET_DIR")
             .env_remove("CI_CLEAN_TARGET_DIR")

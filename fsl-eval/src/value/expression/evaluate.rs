@@ -8,8 +8,8 @@
 //! make no charge.
 
 use filament_checked::node::{
-    Arithmetic, AuthoredBound, Connective, ConnectiveOrigin, EndSide, IntegerDivisionOperator,
-    NodeKind, OrderedKind, Visit,
+    Arithmetic, AuthoredBound, Connective, ConnectiveOrigin, EndSide, IndexedKind,
+    IntegerDivisionOperator, NodeKind, OrderedKind, Visit,
 };
 use std::cmp::Ordering;
 use std::collections::{BTreeSet, VecDeque};
@@ -17,62 +17,63 @@ use std::sync::Arc;
 
 use super::causes::{
     HistoryUnresolved, ModelQueryRefusal, NamedPopulationIncomplete, NavigationRefusal,
-    ObjectFieldIllTyped, ProtocolClauseSnapshot,
+    ObjectFieldIllTyped, ProtocolClauseSnapshot, UnsupportedConstruct,
 };
 use super::protocol_slot::charges::{BinderCharges, ChargeRouting, Owner, Owners};
 use super::s6a::separation::{
-    locatable, occurrence_at, InvocationBinding, Provenance, RuntimeValuePath, Separation,
-    SeparationStep, StopReport, Trail, ValuePathStep, ValuePathSubject, WitnessClaim,
+    ComparisonReport, InvocationBinding, Provenance, RuntimeValuePath, Separation, SeparationStep,
+    StopReport, Trail, ValuePathStep, ValuePathSubject, WitnessClaim, locatable, occurrence_at,
 };
 use super::slot_admission;
+use crate::simulation::model::{ReferenceBinding, ReferenceBindings};
 use filament_checked::key::DeclarationKey;
-use filament_eval::modulo as integer_modulo;
 use filament_eval::Evaluation;
 use filament_eval::FamilyOutcome;
 use filament_eval::FamilyResult;
+use filament_eval::modulo as integer_modulo;
 use filament_eval::{
     PreconditionFailure, ProtocolReferenceUnsupported, ReferenceUnresolved, StateModelUndefined,
 };
 use filament_exact::{
-    admit_quantity_result, compare_text, BoundedQuantityType, ComparisonOperator,
-    QuantityResultInterval,
+    ArithmeticOperator, BooleanConnective, IntegerArithmetic, OrderedOperands, OrderingOperator,
+    RationalArithmetic, evaluate_boolean, evaluate_integer_arithmetic,
+    evaluate_rational_arithmetic, order_numbers, retain_boolean,
 };
-use filament_exact::{
-    compare_ieee, convert_ieee_width, evaluate_ieee, exact_to_ieee, ieee_to_exact, IeeeComparison,
-    IeeeFlags, IeeeOperation, IeeeValue, IeeeWidth,
-};
-use filament_exact::{
-    compare_keys, form, form_grouped, retain_composite, CollectionValue, CompositeValue,
-    FieldValue, ObjectId, ObjectReference, OptionValue, Quantity, UnionValue, Value, ValueType,
-};
-use filament_exact::{
-    evaluate_boolean, evaluate_integer_arithmetic, evaluate_rational_arithmetic, order_numbers,
-    retain_boolean, ArithmeticOperator, BooleanConnective, IntegerArithmetic, OrderedOperands,
-    OrderingOperator, RationalArithmetic,
-};
-use filament_exact::{evaluate_decimal, Decimal, DecimalOperation, DecimalType};
 use filament_exact::{
     BoundViolation, CardinalityBound, Charge, ChargePoint, CollectionKind, Incomplete, Integer,
     LimitKind, Meter, PopulationId,
 };
+use filament_exact::{
+    BoundedQuantityType, ComparisonOperator, QuantityResultInterval, admit_quantity_result,
+    compare_text,
+};
+use filament_exact::{
+    CollectionValue, CompositeValue, FieldValue, ObjectId, ObjectReference, OptionValue, Quantity,
+    UnionValue, Value, ValueType, compare_keys, form, form_grouped, retain_composite,
+};
+use filament_exact::{Decimal, DecimalOperation, DecimalType, evaluate_decimal};
 use filament_exact::{DivisionMember, IntegerDomain};
 use filament_exact::{EffectiveId, NodeKey};
 use filament_exact::{FloatType, Rational};
-use filament_exact::{Outcome, Refusal, Undefined};
-use filament_semantic_value::catalog::{render_identity, InternalFault};
-use filament_semantic_value::declaration::{
-    operand_value, CompositeShape, EqualityOperator, FieldDeclaration, FieldRef, TypeEnvironment,
+use filament_exact::{
+    IeeeComparison, IeeeFlags, IeeeOperation, IeeeValue, IeeeWidth, compare_ieee,
+    convert_ieee_width, evaluate_ieee, exact_to_ieee, ieee_to_exact,
 };
-use filament_semantic_value::enumeration::{compare_enum, EnumMemberIndex};
+use filament_exact::{Outcome, Refusal, Undefined};
+use filament_semantic_value::catalog::{InternalFault, render_identity};
+use filament_semantic_value::declaration::{
+    CompositeShape, EqualityOperator, FieldDeclaration, FieldRef, TypeEnvironment, operand_value,
+};
+use filament_semantic_value::enumeration::{EnumMemberIndex, compare_enum};
 use filament_semantic_value::location::ExpressionLocation as Location;
 use filament_semantic_value::loss::{LocatedLoss, ValueLoss};
 use filament_semantic_value::quantity::{
-    compare_quantity, convert_quantity, evaluate_quantity_unit, ConvertedValue, QuantityOperation,
-    QuantityTarget, UnitScope,
+    ConvertedValue, QuantityOperation, QuantityTarget, UnitScope, compare_quantity,
+    convert_quantity, evaluate_quantity_unit,
 };
 use filament_semantic_value::relationship_extent::Resolution;
-use filament_semantic_value::stop::{outcome_from_stop, outcome_into_stop, Stop};
-use fsl_foundation::diagnostic::{kernel_refusal_record, Locus, RefusalRecord};
+use filament_semantic_value::stop::{Stop, outcome_from_stop, outcome_into_stop};
+use fsl_foundation::diagnostic::{Locus, RefusalRecord, kernel_refusal_record};
 use fsl_foundation::source::provenance::SourceRegion;
 use fsl_semantics::check::{CheckedGraph, DispatchTable, FormedUnits, Operator, Scope, Slot};
 #[cfg(test)]
@@ -81,7 +82,7 @@ use fsl_semantics::model::object_environment::{ObjectEnvironment, ObservedRead};
 use fsl_semantics::model::observation::OutOfRange;
 use fsl_semantics::model::population::PopulationBinding;
 use fsl_semantics::value::divide as integer_divide;
-use fsl_semantics::value::model_query::{evaluate_all_instances, evaluate_lookup, ModelQueryHalt};
+use fsl_semantics::value::model_query::{ModelQueryHalt, evaluate_all_instances, evaluate_lookup};
 use node_source::NodeSource;
 pub(crate) use world::World;
 
@@ -164,8 +165,8 @@ struct LocatedStop {
 }
 
 use crate::value::collections::{
-    self, charge_element, charge_visit, retain_scalar, Absorbed, Flow, Iteration as IterationState,
-    Sequence, Shape, Spec,
+    self, Absorbed, Flow, Iteration as IterationState, Sequence, Shape, Spec, charge_element,
+    charge_visit, retain_scalar,
 };
 use crate::value::composite::{self, construct_record, construct_tuple, present_slots, read_field};
 
@@ -304,6 +305,9 @@ fn bounded_result_interval(bounded: &BoundedQuantityType) -> Result<QuantityResu
 fn size_of(operand: Value) -> Result<Integer, Halt> {
     match operand {
         Value::Text(text) => Ok(Integer::from(text.length())),
+        Value::Map(map) => Ok(Integer::from(map.entries().len())),
+        Value::Bytes(_) => Err(unsupported_construct("bytes")),
+        Value::JsonObject(_) => Err(unsupported_construct("json_object")),
         Value::Boolean(_)
         | Value::Integer(_)
         | Value::Rational(_)
@@ -321,6 +325,14 @@ fn size_of(operand: Value) -> Result<Integer, Halt> {
         | Value::Collection(_)
         | Value::Reference(_) => Err(invariant("collection-value-expected")),
     }
+}
+
+/// A checked construct whose evaluation is not implemented in this evaluator
+/// returns its typed unsupported outcome, naming the construct (FR-091).
+fn unsupported_construct(what: &'static str) -> Halt {
+    Halt::Family(FamilyResult::Refused(Box::new(UnsupportedConstruct {
+        what,
+    })))
 }
 
 /// An FSL-owned invariant at its detecting producer (FR-090).
@@ -450,6 +462,7 @@ pub(super) fn refused_evaluation(refusal: Refusal) -> Evaluation {
         outcome: FamilyOutcome::Evaluated(Outcome::Refused(refusal)),
         location: None,
         losses: Vec::new(),
+        frame_depth: 0,
     }
 }
 
@@ -843,6 +856,12 @@ pub(crate) struct Machine<'a, 'm, N> {
     /// FR-487: the component environment each model read of a hyper atom's
     /// condition observes, when the machine runs one.
     components: Option<ComponentReads<'a>>,
+    /// FR-1000: this subject's fixed/created decision for pending reference
+    /// literals; absent outside model-state evaluation.
+    reference_bindings: Option<&'a ReferenceBindings>,
+    /// FR-1000/W38: the subject table for each hyper component. A created
+    /// literal selects the table indexed by its checked `@ trace` location.
+    component_reference_bindings: Option<&'a [&'a ReferenceBindings]>,
 }
 
 /// The component environments a hyper atom's condition reads (FR-487
@@ -851,8 +870,19 @@ pub(crate) struct Machine<'a, 'm, N> {
 pub(crate) struct ComponentReads<'a> {
     /// One observation per trace variable, in quantifier order.
     pub(crate) environments: &'a [&'a ObjectEnvironment],
+    /// One pre-state observation per trace variable, when evaluating a model
+    /// relation over transitions.
+    pub(crate) pre_environments: Option<&'a [&'a ObjectEnvironment]>,
     /// The component each model read observes, keyed by the read's location.
     pub(crate) reads: &'a std::collections::BTreeMap<Location, usize>,
+    /// The observation selected for each component read, when the caller has
+    /// both pre- and post-state observations.
+    pub(crate) observations: Option<
+        &'a std::collections::BTreeMap<
+            Location,
+            fsl_semantics::model::clause_observation::Observation,
+        >,
+    >,
 }
 
 /// A parameter of a claim at a key with no conforming object.
@@ -868,6 +898,41 @@ struct AbsentParameter {
 }
 
 impl<'a, 'm, N: NodeSource<'a>> Machine<'a, 'm, N> {
+    /// A value-family evaluator over the declarations held by a bytes-only
+    /// package and the caller's admitted object environment.
+    pub(crate) fn from_bare_package(
+        world: &'a fsl_package::BareWorld,
+        objects: &'a ObjectEnvironment,
+        meter: &'m mut Meter,
+    ) -> Self {
+        Self::build(
+            World::Bytes(world),
+            objects,
+            None,
+            None,
+            meter,
+            &[],
+            EvaluationFamily::Value,
+        )
+    }
+
+    /// The bytes-only counterpart of [`Self::observing_applications`].
+    pub(crate) fn observing_bare_package(
+        world: &'a fsl_package::BareWorld,
+        objects: &'a ObjectEnvironment,
+        meter: &'m mut Meter,
+        observation: super::ApplicationObserver<'m>,
+    ) -> Self {
+        let mut machine = Self::from_bare_package(world, objects, meter);
+        machine.observed_applications = Some(observation.observed);
+        machine.operation_capture = Some(observation.capture);
+        machine.unavailable_imported_call = Some(observation.unavailable_imported_call);
+        machine.function_case_limit = Some(observation.function_case_limit);
+        machine.function_evaluations = Some(observation.function_evaluations);
+        machine.function_case_limit_reached = Some(observation.function_case_limit_reached);
+        machine
+    }
+
     pub(crate) fn new(
         scope: &'a Scope,
         graph: &'a CheckedGraph,
@@ -1018,7 +1083,26 @@ impl<'a, 'm, N: NodeSource<'a>> Machine<'a, 'm, N> {
             witnessed_reads: std::collections::BTreeSet::new(),
             absent_parameters: Vec::new(),
             components: None,
+            reference_bindings: None,
+            component_reference_bindings: None,
         }
+    }
+
+    /// FR-1000: evaluate against the reference literals admitted with the
+    /// model subject that owns the current state.
+    pub(crate) fn with_reference_bindings(mut self, bindings: &'a ReferenceBindings) -> Self {
+        self.reference_bindings = Some(bindings);
+        self
+    }
+
+    /// W38: bind hyper literal occurrences to the component table selected
+    /// by the checked innermost `@ trace` component.
+    pub(crate) fn with_component_reference_bindings(
+        mut self,
+        bindings: &'a [&'a ReferenceBindings],
+    ) -> Self {
+        self.component_reference_bindings = Some(bindings);
+        self
     }
 
     /// FR-125 Instancing: `slot` carries absent-key guard provenance when the
@@ -1079,6 +1163,33 @@ impl<'a, 'm, N: NodeSource<'a>> Machine<'a, 'm, N> {
             && self.frames.len() == 1
             && self.iterations == 0
             && self.imported.is_empty()
+    }
+
+    /// FR-265: retain a completed authored comparison on the claim's own
+    /// level, alongside its result and operands.
+    fn note_comparison(&mut self, node: N, left: &Value, right: &Value, result: bool) {
+        if !self.on_claim_level() || node.is_ordering_part() {
+            return;
+        }
+        let Some(location) = node.location() else {
+            return;
+        };
+        let Some(graph) = self.world.graph() else {
+            return;
+        };
+        let Some(comparison) = occurrence_at(graph, location, Some(Operator::Binary)) else {
+            return;
+        };
+        if let Some(trail) = self.trail.as_mut() {
+            trail.compared(
+                location,
+                ComparisonReport {
+                    comparison,
+                    operands: [left.clone(), right.clone()],
+                    result,
+                },
+            );
+        }
     }
 
     /// Evaluate against `package` from now on, returning the package this
@@ -1310,10 +1421,11 @@ impl<'a, 'm, N: NodeSource<'a>> Machine<'a, 'm, N> {
                         outcome: FamilyOutcome::FamilyEvaluated(result),
                         location: reported_location.cloned(),
                         losses: Vec::new(),
+                        frame_depth: self.frame_depth(),
                     }),
-                    Halt::Stop(stop) => Self::stopped(stop, reported_location),
+                    Halt::Stop(stop) => self.stopped(stop, reported_location),
                     // An imported call site still locates at that call.
-                    Halt::Located(at) => Self::stopped(
+                    Halt::Located(at) => self.stopped(
                         at.stop,
                         match self.imported.first() {
                             Some(call) => call.location(),
@@ -1345,13 +1457,12 @@ impl<'a, 'm, N: NodeSource<'a>> Machine<'a, 'm, N> {
                     outcome: FamilyOutcome::FamilyEvaluated(result),
                     location: root.location().cloned(),
                     losses: Vec::new(),
+                    frame_depth: self.frame_depth(),
                 });
             }
-            Err(Halt::Stop(stop)) => {
-                return Self::stopped(stop, root.location());
-            }
+            Err(Halt::Stop(stop)) => return self.stopped(stop, root.location()),
             Err(Halt::Located(at)) => {
-                return Self::stopped(at.stop, at.location.as_ref());
+                return self.stopped(at.stop, at.location.as_ref());
             }
         };
         if !self.values.is_empty() || !self.value_guard_provenance.is_empty() {
@@ -1361,6 +1472,7 @@ impl<'a, 'm, N: NodeSource<'a>> Machine<'a, 'm, N> {
             outcome: FamilyOutcome::Evaluated(Outcome::Completed(value)),
             location: None,
             losses: std::mem::take(&mut self.losses),
+            frame_depth: 0,
         })
     }
 
@@ -1426,7 +1538,7 @@ impl<'a, 'm, N: NodeSource<'a>> Machine<'a, 'm, N> {
                 Visit::Forall => !holds,
                 Visit::Exists => holds,
                 Visit::Map | Visit::Filter | Visit::Count | Visit::Sum | Visit::Only => {
-                    return Err(fault())
+                    return Err(fault());
                 }
             },
             Ok(_) => return Err(fault()),
@@ -1458,7 +1570,19 @@ impl<'a, 'm, N: NodeSource<'a>> Machine<'a, 'm, N> {
     /// S6a invariant break, an `InternalFault` and never a refusal record
     /// (FR-096-AC-19, observed through
     /// [`fsl_semantics::check::ValueFunctionFamily::evaluate`]).
-    fn stopped(stop: Stop, location: Option<&Location>) -> Result<Evaluation, InternalFault> {
+    fn stopped(
+        &self,
+        stop: Stop,
+        location: Option<&Location>,
+    ) -> Result<Evaluation, InternalFault> {
+        Self::stopped_at_depth(stop, location, self.frame_depth())
+    }
+
+    fn stopped_at_depth(
+        stop: Stop,
+        location: Option<&Location>,
+        frame_depth: u32,
+    ) -> Result<Evaluation, InternalFault> {
         if let Stop::Refused(Refusal::CheckedInvariant { cause }) = stop {
             return Err(InternalFault::from_kernel(
                 "S6a",
@@ -1470,7 +1594,13 @@ impl<'a, 'm, N: NodeSource<'a>> Machine<'a, 'm, N> {
             outcome: FamilyOutcome::Evaluated(outcome_from_stop(Err(stop))),
             location: location.cloned(),
             losses: Vec::new(),
+            frame_depth,
         })
+    }
+
+    /// The call frames above the selected call's own frame (FR-100).
+    fn frame_depth(&self) -> u32 {
+        u32::try_from(self.frames.len().saturating_sub(1)).unwrap_or(u32::MAX)
     }
 
     fn pop(&mut self) -> Result<Value, Halt> {
@@ -2162,6 +2292,73 @@ impl<'a, 'm, N: NodeSource<'a>> Machine<'a, 'm, N> {
 
     fn eval(&mut self, node: N) -> Result<(), Halt> {
         match node.kind() {
+            NodeKind::ReferenceLiteral {
+                object_type,
+                identity,
+            } => {
+                let key = (object_type, identity);
+                let component_binding = self
+                    .components
+                    .and_then(|components| {
+                        node.location()
+                            .and_then(|location| components.reads.get(location))
+                    })
+                    .and_then(|component| {
+                        self.component_reference_bindings
+                            .and_then(|bindings| bindings.get(*component).copied())
+                    })
+                    .and_then(|bindings| bindings.get(key.0, key.1));
+                let binding = component_binding
+                    .or_else(|| {
+                        self.reference_bindings
+                            .and_then(|bindings| bindings.get(key.0, key.1))
+                    })
+                    .or_else(|| {
+                        self.component_reference_bindings.and_then(|bindings| {
+                            bindings
+                                .iter()
+                                .find_map(|bindings| bindings.get(key.0, key.1))
+                        })
+                    })
+                    .ok_or_else(|| invariant("reference-literal-subject-binding-exists"))?;
+                match binding {
+                    ReferenceBinding::Fixed(reference) => {
+                        self.push_value(Value::Reference(reference.clone()), false);
+                    }
+                    ReferenceBinding::CreatedObject {
+                        object_type,
+                        identity,
+                        population,
+                        populations,
+                    } => {
+                        let objects = self.objects_for(node)?;
+                        self.log_reference_membership_read(node, objects, populations);
+                        let reference = populations.iter().find_map(|population| {
+                            objects
+                                .population_members(&population.node)
+                                .into_iter()
+                                .flatten()
+                                .find(|reference| {
+                                    reference.object().as_str() == identity
+                                        && self.world.types().conforms(
+                                            reference.object_type().clone(),
+                                            object_type.clone(),
+                                        )
+                                })
+                        });
+                        let Some(reference) = reference else {
+                            return Err(Halt::Family(FamilyResult::Undefined(Box::new(
+                                StateModelUndefined::AbsentKey {
+                                    binding: population.node.clone(),
+                                    key: render_identity(identity.as_bytes()),
+                                },
+                            ))));
+                        };
+                        self.push_value(Value::Reference(reference.clone()), false);
+                    }
+                }
+                return Ok(());
+            }
             NodeKind::Literal(literal) => {
                 self.push_value(N::literal(literal).clone(), false);
                 return Ok(());
@@ -2267,6 +2464,7 @@ impl<'a, 'm, N: NodeSource<'a>> Machine<'a, 'm, N> {
     fn apply(&mut self, node: N) -> Result<(), Halt> {
         let value = match node.kind() {
             NodeKind::Literal(_)
+            | NodeKind::ReferenceLiteral { .. }
             | NodeKind::Local(_)
             | NodeKind::Let { .. }
             | NodeKind::If { .. }
@@ -2275,6 +2473,64 @@ impl<'a, 'm, N: NodeSource<'a>> Machine<'a, 'm, N> {
             // FR-322: `eval` queues a `case` through `Task::Select`, never
             // `Task::Apply`.
             NodeKind::Case { .. } => return Err(invariant("evaluation-apply-node-invalid")),
+            // Quantity scaling is applied below with the source unit kept on
+            // the result (FR-142 quantity scaling).
+            NodeKind::QuantityScaleDiv { .. } => {
+                return Err(unsupported_construct("quantity_scale"));
+            }
+            NodeKind::TupleProject { .. } => {
+                return Err(unsupported_construct("tuple_project"));
+            }
+            // FSpec FR-144 "Indexing": a map entry is located by its key's
+            // canonical key; selection charges one `collection.element` and
+            // retains the value; an absent key has no element.
+            NodeKind::Index {
+                kind: IndexedKind::Map,
+                ..
+            } => {
+                let key = self.pop()?;
+                let Value::Map(map) = self.pop()? else {
+                    return Err(invariant("map-value-expected"));
+                };
+                let value = crate::value::map_entry(&map, &key)
+                    .cloned()
+                    .ok_or(Stop::Undefined(Undefined::NoElement))?;
+                collections::charge_element(self.meter)?;
+                collections::retain_accumulator(value, self.meter)?
+            }
+            NodeKind::Index {
+                index,
+                kind: kind @ (IndexedKind::Sequence | IndexedKind::OrderedSet),
+                ..
+            } => {
+                let position = self.pop_integer()?;
+                let collection = self.pop_collection()?;
+                let expected_kind = match collection.collection_type().kind() {
+                    CollectionKind::Sequence => IndexedKind::Sequence,
+                    CollectionKind::OrderedSet => IndexedKind::OrderedSet,
+                    CollectionKind::Set | CollectionKind::Bag => {
+                        return Err(invariant("index-collection-kind-mismatch"));
+                    }
+                };
+                if *kind != expected_kind
+                    || node.at(*index).value_type() != &ValueType::Integer
+                    || node.value_type() != collection.collection_type().element()
+                {
+                    return Err(invariant("index-collection-type-mismatch"));
+                }
+                let Some(position) = position
+                    .to_u64()
+                    .and_then(|position| usize::try_from(position).ok())
+                else {
+                    return Err(Stop::Undefined(Undefined::NoElement).into());
+                };
+                let Some(value) = collection.elements().get(position) else {
+                    return Err(Stop::Undefined(Undefined::NoElement).into());
+                };
+                charge_element(self.meter)?;
+                retain_scalar(value.clone(), self.meter)?
+            }
+            NodeKind::ConvertText(_, _) => return Err(unsupported_construct("text_conversion")),
             // FR-322: the payload arguments are evaluated and on the stack in
             // position order; the first stopped one never reaches here. Type
             // checking proved each payload against its position (FR-317), so
@@ -2353,7 +2609,7 @@ impl<'a, 'm, N: NodeSource<'a>> Machine<'a, 'm, N> {
             NodeKind::ProtocolReference { .. } => {
                 return Err(Halt::Family(FamilyResult::Refused(Box::new(
                     ProtocolReferenceUnsupported,
-                ))))
+                ))));
             }
             // FR-063: no arm for the probe variant under `--cfg seam_probe`
             // alone (`E0004`, this seam's evidence). The arm below exists
@@ -2401,7 +2657,7 @@ impl<'a, 'm, N: NodeSource<'a>> Machine<'a, 'm, N> {
                             IntegerDivisionOperator::Div => DivisionMember::Quotient,
                             IntegerDivisionOperator::Rem => DivisionMember::Remainder,
                             IntegerDivisionOperator::Mod => {
-                                return Err(invariant("integer-division-member-mismatch"))
+                                return Err(invariant("integer-division-member-mismatch"));
                             }
                         };
                         integer_divide(
@@ -2451,6 +2707,8 @@ impl<'a, 'm, N: NodeSource<'a>> Machine<'a, 'm, N> {
                 | ValueType::CarriedQuantity(_)
                 | ValueType::Text(_)
                 | ValueType::String
+                | ValueType::Bytes
+                | ValueType::JsonObject
                 | ValueType::Uuid
                 | ValueType::Timestamp
                 | ValueType::Enum(_)
@@ -2633,6 +2891,53 @@ impl<'a, 'm, N: NodeSource<'a>> Machine<'a, 'm, N> {
                 self.units.form(unit);
                 Value::Quantity(quantity)
             }
+            NodeKind::QuantityScale { .. } => {
+                let factor = match self.pop()? {
+                    Value::Integer(value) => Rational::from_integer(value),
+                    Value::Rational(value) => value,
+                    Value::Decimal(value) => value.normalized().to_rational(),
+                    Value::Boolean(_)
+                    | Value::Float(_)
+                    | Value::Quantity(_)
+                    | Value::Text(_)
+                    | Value::String(_)
+                    | Value::Bytes(_)
+                    | Value::JsonObject(_)
+                    | Value::Uuid(_)
+                    | Value::Timestamp(_)
+                    | Value::Enum(_)
+                    | Value::Population(_)
+                    | Value::Option(_)
+                    | Value::Composite(_)
+                    | Value::Union(_)
+                    | Value::Collection(_)
+                    | Value::Map(_)
+                    | Value::Reference(_) => {
+                        return Err(invariant("quantity-scale-factor-expected"));
+                    }
+                };
+                let Value::Quantity(quantity) = self.pop()? else {
+                    return Err(invariant("quantity-scale-operand-expected"));
+                };
+                if self.units.resolve(&quantity).is_none() {
+                    return Err(unresolved_unit());
+                }
+                let operation = RationalArithmetic::Multiply(quantity.magnitude(), &factor);
+                self.meter.charge(
+                    Charge::new(ChargePoint::UnitIdentityRead)
+                        .size(LimitKind::ValueOccurrences, 1)
+                        .size(LimitKind::IntegerBits, quantity.magnitude().max_part_bits()),
+                )?;
+                self.meter
+                    .charge(Charge::new(ChargePoint::UnitRationalArithmetic).exact_size(
+                        LimitKind::IntegerBits,
+                        filament_exact::rational_arithmetic_bits(operation),
+                    ))?;
+                let magnitude = quantity.magnitude().mul(&factor);
+                self.meter
+                    .charge(Charge::new(ChargePoint::UnitResultRetain).results(1))?;
+                Value::Quantity(Quantity::new(magnitude, quantity.unit().clone()))
+            }
             NodeKind::QuantityNegate(_) => {
                 let Value::Quantity(operand) = self.pop()? else {
                     return Err(invariant("quantity-negate-operand-expected"));
@@ -2689,7 +2994,9 @@ impl<'a, 'm, N: NodeSource<'a>> Machine<'a, 'm, N> {
             NodeKind::Order(operator, kind, _, _) => {
                 let right = self.pop()?;
                 let left = self.pop()?;
-                Value::Boolean(self.order(*operator, *kind, &left, &right)?)
+                let result = self.order(*operator, *kind, &left, &right)?;
+                self.note_comparison(node, &left, &right, result);
+                Value::Boolean(result)
             }
             NodeKind::Equality(operator, checked, left_node, right_node) => {
                 let right = self.pop()?;
@@ -2705,20 +3012,22 @@ impl<'a, 'm, N: NodeSource<'a>> Machine<'a, 'm, N> {
                         && !node.at(id).value_type().admits(value)
                         && self.reads_witnessed(node.at(id))
                 };
-                match (&left, &right) {
+                let result = match (&left, &right) {
                     (Value::Integer(l), Value::Integer(r))
                         if outside_declared_range(*left_node, &left)
                             || outside_declared_range(*right_node, &right) =>
                     {
-                        Value::Boolean((l == r) == (*operator == EqualityOperator::Equal))
+                        (l == r) == (*operator == EqualityOperator::Equal)
                     }
-                    _ => Value::Boolean(outcome_into_stop(checked.evaluate(
+                    _ => outcome_into_stop(checked.evaluate(
                         self.world.types(),
                         &left,
                         &right,
                         self.meter,
-                    ))?),
-                }
+                    ))?,
+                };
+                self.note_comparison(node, &left, &right, result);
+                Value::Boolean(result)
             }
             NodeKind::IeeeNumericEquality(_, _) => {
                 let right = self.pop()?;
@@ -2735,10 +3044,17 @@ impl<'a, 'm, N: NodeSource<'a>> Machine<'a, 'm, N> {
                     if !self.world.has_ieee_profile() {
                         return Err(invariant("ieee-profile-unresolved"));
                     }
-                    Value::Boolean(outcome_into_stop(
+                    let result = outcome_into_stop(
                         compare_ieee(IeeeComparison::NumericEqual, left, right, self.meter)
                             .map_err(|_| invariant("ieee-operation-rejected"))?,
-                    )?)
+                    )?;
+                    self.note_comparison(
+                        node,
+                        &Value::Float(left),
+                        &Value::Float(right),
+                        result,
+                    );
+                    Value::Boolean(result)
                 } else {
                     // FR-397 "Evaluate once": the numeric-equality parts of
                     // an ordering's composition add no charge. The decision
@@ -3178,8 +3494,35 @@ impl<'a, 'm, N: NodeSource<'a>> Machine<'a, 'm, N> {
             }
             NodeKind::Contains(_, _) => {
                 let item = self.pop()?;
-                let collection = self.pop_collection()?;
-                collections::contains(&item, &collection, self.meter)?
+                match self.pop()? {
+                    Value::Collection(collection) => {
+                        collections::contains(&item, &collection, self.meter)?
+                    }
+                    // FSpec FR-144 "Map values": `contains(m, k)` tests keys
+                    // only.
+                    Value::Map(map) => {
+                        let found = crate::value::map_entry(&map, &item).is_some();
+                        collections::retain_scalar(Value::Boolean(found), self.meter)?
+                    }
+                    Value::Boolean(_)
+                    | Value::Integer(_)
+                    | Value::Rational(_)
+                    | Value::Decimal(_)
+                    | Value::Float(_)
+                    | Value::Quantity(_)
+                    | Value::Text(_)
+                    | Value::String(_)
+                    | Value::Bytes(_)
+                    | Value::JsonObject(_)
+                    | Value::Uuid(_)
+                    | Value::Timestamp(_)
+                    | Value::Enum(_)
+                    | Value::Population(_)
+                    | Value::Option(_)
+                    | Value::Composite(_)
+                    | Value::Union(_)
+                    | Value::Reference(_) => return Err(invariant("collection-value-expected")),
+                }
             }
             NodeKind::Navigate {
                 relationship,
@@ -3188,7 +3531,7 @@ impl<'a, 'm, N: NodeSource<'a>> Machine<'a, 'm, N> {
                 ..
             } => self.navigate(node, relationship, *near, *unique)?,
             NodeKind::NamedPopulation { .. } => {
-                return Err(invariant("named-population-is-read-by-its-parent"))
+                return Err(invariant("named-population-is-read-by-its-parent"));
             }
             NodeKind::AllInstances { population }
                 if let NodeKind::NamedPopulation {
@@ -3378,16 +3721,37 @@ impl<'a, 'm, N: NodeSource<'a>> Machine<'a, 'm, N> {
     /// case (SR-750 FND-013).
     fn objects_for(&self, node: N) -> Result<&'a ObjectEnvironment, Halt> {
         if let Some(components) = &self.components {
-            if let Some(component) = node
-                .location()
-                .and_then(|location| components.reads.get(location))
-            {
+            if let Some((location, component)) = node.location().and_then(|location| {
+                components
+                    .reads
+                    .get(location)
+                    .map(|component| (location, component))
+            }) {
+                if components
+                    .observations
+                    .and_then(|observations| observations.get(location))
+                    == Some(&fsl_semantics::model::clause_observation::Observation::Pre)
+                {
+                    if let Some(pre_environments) = components.pre_environments {
+                        return pre_environments
+                            .get(*component)
+                            .cloned()
+                            .ok_or_else(|| invariant("component-pre-environment-resolved"));
+                    }
+                }
                 return components
                     .environments
                     .get(*component)
                     .cloned()
                     .ok_or_else(|| invariant("component-environment-resolved"));
             }
+        }
+        // FR-120 "Eligible" (W50): a read inside `pre(...)` observes the
+        // pre-state, also a read in the body or precondition of a function or
+        // dispatched query that `pre(...)` calls, whose locations the clause's
+        // `reads` does not list.
+        if let (Some(_), Anchor::Pre, Some(pre)) = (self.reads, self.anchor, self.pre_objects) {
+            return Ok(pre);
         }
         match self.reads {
             Some(reads)
@@ -3463,6 +3827,35 @@ impl<'a, 'm, N: NodeSource<'a>> Machine<'a, 'm, N> {
             population: key.clone(),
             object,
         });
+    }
+
+    /// Records a created-object reference literal's lookup in the population
+    /// selected during subject binding. The graph stays subject-independent;
+    /// footprint derivation admits all populations related to its type.
+    fn log_reference_membership_read(
+        &self,
+        node: N,
+        objects: &ObjectEnvironment,
+        populations: &[DeclarationKey],
+    ) {
+        let Some(log) = objects.read_log() else {
+            return;
+        };
+        let observation = self
+            .reads
+            .and_then(|reads| node.location().and_then(|location| reads.get(location)))
+            .copied()
+            .unwrap_or(match self.anchor {
+                Anchor::Pre => fsl_semantics::model::clause_observation::Observation::Pre,
+                Anchor::Post => fsl_semantics::model::clause_observation::Observation::Post,
+            });
+        for population in populations {
+            log.record(ObservedRead::Membership {
+                observation,
+                population: population.clone(),
+                object: None,
+            });
+        }
     }
 
     /// FR-139: the objects of the concrete population `population` in the
@@ -4722,7 +5115,7 @@ mod carried_sum;
 #[cfg(test)]
 mod invariants;
 
-mod node_source;
+pub(super) mod node_source;
 pub(super) mod reader_source;
 mod world;
 
@@ -4735,7 +5128,7 @@ mod union_case;
 
 #[cfg(test)]
 mod tests {
-    use crate::value::composite::{construction_fault_identifier, ConstructionSite};
+    use crate::value::composite::{ConstructionSite, construction_fault_identifier};
     use filament_exact::IntegerInterval;
     use filament_semantic_value::declaration::{
         Component, ConstructionCause, ConstructionRefusal, StorageRequest, StorageUnit,
@@ -4806,10 +5199,10 @@ mod tests {
         DomainPackage, DomainPackageRecord, DomainPackageRef, Extent, ObjectTypeRecord,
         PopulationRecord,
     };
-    use fsl_semantics::model::normalize::{normalize, NormalizeOutcome};
+    use fsl_semantics::model::normalize::{NormalizeOutcome, normalize};
     use fsl_semantics::model::population::{
-        admit_binding, AdmissionMeter, AdmissionOutcome, PopulationAdmissionLimits,
-        PopulationDocument, PopulationMember,
+        AdmissionMeter, AdmissionOutcome, PopulationAdmissionLimits, PopulationDocument,
+        PopulationMember, admit_binding,
     };
     use ix_trace_rs::trace;
 
@@ -5064,8 +5457,8 @@ mod tests {
     /// package and `F`'s checked identity, so a test can call
     /// [`fsl_semantics::check::ValueFunctionFamily::evaluate`] directly -- the S6a
     /// seam itself, bypassing `CheckedPackage::call`'s admission.
-    pub(super) fn population_function_package(
-    ) -> (fsl_package::CheckedPackage, filament_exact::NodeKey) {
+    pub(super) fn population_function_package()
+    -> (fsl_package::CheckedPackage, filament_exact::NodeKey) {
         let domain_package = domain_package("bundle.qsl174-ac10-seam");
         let view = match normalize(&domain_package, ModelNormalizationLimits::UNLIMITED) {
             NormalizeOutcome::Completed(view) => view,
@@ -5107,10 +5500,13 @@ mod tests {
                 )],
                 TypeForm::builtin(fsl_forms::BuiltinType::Integer, SPAN),
                 None,
-                Expression::size(Expression::all_instances(
-                    TypeForm::name("M::A", SPAN),
-                    Expression::name("p".to_owned()),
-                )),
+                Expression::size(
+                    Expression::all_instances(
+                        TypeForm::name("M::A", SPAN),
+                        Expression::name("p".to_owned()),
+                    ),
+                    None,
+                ),
             )];
             declarations
         }
@@ -5711,31 +6107,31 @@ mod tests {
         );
         let optional = ValueType::option(range);
         let outside = FieldValue::Present(Value::Integer(Integer::from(-1_i64)));
-        assert!(CheckedMachine::project(
-            &TypeEnvironment::default(),
-            &outside,
-            true,
-            &optional,
-            true
-        )
-        .is_ok());
-        assert!(CheckedMachine::project(
-            &TypeEnvironment::default(),
-            &outside,
-            true,
-            &optional,
-            false
-        )
-        .is_err());
+        assert!(
+            CheckedMachine::project(&TypeEnvironment::default(), &outside, true, &optional, true)
+                .is_ok()
+        );
+        assert!(
+            CheckedMachine::project(
+                &TypeEnvironment::default(),
+                &outside,
+                true,
+                &optional,
+                false
+            )
+            .is_err()
+        );
         let wrong_kind = FieldValue::Present(Value::Boolean(true));
-        assert!(CheckedMachine::project(
-            &TypeEnvironment::default(),
-            &wrong_kind,
-            true,
-            &optional,
-            false
-        )
-        .is_err());
+        assert!(
+            CheckedMachine::project(
+                &TypeEnvironment::default(),
+                &wrong_kind,
+                true,
+                &optional,
+                false
+            )
+            .is_err()
+        );
     }
     /// FR-106 check 6.5: an equality compares an out-of-type integer by
     /// value only when the operand reads a witnessed slot. Two integers
@@ -5800,7 +6196,7 @@ mod tests {
     fn a_float_ordering_records_no_decision_but_an_authored_connective_does() {
         use filament_exact::{FloatType, IeeeValue, IeeeWidth};
         use fsl_forms::BinaryOperator;
-        use fsl_semantics::value::{admit_ieee_profile, DefinitionRole};
+        use fsl_semantics::value::{DefinitionRole, admit_ieee_profile};
         let package = fsl_package::CheckedPackage::link(
             {
                 let mut declarations = PackageDeclarations::new(
@@ -5969,7 +6365,7 @@ mod tests {
     fn absent_optional_and_empty_sequence_edges_have_no_outgoing_edge() {
         use crate::test_ids::{effective_id, universe_id};
         use filament_exact::{
-            from_admitted, CollectionKind, CollectionType, FieldValue, ObjectId, Presence,
+            CollectionKind, CollectionType, FieldValue, ObjectId, Presence, from_admitted,
         };
 
         let target = effective_id("Node");

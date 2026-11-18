@@ -25,5 +25,5 @@ literal with no type or no quoted key.
 
 - Step 1: one `ReferenceLiteral` node spanning the literal; the render equals
   the input bytes; formatting is idempotent with an unchanged token stream.
-- Step 2: each refuses `invalid_syntax`, at the token after `#`, the token
+- Step 2: each refuses `invalid_syntax`/`unexpected-token`, at the token after `#`, the token
   after `#` and `#` respectively.

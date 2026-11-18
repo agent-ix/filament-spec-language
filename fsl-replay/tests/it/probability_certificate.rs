@@ -5,9 +5,10 @@
 use filament_exact::{Cancel, CancelCause, Integer, NodeKey, Rational};
 use fsl_eval::simulation::model::ModelSystem;
 use fsl_eval::simulation::TransitionSystem;
+use fsl_package::ObligationIdentity;
 use fsl_replay::{
     check_claim_exact_reachability, ExactProbabilityCertificate, ExactProbabilityCertificateCheck,
-    ExactProbabilityGraphError, ExactProbabilityValue, ObligationIdentity, ProbabilityBoundSide,
+    ExactProbabilityGraphError, ExactProbabilityValue, ProbabilityBoundSide,
     ProbabilityCertificateLocus, ProbabilityCertificateRejection, ProbabilityCertificateRule,
     ProbabilityProductKey,
 };

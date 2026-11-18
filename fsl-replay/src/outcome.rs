@@ -432,6 +432,12 @@ pub struct ItemCause {
     defect: Option<&'static str>,
     #[serde(skip_serializing_if = "Option::is_none")]
     value: Option<u64>,
+    /// An `insufficient-data` cause's window count.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    count: Option<u64>,
+    /// An `insufficient-data` cause's `min_count`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    min_count: Option<u64>,
     /// An accounting limit's attempted counter value, as a decimal string.
     #[serde(skip_serializing_if = "Option::is_none")]
     counter: Option<String>,
@@ -666,6 +672,8 @@ impl ItemCause {
             limit: None,
             defect: None,
             value: None,
+            count: None,
+            min_count: None,
             counter: None,
             lower: None,
             upper: None,
@@ -714,6 +722,13 @@ impl ItemCause {
                 item.rule = Some(*rule);
                 item.certificate_at = Some(at.clone());
             }
+            ReportedInconclusiveCause::Cause(InconclusiveCause::InsufficientData {
+                count,
+                min_count,
+            }) => {
+                item.count = Some(*count);
+                item.min_count = Some(*min_count);
+            }
             ReportedInconclusiveCause::Cause(InconclusiveCause::HypothesesNotEstablished {
                 hypothesis,
                 result,
@@ -741,6 +756,8 @@ impl ItemCause {
                 | InconclusiveCause::OpenHistory
                 | InconclusiveCause::NoInitialState
                 | InconclusiveCause::NoInstance
+                | InconclusiveCause::TemporalPending
+                | InconclusiveCause::TemporalIndeterminate
                 | InconclusiveCause::KaniVacuousProof
                 | InconclusiveCause::RefutedIgnoringConstraints
                 | InconclusiveCause::MatchUndetermined
@@ -942,12 +959,37 @@ pub struct ProtocolConformanceOutput {
     pub closure: ConformanceClosureOutput,
     /// The result joined from the obligations and closure.
     pub global: ConformanceGlobalOutput,
+    /// The protocol's per-channel `max_messages` bound and whether a send
+    /// reached it, when the run has a channel (FR-225, FR-636).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub max_messages: Option<ConformanceMessageBoundOutput>,
     /// Per-role projection results, absent in recording mode.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub projections: Option<Vec<ConformanceProjectionOutput>>,
+    /// The provisioned FR-737 recording identity, present in recording mode.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub recording: Option<ConformanceRecordingIdentity>,
     /// Whether the global counterexample replay reproduced its violation.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub replay: Option<ConformanceReplayOutput>,
+}
+
+/// The per-channel `max_messages` method bound a protocol run used.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
+pub struct ConformanceMessageBoundOutput {
+    /// The configured bound (4 when unset).
+    pub value: u64,
+    /// Whether an offered send reached the bound.
+    pub reached: bool,
+}
+
+/// The command-level identity under which a protocol recording was provisioned.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+pub struct ConformanceRecordingIdentity {
+    /// The authority that provisioned the recording.
+    pub authority: String,
+    /// The provisioned recording identity.
+    pub identity: String,
 }
 
 /// The in-process replay result for a global-conformance counterexample.
@@ -1510,6 +1552,10 @@ fn clause_run_cause(report: &ClauseRunReport) -> Option<ItemCause> {
             TemporalVerdict::Incomplete(incomplete) => {
                 Some(accounting_limit_cause(incomplete, "limit-reached", None))
             }
+            TemporalVerdict::Cancelled(source) => Some(ItemCause {
+                source: Some(*source),
+                ..ItemCause::kind("cancelled")
+            }),
             TemporalVerdict::ActivationIncomplete { at, .. } => Some(ItemCause {
                 at: Some(format!("position {at}")),
                 ..ItemCause::kind("activation-incomplete")
@@ -1557,6 +1603,29 @@ fn clause_run_cause(report: &ClauseRunReport) -> Option<ItemCause> {
                 counter: Some(actual.clone()),
                 setting: Some("observation.input_bytes"),
                 bound: Some(bound.clone()),
+                ..ItemCause::kind("input-bytes-exceeded")
+            })
+        }
+        ClauseDisposition::SnapshotAdmission {
+            failure:
+                fsl_semantics::model::observation::AdmissionFailure::Refused(record)
+                | fsl_semantics::model::observation::AdmissionFailure::Incomplete(record),
+            document,
+            path,
+        } if record.fields.get("setting").map(String::as_str)
+            == Some("observation.input_bytes") =>
+        {
+            let bound = record.fields.get("bound")?;
+            let actual = record.fields.get("actual")?;
+            Some(ItemCause {
+                code: Some(record.catalog.code().to_owned()),
+                limit: Some(CauseLimit::Name("input-bytes-exceeded")),
+                value: bound.parse().ok(),
+                counter: Some(actual.clone()),
+                setting: Some("observation.input_bytes"),
+                bound: Some(bound.clone()),
+                locus: snapshot_admission_locus(record, document, path.as_deref())
+                    .map(ItemLocus::Outcome),
                 ..ItemCause::kind("input-bytes-exceeded")
             })
         }
@@ -1632,7 +1701,7 @@ fn accounting_limit_cause(
     } else {
         incomplete.next_charge.clone()
     };
-    let setting = crate::limits::AccountingLimits::setting_of(incomplete.limit_kind).name();
+    let setting = crate::limits::AccountingLimits::setting_name(incomplete.limit_kind);
     ItemCause {
         code: code.map(str::to_owned),
         limit: Some(CauseLimit::Name(incomplete.limit_kind.as_str())),
@@ -1882,9 +1951,9 @@ impl OutcomeDiagnostic {
                     ..
                 } => {
                     diagnostic.construct = Some(construct.as_str().to_owned());
-                    diagnostic.text = Some(text.clone());
-                    diagnostic.declaration = declaration.clone();
-                    diagnostic.profile = profile.clone();
+                    diagnostic.text = Some(text.to_string());
+                    diagnostic.declaration = declaration.as_deref().map(str::to_owned);
+                    diagnostic.profile = profile.as_deref().map(str::to_owned);
                 }
                 _ => {}
             }
@@ -2070,7 +2139,7 @@ impl From<&CallIncomplete> for ResultLimit {
             bound: incomplete.record.limit.to_string(),
             counter: incomplete.counter().to_string(),
             field: incomplete.limits_field(),
-            setting: incomplete.setting().name(),
+            setting: incomplete.setting_name(),
         }
     }
 }
@@ -2300,7 +2369,7 @@ impl OutcomeDocument {
                 let mut document = Self::from_failure(Operation::Parse, failure);
                 let parsed = match failure {
                     StageFailure::RefusedWithPayload(_, payload)
-                    | StageFailure::LimitWithPayload(_, payload) => payload.parsed.as_ref(),
+                    | StageFailure::LimitWithPayload(_, payload) => payload.parsed.as_deref(),
                     _ => None,
                 };
                 document.result =
@@ -2989,11 +3058,13 @@ mod tests {
                     complete: true,
                     cause: None,
                 },
+                max_messages: None,
                 projections: Some(vec![ConformanceProjectionOutput {
                     role: "Buyer".to_owned(),
                     label: "proved".to_owned(),
                     counterexample: None,
                 }]),
+                recording: None,
                 replay: Some(ConformanceReplayOutput { reproduced: true }),
             });
         let wire = serde_json::to_value(item).expect("serializes");
@@ -3686,7 +3757,7 @@ mod tests {
                 TerminalValue::Inconclusive(InconclusiveCause::ScalarAgrees(
                     crate::scalar::ScalarAgreement::new(
                         crate::scalar::ScalarClaim::Function(Box::new(crate::ValueIdentity {
-                            obligation: crate::identity::ObligationIdentity::new(
+                            obligation: fsl_package::ObligationIdentity::new(
                                 crate::fixture_node(1),
                                 None,
                                 0,

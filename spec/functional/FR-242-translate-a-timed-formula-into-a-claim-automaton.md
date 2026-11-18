@@ -55,6 +55,10 @@ point is still decided by the horizon construction.
   translation SHALL admit punctual intervals in a `BoundedWindow` formula.
 - A `TimedInvariant` clause SHALL read its predicate at each symbolic
   state; a data predicate SHALL decide on the discrete state alone.
+- The translation SHALL translate an interval operator with a lower bound and no upper bound (`[q, *]`)
+  to FR-1034's lower-bound-only component (one clock, the
+  lower guard only, `q` its one constant), never to a horizon clock or block
+  copies, and SHALL NOT refuse it for having no upper bound.
 - Each automaton location's constants SHALL contribute to the LU bounds.
 - The engine SHALL materialize automaton states as the product reaches them
   and count them against `max_automaton_states` (FR-239).

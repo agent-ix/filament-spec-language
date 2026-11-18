@@ -228,6 +228,21 @@ pub enum ProtocolAnchorCause {
         /// The span of the type form (or nested argument form) at fault.
         span: Span,
     },
+    /// FR-218-AC-44 (FR-218 "Attempts"): a read of an attempt binder whose
+    /// declared type is not the operation's result type, or whose operation
+    /// has no result. `ill_typed`/`type-mismatch` at the read, never at the
+    /// binder declaration, which stays admitted (ADR-027 ST-1).
+    AttemptBinderRead {
+        /// The attempt binder's declared name.
+        binder: String,
+        /// The operation result type, or `None` for an operation without a
+        /// result.
+        expected_result: Option<Box<ValueType>>,
+        /// The binder's declared type.
+        actual_result: Box<ValueType>,
+        /// The read's own span.
+        span: Span,
+    },
     /// FR-218 "Channels": a channel's `from` or `to` names no role the
     /// protocol declares. `missing_declaration`/`missing-name`, at the role
     /// name; both ends refuse independently.
@@ -965,12 +980,6 @@ pub enum ProtocolConstruct {
     /// `attempt`: that protocol's node is written after the state clauses
     /// its attempts list, which are written after the functions. QSL-1121g.
     ReferenceToAttemptProtocol,
-    /// A clause whose `over` input is not a reference to an object type of a
-    /// selected model: there is no exact local model declaration node to
-    /// name as the clause's `owner_model`
-    /// (FSpec FR-464 "owner_model", FR-383), and the reader refuses a clause
-    /// without one. QSL-1147.
-    NoOwnerModel,
 }
 
 impl ProtocolConstruct {
@@ -984,7 +993,6 @@ impl ProtocolConstruct {
             Self::ChannelCarriesBounded => "QSL-1137",
             Self::Relationships => "QSL-1141",
             Self::ChannelKeyNotEqualityStable => "QSL-1142",
-            Self::NoOwnerModel => "QSL-1147",
             Self::PostTestRepeat | Self::RepeatDecisionReadsBody => "STD-539",
             Self::RepeatStepsThroughRepeat => "IR-1100",
         }
@@ -1163,6 +1171,7 @@ impl ProtocolAnchorCause {
             | Self::MissingRoleType { span, .. }
             | Self::MissingRole { span, .. }
             | Self::BinderType { span, .. }
+            | Self::AttemptBinderRead { span, .. }
             | Self::ChannelRole { span, .. }
             | Self::ChannelType { span, .. }
             | Self::ChannelDeliveryRange { span, .. }
@@ -1244,6 +1253,7 @@ impl ProtocolAnchorCause {
             | Self::RelatedConnection { .. }
             | Self::RolePopulationType { .. }
             | Self::RoleMax { .. } => Code::IllTyped,
+            Self::AttemptBinderRead { .. } => Code::IllTyped,
             Self::JoinFunctionKind { .. } | Self::JoinFunctionType { .. } => Code::IllTyped,
             Self::KeyClause { cause, .. } | Self::SlotClause { cause, .. } => cause.code(),
             Self::WrongObservation { .. } => Code::WrongSnapshot,
@@ -1302,6 +1312,7 @@ impl ProtocolAnchorCause {
             | Self::RolePopulationType { .. }
             | Self::RoleMax { .. } => "type-mismatch",
             Self::JoinFunctionType { .. } => "type-mismatch",
+            Self::AttemptBinderRead { .. } => "type-mismatch",
             Self::KeyModelState { .. }
             | Self::KeyEquality { .. }
             | Self::SlotModelState { .. }
@@ -2558,18 +2569,18 @@ pub struct ProvedInterval {
     pub upper: Option<Integer>,
 }
 
-/// Source text of an expression whose obligation failed, used for diagnostics
+/// Diagnostic text associated with an operand whose obligation failed,
 /// without changing refusal identity.
 #[derive(Clone, Debug, Default)]
 pub struct OperandText(Option<Box<str>>);
 
 impl OperandText {
-    /// Store the expression's source text.
-    pub fn new(source: &str) -> Self {
-        Self(Some(source.into()))
+    /// Store diagnostic text.
+    pub fn new(text: &str) -> Self {
+        Self(Some(text.into()))
     }
 
-    /// The text supplied by a source-owning stage.
+    /// The stored diagnostic text, whether authored or synthesized.
     pub fn text(&self) -> Option<&str> {
         self.0.as_deref()
     }
@@ -2601,8 +2612,7 @@ pub enum Obligation {
         required: Box<ProvedInterval>,
         /// The interval the accepted proof forms establish.
         proved: Box<ProvedInterval>,
-        /// Source spelling for the expression, filled when source spans are
-        /// available at the compile boundary.
+        /// Diagnostic context for the operand, where available.
         operand: OperandText,
     },
     /// A rational quotient may lie outside its `Rational[..]` domain:
@@ -2937,16 +2947,33 @@ pub enum CheckCause {
         /// keep `CheckCause`, and so `CheckRefusal`, small.
         limit: Option<Box<fsl_foundation::diagnostic::LimitExceeded>>,
     },
+    /// FR-910 / FSpec FR-746: the package has no declaration that produces a
+    /// node in the checked graph. The package and all admitted source owners
+    /// are retained for the check refusal's diagnostic.
+    EmptyPackage {
+        /// The manifest's package name.
+        package_name: String,
+        /// Every source unit in the admitted package, in canonical order.
+        sources: Vec<fsl_foundation::source::provenance::RawSourceRef>,
+    },
     /// `refused { code: ill_typed }` with its FR-272 cause.
     IllTyped(IllTypedCause),
+    /// An undeclared case of a declared variant type, still classified as
+    /// `ill_typed` / `type-mismatch` by FR-360-AC-5.
+    UndeclaredVariantCase {
+        /// The variant type whose cases were checked.
+        owner: String,
+        /// The case name as written.
+        case: String,
+    },
     /// A binary operator whose two typed operands have incompatible types.
     OperandTypeMismatch {
         /// The source operator.
         operator: BinaryOperator,
         /// The left operand's checked type.
-        left_type: ValueType,
+        left_type: Box<ValueType>,
         /// The right operand's checked type.
-        right_type: ValueType,
+        right_type: Box<ValueType>,
     },
     /// `refused { code: wrong_snapshot }` with its FR-272 cause: `pre(...)`
     /// written outside its admitted clause, or over an ineligible operand.
@@ -2957,9 +2984,9 @@ pub enum CheckCause {
     /// explain which type does not declare it.
     UnknownField {
         /// The type whose declaration was searched.
-        owner: String,
+        owner: Box<str>,
         /// The field name as written.
-        field: String,
+        field: Box<str>,
         /// The field token's source span when it was read from source.
         span: Option<Span>,
     },
@@ -3060,6 +3087,20 @@ pub enum CheckCause {
         profile: TextProfile,
         /// The retained sequence's length under `profile`.
         retained_length: u64,
+    },
+    /// FR-480: a reference literal's name resolves to a declaration that is
+    /// not an object type. The source locus is the type name itself.
+    ReferenceLiteralTypeMismatch {
+        /// The type name as written, including its source span.
+        name: fsl_forms::NameForm,
+        /// The kind the name resolved to.
+        actual: ValueType,
+    },
+    /// FR-480: an empty key cannot identify an object. The source locus is
+    /// the string token.
+    EmptyReferenceLiteralKey {
+        /// The quoted string token's span.
+        span: Span,
     },
     /// `ill_typed` / `identity-observing-form` (FR-150): a form that
     /// observes the identity of a `symmetric` population's objects, at the
@@ -3646,15 +3687,18 @@ impl CheckCause {
             Self::ModelConformance(failure) => failure.code,
             Self::ModelIncomplete(_) => Code::ResourceExhausted,
             Self::TypeAdmission { code, .. } => *code,
+            Self::EmptyPackage { .. } => Code::MissingDeclaration,
             Self::TypeCheckAllocation(_) | Self::TypeCheckCapacity(_) => Code::ResourceExhausted,
             Self::IllTyped(_)
+            | Self::UndeclaredVariantCase { .. }
             | Self::OperandTypeMismatch { .. }
             | Self::IdentityObservingForm(_)
             | Self::NonBooleanRoot
             | Self::UnitMismatch
             | Self::IntegerOutsideI128(_)
             | Self::MalformedUuidLiteral { .. }
-            | Self::TextLiteralOutsideBounds { .. } => Code::IllTyped,
+            | Self::TextLiteralOutsideBounds { .. }
+            | Self::ReferenceLiteralTypeMismatch { .. } => Code::IllTyped,
             Self::WrongSnapshot(_) | Self::UnanchoredResult { .. } => Code::WrongSnapshot,
             Self::MissingName(_)
             | Self::UnknownField { .. }
@@ -3678,7 +3722,8 @@ impl CheckCause {
             | Self::ReservedIntrinsicConflict(_)
             | Self::DefinitionCycle { .. }
             | Self::InvalidDispatchDeclaration(_)
-            | Self::NodePreimage(_) => Code::InvalidPackage,
+            | Self::NodePreimage(_)
+            | Self::EmptyReferenceLiteralKey { .. } => Code::InvalidPackage,
             Self::UnrepresentableBound => Code::UnrepresentableConstraint,
             Self::MissingSelection { .. } => Code::MissingDeclaration,
             Self::UnsupportedFeature { .. } => Code::UnknownRequiredFeature,
@@ -3729,9 +3774,11 @@ impl CheckCause {
             // charge is an insufficient next charge, never a stage limit.
             Self::ModelIncomplete(_) => Some("insufficient-next-charge"),
             Self::TypeAdmission { cause, .. } => Some(cause),
+            Self::EmptyPackage { .. } => Some("empty-package"),
             Self::TypeCheckAllocation(_) => Some("allocation-failed"),
             Self::TypeCheckCapacity(_) => Some("reservation-size-overflow"),
             Self::IllTyped(cause) => cause.tag(),
+            Self::UndeclaredVariantCase { .. } => Some("type-mismatch"),
             Self::OperandTypeMismatch { .. } => Some("type-mismatch"),
             Self::WrongSnapshot(cause) => Some(cause.as_str()),
             Self::NonBooleanRoot => Some("non-boolean-root"),
@@ -3739,7 +3786,8 @@ impl CheckCause {
             Self::IdentityObservingForm(_) => Some("identity-observing-form"),
             Self::IntegerOutsideI128(_)
             | Self::MalformedUuidLiteral { .. }
-            | Self::TextLiteralOutsideBounds { .. } => Some("type-mismatch"),
+            | Self::TextLiteralOutsideBounds { .. }
+            | Self::ReferenceLiteralTypeMismatch { .. } => Some("type-mismatch"),
             Self::UnanchoredResult { .. } => Some("wrong-anchor"),
             Self::MissingName(_)
             | Self::UnknownField { .. }
@@ -3768,6 +3816,7 @@ impl CheckCause {
             Self::ResourceExhausted(cause) => Some(cause.kind.setting().kind().catalog_cause()),
             Self::DefinitionCycle { .. } => Some("definition-cycle"),
             Self::InvalidDispatchDeclaration(_) => Some("invalid-value"),
+            Self::EmptyReferenceLiteralKey { .. } => Some("invalid-value"),
             Self::MissingSelection { .. } => Some("missing-selection"),
             Self::UnsupportedFeature { .. } => Some("unsupported-feature"),
             Self::ProfileProhibitedOperator(_) | Self::LayerEquality { .. } => {
