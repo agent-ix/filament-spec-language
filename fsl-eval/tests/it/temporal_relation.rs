@@ -345,7 +345,9 @@ fn two_occurrences_of_one_body_keep_separate_instances_results_and_progress() {
     let mut correcting = asking(&second, p, Valuation::False);
     correcting.relation = Relation::Superseding(r1.result_identity.clone());
     correcting.ledger = Some(r2.ledger.clone());
-    expect_refusal(run(&second, &correcting), "predecessor-not-latest");
+    // FR-526-AC-9, AC-25: occurrence 1's entry holds neither `r1` nor a
+    // chain through it, so `r1` is another obligation instance's result.
+    expect_refusal(run(&second, &correcting), "predecessor-unknown");
 }
 
 /// FR-526-AC-24 (TC-1321 row 24): a result `r1` and a result `r1'` of a
