@@ -97,7 +97,8 @@ pub(crate) use hybrid::{
     hybrid_location, hybrid_site, HybridClaimInput, HybridModelInput, HybridSite,
 };
 pub(crate) use hyper::{
-    finish_step_relation, HyperClauseInput, LoweredStepRelation, StepRelationInput,
+    finish_step_relation, FiniteHyperClauseInput, HyperClauseInput, LoweredStepRelation,
+    StepRelationInput,
 };
 pub(crate) use model::ParentSlotFailure;
 pub(crate) use model::{
