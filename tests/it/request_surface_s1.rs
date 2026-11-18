@@ -378,7 +378,7 @@ fn the_run_command_preserves_a_missing_markdown_clause_selection() {
     let directory = tempfile::tempdir().unwrap();
     std::fs::write(
         directory.path().join("spec.md"),
-        "# Doc\n\n## Invariants\n\n### Present\n```ix:native\nopaque body\n```\n",
+        "# Doc\n\n## Invariants\n\n### present_clause\n```ix:native\nopaque body\n```\n",
     )
     .unwrap();
     let mut request = current_clause_request();
@@ -387,7 +387,7 @@ fn the_run_command_preserves_a_missing_markdown_clause_selection() {
             "document": "Doc", "formal_revision": 1},
         "extraction": {"body": {"authority": "agent-ix", "identity": "body",
             "document": "Body"}},
-        "clauses": [{"clause": "Absent", "package": "agent-ix/spec"}]
+        "clauses": [{"clause": "absent_clause", "package": "agent-ix/spec"}]
     });
 
     let (exit, value) = run_refusal(directory.path(), &request);
@@ -403,7 +403,7 @@ fn the_run_command_preserves_a_missing_markdown_clause_selection() {
     assert_eq!(
         value["details"]["binding"],
         json!({
-            "clause": "Absent", "package": "agent-ix/spec"
+            "clause": "absent_clause", "package": "agent-ix/spec"
         }),
         "{value}"
     );
@@ -462,7 +462,7 @@ fn the_run_command_writes_a_strictly_readable_markdown_extraction_record() {
     let body = spine::unit_text();
     std::fs::write(
         directory.path().join("spec.md"),
-        format!("# Doc\n\n## Invariants\n\n### ParentOrder\n```ix:native\n{body}```\n"),
+        format!("# Doc\n\n## Invariants\n\n### parent_order\n```ix:native\n{body}```\n"),
     )
     .unwrap();
     let mut request = current_clause_request();
@@ -471,7 +471,7 @@ fn the_run_command_writes_a_strictly_readable_markdown_extraction_record() {
             "document": "Doc", "formal_revision": 1},
         "extraction": {"body": {"authority": "agent-ix", "identity": "body",
             "document": "Body"}},
-        "clauses": [{"clause": "ParentOrder", "package": spine::PACKAGE_IDENTITY}]
+        "clauses": [{"clause": "parent_order", "package": spine::PACKAGE_IDENTITY}]
     });
     let path = directory.path().join("request.json");
     std::fs::write(&path, serde_json::to_vec(&request).unwrap()).unwrap();
@@ -483,7 +483,7 @@ fn the_run_command_writes_a_strictly_readable_markdown_extraction_record() {
     assert_eq!(extraction["original"]["identity"], "doc");
     assert_eq!(extraction["body"]["identity"], "body");
     assert_eq!(extraction["body"]["document"], "Body");
-    assert_eq!(extraction["binding"]["clause"], "ParentOrder");
+    assert_eq!(extraction["binding"]["clause"], "parent_order");
     assert!(extraction["outcome"]["clauses"].is_array());
     assert!(extraction["map"]["segments"].is_array());
     let encoded = serde_json::to_vec(result.value.as_value()).unwrap();
