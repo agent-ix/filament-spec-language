@@ -65,7 +65,6 @@ fn guarded_protocol(key: &str) -> String {
     "FSpec-FR-480-AC-5"
 )]
 #[test]
-#[ignore = "QSL-2166: no binding-time reference-literal resolution exists yet"]
 fn a_reference_literal_resolves_at_subject_binding() {
     let fixed = over_wide_universe(
         "reflit-fixed",
@@ -96,7 +95,6 @@ fn a_reference_literal_resolves_at_subject_binding() {
 /// `absent-key`; a fixed literal is decided.
 #[trace("TC-2835", "FR-1000-AC-5", "FSpec-FR-480-AC-4")]
 #[test]
-#[ignore = "QSL-2166: a created-object reference literal is not a per-state key lookup yet"]
 fn a_created_object_literal_is_a_per_state_lookup() {
     let created = over_wide_universe(
         "reflit-created",
