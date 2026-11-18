@@ -452,8 +452,13 @@ pub fn region_probability_product_key(
         .map(|(_, identity, value, cap)| {
             json!([
                 identity,
-                (value / subdivisions).to_string(),
-                cap.div_ceil(subdivisions).to_string(),
+                if value >= cap {
+                    value.div_ceil(subdivisions)
+                } else {
+                    value / subdivisions
+                }
+                .to_string(),
+                (cap / subdivisions).to_string(),
                 fraction_rank(value, cap)
             ])
         })
