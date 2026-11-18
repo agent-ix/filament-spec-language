@@ -725,7 +725,9 @@ fn a_timed_clause_over_untimed_samples_refuses_with_profile_and_kinds() {
 /// FR-644-AC-5, FR-643-AC-1 (TC-1668, TC-1666): a `native-monitor/1`
 /// request over a record file gives, after each observation, the status a
 /// clause run over the samples received so far gives, and a summary equal
-/// to the run over all of them.
+/// to the run over all of them. Both clauses settle at record 2: `Never`
+/// `violation` and `Reaches` `success` at its witness (FR-643-AC-6,
+/// FR-330-AC-2; FR-644-AC-5's "stays pending" is stale, amended by W45).
 #[test]
 #[trace(
     "TC-1668",
@@ -773,18 +775,26 @@ fn the_monitor_stream_equals_a_clause_run_over_each_prefix() {
             {
                 status = event["disposition"].clone();
                 decided = record;
-                // Only `Never` settles, at record 2 (FR-644-AC-5).
+                // Both clauses settle at record 2 (FR-643-AC-6).
                 assert_eq!(
                     event["settled"],
-                    clause == "Never" && record >= 2,
+                    record >= 2,
                     "{clause} settled at record {record}"
                 );
                 // `settlement` is present exactly when `settled` is true.
-                if clause == "Never" && record >= 2 {
+                if record >= 2 {
+                    // `Never` fails at its activation, position 0; the
+                    // infinite-trace `Reaches` success has no FR-501 decision
+                    // support, so its position is `null` (FR-643 "Settlement").
+                    let position = if clause == "Never" {
+                        json!("0")
+                    } else {
+                        Value::Null
+                    };
                     assert_eq!(
                         event["settlement"],
                         json!({"step": "3", "trigger": "decided",
-                            "basis": batch_of(2)["basis"], "horizon": "2", "position": "0"}),
+                            "basis": batch_of(2)["basis"], "horizon": "2", "position": position}),
                         "{event}"
                     );
                 } else {
@@ -810,21 +820,9 @@ fn the_monitor_stream_equals_a_clause_run_over_each_prefix() {
             .and_then(|clauses| clauses.iter().find(|entry| entry["clause"] == clause))
             .expect("a summary entry");
         assert_eq!(summary["disposition"], status, "{clause} summary");
-        assert_eq!(
-            summary["settled"],
-            clause == "Never",
-            "{clause} settled in the summary"
-        );
-        if clause == "Never" {
-            assert_eq!(summary["settlement"]["step"], "3", "{summary}");
-            assert_eq!(summary["settlement"]["trigger"], "decided", "{summary}");
-        } else {
-            assert_eq!(
-                summary["settlement"],
-                json!({"step": "4", "trigger": "finish"}),
-                "{summary}"
-            );
-        }
+        assert_eq!(summary["settled"], true, "{clause} settled in the summary");
+        assert_eq!(summary["settlement"]["step"], "3", "{summary}");
+        assert_eq!(summary["settlement"]["trigger"], "decided", "{summary}");
         assert!(
             run["summary"]["ledger"].is_null(),
             "a finite summary has no ledger: {run}"
