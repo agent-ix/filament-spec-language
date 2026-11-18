@@ -387,7 +387,7 @@ fn the_run_command_preserves_a_missing_markdown_clause_selection() {
             "document": "Doc", "formal_revision": 1},
         "extraction": {"body": {"authority": "agent-ix", "identity": "body",
             "document": "Body"}},
-        "clauses": [{"clause": "Absent", "package": "doc"}]
+        "clauses": [{"clause": "Absent", "package": "agent-ix/spec"}]
     });
 
     let (exit, value) = run_refusal(directory.path(), &request);
@@ -403,7 +403,7 @@ fn the_run_command_preserves_a_missing_markdown_clause_selection() {
     assert_eq!(
         value["details"]["binding"],
         json!({
-            "clause": "Absent", "package": "doc"
+            "clause": "Absent", "package": "agent-ix/spec"
         }),
         "{value}"
     );

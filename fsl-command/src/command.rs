@@ -933,9 +933,12 @@ pub enum RunCause {
 }
 
 #[cfg(feature = "quire-extraction")]
+/// Stage that refused a Markdown extraction request.
 #[derive(Clone, Copy, Debug)]
-enum ExtractionFailureStage {
+pub enum ExtractionFailureStage {
+    /// The authored binding did not identify an extracted clause.
     Selection,
+    /// Quire rejected or could not provide the clause context.
     Quire,
 }
 
@@ -2005,7 +2008,7 @@ fn extraction_failure(error: Box<fsl_source::Error>) -> Result<RunCause> {
     let original = error.original();
     let identity = original.identity();
     let selection = error.selection();
-    let mut details = serde_json::Map::from_iter([
+    let details = serde_json::Map::from_iter([
         (
             "original".to_owned(),
             serde_json::json!({
