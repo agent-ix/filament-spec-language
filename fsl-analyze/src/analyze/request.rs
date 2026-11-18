@@ -625,20 +625,16 @@ fn work<'a>(
         Some(ItemForm::Temporal(form))
             if item.kind == Capability::TemporalSatisfaction && form.protocol.is_some() =>
         {
-            match &form.protocol {
-                Some(protocol) => super::protocol_item::protocol_clause_item(
-                    package,
-                    binding,
-                    *limits,
-                    provision,
-                    &item.claim,
-                    item.request_index,
-                    form,
-                    protocol,
-                )
-                .unwrap_or_else(absent),
-                None => absent(),
-            }
+            super::protocol_item::protocol_clause_item(
+                package,
+                binding,
+                *limits,
+                provision,
+                &item.claim,
+                item.request_index,
+                form,
+            )
+            .unwrap_or_else(absent)
         }
         Some(ItemForm::Temporal(form))
             if item.kind == Capability::TemporalSatisfaction

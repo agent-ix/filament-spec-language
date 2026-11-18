@@ -162,8 +162,8 @@ pub(super) fn protocol_clause_item<'a>(
     claim: &OccurrenceKey,
     index: RequestIndex,
     form: &TemporalItem,
-    protocol: &ProtocolBinding,
 ) -> Option<AnalyzeItem<'a>> {
+    let protocol = form.protocol.as_ref()?;
     let node: Option<&'a TemporalClauseNode> =
         match form.item_kind {
             ItemKind::Formula => {
