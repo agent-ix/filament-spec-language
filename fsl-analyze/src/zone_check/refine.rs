@@ -301,8 +301,7 @@ fn check_refinement_with_time_source<S>(
         return Err(ZoneCheckRefusal::CarriedClocks.into());
     }
     let auxiliary_timed = if abstract_system
-        .package()
-        .graph()
+        .input()
         .timed_model(refinement.abstract_model())
         .is_some()
     {
