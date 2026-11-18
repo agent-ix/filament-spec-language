@@ -439,7 +439,10 @@ fn enumerate(
     reported.sort_unstable();
     let mut found = Vec::new();
     for (state, trace, at) in reported {
-        let findings = run.states.get(state).map_or(&[][..], |state| &state.findings[..]);
+        let findings = run
+            .states
+            .get(state)
+            .map_or(&[][..], |state| &state.findings[..]);
         for finding in findings {
             found.extend(finding_value(finding, trace, at)?);
         }
@@ -470,7 +473,12 @@ fn finding_value(
             self_object,
             evaluation,
             ..
-        } => ("invariant-undetermined", clause, self_object, Some(evaluation)),
+        } => (
+            "invariant-undetermined",
+            clause,
+            self_object,
+            Some(evaluation),
+        ),
         _ => return Ok(None),
     };
     let text = fsl_eval::simulation::model::reference_canonical_text(object)
