@@ -303,7 +303,16 @@ restated here for the emitter and is deterministic and injective:
   `filament.op.temporal.clause` application, with one `temporal_profile` law
   equal to the package's `profile_selections` row of role
   `temporal_profile` for the clause's profile and the six arguments of FSpec FR-370, in order:
-  1. `over`: a reference to the slot node `<p>@<t>` of slot 0;
+  1. `over`: a reference to the slot node `<p>@<t>` of atom slot 0 or, when
+     the clause has no atom slot (its body reads no object parameter's state
+     in any trace, which is always so for a clause with no object
+     parameter), a reference to the `model`/`model_root` node of the
+     clause's first `subjects` binding, the root of the package the first
+     quantifier's alias selects. A clause with no atom slot has no
+     parameter node for `over` to reference, and the model root is the one
+     node every behaviours-domain clause has whose meaning does not depend
+     on the body, so the wrapper stays a well-formed FR-370 clause and its
+     identity stays a function of the checked clause;
   2. `clock`: the `text` literal `model-steps`;
   3. `activation`: the aggregate that binds `kind` to the text `origin`
      alone;
@@ -482,6 +491,7 @@ in FR-487. "Admitted" means FSL's I2 admission of the emitted package
 | FR-488-AC-25 | Under event-position false-extension, `NonInterference` emits two `temporal_bindings` rows at the `hyperproperty` node's NodeId and the ordinal of its `claim` occurrence, `trace` `a` then `b`, each with `clock_name` `model-steps` (the wrapper's clock text) and the configuration FR-640 derives from `V`; no `temporal_bindings` row names the body wrapper; under infinite-trace the clause has a name row and no binding. | Test (TC-1327) |
 | FR-488-AC-26 | Two hyper clauses with equal bodies, `Fwd` over `forall trace a of V forall trace b of V` and `Rev` over `forall trace b of V forall trace a of V`, emit two `hyperproperty` nodes whose `body` references one wrapper, and binding rows `a`, `b` at `Fwd`'s node and `b`, `a` at `Rev`'s node, none at the wrapper; the package is admitted. | Test (TC-3000) |
 | FR-488-AC-27 | The package FSL emits for `hyper Same using inf over behaviours (c: Config::ConfigVersion) forall trace a of Config forall trace b of Config { always holds(c.versionNumber @ a = c.versionNumber @ b) }`, edited so its second quantifier Group's `variable` is `a`, is refused by the reader with `ambiguous_declaration`/`ambiguous-name` at that Group's `variable` binding, `/semantic_graph/nodes/{n}/body/members/3/value/members/1/members/0`; the unedited package is admitted. | Test (TC-3007) |
+| FR-488-AC-28 | `hyper Whole using inf over behaviours () forall trace a of V forall trace b of V { always holds(true) }` over the vault model emits a body wrapper whose `over` argument references the `model`/`model_root` node of the vault package, which is among the wrapper's `dependencies`, and the strict reader admits the package; `NonInterference`, whose body reads `v @ a`, keeps `over` on the slot node `slot_sv_sa`. A package whose wrapper for `NonInterference` has `over` edited to the model root refuses `invalid_model_binding`/`malformed-declaration` at `/semantic_graph/nodes/{w}/body/arguments/0`, and one whose wrapper for `Whole` references the root of a package no `subjects` binding names refuses the same. | Test (TC-3010) |
 
 ## Open FSpec questions
 

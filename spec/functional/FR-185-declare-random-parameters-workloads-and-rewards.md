@@ -151,6 +151,13 @@ of probabilities start from.
 
 ### Workloads
 
+- An operation of an object type the unit declares in its own source
+  (FR-569 "The source model") is an operation of the unit's source model, and
+  S3 SHALL admit a random parameter, a workload weight and a reward on it
+  under the same rules as on an operation of a selected model. The `on` name
+  of a workload on the source model is one of its source object types,
+  resolved as FR-230 resolves the source model's time member: first as a
+  model alias of the unit and, failing that, as a source object type.
 - S3 SHALL admit a workload declaration on a model that gives each operation
   of the model a non-negative exact rational weight. A weight of 0 states that
   the workload does not choose the operation while an operation of positive
