@@ -9,6 +9,7 @@ mod items;
 mod monitor;
 mod output;
 mod output_file;
+pub mod output_mapping;
 mod replay;
 mod requirements;
 mod settle;
