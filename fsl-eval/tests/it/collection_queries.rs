@@ -315,6 +315,59 @@ fn completed(run: &Run) -> &Value {
     }
 }
 
+#[trace("TC-1320", "FR-144-AC-31")]
+#[trace("TC-1927", "FR-144-AC-34")]
+#[test]
+fn index_reads_ordered_collection_elements_and_returns_no_element_out_of_range() {
+    let package = plain();
+    for (kind, values, good_index, expected, bad_indexes) in [
+        (CollectionKind::Sequence, vec![7, 8, 7], 2, 7, vec![-1, 3]),
+        (CollectionKind::OrderedSet, vec![7, 8], 1, 8, vec![2]),
+    ] {
+        let collection_type = integers(kind, 0, 3);
+        let good = run(
+            &package,
+            &[("c", collection_type.clone())],
+            &Expression::index(name("c"), literal(good_index)),
+            vec![collection(&collection_type, ints(&values))],
+            UNLIMITED,
+        );
+        assert_eq!(
+            format!("{:?}", completed(&good)),
+            format!("{:?}", int(expected))
+        );
+        assert_eq!((good.work, good.results), (1, 1));
+
+        for bad_index in bad_indexes {
+            let checked = check(
+                &package,
+                &[("c", collection_type.clone())],
+                &Expression::index(name("c"), literal(bad_index)),
+            )
+            .expect("Kernel checks leave the index obligation to evaluation");
+            let mut meter = Meter::new(UNLIMITED);
+            let evaluation = package
+                .evaluate(
+                    &checked,
+                    vec![collection(&collection_type, ints(&values))],
+                    &ObjectEnvironment::default(),
+                    &mut meter,
+                )
+                .unwrap();
+            assert!(matches!(
+                evaluation.outcome,
+                FamilyOutcome::Evaluated(Outcome::Undefined(Undefined::NoElement))
+            ));
+            assert_eq!(
+                evaluation.location.as_ref(),
+                Some(checked.root().location())
+            );
+            assert_eq!(meter.consumed(LimitKind::WorkUnits), 0);
+            assert_eq!(meter.consumed(LimitKind::ResultUnits), 0);
+        }
+    }
+}
+
 fn elements(value: &Value) -> Vec<Value> {
     match value {
         Value::Collection(collection) => collection.elements().to_vec(),

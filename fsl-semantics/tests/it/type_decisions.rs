@@ -246,7 +246,9 @@ fn a_quantity_scaled_by_a_number_keeps_its_unit() {
 #[ignore = "QSL-2168: quantity scaling refusals not implemented yet"]
 fn an_unproved_or_ineligible_scaling_is_refused() {
     assert_refused(
-        &format!("{UNITS}function f using v(d: Quantity<ms>, k: Int[0, 9]): Quantity<ms> pure {{ d / k }}"),
+        &format!(
+            "{UNITS}function f using v(d: Quantity<ms>, k: Int[0, 9]): Quantity<ms> pure {{ d / k }}"
+        ),
         Code::UndefinedExpression,
         "unproved-nonzero",
     );

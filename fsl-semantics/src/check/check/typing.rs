@@ -25,10 +25,11 @@ use std::sync::Arc;
 
 use super::native_literal::NativeConstructor;
 use super::{
-    catalogued_step, contains_pre_eligible_read, contextual, ineligible, is_integer, mismatch,
-    node, refuse, LocalKind, Typer,
+    LocalKind, Typer, catalogued_step, contains_pre_eligible_read, contextual, ineligible,
+    is_integer, mismatch, node, refuse,
 };
-use crate::check::call_target::{resolve_target, ResolvedTarget};
+use crate::check::DispatchOperation;
+use crate::check::call_target::{ResolvedTarget, resolve_target};
 use crate::check::family::Application;
 use crate::check::ir::{CheckedBody, IntegerRange, Node, NodeId, Slot};
 use crate::check::refusal::{
@@ -37,7 +38,6 @@ use crate::check::refusal::{
 };
 use crate::check::sum_case::{ArmHead, CaseBuilder, UnionMember, UnionRef};
 use crate::check::type_form::{IntegerOutsideI128, IntegerSite};
-use crate::check::DispatchOperation;
 use filament_exact::Cancel;
 use filament_exact::{
     ArithmeticOperator, CollectionKind, CollectionType, DecimalType, FloatType, IeeeValue,
@@ -278,7 +278,6 @@ enum Frame<'e, 'r> {
     IndexKey(Box<(Node, Location)>),
     /// The element-position obligation after the index has integer type.
     IndexPosition(
-        u64,
         NodeId,
         filament_checked::node::IndexedKind,
         ValueType,
@@ -1414,7 +1413,7 @@ impl<'a> Typer<'a> {
                     CheckRefusal::ill_typed(&location, IllTypedCause::OperatorIneligible)
                 } else {
                     missing_segment(&name.name, &location)
-                })
+                });
             }
             ExprNode::Name(name) if self.population_named(&name.name).is_some() => {
                 self.population_objects(&name.name, &location)?
@@ -1463,7 +1462,7 @@ impl<'a> Typer<'a> {
                     (expression, case),
                     location,
                     frames,
-                ))
+                ));
             }
             ExprNode::Let {
                 name,
@@ -1477,7 +1476,7 @@ impl<'a> Typer<'a> {
                     (name, expression.at(*value), expression.at(*body)),
                     location,
                     frames,
-                )
+                );
             }
             ExprNode::If {
                 condition,
@@ -1992,7 +1991,7 @@ impl<'a> Typer<'a> {
                     (expression.at(*source), expression.at(*predicate)),
                     location,
                     frames,
-                )
+                );
             }
             ExprNode::Sum {
                 result_type_span: _,
@@ -2827,7 +2826,6 @@ impl<'a> Typer<'a> {
                     CollectionKind::Sequence | CollectionKind::OrderedSet
                 ) =>
             {
-                let minimum = collection.bound().map_or(0, |bound| bound.minimum());
                 let index_location = location.child(1);
                 let kind = match collection.kind() {
                     CollectionKind::Sequence => filament_checked::node::IndexedKind::Sequence,
@@ -2842,7 +2840,6 @@ impl<'a> Typer<'a> {
                 let value_type = collection.element().clone();
                 let collection_id = self.push(source);
                 frames.push(Frame::IndexPosition(
-                    minimum,
                     collection_id,
                     kind,
                     value_type,
@@ -2924,20 +2921,7 @@ impl<'a> Typer<'a> {
                     &location,
                 )))
             }
-            Frame::IndexPosition(minimum, collection, kind, value_type, index, location) => {
-                let proved = match index.node() {
-                    ExprNode::Integer(position) => {
-                        position.to_u64().is_some_and(|position| position < minimum)
-                    }
-                    _ => false,
-                };
-                let index_location = location.child(1);
-                if !proved {
-                    return Err(refuse(
-                        &index_location,
-                        CheckCause::Unproved(Obligation::Presence),
-                    ));
-                }
+            Frame::IndexPosition(collection, kind, value_type, _index, location) => {
                 Ok(Step::Typed(node(
                     NodeKind::Index {
                         collection,
@@ -4082,13 +4066,13 @@ impl<'a> Typer<'a> {
                             population,
                             &location,
                             Some(population_span),
-                        ))
+                        ));
                     }
                     None => {
                         return Err(refuse(
                             &location,
                             CheckCause::PopulationFormOutsideRefinement,
-                        ))
+                        ));
                     }
                 }
             }
@@ -4111,7 +4095,7 @@ impl<'a> Typer<'a> {
                     } else {
                         CheckCause::PopulationFormOutsideRefinement
                     },
-                ))
+                ));
             }
         };
         let element = self.element_type(&source)?;
@@ -4128,7 +4112,7 @@ impl<'a> Typer<'a> {
             (None, None) => {
                 return self
                     .finish_population(form, source, slot, None, None, &location)
-                    .map(Step::Typed)
+                    .map(Step::Typed);
             }
         };
         frames.push(Frame::Population(Box::new(PopulationFrame {
