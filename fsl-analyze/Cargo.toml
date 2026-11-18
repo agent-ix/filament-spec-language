@@ -1,6 +1,6 @@
 [package]
 name = "fsl-analyze"
-version = "0.3.0"
+version = "0.1.0"
 publish = false
 edition = "2021"
 rust-version = "1.98"
@@ -37,7 +37,7 @@ quire-canonical = { workspace = true }
 # Strict admission authenticates the plan root final clause binding.
 filament-contract-model = { workspace = true }
 # The observation owner admits progress associations independently of FSL.
-filament-observation = { workspace = true }
+filament-observation = { git = "https://github.com/agent-ix/filament-observation", tag = "v0.1.1" }
 filament-exact = { workspace = true }
 filament-eval = { workspace = true }
 num-bigint = "0.4.8"
@@ -46,7 +46,7 @@ num-traits = "0.2.19"
 thiserror = "2.0.20"
 # ADR-012 section 9: the `#[string_edge]` marker `claim_family` decodes wire
 # words at, and the trace tags of the tests.
-ix-trace-rs = { git = "https://github.com/agent-ix/ix-trace-rs", tag = "v0.1.2" }
+ix-trace-rs = { git = "https://github.com/agent-ix/ix-trace-rs", branch = "main" }
 base64 = "0.22"
 serde = { version = "1.0.228", features = ["derive"] }
 serde_json = "1.0.151"
@@ -58,7 +58,6 @@ serde_json = "1.0.151"
 test-support = []
 
 [dev-dependencies]
-filament-specification = { workspace = true }
 # The analyze request stubs (FR-620 to FR-636) read `native-analyze/1`
 # documents through the in-process command adapter.
 fsl-command = { path = "../fsl-command" }
@@ -78,7 +77,7 @@ fsl-semantics = { path = "../fsl-semantics", features = ["test-support"] }
 fsl-eval = { path = "../fsl-eval", features = ["test-support"] }
 filament-eval = { workspace = true }
 # FR-159-AC-5 validates EN-1's manifest entry against FSpec's backend-provider
-# schema, read from the pinned standard package.
+# schema, read in place from `$FSPEC_DIR`.
 jsonschema = { version = "0.17.1", default-features = false, features = ["draft202012"] }
 
 [[test]]
