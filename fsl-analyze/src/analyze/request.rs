@@ -97,6 +97,8 @@ pub struct ItemOptions {
     pub max_task_product_work: Option<std::num::NonZeroU64>,
     /// The provisioned document a `finite-replay` item replays.
     pub trace: Option<fsl_semantics::model::observation::DocumentRef>,
+    /// The provisioned FR-739 finite trace population for a finite hyper item.
+    pub traces: Option<fsl_semantics::model::observation::DocumentRef>,
     /// The provisioned FR-737 execution assessed by `global-conformance`.
     pub recording: Option<fsl_semantics::model::observation::DocumentRef>,
     /// The caller's activated role population for a recording assessment.
@@ -184,7 +186,13 @@ impl ClaimItem {
                 .claims()
                 .iter()
                 .any(|checked| checked.occurrence().as_ref() == Some(&claim));
-        let wrong_authored_occurrence = names_other_occurrence(graph, &claim);
+        let wrong_authored_occurrence = names_other_occurrence(graph, &claim)
+            || graph
+                .finite_hyper_clauses()
+                .iter()
+                .find(|clause| clause.identity() == Some(claim.node()))
+                .and_then(|clause| clause.occurrence())
+                .is_some_and(|occurrence| occurrence != &claim);
         if !occurs
             || wrong_authored_occurrence
             || family.is_none_or(|family| !kind.applies_to_declaration(family))
