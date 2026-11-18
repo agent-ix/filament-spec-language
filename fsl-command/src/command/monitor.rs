@@ -547,6 +547,17 @@ fn drive(
                 .routed
                 .as_ref()
                 .map(|routed| {
+                    // FR-635: a provider's `package` is this compile's own
+                    // emission, under the request's clock selections. The
+                    // emission is remembered so the provider request reads
+                    // these bytes; an emission the selections refuse leaves
+                    // the provider items `package-not-emitted` (FSpec FR-331).
+                    let _ = fsl_package::emit_dependency_with_temporal_selections_and_cancel(
+                        checked.package(),
+                        selections,
+                        settle.cancel,
+                        routed.limits.emit,
+                    );
                     super::analyze::settle_items(
                         checked.package(),
                         &packages,
