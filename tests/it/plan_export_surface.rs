@@ -360,6 +360,87 @@ fn export(unit: &str, with_model: bool, member: Value) -> (u8, Value) {
     run(unit, with_model, ("export", member))
 }
 
+/// FR-756-AC-1's counter (FR-1018 "Behavior"): one `Counter` of
+/// `example/counter-third` with `inc` enabled while `value < 5` and adding 1,
+/// the state clause `Bounded` (`value <= 5`) and the initial state
+/// `value = 0`, so its reachable states are the six values 0 to 5.
+const COUNTER_UNIT: &str = "language \"ix:native\" edition \"1-draft\";\n\
+     profile v = \"filament.value.complete/v1\";\n\
+     profile m = \"filament.model.complete/v1\";\n\
+     model Counter = \"example/counter-third\";\n\
+     pre CanInc using v on Counter::Counter::inc { self.value < 5 }\n\
+     post Inc using v on Counter::Counter::inc \
+     { pre(self.value) < 5 and self.value = pre(self.value) + 1 }\n\
+     invariant Bounded using m on Counter::Counter at current { self.value <= 5 }\n";
+
+/// The counter's domain package: the fixture's third counter model with its
+/// `Level` widened to `Int[0, 9]`, so `value <= 5` is a clause the
+/// precondition keeps and not a consequence of the type.
+fn counter_model() -> Vec<u8> {
+    use crate::support::refinement_cas::{self, Variant};
+    let mut document: Value =
+        serde_json::from_slice(&refinement_cas::documents(Variant::CAS)[2]).unwrap();
+    let level = format!("ix://{}/Level", refinement_cas::THIRD);
+    for node in document["types"].as_array_mut().expect("types") {
+        if node["identity"] == level.as_str() {
+            for constraint in node["constraints"].as_array_mut().expect("constraints") {
+                if constraint["keyword"] == "max" {
+                    constraint["operands"]["value"] = json!("9");
+                }
+            }
+        }
+    }
+    serde_json::to_vec(&document).unwrap()
+}
+
+/// Writes the counter's model, unit and initial snapshot into `directory`
+/// and a `native-run/1` request whose `export` member is `member` with
+/// `initial` naming the snapshot, and returns the request path.
+pub(crate) fn counter_request(directory: &Path, mut member: Value) -> PathBuf {
+    use crate::support::refinement_cas::THIRD;
+    std::fs::write(directory.join("counter.json"), counter_model()).unwrap();
+    std::fs::write(directory.join("unit.native"), COUNTER_UNIT).unwrap();
+    let start = counter_snapshot(THIRD, json!({"value": {"integer": "0"}}));
+    std::fs::write(directory.join("counter-0.json"), start.to_string()).unwrap();
+    member["initial"] = json!("counter-0.json");
+    let model = json!({"format": "semantic-ir/2.0.0", "source": {"file": "counter.json",
+        "authority": "agent-ix", "identity": THIRD, "document": "Counter", "formal_revision": 1}});
+    let request = json!({"format": "native-run/1", "request": {"models": [model],
+        "program": {"source": source("unit.native")}, "export": member}});
+    let path = directory.join("request.json");
+    std::fs::write(&path, serde_json::to_vec(&request).unwrap()).unwrap();
+    path
+}
+
+/// Runs the request at `path` under `overrides`: its exit code, its native
+/// run document and, when FSL returns one, its FR-286 outcome document.
+fn run_path(
+    path: &Path,
+    overrides: &fsl_command::command::RequestOverrides<'_>,
+) -> (u8, Value, Option<fsl_replay::OutcomeDocument>) {
+    match fsl_command::command::run_with_overrides(path, overrides, &crate::negotiation::Fr290) {
+        Ok(result) => (
+            result.exit_code,
+            serde_json::from_str(&result.value.to_string()).expect("a JSON document"),
+            result.outcome,
+        ),
+        Err(error) => (error.category().exit_code(), error.value().unwrap(), None),
+    }
+}
+
+/// Exports the counter with `member` in a fresh directory.
+pub(crate) fn counter_export(member: Value) -> (u8, Value) {
+    let directory = tempfile::tempdir().unwrap();
+    let path = counter_request(directory.path(), member);
+    let (exit, value, _) = run_path(&path, &fsl_command::command::RequestOverrides::default());
+    (exit, value)
+}
+
+/// The JSON form of an FR-286 outcome document.
+fn outcome_json(document: &fsl_replay::OutcomeDocument) -> Value {
+    serde_json::from_slice(&document.to_bytes().expect("serializes")).unwrap()
+}
+
 /// FR-1015-AC-1, FSpec FR-811-AC-2/AC-3 and FR-817-AC-3: below the
 /// default floor the export refuses with no text, exit 21; under `any` it
 /// assembles with the unrepresented record claiming no region.
@@ -396,7 +477,8 @@ fn an_export_below_its_fidelity_floor_refuses_with_no_text() {
 }
 
 /// FR-1015-AC-2, FSpec FR-817-AC-4: a denied output-byte charge stops the
-/// export `incomplete` naming `export.output_bytes`, exit 22.
+/// export `incomplete` naming `export.output_bytes`, exit 22; a `limits`
+/// entry that is not an FR-255 setting name refuses, exit 20.
 #[test]
 #[trace("TC-2865", "FR-1015-AC-2")]
 #[trace("FSpec-TC-1976", "FSpec-FR-817-AC-4")]
@@ -406,12 +488,230 @@ fn an_export_stops_at_its_output_byte_limit() {
         &low_unit(),
         true,
         json!({"profile": "filament.output.tla2/v1", "obligations": ["Low"],
-            "limits": {"output_bytes": 1}}),
+            "limits": {"export.output_bytes": 1}}),
     );
     assert_eq!(value["export"]["status"], "incomplete", "{value}");
     names(&value["export"], "export.output_bytes");
     assert!(value["export"].get("target_text").is_none(), "{value}");
     assert_eq!(exit, 22, "{value}");
+    let (exit, value) = export(
+        &low_unit(),
+        true,
+        json!({"profile": "filament.output.tla2/v1", "obligations": ["Low"],
+            "limits": {"output_bytes": 1}}),
+    );
+    assert_eq!(exit, 20, "{value}");
+    names(&value, "invalid-request");
+    names(&value, "output_bytes");
+    assert!(value.get("export").is_none(), "{value}");
+}
+
+/// FR-1015-AC-3, FSpec FR-817-AC-1/AC-2: FSL writes the target file named
+/// by `export.output` or by the `output` request override, byte-identically,
+/// never over an existing path, and refuses the two together.
+#[test]
+#[trace("TC-2992", "FR-1015-AC-3")]
+#[trace("FSpec-TC-1976", "FSpec-FR-817-AC-1")]
+#[trace("FSpec-TC-1976", "FSpec-FR-817-AC-2")]
+#[ignore = "QSL-1979: FSL does not write the export target file yet"]
+fn an_export_writes_its_target_file_from_the_member_or_the_override() {
+    use fsl_command::command::RequestOverrides;
+    let member = || json!({"profile": "filament.output.tla2/v1", "obligations": ["Bounded"]});
+    // The request member names the file.
+    let first = tempfile::tempdir().unwrap();
+    let mut with_output = member();
+    with_output["output"] = json!({"file": "counter.tla"});
+    let path = counter_request(first.path(), with_output);
+    let (exit, value, _) = run_path(&path, &RequestOverrides::default());
+    assert_eq!(exit, 0, "{value}");
+    let text = value["export"]["target_text"]
+        .as_str()
+        .expect("target text");
+    let written = std::fs::read(first.path().join("counter.tla")).expect("the target file");
+    assert_eq!(written, text.as_bytes());
+    assert_eq!(
+        value["export"]["output"],
+        json!({"path": "counter.tla", "bytes_written": text.len()}),
+        "{value}"
+    );
+    // The same path again: refused by path, bytes unchanged.
+    let (exit, value, _) = run_path(&path, &RequestOverrides::default());
+    assert_eq!(exit, 20, "{value}");
+    names(&value, "invalid-request");
+    names(&value, "counter.tla");
+    assert_eq!(
+        std::fs::read(first.path().join("counter.tla")).unwrap(),
+        written
+    );
+    // The override names the file: byte-identical.
+    let second = tempfile::tempdir().unwrap();
+    let path = counter_request(second.path(), member());
+    let target = second.path().join("counter.tla");
+    let overrides = RequestOverrides {
+        output: Some(&target),
+        ..RequestOverrides::default()
+    };
+    let (exit, value, _) = run_path(&path, &overrides);
+    assert_eq!(exit, 0, "{value}");
+    assert_eq!(std::fs::read(&target).expect("the target file"), written);
+    // The member and the override together: one writer, refused, no file.
+    let third = tempfile::tempdir().unwrap();
+    let mut with_output = member();
+    with_output["output"] = json!({"file": "member.tla"});
+    let path = counter_request(third.path(), with_output);
+    let target = third.path().join("option.tla");
+    let overrides = RequestOverrides {
+        output: Some(&target),
+        ..RequestOverrides::default()
+    };
+    let (exit, value, _) = run_path(&path, &overrides);
+    assert_eq!(exit, 20, "{value}");
+    names(&value, "--output");
+    assert!(!target.exists() && !third.path().join("member.tla").exists());
+}
+
+/// FR-1015-AC-4, FSpec FR-817-AC-6: an assembled export carries FSpec
+/// FR-299's package key apart from its records, with the three export
+/// limits at their compile-lifecycle defaults.
+#[test]
+#[trace("TC-2992", "FR-1015-AC-4")]
+#[trace("FSpec-TC-2020", "FSpec-FR-817-AC-6")]
+#[ignore = "QSL-1979: the export package key is not implemented yet"]
+fn an_assembled_export_carries_its_package_key() {
+    let member = json!({"profile": "filament.output.tla2/v1", "obligations": ["Bounded"]});
+    let (_, first) = counter_export(member.clone());
+    let (_, second) = counter_export(member.clone());
+    let package = &first["export"]["package"];
+    let mut keys: Vec<&str> = package
+        .as_object()
+        .expect("a package member")
+        .keys()
+        .map(String::as_str)
+        .collect();
+    keys.sort_unstable();
+    assert_eq!(
+        keys,
+        ["generator", "limits", "source_package", "target_profile"],
+        "{first}"
+    );
+    assert_eq!(
+        package["target_profile"], "filament.output.tla2/v1",
+        "{first}"
+    );
+    assert_eq!(
+        package["limits"],
+        json!({"export.output_bytes": 16_777_216_u64, "export.nodes": 100_000,
+            "export.work_units": 16_777_216_u64}),
+        "{first}"
+    );
+    assert_eq!(package, &second["export"]["package"]);
+    let mut lowered = member;
+    lowered["limits"] = json!({"export.nodes": 99_999});
+    let (_, third) = counter_export(lowered);
+    let mut expected = package.clone();
+    expected["limits"]["export.nodes"] = json!(99_999);
+    assert_eq!(third["export"]["package"], expected, "{third}");
+}
+
+/// FR-255-AC-22: the three `export.*` settings exist with the compile
+/// lifecycle's defaults, and an export stops at `export.work_units`.
+#[test]
+#[trace("TC-2993", "FR-255-AC-22")]
+#[ignore = "QSL-1979: the export.* settings are not implemented yet"]
+fn the_export_settings_take_the_compile_defaults() {
+    use fsl_foundation::setting::{parse_operands, Setting};
+    for (name, compile) in [
+        ("export.output_bytes", "emit.output_bytes"),
+        ("export.nodes", "s3.nodes"),
+        ("export.work_units", "s3.work_units"),
+    ] {
+        assert!(Setting::from_name(compile).is_some(), "{compile}");
+        assert!(Setting::from_name(name).is_some(), "{name} is a setting");
+    }
+    let parsed = parse_operands(["export.nodes=7"]).expect("export.nodes parses");
+    assert_eq!(parsed.len(), 1);
+    assert_eq!(parsed[0].1, 7);
+    let (exit, value) = counter_export(json!({"profile": "filament.output.tla2/v1",
+        "obligations": ["Bounded"], "limits": {"export.work_units": 1}}));
+    assert_eq!(value["export"]["status"], "incomplete", "{value}");
+    names(&value["export"], "export.work_units");
+    assert_eq!(exit, 22, "{value}");
+}
+
+/// FR-286-AC-22: the export's FR-286 document has operation `export`, the
+/// standard categories and an `exported` result holding the export outcome.
+#[test]
+#[trace("TC-2994", "FR-286-AC-22")]
+#[ignore = "QSL-1979: the export operation's outcome document is not implemented yet"]
+fn an_export_outcome_document_has_operation_export() {
+    let directory = tempfile::tempdir().unwrap();
+    let path = counter_request(
+        directory.path(),
+        json!({"profile": "filament.output.tla2/v1", "obligations": ["Bounded"]}),
+    );
+    let (exit, value, outcome) =
+        run_path(&path, &fsl_command::command::RequestOverrides::default());
+    let document = outcome_json(&outcome.expect("an outcome document"));
+    assert_eq!(document["operation"], "export", "{document}");
+    assert_eq!(document["category"], "success", "{document}");
+    assert_eq!(document["last_stage"], "S4", "{document}");
+    assert_eq!(document["items"], json!([]), "{document}");
+    assert_eq!(document["artifacts"], json!([]), "{document}");
+    assert_eq!(document["result"]["kind"], "exported", "{document}");
+    assert_eq!(document["result"]["export"], value["export"], "{document}");
+    assert_eq!(exit, 0);
+    let limited = tempfile::tempdir().unwrap();
+    let path = counter_request(
+        limited.path(),
+        json!({"profile": "filament.output.tla2/v1", "obligations": ["Bounded"],
+            "limits": {"export.output_bytes": 1}}),
+    );
+    let (_, _, outcome) = run_path(&path, &fsl_command::command::RequestOverrides::default());
+    let document = outcome_json(&outcome.expect("an outcome document"));
+    assert_eq!(document["operation"], "export", "{document}");
+    assert_eq!(document["category"], "incomplete", "{document}");
+    assert_eq!(document["result"]["kind"], "exported", "{document}");
+}
+
+/// FR-865-AC-7: an export outcome renders as its header, target, bytes
+/// written and output path, and no other line.
+#[test]
+#[trace("TC-2996", "FR-865-AC-7")]
+#[ignore = "QSL-1979: the export text form is not implemented yet"]
+fn an_export_outcome_renders_as_four_lines() {
+    use filament_exact::Cancel;
+    use fsl_inspect::{render_outcome, RenderForm, RenderSources};
+    let directory = tempfile::tempdir().unwrap();
+    let path = counter_request(
+        directory.path(),
+        json!({"profile": "filament.output.tla2/v1", "obligations": ["Bounded"],
+            "output": {"file": "m.tla"}}),
+    );
+    let (_, value, outcome) = run_path(&path, &fsl_command::command::RequestOverrides::default());
+    let document = outcome.expect("an outcome document");
+    let rendered = render_outcome(
+        &document,
+        RenderForm::Text,
+        &RenderSources::from_sources(Vec::new()),
+        fsl_replay::RenderLimits::default(),
+        &Cancel::new(),
+    )
+    .expect("the document renders");
+    let text = rendered.value().as_str().to_owned();
+    let length = value["export"]["target_text"]
+        .as_str()
+        .expect("target text")
+        .len();
+    assert_eq!(
+        text.lines().collect::<Vec<_>>(),
+        [
+            "export: success (exit 0) at S4".to_owned(),
+            "target: tla filament.output.tla2/v1".to_owned(),
+            format!("bytes written: {length}"),
+            "output: m.tla".to_owned(),
+        ],
+        "{text}"
+    );
 }
 
 /// FR-1016-AC-1, FSpec FR-812-AC-1, FR-814-AC-3 and FR-817-AC-1: the TLA+
@@ -497,41 +797,30 @@ fn the_counter_export_equals_its_golden_files() {
     ] {
         let expected = std::fs::read_to_string(golden.join(file))
             .unwrap_or_else(|error| panic!("golden {file}: {error}"));
-        let (_, value) = export(
-            &low_unit(),
-            true,
-            json!({"profile": profile, "obligations": ["Low"]}),
-        );
+        let (_, value) = counter_export(json!({"profile": profile, "obligations": ["Bounded"]}));
         assert_eq!(value["export"]["target_text"], json!(expected), "{file}");
     }
 }
 
 /// FR-1018-AC-2, FSpec FR-818-AC-2: with TLC present its state count and
-/// verdict equal FSL's; without it the oracle names the missing tool.
+/// verdict equal FSL's exploration of the counter (six states, `Bounded`
+/// holding); without it the oracle names the missing tool. The export
+/// outcome itself reports no native exploration (FSpec FR-817).
 #[test]
 #[trace("TC-2868", "FR-1018-AC-2")]
 #[trace("FSpec-TC-1977", "FSpec-FR-818-AC-2")]
 #[ignore = "QSL-1979: the TLC export oracle is not implemented yet"]
 fn the_tlc_oracle_agrees_or_names_the_missing_tool() {
-    let (_, value) = export(
-        &low_unit(),
-        true,
-        json!({"profile": "filament.output.tla2/v1", "obligations": ["Low"],
-            "observer": "tlc", "initial": "spine-snapshot.json"}),
-    );
+    let (_, value) = counter_export(json!({"profile": "filament.output.tla2/v1",
+        "obligations": ["Bounded"], "observer": "tlc"}));
+    assert!(value["export"].get("native").is_none(), "{value}");
     let observer = &value["export"]["observer"];
     assert!(observer.is_object(), "{value}");
     if observer["outcome"] == "tool-not-found" {
         names(observer, "tlc not found");
     } else {
-        assert_eq!(
-            observer["reachable_states"], value["export"]["native"]["reachable_states"],
-            "{value}"
-        );
-        assert_eq!(
-            observer["verdict"], value["export"]["native"]["verdict"],
-            "{value}"
-        );
+        assert_eq!(observer["reachable_states"], 6, "{value}");
+        assert_eq!(observer["verdict"], "holds", "{value}");
     }
 }
 

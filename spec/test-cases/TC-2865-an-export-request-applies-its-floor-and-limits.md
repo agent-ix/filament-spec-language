@@ -15,9 +15,11 @@ Verify the fidelity floor and the export output limit. Scope: FR-1015-AC-1 and A
 ## Test Procedure
 
 1. Export `SlowEnough` under the default floor, then under `any`.
-2. Export with `limits.output_bytes` 1.
+2. Export with `limits` `{"export.output_bytes": 1}`, then with `limits` `{"output_bytes": 1}`.
+3. Export with `limits` `{"export.output_bytes": 1}` and `RequestOverrides::limits` setting `export.output_bytes`; then without the `limits` entry and with the override set to 1.
 
 ## Expected Results
 
 - Step 1: `refused` with `below-fidelity-floor`, exit 21; then `assembled`.
-- Step 2: `incomplete` naming `export.output_bytes`, exit 22.
+- Step 2: `incomplete` naming `export.output_bytes`, exit 22; then `invalid-request` naming `output_bytes`, exit 20.
+- Step 3: `invalid-request` naming `limits` and `export.output_bytes`, exit 20; then `incomplete` naming `export.output_bytes`, exit 22.
