@@ -604,6 +604,18 @@ fn recording_document_identity_refusals_name_the_exact_request_pointer() {
         &["stated identity", "stated", "declared"],
     );
 
+    let null_ws = Workspace::new("cli-recording-identity-null");
+    null_ws.write(
+        "recording.json",
+        br#"{"format":"filament.protocol-recording/1","identity":{"authority":"test","identity":"declared"}}"#,
+    );
+    let null_identity = litmus_request(
+        &null_ws,
+        &order_protocol(true),
+        json!({"documents":[{"file":"recording.json", "identity":null}]}),
+    );
+    assert_refusal(&null_identity, "/documents/0/identity", &["malformed"]);
+
     let unidentified_ws = Workspace::new("cli-recording-identity-missing");
     unidentified_ws.write(
         "recording.json",

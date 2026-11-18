@@ -489,7 +489,7 @@ pub(super) struct FileSelection {
 #[serde(deny_unknown_fields)]
 pub(super) struct DocumentFileSelection {
     pub file: String,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "present_json_value")]
     pub identity: Option<serde_json::Value>,
 }
 

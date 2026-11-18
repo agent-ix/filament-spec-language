@@ -1394,50 +1394,73 @@ fn assess_obligations(
                         && observation.instance == instance
                 })
                 .collect::<Vec<_>>();
-            let repeated_choice_is_ambiguous = control_repeat_limit(protocol, control) > 1
-                && decisions
-                    .iter()
-                    .map(|(_, observation)| observation.node.as_str())
-                    .collect::<BTreeSet<_>>()
-                    .len()
-                    > 1;
             let choice_verdict = if control.kind.label() != "choice" || decisions.is_empty() {
                 None
             } else {
                 let positions = decisions.iter().map(|(position, _)| *position).collect();
-                let result = if repeated_choice_is_ambiguous {
+                let mut grouped =
+                    BTreeMap::<Option<RecordingRoleInstance>, Vec<(usize, &Observation)>>::new();
+                for (position, observation) in &decisions {
+                    grouped
+                        .entry(observation.role_instance.clone())
+                        .or_default()
+                        .push((*position, observation));
+                }
+                let choice = protocol
+                    .slots
+                    .choices
+                    .iter()
+                    .find(|choice| choice.node == control.node);
+                let mut guard_failed = false;
+                let mut guard_pending = false;
+                for group in grouped.values() {
+                    let repeated_choice_is_ambiguous = control_repeat_limit(protocol, control) > 1
+                        && group
+                            .iter()
+                            .map(|(_, observation)| observation.node.as_str())
+                            .collect::<BTreeSet<_>>()
+                            .len()
+                            > 1;
+                    if repeated_choice_is_ambiguous {
+                        guard_pending = true;
+                        continue;
+                    }
+                    for (position, observation) in group {
+                        let Some(choice) = choice else {
+                            guard_failed = true;
+                            continue;
+                        };
+                        let Some(case_name) = observation.node.rsplit("::").next() else {
+                            guard_failed = true;
+                            continue;
+                        };
+                        let Some(case) = choice.cases.iter().find(|case| case.name == case_name)
+                        else {
+                            guard_failed = true;
+                            continue;
+                        };
+                        match evaluate_body(
+                            package,
+                            protocol,
+                            document,
+                            &case.guard,
+                            observation.instance.as_deref(),
+                            &observation.role,
+                            observation.role_instance.as_ref(),
+                            *position,
+                        ) {
+                            Some(true) => {}
+                            Some(false) => guard_failed = true,
+                            None => guard_pending = true,
+                        }
+                    }
+                }
+                let result = if guard_failed {
+                    Some(false)
+                } else if guard_pending {
                     None
                 } else {
-                    let choice = protocol
-                        .slots
-                        .choices
-                        .iter()
-                        .find(|choice| choice.node == control.node);
-                    let values = decisions
-                        .iter()
-                        .filter_map(|(position, observation)| {
-                            let choice = choice?;
-                            let case_name = observation.node.rsplit("::").next()?;
-                            let case = choice.cases.iter().find(|case| case.name == case_name)?;
-                            Some(evaluate_body(
-                                package,
-                                protocol,
-                                document,
-                                &case.guard,
-                                observation.instance.as_deref(),
-                                *position,
-                            ))
-                        })
-                        .collect::<Vec<_>>();
-                    if values.len() != decisions.len()
-                        || values.iter().any(|value| *value == Some(false))
-                    {
-                        Some(false)
-                    } else if values.iter().any(Option::is_none) {
-                        None
-                    } else {
-                        Some(true)
-                    }
+                    Some(true)
                 };
                 Some((positions, result))
             };
@@ -1486,17 +1509,22 @@ fn assess_obligations(
                         })
                         .max_by_key(|(position, _)| ranks.get(position).copied());
                     match latest {
-                        Some((position, _)) => (
-                            Some(position),
-                            evaluate_body(
-                                package,
-                                protocol,
-                                document,
-                                &body.body,
-                                instance.as_deref(),
-                                position,
-                            ),
-                        ),
+                        Some((position, _)) => {
+                            let observation = &document.observations[position];
+                            (
+                                Some(position),
+                                evaluate_body(
+                                    package,
+                                    protocol,
+                                    document,
+                                    &body.body,
+                                    instance.as_deref(),
+                                    &observation.role,
+                                    observation.role_instance.as_ref(),
+                                    position,
+                                ),
+                            )
+                        }
                         None => (None, None),
                     }
                 })
@@ -2112,6 +2140,8 @@ fn assess_obligations(
                         document,
                         key,
                         document.observations[*send].instance.as_deref(),
+                        &document.observations[*send].role,
+                        document.observations[*send].role_instance.as_ref(),
                         *send,
                     )
                     .map(|value| format!("key:{value:?}"))
@@ -2365,6 +2395,8 @@ fn assess_obligations(
                     document,
                     &body.body,
                     observation.instance.as_deref(),
+                    &observation.role,
+                    observation.role_instance.as_ref(),
                     position,
                 ) {
                     Some(true) => (RecordingVerdict::Satisfied, None),
@@ -2624,6 +2656,8 @@ fn evaluate_body_value(
     document: &RecordingDocument,
     body: &fsl_semantics::check::CheckedBody,
     instance: Option<&str>,
+    role: &str,
+    role_instance: Option<&RecordingRoleInstance>,
     before: usize,
 ) -> Option<Value> {
     let types = package.graph().scope().types();
@@ -2639,6 +2673,20 @@ fn evaluate_body_value(
         let Some(node) = binder.node else {
             continue;
         };
+        let binder_role = protocol
+            .owners
+            .iter()
+            .find(|owner| owner.node == node)
+            .and_then(|owner| protocol.roles.get(owner.role));
+        let binder_is_replicated = binder_role.is_some_and(|owner| owner.replicated);
+        if binder_is_replicated && binder_role.is_some_and(|owner| owner.name != role) {
+            return None;
+        }
+        let binder_role_instance = if binder_is_replicated {
+            Some(role_instance?)
+        } else {
+            None
+        };
         let node_name = protocol_node_name(protocol, node.0);
         let source_position = order
             .iter()
@@ -2646,7 +2694,11 @@ fn evaluate_body_value(
             .filter(|position| ranks.get(position).is_some_and(|rank| *rank <= before_rank))
             .filter(|position| {
                 let observation = &document.observations[*position];
-                observation.node == node_name && observation.instance.as_deref() == instance
+                observation.node == node_name
+                    && observation.instance.as_deref() == instance
+                    && binder_role.is_none_or(|owner| observation.role == owner.name)
+                    && (!binder_is_replicated
+                        || observation.role_instance.as_ref() == binder_role_instance)
             })
             .max_by_key(|position| ranks.get(position).copied());
         let Some(source) = source_position.map(|position| &document.observations[position]) else {
@@ -2689,9 +2741,20 @@ fn evaluate_body(
     document: &RecordingDocument,
     body: &fsl_semantics::check::CheckedBody,
     instance: Option<&str>,
+    role: &str,
+    role_instance: Option<&RecordingRoleInstance>,
     before: usize,
 ) -> Option<bool> {
-    match evaluate_body_value(package, protocol, document, body, instance, before)? {
+    match evaluate_body_value(
+        package,
+        protocol,
+        document,
+        body,
+        instance,
+        role,
+        role_instance,
+        before,
+    )? {
         Value::Boolean(value) => Some(value),
         _ => None,
     }

@@ -1310,6 +1310,44 @@ fn mixed_cases_across_repeat_iterations_remain_pending() {
     );
 }
 
+/// A replicated member's choice guard reads that same member's binder record.
+#[trace("FR-895-AC-1")]
+#[test]
+fn fanout_choice_guard_uses_the_binder_for_its_role_instance() {
+    let run_body = "sequence Main { event Ready by r as (ready: Boolean) { true }; choice Decide by r visible (ready) { case no when { not ready } sequence No { } case yes when { ready } sequence Yes { } } }";
+    let source = crate::protocol_roles::unit(
+        crate::protocol_roles::ORIGIN,
+        &crate::protocol_roles::role(2, "workflow"),
+        "",
+        run_body,
+    );
+    let package = crate::fill::package(&source);
+    let member = |identity: &str| json!({"authority":"test", "identity":identity});
+    let run = json!({
+        "format":"filament.protocol-recording/1", "protocol":"R",
+        "observations":[
+            {"kind":"event", "node":"R::Main::Ready", "role":"r", "role_instance":member("cell-b"), "keys":{}, "record":false},
+            {"kind":"event", "node":"R::Main::Ready", "role":"r", "role_instance":member("cell-a"), "keys":{}, "record":true},
+            {"kind":"case", "node":"R::Main::Decide::yes", "role":"r", "role_instance":member("cell-b"), "keys":{}},
+            {"kind":"case", "node":"R::Main::Decide::yes", "role":"r", "role_instance":member("cell-a"), "keys":{}}
+        ],
+        "local_order":{"r":[0,1,2,3]}, "correlations":[],
+        "closure":{"state":"open", "premises":[]}
+    });
+    let assessed = assess_recording(&package, run.to_string().as_bytes())
+        .expect("readable replicated-role choice observations");
+    assert!(
+        assessed.obligations.iter().any(|entry| {
+            entry.obligation.kind == "control"
+                && entry.obligation.node.as_deref() == Some("R::Main::Decide")
+                && entry.verdict == RecordingVerdict::Violated
+                && entry.witness == [2, 3]
+        }),
+        "{:#?}",
+        assessed.obligations
+    );
+}
+
 /// Repeated observations of the same case are assessed independently; a
 /// later false guard must refute the choice even when its first guard held.
 #[trace("FR-895-AC-1")]
