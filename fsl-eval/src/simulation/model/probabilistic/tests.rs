@@ -446,12 +446,13 @@ fn the_support_graph_is_the_state_graph() {
 }
 
 /// FR-185-AC-7 (TC-620 step 7): `Service`, with `d` typed `Millis = Int[1,
-/// 12]`, checks at S3 with its record intact and refuses at S4
-/// `unsupported_construct`/`not-yet-implemented`, naming its first random
-/// parameter in source order, `random-parameter` and the selected profile.
+/// 12]`, checks at S3 with its record intact; S4 writes its random
+/// parameters and workload and refuses at `unsupported_construct`/
+/// `not-yet-implemented`, naming its reward, `reward` and the selected
+/// profile.
 #[trace("TC-620", "FR-185-AC-7")]
 #[test]
-fn service_checks_and_refuses_emission_naming_its_first_random_parameter() {
+fn service_checks_and_refuses_emission_naming_its_reward() {
     let world = World::new(&world::service(""));
     let model = world.package.graph().probabilistic_model();
     assert_eq!(model.random_parameters().len(), 2);
@@ -463,10 +464,10 @@ fn service_checks_and_refuses_emission_naming_its_first_random_parameter() {
         &refusal,
         fsl_package::EmitRefusal::ProbabilisticModelNotEmitted {
             declaration,
-            feature: fsl_semantics::check::ProbabilisticFeature::RandomParameter,
+            feature: fsl_semantics::check::ProbabilisticFeature::Reward,
             profile: Some("filament.model.complete/v1"),
             region,
-        } if declaration == "attempt(d)" && region.start() < region.end()
+        } if declaration == "duration" && region.start() < region.end()
     ));
     assert_eq!(
         (refusal.code(), refusal.cause()),
@@ -663,7 +664,7 @@ fn zero_weight_workloads_follow_enabled_operation_weights() {
 #[trace("TC-2062", "FR-740-AC-2")]
 #[trace("FSpec-TC-1563", "FSpec-FR-640-AC-5")]
 #[test]
-#[ignore = "QSL-2000: Service emitted as v2 probabilistic nodes not implemented yet"]
+#[ignore = "QSL-2440: the reward of Service is emitted as a v2 probabilistic node"]
 fn service_is_emitted_and_its_steps_hold_for_the_emitted_model() {
     let world = World::new(&world::service(""));
     let emission = fsl_package::emit_checked(&world.package, fsl_package::EmitLimits::fixture())
@@ -688,6 +689,32 @@ fn service_is_emitted_and_its_steps_hold_for_the_emitted_model() {
     let busy = steps(&system, &request.post, &world, "Steady");
     assert_eq!(busy.len(), 6);
     assert_eq!(sum(&busy), ratio(1, 1));
+}
+
+/// FR-740-AC-1 (TC-2062): `Service` without its reward emits two
+/// `random_parameter` nodes (the Boolean `ok` and the `Millis`-typed `d`)
+/// and the `Steady` workload node.
+#[trace("TC-2062", "FR-740-AC-1")]
+#[test]
+fn service_random_parameters_and_workload_are_emitted() {
+    let mut model = world::service("");
+    model.body = model
+        .body
+        .replace("reward duration on Server::attempt = d;\n", "");
+    let world = World::new(&model);
+    let emission = fsl_package::emit_checked(&world.package, fsl_package::EmitLimits::fixture())
+        .unwrap_or_else(|refusal| panic!("S4 emits the random parameters: {refusal:?}"));
+    let wire: serde_json::Value =
+        serde_json::from_slice(emission.package().bytes()).expect("JSON bytes");
+    let count = |form: &str| {
+        wire["semantic_graph"]["nodes"]
+            .as_array()
+            .expect("nodes")
+            .iter()
+            .filter(|node| node["node_tag"] == "probabilistic" && node["semantic_form"] == form)
+            .count()
+    };
+    assert_eq!((count("random_parameter"), count("workload")), (2, 1));
 }
 
 /// FSpec FR-406-AC-6 (TC-351): under a workload that gives `send_b` weight

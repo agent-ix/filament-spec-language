@@ -50,10 +50,17 @@ pub struct ProbabilisticOperation {
     model: String,
     key: DeclarationKey,
     declaring: EffectiveId,
+    declaring_key: DeclarationKey,
     name: String,
 }
 
 impl ProbabilisticOperation {
+    /// The declaration key of the object type that declares the operation:
+    /// the identity of its `model` node.
+    pub fn declaring_key(&self) -> &DeclarationKey {
+        &self.declaring_key
+    }
+
     /// The `model` alias whose domain package declares the operation.
     pub fn model(&self) -> &str {
         &self.model
@@ -103,6 +110,12 @@ pub struct RandomParameter {
 }
 
 impl RandomParameter {
+    /// The location of the declaration, whose region is the declaration's
+    /// label span.
+    pub fn declaration_location(&self) -> Location {
+        site_location(self.declared, Site::Declaration)
+    }
+
     /// The operation the parameter belongs to.
     pub fn operation(&self) -> &ProbabilisticOperation {
         &self.operation
@@ -141,6 +154,12 @@ pub struct Workload {
 }
 
 impl Workload {
+    /// The location of the declaration, whose region is the declaration's
+    /// label span.
+    pub fn declaration_location(&self) -> Location {
+        site_location(self.declared, Site::Declaration)
+    }
+
     /// The workload's declared name.
     pub fn name(&self) -> &str {
         &self.name
@@ -336,10 +355,9 @@ impl CheckedProbabilisticModel {
 
     /// The first checked declaration in source order that S4 has no node
     /// for, with its feature: what S4 names when it refuses the package
-    /// (FR-185 "Package emission"). A claim is emitted as its own node
-    /// (FR-498), so it is never named. A random parameter is named
-    /// `operation(parameter)`, a reward, a workload and a delay by their
-    /// declared names.
+    /// (FR-185 "Package emission"). A claim, a random parameter and a
+    /// workload are emitted as nodes (FR-498, FR-740), so they are never
+    /// named. A reward and a delay are named by their declared names.
     pub fn first_declaration(&self) -> Option<(ProbabilisticFeature, String)> {
         self.first_declaration_details()
             .map(|(_, feature, name)| (feature, name))
@@ -353,25 +371,11 @@ impl CheckedProbabilisticModel {
     }
 
     fn first_declaration_details(&self) -> Option<(usize, ProbabilisticFeature, String)> {
-        let random = self.random_parameters.iter().map(|random| {
-            (
-                random.declared,
-                ProbabilisticFeature::RandomParameter,
-                format!("{}({})", random.operation.name, random.parameter),
-            )
-        });
         let rewards = self.rewards.iter().map(|reward| {
             (
                 reward.declared,
                 ProbabilisticFeature::Reward,
                 reward.name.clone(),
-            )
-        });
-        let workloads = self.workloads.iter().map(|workload| {
-            (
-                workload.declared,
-                ProbabilisticFeature::Workload,
-                workload.name.clone(),
             )
         });
         let delays = self.delays.iter().map(|delay| {
@@ -381,9 +385,7 @@ impl CheckedProbabilisticModel {
                 delay.operation.name.clone(),
             )
         });
-        random
-            .chain(rewards)
-            .chain(workloads)
+        rewards
             .chain(delays)
             .min_by_key(|(declared, _, _)| *declared)
     }
@@ -669,6 +671,7 @@ impl<'a> ProbabilisticInput<'a> {
             [found] => found,
             _ => return Err(Unresolved::Ambiguous),
         };
+        let objects = self.model_objects.get(alias).ok_or(Unresolved::Missing)?;
         let context = self
             .object_types
             .get(key)
@@ -701,6 +704,11 @@ impl<'a> ProbabilisticInput<'a> {
             ProbabilisticOperation {
                 model: alias.clone(),
                 key: key.clone(),
+                declaring_key: objects
+                    .values()
+                    .find(|candidate| self.object_types.get(*candidate) == Some(&declaring))
+                    .cloned()
+                    .ok_or(Unresolved::Missing)?,
                 declaring,
                 name: declaration.name().to_owned(),
             },
