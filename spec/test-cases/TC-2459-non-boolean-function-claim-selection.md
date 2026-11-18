@@ -22,6 +22,6 @@ Verify the `select` refusals of a `function` claim selection. Scope: FR-867-AC-1
 
 - Step 1: exit 20, stage `select`, `ill_typed`/`type-mismatch` with `function` `seven`, `expected` `Boolean`, `actual` `Integer`; the message names all three.
 - Step 2: `yes` exits 0 with `truth` true; `nope` exits 20 `missing_declaration`/`missing-name` naming `nope`.
-- Step 3: each case runs through `run` and matches its record: `holds` exit 0 `tested`; `false` and `undefined` exit 10 `refuted` (the latter with cause `undefined-evaluation`); `integer`, `bounded` and `unknown` exit 20 `declined` with the FR-867-AC-4 diagnostic.
+- Step 3: each case runs through `run` and matches its record: `holds` exit 0 `tested`; `false` and `undefined` exit 10 `refuted` (the latter with `cause` `{"kind": "undefined-evaluation", "where": W, "cause": R}`, `R` its FR-100 undefined reason); `integer`, `bounded` and `unknown` exit 20 `declined` with the FR-867-AC-4 diagnostic.
 
 Test: `tests/it/function_claim_selection.rs`.

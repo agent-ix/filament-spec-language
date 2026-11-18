@@ -170,12 +170,6 @@ category:
 | refusal | `declined` | the refusal cause |
 | undefined (FR-283's `InsufficientData`) | `undefined` | `insufficient-data` |
 
-A `declined` item of a clause run refused at stage `select` also carries the
-refusal's `diagnostic` (`code`, `cause`, and its FR-272 payload as `detail`),
-as [FR-867](FR-867-name-the-function-and-its-result-type-when-a-non-boolean-function-is-selected-as-a-claim.md)
-states, so the selected name and, for a non-`Boolean` function, its expected
-and actual result types reach the outcome document.
-
 A `monitor` item carries the members of FR-283's record for its verdict, besides
 `clause`, `result`, `category` and `cause`:
 
@@ -186,6 +180,8 @@ A `monitor` item carries the members of FR-283's record for its verdict, besides
 | `InsufficientData` | `position`, `count` and `min_count`; no `counterexample` and no `witness` |
 | `Pending`, `Tested` | none |
 | `Indeterminate` | `position` where FR-501's reason names one |
+| `Declined` at stage `select` | `diagnostic` `{code, cause, detail}`: the refusal's catalog code and cause, and its FR-272 payload as `detail`, so the selected name and, for a non-`Boolean` function, its expected and actual result types reach the document ([FR-867](FR-867-name-the-function-and-its-result-type-when-a-non-boolean-function-is-selected-as-a-claim.md)) |
+| `Declined` at any other stage, `Unsupported`, `Incomplete` | none |
 
 `pending` and `indeterminate` are catalog labels (`Category::as_str`), not
 FR-331 terminal-record labels: a clause run that did not settle has no terminal
@@ -290,8 +286,8 @@ The outcome document's bytes.
   `backend-not-supplied` and `backend` the engine's name (`aot` or `jit`), in
   category unsupported (FR-285, exit 21).
 - `OutcomeItem::from_clause_run` shall give each item the members the
-  "Monitor documents from clause runs" member table lists for its verdict and
-  no other, reading `counterexample` from `ClauseRunReport::counterexample`
+  "Monitor documents from clause runs" member table lists for its verdict,
+  a `select` refusal's `diagnostic` included, and no other, reading `counterexample` from `ClauseRunReport::counterexample`
   (FR-330 Outputs; the same record FR-267 writes in its `temporal` member).
 - `OutcomeItem::from_clause_run` shall write `decisive`, a sibling of `counterexample`, from `ClauseRunReport::decisive` (FR-330 Outputs) on a temporal `Violated` item whose report holds one, and no `decisive` on any other item.
 - `OutcomeItem::from_clause_run` shall write `witness` exactly when
