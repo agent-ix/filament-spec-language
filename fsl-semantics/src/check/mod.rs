@@ -410,9 +410,9 @@ pub use ir::{
     EqualityUnitIdentityFact, EqualityUnitOperandRole, EqualityUnitTypeFact, Node, NodeId, Slot,
 };
 
-pub use assemble::model_operation_table;
 #[cfg(any(test, feature = "test-support"))]
 pub use assemble::model_type_environment;
+pub use assemble::model_operation_table;
 pub use assemble::{
     AdmittedImport, AssemblyCause, AssemblyError, AssemblyLimits, AssemblyRefusal, AssemblyRun,
     ClockReadingDeclaration, ClockSite, ClockSlot, ClockTypePosition, ClockUse,
@@ -7692,8 +7692,10 @@ impl PackageDeclarations {
                 }]
             };
             let boolean = builtin_boolean_type_key(&package_name).map_err(|_| unkeyable())?;
-            let record =
-                claims::RequirementRecord::model_claim(claim.requirements(), claims::wire(boolean));
+            let record = claims::RequirementRecord::model_claim(
+                claim.requirements(),
+                claims::wire(boolean),
+            );
             match requirements.entry(occurrence) {
                 std::collections::hash_map::Entry::Vacant(slot) => {
                     slot.insert(record);

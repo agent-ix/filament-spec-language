@@ -14,15 +14,15 @@ use filament_contract_model::CheckedNodeId;
 use serde::{Deserialize, Serialize};
 use serde_json::value::RawValue;
 
-use super::{read_typed, NativeRunReadError};
+use super::{NativeRunReadError, read_typed};
 use crate::model_check::settle::{Execution, ResultLabel, Truth};
 use crate::proof_result::{
     Certification, IncompleteCause, InconclusiveCause, ProofBasis, SettlementBasis, TerminalValue,
     UnavailabilityCause,
 };
 use crate::protocol_analysis::{
-    self as analysis, node_text, read_node_text, NodeTextError, ProtocolAnalysisKey,
-    ProtocolAnalysisSettlement, UnsupportedSlug,
+    self as analysis, NodeTextError, ProtocolAnalysisKey, ProtocolAnalysisSettlement,
+    UnsupportedSlug, node_text, read_node_text,
 };
 use crate::result::{CauseCodecError, ProtocolWitnessWire, SeparatingWitnessRecord};
 

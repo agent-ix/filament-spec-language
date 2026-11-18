@@ -59,6 +59,7 @@ pub use progress::{
     ProgressLimitReached, ProgressLowerBoundary, ProgressValue,
 };
 use temporal::TemporalRun;
+pub(crate) use temporal::{trace_refusal, verdict, SAMPLE_AUTHORITY};
 pub use temporal::{
     admit_progress, authenticate_package_trace, clause_trace_binding, name_clause_atom,
     run_package_temporal, run_package_temporal_bounded, sample_position, AdmittedLate,
@@ -67,7 +68,6 @@ pub use temporal::{
     TemporalAuthentication, TimestampedCover, TimestampedMissingValuation, TimestampedObservation,
     TimestampedOrderKey, TimestampedWindow, TraceBinding, TraceInput, DEFAULT_MODEL_MAX_CANDIDATES,
 };
-pub(crate) use temporal::{trace_refusal, verdict, SAMPLE_AUTHORITY};
 pub use trace_refusal::{TraceRefusal, REASONS as TRACE_REFUSAL_REASONS};
 pub use trace_subject::{
     run_package_trace_subject, run_trace_subject_clause, PackageTraceSubjectRequest,

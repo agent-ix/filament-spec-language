@@ -1050,8 +1050,14 @@ pub fn replay_protocol_trace_with_temporal_selections(
                     }),
                 )));
             }
-            check_protocol_bounds(&model, protocol, &capacities, package.0, BOUND_POSITIONS)
-                .map_err(|refusal| refused(ModelTraceRefusal::NotSimulated(Box::new(refusal))))?;
+            check_protocol_bounds(
+                &model,
+                protocol,
+                &capacities,
+                package.0,
+                BOUND_POSITIONS,
+            )
+            .map_err(|refusal| refused(ModelTraceRefusal::NotSimulated(Box::new(refusal))))?;
             let protocol_subject = ProtocolSubject {
                 model: ModelSubject {
                     simulation,
@@ -2211,16 +2217,12 @@ pub fn behaviour_valuations(
                         // A meter stop inside the evaluator is an
                         // `Incomplete` activation, not a verdict: the
                         // work budget ended the enumeration there.
-                        let stopped =
-                            valuation
-                                .activations
-                                .iter()
-                                .find_map(|(_, outcome)| match outcome {
-                                    TemporalOutcome::Incomplete(incomplete) => {
-                                        Some(incomplete.clone())
-                                    }
-                                    _ => None,
-                                });
+                        let stopped = valuation.activations.iter().find_map(
+                            |(_, outcome)| match outcome {
+                                TemporalOutcome::Incomplete(incomplete) => Some(incomplete.clone()),
+                                _ => None,
+                            },
+                        );
                         match stopped {
                             Some(incomplete) => std::ops::ControlFlow::Break(
                                 fsl_eval::temporal::ValuationStop::Letter(LetterStop::Incomplete(

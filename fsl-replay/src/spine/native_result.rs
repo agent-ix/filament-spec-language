@@ -3035,6 +3035,7 @@ pub(crate) fn item_record(report: &ClauseRunReport) -> Result<ItemRecord, Native
     })
 }
 
+
 /// FSpec FR-352's `disposition` object for the temporal evaluator's `result`
 /// over a behaviour that is not a set of observed documents (FR-941): the
 /// row's `category`, `truth`, `basis` and `outcome`, and `temporal` with its

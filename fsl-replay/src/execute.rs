@@ -32,9 +32,9 @@ use filament_semantic_value::location::ExpressionLocation as Location;
 use filament_semantic_value::supplied_stop::{
     SuppliedCause, SuppliedFailure, SuppliedRun, SuppliedStop, UnsupportedHelperStop,
 };
-use fsl_eval::temporal::{evaluate_observed, TemporalPosition, TemporalRefusal, TemporalTrace};
+use fsl_eval::temporal::{TemporalPosition, TemporalRefusal, TemporalTrace, evaluate_observed};
 use fsl_eval::value::{
-    input_refusal_code, supplied_stop_cause, supplied_stop_code, CheckedPackageEvaluation,
+    CheckedPackageEvaluation, input_refusal_code, supplied_stop_cause, supplied_stop_code,
 };
 use fsl_foundation::source::provenance::OccurrenceKey;
 use fsl_foundation::{Code, SourceIdentity};
@@ -69,7 +69,7 @@ use filament_semantic_value::catalog::Category;
 use fsl_forms::StateClauseKind;
 use fsl_foundation::Setting;
 use fsl_semantics::model::observation::{
-    admit_trace_snapshot, population_universe_for, AdmissionFailure, DocumentRef, ObservationForm,
+    AdmissionFailure, DocumentRef, ObservationForm, admit_trace_snapshot, population_universe_for,
 };
 use std::borrow::Cow;
 use std::collections::BTreeSet;
@@ -78,7 +78,7 @@ mod argument;
 mod object_environment;
 pub use object_environment::{ObjectEnvironmentFailure, Unresolved};
 pub(crate) mod frame;
-pub use frame::{replay_frame, FrameIdentityMismatch, FrameReplayResult};
+pub use frame::{FrameIdentityMismatch, FrameReplayResult, replay_frame};
 
 mod composite_domain;
 mod composite_parity;
@@ -87,21 +87,21 @@ mod operator_parity;
 mod parity_identity;
 pub(crate) use parity_identity::process_provider_obligation;
 pub use parity_identity::{
-    parity_obligation, value_parity_obligation, BoundEntries, Domain, IdentityEncodeError,
-    ParityArgument, ParityPreimage, ValueParityArgument, ValueParityPreimage,
+    BoundEntries, Domain, IdentityEncodeError, ParityArgument, ParityPreimage, ValueParityArgument,
+    ValueParityPreimage, parity_obligation, value_parity_obligation,
 };
 pub(crate) mod scalar_site;
 pub use composite_domain::ParityBoundRefusal;
 pub use composite_parity::{replay_composite_parity, settle_verified_shadow};
-pub use operator_parity::{replay_operator_parity, ScalarIdentityMismatch};
+pub use operator_parity::{ScalarIdentityMismatch, replay_operator_parity};
 
 mod value_parity;
-pub use value_parity::{replay_value_parity, ValueParityReport, ValueParityResult};
+pub use value_parity::{ValueParityReport, ValueParityResult, replay_value_parity};
 
 mod state_clause;
-pub use state_clause::{replay_state_clause, ClauseIdentityMismatch, StateClauseReplayResult};
+pub use state_clause::{ClauseIdentityMismatch, StateClauseReplayResult, replay_state_clause};
 #[cfg(test)]
-pub(crate) use state_clause::{separate, settle_separation, stopped_reason, SeparationOutcome};
+pub(crate) use state_clause::{SeparationOutcome, separate, settle_separation, stopped_reason};
 
 /// The S1 limit a request names that is above this executor's reader
 /// limit (ADR-013 O-26: "a limit above the reader limit").
@@ -215,9 +215,7 @@ pub enum ReplayRefusal {
     #[error("the package reference's dependencies are no dependency input: {0}")]
     DependencyInput(DependencyInputRefusal),
     /// The selection names no function node of the recompiled package.
-    #[error(
-        "missing_declaration/missing-name: package {package} declares no function {selection}"
-    )]
+    #[error("missing_declaration/missing-name: package {package} declares no function {selection}")]
     UnknownFunction {
         /// The request's selection.
         selection: QualifiedName,
@@ -2796,7 +2794,7 @@ pub(crate) mod tests;
 
 #[cfg(test)]
 mod carried_quantity_tests {
-    use super::{witness_type, InputRefusal, ReplayRefusal};
+    use super::{InputRefusal, ReplayRefusal, witness_type};
     use ix_trace_rs::trace;
 
     fn carried() -> filament_exact::ValueType {

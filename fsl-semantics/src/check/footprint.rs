@@ -538,7 +538,10 @@ impl<'a> Reader<'a> {
         })
     }
 
-    fn for_graph(graph: &'a CheckedGraph, model: &'a StateModel) -> Result<Self, FootprintRefusal> {
+    fn for_graph(
+        graph: &'a CheckedGraph,
+        model: &'a StateModel,
+    ) -> Result<Self, FootprintRefusal> {
         Ok(Self {
             types: graph.scope().types(),
             model,
@@ -605,9 +608,7 @@ impl<'a> Reader<'a> {
         };
         for node in std::iter::once(function.body).chain(function.body.descendants()) {
             match node.kind() {
-                NodeKind::Attribute {
-                    reference, field, ..
-                } => {
+                NodeKind::Attribute { reference, field, .. } => {
                     let field = self.field_key(field.owner.clone(), &field.name)?;
                     let location = match self.local_slot(node.at(*reference)) {
                         Some(slot) => arguments

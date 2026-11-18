@@ -14,8 +14,8 @@
 use std::collections::BTreeMap;
 
 use filament_exact::{
-    admit_text, EffectiveId, IllTypedCause, Meter, OptionValue, Outcome, Rational, TextPayload,
-    Value, ValueType,
+    EffectiveId, IllTypedCause, Meter, OptionValue, Outcome, Rational, TextPayload, Value,
+    ValueType, admit_text,
 };
 use filament_semantic_value::location::{
     ExpressionLocation as Location, ExpressionOwner as Origin,

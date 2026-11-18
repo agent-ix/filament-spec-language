@@ -2,8 +2,8 @@
 //! FR-280's in-process provider boundary over the same admitted analyze request.
 
 use crate::analyze::{
-    analyze_bound, AnalyzeLimits, AnalyzeRefusal, Engines, ItemCounterexample, NegotiatedItem,
-    SourceProvision, SubjectBinding,
+    AnalyzeLimits, AnalyzeRefusal, Engines, ItemCounterexample, NegotiatedItem, SourceProvision,
+    SubjectBinding, analyze_bound,
 };
 use filament_exact::Cancel;
 use filament_semantic_value::catalog::CatalogCode;
@@ -23,15 +23,15 @@ use fsl_replay::value_check::{Selection, ValueTarget};
 use fsl_replay::{Certification, InconclusiveCause, Value};
 use fsl_route::request::{ExtentClassification, ItemKind, RequirementItem};
 use fsl_route::{BackendDescriptor, CandidateOutcome, ProviderOrigin, Registry};
-use fsl_semantics::check::wire_id::WireGraph;
 use fsl_semantics::check::Capability;
+use fsl_semantics::check::wire_id::WireGraph;
 use fsl_semantics::library::LibraryName;
 use fsl_semantics::model::intake::PackageInput;
 
 use crate::analyze::{AnalyzeItem, Engine, EngineReport, Refusal};
 use crate::claim_family::claim_family;
 use crate::value_check::{
-    confirm_reported, manifest, ValueCounterexample, ValueRefusal, ValueReport,
+    ValueCounterexample, ValueRefusal, ValueReport, confirm_reported, manifest,
 };
 
 /// Records and reproduced counterexamples for one provider request.

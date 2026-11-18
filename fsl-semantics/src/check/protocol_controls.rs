@@ -358,22 +358,21 @@ fn check_channel_connection(
         ));
         return None;
     };
-    let mut endpoint_role =
-        |name: &str, span: Span| -> Option<&super::protocol_clause::CheckedRole> {
-            let role = roles.iter().find(|role| role.name == name)?;
-            if role.model_member.is_none() {
-                refusals.push((
+    let mut endpoint_role = |name: &str, span: Span| -> Option<&super::protocol_clause::CheckedRole> {
+        let role = roles.iter().find(|role| role.name == name)?;
+        if role.model_member.is_none() {
+            refusals.push((
+                span,
+                refusal(ProtocolAnchorCause::ChannelPortRole {
+                    channel: channel.name.name.clone(),
+                    role: name.to_owned(),
                     span,
-                    refusal(ProtocolAnchorCause::ChannelPortRole {
-                        channel: channel.name.name.clone(),
-                        role: name.to_owned(),
-                        span,
-                    }),
-                ));
-                return None;
-            }
-            Some(role)
-        };
+                }),
+            ));
+            return None;
+        }
+        Some(role)
+    };
     let Some(from) = endpoint_role(&channel.from.name, channel.from.span) else {
         return None;
     };

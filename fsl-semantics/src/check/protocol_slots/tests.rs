@@ -626,10 +626,7 @@ fn a_choice_can_decide_on_a_listed_field_of_its_channel_receive() {
          case no when { not received.ready } sequence No {}",
     );
     let (cause, pair, _) = only(&overlapping);
-    assert_eq!(
-        pair,
-        ("undefined_expression", Some("unproved-exhaustiveness"))
-    );
+    assert_eq!(pair, ("undefined_expression", Some("unproved-exhaustiveness")));
     assert!(matches!(
         cause,
         ProtocolAnchorCause::Exhaustiveness {
