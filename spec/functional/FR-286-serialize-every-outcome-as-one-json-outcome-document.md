@@ -170,6 +170,12 @@ category:
 | refusal | `declined` | the refusal cause |
 | undefined (FR-283's `InsufficientData`) | `undefined` | `insufficient-data` |
 
+A `declined` item of a clause run refused at stage `select` also carries the
+refusal's `diagnostic` (`code`, `cause`, and its FR-272 payload as `detail`),
+as [FR-867](FR-867-name-the-function-and-its-result-type-when-a-non-boolean-function-is-selected-as-a-claim.md)
+states, so the selected name and, for a non-`Boolean` function, its expected
+and actual result types reach the outcome document.
+
 A `monitor` item carries the members of FR-283's record for its verdict, besides
 `clause`, `result`, `category` and `cause`:
 
