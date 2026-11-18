@@ -15,6 +15,34 @@ pub mod composite;
 mod expression;
 pub(crate) use expression::evaluate_clause_set_with_cancel;
 
+/// FSpec FR-144 canonical key order of two map keys. Float keys use their
+/// membership identity's IEEE total order; integer and decimal keys use their
+/// mathematical ordering through `compare_keys`.
+pub(crate) fn compare_map_keys(
+    left: &filament_exact::Value,
+    right: &filament_exact::Value,
+) -> Option<std::cmp::Ordering> {
+    match (left, right) {
+        (filament_exact::Value::Float(left), filament_exact::Value::Float(right)) => {
+            Some(left.total_order_key().cmp(&right.total_order_key()))
+        }
+        _ => filament_exact::compare_keys(left, right),
+    }
+}
+
+/// The value of the entry of `map` whose key equals `key` in FSpec FR-144
+/// canonical key order: an entry is located by its key's canonical key, so no
+/// member is walked or tested.
+pub(crate) fn map_entry<'m>(
+    map: &'m filament_exact::MapValue,
+    key: &filament_exact::Value,
+) -> Option<&'m filament_exact::Value> {
+    map.entries()
+        .iter()
+        .find(|(held, _)| compare_map_keys(held, key) == Some(std::cmp::Ordering::Equal))
+        .map(|(_, value)| value)
+}
+
 /// Map entries in FSpec FR-144 canonical key order. Float keys use their
 /// membership identity's IEEE total order; integer and decimal keys use their
 /// mathematical ordering through `compare_keys`.
@@ -28,13 +56,7 @@ pub(crate) fn ordered_map_entries(
     entries.extend(map.entries().iter());
     let mut incomparable = false;
     entries.sort_unstable_by(|(left, _), (right, _)| {
-        let order = match (left, right) {
-            (filament_exact::Value::Float(left), filament_exact::Value::Float(right)) => {
-                Some(left.total_order_key().cmp(&right.total_order_key()))
-            }
-            _ => filament_exact::compare_keys(left, right),
-        };
-        order.unwrap_or_else(|| {
+        compare_map_keys(left, right).unwrap_or_else(|| {
             incomparable = true;
             Ordering::Equal
         })

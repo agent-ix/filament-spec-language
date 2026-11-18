@@ -280,3 +280,79 @@ fn an_equality_sum_refusal_names_its_proved_range_expected_type_and_peer() {
          { convert<Integer>(c) = a + b }",
     );
 }
+
+const MAP_SIGNATURE: &str = "m: Map<Int[0, 3], Integer>[0, 4], k: Int[0, 3]";
+
+#[trace("TC-1822", "FR-680-AC-3", "FSpec-FR-144-AC-33", "FSpec-FR-149-AC-28")]
+#[test]
+fn maps_of_one_type_compare_and_other_maps_do_not() {
+    assert_checks(
+        "function f using v(a: Map<Int[0, 3], Integer>[0, 4], b: Map<Int[0, 3], Integer>[0, 4]): \
+         Boolean pure { a = b }",
+    );
+    assert_checks(
+        "function f using v(a: Map<Int[0, 3], Integer>[0, 4], b: Map<Int[0, 3], Integer>[0, 4]): \
+         Boolean pure { a != b }",
+    );
+    for second in [
+        "Map<Int[0, 3], Integer>",
+        "Map<Int[0, 4], Integer>[0, 4]",
+        "Map<Int[0, 3], Boolean>[0, 4]",
+    ] {
+        assert_refused(
+            &format!(
+                "function f using v(a: Map<Int[0, 3], Integer>[0, 4], b: {second}): Boolean pure \
+                 {{ a = b }}"
+            ),
+            Code::IllTyped,
+            "type-mismatch",
+        );
+    }
+}
+
+#[trace("TC-1822", "FR-680-AC-3", "FSpec-FR-144-AC-33")]
+#[test]
+fn a_map_key_that_is_not_a_scalar_key_is_refused() {
+    for key in [
+        "Option<Integer>",
+        "Sequence<Integer>",
+        "Map<Integer, Integer>",
+    ] {
+        assert_assembly_refused(
+            &format!("function f using v(m: Map<{key}, Integer>): Boolean pure {{ true }}"),
+            Code::IllTyped,
+            "operator-ineligible",
+        );
+    }
+}
+
+#[trace("TC-1822", "FR-680-AC-3", "FSpec-FR-144-AC-33")]
+#[test]
+fn a_map_key_and_value_are_checked_against_the_map_type() {
+    assert_refused(
+        &format!("function f using v({MAP_SIGNATURE}): Integer pure {{ if contains(m, true) then 1 else 0 }}"),
+        Code::IllTyped,
+        "type-mismatch",
+    );
+    assert_refused(
+        &format!("function f using v({MAP_SIGNATURE}): Integer pure {{ m[true] }}"),
+        Code::IllTyped,
+        "type-mismatch",
+    );
+    assert_refused(
+        &format!(
+            "function f using v({MAP_SIGNATURE}): Boolean pure \
+             {{ if contains(m, k) then m[k] else false }}"
+        ),
+        Code::IllTyped,
+        "type-mismatch",
+    );
+    assert_refused(
+        &format!("function f using v({MAP_SIGNATURE}): Boolean pure {{ size(m) }}"),
+        Code::IllTyped,
+        "type-mismatch",
+    );
+    assert_checks(&format!(
+        "function f using v({MAP_SIGNATURE}): Integer pure {{ size(m) }}"
+    ));
+}

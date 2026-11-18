@@ -8,8 +8,8 @@
 //! make no charge.
 
 use filament_checked::node::{
-    Arithmetic, AuthoredBound, Connective, ConnectiveOrigin, EndSide, IntegerDivisionOperator,
-    NodeKind, OrderedKind, Visit,
+    Arithmetic, AuthoredBound, Connective, ConnectiveOrigin, EndSide, IndexedKind,
+    IntegerDivisionOperator, NodeKind, OrderedKind, Visit,
 };
 use std::cmp::Ordering;
 use std::collections::{BTreeSet, VecDeque};
@@ -304,7 +304,7 @@ fn bounded_result_interval(bounded: &BoundedQuantityType) -> Result<QuantityResu
 fn size_of(operand: Value) -> Result<Integer, Halt> {
     match operand {
         Value::Text(text) => Ok(Integer::from(text.length())),
-        Value::Map(_) => Err(unsupported_construct("map")),
+        Value::Map(map) => Ok(Integer::from(map.entries().len())),
         Value::Bytes(_) => Err(unsupported_construct("bytes")),
         Value::JsonObject(_) => Err(unsupported_construct("json_object")),
         Value::Boolean(_)
@@ -2350,6 +2350,23 @@ impl<'a, 'm, N: NodeSource<'a>> Machine<'a, 'm, N> {
             NodeKind::TupleProject { .. } => {
                 return Err(unsupported_construct("tuple_project"));
             }
+            // FSpec FR-144 "Indexing": a map entry is located by its key's
+            // canonical key; selection charges one `collection.element` and
+            // retains the value; an absent key has no element.
+            NodeKind::Index {
+                kind: IndexedKind::Map,
+                ..
+            } => {
+                let key = self.pop()?;
+                let Value::Map(map) = self.pop()? else {
+                    return Err(invariant("map-value-expected"));
+                };
+                collections::charge_element(self.meter)?;
+                let value = crate::value::map_entry(&map, &key)
+                    .cloned()
+                    .ok_or(Stop::Undefined(Undefined::NoElement))?;
+                collections::retain_accumulator(value, self.meter)?
+            }
             NodeKind::Index { .. } => return Err(unsupported_construct("index")),
             NodeKind::ConvertText(_, _) => return Err(unsupported_construct("text_conversion")),
             // FR-322: the payload arguments are evaluated and on the stack in
@@ -3257,8 +3274,18 @@ impl<'a, 'm, N: NodeSource<'a>> Machine<'a, 'm, N> {
             }
             NodeKind::Contains(_, _) => {
                 let item = self.pop()?;
-                let collection = self.pop_collection()?;
-                collections::contains(&item, &collection, self.meter)?
+                match self.pop()? {
+                    Value::Collection(collection) => {
+                        collections::contains(&item, &collection, self.meter)?
+                    }
+                    // FSpec FR-144 "Map values": `contains(m, k)` tests keys
+                    // only.
+                    Value::Map(map) => {
+                        let found = crate::value::map_entry(&map, &item).is_some();
+                        collections::retain_scalar(Value::Boolean(found), self.meter)?
+                    }
+                    _ => return Err(invariant("collection-value-expected")),
+                }
             }
             NodeKind::Navigate {
                 relationship,
