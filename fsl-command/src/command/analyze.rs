@@ -119,6 +119,12 @@ fn read<'d>(
                     "population is only valid on a global-conformance item",
                 ));
             }
+            if item.recording.is_none() {
+                return Err(invalid(
+                    &format!("/items/{position}/population"),
+                    "population requires a recording",
+                ));
+            }
             serde_json::from_value::<Vec<fsl_analyze::analyze::document::ActivatedRolePopulation>>(
                 population.clone(),
             )

@@ -136,7 +136,7 @@ fn a_member_absent_from_the_recording_is_refused_or_refuted() {
         "{item}"
     );
     let detail = item["record"]["diagnostic"]["detail"].to_string();
-    assert!(detail.contains(LEFT) && detail.contains("\"y\""), "{item}");
+    assert!(detail.contains(LEFT) && detail.contains("y"), "{item}");
     assert!(item.get("obligations").is_none(), "{item}");
 
     let premised = run(

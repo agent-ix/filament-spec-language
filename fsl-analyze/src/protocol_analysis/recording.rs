@@ -2910,7 +2910,7 @@ fn evaluate_body_value(
             .and_then(|owner| protocol.roles.get(owner.role));
         let binder_is_replicated = binder_role.is_some_and(|owner| owner.replicated);
         if binder_is_replicated && binder_role.is_some_and(|owner| owner.name != role) {
-            return None;
+            continue;
         }
         let binder_role_instance = if binder_is_replicated {
             Some(role_instance?)
