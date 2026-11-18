@@ -494,8 +494,8 @@ fn a_protocol_slot_that_reads_model_state_names_a_population() {
 fn a_reference_literal_checks_and_stays_pending_in_a_barred_slot() {
     let function = |literal: &str| {
         format!(
-            "function f using v(r: Reference<M::Counter>): Reference<M::Counter> \
-             pure {{ {literal} }}"
+            "function f using v(r: Reference<M::Counter>): Boolean \
+             pure {{ r = {literal} }}"
         )
     };
     checked(false, &function("M::Counter#\"a\""));
