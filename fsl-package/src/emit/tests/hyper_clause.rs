@@ -355,7 +355,7 @@ fn a_hyper_clause_emits_the_hyperproperty_node_with_its_seven_bindings() {
 #[trace("TC-1591", "FR-631-AC-4")]
 #[test]
 fn an_object_free_hyper_temporal_emits() {
-    let declaration = "hyper Whole using t over behaviours () \
+    let declaration = "hyper Whole using t over behaviours \
                        forall trace a of Config forall trace b of Config \
                        { always holds(true) }";
     let compiled = compile(&unit(INFINITE, declaration));
