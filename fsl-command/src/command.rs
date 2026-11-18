@@ -317,8 +317,9 @@ fn check_outcome_inner(
             .collect::<Vec<_>>();
         validate_extension_entries(&extensions)?;
 
+        let source_identity = source_path.to_string_lossy();
         let source = intake.source(
-            &check_source_file(source_path, "check-source", "CheckSource"),
+            &check_source_file(source_path, "filament", &source_identity, "CheckSource"),
             "source",
         )?;
         let extension_catalog = extension_catalog(&extensions, &mut intake)?;
@@ -365,7 +366,7 @@ fn check_outcome_inner(
             .map(|(identity, path)| {
                 Ok(wire::Model {
                     format: DOMAIN_PACKAGE_PROFILE.to_owned(),
-                    source: check_source_file(path, identity, "CheckModel"),
+                    source: check_source_file(path, "fsl-command", identity, "CheckModel"),
                 })
             })
             .collect::<Result<Vec<_>>>()?;
@@ -396,7 +397,7 @@ fn check_outcome_inner(
             .iter()
             .map(|(identity, path)| {
                 let source = intake.source(
-                    &check_source_file(path, identity, "CheckLibrary"),
+                    &check_source_file(path, "fsl-command", identity, "CheckLibrary"),
                     "libraries",
                 )?;
                 Ok(fsl_replay::spine::SuppliedLibrary {
@@ -517,11 +518,16 @@ fn reject_unselected_check_inputs(
     Ok(())
 }
 
-fn check_source_file(path: &Path, identity: &str, document: &str) -> wire::SourceFile {
+fn check_source_file(
+    path: &Path,
+    authority: &str,
+    identity: &str,
+    document: &str,
+) -> wire::SourceFile {
     wire::SourceFile {
         file: path.to_string_lossy().into_owned(),
         identity: wire::Identity {
-            authority: "fsl-command".to_owned(),
+            authority: authority.to_owned(),
             identity: identity.to_owned(),
             document: document.to_owned(),
             formal_revision: 1,
