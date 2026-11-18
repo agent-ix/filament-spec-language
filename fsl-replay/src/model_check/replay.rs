@@ -179,6 +179,18 @@ pub enum ModelTraceRefusal {
         /// The envelope's clause node.
         clause_node: NodeKey,
     },
+    /// The counterexample names an authored clause whose package form reads
+    /// a fact the package route does not read yet (FR-940): the replay over
+    /// the package bytes refuses it typed, naming the fact and its node.
+    #[error("unsupported_construct/not-yet-implemented: the package form of temporal clause {clause_node} does not read its {fact} at {node:?} yet")]
+    PendingClauseForm {
+        /// The envelope's clause node.
+        clause_node: NodeKey,
+        /// The fact not read yet.
+        fact: &'static str,
+        /// The node that carries it.
+        node: fsl_package::CheckedNodeId,
+    },
     /// A step carries a `delay`, or the counterexample a `final_delay`, over
     /// a subject this replay reads untimed: the delays are not checked here
     /// (FR-237 replays a timed subject's), so they are refused rather than
@@ -487,7 +499,7 @@ impl ModelTraceRefusal {
             | Self::SendRecord { .. }
             | Self::MemoryComponent { .. } => Code::StaleDependency,
             Self::FairnessSet { .. } | Self::ProtocolFairnessSet { .. } => Code::StaleDependency,
-            Self::HyperProjected => Code::UnsupportedConstruct,
+            Self::HyperProjected | Self::PendingClauseForm { .. } => Code::UnsupportedConstruct,
             Self::Protocol(refusal) => refusal.code(),
             Self::NotSimulated(refusal) => not_simulated_code(refusal),
             Self::Automaton(fsl_eval::automaton::AutomatonError::KeyEncodingLimit { .. })
@@ -548,7 +560,7 @@ impl ModelTraceRefusal {
             | Self::PostState { .. }
             | Self::SendRecord { .. }
             | Self::MemoryComponent { .. } => "content-mismatch",
-            Self::HyperProjected => "not-yet-implemented",
+            Self::HyperProjected | Self::PendingClauseForm { .. } => "not-yet-implemented",
             Self::Protocol(refusal) => refusal.cause(),
             Self::NotSimulated(refusal) => match refusal.catalog_code() {
                 Some(code) => code.cause(),
@@ -863,9 +875,16 @@ pub fn replay_model_trace_from_package(
             envelope.clause_node(),
             filament_semantic_value::checking::CheckingLimits::default().nodes(),
         )
-        .map_err(|_| {
-            refused(ModelTraceRefusal::UnknownTemporalClause {
-                clause_node: envelope.clause_node().clone(),
+        .map_err(|refusal| {
+            refused(match refusal.pending_fact() {
+                Some((fact, node)) => ModelTraceRefusal::PendingClauseForm {
+                    clause_node: envelope.clause_node().clone(),
+                    fact,
+                    node: node.clone(),
+                },
+                None => ModelTraceRefusal::UnknownTemporalClause {
+                    clause_node: envelope.clause_node().clone(),
+                },
             })
         })?;
     let identity = super::identity::ClauseIdentity::of_admitted(&admitted, &clause)

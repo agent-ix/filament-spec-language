@@ -1556,7 +1556,7 @@ impl AnalyzeRecord {
     /// `package` is at hand; `None` when the record holds none.
     fn spell(
         &self,
-        package: &CheckedPackage,
+        package: Option<&CheckedPackage>,
     ) -> Option<Result<serde_json::Value, CounterexampleWireError>> {
         let claim = self.claim.as_ref();
         if let Some(found) = self
@@ -1592,6 +1592,9 @@ impl AnalyzeRecord {
             return Some(Ok(found.clone()));
         }
         if let Some(found) = &self.value_check {
+            let Some(package) = package else {
+                return Some(Err(CounterexampleWireError::Unspelled("value-check scope")));
+            };
             let scope = package.graph().scope();
             return Some(fsl_replay::assignments_wire(
                 &found.parameters,
@@ -1711,7 +1714,7 @@ impl AnalyzeRecord {
                     .map(|counterexample| &counterexample.kind)
             });
         let undefined = undefined_cause(kind, self.value_check.as_deref());
-        let wire = self.spell(package).transpose();
+        let wire = self.spell(Some(package)).transpose();
         Some(
             wire.map_err(OutcomeItemError::from)
                 .and_then(|wire| OutcomeItem::from_analyze(terminal, wire, undefined))
@@ -1891,6 +1894,17 @@ pub fn terminal_records(records: Vec<AnalyzeRecord>) -> Vec<TerminalRecord> {
 pub fn split_records(
     records: Vec<AnalyzeRecord>,
     package: &CheckedPackage,
+) -> (Vec<TerminalRecord>, Vec<ItemCounterexample>) {
+    split_records_over(records, Some(package))
+}
+
+/// [`split_records`] over the checked package `package` of the source route,
+/// or over none on the package route (FR-850), whose items carry no
+/// value-validity counterexample: one spelled against no package fails
+/// unspelled.
+pub(crate) fn split_records_over(
+    records: Vec<AnalyzeRecord>,
+    package: Option<&CheckedPackage>,
 ) -> (Vec<TerminalRecord>, Vec<ItemCounterexample>) {
     let mut terminals = Vec::with_capacity(records.len());
     let mut counterexamples = Vec::new();
