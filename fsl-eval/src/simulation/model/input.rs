@@ -99,6 +99,9 @@ pub struct ModelCheckInput<'a> {
     /// The source package the tables were read from; `None` on the package
     /// route.
     pub source: Option<&'a CheckedPackage>,
+    /// The admitted package the tables were read from on the package route;
+    /// `None` on the source route (FR-940).
+    pub admitted: Option<&'a fsl_package::CheckedPackageV2>,
 }
 
 impl<'a> ModelCheckInput<'a> {
@@ -136,6 +139,7 @@ impl<'a> ModelCheckInput<'a> {
             terminals: fsl_package::resolve_terminals(package),
             evaluator: package,
             source: Some(package),
+            admitted: None,
         }
     }
 
@@ -156,6 +160,12 @@ impl<'a> ModelCheckInput<'a> {
     /// (the SMT encoding); `None` on the package route.
     pub fn source_package(&self) -> Option<&'a CheckedPackage> {
         self.source
+    }
+
+    /// The admitted package of the package route (FR-940); `None` on the
+    /// source route.
+    pub fn admitted_package(&self) -> Option<&'a fsl_package::CheckedPackageV2> {
+        self.admitted
     }
 }
 
@@ -306,6 +316,7 @@ impl<'p> PackageModelInput<'p> {
             terminals: Ok(Vec::new()),
             evaluator: self.package,
             source: None,
+            admitted: Some(self.package.package()),
         }
     }
 }

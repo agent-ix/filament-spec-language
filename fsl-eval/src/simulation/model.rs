@@ -177,6 +177,12 @@ impl<'a> ModelSimulationRequest<'a> {
     pub fn source_package(&self) -> Option<&'a CheckedPackage> {
         self.input.source_package()
     }
+
+    /// The admitted package the request is over on the package route
+    /// (FR-940); `None` on the source route.
+    pub fn admitted_package(&self) -> Option<&'a fsl_package::CheckedPackageV2> {
+        self.input.admitted_package()
+    }
 }
 
 /// A model state with its anchor (FR-120 "State, state key and anchor"). The

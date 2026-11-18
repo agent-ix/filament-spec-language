@@ -242,3 +242,93 @@ fn the_source_route_input_reads_the_source_package() {
         .source_package()
         .is_some_and(|source| std::ptr::eq(source, &package)));
 }
+
+/// FR-940, FR-850 (QSL-2425): over a Counter package whose domain package
+/// declares its operations, EN-1 checks the package form of each temporal
+/// clause, read from the package route's admitted bytes by its node key,
+/// through letters that evaluate its `holds` atoms keyed by node, and gives
+/// the source route's outcome: `Bounded` proved and `AtMostTwo` refuted with
+/// the same counterexample.
+#[trace("TC-2958", "FR-940-AC-6")]
+#[trace("TC-2410", "FR-850-AC-2")]
+#[test]
+fn the_model_checker_decides_a_package_form_clause_as_its_source_form() {
+    use fsl_analyze::model_check::{check_model, ModelCheckRequest};
+    use fsl_replay::{ModelCheckItem, ModelCheckLimits};
+    let model = document(false);
+    let (package, _) = package_with_clauses(
+        &model,
+        "",
+        &[
+            ("Bounded", "", "always holds(c.value <= 3)"),
+            ("AtMostTwo", "", "always holds(c.value <= 2)"),
+        ],
+    );
+    let mut documents = Documents::new(model);
+    let start = documents.start("start", &[("a", 0)]);
+    let source = subject(&package, &documents, vec![start], &["a"], UNLIMITED);
+    let handoff = handoff(&package, &documents);
+    let bare = bare(&handoff);
+    let input = PackageModelInput::of(
+        &bare,
+        &documents.packages,
+        ModelNormalizationLimits::default(),
+    )
+    .expect("the package holds no unread node");
+    let mut over_bytes = source.simulation.clone();
+    over_bytes.input = input.input();
+    let source_system = ModelSystem::new(source.simulation.clone()).expect("the source admits");
+    let package_system = ModelSystem::new(over_bytes.clone()).expect("the package route admits");
+    fn run(
+        simulation: &fsl_eval::simulation::model::ModelSimulationRequest<'_>,
+        item: ModelCheckItem<'_>,
+    ) -> Result<String, String> {
+        check_model(
+            ModelCheckRequest {
+                temporal_clock_selections: &[],
+                subject: fsl_eval::model_subject::ModelSubject {
+                    simulation: simulation.clone(),
+                    proof_bounds: Vec::new(),
+                },
+                item,
+                max_depth: None,
+                limits: ModelCheckLimits::default(),
+                reductions: Default::default(),
+            },
+            &filament_exact::Cancel::new(),
+        )
+        .map(|outcome| format!("{outcome:?}"))
+        .map_err(|refusal| format!("{refusal:?}"))
+    }
+    let mut verdicts = Vec::new();
+    for node in package.graph().temporal_clauses() {
+        let key = node.identity();
+        let clause = input
+            .temporal_clause(
+                &key,
+                filament_semantic_value::checking::CheckingLimits::default().nodes(),
+            )
+            .unwrap_or_else(|refusal| panic!("{}: {refusal}", node.clause().name()));
+        let source_letters = source_system.clause_letters(node).expect("source letters");
+        let package_letters = package_system
+            .package_clause_letters(&clause, &key)
+            .expect("package letters");
+        let from_source = run(
+            &source.simulation,
+            ModelCheckItem::Clause {
+                clause: node.clause(),
+                letters: &source_letters,
+            },
+        );
+        let from_package = run(
+            &over_bytes,
+            ModelCheckItem::Clause {
+                clause: &clause,
+                letters: &package_letters,
+            },
+        );
+        assert_eq!(from_package, from_source, "{}", node.clause().name());
+        verdicts.push(from_package.expect("checked").starts_with("Holds"));
+    }
+    assert_eq!(verdicts, [true, false], "Bounded holds, AtMostTwo does not");
+}
