@@ -85,7 +85,7 @@ fn a_fixed_reference_literal_is_constant_in_hyper_evaluation() {
     let start_b = world.start("reference-literal-fixed-b", &[Obj("a", 1, 0, None)]);
     let system_a = system(&world, vec![start_a], &["a", "b"], UNLIMITED);
     let system_b = system(&world, vec![start_b], &["a", "b"], UNLIMITED);
-    let letters = CheckedHyperLetters::new(&world.package, clause, vec![&system_a, &system_b])
+    let letters = CheckedHyperLetters::new(&world.package, &clause, vec![&system_a, &system_b])
         .expect("fixed references are admitted in hyper atoms");
     let initial_a = system_a.initial();
     let initial_b = system_b.initial();
@@ -99,7 +99,7 @@ fn a_fixed_reference_literal_is_constant_in_hyper_evaluation() {
     }];
     let mut meter = Meter::new(UNLIMITED);
     let reading = letters
-        .atom(first_holds_atom(clause), &bindings, &states, &mut meter)
+        .atom(first_holds_atom(&clause), &bindings, &states, &mut meter)
         .expect("the fixed reference atom evaluates");
     assert_eq!(reading, AtomReading::True);
 }

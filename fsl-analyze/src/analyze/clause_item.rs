@@ -320,7 +320,7 @@ impl<'a> ClauseSubject<'a> {
             occurrence: OccurrenceKey::new(self.node.identity(), self.node.claim().clone()),
             transcript: CLAUSE_TRANSCRIPT,
         };
-        if clause_has_reference_literal(self.node) {
+        if clause_has_reference_literal(self.package.graph(), self.node) {
             let (_, envelope) = replay_wire(&inputs, shape, payload)?;
             let system = ModelSystem::new(self.simulation()).map_err(ReplayRefusal::Admission)?;
             let letters = system
@@ -339,11 +339,22 @@ impl<'a> ClauseSubject<'a> {
     }
 }
 
-fn clause_has_reference_literal(node: &TemporalClauseNode) -> bool {
+fn clause_has_reference_literal(
+    graph: &fsl_semantics::check::CheckedGraph,
+    node: &TemporalClauseNode,
+) -> bool {
     let clause = node.clause();
     let contains = |root: fsl_semantics::check::CheckedNode<'_>| {
+        let mut visited_functions = std::collections::BTreeSet::new();
         let mut pending = vec![root];
         while let Some(node) = pending.pop() {
+            if let filament_checked::NodeKind::Call { function, .. } = node.kind() {
+                if visited_functions.insert(*function) {
+                    if let Some(function) = graph.function_state(*function) {
+                        pending.push(function.body);
+                    }
+                }
+            }
             if matches!(
                 node.kind(),
                 filament_checked::NodeKind::ReferenceLiteral { .. }

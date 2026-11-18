@@ -6839,12 +6839,10 @@ impl<'a> Lowering<'a> {
         let identity = std::str::from_utf8(identity).map_err(|_| {
             fault(
                 node.location(),
-                KeyFault::StageFault(
-                    filament_semantic_value::catalog::InternalFault::new(
-                        "FR-1000",
-                        "reference-literal-identity-is-utf8",
-                    ),
-                ),
+                KeyFault::StageFault(filament_semantic_value::catalog::InternalFault::new(
+                    "FR-1000",
+                    "reference-literal-identity-is-utf8",
+                )),
             )
         })?;
         let ty = self.type_ref(node.value_type(), node.location())?;
@@ -6852,7 +6850,12 @@ impl<'a> Lowering<'a> {
             node,
             "literal",
             ty.clone(),
-            BodyTerm::literal_node(ty, LiteralValue::String(identity.to_owned())),
+            BodyTerm::literal_node(
+                ty,
+                LiteralValue::Reference(
+                    identity.bytes().map(|byte| format!("{byte:02x}")).collect(),
+                ),
+            ),
         )
     }
 
@@ -7806,9 +7809,10 @@ fn literal_operand_text(value: &LiteralValue) -> String {
         LiteralValue::Decimal(text) => text.clone(),
         LiteralValue::Float32Bits(bits) => format!("{bits:08x}"),
         LiteralValue::Float64Bits(bits) => format!("{bits:016x}"),
-        LiteralValue::Text(text) | LiteralValue::String(text) | LiteralValue::Enum(text) => {
-            text.clone()
-        }
+        LiteralValue::Text(text)
+        | LiteralValue::String(text)
+        | LiteralValue::Reference(text)
+        | LiteralValue::Enum(text) => text.clone(),
         LiteralValue::Uuid(value) => value.to_string(),
         LiteralValue::Timestamp(value) => value.to_string(),
         LiteralValue::Bytes(value) | LiteralValue::JsonObject(value) => value.clone(),

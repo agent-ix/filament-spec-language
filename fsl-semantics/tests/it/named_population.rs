@@ -569,9 +569,9 @@ fn reference_literal_aliases_share_one_lowered_value_term() {
             matches!(
                 node.body(),
                 BodyTerm::Leaf(LeafTerm::Literal {
-                    value: LiteralValue::String(value),
+                    value: LiteralValue::Reference(value),
                     ..
-                }) if value == "a"
+                }) if value == "61"
             )
         })
         .collect();
