@@ -1478,8 +1478,9 @@ mod tests {
         assert_eq!(
             text,
             format!(
-                "{}:5-{past_end_by_one}: ill_typed: bad range\n",
-                source_label(region.source())
+                "{}:{}-{past_end_by_one}: ill_typed: bad range\n",
+                source_label(region.source()),
+                region.start(),
             )
         );
         // The region's end exactly at the source's length still resolves.
