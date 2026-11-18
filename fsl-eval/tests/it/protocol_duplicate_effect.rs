@@ -16,7 +16,7 @@ use fsl_semantics::check::PackageDeclarations;
 use fsl_semantics::model::accounting::ModelNormalizationLimits;
 use fsl_semantics::model::intake::{admit_unit, package_input};
 use fsl_semantics::model::observation::{
-    DocumentProvision, DocumentRef, ObservationLimits, document_reference,
+    document_reference, DocumentProvision, DocumentRef, ObservationLimits,
 };
 use ix_trace_rs::trace;
 use serde_json::json;
@@ -131,7 +131,7 @@ fn reachable(source: &str) -> fsl_eval::simulation::protocol::Reachable<Sc> {
     };
     let request = ModelSimulationRequest {
         emit: fsl_package::EmitLimits::fixture(),
-        package: &package,
+        input: fsl_eval::simulation::model::ModelCheckInput::source(&package),
         packages: &packages,
         normalization: ModelNormalizationLimits::default(),
         snapshots: &snapshots,
@@ -221,9 +221,7 @@ fn duplicate_then_effect(
                     duplicated = true;
                 }
                 StepKind::Receive => {
-                    let Some(delivery) = transition.delivery().cloned() else {
-                        return None;
-                    };
+                    let delivery = transition.delivery().cloned()?;
                     if Some(delivery.message()) != message.as_ref() {
                         continue;
                     }

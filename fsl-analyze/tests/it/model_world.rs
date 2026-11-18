@@ -229,12 +229,46 @@ impl World {
         clauses: &[Clause<'_>],
         start: &[(&str, Json)],
     ) -> Self {
+        Self::build(domain, body, "", CheckMode::Linked, profile, clauses, start)
+    }
+
+    /// As [`World::new`], with `functions` (unit-level declarations placed
+    /// before the clauses) checked in `CheckMode::Kernel`, so a function
+    /// whose divisor may be zero is checked by the Kernel (FR-495-AC-3).
+    pub(crate) fn with_kernel_functions(
+        domain: Domain,
+        body: &str,
+        functions: &str,
+        profile: &str,
+        clauses: &[Clause<'_>],
+        start: &[(&str, Json)],
+    ) -> Self {
+        Self::build(
+            domain,
+            body,
+            functions,
+            CheckMode::Kernel,
+            profile,
+            clauses,
+            start,
+        )
+    }
+
+    fn build(
+        domain: Domain,
+        body: &str,
+        functions: &str,
+        mode: CheckMode,
+        profile: &str,
+        clauses: &[Clause<'_>],
+        start: &[(&str, Json)],
+    ) -> Self {
         let packages = package_input([domain.document.as_slice()]).unwrap();
         let text = format!(
             "language \"ix:native\" edition \"1-draft\";\n\
              profile v = \"filament.value.complete/v1\";\n\
              profile t = \"{profile}\";\n\
-             model M = \"{}\";\n{body}",
+             model M = \"{}\";\n{body}{functions}",
             domain.package
         );
         let declared = clauses
@@ -277,7 +311,7 @@ impl World {
         };
         let unit = format!("{text}{declared}");
         let graph = declarations(&unit)
-            .check(CheckMode::Linked, CheckingLimits::default())
+            .check(mode, CheckingLimits::default())
             .unwrap_or_else(|refusals| panic!("{unit}: the unit checks: {refusals:?}"));
         let checked: Vec<CheckedTemporalClause> = graph
             .temporal_clauses()
@@ -357,7 +391,7 @@ impl World {
         ModelSubject {
             simulation: ModelSimulationRequest {
                 emit: fsl_package::EmitLimits::fixture(),
-                package: &self.package,
+                input: fsl_eval::simulation::model::ModelCheckInput::source(&self.package),
                 packages: &self.packages,
                 normalization: ModelNormalizationLimits::default(),
                 snapshots: &self.snapshots,

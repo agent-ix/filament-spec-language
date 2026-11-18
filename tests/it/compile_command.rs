@@ -1,9 +1,9 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //! FR-027: `command::compile` in process over of `1-draft` sources through the spine.
 
-use crate::command_harness::{Output, compile, run_file};
+use crate::command_harness::{compile, run_file, Output};
 use ix_trace_rs::trace;
-use serde_json::{Value, json};
+use serde_json::{json, Value};
 use std::path::Path;
 
 fn compile_in_process(directory: &Path) -> Result<Vec<u8>, Box<fsl_command::command::RunError>> {

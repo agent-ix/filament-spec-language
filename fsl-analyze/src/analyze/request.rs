@@ -191,6 +191,10 @@ impl ClaimItem {
 
 /// The request form of a kind that has one.
 #[derive(Clone)]
+#[allow(
+    clippy::large_enum_variant,
+    reason = "a public request form built by value at many call sites; boxing is an API change"
+)]
 pub enum ItemForm {
     /// An authored temporal clause.
     Temporal(TemporalItem),
@@ -482,7 +486,7 @@ pub(super) fn simulation<'a>(
     limits: &super::AnalyzeLimits,
 ) -> fsl_eval::simulation::model::ModelSimulationRequest<'a> {
     fsl_eval::simulation::model::ModelSimulationRequest {
-        package,
+        input: fsl_eval::simulation::model::ModelCheckInput::source(package),
         packages: binding.packages,
         normalization: limits.normalization,
         snapshots: binding.snapshots,

@@ -75,7 +75,7 @@ fn simulation<'a>(
     max_candidates: u64,
 ) -> ModelSimulationRequest<'a> {
     ModelSimulationRequest {
-        package,
+        input: fsl_eval::simulation::model::ModelCheckInput::source(package),
         packages: binding.packages,
         normalization: limits.normalization,
         snapshots: binding.snapshots,

@@ -65,6 +65,7 @@ fn agree(body: &str, levels: &[i64]) {
         capacities,
         activation_capacity: 8,
         unprojectable: Default::default(),
+        exact: true,
     });
     let atoms: Vec<(usize, i64)> = formula
         .nodes()
@@ -150,7 +151,6 @@ fn definite_monitor_verdicts_equal_the_infinite_trace_evaluator() {
 /// `triggered`, `until` and `release` with `a > 0`, so the two disagree.
 #[trace("TC-1081", "FR-251-AC-41")]
 #[test]
-#[ignore = "QSL-2321: the monitor requires the left operand on the newest a positions; ADR-018 IV-2 and FR-251 exclude them (next spec batch / follow-up ticket)"]
 fn definite_monitor_verdicts_equal_the_infinite_trace_evaluator_with_a_lower_bound_on_since() {
     let (p, q) = ("holds(c.level = 1)", "holds(c.level = 2)");
     let mut shapes = Vec::new();
@@ -184,6 +184,7 @@ fn monitor_and_batch(
         capacities,
         activation_capacity: 8,
         unprojectable: Default::default(),
+        exact: true,
     });
     let atoms: Vec<(usize, &str)> = formula
         .nodes()

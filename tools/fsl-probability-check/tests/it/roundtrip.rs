@@ -126,7 +126,7 @@ fn proof_source_request(
         keys: vec!["m".to_owned()],
     }];
     let simulation = ModelSimulationRequest {
-        package,
+        input: fsl_eval::simulation::model::ModelCheckInput::source(package),
         packages: &packages,
         normalization: limits.model,
         snapshots: &snapshots,

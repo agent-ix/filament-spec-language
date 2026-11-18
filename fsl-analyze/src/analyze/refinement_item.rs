@@ -62,7 +62,7 @@ pub(super) fn refinement_item<'a>(
         return None;
     }
     let concrete = ModelSimulationRequest {
-        package,
+        input: fsl_eval::simulation::model::ModelCheckInput::source(package),
         packages: binding.packages,
         normalization: limits.normalization,
         snapshots: binding.snapshots,

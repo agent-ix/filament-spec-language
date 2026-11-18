@@ -1488,6 +1488,38 @@ fn the_timed_claim_automaton_agrees_under_each_activation() {
     );
 }
 
+/// FR-943 (FR-251-AC-34): a timed interval with a lower bound and no upper
+/// bound reads every stamp difference from the lower bound on. With `p`
+/// (`c.level = 1`) at stamp 0 only, `once[5 ms, *] holds(p)` is false at 4 ms,
+/// where the witness is too near, and true at 6 ms, the batch verdicts the
+/// monitor's `indeterminate` at 4000 us and `true` at 6000 us refine. An
+/// open lower end excludes the stamp at the bound itself.
+#[trace("TC-2623", "FR-943")]
+#[test]
+fn a_timed_interval_with_no_upper_bound_reads_every_difference_from_its_lower_bound() {
+    let once = "once[5 ms, *] holds(c.level = 1)";
+    let (stamps, levels) = ([0, 4, 6], [1, 0, 0]);
+    assert_eq!(at(once, &stamps, &levels, 1), violated(1));
+    assert_eq!(at(once, &stamps, &levels, 2), TemporalOutcome::Holds);
+    let open = "once(6 ms, *) holds(c.level = 1)";
+    assert_eq!(at(open, &[0, 6], &[1, 0], 1), violated(1));
+    assert_eq!(at(open, &[0, 7], &[1, 0], 1), TemporalOutcome::Holds);
+    // `[0 ms, *]` is the operator written with no interval.
+    assert_eq!(
+        at("once[0 ms, *] holds(c.level = 1)", &stamps, &levels, 2),
+        at("once holds(c.level = 1)", &stamps, &levels, 2)
+    );
+    let eventually = "eventually[2 ms, *] holds(c.level = 2)";
+    assert_eq!(
+        at(eventually, &[0, 1, 3], &[0, 2, 2], 0),
+        TemporalOutcome::Holds
+    );
+    assert_eq!(
+        at(eventually, &[0, 1, 3], &[0, 2, 0], 0),
+        TemporalOutcome::Pending
+    );
+}
+
 /// FR-1034-AC-1 (TC-2969): an interval with a lower bound and no upper
 /// bound translates to the lower-bound-only component, never refused
 /// `OpenTimedInterval` or `ClockLimit`, and on 1,000 random timed lassos per
@@ -1532,34 +1564,46 @@ fn an_open_upper_interval_takes_one_clock_with_its_lower_bound() {
     }
 }
 
-/// FR-943 (FR-251-AC-34): a timed interval with a lower bound and no upper
-/// bound reads every stamp difference from the lower bound on. With `p`
-/// (`c.level = 1`) at stamp 0 only, `once[5 ms, *] holds(p)` is false at 4 ms,
-/// where the witness is too near, and true at 6 ms, the batch verdicts the
-/// monitor's `indeterminate` at 4000 us and `true` at 6000 us refine. An
-/// open lower end excludes the stamp at the bound itself.
-#[trace("TC-2623", "FR-943")]
+/// FR-1034-AC-4 (TC-2980): the acceptance set of `until[q, *]` is fulfilled
+/// where the operator is kept pending at a position holding both its guard
+/// and its witness. With `p` and `r` true at every position of a
+/// time-divergent lasso, `always (p implies eventually[1 ms, *] r)` holds
+/// and the automaton does not accept; with `r` never true the operator is
+/// never discharged and the automaton accepts.
+#[trace("TC-2980", "FR-1034-AC-4")]
 #[test]
-fn a_timed_interval_with_no_upper_bound_reads_every_difference_from_its_lower_bound() {
-    let once = "once[5 ms, *] holds(c.level = 1)";
-    let (stamps, levels) = ([0, 4, 6], [1, 0, 0]);
-    assert_eq!(at(once, &stamps, &levels, 1), violated(1));
-    assert_eq!(at(once, &stamps, &levels, 2), TemporalOutcome::Holds);
-    let open = "once(6 ms, *) holds(c.level = 1)";
-    assert_eq!(at(open, &[0, 6], &[1, 0], 1), violated(1));
-    assert_eq!(at(open, &[0, 7], &[1, 0], 1), TemporalOutcome::Holds);
-    // `[0 ms, *]` is the operator written with no interval.
-    assert_eq!(
-        at("once[0 ms, *] holds(c.level = 1)", &stamps, &levels, 2),
-        at("once holds(c.level = 1)", &stamps, &levels, 2)
-    );
-    let eventually = "eventually[2 ms, *] holds(c.level = 2)";
-    assert_eq!(
-        at(eventually, &[0, 1, 3], &[0, 2, 2], 0),
-        TemporalOutcome::Holds
-    );
-    assert_eq!(
-        at(eventually, &[0, 1, 3], &[0, 2, 0], 0),
-        TemporalOutcome::Pending
-    );
+fn an_open_upper_until_kept_pending_with_its_witness_is_fulfilled() {
+    // Stamps 0 ms and 0.5 ms (in quarters), both level 1, re-entering
+    // position 0 1 ms after it: every gap is below 1 ms, so the claim is
+    // fulfilled only where the operator is kept pending with its witness.
+    let (stamps, levels, loop_start, period) = ([0_u64, 2], [1_i64, 1], 0, 4);
+    for (body, refuted) in [
+        (
+            "always (holds(c.level = 1) implies eventually[1 ms, *] holds(c.level = 1))",
+            false,
+        ),
+        (
+            "always (holds(c.level = 1) implies eventually[1 ms, *] holds(c.level = 2))",
+            true,
+        ),
+    ] {
+        let fixture = timed(body);
+        let mut claim =
+            TimedClaim::new(&fixture.clause, 1 << 20).unwrap_or_else(|why| panic!("{body}: {why}"));
+        let atom_levels = levels_of(&fixture, claim.atoms());
+        let word: Vec<Letter> = levels
+            .iter()
+            .map(|level| letter_of(&atom_levels, *level))
+            .collect();
+        assert_eq!(
+            evaluator_refutes(&fixture, body, &stamps, &levels, loop_start, period),
+            refuted,
+            "{body}: the evaluator"
+        );
+        assert_eq!(
+            claim_accepts(&mut claim, &stamps, &word, loop_start, period),
+            refuted,
+            "{body}: the automaton"
+        );
+    }
 }

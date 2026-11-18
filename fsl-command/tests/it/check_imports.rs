@@ -49,6 +49,26 @@ fn check_outcome_admits_model_and_retains_source() {
 }
 
 #[test]
+/// Provenance: QSL-2423.
+fn malformed_check_source_refusal_uses_the_supplied_path_identity() {
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("malformed.fsl");
+    std::fs::write(&path, b"\xff").unwrap();
+
+    let outcome = command::check_outcome(&path, &CheckInputs::default());
+    let document = document(&outcome);
+    assert_eq!(document["category"], "refusal", "{document}");
+    let locus = &document["diagnostics"][0]["locus"];
+    assert_eq!(locus["kind"], "region", "{document}");
+    assert_eq!(locus["source"]["authority"], "filament", "{document}");
+    assert_eq!(
+        locus["source"]["identity"],
+        path.to_string_lossy().as_ref(),
+        "{document}"
+    );
+}
+
+#[test]
 #[trace("TC-2457", "FR-866-AC-4")]
 fn check_rejects_an_unselected_model_before_reading_its_file() {
     let (_directory, path) = source(

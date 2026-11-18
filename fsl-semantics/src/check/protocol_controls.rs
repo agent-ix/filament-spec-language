@@ -170,9 +170,11 @@ pub(super) fn check(
             &protocol.name.name,
             channel,
             &roles,
-            relationships,
-            checked_roles,
-            models,
+            ChannelModels {
+                relationships,
+                checked_roles,
+                models,
+            },
             &mut keys,
             &mut refusals,
         ) {
@@ -197,18 +199,30 @@ pub(super) fn check(
     Err(refusals.into_iter().map(|(_, refusal)| refusal).collect())
 }
 
+/// The relationships, checked roles and admitted models a channel's
+/// connection is checked against.
+#[derive(Clone, Copy)]
+struct ChannelModels<'a> {
+    relationships: &'a [super::protocol_relationship::CheckedRelationship],
+    checked_roles: &'a [super::protocol_clause::CheckedRole],
+    models: &'a [super::lowering::AdmittedModel],
+}
+
 /// One channel's roles and payload type. `None` when any part refuses; the
 /// refusals are pushed to `refusals`, the `from` role first.
 fn check_channel(
     protocol: &str,
     channel: &ChannelForm,
     roles: &BTreeSet<&str>,
-    relationships: &[super::protocol_relationship::CheckedRelationship],
-    checked_roles: &[super::protocol_clause::CheckedRole],
-    models: &[super::lowering::AdmittedModel],
+    channel_models: ChannelModels<'_>,
     keys: &mut Keys<'_, '_, '_>,
     refusals: &mut Vec<(Span, CheckRefusal)>,
 ) -> Option<CheckedChannel> {
+    let ChannelModels {
+        relationships,
+        checked_roles,
+        models,
+    } = channel_models;
     let scope = keys.declarations.scope;
     let before = refusals.len();
     for (end, role) in [
@@ -291,9 +305,7 @@ fn check_channel(
         } => check_fifo(
             protocol,
             channel,
-            binder,
-            key,
-            key_text,
+            (binder, key, key_text),
             carries.as_ref(),
             keys,
             refusals,
@@ -358,27 +370,24 @@ fn check_channel_connection(
         ));
         return None;
     };
-    let mut endpoint_role = |name: &str, span: Span| -> Option<&super::protocol_clause::CheckedRole> {
-        let role = roles.iter().find(|role| role.name == name)?;
-        if role.model_member.is_none() {
-            refusals.push((
-                span,
-                refusal(ProtocolAnchorCause::ChannelPortRole {
-                    channel: channel.name.name.clone(),
-                    role: name.to_owned(),
+    let mut endpoint_role =
+        |name: &str, span: Span| -> Option<&super::protocol_clause::CheckedRole> {
+            let role = roles.iter().find(|role| role.name == name)?;
+            if role.model_member.is_none() {
+                refusals.push((
                     span,
-                }),
-            ));
-            return None;
-        }
-        Some(role)
-    };
-    let Some(from) = endpoint_role(&channel.from.name, channel.from.span) else {
-        return None;
-    };
-    let Some(to) = endpoint_role(&channel.to.name, channel.to.span) else {
-        return None;
-    };
+                    refusal(ProtocolAnchorCause::ChannelPortRole {
+                        channel: channel.name.name.clone(),
+                        role: name.to_owned(),
+                        span,
+                    }),
+                ));
+                return None;
+            }
+            Some(role)
+        };
+    let from = endpoint_role(&channel.from.name, channel.from.span)?;
+    let to = endpoint_role(&channel.to.name, channel.to.span)?;
     let (expected, source_interface) = match connection.direction {
         crate::model::domain_package::RelationshipDirection::SourceToTarget => (
             [connection.ports[0].clone(), connection.ports[1].clone()],
@@ -397,12 +406,8 @@ fn check_channel_connection(
             connection.interfaces[0].clone(),
         ),
     };
-    let Some(actual_from) = from.model_member.as_ref() else {
-        return None;
-    };
-    let Some(actual_to) = to.model_member.as_ref() else {
-        return None;
-    };
+    let actual_from = from.model_member.as_ref()?;
+    let actual_to = to.model_member.as_ref()?;
     let actual = [actual_from.clone(), actual_to.clone()];
     let forward = actual == expected;
     let reverse = connection.direction
@@ -466,9 +471,7 @@ fn check_channel_connection(
 fn check_fifo(
     protocol: &str,
     channel: &ChannelForm,
-    binder: &ParameterForm,
-    key: &ExpressionForm,
-    key_text: &str,
+    (binder, key, key_text): (&ParameterForm, &ExpressionForm, &str),
     carries: Option<&ValueType>,
     keys: &mut Keys<'_, '_, '_>,
     refusals: &mut Vec<(Span, CheckRefusal)>,
@@ -1323,7 +1326,8 @@ mod tests {
 
     /// FR-218-AC-23 (TC-1065 rows 6 and 7): an unsound join list refuses
     /// `invalid_package`/`invalid-value` at the list, or at the count for a
-    /// quorum; sound ones check and a label listed twice joins once.
+    /// quorum. An empty list refuses at S1. Sound lists check and a label
+    /// listed twice joins once.
     #[trace("TC-1065", "FR-218-AC-23")]
     #[test]
     fn an_unsound_join_refuses_at_the_list_or_the_quorum_count() {
@@ -1345,7 +1349,6 @@ mod tests {
                 "3",
                 JoinFault::QuorumAboveLabels { labels: 2 },
             ),
-            ("any [] outstanding cancel", "[]", JoinFault::NoLabel),
         ] {
             let (text, cause, code, tag) = only_refusal(&pipeline("", &parallel(join)));
             assert_eq!((code, tag.as_str()), ("invalid_package", "invalid-value"));
@@ -1359,6 +1362,29 @@ mod tests {
             assert_eq!(*fault, expected, "{join}");
             assert_eq!(located(&text, &cause), located_at, "{join}");
         }
+        let text = format!(
+            "{HEADER}{}\n",
+            pipeline("", &parallel("any [] outstanding cancel"))
+        );
+        let parsed = fsl_cst::parse(
+            SourceIdentity::new("a", "u"),
+            "unit.native",
+            text.as_bytes(),
+            fsl_cst::Limits::default(),
+        )
+        .expect("S1 reads the unit");
+        assert!(!parsed.is_admissible());
+        let [diagnostic] = parsed.diagnostics() else {
+            panic!("one syntax diagnostic, got {:?}", parsed.diagnostics());
+        };
+        assert_eq!(diagnostic.code, fsl_cst::CompleteCode::InvalidSyntax);
+        assert_eq!(diagnostic.cause, fsl_cst::CompleteCause::UnexpectedToken);
+        let span = diagnostic.byte_span().expect("a located diagnostic");
+        assert_eq!(
+            span.start,
+            text.find("[] outstanding").expect("the join list") + 1
+        );
+        assert_eq!(&text[span.start..span.end], "]");
         for join in [
             "all [east, west]",
             "quorum(2) [east, west] outstanding cancel",

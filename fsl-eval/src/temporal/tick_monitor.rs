@@ -70,6 +70,11 @@ pub struct TickMonitorSpec<'f> {
     pub activation_capacity: u64,
     /// The `holds` atoms with no admitted projection, by formula index.
     pub unprojectable: std::collections::BTreeSet<usize>,
+    /// Whether a reading is the exact instant (a position counter, FR-251
+    /// "Exact position readings"): a distance is then known, not covered by
+    /// `[k, k + 1)` widened by the uncertainty, so a witness exactly at a
+    /// bound is determinate.
+    pub exact: bool,
 }
 
 /// One input of the reference evaluator.
@@ -434,6 +439,24 @@ impl<'f> TickMonitorReference<'f> {
                 Membership::No
             };
         }
+        if self.spec.exact {
+            let (lo, hi) = (q(dmin), q(dmax));
+            let at_lower = |d: &Rational| *d > bound.lower || (*d == bound.lower && bound.lower_closed);
+            let at_upper = |d: &Rational| {
+                bound
+                    .upper
+                    .as_ref()
+                    .is_none_or(|upper| *d < *upper || (*d == *upper && bound.upper_closed))
+            };
+            let inside = |d: &Rational| at_lower(d) && at_upper(d);
+            return if inside(&lo) && inside(&hi) {
+                Membership::All
+            } else if !at_lower(&hi) || !at_upper(&lo) {
+                Membership::No
+            } else {
+                Membership::Some
+            };
+        }
         let lo = q(dmin).sub(self.width());
         let hi = q(dmax).add(self.width());
         let within = bound.upper.as_ref().is_none_or(|upper| hi <= *upper);
@@ -461,6 +484,40 @@ impl<'f> TickMonitorReference<'f> {
             Membership::All => Val::TRUE,
             Membership::Some => Val::UNKNOWN,
             Membership::No => Val::FALSE,
+        }
+    }
+
+    /// The left operand `phi` of `node` at a cell `dmin..=dmax` ticks from the
+    /// instance, counted only where the cell is at least the lower bound away:
+    /// the left operand of `since`, `triggered`, `until` and `release` ranges
+    /// over `[a, d)` (ADR-018 IV-2). Where that is uncertain the operand may
+    /// or may not be required.
+    fn guard(&self, node: usize, phi: Val, dmin: i128, dmax: i128, same: bool) -> Val {
+        let Some(bound) = self.spec.bounds.get(&node) else {
+            return phi;
+        };
+        let zero = q(0);
+        if bound.lower <= zero {
+            return phi;
+        }
+        let (lo, hi) = if same {
+            (zero.clone(), zero)
+        } else if self.spec.exact {
+            (q(dmin), q(dmax))
+        } else {
+            (q(dmin).sub(self.width()), q(dmax).add(self.width()))
+        };
+        let absent = if self.spec.exact {
+            hi < bound.lower
+        } else {
+            hi <= bound.lower
+        };
+        if lo >= bound.lower {
+            phi
+        } else if absent {
+            Val::TRUE
+        } else {
+            phi.or(Val::UNKNOWN)
         }
     }
 
@@ -546,7 +603,13 @@ impl<'f> TickMonitorReference<'f> {
                 let same = cell.first == pos && cell.last == pos;
                 let member = self.member(node, cell.t_first - tick, cell.t_last - tick, same);
                 acc = acc.or(Self::member_val(member).and(psi(cell)).and(prefix));
-                prefix = prefix.and(phi(cell));
+                prefix = prefix.and(self.guard(
+                    node,
+                    phi(cell),
+                    cell.t_first - tick,
+                    cell.t_last - tick,
+                    same,
+                ));
             }
             if !self.closed(node, tick) {
                 acc = acc.or(Val {
@@ -562,7 +625,13 @@ impl<'f> TickMonitorReference<'f> {
                 let same = cell.first == pos && cell.last == pos;
                 let member = self.member(node, tick - cell.t_last, tick - cell.t_first, same);
                 acc = acc
-                    .and(phi(cell))
+                    .and(self.guard(
+                        node,
+                        phi(cell),
+                        tick - cell.t_last,
+                        tick - cell.t_first,
+                        same,
+                    ))
                     .or(Self::member_val(member).and(psi(cell)));
             }
             if let Some(start) = self
@@ -623,7 +692,16 @@ impl<'f> TickMonitorReference<'f> {
             cell.t_last - origin.1,
             cell.first == origin.0 && cell.last == origin.0,
         ));
-        (acc.or(member.and(psi).and(pfx)), pfx.and(phi))
+        (
+            acc.or(member.and(psi).and(pfx)),
+            pfx.and(self.guard(
+                node,
+                phi,
+                cell.t_first - origin.1,
+                cell.t_last - origin.1,
+                cell.first == origin.0 && cell.last == origin.0,
+            )),
+        )
     }
 
     fn elem_val(&self, elem: &Elem) -> Val {
@@ -1081,12 +1159,11 @@ impl<'f> TickMonitorReference<'f> {
             let phi = info
                 .left
                 .map_or(Val::TRUE, |left| polar(self.expr(left, position)));
-            let member = Self::member_val(self.member(
-                elem.node,
-                self.events[position].tick - self.events[elem.pos].tick,
-                self.events[position].tick - self.events[elem.pos].tick,
-                elem.pos == position,
-            ));
+            let distance = self.events[position].tick - self.events[elem.pos].tick;
+            let same = elem.pos == position;
+            let member =
+                Self::member_val(self.member(elem.node, distance, distance, same));
+            let phi = self.guard(elem.node, phi, distance, distance, same);
             folded.push((
                 at,
                 elem.acc.or(member.and(psi).and(elem.pfx)),

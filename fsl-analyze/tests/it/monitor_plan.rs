@@ -18,7 +18,8 @@ use crate::units::Domain;
 pub(crate) const TIME_UNITS: &str = "dimension Time;\n\
     unit s : Time = rational(1, 1);\n\
     unit ms : Time = rational(1, 1000) * s;\n\
-    unit us : Time = rational(1, 1000000) * s;\n";
+    unit us : Time = rational(1, 1000000) * s;\n\
+    unit step : Time = rational(1, 1) * s;\n";
 
 pub(crate) fn ratio(numerator: i64, denominator: i64) -> Rational {
     Rational::new(Integer::from(numerator), Integer::from(denominator)).expect("nonzero")
@@ -1044,6 +1045,44 @@ fn a_step_open_interval_is_planned_on_the_position_counter() {
     ));
 }
 
+/// FR-943-AC-3, the monitor half (FR-251-AC-54): `once[3,*]` is `true` at
+/// position 3 and `eventually[2,*]` is discharged by `p` at position 2.
+#[trace("TC-2623", "FR-943-AC-3")]
+#[test]
+fn a_step_open_interval_decides_at_the_lower_bound_itself() {
+    use crate::monitor_entries::{run_reference, Input};
+    let profile = "filament.temporal.infinite-trace/v1";
+    let past = plan_of(&position_counted(
+        profile,
+        "once[3,*] holds(c.versionNumber = 2)",
+    ));
+    let atom = *crate::monitor_entries::atoms_of(&past)
+        .first()
+        .expect("the clause holds one atom");
+    let node = i128::try_from(past.buffers()[0].0.index()).expect("a node index");
+    let inputs: Vec<Input> = (0..5)
+        .map(|tick| Input::Reading(tick, vec![(atom, tick == 0)]))
+        .collect();
+    let entries = run_reference(&past, &inputs);
+    let at_three = entries[3].iter().find(|(key, _)| *key == 3 * 1000 + node);
+    assert_eq!(at_three.map(|(_, code)| *code), Some(1));
+
+    let future = plan_of(&position_counted(
+        profile,
+        "eventually[2,*] holds(c.versionNumber = 2)",
+    ));
+    let atom = *crate::monitor_entries::atoms_of(&future)
+        .first()
+        .expect("the clause holds one atom");
+    let root = i128::try_from(future.program().root().index()).expect("a node index");
+    let inputs: Vec<Input> = (0..3)
+        .map(|tick| Input::Reading(tick, vec![(atom, tick == 2)]))
+        .collect();
+    let entries = run_reference(&future, &inputs);
+    let found = entries[2].iter().find(|(key, _)| *key == root);
+    assert_eq!(found.map(|(_, code)| *code), Some(1));
+}
+
 /// The generated entries of `formula` (a position-counted clause under
 /// `profile`) run over one reading per position, each atom of the clause
 /// taking the truth `truths[position][atom]`; per position, the
@@ -1062,7 +1101,11 @@ fn position_outcomes(
         .map(|(position, row)| {
             crate::monitor_entries::Input::Reading(
                 u64::try_from(position).unwrap(),
-                spec.atoms.iter().copied().zip(row.iter().copied()).collect(),
+                spec.atoms
+                    .iter()
+                    .copied()
+                    .zip(row.iter().copied())
+                    .collect(),
             )
         })
         .collect();
@@ -1082,7 +1125,6 @@ fn position_outcomes(
 /// is discharged `true` by `p` at position 2, not at 1.
 #[trace("TC-2968", "FR-251-AC-54")]
 #[test]
-#[ignore = "QSL-2321: position readings are exact (a witness at the lower bound decides) not implemented yet"]
 fn a_position_witness_at_the_lower_bound_decides() {
     let once = position_outcomes(
         "filament.temporal.infinite-trace/v1",
@@ -1090,11 +1132,15 @@ fn a_position_witness_at_the_lower_bound_decides() {
         &[&[true], &[false], &[false], &[false]],
     );
     assert!(
-        once[2].iter().any(|&(origin, _, code)| origin == 2 && code == 4),
+        once[2]
+            .iter()
+            .any(|&(origin, _, code)| origin == 2 && code == 4),
         "indeterminate at position 2: {once:?}"
     );
     assert!(
-        once[3].iter().any(|&(origin, _, code)| origin == 3 && code == 1),
+        once[3]
+            .iter()
+            .any(|&(origin, _, code)| origin == 3 && code == 1),
         "true at position 3, the lower bound itself: {once:?}"
     );
     let eventually = position_outcomes(
@@ -1103,11 +1149,15 @@ fn a_position_witness_at_the_lower_bound_decides() {
         &[&[false], &[true], &[true]],
     );
     assert!(
-        !eventually[1].iter().any(|&(origin, _, code)| origin == 0 && code == 1),
+        !eventually[1]
+            .iter()
+            .any(|&(origin, _, code)| origin == 0 && code == 1),
         "a witness nearer than the lower bound does not discharge: {eventually:?}"
     );
     assert!(
-        eventually[2].iter().any(|&(origin, _, code)| origin == 0 && code == 1),
+        eventually[2]
+            .iter()
+            .any(|&(origin, _, code)| origin == 0 && code == 1),
         "a witness at the lower bound discharges true: {eventually:?}"
     );
 }
@@ -1117,19 +1167,28 @@ fn a_position_witness_at_the_lower_bound_decides() {
 /// at step 3, the upper bound itself, not left `indeterminate`.
 #[trace("TC-2968", "FR-251-AC-54")]
 #[test]
-#[ignore = "QSL-2321: position readings are exact (a witness at the upper bound decides) not implemented yet"]
 fn a_position_witness_at_the_upper_bound_decides() {
     let steps = position_outcomes(
         "filament.temporal.event-position.false-extension/v1",
         STEP_DEADLINE,
-        &[&[true, false], &[false, false], &[false, false], &[false, true]],
+        &[
+            &[true, false],
+            &[false, false],
+            &[false, false],
+            &[false, true],
+        ],
     );
     assert!(
-        steps[3].iter().any(|&(origin, _, code)| origin == 0 && code == 1),
+        steps[3]
+            .iter()
+            .any(|&(origin, _, code)| origin == 0 && code == 1),
         "the step-0 obligation settles true at step 3: {steps:?}"
     );
     assert!(
-        !steps.iter().flatten().any(|&(origin, _, code)| origin == 0 && code == 4),
+        !steps
+            .iter()
+            .flatten()
+            .any(|&(origin, _, code)| origin == 0 && code == 4),
         "never indeterminate at the bound: {steps:?}"
     );
 }

@@ -2366,7 +2366,36 @@ impl<'a, 'm, N: NodeSource<'a>> Machine<'a, 'm, N> {
                 collections::charge_element(self.meter)?;
                 collections::retain_accumulator(value, self.meter)?
             }
-            NodeKind::Index { .. } => return Err(unsupported_construct("index")),
+            NodeKind::Index {
+                index,
+                kind: kind @ (IndexedKind::Sequence | IndexedKind::OrderedSet),
+                ..
+            } => {
+                let position = self.pop_integer()?;
+                let collection = self.pop_collection()?;
+                let expected_kind = match collection.collection_type().kind() {
+                    CollectionKind::Sequence => IndexedKind::Sequence,
+                    CollectionKind::OrderedSet => IndexedKind::OrderedSet,
+                    _ => return Err(invariant("index-collection-kind-mismatch")),
+                };
+                if *kind != expected_kind
+                    || node.at(*index).value_type() != &ValueType::Integer
+                    || node.value_type() != collection.collection_type().element()
+                {
+                    return Err(invariant("index-collection-type-mismatch"));
+                }
+                let Some(position) = position
+                    .to_u64()
+                    .and_then(|position| usize::try_from(position).ok())
+                else {
+                    return Err(Stop::Undefined(Undefined::NoElement).into());
+                };
+                let Some(value) = collection.elements().get(position) else {
+                    return Err(Stop::Undefined(Undefined::NoElement).into());
+                };
+                charge_element(self.meter)?;
+                retain_scalar(value.clone(), self.meter)?
+            }
             NodeKind::ConvertText(_, _) => return Err(unsupported_construct("text_conversion")),
             // FR-322: the payload arguments are evaluated and on the stack in
             // position order; the first stopped one never reaches here. Type
@@ -2733,7 +2762,25 @@ impl<'a, 'm, N: NodeSource<'a>> Machine<'a, 'm, N> {
                     Value::Integer(value) => Rational::from_integer(value),
                     Value::Rational(value) => value,
                     Value::Decimal(value) => value.normalized().to_rational(),
-                    _ => return Err(invariant("quantity-scale-factor-expected")),
+                    Value::Boolean(_)
+                    | Value::Float(_)
+                    | Value::Quantity(_)
+                    | Value::Text(_)
+                    | Value::String(_)
+                    | Value::Bytes(_)
+                    | Value::JsonObject(_)
+                    | Value::Uuid(_)
+                    | Value::Timestamp(_)
+                    | Value::Enum(_)
+                    | Value::Population(_)
+                    | Value::Option(_)
+                    | Value::Composite(_)
+                    | Value::Union(_)
+                    | Value::Collection(_)
+                    | Value::Map(_)
+                    | Value::Reference(_) => {
+                        return Err(invariant("quantity-scale-factor-expected"));
+                    }
                 };
                 let Value::Quantity(quantity) = self.pop()? else {
                     return Err(invariant("quantity-scale-operand-expected"));
@@ -3312,7 +3359,24 @@ impl<'a, 'm, N: NodeSource<'a>> Machine<'a, 'm, N> {
                         let found = crate::value::map_entry(&map, &item).is_some();
                         collections::retain_scalar(Value::Boolean(found), self.meter)?
                     }
-                    _ => return Err(invariant("collection-value-expected")),
+                    Value::Boolean(_)
+                    | Value::Integer(_)
+                    | Value::Rational(_)
+                    | Value::Decimal(_)
+                    | Value::Float(_)
+                    | Value::Quantity(_)
+                    | Value::Text(_)
+                    | Value::String(_)
+                    | Value::Bytes(_)
+                    | Value::JsonObject(_)
+                    | Value::Uuid(_)
+                    | Value::Timestamp(_)
+                    | Value::Enum(_)
+                    | Value::Population(_)
+                    | Value::Option(_)
+                    | Value::Composite(_)
+                    | Value::Union(_)
+                    | Value::Reference(_) => return Err(invariant("collection-value-expected")),
                 }
             }
             NodeKind::Navigate {

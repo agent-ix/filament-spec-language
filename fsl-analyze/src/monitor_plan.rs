@@ -316,6 +316,7 @@ pub fn produce(
         guard,
     )
     .with_helpers(helpers);
+    let exact_positions = matches!(ticks, Ticks::Positions);
     let plan = TimedMonitorPlan::new(
         subject,
         clock_binding,
@@ -326,7 +327,8 @@ pub fn produce(
         buffers,
         rate_limit,
         target.max_activations,
-    );
+    )
+    .with_exact_positions(exact_positions);
     plan.root_premises()
         .validate()
         .map_err(MonitorPlanRefusal::Premise)?;

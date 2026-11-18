@@ -103,7 +103,7 @@ pub(super) fn deadlock_item<'a>(
     form: &TemporalItem,
 ) -> Option<AnalyzeItem<'a>> {
     let simulation = move |binding: &SubjectBinding<'a>| ModelSimulationRequest {
-        package,
+        input: fsl_eval::simulation::model::ModelCheckInput::source(package),
         packages: binding.packages,
         normalization: limits.normalization,
         snapshots: binding.snapshots,

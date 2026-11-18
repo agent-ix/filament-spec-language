@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //! The public source-object identity-row API preserves FR-531 member facts.
 
+#![cfg(feature = "std")]
+
 use filament_contract_model::{
     CheckedPackageEvidence, CheckedPackageReadLimits, CheckedPackageV2, CheckedPackageV2ReadResult,
     NativeJoinBudget,

@@ -1371,20 +1371,17 @@ fn a_bounded_quantity_has_no_type_node() {
     );
 }
 
-/// A map has no equality (FSpec FR-149 states none): `OperatorIneligible`.
-/// A bounded quantity is compared as `Quantity<u>` (filament-semantic-value
-/// FR-127 item 6), so it lowers to the same equality as the quantity.
+/// A map compares structurally (FR-680-AC-3: `=` over two `Map` operands is
+/// admitted), so it lowers to an equality. A bounded quantity is compared as
+/// `Quantity<u>` (filament-semantic-value FR-127 item 6), so it lowers to the
+/// same equality as the quantity.
 #[test]
-fn equality_refuses_a_map_and_reads_a_bounded_quantity_as_its_quantity() {
+fn equality_admits_a_map_and_reads_a_bounded_quantity_as_its_quantity() {
     with_lowering(|lowering| {
         let location = generated_location();
-        let refusal = lowering
+        lowering
             .equality(&map_of(ValueType::Boolean), "eq", &location)
-            .expect_err("a map has no equality");
-        assert!(matches!(
-            refusal.cause,
-            CheckCause::IllTyped(filament_exact::IllTypedCause::OperatorIneligible)
-        ));
+            .expect("a map compares structurally (FR-680-AC-3)");
         let bounded = lowering
             .equality(&bounded_metre(), "eq", &location)
             .expect("a bounded quantity compares as its quantity");
@@ -2009,6 +2006,47 @@ fn record_projection_and_record_values_name_their_record_node() {
         .collect();
     assert_eq!(held.len(), 1);
     assert_eq!(held[0].semantic_form(), "option");
+}
+
+/// FR-680-AC-1: proved Sequence and OrderedSet indexes lower through the
+/// existing collection.index operation, without a separate emitter arm.
+#[trace("FR-680-AC-1", "TC-1820")]
+#[test]
+fn sequence_and_ordered_set_indexes_lower_as_collection_index() {
+    let sequence_type = TypeForm::collection(CollectionKind::Sequence, SPAN)
+        .with_arguments(vec![int_form(0, 9)])
+        .with_bounds(vec!["1".into(), "3".into()]);
+    let sequence = function(
+        "sequence_read",
+        &[("s", sequence_type)],
+        int_form(0, 9),
+        None,
+        Expression::index(name_expr("s"), integer_expr(0)),
+    );
+
+    let ordered_set_type = TypeForm::collection(CollectionKind::OrderedSet, SPAN)
+        .with_arguments(vec![int_form(0, 9)])
+        .with_bounds(vec!["0".into(), "3".into()]);
+    let ordered_set = function(
+        "ordered_set_read",
+        &[("o", ordered_set_type)],
+        int_form(0, 9),
+        None,
+        Expression::if_then_else(
+            Expression::binary(
+                BinaryOperator::GreaterOrEqual,
+                Expression::size(name_expr("o"), None),
+                integer_expr(2),
+            ),
+            Expression::index(name_expr("o"), integer_expr(1)),
+            integer_expr(0),
+        ),
+    );
+
+    for checked_function in [sequence, ordered_set] {
+        let graph = check(vec![checked_function]).expect("the checked index lowers");
+        application(graph.semantic_graph(), "filament.op.collection.index");
+    }
 }
 
 /// FR-092 L6: a literal `1` that is not an operand of an FR-357 operator is

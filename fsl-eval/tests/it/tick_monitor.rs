@@ -91,6 +91,7 @@ impl Plan {
             capacities,
             activation_capacity: 8,
             unprojectable: Default::default(),
+            exact: false,
         })
     }
 }

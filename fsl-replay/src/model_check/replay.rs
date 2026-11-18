@@ -914,14 +914,8 @@ pub fn replay_protocol_trace_with_temporal_selections(
                     }),
                 )));
             }
-            check_protocol_bounds(
-                &model,
-                protocol,
-                &capacities,
-                package.0.graph(),
-                BOUND_POSITIONS,
-            )
-            .map_err(|refusal| refused(ModelTraceRefusal::NotSimulated(Box::new(refusal))))?;
+            check_protocol_bounds(&model, protocol, &capacities, package.0, BOUND_POSITIONS)
+                .map_err(|refusal| refused(ModelTraceRefusal::NotSimulated(Box::new(refusal))))?;
             let protocol_subject = ProtocolSubject {
                 model: ModelSubject {
                     simulation,
@@ -1116,7 +1110,7 @@ fn replay_on(
     let meter = request.accounting_limits();
     let package = compiled.checked.package();
     let simulation = |subject: &ModelTraceSubject| ModelSimulationRequest {
-        package,
+        input: fsl_eval::simulation::model::ModelCheckInput::source(package),
         packages: &compiled.packages,
         normalization: limits.spine.model,
         snapshots: &documents,
@@ -1997,6 +1991,143 @@ pub fn evaluate_model_trace(
         positions: positions.len(),
         meter,
     })))
+}
+
+/// FR-931 "Cross-evaluation" from a snapshot: the native valuation of every
+/// (instance, behaviour) closed trace, in instance order then behaviour
+/// order, and how the enumeration ended.
+#[derive(Debug)]
+pub struct BehaviourValuations {
+    /// One valuation per trace.
+    pub traces: Vec<fsl_eval::temporal::ObservedValuation>,
+    /// Whether every behaviour was read, or the work budget or an expansion
+    /// stopped the enumeration first.
+    pub end: BehaviourValuationEnd,
+}
+
+/// How [`behaviour_valuations`] ended.
+#[derive(Debug)]
+pub enum BehaviourValuationEnd {
+    /// Every behaviour of every instance was read.
+    Complete,
+    /// The work budget ran out; the traces read so far are kept.
+    Meter(filament_exact::Incomplete),
+    /// An expansion stopped; the traces read so far are kept.
+    Stopped(ExpansionStop),
+}
+
+/// FR-931: read `clause` over every behaviour of `system` of 1 to
+/// `max_steps` steps for each of `instances`, each behaviour of `j` steps a
+/// closed finite trace of `j + 1` positions read on the one clause
+/// evaluator through `letters`, under one meter of `limits`.
+///
+/// # Errors
+///
+/// [`ReplayRefusal`] when the system is not simulated (an unbounded root or
+/// an unencodable key) or the evaluator broke an invariant or refused a
+/// trace.
+pub fn behaviour_valuations(
+    system: &ModelSystem<'_>,
+    clause: &CheckedTemporalClause,
+    letters: &dyn ModelLetters,
+    instances: &[ModelInstance],
+    max_steps: usize,
+    limits: ScalarLimits,
+) -> Result<BehaviourValuations, ReplayRefusal> {
+    let mut meter = Meter::new(limits);
+    let mut traces = Vec::new();
+    for instance in instances {
+        let end = fsl_eval::simulation::model::model_behaviours(
+            system,
+            max_steps,
+            &mut meter,
+            |states, transitions, meter| {
+                let positions: Vec<Position> = states
+                    .iter()
+                    .map(|state| Position {
+                        state: state.state.clone(),
+                        state_key: state.key.clone(),
+                    })
+                    .collect();
+                let prefix: Vec<crate::ModelStep> = transitions
+                    .iter()
+                    .zip(states.iter().skip(1))
+                    .map(|(transition, post)| crate::ModelStep {
+                        transition: transition.clone(),
+                        post_state: post.key.clone(),
+                        delay: None,
+                    })
+                    .collect();
+                let mut replayed = ReplayedLetters {
+                    system,
+                    letters,
+                    instance,
+                    positions: &positions,
+                    prefix: &prefix,
+                    loop_edge_counts: false,
+                    undefined: None,
+                };
+                let trace = TemporalTrace::Finite {
+                    len: position_of(positions.len()),
+                };
+                match fsl_eval::temporal::letters_valuation(clause, &mut replayed, trace, meter) {
+                    Ok(valuation) => {
+                        // A meter stop inside the evaluator is an
+                        // `Incomplete` activation, not a verdict: the
+                        // work budget ended the enumeration there.
+                        let stopped =
+                            valuation
+                                .activations
+                                .iter()
+                                .find_map(|(_, outcome)| match outcome {
+                                    TemporalOutcome::Incomplete(incomplete) => {
+                                        Some(incomplete.clone())
+                                    }
+                                    _ => None,
+                                });
+                        match stopped {
+                            Some(incomplete) => std::ops::ControlFlow::Break(
+                                fsl_eval::temporal::ValuationStop::Letter(LetterStop::Incomplete(
+                                    incomplete,
+                                )),
+                            ),
+                            None => {
+                                traces.push(valuation);
+                                std::ops::ControlFlow::Continue(())
+                            }
+                        }
+                    }
+                    Err(stop) => std::ops::ControlFlow::Break(stop),
+                }
+            },
+        )
+        .map_err(|_| fault("behaviour-enumeration-is-simulated"))?;
+        match end {
+            fsl_eval::simulation::model::BehavioursEnd::Exhausted => {}
+            fsl_eval::simulation::model::BehavioursEnd::Meter(incomplete)
+            | fsl_eval::simulation::model::BehavioursEnd::Broken(
+                fsl_eval::temporal::ValuationStop::Letter(LetterStop::Incomplete(incomplete)),
+            ) => {
+                return Ok(BehaviourValuations {
+                    traces,
+                    end: BehaviourValuationEnd::Meter(incomplete),
+                })
+            }
+            fsl_eval::simulation::model::BehavioursEnd::Stopped(stop) => {
+                return Ok(BehaviourValuations {
+                    traces,
+                    end: BehaviourValuationEnd::Stopped(stop),
+                })
+            }
+            fsl_eval::simulation::model::BehavioursEnd::Broken(_) => {
+                return Err(fault("behaviour-valuation-reads-every-atom-and-activation"))
+            }
+        }
+    }
+    Ok(BehaviourValuations {
+        traces,
+        end: BehaviourValuationEnd::Complete,
+    })
 }
 
 /// FR-941: the evaluator's reading of one required clause over a replayed

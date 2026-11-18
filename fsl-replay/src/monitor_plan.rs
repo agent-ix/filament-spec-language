@@ -359,6 +359,7 @@ pub struct PlanId {
     intervals: Vec<(SubformulaId, TickInterval)>,
     buffers: Vec<(SubformulaId, u64)>,
     activation_capacity: u64,
+    exact_positions: bool,
 }
 
 /// `Eq` rests on reflexivity of `CheckedBody` equality, which is not total
@@ -396,6 +397,7 @@ pub struct TimedMonitorPlan {
     buffers: Vec<(SubformulaId, u64)>,
     rate_limit: Rational,
     activation_capacity: u64,
+    exact_positions: bool,
 }
 
 impl TimedMonitorPlan {
@@ -422,7 +424,20 @@ impl TimedMonitorPlan {
             buffers,
             rate_limit,
             activation_capacity,
+            exact_positions: false,
         }
+    }
+    /// Mark the plan's counter as a position counter, whose reading is the
+    /// exact instant (FR-251 "Exact position readings"), not a tick covered
+    /// by `[k, k + 1)`.
+    #[must_use]
+    pub fn with_exact_positions(mut self, exact: bool) -> Self {
+        self.exact_positions = exact;
+        self
+    }
+    /// Whether the counter is a position counter read exactly.
+    pub fn exact_positions(&self) -> bool {
+        self.exact_positions
     }
     /// The plan's `activation_capacity` premise.
     pub fn activation_capacity(&self) -> u64 {
@@ -488,6 +503,7 @@ impl TimedMonitorPlan {
             intervals: self.intervals.clone(),
             buffers: self.buffers.clone(),
             activation_capacity: self.activation_capacity,
+            exact_positions: self.exact_positions,
         }
     }
 }

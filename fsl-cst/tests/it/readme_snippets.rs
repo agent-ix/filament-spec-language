@@ -20,7 +20,10 @@ fn parse(text: &str) -> ParsedSource {
 fn readme_protocol_excerpt_parses_and_native_fences_parse() {
     let mut protocol = Vec::new();
     let mut depth = 0isize;
-    for line in README.lines().skip_while(|line| !line.contains("protocol Orders")) {
+    for line in README
+        .lines()
+        .skip_while(|line| !line.contains("protocol Orders"))
+    {
         depth += line.matches('{').count() as isize;
         depth -= line.matches('}').count() as isize;
         protocol.push(line);
@@ -34,7 +37,11 @@ fn readme_protocol_excerpt_parses_and_native_fences_parse() {
         protocol.join("\n")
     );
     let parsed = parse(&source);
-    assert!(parsed.is_admissible(), "protocol: {:?}", parsed.diagnostics());
+    assert!(
+        parsed.is_admissible(),
+        "protocol: {:?}",
+        parsed.diagnostics()
+    );
     assert_eq!(parsed.cst().render(), source.as_bytes());
 
     let mut in_native_fence = false;

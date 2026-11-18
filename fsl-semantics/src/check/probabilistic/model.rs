@@ -386,7 +386,6 @@ impl CheckedProbabilisticModel {
             .chain(workloads)
             .chain(delays)
             .min_by_key(|(declared, _, _)| *declared)
-            .map(|(declared, feature, name)| (declared, feature, name))
     }
 }
 

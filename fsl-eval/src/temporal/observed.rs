@@ -21,13 +21,13 @@ use fsl_semantics::check::{FormulaNodeId, TemporalClauseNode};
 use fsl_semantics::model::object_environment::ObjectEnvironment;
 
 use super::engine::DecisiveSearch;
-use super::finite_window::{TimestampedTrace, Valuation, WindowEvaluation, evaluate_finite_window};
+use super::finite_window::{evaluate_finite_window, TimestampedTrace, Valuation, WindowEvaluation};
 use super::tape::{TapeEntry, TapeLetter, TapeReading};
 use super::{
     AtomReading, CaptureReading, LetterStop, TemporalLetters, TemporalOutcome, TemporalPosition,
     TemporalRefusal, TemporalTrace, UndefinedCause,
 };
-use crate::value::{CheckedPackageEvaluation, evaluate_capture};
+use crate::value::{evaluate_capture, CheckedPackageEvaluation};
 use filament_eval::{CallFailure, Evaluation};
 
 /// Why a `holds` condition stopped the run without a reading, kept whole so
@@ -424,7 +424,7 @@ fn evaluate_window_over(
 
 /// FR-820: [`evaluate_positions_finite_window`] carried across a trace that
 /// grows. The state reads only the positions an open activation can still
-/// read ([`WindowState`]), so each step's work is bounded by them, and its
+/// read ([`WindowState`](super::finite_window::WindowState)), so each step's work is bounded by them, and its
 /// report equals the batch report over the prefix.
 #[derive(Clone, Debug, Default)]
 pub struct CarriedWindow {
@@ -1371,18 +1371,9 @@ pub fn observed_valuation(
     trace: TemporalTrace,
     meter: &mut Meter,
 ) -> Result<ObservedValuation, ValuationStop> {
-    let TemporalTrace::Finite { len } = trace else {
+    if !matches!(trace, TemporalTrace::Finite { .. }) {
         return Err(ValuationStop::NotFinite);
-    };
-    let checked = clause.clause();
-    let atoms: Vec<FormulaNodeId> = checked
-        .formula()
-        .nodes()
-        .iter()
-        .enumerate()
-        .filter(|(_, node)| matches!(node, fsl_semantics::check::FormulaNode::Holds { .. }))
-        .map(|(index, _)| FormulaNodeId::from_arena_index(index))
-        .collect();
+    }
     let mut letters = ObservedLetters {
         package,
         clause,
@@ -1397,6 +1388,35 @@ pub fn observed_valuation(
         fixed: BTreeMap::new(),
         active: None,
     };
+    letters_valuation(clause.clause(), &mut letters, trace, meter)
+}
+
+/// [`observed_valuation`] over any letter source: each `holds` atom of
+/// `clause` read through `letters` at every position of the closed finite
+/// `trace`, the activation positions, and the formula's value at each, on
+/// the one clause evaluator. A model behaviour's letters reach FR-931's
+/// cross-evaluation through this entry.
+///
+/// # Errors
+///
+/// [`ValuationStop`], as for [`observed_valuation`].
+pub fn letters_valuation<L: TemporalLetters>(
+    clause: &fsl_semantics::check::CheckedTemporalClause,
+    letters: &mut L,
+    trace: TemporalTrace,
+    meter: &mut Meter,
+) -> Result<ObservedValuation, ValuationStop> {
+    let TemporalTrace::Finite { len } = trace else {
+        return Err(ValuationStop::NotFinite);
+    };
+    let atoms: Vec<FormulaNodeId> = clause
+        .formula()
+        .nodes()
+        .iter()
+        .enumerate()
+        .filter(|(_, node)| matches!(node, fsl_semantics::check::FormulaNode::Holds { .. }))
+        .map(|(index, _)| FormulaNodeId::from_arena_index(index))
+        .collect();
     let mut readings = Vec::new();
     let mut activations = Vec::new();
     for index in 0..len {
@@ -1407,7 +1427,7 @@ pub fn observed_valuation(
             .collect::<Result<Vec<_>, _>>()
             .map_err(ValuationStop::Letter)?;
         readings.push(row);
-        let active = match checked.activation() {
+        let active = match clause.activation() {
             fsl_semantics::check::Activation::Origin => index == 0,
             fsl_semantics::check::Activation::Each { guarded: false } => true,
             fsl_semantics::check::Activation::Each { guarded: true } => matches!(
@@ -1419,11 +1439,11 @@ pub fn observed_valuation(
         };
         if active {
             let (result, _) = super::engine::run_seeking(
-                super::engine::Subject::of_clause(checked),
+                super::engine::Subject::of_clause(clause),
                 trace,
                 super::engine::Goal::At(position),
                 false,
-                &mut letters,
+                letters,
                 meter,
             );
             activations.push((position, result.map_err(ValuationStop::Refused)?));
