@@ -1571,8 +1571,19 @@ fn a_symbolic_capacity_is_decided_at_its_bound_value_under_bounded() {
             outcome.outcome
         );
     }
+    // Two sends at capacity 1 under `reject` lose the second message, so the
+    // environment defeats the protocol; the defeat equals the literal's in
+    // every member but the key, which holds the premise as written.
     let literal = decided(&fixture("1"), &[]);
-    assert_eq!(at_one.outcome, literal.outcome);
+    let defeat = |outcome: &RealizabilityOutcome| match &outcome.outcome {
+        AnalysisOutcome::Refuted(RealizabilityCounterexample::EnvironmentDefeat {
+            defeats_per_branch,
+            obligation,
+            ..
+        }) => (defeats_per_branch.clone(), obligation.clone()),
+        other => panic!("an environment defeat: {other:?}"),
+    };
+    assert_eq!(defeat(&at_one), defeat(&literal));
 
     let unbound = decided(&symbolic, &[]);
     assert_eq!(
