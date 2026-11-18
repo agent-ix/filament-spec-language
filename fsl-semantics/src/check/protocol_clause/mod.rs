@@ -242,6 +242,7 @@ pub fn check(
                     })
                     .map(|selection| selection.identity.clone()),
                 replicated: role.replicated.is_some(),
+                observe_only: role.observe_only,
             }
         })
         .collect();

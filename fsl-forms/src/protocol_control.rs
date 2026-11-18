@@ -789,6 +789,7 @@ pub(crate) fn role_form(cst: &LosslessCst, role: &CstNode) -> Result<RoleForm, F
         name: declared_name(&role_items, role)?,
         context,
         replicated,
+        observe_only: has_token(&role_items, b"observe"),
         span: role.span(),
     })
 }

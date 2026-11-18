@@ -1948,6 +1948,7 @@ fn protocol(g: &mut Grammar) {
         P::Role,
         c(vec![
             s(vec![
+                opt(x("observe")),
                 x("role"),
                 ident(),
                 x("on"),
@@ -1955,6 +1956,7 @@ fn protocol(g: &mut Grammar) {
                 x(";"),
             ]),
             s(vec![
+                opt(x("observe")),
                 x("role"),
                 ident(),
                 x("each"),
@@ -2272,6 +2274,23 @@ fn protocol(g: &mut Grammar) {
     g.insert(
         P::EventNode,
         c(vec![
+            s(vec![
+                x("recommend"),
+                ident(),
+                x("by"),
+                ident(),
+                x("on"),
+                r(P::OperationName),
+                x("contracts"),
+                x("["),
+                opt(list(ident)),
+                x("]"),
+                x("as"),
+                bound_parameter(),
+                star(r(P::Related)),
+                r(P::Block),
+                x(";"),
+            ]),
             s(vec![x("send"), ident(), x("via"), ident(), event_tail()]),
             s(vec![
                 x("receive"),
@@ -2340,15 +2359,15 @@ fn protocol(g: &mut Grammar) {
     g.insert(
         P::Control,
         c(vec![
-            r(P::Sequence),
-            r(P::Choice),
-            r(P::Parallel),
-            r(P::Repetition),
-            r(P::AwaitControl),
-            r(P::EventNode),
-            r(P::Check),
-            r(P::Commit),
-            r(P::Fence),
+            s(vec![opt(x("observe")), r(P::Sequence)]),
+            s(vec![opt(x("observe")), r(P::Choice)]),
+            s(vec![opt(x("observe")), r(P::Parallel)]),
+            s(vec![opt(x("observe")), r(P::Repetition)]),
+            s(vec![opt(x("observe")), r(P::AwaitControl)]),
+            s(vec![opt(x("observe")), r(P::EventNode)]),
+            s(vec![opt(x("observe")), r(P::Check)]),
+            s(vec![opt(x("observe")), r(P::Commit)]),
+            s(vec![opt(x("observe")), r(P::Fence)]),
         ]),
     );
     g.insert(

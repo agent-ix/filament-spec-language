@@ -1320,6 +1320,12 @@ impl Lowering<'_> {
             if let Some(port) = selected_port {
                 bindings.push(MemberTerm::binding("model_member", port));
             }
+            if role.observe_only {
+                bindings.push(MemberTerm::bound(
+                    "boundary",
+                    self.text_literal("observe-only", &location)?,
+                ));
+            }
             let key = self.protocol_member(
                 &location,
                 "role",

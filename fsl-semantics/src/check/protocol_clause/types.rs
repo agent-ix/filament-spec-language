@@ -436,6 +436,8 @@ pub struct CheckedRole {
     pub model_selection: Option<String>,
     /// Whether the role is replicated (`each`).
     pub replicated: bool,
+    /// Whether the role has the source-level observe-only boundary.
+    pub observe_only: bool,
 }
 
 /// One `parallel`'s join as written (ADR-027 ST-7, FSpec FR-171).
@@ -660,6 +662,8 @@ pub struct CheckedControl {
     pub path: Vec<String>,
     /// Its direct children, in authored order.
     pub children: Vec<ProtocolNodeId>,
+    /// Whether this control starts an observe-only boundary.
+    pub observe_only: bool,
 }
 
 /// The checked control tree of a protocol's `run` control (FR-218

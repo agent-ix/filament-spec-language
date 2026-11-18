@@ -388,6 +388,7 @@ pub(crate) fn protocol_declaration(
             channel: None,
             related: Vec::new(),
             role: None,
+            observe_only: false,
         });
         collector
             .binders
@@ -694,6 +695,7 @@ fn compensation_anchors(
         channel: None,
         related: Vec::new(),
         role: None,
+        observe_only: false,
     });
     let references = nodes_of(&compensation_items, Production::NodeReference);
     let for_reference = references.first().ok_or_else(|| unexpected(node))?;
@@ -882,6 +884,8 @@ impl<'c> ControlWalk<'c, '_, '_> {
         children: &mut Vec<ControlNode<'c>>,
     ) -> Result<(), FormsRefusal> {
         let cst = self.cst;
+        let declaration_start = self.collector.declarations.len();
+        let observe_only = has_token(&items(cst, control), b"observe");
         let matched = items(cst, control)
             .into_iter()
             .find_map(|item| match item {
@@ -893,7 +897,7 @@ impl<'c> ControlWalk<'c, '_, '_> {
         let named = |kind| -> Result<(ProtocolNodeKind, DeclaredName), FormsRefusal> {
             Ok((kind, declared_name(&matched_items, matched)?))
         };
-        match matched.production() {
+        let result = match matched.production() {
             Production::Sequence | Production::Repetition => {
                 let kind = if matched.production() == Production::Sequence {
                     ProtocolNodeKind::Sequence
@@ -1013,7 +1017,13 @@ impl<'c> ControlWalk<'c, '_, '_> {
                 self.collector.body(cst, &matched_items, matched, owner)
             }
             _ => Err(unexpected(matched)),
+        };
+        if result.is_ok() && observe_only {
+            if let Some(declaration) = self.collector.declarations.get_mut(declaration_start) {
+                declaration.observe_only = true;
+            }
         }
+        result
     }
 
     /// `await N after R using alias clock "c" within i match Event then
@@ -1107,6 +1117,7 @@ fn declare(
         channel: None,
         related: Vec::new(),
         role: None,
+        observe_only: false,
     });
 }
 
@@ -1183,6 +1194,7 @@ fn event_node_anchors(
         channel: channel.clone(),
         related,
         role,
+        observe_only: false,
     });
     // Every event node kind (`send` and `attempt` included) carries its own
     // `as (x: T)` record binder (FR-113 "Refusals"), its own body block and
