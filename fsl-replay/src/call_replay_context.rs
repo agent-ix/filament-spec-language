@@ -275,13 +275,14 @@ mod tests {
         )
         .expect("selects")
         .into_value();
+        let function_modes = BTreeMap::from([("q".to_owned(), CheckMode::Kernel)]);
         let checked = spine::check_units_with_options(
             &admitted,
             "fixture".to_owned(),
             &models,
             &dependencies,
             spine::UnitCheckOptions {
-                check_mode: Some(CheckMode::Kernel),
+                function_modes: Some(&function_modes),
                 ..spine::UnitCheckOptions::default()
             },
             limits.spine,
