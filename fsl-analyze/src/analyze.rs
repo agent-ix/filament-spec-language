@@ -2255,6 +2255,7 @@ mod tests {
                 label: "proved".to_owned(),
                 counterexample: None,
             }]),
+            recording: None,
             replay: None,
         };
         let document = analyze_document_routed_with_conformance(

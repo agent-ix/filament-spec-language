@@ -512,13 +512,18 @@ fn work<'a>(
                             .recording
                             .as_ref()
                             .and_then(|reference| binding.snapshots.get(reference));
+                        let recording_identity = item
+                            .options
+                            .recording
+                            .as_ref()
+                            .cloned();
                         match recording {
                             Some(recording) => {
                                 crate::protocol_analysis::conformance::global_recording_item(
                                     item.request_index,
                                     package,
-                                    protocol,
                                     None,
+                                    recording_identity,
                                     Some(recording),
                                 )
                             }
