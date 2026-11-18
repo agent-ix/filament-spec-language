@@ -46,7 +46,8 @@ use fsl_semantics::model::object_environment::ObjectEnvironment;
 use fsl_semantics::value::environment_stage::{membership_failure_cause, membership_failure_code};
 
 use crate::bounds::ReplayLimits;
-use crate::identity::{DefinitionSourceRef, ObligationIdentity, ProfileSelection, QualifiedName};
+use crate::identity::{DefinitionSourceRef, ProfileSelection, QualifiedName};
+use fsl_package::ObligationIdentity;
 use crate::limits::CallerLimits;
 use crate::request::StageLimits;
 use crate::request::{ReplayRequest, ReplayRequestRefusal, ReplayRequestWire};

@@ -88,6 +88,8 @@ pub mod value_check;
 mod witness;
 mod witness_entry_name;
 
+use fsl_package::{ModelIdentity, ObligationIdentity};
+
 pub use admitted::{
     compile_admitted, compile_admitted_with_temporal_selections, AdmittedCompilation,
     AdmittedComposite, AdmittedCompositeForm, AdmittedContext, AdmittedDimension, AdmittedEnum,
@@ -205,8 +207,8 @@ pub use hybrid_replay::{
     TraceBefore, TraceFault, TraceJump, TraceRefusal, TraceState, UndefinedCause, UndefinedInstant,
 };
 pub use identity::{
-    DeclaredDomain, DefinitionSourceRef, EmptyQualifiedName, ModelIdentity, ObligationIdentity,
-    ProfileSelection, QualifiedName, TracePosition,
+    DeclaredDomain, DefinitionSourceRef, EmptyQualifiedName, ProfileSelection, QualifiedName,
+    TracePosition,
 };
 pub use limits::{AccountingLimits, CallerLimits, EngineLimits, RenderLimits};
 pub use model_check::counterexample::{

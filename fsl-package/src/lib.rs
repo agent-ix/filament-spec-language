@@ -52,6 +52,7 @@ mod introduced_binders;
 mod model_input_form;
 #[cfg(feature = "std")]
 mod native_row;
+mod obligation_identity;
 #[cfg(feature = "std")]
 mod probabilistic_read;
 #[cfg(feature = "std")]
@@ -141,6 +142,7 @@ pub use export::{export_bindings, BoundItem, ExportRefusal, UnboundElement};
 pub use filament_contract_model::{CheckedBindingNameKind, CheckedLiteralValue, CheckedTerm};
 #[cfg(feature = "std")]
 pub use native_row::{NativeRowError, NativeRowErrorCode};
+pub use obligation_identity::{ModelIdentity, ObligationIdentity};
 #[cfg(feature = "std")]
 pub use protocol_occurrence::{
     protocol_occurrence_schemas_from_read, CompensationEntry, ControlEntry, ControlOperator,
