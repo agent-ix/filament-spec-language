@@ -2038,9 +2038,9 @@ fn a_finite_trace_set_defect_refuses_with_its_named_cause() {
             "Nowhere",
         ),
         (
-            FINITE_DET.replace("in Obs", "in Int"),
+            FINITE_DET.replace("in Obs", "in V"),
             Code::InvalidModelBinding,
-            "Int",
+            "V",
         ),
         (
             FINITE_DET.replace("forall trace b", "forall trace a"),
