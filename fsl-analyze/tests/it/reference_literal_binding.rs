@@ -8,7 +8,8 @@ use ix_trace_rs::trace;
 use serde_json::{Value, json};
 
 use crate::analyze_cli_support::{
-    Workspace, analyze, counter_request_with, counter_snapshot, label, request_members,
+    Workspace, analyze, counter_request, counter_request_with, counter_snapshot, label,
+    request_members,
 };
 
 /// One analyze run over the Counter subject whose initial state holds `a`
@@ -66,11 +67,12 @@ fn guarded_protocol(key: &str) -> String {
 )]
 #[test]
 fn a_reference_literal_resolves_at_subject_binding() {
-    let fixed = over_wide_universe(
-        "reflit-fixed",
-        &temporal("F", "always holds(c.value <= 3 or c = M::Counter#\"a\")"),
-        "F",
-    );
+    let fixed_workspace = Workspace::new("reflit-fixed");
+    let fixed = analyze(&counter_request(
+        &fixed_workspace,
+        &temporal("F", "always holds(c = M::Counter#\"a\")"),
+        request_members(Some(json!([{"claim": "F"}]))),
+    ));
     assert_eq!(fixed.exit, 0, "{}", fixed.document());
     let unknown = over_wide_universe(
         "reflit-unknown",
