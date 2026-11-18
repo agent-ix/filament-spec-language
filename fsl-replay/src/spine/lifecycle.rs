@@ -3238,9 +3238,21 @@ fn protocol_check_outcome(
         {
             let refusal = refused.refusals.first().cloned();
             if let Some(primary) = refusal.clone() {
+                // FR-096 / FR-884: protocol refusals carry the subject span
+                // on their typed cause. Keep the protocol declaration span
+                // only as a fallback for causes without a located subject.
+                let subject_span = match &primary.cause {
+                    CheckCause::ProtocolAnchor(cause) => Some(cause.span()),
+                    CheckCause::ProtocolObligation(cause) => Some(cause.span()),
+                    CheckCause::Temporal(cause) => Some(cause.span()),
+                    CheckCause::StateGraph(cause) => cause.span(),
+                    _ => None,
+                }
+                .unwrap_or(declaration_span);
+                let subject_region = region(parsed.source().reference(), subject_span);
                 if first_failure.is_none() {
                     first_failure = Some(CompileRefusal::Check {
-                        region: region(parsed.source().reference(), declaration_span),
+                        region: subject_region.clone(),
                         refusals: refused.refusals.clone(),
                     });
                 }
@@ -3269,8 +3281,7 @@ fn protocol_check_outcome(
                     cause: catalog
                         .map(|code| code.cause().to_owned())
                         .unwrap_or_else(|| "unknown-cause".to_owned()),
-                    locus: region(parsed.source().reference(), refused.declaration_span)
-                        .map(Locus::Region),
+                    locus: subject_region.map(Locus::Region),
                 });
             } else {
                 results.push(super::ProtocolResult::Refused {

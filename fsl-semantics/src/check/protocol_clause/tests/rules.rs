@@ -6,8 +6,8 @@ use filament_semantic_value::checking::{CheckMode, CheckingLimits};
 use ix_trace_rs::trace;
 
 use super::assemble;
-use crate::check::refusal::ProtocolAnchorCause;
 use crate::check::CheckRefusal;
+use crate::check::refusal::ProtocolAnchorCause;
 
 fn catalog(refusal: &CheckRefusal) -> (&'static str, Option<&'static str>) {
     (refusal.cause.code().as_str(), refusal.cause.cause())
@@ -15,7 +15,7 @@ fn catalog(refusal: &CheckRefusal) -> (&'static str, Option<&'static str>) {
 
 /// The S3 refusals of `declarations`, each with its catalog pair and the
 /// source text of its refusal region (`PackageDeclarations::regions`).
-fn located_refusals(declarations: &str) -> Vec<(CheckRefusal, String)> {
+pub(super) fn located_refusals(declarations: &str) -> Vec<(CheckRefusal, String)> {
     let (text, assembled) = assemble(declarations);
     let regions = assembled.regions();
     let refusals: Vec<CheckRefusal> =
@@ -43,7 +43,7 @@ fn located_refusals(declarations: &str) -> Vec<(CheckRefusal, String)> {
 
 /// A protocol over `M::Actor` with the `captures`, the `roles` and the
 /// `run` control.
-fn protocol(captures: &str, roles: &str, run: &str) -> String {
+pub(super) fn protocol(captures: &str, roles: &str, run: &str) -> String {
     format!(
         "protocol Flow using pp over (input: M::Actor) on origin {{\n\
          {captures}\n\
@@ -54,7 +54,8 @@ fn protocol(captures: &str, roles: &str, run: &str) -> String {
     )
 }
 
-const TRIED: &str = "attempt Tried by R on M::Actor::op contracts [] as (tried: Boolean) { true };";
+pub(super) const TRIED: &str =
+    "attempt Tried by R on M::Actor::op contracts [] as (tried: Boolean) { true };";
 
 /// FR-218-AC-41: `role W on M` checks beside a role on a model type, and the
 /// replicated form over the alias refuses with the alias as its region.

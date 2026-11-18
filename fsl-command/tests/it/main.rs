@@ -11,6 +11,7 @@ mod integer_division_request;
 mod native_source_projection;
 mod negotiation;
 mod prepared_command;
+mod protocol_refusal_text;
 mod probabilistic_package_locus;
 mod protocol_refusal_names;
 mod request_overrides;
