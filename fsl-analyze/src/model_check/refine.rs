@@ -43,9 +43,9 @@ use filament_semantic_value::catalog::InternalFault;
 use filament_semantic_value::fairness::{FairnessConstraint, FairnessKind};
 use filament_semantic_value::model_transition::ModelTransition;
 use fsl_eval::fairness::{analyze, Analysis, EdgeLabel, FairnessError, Graph, Identity, Vertex};
-use fsl_eval::model_subject::{ModelInstance, ModelSubject};
+use fsl_eval::model_subject::{CapacityBinding, ModelInstance, ModelSubject};
 use fsl_eval::simulation::model::{check_model_bounds, ModelFinding, ModelSimState, ModelSystem};
-use fsl_eval::simulation::protocol::ProtocolTarget;
+use fsl_eval::simulation::protocol::{ProtocolRefusal, ProtocolTarget};
 use fsl_eval::simulation::{ExpansionLimit, ExpansionStop, TransitionSystem};
 use fsl_package::CheckedPackage;
 use fsl_replay::{
@@ -53,10 +53,11 @@ use fsl_replay::{
     check_protocol_step, check_step, open_protocol_systems, open_systems, AbstractClass,
     AbstractProtocolSystem, CertifiedEdge, CertifiedPosition, ConcreteStep, CounterexampleKind,
     IncompleteCause, Lasso, LivenessHalf, ModelCheckLimit, ModelCheckLimits, ModelCheckOutcome,
-    ModelStep, ProtocolRelationError, ProtocolStateRelation, ReachedLimit, RefinementFailure,
-    RefinementOutcome, RefinementPosition, RefinementSystems, RunStats, SafetyOutcome,
-    SafetyUndecided, SimulationCertificate, StepResult, StepVerdict, SubjectRefusal, Taken,
-    TemporalCounterexample, UnavailabilityCause, UndecidedCause, UndefinedEvaluation, Undetermined,
+    ModelStep, ProtocolRelationError, ProtocolStateRelation, ProtocolSystemsRefusal, ReachedLimit,
+    RefinementFailure, RefinementOutcome, RefinementPosition, RefinementSystems, RunStats,
+    SafetyOutcome, SafetyUndecided, SimulationCertificate, StepResult, StepVerdict, SubjectRefusal,
+    Taken, TemporalCounterexample, UnavailabilityCause, UndecidedCause, UndefinedEvaluation,
+    Undetermined,
 };
 use fsl_semantics::check::CheckedRefinement;
 use fsl_semantics::model::observation::DocumentRef;
@@ -76,8 +77,9 @@ pub struct RefinementCheckRequest<'a> {
     /// The abstract subject's FR-106 initial snapshots.
     pub abstract_initial: Vec<DocumentRef>,
     /// Bindings for an abstract protocol subject. The clause and static
-    /// roles remain owned by `abstract_package`; the request supplies only
-    /// the model instance bound to its `over` parameter.
+    /// roles remain owned by `abstract_package`; the request supplies the
+    /// model instance bound to its `over` parameter and the capacity binding
+    /// of its symbolic capacities.
     pub abstract_protocol_binding: Option<AbstractProtocolBinding>,
     /// The search horizon `k`; `None` sets none.
     pub max_depth: Option<usize>,
@@ -90,6 +92,8 @@ pub struct RefinementCheckRequest<'a> {
 pub struct AbstractProtocolBinding {
     /// The object bound to the protocol's checked `over` input.
     pub over: ModelInstance,
+    /// The binding of the clause's symbolic capacities (FSpec FR-785).
+    pub capacities: Vec<CapacityBinding>,
 }
 
 /// A product state's key: the concrete state's key bytes, its history
@@ -205,7 +209,8 @@ fn check_with(
             &request.concrete.simulation,
             request.abstract_package,
             request.abstract_initial.clone(),
-        ),
+        )
+        .map_err(ProtocolSystemsRefusal::Subject),
         (fsl_semantics::check::AbstractSide::Protocol { .. }, Some(binding)) => {
             open_protocol_systems(
                 refinement,
@@ -213,6 +218,7 @@ fn check_with(
                 request.abstract_package,
                 request.abstract_initial.clone(),
                 binding.over,
+                &binding.capacities,
             )
         }
         (fsl_semantics::check::AbstractSide::Protocol { .. }, None) => {
@@ -220,12 +226,22 @@ fn check_with(
         }
     };
     let systems = opened.map_err(|refusal| match refusal {
-        SubjectRefusal::Admission(failure) => ModelCheckRefusal::Admission(failure),
-        SubjectRefusal::ProtocolSubject => ModelCheckRefusal::ProtocolRefinement,
-        SubjectRefusal::NoModels | SubjectRefusal::NoUniverse => {
+        ProtocolSystemsRefusal::Subject(SubjectRefusal::Admission(failure)) => {
+            ModelCheckRefusal::Admission(failure)
+        }
+        ProtocolSystemsRefusal::Subject(SubjectRefusal::ProtocolSubject) => {
+            ModelCheckRefusal::ProtocolRefinement
+        }
+        ProtocolSystemsRefusal::Subject(SubjectRefusal::NoModels | SubjectRefusal::NoUniverse) => {
             fault("the-subjects-of-a-refinement-open")
         }
-        SubjectRefusal::ProtocolAbstractSide => ModelCheckRefusal::ProtocolAbstractSide,
+        ProtocolSystemsRefusal::Subject(SubjectRefusal::ProtocolAbstractSide) => {
+            ModelCheckRefusal::ProtocolAbstractSide
+        }
+        ProtocolSystemsRefusal::Capacity(refusal) => {
+            ModelCheckRefusal::Protocol(ProtocolRefusal::Capacity(refusal))
+        }
+        ProtocolSystemsRefusal::UnboundCapacity(names) => ModelCheckRefusal::UnboundCapacity(names),
     })?;
     let protocol_system = systems.abstract_protocol.as_ref();
     let RefinementSystems {

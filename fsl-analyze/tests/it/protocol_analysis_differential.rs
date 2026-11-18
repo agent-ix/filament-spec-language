@@ -45,8 +45,8 @@ fn protocol_deadlock_agrees_with_projection() {
 
 /// FR-891-AC-2 (TC-2523): a symbolic capacity takes its value from the
 /// subject's FSpec FR-785 `capacities` binding. Unbound, realizability is
-/// `inconclusive`, `premise-not-stated`, naming the capacity; bound to 1 it
-/// settles as the literal capacity 1 does.
+/// `inconclusive`, `premise-not-stated`, whose FR-331 wire spelling carries
+/// no payload; bound to 1 it settles as the literal capacity 1 does.
 #[trace("TC-2523", "FR-891-AC-2", "FSpec-FR-785-AC-6")]
 #[test]
 #[ignore = "QSL-2212: realizability does not read the subject's capacities binding yet"]
@@ -66,10 +66,7 @@ fn a_symbolic_capacity_settles_from_the_capacities_binding() {
     let unbound = run("capacity-unbound", &symbolic, json!({}));
     assert_eq!(label(&unbound), "inconclusive", "{unbound}");
     let text = unbound.to_string();
-    assert!(
-        text.contains("premise-not-stated") && text.contains("Bound"),
-        "{text}"
-    );
+    assert!(text.contains("premise-not-stated"), "{text}");
     assert!(!text.contains("requires-bound"), "{text}");
     let bound = run(
         "capacity-bound",

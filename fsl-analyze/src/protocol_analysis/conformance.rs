@@ -292,6 +292,12 @@ pub(crate) fn global_behavior_item<'a>(
             };
             let subject = match subject_builder.subject(over.clone()) {
                 Ok(subject) => subject,
+                // FSpec FR-785: a symbolic capacity with no binding.
+                Err(super::finite_replay::ReplayFault::UnboundCapacity) => {
+                    return crate::analyze::EngineReport::Refused(
+                        crate::analyze::Refusal::RequiresBound,
+                    );
+                }
                 Err(_) => return internal_fault(),
             };
             let replay_subject = match subject_builder.subject(over.clone()) {
