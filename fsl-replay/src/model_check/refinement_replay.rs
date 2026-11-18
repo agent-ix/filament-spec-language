@@ -862,8 +862,7 @@ fn replay_abstract_timed_failure(
 ) -> Result<Option<(RefinementFailure, Vec<ModelState>)>, ReplayRefusal> {
     if systems
         .abstract_system
-        .package()
-        .graph()
+        .input()
         .timed_model(refinement.abstract_model())
         .is_none()
     {

@@ -1012,7 +1012,7 @@ fn check_zone_certificate_with_time_source<O: Clone + Eq>(
             // its abstract-package identity is identical by construction.
             // Avoid emitting it twice: multi-model timed packages can have
             // a source map that the emitter cannot re-key independently.
-            if std::ptr::eq(abstract_package, request.simulation.package) {
+            if std::ptr::eq(abstract_package, source) {
                 if part.refinement_node != *occurrence.node() {
                     return Ok(ZoneCertificateVerdict::Rejected(CertificateRejection {
                         rule: CertificateRule::ShapeMismatch,
@@ -1080,8 +1080,7 @@ fn check_zone_certificate_with_time_source<O: Clone + Eq>(
         Some(refined)
             if refined
                 .abstract_system
-                .package()
-                .graph()
+                .input()
                 .timed_model(refined.refinement.abstract_model())
                 .is_some() =>
         {
