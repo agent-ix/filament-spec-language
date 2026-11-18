@@ -1411,7 +1411,21 @@ fn protocol_results_preserve_independent_emission_when_a_join_is_refused() {
         "source index is relative to the containing unit after removing Flow"
     );
 
-    let no_owner = flow_over("Boolean", "on origin", "role Buyer on M::Order;");
+    let no_owner = flow_over(
+        "M::Order",
+        "on origin",
+        &format!(
+            "{BUYER}\n{SELLER}\n{}",
+            channel(
+                "C",
+                ("Buyer", "Seller"),
+                "unordered",
+                "unknown",
+                "capacity 4 overflow block"
+            )
+            .replace("Boolean", "Int[0, 5]")
+        ),
+    );
     let no_owner_pair = emit_checked_with_protocol_results(&CheckedPackage::link(check(&format!(
         "{good}\n{}",
         no_owner.replace("protocol Flow", "protocol NoOwner")
@@ -1436,7 +1450,7 @@ fn protocol_results_preserve_independent_emission_when_a_join_is_refused() {
     assert!(matches!(
         refusal.cause,
         fsl_semantics::check::CheckCause::ProtocolReference(ref cause)
-            if cause.construct() == Some(ProtocolConstruct::NoOwnerModel)
+            if cause.construct() == Some(ProtocolConstruct::ChannelCarriesBounded)
     ));
 
     let dependent = good.replace("protocol Flow", "protocol Dependent").replace(
@@ -2011,7 +2025,6 @@ fn an_unstable_fifo_key_refuses_at_the_key() {
 /// admitted.
 #[test]
 #[trace("TC-2502", "FR-880-AC-7", "FSpec-FR-727-AC-1")]
-#[ignore = "QSL-2220: a clause whose over input is not an object reference is refused NoOwnerModel at S4"]
 fn a_non_object_over_is_written() {
     for over in [
         "Int[0, 3]",

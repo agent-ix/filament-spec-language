@@ -5107,10 +5107,13 @@ mod tests {
                 )],
                 TypeForm::builtin(fsl_forms::BuiltinType::Integer, SPAN),
                 None,
-                Expression::size(Expression::all_instances(
-                    TypeForm::name("M::A", SPAN),
-                    Expression::name("p".to_owned()),
-                )),
+                Expression::size(
+                    Expression::all_instances(
+                        TypeForm::name("M::A", SPAN),
+                        Expression::name("p".to_owned()),
+                    ),
+                    None,
+                ),
             )];
             declarations
         }

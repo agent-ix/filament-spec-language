@@ -893,6 +893,7 @@ fn p09_intervals_come_only_from_declared_types_and_literal_guards() {
                     lower: Some(integer(lower)),
                     upper: Some(integer(upper)),
                 }),
+                operand: Default::default(),
             },
             "unproved-range",
         )

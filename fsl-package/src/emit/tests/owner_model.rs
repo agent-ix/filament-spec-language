@@ -10,11 +10,10 @@ use filament_contract_model::{
     read_checked_package, CheckedPackageDispatchResult, CheckedPackageEvidence,
     CheckedPackageReadLimits, ExactTypeProjectionErrorCode, SelectedExactIdentities,
 };
-use fsl_semantics::check::{CheckRefusal, ProtocolConstruct};
 
 use super::population_bound::document;
 use super::protocol_graph::{checked, flow_over, PROFILES};
-use super::protocol_reference::{node_by_id, node_of, not_emitted};
+use super::protocol_reference::node_of;
 use super::reachability::{lower_with, model_node, Lowered};
 use super::*;
 
@@ -345,72 +344,28 @@ fn each_defect_of_the_edge_is_refused_where_the_reader_reaches_it() {
     }
 }
 
-/// FR-383-AC-26: a clause whose `over` input is not a reference to an object
-/// type of a selected model has no model declaration node to name, so the
-/// protocol is refused typed (`unsupported_construct`/`not-yet-implemented`,
-/// QSL-1147), once, and with the emission gate open writes no clause. The same
-/// protocol over an object type checks and writes the clause.
+/// FR-383-AC-27 (FSpec FR-727): a clause whose `over` input is `Boolean` or
+/// `Integer` is written with no `owner_model` edge; one over `Option<M::T>` or
+/// `Sequence<M::T>` names `M::T`'s object-type node, the same node the
+/// protocol over `M::T` names. Each is admitted by IR's strict reader.
 #[trace("FR-383-AC-27", "TC-1063")]
 #[test]
-fn an_over_input_that_is_no_object_type_refuses_typed_and_writes_no_clause() {
-    let clauses = |graph: &fsl_semantics::check::CheckedGraph| {
-        graph
-            .semantic_graph()
-            .nodes()
-            .filter(|node| node.semantic_form() == "protocol_clause")
-            .count()
+fn an_over_input_that_is_no_object_type_writes_the_clause_by_what_it_reaches() {
+    let clause_of = |over: &str| {
+        let lowered = emitted(&flow(over));
+        let clause = node_of(&lowered.wire, "protocol", "protocol_clause").clone();
+        (lowered, clause)
     };
-    let written =
-        checked(&flow("M::Order"), false).unwrap_or_else(|refusals| panic!("{refusals:?}"));
-    assert_eq!(clauses(&written), 1);
-    assert_eq!(ProtocolConstruct::NoOwnerModel.tracking(), "QSL-1147");
-    for over in [
-        "Boolean",
-        "Integer",
-        "Option<M::Order>",
-        "Sequence<M::Order>",
-    ] {
-        let text = flow(over);
-        let refusals: Vec<CheckRefusal> = checked(&text, false).expect_err(&text);
-        assert_eq!(
-            refusals
-                .iter()
-                .map(|refusal| &refusal.cause)
-                .collect::<Vec<_>>(),
-            [&not_emitted(ProtocolConstruct::NoOwnerModel)],
-            "{over}"
-        );
-        let open = checked(&text, true).unwrap_or_else(|refusals| panic!("{over}: {refusals:?}"));
-        assert_eq!(clauses(&open), 0, "{over} writes no clause node");
+    for over in ["Boolean", "Integer"] {
+        let (_, clause) = clause_of(over);
+        assert!(clause.get("owner_model").is_none(), "{over} has no edge");
     }
-}
-
-/// FR-383-AC-26: the edge is the model declaration the clause's `over` names,
-/// not one found from the roles: a clause over `Order` whose only role is on
-/// `Person` still names `Order`, and `Order`'s node is the clause's
-/// dependency though no role names it.
-#[trace("FR-383-AC-26", "TC-1062")]
-#[test]
-fn the_edge_follows_over_and_not_the_roles() {
-    let lowered = emitted(&flow_over(
-        "M::Order",
-        "on origin",
-        "role Seller on M::Person;",
-    ));
-    let wire = &lowered.wire;
-    let clause = node_of(wire, "protocol", "protocol_clause");
-    let owner = model_node(wire, "Order");
-    assert_eq!(clause["owner_model"], owner["node_id"]);
-    assert!(clause["dependencies"]
-        .as_array()
-        .unwrap()
-        .contains(&owner["node_id"]));
-    let role = node_of(wire, "protocol", "role");
-    let mut reached = Vec::new();
-    targets(&role["body"], &mut reached);
-    assert!(!reached.contains(&owner["node_id"]));
-    assert_eq!(
-        node_by_id(wire, &clause["owner_model"])["declaration"],
-        owner["declaration"]
-    );
+    let (lowered, direct) = clause_of("M::Order");
+    let owner = model_node(&lowered.wire, "Order");
+    assert_eq!(direct["owner_model"], owner["node_id"]);
+    for over in ["Option<M::Order>", "Sequence<M::Order>"] {
+        let (lowered, clause) = clause_of(over);
+        let owner = model_node(&lowered.wire, "Order");
+        assert_eq!(clause["owner_model"], owner["node_id"], "{over}");
+    }
 }
