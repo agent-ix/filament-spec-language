@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //! O-09: structural identity of one checked obligation.
 
-use alloc::string::String;
+use alloc::{boxed::Box, string::String};
 use core::fmt;
 
 use filament_exact::NodeKey;
