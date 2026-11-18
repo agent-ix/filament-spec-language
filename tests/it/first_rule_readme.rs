@@ -31,8 +31,11 @@ fn first_rule_source() -> String {
 #[test]
 fn first_rule_readme_example_compiles_against_config_version() {
     let directory = tempfile::tempdir().expect("temporary compile directory");
-    std::fs::write(directory.path().join("first-rule.native"), first_rule_source())
-        .expect("write extracted README source");
+    std::fs::write(
+        directory.path().join("first-rule.native"),
+        first_rule_source(),
+    )
+    .expect("write extracted README source");
     std::fs::write(
         directory.path().join("config-version.json"),
         CONFIG_VERSION_MODEL,
