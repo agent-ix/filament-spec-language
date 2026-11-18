@@ -83,3 +83,9 @@ Round 1, head 3936e36cabda798c65231072ef4f0fdad4562b87 (fix commit aeec40ac1).
 | FND-006 | fixed | `support_spelling` returns `Option`, Boolean/Enum arms removed, `None` refuses with the declaration's locus |
 | FND-007 | fixed | digital_clocks.rs:848 ignore now cites QSL-2439 |
 | FND-008 | still-open | The `Unresolved::Missing` path was replaced by an untested fallback chain: the alias's own objects, then any `object_types` entry with the same EffectiveId (which can name a type of another package), then `key.clone()`, which is the operation's declaration key used as a type key. The comment says a key without a node "is refused at emission with the declaration's locus", but `Lowering::probabilistic_declarations` runs first in the same check and calls `model_node` on that key: `model_owner` faults `UnadmittedPackage` for another package's key, and `records.get` faults `UnknownDeclaration` for an operation key. Either one becomes an S3 InternalFault refusal of the whole unit, or roots a mislabelled declaring node. Required: make `declaring_key` an `Option`, skip rooting on `None` and refuse at emission with the locus (as `model_key` already does), or restore a typed S3 refusal; in both cases add a test that reaches the case |
+
+Round 2, head 334f056205e55f0b282fbee39b14529f953106fa (fix commit e9260d2fb).
+
+| FND | outcome | reason |
+| --- | --- | --- |
+| FND-008 | fixed | `declaring_key` is `Option<DeclarationKey>` from `declaring_key_of` (the model's own objects only, no fallback); lowering skips rooting on `None`; both emitter call sites refuse through the same `unwritable` locus closure the enum and unrelated-type refusal tests already exercise; the helper's `None` case is unit-tested. The emitter's `None` branch has no end-to-end test, which is accepted: no checked model can currently produce `None`, and the branch is one `ok_or_else(unwritable)` on an already-tested refusal path |
