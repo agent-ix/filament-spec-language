@@ -20,8 +20,8 @@ FR-644-AC-8 to FR-644-AC-11, FR-635-AC-5.
 
 ## Test Procedure
 
-1. Run FR-644-AC-8's request with the recording provider answering
-   `proved`, counting `settle` calls and the events handed before the first.
+1. Run FR-644-AC-8's request (`Even` over `n: Integer`, item kind
+   `value-validity`) with the recording provider answering `proved`, counting `settle` calls and the events handed before the first.
 2. Run FR-644-AC-1's stream with the provider registered and no `items`.
 3. Run AC-8's request naming `fsl.absent`; with a provider answering
    `unknown`; with two providers of one `BackendId`.
@@ -31,7 +31,9 @@ FR-644-AC-8 to FR-644-AC-11, FR-635-AC-5.
 ## Expected Results
 
 - Step 1: one `settle` call before any event, holding only `Even`'s items;
-  summary `items` and `registry` equal the equivalent analyze outcome's,
+  summary `items` and `registry` equal those of the equivalent analyze
+  request, the `package` request over the handoff of the monitor's own
+  clocked compile,
   each item `proved` `trusted`; events and clause entries equal the run
   without `items`; exit 10.
 - Step 2: no negotiation and no provider call; events and summary

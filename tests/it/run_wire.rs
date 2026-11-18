@@ -2128,6 +2128,74 @@ fn equivalent_analyze(items: Value, providers: Vec<fsl_analyze::analyze::Engine>
     result.value.as_value().clone()
 }
 
+/// `analyze_with_providers` over the `package` request equivalent to
+/// FR-644-AC-8's clocked monitor request (FR-644 "Provider-routed items"):
+/// the handoff directory of the `native-compile/1` request with the monitor
+/// request's `models`, `program` and `clocks`, selected as `package`.
+fn equivalent_package_analyze(items: Value, providers: Vec<fsl_analyze::analyze::Engine>) -> Value {
+    let directory = tempfile::tempdir().unwrap();
+    std::fs::write(directory.path().join("unit.native"), even_unit()).unwrap();
+    let compile = json!({"format": "native-compile/1", "request": {
+        "models": [], "program": program(), "clocks": trace_clocks(),
+        "handoff": {"directory": "handoff", "package_name": "monitor-unit",
+            "native_join": {"work_units": 1_u64 << 40, "storage": 1_u64 << 24}}}});
+    let compile_path = directory.path().join("compile.json");
+    std::fs::write(&compile_path, serde_json::to_vec(&compile).unwrap()).unwrap();
+    fsl_command::command::compile(&compile_path).expect("the monitor program compiles");
+    let path = directory.path().join("analyze.json");
+    std::fs::write(
+        &path,
+        serde_json::to_vec(&json!({"format": "native-analyze/1", "request": {
+            "models": [], "package": {"directory": "handoff"}, "items": items}}))
+        .unwrap(),
+    )
+    .unwrap();
+    let result = fsl_command::command::analyze_with_providers(
+        &path,
+        &crate::negotiation::Fr290,
+        providers,
+        &fsl_analyze::provider::ProviderOptions::default(),
+        &filament_exact::Cancel::new(),
+    )
+    .expect("the equivalent package request runs");
+    result.value.as_value().clone()
+}
+
+/// FR-644-AC-8 (TC-2984): a monitor request carrying `clocks` settles its
+/// `items` as the equivalent `package` analyze request over the handoff of
+/// the same clocked compile settles them, the item `Even` well typed over
+/// `Integer` and of kind `value-validity`.
+#[test]
+#[trace("TC-2984", "FR-644-AC-8")]
+#[ignore = "QSL-2132: a clocked monitor's items equal to the package-route analyze over its own compile not implemented yet"]
+fn command_monitor_items_equal_the_package_route_of_its_clocked_compile() {
+    use fsl_analyze::provider::ProviderVerdict;
+
+    let clauses = json!([{"name": "Reaches"}, {"name": "Never"}]);
+    let items = json!([{"claim": "Even", "kind": "value-validity", "backend": RECORDING}]);
+    let recorded = Recorded::new();
+    let (summary, _) = monitor_with_items(
+        clauses,
+        Some(items.clone()),
+        vec![recorded.provider(ProviderVerdict::Proved)],
+        &recorded,
+        &filament_exact::Cancel::new(),
+    );
+    let summary = summary.expect("the stream runs");
+    let value = summary.as_value();
+    let analyzed = Recorded::new();
+    let document =
+        equivalent_package_analyze(items, vec![analyzed.provider(ProviderVerdict::Proved)]);
+    assert_eq!(
+        analyzed.calls(),
+        1,
+        "the package route sends Even's items once"
+    );
+    assert_eq!(value["items"], document["items"], "{document}");
+    assert_eq!(value["registry"], document["registry"], "{document}");
+    assert_eq!(summary.exit_code, 10);
+}
+
 /// The summary with the members `items` adds removed.
 fn clause_summary(summary: &Value) -> Value {
     let mut summary = summary.clone();
