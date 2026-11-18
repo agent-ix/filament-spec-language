@@ -268,6 +268,10 @@ fn defective_populations_refuse_the_item_or_the_request() {
             "missing-name",
         ),
         (
+            json!([{"role": "", "members": [member("x")]}]),
+            "missing-name",
+        ),
+        (
             json!([{"role": "r", "instance": "w-1", "members": [member("x"), member("y")]}]),
             "invalid-value",
         ),

@@ -58,9 +58,6 @@ fn validate_activated_population(
         let Some(role) = group.get("role").and_then(serde_json::Value::as_str) else {
             return invalid_at(role_pointer, "role must be a string".to_owned());
         };
-        if role.is_empty() {
-            return invalid_at(role_pointer, "role must be nonempty".to_owned());
-        }
         if let Some(instance) = group.get("instance") {
             if !instance.is_null() && !instance.is_string() {
                 return invalid_at(
