@@ -951,6 +951,8 @@ profile v = \"filament.value.complete/v1\";\n\
 profile t = \"filament.temporal.timed/v1\";\n\
 profile tc = \"filament.temporal.complete/v1\";\n\
 model M = \"acme/orders\";\n\
+dimension Time;\n\
+unit ms : Time = rational(1, 1);\n\
 time M dense unit ms;\n\
 temporal T using t over (r: M::Widget) clock \"model-time\" on origin { eventually[0, 1] holds(r.code > 0) }\n";
         let one = filament_exact::Rational::new(
