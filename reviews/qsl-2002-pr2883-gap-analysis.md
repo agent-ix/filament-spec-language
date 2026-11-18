@@ -14,7 +14,9 @@ relationships:
 
 ## Summary
 
-PR-delta gap analysis for QSL-2002 PR #2883 at `a0d60ddc1fc3789ea6d8db5f7f5c2a23e83bbc0e`, relative to stacked base `87d71c6203b8d5461712d48e8103b096b4246fe7`. The dispatch explicitly confines acceptance to the frame-depth follow-up. The matrix was computed over the repository, but unrelated repository gaps and PR #2841 are not attributed to this change.
+Current PR-delta gap re-review for QSL-2002 PR #2883 at `b7d1b964c67a211f0d5b0501914fe12096b536a8`, relative to main `5a85e05e49d569223cdbd0759cc528ea98c1c3a7`. The dispatch confines acceptance to the frame-depth follow-up. The current delta comprises five source/test files and two review artifacts; the clause fixture adjustment and dependency update are already in main.
+
+Historical first pass: `a0d60ddc1fc3789ea6d8db5f7f5c2a23e83bbc0e` against stacked base `87d71c6203b8d5461712d48e8103b096b4246fe7`. The matrix and first publication below are historical evidence, not a claim to have recomputed the whole-repository matrix at the new head. Current-head evidence appears in Re-review.
 
 ## Verdict
 
@@ -55,6 +57,8 @@ bindings:
 
 Plan completion: not assessed
 
+This section records the historical first pass. The scoped source, tests and governing spec are unchanged; the re-review verifies their applicability below.
+
 `quire matrix --scope . --format json` completed with exit 0 using quire 0.52.0 (engine 0.62.2); quoin is 0.36.6, spec-artifacts-process v0.29.2. Static matrix data is at `/private/tmp/qsl2002-pr2883-matrix.json`; no Quoin stored-run evidence was claimed. Both FR-100-AC-20 and FR-098-AC-27 are `tagged`, each bound to its corresponding targeted test. The latter is no longer ignored. The two exact targeted Cargo tests independently passed, one test each, at the frozen head.
 
 Whole-repository counts: 4,134 tagged, 258 tagged-by-ignored-test, 1,170 untagged, 103 method-without-symbol and 13 retired. The command also emits diagnostics for other documents, unmarked prose references and symbol collisions. Those counts are neither introduced by this narrow diff nor evidence of full repository qualification; broader assurance remains outside the dispatch. No relevant target tag is missing or unrecognized.
@@ -68,3 +72,11 @@ No real findings require disposition. Prior QSL-2002 review history was not reop
 ## Publication
 
 Linear comment `854a544d-268f-4383-8c15-f6bb13c6edc6` on QSL-2002. `has-review` was already present. Read-back passed: body equality, real YAML parsing through `quire parse`, clean/findings agreement with the single placeholder, matching scope and trace bindings. Lead custody: preserve this file under `reviews/qsl-2002-pr2883-gap-analysis.md` before merge.
+
+## Re-review
+
+Current-head publication: Linear comment `f25e49d9-f555-4287-bb89-c70ca3de43ba` on QSL-2002. Read-back body and structured data match; both comments are clean with empty findings, consistent with the preserved placeholder. `has-review` was already present.
+
+**PASS** for the requested follow-up at `b7d1b964c67a211f0d5b0501914fe12096b536a8`, base main `5a85e05e49d569223cdbd0759cc528ea98c1c3a7`. Inspected all five current source/test changes and both existing artifacts. Compared the five source/test files and the FR-100, FR-098 and TC-444 documents with the original reviewed head: unchanged. Therefore the scoped trace bindings and acceptance mapping remain applicable; no new uncovered behavior or weakened assertion was introduced by rebasing.
+
+The exact S6a and replay acceptance tests were independently rerun on this head and each passed one test. They continue to assert d(0)=0, d(1)=0, d(2)=1, d(3)=2, e(1)=1 and replay's selected/nested/unvisited-site settlements. The clause fixture's depth field is in main, no longer a changed file. No aggregate gate or whole-repository matrix rerun; prior broader matrix counts remain historical only. No spec, source, plan or trace edits. No findings need disposition. Lead custody: replace the committed artifact with this updated version.
