@@ -20,7 +20,6 @@ use fsl_package::CheckedPackage;
 use fsl_semantics::check::{AbstractSide, CheckedRefinement};
 use std::collections::BTreeMap;
 
-use filament_semantic_value::catalog::CatalogCode;
 use fsl_semantics::model::observation::{
     AdmissionFailure, AdmissionRecord, DocumentRef, SelectedAnchor,
 };
@@ -241,7 +240,9 @@ fn open_systems_inner<'a>(
     let admit = |failure| SubjectRefusal::Admission(Box::new(failure));
     let (snapshots, mapped) = match abstract_initial {
         AbstractInitial::Snapshots(snapshots) => (snapshots, false),
-        AbstractInitial::Mapped if allow_protocol => return Err(incomplete_abstract_initial()),
+        AbstractInitial::Mapped if allow_protocol => {
+            return Err(SubjectRefusal::ProtocolAbstractSide)
+        }
         AbstractInitial::Mapped => (Vec::new(), true),
     };
     let abstract_request = ModelSimulationRequest {
@@ -273,25 +274,13 @@ fn open_systems_inner<'a>(
     })
 }
 
-/// The refusal of an abstract subject whose initial states the request does
-/// not determine: `invalid_runtime_input`/`incomplete-abstract-initial`.
-fn incomplete_abstract_initial() -> SubjectRefusal {
-    SubjectRefusal::Admission(Box::new(AdmissionFailure::Refused(Box::new(
-        AdmissionRecord {
-            catalog: CatalogCode::new("invalid_runtime_input", "incomplete-abstract-initial"),
-            fields: BTreeMap::new(),
-            path: Vec::new(),
-            kernel: None,
-        },
-    ))))
-}
-
 /// FSL FR-630 "Request item": the abstract states the mapping gives each
 /// concrete initial state, anchored as that state is. A state the mapping
 /// does not determine gives none here: the initial check names its failure
-/// from the same mapping. A mapping that leaves an abstract field open
-/// gives no complete abstract state, so the request must name the abstract
-/// subject.
+/// from the same mapping. The abstract fields the mapping leaves open range
+/// over the values the abstract model's invariants admit, so one concrete
+/// state can give several abstract states, and none when the image violates
+/// the abstract constraint (the initial check then refutes at position 0).
 fn mapped_initial(
     refinement: &CheckedRefinement,
     concrete: &ModelSystem<'_>,
@@ -309,10 +298,34 @@ fn mapped_initial(
         ) else {
             continue;
         };
-        if !mapped.hidden.is_empty() {
-            return Err(incomplete_abstract_initial());
-        }
-        images.push((mapped.visible, initial.anchor().clone()));
+        let slots: Vec<_> = mapped
+            .hidden
+            .iter()
+            .map(|slot| {
+                (
+                    slot.object.population.clone(),
+                    slot.object.key.clone(),
+                    slot.field.clone(),
+                )
+            })
+            .collect();
+        let states = abstract_system
+            .complete_open_fields(&mapped.visible, initial.anchor(), &slots)
+            .map_err(|stop| {
+                SubjectRefusal::Admission(Box::new(AdmissionFailure::Refused(Box::new(
+                    AdmissionRecord {
+                        catalog: stop.cause,
+                        fields: BTreeMap::new(),
+                        path: Vec::new(),
+                        kernel: None,
+                    },
+                ))))
+            })?;
+        images.extend(
+            states
+                .into_iter()
+                .map(|state| (state, initial.anchor().clone())),
+        );
     }
     Ok(images)
 }

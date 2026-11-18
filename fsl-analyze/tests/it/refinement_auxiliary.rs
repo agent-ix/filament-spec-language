@@ -428,3 +428,40 @@ fn a_certificate_position_carries_its_history() {
         "a certificate without the second variant is rejected"
     );
 }
+
+/// FR-630 "Request item", FR-144: with no abstract subject the hidden `side`
+/// ranges over the values the abstract constraint admits, so one concrete
+/// coin gives one abstract initial state for each `side`, and the refinement
+/// holds for every one of them; the mapped `side` row fixes it to a single
+/// state and is refuted as before.
+#[trace("TC-1590", "FR-630")]
+#[test]
+fn a_hidden_side_ranges_over_the_abstract_initial_states_the_mapping_leaves_open() {
+    let unit = Unit::coin(1);
+    let hidden = unit.world(&coin_refines(""));
+    let systems = open_systems(
+        hidden.refinement(),
+        &hidden.concrete_request(UNLIMITED),
+        hidden.package(),
+        fsl_replay::AbstractInitial::Mapped,
+    )
+    .expect("the subjects open");
+    assert_eq!(systems.abstract_system.initial_states().len(), 2);
+    let RefinementOutcome { safety, .. } = check_refinement(
+        RefinementCheckRequest {
+            refinement: hidden.refinement(),
+            concrete: ModelSubject {
+                simulation: hidden.concrete_request(UNLIMITED),
+                proof_bounds: Vec::new(),
+            },
+            abstract_package: hidden.package(),
+            abstract_initial: fsl_replay::AbstractInitial::Mapped,
+            abstract_protocol_binding: None,
+            max_depth: None,
+            limits: ModelCheckLimits::default(),
+        },
+        &Cancel::new(),
+    )
+    .expect("the refinement is checked");
+    assert!(matches!(safety, SafetyOutcome::Holds { .. }), "{safety:?}");
+}
