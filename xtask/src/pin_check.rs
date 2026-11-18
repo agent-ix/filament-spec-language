@@ -100,16 +100,23 @@ fn inspect_manifest(
             inspect_dependencies(table, section, path, dependency_count, findings);
         }
     }
-    for section in ["patch", "replace"] {
-        if let Some(sources) = root.get(section).and_then(toml::Value::as_table) {
-            for (source, dependencies) in sources {
-                let Some(dependencies) = dependencies.as_table() else {
-                    continue;
-                };
-                let name = format!("{section}.{source}");
-                inspect_dependencies(dependencies, &name, path, dependency_count, findings);
-            }
+    if let Some(sources) = root.get("patch").and_then(toml::Value::as_table) {
+        for (source, dependencies) in sources {
+            let Some(dependencies) = dependencies.as_table() else {
+                continue;
+            };
+            let name = format!("patch.{source}");
+            inspect_dependencies(dependencies, &name, path, dependency_count, findings);
         }
+    }
+    if let Some(replacements) = root.get("replace").and_then(toml::Value::as_table) {
+        inspect_dependencies(
+            replacements,
+            "replace",
+            path,
+            dependency_count,
+            findings,
+        );
     }
     if let Some(workspace) = root.get("workspace").and_then(toml::Value::as_table) {
         if let Some(table) = workspace
