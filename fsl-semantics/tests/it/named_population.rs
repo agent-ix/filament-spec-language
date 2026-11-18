@@ -492,13 +492,25 @@ fn a_protocol_slot_that_reads_model_state_names_a_population() {
 #[trace("TC-2834", "FR-1000-AC-2", "FSpec-TC-965", "FSpec-FR-480-AC-2")]
 #[test]
 fn a_reference_literal_checks_and_stays_pending_in_a_barred_slot() {
-    let function = |literal: &str| {
+    let protocol = |literal: &str| {
         format!(
-            "function f using v(r: Reference<M::Counter>): Boolean \
-             pure {{ r = {literal} }}"
+            "profile p = \"filament.protocol.finite-global/v1\";\n\\
+             record Pick {{ target: Reference<M::Counter>; }}\n\\
+             protocol L using p over (c: M::Counter) on origin {{\n\\
+             role R on M::Counter;\nrole S on M::Counter;\n\\
+             channel ch from R to S carries Pick ordering unordered delivery \\
+             exactly-once-premise capacity 2 overflow reject;\n\\
+             run sequence Main {{\n\\
+             send Go via ch as (go: Pick) {{ true }};\n\\
+             receive Got via ch of Go as (got: Pick) {{ true }};\n\\
+             choice Decide by S visible (got.target) {{ \\
+             case yes when {{ got.target = {literal} }} sequence Yes {{ }} \\
+             case no when {{ true }} sequence No {{ }} }} }}\n\\
+             finish Done as (d: Boolean) {{ true }};\n\\
+             }}"
         )
     };
-    checked(false, &function("M::Counter#\"a\""));
+    checked(false, &protocol("M::Counter#\"a\""));
     for (literal, expected, at) in [
         (
             "M::Nothing#\"a\"",
@@ -516,7 +528,7 @@ fn a_reference_literal_checks_and_stays_pending_in_a_barred_slot() {
             "\"\"",
         ),
     ] {
-        let (code, cause, text) = refused(false, &function(literal));
+        let (code, cause, text) = refused(false, &protocol(literal));
         assert_eq!((code.as_str(), cause.as_str()), expected, "{literal}");
         assert_eq!(text, at, "{literal}");
     }
