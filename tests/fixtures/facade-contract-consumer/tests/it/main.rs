@@ -427,25 +427,7 @@ protocol Flow using p over (input: M::Widget) on origin {\n\
     fn checked_protocol() -> filament_contract_model::CheckedPackageV2 {
         let source = fsl_replay::SourceIdentity::new("consumer", "protocol-contract");
         let model = super::code_generation::model_with_touch();
-        let compensate_start = UNIT.find("compensate Full").expect("compensation");
-        let compensate_end = UNIT[compensate_start..]
-            .find("\nrun sequence Main")
-            .map(|end| compensate_start + end)
-            .expect("compensation end");
-        let source_ref =
-            fsl_foundation::source::provenance::RawSourceRef::new("consumer", "protocol-contract")
-                .expect("source reference");
-        let selection = fsl_package::TemporalClockSelection::new(
-            source_ref,
-            fsl_foundation::Span {
-                start: compensate_start,
-                end: compensate_end,
-            },
-            filament_contract_model::ClockConfiguration::EventPosition {
-                sequence_authority: "protocol-events".into(),
-            },
-        );
-        let emitted = fsl_replay::compile_package_with_temporal_selections(
+        let emitted = fsl_replay::compile_package(
             fsl_replay::CompileUnit {
                 source,
                 package_name: "protocol-consumer".into(),
@@ -454,7 +436,6 @@ protocol Flow using p over (input: M::Widget) on origin {\n\
             },
             [&model[..]],
             &fsl_replay::DependencyInput::default(),
-            &[selection],
             fsl_replay::StageLimits::default(),
             fsl_replay::ReplayLimits::default(),
         )
