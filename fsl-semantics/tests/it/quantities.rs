@@ -99,7 +99,7 @@ fn check_quantity_scale_source(
 fn u12_quantity_times_integer_keeps_the_unit() {
     let checked = check_quantity_scale_source(
         "function integer using v(d: Quantity<ms>): Quantity<ms> pure { d * 2 }\n\
-         function bounded using v(d: Quantity<ms>, k: Int[0, 9]): Quantity<ms> pure { d * k }\n\
+         function bounded_factor using v(d: Quantity<ms>, k: Int[0, 9]): Quantity<ms> pure { d * k }\n\
          function rational_factor using v(d: Quantity<ms>): Quantity<ms> pure { d * rational(1, 2) }\n\
          function reversed using v(d: Quantity<ms>): Quantity<ms> pure { 2 * d }\n",
     );
