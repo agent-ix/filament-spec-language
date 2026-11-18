@@ -1289,6 +1289,7 @@ fn a_monitor_request_supplies_the_integer_division_law() {
     let run = |law: Option<&str>| {
         let mut request = monitor_request(json!([{"name": "Half"}]), json!({"kind": "finite"}));
         request["request"]["records"] = json!("half.jsonl");
+        request["request"]["clocks"] = json!({});
         if let Some(law) = law {
             request["request"]["integer_division"] = json!(law);
         }
