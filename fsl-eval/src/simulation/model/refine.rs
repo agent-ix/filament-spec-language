@@ -43,6 +43,14 @@ pub enum RowReading {
 #[derive(Clone, Debug)]
 pub struct StateObservation(fsl_semantics::model::observation::Observation);
 
+impl StateObservation {
+    /// The admitted object environment used to evaluate model reads at this
+    /// state.
+    pub fn environment(&self) -> &fsl_semantics::model::object_environment::ObjectEnvironment {
+        &self.0.environment
+    }
+}
+
 impl ModelSystem<'_> {
     /// The identity of the one domain package this system is over; `None`
     /// for a system over several selected models.

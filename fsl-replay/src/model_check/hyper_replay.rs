@@ -68,7 +68,8 @@ use std::collections::BTreeSet;
 use filament_exact::{Cancel, Meter, ScalarLimits};
 use filament_semantic_value::catalog::Category;
 use filament_semantic_value::model_transition::ModelTransition;
-use fsl_semantics::check::{CheckedHyperClause, FormulaNodeId, HyperForm};
+use fsl_package::CheckedPackage;
+use fsl_semantics::check::{CheckedHyperClause, CheckedModelRelation, FormulaNodeId, HyperForm};
 
 use crate::bounds::{BoundExceeded, ReplayLimits};
 use crate::execute::ReplayRefusal;
@@ -109,6 +110,165 @@ pub struct HyperReplay<'a, 's> {
     pub cancel: &'a Cancel,
 }
 
+/// Inputs for replaying a FR-179 `step-tuple` counterexample.
+pub struct ModelRelationReplay<'a, 's> {
+    /// The recompiled relation.
+    pub relation: &'a CheckedModelRelation,
+    /// The package that owns the checked relation body.
+    pub package: &'a CheckedPackage,
+    /// One admitted model system per execution, in binding order.
+    pub systems: Vec<&'a ModelSystem<'s>>,
+    /// The relation body's evaluation budget.
+    pub meter: ScalarLimits,
+    /// The replay cancellation handle.
+    pub cancel: &'a Cancel,
+}
+
+/// Replay an FR-179 `step-tuple` counterexample against the checked relation.
+/// Each trace establishes a reachable pre-state and ends in one transition of
+/// the execution's named operation. The relation body is then recomputed over
+/// those transitions.
+pub fn replay_model_relation_tuple(
+    replay: &ModelRelationReplay<'_, '_>,
+    counterexample: &HyperCounterexample,
+) -> Result<ModelTraceSettlement, ReplayRefusal> {
+    let executions = replay.relation.executions();
+    let aliases = replay.relation.execution_aliases();
+    let undefined_claim = match &counterexample.kind {
+        HyperCounterexampleKind::StepTuple => None,
+        HyperCounterexampleKind::Undefined(claimed)
+            if claimed.position == 0 && claimed.locus == HyperLocus::RelationBody =>
+        {
+            Some(claimed)
+        }
+        _ => return Err(shape_error("does not have the checked step-tuple shape")),
+    };
+    if !counterexample.instance.is_empty()
+        || counterexample.trace_position != 0
+        || counterexample.traces.len() != executions.len()
+        || replay.systems.len() != executions.len()
+        || aliases.len() != executions.len()
+    {
+        return Err(shape_error("does not have the checked step-tuple shape"));
+    }
+
+    let mut pre_observations = Vec::with_capacity(executions.len());
+    let mut post_observations = Vec::with_capacity(executions.len());
+    let mut transitions = Vec::with_capacity(executions.len());
+    let mut result_values = Vec::with_capacity(executions.len());
+    let mut post_state_keys = Vec::with_capacity(executions.len());
+    for index in 0..executions.len() {
+        let (variable, operation) = &executions[index];
+        let alias = &aliases[index];
+        let trace = &counterexample.traces[index];
+        let system = replay.systems[index];
+        let expected_package = replay
+            .package
+            .graph()
+            .model_package_identity(alias)
+            .unwrap_or_default();
+        if trace.variable != *variable
+            || trace.alias != *alias
+            || system.model() != Some(expected_package)
+            || !trace.marks.is_empty()
+            || trace.steps.is_empty()
+            || trace
+                .steps
+                .iter()
+                .any(|step| matches!(step, HyperStep::TerminalStutter))
+        {
+            return Err(shape_error("does not name the checked execution tuple"));
+        }
+        let positions = match reexecute(system, trace)? {
+            Some(positions) => positions,
+            None => return Ok(no_value()),
+        };
+        let Some(HyperStep::Model(last)) = trace.steps.last() else {
+            return Err(shape_error("ends with a model transition"));
+        };
+        if last.transition.operation() != fsl_semantics::check::operation_text(operation) {
+            return Err(shape_error("ends with the execution's checked operation"));
+        }
+        let pre = positions
+            .get(positions.len().saturating_sub(2))
+            .ok_or_else(|| fault("relation-trace-has-a-pre-state"))?;
+        let post = positions
+            .last()
+            .ok_or_else(|| fault("relation-trace-has-a-post-state"))?;
+        pre_observations.push(
+            system
+                .observe(pre.state.state())
+                .map_err(|_| fault("relation-pre-state-observes"))?,
+        );
+        post_observations.push(
+            system
+                .observe(post.state.state())
+                .map_err(|_| fault("relation-post-state-observes"))?,
+        );
+        post_state_keys.push(post.state_key.clone());
+        let effect = post
+            .state
+            .reached_by()
+            .ok_or_else(|| fault("relation-final-step-has-an-effect"))?;
+        transitions.push(&last.transition);
+        result_values.push(effect.result.clone());
+    }
+    let pre: Vec<_> = pre_observations
+        .iter()
+        .map(|observation| observation.environment())
+        .collect();
+    let post: Vec<_> = post_observations
+        .iter()
+        .map(|observation| observation.environment())
+        .collect();
+    let results: Vec<_> = result_values.iter().map(Option::as_deref).collect();
+    let evaluation = fsl_eval::value::evaluate_model_relation_transitions(
+        replay.package,
+        replay.relation,
+        &transitions,
+        &results,
+        &pre,
+        &post,
+        &mut Meter::new(replay.meter).with_cancel(replay.cancel.clone()),
+    )
+    .map_err(|_| fault("checked-relation-body-evaluates"))?;
+    Ok(match (undefined_claim, evaluation) {
+        (None, fsl_eval::value::ModelRelationEvaluation::Refuted) => {
+            ModelTraceSettlement::Reproduced {
+                value: ModelTraceValue::Truth(false),
+                trace_position: Some(0),
+            }
+        }
+        (Some(claimed), fsl_eval::value::ModelRelationEvaluation::Undefined(cause)) => {
+            let variables: Vec<_> = replay
+                .relation
+                .executions()
+                .iter()
+                .zip(replay.relation.execution_aliases())
+                .map(|((variable, _), alias)| (variable.clone(), alias.clone()))
+                .collect();
+            if claimed.state_keys != post_state_keys
+                || claimed.variables != variables
+                || claimed.transition.is_some()
+                || claimed.cause != cause
+            {
+                no_value()
+            } else {
+                ModelTraceSettlement::Reproduced {
+                    value: ModelTraceValue::HyperUndefined(claimed.clone()),
+                    trace_position: Some(0),
+                }
+            }
+        }
+        (_, fsl_eval::value::ModelRelationEvaluation::Holds) => {
+            ModelTraceSettlement::Inconclusive(disagreement(Category::Success))
+        }
+        (_, fsl_eval::value::ModelRelationEvaluation::Refuted) => no_value(),
+        (_, fsl_eval::value::ModelRelationEvaluation::Undefined(_))
+        | (_, fsl_eval::value::ModelRelationEvaluation::Undetermined(_)) => no_value(),
+    })
+}
+
 /// Replay `counterexample` over `replay`'s systems (FR-183).
 ///
 /// Refuses, with no partial result, a counterexample whose traces do not
@@ -132,6 +292,11 @@ pub fn replay_hyper_trace_tuple(
     replay: &HyperReplay<'_, '_>,
     counterexample: &HyperCounterexample,
 ) -> Result<ModelTraceSettlement, ReplayRefusal> {
+    if counterexample.kind == HyperCounterexampleKind::StepTuple {
+        return Err(shape_error(
+            "a step-tuple counterexample is replayed against its checked relation",
+        ));
+    }
     if !counterexample.marks_match_kind() {
         return Err(shape_error(
             "marks its steps other than as its kind does: every step of a projected one and none of any other",
@@ -146,6 +311,7 @@ pub fn replay_hyper_trace_tuple(
     if !replay.clause.align_skip().is_empty() {
         return Err(match counterexample.kind {
             HyperCounterexampleKind::Undefined(_) => refused(ModelTraceRefusal::HyperProjected),
+            HyperCounterexampleKind::StepTuple => shape_error(WRONG_KIND_FOR_ALIGN_SKIP),
             _ => shape_error(WRONG_KIND_FOR_ALIGN_SKIP),
         });
     }
@@ -167,6 +333,7 @@ pub fn replay_hyper_trace_tuple(
         HyperCounterexampleKind::Projected => {
             Err(fault("an-unreplayed-counterexample-is-refused-first"))
         }
+        HyperCounterexampleKind::StepTuple => Err(fault("step-tuple-replay-dispatches-first")),
     }
 }
 
@@ -203,7 +370,7 @@ pub fn check_match_witness(
         Ok(None) => {
             return MatchWitnessCheck::Refused(shape_error(
                 "could not be replayed within the subject's expansion limits",
-            ))
+            ));
         }
         Err(refusal) => return MatchWitnessCheck::Refused(refusal),
     };
@@ -282,6 +449,11 @@ fn shape(
         }
         HyperCounterexampleKind::Projected => {
             return Err(fault("an-unreplayed-counterexample-is-refused-first"));
+        }
+        HyperCounterexampleKind::StepTuple => {
+            return Err(shape_error(
+                "step-tuple is not a hyper-clause counterexample",
+            ));
         }
         HyperCounterexampleKind::Undefined(claimed) => {
             let position = u64::try_from(steps).unwrap_or(u64::MAX);
@@ -556,7 +728,7 @@ fn universal_lasso(
             Some(_) => {
                 return Err(refused(ModelTraceRefusal::HyperUnmatched {
                     joint: u64::try_from(joint).unwrap_or(u64::MAX),
-                }))
+                }));
             }
             None => return Ok(None),
         }
@@ -889,7 +1061,7 @@ fn undefined(
                 Some(MatchReading::Fails) => {
                     return Err(refused(ModelTraceRefusal::HyperUnmatched {
                         joint: u64::try_from(joint).unwrap_or(u64::MAX),
-                    }))
+                    }));
                 }
                 Some(MatchReading::Fault(_)) => return Err(fault("the-match-evaluates")),
                 Some(MatchReading::Refused { .. }) | None => return Ok(no_value()),
@@ -911,7 +1083,7 @@ fn undefined(
                 Some(MatchReading::Fails) => {
                     return Ok(ModelTraceSettlement::Inconclusive(disagreement(
                         Category::Success,
-                    )))
+                    )));
                 }
                 Some(MatchReading::Fault(_)) => return Err(fault("the-match-evaluates")),
                 Some(MatchReading::Refused { .. }) | None => return Ok(no_value()),
@@ -1044,7 +1216,7 @@ fn projected(
             Some(_) => {
                 return Err(refused(ModelTraceRefusal::HyperUnmatched {
                     joint: u64::try_from(joint).unwrap_or(u64::MAX),
-                }))
+                }));
             }
             None => return Ok(no_value()),
         }
@@ -1081,12 +1253,12 @@ fn projected(
     match evaluate(longest)? {
         TemporalOutcome::Violated { .. } => {}
         TemporalOutcome::Incomplete(_) | TemporalOutcome::WindowLimitReached(_) => {
-            return Ok(no_value())
+            return Ok(no_value());
         }
         other => {
             return Ok(ModelTraceSettlement::Inconclusive(disagreement(
                 other.category(),
-            )))
+            )));
         }
     }
     // A bad prefix stays bad as it grows, so the shortest one is found by
@@ -1099,7 +1271,7 @@ fn projected(
         match evaluate(middle)? {
             TemporalOutcome::Violated { .. } => high = middle,
             TemporalOutcome::Incomplete(_) | TemporalOutcome::WindowLimitReached(_) => {
-                return Ok(no_value())
+                return Ok(no_value());
             }
             _ => low = middle,
         }

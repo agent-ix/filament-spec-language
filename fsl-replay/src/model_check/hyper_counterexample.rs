@@ -62,6 +62,8 @@ pub struct HyperTrace {
 /// `UndefinedEvaluation` `where.locus`).
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum HyperLocus {
+    /// A model relation's body over a tuple of reachable transitions.
+    RelationBody,
     /// A `holds` atom of the clause's body.
     Atom(FormulaNodeId),
     /// A universal conjunct of the clause's `match` block, by its index.
@@ -126,6 +128,8 @@ pub enum HyperCounterexampleKind {
     /// loop, and `trace_position` is the projected position the visible steps
     /// reach.
     Projected,
+    /// HP-1: a tuple of reachable transitions refutes a model relation.
+    StepTuple,
     /// Any form: the traces are finite paths to the state an undefined
     /// evaluation reads, one per trace variable (ADR-023 HV-8).
     Undefined(HyperUndefined),
