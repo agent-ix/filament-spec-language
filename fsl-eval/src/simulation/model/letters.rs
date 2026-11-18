@@ -42,7 +42,7 @@ use crate::value::{
 };
 
 /// Why a clause has no [`ClauseLetters`].
-#[derive(Clone, Copy, Debug, Eq, PartialEq, thiserror::Error)]
+#[derive(Clone, Debug, Eq, PartialEq, thiserror::Error)]
 pub enum LettersRefusal {
     /// The clause's `over` parameter is not an object reference, so the
     /// clause has no instance (FR-125 Instancing).
