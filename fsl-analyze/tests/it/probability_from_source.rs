@@ -63,10 +63,17 @@ fn run(name: &str, claims: &str, items: Value) -> Value {
 #[ix_trace_rs::trace("FSpec-TC-1564", "FSpec-FR-641-AC-1")]
 #[test]
 fn statistical_items_settle_measured_from_source() {
-    for method in ["okamoto", "sprt"] {
+    for (method, method_selection) in [
+        ("okamoto", json!({"type": "okamoto"})),
+        ("sprt", json!({"type": "sprt"})),
+        (
+            "regenerative",
+            json!({"type": "regenerative", "min_cycles": 1}),
+        ),
+    ] {
         let item = |workers: u64| {
             json!([{"claim": "Delivered", "probabilistic": {
-                "evidence": "statistical", "method": {"type": method},
+                "evidence": "statistical", "method": method_selection,
                 "seed": "7", "max_witnesses": 8, "workers": workers}}])
         };
         let one = run(&format!("stat-{method}-1"), DELIVERED, item(1));
@@ -78,7 +85,11 @@ fn statistical_items_settle_measured_from_source() {
             "{first}"
         );
         assert_eq!(first["verdict"]["provenance"]["seed"], "7", "{first}");
-        assert!(first["verdict"]["interval"].is_object(), "{first}");
+        if method == "sprt" {
+            assert!(first["verdict"]["interval"].is_null(), "{first}");
+        } else {
+            assert!(first["verdict"]["interval"].is_object(), "{first}");
+        }
         assert!(
             first["verdict"]["basis"]["samples"].as_str().is_some(),
             "{first}"
