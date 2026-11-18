@@ -74,6 +74,26 @@ nothing is derived from the package bytes, a display name or source text. A
 caller obtains the directory from a `native-compile/1` request's `handoff`
 member (FR-665).
 
+### Decision: a package-route request names a model by its package identity
+
+On the source route a request may name a model by the alias its unit
+imports it under (`M` for the Counter's model) or by its package identity
+(FR-626, its Inputs). An alias belongs to the source that declares it: two units that
+import the same domain package as `M` and as `N` record the same model
+selection by identity, and an untimed unit compiles to package bytes that
+are otherwise equal, so its bytes carry no alias. A timed model's qualified
+name carries its alias (`[alias, "Timed"]`), but a model selection never
+does, so no byte row names the alias as the model's name, and a package route that accepted one would
+have to read it from source text the selection does not provide or guess
+it. The package route therefore names a model by the identity the package
+records, which is the one name both routes accept, and a request written
+with identities settles the same records on both routes. A name the
+package cannot resolve is told apart from an unknown claim by the cause
+`model-alias`, which names the identity to write instead, so a caller
+moving a request from source to package fixes it from the diagnostic
+alone. The item is settled, not the request refused, because the defect
+is that one item's spelling, as with `unknown-claim`.
+
 ## Inputs
 
 - The request's `package` member `{directory}`: the path of an FR-517
@@ -183,8 +203,8 @@ member is the same as the source route gives.
   reads them through their package forms (FR-940), so every engine, the
   default-item rule, the subject binding and the replay of a counterexample
   read one value per fact on both routes.
-- An item's `claim` SHALL resolve by name against the package's name tables
-  only: a temporal clause through its `temporal_clause_names` row, and an
+- An item's `claim` SHALL resolve by name against the package's name tables,
+  and a derived item's model through `model_selections`, only: a temporal clause through its `temporal_clause_names` row, and an
   invariant, precondition or postcondition state clause, a refinement and
   every non-temporal claim (state-graph, hyperproperty, probabilistic)
   through its `claim_names` row (FSpec FR-322 "Claim declaration names"), a
@@ -196,6 +216,20 @@ member is the same as the source route gives.
   graph's state-clause nodes are identified by structure and carry no name,
   so a name is never read from a node body, a source region or a `NodeRef`
   path.
+- A derived item over a model subject (FSpec FR-368 "Claim and anchor of a
+  derived or refinement item"), such as a deadlock-freedom item, SHALL name
+  its model in `claim` by the package identity its model selection records,
+  for the Counter `test/counter`. Its `claim` SHALL resolve when it equals
+  the identity of exactly one of the package's model selections, and the
+  item then settles with the source route's record for the same item.
+- A derived item over a model subject whose `claim` names no claim row and
+  no model identity the package records SHALL settle `invalid-request`
+  with `invalid_capability`/`model-alias`, naming the claim and every model
+  identity the package records, in model-selection order, as the name to
+  use; the request's other items settle as they would without it, and the
+  item never refuses the whole request, settles `unsupported` or
+  falls back to source.
+
 - The default items of a request with no `items` member SHALL be FR-620's
   default items, in the order the package's source map gives each claim's
   declaration span, so the order equals the source route's order.
@@ -208,7 +242,8 @@ member is the same as the source route gives.
 - For a package `P` compiled from a request's program, models and libraries,
   the outcome of the request with `package` selecting `P`'s bytes SHALL equal
   the outcome of the request over the source, member for member, except for
-  the `request` echo's selection member.
+  the `request` echo's selection member, when every item that names a model
+  names it by its package identity ("Building the analysis input").
 - The equality holds over every member of a clause's record, its `span`
   included, with no member normalized. A package clause's span SHALL be read
   from the `declaration_region` of its `temporal_clause_names` or
@@ -233,6 +268,7 @@ The Counter fixture is FR-620's.
 | FR-850-AC-6 | AC-1's handoff directory with `identities.json` removed refuses the whole request at the request stage, `invalid_package`, cause `missing-file`, naming `identities.json`, exit 20, `items` empty and no engine run; with `identities.json` replaced by `{}` it refuses `invalid_package`, `malformed-file`, naming `identities.json`; with its `format` changed it refuses `invalid_package`, `unknown-format`; with `equality.json` removed the request analyzes as AC-1 states; with `equality.json` replaced by `not json` it refuses `invalid_package`, `refused-file`, naming `equality.json`; a `package` `{"directory": "absent"}` refuses `invalid_package`, `missing-file`, naming the path. | Test (TC-2966) |
 | FR-850-AC-7 | Over the handoff directory of FR-940-AC-4's Counter unit, a `package` request with the items `{"claim": "NotAboveThree"}` (an invariant state clause) and `{"claim": "ReachThree"}` (a `possible` state-graph claim) resolves each through its `claim_names` row and settles it with the source route's record; `{"claim": "Missing"}` settles `invalid-request` `unknown-claim`; the same directory whose `checked-package.json` has the `NotAboveThree` row removed refuses `invalid_package`/`invalid-value` at `/claim_names`, and one with two rows of one `qualified_name` refuses `ambiguous_declaration`/`ambiguous-name`, each before any engine runs. | Test (TC-2967) |
 | FR-850-AC-8 | For every temporal clause and every state clause of FR-940-AC-4's Counter handoff, the clause the package route builds from the admitted bytes equals the source route's checked clause in every member, `span` included, and its `span` equals the `declaration_region` of the clause's name row; a handoff whose `checked-package.json` has one name row's `declaration_region` removed refuses the whole request `invalid_package` at the request stage naming that member, exit 20, before any engine runs. | Test (TC-2983) |
+| FR-850-AC-9 | Over the handoff directory of the untimed Counter unit that imports its model as `M`, the `package` request with the items `{"claim": "Bounded"}` and `{"claim": "test/counter", "temporal": {"item_kind": "deadlock-freedom"}}` settles both with the records the source request with the same items gives; the same `package` request with the second item's `claim` `M` settles `Bounded` with the same record and settles that item `invalid-request` with `invalid_capability`/`model-alias`, naming `M` and `test/counter`, with no `not-yet-implemented` diagnostic and no item `unsupported`, while the source request with `M` settles it as with `test/counter`; the handoff directory of the same untimed unit importing its model as `N` holds a `checked-package.json` byte-equal to the `M` unit's. | Test (TC-2987) |
 
 ## Dependencies
 
