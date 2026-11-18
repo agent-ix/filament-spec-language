@@ -478,6 +478,24 @@ impl<'a> ClauseState<'a> {
             ) => Reading::Refused,
             (true, ..) => Reading::Observed,
         };
+        // FR-860: an atom that reads a capture has a value per activation,
+        // which a streamed letter shared by every activation cannot carry:
+        // such a clause is read from the positions held by value, each run
+        // binding every activation's own captures.
+        let formula = clause.clause().formula();
+        let reads_captures = (0..formula.nodes().len())
+            .filter_map(|index| formula.node_id(index))
+            .any(|atom| clause.atom_reads_captures(atom));
+        let per_activation = reads_captures
+            && matches!(
+                clause.clause().activation(),
+                fsl_semantics::check::Activation::Each { .. }
+            );
+        let reading = match reading {
+            Reading::Streamed if reads_captures => Reading::Values,
+            Reading::Subject | Reading::Snapshot if per_activation => Reading::Values,
+            other => other,
+        };
         let mut exhausted = None;
         let stream = match reading {
             Reading::Streamed | Reading::Subject => {
