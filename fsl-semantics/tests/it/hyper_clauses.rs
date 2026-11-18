@@ -1985,7 +1985,6 @@ const FINITE_DET: &str = "record Obs { inp: Int[0, 3]; out: Int[0, 3]; }\n\
 /// blanket `FiniteDomain` refusal.
 #[trace("TC-2534", "FR-898-AC-1")]
 #[test]
-#[ignore = "QSL-2239: a hyper clause over a finite trace domain refuses FiniteDomain instead of checking"]
 fn a_finite_trace_set_hyperproperty_checks() {
     let (_, outcome) = check_under(&[], EVENT, FINITE_DET);
     assert!(outcome.is_ok(), "the finite clause checks: {outcome:?}");
@@ -1995,7 +1994,6 @@ fn a_finite_trace_set_hyperproperty_checks() {
 /// own named cause at its own span, never `FiniteDomain`.
 #[trace("TC-2534", "FR-898-AC-2")]
 #[test]
-#[ignore = "QSL-2239: finite trace-set clause defects refuse FiniteDomain instead of their named causes"]
 fn a_finite_trace_set_defect_refuses_with_its_named_cause() {
     let cases = [
         (
@@ -2009,9 +2007,24 @@ fn a_finite_trace_set_defect_refuses_with_its_named_cause() {
             "Nowhere",
         ),
         (
+            FINITE_DET.replace("in Obs", "in Int"),
+            Code::InvalidModelBinding,
+            "Int",
+        ),
+        (
+            FINITE_DET.replace("forall trace b", "forall trace a"),
+            Code::AmbiguousDeclaration,
+            "trace a",
+        ),
+        (
             FINITE_DET.replace("b.out)", "c.out)"),
             Code::MissingDeclaration,
             "c.out",
+        ),
+        (
+            FINITE_DET.replace("(a.inp = b.inp) -> (a.out = b.out)", "a.out"),
+            Code::IllTyped,
+            "a.out",
         ),
     ];
     for (declaration, code, at) in cases {

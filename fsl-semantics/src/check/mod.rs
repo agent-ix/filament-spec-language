@@ -4948,6 +4948,7 @@ impl PackageDeclarations {
             clause_source: std::cell::RefCell::new(None),
         };
         let mut checked_hyper: Vec<hyper_clause::CheckedHyperClause> = Vec::new();
+        let mut checked_finite_hyper: Vec<hyper_clause::CheckedFiniteHyperClause> = Vec::new();
         let mut checked_relations: Vec<hyper_clause::CheckedModelRelation> = Vec::new();
         for clause in &self.hyper_clauses {
             let mut contract_cx = crate::family::CheckContext::new(
@@ -4967,6 +4968,9 @@ impl PackageDeclarations {
                             Some(refusal) => refusals.push(refusal),
                             None => checked_hyper.push(*checked),
                         }
+                    }
+                    hyper_clause::CheckedHyper::Finite(checked) => {
+                        checked_finite_hyper.push(*checked);
                     }
                     hyper_clause::CheckedHyper::Relation(relation) => {
                         checked_relations.push(*relation);
@@ -6190,6 +6194,20 @@ impl PackageDeclarations {
                 Ok(lowered) => lowered_hyper.push(lowered),
                 Err(refusal) => refusals.push(refusal),
             }
+        }
+        for (finite_index, clause) in checked_finite_hyper.iter().enumerate() {
+            let location = hyper_clause::lowering::hyper_location(
+                checked_hyper.len() + finite_index,
+                hyper_clause::lowering::Site::Claim,
+            );
+            refusals.push(CheckRefusal {
+                location,
+                cause: CheckCause::Hyper(Box::new(
+                    hyper_clause::HyperCause::FiniteDomainContractUnavailable {
+                        span: clause.span(),
+                    },
+                )),
+            });
         }
         // FR-410: each checked state-graph claim, after every function its
         // predicates may call.

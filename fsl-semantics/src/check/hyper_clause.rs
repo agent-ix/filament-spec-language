@@ -468,6 +468,92 @@ pub struct CheckedHyperClause {
     occurrence: Option<OccurrenceKey>,
 }
 
+/// One quantifier over the request-supplied finite trace population
+/// (FR-898, FSpec FR-402).
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct CheckedFiniteTraceQuantifier {
+    /// Universal or existential, in source order.
+    pub kind: QuantifierKind,
+    /// The trace variable.
+    pub variable: String,
+}
+
+/// A checked hyper clause over a finite population of record traces
+/// (FR-898). The population is supplied by the analysis request; this value
+/// retains the record shape, bound, quantifier order and checked Boolean body.
+#[derive(Clone, Debug)]
+pub struct CheckedFiniteHyperClause {
+    name: String,
+    span: Span,
+    profile: TemporalProfile,
+    record: NodeKey,
+    bound: u64,
+    quantifiers: Vec<CheckedFiniteTraceQuantifier>,
+    body: fsl_forms::Expression,
+    body_spans: ExpressionSpans,
+    typed_body: super::ir::CheckedBody,
+    body_parameters: Vec<(String, ValueType)>,
+    identity: Option<NodeKey>,
+    occurrence: Option<OccurrenceKey>,
+}
+
+impl CheckedFiniteHyperClause {
+    /// The declared clause name.
+    pub fn name(&self) -> &str {
+        &self.name
+    }
+    /// The clause's source span.
+    pub fn span(&self) -> Span {
+        self.span
+    }
+    /// The finite temporal profile.
+    pub fn profile(&self) -> TemporalProfile {
+        self.profile
+    }
+    /// The record type shared by every trace position.
+    pub fn record(&self) -> &NodeKey {
+        &self.record
+    }
+    /// The declared maximum population size.
+    pub fn bound(&self) -> u64 {
+        self.bound
+    }
+    /// The prefix in source order.
+    pub fn quantifiers(&self) -> &[CheckedFiniteTraceQuantifier] {
+        &self.quantifiers
+    }
+    /// The source Boolean expression.
+    pub fn body(&self) -> &fsl_forms::Expression {
+        &self.body
+    }
+    /// Source spans for the Boolean body.
+    pub fn body_spans(&self) -> &ExpressionSpans {
+        &self.body_spans
+    }
+    /// The typed Boolean body.
+    pub(crate) fn typed_body(&self) -> &super::ir::CheckedBody {
+        &self.typed_body
+    }
+    /// The body parameter names and their checked field types.
+    pub(crate) fn body_parameters(&self) -> &[(String, ValueType)] {
+        &self.body_parameters
+    }
+    /// The node key after S4 assembly.
+    pub fn identity(&self) -> Option<&NodeKey> {
+        self.identity.as_ref()
+    }
+    /// The claim occurrence after S4 assembly.
+    pub fn occurrence(&self) -> Option<&OccurrenceKey> {
+        self.occurrence.as_ref()
+    }
+
+    pub(crate) fn assembled_at(mut self, identity: NodeKey, occurrence: OccurrenceKey) -> Self {
+        self.identity = Some(identity);
+        self.occurrence = Some(occurrence);
+        self
+    }
+}
+
 #[cfg(any(test, feature = "test-support"))]
 impl CheckedHyperClause {
     /// The clause with every object parameter bound to the model alias
@@ -881,6 +967,8 @@ impl CheckedModelRelation {
 pub enum CheckedHyper {
     /// A hyper clause over `behaviours`.
     Behaviours(Box<CheckedHyperClause>),
+    /// A hyper clause over a request-supplied finite trace population.
+    Finite(Box<CheckedFiniteHyperClause>),
     /// A relation over model executions.
     Relation(Box<CheckedModelRelation>),
 }
@@ -902,6 +990,7 @@ impl FamilyContract for HyperTraceFamily {
     fn requirements(checked: &CheckedHyper) -> Vec<TemporalClaim> {
         match checked {
             CheckedHyper::Behaviours(clause) => vec![clause.claim.clone()],
+            CheckedHyper::Finite(_) => vec![TemporalClaim::new(BTreeMap::new(), false, false)],
             CheckedHyper::Relation(relation) => vec![relation.claim.clone()],
         }
     }
@@ -929,6 +1018,22 @@ pub enum HyperCause {
         /// The clause's span.
         span: Span,
     },
+    /// A finite trace domain's bound is zero.
+    FiniteBoundZero { span: Span },
+    /// A finite trace domain requires an event-position, fixed-sample or
+    /// timestamped-event profile.
+    FiniteProfileRequired { span: Span },
+    /// The finite trace domain names no record declaration.
+    FiniteRecordMissing { name: String, span: Span },
+    /// The finite trace domain names a type that is not a record value type.
+    FiniteRecordWrongKind { name: String, span: Span },
+    /// More than one type binds the finite population's name.
+    FiniteRecordAmbiguous { name: String, span: Span },
+    /// A finite trace variable is repeated in the quantifier prefix.
+    FiniteVariableRepeated { name: String, span: Span },
+    /// The current checked-package contract has no finite trace population
+    /// node form, so S4 cannot safely write the clause yet.
+    FiniteDomainContractUnavailable { span: Span },
     /// An `of` alias, or an object parameter's alias, names no model of the
     /// unit. `missing_declaration`/`missing-name`, at the alias.
     UnresolvedAlias {
@@ -1124,6 +1229,13 @@ impl HyperCause {
             Self::QuantifierWithoutAlias { span }
             | Self::QuantifierWithAlias { span }
             | Self::FiniteDomain { span }
+            | Self::FiniteBoundZero { span }
+            | Self::FiniteProfileRequired { span }
+            | Self::FiniteRecordMissing { span, .. }
+            | Self::FiniteRecordWrongKind { span, .. }
+            | Self::FiniteRecordAmbiguous { span, .. }
+            | Self::FiniteVariableRepeated { span, .. }
+            | Self::FiniteDomainContractUnavailable { span }
             | Self::UnresolvedAlias { span, .. }
             | Self::UnboundParameterAlias { span, .. }
             | Self::ParameterNotAnObject { span, .. }
@@ -1169,9 +1281,16 @@ impl HyperCause {
             | Self::ExecutionNotAnOperation { .. }
             | Self::BodyUnsupported { .. }
             | Self::OutsideHyperClause => Code::UnsupportedConstruct,
+            Self::FiniteDomainContractUnavailable { .. } => Code::UnsupportedConstruct,
+            Self::FiniteBoundZero { .. } => Code::InvalidPackage,
+            Self::FiniteRecordWrongKind { .. } => Code::InvalidModelBinding,
+            Self::FiniteRecordAmbiguous { .. } | Self::FiniteVariableRepeated { .. } => {
+                Code::AmbiguousDeclaration
+            }
             Self::DuplicateName { .. } => Code::ConflictingDeclaration,
             Self::UnresolvedAlias { .. }
             | Self::UnresolvedPopulation { .. }
+            | Self::FiniteRecordMissing { .. }
             | Self::UnknownTrace { .. }
             | Self::BodyMissing { .. }
             | Self::UnresolvedStepLabel { .. } => Code::MissingDeclaration,
@@ -1185,7 +1304,8 @@ impl HyperCause {
             | Self::BodyIllTyped { .. }
             | Self::BodyUntypedMember { .. }
             | Self::BodyAmbiguousLiteral { .. }
-            | Self::MismatchedTrace { .. } => Code::IllTyped,
+            | Self::MismatchedTrace { .. }
+            | Self::FiniteProfileRequired { .. } => Code::IllTyped,
         }
     }
 
@@ -1205,18 +1325,26 @@ impl HyperCause {
             | Self::ExecutionNotAnOperation { .. }
             | Self::BodyUnsupported { .. }
             | Self::OutsideHyperClause => "expression-form",
+            Self::FiniteDomainContractUnavailable { .. } => "not-yet-implemented",
+            Self::FiniteBoundZero { .. } => "invalid-value",
+            Self::FiniteRecordWrongKind { .. } => "wrong-export",
+            Self::FiniteRecordAmbiguous { .. } | Self::FiniteVariableRepeated { .. } => {
+                "ambiguous-name"
+            }
             Self::DuplicateName { .. } => "duplicate-declaration",
             Self::UnresolvedAlias { .. }
             | Self::UnresolvedPopulation { .. }
             | Self::UnknownTrace { .. }
             | Self::BodyMissing { .. }
-            | Self::UnresolvedStepLabel { .. } => "missing-name",
+            | Self::UnresolvedStepLabel { .. }
+            | Self::FiniteRecordMissing { .. } => "missing-name",
             Self::AmbiguousPopulation { .. } | Self::BodyShadows { .. } => "ambiguous-name",
             Self::UnboundParameterAlias { .. }
             | Self::ParameterNotAnObject { .. }
             | Self::UnindexedRead { .. }
             | Self::BodyIllTyped { .. }
-            | Self::MismatchedTrace { .. } => "type-mismatch",
+            | Self::MismatchedTrace { .. }
+            | Self::FiniteProfileRequired { .. } => "type-mismatch",
             Self::BodyUntypedMember { .. } => "operator-ineligible",
             Self::BodyAmbiguousLiteral { .. } => "ambiguous-literal",
             Self::BodyUnproved { obligation, .. } => match obligation {
@@ -1299,7 +1427,8 @@ fn check_declaration<'a>(
     let checked = match declaration {
         HyperDeclaration::Behaviours(form) => check_behaviours(form, declarations, cx)
             .map(|clause| CheckedHyper::Behaviours(Box::new(clause))),
-        HyperDeclaration::Finite(form) => Err(check_finite(form)),
+        HyperDeclaration::Finite(form) => check_finite(form, declarations, cx)
+            .map(|clause| CheckedHyper::Finite(Box::new(clause))),
         HyperDeclaration::Relation(form) => check_relation(form, declarations, cx)
             .map(|relation| CheckedHyper::Relation(Box::new(relation))),
     };
@@ -1309,23 +1438,155 @@ fn check_declaration<'a>(
     checked
 }
 
-/// A clause over a finite trace domain: a quantifier with `of` refuses at the
-/// quantifier (ADR-023 HS-2); one without has no check at S3.
-fn check_finite(form: &HyperFiniteForm) -> StageFailure<CheckRefusal> {
-    let found: Vec<Found> = form
-        .quantifiers
-        .iter()
-        .filter(|quantifier| quantifier.alias.is_some())
-        .map(|quantifier| {
-            Found::Hyper(HyperCause::QuantifierWithAlias {
-                span: quantifier.span,
-            })
+/// A clause over a finite trace domain, checked against its finite profile,
+/// record shape, quantifier prefix and Boolean body (FR-898).
+fn check_finite(
+    form: &HyperFiniteForm,
+    declarations: &HyperDeclarations<'_>,
+    cx: &mut CheckContext<'_, HyperDeclarations<'_>>,
+) -> Result<CheckedFiniteHyperClause, StageFailure<CheckRefusal>> {
+    let temporal = &declarations.temporal;
+    let scope = temporal.scope;
+    let profile =
+        super::temporal_clause::clause_profile(temporal.selections, &form.profile, form.span)
+            .map_err(|cause| Found::Temporal(cause).into_failure())?;
+    if !matches!(
+        profile,
+        TemporalProfile::EventPositionFalseExtension
+            | TemporalProfile::FixedSampleFalseExtension
+            | TemporalProfile::TimestampedEventFiniteWindow
+    ) {
+        return Err(Found::Hyper(HyperCause::FiniteProfileRequired {
+            span: form.profile.span,
         })
-        .collect();
-    match earliest(found) {
-        Err(failure) => failure,
-        Ok(()) => Found::Hyper(HyperCause::FiniteDomain { span: form.span }).into_failure(),
+        .into_failure());
     }
+    if form.domain.bound == 0 {
+        return Err(Found::Hyper(HyperCause::FiniteBoundZero {
+            span: form.domain.bound_span,
+        })
+        .into_failure());
+    }
+
+    let source = declarations.clause_source.borrow();
+    let candidates = scope.named_types(source.as_ref(), &form.domain.population.name);
+    if candidates.len() > 1 {
+        return Err(Found::Hyper(HyperCause::FiniteRecordAmbiguous {
+            name: form.domain.population.name.clone(),
+            span: form.domain.population.span,
+        })
+        .into_failure());
+    }
+    let Some(value_type) = candidates.first() else {
+        return Err(Found::Hyper(HyperCause::FiniteRecordMissing {
+            name: form.domain.population.name.clone(),
+            span: form.domain.population.span,
+        })
+        .into_failure());
+    };
+    let ValueType::Composite(record) = value_type else {
+        return Err(Found::Hyper(HyperCause::FiniteRecordWrongKind {
+            name: form.domain.population.name.clone(),
+            span: form.domain.population.span,
+        })
+        .into_failure());
+    };
+    let Some(record_declaration) = scope.types().composite(record.clone()) else {
+        return Err(fault("finite-trace-record-is-admitted"));
+    };
+    let filament_semantic_value::declaration::CompositeShape::Record(record_fields) =
+        record_declaration.shape()
+    else {
+        return Err(Found::Hyper(HyperCause::FiniteRecordWrongKind {
+            name: form.domain.population.name.clone(),
+            span: form.domain.population.span,
+        })
+        .into_failure());
+    };
+
+    let mut found = Vec::new();
+    let mut names = BTreeSet::new();
+    let mut quantifiers = Vec::with_capacity(form.quantifiers.len());
+    let mut finite_traces = BTreeMap::new();
+    let mut body_parameters = Vec::new();
+    for quantifier in &form.quantifiers {
+        if quantifier.alias.is_some() {
+            found.push(Found::Hyper(HyperCause::QuantifierWithAlias {
+                span: quantifier.span,
+            }));
+        }
+        if !names.insert(quantifier.variable.name.clone()) {
+            found.push(Found::Hyper(HyperCause::FiniteVariableRepeated {
+                name: quantifier.variable.name.clone(),
+                span: quantifier.variable.span,
+            }));
+            continue;
+        }
+        let mut fields = BTreeMap::new();
+        for field in record_fields {
+            let slot = body_parameters.len();
+            let field_name = field.name().to_owned();
+            let value_type = field.value_type().clone();
+            fields.insert(field_name.clone(), (slot, value_type.clone()));
+            body_parameters.push((
+                format!("{}.{}", quantifier.variable.name, field_name),
+                value_type,
+            ));
+        }
+        finite_traces.insert(quantifier.variable.name.clone(), fields);
+        quantifiers.push(CheckedFiniteTraceQuantifier {
+            kind: quantifier.kind,
+            variable: quantifier.variable.name.clone(),
+        });
+    }
+    earliest(found)?;
+
+    let hyper_typing = HyperTyping {
+        reserved_roots: names,
+        finite_traces,
+        ..HyperTyping::default()
+    };
+    let mut nodes_used = declarations.nodes_used.get();
+    let body_location = Location::root(Origin::TypeDeclaration {
+        name: format!("finite hyper {} body", form.name.name),
+    });
+    let typed_body = Typer::new(
+        scope,
+        declarations.signatures,
+        declarations.checking_limits,
+        &mut nodes_used,
+        fsl_forms::ClauseKind::Invariant,
+    )
+    .with_cancel(declarations.cancel)
+    .with_context(cx.reborrow(scope))
+    .with_hyper(hyper_typing)
+    .check_as(&form.body.expression, &ValueType::Boolean, &body_location)
+    .map_err(|refusal| {
+        body_refusal(
+            refusal,
+            &form.body.expression,
+            &form.body.spans,
+            &BTreeMap::new(),
+            &BTreeMap::new(),
+            scope,
+        )
+        .into_failure()
+    })?;
+    declarations.nodes_used.set(nodes_used);
+    Ok(CheckedFiniteHyperClause {
+        name: form.name.name.clone(),
+        span: form.span,
+        profile,
+        record: record.clone(),
+        bound: form.domain.bound,
+        quantifiers,
+        body: form.body.expression.clone(),
+        body_spans: form.body.spans.clone(),
+        typed_body,
+        body_parameters,
+        identity: None,
+        occurrence: None,
+    })
 }
 
 /// The trace variables of a clause, by name.

@@ -2339,6 +2339,9 @@ pub(crate) struct HyperTyping {
     /// The fields of each HP-1 execution variable, with their shared body
     /// binder slots and checked types.
     pub(crate) executions: BTreeMap<String, BTreeMap<String, (usize, ValueType)>>,
+    /// The fields of each finite trace variable's state record, with their
+    /// shared body binder slots and checked types.
+    pub(crate) finite_traces: BTreeMap<String, BTreeMap<String, (usize, ValueType)>>,
 }
 
 /// One history field a refinement row's expression may read (FR-138).
