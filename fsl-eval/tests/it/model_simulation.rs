@@ -7,13 +7,13 @@ use std::collections::BTreeMap;
 
 use filament_checked::key::DeclarationKey;
 use filament_exact::Cancel;
-use filament_exact::{ObjectId, ObjectReference, ScalarLimits, Value};
+use filament_exact::{IntegerInterval, ObjectId, ObjectReference, ScalarLimits, Value};
 use filament_semantic_value::catalog::CatalogCode;
 use filament_semantic_value::checking::CheckingLimits;
 use fsl_eval::simulation::model::{
-    explore_model, sample_model, ClauseOutcome, ExpansionLimits, ModelFinding, ModelSampleError,
-    ModelSimulationRequest, ModelSystem, PopulationUniverse, StepEffect, UndecidedSuccessor,
-    Unsteppable,
+    explore_model, sample_model, ClauseOutcome, ExpansionLimits, ModelBoundaryKind, ModelFinding,
+    ModelSampleError, ModelSimulationRequest, ModelSystem, PopulationUniverse, StepEffect,
+    UndecidedSuccessor, Unsteppable,
 };
 use fsl_eval::simulation::{
     replay, sample_probabilistic, Exploration, Limits, NotSimulated, Outcome, ReplayError,

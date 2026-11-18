@@ -39,7 +39,8 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use filament_checked::key::DeclarationKey;
 use filament_exact::{
-    EffectiveId, Incomplete, NodeKey, ObjectReference, Refusal, ScalarLimits, Undefined, ValueType,
+    EffectiveId, Incomplete, Integer, IntegerInterval, NodeKey, ObjectReference, Refusal,
+    ScalarLimits, Undefined, ValueType,
 };
 use filament_semantic_value::catalog::{CatalogCode, InternalFault};
 use filament_semantic_value::declaration::TypeEnvironment;
@@ -405,6 +406,36 @@ pub struct ModelTrace {
     pub trace: Trace<ModelTransition, ModelFinding>,
     /// One effect per step, derived by replaying the trace.
     pub effects: Vec<StepEffect>,
+    /// Boundary partitions for finite integer domains, in declaration order.
+    pub boundary_partitions: Vec<ModelBoundaryPartition>,
+}
+
+/// Which edge of a finite integer domain a generated partition represents.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum ModelBoundaryKind {
+    /// The representable value immediately below the inclusive lower bound.
+    LowerRefusal,
+    /// The inclusive lower bound.
+    LowerEndpoint,
+    /// The inclusive upper bound.
+    UpperEndpoint,
+    /// The representable value immediately above the inclusive upper bound.
+    UpperRefusal,
+}
+
+/// A generated endpoint or adjacent refusal value for one model input domain.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ModelBoundaryPartition {
+    /// The model declaration node that owns this domain.
+    pub node: NodeKey,
+    /// The path from the declaration node to this input domain.
+    pub path: Vec<u32>,
+    /// The declared inclusive integer domain.
+    pub domain: IntegerInterval,
+    /// The boundary represented by `value`.
+    pub kind: ModelBoundaryKind,
+    /// The generated endpoint or adjacent refusal value.
+    pub value: Integer,
 }
 
 /// Why [`sample_model`] returned no trace.
@@ -1232,6 +1263,36 @@ impl<'a> ModelSystem<'a> {
             .collect()
     }
 
+    /// Generate inclusive endpoints and adjacent refusal values for every
+    /// finite integer field and parameter domain, in declaration order.
+    pub fn boundary_partitions(&self) -> Vec<ModelBoundaryPartition> {
+        let mut partitions = Vec::new();
+        let one = Integer::one();
+        for (node, path, value_type) in self.rooted_domains() {
+            if path.first() == Some(&2) {
+                continue;
+            }
+            let ValueType::Int(domain) = value_type else {
+                continue;
+            };
+            for (kind, value) in [
+                (ModelBoundaryKind::LowerRefusal, domain.lower().sub(&one)),
+                (ModelBoundaryKind::LowerEndpoint, domain.lower().clone()),
+                (ModelBoundaryKind::UpperEndpoint, domain.upper().clone()),
+                (ModelBoundaryKind::UpperRefusal, domain.upper().add(&one)),
+            ] {
+                partitions.push(ModelBoundaryPartition {
+                    node: node.clone(),
+                    path: path.clone(),
+                    domain: domain.clone(),
+                    kind,
+                    value,
+                });
+            }
+        }
+        partitions
+    }
+
     /// [`Self::domains`], each with the child-index path below its node at
     /// which the root sits (FSpec FR-331): empty for a population, `[0, f]`
     /// for a field, `[1, o, p]` for a parameter, `[2, o]` for a result.
@@ -1766,7 +1827,12 @@ pub fn sample_model(
     )?;
     replay(system, &trace, identity_limits()).map_err(ModelSampleError::Replay)?;
     let effects = effects_of(system, &trace)?;
-    Ok(ModelTrace { trace, effects })
+    let boundary_partitions = system.boundary_partitions();
+    Ok(ModelTrace {
+        trace,
+        effects,
+        boundary_partitions,
+    })
 }
 
 /// Shrink a model trace through single-invocation deletion and immediate
@@ -1998,7 +2064,15 @@ fn rebuild_model_trace(
         ModelSampleError::NotSimulated(cause) => ModelShrinkError::NotSimulated(cause),
         ModelSampleError::Replay(cause) => ModelShrinkError::Replay(cause),
     })?;
-    Ok(Some((ModelTrace { trace, effects }, states)))
+    let boundary_partitions = system.boundary_partitions();
+    Ok(Some((
+        ModelTrace {
+            trace,
+            effects,
+            boundary_partitions,
+        },
+        states,
+    )))
 }
 
 /// The expansions of one run's sampled walks, kept so that a state the walks
