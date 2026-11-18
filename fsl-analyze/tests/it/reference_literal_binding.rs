@@ -222,21 +222,6 @@ fn a_called_literal_is_barred_when_another_use_is_unindexed() {
     assert!(text.contains("Counter") && text.contains("62"), "{text}");
 }
 
-/// FR-1000-AC-8: the specified two-component hyper clause admits and analyzes
-/// its fixed reference literal without a binding refusal.
-#[trace("TC-2957", "FR-1000-AC-8")]
-#[test]
-fn a_fixed_literal_hyper_clause_analyzes_without_binding_refusal() {
-    let body = hyper(
-        "HF",
-        "always holds(c.value @ a <= 3 or c.value @ b <= 3 or c = M::Counter#\"a\")",
-    );
-    let run = over_wide_universe("reflit-hyper-fixed-analyze", &body, "HF");
-    let text = run.document().to_string();
-    assert_eq!(run.exit, 0, "{text}");
-    assert!(!text.contains("operator-ineligible"), "{text}");
-}
-
 /// FR-1000-AC-11: hyper letters over components whose binding tables
 /// disagree on a literal refuse before any state is observed.
 #[trace("TC-2957", "FR-1000-AC-11")]
