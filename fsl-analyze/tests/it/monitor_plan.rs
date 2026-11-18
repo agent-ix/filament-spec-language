@@ -694,7 +694,8 @@ fn production_and_admission_refuse_a_clause_with_no_complete_program() {
     use fsl_analyze::monitor_plan::{admit, PlanAdmissionRefusal};
     let library = || fsl_semantics::library::LibraryName::new("fixture").expect("a library name");
     let target = base_target();
-    for shape in ["always eventually holds(c.versionNumber = 2)"] {
+    let shape = "always eventually holds(c.versionNumber = 2)";
+    {
         let (package, _) = checked_clause(shape);
         let clause = package.graph().temporal_clauses()[0].clause();
         let produced = produce(
