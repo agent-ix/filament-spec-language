@@ -2133,6 +2133,12 @@ fn check_atom(
             ExprNode::Name(name) if parameter(&name.name).is_some() => {
                 touched.extend(around);
             }
+            ExprNode::ReferenceLiteral { .. } => {
+                // W38: an indexed reference literal is a component-bound
+                // constant or created-object lookup, not a model-member read.
+                // It still supplies the enclosing `@ trace` component.
+                touched.extend(around);
+            }
             other => {
                 let root_parameter = read_root(visit.node).and_then(parameter);
                 let reads_member = match other {
