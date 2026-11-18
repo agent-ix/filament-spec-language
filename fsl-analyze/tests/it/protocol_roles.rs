@@ -34,11 +34,12 @@ use fsl_foundation::MemoryModelName;
 use fsl_foundation::source::provenance::OccurrenceKey;
 use fsl_package::CheckedPackage;
 use fsl_replay::{
-    node_occurrence, replay_protocol_trace, settle_protocol_check, InconclusiveCause,
-    InstanceBound, ModelCheckItem, ModelCheckLimits, ModelCheckOutcome, ModelCheckRecord,
-    ModelTraceReplayResult, ModelTraceSubject, ProtocolCertificateRequest, ProtocolTraceSubject,
-    ReplayLimits, ReplayRefusal, ResultLabel, StatedInstanceBound, TemporalCounterexample,
-    TerminalValue, UndecidedCause,
+    node_occurrence, replay_protocol_trace, settle_protocol_check, CounterexampleKind,
+    Execution, InconclusiveCause, InstanceBound, ModelCheckItem, ModelCheckLimits,
+    ModelCheckOutcome, ModelCheckRecord, ModelTraceReplayResult, ModelTraceSubject,
+    ProtocolCertificateRequest, ProtocolTraceSubject, ReplayLimits, ReplayRefusal, ResultLabel,
+    StatedInstanceBound, TemporalCounterexample, TerminalValue, Truth, UndecidedCause,
+    UndefinedLocus,
 };
 use fsl_route::deadlock::{ItemObligation, ObligationKind};
 use fsl_route::model_request::ModelRequest;
@@ -51,7 +52,7 @@ use crate::fill::{
     attempt, check_refusals, class_of, contracts, document, instance, json_of, model_subject,
     package_with, reachable, sc_system, source_memory, universe, v, Documents, Reached, PACKAGE,
 };
-use crate::model_settle::{envelope_at, request};
+use crate::model_settle::{envelope_at, protocol_anchor, request};
 use crate::protocol_compensation::{pay_run, refund, REFUND};
 use crate::protocol_system::touch;
 
@@ -216,6 +217,86 @@ impl World {
             },
             &Cancel::new(),
             |payload| self.replay(payload.clone(), letters, max_live_instances),
+        )
+    }
+
+    /// EN-1's deadlock-freedom outcome over protocol `R`.
+    fn deadlock(&self) -> ModelCheckOutcome<ProtocolTransition> {
+        check_protocol(
+            ProtocolCheckRequest {
+                temporal_clock_selections: &[],
+                subject: self.subject(),
+                item: ModelCheckItem::DeadlockFreedom,
+                max_depth: None,
+                max_store_buffer: None,
+                max_messages: None,
+                max_live_instances: None,
+                limits: ModelCheckLimits::default(),
+                ignore_memory_constraints: false,
+            },
+            &Cancel::new(),
+        )
+        .expect("the deadlock-freedom item checks")
+    }
+
+    /// FR-217 replay and FR-127 settlement for the deadlock-freedom item.
+    fn settle_deadlock(
+        &self,
+        outcome: &ModelCheckOutcome<ProtocolTransition>,
+    ) -> ModelCheckRecord<ProtocolTransition> {
+        let subject = self.subject();
+        let trace_roles = subject.roles.clone();
+        let trace_memory = subject.memory.clone();
+        settle_protocol_check(
+            outcome,
+            &ModelCheckLimits::default(),
+            &ProtocolCertificateRequest {
+                temporal_clock_selections: &[],
+                subject,
+                item: ModelCheckItem::DeadlockFreedom,
+                max_store_buffer: None,
+                max_messages: None,
+                max_live_instances: None,
+            },
+            &Cancel::new(),
+            |payload| {
+                let (node, occurrence) = protocol_anchor(&self.checked, "R");
+                let unit = crate::fill::unit_text_with(
+                    crate::fill::PROTOCOL_PROFILE,
+                    &self.body,
+                )
+                .into_bytes();
+                replay_protocol_trace(
+                    request(
+                        &self.checked,
+                        &[],
+                        &document(),
+                        self.documents.snapshots.iter(),
+                        &unit,
+                    ),
+                    &ProtocolTraceSubject {
+                        model: ModelTraceSubject {
+                            timed: None,
+                            initial: self.initial.clone(),
+                            universes: universe(&self.keys),
+                            expansion: ExpansionLimits {
+                                max_candidates: 1_000_000,
+                            },
+                        },
+                        protocol: "R".to_owned(),
+                        over: instance("c"),
+                        roles: trace_roles.clone(),
+                        capacities: Vec::new(),
+                        memory: trace_memory.clone(),
+                        max_store_buffer: None,
+                        max_messages: None,
+                        max_live_instances: None,
+                    },
+                    &envelope_at(payload.clone(), node, occurrence),
+                    &crate::counter::Letters { atom: |_| None },
+                    ReplayLimits::default(),
+                )
+            },
         )
     }
 
@@ -2136,8 +2217,8 @@ fn an_undecided_protocol_capture_is_a_finding_on_each() {
 }
 
 /// FR-882-AC-2 (TC-2505): a choice guard that calls a Kernel-checked
-/// function whose `mod` divisor is zero produces an undefined finding at the
-/// initial state under both `on origin` and `on each`.
+/// function whose `mod` divisor is zero settles deadlock freedom as refuted:
+/// `on origin` has an empty prefix and `on each` has only its activation.
 #[trace("TC-2505", "FR-882-AC-2")]
 #[test]
 fn an_undecided_initial_choice_guard_is_a_finding_on_origin_and_each() {
@@ -2170,6 +2251,22 @@ fn an_undecided_initial_choice_guard_is_a_finding_on_origin_and_each() {
         )),
         "{findings:?}"
     );
+    let outcome = origin.deadlock();
+    let record = origin.settle_deadlock(&outcome);
+    assert_eq!(record.label, ResultLabel::Refuted);
+    assert_eq!(record.value, TerminalValue::Refuted);
+    assert_eq!(record.execution, Execution::Completed);
+    assert_eq!(record.truth, Truth::Violated);
+    assert_ne!(record.label, ResultLabel::Unsupported);
+    let counterexample = record.counterexample.expect("a replayed counterexample");
+    assert!(counterexample.prefix.is_empty(), "{counterexample:?}");
+    let CounterexampleKind::UndefinedEvaluation(undefined) = counterexample.kind else {
+        panic!("{counterexample:?}");
+    };
+    assert!(matches!(
+        undefined.site.locus,
+        UndefinedLocus::Protocol(ref node) if node.contains("Pick")
+    ));
 
     let each = World::with_kernel_functions(&protocol(EACH), &["c"], &[0]);
     let subject = each.subject();
@@ -2183,6 +2280,30 @@ fn an_undecided_initial_choice_guard_is_a_finding_on_origin_and_each() {
         finding,
         ModelFinding::ProtocolExpressionUndetermined { node, .. } if node.contains("Pick")
     )), "{findings:?}");
+    let outcome = each.deadlock();
+    let record = each.settle_deadlock(&outcome);
+    assert_eq!(record.label, ResultLabel::Refuted);
+    assert_eq!(record.value, TerminalValue::Refuted);
+    assert_eq!(record.execution, Execution::Completed);
+    assert_eq!(record.truth, Truth::Violated);
+    assert_ne!(record.label, ResultLabel::Unsupported);
+    let counterexample = record.counterexample.expect("a replayed counterexample");
+    assert_eq!(
+        counterexample
+            .prefix
+            .iter()
+            .map(|step| step.transition.kind())
+            .collect::<Vec<_>>(),
+        [StepKind::Activate],
+        "{counterexample:?}"
+    );
+    let CounterexampleKind::UndefinedEvaluation(undefined) = counterexample.kind else {
+        panic!("{counterexample:?}");
+    };
+    assert!(matches!(
+        undefined.site.locus,
+        UndefinedLocus::Protocol(ref node) if node.contains("Pick")
+    ));
 }
 
 /// FR-882-AC-3 (TC-2506): an `over` input that is not an object reference

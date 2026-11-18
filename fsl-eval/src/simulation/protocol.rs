@@ -1351,7 +1351,7 @@ impl<'a, M: MemoryModel> ProtocolSystem<'a, M> {
                         roles::Started::Instance(instance) => {
                             (BTreeMap::from([(0, *instance)]), Vec::new())
                         }
-                        roles::Started::Undecided(finding) => {
+                        roles::Started::Undecided { finding, .. } => {
                             (BTreeMap::new(), vec![*finding])
                         }
                     }
