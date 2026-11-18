@@ -45,3 +45,7 @@ The Rust review found no additional ownership, panic, unsafe-code, concurrency, 
 | FND | outcome | reason |
 | --- | --- | --- |
 | FND-001 | fixed | Verified closed at acfc0bc; the main rebase and evaluator fallback cleanup do not alter contextual role/event parsing. |
+
+| FND | outcome | reason |
+| --- | --- | --- |
+| FND-001 | fixed | Rechecked at e9770f7; the dependency-revision-only delta does not alter the corrected contextual parsing. |

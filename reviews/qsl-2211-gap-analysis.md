@@ -60,3 +60,10 @@ FR-383-AC-69 is tagged to the package test and the expected assertions are prese
 | FND-002 | fixed | Verified closed at acfc0bc; the action refusal assertions remain unchanged. |
 | FND-003 | fixed | Verified closed at acfc0bc; the recommendation resolution and binder-read assertions remain unchanged. |
 | FND-004 | fixed | Verified closed at acfc0bc; the evaluator state assertions remain unchanged, with evaluator focused tests reported 4/4 after rebase. |
+
+| FND | outcome | reason |
+| --- | --- | --- |
+| FND-001 | fixed | Rechecked at e9770f7; the parser and duplicate-marker/parity tests are unchanged. |
+| FND-002 | fixed | Rechecked at e9770f7; the action and boundary tests are unchanged. |
+| FND-003 | fixed | Rechecked at e9770f7; the recommendation operation and binder tests are unchanged. |
+| FND-004 | fixed | Rechecked at e9770f7; the evaluator state tests are unchanged. |
