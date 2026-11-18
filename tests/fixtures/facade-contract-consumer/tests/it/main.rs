@@ -431,8 +431,8 @@ mod protocol {
         .check(CheckMode::Linked, CheckingLimits::default())
         .expect("protocol checks");
         let source = graph.source().clone();
-        let clock = filament_contract_model::ClockConfiguration::EventPosition {
-            sequence_authority: "protocol-events".into(),
+        let clock = filament_contract_model::ClockConfiguration::Timed {
+            unit: "ticks".into(),
         };
         let selections = graph
             .protocols()
@@ -477,14 +477,14 @@ mod protocol {
     const UNIT: &str = "language \"ix:native\" edition \"1-draft\";\n\
 profile p = \"filament.protocol.finite-global/v1\";\n\
 profile v = \"filament.value.complete/v1\";\n\
-profile t = \"filament.temporal.event-position.false-extension/v1\";\n\
+profile t = \"filament.temporal.timed/v1\";\n\
 profile u = \"filament.temporal.timed/v1\";\n\
 model M = \"acme/orders\";\n\
 protocol Flow using p over (input: M::Widget) on origin {\n\
   role Buyer on M::Widget;\n\
   role Seller on M::Widget;\n\
   channel Ch from Buyer to Seller carries Boolean ordering unordered delivery at-least-once capacity 4 overflow block;\n\
-  compensate Full for Main::Applied as (fwd: M::Widget) by Buyer on M::Widget::touch using t clock \"model-steps\" {\n\
+  compensate Full for Main::Applied as (fwd: M::Widget) by Buyer on M::Widget::touch using t clock \"ticks\" {\n\
     activate first (trig: M::Widget) when { true } {}\n\
     within [0, 10]; attempts 2 of M::Attempt;\n\
     retry (early: M::Attempt, late: M::Attempt) { false };\n\
