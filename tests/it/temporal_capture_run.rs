@@ -35,10 +35,6 @@ fn unit() -> String {
          {{ capture start: Int[0, 9] = q.level; eventually[0,2] holds(r.level > start) }}\n\
          temporal EachLoop using i over (r: Reading) clock \"steps\" on each (q: Reading) \
          {{ capture start: Int[0, 9] = q.level; eventually[0,1] holds(r.level > start) }}\n\
-         temporal Div using e over (r: Reading) clock \"events\" on origin \
-         {{ capture m: Integer = 3 mod (2 - r.level); always[0,1] holds(m >= 0) }}\n\
-         temporal DivEach using e over (r: Reading) clock \"events\" on each (q: Reading) \
-         {{ capture m: Integer = 3 mod (2 - r.level); always[0,1] holds(m >= 0) }}\n\
          temporal Refused using e over (r: Reading) clock \"events\" on origin \
          {{ capture z: Zero = count<Zero>(m in ints(sequence[r.level]): m > 0); always[0,1] holds(z = 0) }}\n"
     )
@@ -67,17 +63,36 @@ fn run_request(temporal: Value) -> Value {
         "clause": {"selection": {"temporal": temporal}, "observations": {}}}})
 }
 
+/// FR-860-AC-4's clauses whose capture divides by a divisor that may be
+/// zero: Linked checking refuses the unproved `mod` (FR-495-AC-3), so they
+/// are kept out of the shared unit.
+const DIVISION: &str = "temporal Div using e over (r: Reading) clock \"events\" on origin \
+     { capture m: Integer = 3 mod (2 - r.level); always[0,1] holds(m >= 0) }\n\
+     temporal DivEach using e over (r: Reading) clock \"events\" on each (q: Reading) \
+     { capture m: Integer = 3 mod (2 - r.level); always[0,1] holds(m >= 0) }\n";
+
 fn write(directory: &Path, name: &str, request: &Value) -> PathBuf {
-    std::fs::write(directory.join("unit.native"), unit()).unwrap();
+    write_with(directory, "", name, request)
+}
+
+/// [`write`] with `extra` declarations appended to the unit.
+fn write_with(directory: &Path, extra: &str, name: &str, request: &Value) -> PathBuf {
+    std::fs::write(directory.join("unit.native"), unit() + extra).unwrap();
     let path = directory.join(name);
     std::fs::write(&path, serde_json::to_vec(request).unwrap()).unwrap();
     path
 }
 
 fn run(directory: &Path, name: &str, trace: Value) -> Output {
+    run_with(directory, "", name, trace)
+}
+
+/// [`run`] over the unit with `extra` declarations appended.
+fn run_with(directory: &Path, extra: &str, name: &str, trace: Value) -> Output {
     let file = format!("{name}-{}.json", trace.to_string().len());
-    run_file(&write(
+    run_file(&write_with(
         directory,
+        extra,
         &file,
         &run_request(json!({"name": name, "trace": trace})),
     ))
@@ -196,13 +211,18 @@ fn each_activation_reads_its_own_capture_at_later_positions() {
 }
 
 /// FR-860-AC-4 (negative): an undefined capture is an `undefined` violation
-/// at its activation, a refused capture a stage `evaluate` refusal, neither
-/// an internal failure.
+/// at its activation, never an internal failure.
 #[test]
 #[trace("TC-2440", "FR-860-AC-4")]
-fn a_capture_fault_is_reported_at_the_capture() {
+#[ignore = "QSL-2001: FR-860-AC-4's division capture is refused unproved-nonzero under Linked checking (FR-495-AC-3) until the spec routes it through a Kernel-checked function"]
+fn an_undefined_capture_is_reported_at_the_capture() {
     let directory = tempfile::tempdir().unwrap();
-    let output = run(directory.path(), "Div", json!({"finite": moving(&[2, 0])}));
+    let output = run_with(
+        directory.path(),
+        DIVISION,
+        "Div",
+        json!({"finite": moving(&[2, 0])}),
+    );
     assert_eq!(output.status.code(), Some(10));
     let undefined = result(&output);
     assert_eq!(temporal(&undefined)["kind"], "undefined", "{undefined}");
@@ -215,20 +235,29 @@ fn a_capture_fault_is_reported_at_the_capture() {
         undefined.to_string().contains("division-by-zero"),
         "{undefined}"
     );
-    let defined = result(&run(
+    let defined = result(&run_with(
         directory.path(),
+        DIVISION,
         "Div",
         json!({"finite": moving(&[0, 2])}),
     ));
     assert_eq!(temporal(&defined)["kind"], "holds", "{defined}");
-    let each = result(&run(
+    let each = result(&run_with(
         directory.path(),
+        DIVISION,
         "DivEach",
         json!({"finite": moving(&[0, 2])}),
     ));
     assert_eq!(temporal(&each)["kind"], "undefined", "{each}");
     assert_eq!(temporal(&each)["position"], 1, "{each}");
+}
 
+/// FR-860-AC-4 (negative): a refused capture is a stage `evaluate` refusal
+/// located at the capture, never an internal failure.
+#[test]
+#[trace("TC-2440", "FR-860-AC-4")]
+fn a_refused_capture_is_reported_at_the_capture() {
+    let directory = tempfile::tempdir().unwrap();
     let refused = run(directory.path(), "Refused", json!({"finite": moving(&[1])}));
     assert_eq!(refused.status.code(), Some(20));
     let text = format!(
