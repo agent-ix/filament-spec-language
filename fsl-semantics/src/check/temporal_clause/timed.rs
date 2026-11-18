@@ -620,7 +620,9 @@ pub(crate) fn property_form(formula: &CheckedFormula, activation: Activation) ->
             .iter()
             .filter_map(timed)
             .filter_map(TimedInterval::upper)
-            .fold(Rational::from_integer(Integer::zero()), |sum, upper| sum.add(upper));
+            .fold(Rational::from_integer(Integer::zero()), |sum, upper| {
+                sum.add(upper)
+            });
         return TimedPropertyForm::BoundedWindow { horizon };
     }
     if in_safety_fragment(formula) {

@@ -248,10 +248,7 @@ impl Thresholds {
         // An interval with no upper bound is never passed: its upper
         // thresholds are beyond every tick the generated integers hold.
         let (all_hi, none_hi) = match upper {
-            Some(upper) => (
-                floor_of(&upper.sub(&width))?,
-                ceil_of(&upper.add(&width))?,
-            ),
+            Some(upper) => (floor_of(&upper.sub(&width))?, ceil_of(&upper.add(&width))?),
             None => (NO_UPPER, NO_UPPER),
         };
         Some(Self {
@@ -374,7 +371,9 @@ pub fn spec_from_plan(plan: &TimedMonitorPlan) -> Result<EntrySpec, EntryRefusal
             psi: expr_of(arena, info.right),
             interval,
             carrier,
-            summary: info.buffered && !info.future && bound.as_ref().is_none_or(|bound| bound.upper.is_none()),
+            summary: info.buffered
+                && !info.future
+                && bound.as_ref().is_none_or(|bound| bound.upper.is_none()),
             start: if info.buffered { None } else { thresholds },
         });
     }
@@ -742,7 +741,10 @@ impl<'a> Gen<'a> {
             ("NONE_HI", sig(t.none_hi)),
             ("RETAIN", sig(interval.retention)),
             ("CAP", self.cap(node).to_string()),
-            ("CAPB", (self.cap(node) + u64::from(node.summary)).to_string()),
+            (
+                "CAPB",
+                (self.cap(node) + u64::from(node.summary)).to_string(),
+            ),
             ("SUMMARY", node.summary.to_string()),
             ("ELAPSED", elapsed),
             ("PSI", psi),
@@ -1191,8 +1193,7 @@ impl<'a> Gen<'a> {
             "function pushAll using v(s0: State, now2: Integer, pos: Integer, atoms: Atoms, hz: Integer): State pure {{ {push_all} }}"
         );
         let sticky_all = self.sequential(
-            &asc
-                .iter()
+            &asc.iter()
                 .copied()
                 .filter(|id| self.is_summary(*id))
                 .collect::<Vec<_>>(),

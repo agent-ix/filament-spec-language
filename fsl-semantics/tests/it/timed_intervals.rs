@@ -453,8 +453,8 @@ fn a_unit_spelled_role_over_a_trace_subject_refuses_under_the_timed_profile() {
 }
 
 /// FR-233 "Intervals" through FR-230's time units: a step interval has
-/// bounds with no unit (`ill_typed`/`type-mismatch`), `[a, *]` refuses as
-/// ADR-014 TR-3 states, and a bound whose unit is unknown or of another
+/// bounds with no unit (`ill_typed`/`type-mismatch`), `[a, *]` included
+/// (FR-943), and a bound whose unit is unknown or of another
 /// dimension refuses at the unit. A supplied time source whose unit is no
 /// time unit is a broken input, not a refusal: FR-230 checks the unit.
 #[trace("TC-689", "FR-234")]
@@ -474,7 +474,7 @@ fn timed_bounds_are_time_quantities_of_the_unit_graph() {
     let (text, cause) = refused("eventually[3, *] holds(c.healthy)");
     assert_eq!(
         cause,
-        TemporalCause::OpenInterval {
+        TemporalCause::UnitlessTimedBound {
             span: first(&text, "[3, *]")
         }
     );

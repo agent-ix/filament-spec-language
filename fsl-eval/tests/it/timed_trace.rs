@@ -1487,3 +1487,35 @@ fn the_timed_claim_automaton_agrees_under_each_activation() {
         "{held} held, {violated} violated"
     );
 }
+
+/// FR-943 (FR-251-AC-34): a timed interval with a lower bound and no upper
+/// bound reads every stamp difference from the lower bound on. With `p`
+/// (`c.level = 1`) at stamp 0 only, `once[5 ms, *] holds(p)` is false at 4 ms,
+/// where the witness is too near, and true at 6 ms, the batch verdicts the
+/// monitor's `indeterminate` at 4000 us and `true` at 6000 us refine. An
+/// open lower end excludes the stamp at the bound itself.
+#[trace("TC-2623", "FR-943")]
+#[test]
+fn a_timed_interval_with_no_upper_bound_reads_every_difference_from_its_lower_bound() {
+    let once = "once[5 ms, *] holds(c.level = 1)";
+    let (stamps, levels) = ([0, 4, 6], [1, 0, 0]);
+    assert_eq!(at(once, &stamps, &levels, 1), violated(1));
+    assert_eq!(at(once, &stamps, &levels, 2), TemporalOutcome::Holds);
+    let open = "once(6 ms, *) holds(c.level = 1)";
+    assert_eq!(at(open, &[0, 6], &[1, 0], 1), violated(1));
+    assert_eq!(at(open, &[0, 7], &[1, 0], 1), TemporalOutcome::Holds);
+    // `[0 ms, *]` is the operator written with no interval.
+    assert_eq!(
+        at("once[0 ms, *] holds(c.level = 1)", &stamps, &levels, 2),
+        at("once holds(c.level = 1)", &stamps, &levels, 2)
+    );
+    let eventually = "eventually[2 ms, *] holds(c.level = 2)";
+    assert_eq!(
+        at(eventually, &[0, 1, 3], &[0, 2, 2], 0),
+        TemporalOutcome::Holds
+    );
+    assert_eq!(
+        at(eventually, &[0, 1, 3], &[0, 2, 0], 0),
+        TemporalOutcome::Pending
+    );
+}

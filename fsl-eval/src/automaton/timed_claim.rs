@@ -547,7 +547,9 @@ impl Lowering<'_> {
 fn window(interval: Option<&CheckedInterval>) -> Result<Option<TimedInterval>, AutomatonError> {
     match interval {
         None => Ok(None),
-        Some(CheckedInterval::Timed(interval)) if interval.is_bounded() => Ok(Some(interval.clone())),
+        Some(CheckedInterval::Timed(interval)) if interval.is_bounded() => {
+            Ok(Some(interval.clone()))
+        }
         Some(CheckedInterval::Timed(_)) => Err(AutomatonError::OpenTimedInterval),
         Some(CheckedInterval::Steps(_)) => Err(AutomatonError::Invariant {
             invariant: "timed-claim-reads-timed-intervals",
@@ -558,10 +560,7 @@ fn window(interval: Option<&CheckedInterval>) -> Result<Option<TimedInterval>, A
 /// The upper end of `window`. [`window`] admits only bounded windows, so the
 /// lower end it falls back to is never read.
 fn upper(window: &TimedInterval) -> Rational {
-    window
-        .upper()
-        .unwrap_or_else(|| window.lower())
-        .clone()
+    window.upper().unwrap_or_else(|| window.lower()).clone()
 }
 
 /// Whether `window` starts at a closed 0.

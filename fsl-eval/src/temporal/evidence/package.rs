@@ -684,9 +684,12 @@ fn operation_of(node: &FormulaNode) -> Option<(&'static str, Option<IntervalKey>
                     timed.lower().numerator().to_string(),
                     timed.lower().denominator().to_string(),
                 ),
-                upper: timed
-                    .upper()
-                    .map(|upper| (upper.numerator().to_string(), upper.denominator().to_string())),
+                upper: timed.upper().map(|upper| {
+                    (
+                        upper.numerator().to_string(),
+                        upper.denominator().to_string(),
+                    )
+                }),
                 closed: (timed.lower_closed(), timed.upper_closed()),
             },
         })

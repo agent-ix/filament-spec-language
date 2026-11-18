@@ -893,7 +893,9 @@ mod tests {
         let open = TimedInterval::unbounded(five.clone(), false).unwrap();
         assert!(!open.contains(&five) && open.contains(&ratio(501, 100)));
         assert_ne!(open, closed);
-        assert!(TimedInterval::unbounded(zero.clone(), true).unwrap().is_whole());
+        assert!(TimedInterval::unbounded(zero.clone(), true)
+            .unwrap()
+            .is_whole());
         assert!(!TimedInterval::unbounded(zero, false).unwrap().is_whole());
         let bounded = TimedInterval::new(five, true, ratio(9, 1), true).unwrap();
         assert_ne!(

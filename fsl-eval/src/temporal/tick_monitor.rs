@@ -390,7 +390,11 @@ impl<'f> TickMonitorReference<'f> {
             .nodes()
             .iter()
             .filter(|(_, node)| {
-                !node.future && node.bound.as_ref().is_none_or(|bound| bound.upper.is_none())
+                !node.future
+                    && node
+                        .bound
+                        .as_ref()
+                        .is_none_or(|bound| bound.upper.is_none())
             })
             .map(|(index, _)| *index)
             .collect()

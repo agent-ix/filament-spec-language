@@ -178,9 +178,9 @@ impl TickShape {
                 Some(upper) if future => upper,
                 _ => int(0),
             };
-            let below = operands(index)
-                .into_iter()
-                .fold(int(0), |acc, leaf| larger(acc, delays.get(&leaf).cloned().unwrap_or_else(|| int(0))));
+            let below = operands(index).into_iter().fold(int(0), |acc, leaf| {
+                larger(acc, delays.get(&leaf).cloned().unwrap_or_else(|| int(0)))
+            });
             delays.insert(index, own.add(&below));
         }
         let delay = |index: usize| delays.get(&index).cloned().unwrap_or_else(|| int(0));

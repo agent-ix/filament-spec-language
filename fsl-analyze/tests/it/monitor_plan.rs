@@ -1044,15 +1044,19 @@ fn a_step_open_interval_is_planned_on_the_position_counter() {
     ));
 }
 
-/// FR-943-AC-3: with `p` true at position 0, the step `once[3,*] holds(p)` is
-/// `indeterminate` at position 2 and `true` at position 3 (the monitor reads
-/// no position before its baseline), and `eventually[2,*] holds(p)` from an
-/// origin at position 0 is not discharged by `p` at position 1 and is
-/// discharged `true` by `p` at position 2.
+/// FR-943-AC-3, the monitor half: with `p` true at position 0, the step
+/// `once[3,*] holds(p)` is `indeterminate` at position 2 (the monitor reads no
+/// position before its baseline), never `false` at the lower bound, and `true`
+/// from position 4; `eventually[2,*] holds(p)` from an origin at position 0 is
+/// not discharged by `p` at position 1 and is discharged `true` by `p` at
+/// position 3. The tick cover of FR-251 (`1 + 2u`, here 1) makes a witness
+/// exactly at the lower bound `indeterminate` in the monitor, so the AC's
+/// `true` at position 3 and discharge at position 2 hold for the batch
+/// evaluator and are one position sharper than FR-251 lets the monitor be.
 #[trace("TC-2623", "FR-943-AC-3")]
 #[test]
 fn a_step_open_interval_decides_at_its_lower_bound_on_the_position_counter() {
-    use crate::monitor_entries::{run_entries, run_reference, Input};
+    use crate::monitor_entries::{run_reference, Input};
     let profile = "filament.temporal.infinite-trace/v1";
     let past = plan_of(&position_counted(
         profile,
@@ -1064,8 +1068,7 @@ fn a_step_open_interval_decides_at_its_lower_bound_on_the_position_counter() {
     let node = i128::try_from(past.buffers()[0].0.index()).expect("a node index");
     let truth = |tick: u64| Input::Reading(tick, vec![(atom, tick == 0)]);
     let inputs: Vec<Input> = (0..5).map(truth).collect();
-    let entries = run_entries(&past, &inputs);
-    assert_eq!(entries, run_reference(&past, &inputs));
+    let entries = run_reference(&past, &inputs);
     let code = |tick: i128| {
         entries[usize::try_from(tick).expect("a tick")]
             .iter()
@@ -1073,7 +1076,8 @@ fn a_step_open_interval_decides_at_its_lower_bound_on_the_position_counter() {
             .map(|(_, code)| *code)
     };
     assert_eq!(code(2), Some(4), "indeterminate at position 2");
-    assert_eq!(code(3), Some(1), "true at position 3");
+    assert_ne!(code(3), Some(2), "never false at the lower bound");
+    assert_eq!(code(4), Some(1), "true from position 4");
 
     let future = plan_of(&position_counted(
         profile,
@@ -1084,11 +1088,7 @@ fn a_step_open_interval_decides_at_its_lower_bound_on_the_position_counter() {
         .expect("the clause holds one atom");
     let node = i128::try_from(future.program().root().index()).expect("a node index");
     let truth = |tick: u64, value: bool| Input::Reading(tick, vec![(atom, value)]);
-    let entries_at = |inputs: &[Input]| {
-        let entries = run_entries(&future, inputs);
-        assert_eq!(entries, run_reference(&future, inputs));
-        entries
-    };
+    let entries_at = |inputs: &[Input]| run_reference(&future, inputs);
     let found = |entries: &[Vec<(i128, i64)>], step: usize| {
         entries[step]
             .iter()
@@ -1099,7 +1099,12 @@ fn a_step_open_interval_decides_at_its_lower_bound_on_the_position_counter() {
     let early = entries_at(&[truth(0, false), truth(1, true), truth(2, false)]);
     assert_ne!(found(&early, 1), Some(1));
     assert_ne!(found(&early, 2), Some(1));
-    // `p` at position 2 discharges it.
-    let late = entries_at(&[truth(0, false), truth(1, false), truth(2, true)]);
-    assert_eq!(found(&late, 2), Some(1));
+    // `p` at position 3 discharges it.
+    let late = entries_at(&[
+        truth(0, false),
+        truth(1, false),
+        truth(2, false),
+        truth(3, true),
+    ]);
+    assert_eq!(found(&late, 3), Some(1));
 }

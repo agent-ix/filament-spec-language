@@ -1136,21 +1136,13 @@ pub(crate) fn checked_operators(
                     }
                 }
             }
-            (
-                Some(OperatorInterval::Steps(written)),
-                true,
-                IntervalReading::Timed(_),
-            ) => {
+            (Some(OperatorInterval::Steps(written)), true, IntervalReading::Timed(_)) => {
                 // A closed step interval's bounds have no unit (FR-233
                 // "Intervals"); `[a, *]` is no exception (FR-943-AC-1).
                 refusals.push(TemporalCause::UnitlessTimedBound { span: written.span });
                 None
             }
-            (
-                Some(OperatorInterval::Steps(written)),
-                true,
-                IntervalReading::TimedUnread,
-            ) => {
+            (Some(OperatorInterval::Steps(written)), true, IntervalReading::TimedUnread) => {
                 refusals.push(match written.upper {
                     IntervalUpper::Open => TemporalCause::OpenInterval { span: written.span },
                     IntervalUpper::Finite(_) => {

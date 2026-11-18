@@ -1777,7 +1777,9 @@ fn an_aged_out_entry_is_folded_into_the_summary_cell() {
     assert_eq!(entries, run_reference(&plan, &inputs));
     // The tick-5000 entry and the cell: the tick-0 entry was folded.
     assert_eq!(sizes[1].len(), 2);
-    assert!(entries[1].iter().any(|(key, code)| key % 1000 == node && *code == 1));
+    assert!(entries[1]
+        .iter()
+        .any(|(key, code)| key % 1000 == node && *code == 1));
     let plan = premise_plan(&format!("historically {P}"), &tick_target(2, 8));
     let inputs = vec![
         Input::Reading(0, vec![(atom, true)]),
@@ -1786,7 +1788,9 @@ fn an_aged_out_entry_is_folded_into_the_summary_cell() {
     ];
     let entries = run_entries(&plan, &inputs);
     assert_eq!(entries, run_reference(&plan, &inputs));
-    assert!(entries[2].iter().any(|(key, code)| key % 1000 == node && *code == 2));
+    assert!(entries[2]
+        .iter()
+        .any(|(key, code)| key % 1000 == node && *code == 2));
 }
 
 /// FR-251-AC-26 and the sticky rule of "Unbounded past operators": three
@@ -1806,7 +1810,10 @@ fn an_overflow_of_an_unbounded_past_operator_is_sticky() {
     ];
     let (entries, sizes) = run_entries_probe(&plan, &spec, &inputs, "map(x in s.buffer_0: x.tf)");
     assert_eq!(entries, run_reference(&plan, &inputs));
-    assert!(entries[2].iter().any(|(_, code)| *code == 2002), "{entries:?}");
+    assert!(
+        entries[2].iter().any(|(_, code)| *code == 2002),
+        "{entries:?}"
+    );
     assert!(sizes.iter().all(|cells| cells.len() <= 3), "{sizes:?}");
 }
 
@@ -1816,7 +1823,10 @@ fn an_overflow_of_an_unbounded_past_operator_is_sticky() {
 #[trace("TC-1081", "FR-251-AC-34")]
 #[test]
 fn a_lower_bounded_unbounded_once_decides_after_its_lower_bound() {
-    let plan = premise_plan("once[5 ms, *] holds(c.versionNumber = 3)", &tick_target(2, 8));
+    let plan = premise_plan(
+        "once[5 ms, *] holds(c.versionNumber = 3)",
+        &tick_target(2, 8),
+    );
     assert_eq!(capacities(&plan), [12]);
     let spec = spec_from_plan(&plan).unwrap();
     let atom = spec.atoms[0];

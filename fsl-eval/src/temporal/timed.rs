@@ -689,7 +689,7 @@ fn unrolled(
                 match interval {
                     Some(CheckedInterval::Timed(interval)) => {
                         Some(interval.upper().unwrap_or(interval.lower()))
-                    },
+                    }
                     Some(CheckedInterval::Steps(_)) | None => None,
                 }
             }

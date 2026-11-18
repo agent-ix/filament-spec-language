@@ -232,15 +232,13 @@ impl WindowClaim {
         let mut breakpoints: Vec<Rational> = obligations
             .iter()
             .filter_map(|obligation| match obligation {
-                Obligation::Until { interval, .. } => {
-                    Some(
-                        [Some(interval.lower()), interval.upper()]
-                            .into_iter()
-                            .flatten()
-                            .cloned()
-                            .collect::<Vec<_>>(),
-                    )
-                }
+                Obligation::Until { interval, .. } => Some(
+                    [Some(interval.lower()), interval.upper()]
+                        .into_iter()
+                        .flatten()
+                        .cloned()
+                        .collect::<Vec<_>>(),
+                ),
                 Obligation::Origin(_) => None,
             })
             .flatten()
