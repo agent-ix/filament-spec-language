@@ -959,6 +959,10 @@ pub struct ProtocolConformanceOutput {
     pub closure: ConformanceClosureOutput,
     /// The result joined from the obligations and closure.
     pub global: ConformanceGlobalOutput,
+    /// The protocol's per-channel `max_messages` bound and whether a send
+    /// reached it, when the run has a channel (FR-225, FR-636).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub max_messages: Option<ConformanceMessageBoundOutput>,
     /// Per-role projection results, absent in recording mode.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub projections: Option<Vec<ConformanceProjectionOutput>>,
@@ -968,6 +972,15 @@ pub struct ProtocolConformanceOutput {
     /// Whether the global counterexample replay reproduced its violation.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub replay: Option<ConformanceReplayOutput>,
+}
+
+/// The per-channel `max_messages` method bound a protocol run used.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
+pub struct ConformanceMessageBoundOutput {
+    /// The configured bound (4 when unset).
+    pub value: u64,
+    /// Whether an offered send reached the bound.
+    pub reached: bool,
 }
 
 /// The command-level identity under which a protocol recording was provisioned.
@@ -3041,6 +3054,7 @@ mod tests {
                     complete: true,
                     cause: None,
                 },
+                max_messages: None,
                 projections: Some(vec![ConformanceProjectionOutput {
                     role: "Buyer".to_owned(),
                     label: "proved".to_owned(),

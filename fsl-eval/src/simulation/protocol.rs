@@ -1058,6 +1058,8 @@ pub struct ProtocolSystem<'a, M: MemoryModel> {
     protocol: &'a CheckedProtocol,
     program: Program<'a>,
     memory: M,
+    /// The per-channel queue occupancy bound supplied by model checking.
+    channel_message_bound: Option<u64>,
     /// The model governing each `parallel`: its outermost `parallel`'s
     /// resolved model (FR-219, ADR-025 MM-3).
     governing: BTreeMap<fsl_semantics::check::ProtocolNodeId, fsl_foundation::MemoryModelName>,
@@ -1260,6 +1262,7 @@ impl<'a, M: MemoryModel> ProtocolSystem<'a, M> {
             protocol,
             program,
             memory,
+            channel_message_bound: None,
             governing,
             weak_ancestors,
             weak_parallel_paths,
@@ -1287,6 +1290,25 @@ impl<'a, M: MemoryModel> ProtocolSystem<'a, M> {
     pub fn with_max_live_instances(mut self, bound: u64) -> Self {
         self.max_live_instances = bound;
         self
+    }
+
+    /// This system with a per-channel `max_messages` bound (FR-225-AC-6).
+    /// A send offered to a full channel is left unexpanded before its
+    /// overflow policy is applied.
+    #[must_use]
+    pub fn with_channel_message_bound(mut self, bound: u64) -> Self {
+        self.channel_message_bound = Some(bound);
+        self
+    }
+
+    /// Whether the checked protocol declares at least one channel.
+    pub fn has_channels(&self) -> bool {
+        !self.program.channels.is_empty()
+    }
+
+    /// The selected per-channel message bound, when model checking supplied one.
+    pub fn channel_message_bound(&self) -> Option<u64> {
+        self.channel_message_bound
     }
 
     /// Whether any live instance holds an undelivered message on an
