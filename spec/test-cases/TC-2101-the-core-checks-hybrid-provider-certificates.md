@@ -10,7 +10,7 @@ relationships:
 
 ## Description
 
-Verify the exact interval check of hybrid certificates and its effect on certification and refutation. Scope: FR-751-AC-1 to FR-751-AC-3.
+Verify the exact interval check of hybrid certificates and its effect on certification and refutation. Scope: FR-751-AC-1 to FR-751-AC-3. Tests live in `fsl-analyze/tests/it/hybrid_requests.rs`, tagged `#[trace("TC-2101", "FR-751-AC-n")]`.
 
 ## Test Procedure
 

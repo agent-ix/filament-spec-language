@@ -10,7 +10,7 @@ relationships:
 
 ## Description
 
-Verify the hybrid provider interface, dispatch through `analyze` and `provider::run`, process-provider composition and the no-provider result. Scope: FR-750-AC-1 to FR-750-AC-5. Tests live in `fsl-analyze/tests/it/hybrid_provider.rs`, tagged `#[trace("TC-2100", "FR-750-AC-n")]`.
+Verify the hybrid provider interface, dispatch through `analyze` and `provider::run`, process-provider composition and the no-provider result. Scope: FR-750-AC-1 to FR-750-AC-5. Tests live in `fsl-analyze/tests/it/hybrid_provider.rs` (the in-process `analyze` entry) and `fsl-analyze/tests/it/hybrid_requests.rs` (`native-analyze/1` documents through the command adapter), tagged `#[trace("TC-2100", "FR-750-AC-n")]`.
 
 ## Test Procedure
 

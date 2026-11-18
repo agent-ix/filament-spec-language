@@ -849,68 +849,6 @@ fn the_tlc_oracle_agrees_or_names_the_missing_tool() {
     }
 }
 
-// ---- QSL-2234: reference hybrid provider --------------------------------
-
-/// `Braking` with the violated claim `TooSlow` beside `SlowEnough`.
-fn braking_pair() -> String {
-    BRAKING.replace("always holds(h.v < 30)", "always [0, 10] holds(h.v < 30)")
-        + "temporal TooSlow using p over (h: Braking) clock \"model-time\" \
-           on origin { always [0, 10] holds(h.v > 5) }\n"
-}
-
-fn reference_analyze(unit: &str, claim: &str) -> (u8, Value) {
-    run(
-        unit,
-        false,
-        (
-            "hybrid_analyze",
-            json!({"claim": claim, "engines": "fsl_with_reference_hybrid"}),
-        ),
-    )
-}
-
-/// FR-1019-AC-1 and AC-2: the reference provider proves `SlowEnough` with a
-/// certified outward-rounded flowpipe and refutes `TooSlow` by exact replay.
-#[test]
-#[trace("TC-2869", "FR-1019-AC-1")]
-#[trace("TC-2869", "FR-1019-AC-2")]
-#[ignore = "QSL-2234: the first-party reference hybrid provider is not implemented yet"]
-fn the_reference_hybrid_provider_proves_and_refutes() {
-    let unit = braking_pair();
-    let (_, value) = reference_analyze(&unit, "SlowEnough");
-    let result = &value["hybrid_result"];
-    assert_eq!(result["value"], "proved", "{value}");
-    assert_eq!(
-        result["basis"]["method"], "flowpipe-outward-rounded",
-        "{value}"
-    );
-    assert_eq!(result["certification"], "certified", "{value}");
-    assert_eq!(result["backend"], "fsl-hybrid-reference", "{value}");
-    let (_, value) = reference_analyze(&unit, "TooSlow");
-    assert_eq!(value["hybrid_result"]["value"], "refuted", "{value}");
-    assert_eq!(
-        value["hybrid_result"]["counterexamples"]
-            .as_array()
-            .map(Vec::len),
-        Some(1),
-        "{value}"
-    );
-}
-
-/// FR-1019-AC-3: a non-polynomial flow is outside the reference provider's
-/// class and settles `unsupported` with a located `expression-form` cause.
-#[test]
-#[trace("TC-2869", "FR-1019-AC-3")]
-#[ignore = "QSL-2234: the reference hybrid provider's class check is not implemented yet"]
-fn a_non_polynomial_flow_is_a_located_unsupported() {
-    let unit = braking_pair().replace("flow { v' = -a; a' = 0; }", "flow { v' = sin(v); a' = 0; }");
-    let (_, value) = reference_analyze(&unit, "SlowEnough");
-    assert_eq!(value["hybrid_result"]["value"], "unsupported", "{value}");
-    names(&value["hybrid_result"], "expression-form");
-    names(&value["hybrid_result"], "Moving");
-    names(&value["hybrid_result"], "locus");
-}
-
 // ---- QSL-1978: hybrid plans ----------------------------------------------
 
 const TANK: &str = "language \"ix:native\" edition \"1-draft\";\n\
