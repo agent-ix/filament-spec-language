@@ -701,3 +701,40 @@ fn recording_item_references_require_a_provisioned_recording_document() {
     );
     assert_refusal(&wrong_kind);
 }
+
+/// FSpec FR-181-AC-32: a simulation item with no bounds runs under the
+/// published defaults and reports each with its setting; a zero bound and a
+/// sample-only member in enumerate mode refuse before any state is explored.
+#[trace("FSpec-TC-2008", "FSpec-FR-181-AC-32")]
+#[test]
+#[ignore = "QSL-2296 (from QSL-2132): simulation items have no in-process route yet"]
+fn simulation_bounds_take_their_published_defaults() {
+    let ws = Workspace::new("cli-simulation-defaults");
+    let run = analyze(&counter_request(
+        &ws,
+        "",
+        json!([{"kind": "simulation", "simulation": {"mode": "sample"}}]),
+    ));
+    let settings = run.item(0)["simulation"].clone();
+    assert_eq!(settings["max_states"], 10_000_000, "{settings}");
+    assert_eq!(settings["max_steps"], 16_777_216, "{settings}");
+    assert_eq!(settings["max_state_key_bytes"], 16_777_216, "{settings}");
+    assert_eq!(settings["samples"], 1, "{settings}");
+    assert_eq!(settings["seed"], 0, "{settings}");
+    for (n, simulation) in [
+        json!({"mode": "sample", "max_steps": 0}),
+        json!({"mode": "enumerate", "samples": 2}),
+        json!({"mode": "enumerate", "bogus": 1}),
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let ws = Workspace::new(&format!("cli-simulation-refusal-{n}"));
+        let run = analyze(&counter_request(
+            &ws,
+            "",
+            json!([{"kind": "simulation", "simulation": simulation}]),
+        ));
+        assert_eq!(run.exit, 20, "{}", run.document());
+    }
+}

@@ -17,6 +17,10 @@ relationships:
     type: depends_on
   - target: ix://agent-ix/filament-specification/FR-290
     type: depends_on
+  - target: ix://agent-ix/filament-spec-language/FR-062
+    type: depends_on
+  - target: ix://agent-ix/filament-specification/FR-322
+    type: depends_on
 ---
 # FR-246: Check task sets and schedulability claims
 
@@ -132,6 +136,21 @@ pub enum ScheduleClaim { Schedulable(SchedulingPolicy), Response { task: Name, b
 - The request writer SHALL give each claim the requirement
   (`schedulability`, policy) and route it by negotiation (FR-075), where
   EN-7 registers a provider manifest for that kind.
+- S3 SHALL write one requirement record for each checked `schedulable` and
+  `response` claim into the checked graph's requirement records
+  (`CheckedGraph::requirements`, FR-062-AC-13), so that FR-075's request
+  builder `items_from_requirements` writes one `schedulability` item per claim
+  and routes it to EN-7 like every other record. The record's key is the
+  `claim` occurrence key of the claim's FSpec FR-482 `claim`/`schedulability`
+  node, its kind `schedulability`, its extent `Bounded` (a task set is finite
+  and the analysis is closed form), its extent roots and path condition empty,
+  its owner none (a claim is not a function body), and its requirements the
+  claim's policy (`fixed_priority`, `edf` or `amc`). A task set refused for its
+  own defects writes no record for its claims.
+- While a `package` is selected (FR-850, FR-940), FSL SHALL read the same records from
+  the package's `schedulability_claims` rows (FSpec FR-322), one per row in row
+  order, the policy read from the FR-482 body, so both routes write equal
+  items.
 
 ## Acceptance Criteria
 
@@ -140,6 +159,7 @@ pub enum ScheduleClaim { Schedulable(SchedulingPolicy), Response { task: Name, b
 | FR-246-AC-1 | ADR-026 §12's `Ctl` (periodic, `(C, T = D)` of `(1, 4)`, `(2, 6)` and `(5, 12)` ms, priorities by period) checks; `schedulable CtlFp on Ctl under fixed_priority;` and `schedulable CtlEdf on Ctl under edf;` route to EN-7 under `schedulability`. The `Ctl` with the third WCET 6, or with a task's `bcet` 1 ms, gives a different obligation identity; a task with `bcet` omitted and the same task with `bcet 0 ms` check to one value and one identity. | Test (TC-701) |
 | FR-246-AC-2 | Each of these refuses `invalid_timed_model`/`invalid-task-set` naming the task (the task set for the empty one), and both tasks for a clash: a task set with no task; a period of 0 ms; a deadline of 0 ms; a WCET of 0 ms; a BCET of -1 ms; a `LO` task whose BCET exceeds its WCET and a `HI` task whose BCET exceeds its `C(HI)`; a jitter of -1 ms; a blocking term of -1 ms; a sporadic task with minimum inter-arrival time 0 ms; a `HI` task with `C(LO)` 3 and `C(HI)` 2; a `LO` task with dual budgets; a task with no priority under `fixed_priority`; two tasks with priority 1 under `fixed_priority`; a task with blocking 1 ms under `edf`; a task with jitter 1 ms under `edf`; a task with no priority and two tasks with priority 1 under `amc`; a task with no priority under `response R on Ctl.c <= 12 ms under fixed_priority;`; two tasks with priority 1 under `response R on Ctl.c <= 12 ms under fixed_priority;`; a task with deadline above its period under `amc`. Two tasks named `a` refuse `conflicting_declaration`/`duplicate-declaration`; `response R on Ctl.zz <= 5 ms under fixed_priority;` refuses `missing_declaration`/`missing-name`; a deadline of `3 m` refuses `ill_typed`/`type-mismatch`. The same priority clash and a task with no priority under `edf` check. | Test (TC-701) |
 | FR-246-AC-3 | `Ctl` written in `ms` has unit `ms`, and FR-248 settles `CtlFp` with fixpoints `(1, 3, 12)`; `Ctl` with task `a`'s period written `4000 us` has unit `us`, every value and `response R on Ctl.c <= 12 ms under fixed_priority;`'s bound converted exactly (`12 ms` is `12000`), and fixpoints `(1000, 3000, 12000)`. Reordering those same tasks so `c` is first in source, while task `a` still has period `4000 us`, keeps unit `us`, all checked values and claim identity unchanged. `Ctl` with the first task's jitter `-1 ms` and the second's blocking `-1 ms`, under `CtlEdf`, reports four `invalid_timed_model`/`invalid-task-set` refusals in this order: the first task, the second task (the task set's own), then the first task and the second task (`edf`'s non-zero terms); with tasks declared in the order `a` (valid), `a` (valid) and `z` (period 0 ms), it reports `conflicting_declaration`/`duplicate-declaration` at the second `a`, then `invalid_timed_model`/`invalid-task-set` at `z`, in that order. `taskset Empty { }` with `response R on Empty.c <= 12 ms under fixed_priority;` has no unit, refuses `invalid-task-set` naming `Empty` and `missing_declaration`/`missing-name` at `c`, and keeps the bound `12 ms`. | Test (TC-701) |
+| FR-246-AC-4 | `Ctl` with `schedulable CtlFp on Ctl under fixed_priority;`, `schedulable CtlEdf on Ctl under edf;` and `response R on Ctl.c <= 12 ms under fixed_priority;` writes three requirement records of kind `schedulability`, each keyed by its claim node's `claim` occurrence, extent `Bounded`, no owner, empty extent roots and path condition, and its policy; `items_from_requirements` over them and `Engines::fsl()`'s registry returns three items in occurrence-key order whose candidate set is `["en-7"]`; the same records read from the compiled package's `schedulability_claims` rows give equal items; a task set with a period of 0 ms writes no record. | Test (TC-2960) |
 
 ## Dependencies
 
