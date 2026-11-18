@@ -1171,7 +1171,7 @@ fn tc_774_limits_flow_into_the_request_and_refusals_are_ordered() {
 #[test]
 fn tc_774_a_state_clause_record_is_not_replayable() {
     let (source, packages) = crate::spine::clause::tests::config_version_unit_and_packages();
-    let fixture = fixture_of(&source, &packages, &DependencyInput::default());
+    let fixture = fixture_of(&source, &packages, &DependencyInput::default(), None);
     let context = context(&fixture, CallerLimits::default());
     let keys: Vec<OccurrenceKey> = fixture
         .checked
@@ -1220,7 +1220,7 @@ fn tc_774_a_transitive_dependency_replays() {
     };
     let supplied =
         DependencyInput::new(vec![library("b", &b), library("c", &c)]).expect("supplied");
-    let fixture = fixture_of(&a, &BTreeMap::new(), &supplied);
+    let fixture = fixture_of(&a, &BTreeMap::new(), &supplied, None);
     let context = context(&fixture, CallerLimits::default());
     let (q, q_x) = declaration(&fixture, "q");
     let wire = context
@@ -1283,7 +1283,7 @@ fn plugin_replay_retains_every_source_of_each_selected_library() {
         .unwrap()
         .with_library_units("test/b", vec![second.clone(), first.clone()])
         .unwrap();
-    let fixture = fixture_of(&root, &BTreeMap::new(), &dependencies);
+    let fixture = fixture_of(&root, &BTreeMap::new(), &dependencies, None);
     let context = context(&fixture, CallerLimits::default());
     let (q, parameter) = declaration(&fixture, "q");
     let wire = context
