@@ -11,6 +11,8 @@ relationships:
     type: traces_to
   - target: "ix://agent-ix/filament-spec-language/FR-255"
     type: references
+  - target: "ix://agent-ix/filament-spec-language/FR-1000"
+    type: references
 ---
 # FR-003: Format validated source without changing token meaning
 
@@ -113,7 +115,8 @@ token:
   fields, binders, `let x: T`, record field values, `forall(x in c: p)`). A
   `,` has no space before and one after; a `;` has no space before it, ends
   its line outside brackets and is followed by one space inside `[..]`.
-  `.`, `::` and `?` touch their neighbours.
+  `.`, `::`, `?` and the `#` of a reference literal (`M::Server#"s1"`, FR-1000)
+  touch their neighbours.
 - **Operators.** Every binary operator, `@`, `^`, `=`, `in`, `implies` and the
   temporal connectives have one space on each side; unary `-` touches its
   operand (`-1`); `not` is followed by one space.
@@ -144,6 +147,7 @@ checked package identity as checking the original source.
 | FR-003-AC-13 | Formatting `hyper NI using inf over behaviours (v: V::Vault) forall trace a of V forall trace b of V match { a.step.op = b.step.op } { always holds(v.l @ a = v.l @ b) }` prints the `match` block's closing brace and the body's opening brace as `} {` on one line, and `v.l @ a` with one space on each side of `@`. | Test (TC-2784) |
 | FR-003-AC-14 | Every unit of the complete-grammar corpus formats; for each, formatting the output again gives identical bytes, the output's significant token sequence equals the input's, and the output parses to the same production tree. | Test (TC-2784) |
 | FR-003-AC-15 | Formatting `function f using v(): Boolean pure { let o: Option < Int[0,9] > = none in present(o) }` prints `let o: Option<Int[0, 9]> = none in present(o)`; formatting `function g using v(x: Option<Int[0,9]>): Option<Int[0,9]>pure { x }` prints `g using v(x: Option<Int[0, 9]>): Option<Int[0, 9]> pure {`; formatting `function d using v(x: Decimal[0,9;0,2;exact]): Boolean pure { true }` prints `x: Decimal[0, 9; 0, 2; exact]` on one line; formatting a protocol `finish Closed as (r: Boolean){ true };` prints `finish Closed as (r: Boolean) {`. | Test (TC-2783) |
+| FR-003-AC-16 | Formatting a unit whose clause body is `self = M::Server#"s1" or self = V::Server#"s2"` prints `M::Server#"s1"` and `V::Server#"s2"` with no space on either side of `#`; formatting the output again gives identical bytes, and the output's significant token sequence equals the input's. | Test (TC-2954) |
 
 ## Dependencies
 
