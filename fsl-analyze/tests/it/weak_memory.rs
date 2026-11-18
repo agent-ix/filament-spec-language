@@ -1380,13 +1380,17 @@ fn an_access_footprint_is_stepped() {
     let run = format!(
         "parallel Both {{ branch left sequence L {{ {} }} \
          branch right sequence R {{ {} }} }} join all [left, right];",
-        attempt("Sx", "w", "Cell::set", "", "IsX, StoreOne"),
-        attempt("Sy", "w", "Cell::set", "", "IsY, StoreOne"),
+        attempt("Sx", "c", "Core::look", "", "LooksY, Looked"),
+        attempt("Sy", "c", "Core::look", "", "LooksY, Looked"),
     );
-    let direct = Case::new(&(contracts() + &protocol("SB", &run)));
-    let called_contracts = contracts().replace(
-        "pre IsX using v on M::Cell::set { self.id = 0 }",
-        "pre IsX using v on M::Cell::set { is_zero(self.id) }",
+    let direct_contracts = contracts().replace(
+        "pre LooksY using v on M::Core::look { c.id = 1 }",
+        "pre LooksY using v on M::Core::look { c.id = 0 }",
+    );
+    let direct = Case::new(&(direct_contracts.clone() + &protocol("SB", &run)));
+    let called_contracts = direct_contracts.replace(
+        "pre LooksY using v on M::Core::look { c.id = 0 }",
+        "pre LooksY using v on M::Core::look { is_zero(c.id) }",
     );
     let called = Case::new(&format!(
         "function is_zero using v(x: Int[0, 3]): Boolean pure {{ x = 0 }}\n{}{}",

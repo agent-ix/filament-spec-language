@@ -2361,9 +2361,15 @@ fn no_required_construct_settles_unsupported() {
     fn has_non_refusing_case(variant: Unsupported) -> bool {
         match variant {
             Unsupported::WeakMemory => {
-                let case = crate::weak_memory::Case::new(&crate::litmus::sb_unit(
-                    &crate::litmus::sb_run("", "release", "acquire"),
-                ));
+                let run = "parallel Both { branch left sequence L { \
+                            event Left by w as (left: Boolean) { true }; } \
+                            branch right sequence R { \
+                            event Right by w as (right: Boolean) { true }; } } \
+                            join all [left, right];";
+                let text = crate::litmus::contracts()
+                    + &crate::litmus::protocol("SB", run)
+                    + crate::litmus::NO_BOTH_ZERO;
+                let case = crate::weak_memory::Case::new(&text);
                 let selection = [crate::weak_memory::select(
                     "SB::Both",
                     MemoryModelName::Tso,
