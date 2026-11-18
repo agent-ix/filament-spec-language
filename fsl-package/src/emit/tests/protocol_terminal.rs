@@ -4,11 +4,10 @@
 //! package is read back through IR's v2 reader, which checks the layout, the
 //! condition's type and the binders the `terminal` stage may read.
 
-use super::protocol_graph::{checked, clause, member, model, occurrences, target, PROFILES};
+use super::protocol_graph::{clause, member, model, occurrences, target, PROFILES};
 use super::protocol_reference::clause_argument;
 use super::reachability::{lower_with, Lowered};
 use super::*;
-use fsl_semantics::check::{CheckCause, ProtocolConstruct, ProtocolReferenceCause};
 
 /// A record the trigger reads.
 const TICK: &str = "record Tick { ready: Boolean; n: Integer; }\n";
@@ -131,37 +130,13 @@ fn an_origin_terminal_condition_may_read_a_capture() {
     assert!(super::protocol_graph::reads(wire, node, &binder["target"]));
 }
 
-/// FR-464 stage `terminal`: under `on each` a condition that reads nothing
-/// is admitted. One that reads `over` (TC-947 TM11) is admitted by FSpec but
-/// refused by IR's reader (`terminal` stage allows `over` only under
-/// `origin`), so FSL refuses it naming the construct, never writing a
-/// package the reader rejects.
+/// FR-464 stage `terminal`: under `on each`, a constant condition is admitted.
 #[trace("FR-465-AC-7", "TC-947")]
 #[test]
-fn an_each_terminal_condition_reads_nothing_and_over_is_an_ir_gap() {
+fn an_each_terminal_condition_reads_nothing() {
     let lowered = admitted(&flow("on each (t: Tick)", "terminal when { true };"));
     let node = terminal(&lowered.wire).expect("a terminal node");
     assert_eq!(argument(node, "mode")["value"], "when");
-
-    let text = flow(
-        "on each (t: Tick)",
-        "terminal when { present(deref(input).trail) };",
-    );
-    let refused = checked(&text, false).expect_err("over under each is an IR gap");
-    assert!(
-        refused.iter().all(|refusal| matches!(
-            &refusal.cause,
-            CheckCause::ProtocolReference(cause)
-                if matches!(**cause, ProtocolReferenceCause::NotEmitted {
-                    construct: ProtocolConstruct::TerminalReadsOverUnderEach
-                })
-        )),
-        "{refused:?}"
-    );
-    assert_eq!(
-        ProtocolConstruct::TerminalReadsOverUnderEach.tracking(),
-        "IR-1069"
-    );
 }
 
 /// FR-465 "Terminal", TC-947 TM9: a protocol without a `terminal` member
@@ -185,7 +160,6 @@ fn the_absent_any_and_when_terminals_are_three_clauses() {
 /// either activation.
 #[test]
 #[trace("TC-2502", "FR-880-AC-6")]
-#[ignore = "QSL-2220: terminal when reading over under on each is refused at S4 instead of written"]
 fn an_each_terminal_condition_that_reads_over_is_written() {
     let lowered = admitted(&flow(
         "on each (t: Tick)",

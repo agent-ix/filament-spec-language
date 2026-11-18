@@ -24,6 +24,7 @@ mod attempts;
 mod binders;
 mod controls;
 mod coverage;
+mod declaration;
 mod graph;
 mod rules;
 

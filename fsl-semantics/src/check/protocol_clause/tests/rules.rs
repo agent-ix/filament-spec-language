@@ -6,6 +6,7 @@ use filament_semantic_value::checking::{CheckMode, CheckingLimits};
 use ix_trace_rs::trace;
 
 use super::assemble;
+use crate::check::refusal::ProtocolAnchorCause;
 use crate::check::CheckRefusal;
 
 fn catalog(refusal: &CheckRefusal) -> (&'static str, Option<&'static str>) {
@@ -87,7 +88,13 @@ fn a_role_on_a_whole_model_checks_and_its_replicated_form_refuses_at_the_alias()
 /// FR-218-AC-42: a guard over a capture of the input checks with no listing;
 /// a guard over `input.ready` refuses at that read, and no region covers the
 /// guard block, the choice or the protocol.
-#[trace("TC-2021", "FR-218-AC-42", "FSpec-TC-1521", "FSpec-FR-053-AC-5")]
+#[trace(
+    "TC-2021",
+    "FR-218-AC-42",
+    "FR-884-AC-1",
+    "FSpec-TC-1521",
+    "FSpec-FR-053-AC-5"
+)]
 #[test]
 fn a_guard_reads_the_input_through_a_capture_and_a_direct_read_refuses_at_the_read() {
     let pick = |yes: &str, no: &str| {
@@ -183,6 +190,40 @@ fn a_nonexhaustive_choice_and_a_duplicate_role_refuse_at_their_subject() {
         .map(|(_, at)| at)
         .collect();
     assert_eq!(at, ["R", "R"], "{twice:?}");
+    assert!(
+        twice.iter().all(|(refusal, _)| matches!(
+            &refusal.cause,
+            crate::check::CheckCause::ProtocolAnchor(cause)
+                if matches!(**cause, ProtocolAnchorCause::Ambiguous { ref name, .. } if name == "R")
+        )),
+        "{twice:?}"
+    );
+}
+
+/// FR-218-AC-17 / FR-884-AC-1: an `over` read carries its typed slot cause
+/// and a source locus covering the exact expression.
+#[trace("TC-2508", "FR-218-AC-17", "FR-884-AC-1")]
+#[test]
+fn the_over_read_refusal_is_at_the_read() {
+    let run = format!(
+        "sequence Main {{ {TRIED} choice Pick by R visible () {{ \
+         case yes when {{ input.ready }} sequence Yes {{ }} \
+         case no when {{ not input.ready }} sequence No {{ }} }} }}"
+    );
+    let found = located_refusals(&protocol("", "role R on M::Actor;", &run));
+    let over: Vec<_> = found
+        .iter()
+        .filter(|(refusal, _)| catalog(refusal) == ("ill_typed", Some("operator-ineligible")))
+        .collect();
+    assert_eq!(over.len(), 2, "{found:?}");
+    assert!(over.iter().all(|(refusal, at)| {
+        at == "input.ready"
+            && matches!(
+                &refusal.cause,
+                crate::check::CheckCause::ProtocolAnchor(cause)
+                    if matches!(**cause, ProtocolAnchorCause::SlotModelState { ref node, .. } if node == "Pick")
+            )
+    }), "{over:?}");
 }
 
 /// FR-884-AC-4 (TC-2509): two protocols of one name in one unit refuse at
@@ -201,6 +242,11 @@ fn two_protocols_of_one_name_refuse_at_each_name() {
         .map(|(_, at)| at)
         .collect();
     assert_eq!(at, ["Flow", "Flow"], "{found:?}");
+    assert!(found.iter().all(|(refusal, _)| matches!(
+        &refusal.cause,
+        crate::check::CheckCause::ProtocolAnchor(cause)
+            if matches!(**cause, ProtocolAnchorCause::Ambiguous { ref name, ref loci, .. } if name == "Flow" && loci.len() == 2)
+    )), "{found:?}");
     super::checks(&format!(
         "{one}\n{}",
         one.replace("protocol Flow", "protocol Drain")

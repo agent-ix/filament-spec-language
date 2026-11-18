@@ -281,11 +281,6 @@ impl ProtocolInput<'_> {
         if self.repeat_steps_through_repeat() {
             unemitted.push(ProtocolConstruct::RepeatStepsThroughRepeat);
         }
-        if matches!(form.activation, ActivationForm::Each { .. })
-            && matches!(&slots.terminal, CheckedTerminalMember::When { predicate, .. } if predicate.reads_local(0))
-        {
-            unemitted.push(ProtocolConstruct::TerminalReadsOverUnderEach);
-        }
         unemitted
     }
 
@@ -319,7 +314,11 @@ impl ProtocolInput<'_> {
                 | K::Fence
                 | K::Await
                 | K::Parallel => true,
-                K::Check | K::Repeat | K::Finish | K::CompensateTemplate => false,
+                K::Check | K::Finish | K::CompensateTemplate => false,
+                // A repeat makes progress when its body makes progress. In
+                // particular, this lets an outer repeat step through a
+                // nested repeat whose body contains an action.
+                K::Repeat => child(0),
                 K::Branch | K::Case => child(0),
                 K::Sequence => (0..control.children.len()).any(child),
                 K::Choice => (0..control.children.len()).all(child),

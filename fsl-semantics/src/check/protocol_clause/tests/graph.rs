@@ -835,7 +835,7 @@ fn located_causes(source: &str) -> Vec<(ProtocolAnchorCause, String)> {
 /// a discarded `let` that reads a fact still needs the fact listed; a read
 /// of the `over` input refuses `ill_typed`/`operator-ineligible` at the read,
 /// naming the guard; a read of a protocol capture checks without listing.
-#[trace("TC-1056", "FR-218-AC-17", "FR-218-AC-18")]
+#[trace("TC-1056", "FR-218-AC-17", "FR-218-AC-18", "FR-884-AC-1")]
 #[test]
 fn a_decision_reads_only_listed_facts_of_its_owner() {
     let graph = checks(&received(&pick(
