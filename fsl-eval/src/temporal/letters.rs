@@ -167,6 +167,25 @@ pub trait TemporalLetters {
         )))
     }
 
+    /// Whether the `holds` atom `atom` reads a capture (FR-860): its value
+    /// then depends on the activation it is read for, not on its position
+    /// alone. The default reads none, which is exact for letters of a clause
+    /// with no capture.
+    fn reads_captures(&self, _atom: FormulaNodeId) -> bool {
+        false
+    }
+
+    /// FR-860: bind the captures the activation at the represented
+    /// `activation` fixed (when [`Self::captures`] read it) for every later
+    /// reading of an atom that [`Self::reads_captures`]. Asked only after
+    /// the activation's captures were fixed. The default fails closed.
+    fn select_activation(&mut self, _activation: TemporalPosition) -> Result<(), LetterStop> {
+        Err(LetterStop::Fault(InternalFault::new(
+            "temporal.letters",
+            "letters-of-a-captured-clause-select-an-activation",
+        )))
+    }
+
     /// Whether the step into the represented `position` counts for interval
     /// distance (ADR-027 PB-3, FSpec FR-431). Every step of a model subject
     /// does, which is ADR-018's reading, so a letter of a protocol subject

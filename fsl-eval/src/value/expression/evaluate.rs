@@ -2361,10 +2361,10 @@ impl<'a, 'm, N: NodeSource<'a>> Machine<'a, 'm, N> {
                 let Value::Map(map) = self.pop()? else {
                     return Err(invariant("map-value-expected"));
                 };
-                collections::charge_element(self.meter)?;
                 let value = crate::value::map_entry(&map, &key)
                     .cloned()
                     .ok_or(Stop::Undefined(Undefined::NoElement))?;
+                collections::charge_element(self.meter)?;
                 collections::retain_accumulator(value, self.meter)?
             }
             NodeKind::Index { .. } => return Err(unsupported_construct("index")),

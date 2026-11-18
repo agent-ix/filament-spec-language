@@ -426,6 +426,7 @@ impl CheckedPackageEvaluation for BarePackage<'_> {
         _clause: &fsl_semantics::check::TemporalClauseNode,
         _atom: fsl_semantics::check::FormulaNodeId,
         _over: Value,
+        _captures: &[Value],
         _objects: &ObjectEnvironment,
         _meter: &mut Meter,
     ) -> Result<Evaluation, CallFailure> {
@@ -436,7 +437,7 @@ impl CheckedPackageEvaluation for BarePackage<'_> {
         &self,
         _clause: &fsl_semantics::check::TemporalClauseNode,
         _atom: fsl_semantics::check::FormulaNodeId,
-        _over: &filament_exact::ObjectReference,
+        _binders: super::HoldsBinders<'_>,
         _objects: &ObjectEnvironment,
         _observation: super::ObservationIdentity,
         _meter: &mut Meter,

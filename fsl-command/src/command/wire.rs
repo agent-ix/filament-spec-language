@@ -512,7 +512,7 @@ pub(super) struct AnalyzeRequest {
     #[serde(default, deserialize_with = "from_object_opt")]
     pub program: Option<Program>,
     #[serde(default, deserialize_with = "from_object_opt")]
-    pub package: Option<FileSelection>,
+    pub package: Option<HandoffSelection>,
     #[serde(default, deserialize_with = "deserialize_objects")]
     pub models: Vec<Model>,
     #[serde(default, deserialize_with = "deserialize_objects")]
@@ -533,6 +533,15 @@ pub(super) struct AnalyzeRequest {
     pub limits: AnalyzeLimits,
     #[serde(default, deserialize_with = "deadline")]
     pub deadline_ms: Option<u64>,
+}
+
+/// FR-850's `package` selection: the FR-517 handoff directory, beneath the
+/// request's directory, holding `checked-package.json`, `identities.json`
+/// and, when the unit has equality rows, `equality.json`.
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(super) struct HandoffSelection {
+    pub directory: String,
 }
 
 /// A `{file}` selection of a supplied document or checked package.

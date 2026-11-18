@@ -38,14 +38,14 @@ use ix_trace_rs::trace;
 use serde_json::json;
 
 use super::{
-    ClauseArgument, ClauseArgumentValue, ClauseDisposition, ClauseRunRefusal, ClauseRunRequest,
-    ClauseRunSelection, ClauseRunSource, ClauseRunStage, ProgramBatchItemResult,
-    ProgramBatchSelection, ProgramCompilationRequest, ValueInvariantsBatchRequest,
-    admit_clause_observations, run_clause, run_program_batch_with_compile,
+    admit_clause_observations, run_clause, run_program_batch_with_compile, ClauseArgument,
+    ClauseArgumentValue, ClauseDisposition, ClauseRunRefusal, ClauseRunRequest, ClauseRunSelection,
+    ClauseRunSource, ClauseRunStage, ProgramBatchItemResult, ProgramBatchSelection,
+    ProgramCompilationRequest, ValueInvariantsBatchRequest,
 };
 use crate::spine::Call;
 use crate::spine::{
-    CompileRefusal, ComposedUnit, DependencyInput, SpineLimits, SuppliedLibrary, default_accounting,
+    default_accounting, CompileRefusal, ComposedUnit, DependencyInput, SpineLimits, SuppliedLibrary,
 };
 
 // Keep the oracle where the private fixture's actual package input is owned.
@@ -1198,11 +1198,9 @@ fn run_clause_writes_the_caller_budget_fields_of_a_compile_ceiling() {
     assert_eq!(refusal["fields"]["kind"], "input-bytes-exceeded");
     assert_eq!(refusal["fields"]["bound"], "1");
     assert_eq!(refusal["fields"]["setting"], "intake.input_bytes");
-    assert!(
-        refusal["fields"]["actual"]
-            .as_str()
-            .is_some_and(|actual| actual != "1")
-    );
+    assert!(refusal["fields"]["actual"]
+        .as_str()
+        .is_some_and(|actual| actual != "1"));
 }
 
 // ---------------------------------------------------------------------------
@@ -1588,8 +1586,8 @@ fn config_version_domain_document_with_operations(
 /// at all ("Today FSL emits no `state` node",
 /// `spec/functional/FR-105-emit-state-nodes.md`). `VersionUnchanged` below
 /// is that postcondition, now reachable through `run_clause` end to end.
-pub(crate) fn config_version_unit_and_packages()
--> (String, fsl_semantics::model::intake::PackageInput) {
+pub(crate) fn config_version_unit_and_packages(
+) -> (String, fsl_semantics::model::intake::PackageInput) {
     config_version_unit_and_packages_for(config_version_domain_document())
 }
 
@@ -2282,8 +2280,9 @@ fn checked_invariant_and_call_fault_both_report_the_same_internal_failure_shape(
 /// `filament_eval::Evaluation`, run through `super::super::
 /// call::convert_outcome` itself (never a hand-copied expected
 /// `CallOutcome`), and only then checked against
-/// `ClauseDisposition::category`/`exit_code`'s own mapping (FR-301's exit
-/// 0/10, and FR-100-AC-9's 20/22 for `Undefined`/`Incomplete`).
+/// `ClauseDisposition::category`/`truth`/`exit_code`: a typed undefined
+/// evaluates as a refuted claim under FR-301, with the same exit 10 as the
+/// value run; incomplete remains exit 22.
 #[trace("TC-468", "FR-109-AC-5")]
 #[test]
 fn convert_outcome_drives_the_disposition_for_every_general_outcome_kind() {
@@ -2332,7 +2331,7 @@ fn convert_outcome_drives_the_disposition_for_every_general_outcome_kind() {
     assert_eq!(disposition.truth(), Some(false));
     assert_eq!(disposition.category().exit_code(), 10);
 
-    // A kernel `Undefined`: undefined, exit 10 (FR-285).
+    // A kernel `Undefined` is a refuted claim in the clause-run domain.
     let mapped = super::super::call::convert_outcome(
         evaluation(FamilyOutcome::Evaluated(
             filament_exact::Outcome::Undefined(filament_exact::Undefined::DivisionByZero),
@@ -2344,9 +2343,9 @@ fn convert_outcome_drives_the_disposition_for_every_general_outcome_kind() {
     let disposition = ClauseDisposition::Evaluate(mapped);
     assert_eq!(
         disposition.category(),
-        filament_semantic_value::catalog::Category::Undefined
+        filament_semantic_value::catalog::Category::Violation
     );
-    assert_eq!(disposition.truth(), None);
+    assert_eq!(disposition.truth(), Some(false));
     assert_eq!(disposition.category().exit_code(), 10);
 
     // A kernel `Incomplete`: incomplete, exit 22.
@@ -2371,48 +2370,6 @@ fn convert_outcome_drives_the_disposition_for_every_general_outcome_kind() {
     );
     assert_eq!(disposition.truth(), None);
     assert_eq!(disposition.category().exit_code(), 22);
-}
-
-/// TC-2830 step 1 (FR-109-AC-14): a constructed
-/// `Outcome::Undefined(SumOutOfDomain)` maps, as AC-5 checks FR-100-AC-9's
-/// outcomes, to a refuted claim: stage `evaluate`, category `violation`,
-/// `truth` false, cause `sum-out-of-domain` (never null), exit 10.
-#[trace("TC-2830", "FR-109-AC-14")]
-#[test]
-#[ignore = "QSL-2186: an undefined clause evaluation maps to violation/truth false with its cause; not implemented yet"]
-fn sum_out_of_domain_maps_to_a_refuted_claim_with_its_cause() {
-    let compiled = compiled();
-    let sources = std::slice::from_ref(&compiled.source);
-    let mapped = super::super::call::convert_outcome(
-        filament_eval::Evaluation {
-            outcome: FamilyOutcome::Evaluated(filament_exact::Outcome::Undefined(
-                filament_exact::Undefined::SumOutOfDomain,
-            )),
-            location: None,
-            losses: Vec::new(),
-            frame_depth: 0,
-        },
-        compiled.package.graph(),
-        sources,
-    )
-    .expect("Undefined maps to Ok");
-    assert!(
-        matches!(
-            mapped,
-            super::super::call::CallOutcome::Undefined {
-                reason: "sum-out-of-domain"
-            }
-        ),
-        "the cause is present: {mapped:?}"
-    );
-    let disposition = ClauseDisposition::Evaluate(mapped);
-    assert_eq!(disposition.stage(), ClauseRunStage::Evaluate);
-    assert_eq!(
-        disposition.category(),
-        filament_semantic_value::catalog::Category::Violation
-    );
-    assert_eq!(disposition.truth(), Some(false));
-    assert_eq!(disposition.exit_code(), 10);
 }
 
 /// FR-285: an admission refusal exits by its record code's category, so
@@ -4362,11 +4319,9 @@ fn s4_state_clause_and_anchor_dependencies_beyond_the_frame() {
     else {
         unreachable!("the find above matched an application body");
     };
-    let [
-        fsl_semantics::check::MemberTerm::Leaf(fsl_semantics::check::LeafTerm::Reference {
-            target: receiver,
-        }),
-    ] = arguments.as_slice()
+    let [fsl_semantics::check::MemberTerm::Leaf(fsl_semantics::check::LeafTerm::Reference {
+        target: receiver,
+    })] = arguments.as_slice()
     else {
         panic!("the field read has one argument, a reference to its receiver, got {arguments:?}");
     };
@@ -4671,13 +4626,11 @@ fn s4_renaming_parent_order_changes_no_node_id() {
         node_keys(&renamed),
         "renaming a clause changes no node id"
     );
-    assert!(
-        renamed
-            .package
-            .graph()
-            .state_clause("ParentOrder")
-            .is_none()
-    );
+    assert!(renamed
+        .package
+        .graph()
+        .state_clause("ParentOrder")
+        .is_none());
     assert_eq!(
         renamed
             .package
@@ -5088,10 +5041,8 @@ fn tc_792_a_reference_completion_is_not_a_clause_truth() {
         disposition["internal_fault"]["invariant"],
         "clause-completes-reference"
     );
-    assert!(
-        disposition
-            .get("truth")
-            .is_none_or(serde_json::Value::is_null)
-    );
+    assert!(disposition
+        .get("truth")
+        .is_none_or(serde_json::Value::is_null));
     assert!(disposition.get("outcome").is_none());
 }

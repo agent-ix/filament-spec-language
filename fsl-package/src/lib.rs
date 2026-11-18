@@ -19,6 +19,10 @@
 extern crate alloc;
 
 #[cfg(feature = "std")]
+mod analysis_view;
+#[cfg(feature = "std")]
+pub use analysis_view::{AnalysisView, DependencyClosure};
+#[cfg(feature = "std")]
 mod bare;
 #[cfg(feature = "std")]
 mod bare_slot;

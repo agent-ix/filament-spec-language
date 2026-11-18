@@ -1147,8 +1147,8 @@ mod map_source {
     use super::UNLIMITED;
     use filament_eval::FamilyOutcome;
     use filament_exact::{
-        from_admitted_map, CardinalityBound, Integer, IntegerInterval, MapType, Meter, Outcome,
-        Undefined, Value, ValueType,
+        from_admitted_map, CardinalityBound, Integer, IntegerInterval, LimitKind, MapType, Meter,
+        Outcome, Undefined, Value, ValueType,
     };
     use filament_semantic_value::checking::{CheckMode, CheckingLimits};
     use fsl_eval::value::{CheckedPackageEvaluation, QualifiedName};
@@ -1221,7 +1221,17 @@ mod map_source {
     }
 
     fn call(package: &CheckedPackage, name: &str, arguments: Vec<Value>) -> Outcome<Value> {
+        call_metered(package, name, arguments).0
+    }
+
+    /// The outcome of `name(arguments)` and the work units it charged.
+    fn call_metered(
+        package: &CheckedPackage,
+        name: &str,
+        arguments: Vec<Value>,
+    ) -> (Outcome<Value>, u64) {
         let mut meter = Meter::new(UNLIMITED);
+        meter.enable_charge_accounting();
         let evaluation = package
             .call(
                 &QualifiedName::unqualified(name).expect("an identifier"),
@@ -1233,7 +1243,10 @@ mod map_source {
         let FamilyOutcome::Evaluated(outcome) = evaluation.outcome else {
             panic!("a kernel outcome, not {:?}", evaluation.outcome);
         };
-        outcome
+        let work = meter
+            .take_charge_accounting()
+            .map_or(0, |accounting| accounting.amount(LimitKind::WorkUnits));
+        (outcome, work)
     }
 
     fn whole(outcome: Outcome<Value>) -> i64 {
@@ -1286,9 +1299,11 @@ mod map_source {
             whole(call(&kernel, "raw", vec![map(&[(1, 10)]), integer(1)])),
             10
         );
-        assert!(matches!(
-            call(&kernel, "raw", vec![map(&[(1, 10)]), integer(2)]),
-            Outcome::Undefined(Undefined::NoElement)
-        ));
+        let (absent, absent_work) = call_metered(&kernel, "raw", vec![map(&[(1, 10)]), integer(2)]);
+        assert!(matches!(absent, Outcome::Undefined(Undefined::NoElement)));
+        // FR-144-AC-34: an absent key charges neither `collection.element` nor
+        // `collection.result-retain`: a present read pays one work unit for each.
+        let (_, present_work) = call_metered(&kernel, "raw", vec![map(&[(1, 10)]), integer(1)]);
+        assert_eq!(present_work, absent_work + 2);
     }
 }

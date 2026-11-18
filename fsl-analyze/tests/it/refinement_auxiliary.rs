@@ -33,7 +33,7 @@ fn run(world: &World<'_>) -> SafetyOutcome {
                 proof_bounds: Vec::new(),
             },
             abstract_package: world.package(),
-            abstract_initial: vec![world.abstract_initial()],
+            abstract_initial: vec![world.abstract_initial()].into(),
             abstract_protocol_binding: None,
             max_depth: None,
             limits: ModelCheckLimits::default(),
@@ -70,7 +70,7 @@ fn settle(world: &World<'_>, outcome: &SafetyOutcome) -> ModelCheckRecord {
         refinement: world.refinement(),
         concrete: world.concrete_request(UNLIMITED),
         abstract_package: world.package(),
-        abstract_initial: vec![world.abstract_initial()],
+        abstract_initial: vec![world.abstract_initial()].into(),
     };
     settle_refinement_safety(
         outcome,
@@ -367,7 +367,7 @@ fn the_product_key_holds_the_candidate_set() {
                 proof_bounds: Vec::new(),
             },
             abstract_package: world.package(),
-            abstract_initial: vec![world.abstract_initial()],
+            abstract_initial: vec![world.abstract_initial()].into(),
             abstract_protocol_binding: None,
             max_depth: Some(1),
             limits: ModelCheckLimits::default(),
@@ -397,7 +397,7 @@ fn a_certificate_position_carries_its_history() {
         refinement: world.refinement(),
         concrete: world.concrete_request(UNLIMITED),
         abstract_package: world.package(),
-        abstract_initial: vec![world.abstract_initial()],
+        abstract_initial: vec![world.abstract_initial()].into(),
     };
     let check = |certificate: &fsl_replay::SimulationCertificate| {
         check_simulation_certificate(
@@ -427,4 +427,84 @@ fn a_certificate_position_carries_its_history() {
         matches!(check(&lacking), TemporalCertificateCheck::Rejected(_)),
         "a certificate without the second variant is rejected"
     );
+}
+
+/// FR-630 "Request item", FR-144: with no abstract subject the hidden `side`
+/// ranges over the values the abstract constraint admits, so one concrete
+/// coin gives one abstract initial state for each `side`, and the refinement
+/// holds for every one of them; the mapped `side` row fixes it to a single
+/// state and is refuted as before.
+#[trace("TC-1590", "FR-630")]
+#[test]
+fn a_hidden_side_ranges_over_the_abstract_initial_states_the_mapping_leaves_open() {
+    let unit = Unit::coin(1);
+    let hidden = unit.world(&coin_refines(""));
+    let systems = open_systems(
+        hidden.refinement(),
+        &hidden.concrete_request(UNLIMITED),
+        hidden.package(),
+        fsl_replay::AbstractInitial::Mapped,
+    )
+    .expect("the subjects open");
+    assert_eq!(systems.abstract_system.initial_states().len(), 2);
+    let RefinementOutcome { safety, .. } = check_refinement(
+        RefinementCheckRequest {
+            refinement: hidden.refinement(),
+            concrete: ModelSubject {
+                simulation: hidden.concrete_request(UNLIMITED),
+                proof_bounds: Vec::new(),
+            },
+            abstract_package: hidden.package(),
+            abstract_initial: fsl_replay::AbstractInitial::Mapped,
+            abstract_protocol_binding: None,
+            max_depth: None,
+            limits: ModelCheckLimits::default(),
+        },
+        &Cancel::new(),
+    )
+    .expect("the refinement is checked");
+    assert!(matches!(safety, SafetyOutcome::Holds { .. }), "{safety:?}");
+}
+
+/// FR-630 "Request item", FSpec FR-378: the abstract initial states the
+/// mapping leaves open count against `max_candidates`, one budget across the
+/// whole opening, so a bound below the `side` assignments stops the run
+/// `resource-incomplete` naming `max_candidates` and its setting, not
+/// `declined`.
+#[trace("TC-1590", "FR-630")]
+#[test]
+fn the_open_field_assignments_count_against_the_candidate_bound() {
+    let unit = Unit::coin(1);
+    let world = unit.world(&coin_refines(""));
+    let mut concrete = world.concrete_request(UNLIMITED);
+    concrete.expansion = fsl_eval::simulation::model::ExpansionLimits { max_candidates: 1 };
+    let RefinementOutcome { safety, liveness } = check_refinement(
+        RefinementCheckRequest {
+            refinement: world.refinement(),
+            concrete: ModelSubject {
+                simulation: concrete,
+                proof_bounds: Vec::new(),
+            },
+            abstract_package: world.package(),
+            abstract_initial: fsl_replay::AbstractInitial::Mapped,
+            abstract_protocol_binding: None,
+            max_depth: None,
+            limits: ModelCheckLimits::default(),
+        },
+        &Cancel::new(),
+    )
+    .expect("the stop is an outcome, not a refusal");
+    assert!(liveness.is_none());
+    let SafetyOutcome::Stopped {
+        cause,
+        limit: Some(reached),
+        ..
+    } = safety
+    else {
+        panic!("the opening stops on the candidate bound: {safety:?}");
+    };
+    assert_eq!(cause, fsl_replay::IncompleteCause::ResourceExhausted);
+    assert_eq!(reached.limit, fsl_replay::ModelCheckLimit::MaxCandidates);
+    assert_eq!(reached.value, 1);
+    assert_eq!(reached.limit.setting(), "expansion.max_candidates");
 }
