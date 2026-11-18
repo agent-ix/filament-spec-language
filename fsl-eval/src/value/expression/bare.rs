@@ -435,6 +435,7 @@ impl CheckedPackageEvaluation for BarePackage<'_> {
         _clause: &fsl_semantics::check::TemporalClauseNode,
         _atom: fsl_semantics::check::FormulaNodeId,
         _over: &filament_exact::ObjectReference,
+        _captures: &[Value],
         _objects: &ObjectEnvironment,
         _observation: super::ObservationIdentity,
         _meter: &mut Meter,

@@ -276,6 +276,7 @@ impl<'a> ClauseState<'a> {
                     stopped: None,
                     undefined: None,
                     decisive: Some(Ok(*atom)),
+                    captures: Vec::new(),
                 });
             }
         }
@@ -348,6 +349,7 @@ impl<'a> ClauseState<'a> {
             self.node,
             atom,
             over,
+            &[],
             objects,
             fsl_eval::value::ObservationIdentity {
                 authority: document.authority,
@@ -438,6 +440,7 @@ impl<'a> ClauseState<'a> {
             stopped: read.stopped,
             undefined: read.undefined,
             decisive: None,
+            captures: Vec::new(),
         };
         let usage = ClauseRunUsage::from_meter(meter, Default::default());
         let mut report = streamed_sample_report(

@@ -1035,6 +1035,7 @@ pub trait CheckedPackageEvaluation: family::sealed::Sealed {
         clause: &fsl_semantics::check::TemporalClauseNode,
         atom: fsl_semantics::check::FormulaNodeId,
         over: &filament_exact::ObjectReference,
+        captures: &[Value],
         objects: &ObjectEnvironment,
         observation: ObservationIdentity,
         meter: &mut Meter,
@@ -1937,6 +1938,7 @@ impl CheckedPackageEvaluation for CheckedPackage {
         clause: &fsl_semantics::check::TemporalClauseNode,
         atom: fsl_semantics::check::FormulaNodeId,
         over: &filament_exact::ObjectReference,
+        captures: &[Value],
         objects: &ObjectEnvironment,
         observation: ObservationIdentity,
         meter: &mut Meter,
@@ -1962,7 +1964,11 @@ impl CheckedPackageEvaluation for CheckedPackage {
             self.graph().dispatch_tables(),
         )
         .with_trail(trail)
-        .run_traced(condition, slots, vec![Value::Reference(over.clone())])
+        .run_traced(
+            condition,
+            slots,
+            holds_bindings(clause, Value::Reference(over.clone()), captures),
+        )
         .map_err(CallFailure::Fault)?;
         Ok(ClauseEvaluation::new(
             evaluation,

@@ -60,6 +60,10 @@ pub struct ObservedRun {
     /// The violation's decisive atom, found by [`evaluate_observed_decisive`]
     /// on the run's own evaluator and meter; `None` for every other run.
     pub decisive: Option<DecisiveSearch>,
+    /// The captures the violating activation fixed (FR-860), which the
+    /// decisive atom is read again with; empty for every other run and for a
+    /// clause with no capture.
+    pub captures: Vec<Value>,
 }
 
 /// The expression an observed run first read as undefined: a `holds` atom,
@@ -281,11 +285,16 @@ fn evaluate_observed_goal(
         (Some(HoldsStop::Refused { .. }), Ok(_)) => None,
         (stopped, _) => stopped,
     };
+    let captures = match &result {
+        Ok(TemporalOutcome::Violated { at }) => letters.fixed.remove(&at.index()).unwrap_or_default(),
+        _ => Vec::new(),
+    };
     ObservedRun {
         result,
         stopped,
         undefined: letters.undefined,
         decisive,
+        captures,
     }
 }
 

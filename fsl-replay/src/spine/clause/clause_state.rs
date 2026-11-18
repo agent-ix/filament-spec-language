@@ -493,7 +493,8 @@ impl<'a> ClauseState<'a> {
             );
         let reading = match reading {
             Reading::Streamed if reads_captures => Reading::Values,
-            Reading::Subject | Reading::Snapshot if per_activation => Reading::Values,
+            Reading::Subject if per_activation => Reading::Values,
+            Reading::Snapshot if reads_captures => Reading::Values,
             other => other,
         };
         let mut exhausted = None;
@@ -885,6 +886,7 @@ impl<'a> ClauseState<'a> {
             stopped: read.stopped,
             undefined: read.undefined,
             decisive: None,
+            captures: Vec::new(),
         };
         let usage = ClauseRunUsage::from_meter(meter, Default::default());
         streamed_sample_report(
