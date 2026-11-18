@@ -39,10 +39,17 @@ fn refinement_stepping(name: &str, mapped: &str, step: &str, rows: &str) -> Stri
 /// identity, which the unit selects as `Spec`.
 const SPEC: &str = "test/counter-spec";
 
+/// FSpec FR-368's `abstract_subject` starting at the [`SPEC`] snapshot
+/// `identity`: `spec-start` holds counter `a` at 0, `spec-start-one` at 1.
+fn abstract_start(identity: &str) -> Value {
+    json!({"identity": SPEC, "initial_states": [{"authority": "test", "identity": identity}]})
+}
+
 /// The Counter request with the abstract `Spec` model, a copy of the Counter
 /// domain package under [`SPEC`], selected in the unit header. The concrete
 /// subject is counter `a` at 0; each item's `abstract_subject` (FSpec
-/// FR-368) names the abstract snapshot, counter `a` at 0 in [`SPEC`].
+/// FR-368) names the abstract snapshot, `spec-start` unless the item names
+/// one.
 fn refinement_request(ws: &Workspace, body: &str, items: Value) -> std::path::PathBuf {
     // The abstract `inc` carries the concrete one's contract.
     let contract = crate::counter::CONTRACT
@@ -62,19 +69,25 @@ fn refinement_request(ws: &Workspace, body: &str, items: Value) -> std::path::Pa
             .into_bytes()
     };
     let snapshot = crate::analyze_cli_support::counter_snapshot(&[("a", 0)]);
-    let spec_snapshot = String::from_utf8(spec(snapshot.clone()))
+    let spec_snapshot = |value: i64, identity: &str| -> Vec<u8> {
+        String::from_utf8(spec(crate::analyze_cli_support::counter_snapshot(&[(
+            "a", value,
+        )])))
         .expect("the fixture is UTF-8")
-        .replace("\"identity\":\"start\"", "\"identity\":\"spec-start\"")
-        .into_bytes();
+        .replace("\"identity\":\"start\"", &format!("\"identity\":\"{identity}\""))
+        .into_bytes()
+    };
     ws.write("program.fsl", unit.as_bytes());
     ws.write("model.json", &crate::counter::document(false));
     ws.write("spec.json", &spec(crate::counter::document(false)));
     ws.write("start.json", &snapshot);
-    ws.write("spec-start.json", &spec_snapshot);
+    ws.write("spec-start.json", &spec_snapshot(0, "spec-start"));
+    ws.write("spec-start-one.json", &spec_snapshot(1, "spec-start-one"));
     let mut items = items;
     for item in items.as_array_mut().expect("items") {
-        item["temporal"]["abstract_subject"] = json!({"identity": SPEC,
-            "initial_states": [{"authority": "test", "identity": "spec-start"}]});
+        if item["temporal"].get("abstract_subject").is_none() {
+            item["temporal"]["abstract_subject"] = abstract_start("spec-start");
+        }
     }
     let mut request = request_members(Some(items));
     request["models"].as_array_mut().expect("models").push(
@@ -82,7 +95,8 @@ fn refinement_request(ws: &Workspace, body: &str, items: Value) -> std::path::Pa
             "authority": "test", "identity": "counter-spec-model", "document": "Counter",
             "formal_revision": 1}}),
     );
-    request["documents"] = json!([{"file": "start.json"}, {"file": "spec-start.json"}]);
+    request["documents"] = json!([{"file": "start.json"}, {"file": "spec-start.json"},
+        {"file": "spec-start-one.json"}]);
     let start = json!([{"authority": "test", "identity": "start"}]);
     request["subject"] = json!({"initial_states": start, "universes": start, "proof_bounds": []});
     let document = json!({"format": "native-analyze/1", "request": request});
@@ -90,24 +104,33 @@ fn refinement_request(ws: &Workspace, body: &str, items: Value) -> std::path::Pa
 }
 
 /// FR-630-AC-1: a correct mapping proves and a wrong one refutes with a
-/// replayed counterexample carrying per-step records.
+/// replayed counterexample carrying per-step records. The wrong mapping
+/// sends the empty counter (`value = 0`) to a non-empty one (`value = 1`);
+/// its abstract subject starts at that image, as FR-630's default does, so
+/// the first concrete `inc` maps to an abstract `inc` the abstract contract
+/// rejects: `abstract-step-disabled` (RS-4, `AbstractStepRejected`).
 #[trace("TC-1590", "FR-630-AC-1")]
 #[test]
 fn a_refinement_proves_and_a_wrong_mapping_refutes() {
     let body = refinement("Same", "self.value", "")
-        + &refinement_stepping("Off", "self.value", "stutter", "");
+        + &refinement("Off", "if self.value = 0 then 1 else self.value", "");
     let ws = Workspace::new("family-refinement");
     let run = analyze(&refinement_request(
         &ws,
         &body,
         json!([{"claim": "Same", "kind": "refinement", "temporal": {"item_kind": "refinement"}},
-            {"claim": "Off", "kind": "refinement", "temporal": {"item_kind": "refinement"}}]),
+            {"claim": "Off", "kind": "refinement", "temporal": {"item_kind": "refinement",
+                "abstract_subject": abstract_start("spec-start-one")}}]),
     ));
     assert_eq!(results(&run, 2), ["proved", "refuted"]);
     assert_eq!(run.item(0)["record"]["certification"], "certified");
     let refuted = run.item(1);
     assert_eq!(refuted["replay"]["reproduced"], true);
     assert!(refuted["counterexample"]["steps"].is_array(), "{refuted}");
+    assert_eq!(
+        refuted["counterexample"]["refinement_failure"]["kind"], "AbstractStepRejected",
+        "{refuted}"
+    );
 }
 
 /// FR-630 "Outputs": the refuted item's counterexample carries the abstract
@@ -855,3 +878,4 @@ fn a_hyper_clause_over_two_models_analyzes_and_replays_per_trace() {
         assert_eq!(item["replay"]["reproduced"], true, "{item}");
     }
 }
+

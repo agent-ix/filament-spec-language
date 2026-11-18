@@ -8,7 +8,7 @@
 
 use std::num::NonZeroU64;
 
-use filament_exact::Cancel;
+use filament_exact::{length_amount, Cancel, Charge, ChargePoint, Incomplete, Meter};
 use filament_semantic_value::catalog::Category;
 use fsl_eval::simulation::model::{enumerate_model, sample_model_runs, ModelSystem, SampledRuns};
 use fsl_eval::simulation::{
@@ -219,6 +219,7 @@ fn ending(end: &EnumerationEnd, settings: &SimulationSelection) -> (Category, Op
                 "value": settings.max_state_key_bytes()}),
             ),
         ),
+        EnumerationEnd::Meter(incomplete) => (Category::Incomplete, Some(meter_cause(incomplete))),
         EnumerationEnd::Cancelled => (
             Category::Incomplete,
             Some(json!({"kind": "cancelled", "code": "cancelled"})),
@@ -273,8 +274,8 @@ pub(super) fn simulate(
     document.insert("kind".to_owned(), json!("simulation"));
     document.insert("simulation".to_owned(), settings.echo());
     let category = match settings.mode {
-        SimulationMode::Enumerate => enumerate(&system, settings, cancel, &mut document)?,
-        SimulationMode::Sample => sample(&system, settings, cancel, &mut document)?,
+        SimulationMode::Enumerate => enumerate(&system, settings, limits, cancel, &mut document)?,
+        SimulationMode::Sample => sample(&system, settings, limits, cancel, &mut document)?,
     };
     document.insert("category".to_owned(), json!(category.as_str()));
     Ok((Value::Object(document), category))
@@ -296,9 +297,50 @@ fn not_simulated(refused: &NotSimulated) -> (Category, Value) {
     }
 }
 
+/// The FR-109 `limit-reached` cause of a refused charge, naming the
+/// counter, its limit and the charge point.
+fn meter_cause(incomplete: &Incomplete) -> Value {
+    json!({"kind": "limit-reached", "limit": incomplete.limit_kind.as_str(),
+        "value": incomplete.limit, "charge_point": incomplete.charge_point.as_str()})
+}
+
+/// The bound on what one item writes: every emitted trace step is charged
+/// to the item's FR-109 meter before the trace is built, and the written
+/// traces' bytes are held under the request's `emit.output_bytes`.
+struct Emission<'m> {
+    meter: &'m mut Meter,
+    written: u64,
+    limit: u64,
+}
+
+impl Emission<'_> {
+    /// Admit a trace of `positions` states before it is built.
+    fn admit(&mut self, positions: usize) -> Result<(), Value> {
+        self.meter
+            .charge(Charge::new(ChargePoint::GraphResultRetain).results(length_amount(positions)))
+            .map_err(|incomplete| meter_cause(&incomplete))
+    }
+
+    /// Account for the built trace `trace`; refuse it when the item's
+    /// written bytes would pass `emit.output_bytes`.
+    fn account(&mut self, trace: &Value) -> Result<(), Value> {
+        let bytes = u64::try_from(trace.to_string().len()).unwrap_or(u64::MAX);
+        let written = self.written.saturating_add(bytes);
+        if written > self.limit {
+            return Err(
+                json!({"kind": "limit-reached", "limit": "emit.output_bytes",
+                "value": self.limit}),
+            );
+        }
+        self.written = written;
+        Ok(())
+    }
+}
+
 fn enumerate(
     system: &ModelSystem<'_>,
     settings: &SimulationSelection,
+    limits: &AnalyzeLimits,
     cancel: &Cancel,
     document: &mut Map<String, Value>,
 ) -> Result<Category, SimulationFault> {
@@ -307,7 +349,10 @@ fn enumerate(
         max_steps: settings.max_steps(),
         max_state_key_bytes: settings.max_state_key_bytes(),
     };
-    let run = match enumerate_model(system, BOUND_POSITIONS, bounds, || cancel.poll()) {
+    let mut meter = Meter::new(limits.accounting);
+    let run = match enumerate_model(system, BOUND_POSITIONS, bounds, &mut meter, || {
+        cancel.poll()
+    }) {
         Ok(run) => run,
         Err(refused) => {
             let (category, cause) = not_simulated(&refused);
@@ -326,21 +371,35 @@ fn enumerate(
             state_value(&state.key)
         }
     };
-    let traces = run
-        .traces()
-        .into_iter()
-        .map(|(positions, transitions)| {
-            let states = positions
-                .iter()
-                .map(|at| position(*at))
-                .collect::<Result<Vec<_>, _>>()?;
-            let choices = transitions
-                .iter()
-                .map(|transition| Ok(json!({"transition": transition_value(transition)?})))
-                .collect::<Result<Vec<_>, SimulationFault>>()?;
-            Ok(json!({"states": states, "steps": choices}))
-        })
-        .collect::<Result<Vec<_>, SimulationFault>>()?;
+    let mut emission = Emission {
+        meter: &mut meter,
+        written: 0,
+        limit: limits.emit.output_bytes,
+    };
+    let mut traces = Vec::new();
+    let mut cut = None;
+    for leaf in run.leaves() {
+        let depth = run.states.get(leaf).map_or(0, |state| state.depth);
+        if let Err(cause) = emission.admit(depth.saturating_add(1)) {
+            cut = Some(cause);
+            break;
+        }
+        let (positions, transitions) = run.path(leaf);
+        let states = positions
+            .iter()
+            .map(|at| position(*at))
+            .collect::<Result<Vec<_>, _>>()?;
+        let choices = transitions
+            .iter()
+            .map(|transition| Ok(json!({"transition": transition_value(transition)?})))
+            .collect::<Result<Vec<_>, SimulationFault>>()?;
+        let trace = json!({"states": states, "steps": choices});
+        if let Err(cause) = emission.account(&trace) {
+            cut = Some(cause);
+            break;
+        }
+        traces.push(trace);
+    }
     let frontier = run
         .frontier
         .iter()
@@ -353,7 +412,12 @@ fn enumerate(
             })
         })
         .collect::<Result<Vec<_>, SimulationFault>>()?;
-    let (category, cause) = ending(&run.end, settings);
+    let (category, cause) = match cut {
+        // A cut list of traces leaves the run incomplete whatever else
+        // stopped it.
+        Some(cause) => (Category::Incomplete, Some(cause)),
+        None => ending(&run.end, settings),
+    };
     if let Some(cause) = cause {
         document.insert("cause".to_owned(), cause);
     }
@@ -373,6 +437,7 @@ fn base64url(key: &StateKey) -> String {
 fn sample(
     system: &ModelSystem<'_>,
     settings: &SimulationSelection,
+    limits: &AnalyzeLimits,
     cancel: &Cancel,
     document: &mut Map<String, Value>,
 ) -> Result<Category, SimulationFault> {
@@ -385,51 +450,65 @@ fn sample(
         samples: settings.samples(),
         max_steps: settings.max_steps(),
     };
-    let (traces, coverage) =
-        match sample_model_runs(system, BOUND_POSITIONS, &sampler, runs, || cancel.poll()) {
-            Ok(drawn) => drawn,
-            Err(refused) => {
-                let (category, cause) = not_simulated(&refused);
-                document.insert("cause".to_owned(), cause);
-                document.insert("traces".to_owned(), json!([]));
-                document.insert("coverage".to_owned(), coverage_value(&Coverage::default()));
-                document.insert("frontier".to_owned(), json!([]));
-                return Ok(category);
-            }
-        };
+    let mut meter = Meter::new(limits.accounting);
+    let draw = match sample_model_runs(system, BOUND_POSITIONS, &sampler, runs, &mut meter, || {
+        cancel.poll()
+    }) {
+        Ok(draw) => draw,
+        Err(refused) => {
+            let (category, cause) = not_simulated(&refused);
+            document.insert("cause".to_owned(), cause);
+            document.insert("traces".to_owned(), json!([]));
+            document.insert("coverage".to_owned(), coverage_value(&Coverage::default()));
+            document.insert("frontier".to_owned(), json!([]));
+            return Ok(category);
+        }
+    };
+    let mut emission = Emission {
+        meter: &mut meter,
+        written: 0,
+        limit: limits.emit.output_bytes,
+    };
     let limit = settings.max_state_key_bytes();
     let mut oversized = false;
-    let written = traces
-        .iter()
-        .enumerate()
-        .map(|(index, trace)| {
-            let mut states = Vec::new();
-            let mut steps = Vec::new();
-            let mut keep = |key: &StateKey| -> Result<bool, SimulationFault> {
-                if !u64::try_from(key.as_bytes().len()).is_ok_and(|len| len <= limit) {
-                    states.push(json!({"position": states.len()}));
-                    oversized = true;
-                    return Ok(false);
-                }
-                states.push(state_value(key)?);
-                Ok(true)
-            };
-            if keep(&trace.initial)? {
-                for step in &trace.steps {
-                    steps.push(json!({"transition": transition_value(&step.transition)?}));
-                    if !keep(&step.key)? {
-                        break;
-                    }
+    let mut cut = draw.stopped.as_ref().map(meter_cause);
+    let mut written = Vec::new();
+    for (index, trace) in draw.traces.iter().enumerate() {
+        if let Err(cause) = emission.admit(trace.steps.len().saturating_add(1)) {
+            cut = Some(cause);
+            break;
+        }
+        let mut states = Vec::new();
+        let mut steps = Vec::new();
+        let mut keep = |key: &StateKey| -> Result<bool, SimulationFault> {
+            if !u64::try_from(key.as_bytes().len()).is_ok_and(|len| len <= limit) {
+                states.push(json!({"position": states.len()}));
+                oversized = true;
+                return Ok(false);
+            }
+            states.push(state_value(key)?);
+            Ok(true)
+        };
+        if keep(&trace.initial)? {
+            for step in &trace.steps {
+                steps.push(json!({"transition": transition_value(&step.transition)?}));
+                if !keep(&step.key)? {
+                    break;
                 }
             }
-            Ok(
-                json!({"seed": seed.to_string(), "trace_index": index.to_string(),
-                "states": states, "steps": steps}),
-            )
-        })
-        .collect::<Result<Vec<_>, SimulationFault>>()?;
+        }
+        let trace = json!({"seed": seed.to_string(), "trace_index": index.to_string(),
+            "states": states, "steps": steps});
+        if let Err(cause) = emission.account(&trace) {
+            cut = Some(cause);
+            break;
+        }
+        written.push(trace);
+    }
     let drawn = u64::try_from(written.len()).unwrap_or(u64::MAX);
-    let (category, cause) = if oversized {
+    let (category, cause) = if let Some(cause) = cut {
+        (Category::Incomplete, Some(cause))
+    } else if oversized {
         (
             Category::Incomplete,
             Some(
@@ -449,7 +528,59 @@ fn sample(
         document.insert("cause".to_owned(), cause);
     }
     document.insert("traces".to_owned(), Value::Array(written));
-    document.insert("coverage".to_owned(), coverage_value(&coverage));
+    document.insert("coverage".to_owned(), coverage_value(&draw.coverage));
     document.insert("frontier".to_owned(), json!([]));
     Ok(category)
+}
+
+#[cfg(test)]
+mod tests {
+    use filament_exact::{Meter, ScalarLimits};
+    use ix_trace_rs::trace;
+    use serde_json::json;
+
+    use super::Emission;
+
+    fn limits(result_units: u64) -> ScalarLimits {
+        ScalarLimits {
+            integer_bits: u64::MAX,
+            decimal_digits: u64::MAX,
+            scale_expansion: u64::MAX,
+            text_input_bytes: u64::MAX,
+            text_scalars: u64::MAX,
+            normalized_scalars: u64::MAX,
+            unit_edges: u64::MAX,
+            value_occurrences: u64::MAX,
+            work_units: u64::MAX,
+            result_units,
+        }
+    }
+
+    /// FR-634, FR-109: a trace is charged by its length before it is built,
+    /// so a run whose leaves times depth pass `result_units` stops naming
+    /// the counter, and the written traces' bytes stop at
+    /// `emit.output_bytes`.
+    #[trace("TC-1594", "FR-634")]
+    #[test]
+    fn traces_stop_at_the_result_and_emit_limits() {
+        let mut meter = Meter::new(limits(5));
+        let mut emission = Emission {
+            meter: &mut meter,
+            written: 0,
+            limit: 40,
+        };
+        assert!(emission.admit(3).is_ok());
+        let cause = emission.admit(3).expect_err("3 + 3 positions pass 5");
+        assert_eq!(cause["kind"], "limit-reached");
+        assert_eq!(cause["limit"], "result_units");
+        assert_eq!(cause["value"], 5);
+
+        let trace = json!({"states": [1, 2, 3], "steps": [4, 5]});
+        assert!(emission.account(&trace).is_ok());
+        let cause = emission
+            .account(&trace)
+            .expect_err("two traces pass 40 bytes");
+        assert_eq!(cause["limit"], "emit.output_bytes");
+        assert_eq!(cause["value"], 40);
+    }
 }

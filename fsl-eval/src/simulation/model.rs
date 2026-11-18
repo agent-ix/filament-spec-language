@@ -1757,7 +1757,8 @@ pub fn sample_model(
 
 /// FSL FR-634's enumeration over `system`: [`enumerate_request`] over its
 /// [`ModelSystem::domains`] and the package's `TypeEnvironment`, keeping
-/// the discovery tree.
+/// the discovery tree and charging `meter` for every expansion and every
+/// stored state and edge.
 ///
 /// # Errors
 ///
@@ -1768,6 +1769,7 @@ pub fn enumerate_model(
     system: &ModelSystem<'_>,
     position_limit: u64,
     bounds: crate::simulation::EnumerationBounds,
+    meter: &mut filament_exact::Meter,
     poll: impl FnMut() -> bool,
 ) -> Result<crate::simulation::Enumeration<ModelTransition>, NotSimulated> {
     let domains = system.rooted_domains();
@@ -1784,6 +1786,7 @@ pub fn enumerate_model(
             bounds,
             identity: identity_limits(),
         },
+        meter,
         poll,
     )
 }
@@ -1799,12 +1802,28 @@ pub struct SampledRuns {
     pub max_steps: usize,
 }
 
+/// What [`sample_model_runs`] drew: the traces in trace-index order, the
+/// coverage they visited, and the FR-109 refusal that stopped the run, if
+/// the meter refused before every requested trace was drawn in full.
+pub struct SampledDraw {
+    /// The traces drawn, the last one cut short when `stopped` is set.
+    pub traces: Vec<Trace<ModelTransition, ModelFinding>>,
+    /// What the traces visited.
+    pub coverage: crate::simulation::Coverage,
+    /// The meter's refusal, when it stopped the run.
+    pub stopped: Option<filament_exact::Incomplete>,
+}
+
 /// FSL FR-634's sampled runs over `system`: `runs.samples` traces drawn by
 /// `sampler` (the `filament.simulation.sampler/v1` generator) under
-/// `runs.seed`, in
-/// trace-index order, with the coverage they visited. `poll` is called once
-/// per trace; returning `true` stops before that trace, and the traces drawn
-/// so far are returned.
+/// `runs.seed`, in trace-index order, with the coverage they visited.
+///
+/// Every state a trace reaches is charged to `meter` (`graph.edge`) before
+/// the sampler draws from it, and every finished trace's retained keys
+/// (`graph.result-retain`, their bytes), so the traces held never outgrow
+/// the request's accounting limits: a refused charge ends the trace there
+/// and the run, and [`SampledDraw::stopped`] names the counter. `poll` is
+/// called once per trace; returning `true` stops before that trace.
 ///
 /// # Errors
 ///
@@ -1814,39 +1833,64 @@ pub fn sample_model_runs(
     position_limit: u64,
     sampler: &DefinitionRef,
     runs: SampledRuns,
+    meter: &mut filament_exact::Meter,
     mut poll: impl FnMut() -> bool,
-) -> Result<
-    (
-        Vec<Trace<ModelTransition, ModelFinding>>,
-        crate::simulation::Coverage,
-    ),
-    NotSimulated,
-> {
+) -> Result<SampledDraw, NotSimulated> {
+    use filament_exact::{length_amount, Charge, ChargePoint};
     let domains = system.rooted_domains();
     let roots: Vec<(NodeKey, Vec<u32>, &ValueType)> = domains
         .iter()
         .map(|(id, base, value_type)| (id.clone(), base.clone(), value_type))
         .collect();
     let mut traces = Vec::new();
+    let mut stopped = None;
     for trace in 0..runs.samples {
         if poll() {
             break;
         }
-        traces.push(sample_request(
+        let drawn = sample_request_until(
             system,
-            &roots,
-            system.types,
-            position_limit,
-            sampler,
-            runs.seed,
-            trace,
-            runs.max_steps,
-            identity_limits(),
-        )?);
+            SampleRequest {
+                domains: &roots,
+                types: system.types,
+                position_limit,
+                sampler,
+                seed: runs.seed,
+                trace,
+                max_steps: runs.max_steps,
+                identity: identity_limits(),
+            },
+            |_| match meter.charge(Charge::new(ChargePoint::GraphEdge)) {
+                Ok(()) => false,
+                Err(incomplete) => {
+                    stopped = Some(incomplete);
+                    true
+                }
+            },
+        )?;
+        let retained = std::iter::once(&drawn.initial)
+            .chain(drawn.steps.iter().map(|step| &step.key))
+            .map(|key| length_amount(key.as_bytes().len()))
+            .fold(0u64, u64::saturating_add);
+        if stopped.is_none() {
+            if let Err(incomplete) =
+                meter.charge(Charge::new(ChargePoint::GraphResultRetain).results(retained))
+            {
+                stopped = Some(incomplete);
+            }
+        }
+        traces.push(drawn);
+        if stopped.is_some() {
+            break;
+        }
     }
     let coverage = crate::simulation::sampled_coverage(system, &traces, identity_limits())
         .map_err(NotSimulated::from)?;
-    Ok((traces, coverage))
+    Ok(SampledDraw {
+        traces,
+        coverage,
+        stopped,
+    })
 }
 
 /// The expansions of one run's sampled walks, kept so that a state the walks

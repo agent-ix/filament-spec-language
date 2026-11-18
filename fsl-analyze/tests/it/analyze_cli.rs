@@ -407,6 +407,66 @@ fn a_step_bound_leaves_the_horizon_state_in_the_frontier() {
     assert_eq!(run.exit, 22, "an incomplete item ranks in the exit code");
 }
 
+/// The Counter request with `items` under the request's FR-109 accounting
+/// limit `result_units`.
+fn metered_counter_request(ws: &Workspace, items: Value, result_units: u64) -> std::path::PathBuf {
+    let mut request = crate::analyze_cli_support::request_members(Some(items));
+    request["limits"] = json!({"accounting": {"result_units": result_units}});
+    crate::analyze_cli_support::counter_request_with(ws, "", request)
+}
+
+/// FR-634, FR-109: an enumeration's store and its written traces are
+/// charged to the request's accounting limits, so a walk whose states and
+/// traces outgrow a small `result_units` stops `incomplete` with
+/// `limit-reached` naming the counter, writing only the traces admitted
+/// before it, and the same walk under the default limits completes.
+#[trace("TC-1594", "FR-634")]
+#[test]
+fn an_enumeration_over_the_result_budget_stops_incomplete() {
+    let item = json!([{"kind": "simulation", "simulation": {"mode": "enumerate"}}]);
+    let ws = Workspace::new("cli-simulation-metered");
+    let run = analyze(&metered_counter_request(&ws, item.clone(), 1_000));
+    let stopped = run.item(0);
+    assert_eq!(stopped["category"], "incomplete", "{stopped}");
+    assert_eq!(stopped["cause"]["kind"], "limit-reached", "{stopped}");
+    assert_eq!(stopped["cause"]["limit"], "result_units", "{stopped}");
+    assert_eq!(stopped["cause"]["value"], 1_000, "{stopped}");
+    let states: u64 = stopped["coverage"]["states"]
+        .as_str()
+        .and_then(|count| count.parse().ok())
+        .expect("a decimal count");
+    assert!(states < 4, "the store stopped before the walk ended: {stopped}");
+    assert!(
+        !stopped["frontier"].as_array().expect("frontier").is_empty(),
+        "{stopped}"
+    );
+    let ws = Workspace::new("cli-simulation-unmetered");
+    let run = analyze(&counter_request(&ws, "", item));
+    assert_eq!(run.item(0)["category"], "success", "{}", run.item(0));
+}
+
+/// FR-634, FR-109: sampled traces are charged per reached state and per
+/// retained trace, so many requested samples under a small `result_units`
+/// stop `incomplete` naming the counter after the traces it admitted,
+/// never holding every requested trace.
+#[trace("TC-1594", "FR-634")]
+#[test]
+fn sampling_over_the_result_budget_stops_incomplete() {
+    let ws = Workspace::new("cli-simulation-sample-metered");
+    let run = analyze(&metered_counter_request(
+        &ws,
+        json!([{"kind": "simulation",
+            "simulation": {"mode": "sample", "seed": 5, "samples": 1_000_000}}]),
+        5_000,
+    ));
+    let stopped = run.item(0);
+    assert_eq!(stopped["category"], "incomplete", "{stopped}");
+    assert_eq!(stopped["cause"]["kind"], "limit-reached", "{stopped}");
+    assert_eq!(stopped["cause"]["limit"], "result_units", "{stopped}");
+    let traces = stopped["traces"].as_array().expect("traces").len();
+    assert!(traces < 10, "{traces} traces of a million requested");
+}
+
 /// FR-635-AC-3: an unregistered backend is an invalid request.
 #[trace("TC-1595", "FR-635-AC-3")]
 #[test]

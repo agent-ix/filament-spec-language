@@ -8,7 +8,16 @@
 //! than an initial one keeps its *discovery edge*, the edge by which the
 //! walk first reached it, so the discovery edges form a tree rooted at the
 //! initial states, and the run's traces are the root-to-leaf paths of that
-//! tree, one per leaf, in the leaves' discovery order.
+//! tree, one per leaf, in the leaves' discovery order. The tree is stored
+//! once, each state by one shared key and each edge by the positions of its
+//! two states and an interned transition identity; a trace is built from it
+//! only when the caller asks for that leaf's path ([`Enumeration::path`]).
+//!
+//! Every expansion, stored state and stored edge is charged to the caller's
+//! FR-109 [`Meter`] (`graph.expand`, `graph.result-retain` with the key's
+//! bytes, `graph.edge`), so a run whose store would outgrow the request's
+//! accounting limits stops `incomplete` naming the exhausted counter
+//! ([`EnumerationEnd::Meter`]).
 //!
 //! [`sampled_coverage`] re-walks sampled traces against the system that drew
 //! them and counts what they visited. Both count coverage with one meaning:
@@ -17,7 +26,9 @@
 //! which more than one successor was enabled.
 
 use std::collections::{HashMap, HashSet, VecDeque};
+use std::rc::Rc;
 
+use filament_exact::{length_amount, Charge, ChargePoint, Incomplete, Meter};
 use fsl_foundation::IdentityLimits;
 
 use crate::simulation::explore::TransitionSystem;
@@ -65,6 +76,9 @@ pub enum EnumerationEnd {
     /// A reached state's key was longer than `max_state_key_bytes`; it is
     /// kept in the frontier by position (FSpec FR-181-AC-30).
     StateKeyLimit,
+    /// The FR-109 meter refused a charge: the store would exceed the
+    /// request's accounting limits.
+    Meter(Incomplete),
     /// The caller cancelled the walk.
     Cancelled,
     /// The system stopped an expansion with this cause.
@@ -73,16 +87,18 @@ pub enum EnumerationEnd {
 
 /// One discovered state: its key, whether that key is longer than the
 /// walk's `max_state_key_bytes` (so no output carries it), its discovery
-/// edge, and whether it has a child in the discovery tree.
+/// edge, its depth, and whether it has a child in the discovery tree.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct Discovered<T> {
-    /// The state's full canonical key.
-    pub key: StateKey,
+    /// The state's full canonical key, shared with the walk's index.
+    pub key: Rc<StateKey>,
     /// Whether the key exceeds `max_state_key_bytes`.
     pub oversized: bool,
     /// The discovering state's position and the transition taken; `None`
     /// for an initial state.
     pub parent: Option<(usize, T)>,
+    /// The number of discovery edges from its initial state.
+    pub depth: usize,
     /// Whether some discovery edge leaves this state.
     pub has_child: bool,
 }
@@ -115,59 +131,121 @@ pub struct Enumeration<T> {
     pub coverage: Coverage,
 }
 
-impl<T: Clone> Enumeration<T> {
-    /// The discovery-tree traces: for each leaf, in discovery order, the
-    /// positions of the states from its initial state to it and the
-    /// transitions between them.
-    pub fn traces(&self) -> Vec<(Vec<FrontierPosition>, Vec<T>)> {
+impl<T> Enumeration<T> {
+    /// The leaves of the discovery tree, in discovery order: one trace each.
+    pub fn leaves(&self) -> impl Iterator<Item = FrontierPosition> + '_ {
         self.states
             .iter()
             .enumerate()
             .filter(|(_, state)| !state.has_child)
-            .map(|(leaf, _)| {
-                let mut positions = vec![leaf];
-                let mut transitions = Vec::new();
-                let mut at = leaf;
-                while let Some((parent, transition)) = &self.states[at].parent {
-                    positions.push(*parent);
-                    transitions.push(transition.clone());
-                    at = *parent;
-                }
-                positions.reverse();
-                transitions.reverse();
-                (positions, transitions)
-            })
-            .collect()
+            .map(|(leaf, _)| leaf)
+    }
+
+    /// The trace ending at `leaf`: the positions of the states from its
+    /// initial state to it and the transitions between them. Built on
+    /// request, so a caller meters each trace before it exists.
+    pub fn path(&self, leaf: FrontierPosition) -> (Vec<FrontierPosition>, Vec<&T>) {
+        let mut positions = vec![leaf];
+        let mut transitions = Vec::new();
+        let mut at = leaf;
+        while let Some((parent, transition)) = self.states.get(at).and_then(|s| s.parent.as_ref()) {
+            positions.push(*parent);
+            transitions.push(transition);
+            at = *parent;
+        }
+        positions.reverse();
+        transitions.reverse();
+        (positions, transitions)
     }
 }
 
-/// Distinct successors of one expansion, by transition identity bytes and
-/// post-state key.
-fn distinct_successors<T, S>(
+/// Whether one expansion's successors hold more than one distinct
+/// (transition identity, post-state) pair: a choice point.
+fn is_choice<T, S>(
     successors: &[OrderedSuccessor<T, S>],
     identity: IdentityLimits,
-) -> Result<Vec<(Vec<u8>, StateKey)>, EncodingRefusal>
+) -> Result<bool, EncodingRefusal>
 where
     T: quire_canonical::Encode,
 {
-    let mut seen = Vec::new();
+    let mut seen: HashSet<(Vec<u8>, &StateKey)> = HashSet::new();
     for successor in successors {
-        let entry = (
+        seen.insert((
             canonical_bytes(&successor.transition, identity)?,
-            successor.key.clone(),
-        );
-        if !seen.contains(&entry) {
-            seen.push(entry);
+            &successor.key,
+        ));
+        if seen.len() > 1 {
+            return Ok(true);
         }
     }
-    Ok(seen)
+    Ok(false)
+}
+
+/// The walk's store: the discovered states, the index from key to
+/// position, the interned transition identities and the traversed edges.
+struct Store<T> {
+    states: Vec<Discovered<T>>,
+    known: HashMap<Rc<StateKey>, usize>,
+    transitions: HashMap<Vec<u8>, usize>,
+    edges: HashSet<(usize, usize, usize)>,
+}
+
+impl<T> Store<T> {
+    /// Record a newly reached state, charging its retained key.
+    fn discover(
+        &mut self,
+        meter: &mut Meter,
+        key: StateKey,
+        oversized: bool,
+        parent: Option<(usize, T)>,
+        depth: usize,
+    ) -> Result<usize, Incomplete> {
+        meter.charge(
+            Charge::new(ChargePoint::GraphResultRetain)
+                .results(length_amount(key.as_bytes().len())),
+        )?;
+        let key = Rc::new(key);
+        let position = self.states.len();
+        if let Some((parent, _)) = &parent {
+            if let Some(state) = self.states.get_mut(*parent) {
+                state.has_child = true;
+            }
+        }
+        self.known.insert(Rc::clone(&key), position);
+        self.states.push(Discovered {
+            key,
+            oversized,
+            parent,
+            depth,
+            has_child: false,
+        });
+        Ok(position)
+    }
+
+    /// Record the edge `pre --transition--> post`, charging it once.
+    fn edge(
+        &mut self,
+        meter: &mut Meter,
+        pre: usize,
+        transition: Vec<u8>,
+        post: usize,
+    ) -> Result<(), Incomplete> {
+        let next = self.transitions.len();
+        let interned = *self.transitions.entry(transition).or_insert(next);
+        if !self.edges.contains(&(pre, interned, post)) {
+            meter.charge(Charge::new(ChargePoint::GraphEdge))?;
+            self.edges.insert((pre, interned, post));
+        }
+        Ok(())
+    }
 }
 
 /// Enumerate `system` breadth-first in FR-101's canonical order within
-/// `request`'s bounds, keeping the discovery tree, first refusing an
-/// unbounded `domains` request before any `TransitionSystem` method is
-/// called. `poll` is called once per state the walk attempts to expand;
-/// returning `true` cancels the walk before that state is touched.
+/// `request`'s bounds, keeping the discovery tree and charging `meter`,
+/// first refusing an unbounded `domains` request before any
+/// `TransitionSystem` method is called. `poll` is called once per state the
+/// walk attempts to expand; returning `true` cancels the walk before that
+/// state is touched.
 ///
 /// # Errors
 ///
@@ -175,6 +253,7 @@ where
 pub fn enumerate_request<S: TransitionSystem, R: Root>(
     system: &S,
     request: EnumerationRequest<'_, R>,
+    meter: &mut Meter,
     mut poll: impl FnMut() -> bool,
 ) -> Result<Enumeration<S::TransitionId>, NotSimulated> {
     check_requires_bound(request.domains, request.types, request.position_limit)?;
@@ -183,48 +262,54 @@ pub fn enumerate_request<S: TransitionSystem, R: Root>(
     let oversized = |key: &StateKey| {
         !u64::try_from(key.as_bytes().len()).is_ok_and(|len| len <= bounds.max_state_key_bytes)
     };
-    let mut states: Vec<Discovered<S::TransitionId>> = Vec::new();
-    let mut known: HashMap<StateKey, usize> = HashMap::new();
-    let mut queue: VecDeque<(usize, S::State, usize)> = VecDeque::new();
+    let mut store: Store<S::TransitionId> = Store {
+        states: Vec::new(),
+        known: HashMap::new(),
+        transitions: HashMap::new(),
+        edges: HashSet::new(),
+    };
+    let mut queue: VecDeque<(usize, S::State)> = VecDeque::new();
     let mut held: Vec<FrontierPosition> = Vec::new();
-    let mut edges: HashSet<(usize, Vec<u8>, StateKey)> = HashSet::new();
+    let mut frontier = Vec::new();
     let mut choices = 0usize;
     let mut end = None;
     for initial in sorted_initial(system, identity).map_err(NotSimulated::from)? {
-        if states.len() >= bounds.max_states {
+        if store.states.len() >= bounds.max_states {
             end = Some(EnumerationEnd::MaxStates);
             break;
         }
-        let position = states.len();
         let big = oversized(&initial.key);
-        known.insert(initial.key.clone(), position);
-        states.push(Discovered {
-            key: initial.key,
-            oversized: big,
-            parent: None,
-            has_child: false,
-        });
+        let position = match store.discover(meter, initial.key, big, None, 0) {
+            Ok(position) => position,
+            Err(incomplete) => {
+                end = Some(EnumerationEnd::Meter(incomplete));
+                break;
+            }
+        };
         if big {
             held.push(position);
         } else {
-            queue.push_back((position, initial.state, 0));
+            queue.push_back((position, initial.state));
         }
     }
-    let mut frontier = Vec::new();
     while end.is_none() {
-        let Some((position, state, depth)) = queue.pop_front() else {
+        let Some((position, state)) = queue.pop_front() else {
             break;
         };
+        let depth = store.states.get(position).map_or(0, |state| state.depth);
         if depth >= bounds.max_steps {
             frontier.push(position);
-            frontier.extend(queue.iter().map(|(at, _, _)| *at));
-            queue.clear();
             end = Some(EnumerationEnd::MaxSteps);
             break;
         }
         if poll() {
             frontier.push(position);
             end = Some(EnumerationEnd::Cancelled);
+            break;
+        }
+        if let Err(incomplete) = meter.charge(Charge::new(ChargePoint::GraphExpand)) {
+            frontier.push(position);
+            end = Some(EnumerationEnd::Meter(incomplete));
             break;
         }
         let successors = match expand(system, &state, identity).map_err(NotSimulated::from)? {
@@ -235,45 +320,52 @@ pub fn enumerate_request<S: TransitionSystem, R: Root>(
                 break;
             }
         };
-        let distinct = distinct_successors(&successors, identity).map_err(NotSimulated::from)?;
-        if distinct.len() > 1 {
+        if is_choice(&successors, identity).map_err(NotSimulated::from)? {
             choices += 1;
         }
-        let mut stopped = false;
         for successor in successors {
             let bytes =
                 canonical_bytes(&successor.transition, identity).map_err(NotSimulated::from)?;
-            if known.contains_key(&successor.key) {
-                edges.insert((position, bytes, successor.key));
+            if let Some(post) = store.known.get(&successor.key).copied() {
+                if let Err(incomplete) = store.edge(meter, position, bytes, post) {
+                    end = Some(EnumerationEnd::Meter(incomplete));
+                    break;
+                }
                 continue;
             }
-            if states.len() >= bounds.max_states {
-                frontier.push(position);
-                stopped = true;
+            if store.states.len() >= bounds.max_states {
+                end = Some(EnumerationEnd::MaxStates);
                 break;
             }
-            edges.insert((position, bytes, successor.key.clone()));
-            let discovered = states.len();
             let big = oversized(&successor.key);
-            known.insert(successor.key.clone(), discovered);
-            states[position].has_child = true;
-            states.push(Discovered {
-                key: successor.key,
-                oversized: big,
-                parent: Some((position, successor.transition)),
-                has_child: false,
-            });
+            let discovered = match store.discover(
+                meter,
+                successor.key,
+                big,
+                Some((position, successor.transition)),
+                depth + 1,
+            ) {
+                Ok(discovered) => discovered,
+                Err(incomplete) => {
+                    end = Some(EnumerationEnd::Meter(incomplete));
+                    break;
+                }
+            };
+            if let Err(incomplete) = store.edge(meter, position, bytes, discovered) {
+                end = Some(EnumerationEnd::Meter(incomplete));
+                break;
+            }
             if big {
                 held.push(discovered);
             } else {
-                queue.push_back((discovered, successor.state, depth + 1));
+                queue.push_back((discovered, successor.state));
             }
         }
-        if stopped {
-            end = Some(EnumerationEnd::MaxStates);
+        if end.is_some() {
+            frontier.push(position);
         }
     }
-    frontier.extend(queue.iter().map(|(at, _, _)| *at));
+    frontier.extend(queue.iter().map(|(at, _)| *at));
     frontier.extend(held.iter().copied());
     let end = end.unwrap_or(if held.is_empty() {
         EnumerationEnd::Exhausted
@@ -281,16 +373,22 @@ pub fn enumerate_request<S: TransitionSystem, R: Root>(
         EnumerationEnd::StateKeyLimit
     });
     let coverage = Coverage {
-        states: states.len(),
-        transitions: edges.len(),
+        states: store.states.len(),
+        transitions: store.edges.len(),
         choices,
     };
     Ok(Enumeration {
         end,
-        states,
+        states: store.states,
         frontier,
         coverage,
     })
+}
+
+/// The position of `key` among `keys`, interning it on first sight.
+fn index(key: &StateKey, keys: &mut HashMap<StateKey, usize>) -> usize {
+    let next = keys.len();
+    *keys.entry(key.clone()).or_insert(next)
 }
 
 /// The coverage of `traces`, each drawn from `system`: the run re-walks each
@@ -308,24 +406,24 @@ pub fn sampled_coverage<S: TransitionSystem, F>(
     identity: IdentityLimits,
 ) -> Result<Coverage, EncodingRefusal> {
     let initial = sorted_initial(system, identity)?;
-    let mut states: HashSet<StateKey> = HashSet::new();
-    let mut edges: HashSet<(StateKey, Vec<u8>, StateKey)> = HashSet::new();
-    let mut choices: HashSet<StateKey> = HashSet::new();
+    let mut keys: HashMap<StateKey, usize> = HashMap::new();
+    let mut transitions: HashMap<Vec<u8>, usize> = HashMap::new();
+    let mut edges: HashSet<(usize, usize, usize)> = HashSet::new();
+    let mut choices: HashSet<usize> = HashSet::new();
     for trace in traces {
         let Some(start) = initial.iter().find(|state| state.key == trace.initial) else {
             continue;
         };
-        let mut key = start.key.clone();
+        let mut at = index(&start.key, &mut keys);
         let mut state = None;
-        states.insert(key.clone());
         let mut steps = trace.steps.iter();
         loop {
-            let at = state.as_ref().unwrap_or(&start.state);
-            let Expanded::Successors { successors, .. } = expand(system, at, identity)? else {
+            let current = state.as_ref().unwrap_or(&start.state);
+            let Expanded::Successors { successors, .. } = expand(system, current, identity)? else {
                 break;
             };
-            if distinct_successors(&successors, identity)?.len() > 1 {
-                choices.insert(key.clone());
+            if is_choice(&successors, identity)? {
+                choices.insert(at);
             }
             let Some(step) = steps.next() else {
                 break;
@@ -337,18 +435,17 @@ pub fn sampled_coverage<S: TransitionSystem, F>(
             else {
                 break;
             };
-            edges.insert((
-                key.clone(),
-                canonical_bytes(&next.transition, identity)?,
-                next.key.clone(),
-            ));
-            key = next.key;
-            states.insert(key.clone());
+            let bytes = canonical_bytes(&next.transition, identity)?;
+            let next_transition = transitions.len();
+            let transition = *transitions.entry(bytes).or_insert(next_transition);
+            let post = index(&next.key, &mut keys);
+            edges.insert((at, transition, post));
+            at = post;
             state = Some(next.state);
         }
     }
     Ok(Coverage {
-        states: states.len(),
+        states: keys.len(),
         transitions: edges.len(),
         choices: choices.len(),
     })
