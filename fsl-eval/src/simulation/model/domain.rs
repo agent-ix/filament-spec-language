@@ -4,9 +4,9 @@
 //! product of domains one element at a time.
 
 use filament_exact::{
-    from_admitted, from_admitted_slots, CollectionKind, CollectionType, EnumMember, FieldValue,
-    Integer, NodeKey, ObjectReference, OptionValue, Presence, UnionMember, UnionValue, Value,
-    ValueType,
+    CollectionKind, CollectionType, EnumMember, FieldValue, Integer, NodeKey, ObjectReference,
+    OptionValue, Presence, UnionMember, UnionValue, Value, ValueType, from_admitted,
+    from_admitted_slots,
 };
 use filament_semantic_value::declaration::{
     CompositeDeclaration, CompositeShape, TypeEnvironment, UnionMemberDeclaration,
