@@ -89,7 +89,7 @@ pub enum EnumerationEnd {
 /// walk's `max_state_key_bytes` (so no output carries it), its discovery
 /// edge, its depth, and whether it has a child in the discovery tree.
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub struct Discovered<T> {
+pub struct Discovered<T, F> {
     /// The state's full canonical key, shared with the walk's index.
     pub key: Rc<StateKey>,
     /// Whether the key exceeds `max_state_key_bytes`.
@@ -101,6 +101,11 @@ pub struct Discovered<T> {
     pub depth: usize,
     /// Whether some discovery edge leaves this state.
     pub has_child: bool,
+    /// What the system found at this state, in its own order (FR-634
+    /// "Invariant findings"). A state the walk left unexpanded is evaluated
+    /// for its findings alone; an oversized state, or one whose evaluation
+    /// stopped, has none.
+    pub findings: Vec<F>,
 }
 
 /// One entry of the unexplored frontier: a state's position in
@@ -120,18 +125,18 @@ pub struct Coverage {
 
 /// The result of one enumeration.
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub struct Enumeration<T> {
+pub struct Enumeration<T, F> {
     /// How the walk ended.
     pub end: EnumerationEnd,
     /// Every discovered state, in discovery order.
-    pub states: Vec<Discovered<T>>,
+    pub states: Vec<Discovered<T, F>>,
     /// The unexplored states, in the order the walk would expand them next.
     pub frontier: Vec<FrontierPosition>,
     /// What the walk visited.
     pub coverage: Coverage,
 }
 
-impl<T> Enumeration<T> {
+impl<T, F> Enumeration<T, F> {
     /// The leaves of the discovery tree, in discovery order: one trace each.
     pub fn leaves(&self) -> impl Iterator<Item = FrontierPosition> + '_ {
         self.states
@@ -183,14 +188,14 @@ where
 
 /// The walk's store: the discovered states, the index from key to
 /// position, the interned transition identities and the traversed edges.
-struct Store<T> {
-    states: Vec<Discovered<T>>,
+struct Store<T, F> {
+    states: Vec<Discovered<T, F>>,
     known: HashMap<Rc<StateKey>, usize>,
     transitions: HashMap<Vec<u8>, usize>,
     edges: HashSet<(usize, usize, usize)>,
 }
 
-impl<T> Store<T> {
+impl<T, F> Store<T, F> {
     /// Record a newly reached state, charging its retained key.
     fn discover(
         &mut self,
@@ -218,6 +223,7 @@ impl<T> Store<T> {
             parent,
             depth,
             has_child: false,
+            findings: Vec::new(),
         });
         Ok(position)
     }
@@ -255,14 +261,14 @@ pub fn enumerate_request<S: TransitionSystem, R: Root>(
     request: EnumerationRequest<'_, R>,
     meter: &mut Meter,
     mut poll: impl FnMut() -> bool,
-) -> Result<Enumeration<S::TransitionId>, NotSimulated> {
+) -> Result<Enumeration<S::TransitionId, S::Finding>, NotSimulated> {
     check_requires_bound(request.domains, request.types, request.position_limit)?;
     let bounds = request.bounds;
     let identity = request.identity;
     let oversized = |key: &StateKey| {
         !u64::try_from(key.as_bytes().len()).is_ok_and(|len| len <= bounds.max_state_key_bytes)
     };
-    let mut store: Store<S::TransitionId> = Store {
+    let mut store: Store<S::TransitionId, S::Finding> = Store {
         states: Vec::new(),
         known: HashMap::new(),
         transitions: HashMap::new(),
@@ -272,6 +278,7 @@ pub fn enumerate_request<S: TransitionSystem, R: Root>(
     let mut held: Vec<FrontierPosition> = Vec::new();
     let mut frontier = Vec::new();
     let mut choices = 0usize;
+    let mut horizon: Option<(usize, S::State)> = None;
     let mut end = None;
     for initial in sorted_initial(system, identity).map_err(NotSimulated::from)? {
         if store.states.len() >= bounds.max_states {
@@ -300,6 +307,7 @@ pub fn enumerate_request<S: TransitionSystem, R: Root>(
         if depth >= bounds.max_steps {
             frontier.push(position);
             end = Some(EnumerationEnd::MaxSteps);
+            horizon = Some((position, state));
             break;
         }
         if poll() {
@@ -313,7 +321,15 @@ pub fn enumerate_request<S: TransitionSystem, R: Root>(
             break;
         }
         let successors = match expand(system, &state, identity).map_err(NotSimulated::from)? {
-            Expanded::Successors { successors, .. } => successors,
+            Expanded::Successors {
+                successors,
+                findings,
+            } => {
+                if let Some(entry) = store.states.get_mut(position) {
+                    entry.findings = findings;
+                }
+                successors
+            }
             Expanded::Stopped(stop) => {
                 frontier.push(position);
                 end = Some(EnumerationEnd::Stopped(stop.cause));
@@ -363,6 +379,27 @@ pub fn enumerate_request<S: TransitionSystem, R: Root>(
         }
         if end.is_some() {
             frontier.push(position);
+        }
+    }
+    // FR-634 "Invariant findings": the last state of a reported trace is
+    // evaluated too, so each state the walk left unexpanded is evaluated for
+    // its findings, charged as an expansion.
+    if matches!(
+        end,
+        None | Some(EnumerationEnd::MaxSteps | EnumerationEnd::MaxStates)
+    ) {
+        for (at, state) in horizon.iter().chain(queue.iter()) {
+            if let Err(incomplete) = meter.charge(Charge::new(ChargePoint::GraphExpand)) {
+                end = Some(EnumerationEnd::Meter(incomplete));
+                break;
+            }
+            if let Expanded::Successors { findings, .. } =
+                expand(system, state, identity).map_err(NotSimulated::from)?
+            {
+                if let Some(entry) = store.states.get_mut(*at) {
+                    entry.findings = findings;
+                }
+            }
         }
     }
     frontier.extend(queue.iter().map(|(at, _)| *at));

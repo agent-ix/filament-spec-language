@@ -2122,7 +2122,7 @@ pub fn enumerate_model(
     bounds: crate::simulation::EnumerationBounds,
     meter: &mut filament_exact::Meter,
     poll: impl FnMut() -> bool,
-) -> Result<crate::simulation::Enumeration<ModelTransition>, NotSimulated> {
+) -> Result<crate::simulation::Enumeration<ModelTransition, ModelFinding>, NotSimulated> {
     let domains = system.rooted_domains();
     let roots: Vec<(NodeKey, Vec<u32>, &ValueType)> = domains
         .iter()
