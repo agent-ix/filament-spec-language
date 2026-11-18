@@ -1257,7 +1257,7 @@ impl<'wire> ReaderBuilder<'_, 'wire> {
             .iter()
             .filter_map(|id| self.index.node(id))
             .filter(|node| has_form(node, WireTag::Function, WireForm::PureFunction))
-            .map(|node| {
+            .map(|node| -> Result<_, BuildError> {
                 let (parameters, body) = function_parts(&node.body)
                     .ok_or_else(|| fault("reader-pure-function-has-checked-body"))?;
                 let parameter_ids = parameters
