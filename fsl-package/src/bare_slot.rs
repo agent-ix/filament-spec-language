@@ -638,6 +638,52 @@ impl<'p> BarePackage<'p> {
         }
         Ok(projection)
     }
+
+    /// The projection of a named pure function, its checked parameter and
+    /// result types, and the pure functions its body calls. Charges nothing.
+    ///
+    /// # Errors
+    ///
+    /// [`BareSelectionFailure`] when the identity/equality supply or a type,
+    /// equality decision, or checked body cannot be projected.
+    pub fn project_function(
+        &self,
+        name: &str,
+    ) -> Result<Option<ReaderProtocolProjection>, BareSelectionFailure> {
+        let (_, identities) = self.witness()?;
+        let walker = BareWalker::new(
+            self.package(),
+            identities,
+            self.equality_decisions(),
+            self.exact_type_projections(),
+        )
+        .map_err(SlotSelectionFailure::Fault)?;
+        let projection = walker.project_function(name).map_err(|failure| match failure {
+            WalkFailure::Unsupported(view) => BareSelectionFailure::Unsupported(Box::new(view)),
+            WalkFailure::Equality(refusal) => BareSelectionFailure::Equality(refusal),
+            WalkFailure::Fault(failure) => SlotSelectionFailure::Fault(failure).into(),
+        })?;
+        let Some(projection) = projection else {
+            return Ok(None);
+        };
+        let world = self.world()?;
+        let selected = projection
+            .selected_function_node()
+            .ok_or_else(|| SlotSelectionFailure::Fault(fault("bare-function-projection-has-entry")))?;
+        let unsupported_parameter = projection
+            .selected_function()
+            .into_iter()
+            .flat_map(|function| function.parameters.iter())
+            .find(|parameter| world.types().runtime_type(&parameter.value_type).is_none());
+        if unsupported_parameter.is_some()
+            || projection.has_unrepresented_types(world.types())
+        {
+            return Err(BareSelectionFailure::Unsupported(Box::new(
+                UnsupportedView::missing_type(self.package().name(), selected.clone()),
+            )));
+        }
+        Ok(Some(projection))
+    }
 }
 
 /// The origins among `names` that the control's `decision` family spells with

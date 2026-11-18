@@ -45,6 +45,8 @@ pub struct ReaderProtocolProjection {
     nodes: Vec<ReaderProjectedNode>,
     functions: Vec<ReaderFunction>,
     root: usize,
+    selected_function: Option<usize>,
+    selected_function_node: Option<NodeKey>,
     frame_slots: usize,
     locals: BTreeMap<NodeKey, usize>,
 }
@@ -94,7 +96,21 @@ impl ReaderProtocolProjection {
             name: &function.name,
             body: function.body,
             slots: function.slots,
+            parameters: &function.parameters,
+            result_type: &function.result_type,
         })
+    }
+
+    /// The selected entry function when this projection was built for a
+    /// top-level function call. Protocol-slot projections have no selected
+    /// entry function.
+    pub fn selected_function(&self) -> Option<ReaderProtocolFunction<'_>> {
+        self.function(self.selected_function?)
+    }
+
+    /// Structural key of the selected top-level function, when present.
+    pub fn selected_function_node(&self) -> Option<&NodeKey> {
+        self.selected_function_node.as_ref()
     }
 
     /// The number of frame slots the slot's root context uses: its binders
@@ -129,6 +145,20 @@ pub struct ReaderProtocolFunction<'a> {
     pub body: usize,
     /// Number of checked parameter slots.
     pub slots: usize,
+    /// The checked parameters, in declaration order.
+    pub parameters: &'a [ReaderProtocolParameter],
+    /// The checked result type.
+    pub result_type: &'a ValueType,
+}
+
+/// One checked parameter of a reader-projected pure function.
+pub struct ReaderProtocolParameter {
+    /// Parameter name admitted from its declaration.
+    pub name: String,
+    /// Structural key of the parameter declaration.
+    pub node: NodeKey,
+    /// Parameter type admitted from its checked type node.
+    pub value_type: ValueType,
 }
 
 /// The projection of one slot, or why it has none.
@@ -770,8 +800,49 @@ impl<'wire> WireIndex<'wire> {
             nodes: builder.nodes,
             functions: builder.functions,
             root: root_index,
+            selected_function: None,
+            selected_function_node: None,
             frame_slots: builder.root_slots,
             locals: local_keys,
+        })
+    }
+
+    fn project_function(
+        &self,
+        root: &CheckedNodeId,
+    ) -> Result<ReaderProtocolProjection, BuildError> {
+        let selected_function_node = Some(self.key(root).map_err(BuildError::Fault)?);
+        let mut builder = ReaderBuilder {
+            index: self,
+            nodes: Vec::new(),
+            functions: Vec::new(),
+            function_indexes: BTreeMap::new(),
+            memo: BTreeMap::new(),
+            binders: BTreeMap::new(),
+            root_slots: 0,
+            active: None,
+            suspended: Vec::new(),
+            ordinal: 0,
+        };
+        builder.read_functions(root)?;
+        let selected = *builder
+            .function_indexes
+            .get(root)
+            .ok_or_else(|| fault("reader-selected-function-is-in-function-table"))?;
+        let function = builder
+            .functions
+            .get(selected)
+            .ok_or_else(|| fault("reader-selected-function-index-is-retained"))?;
+        let root = function.body;
+        let frame_slots = function.slots;
+        Ok(ReaderProtocolProjection {
+            nodes: builder.nodes,
+            functions: builder.functions,
+            root,
+            selected_function: Some(selected),
+            selected_function_node,
+            frame_slots,
+            locals: BTreeMap::new(),
         })
     }
 }
@@ -935,6 +1006,47 @@ impl<'wire> BareWalker<'wire> {
                 std::borrow::Cow::Borrowed(projections),
             )?,
         })
+    }
+
+    /// Project the named pure function and every function its body reaches.
+    /// The function's body has no protocol-origin location rows, so this
+    /// route retains the admitted node types and evaluator operations only.
+    pub(crate) fn project_function(
+        &self,
+        name: &str,
+    ) -> Result<Option<ReaderProtocolProjection>, WalkFailure> {
+        let selected = self.index.nodes.values().find(|node| {
+            has_form(node, WireTag::Function, WireForm::PureFunction)
+                && node.declaration.as_ref().is_some_and(|declaration| {
+                    declaration.qualified_name.len() == 1
+                        && declaration.qualified_name[0].as_ref() == name
+                })
+        });
+        let Some(selected) = selected else {
+            return Ok(None);
+        };
+        let failure = match self.index.project_function(&selected.node_id) {
+            Ok(projection) => return Ok(Some(projection)),
+            Err(BuildError::Fault(fault)) => return Err(WalkFailure::Fault(fault)),
+            Err(failure) => failure,
+        };
+        if let Some(refusal) = self.index.equality_refusal(&selected.node_id) {
+            return Err(WalkFailure::Equality(refusal));
+        }
+        match failure {
+            BuildError::Equality(refusal) => Err(WalkFailure::Equality(refusal)),
+            BuildError::Unsupported { reason, node } => {
+                Err(WalkFailure::Unsupported(UnsupportedView {
+                    package: self.index.admitted.name().to_owned(),
+                    locus: ViewLocus::node(self.index.key(&node).map_err(WalkFailure::Fault)?),
+                    reason,
+                }))
+            }
+            BuildError::Fault(fault) => Err(WalkFailure::Fault(fault)),
+            BuildError::Suspended => Err(WalkFailure::Fault(fault(
+                "reader-function-projection-resolves-its-suspensions",
+            ))),
+        }
     }
 
     /// `project_slot`, reporting the first refusal of the whole walk by
@@ -1148,7 +1260,7 @@ impl<'wire> ReaderBuilder<'_, 'wire> {
             .map(|node| {
                 let (parameters, body) = function_parts(&node.body)
                     .ok_or_else(|| fault("reader-pure-function-has-checked-body"))?;
-                let parameters = parameters
+                let parameter_ids = parameters
                     .iter()
                     .map(|parameter| match parameter {
                         CheckedTerm::Reference { target } => Ok(target.clone()),
@@ -1165,21 +1277,51 @@ impl<'wire> ReaderBuilder<'_, 'wire> {
                     .and_then(|declaration| declaration.qualified_name.last())
                     .map(|name| name.to_string())
                     .ok_or_else(|| fault("reader-function-name-is-admitted"))?;
-                Ok((node.node_id.clone(), name, parameters, body))
+                let parameters = parameter_ids
+                    .iter()
+                    .map(|id| {
+                        let parameter = self
+                            .index
+                            .node(id)
+                            .ok_or_else(|| fault("reader-function-parameter-is-admitted"))?;
+                        let name = parameter
+                            .declaration
+                            .as_ref()
+                            .and_then(|declaration| declaration.qualified_name.last())
+                            .map(|name| name.to_string())
+                            .ok_or_else(|| fault("reader-function-parameter-name-is-admitted"))?;
+                        let value_type = self.index.types().value_type(id)?;
+                        Ok(ReaderProtocolParameter {
+                            name,
+                            node: self.index.key(id)?,
+                            value_type,
+                        })
+                    })
+                    .collect::<Result<Vec<_>, BuildError>>()?;
+                Ok((node.node_id.clone(), name, parameter_ids, parameters, body))
             })
-            .collect::<Result<Vec<_>, InternalFault>>()?;
+            .collect::<Result<Vec<_>, BuildError>>()?;
 
-        for (node, name, parameters, _) in &declarations {
+        for (node, name, parameter_ids, parameters, _) in &declarations {
             let index = self.functions.len();
             self.function_indexes.insert(node.clone(), index);
             self.functions.push(ReaderFunction {
                 name: name.clone(),
                 body: usize::MAX,
-                slots: parameters.len(),
+                slots: parameter_ids.len(),
+                parameters: parameters
+                    .iter()
+                    .map(|parameter| ReaderProtocolParameter {
+                        name: parameter.name.clone(),
+                        node: parameter.node.clone(),
+                        value_type: parameter.value_type.clone(),
+                    })
+                    .collect(),
+                result_type: ValueType::Boolean,
             });
         }
-        for (index, (_, _, parameters, body)) in declarations.iter().enumerate() {
-            let locals = parameters
+        for (index, (_, _, parameter_ids, _, body)) in declarations.iter().enumerate() {
+            let locals = parameter_ids
                 .iter()
                 .enumerate()
                 .map(|(slot, id)| (id.clone(), slot))
@@ -1190,6 +1332,12 @@ impl<'wire> ReaderBuilder<'_, 'wire> {
                 locals: std::rc::Rc::new(locals),
             })?;
             self.functions[index].body = body;
+            self.functions[index].result_type = self
+                .nodes
+                .get(body)
+                .ok_or_else(|| fault("reader-function-body-is-projected"))?
+                .value_type
+                .clone();
         }
         Ok(())
     }
@@ -3124,6 +3272,8 @@ struct ReaderFunction {
     name: String,
     body: usize,
     slots: usize,
+    parameters: Vec<ReaderProtocolParameter>,
+    result_type: ValueType,
 }
 
 fn fault(invariant: &'static str) -> InternalFault {
@@ -3191,6 +3341,8 @@ mod order_tests {
             )],
             functions: Vec::new(),
             root: 0,
+            selected_function: None,
+            selected_function_node: None,
             frame_slots: 2,
             locals: BTreeMap::new(),
         };
