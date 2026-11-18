@@ -954,7 +954,7 @@ model M = \"acme/orders\";\n\
 dimension Time;\n\
 unit ms : Time = rational(1, 1);\n\
 time M dense unit ms;\n\
-temporal T using t over (r: M::Widget) clock \"model-time\" on origin { eventually[0, 1] holds(r.code > 0) }\n";
+temporal T using t over (r: M::Widget) clock \"model-time\" on origin { eventually[0 ms, 1 ms] holds(r.code > 0) }\n";
         let one = filament_exact::Rational::new(
             filament_exact::Integer::from(1_u64),
             filament_exact::Integer::from(1_u64),
