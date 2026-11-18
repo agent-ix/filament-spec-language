@@ -8,7 +8,7 @@
 
 use crate::command_harness::{compile_file, run_file};
 use ix_trace_rs::trace;
-use serde_json::{Value, json};
+use serde_json::{json, Value};
 use std::path::{Path, PathBuf};
 
 const VALUE: &str = "filament.value.complete/v1";
@@ -1390,7 +1390,7 @@ fn a_timed_trace_answers_a_timed_clause() {
 #[test]
 #[trace("TC-1668", "FR-644-AC-1", "TC-1669", "FR-644-AC-4")]
 fn command_monitor_streams_events_to_its_sink() {
-    use fsl_command::command::{MonitorEvent, RunLimits, monitor};
+    use fsl_command::command::{monitor, MonitorEvent, RunLimits};
 
     let directory = tempfile::tempdir().unwrap();
     let request = monitor_request(
@@ -1469,7 +1469,7 @@ fn cancelled_monitor(
     Vec<fsl_command::command::MonitorEvent>,
     fsl_command::command::MonitorSummary,
 ) {
-    use fsl_command::command::{RunLimits, monitor};
+    use fsl_command::command::{monitor, RunLimits};
 
     let directory = tempfile::tempdir().unwrap();
     let request = monitor_request(clauses, json!({"kind": "finite"}));

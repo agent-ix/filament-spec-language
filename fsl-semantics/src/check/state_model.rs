@@ -299,27 +299,25 @@ impl FamilyContract for StateModelFamily {
                         (None, []) => {
                             // FR-056-AC-43: a field declared with no checked
                             // type is refused where it is used.
-                            return Err(match scope.untyped_member(
-                                object,
-                                field,
-                                UntypedKind::Field,
-                            ) {
-                                Some(untyped) => refuse(location, untyped_cause(untyped)),
-                                None => refuse(
-                                    location,
-                                    CheckCause::UnknownField {
-                                        owner: object
-                                            .original()
-                                            .node()
-                                            .rsplit('/')
-                                            .next()
-                                            .unwrap_or(object.original().node())
-                                            .to_owned(),
-                                        field: field.clone(),
-                                        span: *member_span,
-                                    },
-                                ),
-                            });
+                            return Err(
+                                match scope.untyped_member(object, field, UntypedKind::Field) {
+                                    Some(untyped) => refuse(location, untyped_cause(untyped)),
+                                    None => refuse(
+                                        location,
+                                        CheckCause::UnknownField {
+                                            owner: object
+                                                .original()
+                                                .node()
+                                                .rsplit('/')
+                                                .next()
+                                                .unwrap_or(object.original().node())
+                                                .to_owned(),
+                                            field: field.clone(),
+                                            span: *member_span,
+                                        },
+                                    ),
+                                },
+                            );
                         }
                         (Some(_), []) if !*field_reads => return Err(mismatch(location)),
                         (Some(attribute), []) => {

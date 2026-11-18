@@ -359,7 +359,9 @@ fn refuse_unsupported(
 ) -> Result<(), ProtocolRefusal> {
     for control in &protocol.controls.controls {
         if matches!(control.step(), ControlStep::Unstepped(_)) {
-            return Err(ProtocolRefusal::fault("a-checked-protocol-control-is-stepped"));
+            return Err(ProtocolRefusal::fault(
+                "a-checked-protocol-control-is-stepped",
+            ));
         }
     }
     // The pre-check (TS-5) has already refused an unbounded record type.

@@ -15,13 +15,13 @@ mod tl;
 mod wire;
 
 pub use analyze::{
-    AnalyzeInput, PreparedAnalyze, analyze, analyze_with_limits, analyze_with_providers,
-    analyze_with_providers_and_limits, prepare_analyze,
+    analyze, analyze_with_limits, analyze_with_providers, analyze_with_providers_and_limits,
+    prepare_analyze, AnalyzeInput, PreparedAnalyze,
 };
-pub use flow::{FlowAnalyzeError, analyze_flow_report};
-pub use monitor::{MonitorEvent, MonitorSummary, monitor};
+pub use flow::{analyze_flow_report, FlowAnalyzeError};
+pub use monitor::{monitor, MonitorEvent, MonitorSummary};
 pub use output::NativeResult;
-pub use tl::{AtomMapping, TlRecord, record as tl_record};
+pub use tl::{record as tl_record, AtomMapping, TlRecord};
 
 use crate::formal_source::FormalSource;
 use filament_contract_model as ir;
@@ -3044,14 +3044,12 @@ fn prepare_complete_run(
             }
         }))
         .and_then(|dependencies| {
-            dependencies.with_refinement_internals(libraries.iter().filter_map(
-                |(library, _)| {
-                    library
-                        .refinement_internals
-                        .as_ref()
-                        .map(|value| (library.identity.clone(), value.clone()))
-                },
-            ))
+            dependencies.with_refinement_internals(libraries.iter().filter_map(|(library, _)| {
+                library
+                    .refinement_internals
+                    .as_ref()
+                    .map(|value| (library.identity.clone(), value.clone()))
+            }))
         })
         .and_then(|dependencies| dependencies.with_integer_division(library_integer_division))
         .map_err(|refusal| {

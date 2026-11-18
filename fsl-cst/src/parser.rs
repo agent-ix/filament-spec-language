@@ -607,19 +607,19 @@ fn parse_with_declaration_recovery(
                         &tokens,
                         &Failure::expected(failure.position, expected.clone()),
                     )
-                        .or_else(|| {
-                            reserved_collection_name_hint(
-                                &tokens,
-                                &Failure::expected(failure.position, expected.clone()),
-                            )
-                        })
-                        .or_else(|| {
-                            declared_type_name_hint(
-                                &tokens,
-                                &Failure::expected(failure.position, expected.clone()),
-                            )
-                        })
-                        .map_or_else(
+                    .or_else(|| {
+                        reserved_collection_name_hint(
+                            &tokens,
+                            &Failure::expected(failure.position, expected.clone()),
+                        )
+                    })
+                    .or_else(|| {
+                        declared_type_name_hint(
+                            &tokens,
+                            &Failure::expected(failure.position, expected.clone()),
+                        )
+                    })
+                    .map_or_else(
                         || {
                             format_expected(
                                 &tokens,
@@ -1816,21 +1816,18 @@ fn derived_form(tokens: &[Significant], failure: &Failure) -> Option<&'static st
 fn declared_type_name_hint(tokens: &[Significant], failure: &Failure) -> Option<&'static str> {
     let position = failure.position;
     let is_query = |at: usize| {
-        tokens
-            .get(at)
-            .is_some_and(|token| {
-                matches!(
-                    token.spelling.as_ref(),
-                    "count" | "sum" | "fold" | "reduce"
-                )
-            })
+        tokens.get(at).is_some_and(|token| {
+            matches!(token.spelling.as_ref(), "count" | "sum" | "fold" | "reduce")
+        })
     };
     let type_argument_start = if tokens
         .get(position.checked_sub(1)?)
         .is_some_and(|token| token.spelling.as_ref() == "<")
     {
         position.checked_sub(2)?
-    } else if tokens.get(position).is_some_and(|token| token.spelling.as_ref() == "[")
+    } else if tokens
+        .get(position)
+        .is_some_and(|token| token.spelling.as_ref() == "[")
         && tokens
             .get(position.checked_sub(2)?)
             .is_some_and(|token| token.spelling.as_ref() == "<")

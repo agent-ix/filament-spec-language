@@ -28,7 +28,7 @@ use fsl_route::{CandidateOutcome, Registry};
 use fsl_semantics::check::Capability;
 use fsl_semantics::model::observation::{DocumentProvision, DocumentRef};
 use serde::Deserialize;
-use serde_json::{Map, Value, json};
+use serde_json::{json, Map, Value};
 
 use super::{
     AnalyzeLimits, ClaimItem, Diagnostic, Engines, ItemForm, ItemOptions, NegotiatedItem,
@@ -1146,10 +1146,10 @@ fn resolve_one(
     }
     let form = (kind == Capability::TemporalSatisfaction || kind == Capability::GlobalConformance)
         .then(|| {
-        let mut form = temporal_item(package, &claim, &temporal);
-        form.pending_reductions.clone_from(&selection.reductions);
-        ItemForm::Temporal(form)
-    });
+            let mut form = temporal_item(package, &claim, &temporal);
+            form.pending_reductions.clone_from(&selection.reductions);
+            ItemForm::Temporal(form)
+        });
     let item = ClaimItem {
         request_index: index,
         claim,

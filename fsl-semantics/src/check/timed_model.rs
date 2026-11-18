@@ -1964,7 +1964,8 @@ impl Clocks<'_> {
         context: &EffectiveId,
         parents: &[Option<ExprId>],
     ) -> bool {
-        let Some(ExprNode::Field { operand, field, .. }) = form.expression.get(id).map(|n| n.node())
+        let Some(ExprNode::Field { operand, field, .. }) =
+            form.expression.get(id).map(|n| n.node())
         else {
             return false;
         };

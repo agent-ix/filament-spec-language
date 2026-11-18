@@ -43,9 +43,9 @@ use super::{
     ProtocolRefusal, ProtocolState, ProtocolSystem, Thread,
 };
 use crate::simulation::expansion::{Expansion, ExpansionLimit, ExpansionStop};
-use crate::simulation::model::FootprintError;
 use crate::simulation::footprint::Location;
 use crate::simulation::model::encode::{reference_enc, value_enc, Enc};
+use crate::simulation::model::FootprintError;
 use crate::simulation::model::{
     verdict, Applied, Budget, ClauseOutcome, FirstApplication, ModelFinding, ModelSimState,
     Observed, ObservedIdentities, OperationRef, Verdict, EXHAUSTED,
@@ -226,7 +226,9 @@ impl<M: MemoryModel> ProtocolSystem<'_, M> {
             findings: self.model.invariant_findings(&state.model)?,
             cut: Cut::default(),
         };
-        gathered.findings.extend(state.initial_findings.iter().cloned());
+        gathered
+            .findings
+            .extend(state.initial_findings.iter().cloned());
         gathered.findings.extend(access_findings);
         let mut running = Vec::new();
         for (ordinal, instance) in &state.instances {

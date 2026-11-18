@@ -8,6 +8,7 @@ use filament_contract_model::{
 use fsl_analyze::protocol_analysis::{
     project, unsupported_construct, ProjectionOutcome, ProjectionRefusal, ProjectionRequest,
 };
+use fsl_package::protocol_view::clause_activation_trigger;
 use fsl_replay::protocol_analysis::{
     replay_projection_counterexample, AnalysisOutcome, AssessedRootDraft, CapacityPremise,
     ChoiceBasis, DecisionOwner, GlobalStructure, InconclusiveCause, JoinPolicy, LocalEventKind,
@@ -16,7 +17,6 @@ use fsl_replay::protocol_analysis::{
     WalkDisagreement,
 };
 use fsl_replay::spine::replay_protocol_analysis;
-use fsl_package::protocol_view::clause_activation_trigger;
 use fsl_replay::{DecidingElement, ModelCheckLimit, ObservationIdentity, ReplaySource};
 use ix_trace_rs::trace;
 
@@ -1048,14 +1048,16 @@ fn repeat_projects() {
     let loop_id = graph
         .events
         .iter()
-        .find(|event| matches!(
-            event.kind,
-            LocalEventKind::ControlAction {
-                operation: fsl_package::protocol_view::ControlOperation::Repeat,
-                maximum: Some(2),
-                ..
-            }
-        ))
+        .find(|event| {
+            matches!(
+                event.kind,
+                LocalEventKind::ControlAction {
+                    operation: fsl_package::protocol_view::ControlOperation::Repeat,
+                    maximum: Some(2),
+                    ..
+                }
+            )
+        })
         .expect("the loop action carries its maximum")
         .id;
     let send_id = graph
@@ -1384,8 +1386,11 @@ fn a_replicated_role_projects() {
 #[test]
 fn on_each_projects() {
     let package = admitted_source(
-        &source(MEMBERS, "sequence Main { send S via Order as (s: Ack) { true }; }\n")
-            .replace("on origin", "on each (t: M::Cell)"),
+        &source(
+            MEMBERS,
+            "sequence Main { send S via Order as (s: Ack) { true }; }\n",
+        )
+        .replace("on origin", "on each (t: M::Cell)"),
     );
     let mut asked = request(&package, "Seller");
     asked.profile = Some("bounded".to_owned());
@@ -1479,16 +1484,13 @@ fn join_projects(
     let mut asked = request(&package, "Warehouse");
     asked.profile = Some("bounded".to_owned());
     let graph = witness(project(&package, asked).unwrap()).local_graph;
-    assert!(graph
-        .events
-        .iter()
-        .any(|event| matches!(
-            &event.kind,
-            LocalEventKind::ParallelJoin { policy, joined, outstanding }
-                if policy == &expected_policy
-                    && joined.iter().map(String::as_str).eq(expected_joined.iter().copied())
-                    && outstanding == &expected_outstanding
-        )));
+    assert!(graph.events.iter().any(|event| matches!(
+        &event.kind,
+        LocalEventKind::ParallelJoin { policy, joined, outstanding }
+            if policy == &expected_policy
+                && joined.iter().map(String::as_str).eq(expected_joined.iter().copied())
+                && outstanding == &expected_outstanding
+    )));
 }
 
 /// FR-890-AC-2 (TC-2521): a `repeat` is a decision point owned by its `by`

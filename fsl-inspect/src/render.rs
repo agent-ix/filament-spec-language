@@ -9,8 +9,8 @@ use fsl_foundation::{
     diagnostic::{LimitExceeded, StageFailure, Staged},
     setting::Setting,
     source::{
-        Source,
         provenance::{RawSourceRef, SourceRegion},
+        Source,
     },
 };
 use fsl_replay::{Certification, OutcomeDocument, RenderLimits};
@@ -1309,12 +1309,12 @@ fn source_label(source: &RawSourceRef) -> String {
 mod tests {
     use super::*;
     use crate::{
-        AssignmentView, InspectLimits, NodeSelector, OutcomeView, TracePositionView, inspect_node,
-        inspect_package, inspect_state_graph, tests::emitted_spine_package,
+        inspect_node, inspect_package, inspect_state_graph, tests::emitted_spine_package,
+        AssignmentView, InspectLimits, NodeSelector, OutcomeView, TracePositionView,
     };
     use filament_exact::CancelCause;
     use filament_semantic_value::catalog::Category;
-    use fsl_foundation::{Span, diagnostic::LimitKind, source::SourceIdentity};
+    use fsl_foundation::{diagnostic::LimitKind, source::SourceIdentity, Span};
     use ix_trace_rs::trace;
 
     const EXPECTED_JSON: &[&str] = &[
@@ -1550,10 +1550,8 @@ mod tests {
         );
         // The region's end exactly at the source's length still resolves.
         let at_end = refusal_over(&region, u64::try_from(text_source.len()).unwrap(), "edge");
-        assert!(
-            text_of(&at_end, &RenderSources::from_sources([input]))
-                .contains("src/inv.fsl:2:2: ill_typed: edge")
-        );
+        assert!(text_of(&at_end, &RenderSources::from_sources([input]))
+            .contains("src/inv.fsl:2:2: ill_typed: edge"));
     }
 
     #[trace("TC-783", "FR-298-AC-11")]
@@ -1723,16 +1721,12 @@ mod tests {
             assignments: Vec::new(),
             certification: Some(fsl_replay::Certification::Uncertified),
         });
-        assert!(
-            render_default(&view, RenderForm::Json)
-                .as_str()
-                .contains(r#""certification":"uncertified""#)
-        );
-        assert!(
-            render_default(&view, RenderForm::Text)
-                .as_str()
-                .contains("Certification: uncertified\n")
-        );
+        assert!(render_default(&view, RenderForm::Json)
+            .as_str()
+            .contains(r#""certification":"uncertified""#));
+        assert!(render_default(&view, RenderForm::Text)
+            .as_str()
+            .contains("Certification: uncertified\n"));
     }
 
     #[trace("TC-783", "FR-298-AC-3", "FR-298-AC-5")]
@@ -2322,9 +2316,7 @@ mod tests {
         let render =
             |document: &OutcomeDocument| text_of(document, &RenderSources::from_sources([]));
 
-        assert!(
-            render(&completed).ends_with("result: completed {\"value\":{\"integer\":\"7\"}}\n")
-        );
+        assert!(render(&completed).ends_with("result: completed {\"value\":{\"integer\":\"7\"}}\n"));
         assert!(
             render(&undefined).ends_with("result: undefined {\"reason\":\"sum-out-of-domain\"}\n")
         );

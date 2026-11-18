@@ -8,8 +8,8 @@
 use filament_exact::Cancel;
 use fsl_cst::Limits;
 use fsl_foundation::SourceIdentity;
+use fsl_replay::spine::{parse, ParseRequest};
 use fsl_replay::OutcomeDocument;
-use fsl_replay::spine::{ParseRequest, parse};
 use ix_trace_rs::trace;
 use serde_json::Value;
 
@@ -167,12 +167,10 @@ fn the_parse_document_renders_the_construct_cause() {
     assert_eq!(diagnostic["text"], "null");
     assert_eq!(diagnostic["declaration"], "f");
     assert_eq!(diagnostic["profile"], PROFILE);
-    assert!(
-        diagnostic["message"]
-            .as_str()
-            .expect("a message")
-            .starts_with("`null` is not supported as a value here yet")
-    );
+    assert!(diagnostic["message"]
+        .as_str()
+        .expect("a message")
+        .starts_with("`null` is not supported as a value here yet"));
 }
 
 /// The start byte of a diagnostic's source locus, written as a JSON number

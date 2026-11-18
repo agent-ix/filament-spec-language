@@ -952,16 +952,19 @@ fn unknown_record_and_model_fields_name_their_owner_and_keep_type_mismatches() {
         .iter()
         .find(|refusal| matches!(&refusal.cause, CheckCause::StateModel(cause) if matches!(cause.cause, CheckCause::UnknownField { .. })))
         .unwrap_or_else(|| panic!("the absent model field is refused: {refusals:?}"));
-    assert!(matches!(
-        &object.cause,
-        CheckCause::StateModel(cause)
-            if matches!(&cause.cause, CheckCause::UnknownField { owner, field, span }
-                if owner == "Account" && field == "paid"
-                    && *span == Some(fsl_foundation::Span {
-                        start: model_start,
-                        end: model_start + "paid".len(),
-                    }))
-    ), "{object:?}");
+    assert!(
+        matches!(
+            &object.cause,
+            CheckCause::StateModel(cause)
+                if matches!(&cause.cause, CheckCause::UnknownField { owner, field, span }
+                    if owner == "Account" && field == "paid"
+                        && *span == Some(fsl_foundation::Span {
+                            start: model_start,
+                            end: model_start + "paid".len(),
+                        }))
+        ),
+        "{object:?}"
+    );
     assert!(object.location.path().is_empty());
 
     assert!(

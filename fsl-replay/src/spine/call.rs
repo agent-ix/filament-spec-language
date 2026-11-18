@@ -28,7 +28,7 @@ use filament_semantic_value::catalog::{CatalogCode, Category, InternalFault};
 use filament_semantic_value::declaration::EnvironmentFailure;
 use filament_semantic_value::location::ExpressionLocation as Location;
 use fsl_eval::execution::{
-    ExecuteLimits, ExecuteRequest, ExecuteSelection, PrepareLimits, SuppliedBackends, execute,
+    execute, ExecuteLimits, ExecuteRequest, ExecuteSelection, PrepareLimits, SuppliedBackends,
 };
 use fsl_foundation::diagnostic::StageFailure;
 use fsl_foundation::diagnostic::{Code, Locus, RefusalRecord};
@@ -560,7 +560,7 @@ impl RunRefusal {
     /// the outcome diagnostic carry this same object.
     #[must_use]
     pub fn details(&self) -> Option<serde_json::Map<String, serde_json::Value>> {
-        use serde_json::{Value, json};
+        use serde_json::{json, Value};
         let object = |value: Value| match value {
             Value::Object(members) => Some(members),
             _ => None,
@@ -1057,8 +1057,8 @@ fn bind_snapshot_populations(
     use fsl_semantics::model::dispatch::GeneralizationClosure;
     use fsl_semantics::model::domain_package::DomainPackageRecord;
     use fsl_semantics::model::population::{
-        AdmissionMeter, AdmissionOutcome, PopulationAdmissionLimits, PopulationDocument,
-        PopulationMember, admit_binding,
+        admit_binding, AdmissionMeter, AdmissionOutcome, PopulationAdmissionLimits,
+        PopulationDocument, PopulationMember,
     };
     let mut environment = objects.clone();
     for (position, (name, value_type)) in parameters.iter().enumerate() {

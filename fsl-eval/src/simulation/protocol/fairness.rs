@@ -36,7 +36,7 @@ use quire_canonical::{Encode, Error, Sink, Writer};
 
 use super::identity::{ProtocolTransition, ThreadPath};
 use super::memory::MemoryBranch;
-use crate::fairness::{Constraint, Identity, Strength, VisibilityPair, visibility_constraints};
+use crate::fairness::{visibility_constraints, Constraint, Identity, Strength, VisibilityPair};
 use crate::simulation::model::encode::Enc;
 
 /// What a protocol fairness constraint names (ADR-027 PA-1).
@@ -646,7 +646,7 @@ mod tests {
     #[test]
     fn a_flush_member_is_one_constraint_per_thread_of_its_branch() {
         use super::super::memory::MemoryStepId;
-        use crate::fairness::{EdgeLabel, LassoFairness, LoopStep, check_loop};
+        use crate::fairness::{check_loop, EdgeLabel, LassoFairness, LoopStep};
 
         let flush = |instance: u64| {
             ProtocolTransition::memory(MemoryStepId {

@@ -12,7 +12,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::num::NonZeroUsize;
 
-use fsl_analyze::model_check::{ProtocolCheckRequest, SubjectContext, check_protocol};
+use fsl_analyze::model_check::{check_protocol, ProtocolCheckRequest, SubjectContext};
 use fsl_eval::model_subject::{AtomStop, ModelInstance, ModelLetters, ProtocolSubject};
 use fsl_eval::simulation::model::{ModelFinding, ModelSimState, ModelSystem};
 use ix_trace_rs::trace;
@@ -20,34 +20,34 @@ use ix_trace_rs::trace;
 use filament_exact::{Cancel, Meter};
 use filament_semantic_value::catalog::CatalogCode;
 use fsl_eval::simulation::protocol::{
-    CarriedComponent, ClaimReads, InstanceAccess, MemoryModel, MemorySelection,
-    MemorySelectionRefusal, PositionAnchor, ProtocolLocation, ProtocolRefusal, ProtocolState,
-    ProtocolSystem, ProtocolTransition, Ra, ReachRefusal, RestKind, Sc, StepKind, ThreadPath, Tso,
-    WaitCause, WeakAccesses, classify_accesses, visible,
+    classify_accesses, visible, CarriedComponent, ClaimReads, InstanceAccess, MemoryModel,
+    MemorySelection, MemorySelectionRefusal, PositionAnchor, ProtocolLocation, ProtocolRefusal,
+    ProtocolState, ProtocolSystem, ProtocolTransition, Ra, ReachRefusal, RestKind, Sc, StepKind,
+    ThreadPath, Tso, WaitCause, WeakAccesses,
 };
 use fsl_eval::simulation::{
-    ExpansionLimit, Location, SubjectSystem, TransitionSystem, independent,
+    independent, ExpansionLimit, Location, SubjectSystem, TransitionSystem,
 };
 use fsl_eval::temporal::AtomReading;
-use fsl_foundation::MemoryModelName;
 use fsl_foundation::source::provenance::OccurrenceKey;
+use fsl_foundation::MemoryModelName;
 use fsl_package::CheckedPackage;
 use fsl_replay::{
-    IncompleteCause, InconclusiveCause, MemoryBound, MemoryBoundMember, MemoryCause,
-    ModelCheckItem, ModelCheckLimit, ModelCheckLimits, ModelCheckOutcome, ModelCheckRecord,
-    ModelTraceRefusal, ModelTraceReplayResult, ModelTraceSettlement, ModelTraceSubject,
-    ProtocolCertificateRequest, ProtocolTraceSubject, ReachedLimit, ReplayLimits, ReplayRefusal,
-    ResultLabel, StatedMemoryBound, TemporalCounterexample, TerminalValue, UndecidedCause,
-    replay_protocol_trace, settle_protocol_check,
+    replay_protocol_trace, settle_protocol_check, IncompleteCause, InconclusiveCause, MemoryBound,
+    MemoryBoundMember, MemoryCause, ModelCheckItem, ModelCheckLimit, ModelCheckLimits,
+    ModelCheckOutcome, ModelCheckRecord, ModelTraceRefusal, ModelTraceReplayResult,
+    ModelTraceSettlement, ModelTraceSubject, ProtocolCertificateRequest, ProtocolTraceSubject,
+    ReachedLimit, ReplayLimits, ReplayRefusal, ResultLabel, StatedMemoryBound,
+    TemporalCounterexample, TerminalValue, UndecidedCause,
 };
 use fsl_route::model_request::ModelRequest;
 use fsl_semantics::check::{AccessClass, FormulaNodeId};
-use serde_json::{Value as Json, json};
+use serde_json::{json, Value as Json};
 
-use crate::fill::{Explored, Reached, reachable};
+use crate::fill::{reachable, Explored, Reached};
 use crate::litmus::{
-    Documents, NO_BOTH_ZERO, PROTOCOL_PROFILE, attempt, contracts, core, document, field, key,
-    package, protocol, protocol_profiled_package, protocol_with, sb_run, sb_unit, unit_text_with,
+    attempt, contracts, core, document, field, key, package, protocol, protocol_profiled_package,
+    protocol_with, sb_run, sb_unit, unit_text_with, Documents, NO_BOTH_ZERO, PROTOCOL_PROFILE,
 };
 use crate::model_settle::{envelope_at, request};
 
@@ -899,12 +899,10 @@ fn nested_any_joins_explore_under_a_weak_selection() {
         .successors(&forked)
         .expect("expands the forked state");
     assert!(!after.successors.is_empty());
-    assert!(
-        !after
-            .findings
-            .iter()
-            .any(|finding| matches!(finding, ModelFinding::WeakAccessShape(_)))
-    );
+    assert!(!after
+        .findings
+        .iter()
+        .any(|finding| matches!(finding, ModelFinding::WeakAccessShape(_))));
     assert!(explores(&case, MemoryModelName::Tso));
 }
 
@@ -1032,12 +1030,10 @@ fn en1_classifies_two_relaxed_stores_to_one_shared_location() {
         for node in ["Both/left/L/S1", "Both/right/R/S2"] {
             assert!(classes(&accesses, node).contains(&(AccessClass::Store, name("x", "v"))));
         }
-        assert!(
-            accesses
-                .shared()
-                .iter()
-                .any(|location| named(&accesses, location) == name("x", "v"))
-        );
+        assert!(accesses
+            .shared()
+            .iter()
+            .any(|location| named(&accesses, location) == name("x", "v")));
     }
 }
 
@@ -1148,12 +1144,10 @@ fn a_constraint_reading_a_shared_location_loads_it_relaxed() {
     // The actual `Cell` z that no selected attempt accesses is not shared
     // with the reader.
     let read_z = Case::over_cells(&object_unit("Cell", &sb_with_event(SEEN), "{ d }"), "z");
-    assert!(
-        read_z
-            .accesses(&tso)
-            .node_reads("Both/right/R/Seen")
-            .is_empty()
-    );
+    assert!(read_z
+        .accesses(&tso)
+        .node_reads("Both/right/R/Seen")
+        .is_empty());
     assert!(matches!(
         read_z.check(&tso, ModelCheckItem::DeadlockFreedom, None),
         ModelCheckOutcome::Holds { .. }
@@ -1421,8 +1415,8 @@ fn scalar_over_with_model_read_free_weak_constraints_builds() {
                 branch right sequence R { \
                 event Right by w as (right: Boolean) { true }; } } \
                 join all [left, right];";
-    let unit = (contracts() + &protocol("SB", run))
-        .replace("over (k: M::Core)", "over (k: Int[0, 1])");
+    let unit =
+        (contracts() + &protocol("SB", run)).replace("over (k: M::Core)", "over (k: Int[0, 1])");
     let case = Case::new(&unit);
     let selection = [select("SB::Both", MemoryModelName::Tso)];
     assert!(case.system(&selection, Tso::default()).is_ok());
@@ -1671,12 +1665,10 @@ fn a_seq_cst_fence_waits_for_its_store_buffer_under_tso() {
                 None => {
                     assert!(buffered, "an unbuffered seq_cst fence is enabled");
                     let blocked = system.blocked(&state.state, &[]).expect("blocked");
-                    assert!(
-                        blocked
-                            .iter()
-                            .filter(|thread| thread.path == left)
-                            .all(|thread| thread.cause == WaitCause::Gate)
-                    );
+                    assert!(blocked
+                        .iter()
+                        .filter(|thread| thread.path == left)
+                        .all(|thread| thread.cause == WaitCause::Gate));
                     // `flush(left)` drains the one store, and the fence is
                     // then enabled.
                     let (_, flushed) = state
@@ -1689,14 +1681,12 @@ fn a_seq_cst_fence_waits_for_its_store_buffer_under_tso() {
                         })
                         .expect("a flush of left's buffer");
                     let after = &reached[*flushed];
-                    assert!(
-                        after
-                            .state
-                            .memory()
-                            .buffer(&left)
-                            .unwrap_or_default()
-                            .is_empty()
-                    );
+                    assert!(after
+                        .state
+                        .memory()
+                        .buffer(&left)
+                        .unwrap_or_default()
+                        .is_empty());
                     assert!(fence_step(after, &left).is_some());
                     waited += 1;
                 }
@@ -2289,12 +2279,10 @@ fn a_tso_counterexample_replays_only_under_tso() {
     else {
         panic!("both loads read 0 under sc");
     };
-    assert!(
-        under_sc
-            .prefix
-            .iter()
-            .all(|step| step.transition.memory_component().is_none())
-    );
+    assert!(under_sc
+        .prefix
+        .iter()
+        .all(|step| step.transition.memory_component().is_none()));
     // An `sc` step that carries a component, its post-state key right,
     // is refused on the component alone.
     let mut forged_sc = under_sc.as_ref().clone();
@@ -2901,12 +2889,10 @@ fn a_send_waits_for_its_threads_buffer() {
                 .map(|(_, next)| *next)
                 .expect("a flush");
             let after = &reachable(&system)[flushed];
-            assert!(
-                after
-                    .steps
-                    .iter()
-                    .any(|(transition, _)| transition.kind() == StepKind::Send)
-            );
+            assert!(after
+                .steps
+                .iter()
+                .any(|(transition, _)| transition.kind() == StepKind::Send));
         }
     }
     assert!(waited > 0);
@@ -3290,12 +3276,11 @@ fn reachable_refuses_with_the_expansion_stop_on_any_worker_count() {
             CatalogCode::new("resource_exhausted", "insufficient-next-charge")
         );
     }
-    assert!(
-        case.system(&tso, Tso::default())
-            .expect("builds")
-            .reachable(four)
-            .is_ok()
-    );
+    assert!(case
+        .system(&tso, Tso::default())
+        .expect("builds")
+        .reachable(four)
+        .is_ok());
 }
 
 /// FR-902-AC-1, FR-902-AC-5 (TC-2542, TC-2544): under a `tso` selection, an

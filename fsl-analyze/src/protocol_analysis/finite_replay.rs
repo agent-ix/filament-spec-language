@@ -11,8 +11,8 @@ use base64::Engine as _;
 use fsl_eval::model_subject::{ModelInstance, ModelSubject, ProtocolSubject, RoleBinding};
 use fsl_eval::simulation::model::{ExpansionLimits, ModelSimulationRequest, ModelSystem};
 use fsl_eval::simulation::protocol::{
-    MemoryModel, ProtocolRefusal, ProtocolSystem, ResolvedMemory, SubjectMemory,
-    live_instance_bound, send_record_json, transition_json,
+    live_instance_bound, send_record_json, transition_json, MemoryModel, ProtocolRefusal,
+    ProtocolSystem, ResolvedMemory, SubjectMemory,
 };
 use fsl_eval::simulation::{StateKey, TransitionSystem};
 use fsl_package::CheckedPackage;

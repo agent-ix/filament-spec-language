@@ -38,9 +38,9 @@ use super::protocol_clause;
 use super::refinement;
 use super::state_graph;
 use super::state_model;
-use super::synthesis_verify;
 use super::sum_case;
 use super::syntax::DeclarationForm;
+use super::synthesis_verify;
 use super::task_set;
 use super::temporal_clause;
 use super::terminal_declaration;
@@ -694,9 +694,9 @@ pub fn build_unit_with_protocol_results(
             let refusal = with_declaration_context(
                 FormsRefusal::at(
                     FormsCause::NoDispatchEntry {
-                    spelling: String::from_utf8_lossy(spelling).into_owned(),
+                        spelling: String::from_utf8_lossy(spelling).into_owned(),
                         construct: ConstructKind::Declaration,
-                    text: bounded_text(&String::from_utf8_lossy(spelling)),
+                        text: bounded_text(&String::from_utf8_lossy(spelling)),
                         declaration: None,
                         profile: None,
                     },
@@ -801,7 +801,7 @@ fn build_forms(
                     FormsCause::NoDispatchEntry {
                         spelling: String::from_utf8_lossy(spelling).into_owned(),
                         construct: ConstructKind::Declaration,
-                    text: bounded_text(&String::from_utf8_lossy(spelling)),
+                        text: bounded_text(&String::from_utf8_lossy(spelling)),
                         declaration: None,
                         profile: None,
                     },

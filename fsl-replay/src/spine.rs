@@ -43,8 +43,7 @@ use fsl_semantics::check::{
     AccessClass, AssemblyCause, AssemblyRefusal, CheckCause, CheckRefusal, ClockSelectionFault,
     ExtensionCause, Obligation, ProbabilisticCause, ProfileRefusal, ProtocolAnchorCause,
     ProvedInterval, RefinementCause, RowClass, ShadowedDeclaration, SourceObjectFault,
-    TemporalCause, TimeUnitCause,
-    TopologyRetained,
+    TemporalCause, TimeUnitCause, TopologyRetained,
 };
 use fsl_semantics::library::LibraryName;
 use fsl_semantics::model::accounting::ModelNormalizationLimits;
@@ -76,15 +75,15 @@ pub use lifecycle::{
     check_units_with_refinement_internals, check_with_execution_points,
     check_with_execution_points_and_refinement_internals,
     check_with_execution_points_and_source_inputs, check_with_integer_division,
-    check_with_profile_catalog, check_with_profile_catalog_and_inputs, check_with_refinement_internals,
-    check_with_refinement_internals_and_integer_division,
+    check_with_profile_catalog, check_with_profile_catalog_and_inputs,
+    check_with_refinement_internals, check_with_refinement_internals_and_integer_division,
     check_with_temporal_selections_and_execution_points, core_vocabulary, extension_forms, package,
     package_with_temporal_selections, parse, parse_selecting_extensions, parse_with_extensions,
     preflight_unit_list, refusal_or_fault, select, select_units, AdmittedModels, AdmittedUnitList,
-    CheckedUnit, EmittedUnit, FrontEndFailure, ObligationState, PackageLimits, ParseRequest,
-    ParsedUnitSource, PendingObligation, ProfileCatalogInput, ProfileCheckFailure,
-    ProtocolCheckSite, SourceInputs, TypeDeclaration, TypeReport, TypeRequirement,
-    FrontEndFailurePayload, ParseReport,
+    CheckedUnit, EmittedUnit, FrontEndFailure, FrontEndFailurePayload, ObligationState,
+    PackageLimits, ParseReport, ParseRequest, ParsedUnitSource, PendingObligation,
+    ProfileCatalogInput, ProfileCheckFailure, ProtocolCheckSite, SourceInputs, TypeDeclaration,
+    TypeReport, TypeRequirement,
 };
 pub(crate) use lifecycle::{
     check_for_continuation, check_units_with_options, parse_for_continuation, ContinuationInputs,
@@ -217,13 +216,13 @@ pub use bind::{
 mod call;
 mod identity_form;
 mod run_value;
-pub(crate) use call::{run_reading, run_reading_with_integer_division};
 pub use call::{
-    default_accounting, run, run_with_profile_catalog, Call, CallArgument, CallIncomplete,
-    run_with_profile_catalog_and_integer_division, CallLocus, CallOutcome, CallRefusal,
-    CallSnapshot, CallValue, RunRefusal, WireArgument,
+    default_accounting, run, run_with_profile_catalog,
+    run_with_profile_catalog_and_integer_division, Call, CallArgument, CallIncomplete, CallLocus,
+    CallOutcome, CallRefusal, CallSnapshot, CallValue, RunRefusal, WireArgument,
     DEFAULT_WORK_UNITS,
 };
+pub(crate) use call::{run_reading, run_reading_with_integer_division};
 pub use identity_form::{effective_form, node_key_form, universe_form};
 pub use run_value::ArgumentDefect;
 
@@ -2711,9 +2710,7 @@ impl DependencyInput {
     /// their supplied library identities (FR-767).
     pub fn with_integer_division(
         mut self,
-        laws: impl IntoIterator<
-            Item = (String, crate::AdmittedIntegerDivision),
-        >,
+        laws: impl IntoIterator<Item = (String, crate::AdmittedIntegerDivision)>,
     ) -> Result<Self, DependencyInputRefusal> {
         for (identity, law) in laws {
             let name = LibraryName::new(&identity).map_err(|_| {

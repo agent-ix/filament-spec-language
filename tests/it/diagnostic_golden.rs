@@ -13,7 +13,7 @@ use fsl_replay::{
     OutcomeDocument, OutcomeLocus, ReplayLimits, ReplayRefusal, StageLimits,
 };
 use ix_trace_rs::trace;
-use serde_json::{Value, json};
+use serde_json::{json, Value};
 
 const HEADER: &str = "language \"ix:native\" edition \"1-draft\";\n\
 profile v = \"filament.value.complete/v1\";\n";
@@ -404,11 +404,7 @@ fn compile_diagnostic_messages_match_goldens_and_keep_structured_stages() {
         )
         .expect("read message golden");
         assert_eq!(refusal["stage"], stage, "{name}: {refusal}");
-        assert_eq!(
-            refusal["message"],
-            expected.trim_end(),
-            "{name}: {refusal}"
-        );
+        assert_eq!(refusal["message"], expected.trim_end(), "{name}: {refusal}");
     }
 
     let assembly = std::fs::read_to_string(
@@ -432,10 +428,16 @@ fn compile_diagnostic_corpus_has_no_internal_stage_prefixes() {
     let mut goldens = std::fs::read_dir(expected_directory)
         .expect("read diagnostic fixture directory")
         .map(|entry| entry.expect("read diagnostic fixture entry").path())
-        .filter(|path| path.extension().is_some_and(|extension| extension == "expected"))
+        .filter(|path| {
+            path.extension()
+                .is_some_and(|extension| extension == "expected")
+        })
         .collect::<Vec<_>>();
     goldens.sort();
-    assert!(!goldens.is_empty(), "the diagnostic corpus has message goldens");
+    assert!(
+        !goldens.is_empty(),
+        "the diagnostic corpus has message goldens"
+    );
 
     for path in goldens {
         let message = std::fs::read_to_string(&path).expect("read expected diagnostic message");

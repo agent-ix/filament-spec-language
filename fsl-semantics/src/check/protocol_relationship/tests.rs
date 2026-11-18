@@ -16,8 +16,8 @@ use crate::check::refusal::{
 use crate::check::{CheckCause, CheckRefusal, CheckedGraph, PackageDeclarations};
 use crate::model::domain_package::{
     ComponentRecord, DomainPackageRecord, EndpointRecord, FieldMemberRecord, Multiplicity,
-    NativeValueType, ObjectTypeRecord, PortDirection, RecordValueTypeRecord,
-    RelationshipDirection, RelationshipEnd, RelationshipRecord, ValueTypeRef,
+    NativeValueType, ObjectTypeRecord, PortDirection, RecordValueTypeRecord, RelationshipDirection,
+    RelationshipEnd, RelationshipRecord, ValueTypeRef,
 };
 use filament_checked::key::DeclarationKey;
 
@@ -225,9 +225,14 @@ fn a_channel_binds_to_a_connection_between_port_roles() {
         "channel Feed from Outlet to Inlet via Link carries M::Flow ordering unordered \
          delivery exactly-once-premise capacity 2 overflow reject;",
     );
-    let graph = check_connection_protocol(&text)
-        .unwrap_or_else(|refusals| panic!("{text}: {refusals:?}"));
-    let channel = graph.protocol("Pipeline").unwrap().channels.first().unwrap();
+    let graph =
+        check_connection_protocol(&text).unwrap_or_else(|refusals| panic!("{text}: {refusals:?}"));
+    let channel = graph
+        .protocol("Pipeline")
+        .unwrap()
+        .channels
+        .first()
+        .unwrap();
     assert_eq!(channel.connection.as_ref(), Some(&key("link")));
 }
 

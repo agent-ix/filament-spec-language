@@ -1616,7 +1616,9 @@ pub(crate) fn run_spine_with_temporal_selections_and_execution_points(
     execution_points: &spine::StateClauseExecutionPoints,
     temporal_selections: &[fsl_package::TemporalClockSelection],
     integer_division: Option<filament_checked::integer_division::AdmittedIntegerDivision>,
-    function_modes: Option<&std::collections::BTreeMap<String, filament_semantic_value::checking::CheckMode>>,
+    function_modes: Option<
+        &std::collections::BTreeMap<String, filament_semantic_value::checking::CheckMode>,
+    >,
     limits: SpineLimits,
 ) -> Result<Recompiled, ReplayRefusal> {
     let SpineUnit {
@@ -1852,7 +1854,10 @@ pub(crate) fn recompile_with_temporal_selections(
             ));
         }
     }
-    check_recorded_modes(request.package().bytes(), compiled.emitted.package().bytes())?;
+    check_recorded_modes(
+        request.package().bytes(),
+        compiled.emitted.package().bytes(),
+    )?;
     request
         .package()
         .admit(&evidence, limits.spine.imports.for_ir())?;
@@ -2044,7 +2049,10 @@ fn run_spine_units(
     limits: SpineLimits,
     refinement_internals: Option<&[filament_contract_model::CheckedRefinementInternal]>,
     check_mode: filament_semantic_value::checking::CheckMode,
-    function_modes: &std::collections::BTreeMap<String, filament_semantic_value::checking::CheckMode>,
+    function_modes: &std::collections::BTreeMap<
+        String,
+        filament_semantic_value::checking::CheckMode,
+    >,
 ) -> Result<(Recompiled, filament_contract_model::CheckedPackageEvidence), ReplayRefusal> {
     #[cfg(test)]
     SPINE_RUNS.with(|runs| runs.set(runs.get() + 1));

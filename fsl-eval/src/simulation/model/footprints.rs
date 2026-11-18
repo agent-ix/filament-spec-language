@@ -681,28 +681,30 @@ impl<'a> ModelSystem<'a> {
         if over.is_none() && !symbolic.is_empty() {
             return Ok(None);
         }
-        Ok(Some(symbolic
-            .iter()
-            .filter_map(|location| {
-                lower(location, &|bound| match bound {
-                    FootprintObject::Receiver => over.cloned(),
-                    FootprintObject::Param(_) => None,
+        Ok(Some(
+            symbolic
+                .iter()
+                .filter_map(|location| {
+                    lower(location, &|bound| match bound {
+                        FootprintObject::Receiver => over.cloned(),
+                        FootprintObject::Param(_) => None,
+                    })
                 })
-            })
-            .flat_map(|location| match location {
-                Location::AnyField { field } => match self.universe_declaring(&field) {
-                    Some(objects) => objects
-                        .into_iter()
-                        .map(|object| Location::Field {
-                            object,
-                            field: field.clone(),
-                        })
-                        .collect(),
-                    None => vec![Location::AnyField { field }],
-                },
-                other => vec![other],
-            })
-            .collect()))
+                .flat_map(|location| match location {
+                    Location::AnyField { field } => match self.universe_declaring(&field) {
+                        Some(objects) => objects
+                            .into_iter()
+                            .map(|object| Location::Field {
+                                object,
+                                field: field.clone(),
+                            })
+                            .collect(),
+                        None => vec![Location::AnyField { field }],
+                    },
+                    other => vec![other],
+                })
+                .collect(),
+        ))
     }
 
     /// FR-156 "Atom footprints": the symbolic locations the `holds` atom

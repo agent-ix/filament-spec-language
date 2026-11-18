@@ -566,13 +566,10 @@ impl Checker<'_, '_> {
         };
         self.formed_units.append(formed_units);
         if slot.bars_model_state {
-            let input = self
-                .binders
-                .iter()
-                .position(|binder| {
-                    binder.origin == BinderOrigin::Input
-                        && matches!(binder.value_type, ValueType::Reference(_))
-                });
+            let input = self.binders.iter().position(|binder| {
+                binder.origin == BinderOrigin::Input
+                    && matches!(binder.value_type, ValueType::Reference(_))
+            });
             let reads = model_state_reads(&body, slot.form, input);
             if !reads.is_empty() {
                 for span in reads {
@@ -1004,11 +1001,7 @@ fn atoms<'f>(visible: &'f [ExpressionForm], guards: &[&'f ExpressionForm]) -> At
 }
 
 fn insert_atom<'a>(node: ExprRef<'a>, atoms: &mut Atoms<'a>) {
-    if !atoms
-        .expressions
-        .iter()
-        .any(|atom| same_atom(*atom, node))
-    {
+    if !atoms.expressions.iter().any(|atom| same_atom(*atom, node)) {
         atoms.expressions.push(node);
     }
 }
@@ -1243,7 +1236,8 @@ pub(crate) fn check(
             if checked_relationship.connection.is_some() {
                 checker.refuse(ProtocolAnchorCause::RelatedConnection {
                     name: name.name.clone(),
-                    message: "a connection relates ports, not values; bind it to a channel with via",
+                    message:
+                        "a connection relates ports, not values; bind it to a channel with via",
                     span: name.span,
                 });
                 continue;

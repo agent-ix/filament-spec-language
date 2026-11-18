@@ -60,9 +60,7 @@ fn some_literal_checks_as_an_option_int_result() {
 #[trace("TC-1823", "FR-680-AC-4", "FSpec-FR-143-AC-21")]
 #[test]
 fn some_literal_checks_as_an_equality_operand() {
-    assert_checks(
-        "function f using v(x: Option<Int[0, 9]>): Boolean pure { x = Some(3) }",
-    );
+    assert_checks("function f using v(x: Option<Int[0, 9]>): Boolean pure { x = Some(3) }");
 }
 
 #[trace("TC-1823", "FR-680-AC-4", "FSpec-FR-143-AC-21")]

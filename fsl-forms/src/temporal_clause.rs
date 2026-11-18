@@ -22,8 +22,8 @@ use super::syntax::{
     UsingAlias,
 };
 use super::value::{
-    Item, declared_name, exact_value, expression, has_token, items, name_form, nodes_of, only,
-    production_node, quantity_form, text, tokens_of, type_form, unexpected, unrepresented,
+    declared_name, exact_value, expression, has_token, items, name_form, nodes_of, only,
+    production_node, quantity_form, text, tokens_of, type_form, unexpected, unrepresented, Item,
 };
 
 /// `temporal Name using p over (x: T) clock "c" activation { fairness*
@@ -506,12 +506,9 @@ impl<'c> Formula<'c> {
                 );
                 Ok(())
             }
-            [
-                Item::Token(holds),
-                Item::Token(_),
-                Item::Node(condition),
-                Item::Token(_),
-            ] if holds.spelling() == b"holds" => {
+            [Item::Token(holds), Item::Token(_), Item::Node(condition), Item::Token(_)]
+                if holds.spelling() == b"holds" =>
+            {
                 if condition.production() == Production::HyperExpression && !self.hyper {
                     return Err(unrepresented(
                         self.cst,

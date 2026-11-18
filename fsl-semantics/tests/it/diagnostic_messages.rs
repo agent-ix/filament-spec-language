@@ -2,7 +2,7 @@
 //! QSL-2199: preserve the operator and operand types on arithmetic mismatch.
 
 use filament_semantic_value::checking::{CheckMode, CheckingLimits};
-use fsl_forms::{BinaryOperator, build_unit};
+use fsl_forms::{build_unit, BinaryOperator};
 use fsl_foundation::SourceIdentity;
 use fsl_semantics::check::{AssemblyCause, CheckCause, PackageDeclarations};
 use fsl_semantics::model::intake::SelectedModels;

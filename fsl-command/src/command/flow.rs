@@ -9,9 +9,9 @@ use std::sync::atomic::{AtomicU64, Ordering};
 
 use filament_exact::Cancel;
 use serde::Deserialize;
-use serde_json::{Value, json};
+use serde_json::{json, Value};
 
-use super::{RunResult, analyze};
+use super::{analyze, RunResult};
 use fsl_analyze::analyze::document::Negotiate;
 #[cfg(test)]
 use fsl_route::CandidateOutcome;
@@ -1477,12 +1477,10 @@ mod tests {
         let items = result.value.as_value()["items"].as_array().unwrap();
         assert_eq!(items.len(), 2);
         assert_eq!(items[0]["record"]["result"], "incomplete");
-        assert!(
-            items[0]["claim_name"]
-                .as_str()
-                .unwrap()
-                .contains("item_limit")
-        );
+        assert!(items[0]["claim_name"]
+            .as_str()
+            .unwrap()
+            .contains("item_limit"));
         assert_ne!(items[1]["record"]["result"], "incomplete");
         assert!(items[1]["claim_name"].as_str().unwrap().contains("CONN_2"));
     }
@@ -1525,12 +1523,10 @@ mod tests {
         let items = result.value.as_value()["items"].as_array().unwrap();
         assert_eq!(items.len(), 3);
         assert_eq!(items[0]["record"]["result"], "unsupported");
-        assert!(
-            items[0]["claim_name"]
-                .as_str()
-                .unwrap()
-                .contains("health_across_untrusted_boundary")
-        );
+        assert!(items[0]["claim_name"]
+            .as_str()
+            .unwrap()
+            .contains("health_across_untrusted_boundary"));
         assert!(items[0]["record"]["diagnostic"].is_object());
         assert_ne!(items[1]["record"]["result"], "unsupported");
         assert_ne!(items[2]["record"]["result"], "unsupported");
@@ -1556,18 +1552,14 @@ mod tests {
             .expect("native implications");
         let items = &result.value.as_value()["items"];
         assert_eq!(items.as_array().expect("ordered items").len(), 6);
-        assert!(
-            items[0]["claim_name"]
-                .as_str()
-                .unwrap()
-                .starts_with("FlowRule0_broad_")
-        );
-        assert!(
-            items[2]["claim_name"]
-                .as_str()
-                .unwrap()
-                .starts_with("FlowRule1_narrow_")
-        );
+        assert!(items[0]["claim_name"]
+            .as_str()
+            .unwrap()
+            .starts_with("FlowRule0_broad_"));
+        assert!(items[2]["claim_name"]
+            .as_str()
+            .unwrap()
+            .starts_with("FlowRule1_narrow_"));
         assert_eq!(items[4]["record"]["result"], "refuted");
         assert_eq!(items[5]["record"]["result"], "proved");
     }

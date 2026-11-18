@@ -402,8 +402,12 @@ impl WeakAccesses {
                 continue;
             };
             current.instances.append(&mut attempt.instances);
-            current.instances.sort_by(|left, right| left.transition.cmp(&right.transition));
-            current.instances.dedup_by(|left, right| left.transition == right.transition);
+            current
+                .instances
+                .sort_by(|left, right| left.transition.cmp(&right.transition));
+            current
+                .instances
+                .dedup_by(|left, right| left.transition == right.transition);
         }
         for (node, candidates) in other.load_candidates {
             let current = self.load_candidates.entry(node).or_default();

@@ -6,8 +6,8 @@ use filament_semantic_value::catalog::CatalogCode;
 use fsl_eval::model_subject::ProtocolSubject;
 use fsl_eval::simulation::model::ModelSystem;
 use fsl_eval::simulation::protocol::{
-    ProtocolRefusal, ProtocolSystem, ProtocolTransition, Ra, Sc, StepKind, SubjectMemory, Tso,
-    live_instance_bound,
+    live_instance_bound, ProtocolRefusal, ProtocolSystem, ProtocolTransition, Ra, Sc, StepKind,
+    SubjectMemory, Tso,
 };
 use fsl_eval::simulation::{SubjectSystem, TransitionSystem};
 use fsl_replay::TemporalCounterexample;
@@ -271,9 +271,14 @@ pub(crate) fn global_recording_item<'a>(
         fsl_route::Mode::Bounded,
         super::manifest::BACKEND_ID,
         move |cancel| match recording {
-            Some(recording) => {
-                recording_result(index, package, protocol, subject.as_ref(), recording, cancel)
-            }
+            Some(recording) => recording_result(
+                index,
+                package,
+                protocol,
+                subject.as_ref(),
+                recording,
+                cancel,
+            ),
             None => crate::analyze::EngineReport::Refused(crate::analyze::Refusal::Declined(
                 fsl_replay::ProofRefusalCause::InvalidInput,
                 fsl_replay::DeclineCode::Fsl(fsl_foundation::Code::InvalidRuntimeInput),
@@ -998,11 +1003,9 @@ pub fn replay_counterexample(
         } => {
             fsl_replay::BoundExceeded::check(recording.len(), limits)
                 .map_err(|error| ConformanceReplayRefusal::invalid(error.to_string(), None))?;
-            let assessment = super::recording::assess_recording(
-                subject.model.simulation.package,
-                recording,
-            )
-            .map_err(ConformanceReplayRefusal::recording)?;
+            let assessment =
+                super::recording::assess_recording(subject.model.simulation.package, recording)
+                    .map_err(ConformanceReplayRefusal::recording)?;
             if assessment.global.label == "refuted"
                 && assessment.trace_position == Some(*trace_position)
             {

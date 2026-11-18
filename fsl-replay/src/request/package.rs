@@ -142,7 +142,10 @@ impl ReplayPackage {
             .map(|(position, node)| FunctionRecord {
                 position,
                 node_id: node["node_id"].to_string(),
-                name: match node["declaration"]["qualified_name"].as_array().map(Vec::as_slice) {
+                name: match node["declaration"]["qualified_name"]
+                    .as_array()
+                    .map(Vec::as_slice)
+                {
                     Some([name]) => name.as_str().map(str::to_owned),
                     _ => None,
                 },

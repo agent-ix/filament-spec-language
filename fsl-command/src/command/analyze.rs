@@ -167,16 +167,17 @@ fn read<'d>(
             ));
         }
     }
-    for (position, recording) in request
-        .items
-        .iter()
-        .flatten()
-        .enumerate()
-        .filter_map(|(position, item)| {
-            item.recording
-                .as_ref()
-                .map(|recording| (position, recording))
-        })
+    for (position, recording) in
+        request
+            .items
+            .iter()
+            .flatten()
+            .enumerate()
+            .filter_map(|(position, item)| {
+                item.recording
+                    .as_ref()
+                    .map(|recording| (position, recording))
+            })
     {
         if !documents.contains_key(&recording.reference()) {
             return Err(invalid(

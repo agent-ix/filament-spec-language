@@ -17,12 +17,12 @@ use super::protocol_requirements::fixture_w::{
 use super::*;
 use crate::protocol_view::{
     attempts_maximum, attempts_over, await_anchor, binder, causal_relation, channel_connection,
-    channel_endpoints,
-    channel_ordering, choice_visibility, control_operation, declaration, delivery, dependency,
-    fifo_key, locus, operation_identity, owner_model, protocol_view, queue_capacity, queue_channel,
-    queue_overflow, relation_over, selection, source, temporal_binding, AwaitAnchor,
-    AwaitAnchorKind, ChannelOrdering, ChoiceVisibility, ControlOperation, Delivery, FifoKey,
-    LossSelector, Overflow, QueueCapacity, Scheduling, ViewRefusal,
+    channel_endpoints, channel_ordering, choice_visibility, control_operation, declaration,
+    delivery, dependency, fifo_key, locus, operation_identity, owner_model, protocol_view,
+    queue_capacity, queue_channel, queue_overflow, relation_over, selection, source,
+    temporal_binding, AwaitAnchor, AwaitAnchorKind, ChannelOrdering, ChoiceVisibility,
+    ControlOperation, Delivery, FifoKey, LossSelector, Overflow, QueueCapacity, Scheduling,
+    ViewRefusal,
 };
 
 /// The TC-134 workflow plus an `await` anchored at an event, so every edge

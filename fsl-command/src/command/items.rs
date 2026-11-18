@@ -2,10 +2,10 @@
 //! FR-651: read several independent selections through the public run command.
 
 use super::{
-    RequestOverrides, Result, RunCause, RunError, RunLimits, RunResult, output::NativeResult,
-    prepare_run_bytes,
+    output::NativeResult, prepare_run_bytes, RequestOverrides, Result, RunCause, RunError,
+    RunLimits, RunResult,
 };
-use serde_json::{Map, Value, json};
+use serde_json::{json, Map, Value};
 use std::path::Path;
 
 const FORMAT: &str = "native-run-items/1";

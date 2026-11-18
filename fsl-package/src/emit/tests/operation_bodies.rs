@@ -513,8 +513,9 @@ fn under_kernel_a_precondition_clause_function_is_linked_and_a_body_is_kernel() 
          pre ps using v on Config::ConfigVersion::size {{ true }}\n{CALLED}"
     );
     let packages = fsl_semantics::model::intake::package_input([document.as_slice()]).unwrap();
-    let mut assembled = assemble_with_models(unit(&declarations, &["Config"]).as_bytes(), &packages)
-        .expect("the unit assembles");
+    let mut assembled =
+        assemble_with_models(unit(&declarations, &["Config"]).as_bytes(), &packages)
+            .expect("the unit assembles");
     let pending = assembled.link_dispatch(Default::default()).expect("links");
     let graph = assembled
         .check(CheckMode::Kernel, CheckingLimits::default())
@@ -533,4 +534,3 @@ fn under_kernel_a_precondition_clause_function_is_linked_and_a_body_is_kernel() 
     assert!(modes.contains(&json!("kernel")), "{modes:?}");
     assert!(modes.contains(&json!("linked")), "{modes:?}");
 }
-

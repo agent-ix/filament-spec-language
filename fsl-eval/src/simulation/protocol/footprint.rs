@@ -939,7 +939,10 @@ impl<M: MemoryModel> ProtocolSystem<'_, M> {
         let own = control(path);
         built.enabling(own.clone());
         built.write(own);
-        if matches!(step.kind(), StepKind::CAttempt | StepKind::CFail | StepKind::CTimeout) {
+        if matches!(
+            step.kind(),
+            StepKind::CAttempt | StepKind::CFail | StepKind::CTimeout
+        ) {
             let Some(index) = template.role else {
                 return Err(unknown());
             };

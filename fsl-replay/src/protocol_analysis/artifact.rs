@@ -10,8 +10,8 @@ use filament_exact::ObjectReference;
 use fsl_package::protocol_view::PortRef;
 
 use super::{
-    Action, BranchMerge, ChoiceBasis, GlobalStructure, MissingMember, ProtocolAnalysisKey,
-    node_text,
+    node_text, Action, BranchMerge, ChoiceBasis, GlobalStructure, MissingMember,
+    ProtocolAnalysisKey,
 };
 use crate::identity::TracePosition;
 use crate::result::{DecidingElement, SeparatingWitnessRecord};

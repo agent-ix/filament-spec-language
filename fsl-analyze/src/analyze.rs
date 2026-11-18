@@ -2264,10 +2264,9 @@ mod tests {
             &[(index, output)].into_iter().collect(),
         )
         .expect("the settled item serializes");
-        let wire: serde_json::Value = serde_json::from_slice(
-            &document.to_bytes().expect("the document encodes"),
-        )
-        .expect("the document is JSON");
+        let wire: serde_json::Value =
+            serde_json::from_slice(&document.to_bytes().expect("the document encodes"))
+                .expect("the document is JSON");
 
         assert_eq!(wire["items"][0]["result"], "proved");
         assert_eq!(wire["items"][0]["obligations"][0]["verdict"], "satisfied");

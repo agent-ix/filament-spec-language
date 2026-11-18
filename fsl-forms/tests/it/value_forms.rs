@@ -5,9 +5,9 @@
 use filament_exact::{CollectionKind, Integer};
 use fsl_cst::{CstElement, LosslessCst, ParsedSource, Production};
 use fsl_forms::{
-    Accumulation, BinaryOperator, BinderQuery, BuiltinType, DecimalSpellingKind, DeclarationForm,
-    DeclarationKind, ExactNumberKind, ExprNode, ExprRef, Expression, FieldInitializer, FormsCause,
-    FunctionDeclaration, ParsedUnit, TermOperator, TypeFormHead, build_unit,
+    build_unit, Accumulation, BinaryOperator, BinderQuery, BuiltinType, DecimalSpellingKind,
+    DeclarationForm, DeclarationKind, ExactNumberKind, ExprNode, ExprRef, Expression,
+    FieldInitializer, FormsCause, FunctionDeclaration, ParsedUnit, TermOperator, TypeFormHead,
 };
 use fsl_foundation::{Code, SourceIdentity, Span, SyntaxLimit};
 use ix_trace_rs::trace;
@@ -1903,7 +1903,10 @@ fn a_selector_after_a_call_builds_as_an_index() {
     let ExprNode::Index { operand, .. } = root.node() else {
         panic!("index after a call builds as Index: {:?}", root.node());
     };
-    assert!(matches!(root.at(*operand).node(), ExprNode::Dispatch { .. }));
+    assert!(matches!(
+        root.at(*operand).node(),
+        ExprNode::Dispatch { .. }
+    ));
 }
 
 /// FR-764-AC-2: a bare decimal literal builds the `DecimalValue` of the
