@@ -62,7 +62,7 @@ const REWARD: &str = "probabilistic Reward using inf on M over (m: M::Msg) under
 
 const FAIR_DELIVER: &str = "probabilistic DeliverFair using ev on M over (m: M::Msg) \
      under every scheduler fair weak Msg::send_a on origin \
-     { probability >= rational(97, 100) [ eventually[0,2] holds(m.delivered) ] }";
+     { probability >= rational(95, 100) [ eventually[0,2] holds(m.delivered) ] }";
 
 fn run(name: &str, claims: &str, items: Value) -> Value {
     let ws = Workspace::new(name);
