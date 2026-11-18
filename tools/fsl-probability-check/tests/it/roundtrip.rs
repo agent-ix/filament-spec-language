@@ -597,7 +597,7 @@ fn certificate_checks_independently() {
     let outcome = serde_json::to_value(analyzed.value).expect("the analyze document is JSON");
     let item = &outcome["items"][0];
     assert_eq!(item["record"]["result"], "proved", "{item}");
-    let certificate = &item["certificate"]["document"]["document"];
+    let certificate = &item["certificate"]["document"];
     assert!(certificate.is_object(), "{item}");
 
     let mut checker_request = proof_request(CLAIM);
