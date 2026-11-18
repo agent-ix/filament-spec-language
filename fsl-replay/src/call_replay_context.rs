@@ -273,9 +273,10 @@ mod tests {
         )
         .expect("selects")
         .into_value();
-        let checked = spine::check_with_refinement_internals(
+        let checked = spine::check_with_execution_points_and_source_inputs(
             &parsed,
             "fixture".to_owned(),
+            &BTreeMap::new(),
             spine::SourceInputs {
                 check_mode: Some(CheckMode::Kernel),
                 ..spine::SourceInputs::default()
