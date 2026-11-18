@@ -336,3 +336,32 @@ fn a_refused_package_never_falls_back_to_source() {
     assert_eq!(run.document()["last_stage"], Value::Null, "{}", run.document());
     assert_eq!(first_diagnostic(&run)["code"], "invalid_package", "{}", run.document());
 }
+
+/// FR-850, FR-940 (review round 1): an `invariant` state clause carries no
+/// name row in the package, so a request naming it over the package is never
+/// settled `unknown-claim` while the source route decides it; until the
+/// invariant family has a package form the request is refused whole, naming
+/// the item and the family.
+#[trace("TC-2410", "FR-850-AC-5")]
+#[trace("TC-2958", "FR-940-AC-6")]
+#[test]
+fn an_invariant_named_over_a_package_is_never_an_unknown_claim() {
+    let items = json!([{"claim": "NotAboveThree"}]);
+    let ws = Workspace::new("package-invariant-name");
+    let source = analyze(&counter_request(&ws, not_above_three(), items.clone()));
+    assert_eq!(label(&source.item(0)), "proved", "{}", source.document());
+    let (members, _) = package_request(&ws, not_above_three(), items);
+    let run = analyze_members(&ws, "analyze-invariant.json", &members);
+    assert!(
+        !run.document().to_string().contains("unknown-claim"),
+        "{}",
+        run.document()
+    );
+    let diagnostic = first_diagnostic(&run);
+    assert_eq!(diagnostic["cause"], "not-yet-implemented", "{diagnostic}");
+    let message = diagnostic["message"].as_str().unwrap_or_default();
+    assert!(
+        message.contains("items[0]") && message.contains("unnamed-claim"),
+        "{diagnostic}"
+    );
+}

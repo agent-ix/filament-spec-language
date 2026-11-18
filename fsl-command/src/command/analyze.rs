@@ -90,7 +90,10 @@ fn prepare_bytes(
         }),
         // A prepared run holds the source it compiles; a package request
         // has none to prepare (FR-850).
-        Readout::Package(_) => Err(RunCause::AnalyzeNotYetImplemented { member: "package" }),
+        Readout::Package(_) => Err(RunCause::AnalyzeNotYetImplemented {
+            member: "package",
+            detail: ": a prepared run holds a program source".to_owned(),
+        }),
     }
 }
 
@@ -146,7 +149,17 @@ fn run_package(
             }
         })?;
     let items = resolve_package_items(&package, selection.items.as_deref())
-        .map_err(|_| RunCause::AnalyzeNotYetImplemented { member: "package" })?;
+        .map_err(|pending| RunCause::AnalyzeNotYetImplemented {
+            member: "package",
+            detail: match pending.request_index {
+                Some(index) => format!(
+                    ": items[{}] names the {} family, which has no package form yet",
+                    index.get(),
+                    pending.family.name()
+                ),
+                None => format!(": the {} rule has no package form yet", pending.family.name()),
+            },
+        })?;
     let settled = settle_package_items(items, &engines).map_err(|_| RunCause::AnalyzeFault)?;
     Ok(RunResult {
         exit_code: settled.exit_code,

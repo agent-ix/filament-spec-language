@@ -947,21 +947,60 @@ pub struct PendingPackageFamily {
     /// The request index of the first such item, `None` for the default
     /// items of a request with no `items` member.
     pub request_index: Option<RequestIndex>,
+    /// What the item names.
+    pub family: PendingFamily,
+}
+
+/// What a pending package-route item names.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum PendingFamily {
+    /// The default items of a request with no `items` member.
+    DefaultItems,
+    /// A claimless `simulation` item (FR-634).
+    Simulation,
+    /// A derived item over a model (FSpec FR-368).
+    Derived,
+    /// A temporal clause, named by its `temporal_clause_names` row.
+    Temporal,
+    /// A named declaration.
+    Declaration,
+    /// A name the package carries no row for while it holds a claim whose
+    /// name it does not carry ([`fsl_package::AnalysisView::unnamed_claims`]):
+    /// the name may be that claim's, so it is not settled `unknown-claim`.
+    UnnamedClaim,
+}
+
+impl PendingFamily {
+    /// The family's name in a refusal message.
+    #[must_use]
+    pub const fn name(self) -> &'static str {
+        match self {
+            Self::DefaultItems => "default-items",
+            Self::Simulation => "simulation",
+            Self::Derived => "derived",
+            Self::Temporal => "temporal",
+            Self::Declaration => "declaration",
+            Self::UnnamedClaim => "unnamed-claim",
+        }
+    }
 }
 
 /// FR-850 "Building the analysis input": resolve a `package` request's items
 /// by name against the package, read only through `view` (FR-940). A
 /// temporal clause is named by its `temporal_clause_names` row and any other
-/// claim by the `declaration.qualified_name` of its node; a name neither
+/// claim by the `declaration.qualified_name` of its node. A name neither
 /// carries settles `invalid-request` with `invalid_capability`/`unknown-claim`
-/// as the source route settles it.
+/// as the source route settles it, but only when the package holds no claim
+/// whose name it does not carry (an `invariant` state clause, a refinement,
+/// a state-graph claim): the name could be that claim's.
 ///
 /// # Errors
 ///
 /// [`PendingPackageFamily`] for the first item that names a claim, a
-/// derived item or a simulation, and for the default items: the package
-/// route settles no engine family yet, and it never settles one
-/// `unsupported` for a fact the source route reads (FR-940).
+/// derived item or a simulation, or a name that may be an unnamed claim's,
+/// and for the default items: the package route settles no engine family
+/// yet, and it never settles one `unsupported` for a fact the source route
+/// reads (FR-940).
 pub fn resolve_package_items(
     view: &dyn fsl_package::AnalysisView,
     selections: Option<&[ItemSelection]>,
@@ -969,30 +1008,40 @@ pub fn resolve_package_items(
     let Some(selections) = selections else {
         return Err(PendingPackageFamily {
             request_index: None,
+            family: PendingFamily::DefaultItems,
         });
     };
     let clauses = view.clause_names();
     let declared = view.declared_names();
+    let unnamed = !view.unnamed_claims().is_empty();
     selections
         .iter()
         .enumerate()
         .map(|(position, selection)| {
             let index = RequestIndex::new(position);
-            let pending = PendingPackageFamily {
+            let pending = |family| PendingPackageFamily {
                 request_index: Some(index),
+                family,
             };
             let Some(name) = selection.claim.as_deref() else {
-                return Err(pending);
+                return Err(pending(PendingFamily::Simulation));
             };
-            let named = clauses.iter().any(|row| row.name.as_ref() == name)
-                || declared.iter().any(|(declared, _)| declared == name);
             // A derived item names a model, not a claim (FSpec FR-368).
-            let derived = selection
+            if selection
                 .temporal
                 .as_ref()
-                .is_some_and(|temporal| temporal.item_kind.is_some());
-            if named || derived {
-                return Err(pending);
+                .is_some_and(|temporal| temporal.item_kind.is_some())
+            {
+                return Err(pending(PendingFamily::Derived));
+            }
+            if clauses.iter().any(|row| row.name.as_ref() == name) {
+                return Err(pending(PendingFamily::Temporal));
+            }
+            if declared.iter().any(|(declared, _)| declared == name) {
+                return Err(pending(PendingFamily::Declaration));
+            }
+            if unnamed {
+                return Err(pending(PendingFamily::UnnamedClaim));
             }
             Ok(unknown_claim(index, name))
         })
