@@ -61,6 +61,9 @@ pub enum UndefinedLocus {
     Terminal(String),
     /// The request's state constraint (ADR-021 SC-2), by its clause name.
     Constraint(String),
+    /// An invariant item's letter (FR-951): its `invariant` state clause,
+    /// by its declared name.
+    Invariant(String),
     /// A protocol step's constraint (ADR-027 TS-4), by its node's static
     /// declaration path.
     Protocol(String),

@@ -26,7 +26,7 @@ use fsl_eval::automaton::{
 use fsl_eval::model_subject::{ModelInstance, ModelLetters, ModelSubject};
 use fsl_eval::simulation::model::ModelSystem;
 use fsl_eval::simulation::NotSimulated;
-use fsl_semantics::check::CheckedTemporalClause;
+use fsl_semantics::check::{CheckedStateClause, CheckedTemporalClause};
 
 use crate::model_check::identity::{ClauseIdentity, ClauseRootRefusal};
 
@@ -47,6 +47,12 @@ pub enum ModelCheckItem<'a> {
     /// FR-224's derived race-freedom item, `always holds(not raced)`, over a
     /// protocol subject with a weak `parallel`.
     RaceFreedom,
+    /// FR-951's invariant item: the checked `invariant` state clause
+    /// `clause` holds at every reachable state of a model subject.
+    Invariant {
+        /// The checked `invariant` state clause.
+        clause: &'a CheckedStateClause,
+    },
 }
 
 /// One instance of an item: the bound population key, `None` for the
@@ -131,6 +137,9 @@ pub enum ItemRefusal {
     /// The race-freedom item's context did not encode.
     #[error("the race-freedom context does not encode")]
     RaceContext,
+    /// The invariant item's context did not encode.
+    #[error("the invariant context does not encode")]
+    InvariantContext,
     /// FR-125: a population that admits the `over` type has no universe
     /// (`RequiresBound`), or that check could not classify it.
     #[error("the clause's instances are not finite: {0:?}")]
@@ -216,6 +225,16 @@ impl ModelCheckItem<'_> {
                     SafetyTranslation::race_freedom().map_err(|_| ItemRefusal::RaceContext)?,
                 ),
             }]),
+            Self::Invariant { clause } => {
+                let occurrence = invariant_root(subject.simulation.package, clause)?;
+                Ok(vec![Instance {
+                    binding: None,
+                    translation: Translation::Safety(
+                        SafetyTranslation::state_invariant(occurrence)
+                            .map_err(|_| ItemRefusal::InvariantContext)?,
+                    ),
+                }])
+            }
             Self::Clause { clause, .. } => {
                 let identity = ClauseIdentity::resolve(
                     subject.simulation.package,
@@ -290,4 +309,37 @@ impl ModelCheckItem<'_> {
             }
         }
     }
+}
+
+/// FR-338's invariant root of `clause` in `package`: its `state`/
+/// `state_clause` node and `claim` occurrence, resolved to a checked state
+/// clause of kind `invariant` with the same node and occurrence. A node that
+/// is no such clause, a clause of another kind (a `constraint` included) or a
+/// foreign occurrence is refused as a foreign clause root is refused.
+///
+/// # Errors
+///
+/// [`ClauseRootRefusal::Undeclared`] naming the clause.
+pub fn invariant_root(
+    package: &fsl_package::CheckedPackage,
+    clause: &CheckedStateClause,
+) -> Result<fsl_foundation::source::provenance::OccurrenceKey, ClauseRootRefusal> {
+    package
+        .graph()
+        .state_clauses()
+        .iter()
+        .find(|candidate| {
+            candidate.is_invariant()
+                && candidate.identity() == clause.identity()
+                && candidate.claim() == clause.claim()
+        })
+        .map(|found| {
+            fsl_foundation::source::provenance::OccurrenceKey::new(
+                found.identity(),
+                found.claim().clone(),
+            )
+        })
+        .ok_or_else(|| ClauseRootRefusal::Undeclared {
+            name: clause.name().to_owned(),
+        })
 }

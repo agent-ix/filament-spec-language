@@ -292,6 +292,12 @@ pub enum ModelTraceRefusal {
     /// and so no data race (FR-224).
     #[error("invalid_runtime_input/invalid-value: a race counterexample names a model subject")]
     RaceOverModel,
+    /// A counterexample of an invariant item (FR-951) with a non-empty
+    /// `loop` or a `kind` of `deadlock`: a reachable-state invariant's
+    /// violation is a finite prefix ending at a state where its letter is
+    /// false or undefined (FR-128).
+    #[error("invalid_runtime_input/invalid-value: an invariant counterexample is a finite prefix of kind formula or an undefined evaluation")]
+    InvariantShape,
     /// A formula counterexample names no instance of the clause's `over`
     /// parameter.
     #[error(
@@ -517,6 +523,7 @@ impl ModelTraceRefusal {
             | Self::SendRecordShape { .. }
             | Self::OverBinding
             | Self::RaceOverModel
+            | Self::InvariantShape
             | Self::NoRefinementFailure
             | Self::PrefixShort { .. }
             | Self::LoopOpen { .. }
@@ -568,6 +575,7 @@ impl ModelTraceRefusal {
             | Self::SendRecordShape { .. }
             | Self::OverBinding
             | Self::RaceOverModel
+            | Self::InvariantShape
             | Self::NoRefinementFailure
             | Self::PrefixShort { .. }
             | Self::LoopOpen { .. }
@@ -744,6 +752,12 @@ pub fn replay_model_trace_with_temporal_selections(
         temporal_selections,
         replay_limits,
         |package, simulation, meter| {
+            if let Some(clause) = resolve_invariant(envelope, package.0)? {
+                let system =
+                    ModelSystem::new(simulation(subject)).map_err(ReplayRefusal::Admission)?;
+                return invariant(&system, envelope.family_payload(), clause)
+                    .map(|settlement| (settlement, Vec::new()));
+            }
             let clause = resolve_item(envelope, package.0, DerivedAnchors::Model, |clause| {
                 let payload = envelope.family_payload();
                 if payload.fairness == clause.fairness() {
@@ -1239,6 +1253,107 @@ fn derived_items<T: SubjectTransition>(payload: &TemporalCounterexample<T>) -> (
         }
         CounterexampleKind::Formula | CounterexampleKind::TimeLock => (false, false),
     }
+}
+
+/// The `invariant` state clause the envelope's clause node names, when it
+/// names one (FR-128, FR-951): its occurrence key must be the clause's
+/// `state_clause` node and `claim` occurrence.
+fn resolve_invariant<'p, T: SubjectTransition>(
+    envelope: &WitnessEnvelope<TemporalCounterexample<T>>,
+    package: &'p CheckedPackage,
+) -> Result<Option<&'p fsl_semantics::check::CheckedStateClause>, ReplayRefusal> {
+    let Some(clause) = package
+        .graph()
+        .state_clauses()
+        .iter()
+        .find(|clause| clause.is_invariant() && clause.identity() == *envelope.clause_node())
+    else {
+        return Ok(None);
+    };
+    let expected = OccurrenceKey::new(clause.identity(), clause.claim().clone());
+    if expected != *envelope.occurrence_key() {
+        return Err(refused(ModelTraceRefusal::ItemIdentity {
+            clause_node: envelope.clause_node().clone(),
+            occurrence_key: Box::new(envelope.occurrence_key().clone()),
+            expected_node: clause.identity(),
+            expected_key: Box::new(expected),
+        }));
+    }
+    Ok(Some(clause))
+}
+
+/// FR-128's replay of an invariant item's counterexample (FR-951): a finite
+/// prefix with no loop and no fairness set, refused before any step replays
+/// otherwise. The invariant's letter, FR-158's truth of its body over every
+/// conforming object of the state, is read at every replayed state in
+/// order: it reproduces when it is true at every state before the last and,
+/// at the last, false for a `formula` counterexample or undefined at the
+/// claimed locus with the claimed cause for an undefined evaluation.
+fn invariant(
+    system: &ModelSystem<'_>,
+    payload: &TemporalCounterexample,
+    clause: &fsl_semantics::check::CheckedStateClause,
+) -> Result<ModelTraceSettlement, ReplayRefusal> {
+    if payload.lasso.is_some()
+        || !matches!(
+            payload.kind,
+            CounterexampleKind::Formula | CounterexampleKind::UndefinedEvaluation(_)
+        )
+    {
+        return Err(refused(ModelTraceRefusal::InvariantShape));
+    }
+    if !payload.fairness.is_empty() {
+        return Err(refused(ModelTraceRefusal::FairnessSet {
+            payload: payload.fairness.clone(),
+            recompiled: Vec::new(),
+        }));
+    }
+    let Some((positions, _)) = replay_prefix(system, payload, &MODEL_STEPS)? else {
+        return Ok(no_value());
+    };
+    let last = positions.len().saturating_sub(1);
+    for (index, position) in positions.iter().enumerate() {
+        let value = match system.constraint_value(&position.state, clause.name()) {
+            Ok(value) => value,
+            Err(stop) if stop.is_internal_failure() => return Err(fault("invariant-letter")),
+            Err(_) => return Ok(no_value()),
+        };
+        let at_last = index == last;
+        match (value, &payload.kind) {
+            (ConstraintValue::Holds, _) if !at_last => {}
+            (ConstraintValue::Holds, _) => return Ok(disagrees(Category::Success)),
+            (ConstraintValue::Boundary, CounterexampleKind::Formula) if at_last => {
+                return Ok(ModelTraceSettlement::Reproduced {
+                    value: ModelTraceValue::Truth(false),
+                    trace_position: payload.trace_position(),
+                });
+            }
+            (ConstraintValue::Undefined { cause, .. }, CounterexampleKind::UndefinedEvaluation(claimed))
+                if at_last
+                    && claimed.cause == cause
+                    && claimed.site.position == position_of(index)
+                    && claimed.site.locus == UndefinedLocus::Invariant(clause.name().to_owned()) =>
+            {
+                return Ok(ModelTraceSettlement::Reproduced {
+                    value: ModelTraceValue::Undefined(UndefinedEvaluation {
+                        site: UndefinedSite {
+                            position: position_of(index),
+                            state_key: position.state_key.clone(),
+                            locus: UndefinedLocus::Invariant(clause.name().to_owned()),
+                            transition: None,
+                            time: None,
+                        },
+                        cause,
+                    }),
+                    trace_position: payload.trace_position(),
+                });
+            }
+            (ConstraintValue::Boundary | ConstraintValue::Undefined { .. }, _) => {
+                return Ok(disagrees(Category::Violation));
+            }
+        }
+    }
+    Ok(no_value())
 }
 
 pub(super) fn fault(invariant: &'static str) -> ReplayRefusal {
@@ -2389,6 +2504,7 @@ fn undefined<S: SubjectSystem>(
         | UndefinedLocus::Capture(_)
         | UndefinedLocus::Contract(_)
         | UndefinedLocus::Terminal(_)
+        | UndefinedLocus::Invariant(_)
         | UndefinedLocus::Protocol(_)
         | UndefinedLocus::Mapping { .. }
         | UndefinedLocus::ClaimPredicate(_) => None,

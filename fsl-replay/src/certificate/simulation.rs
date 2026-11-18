@@ -344,6 +344,7 @@ fn locus_kind(locus: &UndefinedLocus) -> &'static str {
         UndefinedLocus::Contract(_) => "contract",
         UndefinedLocus::Terminal(_) => "terminal",
         UndefinedLocus::Constraint(_) => "constraint",
+        UndefinedLocus::Invariant(_) => "invariant",
         UndefinedLocus::Protocol(_) => "protocol",
         UndefinedLocus::Mapping(_) => "mapping",
         UndefinedLocus::ClaimPredicate(_) => "claim-predicate",

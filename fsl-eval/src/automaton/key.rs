@@ -57,6 +57,8 @@ pub const AUTOMATON_STATE_KEY_V1: &str = "filament.automaton-state-key/v1";
 /// The root of the derived deadlock-freedom item's context.
 const DEADLOCK_FREEDOM: &str = "deadlock-freedom";
 const RACE_FREEDOM: &str = "race-freedom";
+/// The leading member of an invariant item's root (FR-338, FR-951).
+const INVARIANT: &str = "invariant";
 
 /// FR-338's `AutomatonStateKey`: the complete canonical octets of one
 /// automaton state under its context. Equality compares complete octets;
@@ -133,6 +135,9 @@ pub enum ContextRoot {
     DeadlockFreedom,
     /// The derived race-freedom item (FR-224): `["race-freedom"]`.
     RaceFreedom,
+    /// An invariant item (FR-951), by its `state`/`state_clause` node and
+    /// `claim` occurrence: `["invariant", node, role, ordinal]`.
+    Invariant(OccurrenceKey),
 }
 
 /// A context's activation: `"origin"` or `"each"` for a bounded monitor,
@@ -241,6 +246,20 @@ impl StateContext {
         }
     }
 
+    /// An invariant item's context (FR-338, FR-951): `[["invariant", node,
+    /// role, ordinal], "filament.temporal.infinite-trace/v1", "infinite",
+    /// []]`, with `occurrence` the invariant's `state`/`state_clause` node
+    /// and `claim` occurrence. The invariant quantifies over the state's
+    /// objects inside its letter, so it binds nothing.
+    pub fn invariant(occurrence: OccurrenceKey) -> Self {
+        Self {
+            root: ContextRoot::Invariant(occurrence),
+            profile: TemporalProfile::InfiniteTrace,
+            activation: ContextActivation::Infinite,
+            binding: Vec::new(),
+        }
+    }
+
     /// The context of `clause` at `occurrence` under `binding`: its profile
     /// and activation are the checked clause's own.
     pub fn clause(
@@ -287,6 +306,12 @@ impl StateContext {
             ]),
             ContextRoot::DeadlockFreedom => Enc::Array(vec![Enc::text(DEADLOCK_FREEDOM)]),
             ContextRoot::RaceFreedom => Enc::Array(vec![Enc::text(RACE_FREEDOM)]),
+            ContextRoot::Invariant(occurrence) => Enc::Array(vec![
+                Enc::text(INVARIANT),
+                node_enc(occurrence.node()),
+                Enc::text(occurrence.origin().role().as_str()),
+                Enc::text(occurrence.origin().ordinal().to_string()),
+            ]),
         };
         let binding = self
             .binding
@@ -363,6 +388,10 @@ pub enum SafetyItem {
     DeadlockFreedom,
     /// FR-224's race-freedom item, `always holds(not raced)`.
     RaceFreedom,
+    /// FR-951's invariant item, `always holds(I)`, with `I` the invariant's
+    /// letter: its checked body true for every object of the state whose
+    /// type conforms to its context type.
+    StateInvariant,
 }
 
 /// A clause this module does not translate.
@@ -458,6 +487,20 @@ impl SafetyTranslation {
     /// identity byte budget.
     pub fn race_freedom() -> Result<Self, KeyRefusal> {
         Self::new(SafetyItem::RaceFreedom, &StateContext::race_freedom())
+    }
+
+    /// The translation of the invariant item whose `state`/`state_clause`
+    /// node and `claim` occurrence is `occurrence` (FR-338, FR-951).
+    ///
+    /// # Errors
+    ///
+    /// [`KeyRefusal::Encoding`] when the context does not encode within the
+    /// identity byte budget.
+    pub fn state_invariant(occurrence: OccurrenceKey) -> Result<Self, KeyRefusal> {
+        Self::new(
+            SafetyItem::StateInvariant,
+            &StateContext::invariant(occurrence),
+        )
     }
 
     /// The translation of the TP-1 clause `clause` under `context`.
