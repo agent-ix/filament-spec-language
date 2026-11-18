@@ -130,7 +130,7 @@ fn package_of_with_mode(declarations: &str, mode: CheckMode) -> CheckedPackage {
 #[test]
 fn sum_out_of_domain_same_cause_call_and_clause() {
     let package = package_of_with_mode(
-        "type Pos = Int[1, 9];\n\
+        "type Pos = Int[0, 9];\n\
          function total using v(x: Pos): Pos pure { \
          sum<Pos>(n in sequence[x, x]: n) }",
         CheckMode::Kernel,
