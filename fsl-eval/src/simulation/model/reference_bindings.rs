@@ -361,7 +361,10 @@ fn resolve_literals(
             return Err(super::refused(
                 Code::MissingDeclaration,
                 "missing-name",
-                &[("key", identity_hex(&literal.identity))],
+                &[
+                    ("type", literal.object_type.original().node().to_owned()),
+                    ("key", identity_hex(&literal.identity)),
+                ],
             ));
         }
 
@@ -400,7 +403,10 @@ fn resolve_literals(
                 return Err(super::refused(
                     Code::MissingDeclaration,
                     "missing-name",
-                    &[("key", identity_hex(&literal.identity))],
+                    &[
+                        ("type", literal.object_type.original().node().to_owned()),
+                        ("key", identity_hex(&literal.identity)),
+                    ],
                 ));
             }
             if barred.contains(&literal) {
@@ -409,7 +415,10 @@ fn resolve_literals(
                 return Err(super::refused(
                     Code::IllTyped,
                     "operator-ineligible",
-                    &[("key", identity_hex(&literal.identity))],
+                    &[
+                        ("type", literal.object_type.original().node().to_owned()),
+                        ("key", identity_hex(&literal.identity)),
+                    ],
                 ));
             }
             // StateModel::populations is declaration-key ordered, so the

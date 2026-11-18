@@ -96,6 +96,7 @@ fn a_reference_literal_resolves_at_subject_binding() {
     let text = unknown.document().to_string();
     assert_eq!(unknown.exit, 20, "{text}");
     assert!(text.contains("missing-name"), "{text}");
+    assert!(text.contains("Counter") && text.contains("7a7a"), "{text}");
     let created = over_wide_universe_with_prelude(
         "reflit-created-guard",
         "profile p = \"filament.protocol.finite-global/v1\";\n",
@@ -191,6 +192,7 @@ fn a_created_object_literal_outside_every_indexed_read_refuses() {
         let text = refused.document().to_string();
         assert_eq!(refused.exit, 20, "{text}");
         assert!(text.contains("operator-ineligible"), "{text}");
+        assert!(text.contains("Counter") && text.contains("62"), "{text}");
         let admitted = over_wide_universe(
             &format!("reflit-hyper-{name}-fixed"),
             &hyper("HS", &formula.replace('K', "a")),
