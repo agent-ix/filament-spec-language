@@ -1306,14 +1306,12 @@ pub fn replay_with_cancel_and_temporal_selections(
     let mut limit = None;
     // FR-098 "Application claim: the observation": the call stopped
     // undefined at the application step of the claim's own site. A stop
-    // inside an operand, in a nested function or at another occurrence of
-    // the node is a different location and no observation. `Location` has
-    // no frame, so in a recursive function a stop at the site may belong to
-    // a nested call of the function itself: it then settles `NoValue`, which
-    // loses a reproduction and never invents one.
+    // inside an operand or at another occurrence is no observation. The
+    // evaluation's frame depth distinguishes a stop at the same source site
+    // in a nested call from the selected call's own stop.
     let failed_at_site = match &claim {
         FunctionClaim::Application(application) => {
-            !application.recursive && evaluation.location.as_ref() == Some(&application.site)
+            evaluation.frame_depth == 0 && evaluation.location.as_ref() == Some(&application.site)
         }
         FunctionClaim::Predicate => false,
     };
@@ -2201,9 +2199,6 @@ struct ApplicationClaim {
     site: Location,
     /// The extent roots that are parameter nodes of the function.
     roots: BTreeSet<NodeKey>,
-    /// The owning function is in a recursion group (FR-092). A stop at the
-    /// site may then be a nested call's, and `Location` carries no frame.
-    recursive: bool,
 }
 
 impl FunctionClaim {
@@ -2277,14 +2272,7 @@ fn function_claim(
                 .ok_or_else(|| fault("extent-root-is-a-node"))
         })
         .collect::<Result<_, _>>()?;
-    let recursive = semantic
-        .node(callable.identity.clone())
-        .is_some_and(|node| node.recursion().is_some());
-    Ok(FunctionClaim::Application(ApplicationClaim {
-        site,
-        roots,
-        recursive,
-    }))
+    Ok(FunctionClaim::Application(ApplicationClaim { site, roots }))
 }
 
 /// A function node's one `declaration` occurrence (ADR-013 O-07): the node,
