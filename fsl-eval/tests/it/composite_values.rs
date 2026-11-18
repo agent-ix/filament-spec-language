@@ -1339,7 +1339,7 @@ mod library_import {
 #[trace("FSpec-TC-194", "FSpec-FR-149-AC-25")]
 #[test]
 fn float_leaf_record_union_option_and_sequence_compare_under_numeric_equal() {
-    use filament_exact::{FloatType, Identifier, IeeeValue, IeeeWidth, VariantId};
+    use filament_exact::{FloatType, IeeeValue, IeeeWidth, UnionMember, VariantId};
     use filament_semantic_value::declaration::UnionMemberDeclaration;
 
     let double = ValueType::Float(FloatType::exact(IeeeWidth::Binary64));
@@ -1362,11 +1362,14 @@ fn float_leaf_record_union_option_and_sequence_compare_under_numeric_equal() {
                 key("U"),
                 "U",
                 CompositeShape::Union(vec![
-                    UnionMemberDeclaration::resolved(
-                        Identifier::new("V").unwrap(),
+                    UnionMemberDeclaration::from_verified(
+                        UnionMember::from_admitted(key("U"), "V").unwrap(),
                         vec![double.clone()],
                     ),
-                    UnionMemberDeclaration::resolved(Identifier::new("N").unwrap(), vec![]),
+                    UnionMemberDeclaration::from_verified(
+                        UnionMember::from_admitted(key("U"), "N").unwrap(),
+                        vec![],
+                    ),
                 ]),
             ),
         ],
@@ -1454,17 +1457,6 @@ fn float_leaf_record_union_option_and_sequence_compare_under_numeric_equal() {
         Ok(Outcome::Completed(true))
     );
 
-    // The union type is admitted as an `=` operand.
-    assert!(
-        env.check_equality(
-            EqualityOperator::Equal,
-            EqualityOperand::typed(composite("U")),
-            EqualityOperand::typed(composite("U")),
-            &EnumMemberIndex::default(),
-        )
-        .is_ok()
-    );
-
     let union = |value: &Value| {
         env.union(
             key("U"),
@@ -1527,5 +1519,23 @@ fn nan_leaf_and_signed_zero_leaf_cases() {
             &value(0x7ff8_0000_0000_0000)
         ),
         Ok(Outcome::Completed(false))
+    );
+    let not_equal = env.check_equality(
+        EqualityOperator::NotEqual,
+        EqualityOperand::typed(record_type.clone()),
+        EqualityOperand::typed(record_type.clone()),
+        &EnumMemberIndex::default(),
+    );
+    assert_eq!(
+        not_equal.map(|checked| {
+            checked.evaluate(
+                &env,
+                &value(0x7ff8_0000_0000_0000),
+                &value(0x7ff8_0000_0000_0000),
+                &mut Meter::new(UNLIMITED),
+            )
+        }),
+        Ok(Outcome::Completed(true)),
+        "a record containing NaN is unequal to itself"
     );
 }

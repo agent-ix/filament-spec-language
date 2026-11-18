@@ -431,6 +431,24 @@ fn set_of_float64_compares_by_bit_identity() {
         &set(vec![plus_zero.clone()]),
         &set(vec![minus_zero.clone()])
     ));
+    let not_equal = env
+        .check_equality(
+            EqualityOperator::NotEqual,
+            EqualityOperand::typed(set_type.clone()),
+            EqualityOperand::typed(set_type.clone()),
+            &EnumMemberIndex::default(),
+        )
+        .unwrap();
+    assert_eq!(
+        not_equal.evaluate(
+            &env,
+            &set(vec![plus_zero.clone()]),
+            &set(vec![minus_zero.clone()]),
+            &mut Meter::new(UNLIMITED),
+        ),
+        Outcome::Completed(true),
+        "sets containing +0 and -0 are not equal"
+    );
     assert!(equal(
         &env,
         &set_type,
