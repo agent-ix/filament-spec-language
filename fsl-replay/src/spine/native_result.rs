@@ -4,10 +4,10 @@
 use std::cell::RefCell;
 use std::collections::BTreeMap;
 
+use fsl_foundation::LocatedSpan;
 use fsl_foundation::diagnostic::Code;
 use fsl_foundation::diagnostic::Locus;
 use fsl_foundation::wire_format::WireFormat;
-use fsl_foundation::LocatedSpan;
 use quire_canonical::{
     Document, Encode, Limits, Node, NodeRef, Reservation, ReservationDenied, Sink, Writer,
 };
@@ -247,6 +247,12 @@ pub struct ClauseRunRecord(
 );
 
 impl ClauseRunRecord {
+    /// The Quire-backed source extraction record, when this run consumed a
+    /// Markdown source through extraction.
+    pub fn extraction(&self) -> Option<&serde_json::Value> {
+        self.0.extraction.as_ref()
+    }
+
     /// The settlement basis label.
     pub fn basis(&self) -> &'static str {
         self.0.basis.as_str()
@@ -1119,6 +1125,8 @@ struct ClauseRead {
     #[serde(default, deserialize_with = "present")]
     witness: Option<RecordWire<Box<RawValue>>>,
     #[serde(default, deserialize_with = "present")]
+    extraction: Option<serde_json::Value>,
+    #[serde(default, deserialize_with = "present")]
     ledger: Option<serde_json::Value>,
     axes: crate::OutcomeAxes,
     #[serde(default, rename = "support")]
@@ -1137,6 +1145,81 @@ struct ClauseRead {
     _lineage: Option<u64>,
     #[serde(default, rename = "evidence_ledger")]
     _evidence_ledger: Option<serde_json::Value>,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ExtractionRead {
+    original: ExtractionOriginalRead,
+    body: ExtractionBodyRead,
+    binding: ExtractionBindingRead,
+    outcome: serde_json::Value,
+    map: ExtractionMapRead,
+    #[serde(default, deserialize_with = "present")]
+    original_regions: Option<Vec<ExtractionRegionRead>>,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ExtractionOriginalRead {
+    authority: String,
+    identity: String,
+    path: String,
+    bytes: Vec<u8>,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ExtractionBodyRead {
+    authority: String,
+    identity: String,
+    document: String,
+    bytes: Vec<u8>,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ExtractionBindingRead {
+    clause: String,
+    package: String,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ExtractionMapRead {
+    region: ExtractionSpanRead,
+    segments: Vec<ExtractionSegmentRead>,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ExtractionSpanRead {
+    start: u64,
+    end: u64,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ExtractionSegmentRead {
+    body_start: u64,
+    body_end: u64,
+    original_start: u64,
+    original_end: u64,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ExtractionRegionRead {
+    start: ExtractionPositionRead,
+    end: ExtractionPositionRead,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ExtractionPositionRead {
+    byte: u64,
+    line: u64,
+    column: u64,
 }
 
 #[derive(Deserialize)]
@@ -1393,7 +1476,7 @@ fn validate_disposition(value: &DispositionRead) -> Result<(), NativeRunReadErro
             return Err(invalid(
                 "disposition.category",
                 "pending and indeterminate are temporal rows only",
-            ))
+            ));
         }
         (Stage::Compile | Stage::Select | Stage::Admit, Category::InternalFailure) => {
             if value.internal_fault.is_none()
@@ -1620,7 +1703,7 @@ fn validate_disposition(value: &DispositionRead) -> Result<(), NativeRunReadErro
             return Err(invalid(
                 "disposition.category",
                 "clause run has no inconclusive category",
-            ))
+            ));
         }
     }
     Ok(())
@@ -1880,7 +1963,7 @@ pub fn read_native_run_result_bounded(
     let tree =
         match quire_canonical::read_with_reservation(bytes, limits.max_input_bytes, &mut budget) {
             Err(quire_canonical::ReadError::ReservationDenied { .. }) => {
-                return Err(budget.denied())
+                return Err(budget.denied());
             }
             other => other?,
         };
@@ -1929,6 +2012,14 @@ pub fn read_native_run_result_bounded(
             .map_err(|_| budget.copy_failure("witness", "cannot traverse witness document"))?;
         budget.charge(u64::try_from(shallow.len()).unwrap_or(u64::MAX))?;
         let document: ClauseRead = read_typed(&shallow)?;
+        if let Some(extraction) = &document.extraction {
+            let _: ExtractionRead = serde_json::from_value(extraction.clone()).map_err(|_| {
+                NativeRunReadError::Invalid {
+                    member: "extraction",
+                    reason: "a closed native extraction record",
+                }
+            })?;
+        }
         let deciding_element = splice
             .element
             .into_inner()
@@ -2467,6 +2558,8 @@ struct ClauseRunDocument {
     basis: &'static str,
     #[serde(skip_serializing_if = "Option::is_none")]
     witness: Option<RecordWire<Box<RawValue>>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    extraction: Option<serde_json::Value>,
     #[serde(skip_serializing_if = "Option::is_none")]
     ledger: Option<serde_json::Value>,
     /// FR-641-AC-8, FSpec FR-352-AC-19: the effective limits a `model`
@@ -3135,6 +3228,16 @@ pub fn write_clause_run_result_for(
     report: &ClauseRunReport,
     selection: Option<&super::ClauseRunSelection>,
 ) -> Result<Vec<u8>, NativeRunResultError> {
+    write_clause_run_result_for_with_extraction(report, selection, None)
+}
+
+/// [`write_clause_run_result_for`] with the source extraction record required
+/// for a command run that selected a Markdown clause through Quire.
+pub fn write_clause_run_result_for_with_extraction(
+    report: &ClauseRunReport,
+    selection: Option<&super::ClauseRunSelection>,
+    extraction: Option<serde_json::Value>,
+) -> Result<Vec<u8>, NativeRunResultError> {
     if report.basis.is_decisive() != report.witness.is_some() {
         return Err(NativeRunResultError::BasisWitness);
     }
@@ -3145,7 +3248,7 @@ pub fn write_clause_run_result_for(
     } else if !verdict_basis(report) {
         return Err(NativeRunResultError::BasisDisposition);
     }
-    write_document(report, selection)
+    write_document(report, selection, extraction)
 }
 
 /// FR-266: a verdict has a decisive or closed settlement, a non-verdict
@@ -3174,6 +3277,7 @@ fn verdict_basis(report: &ClauseRunReport) -> bool {
 fn write_document(
     report: &ClauseRunReport,
     selection: Option<&super::ClauseRunSelection>,
+    extraction: Option<serde_json::Value>,
 ) -> Result<Vec<u8>, NativeRunResultError> {
     let witness = report.witness.as_ref().map(RecordWire::of).transpose()?;
     let ledger = report
@@ -3215,6 +3319,7 @@ fn write_document(
         },
         basis: report.basis.as_str(),
         witness,
+        extraction,
         ledger,
         limits: run_limits(selection),
         axes: report.axes(),

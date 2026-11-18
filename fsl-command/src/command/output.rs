@@ -5,8 +5,8 @@ mod types;
 
 use super::{LimitKind, RunCause, RunError, RunResult};
 use crate::formal_source::FormalSource;
-use fsl_foundation::source::SourceReadCause;
 use fsl_foundation::Diagnostic;
+use fsl_foundation::source::SourceReadCause;
 use serde_json::Value;
 
 /// Immutable JSON produced from the typed native result schema.
@@ -414,13 +414,34 @@ pub(super) fn clause_report(
     mut report: fsl_replay::spine::ClauseRunReport,
     selection: &fsl_replay::spine::ClauseRunSelection,
 ) -> super::Result<RunResult> {
+    clause_report_with_record(&mut report, selection, None)
+}
+
+#[cfg(feature = "quire-extraction")]
+pub(super) fn clause_report_with_extraction(
+    mut report: fsl_replay::spine::ClauseRunReport,
+    selection: &fsl_replay::spine::ClauseRunSelection,
+    extraction: serde_json::Value,
+) -> super::Result<RunResult> {
+    clause_report_with_record(&mut report, selection, Some(extraction))
+}
+
+fn clause_report_with_record(
+    report: &mut fsl_replay::spine::ClauseRunReport,
+    selection: &fsl_replay::spine::ClauseRunSelection,
+    extraction: Option<serde_json::Value>,
+) -> super::Result<RunResult> {
     // FR-526: a timestamped run settles its correction relation before any
     // result document is written; a refused relation writes none.
-    fsl_replay::spine::settle_run_correction(&mut report, selection)
+    fsl_replay::spine::settle_run_correction(report, selection)
         .map_err(RunCause::TemporalCorrection)?;
-    let report = &report;
-    let bytes = fsl_replay::spine::write_clause_run_result_for(report, Some(selection))
-        .map_err(RunCause::ClauseOutput)?;
+    let report = &*report;
+    let bytes = fsl_replay::spine::write_clause_run_result_for_with_extraction(
+        report,
+        Some(selection),
+        extraction,
+    )
+    .map_err(RunCause::ClauseOutput)?;
     let outcome = monitor_outcome(std::iter::once((&selection.clause_name()[..], report)));
     let value = serde_json::from_slice(&bytes).map_err(RunCause::Output)?;
     Ok(RunResult {

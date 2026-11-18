@@ -5,15 +5,15 @@
 //! (FR-664) and the compile request's `handoff` member (FR-665). The
 //! driver's verbs over these surfaces are tested in the driver repository.
 
-use crate::command_harness::{run_file, Output};
-use crate::support::config_version_spine::{spine, Case};
+use crate::command_harness::{Output, run_file};
+use crate::support::config_version_spine::{Case, spine};
 use filament_exact::Cancel;
 use fsl_cst::Limits;
 use fsl_foundation::SourceIdentity;
-use fsl_replay::spine::{parse, ParseRequest};
 use fsl_replay::OutcomeDocument;
+use fsl_replay::spine::{ParseRequest, parse};
 use ix_trace_rs::trace;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use std::path::{Path, PathBuf};
 
 const HEADER: &str =
@@ -407,6 +407,91 @@ fn the_run_command_preserves_a_missing_markdown_clause_selection() {
         }),
         "{value}"
     );
+    assert_eq!(
+        value["details"]["outcome"]["availability"]["state"], "available",
+        "{value}"
+    );
+    assert!(value["details"]["outcome"]["clauses"].is_array(), "{value}");
+}
+
+/// FR-031-AC-7 (TC-109): unavailable Quire extraction is reported at the
+/// Quire stage and retains the completed extraction outcome.
+#[test]
+#[trace("TC-109", "FR-031-AC-7")]
+fn the_run_command_preserves_an_unavailable_markdown_extraction() {
+    let directory = tempfile::tempdir().unwrap();
+    std::fs::write(
+        directory.path().join("spec.md"),
+        "# Doc\n\nNo clauses here.\n",
+    )
+    .unwrap();
+    let mut request = current_clause_request();
+    request["request"]["program"] = json!({
+        "source": {"file": "spec.md", "authority": "agent-ix", "identity": "doc",
+            "document": "Doc", "formal_revision": 1},
+        "extraction": {"body": {"authority": "agent-ix", "identity": "body",
+            "document": "Body"}},
+        "clauses": [{"clause": "ParentOrder", "package": "agent-ix/spec"}]
+    });
+
+    let (exit, value) = run_refusal(directory.path(), &request);
+    assert_eq!(exit, 20, "{value}");
+    assert_eq!(value["stage"], "quire", "{value}");
+    assert_eq!(value["details"]["original"]["identity"], "doc", "{value}");
+    assert_eq!(
+        value["details"]["binding"]["clause"], "ParentOrder",
+        "{value}"
+    );
+    assert!(
+        value["details"]["outcome"]["availability"].is_object(),
+        "{value}"
+    );
+    assert!(
+        value["details"]["outcome"]["diagnostics"].is_array(),
+        "{value}"
+    );
+}
+
+/// FR-031-AC-5/10 (TC-109): the command writes the extraction record and
+/// the strict native-result reader returns the same complete member.
+#[test]
+#[trace("TC-109", "FR-031-AC-5", "FR-031-AC-10")]
+fn the_run_command_writes_a_strictly_readable_markdown_extraction_record() {
+    let directory = tempfile::tempdir().unwrap();
+    spine::write(directory.path(), Case::Healthy).unwrap();
+    let body = spine::unit_text();
+    std::fs::write(
+        directory.path().join("spec.md"),
+        format!("# Doc\n\n## Invariants\n\n### ParentOrder\n```ix:native\n{body}```\n"),
+    )
+    .unwrap();
+    let mut request = current_clause_request();
+    request["request"]["program"] = json!({
+        "source": {"file": "spec.md", "authority": "agent-ix", "identity": "doc",
+            "document": "Doc", "formal_revision": 1},
+        "extraction": {"body": {"authority": "agent-ix", "identity": "body",
+            "document": "Body"}},
+        "clauses": [{"clause": "ParentOrder", "package": spine::PACKAGE_IDENTITY}]
+    });
+    let path = directory.path().join("request.json");
+    std::fs::write(&path, serde_json::to_vec(&request).unwrap()).unwrap();
+
+    let result = fsl_command::command::run(&path, &crate::negotiation::Fr290)
+        .unwrap_or_else(|error| panic!("{}", error.value().unwrap()));
+    assert_eq!(result.exit_code, 0, "{}", result.value);
+    let extraction = &result.value.as_value()["extraction"];
+    assert_eq!(extraction["original"]["identity"], "doc");
+    assert_eq!(extraction["body"]["identity"], "body");
+    assert_eq!(extraction["body"]["document"], "Body");
+    assert_eq!(extraction["binding"]["clause"], "ParentOrder");
+    assert!(extraction["outcome"]["clauses"].is_array());
+    assert!(extraction["map"]["segments"].is_array());
+    let encoded = serde_json::to_vec(result.value.as_value()).unwrap();
+    let read = fsl_replay::spine::read_native_run_result(&encoded).unwrap();
+    let fsl_replay::spine::NativeRunResult::Clause(record) = read else {
+        panic!("expected a clause result");
+    };
+    assert_eq!(record.extraction(), Some(extraction));
 }
 
 /// FR-663-AC-1 (TC-1745): a completed parse's outcome document carries the
@@ -689,10 +774,12 @@ fn version_emits_the_build_inventory_and_kind_selects_one_list() {
     for list in lists {
         assert!(document[list].is_array(), "{list}: {document}");
     }
-    assert!(document["editions"]
-        .as_array()
-        .unwrap()
-        .contains(&json!("1-draft")));
+    assert!(
+        document["editions"]
+            .as_array()
+            .unwrap()
+            .contains(&json!("1-draft"))
+    );
     let features: Vec<String> = fsl_semantics::library::bundle::CapabilityId::complete_inventory()
         .iter()
         .map(|id| id.as_str().to_owned())
@@ -831,8 +918,8 @@ fn every_listed_profile_is_accepted_by_a_header() {
 #[test]
 #[trace("TC-1742", "FR-661-AC-3")]
 fn version_includes_provider_backed_registry_consumers() {
-    use fsl_foundation::bound::DomainKind;
     use fsl_foundation::BackendId;
+    use fsl_foundation::bound::DomainKind;
     use fsl_route::{Candidate, ManifestMembers, ProviderOrigin, Registry};
 
     let base = Registry::new();
