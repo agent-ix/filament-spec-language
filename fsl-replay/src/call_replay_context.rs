@@ -449,7 +449,7 @@ mod tests {
     fn a_member_request_carries_the_process_provider_identity() {
         let source = "language \"ix:native\" edition \"1-draft\";\n\
             profile v = \"filament.value.complete/v1\";\n\
-            function q using v(x: Integer): Integer pure { 6 mod x }\n"
+            function q using v(x: Int[0, 9]): Integer pure { 10 mod x }\n"
             .to_owned();
         let call = Call {
             clocks: Default::default(),
