@@ -43,8 +43,8 @@ use fsl_semantics::model::operation::{OperationDeclaration, OperationTable};
 use fsl_semantics::model::state::StateModel;
 
 use crate::value::{
-    CheckedPackageEvaluation, ClauseEvaluation, ClauseSetEvaluation, QualifiedName,
-    PostTargets, WrittenCollection,
+    CheckedPackageEvaluation, ClauseEvaluation, ClauseSetEvaluation, PostTargets, QualifiedName,
+    WrittenCollection,
 };
 
 /// One state clause as a model check reads it: its name, node, context,

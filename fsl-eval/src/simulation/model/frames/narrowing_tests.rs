@@ -34,7 +34,12 @@ fn brake(cap: u32) -> String {
 /// The rover with `speed: Int[0, max]`, the clauses `posts` (operation,
 /// postcondition), each written as is or, when `enumerated`, as its
 /// enumerated reference form, and the initial fields `initial`.
-fn rover(max: i64, posts: &[(&str, String)], enumerated: bool, initial: serde_json::Value) -> Model {
+fn rover(
+    max: i64,
+    posts: &[(&str, String)],
+    enumerated: bool,
+    initial: serde_json::Value,
+) -> Model {
     let ident = |name: &str| format!("ix://{PACKAGE}/{name}");
     let operation = |name: &'static str, modifies: Vec<&'static str>| Operation {
         name,
@@ -52,7 +57,9 @@ fn rover(max: i64, posts: &[(&str, String)], enumerated: bool, initial: serde_js
             "post P{index} using v on M::Rover::{operation} {{ {post} }}\n"
         ));
     }
-    body.push_str("pre Driving using v on M::Rover::loseLidar { self.mode = 0 and self.lidarOk }\n");
+    body.push_str(
+        "pre Driving using v on M::Rover::loseLidar { self.mode = 0 and self.lidarOk }\n",
+    );
     body.push_str("pre Degraded using v on M::Rover::brake { self.mode = 1 }\n");
     body.push_str("pre Braked using v on M::Rover::halt { self.mode = 2 and not self.stopped }\n");
     Model {

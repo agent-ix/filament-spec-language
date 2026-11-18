@@ -31,7 +31,6 @@ mod narrowing_tests;
 use super::contracts::{conjunction, Conjunction};
 use super::domain::{Domain, Odometer};
 use super::encode::{self, value_enc, values_equal, Typing};
-use crate::value::PostTarget;
 use super::footprints::ReadCheck;
 use super::walk::{stop, Applied, Budget, ContractFinding, FindingCase, Row, Selected, Walk};
 use super::{
@@ -41,6 +40,7 @@ use super::{
 use crate::simulation::expansion::ExpansionStop;
 use crate::simulation::footprint::Footprint;
 use crate::simulation::key;
+use crate::value::PostTarget;
 use crate::value::{Provenance, WrittenCollection};
 use filament_semantic_value::catalog::CatalogCode;
 use fsl_semantics::check::CollectionWrite;
@@ -1037,7 +1037,10 @@ impl Run<'_, '_, '_> {
                     .ok_or_else(|| stop(BROKEN))?;
                 // `None` marks a field whose targets send the whole
                 // application back to enumeration.
-                let allowed = match plan.narrowing.and_then(|narrowing| narrowing.get(&field.name)) {
+                let allowed = match plan
+                    .narrowing
+                    .and_then(|narrowing| narrowing.get(&field.name))
+                {
                     Some(targets)
                         if !member.created
                             && !field.optional
