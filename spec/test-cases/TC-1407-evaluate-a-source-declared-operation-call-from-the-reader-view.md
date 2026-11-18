@@ -59,7 +59,7 @@ Fixture E, with `Node` and `step` model-owned, is the control.
    FR-569-AC-11, AC-70, AC-71, AC-73)
 1. Emit E-S, S and E. Read the `source_operations` and
    `source_objects` rows of each emission and of `identities.json`
-   (`identities/4`). (AC-70)
+   (`identities/5`). (AC-70)
 2. **waits** (also on FR-352). Vector S1: evaluate `Refund.retry` of E-S with
    the supply of TC-1070's retry row; S2: `Refund.recover` with the supply of
    TC-1070's recover row; S3: `Refund.recover` with the supply of TC-1072 that

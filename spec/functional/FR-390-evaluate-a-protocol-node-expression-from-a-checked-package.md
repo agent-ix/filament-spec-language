@@ -1014,7 +1014,7 @@ value; check 6 does not apply to it.
 - [FR-531](FR-531-evaluate-from-a-checked-package-read-from-its-bytes-alone.md)
   and [FR-517](FR-517-write-a-checked-package-handoff-directory-from-source-in-process.md):
   the `source_operations` and `source_objects` members of `identities.json`
-  (`identities/4`).
+  (`identities/5`).
 - [FR-569](FR-569-declare-object-types-populations-and-operations-in-fsl-source.md):
   the source `object` declaration that declares a source-declared operation,
   and the source-object identity rows.

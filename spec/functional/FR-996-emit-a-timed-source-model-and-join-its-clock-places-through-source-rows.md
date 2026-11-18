@@ -31,8 +31,8 @@ selected timed model, with these source forms: the `timed_model` root's
 time member names; each `clock_place`'s `resolved_path` row names its
 declaring type and member by FR-995's source declaration keys; and each row's
 declared member type is the rendering the source-object identity row of the
-declaring type (FR-569 "Source-object identity rows") gives that member. A
-strict reader SHALL resolve those rows through the source rows, never
+declaring type (FR-569 "Source-object identity rows") gives that member, and S4 SHALL list every clock member in those rows as a clock entry. A
+strict reader SHALL check each row against the package at the strict read and against the identity rows at the identity-row join, never
 through a selected model declaration (FSpec FR-789).
 
 ## Rationale
@@ -78,7 +78,8 @@ The `timed_model` root, `time_source` and `clock_place` nodes, or a refusal.
 | ID | Criteria | Verification |
 | --- | --- | --- |
 | FR-996-AC-1 | Over FR-230-AC-65's unit (`record W { c: Clock; }`, `object O { w: W; d: Clock; operation step() modifies self.d; }`, `time O dense unit ms;`), S4 emits one `timed_model` root whose `model` is `O`'s source-declared node, and two `clock_place` nodes: `d` with one row `{declaring_type: "ix://I/O", member_identity: "ix://I/O/d", member_type: "ix://filament/native/Clock"}`, and `w.c` with rows `ix://I/O`/`ix://I/O/w` of type `ix://I/W`, then `ix://I/W`/`ix://I/W/c` of type `ix://filament/native/Clock`, the terminal `Clock`, `I` the `SourceOwner` `identity` of `O`'s node. | Test (TC-2818) |
-| FR-996-AC-2 | FSL's strict I2 read admits the FR-996-AC-1 package. Each refuses `invalid_package`/`malformed-clock-place` at the row: `d`'s `member_identity` replaced by `ix://I/O/e` (no such member), its `declaring_type` by `ix://J/O` for another unit's identity `J`, its `member_type` by `Integer`, and `w.c`'s second row's `declaring_type` replaced by a selected model's `ix://acme/orders/Order`. | Test (TC-2819) |
+| FR-996-AC-2 | FSL's strict I2 read admits the FR-996-AC-1 package with no identity row. Each refuses, at the strict read, `invalid_package`/`malformed-clock-place` at the row: `d`'s `member_identity` replaced by `ix://I/O/e` (no such member), its `declaring_type` by `ix://J/O` for another unit's identity `J`, its `member_type` by `Integer`, and `w.c`'s second row's `declaring_type` replaced by a selected model's `ix://acme/orders/Order`. | Test (TC-2819) |
+| FR-996-AC-3 | Over the FR-996-AC-1 unit, the emitted `identities.json` gives `O` the data entry `w` and the clock entry `d` and `W` the clock entry `c` (FR-531 member entries), and the identity-row join over the package and that file joins both places. Each edit passes the strict read and refuses `invalid_package`/`malformed-clock-place` at the row at the identity-row join: a third place `field(e)` with the row `{ix://I/O, ix://I/O/e, ix://filament/native/Clock}`; `d`'s `member_type` `Option<ix://filament/native/Clock>`; `d` removed from `O`'s row; `c` removed from `W`'s row (at `w.c`'s row `1`). | Test (TC-2999) |
 
 ## Dependencies
 
