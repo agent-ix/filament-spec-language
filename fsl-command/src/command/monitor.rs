@@ -70,6 +70,21 @@ pub struct MonitorSummary {
 }
 
 impl MonitorSummary {
+    /// FR-644: the summary of a request carrying `items`, with each item's
+    /// FR-621 record and the FR-635 registry, and the exit code counting a
+    /// settled item's category beside the clauses'.
+    fn with_items(mut self, settled: &SettledRun) -> Self {
+        if let Some(members) = self.value.as_object_mut() {
+            members.insert("items".to_owned(), Value::Array(settled.items.clone()));
+            members.insert(
+                "registry".to_owned(),
+                Value::Array(settled.registry.iter().map(RegistryEntry::wire).collect()),
+            );
+        }
+        self.exit_code = severity_exit([self.exit_code, settled.exit_code].into_iter());
+        self
+    }
+
     /// The FR-286 `monitor` outcome document of the run (category and last
     /// stage).
     pub fn outcome(&self) -> &fsl_replay::OutcomeDocument {
@@ -488,7 +503,6 @@ fn drive(
     directory: &Path,
     bytes: &[u8],
     dependent_bytes: usize,
-    batch: bool,
     source: Records<'_>,
     sink: &mut dyn FnMut(&MonitorEvent),
     settle: &Settle<'_>,
@@ -496,7 +510,7 @@ fn drive(
 ) -> Result<MonitorSummary> {
     let request: wire::MonitorRequest = request(bytes)?;
     let records_file = request.records.clone();
-    match (batch, &records_file) {
+    match (matches!(source, Records::Batch), &records_file) {
         (true, None) => {
             return Err(invalid(
                 "records",
@@ -604,10 +618,13 @@ fn drive(
                     .iter()
                     .map(|clause| clause.name.clone())
                     .collect(),
-                items.as_ref(),
                 sink,
                 cancel,
             )
+            .map(|summary| match &items {
+                Some(settled) => summary.with_items(settled),
+                None => summary,
+            })
         },
     )
 }
@@ -619,7 +636,6 @@ fn stream(
     snapshots: &BTreeMap<String, Vec<u8>>,
     records: Box<dyn Iterator<Item = Result<Vec<u8>>> + '_>,
     names: Vec<String>,
-    items: Option<&SettledRun>,
     sink: &mut dyn FnMut(&MonitorEvent),
     cancel: &Cancel,
 ) -> Result<MonitorSummary> {
@@ -721,24 +737,13 @@ fn stream(
             filament_semantic_value::catalog::Category::InternalFailure,
         )
     });
-    let mut value = json!({
+    let value = json!({
         "format": SUMMARY_FORMAT,
         "clauses": clauses,
         "records": read,
         "refused": refused,
         "ledger": ledger,
     });
-    // FR-644: a request carrying `items` reports each item's FR-621 record
-    // and the FR-635 registry, and a settled item's category counts beside
-    // the clauses'.
-    if let (Some(settled), Some(members)) = (items, value.as_object_mut()) {
-        members.insert("items".to_owned(), Value::Array(settled.items.clone()));
-        members.insert(
-            "registry".to_owned(),
-            Value::Array(settled.registry.iter().map(RegistryEntry::wire).collect()),
-        );
-        codes.push(settled.exit_code);
-    }
     Ok(MonitorSummary {
         value,
         outcome: lifecycle,
@@ -831,7 +836,6 @@ pub fn monitor(
             directory,
             bytes,
             limits.dependent_bytes,
-            false,
             Records::Stream(Box::new(records.map(|line| {
                 line.map_err(|error| RunCause::Io {
                     path: path.to_path_buf(),
@@ -859,7 +863,6 @@ pub(super) fn run_bytes(
         directory,
         bytes,
         dependent_bytes,
-        true,
         Records::Batch,
         &mut |event| events.push(event.as_value().clone()),
         settle,
