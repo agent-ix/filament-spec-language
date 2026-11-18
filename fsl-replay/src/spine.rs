@@ -225,8 +225,6 @@ pub use call::{
 pub(crate) use call::{run_reading, run_reading_with_integer_division};
 #[cfg(test)]
 pub(crate) use call::{run_compiled, CallSources};
-#[cfg(test)]
-pub(crate) use lifecycle::parse_for_continuation;
 pub use identity_form::{effective_form, node_key_form, universe_form};
 pub use run_value::ArgumentDefect;
 
