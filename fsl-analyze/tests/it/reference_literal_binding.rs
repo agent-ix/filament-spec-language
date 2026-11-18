@@ -11,10 +11,20 @@ use crate::analyze_cli_support::{
     Workspace, analyze, counter_request, counter_request_with, counter_snapshot, label,
     request_members,
 };
+use crate::counter::{CONTRACT, unit_text};
 
 /// One analyze run over the Counter subject whose initial state holds `a`
 /// and whose universe holds `a` and `b`, with `body` and the item `claim`.
 fn over_wide_universe(name: &str, body: &str, claim: &str) -> crate::analyze_cli_support::Run {
+    over_wide_universe_with_prelude(name, "", body, claim)
+}
+
+fn over_wide_universe_with_prelude(
+    name: &str,
+    prelude: &str,
+    body: &str,
+    claim: &str,
+) -> crate::analyze_cli_support::Run {
     let ws = Workspace::new(name);
     let mut wide: Value =
         serde_json::from_slice(&counter_snapshot(&[("a", 0), ("b", 0)])).expect("a snapshot");
@@ -27,6 +37,12 @@ fn over_wide_universe(name: &str, body: &str, claim: &str) -> crate::analyze_cli
         "proof_bounds": []
     });
     let path = counter_request_with(&ws, body, request);
+    if !prelude.is_empty() {
+        ws.write(
+            "program.fsl",
+            unit_text(&format!("{prelude}{CONTRACT}{body}")).as_bytes(),
+        );
+    }
     ws.write("wide.json", wide.to_string().as_bytes());
     analyze(&path)
 }
@@ -39,8 +55,7 @@ fn temporal(name: &str, formula: &str) -> String {
 
 fn guarded_protocol(key: &str) -> String {
     format!(
-        "profile p = \"filament.protocol.finite-global/v1\";\n\
-         record Pick {{ target: Reference<M::Counter>; }}\n\
+        "record Pick {{ target: Reference<M::Counter>; }}\n\
          protocol L using p over (c: M::Counter) on origin {{\n\
          role R on M::Counter;\nrole S on M::Counter;\n\
          channel ch from R to S carries Pick ordering unordered delivery \
@@ -82,10 +97,20 @@ fn a_reference_literal_resolves_at_subject_binding() {
     let text = unknown.document().to_string();
     assert_eq!(unknown.exit, 20, "{text}");
     assert!(text.contains("missing-name"), "{text}");
-    let created = over_wide_universe("reflit-created-guard", &guarded_protocol("b"), "L");
+    let created = over_wide_universe_with_prelude(
+        "reflit-created-guard",
+        "profile p = \"filament.protocol.finite-global/v1\";\n",
+        &guarded_protocol("b"),
+        "L",
+    );
     let text = created.document().to_string();
     assert!(text.contains("operator-ineligible"), "{text}");
-    let admitted = over_wide_universe("reflit-fixed-guard", &guarded_protocol("a"), "L");
+    let admitted = over_wide_universe_with_prelude(
+        "reflit-fixed-guard",
+        "profile p = \"filament.protocol.finite-global/v1\";\n",
+        &guarded_protocol("a"),
+        "L",
+    );
     let text = admitted.document().to_string();
     assert!(!text.contains("operator-ineligible"), "{text}");
 }
