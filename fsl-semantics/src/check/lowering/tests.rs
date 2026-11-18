@@ -2037,7 +2037,7 @@ fn sequence_and_ordered_set_indexes_lower_as_collection_index() {
         None,
         Expression::if_then_else(
             Expression::binary(
-                BinaryOperator::GreaterEqual,
+                BinaryOperator::GreaterOrEqual,
                 Expression::size(name_expr("o"), None),
                 integer_expr(2),
             ),
