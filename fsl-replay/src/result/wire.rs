@@ -43,7 +43,7 @@ use filament_semantic_value::catalog::Category;
 
 mod replay;
 mod value;
-use value::{decode_element, encode_element, reference_of, validate_element_shape, Keys};
+use value::{Keys, decode_element, encode_element, reference_of, validate_element_shape};
 
 /// Why a [`DisagreementCause`] did not encode or read.
 #[derive(Debug, thiserror::Error)]
@@ -874,6 +874,9 @@ impl RecordWire<Box<RawValue>> {
                     .ok_or(CauseCodecError::Shape("quantifier"))?
                     .read()?,
             ),
+            deciding_comparison: None,
+            operands: None,
+            decision_path: None,
             deciding_element: DecidingElement::Value(decode_element(element, keys)?),
             index: self.index,
             value_path: self.value_path.clone().read(keys)?,
@@ -1019,6 +1022,9 @@ impl RecordWire<ElementSlot> {
         };
         Ok(SeparatingWitnessRecord {
             quantifier,
+            deciding_comparison: None,
+            operands: None,
+            decision_path: None,
             deciding_element,
             index,
             value_path: self.value_path.read(keys)?,
