@@ -117,19 +117,91 @@ fn digital_clocks_refuse_strict_constraints_and_intervals() {
     assert_eq!(declined["record"]["backend"], "en-1", "{declined}");
 }
 
+/// The Counter request over `body` whose unit header selects the Euclidean
+/// integer-division law (FR-670), so `div` checks.
+fn dividing_counter_request(ws: &Workspace, body: &str, items: Value) -> std::path::PathBuf {
+    let unit = unit_text(&format!("{CONTRACT}{body}")).replacen(
+        "model M = ",
+        "profile d = \"filament.value.integer-division.euclidean/v1\";\nmodel M = ",
+        1,
+    );
+    request_over(
+        ws,
+        &unit,
+        &document(false),
+        &[counter_snapshot(&[("a", 0)])],
+        json!({"items": items}),
+    )
+}
+
+/// FR-628-AC-4's instance half and FR-628-AC-5: the proof's evidence names
+/// its instance by counter `a`'s key in typed canonical form; under
+/// `max_states` 2 a witnessed `possible` claim settles `inconclusive`
+/// `well-definedness-unchecked` and `always possible` settles `incomplete`
+/// naming the limit.
+#[trace("TC-2291", "FR-628-AC-4")]
+#[trace("TC-2291", "FR-628-AC-5")]
+#[test]
+fn state_graph_instance_keys_and_budget_stops() {
+    let body = "possible ReachThree using v over (c: M::Counter) { c.value = 3 }\n\
+                always possible BackToZero using v over (c: M::Counter) { c.value = 0 }\n";
+    let ws = Workspace::new("rulings-instance-key");
+    let run = analyze(&counter_request(
+        &ws,
+        body,
+        json!([{"claim": "ReachThree"}]),
+    ));
+    let proved = run.item(0);
+    assert_eq!(label(&proved), "proved", "{proved}");
+    let instance = find(&proved, "instance").expect("the evidence names its instance");
+    assert_eq!(instance["type"], "instance", "{instance}");
+    assert_eq!(instance["parameter"], "c", "{instance}");
+    assert!(
+        instance["key"].get("type").is_some(),
+        "the key is in typed canonical form: {instance}"
+    );
+    assert!(
+        instance["key"].to_string().contains("\"a\""),
+        "the key names counter a: {instance}"
+    );
+
+    let ws = Workspace::new("rulings-instance-budget");
+    let limited = json!({"limits": {"max_states": 2}});
+    let run = analyze(&counter_request(
+        &ws,
+        body,
+        json!([{"claim": "ReachThree", "temporal": limited.clone()},
+            {"claim": "BackToZero", "temporal": limited}]),
+    ));
+    let witnessed = run.item(0);
+    assert_eq!(label(&witnessed), "inconclusive", "{witnessed}");
+    assert!(
+        witnessed["record"]
+            .to_string()
+            .contains("well-definedness-unchecked"),
+        "{witnessed}"
+    );
+    let stopped = run.item(1);
+    assert_eq!(label(&stopped), "incomplete", "{stopped}");
+    assert_eq!(
+        stopped["record"]["cause"]["limit"], "max_states",
+        "{stopped}"
+    );
+}
+
 /// FR-628-AC-4, AC-5: the evidence's instance key is the typed canonical
 /// universe key, the undefined arm carries its locus, and a budget stop
 /// settles by the claim's form.
 #[trace("TC-2291", "FR-628-AC-4")]
 #[trace("TC-2291", "FR-628-AC-5")]
 #[test]
-#[ignore = "QSL-2296 (from QSL-2125): the fixture's `Ratio` claim divides, and the checker refuses `/` with unsupported_construct/expression-form, so the undefined arm has no checked claim to run (spec question open); the typed instance key and the budget stops are untested until it is rewritten"]
+#[ignore = "QSL-2125 spec gap: FR-628-AC-4's target dividing by `3 - c.value` is refused at S3 `undefined_expression`/`unproved-nonzero`, so the undefined arm has no checked claim to run; the instance key and the budget stops are tested by `state_graph_instance_keys_and_budget_stops`"]
 fn state_graph_evidence_keys_loci_and_budget_stops() {
     let body = "possible ReachThree using v over (c: M::Counter) { c.value = 3 }\n\
-                possible Ratio using v over (c: M::Counter) { 3 / (3 - c.value) = 1 }\n\
+                possible Ratio using v over (c: M::Counter) { 3 div (3 - c.value) = 1 }\n\
                 always possible BackToZero using v over (c: M::Counter) { c.value = 0 }\n";
     let ws = Workspace::new("rulings-evidence");
-    let run = analyze(&counter_request(
+    let run = analyze(&dividing_counter_request(
         &ws,
         body,
         json!([{"claim": "ReachThree"}, {"claim": "Ratio"}]),
@@ -153,7 +225,7 @@ fn state_graph_evidence_keys_loci_and_budget_stops() {
 
     let ws = Workspace::new("rulings-budget");
     let limited = json!({"limits": {"max_states": 2}});
-    let run = analyze(&counter_request(
+    let run = analyze(&dividing_counter_request(
         &ws,
         body,
         json!([{"claim": "ReachThree", "temporal": limited.clone()},
