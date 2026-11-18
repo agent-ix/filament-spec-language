@@ -1978,7 +1978,7 @@ fn a_relation_body_reading_a_member_of_no_checked_type_refuses_operator_ineligib
 /// state, and the traces come with the request.
 const FINITE_DET: &str = "record Obs { inp: Int[0, 3]; out: Int[0, 3]; }\n\
     hyper Det using inf over t in Obs bounded 3 forall trace a forall trace b \
-    { (a.inp = b.inp) -> (a.out = b.out) }";
+    { (a.inp = b.inp) implies (a.out = b.out) }";
 
 /// FR-898-AC-1 (TC-2534): a `hyper` clause over a declared finite trace
 /// domain checks under a finite-trace profile; S3 never answers it with the
@@ -2022,7 +2022,7 @@ fn a_finite_trace_set_defect_refuses_with_its_named_cause() {
             "c.out",
         ),
         (
-            FINITE_DET.replace("(a.inp = b.inp) -> (a.out = b.out)", "a.out"),
+            FINITE_DET.replace("(a.inp = b.inp) implies (a.out = b.out)", "a.out"),
             Code::IllTyped,
             "a.out",
         ),
