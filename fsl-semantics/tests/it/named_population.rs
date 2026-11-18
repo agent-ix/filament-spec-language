@@ -558,7 +558,8 @@ fn reference_literal_aliases_share_one_lowered_value_term() {
     let checked = fixture::checked(
         false,
         "model N = \"test/counter\";\n\
-         function same using v(): Boolean pure { M::Counter#\"a\" = N::Counter#\"a\" }",
+         function same_m using v(): Reference<M::Counter> pure { M::Counter#\"a\" }\n\
+         function same_n using v(): Reference<N::Counter> pure { N::Counter#\"a\" }",
     );
     let matching: Vec<_> = checked
         .graph
