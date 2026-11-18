@@ -328,12 +328,12 @@ pub(super) struct ReplayInputs<'r, 'a> {
 
 /// How a counterexample names its item (FR-128 Inputs): the replay target,
 /// the item's node and occurrence, and the witness transcript.
-pub(super) struct ReplayShape {
-    pub(super) target: RequestTargetWire,
-    pub(super) members: ReplayTargetMembers,
-    pub(super) node: filament_exact::NodeKey,
-    pub(super) occurrence: OccurrenceKey,
-    pub(super) transcript: &'static str,
+pub(crate) struct ReplayShape {
+    pub(crate) target: RequestTargetWire,
+    pub(crate) members: ReplayTargetMembers,
+    pub(crate) node: filament_exact::NodeKey,
+    pub(crate) occurrence: OccurrenceKey,
+    pub(crate) transcript: &'static str,
 }
 
 /// FR-128's replay of `payload` over the same source and subject, for the
@@ -422,4 +422,92 @@ pub(super) fn clause_name(node: &TemporalClauseNode) -> Result<QualifiedName, Cl
     let segment =
         Identifier::new(node.clause().name()).map_err(|_| ClauseItemRefusal::UnnamedClause)?;
     QualifiedName::new(vec![segment]).map_err(|_| ClauseItemRefusal::UnnamedClause)
+}
+
+/// What FR-217's replay of a protocol counterexample reads of the run: the
+/// checked package, the subject binding, the shared limits, the source bytes,
+/// and the protocol subject the counterexample was found over.
+pub(crate) struct ProtocolReplayInputs<'r, 'a> {
+    pub(crate) package: &'a CheckedPackage,
+    pub(crate) binding: &'r SubjectBinding<'a>,
+    pub(crate) limits: &'r AnalyzeLimits,
+    pub(crate) provision: &'r super::SourceProvision,
+    pub(crate) subject: fsl_replay::ProtocolTraceSubject,
+    /// The engine whose run the counterexample came from.
+    pub(crate) backend: &'static str,
+}
+
+/// FR-217's replay of the protocol counterexample `payload` over the same
+/// source and subject, for the item `shape` names: the protocol analogue of
+/// [`replay_over`].
+pub(crate) fn replay_protocol_over(
+    inputs: &ProtocolReplayInputs<'_, '_>,
+    shape: ReplayShape,
+    payload: &TemporalCounterexample<fsl_eval::simulation::protocol::ProtocolTransition>,
+    letters: &dyn fsl_eval::model_subject::ModelLetters,
+) -> Result<ModelTraceReplayResult, ReplayRefusal> {
+    let fault = |cause: &'static str| ReplayRefusal::Fault(InternalFault::new("analyze", cause));
+    let ReplayShape {
+        target,
+        members,
+        node: identity,
+        occurrence,
+        transcript: text,
+    } = shape;
+    let emission =
+        fsl_package::emit_checked_with_temporal_selections(inputs.package, &[], inputs.limits.emit)
+            .map_err(|_| fault("package-emission"))?;
+    let package = ReplayPackage::read(
+        emission.package().bytes(),
+        ReplayLimits::default().input_bytes,
+    )
+    .map_err(|_| fault("package-emission"))?;
+    let transcript = || Witness::parse(text).map_err(|_| fault("transcript"));
+    let wire = ReplayRequestWire {
+        package,
+        profile_selections: Vec::new(),
+        dependencies: super::request::dependency_wires(inputs.package),
+        replay_target: target,
+        source: ReplaySource::Witness(transcript()?),
+        obligation_identity: ObligationIdentity::new(identity.clone(), None, 0),
+        backend: inputs.backend.to_owned(),
+        state_environment: StateEnvironment::new(Vec::new()),
+        accounting_limits: inputs.limits.accounting,
+        stage_limits: std::collections::BTreeMap::new(),
+        supplied_limits: None,
+        object_environment: None,
+        declared_domains: Vec::new(),
+        byte_provision: inputs.provision.wire_entries(),
+        documents: inputs
+            .binding
+            .packages
+            .values()
+            .chain(inputs.binding.snapshots.values())
+            .cloned()
+            .collect(),
+    };
+    let envelope = WitnessEnvelope::reconstruct(
+        WitnessPacket {
+            obligation_identity: Some(ObligationIdentity::new(identity.clone(), None, 0)),
+            occurrence_key: Some(occurrence),
+            clause_node: Some(identity),
+            replay_target: members,
+            profile_selections: Some(Vec::new()),
+            run_limits: Some(inputs.limits.accounting),
+            declared_domains: Some(Vec::new()),
+            backend: Some(inputs.backend.to_owned()),
+            trace_position: Some(None),
+            source: Some(EnvelopeSource::Witness(transcript()?)),
+            family_payload: Some(payload.clone()),
+        },
+        ReplayLimits::default(),
+    )
+    .map_err(|_| fault("envelope"))?;
+    fsl_replay::replay_protocol_trace(
+        wire,
+        &inputs.subject,
+        &envelope,
+        letters,
+        ReplayLimits::default(),
+    )
 }
