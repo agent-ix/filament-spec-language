@@ -327,12 +327,17 @@ impl HyperIdentity {
 }
 
 fn node_has_reference_literal(root: fsl_semantics::check::CheckedNode<'_>) -> bool {
-    std::iter::once(root).chain(root.descendants()).any(|node| {
-        matches!(
+    let mut pending = vec![root];
+    while let Some(node) = pending.pop() {
+        if matches!(
             node.kind(),
             filament_checked::NodeKind::ReferenceLiteral { .. }
-        )
-    })
+        ) {
+            return true;
+        }
+        pending.extend(node.children());
+    }
+    false
 }
 
 fn temporal_clause_has_reference_literal(node: &fsl_semantics::check::TemporalClauseNode) -> bool {
