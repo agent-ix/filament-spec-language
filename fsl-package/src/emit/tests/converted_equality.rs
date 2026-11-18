@@ -171,7 +171,8 @@ fn float_equality_schedule_roundtrips_as_float() {
          function float_not_equal using v(a: Float64[nearest-even], b: Float64[nearest-even]): Boolean pure { a != b }",
     );
     super::assert_equality_reader_outcomes(&emission, read_back(&emission));
-    let decisions = wire(&emission)["checked_term_data"]["equality_decisions"]
+    let emitted_wire = wire(&emission);
+    let decisions = emitted_wire["checked_term_data"]["equality_decisions"]
         .as_array()
         .expect("Float equality rows are emitted");
     assert_eq!(decisions.len(), 2);
