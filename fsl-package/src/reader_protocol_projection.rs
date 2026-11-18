@@ -1288,11 +1288,8 @@ impl<'wire> ReaderBuilder<'_, 'wire> {
                             .index
                             .node(id)
                             .ok_or_else(|| fault("reader-function-parameter-is-admitted"))?;
-                        let name = parameter
-                            .declaration
-                            .as_ref()
-                            .and_then(|declaration| declaration.qualified_name.last())
-                            .map(|name| name.to_string())
+                        let name = parameter_name(&parameter.body)
+                            .map(str::to_owned)
                             .ok_or_else(|| fault("reader-function-parameter-name-is-admitted"))?;
                         let value_type = self.value_type(id)?;
                         Ok(ReaderProtocolParameter {
