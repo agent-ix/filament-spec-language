@@ -1108,3 +1108,44 @@ fn a_step_open_interval_decides_at_its_lower_bound_on_the_position_counter() {
     ]);
     assert_eq!(found(&late, 3), Some(1));
 }
+
+/// FR-943-AC-3 as written: `once[3,*]` is `true` at position 3 and
+/// `eventually[2,*]` is discharged by `p` at position 2. FR-251's tick cover
+/// makes the monitor decide one position later, so the AC and FR-251 differ
+/// (next spec batch).
+#[trace("TC-2623", "FR-943-AC-3")]
+#[test]
+#[ignore = "QSL-2321: FR-943-AC-3 decides at the lower bound itself; FR-251's tick cover decides one position later"]
+fn a_step_open_interval_decides_at_the_lower_bound_itself() {
+    use crate::monitor_entries::{run_reference, Input};
+    let profile = "filament.temporal.infinite-trace/v1";
+    let past = plan_of(&position_counted(
+        profile,
+        "once[3,*] holds(c.versionNumber = 2)",
+    ));
+    let atom = *crate::monitor_entries::atoms_of(&past)
+        .first()
+        .expect("the clause holds one atom");
+    let node = i128::try_from(past.buffers()[0].0.index()).expect("a node index");
+    let inputs: Vec<Input> = (0..5)
+        .map(|tick| Input::Reading(tick, vec![(atom, tick == 0)]))
+        .collect();
+    let entries = run_reference(&past, &inputs);
+    let at_three = entries[3].iter().find(|(key, _)| *key == 3 * 1000 + node);
+    assert_eq!(at_three.map(|(_, code)| *code), Some(1));
+
+    let future = plan_of(&position_counted(
+        profile,
+        "eventually[2,*] holds(c.versionNumber = 2)",
+    ));
+    let atom = *crate::monitor_entries::atoms_of(&future)
+        .first()
+        .expect("the clause holds one atom");
+    let root = i128::try_from(future.program().root().index()).expect("a node index");
+    let inputs: Vec<Input> = (0..3)
+        .map(|tick| Input::Reading(tick, vec![(atom, tick == 2)]))
+        .collect();
+    let entries = run_reference(&future, &inputs);
+    let found = entries[2].iter().find(|(key, _)| *key == root);
+    assert_eq!(found.map(|(_, code)| *code), Some(1));
+}

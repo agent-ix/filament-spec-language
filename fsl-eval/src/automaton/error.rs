@@ -70,7 +70,8 @@ pub enum AutomatonError {
     RepeatedPunctualInterval,
     /// A timed interval with a lower bound and no upper bound (`[q, *]`,
     /// FR-943): the clock-zone automaton has no construction for a window
-    /// that never closes, and FSL names none.
+    /// that never closes, and FSL names none. Remaining work: QSL-2408
+    /// (zone checking for `[q, *]`).
     #[error("a timed interval with no upper bound has no timed automaton")]
     OpenTimedInterval,
     /// The construction needs more automaton clocks than it builds: each
