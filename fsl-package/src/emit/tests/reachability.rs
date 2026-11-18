@@ -227,16 +227,32 @@ pub(super) fn lower_package(
                 .awaits
                 .iter()
                 .filter(|awaited| {
-                    awaited.profile
-                        == Some(fsl_semantics::check::TemporalProfile::EventPositionFalseExtension)
+                    matches!(
+                        awaited.profile,
+                        Some(
+                            fsl_semantics::check::TemporalProfile::EventPositionFalseExtension
+                                | fsl_semantics::check::TemporalProfile::TimestampedEventFiniteWindow
+                        )
+                    )
                 })
                 .map(|awaited| {
+                    let clock = match awaited.profile {
+                        Some(
+                            fsl_semantics::check::TemporalProfile::EventPositionFalseExtension,
+                        ) => filament_contract_model::ClockConfiguration::EventPosition {
+                            sequence_authority: "test-order-events".into(),
+                        },
+                        Some(
+                            fsl_semantics::check::TemporalProfile::TimestampedEventFiniteWindow,
+                        ) => filament_contract_model::ClockConfiguration::TimestampedEvent {
+                            timestamp_unit: "test-rfc3339".into(),
+                        },
+                        _ => unreachable!("the filter selected a clocked temporal profile"),
+                    };
                     crate::emit::TemporalClockSelection::new(
                         graph.source().clone(),
                         awaited.span,
-                        filament_contract_model::ClockConfiguration::EventPosition {
-                            sequence_authority: "test-order-events".into(),
-                        },
+                        clock,
                     )
                 })
         }))
