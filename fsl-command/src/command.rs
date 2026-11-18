@@ -1998,12 +1998,9 @@ fn read_clause_run_request_bytes(
 #[cfg(feature = "quire-extraction")]
 fn extraction_failure(error: Box<fsl_source::Error>) -> Result<RunCause> {
     let code = error.code();
-    let stage = if error.extraction().is_some_and(|outcome| {
-        outcome.availability.state != fsl_source::AvailabilityState::Available
-    }) {
-        ExtractionFailureStage::Quire
-    } else {
-        ExtractionFailureStage::Selection
+    let stage = match &error.cause {
+        fsl_source::Cause::Join(_) => ExtractionFailureStage::Selection,
+        fsl_source::Cause::Preflight(_) => ExtractionFailureStage::Quire,
     };
     let original = error.original();
     let identity = original.identity();
