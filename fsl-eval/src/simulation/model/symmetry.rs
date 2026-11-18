@@ -13,16 +13,16 @@ use std::collections::BTreeMap;
 
 use filament_checked::key::DeclarationKey;
 use filament_exact::{
-    compare_keys, from_admitted, from_admitted_map, from_admitted_slots, CollectionKind,
-    FieldValue, ObjectId, ObjectReference, OptionValue, UnionValue, UniverseId, Value,
+    CollectionKind, FieldValue, ObjectId, ObjectReference, OptionValue, UnionValue, UniverseId,
+    Value, compare_keys, from_admitted, from_admitted_map, from_admitted_slots,
 };
 use filament_semantic_value::model_transition::ModelTransition;
 use fsl_semantics::model::state::{ModelState, StateObject};
 use quire_canonical::Limits;
 
-use super::encode::{self, declaration_text, Enc};
+use super::encode::{self, Enc, declaration_text};
 use super::walk::stop;
-use super::{identity_limits, ModelSimState, ModelSystem, BROKEN};
+use super::{BROKEN, ModelSimState, ModelSystem, identity_limits};
 use crate::simulation::expansion::ExpansionStop;
 use crate::simulation::reduction::{Permutation, SymmetryGroup};
 
@@ -134,6 +134,8 @@ impl Renaming<'_> {
             | Value::Quantity(_)
             | Value::Text(_)
             | Value::String(_)
+            | Value::Bytes(_)
+            | Value::JsonObject(_)
             | Value::Uuid(_)
             | Value::Timestamp(_)
             | Value::Enum(_)

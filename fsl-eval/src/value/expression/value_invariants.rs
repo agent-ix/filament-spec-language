@@ -22,7 +22,7 @@ use fsl_semantics::model::observation::{
 
 use super::evaluate::Machine;
 use super::s6a::separation::{
-    observation_identity, InvocationBinding, RuntimeValuePath, ValuePathStep, ValuePathSubject,
+    InvocationBinding, RuntimeValuePath, ValuePathStep, ValuePathSubject, observation_identity,
 };
 use filament_eval::CallFailure;
 use filament_eval::Evaluation;
@@ -391,6 +391,8 @@ fn walk(
             | Value::Quantity(_)
             | Value::Text(_)
             | Value::String(_)
+            | Value::Bytes(_)
+            | Value::JsonObject(_)
             | Value::Uuid(_)
             | Value::Timestamp(_)
             | Value::Enum(_)

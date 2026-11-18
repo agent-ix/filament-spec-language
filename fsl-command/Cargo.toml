@@ -35,9 +35,9 @@ serde = { version = "1.0.228", features = ["derive"] }
 serde_json = { version = "1.0.151", features = ["raw_value", "unbounded_depth"] }
 thiserror = "2.0.20"
 # ADR-011, FR-931: the temporal correspondence stage is this crate's
-# only; no other FSL crate names the TL crates. `tl-syntax` is pinned to
-# the revision `tl-mltl` itself pins, so both name one `Formula` type.
-tl-mltl = { git = "https://github.com/agent-ix/tl-mltl", tag = "v0.4.0" }
+# only; no other FSL crate names the TL crates. Both dependencies use the
+# `tl-syntax` v0.4.0 tag, so they name one `Formula` type.
+tl-mltl = { git = "https://github.com/agent-ix/tl-mltl", tag = "v0.4.1" }
 tl-syntax = { git = "https://github.com/agent-ix/tl-syntax.git", tag = "v0.4.0", default-features = false, features = ["alloc", "serde"] }
 
 [dev-dependencies]

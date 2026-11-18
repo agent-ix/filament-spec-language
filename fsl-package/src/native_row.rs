@@ -380,6 +380,8 @@ pub(crate) fn value_type(
         | ValueType::String
         | ValueType::Uuid
         | ValueType::Timestamp
+        | ValueType::Bytes
+        | ValueType::JsonObject
         | ValueType::Composite(_)
         | ValueType::Population(_) => Ok(()),
     }

@@ -15,8 +15,8 @@ use fsl_semantics::model::state::{ModelState, StateField, StateModel, StateObjec
 use quire_canonical::{Error, Limits, Sink, Writer};
 
 use super::super::{ModelKeyBudget, ModelKeyError};
-use super::projection::{self, ArrayOrder, Scalar, StructuralSink, ValueSink};
 use super::Typing;
+use super::projection::{self, ArrayOrder, Scalar, StructuralSink, ValueSink};
 use crate::simulation::EncodingRefusal;
 
 struct Scope<'a> {
@@ -802,6 +802,18 @@ impl ValueSink for Bounded<'_, '_> {
                 self.store(ArenaNode::Boolean(value))
             }
             Scalar::Text(value) => self.text(value),
+            Scalar::Bytes(value) => {
+                struct HexBytes<'a>(&'a [u8]);
+                impl std::fmt::Display for HexBytes<'_> {
+                    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                        for byte in self.0 {
+                            write!(formatter, "{byte:02x}")?;
+                        }
+                        Ok(())
+                    }
+                }
+                self.formatted(HexBytes(value))
+            }
             Scalar::Integer(value) => self.integer(value),
             Scalar::Hex { bits, digits } => {
                 struct Hex(u64, usize);

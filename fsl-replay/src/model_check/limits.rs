@@ -314,6 +314,7 @@ impl ModelCheckLimit {
                 LimitKind::ValueOccurrences => "value_occurrences",
                 LimitKind::WorkUnits => "work_units",
                 LimitKind::ResultUnits => "result_units",
+                LimitKind::LiveOccurrences => "live_occurrences",
             },
             Self::MaxCandidates => "max_candidates",
             Self::SolverSteps => "max_solver_steps",
@@ -361,7 +362,7 @@ impl ModelCheckLimit {
             Self::ExactProbMaxPolicyIterations => "exact_prob.max_policy_iterations",
             Self::ExactProbMaxWitnessPaths => "exact_prob.max_witness_paths",
             Self::EvaluationMeter { counter } => {
-                crate::limits::AccountingLimits::setting_of(counter).name()
+                crate::limits::AccountingLimits::setting_name(counter)
             }
             Self::MaxCandidates => "expansion.max_candidates",
             Self::SolverSteps => "hybrid.max_solver_steps",
@@ -407,6 +408,8 @@ pub fn meter_bound(limits: &ScalarLimits, counter: LimitKind) -> u64 {
         LimitKind::ValueOccurrences => limits.value_occurrences,
         LimitKind::WorkUnits => limits.work_units,
         LimitKind::ResultUnits => limits.result_units,
+        // The live-occurrence cap is session-level and is not in ScalarLimits.
+        LimitKind::LiveOccurrences => 1_048_576,
     }
 }
 
@@ -573,6 +576,7 @@ mod tests {
                 }
                 LimitKind::WorkUnits => ("work_units", "accounting.work_units"),
                 LimitKind::ResultUnits => ("result_units", "accounting.result_units"),
+                LimitKind::LiveOccurrences => ("live_occurrences", "evaluation.live_occurrences"),
             },
             ModelCheckLimit::MaxCandidates => ("max_candidates", "expansion.max_candidates"),
             ModelCheckLimit::ValueCheckMaxCases => ("max_cases", "value_check.max_cases"),

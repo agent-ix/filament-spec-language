@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 use super::*;
-use crate::spine::{compose, DependencyInput};
+use crate::spine::{DependencyInput, compose};
 use filament_checked::key::DeclarationKey;
 use filament_exact::{
     BoundViolation, CardinalityBound, CollectionKind, Incomplete, Integer, Value,
@@ -114,8 +114,8 @@ pub(in crate::spine) fn lookup_driver_context(
     use filament_semantic_value::object_closure::ObjectClosure;
     use fsl_semantics::model::dispatch::GeneralizationClosure;
     use fsl_semantics::model::population::{
-        admit_binding, AdmissionMeter, AdmissionOutcome, PopulationAdmissionLimits,
-        PopulationDocument, PopulationMember,
+        AdmissionMeter, AdmissionOutcome, PopulationAdmissionLimits, PopulationDocument,
+        PopulationMember, admit_binding,
     };
 
     let cancel = Cancel::new();
@@ -234,7 +234,9 @@ pub(in crate::spine) fn lookup_driver_context(
 #[test]
 #[trace("TC-792", "FR-100-AC-14", "FR-100-AC-16", "FR-100-AC-17")]
 fn tc_792_source_compiled_lookup_driver_preserves_present_and_absent_paths() {
-    let fixture = lookup_driver_fixture("function query using v(p: Population<M::Gadget>[1], r: M::Gadget): M::Gadget pure { lookup<M::Gadget>(p, r) absent refused }");
+    let fixture = lookup_driver_fixture(
+        "function query using v(p: Population<M::Gadget>[1], r: M::Gadget): M::Gadget pure { lookup<M::Gadget>(p, r) absent refused }",
+    );
     let (objects, population, present, absent) = lookup_driver_context(&fixture);
     let invoke = |reference| {
         run(
@@ -334,7 +336,9 @@ fn tc_792_source_driver_admits_unused_parameters_before_body_evaluation() {
 #[test]
 #[trace("TC-792", "FR-100-AC-14", "FR-100-AC-16")]
 fn tc_792_source_driver_binding_precedence_precedes_value_admission() {
-    let fixture = lookup_driver_fixture("function query using v(p: Population<M::Gadget>[1], r: M::Gadget): M::Gadget pure { lookup<M::Gadget>(p, r) absent refused }");
+    let fixture = lookup_driver_fixture(
+        "function query using v(p: Population<M::Gadget>[1], r: M::Gadget): M::Gadget pure { lookup<M::Gadget>(p, r) absent refused }",
+    );
     let (objects, _, _, _) = lookup_driver_context(&fixture);
     let refusal = run(
         source(),
@@ -370,7 +374,9 @@ fn tc_792_source_driver_binding_precedence_precedes_value_admission() {
 #[test]
 #[trace("TC-792", "FR-100-AC-14", "FR-100-AC-16")]
 fn tc_792_source_driver_cancellation_returns_no_lookup_result() {
-    let fixture = lookup_driver_fixture("function query using v(p: Population<M::Gadget>[1], r: M::Gadget): M::Gadget pure { lookup<M::Gadget>(p, r) absent refused }");
+    let fixture = lookup_driver_fixture(
+        "function query using v(p: Population<M::Gadget>[1], r: M::Gadget): M::Gadget pure { lookup<M::Gadget>(p, r) absent refused }",
+    );
     let (objects, population, _, _) = lookup_driver_context(&fixture);
     let cancel = Cancel::new();
     cancel.cancel(filament_exact::CancelCause::Requested);
@@ -590,7 +596,7 @@ fn synthetic_model(
         DomainPackage, DomainPackageRecord, DomainPackageRef, Extent, ObjectTypeRecord,
         PopulationRecord,
     };
-    use fsl_semantics::model::normalize::{normalize, NormalizeOutcome};
+    use fsl_semantics::model::normalize::{NormalizeOutcome, normalize};
 
     let object = DeclarationKey::fixture(format!("{placeholder}/A"));
     let population = DeclarationKey::fixture(format!("{placeholder}/P"));
@@ -635,7 +641,7 @@ fn synthetic_reference_hierarchy(
     use fsl_semantics::model::domain_package::{
         DomainPackage, DomainPackageRecord, DomainPackageRef, ObjectTypeRecord,
     };
-    use fsl_semantics::model::normalize::{normalize, NormalizeOutcome};
+    use fsl_semantics::model::normalize::{NormalizeOutcome, normalize};
 
     let root = DeclarationKey::fixture(format!("{placeholder}/Root"));
     let target = DeclarationKey::fixture(format!("{placeholder}/T"));
@@ -689,8 +695,8 @@ fn tc_792_population_and_foreign_model_admission_keep_typed_causes() {
     use fsl_semantics::model::intake::SelectedModel;
     use fsl_semantics::model::object_environment::ObjectEnvironment;
     use fsl_semantics::model::population::{
-        admit_binding, AdmissionMeter, AdmissionOutcome, PopulationAdmissionLimits,
-        PopulationDocument, PopulationMember,
+        AdmissionMeter, AdmissionOutcome, PopulationAdmissionLimits, PopulationDocument,
+        PopulationMember, admit_binding,
     };
 
     let types = TypeEnvironment::new([], []).unwrap();
@@ -1002,8 +1008,8 @@ fn tc_792_lookup_present_absent_malformed_and_accounting_vectors_preserve_owners
     use filament_semantic_value::absence::AbsenceMode;
     use fsl_semantics::model::dispatch::GeneralizationClosure;
     use fsl_semantics::model::population::{
-        admit_binding, lookup, AdmissionMeter, AdmissionOutcome, LookupKey, LookupOutcome,
-        PopulationAdmissionLimits, PopulationDocument, PopulationMember,
+        AdmissionMeter, AdmissionOutcome, LookupKey, LookupOutcome, PopulationAdmissionLimits,
+        PopulationDocument, PopulationMember, admit_binding, lookup,
     };
 
     let (view, object_type, population_key) = synthetic_model("tc-792-lookup");
@@ -1353,8 +1359,8 @@ fn an_execute_accounting_limit_carries_its_kind_bound_counter_and_field() {
 fn a_stage_limit_refusal_of_run_is_incomplete_and_exits_22() {
     use crate::spine::CheckingLimits;
     use filament_semantic_value::catalog::Category;
-    use fsl_foundation::diagnostic::LimitKind;
     use fsl_foundation::Setting;
+    use fsl_foundation::diagnostic::LimitKind;
     let mut source_limit = SpineLimits::default();
     source_limit.source.source_bytes = 1;
     let checking_limit = SpineLimits {
@@ -1431,6 +1437,7 @@ fn evaluation(outcome: FamilyOutcome<Value>) -> filament_eval::Evaluation {
         outcome,
         location: Some(fixture_f_location()),
         losses: Vec::new(),
+        frame_depth: 0,
     }
 }
 
@@ -1450,13 +1457,15 @@ fn tc_452_step_4_outcome_mapping_covers_every_category() {
     )
     .unwrap();
     let graph = compiled.package.graph();
-    let sources = vec![Source::read(
-        source(),
-        "tc-452-f.native",
-        FIXTURE_F.as_bytes(),
-        fsl_foundation::source::MAX_SOURCE_BYTES,
-    )
-    .unwrap()];
+    let sources = vec![
+        Source::read(
+            source(),
+            "tc-452-f.native",
+            FIXTURE_F.as_bytes(),
+            fsl_foundation::source::MAX_SOURCE_BYTES,
+        )
+        .unwrap(),
+    ];
 
     let convert =
         |outcome: FamilyOutcome<Value>| convert_outcome(evaluation(outcome), graph, &sources);
@@ -1771,6 +1780,7 @@ fn tc_452_step_4_outcome_mapping_covers_every_category() {
         (Undefined::IeeeNotFinite, "ieee-not-finite"),
         (Undefined::EmptyReduction, "empty-reduction"),
         (Undefined::NoneValue, "none-value"),
+        (Undefined::NoElement, "no-element"),
         (Undefined::SumOutOfDomain, "sum-out-of-domain"),
     ] {
         match convert(FamilyOutcome::Evaluated(Outcome::Undefined(reason))).unwrap() {

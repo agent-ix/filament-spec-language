@@ -21,6 +21,7 @@ pub(super) enum Scalar<'a> {
     Null,
     Boolean(bool),
     Text(&'a str),
+    Bytes(&'a [u8]),
     Integer(&'a Integer),
     Hex {
         bits: u64,
@@ -47,6 +48,17 @@ pub(super) enum Scalar<'a> {
     UnitText(&'a UnitId),
     Replacement(Enc),
     Unencodable(&'static str),
+}
+
+/// The canonical lowercase hexadecimal payload of FR-106's Bytes form.
+fn hex_bytes(bytes: &[u8]) -> String {
+    const HEX: &[u8; 16] = b"0123456789abcdef";
+    let mut text = String::with_capacity(bytes.len().saturating_mul(2));
+    for byte in bytes {
+        text.push(char::from(HEX[usize::from(*byte >> 4)]));
+        text.push(char::from(HEX[usize::from(*byte & 0x0f)]));
+    }
+    text
 }
 
 #[derive(Clone, Copy)]
@@ -212,6 +224,7 @@ impl ValueSink for Retained {
             Scalar::Null => Enc::Null,
             Scalar::Boolean(value) => Enc::Bool(value),
             Scalar::Text(value) => Enc::text(value),
+            Scalar::Bytes(value) => Enc::text(hex_bytes(value)),
             Scalar::Integer(value) => Enc::text(value.to_string()),
             Scalar::Hex { bits, digits } => Enc::text(format!("{bits:0digits$x}")),
             Scalar::Scale(value) => Enc::text(value.to_string()),
@@ -1037,6 +1050,14 @@ pub(super) fn project_value<'a, S: ValueSink>(
                 sink.name("value")?;
                 sink.scalar(Scalar::Text(value.retained()))
             }),
+            Value::Bytes(value) => tagged(sink, "bytes", |sink| {
+                sink.name("text")?;
+                sink.scalar(Scalar::Bytes(value))
+            }),
+            Value::JsonObject(value) => tagged(sink, "json_object", |sink| {
+                sink.name("text")?;
+                sink.scalar(Scalar::Text(value.canonical_text()))
+            }),
             Value::String(value) => tagged(sink, "text", |sink| {
                 sink.name("value")?;
                 sink.scalar(Scalar::Text(value.as_str()))
@@ -1227,7 +1248,7 @@ pub(super) fn project_value<'a, S: ValueSink>(
 
 #[cfg(test)]
 mod tests {
-    use filament_exact::ValueType;
+    use filament_exact::{JsonObject, ValueType};
 
     use super::*;
 
@@ -1245,6 +1266,29 @@ mod tests {
             value_type: ValueType::Boolean,
             optional: false,
         }
+    }
+
+    #[ix_trace_rs::trace("FR-106-AC-61", "FR-650-AC-1")]
+    #[test]
+    fn native_bytes_and_json_use_their_admitted_run_forms() {
+        let bytes = Value::Bytes(vec![0, 255]);
+        let bytes = retained(|sink| project_value(sink, &bytes, Typing::none(), None, false));
+        assert_eq!(
+            bytes,
+            Enc::tagged("bytes", vec![("text", Enc::text("00ff"))])
+        );
+
+        let json = Value::JsonObject(
+            JsonObject::from_json_text("{\"b\":2,\"a\":1}").expect("valid JSON object"),
+        );
+        let json = retained(|sink| project_value(sink, &json, Typing::none(), None, false));
+        assert_eq!(
+            json,
+            Enc::tagged(
+                "json_object",
+                vec![("text", Enc::text("{\"a\":1,\"b\":2}"))]
+            )
+        );
     }
 
     #[ix_trace_rs::trace("TC-471", "TC-685", "FR-120-AC-4")]

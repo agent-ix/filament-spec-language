@@ -20,20 +20,20 @@ use fsl_semantics::model::domain_package::OperationEffect;
 use fsl_semantics::model::observation::{
     AdmissionUsage, AdmittedObservations, Observation, SelfKind,
 };
-use fsl_semantics::model::population::{decide_frame, FrameDecision, FrameObject, FrameStop};
+use fsl_semantics::model::population::{FrameDecision, FrameObject, FrameStop, decide_frame};
 use fsl_semantics::model::state::{ModelState, StateField, StateObject};
 use quire_canonical::Limits as CanonicalLimits;
 
 pub(super) mod judge;
 
-use super::contracts::{conjunction, Conjunction};
+use super::contracts::{Conjunction, conjunction};
 use super::domain::{Domain, Odometer};
-use super::encode::{self, value_enc, values_equal, Typing};
+use super::encode::{self, Typing, value_enc, values_equal};
 use super::footprints::ReadCheck;
-use super::walk::{stop, Applied, Budget, ContractFinding, FindingCase, Row, Selected, Walk};
+use super::walk::{Applied, Budget, ContractFinding, FindingCase, Row, Selected, Walk, stop};
 use super::{
-    handler_anchor, identity_limits, state_document, Application, ClauseInfo, ClauseOutcome,
-    FieldChange, ModelFinding, ModelSimState, StepEffect, WrittenSlots, BROKEN, EXHAUSTED,
+    Application, BROKEN, ClauseInfo, ClauseOutcome, EXHAUSTED, FieldChange, ModelFinding,
+    ModelSimState, StepEffect, WrittenSlots, handler_anchor, identity_limits, state_document,
 };
 use crate::simulation::expansion::ExpansionStop;
 use crate::simulation::footprint::Footprint;
@@ -1665,6 +1665,8 @@ fn collect_references<'v>(
         | Value::Quantity(_)
         | Value::Text(_)
         | Value::String(_)
+        | Value::Bytes(_)
+        | Value::JsonObject(_)
         | Value::Uuid(_)
         | Value::Timestamp(_)
         | Value::Enum(_)

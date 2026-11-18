@@ -3,7 +3,7 @@
 //! (check 1), admitting its populations and objects (checks 5 to 8) and
 //! resolving `self`, `parameters` and `result` (checks 9 and 10).
 
-use super::{admission_record, AdmissionRecordExt};
+use super::{AdmissionRecordExt, admission_record};
 use std::collections::{BTreeMap, BTreeSet};
 
 use filament_exact::{
@@ -13,12 +13,12 @@ use filament_exact::{
 use fsl_foundation::diagnostic::Code;
 
 use super::helpers::object_reference;
-use super::tree::{read_raw_value, Json, Object};
+use super::tree::{Json, Object, read_raw_value};
 use super::{
-    check_document_valid, collection_tag, fault, incomplete, population_universe, refuse,
     AdmissionFailure, AdmissionRecord, DocumentRef, ModelView, NativeKind, ObservationLimits,
     OutOfRange, PathStep, PostStateRange, RawForm, RawNative, RawNativeKind, RawValue, ReadMeter,
-    SelectedObject, SnapshotValue,
+    SelectedObject, SnapshotValue, check_document_valid, collection_tag, fault, incomplete,
+    population_universe, refuse,
 };
 use crate::model::object_environment::ObjectEnvironment;
 use crate::model::operation::OperationDeclaration;
@@ -676,7 +676,7 @@ fn read_snapshot_body(
             return Err(refuse(admission_record(
                 Code::WrongSnapshot,
                 "wrong-observation",
-            )))
+            )));
         }
     };
     let anchor = match object.member("anchor") {
@@ -1614,10 +1614,8 @@ fn admit_native(
                     .bytes()
                     .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
             {
-                return Err(
-                    admission_record(Code::InvalidRuntimeInput, "invalid-value")
-                        .with("member", "text"),
-                );
+                return Err(admission_record(Code::InvalidRuntimeInput, "invalid-value")
+                    .with("member", "text"));
             }
             let bytes = text
                 .as_bytes()
@@ -1638,10 +1636,8 @@ fn admit_native(
                 admission_record(Code::InvalidRuntimeInput, "invalid-value").with("member", "text")
             })?;
             if value.canonical_text() != text {
-                return Err(
-                    admission_record(Code::InvalidRuntimeInput, "invalid-value")
-                        .with("member", "text"),
-                );
+                return Err(admission_record(Code::InvalidRuntimeInput, "invalid-value")
+                    .with("member", "text"));
             }
             Ok(Value::JsonObject(value))
         }
@@ -2411,6 +2407,8 @@ fn missing_wire_form(value_type: &filament_exact::ValueType) -> Option<&'static 
             | filament_exact::ValueType::String
             | filament_exact::ValueType::Uuid
             | filament_exact::ValueType::Timestamp
+            | filament_exact::ValueType::Bytes
+            | filament_exact::ValueType::JsonObject
             | filament_exact::ValueType::Enum(_)
             | filament_exact::ValueType::Composite(_)
             | filament_exact::ValueType::Reference(_) => {}
@@ -2450,6 +2448,8 @@ fn unsupported_collection_element(value_type: &filament_exact::ValueType) -> Opt
             | filament_exact::ValueType::String
             | filament_exact::ValueType::Uuid
             | filament_exact::ValueType::Timestamp
+            | filament_exact::ValueType::Bytes
+            | filament_exact::ValueType::JsonObject
             | filament_exact::ValueType::Enum(_)
             | filament_exact::ValueType::Composite(_)
             | filament_exact::ValueType::Reference(_)
@@ -3268,7 +3268,7 @@ fn admit_contexts<'t>(
         RawContexts::Malformed(record) => {
             return Err(refuse(
                 record.clone().with("document", document.identity.clone()),
-            ))
+            ));
         }
         RawContexts::Entries(entries) => entries,
     };
@@ -3521,7 +3521,9 @@ fn holds_references(value_type: &filament_exact::ValueType) -> bool {
             | filament_exact::ValueType::Composite(_)
             | filament_exact::ValueType::Population(_)
             | filament_exact::ValueType::Uuid
-            | filament_exact::ValueType::Timestamp => return false,
+            | filament_exact::ValueType::Timestamp
+            | filament_exact::ValueType::Bytes
+            | filament_exact::ValueType::JsonObject => return false,
         }
     }
 }
