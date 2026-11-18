@@ -398,17 +398,6 @@ fn replay_item_over(identity: &str, body: &str, trace: &Value) -> crate::analyze
         json!({"items": [{"claim": "Flow", "kind": "finite-replay",
             "trace": {"authority": "test", "identity": identity}}]}),
     );
-    // The bounded profile `tb` a clause deciding `eventually` selects (FR-327).
-    let unit = std::fs::read_to_string(path.with_file_name("program.fsl")).expect("unit");
-    ws.write(
-        "program.fsl",
-        unit.replacen(
-            "model M =",
-            "profile tb = \"filament.temporal.event-position.false-extension/v1\";\nmodel M =",
-            1,
-        )
-        .as_bytes(),
-    );
     ws.write("trace.json", trace.to_string().as_bytes());
     let mut document: Value =
         serde_json::from_slice(&std::fs::read(&path).expect("request")).expect("json");
@@ -424,14 +413,11 @@ fn replay_item_over(identity: &str, body: &str, trace: &Value) -> crate::analyze
 /// `(name, formula)` over `k: M::Core` under the infinite-trace profile,
 /// in `requires` order.
 fn order_requiring(clauses: &[(&str, &str)]) -> String {
-    // A closed trace decides `eventually` (a bounded profile, FR-327); the
-    // infinite-trace profile reads the behaviour as a prefix (FR-328).
     let mut declarations = String::new();
     let mut requirements = String::new();
     for (name, formula) in clauses {
         declarations.push_str(&format!(
-            "temporal {name} using {} over (k: M::Core) clock \"model-steps\" on origin {{ {formula} }}\n",
-            if formula.starts_with("eventually") { "tb" } else { "t0" }
+            "temporal {name} using t0 over (k: M::Core) clock \"model-steps\" on origin {{ {formula} }}\n"
         ));
         requirements.push_str(&format!("requires temporal {name};\n"));
     }
@@ -445,7 +431,7 @@ fn order_requiring(clauses: &[(&str, &str)]) -> String {
 
 /// FR-941-AC-4: a protocol clause that requires temporal clauses is decided
 /// over the replayed behaviour by the one temporal evaluator, reporting the
-/// deciding clause's FSpec FR-352 disposition: `holds` proves, `violated`
+/// deciding clause's FSpec FR-352 disposition: `violated`
 /// and `undefined` refute with a replayed counterexample, `pending` is
 /// inconclusive with exit 0, and the first refuting requirement decides.
 #[trace("TC-2965", "FR-941-AC-4")]
@@ -459,15 +445,6 @@ fn a_claim_with_a_formula_is_decided_over_the_replayed_behaviour() {
             &trace_document(identity, &steps),
         )
     };
-
-    let holds = run_with(
-        "formula-holds",
-        &[("R", "eventually[0,3] holds(k.r1 = k.r1)")],
-    );
-    let item = holds.item(0);
-    assert_eq!(label(&item), "proved", "{item}");
-    assert_eq!(item["disposition"]["temporal"]["kind"], "holds", "{item}");
-    assert_eq!(item["record"]["steps"], 3, "{item}");
 
     let violated = run_with("formula-violated", &[("R", "always holds(k.r1 != k.r1)")]);
     let item = violated.item(0);
@@ -727,4 +704,23 @@ fn a_required_clause_over_an_undefined_atom_is_refuted_as_undefined() {
         item["counterexample"]["kind"]["where"]["position"], 0,
         "{item}"
     );
+}
+
+/// FR-941-AC-4's `holds` row: `eventually holds(k.r1 = k.r1)` under the
+/// infinite-trace profile `t0` over the replayed `Placed`, `Got`, `Ship`
+/// settles `proved` with kind `holds` and 3 replayed steps.
+#[trace("TC-2965", "FR-941-AC-4")]
+#[test]
+#[ignore = "QSL-2272: spec conflict - FR-941-AC-4 expects `holds` for `eventually holds(k.r1 = k.r1)` under the infinite-trace profile, but FR-328 (AC-1 and the 'every other case' rule, including a formula outside the safety fragment whose prefix already satisfies it) returns `Pending`; the evaluator follows FR-328. Question for the spec: does a prefix that already satisfies a liveness formula settle `holds` (amend FR-328) or `pending` (amend FR-941-AC-4)?"]
+fn an_eventually_clause_satisfied_by_the_replayed_prefix_holds_under_the_infinite_trace_profile() {
+    let steps = order_steps(&[StepKind::Send, StepKind::Receive, StepKind::Finish]);
+    let run = replay_item_over(
+        "formula-holds",
+        &order_requiring(&[("R", "eventually holds(k.r1 = k.r1)")]),
+        &trace_document("formula-holds", &steps),
+    );
+    let item = run.item(0);
+    assert_eq!(label(&item), "proved", "{item}");
+    assert_eq!(item["disposition"]["temporal"]["kind"], "holds", "{item}");
+    assert_eq!(item["record"]["steps"], 3, "{item}");
 }
