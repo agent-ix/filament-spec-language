@@ -672,9 +672,9 @@ protocol Flow using p over (input: M::Widget) on origin {\n\
             fsl_package::protocol_view::ControlOperation::Choice,
             "Pick",
         );
-        assert!(view.controls().contains(&done.node_id));
-        assert!(view.controls().contains(&await_node.node_id));
-        assert!(view.controls().contains(&choice_node.node_id));
+        assert!(view.controls().contains(&&done.node_id));
+        assert!(view.controls().contains(&&await_node.node_id));
+        assert!(view.controls().contains(&&choice_node.node_id));
         let choice =
             fsl_package::protocol_view::choice_visibility(choice_node).expect("choice visibility");
         assert_eq!(choice.choice, &choice_node.node_id);
