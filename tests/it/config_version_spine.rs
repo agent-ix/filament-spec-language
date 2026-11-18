@@ -565,6 +565,72 @@ fn clause_run_observation_limit_reports_its_own_bound() {
     assert_eq!(error["details"]["maximum"], 1_000_000);
 }
 
+/// The first object anywhere in `value` whose `code` is `code`.
+fn coded<'a>(value: &'a Value, code: &str) -> Option<&'a Value> {
+    match value {
+        Value::Object(members) => {
+            if members.get("code").and_then(Value::as_str) == Some(code) {
+                return Some(value);
+            }
+            members.values().find_map(|member| coded(member, code))
+        }
+        Value::Array(items) => items.iter().find_map(|item| coded(item, code)),
+        _ => None,
+    }
+}
+
+/// FR-312-AC-9 (TC-2982): the observation byte ceiling set by the request
+/// member settles the clause item with the one `stage_limit_exceeded` record
+/// naming `observation.input_bytes`, and the hint names the setting `--limit`
+/// accepts. FR-312-AC-10's `RequestOverrides::observation` is the code
+/// ticket's to add and test.
+#[trace("TC-2982", "FR-312-AC-9")]
+#[test]
+#[ignore = "QSL-2015: the observation byte ceiling as one stage_limit_exceeded item naming observation.input_bytes is not implemented yet"]
+fn clause_run_observation_limit_is_one_stage_limit_item_naming_its_setting() {
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("observation-shape");
+    build(&path, Case::Healthy);
+    let snapshot_path = path.join("spine-snapshot.json");
+    let size = std::fs::metadata(&snapshot_path).unwrap().len();
+    let run = |bound: u64| {
+        let mut request = current_clause_request();
+        request["request"]["clause"]["observation_limits"] = json!({"document_bytes": bound});
+        std::fs::write(
+            path.join("request.json"),
+            serde_json::to_vec(&request).unwrap(),
+        )
+        .unwrap();
+        run_file_with_limits(
+            &path.join("request.json"),
+            RunLimits {
+                dependent_bytes: 8_000_000,
+                ..RunLimits::default()
+            },
+        )
+    };
+    let output = run(size - 1);
+    assert_eq!(output.status.code(), Some(22), "{output:?}");
+    let document: Value = serde_json::from_slice(&output.stdout).expect("an outcome document");
+    let limit = coded(&document, "stage_limit_exceeded")
+        .unwrap_or_else(|| panic!("a stage_limit_exceeded item: {document}"));
+    assert_eq!(limit["setting"], "observation.input_bytes", "{limit}");
+    assert_eq!(limit["bound"], size - 1, "{limit}");
+    assert_eq!(limit["actual"], size, "{limit}");
+    assert!(
+        coded(&document, "resource_exhausted").is_none(),
+        "{document}"
+    );
+    let text = format!(
+        "{}{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(text.contains("--limit observation.input_bytes="), "{text}");
+    assert!(!text.contains("observation.document_bytes"), "{text}");
+    assert_eq!(run(size).status.code(), Some(0));
+}
+
 /// FR-312: a deep pre-call parameter reaches the typed reader without a
 /// serde recursion ceiling or recursive JSON-value drop.
 #[trace("TC-891", "FR-312-AC-5")]

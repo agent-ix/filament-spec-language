@@ -723,3 +723,42 @@ fn an_eventually_clause_satisfied_by_the_replayed_prefix_holds_under_the_infinit
     assert_eq!(item["disposition"]["temporal"]["kind"], "holds", "{item}");
     assert_eq!(item["record"]["steps"], 3, "{item}");
 }
+
+/// FR-225-AC-6 (TC-2986): `max_messages` also bounds each channel's occupancy,
+/// counted per channel, so over a protocol with no RA access it cuts the second send on the
+/// capacity-1 channel before its overflow policy applies; at 2 the overflow
+/// refutes; unset, the record states 4, not reached.
+#[trace("TC-2986", "FR-225-AC-6")]
+#[test]
+#[ignore = "QSL-2431: max_messages as the per-channel occupancy bound is not implemented yet"]
+fn max_messages_bounds_each_channels_occupancy() {
+    let body = "record Ack { ok: Boolean; }\n\
+        protocol Burst using pp over (k: M::Core) on origin {\n\
+        role Buyer on M::Cell;\nrole Seller on M::Cell;\n\
+        channel Order from Buyer to Seller carries Ack ordering unordered delivery exactly-once-premise capacity 1 overflow reject;\n\
+        run parallel Both { branch left sequence L { send A via Order as (a: Ack) { true }; } \
+        branch right sequence R { send B via Order as (b: Ack) { true }; } } join all [left, right];\n\
+        finish Done as (zz: Boolean) { true };\n}\n";
+    let ws = Workspace::new("protocol-message-bound");
+    let run = analyze(&litmus_request(
+        &ws,
+        body,
+        json!({"items": [
+            {"claim": "Burst", "kind": "global-conformance",
+             "temporal": {"limits": {"max_messages": 1}}},
+            {"claim": "Burst", "kind": "global-conformance",
+             "temporal": {"limits": {"max_messages": 2}}},
+            {"claim": "Burst", "kind": "global-conformance"},
+        ]}),
+    ));
+    assert_eq!(label(&run.item(0)), "incomplete");
+    assert_eq!(run.item(0)["record"]["cause"]["limit"], "max_messages");
+    let bounded = run.item(0).to_string();
+    assert!(bounded.contains("max_messages"), "{bounded}");
+    assert_eq!(label(&run.item(1)), "refuted");
+    let unset = run.item(2).to_string();
+    assert!(
+        unset.contains("max_messages"),
+        "the record states the bound: {unset}"
+    );
+}

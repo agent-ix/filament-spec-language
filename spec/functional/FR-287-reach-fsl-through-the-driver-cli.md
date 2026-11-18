@@ -199,6 +199,7 @@ FR-298) and takes FR-285's exit code.
 | FR-287-AC-10 | An external Rust consumer with no dependency on `filament-spec-language` calls `fsl_command::command::compile_outcome` over AC-2's compile request and `prepare_run` over its bounded run request. The compile bytes equal the existing `compile` entry's bytes and the document equals FR-286's projection of the actual package result. Executing the prepared run through the existing spine yields the same result and incomplete category as the existing command entry; preparation retains authored labels, package name, packages, libraries, call arguments and accounting. The FSL root defines and re-exports neither `command` nor `formal_source`, and no core crate depends on `fsl-command`. | Test |
 | FR-287-AC-11 | Missing request files and malformed request JSON produce the command owner's outcome document with the original catalog code and category and `last_stage` null; source, check and emit refusals retain their owning typed cause, category, reached stage and available region. A source identity refusal retains its exact typed label with no fabricated locus. The command's existing native library result and refusal behavior remain unchanged. | Test |
 | FR-287-AC-12 | `quire prove --provider-config providers.json` with no `--provider-limit` sends the fixture plugin a request whose `deadline_ms` is 600000 and enforces a 67108864-byte frame limit; with `--provider-limit deadline_ms=250 --provider-limit max_frame_bytes=1048576` the request carries `deadline_ms` 250 and a 1048577-byte result frame settles the item `failed` with `{"type": "tool-failure", "defect": "frame-length", "limit": 1048576, "value": 1048577}`. `--provider-limit max_frames=4`, `deadline_ms`, `deadline_ms=0`, `deadline_ms=10s`, `deadline_ms=010`, `max_total_bytes=9007199254740992` and `deadline_ms=5` given twice each refuse `invalid-request` naming `--provider-limit` and the argument, exit 20 with empty stdout, and start no plugin; `quire parse --provider-limit deadline_ms=5` refuses the option as unknown, exit 20. | Test (TC-2626) |
+| FR-287-AC-13 | `fsl run req.json --limit observation.input_bytes=N` over FR-312-AC-9's request without `observation_limits` and with its snapshot one byte over `N` writes the same outcome document as FR-312-AC-9's request with `clause.observation_limits.document_bytes` `N`, exit 22, its item cause `stage_limit_exceeded` naming `observation.input_bytes`; `fsl run req.json --limit observation.document_bytes=N` exits 20 with the settings operation's unknown-setting refusal naming the operand; FR-312-AC-9's request with `--limit observation.input_bytes=N` as well refuses `invalid-request` naming `observation_limits`, exit 20. | Test (TC-2985) |
 
 ## Dependencies
 
@@ -228,7 +229,10 @@ stream convention when the driver's verbs land; native library artifacts
 remain in-process command products, except the files the command writes to
 disk on request: FR-665's handoff directory and FR-810's package file. `run` and `compile` accept the `request_bytes` and
 `dependent_bytes` options, and `parse`, `check` and `compile` accept `--limit`
-for the settings of the stages they run (FR-869). The provider-routing verbs
+for the settings of the stages they run (FR-869), and `run` accepts `--limit`
+for the observation settings, passing the `observation` member of the
+settings operation's caller limits as `RequestOverrides::observation`
+(FR-312); FR-287-AC-13 states its criteria and TC-2985 tests them. The provider-routing verbs
 accept `--provider-limit` for the process-plugin run limits.
 FR-287-AC-12 states its criteria and TC-2626 tests them. For `parse` and `format` it
 owns the command and label operands, their OS encoding (a non-UTF-8 command
