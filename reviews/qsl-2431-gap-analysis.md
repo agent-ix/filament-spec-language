@@ -39,3 +39,11 @@ Changed production behavior maps to FR-225's channel-bound decision and FR-225-A
 | FND-001 | high | FR-636-AC-4 has no active trace-bound test: the matrix binds it only to an ignored test, while the active bound-1 assertion omits FR-636-AC-4 from its trace tag. Add the criterion to the active test tag so the matrix records the exercised acceptance. | fsl-analyze/tests/it/protocol_composition.rs:733; FR-636-AC-4 |
 | FND-002 | medium | The pending-finish scan saves a concrete reachable candidate but discards it if any other explored state is bound-limited. This loses a candidate whose own prefix may be within the bound and can settle the item incomplete despite a concrete refutation. | fsl-analyze/src/protocol_analysis/conformance.rs:778; FR-225 |
 | FND-003 | medium | The run-stat union of message-bound and memory-bound states causes TSO store-buffer reporting to claim a channel-only cut reached `max_store_buffer`; the message-bound result path also misses reached cuts when another outcome settles. Keep per-bound reached state separate through settlement and output. | fsl-analyze/src/model_check/check.rs:1849; fsl-replay/src/model_check/settle.rs:358; fsl-analyze/src/protocol_analysis/conformance.rs:630; FR-225 |
+
+## Dispositions
+
+| FND | Outcome | Reason |
+| --- | --- | --- |
+| FND-001 | fixed | The active bound-1 test now carries the FR-636-AC-4 trace tag; the recomputed matrix lists the active test as a binder. |
+| FND-002 | still-open | When `pending_finish_counterexample` finds a candidate, `every_behavior_result` still replaces the bounded check outcome with `Violated { stats: Default::default() }`. That drops `message_bound_limited`; `behavior_report` therefore still reports `max_messages.reached` false for this counterexample path when a different explored state was cut. |
+| FND-003 | fixed | `RunStats` now keeps channel-cut counts separate, and the bound serializer reads `message_bound_limited` without treating it as `max_store_buffer` reached. |

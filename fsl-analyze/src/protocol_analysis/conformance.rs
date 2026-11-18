@@ -836,7 +836,7 @@ fn every_behavior_result(
     let outcome = match pending_delivery {
         Some(counterexample) => fsl_replay::ModelCheckOutcome::Violated {
             counterexample: Box::new(counterexample),
-            stats: Default::default(),
+            stats: outcome.stats(),
         },
         None => outcome,
     };

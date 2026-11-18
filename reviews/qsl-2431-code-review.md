@@ -31,3 +31,15 @@ Reviewed PR #2918 at `feca9ae47770cc0d4f6447e8313f79d29298ad86` against the chan
 | FND-001 | medium | `pending_finish_in` discards a reachable pending-delivery/finish counterexample whenever any explored state hits a channel or memory cut. A cut on another branch is not evidence that the saved candidate path crossed the bound; the helper is the path that turns this condition into a violation, so this can lose a concrete refutation and leave the run incomplete. Preserve a candidate whose own prefix remains within the bound. | fsl-analyze/src/protocol_analysis/conformance.rs:778 |
 | FND-002 | medium | Channel cuts are unioned into `RunStats.bound_limited`, then used as `StatedMemoryBound.reached`. Under TSO this marks `max_store_buffer` reached when only a channel's `max_messages` cut; meanwhile the conformance `max_messages.reached` fallback checks only `limit_reached`, so it can report false when a counterexample settles despite a channel cut. Track and report each bound independently. | fsl-analyze/src/model_check/check.rs:1849; fsl-replay/src/model_check/settle.rs:358; fsl-analyze/src/protocol_analysis/conformance.rs:630 |
 | FND-003 | medium | The new active test that exercises FR-636-AC-4's bound-1 incomplete result is tagged only to TC-2986 and FR-225-AC-6. The computed matrix still sees FR-636-AC-4 only in the old ignored test, leaving the AC without active trace-bound evidence. Add FR-636-AC-4 to the test trace. | fsl-analyze/tests/it/protocol_composition.rs:733 |
+
+## Dispositions
+
+| FND | Outcome | Reason |
+| --- | --- | --- |
+| FND-001 | fixed | The bounded scan now returns the concrete candidate immediately when it finds the pending-delivery/finish condition, so an unrelated cut elsewhere cannot erase it. |
+| FND-002 | still-open | When `pending_finish_counterexample` finds a candidate, `every_behavior_result` still replaces the bounded check outcome with `Violated { stats: Default::default() }`. That drops `message_bound_limited`; `behavior_report` therefore still reports `max_messages.reached` false for this counterexample path when a different explored state was cut. |
+| FND-003 | fixed | The active bound-1 test now carries the FR-636-AC-4 trace tag; the recomputed matrix lists the active test as a binder. |
+
+## New findings (disposition pass 1)
+
+None.
