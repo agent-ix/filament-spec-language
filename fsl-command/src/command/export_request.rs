@@ -545,7 +545,7 @@ mod tests {
         .unwrap();
         assert_eq!(
             request.limits.named_overrides(),
-            BTreeMap::from([
+            std::collections::BTreeMap::from([
                 ("export.nodes".to_owned(), 4),
                 ("export.work_units".to_owned(), 8),
             ])
