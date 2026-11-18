@@ -145,7 +145,7 @@ fn an_infeasible_plan_exits_ten_and_a_malformed_request_refuses() {
     let (exit, value) = plan(&unit, json!({"strategy": "greedy"}));
     assert_eq!(exit, 20, "{value}");
     names(&value, "unknown-member");
-    names(&value, "/strategy");
+    names(&value, "/synthesis/strategy");
 }
 
 /// FR-1011-AC-1, FSpec FR-801-AC-1/AC-6: the plan search stops at its own
@@ -206,13 +206,13 @@ fn plan_search_limits_have_published_defaults_and_refuse_invalid_values() {
         let (exit, value) = plan(&unit, json!({"limits": {"max_work": limit}}));
         assert_eq!(exit, 20, "{value}");
         names(&value, cause);
-        names(&value, "/limits/max_work");
+        names(&value, "/synthesis/limits/max_work");
         assert!(value["synthesis"].get("status").is_none(), "{value}");
     }
     let (exit, value) = plan(&unit, json!({"limits": {"max_steps": 1}}));
     assert_eq!(exit, 20, "{value}");
     names(&value, "unknown-member");
-    names(&value, "/limits/max_steps");
+    names(&value, "/synthesis/limits/max_steps");
 }
 
 /// FR-1011-AC-2, FSpec FR-801-AC-2: an exhausted evaluation meter names
@@ -291,7 +291,11 @@ fn a_decimal_step_cost_is_exact_and_certified() {
     let outcome = &value["synthesis"];
     assert_eq!(outcome["status"], "optimal", "{value}");
     assert!(!outcome["objective"]["value"].is_f64(), "{value}");
-    names(&outcome["objective"]["value"], "0.30");
+    assert_eq!(
+        outcome["objective"]["value"],
+        json!({"kind": "decimal", "coefficient": "30", "scale": "2"}),
+        "{value}"
+    );
     assert_eq!(outcome["certificate"]["type"], "potential", "{value}");
 }
 
@@ -324,19 +328,35 @@ fn plan_declarations_refuse_at_check() {
 #[trace("FSpec-TC-1963", "FSpec-FR-810-AC-4")]
 #[trace("FSpec-TC-1964", "FSpec-FR-810-AC-5")]
 #[trace("FSpec-TC-1965", "FSpec-FR-810-AC-6")]
-#[ignore = "QSL-1978: the six reference planning examples are not published yet"]
+#[ignore = "QSL-1978: the six reference planning examples are not published yet; its FSpec planning fixtures are not in the pinned filament-specification v0.1.1, so published_file returns none until the pin moves"]
 fn the_six_reference_planning_examples_plan_as_specified() {
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("examples/planning");
+    let decimal =
+        |coefficient: &str| json!({"kind": "decimal", "coefficient": coefficient, "scale": "2"});
     for (case, objective) in [
-        ("o1-rollout", "15"),
-        ("o2-battery-dispatch", "0.30"),
-        ("o3-production-schedule", "60"),
-        ("o4-staffing", "20"),
-        ("o5-robot-routing", "10"),
-        ("o6-autoscaling", "0.80"),
+        ("o1-rollout", json!({"integer": "15"})),
+        ("o2-battery-dispatch", decimal("30")),
+        (
+            "o3-production-schedule",
+            json!({"kind": "quantity", "unit": "min",
+                "magnitude": {"kind": "rational", "numerator": "60", "denominator": "1"}}),
+        ),
+        ("o4-staffing", json!({"integer": "20"})),
+        ("o5-robot-routing", json!({"integer": "10"})),
+        ("o6-autoscaling", decimal("80")),
     ] {
-        let request = root.join(case).join("request.json");
-        assert!(request.is_file(), "missing example {}", request.display());
+        // FR-1014: the example holds only its envelope; the unit, model,
+        // snapshot and plan are FSpec's published fixture files.
+        let directory = tempfile::tempdir().unwrap();
+        let prefix = format!("proposals/planning-v1/fixtures/{case}/");
+        for (path, bytes) in filament_specification::published_files(&prefix) {
+            let name = path.strip_prefix(&prefix).expect("a fixture file");
+            std::fs::write(directory.path().join(name), bytes).unwrap();
+        }
+        let envelope = root.join(case).join("request.json");
+        assert!(envelope.is_file(), "missing example {}", envelope.display());
+        let request = directory.path().join("request.json");
+        std::fs::copy(&envelope, &request).unwrap();
         let (exit, value) = match fsl_command::command::run(&request, &crate::negotiation::Fr290) {
             Ok(result) => (
                 result.exit_code,
@@ -346,7 +366,10 @@ fn the_six_reference_planning_examples_plan_as_specified() {
         };
         assert_eq!(exit, 0, "{case}: {value}");
         assert_eq!(value["synthesis"]["status"], "optimal", "{case}: {value}");
-        names(&value["synthesis"]["objective"]["value"], objective);
+        assert_eq!(
+            value["synthesis"]["objective"]["value"], objective,
+            "{case}: {value}"
+        );
     }
 }
 
@@ -608,9 +631,64 @@ const TANK: &str = "language \"ix:native\" edition \"1-draft\";\n\
      }\n\
      type Lengths = Int[0, 1];\n";
 
+/// The reference hybrid provider (FR-1019) to register beside
+/// `Engines::fsl()` through `run_with_providers` (FR-1021: the engine set is
+/// a library parameter, never a request member). Until FR-1019's
+/// `Engine::hybrid` reference descriptor exists this registers none, so the
+/// provider-backed assertions below fail as they should.
+fn reference_hybrid_providers() -> Vec<fsl_analyze::analyze::Engine> {
+    Vec::new()
+}
+
+/// Runs `unit` with the `synthesis` member through `run_with_providers`
+/// with `providers` registered beside `Engines::fsl()`.
+fn run_with_providers(
+    unit: &str,
+    synthesis: Value,
+    providers: Vec<fsl_analyze::analyze::Engine>,
+) -> (u8, Value) {
+    let directory = tempfile::tempdir().unwrap();
+    spine::write(directory.path(), Case::Healthy).unwrap();
+    std::fs::write(directory.path().join("unit.native"), unit).unwrap();
+    let request = json!({"format": "native-run/1", "request": {
+        "models": [], "program": {"source": source("unit.native")}, "synthesis": synthesis}});
+    let path = directory.path().join("request.json");
+    std::fs::write(&path, serde_json::to_vec(&request).unwrap()).unwrap();
+    match fsl_command::command::run_with_providers(
+        &path,
+        &crate::negotiation::Fr290,
+        providers,
+        &fsl_analyze::provider::ProviderOptions::default(),
+        &filament_exact::Cancel::new(),
+    ) {
+        Ok(result) => (
+            result.exit_code,
+            serde_json::from_str(&result.value.to_string()).expect("a JSON document"),
+        ),
+        Err(error) => (error.category().exit_code(), error.value().unwrap()),
+    }
+}
+
+fn rational(numerator: &str, denominator: &str) -> Value {
+    json!({"kind": "rational", "numerator": numerator, "denominator": denominator})
+}
+
+fn tank_unit(goal: &str) -> String {
+    format!("{TANK}synthesis Reach using p grammar Tank domain Lengths satisfies {{ {goal} }};\n")
+}
+
+fn tank_member(grid: Option<Value>) -> Value {
+    let mut synthesis = json!({"declaration": "Reach"});
+    if let Some(grid) = grid {
+        synthesis["dwell_grid"] = grid;
+    }
+    synthesis
+}
+
 /// FR-1021-AC-1, FSpec FR-819-AC-1 to AC-4: a hybrid model plans
-/// `feasible` through its provider, `infeasible` with a certified closure,
-/// `unsupported` with no provider, and needs a `dwell_grid`.
+/// `feasible` through the reference provider registered by the caller,
+/// `infeasible` with a certified proof, `unsupported` through `run`, whose
+/// engine set holds no hybrid provider, and needs a `dwell_grid`.
 #[test]
 #[trace("TC-2871", "FR-1021-AC-1")]
 #[trace("FSpec-TC-1966", "FSpec-FR-819-AC-1")]
@@ -619,45 +697,471 @@ const TANK: &str = "language \"ix:native\" edition \"1-draft\";\n\
 #[trace("FSpec-TC-1966", "FSpec-FR-819-AC-4")]
 #[ignore = "QSL-1978: hybrid plan synthesis is not implemented yet"]
 fn a_hybrid_model_plans_through_its_provider() {
-    let unit = |goal: &str| {
-        format!(
-            "{TANK}synthesis Reach using p grammar Tank domain Lengths satisfies {{ {goal} }};\n"
-        )
-    };
-    let member = |grid: Option<u32>, engines: &str| {
-        let mut synthesis = json!({"declaration": "Reach", "engines": engines});
-        if let Some(grid) = grid {
-            synthesis["dwell_grid"] = json!(grid);
-        }
-        synthesis
-    };
-    let (_, value) = run(
-        &unit("Reach.final.mode = Tank::Mode::Drain"),
-        false,
-        ("synthesis", member(Some(1), "fsl_with_reference_hybrid")),
+    let grid = || Some(rational("1", "1"));
+    let (_, value) = run_with_providers(
+        &tank_unit("Reach.final.mode = Tank::Mode::Drain"),
+        tank_member(grid()),
+        reference_hybrid_providers(),
     );
     assert_eq!(value["synthesis"]["status"], "feasible", "{value}");
     assert!(value["synthesis"]["bound"].is_null(), "{value}");
-    let (_, value) = run(
-        &unit("Reach.final.h >= 12"),
-        false,
-        ("synthesis", member(Some(1), "fsl_with_reference_hybrid")),
+    let (_, value) = run_with_providers(
+        &tank_unit("Reach.final.h >= 12"),
+        tank_member(grid()),
+        reference_hybrid_providers(),
     );
     assert_eq!(value["synthesis"]["status"], "infeasible", "{value}");
     assert_eq!(value["synthesis"]["certification"], "certified", "{value}");
-    let (_, value) = run(
-        &unit("Reach.final.mode = Tank::Mode::Drain"),
-        false,
-        ("synthesis", member(Some(1), "fsl")),
-    );
-    names(&value, "hybrid-dynamics");
     let (exit, value) = run(
-        &unit("Reach.final.mode = Tank::Mode::Drain"),
+        &tank_unit("Reach.final.mode = Tank::Mode::Drain"),
         false,
-        ("synthesis", member(None, "fsl_with_reference_hybrid")),
+        ("synthesis", tank_member(grid())),
+    );
+    assert_eq!(value["synthesis"]["status"], "unsupported", "{value}");
+    names(&value["synthesis"], "hybrid-dynamics");
+    assert_eq!(exit, 21, "{value}");
+    let (exit, value) = run(
+        &tank_unit("Reach.final.mode = Tank::Mode::Drain"),
+        false,
+        ("synthesis", tank_member(None)),
     );
     assert_eq!(exit, 20, "{value}");
-    names(&value, "dwell_grid");
+    names(&value, "missing-member");
+    names(&value, "/synthesis/dwell_grid");
+}
+
+/// FR-1021-AC-2, FSpec FR-805-AC-8 and AC-6: `dwell_grid` is an exact
+/// rational in the run value form, `engines` is not a member, and the
+/// `unsupported` outcome carries every member with its no-plan members null.
+#[test]
+#[trace("TC-2871", "FR-1021-AC-2")]
+#[trace("FSpec-TC-1955", "FSpec-FR-805-AC-8")]
+#[trace("FSpec-TC-1955", "FSpec-FR-805-AC-6")]
+#[ignore = "QSL-1978: the hybrid plan request reader is not implemented yet"]
+fn a_hybrid_plan_request_reads_an_exact_grid_and_no_engine_member() {
+    let unit = tank_unit("Reach.final.mode = Tank::Mode::Drain");
+    for (grid, cause) in [
+        (json!(1), "wrong-value-kind"),
+        (rational("0", "1"), "invalid-value"),
+    ] {
+        let (exit, value) = run(&unit, false, ("synthesis", tank_member(Some(grid))));
+        assert_eq!(exit, 20, "{value}");
+        names(&value, cause);
+        names(&value, "/synthesis/dwell_grid");
+    }
+    let mut member = tank_member(Some(rational("1", "2")));
+    member["engines"] = json!("fsl_with_reference_hybrid");
+    let (exit, value) = run(&unit, false, ("synthesis", member));
+    assert_eq!(exit, 20, "{value}");
+    names(&value, "unknown-member");
+    names(&value, "/synthesis/engines");
+    let (_, value) = run(
+        &unit,
+        false,
+        ("synthesis", tank_member(Some(rational("1", "2")))),
+    );
+    let outcome = &value["synthesis"];
+    assert_eq!(outcome["status"], "unsupported", "{value}");
+    for member in ["plan", "replay", "certificate", "certification", "bound"] {
+        assert!(
+            outcome.get(member).is_some_and(Value::is_null),
+            "{member}: {value}"
+        );
+    }
+    assert!(outcome["objective"]["value"].is_null(), "{value}");
+}
+
+// ---- QSL-1978: the counter fixture and the planner's test seams ----------
+
+const PLANNING_FIXTURES: &str = "proposals/planning-v1/fixtures/";
+
+/// The declaration FSpec FR-650 "The counter fixture" holds verbatim.
+const COUNTER_REACH: &str =
+    "synthesis Reach using p grammar M::Counter domain Upto5 satisfies { Reach.final.value = 8 };";
+
+/// FR-755's `PlanFault` seam. Until `fsl_analyze` exposes it, this stand-in
+/// carries the fault and [`run_with_plan_fault`] runs the request unfaulted,
+/// so the seam assertions fail as they should.
+#[derive(Debug)]
+#[allow(
+    dead_code,
+    reason = "read once fsl_analyze's PlanFault replaces this stand-in"
+)]
+enum PlanFault {
+    ReportPlan(Vec<&'static str>),
+    DropSuccessor { entry: usize, successor: usize },
+}
+
+/// Writes FSpec's published fixture `case` into a directory, the unit with
+/// `edit` applied, and returns the directory and its `native-run/1` request
+/// whose `synthesis` member is the fixture's `plan.json` merged with
+/// `synthesis`.
+fn fixture_request(
+    case: &str,
+    edit: &dyn Fn(String) -> String,
+    synthesis: Value,
+) -> (tempfile::TempDir, PathBuf) {
+    let directory = tempfile::tempdir().unwrap();
+    let prefix = format!("{PLANNING_FIXTURES}{case}/");
+    let mut files = 0;
+    for (path, bytes) in filament_specification::published_files(&prefix) {
+        let name = path.strip_prefix(&prefix).expect("a fixture file");
+        std::fs::write(directory.path().join(name), bytes).unwrap();
+        files += 1;
+    }
+    assert_eq!(files, 4, "FSpec publishes the {case} fixture's four files");
+    let unit_path = directory.path().join("unit.native");
+    let unit = std::fs::read_to_string(&unit_path).unwrap();
+    std::fs::write(&unit_path, edit(unit)).unwrap();
+    let mut member: Value =
+        serde_json::from_slice(&std::fs::read(directory.path().join("plan.json")).unwrap())
+            .unwrap();
+    for (key, value) in synthesis.as_object().into_iter().flatten() {
+        member[key] = value.clone();
+    }
+    let request = json!({"format": "native-run/1", "request": {
+        "models": [{"format": "semantic-ir/2.0.0", "source": source("model.semantic-ir.json")}],
+        "program": {"source": source("unit.native")}, "synthesis": member}});
+    let path = directory.path().join("request.json");
+    std::fs::write(&path, serde_json::to_vec(&request).unwrap()).unwrap();
+    (directory, path)
+}
+
+fn run_path(path: &Path) -> (u8, Value) {
+    match fsl_command::command::run(path, &crate::negotiation::Fr290) {
+        Ok(result) => (
+            result.exit_code,
+            serde_json::from_str(&result.value.to_string()).expect("a JSON document"),
+        ),
+        Err(error) => (error.category().exit_code(), error.value().unwrap()),
+    }
+}
+
+/// FR-755's `run_with_plan_fault`; see [`PlanFault`].
+fn run_with_plan_fault(path: &Path, fault: &PlanFault) -> (u8, Value) {
+    let _ = fault;
+    run_path(path)
+}
+
+fn fixture(case: &str, edit: &dyn Fn(String) -> String, synthesis: Value) -> (u8, Value) {
+    let (_directory, path) = fixture_request(case, edit, synthesis);
+    run_path(&path)
+}
+
+fn counter_goal(goal: &str) -> impl Fn(String) -> String + '_ {
+    move |unit: String| {
+        unit.replace(
+            COUNTER_REACH,
+            &COUNTER_REACH.replace("Reach.final.value = 8", goal),
+        )
+    }
+}
+
+const DOUBLE_COSTS_FIVE: &str =
+    "minimize Reach.steps.sum(s => if s.operation = M::Op::double then 5 else 1) satisfies";
+
+fn operations(outcome: &Value) -> Vec<String> {
+    outcome["plan"]["steps"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .map(|step| step["operation"].as_str().unwrap_or_default().to_owned())
+        .collect()
+}
+
+/// FR-755-AC-1, FSpec FR-650-AC-1/AC-2 and FR-805-AC-7: over the counter,
+/// `length` gives `inc, double, double` at `{"integer": "3"}` and the
+/// `double`-costs-five sum gives `inc, inc, inc, double` at 8.
+#[test]
+#[trace("TC-2105", "FR-755-AC-1")]
+#[trace("FSpec-TC-1603", "FSpec-FR-650-AC-1")]
+#[trace("FSpec-TC-1603", "FSpec-FR-650-AC-2")]
+#[trace("FSpec-TC-1955", "FSpec-FR-805-AC-7")]
+#[ignore = "QSL-1978: plan search over the counter fixture is not implemented yet; its FSpec planning fixtures are not in the pinned filament-specification v0.1.1, so published_file returns none until the pin moves"]
+fn the_counter_plans_by_length_and_by_step_cost() {
+    let (exit, value) = fixture("counter", &|unit| unit, json!({}));
+    let outcome = &value["synthesis"];
+    assert_eq!(outcome["status"], "optimal", "{value}");
+    assert_eq!(operations(outcome), ["inc", "double", "double"], "{value}");
+    assert_eq!(
+        outcome["objective"]["value"],
+        json!({"integer": "3"}),
+        "{value}"
+    );
+    assert_eq!(outcome["certificate"]["type"], "potential", "{value}");
+    assert_eq!(outcome["certification"], "certified", "{value}");
+    assert_eq!(exit, 0, "{value}");
+    let (_, value) = fixture(
+        "counter",
+        &|unit| {
+            unit.replace(
+                COUNTER_REACH,
+                &COUNTER_REACH.replace("satisfies", DOUBLE_COSTS_FIVE),
+            )
+        },
+        json!({}),
+    );
+    let outcome = &value["synthesis"];
+    assert_eq!(outcome["status"], "optimal", "{value}");
+    assert_eq!(
+        operations(outcome),
+        ["inc", "inc", "inc", "double"],
+        "{value}"
+    );
+    assert_eq!(
+        outcome["objective"]["value"],
+        json!({"integer": "8"}),
+        "{value}"
+    );
+    assert_eq!(outcome["certification"], "certified", "{value}");
+}
+
+/// FR-755-AC-2, FSpec FR-650-AC-5/AC-7: a tampered `potential` certificate
+/// demotes the plan to `feasible`; a tampered closure certificate leaves the
+/// goal-21 run `incomplete` with `certificate-rejected`, never `infeasible`.
+#[test]
+#[trace("TC-2105", "FR-755-AC-2")]
+#[trace("FSpec-TC-1603", "FSpec-FR-650-AC-5")]
+#[trace("FSpec-TC-1603", "FSpec-FR-650-AC-7")]
+#[ignore = "QSL-1978: the certificate tamper seam is not implemented yet; its FSpec planning fixtures are not in the pinned filament-specification v0.1.1, so published_file returns none until the pin moves"]
+fn a_tampered_certificate_is_rejected_by_the_core() {
+    let (_, value) = fixture(
+        "counter",
+        &counter_goal("Reach.final.value = 21"),
+        json!({}),
+    );
+    assert_eq!(value["synthesis"]["status"], "infeasible", "{value}");
+    assert_eq!(
+        value["synthesis"]["certificate"]["outcome"], "accepted",
+        "{value}"
+    );
+
+    let (_directory, path) = fixture_request("counter", &|unit| unit, json!({}));
+    let (_, value) = run_with_plan_fault(
+        &path,
+        &PlanFault::DropSuccessor {
+            entry: 0,
+            successor: 1,
+        },
+    );
+    let outcome = &value["synthesis"];
+    assert_eq!(outcome["status"], "feasible", "{value}");
+    assert_eq!(operations(outcome), ["inc", "double", "double"], "{value}");
+    assert_eq!(outcome["certificate"]["outcome"], "rejected", "{value}");
+    assert_eq!(outcome["certificate"]["rule"], "closure", "{value}");
+    assert_eq!(outcome["certificate"]["entry"], 0, "{value}");
+    assert_eq!(outcome["certification"], "uncertified", "{value}");
+
+    let (_directory, path) = fixture_request(
+        "counter",
+        &counter_goal("Reach.final.value = 21"),
+        json!({}),
+    );
+    let (exit, value) = run_with_plan_fault(
+        &path,
+        &PlanFault::DropSuccessor {
+            entry: 0,
+            successor: 0,
+        },
+    );
+    let outcome = &value["synthesis"];
+    assert_eq!(outcome["status"], "incomplete", "{value}");
+    names(&outcome["cause"], "certificate-rejected");
+    assert!(outcome["plan"].is_null(), "{value}");
+    assert_eq!(exit, 22, "{value}");
+}
+
+/// FR-755-AC-4, FSpec FR-650-AC-6: a substituted plan whose fifth `double`
+/// is disabled is a method failure naming step 4, with no outcome written.
+#[test]
+#[trace("TC-2105", "FR-755-AC-4")]
+#[trace("FSpec-TC-1603", "FSpec-FR-650-AC-6")]
+#[ignore = "QSL-1978: the plan substitution seam is not implemented yet; its FSpec planning fixtures are not in the pinned filament-specification v0.1.1, so published_file returns none until the pin moves"]
+fn a_substituted_plan_that_fails_replay_is_a_method_failure() {
+    let (_directory, path) = fixture_request("counter", &|unit| unit, json!({}));
+    let (exit, value) = run_with_plan_fault(&path, &PlanFault::ReportPlan(vec!["double"; 5]));
+    assert_eq!(exit, 30, "{value}");
+    names(&value, "double");
+    names(&value, "4");
+    assert!(value["synthesis"].get("status").is_none(), "{value}");
+}
+
+/// FR-1012-AC-6, FSpec FR-801-AC-8: the canonical exploration pins the
+/// counts of a stopped counter search.
+#[test]
+#[trace("TC-2862", "FR-1012-AC-6")]
+#[trace("FSpec-TC-1951", "FSpec-FR-801-AC-8")]
+#[ignore = "QSL-1978: the canonical plan exploration order is not implemented yet; its FSpec planning fixtures are not in the pinned filament-specification v0.1.1, so published_file returns none until the pin moves"]
+fn the_canonical_exploration_pins_stopped_counts() {
+    for (limits, states, work) in [
+        (json!({"max_states": 2}), 2, 6),
+        (json!({"max_work": 1}), 1, 1),
+    ] {
+        let first = fixture("counter", &|unit| unit, json!({"limits": limits}));
+        let second = fixture("counter", &|unit| unit, json!({"limits": limits}));
+        let outcome = &first.1["synthesis"];
+        assert_eq!(outcome["status"], "incomplete", "{}", first.1);
+        assert_eq!(outcome["explored"]["states"], states, "{}", first.1);
+        assert_eq!(outcome["explored"]["work"], work, "{}", first.1);
+        assert!(outcome["plan"].is_null(), "{}", first.1);
+        assert_eq!(first.1.to_string(), second.1.to_string());
+    }
+}
+
+/// FR-1012-AC-4, FSpec FR-808-AC-1/2/3/5: timed plans carry exact delays and
+/// `elapsed` in the run value form.
+#[test]
+#[trace("TC-2862", "FR-1012-AC-4")]
+#[trace("FSpec-TC-1958", "FSpec-FR-808-AC-1")]
+#[trace("FSpec-TC-1958", "FSpec-FR-808-AC-2")]
+#[trace("FSpec-TC-1958", "FSpec-FR-808-AC-3")]
+#[trace("FSpec-TC-1958", "FSpec-FR-808-AC-5")]
+#[ignore = "QSL-1978: timed plan search is not implemented yet; its FSpec planning fixtures are not in the pinned filament-specification v0.1.1, so published_file returns none until the pin moves"]
+fn timed_plans_carry_exact_delays() {
+    let (_, value) = fixture("timed-tick", &|unit| unit, json!({}));
+    let outcome = &value["synthesis"];
+    names(&outcome["objective"], "quantity");
+    for step in outcome["plan"]["steps"].as_array().expect("steps") {
+        names(&step["delay"], "\"numerator\":\"0\"");
+    }
+    let (_, value) = fixture("timed-go", &|unit| unit, json!({}));
+    let outcome = &value["synthesis"];
+    assert_eq!(outcome["status"], "optimal", "{value}");
+    assert_eq!(outcome["certificate"]["type"], "closure", "{value}");
+    names(&outcome["plan"]["steps"][0]["delay"], "\"numerator\":\"2\"");
+    let strict = |unit: String| unit.replace("x >= 2", "x > 2");
+    let first = fixture("timed-go", &strict, json!({}));
+    let second = fixture("timed-go", &strict, json!({}));
+    let outcome = &first.1["synthesis"];
+    assert_eq!(outcome["status"], "feasible", "{}", first.1);
+    assert_eq!(outcome["bound"]["side"], "lower", "{}", first.1);
+    assert_eq!(outcome["bound"]["attained"], false, "{}", first.1);
+    names(&outcome["plan"]["steps"][0]["delay"], "\"numerator\":\"5\"");
+    names(
+        &outcome["plan"]["steps"][0]["delay"],
+        "\"denominator\":\"2\"",
+    );
+    assert_eq!(first.1.to_string(), second.1.to_string());
+}
+
+/// FR-1012-AC-5, FSpec FR-809-AC-1/2: probabilistic plans compute exact
+/// probabilities.
+#[test]
+#[trace("TC-2862", "FR-1012-AC-5")]
+#[trace("FSpec-TC-1959", "FSpec-FR-809-AC-1")]
+#[trace("FSpec-TC-1959", "FSpec-FR-809-AC-2")]
+#[ignore = "QSL-1978: probabilistic plan search is not implemented yet; its FSpec planning fixtures are not in the pinned filament-specification v0.1.1, so published_file returns none until the pin moves"]
+fn probabilistic_plans_compute_exact_probabilities() {
+    let (_, value) = fixture("probabilistic-try", &|unit| unit, json!({}));
+    let outcome = &value["synthesis"];
+    assert_eq!(outcome["status"], "optimal", "{value}");
+    assert_eq!(operations(outcome), ["retry"], "{value}");
+    let (_, value) = fixture(
+        "probabilistic-try",
+        &|unit| unit.replace("satisfies", "maximize Reach.probability satisfies"),
+        json!({}),
+    );
+    let outcome = &value["synthesis"];
+    assert_eq!(outcome["status"], "optimal", "{value}");
+    assert_eq!(operations(outcome), ["try", "try"], "{value}");
+    assert_eq!(
+        outcome["objective"]["value"],
+        json!({"kind": "rational", "numerator": "3", "denominator": "4"}),
+        "{value}"
+    );
+}
+
+/// FR-1013-AC-2, FSpec FR-806-AC-3/AC-4: admission refuses a value-type
+/// declaration, an unknown policy, a policy over another declaration and an
+/// inadmissible initial snapshot, each at its `/synthesis` pointer.
+#[test]
+#[trace("TC-2863", "FR-1013-AC-2")]
+#[trace("FSpec-TC-1956", "FSpec-FR-806-AC-3")]
+#[trace("FSpec-TC-1956", "FSpec-FR-806-AC-4")]
+#[ignore = "QSL-1978: plan request admission refusals are not implemented yet"]
+fn plan_requests_refuse_at_admission() {
+    let unit = format!(
+        "{}type Digit = Int[0, 9];\n\
+         synthesis Pick using v grammar Digit domain Digit satisfies {{ Pick = 7 }};\n\
+         profile p = \"filament.temporal.infinite-trace/v1\";\n{}",
+        plan_unit("Int[0, 3]", "", "Reach.length >= 1"),
+        BRAKING
+            .split_once("hybrid")
+            .map(|(_, rest)| format!("hybrid{rest}"))
+            .unwrap(),
+    );
+    for (synthesis, cause, pointer) in [
+        (
+            json!({"declaration": "Pick"}),
+            "missing-name",
+            "/synthesis/declaration",
+        ),
+        (
+            json!({"policy": ["Nowhere"]}),
+            "missing-name",
+            "/synthesis/policy/0",
+        ),
+        (
+            json!({"policy": ["SlowEnough"]}),
+            "type-mismatch",
+            "/synthesis/policy/0",
+        ),
+    ] {
+        let (exit, value) = plan(&unit, synthesis);
+        assert_eq!(exit, 20, "{value}");
+        names(&value, cause);
+        names(&value, pointer);
+        assert!(value["synthesis"].get("status").is_none(), "{value}");
+    }
+    let directory = tempfile::tempdir().unwrap();
+    spine::write(directory.path(), Case::AboveRange).unwrap();
+    std::fs::write(
+        directory.path().join("unit.native"),
+        plan_unit("Int[0, 3]", "", "Reach.length >= 1"),
+    )
+    .unwrap();
+    let (exit, value) = write_request(
+        directory.path(),
+        &json!({"format": "native-run/1", "request": {
+            "models": [{"format": "semantic-ir/2.0.0", "source": source("spine-model.semantic-ir.json")}],
+            "program": {"source": source("unit.native")},
+            "synthesis": {"declaration": "Reach", "initial": "spine-snapshot.json"}}}),
+    );
+    assert_eq!(exit, 20, "{value}");
+    names(&value, "/synthesis/initial");
+    assert!(value["synthesis"].get("status").is_none(), "{value}");
+}
+
+/// FR-1014-AC-2: each planning example holds only its host envelope, whose
+/// `synthesis` member equals FSpec's published `plan.json`.
+#[test]
+#[trace("TC-2864", "FR-1014-AC-2")]
+#[ignore = "QSL-1978: the planning example envelopes are not published yet; its FSpec planning fixtures are not in the pinned filament-specification v0.1.1, so published_file returns none until the pin moves"]
+fn planning_examples_hold_only_their_envelope() {
+    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("examples/planning");
+    for case in [
+        "o1-rollout",
+        "o2-battery-dispatch",
+        "o3-production-schedule",
+        "o4-staffing",
+        "o5-robot-routing",
+        "o6-autoscaling",
+    ] {
+        let directory = root.join(case);
+        let entries: Vec<_> = std::fs::read_dir(&directory)
+            .unwrap_or_else(|error| panic!("{}: {error}", directory.display()))
+            .map(|entry| entry.unwrap().file_name().into_string().unwrap())
+            .collect();
+        assert_eq!(entries, ["request.json"], "{case}");
+        let request: Value =
+            serde_json::from_slice(&std::fs::read(directory.join("request.json")).unwrap())
+                .unwrap();
+        let published =
+            filament_specification::published_file(&format!("{PLANNING_FIXTURES}{case}/plan.json"))
+                .unwrap_or_else(|| panic!("FSpec publishes {case}/plan.json"));
+        let plan: Value = serde_json::from_slice(published).unwrap();
+        assert_eq!(request["request"]["synthesis"], plan, "{case}");
+    }
 }
 
 // ---- QSL-2247: refinement transfer through a native run -------------------
