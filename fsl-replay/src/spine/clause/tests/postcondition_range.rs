@@ -467,7 +467,7 @@ fn equality_sum_compile_refusal_keeps_its_range_context() {
         "{HEADER}function f using v(a: Int[0, 10], b: Int[0, 10], c: Int[0, 10]): Boolean pure {{ c = a + b }}\n"
     );
     let message = refusal(function_site(&unit, "f"));
-    for detail in ["a + b", "[0, 20]", "Int[0,10]", "peer operand c"] {
+    for detail in ["a + b", "[0, 20]", "Int[0, 10]", "peer operand c"] {
         assert!(message.contains(detail), "missing `{detail}` in {message}");
     }
 }
