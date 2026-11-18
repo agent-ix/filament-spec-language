@@ -54,6 +54,7 @@ mod hyper;
 mod hyper_lowering;
 mod hyper_projected;
 mod hyper_replay;
+mod hyper_reductions;
 mod hyper_settle;
 mod hyper_single;
 mod hyper_swap;
