@@ -2430,8 +2430,7 @@ fn an_effect_enables_whatever_the_binder_type() {
     ] {
         let world = World::new(&unit(ORIGIN, "", "", run), &["c"], &[0]);
         let subject = world.subject();
-        let model =
-            ModelSystem::new(subject.model.simulation.clone()).expect("the subject admits");
+        let model = ModelSystem::new(subject.model.simulation.clone()).expect("the subject admits");
         let system = ProtocolSystem::new(model, &subject, Sc)
             .unwrap_or_else(|refusal| panic!("the system is built: {refusal:?}"));
         assert!(
