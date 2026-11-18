@@ -33,7 +33,11 @@ pub(crate) enum ReferenceBinding {
     CreatedObject {
         object_type: EffectiveId,
         identity: String,
+        /// The stable absent-key locus, selected from universe occurrences.
         population: filament_checked::key::DeclarationKey,
+        /// Every population the literal's type may inhabit, for lookup and
+        /// resolved-footprint reads.
+        populations: Vec<filament_checked::key::DeclarationKey>,
     },
 }
 
@@ -44,13 +48,13 @@ pub(crate) struct ReferenceBindings(BTreeMap<ReferenceLiteralKey, ReferenceBindi
 impl ReferenceBindings {
     pub(crate) fn created_for_footprints(
         &self,
-    ) -> BTreeMap<(EffectiveId, Vec<u8>), filament_checked::key::DeclarationKey> {
+    ) -> BTreeMap<(EffectiveId, Vec<u8>), Vec<filament_checked::key::DeclarationKey>> {
         self.0
             .iter()
             .filter_map(|(literal, binding)| match binding {
-                ReferenceBinding::CreatedObject { population, .. } => Some((
+                ReferenceBinding::CreatedObject { populations, .. } => Some((
                     (literal.object_type.clone(), literal.identity.clone()),
-                    population.clone(),
+                    populations.clone(),
                 )),
                 ReferenceBinding::Fixed(_) => None,
             })
@@ -235,6 +239,10 @@ impl ReferenceBindings {
                     object_type: literal.object_type.clone(),
                     identity: text.to_owned(),
                     population: available[0].key.clone(),
+                    populations: overlapping
+                        .iter()
+                        .map(|population| population.key.clone())
+                        .collect(),
                 }
             };
             bindings.insert(literal, binding);

@@ -2283,20 +2283,23 @@ impl<'a, 'm, N: NodeSource<'a>> Machine<'a, 'm, N> {
                         object_type,
                         identity,
                         population,
+                        populations,
                     } => {
                         let objects = self.objects_for(node)?;
-                        self.log_reference_membership_read(node, objects, population);
-                        let reference = objects
-                            .population_members(&population.node)
-                            .into_iter()
-                            .flatten()
-                            .find(|reference| {
-                                reference.object().as_str() == identity
-                                    && self.world.types().conforms(
-                                        reference.object_type().clone(),
-                                        object_type.clone(),
-                                    )
-                            });
+                        self.log_reference_membership_read(node, objects, populations);
+                        let reference = populations.iter().find_map(|population| {
+                            objects
+                                .population_members(&population.node)
+                                .into_iter()
+                                .flatten()
+                                .find(|reference| {
+                                    reference.object().as_str() == identity
+                                        && self.world.types().conforms(
+                                            reference.object_type().clone(),
+                                            object_type.clone(),
+                                        )
+                                })
+                        });
                         let Some(reference) = reference else {
                             return Err(Halt::Family(FamilyResult::Undefined(Box::new(
                                 StateModelUndefined::AbsentKey {
@@ -3765,7 +3768,7 @@ impl<'a, 'm, N: NodeSource<'a>> Machine<'a, 'm, N> {
         &self,
         node: N,
         objects: &ObjectEnvironment,
-        population: &DeclarationKey,
+        populations: &[DeclarationKey],
     ) {
         let Some(log) = objects.read_log() else {
             return;
@@ -3778,11 +3781,13 @@ impl<'a, 'm, N: NodeSource<'a>> Machine<'a, 'm, N> {
                 Anchor::Pre => fsl_semantics::model::clause_observation::Observation::Pre,
                 Anchor::Post => fsl_semantics::model::clause_observation::Observation::Post,
             });
-        log.record(ObservedRead::Membership {
-            observation,
-            population: population.clone(),
-            object: None,
-        });
+        for population in populations {
+            log.record(ObservedRead::Membership {
+                observation,
+                population: population.clone(),
+                object: None,
+            });
+        }
     }
 
     /// FR-139: the objects of the concrete population `population` in the

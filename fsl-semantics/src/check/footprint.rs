@@ -181,7 +181,7 @@ pub fn derive_selected_footprint_with_reference_literals(
     declaring: EffectiveId,
     operation: &OperationDeclaration,
     arguments: &[(String, EffectiveId)],
-    reference_literals: &BTreeMap<(EffectiveId, Vec<u8>), DeclarationKey>,
+    reference_literals: &BTreeMap<(EffectiveId, Vec<u8>), Vec<DeclarationKey>>,
     select: &dyn Fn(NodeKey) -> bool,
 ) -> Result<SymbolicFootprint, FootprintRefusal> {
     derive_from(
@@ -235,7 +235,7 @@ pub fn derive_attempt_footprint_fallback_with_reference_literals(
     declaring: EffectiveId,
     operation: &OperationDeclaration,
     arguments: &[(String, EffectiveId)],
-    reference_literals: &BTreeMap<(EffectiveId, Vec<u8>), DeclarationKey>,
+    reference_literals: &BTreeMap<(EffectiveId, Vec<u8>), Vec<DeclarationKey>>,
     select: &dyn Fn(NodeKey) -> bool,
 ) -> Result<SymbolicFootprint, FootprintRefusal> {
     let derivation = Derivation {
@@ -267,7 +267,7 @@ pub(crate) fn derive_from(
     clauses: &[CheckedStateClause],
     model: &StateModel,
     graph: Option<&CheckedGraph>,
-    reference_literals: Option<&BTreeMap<(EffectiveId, Vec<u8>), DeclarationKey>>,
+    reference_literals: Option<&BTreeMap<(EffectiveId, Vec<u8>), Vec<DeclarationKey>>>,
     operation: Operation<'_>,
     select: &dyn Fn(NodeKey) -> bool,
 ) -> Result<SymbolicFootprint, FootprintRefusal> {
@@ -585,7 +585,7 @@ struct Reader<'a> {
     model: &'a StateModel,
     populations: Vec<PopulationTypes>,
     graph: Option<&'a CheckedGraph>,
-    reference_literals: Option<&'a BTreeMap<(EffectiveId, Vec<u8>), DeclarationKey>>,
+    reference_literals: Option<&'a BTreeMap<(EffectiveId, Vec<u8>), Vec<DeclarationKey>>>,
 }
 
 impl<'a> Reader<'a> {
@@ -612,7 +612,7 @@ impl<'a> Reader<'a> {
     fn for_graph_with_reference_literals(
         graph: &'a CheckedGraph,
         model: &'a StateModel,
-        reference_literals: &'a BTreeMap<(EffectiveId, Vec<u8>), DeclarationKey>,
+        reference_literals: &'a BTreeMap<(EffectiveId, Vec<u8>), Vec<DeclarationKey>>,
     ) -> Result<Self, FootprintRefusal> {
         Ok(Self {
             types: graph.scope().types(),
@@ -716,16 +716,18 @@ impl<'a> Reader<'a> {
                     object_type,
                     identity,
                 } => {
-                    if let Some(population) = self
+                    if let Some(populations) = self
                         .reference_literals
                         .and_then(|literals| literals.get(&(object_type.clone(), identity.clone())))
                     {
-                        reads.push((
-                            SymbolicLocation::AnyMembership {
-                                population: population.clone(),
-                            },
-                            scope.observation,
-                        ));
+                        reads.extend(populations.iter().map(|population| {
+                            (
+                                SymbolicLocation::AnyMembership {
+                                    population: population.clone(),
+                                },
+                                scope.observation,
+                            )
+                        }));
                     }
                 }
                 NodeKind::Call { .. }
@@ -821,16 +823,18 @@ impl<'a> Reader<'a> {
                 object_type,
                 identity,
             } => {
-                if let Some(population) = self
+                if let Some(populations) = self
                     .reference_literals
                     .and_then(|literals| literals.get(&(object_type.clone(), identity.clone())))
                 {
-                    reads.push((
-                        SymbolicLocation::AnyMembership {
-                            population: population.clone(),
-                        },
-                        observation,
-                    ));
+                    reads.extend(populations.iter().map(|population| {
+                        (
+                            SymbolicLocation::AnyMembership {
+                                population: population.clone(),
+                            },
+                            observation,
+                        )
+                    }));
                 }
             }
             NodeKind::Attribute {

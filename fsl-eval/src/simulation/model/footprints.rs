@@ -695,9 +695,10 @@ impl<'a> ModelSystem<'a> {
         body: &fsl_semantics::check::CheckedBody,
         over: Option<&ObjectReference>,
     ) -> Result<Option<BTreeSet<Location>>, FootprintError> {
-        let symbolic = self
+        let mut symbolic = self
             .evaluator()
             .node_reads(&self.model, name, parameters, body.root())?;
+        self.add_reference_literal_memberships(body.root(), &mut symbolic);
         if over.is_none() && !symbolic.is_empty() {
             return Ok(None);
         }
@@ -786,12 +787,15 @@ impl<'a> ModelSystem<'a> {
                 identity,
             } = node.kind()
             {
-                if let Some(ReferenceBinding::CreatedObject { population, .. }) =
+                if let Some(ReferenceBinding::CreatedObject { populations, .. }) =
                     self.reference_bindings.get(object_type, identity)
                 {
-                    reads.insert(SymbolicLocation::AnyMembership {
-                        population: population.clone(),
-                    });
+                    reads.extend(
+                        populations
+                            .iter()
+                            .cloned()
+                            .map(|population| SymbolicLocation::AnyMembership { population }),
+                    );
                 }
             }
         }
