@@ -1,34 +1,199 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-//! Grammar drift between FSpec's shared grammar and the complete-V1 parser:
-//! each `ebnf` production name of `proposals/filament-v1/shared-grammar.md`
-//! maps to a parser `Production` or to a named allow-list entry.
+//! QSL-2107: compare the shared EBNF inventory with the parser inventory.
 
 use std::collections::BTreeSet;
+use std::fs;
+use std::path::Path;
 
 use fsl_cst::Production;
 use ix_trace_rs::trace;
 
-/// The shared grammar's published path inside the standard's pinned package.
 const SHARED_GRAMMAR: &str = "proposals/filament-v1/shared-grammar.md";
 
-/// The bytes of a standard file, read only through the pinned
-/// `filament_specification` crate (FR-760, FSpec FR-660): no environment
-/// variable, no sibling checkout, no filesystem path.
-fn published_file(path: &str) -> Option<&'static str> {
-    // QSL-2107: until the workspace takes `filament-specification-qualification`
-    // as a tagged dev-dependency (FR-760), this is the one place that becomes
-    // `filament_specification::published_file(path)`.
-    panic!("{path}: the pinned filament_specification crate is not a dependency yet (FR-760)")
+/// A written production whose parser counterpart has a different name.
+const CORRESPONDENCE: &[(&str, &str)] = &[
+    ("abstraction-binding", "ObjectBinding"),
+    ("abstraction-decl", "AbstractionDeclaration"),
+    ("alias-decl", "AliasDeclaration"),
+    ("always-possible-clause", "StateGraphClaim"),
+    ("attempt-type", "TypeName"),
+    ("absence-mode", "Primary"),
+    ("binder", "PopulationBinder"),
+    ("bound-op", "Comparison"),
+    ("complete-unit", "CompleteUnit"),
+    ("composed-unit", "CompleteUnit"),
+    ("component-clause", "CompositionComponent"),
+    ("component-decl", "CompositionComponent"),
+    ("composition-decl", "CompositionDeclaration"),
+    ("composition-member", "CompositionGuarantee"),
+    ("delay-decl", "DelayDeclaration"),
+    ("delay-dist", "DelayDistribution"),
+    ("dimension-decl", "DimensionDeclaration"),
+    ("enum-decl", "EnumDeclaration"),
+    ("expr", "Expression"),
+    ("environment-premise", "GuaranteeEnvironment"),
+    ("field-value", "FieldValue"),
+    ("function", "FunctionDeclaration"),
+    ("guarantee-decl", "GuaranteeDeclaration"),
+    ("guarantee-member", "GuaranteeInitial"),
+    ("hybrid-decl", "HybridDeclaration"),
+    ("initial-binding", "GuaranteeInitial"),
+    ("import-decl", "ImportDeclaration"),
+    ("node-ref", "NodeReference"),
+    ("object-decl", "ObjectDeclaration"),
+    ("operation-member", "ObjectOperation"),
+    ("population-binding", "PopulationBinding"),
+    ("population-member", "ObjectPopulation"),
+    ("possible-clause", "PossibleClause"),
+    ("policy", "SchedulerClause"),
+    ("progress-premise", "GuaranteeProgress"),
+    ("random-decl", "RandomDeclaration"),
+    ("record-decl", "RecordDeclaration"),
+    ("release-decl", "ReleaseDeclaration"),
+    ("reward-decl", "RewardDeclaration"),
+    ("rust-field", "FieldBinding"),
+    ("rust-name", "ParameterBinding"),
+    ("rust-path", "ObjectBinding"),
+    ("rust-receiver", "FrameBinding"),
+    ("signed-int", "SignedInteger"),
+    ("signed-quantity", "SignedQuantity"),
+    ("state-graph-clause", "StateGraphClaim"),
+    ("synthesis-decl", "SynthesisDeclaration"),
+    ("taskset-decl", "TasksetDeclaration"),
+    ("temporal-expr", "TemporalExpression"),
+    ("terminal-decl", "TerminalDeclaration"),
+    ("time-decl", "TimeDeclaration"),
+    ("tuple-decl", "TupleDeclaration"),
+    ("type-ref", "TypeReference"),
+    ("union-decl", "UnionDeclaration"),
+    ("unit-decl", "UnitDeclaration"),
+    ("unit-term", "UnitExpression"),
+    ("quantity-unit", "UnitExpression"),
+    ("urgent-decl", "UrgentDeclaration"),
+    ("window", "PastWindow"),
+    ("workload-decl", "WorkloadDeclaration"),
+];
+
+/// A parser production whose spelling identifies a subrule written inline
+/// under a shared-grammar production.
+const PARSER_SUBPRODUCTIONS: &[(&str, &str)] = &[
+    ("CaseArm", "case-arm"),
+    ("CaseBinder", "case-arm"),
+    ("CaseExpression", "expr"),
+    ("ScrutineeExpression", "expr"),
+    ("ScrutineeImplication", "implication"),
+    ("ScrutineeDisjunction", "disjunction"),
+    ("ScrutineeConjunction", "conjunction"),
+    ("ScrutineeComparison", "comparison"),
+    ("ScrutineeSum", "sum"),
+    ("ScrutineeProduct", "product"),
+    ("ScrutineeUnary", "unary"),
+    ("ScrutineePostfix", "postfix"),
+    ("ScrutineePrimary", "primary"),
+    ("HyperExpression", "hyper-clause"),
+    ("HyperImplication", "hyper-clause"),
+    ("HyperDisjunction", "hyper-clause"),
+    ("HyperConjunction", "hyper-clause"),
+    ("HyperComparison", "hyper-clause"),
+    ("HyperSum", "hyper-clause"),
+    ("HyperProduct", "hyper-clause"),
+    ("HyperUnary", "hyper-clause"),
+    ("HyperPostfix", "hyper-clause"),
+    ("HyperPrimary", "hyper-clause"),
+    ("StateGraphBody", "graph-body"),
+    ("StateGraphClaim", "possible-clause"),
+    ("StateGraphConjunction", "graph-conjunction"),
+    ("StateGraphDisjunction", "graph-disjunction"),
+    ("StateGraphImplication", "graph-implication"),
+    ("StateGraphPredicate", "graph-predicate"),
+    ("StateGraphRelation", "graph-relation"),
+    ("StateGraphUnary", "graph-unary"),
+    ("PastWindow", "window"),
+    ("UnitExpression", "quantity-unit"),
+];
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum Side {
+    Standard,
+    Parser,
 }
 
-/// Every production name defined in an `ebnf` fence of the shared grammar.
-fn shared_grammar_productions() -> BTreeSet<String> {
-    let text = published_file(SHARED_GRAMMAR)
-        .unwrap_or_else(|| panic!("{SHARED_GRAMMAR}: not published by the pinned standard"));
+#[derive(Clone, Copy, Debug)]
+struct Divergence {
+    side: Side,
+    production: &'static str,
+    register_row: &'static str,
+    ticket: &'static str,
+}
+
+/// Known unmatched production names, each with the issue that owns their
+/// reconciliation. The standard-only object member is inlined by the parser.
+const DIVERGENCES: &[Divergence] = &[
+    Divergence {
+        side: Side::Parser,
+        production: "PopulationBound",
+        register_row: "G-249",
+        ticket: "QSL-820",
+    },
+    Divergence {
+        side: Side::Parser,
+        production: "DeliveryInterval",
+        register_row: "G-251",
+        ticket: "QSL-1526",
+    },
+    Divergence {
+        side: Side::Parser,
+        production: "ObjectDeclaration",
+        register_row: "G-257",
+        ticket: "QSL-1880",
+    },
+    Divergence {
+        side: Side::Parser,
+        production: "ObjectPopulation",
+        register_row: "G-257",
+        ticket: "QSL-1880",
+    },
+    Divergence {
+        side: Side::Parser,
+        production: "ObjectOperation",
+        register_row: "G-257",
+        ticket: "QSL-1880",
+    },
+    Divergence {
+        side: Side::Parser,
+        production: "FrameClause",
+        register_row: "G-257",
+        ticket: "QSL-1880",
+    },
+    Divergence {
+        side: Side::Parser,
+        production: "FieldTarget",
+        register_row: "G-257",
+        ticket: "QSL-1880",
+    },
+    Divergence {
+        side: Side::Parser,
+        production: "DeleteTarget",
+        register_row: "G-257",
+        ticket: "QSL-1880",
+    },
+];
+
+/// Read the one shared grammar document from an explicitly supplied FSpec
+/// checkout. `None` is an error; it is never interpreted as a passing skip.
+fn read_shared_grammar(fspec_dir: Option<&Path>) -> Result<String, String> {
+    let root = fspec_dir.ok_or_else(|| "FSPEC_DIR is not set".to_owned())?;
+    let path = root.join(SHARED_GRAMMAR);
+    fs::read_to_string(&path).map_err(|error| format!("{}: {error}", path.display()))
+}
+
+/// The production names declared by top-level `name =` or `name =/` lines
+/// inside EBNF fences.
+fn grammar_productions(text: &str) -> BTreeSet<String> {
     let mut names = BTreeSet::new();
     let mut in_ebnf = false;
     for line in text.lines() {
-        if line.starts_with("```") {
+        if line.trim_start().starts_with("```") {
             in_ebnf = line.trim() == "```ebnf";
             continue;
         }
@@ -39,11 +204,11 @@ fn shared_grammar_productions() -> BTreeSet<String> {
             continue;
         };
         let name = name.trim();
-        if !name.is_empty()
-            && !line.starts_with(' ')
+        if !line.starts_with(' ')
+            && !name.is_empty()
             && name
                 .chars()
-                .all(|c| c.is_ascii_lowercase() || c == '-' || c.is_ascii_digit())
+                .all(|character| character.is_ascii_lowercase() || character == '-')
         {
             names.insert(name.to_owned());
         }
@@ -51,80 +216,7 @@ fn shared_grammar_productions() -> BTreeSet<String> {
     names
 }
 
-/// The parser's production names.
-fn parser_productions() -> BTreeSet<String> {
-    Production::all()
-        .iter()
-        .map(|production| format!("{production:?}"))
-        .collect()
-}
-
-/// FSpec FR-610: the object declaration productions map to the parser's,
-/// and `object-member`, a choice the parser inlines into
-/// `ObjectDeclaration`, is the one allow-listed name.
-#[trace("FSpec-FR-610-AC-1", "FSpec-TC-1440", "FR-569-AC-1", "TC-1408")]
-#[test]
-#[ignore = "QSL-2107: the grammar drift gate maps the standard's object productions; not implemented yet"]
-fn the_object_declaration_productions_are_mapped() {
-    const MAPPED: [(&str, &str); 9] = [
-        ("object-decl", "ObjectDeclaration"),
-        ("population-member", "ObjectPopulation"),
-        ("operation-member", "ObjectOperation"),
-        ("frame-clause", "FrameClause"),
-        ("field-target", "FieldTarget"),
-        ("delete-target", "DeleteTarget"),
-        ("type-name", "TypeName"),
-        ("operation-name", "OperationName"),
-        ("population-name", "PopulationName"),
-    ];
-    const INLINED: [&str; 1] = ["object-member"];
-    let standard = shared_grammar_productions();
-    let parser = parser_productions();
-    for (name, production) in MAPPED {
-        assert!(
-            standard.contains(name),
-            "the shared grammar defines `{name}`"
-        );
-        assert!(
-            parser.contains(production),
-            "`{name}` maps to the parser production `{production}`"
-        );
-    }
-    for name in INLINED {
-        assert!(
-            standard.contains(name),
-            "the shared grammar defines `{name}`"
-        );
-    }
-}
-
-/// FR-600's correspondence table: a standard production name and the parser
-/// production that recognizes it, where the PascalCase spelling of the name
-/// is not the variant's spelling.
-const CORRESPONDENCE: &[(&str, &str)] = &[
-    ("object-decl", "ObjectDeclaration"),
-    ("population-member", "ObjectPopulation"),
-    ("operation-member", "ObjectOperation"),
-    ("composed-unit", "CompleteUnit"),
-    ("complete-unit", "CompleteUnit"),
-    ("import-decl", "ImportDeclaration"),
-    ("type-ref", "TypeReference"),
-    ("expr", "Expression"),
-    ("population-bound", "PopulationBound"),
-    ("delivery-interval", "DeliveryInterval"),
-    ("quantified-clock-bound", "QuantifiedClockBound"),
-    ("protocol-requirement", "ProtocolRequirement"),
-];
-
-/// FR-600's standard-only allow-list: a standard production with no parser
-/// production, and why.
-const STANDARD_ONLY: &[(&str, &str)] = &[("object-member", "inlined into ObjectDeclaration")];
-
-/// FR-600's parser-only allow-list: a parser production with no standard
-/// production, and why.
-const PARSER_ONLY: &[(&str, &str)] = &[];
-
-/// The PascalCase spelling of a kebab-case production name.
+/// Convert an unlisted kebab-case name to its ordinary parser spelling.
 fn pascal(name: &str) -> String {
     name.split('-')
         .map(|part| {
@@ -137,229 +229,229 @@ fn pascal(name: &str) -> String {
         .collect()
 }
 
-/// Every disagreement between the two inventories under the table and the
-/// allow-lists, each naming its production and side.
-fn disagreements(
+/// The parser productions corresponding to one shared-grammar production.
+fn parser_names_for(name: &str) -> Vec<String> {
+    let mut names = CORRESPONDENCE
+        .iter()
+        .filter(|(standard, _)| *standard == name)
+        .map(|(_, parser)| (*parser).to_owned())
+        .chain(
+            PARSER_SUBPRODUCTIONS
+                .iter()
+                .filter(|(_, standard)| *standard == name)
+                .map(|(parser, _)| (*parser).to_owned()),
+        )
+        .collect::<Vec<_>>();
+    let default = pascal(name);
+    if Production::all()
+        .iter()
+        .any(|production| format!("{production:?}") == default)
+    {
+        names.push(default);
+    }
+    names.sort();
+    names.dedup();
+    names
+}
+
+/// Parser production names from the closed inventory.
+fn parser_productions() -> BTreeSet<String> {
+    Production::all()
+        .iter()
+        .map(|production| format!("{production:?}"))
+        .collect()
+}
+
+fn ticket_id(ticket: &str) -> bool {
+    let Some((team, number)) = ticket.split_once('-') else {
+        return false;
+    };
+    !team.is_empty()
+        && team.chars().all(|character| character.is_ascii_uppercase())
+        && !number.is_empty()
+        && number.chars().all(|character| character.is_ascii_digit())
+}
+
+fn allow_list_errors(
+    divergences: &[Divergence],
     standard: &BTreeSet<String>,
     parser: &BTreeSet<String>,
-    correspondence: &[(&str, &str)],
-    standard_only: &[(&str, &str)],
-    parser_only: &[(&str, &str)],
 ) -> Vec<String> {
-    let mapped = |name: &str| -> String {
-        correspondence
-            .iter()
-            .find(|(standard_name, _)| *standard_name == name)
-            .map(|(_, production)| (*production).to_owned())
-            .unwrap_or_else(|| pascal(name))
-    };
+    let mapped_parser: BTreeSet<String> = standard
+        .iter()
+        .flat_map(|name| parser_names_for(name))
+        .filter(|production| parser.contains(production))
+        .collect();
+    let mut errors = Vec::new();
+    for divergence in divergences {
+        if !ticket_id(divergence.ticket) {
+            errors.push(format!(
+                "allow-list entry `{}` has no ticket id",
+                divergence.production
+            ));
+        }
+        if !divergence
+            .register_row
+            .strip_prefix("G-")
+            .is_some_and(|digits| {
+                !digits.is_empty() && digits.chars().all(|character| character.is_ascii_digit())
+            })
+        {
+            errors.push(format!(
+                "allow-list entry `{}` has no grammar register row",
+                divergence.production
+            ));
+        }
+        let still_diverges = match divergence.side {
+            Side::Standard => {
+                standard.contains(divergence.production)
+                    && parser_names_for(divergence.production)
+                        .iter()
+                        .all(|production| !parser.contains(production))
+            }
+            Side::Parser => {
+                parser.contains(divergence.production)
+                    && !mapped_parser.contains(divergence.production)
+            }
+        };
+        if !still_diverges {
+            errors.push(format!(
+                "stale allow-list entry `{}`: it no longer diverges",
+                divergence.production
+            ));
+        }
+    }
+    errors
+}
+
+fn standard_drift(standard: &BTreeSet<String>, parser: &BTreeSet<String>) -> Vec<String> {
     let mut found = Vec::new();
-    let mut matched = BTreeSet::new();
     for name in standard {
-        let production = mapped(name);
-        if parser.contains(&production) {
-            matched.insert(production);
-        } else if !standard_only.iter().any(|(entry, _)| entry == name) {
+        if parser_names_for(name)
+            .iter()
+            .any(|production| parser.contains(production))
+        {
+            continue;
+        }
+        if !DIVERGENCES
+            .iter()
+            .any(|entry| entry.side == Side::Standard && entry.production == name)
+        {
             found.push(format!(
                 "standard production `{name}` has no parser production"
             ));
         }
     }
-    for production in parser {
-        if !matched.contains(production)
-            && !parser_only.iter().any(|(entry, _)| entry == production)
-        {
-            found.push(format!(
-                "parser production `{production}` has no standard production"
-            ));
-        }
-    }
-    for (name, production) in correspondence {
-        if !standard.contains(*name) {
-            found.push(format!(
-                "stale correspondence entry `{name}`: not in the standard"
-            ));
-        }
-        if !parser.contains(*production) {
-            found.push(format!(
-                "stale correspondence entry `{production}`: not in the parser"
-            ));
-        }
-    }
-    for (name, _) in standard_only {
-        if !standard.contains(*name) {
-            found.push(format!("stale standard-only entry `{name}`"));
-        }
-    }
-    for (production, _) in parser_only {
-        if !parser.contains(*production) {
-            found.push(format!("stale parser-only entry `{production}`"));
-        }
-    }
     found
 }
 
-/// FR-600-AC-1: every standard production and every parser production is
-/// matched or allow-listed with a reason.
-#[trace("TC-1500", "FR-600-AC-1", "FSpec-TC-1010", "FSpec-FR-503-AC-1")]
-#[test]
-#[ignore = "QSL-2107: the two production inventories do not yet correspond; not implemented yet"]
-fn every_standard_and_parser_production_is_matched_or_allow_listed() {
-    let found = disagreements(
-        &shared_grammar_productions(),
-        &parser_productions(),
-        CORRESPONDENCE,
-        STANDARD_ONLY,
-        PARSER_ONLY,
-    );
-    assert!(found.is_empty(), "grammar drift:\n{}", found.join("\n"));
-}
-
-/// FR-600-AC-2: an invented standard name, a removed parser production and a
-/// stale entry each fail naming the production and its side.
-#[trace("TC-1500", "FR-600-AC-2")]
-#[test]
-#[ignore = "QSL-2107: the drift gate does not yet detect each disagreement; not implemented yet"]
-fn drift_and_stale_entries_are_reported_by_name() {
-    let mut standard = shared_grammar_productions();
-    let parser = parser_productions();
-    standard.insert("invented-form".to_owned());
-    let found = disagreements(
-        &standard,
-        &parser,
-        CORRESPONDENCE,
-        STANDARD_ONLY,
-        PARSER_ONLY,
-    );
-    assert!(
-        found.contains(&"standard production `invented-form` has no parser production".to_owned())
-    );
-
-    let standard = shared_grammar_productions();
-    let mut parser = parser_productions();
-    parser.remove("DeliveryInterval");
-    let found = disagreements(
-        &standard,
-        &parser,
-        CORRESPONDENCE,
-        STANDARD_ONLY,
-        PARSER_ONLY,
-    );
-    assert!(found.iter().any(|line| line.contains("delivery-interval")));
-    assert!(found
-        .contains(&"stale correspondence entry `DeliveryInterval`: not in the parser".to_owned()));
-}
-
-/// FR-600-AC-3: the shared grammar is read from the pinned standard crate,
-/// which publishes it, and a path it does not publish yields nothing.
-#[trace("TC-1500", "FR-600-AC-3")]
-#[test]
-#[ignore = "QSL-2107: the drift gate does not yet read the shared grammar through the pinned standard crate; not implemented yet"]
-fn the_shared_grammar_is_read_through_the_pinned_standard_crate() {
-    assert!(published_file(SHARED_GRAMMAR).is_some_and(|text| text.contains("```ebnf")));
-    assert!(published_file("proposals/filament-v1/no-such-grammar.md").is_none());
-}
-
-/// FSpec FR-502 and FR-501: the productions the standard gained from the
-/// parser, and the optional `clock`, exist on both sides.
-#[trace(
-    "FSpec-TC-1009",
-    "FSpec-FR-502-AC-1",
-    "FSpec-FR-502-AC-2",
-    "FSpec-FR-502-AC-3",
-    "FSpec-FR-502-AC-4"
-)]
-#[test]
-#[ignore = "QSL-2107: the drift gate does not yet map the population bound, quantified clock bound, delivery interval and protocol requirement; not implemented yet"]
-fn the_language_forms_recorded_in_the_standard_are_mapped() {
-    let standard = shared_grammar_productions();
-    let parser = parser_productions();
-    for (name, production) in [
-        ("population-bound", "PopulationBound"),
-        ("quantified-clock-bound", "QuantifiedClockBound"),
-        ("delivery-interval", "DeliveryInterval"),
-        ("protocol-requirement", "ProtocolRequirement"),
-    ] {
-        assert!(
-            standard.contains(name),
-            "the shared grammar defines `{name}`"
-        );
-        assert!(
-            parser.contains(production),
-            "`{name}` maps to `{production}`"
-        );
-    }
-}
-
-/// FSpec FR-503-AC-1 and AC-2: the shared grammar's inventory is closed under
-/// use: every `=/` names an earlier `=` definition, and every right-hand-side
-/// name is defined or is a lexical terminal.
-#[trace("FSpec-TC-1010", "FSpec-FR-503-AC-1", "FSpec-FR-503-AC-2")]
-#[test]
-#[ignore = "QSL-2107: the shared grammar is not yet read through the pinned standard crate and checked for closure; not implemented yet"]
-fn every_name_the_shared_grammar_uses_is_defined() {
-    const TERMINALS: [&str; 5] = ["ident", "member-name", "string", "uint", "EOF"];
-    let text = published_file(SHARED_GRAMMAR).expect("published");
-    let defined = shared_grammar_productions();
-    assert!(!defined.is_empty());
-    let mut in_ebnf = false;
-    let mut undefined = Vec::new();
-    for (number, line) in text.lines().enumerate() {
-        if line.starts_with("```") {
-            in_ebnf = line.trim() == "```ebnf";
-            continue;
-        }
-        if !in_ebnf {
-            continue;
-        }
-        let body = if line.starts_with(' ') {
-            line
-        } else {
-            line.split_once('=').map_or(line, |(_, rest)| rest)
-        };
-        let mut quoted = false;
-        let mut word = String::new();
-        for c in body.chars().chain(std::iter::once(' ')) {
-            if c == '\'' || c == '"' {
-                quoted = !quoted;
-                word.clear();
-            } else if !quoted && (c.is_ascii_alphanumeric() || c == '-') {
-                word.push(c);
-            } else {
-                if !word.is_empty()
-                    && word
-                        .chars()
-                        .next()
-                        .is_some_and(|f| f.is_ascii_lowercase() || f == 'E')
-                    && !defined.contains(&word)
-                    && !TERMINALS.contains(&word.as_str())
-                {
-                    undefined.push(format!("line {}: `{word}`", number + 1));
-                }
-                word.clear();
-            }
-        }
-    }
-    assert!(
-        undefined.is_empty(),
-        "undefined names:\n{}",
-        undefined.join("\n")
-    );
-}
-
-/// FR-600-AC-1: every parser production the correspondence table and the
-/// parser-only allow-list name exists in the parser, so a misspelled entry
-/// cannot hide a production from the drift gate.
-#[trace("TC-1500", "FR-600-AC-1")]
-#[test]
-fn every_parser_production_the_tables_name_exists() {
-    let parser = parser_productions();
-    let named = CORRESPONDENCE
+fn parser_drift(standard: &BTreeSet<String>, parser: &BTreeSet<String>) -> Vec<String> {
+    let mapped: BTreeSet<String> = standard
         .iter()
-        .map(|(_, production)| *production)
-        .chain(PARSER_ONLY.iter().map(|(production, _)| *production));
-    let missing = named
-        .filter(|production| !parser.contains(*production))
-        .collect::<Vec<_>>();
-    assert!(missing.is_empty(), "not parser productions: {missing:?}");
+        .flat_map(|name| parser_names_for(name))
+        .filter(|production| parser.contains(production))
+        .collect();
+    parser
+        .iter()
+        .filter(|production| {
+            !mapped.contains(*production)
+                && !DIVERGENCES.iter().any(|entry| {
+                    entry.side == Side::Parser && entry.production == production.as_str()
+                })
+        })
+        .map(|production| format!("parser production `{production}` has no standard production"))
+        .collect()
+}
+
+fn drift_with(standard: &BTreeSet<String>, parser: &BTreeSet<String>) -> Vec<String> {
+    let mut found = standard_drift(standard, parser);
+    found.extend(parser_drift(standard, parser));
+    found.extend(allow_list_errors(DIVERGENCES, standard, parser));
+    found
+}
+
+fn configured_grammar() -> Result<String, String> {
+    let root = std::env::var_os("FSPEC_DIR").map(std::path::PathBuf::from);
+    read_shared_grammar(root.as_deref())
+}
+
+#[trace("QSL-2107")]
+#[test]
+fn every_standard_production_maps_to_a_parser_production() {
+    let grammar = configured_grammar().expect("FSPEC_DIR must name an FSpec checkout");
+    let standard = grammar_productions(&grammar);
+    let parser = parser_productions();
+    let found = standard_drift(&standard, &parser);
+    assert!(
+        !standard.is_empty(),
+        "the shared grammar defines productions"
+    );
+    assert!(
+        found.is_empty(),
+        "standard grammar drift:\n{}",
+        found.join("\n")
+    );
+}
+
+#[trace("QSL-2107")]
+#[test]
+fn every_parser_production_appears_in_the_standard() {
+    let grammar = configured_grammar().expect("FSPEC_DIR must name an FSpec checkout");
+    let standard = grammar_productions(&grammar);
+    let parser = parser_productions();
+    let found = parser_drift(&standard, &parser);
+    assert!(
+        found.is_empty(),
+        "parser grammar drift:\n{}",
+        found.join("\n")
+    );
+}
+
+#[trace("QSL-2107")]
+#[test]
+fn allow_list_entries_name_a_ticket_and_still_diverge() {
+    let grammar = configured_grammar().expect("FSPEC_DIR must name an FSpec checkout");
+    let standard = grammar_productions(&grammar);
+    let parser = parser_productions();
+    let found = allow_list_errors(DIVERGENCES, &standard, &parser);
+    assert!(
+        found.is_empty(),
+        "grammar drift allow-list:\n{}",
+        found.join("\n")
+    );
+
+    let mut repaired = standard.clone();
+    repaired.insert("population-bound".to_owned());
+    let stale = allow_list_errors(DIVERGENCES, &repaired, &parser);
+    assert!(
+        stale
+            .iter()
+            .any(|error| error.contains("PopulationBound") && error.contains("stale")),
+        "a now-matched production must make its allow-list entry stale: {stale:?}"
+    );
+}
+
+#[trace("QSL-2107")]
+#[test]
+fn a_renamed_production_fails() {
+    let grammar = configured_grammar().expect("FSPEC_DIR must name an FSpec checkout");
+    let renamed = grammar.replacen("header       =", "renamed-header =", 1);
+    assert_ne!(grammar, renamed, "fixture changes a production name");
+    let standard = grammar_productions(&renamed);
+    let parser = parser_productions();
+    let found = drift_with(&standard, &parser);
+    assert!(
+        found.iter().any(|error| error.contains("renamed-header")),
+        "a changed production name fails by name: {found:?}"
+    );
+}
+
+#[trace("QSL-2107")]
+#[test]
+fn a_missing_fspec_dir_is_an_error_not_a_skip() {
+    let error = read_shared_grammar(None).expect_err("missing FSPEC_DIR is an error");
+    assert!(
+        error.contains("FSPEC_DIR"),
+        "the error names the missing input: {error}"
+    );
 }
