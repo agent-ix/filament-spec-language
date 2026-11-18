@@ -40,7 +40,12 @@ pub(super) enum Started {
     /// The instance, its root thread settled from the start of `run`.
     Instance(Box<Instance>),
     /// A guard or `check` the evaluator does not decide.
-    Undecided(Box<ModelFinding>),
+    Undecided {
+        /// The instance at its initial guard or check, if activation took it.
+        instance: Box<Instance>,
+        /// The evaluation finding to report at the reached state.
+        finding: Box<ModelFinding>,
+    },
 }
 
 /// Who takes the steps of a node (ADR-027 RR-2).
@@ -82,7 +87,12 @@ impl<M: MemoryModel> ProtocolSystem<'_, M> {
                     enc: value_enc(&value, self.model.typing()),
                     value: Some(value),
                 }),
-                Decided::Undecided(finding) => return Ok(Started::Undecided(finding)),
+                Decided::Undecided(finding) => {
+                    return Ok(Started::Undecided {
+                        instance: Box::new(instance),
+                        finding,
+                    });
+                }
             }
         }
         let rest = match self.settle(
@@ -92,7 +102,12 @@ impl<M: MemoryModel> ProtocolSystem<'_, M> {
             model,
         )? {
             Settled::Rest(rest) => rest,
-            Settled::Undecided(finding) => return Ok(Started::Undecided(finding)),
+            Settled::Undecided(finding) => {
+                return Ok(Started::Undecided {
+                    instance: Box::new(instance),
+                    finding,
+                });
+            }
         };
         instance.threads.insert(
             root,
@@ -371,7 +386,14 @@ impl<M: MemoryModel> ProtocolSystem<'_, M> {
                         .successors
                         .push((ProtocolTransition::activate(enc), next));
                 }
-                Started::Undecided(finding) => gathered.findings.push(*finding),
+                Started::Undecided { instance, finding } => {
+                    let mut next = state.clone();
+                    next.instances.insert(ordinal, *instance);
+                    next.initial_findings.push(*finding);
+                    gathered
+                        .successors
+                        .push((ProtocolTransition::activate(enc), next));
+                }
             }
         }
         Ok(enabled && at_bound)
