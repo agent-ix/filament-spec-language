@@ -933,7 +933,7 @@ pub enum RunCause {
 }
 
 #[cfg(feature = "quire-extraction")]
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Debug)]
 enum ExtractionFailureStage {
     Selection,
     Quire,
@@ -1236,14 +1236,26 @@ impl RunError {
                 ])
             }
             #[cfg(feature = "quire-extraction")]
-            RunCause::ExtractionFailure { .. } => {
+            RunCause::ExtractionFailure { stage, details, .. } => {
+                let mut details = details.clone();
+                details.insert(
+                    "stage".to_owned(),
+                    serde_json::Value::String(
+                        match stage {
+                            ExtractionFailureStage::Selection => "selection",
+                            ExtractionFailureStage::Quire => "quire",
+                        }
+                        .to_owned(),
+                    ),
+                );
                 OutcomeDocument::new(operation, None, self.category()).with_diagnostics(vec![
                     OutcomeDiagnostic::new(
                         None,
                         self.cause.code().as_str(),
                         None,
                         self.outcome_message(),
-                    ),
+                    )
+                    .with_details(Some(details)),
                 ])
             }
             RunCause::AnalyzePackage { cause, .. } => {
@@ -1954,7 +1966,7 @@ fn read_clause_run_request_bytes(
         let binding = &request.program.clauses[0];
         let context = fsl_source::clause_context(&binding.package, source.source())
             .map_err(|diagnostics| RunCause::InvalidQuireContext { diagnostics })?;
-        let body_identity = SourceIdentity::new(
+        let body_identity = fsl_foundation::SourceIdentity::new(
             extraction.body.authority.clone(),
             extraction.body.identity.clone(),
         );
@@ -2020,12 +2032,6 @@ fn extraction_failure(error: Box<fsl_source::Error>) -> Result<RunCause> {
             }),
         ),
     ]);
-    if let Some(outcome) = error.extraction() {
-        details.insert(
-            "outcome".to_owned(),
-            serde_json::to_value(outcome).map_err(RunCause::Output)?,
-        );
-    }
     Ok(RunCause::ExtractionFailure {
         code,
         stage,
