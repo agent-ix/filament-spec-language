@@ -832,6 +832,16 @@ pub enum RunCause {
         /// Why it is refused.
         reason: String,
     },
+    /// FSL FR-1033: a `memory` entry names no outermost `parallel` of a
+    /// protocol of the package, or two entries name one
+    /// (`invalid_runtime_input`/`invalid-value`).
+    #[error("invalid analyze request member {member}: {reason}")]
+    AnalyzeMemory {
+        /// The entry at fault, by its pointer.
+        member: String,
+        /// Why it is refused.
+        reason: String,
+    },
     /// FR-620: a `subject.universes` entry names no provisioned snapshot
     /// (`invalid-request`), or a population of a referenced snapshot is
     /// incomplete (`incomplete_population`).
@@ -988,6 +998,7 @@ impl RunCause {
             Self::UnknownRequirementClaim { .. } => Code::MissingDeclaration,
             Self::TemporalCorrection(_) => Code::InvalidRuntimeInput,
             Self::AnalyzeRequest { .. } => Code::InvalidRequest,
+            Self::AnalyzeMemory { .. } => Code::InvalidRuntimeInput,
             Self::AnalyzePackage { code, .. } => *code,
             Self::AnalyzeNotYetImplemented { .. } => Code::UnsupportedConstruct,
             Self::TlCorrespondence { .. } | Self::IntegerDivisionLaw { .. } => Code::UnknownProfile,
@@ -1181,6 +1192,16 @@ impl RunError {
                     None,
                     self.outcome_message(),
                 )]),
+            RunCause::AnalyzeMemory { .. } => {
+                OutcomeDocument::new(operation, None, self.category()).with_diagnostics(vec![
+                    OutcomeDiagnostic::new(
+                        Some("invalid-value"),
+                        self.cause.code().as_str(),
+                        None,
+                        self.outcome_message(),
+                    ),
+                ])
+            }
             RunCause::AnalyzePackage { cause, .. } => {
                 OutcomeDocument::new(operation, None, self.category()).with_diagnostics(vec![
                     OutcomeDiagnostic::new(

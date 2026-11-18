@@ -358,6 +358,19 @@ pub fn builtin_integer_type_key(
     )
 }
 
+/// The structural key of FSpec's built-in Boolean scalar type (FR-092): the
+/// result bound of a task-set claim's requirement record (FSL FR-246-AC-4),
+/// whose claim node sits beside the semantic graph.
+pub fn builtin_boolean_type_key(
+    package_name: &str,
+) -> Result<filament_exact::NodeKey, filament_exact::InvalidNodeKey> {
+    declared_node_key(
+        package_name.to_owned(),
+        vec!["scalar_type".to_owned(), "boolean".to_owned()],
+        0,
+    )
+}
+
 /// The structural key of FSpec's built-in Text scalar type (FR-092).
 /// Timed source metadata uses this primitive even when no source expression
 /// already caused its scalar node to enter the checked graph.
@@ -7637,6 +7650,31 @@ impl PackageDeclarations {
             // A continuation graph may retain clean siblings beside a
             // refusal. It must not publish a partial package reference set.
             dependency_references.clear();
+        }
+        // FSL FR-246-AC-4: one `schedulability` requirement record per
+        // checked task-set claim, keyed by the claim's `claim` occurrence. A
+        // claim of a refused task set has no node and writes none.
+        for claim in checked_task_sets.claims() {
+            let Some(occurrence) = claim.occurrence() else {
+                continue;
+            };
+            let unkeyable = || {
+                vec![CheckRefusal {
+                    location: root(Origin::Expression),
+                    cause: CheckCause::InternalFault(Box::new(KeyFault::UnkeyableRequirements)),
+                }]
+            };
+            let boolean = builtin_boolean_type_key(&package_name).map_err(|_| unkeyable())?;
+            let record = claims::RequirementRecord::model_claim(
+                claim.requirements(),
+                claims::wire(boolean),
+            );
+            match requirements.entry(occurrence) {
+                std::collections::hash_map::Entry::Vacant(slot) => {
+                    slot.insert(record);
+                }
+                std::collections::hash_map::Entry::Occupied(_) => return Err(unkeyable()),
+            }
         }
         let mut graph = CheckedGraph {
             graph_identity: CheckedGraphIdentity::fresh(),

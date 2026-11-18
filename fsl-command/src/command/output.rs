@@ -240,6 +240,7 @@ pub(super) fn error(error: &RunError, artifact: bool) -> Result<Value, serde_jso
         | RunCause::CompleteRunSelection(_)
         | RunCause::EmptyCompileProgram
         | RunCause::AnalyzeRequest { .. }
+        | RunCause::AnalyzeMemory { .. }
         | RunCause::AnalyzeUniverse(_)
         | RunCause::AnalyzePackage { .. }
         | RunCause::AnalyzeNotYetImplemented { .. }

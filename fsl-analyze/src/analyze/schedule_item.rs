@@ -11,7 +11,7 @@ use fsl_foundation::source::provenance::OccurrenceKey;
 use fsl_foundation::RequestIndex;
 use fsl_package::CheckedPackage;
 use fsl_replay::{
-    Arrival, ClosedFormOutcome, Criticality, DeclineCode, ProofRefusalCause, QualifiedName,
+    Arrival, ClosedFormAnalysis, ClosedFormOutcome, MissEvidence, Criticality, DeclineCode, ProofRefusalCause, QualifiedName,
     ScheduleClaim, ScheduleSubject, SchedulingPolicy, Task, TaskSet, TaskSetRefusal, TerminalValue,
     Wcet,
 };
@@ -29,6 +29,8 @@ pub(crate) struct ClosedFormReport {
     pub(crate) value: TerminalValue,
     /// EN-7's outcome, with its evidence.
     pub(crate) outcome: ClosedFormOutcome,
+    /// FSpec FR-419's `schedulability-miss` counterexample of a miss.
+    pub(crate) miss: Option<serde_json::Value>,
 }
 
 /// Why a checked claim has no closed-form subject.
@@ -47,8 +49,8 @@ pub(super) fn schedule_item<'a>(
     request_index: RequestIndex,
     claim: &OccurrenceKey,
 ) -> Option<AnalyzeItem<'a>> {
-    let subject = match subject_of(package, claim) {
-        Ok(subject) => subject,
+    let (subject, name, unit) = match subject_of(package, claim) {
+        Ok(found) => found,
         Err(Lowering::Absent) => return None,
         Err(Lowering::Refused(refusal)) => {
             let diagnostic = CatalogCode::new(refusal.code().as_str(), refusal.cause());
@@ -64,7 +66,12 @@ pub(super) fn schedule_item<'a>(
     Some(item(request_index, move |cancel| {
         let outcome = schedulability::analyze(&subject, &ScheduleLimits::default(), cancel);
         let value = fsl_replay::settle(&subject, &outcome, cancel);
-        EngineReport::ClosedForm(Box::new(ClosedFormReport { value, outcome }))
+        let miss = miss_wire(&name, &unit, &subject, &outcome);
+        EngineReport::ClosedForm(Box::new(ClosedFormReport {
+            value,
+            outcome,
+            miss,
+        }))
     }))
 }
 
@@ -87,7 +94,7 @@ fn item<'a>(
 fn subject_of(
     package: &CheckedPackage,
     claim: &OccurrenceKey,
-) -> Result<ScheduleSubject, Lowering> {
+) -> Result<(ScheduleSubject, String, String), Lowering> {
     let model = package.graph().task_sets();
     let checked = model
         .claims()
@@ -109,7 +116,9 @@ fn subject_of(
             bound: bound.clone(),
         },
     };
-    ScheduleSubject::new(task_set, claim).map_err(Lowering::Refused)
+    let subject = ScheduleSubject::new(task_set, claim).map_err(Lowering::Refused)?;
+    let unit = set.unit.as_ref().map(|unit| unit.name.clone()).unwrap_or_default();
+    Ok((subject, checked.name.clone(), unit))
 }
 
 fn identifier(name: &str) -> Result<Identifier, Lowering> {
@@ -143,4 +152,72 @@ fn task(task: &checked::Task) -> Result<Task, Lowering> {
         jitter: task.jitter.clone(),
         blocking: task.blocking.clone(),
     })
+}
+
+/// FSpec FR-419's `schedulability-miss` counterexample of the miss `outcome`
+/// reports over `subject` (FSL FR-621 "A refuted schedulability item"): every
+/// time value an FR-181 rational in the task set's checked unit `unit`.
+/// `None` for an outcome that is no miss, or a miss naming a task the set
+/// does not hold.
+pub(super) fn miss_wire(
+    claim: &str,
+    unit: &str,
+    subject: &ScheduleSubject,
+    outcome: &ClosedFormOutcome,
+) -> Option<serde_json::Value> {
+    let ClosedFormOutcome::Miss(evidence) = outcome else {
+        return None;
+    };
+    let rational = |value: &filament_exact::Rational| {
+        serde_json::json!({
+            "type": "rational",
+            "numerator": value.numerator().as_big().to_string(),
+            "denominator": value.denominator().as_big().to_string(),
+        })
+    };
+    let miss = match evidence {
+        MissEvidence::FixedPriority {
+            task,
+            job,
+            iterates,
+        } => {
+            let found = subject.task_set().task(task)?;
+            let last = iterates.last()?;
+            let offset = filament_exact::Rational::from_integer(filament_exact::Integer::from(i128::from(*job)))
+                .mul(found.arrival.interval());
+            let response = last.add(&found.jitter).sub(&offset);
+            let bound = match subject.claim() {
+                ScheduleClaim::Response { bound, .. } => bound.clone(),
+                ScheduleClaim::Schedulable(_) => found.deadline.clone(),
+            };
+            let mut miss = serde_json::json!({
+                "kind": "response",
+                "task": task.as_str(),
+                "job": job.to_string(),
+                "iterates": iterates.iter().map(&rational).collect::<Vec<_>>(),
+                "response": rational(&response),
+                "bound": rational(&bound),
+            });
+            if subject.analysis() == ClosedFormAnalysis::AmcRtb {
+                miss["mode"] = serde_json::json!("lo");
+            }
+            miss
+        }
+        MissEvidence::Edf(witness) => serde_json::json!({
+            "kind": "demand",
+            "t": rational(&witness.t),
+            "demand": rational(&witness.demand),
+        }),
+        MissEvidence::Utilization(utilization) => serde_json::json!({
+            "kind": "utilization",
+            "utilization": rational(utilization),
+        }),
+    };
+    Some(serde_json::json!({
+        "type": "schedulability-miss",
+        "claim": claim,
+        "analysis": subject.analysis(),
+        "unit": unit,
+        "miss": miss,
+    }))
 }

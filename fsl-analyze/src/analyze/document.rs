@@ -73,15 +73,162 @@ impl DocumentSelection {
 /// FSpec FR-520's model subject `{initial_states, universes, proof_bounds}`:
 /// the snapshots the subject starts from and the snapshots whose complete
 /// populations are its universes.
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq)]
+#[derive(Clone, Debug, Default, Deserialize, Eq, PartialEq)]
 #[serde(deny_unknown_fields)]
 pub struct SubjectSelection {
     /// The initial-state snapshots, in request order.
+    #[serde(default)]
     pub initial_states: Vec<DocumentSelection>,
     /// The snapshots whose complete populations are the universes.
+    #[serde(default)]
     pub universes: Vec<DocumentSelection>,
     /// The substituted proof bounds; FSL reads none yet from a document.
+    #[serde(default)]
     pub proof_bounds: Vec<Value>,
+    /// FSL FR-1033: the protocol the subject binds, when the claim is decided
+    /// over a protocol subject rather than the model subject.
+    #[serde(default)]
+    pub protocol: Option<ProtocolSelection>,
+    /// The request's `memory` member (FR-1033, FR-219), carried with the
+    /// subject because it resolves the memory model of the protocol subject's
+    /// outermost `parallel`s; never read from a subject document.
+    #[serde(skip)]
+    pub memory: Vec<fsl_eval::simulation::protocol::MemorySelection>,
+}
+
+/// FSL FR-1033: an `over` binding, FSpec FR-433's `{reference}` spelling.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct OverSelection {
+    /// The object reference.
+    pub reference: ReferenceSelection,
+}
+
+/// The population identity and key an `over` binding names.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct ReferenceSelection {
+    /// The population identity.
+    pub population: String,
+    /// The object key.
+    pub key: String,
+}
+
+/// A role's `{type, selection}` binding.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct RoleSelection {
+    /// The binding's type, `model-binding`.
+    #[serde(rename = "type")]
+    pub kind: String,
+    /// The domain package identity bound to the role.
+    pub selection: String,
+}
+
+/// FSL FR-1033: the `protocol` member of a subject.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct ProtocolSelection {
+    /// The protocol clause's qualified name.
+    pub protocol: String,
+    /// The `over` binding; the item settles `declined` when absent.
+    #[serde(default)]
+    pub over: Option<OverSelection>,
+    /// Each static role's binding.
+    #[serde(default)]
+    pub roles: BTreeMap<String, RoleSelection>,
+    /// Each symbolic capacity's decimal value.
+    #[serde(default)]
+    pub capacities: BTreeMap<String, String>,
+}
+
+impl ProtocolSelection {
+    /// The binding this selection states, over the request's `memory`; `None`
+    /// when a capacity is no decimal count.
+    fn binding(
+        &self,
+        package: &CheckedPackage,
+        memory: &[fsl_eval::simulation::protocol::MemorySelection],
+    ) -> Option<super::request::ProtocolBinding> {
+        // The selections naming this protocol's `parallel`s; another protocol's
+        // change nothing here (FR-1033 "Reading `memory`").
+        let memory: Vec<_> = memory
+            .iter()
+            .filter(|entry| entry.parallel.split("::").next() == Some(self.protocol.as_str()))
+            .cloned()
+            .collect();
+        let memory = memory.as_slice();
+        let capacities = self
+            .capacities
+            .iter()
+            .map(|(name, value)| {
+                Some(fsl_eval::model_subject::CapacityBinding {
+                    name: name.clone(),
+                    value: value.parse().ok()?,
+                })
+            })
+            .collect::<Option<Vec<_>>>()?;
+        let effective = package
+            .graph()
+            .protocol(&self.protocol)
+            .and_then(|checked| {
+                fsl_eval::simulation::protocol::ResolvedMemory::resolve(checked, memory).ok()
+            })
+            .map(|resolved| {
+                resolved
+                    .parallels()
+                    .iter()
+                    .map(|parallel| (parallel.parallel.clone(), parallel.model))
+                    .collect()
+            })
+            .unwrap_or_default();
+        Some(super::request::ProtocolBinding {
+            protocol: self.protocol.clone(),
+            over: self
+                .over
+                .as_ref()
+                .map(|over| (over.reference.population.clone(), over.reference.key.clone())),
+            roles: self
+                .roles
+                .iter()
+                .map(|(role, binding)| fsl_eval::model_subject::RoleBinding {
+                    role: role.clone(),
+                    model: binding.selection.clone(),
+                })
+                .collect(),
+            capacities,
+            memory: memory.to_vec(),
+            effective,
+        })
+    }
+
+    fn wire(&self) -> Value {
+        let mut member = Map::new();
+        member.insert("protocol".to_owned(), json!(self.protocol));
+        if let Some(over) = &self.over {
+            member.insert(
+                "over".to_owned(),
+                json!({"reference": {"population": over.reference.population,
+                    "key": over.reference.key}}),
+            );
+        }
+        member.insert(
+            "roles".to_owned(),
+            Value::Object(
+                self.roles
+                    .iter()
+                    .map(|(role, binding)| {
+                        (
+                            role.clone(),
+                            json!({"type": binding.kind, "selection": binding.selection}),
+                        )
+                    })
+                    .collect(),
+            ),
+        );
+        member.insert("capacities".to_owned(), json!(self.capacities));
+        Value::Object(member)
+    }
 }
 
 impl SubjectSelection {
@@ -98,6 +245,8 @@ impl SubjectSelection {
             universes: initial.clone(),
             initial_states: initial,
             proof_bounds: Vec::new(),
+            protocol: None,
+            memory: Vec::new(),
         }
     }
 
@@ -186,11 +335,38 @@ impl SubjectSelection {
     }
 
     fn wire(&self) -> Value {
-        json!({
+        let mut subject = json!({
             "initial_states": self.initial_states.iter().map(DocumentSelection::wire).collect::<Vec<_>>(),
             "universes": self.universes.iter().map(DocumentSelection::wire).collect::<Vec<_>>(),
             "proof_bounds": self.proof_bounds,
-        })
+        });
+        if let (Some(protocol), Some(members)) = (&self.protocol, subject.as_object_mut()) {
+            members.insert("protocol".to_owned(), protocol.wire());
+        }
+        subject
+    }
+
+    /// This subject with the model parts it leaves out (FSL FR-1033: a
+    /// subject may state only its `protocol`) taken from `base`, the request's
+    /// subject.
+    #[must_use]
+    pub fn completed_by(mut self, base: &Self) -> Self {
+        self.memory.clone_from(&base.memory);
+        if self.initial_states.is_empty() && self.universes.is_empty() && self.proof_bounds.is_empty()
+        {
+            self.initial_states.clone_from(&base.initial_states);
+            self.universes.clone_from(&base.universes);
+            self.proof_bounds.clone_from(&base.proof_bounds);
+        }
+        self
+    }
+
+    /// Whether both subjects have the same model parts, whatever protocol
+    /// either binds.
+    fn same_model(&self, other: &Self) -> bool {
+        self.initial_states == other.initial_states
+            && self.universes == other.universes
+            && self.proof_bounds == other.proof_bounds
     }
 }
 
@@ -390,12 +566,16 @@ pub struct TemporalLimitsSelection {
 }
 
 impl TemporalLimitsSelection {
+    /// Whether a weak-memory bound (FR-225) is set, which only a run over a
+    /// protocol subject reads.
+    fn sets_memory_limits(&self) -> bool {
+        self.max_store_buffer.is_some() || self.max_messages.is_some()
+    }
+
     /// Whether a limit no explicit-state EN-1 run reads is set.
     fn sets_other_engine_limits(&self) -> bool {
         [
             self.max_task_product_work,
-            self.max_store_buffer,
-            self.max_messages,
             self.max_live_instances,
             self.max_solver_steps,
             self.max_solver_time,
@@ -919,6 +1099,8 @@ pub fn resolve_items(
     selections: Option<&[ItemSelection]>,
     registry: &Registry,
     units: &[RawSourceRef],
+    binding: &SubjectBinding<'_>,
+    limits: &AnalyzeLimits,
 ) -> Vec<ResolvedItem> {
     match selections {
         Some(selections) => selections
@@ -934,7 +1116,7 @@ pub fn resolve_items(
                 )
             })
             .collect(),
-        None => default_items(package, subject, registry, units),
+        None => default_items(package, subject, registry, units, binding, limits),
     }
 }
 
@@ -1079,6 +1261,10 @@ fn resolve_one(
             )),
         };
     };
+    if let Some(resolved) = resolve_protocol_freedom(package, subject, index, selection, registry, name)
+    {
+        return resolved;
+    }
     let Some(node) = declarations(package).get(name).cloned() else {
         return resolve_derived(package, subject, index, selection, registry, name)
             .unwrap_or_else(|| unknown_claim(index, name));
@@ -1213,7 +1399,28 @@ fn resolve_one(
         candidates,
     );
     let temporal = selection.temporal.clone().unwrap_or_default();
-    let own_subject = temporal.subject.clone().unwrap_or_else(|| subject.clone());
+    let own_subject = temporal
+        .subject
+        .clone()
+        .map_or_else(|| subject.clone(), |own| own.completed_by(subject));
+    let protocol = if kind == Capability::TemporalSatisfaction
+        && temporal.item_kind.is_none_or(|item_kind| item_kind.kind() == ItemKind::Formula)
+        && package
+            .graph()
+            .temporal_clauses()
+            .iter()
+            .any(|clause| clause.identity() == *claim.node())
+    {
+        match own_subject.protocol.as_ref() {
+            Some(selected) => match selected.binding(package, &own_subject.memory) {
+                Some(binding) => Some(binding),
+                None => return invalid_value(index, name, "capacities"),
+            },
+            None => None,
+        }
+    } else {
+        None
+    };
     if let Some(claim) = state_graph {
         if timed(package) {
             // EN-6 lists no state-graph form and EN-1 reads no clocks, so a
@@ -1241,6 +1448,7 @@ fn resolve_one(
         .then(|| {
         let mut form = temporal_item(package, &claim, &temporal);
         form.pending_reductions.clone_from(&selection.reductions);
+        form.protocol = protocol;
         ItemForm::Temporal(form)
     });
     let item = ClaimItem {
@@ -1272,7 +1480,11 @@ fn resolve_one(
             selection.unrouted()
         } || (selection.reductions.is_some() && kind != Capability::TemporalSatisfaction)
             || reads_no_clocks(package, &temporal)
-            || own_subject != *subject,
+            || (protocol.is_none()
+                && temporal
+                    .limits
+                    .is_some_and(|limits| limits.sets_memory_limits()))
+            || !own_subject.same_model(subject),
         subject: own_subject,
     }))
 }
@@ -1359,7 +1571,10 @@ fn resolve_derived(
     let Some(mut claim) = derived else {
         return Some(invalid_kind(index, Some(name), "inapplicable-kind"));
     };
-    let own_subject = temporal.subject.clone().unwrap_or_else(|| subject.clone());
+    let own_subject = temporal
+        .subject
+        .clone()
+        .map_or_else(|| subject.clone(), |own| own.completed_by(subject));
     claim.item.request_index = index;
     let named = selection.backend.as_deref().map(BackendId::new);
     let backend_options = selection.options.clone().unwrap_or_default();
@@ -1390,9 +1605,127 @@ fn resolve_derived(
     claim.item.form = Some(ItemForm::Temporal(form));
     claim.claim_name = name.to_owned();
     claim.unrouted =
-        selection.unrouted() || reads_no_clocks(package, temporal) || own_subject != *subject;
+        selection.unrouted() || reads_no_clocks(package, temporal) || !own_subject.same_model(subject);
     claim.subject = own_subject;
     Some(ResolvedItem::Claim(claim))
+}
+
+/// A request member the item cannot read: the item settles `declined`
+/// `invalid-input` `invalid_runtime_input`/`invalid-value` naming `member`.
+fn invalid_value(index: RequestIndex, name: &str, member: &str) -> ResolvedItem {
+    let mut detail = Map::new();
+    detail.insert("member".to_owned(), json!(member));
+    ResolvedItem::Settled {
+        claim_name: Some(name.to_owned()),
+        record: Box::new(
+            TerminalRecord::disposition_declined(
+                index,
+                fsl_replay::ProofRefusalCause::InvalidInput,
+                fsl_replay::DeclineCode::Fsl(fsl_foundation::Code::InvalidRuntimeInput),
+                CatalogCode::new("invalid_runtime_input", "invalid-value"),
+            )
+            .with_diagnostic_detail(detail),
+        ),
+    }
+}
+
+/// FSL FR-1033 "Selecting the subject of an item": a `race-freedom` item
+/// whose `claim` is the scoped path of an outermost `parallel` is decided over
+/// the protocol its path names. `None` when the item is no such item, so the
+/// caller resolves it as every other item.
+fn resolve_protocol_freedom(
+    package: &CheckedPackage,
+    subject: &SubjectSelection,
+    index: RequestIndex,
+    selection: &ItemSelection,
+    registry: &Registry,
+    name: &str,
+) -> Option<ResolvedItem> {
+    let temporal = selection.temporal.as_ref()?;
+    if temporal.item_kind?.kind() != ItemKind::RaceFreedom {
+        return None;
+    }
+    let owner = name.split("::").next()?;
+    let checked = package.graph().protocol(owner)?;
+    let outermost = fsl_eval::simulation::protocol::ResolvedMemory::resolve(checked, &[]).ok()?;
+    if !outermost
+        .parallels()
+        .iter()
+        .any(|parallel| parallel.parallel == name)
+    {
+        return None;
+    }
+    let own_subject = temporal
+        .subject
+        .clone()
+        .map_or_else(|| subject.clone(), |own| own.completed_by(subject));
+    let Some(selected) = own_subject.protocol.as_ref() else {
+        let mut detail = Map::new();
+        detail.insert("member".to_owned(), json!("temporal.subject.protocol"));
+        return Some(ResolvedItem::Settled {
+            claim_name: Some(name.to_owned()),
+            record: Box::new(
+                TerminalRecord::disposition_declined(
+                    index,
+                    fsl_replay::ProofRefusalCause::InvalidInput,
+                    fsl_replay::DeclineCode::Fsl(fsl_foundation::Code::InvalidRuntimeInput),
+                    CatalogCode::new("invalid_runtime_input", "missing-member"),
+                )
+                .with_diagnostic_detail(detail),
+            ),
+        });
+    };
+    if selected.protocol != owner {
+        return Some(unknown_claim(index, name));
+    }
+    let Some(binding) = selected.binding(package, &own_subject.memory) else {
+        return Some(invalid_value(index, name, "capacities"));
+    };
+    let Some(node) = checked.node() else {
+        return Some(invalid_kind(index, Some(name), "inapplicable-kind"));
+    };
+    let named = selection.backend.as_deref().map(BackendId::new);
+    let backend_options = selection.options.clone().unwrap_or_default();
+    if let Some(refused) = unknown_option(
+        index,
+        Some(name),
+        registry,
+        named.as_ref(),
+        &backend_options,
+    ) {
+        return Some(refused);
+    }
+    let claim = OccurrenceKey::declaration(node);
+    let candidates = registry.restrict_to_timing(
+        registry.candidates(Capability::TemporalSatisfaction, named.as_ref()),
+        false,
+    );
+    let mut form = temporal_item(package, &claim, temporal);
+    form.protocol = Some(binding);
+    Some(ResolvedItem::Claim(Box::new(ResolvedClaim {
+        item: ClaimItem {
+            request_index: index,
+            claim,
+            kind: Capability::TemporalSatisfaction,
+            extent: ExtentClassification::Unbounded {
+                finite_bound_available: false,
+            },
+            backend: named,
+            candidates: candidate_list(&candidates),
+            options: ItemOptions {
+                required: selection.required.unwrap_or(true),
+                max_cases: None,
+                trace: None,
+                recording: None,
+                backend_options,
+            },
+            form: Some(ItemForm::Temporal(form)),
+        },
+        claim_name: name.to_owned(),
+        candidates,
+        subject: own_subject.clone(),
+        unrouted: selection.unrouted() || !own_subject.same_model(subject),
+    })))
 }
 
 /// Whether the item sets `max_clocks`, which only a timed subject reads
@@ -1484,6 +1817,8 @@ fn temporal_item(
         );
         set(limits.max_walk_steps, &mut item.limits.max_walk_steps);
         item.max_clocks = limits.max_clocks;
+        item.max_store_buffer = limits.max_store_buffer.map(NonZeroU64::get);
+        item.max_messages = limits.max_messages.map(NonZeroU64::get);
         set(limits.max_witness_set, &mut item.limits.max_witness_set);
         set(
             limits.max_relation_tuples,
@@ -1501,6 +1836,8 @@ fn default_items(
     subject: &SubjectSelection,
     registry: &Registry,
     units: &[RawSourceRef],
+    binding: &SubjectBinding<'_>,
+    limits: &AnalyzeLimits,
 ) -> Vec<ResolvedItem> {
     let graph = package.graph();
     let records = requirement_items(package, registry, None);
@@ -1568,13 +1905,19 @@ fn default_items(
             ));
         }
     }
-    resolved.extend(derived_items(
-        package,
-        subject,
-        registry,
-        &resolved,
-        resolved.len(),
-    ));
+    let derived = if subject.protocol.is_some() {
+        protocol_derived_items(
+            package,
+            subject,
+            registry,
+            (binding, limits),
+            &resolved,
+            resolved.len(),
+        )
+    } else {
+        derived_items(package, subject, registry, &resolved, resolved.len())
+    };
+    resolved.extend(derived);
     resolved
 }
 
@@ -1650,39 +1993,145 @@ fn derived_items(
         })
         .enumerate()
         .map(|(offset, item)| {
-            let index = RequestIndex::new(first + offset);
-            let candidates = registry.restrict_to_timing(
-                item.candidates()
-                    .cloned()
-                    .unwrap_or_else(|| registry.candidates(item.kind(), None)),
-                timed(package),
-            );
-            let claim_name = declared_name(package, item.node()).unwrap_or_default();
-            ResolvedItem::Claim(Box::new(ResolvedClaim {
-                item: ClaimItem {
-                    request_index: index,
-                    claim: item.occurrence().clone(),
-                    kind: item.kind(),
-                    extent: item.extent(),
-                    backend: None,
-                    candidates: candidate_list(&candidates),
-                    options: ItemOptions {
-                        required: true,
-                        max_cases: None,
-                        trace: None,
-                        recording: None,
-                        backend_options: BTreeMap::new(),
-                    },
-                    form: Some(ItemForm::Temporal(TemporalItem {
-                        item_kind: item.item_kind().unwrap_or(ItemKind::Formula),
-                        ..TemporalItem::default()
-                    })),
-                },
-                claim_name,
-                candidates,
-                subject: subject.clone(),
-                unrouted: false,
-            }))
+            derived_claim(
+                package,
+                subject,
+                registry,
+                item,
+                RequestIndex::new(first + offset),
+                None,
+            )
+        })
+        .collect()
+}
+
+/// The resolved claim of the derived request item `item` over `subject`, run
+/// over the protocol subject `protocol` when it has one.
+fn derived_claim(
+    package: &CheckedPackage,
+    subject: &SubjectSelection,
+    registry: &Registry,
+    item: &fsl_route::request::RequestItem,
+    index: RequestIndex,
+    protocol: Option<&super::request::ProtocolBinding>,
+) -> ResolvedItem {
+    let candidates = registry.restrict_to_timing(
+        item.candidates()
+            .cloned()
+            .unwrap_or_else(|| registry.candidates(item.kind(), None)),
+        timed(package),
+    );
+    let claim_name = declared_name(package, item.node()).unwrap_or_else(|| {
+        protocol.map(|binding| binding.protocol.clone()).unwrap_or_default()
+    });
+    ResolvedItem::Claim(Box::new(ResolvedClaim {
+        item: ClaimItem {
+            request_index: index,
+            claim: item.occurrence().clone(),
+            kind: item.kind(),
+            extent: item.extent(),
+            backend: None,
+            candidates: candidate_list(&candidates),
+            options: ItemOptions {
+                required: true,
+                max_cases: None,
+                trace: None,
+                recording: None,
+                backend_options: BTreeMap::new(),
+            },
+            form: Some(ItemForm::Temporal(TemporalItem {
+                item_kind: item.item_kind().unwrap_or(ItemKind::Formula),
+                protocol: protocol.cloned(),
+                ..TemporalItem::default()
+            })),
+        },
+        claim_name,
+        candidates,
+        subject: subject.clone(),
+        unrouted: false,
+    }))
+}
+
+/// FSL FR-1033 and FSpec FR-429, FR-438: the derived items of the protocol
+/// subject `subject` binds, written beside the authored items of `authored`
+/// that are decided over it: a `deadlock-freedom` item, and, when a resolved
+/// model is weak and an access is non-atomic, a `race-freedom` item.
+fn protocol_derived_items(
+    package: &CheckedPackage,
+    subject: &SubjectSelection,
+    registry: &Registry,
+    (admission, limits): (&SubjectBinding<'_>, &AnalyzeLimits),
+    authored: &[ResolvedItem],
+    first: usize,
+) -> Vec<ResolvedItem> {
+    let graph = package.graph();
+    let Some(binding) = subject
+        .protocol
+        .as_ref()
+        .and_then(|selected| selected.binding(package, &subject.memory))
+    else {
+        return Vec::new();
+    };
+    let Some(checked) = graph.protocol(&binding.protocol) else {
+        return Vec::new();
+    };
+    let non_atomic = super::protocol_item::has_non_atomic_access(package, admission, limits, &binding);
+    let occurrences: Vec<OccurrenceKey> = authored
+        .iter()
+        .filter_map(|resolved| match resolved {
+            ResolvedItem::Claim(claim)
+                if matches!(
+                    &claim.item.form,
+                    Some(ItemForm::Temporal(form)) if form.protocol.as_ref() == Some(&binding)
+                        && form.item_kind == ItemKind::Formula
+                ) =>
+            {
+                Some(claim.item.claim.clone())
+            }
+            ResolvedItem::Claim(_) | ResolvedItem::Settled { .. } | ResolvedItem::Simulation(_) => {
+                None
+            }
+        })
+        .collect();
+    let requirements = fsl_semantics::family::Requirements::new(
+        Capability::TemporalSatisfaction,
+        fsl_semantics::family::ClaimExtent::Bounded,
+    );
+    let mut request = fsl_route::model_request::ModelRequest::<super::request::ProtocolBinding>::new();
+    for occurrence in &occurrences {
+        request.protocol(
+            &fsl_route::deadlock::ProtocolTemporalItem {
+                occurrence,
+                subject: &binding,
+                protocol: checked,
+                models: &binding.effective,
+                non_atomic_access: non_atomic,
+            },
+            &requirements,
+        );
+    }
+    let written = request.derived(
+        registry,
+        None,
+        &fsl_route::request::DerivedLimits::default(),
+    );
+    written
+        .items()
+        .iter()
+        .filter(|item| {
+            item.item_kind()
+                .is_some_and(|kind| kind != ItemKind::Formula)
+        })
+        .enumerate()
+        .map(|(offset, item)| {
+            derived_claim(
+                package,
+                subject,
+                registry,
+                item,
+                RequestIndex::new(first + offset),
+                Some(&binding),
+            )
         })
         .collect()
 }
@@ -1764,6 +2213,20 @@ impl ClaimItem {
                         .collect::<Result<_, _>>()?,
                 ),
             );
+            if let Some(protocol) = &temporal.protocol {
+                item.insert(
+                    "memory".to_owned(),
+                    Value::Array(
+                        protocol
+                            .effective
+                            .iter()
+                            .map(|(parallel, model)| {
+                                json!({"parallel": parallel, "model": model.label()})
+                            })
+                            .collect(),
+                    ),
+                );
+            }
             if !temporal.reductions.is_empty() {
                 item.insert(
                     "reductions".to_owned(),
@@ -2118,7 +2581,11 @@ pub fn settle_run(
                     .counterexamples
                     .iter()
                     .find(|found| found.request_index == index)
-                    .and_then(|found| claim_name.as_deref().map(|name| replay_target(found, name)))
+                    .and_then(|found| {
+                        claim_name
+                            .as_deref()
+                            .and_then(|name| replay_target(found, name))
+                    })
             })
             .flatten();
         items.push(item_document(
@@ -2297,9 +2764,9 @@ fn owning_model<'p>(package: &'p CheckedPackage, claim: &OccurrenceKey) -> Optio
 /// parameters belong to by `function`. The in-process engines produce no
 /// protocol-refinement counterexample, so FR-071's `protocol_refinement`
 /// target has no variant to come from here.
-fn replay_target(found: &super::ItemCounterexample, name: &str) -> Value {
+fn replay_target(found: &super::ItemCounterexample, name: &str) -> Option<Value> {
     let qualified = name.split("::").collect::<Vec<_>>().join(".");
-    match &found.counterexample {
+    Some(match &found.counterexample {
         super::Counterexample::Assignments(_) => json!({"function": qualified}),
         super::Counterexample::Temporal { .. }
         | super::Counterexample::Protocol { .. }
@@ -2307,7 +2774,8 @@ fn replay_target(found: &super::ItemCounterexample, name: &str) -> Value {
         | super::Counterexample::Contract(_)
         | super::Counterexample::StateGraph(_)
         | super::Counterexample::GlobalConformance(_) => json!({"state_clause": qualified}),
-    }
+        super::Counterexample::ScheduleMiss(_) => return None,
+    })
 }
 
 /// One FR-621 item from the FR-286 item `written`.

@@ -217,21 +217,24 @@ fn always_possible_refutes_and_witnesses_repeat() {
     );
 }
 
-/// FR-629-AC-2, AC-3, AC-5: release/acquire message passing, a race, and a
-/// selection naming no weak parallel.
+/// FR-629-AC-2, AC-3, AC-5 through FR-1033: release/acquire message passing,
+/// a race, and a selection naming no weak parallel.
 #[trace("TC-1589", "FR-629-AC-2")]
 #[trace("TC-1589", "FR-629-AC-3")]
 #[trace("TC-1589", "FR-629-AC-5")]
 #[test]
-#[ignore = "QSL-2126: weak-memory items are not reachable through fsl analyze yet"]
 fn release_acquire_races_and_selections() {
+    let binding = json!({"type": "model-binding", "selection": "test/litmus"});
+    let subject = json!({"protocol": {"protocol": "SB",
+        "over": {"reference": {"population": "ix://test/litmus/cores", "key": "core"}},
+        "roles": {"w": binding, "c": binding}}});
     let body = crate::litmus::sb_unit(&crate::litmus::sb_run("memory ra", "release", "acquire"));
     let ws = Workspace::new("cov-ra");
     let run = analyze(&litmus_request(
         &ws,
         &body,
-        json!({"items": [{"claim": "NoBothZero"},
-            {"claim": "Both", "temporal": {"item_kind": "race-freedom"}}]}),
+        json!({"subject": subject, "items": [{"claim": "NoBothZero"},
+            {"claim": "SB::Both", "temporal": {"item_kind": "race-freedom"}}]}),
     ));
     assert!(matches!(label(&run.item(0)), "proved" | "refuted"));
     assert!(matches!(label(&run.item(1)), "proved" | "refuted"));
@@ -239,11 +242,11 @@ fn release_acquire_races_and_selections() {
     let run = analyze(&litmus_request(
         &ws,
         &body,
-        json!({"memory": [{"parallel": "Nowhere", "model": "tso"}],
+        json!({"subject": subject, "memory": [{"parallel": "Nowhere", "model": "tso"}],
             "items": [{"claim": "NoBothZero"}]}),
     ));
     assert_eq!(run.exit, 20);
-    assert_eq!(run.document()["diagnostics"][0]["code"], "invalid-request");
+    assert_eq!(run.document()["diagnostics"][0]["code"], "invalid_runtime_input");
 }
 
 /// FR-631-AC-2, AC-3: copy-swap reduction and the witness-set budget.
@@ -329,7 +332,6 @@ fn digital_clocks_agree_and_the_clock_budget_stops() {
 /// FR-633-AC-3: EDF proves `Ctl` in closed form.
 #[trace("TC-1593", "FR-633-AC-3")]
 #[test]
-#[ignore = "QSL-2131: schedulability items are not reachable through fsl analyze yet"]
 fn edf_proves_ctl() {
     let ws = Workspace::new("cov-edf");
     let run = analyze(&crate::analyze_family_cli::ctl_request(

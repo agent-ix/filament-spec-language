@@ -344,6 +344,30 @@ pub(super) fn replay_over(
     payload: &TemporalCounterexample,
     letters: &dyn fsl_eval::model_subject::ModelLetters,
 ) -> Result<ModelTraceReplayResult, ReplayRefusal> {
+    let (wire, envelope) = replay_wire(inputs, shape, payload)?;
+    replay_model_trace(
+        wire,
+        &ModelTraceSubject {
+            timed: inputs.timed.clone(),
+            initial: inputs.binding.initial.clone(),
+            universes: inputs.binding.universes.clone(),
+            expansion: ExpansionLimits {
+                max_candidates: inputs.max_candidates,
+            },
+        },
+        &envelope,
+        letters,
+        ReplayLimits::default(),
+    )
+}
+
+/// FR-128's replay request and witness envelope for `payload`, the
+/// counterexample of the item `shape` names.
+pub(super) fn replay_wire<T: Clone>(
+    inputs: &ReplayInputs<'_, '_>,
+    shape: ReplayShape,
+    payload: &TemporalCounterexample<T>,
+) -> Result<(ReplayRequestWire, WitnessEnvelope<TemporalCounterexample<T>>), ReplayRefusal> {
     let fault = |cause: &'static str| ReplayRefusal::Fault(InternalFault::new("analyze", cause));
     let ReplayShape {
         target,
@@ -401,20 +425,7 @@ pub(super) fn replay_over(
         ReplayLimits::default(),
     )
     .map_err(|_| fault("envelope"))?;
-    replay_model_trace(
-        wire,
-        &ModelTraceSubject {
-            timed: inputs.timed.clone(),
-            initial: inputs.binding.initial.clone(),
-            universes: inputs.binding.universes.clone(),
-            expansion: ExpansionLimits {
-                max_candidates: inputs.max_candidates,
-            },
-        },
-        &envelope,
-        letters,
-        ReplayLimits::default(),
-    )
+    Ok((wire, envelope))
 }
 
 /// The `state_clause` target of a temporal clause: its declared name.

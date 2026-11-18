@@ -453,7 +453,6 @@ fn ctl_body(c: u32, claims: &str) -> String {
 #[trace("TC-1593", "FR-633-AC-1")]
 #[trace("TC-1593", "FR-633-AC-2")]
 #[test]
-#[ignore = "QSL-2131: schedulability items are not reachable through fsl analyze yet"]
 fn schedulability_proves_on_en7_and_a_tight_response_refutes() {
     let claims = "schedulable CtlFp on Ctl under fixed_priority;\n\
                   response Twelve on Ctl.c <= 12 ms under fixed_priority;\n\
@@ -478,10 +477,11 @@ fn schedulability_proves_on_en7_and_a_tight_response_refutes() {
     assert_eq!(proved["record"]["basis"]["analysis"], "fixed-priority");
     assert_eq!(proved["record"]["backend"], "en-7");
     assert!(proved.get("axes").is_none());
-    let miss = &run.item(2)["counterexample"];
-    assert_eq!(miss["task"], "c");
-    assert_eq!(miss["response"], "12");
-    assert_eq!(miss["deadline"], "11");
+    let miss = &run.item(2)["counterexample"]["counterexample"];
+    assert_eq!(miss["type"], "schedulability-miss", "{miss}");
+    assert_eq!(miss["miss"]["task"], "c", "{miss}");
+    assert_eq!(miss["miss"]["response"]["numerator"], "12", "{miss}");
+    assert_eq!(miss["miss"]["bound"]["numerator"], "11", "{miss}");
 }
 
 /// FR-635-AC-1, AC-2: an item naming a process provider handed to

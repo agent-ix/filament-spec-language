@@ -38,6 +38,7 @@ pub mod document;
 mod exact;
 mod invariant_item;
 mod items;
+mod protocol_item;
 mod reduction_item;
 mod refinement_item;
 mod request;
@@ -599,6 +600,9 @@ pub enum Counterexample {
     StateGraph(Box<GraphReport>),
     /// A global-conformance recording prefix, already replayed in process.
     GlobalConformance(Box<serde_json::Value>),
+    /// An EN-7 closed-form miss in FSpec FR-419's `schedulability-miss`
+    /// spelling, typed and not replayed.
+    ScheduleMiss(Box<serde_json::Value>),
 }
 
 /// What a state-graph engine run reports for one item (FR-628): the record of
@@ -815,7 +819,10 @@ fn item_stage(
         .iter()
         .find(|found| found.request_index == record.request_index())
     {
-        return if matches!(found.counterexample, Counterexample::StateGraph(_)) {
+        return if matches!(
+            found.counterexample,
+            Counterexample::StateGraph(_) | Counterexample::ScheduleMiss(_)
+        ) {
             OutcomeStage::S7
         } else {
             OutcomeStage::S8
@@ -1448,6 +1455,10 @@ pub struct AnalyzeRecord {
     /// EN-7's closed-form outcome with its evidence (FR-247): the miss of a
     /// `refuted` item, the fixpoints or demand points of a `proved` one.
     pub closed_form: Option<Box<fsl_replay::ClosedFormOutcome>>,
+    /// FSpec FR-419's `schedulability-miss` counterexample of a refuted
+    /// EN-7 item (FSL FR-621): recomputed by the closed-form check, so it has
+    /// no replay.
+    pub schedule_miss: Option<Box<serde_json::Value>>,
     /// The number of steps of a supplied trace a `finite-replay` item
     /// replayed to its proof (FR-941).
     pub replayed_steps: Option<u64>,
@@ -1484,6 +1495,7 @@ impl AnalyzeRecord {
             protocol_conformance: None,
             protocol_conformance_counterexample: None,
             closed_form: None,
+            schedule_miss: None,
             state_graph: None,
         }
     }
@@ -1539,6 +1551,9 @@ impl AnalyzeRecord {
         if let Some(found) = &self.contract_check {
             return Some(found.wire.clone());
         }
+        if let Some(found) = &self.schedule_miss {
+            return Some(Ok((**found).clone()));
+        }
         self.probabilistic_counterexample
             .as_ref()
             .map(|found| found.wire.clone())
@@ -1583,6 +1598,9 @@ impl AnalyzeRecord {
         }
         if let Some(found) = self.contract_check.take() {
             return Some(Counterexample::Contract(found.found));
+        }
+        if let Some(found) = self.schedule_miss.take() {
+            return Some(Counterexample::ScheduleMiss(found));
         }
         self.probabilistic_counterexample
             .take()
@@ -1697,7 +1715,8 @@ impl Counterexample {
             Self::Probabilistic(_)
             | Self::Contract(_)
             | Self::StateGraph(_)
-            | Self::GlobalConformance(_) => None,
+            | Self::GlobalConformance(_)
+            | Self::ScheduleMiss(_) => None,
         }
     }
 }
@@ -2137,7 +2156,11 @@ fn settle(
             settled
         }
         EngineReport::ClosedForm(report) => {
-            let schedule_item::ClosedFormReport { value, outcome } = *report;
+            let schedule_item::ClosedFormReport {
+                value,
+                outcome,
+                miss,
+            } = *report;
             // A refuted value without its miss evidence is an engine fault,
             // never a verdict.
             let settlement = terminal(
@@ -2146,6 +2169,7 @@ fn settle(
             );
             AnalyzeRecord {
                 closed_form: Some(Box::new(outcome)),
+                schedule_miss: miss.map(Box::new),
                 ..AnalyzeRecord::of(index, settlement)
             }
         }

@@ -47,6 +47,9 @@ pub struct AnalyzeInput {
     pub documents: DocumentProvision,
     /// The request's default model subject.
     pub subject: SubjectSelection,
+    /// The request's `memory` member (FSL FR-1033, FR-219), also carried by
+    /// [`Self::subject`].
+    pub memory: Vec<fsl_eval::simulation::protocol::MemorySelection>,
     /// The caller's items; `None` for FR-620's default items.
     pub items: Option<Vec<ItemSelection>>,
     /// The limits every item of the run shares.
@@ -162,12 +165,7 @@ fn read<'d>(
     let Some(program) = &request.program else {
         return Err(invalid("program", "a program or package is required"));
     };
-    if !request.memory.is_empty() {
-        return Err(invalid(
-            "memory",
-            "weak-memory selections are not read by this build",
-        ));
-    }
+    let memory = read_memory(&request.memory)?;
     let mut intake = intake_with_bytes(
         directory,
         FileCounts {
@@ -311,15 +309,20 @@ fn read<'d>(
     // FR-620: an explicit `subject.universes` refuses an unprovisioned or
     // incomplete reference; the default subject's universes are the complete
     // populations its snapshots declare, so it refuses neither.
-    let subject = match request.subject {
+    let default_subject = SubjectSelection::default_over(&documents);
+    let mut subject = match request.subject {
+        // A subject that states only its `protocol` keeps the default model
+        // parts (FSL FR-1033).
         Some(subject) => {
+            let subject = subject.completed_by(&default_subject);
             subject
                 .check_universes(&documents)
                 .map_err(RunCause::AnalyzeUniverse)?;
             subject
         }
-        None => SubjectSelection::default_over(&documents),
+        None => default_subject,
     };
+    subject.memory.clone_from(&memory);
     let compile = wire::CompileRequest {
         models: request.models,
         program: wire::CompileProgram {
@@ -339,6 +342,7 @@ fn read<'d>(
             compile,
             documents,
             subject,
+            memory,
             items: request.items,
             limits,
             deadline_ms: request.deadline_ms,
@@ -472,6 +476,7 @@ fn run_input(
         compile,
         documents,
         subject,
+        memory,
         items,
         limits,
         deadline_ms,
@@ -504,10 +509,20 @@ fn run_input(
                     .register(descriptor.clone())
                     .map_err(|_| RunCause::AnalyzeFault)?;
             }
-            let resolved = resolve_items(package, &subject, items.as_deref(), &registry, &units);
+            check_memory(package, &memory)?;
+            let binding = subject.binding(&packages, &documents);
+            let resolved = resolve_items(
+                package,
+                &subject,
+                items.as_deref(),
+                &registry,
+                &units,
+                &binding,
+                &limits,
+            );
             let run = AnalyzeRun {
                 package,
-                binding: subject.binding(&packages, &documents),
+                binding,
                 provision,
                 items: resolved,
                 engines: &engines,
@@ -683,4 +698,102 @@ fn package_refusal(refusal: fsl_package::PackageAdmissionRefusal) -> RunCause {
         pointer,
         message: format!("{label}{named}"),
     }
+}
+
+/// FSL FR-1033 "Reading `memory`": each entry is a closed object with exactly
+/// `parallel` and `model`, the model `sc`, `tso` or `ra`; a malformed one
+/// refuses the whole request naming the member by its pointer.
+fn read_memory(
+    entries: &[serde_json::Value],
+) -> Result<Vec<fsl_eval::simulation::protocol::MemorySelection>> {
+    use fsl_foundation::MemoryModelName;
+
+    entries
+        .iter()
+        .enumerate()
+        .map(|(position, entry)| {
+            let Some(object) = entry.as_object() else {
+                return Err(invalid(
+                    &format!("/memory/{position}"),
+                    "a memory entry is an object",
+                ));
+            };
+            if let Some(member) = object
+                .keys()
+                .find(|member| !matches!(member.as_str(), "parallel" | "model"))
+            {
+                return Err(invalid(
+                    &format!("/memory/{position}/{member}"),
+                    "a memory entry holds only parallel and model",
+                ));
+            }
+            let parallel = object
+                .get("parallel")
+                .and_then(serde_json::Value::as_str)
+                .ok_or_else(|| {
+                    invalid(
+                        &format!("/memory/{position}/parallel"),
+                        "a memory entry names its parallel as a string",
+                    )
+                })?;
+            let model = match object.get("model").and_then(serde_json::Value::as_str) {
+                Some("sc") => MemoryModelName::Sc,
+                Some("tso") => MemoryModelName::Tso,
+                Some("ra") => MemoryModelName::Ra,
+                _ => {
+                    return Err(invalid(
+                        &format!("/memory/{position}/model"),
+                        "a memory model is sc, tso or ra",
+                    ))
+                }
+            };
+            Ok(fsl_eval::simulation::protocol::MemorySelection {
+                parallel: parallel.to_owned(),
+                model,
+            })
+        })
+        .collect()
+}
+
+/// FSL FR-1033 "Reading `memory`": an entry naming no outermost `parallel`
+/// of a protocol of the package (a nested `parallel`, an attempt, a protocol
+/// the package does not declare), and two entries naming one `parallel`,
+/// refuse the request before any item runs.
+fn check_memory(
+    package: &fsl_package::CheckedPackage,
+    memory: &[fsl_eval::simulation::protocol::MemorySelection],
+) -> Result<()> {
+    let refused = |member: String, reason: String| RunCause::AnalyzeMemory { member, reason };
+    let mut protocols: Vec<&str> = Vec::new();
+    for (position, entry) in memory.iter().enumerate() {
+        let protocol = entry.parallel.split("::").next().unwrap_or_default();
+        if package.graph().protocol(protocol).is_none() {
+            return Err(refused(
+                format!("/memory/{position}/parallel"),
+                format!("{} names no protocol of the package", entry.parallel),
+            ));
+        }
+        if !protocols.contains(&protocol) {
+            protocols.push(protocol);
+        }
+    }
+    for protocol in protocols {
+        let Some(checked) = package.graph().protocol(protocol) else {
+            continue;
+        };
+        let entries: Vec<_> = memory
+            .iter()
+            .filter(|entry| entry.parallel.split("::").next() == Some(protocol))
+            .cloned()
+            .collect();
+        if let Err(refusal) = fsl_eval::simulation::protocol::ResolvedMemory::resolve(checked, &entries)
+        {
+            let member = memory
+                .iter()
+                .position(|entry| entries.first().is_some_and(|first| first == entry))
+                .map_or_else(|| "/memory".to_owned(), |position| format!("/memory/{position}"));
+            return Err(refused(member, refusal.to_string()));
+        }
+    }
+    Ok(())
 }

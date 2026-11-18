@@ -425,7 +425,6 @@ fn without_en7_a_schedulability_claim_has_no_engine() {
 /// task-set claim, so FR-075's request builder routes each to EN-7.
 #[test]
 #[trace("TC-2961", "FR-246-AC-4")]
-#[ignore = "QSL-2131: the checked graph writes no requirement record for a task-set claim yet"]
 fn task_set_claims_have_requirement_records_that_route_to_en_7() {
     let world = World::new();
     let records = world.package.graph().requirements();
@@ -473,7 +472,6 @@ fn rational(numerator: i64, denominator: i64) -> serde_json::Value {
 #[test]
 #[trace("TC-2960", "FR-621-AC-13")]
 #[trace("FSpec-TC-2006", "FSpec-FR-419-AC-13")]
-#[ignore = "QSL-2131: a refuted EN-7 item fails the document with MissingCounterexample today"]
 fn a_refuted_schedulability_item_carries_its_miss_as_its_counterexample() {
     use serde_json::json;
     let ws = crate::analyze_cli_support::Workspace::new("schedulability-miss");

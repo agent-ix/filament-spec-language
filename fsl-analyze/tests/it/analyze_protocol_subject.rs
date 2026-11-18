@@ -24,7 +24,6 @@ fn sb_subject() -> Value {
 #[trace("TC-2959", "FR-1033-AC-1")]
 #[trace("FSpec-TC-2005", "FSpec-FR-520-AC-6")]
 #[test]
-#[ignore = "QSL-2126: subject.protocol and the memory member are not read by fsl analyze yet"]
 fn a_protocol_subject_is_decided_under_the_selected_memory_model() {
     let body = sb_unit(&sb_run("", "release", "acquire"));
     let ws = Workspace::new("protocol-subject-sc");
@@ -57,7 +56,6 @@ fn a_protocol_subject_is_decided_under_the_selected_memory_model() {
 /// writes is refuted naming both; naming another protocol is unknown-claim.
 #[trace("TC-2959", "FR-1033-AC-2")]
 #[test]
-#[ignore = "QSL-2126: race-freedom items are not reachable through fsl analyze yet"]
 fn a_race_freedom_item_over_a_parallel_is_refuted() {
     let body = sb_unit(&sb_run("memory tso", "", "acquire"));
     let ws = Workspace::new("protocol-race");
@@ -84,7 +82,6 @@ fn a_race_freedom_item_over_a_parallel_is_refuted() {
 /// outermost `parallel` refuse the whole request.
 #[trace("TC-2959", "FR-1033-AC-4")]
 #[test]
-#[ignore = "QSL-2126: the memory member is refused as unread by fsl analyze today"]
 fn bad_memory_selections_refuse_the_request() {
     let body = sb_unit(&sb_run("", "release", "acquire"));
     for (n, memory) in [
@@ -120,7 +117,6 @@ fn bad_memory_selections_refuse_the_request() {
 /// declines the item; an unknown binding member refuses the request.
 #[trace("TC-2959", "FR-1033-AC-5")]
 #[test]
-#[ignore = "QSL-2126: subject.protocol is not read by fsl analyze yet"]
 fn bad_protocol_bindings_decline_or_refuse() {
     let body = sb_unit(&sb_run("", "release", "acquire"));
     let ws = Workspace::new("protocol-binding-missing");
@@ -147,7 +143,6 @@ fn bad_protocol_bindings_decline_or_refuse() {
 #[trace("TC-2959", "FR-1033-AC-6")]
 #[trace("TC-670", "FR-225-AC-4")]
 #[test]
-#[ignore = "QSL-2126: constrained weak-memory items are not reachable through fsl analyze yet"]
 fn a_constrained_store_buffer_run_settles_constraint_reached() {
     use crate::litmus::attempt;
     let run = format!(
