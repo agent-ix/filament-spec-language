@@ -388,6 +388,13 @@ impl<'a> ReplaySubject<'a, '_> {
 
     /// The subject with `over` bound to `instance`.
     pub(crate) fn subject(&self, over: ModelInstance) -> Result<ProtocolSubject<'a>, ReplayFault> {
+        // FSpec FR-785: an analyze request's subject carries no capacity
+        // binding, so a symbolic capacity is an unbounded root of every
+        // subject built here.
+        let capacities = Capacities::admit(self.protocol, &[]).map_err(|_| ReplayFault::Broken)?;
+        if !capacities.unbound().is_empty() {
+            return Err(ReplayFault::UnboundCapacity);
+        }
         let memory =
             ResolvedMemory::resolve(self.protocol, &[]).map_err(|_| ReplayFault::Broken)?;
         Ok(ProtocolSubject {
@@ -398,8 +405,7 @@ impl<'a> ReplaySubject<'a, '_> {
             protocol: self.protocol.name.clone(),
             over,
             roles: self.roles(),
-            // An analyze request's subject states no capacity binding;
-            // `replay` returns requires-bound for a symbolic capacity first.
+            // No capacity binding: a symbolic capacity returned above.
             capacities: Vec::new(),
             memory,
         })
@@ -458,12 +464,6 @@ impl<'a> ReplaySubject<'a, '_> {
     /// bound to. The trace replays when any binding replays it; otherwise
     /// the verdict is the stale step that came furthest.
     pub(crate) fn replay(&self, trace: &SuppliedTrace) -> Result<ReplayVerdict, ReplayFault> {
-        // FSpec FR-785: an analyze request's subject carries no capacity
-        // binding, so a symbolic capacity is an unbounded root here.
-        let capacities = Capacities::admit(self.protocol, &[]).map_err(|_| ReplayFault::Broken)?;
-        if !capacities.unbound().is_empty() {
-            return Err(ReplayFault::UnboundCapacity);
-        }
         let mut furthest: Option<ReplayVerdict> = None;
         for instance in self.instances()? {
             match self.replay_over(instance, trace)? {

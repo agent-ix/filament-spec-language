@@ -321,7 +321,7 @@ pub use refinement::{
     ProtocolStep, ProtocolStepView, ProtocolSteps, ProtocolTrace, RefinementFailure,
     RefinementOutcome, RefinementPosition, RefinementSystems, RefinementWitness,
     RefinementWitnessError, RequiredTemporalFairness, SafetyOutcome, SafetyUndecided, StateIndex,
-    StepArgument, StepRejection, StepResult, StepVerdict, StepViewRefusal, SubjectRefusal, Taken,
+    StepArgument, StepRejection, StepResult, StepVerdict, StepViewRefusal, SubjectRefusal, Taken, ProtocolSystemsRefusal,
     TerminalSuccessDirection, Undetermined, UnsteppedConstruct,
 };
 // The equality operator a composite parity claim names (FR-358).

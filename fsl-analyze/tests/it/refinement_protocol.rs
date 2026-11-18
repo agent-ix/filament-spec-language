@@ -2245,11 +2245,11 @@ fn the_certificate_checker_refuses_a_refinement_over_a_protocol() {
 /// each before any state is explored.
 #[trace("FSpec-TC-1911")]
 #[test]
-#[ignore = "main-side: every refinement_protocol fixture refuses AttemptBinderType at S3 (a binder over the void Spec::Counter::inc)"]
+#[ignore = "Remaining work: un-ignore with the refinement_cas fixture fix; every refinement_protocol fixture refuses AttemptBinderType at S3 (a binder over the void Spec::Counter::inc)"]
 fn an_abstract_protocol_side_takes_its_capacity_binding_from_the_request() {
     use fsl_eval::model_subject::CapacityBinding;
     use fsl_eval::simulation::protocol::{CapacityRefusal, ProtocolRefusal, UnboundCapacity};
-    use fsl_replay::SubjectRefusal;
+    use fsl_replay::ProtocolSystemsRefusal;
 
     let source = cas_twice(false, false).replace(
         "role w on Spec::Counter; scheduling adversarial;",
@@ -2291,14 +2291,14 @@ fn an_abstract_protocol_side_takes_its_capacity_binding_from_the_request() {
         .is_some());
     assert!(matches!(
         open(&[]),
-        Err(SubjectRefusal::UnboundCapacity(names)) if names == [UnboundCapacity {
+        Err(ProtocolSystemsRefusal::UnboundCapacity(names)) if names == [UnboundCapacity {
             name: "K".to_owned(),
             channels: vec!["Twice::q".to_owned()],
         }]
     ));
     assert!(matches!(
         open(&binding(&[("Other", 1)])),
-        Err(SubjectRefusal::Capacity(CapacityRefusal::UnknownName { name })) if name == "Other"
+        Err(ProtocolSystemsRefusal::Capacity(CapacityRefusal::UnknownName { name })) if name == "Other"
     ));
 
     let check = |capacities: Vec<CapacityBinding>| {

@@ -39,12 +39,26 @@ pub enum SubjectRefusal {
     /// The abstract subject is a protocol clause, whose steps FR-148 decides
     /// and no model system does.
     ProtocolAbstractSide,
-    /// The request's capacity binding of the abstract protocol is refused
-    /// (FSpec FR-785 "Admission").
+}
+
+/// Why [`open_protocol_systems`] built no systems: a subject refusal, or a
+/// refusal of the request's capacity binding of the abstract protocol
+/// (FSpec FR-785 "Admission").
+#[derive(Debug)]
+pub enum ProtocolSystemsRefusal {
+    /// The subjects do not open, as for [`open_systems`].
+    Subject(SubjectRefusal),
+    /// The capacity binding is refused.
     Capacity(CapacityRefusal),
-    /// The request's capacity binding leaves these capacity names of the
-    /// abstract protocol unbound: requires-bound (FSpec FR-785).
+    /// The capacity binding leaves these capacity names unbound:
+    /// requires-bound.
     UnboundCapacity(Vec<UnboundCapacity>),
+}
+
+impl From<SubjectRefusal> for ProtocolSystemsRefusal {
+    fn from(refusal: SubjectRefusal) -> Self {
+        Self::Subject(refusal)
+    }
 }
 
 /// The concrete and abstract systems of `refinement`.
@@ -92,9 +106,10 @@ pub fn open_systems<'a>(
 ///
 /// # Errors
 ///
-/// [`SubjectRefusal`] as [`open_systems`]; [`SubjectRefusal::Capacity`] for
-/// a refused capacity binding, and [`SubjectRefusal::UnboundCapacity`] for a
-/// capacity name it leaves unbound, before the protocol system is built.
+/// [`ProtocolSystemsRefusal::Subject`] as [`open_systems`];
+/// [`ProtocolSystemsRefusal::Capacity`] for a refused capacity binding, and
+/// [`ProtocolSystemsRefusal::UnboundCapacity`] for a capacity name it leaves
+/// unbound, before the protocol system is built.
 pub fn open_protocol_systems<'a>(
     refinement: &CheckedRefinement,
     concrete: &ModelSimulationRequest<'a>,
@@ -102,7 +117,7 @@ pub fn open_protocol_systems<'a>(
     abstract_initial: Vec<DocumentRef>,
     over: ModelInstance,
     capacities: &[CapacityBinding],
-) -> Result<RefinementSystems<'a>, SubjectRefusal> {
+) -> Result<RefinementSystems<'a>, ProtocolSystemsRefusal> {
     let mut systems = open_systems_inner(
         refinement,
         concrete,
@@ -111,7 +126,7 @@ pub fn open_protocol_systems<'a>(
         true,
     )?;
     let AbstractSide::Protocol { clause, .. } = refinement.abstract_side() else {
-        return Err(SubjectRefusal::ProtocolAbstractSide);
+        return Err(SubjectRefusal::ProtocolAbstractSide.into());
     };
     let protocol = abstract_package
         .graph()
@@ -136,9 +151,12 @@ pub fn open_protocol_systems<'a>(
                 .ok_or(SubjectRefusal::ProtocolAbstractSide)
         })
         .collect::<Result<Vec<_>, _>>()?;
-    let admitted = Capacities::admit(protocol, capacities).map_err(SubjectRefusal::Capacity)?;
+    let admitted =
+        Capacities::admit(protocol, capacities).map_err(ProtocolSystemsRefusal::Capacity)?;
     if !admitted.unbound().is_empty() {
-        return Err(SubjectRefusal::UnboundCapacity(admitted.unbound().to_vec()));
+        return Err(ProtocolSystemsRefusal::UnboundCapacity(
+            admitted.unbound().to_vec(),
+        ));
     }
     let memory =
         ResolvedMemory::resolve(protocol, &[]).map_err(|_| SubjectRefusal::ProtocolAbstractSide)?;

@@ -97,7 +97,7 @@ has already seen instead of a new one.
   and a repeated name `duplicate-member`, before the requires-bound
   pre-check; a name with no entry is an unbounded root, reported
   requires-bound naming it and each of its channels. A system built without
-  that pre-check, such as a replay, refuses an unbound name
+  that pre-check, such as a counterexample replay (FSpec FR-433), refuses an unbound name
   `invalid_runtime_input`/`missing-member`.
 - A refinement whose abstract side is a protocol takes the binding from the
   request's abstract protocol binding, with its `over` object: a defect

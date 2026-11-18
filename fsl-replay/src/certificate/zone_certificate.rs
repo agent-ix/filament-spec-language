@@ -735,9 +735,7 @@ fn subject_refusal<O>(refusal: SubjectRefusal) -> ZoneCertificateRefusal<O> {
         SubjectRefusal::NoUniverse => ZoneCertificateRefusal::Unbounded,
         SubjectRefusal::NoModels
         | SubjectRefusal::ProtocolSubject
-        | SubjectRefusal::ProtocolAbstractSide
-        | SubjectRefusal::Capacity(_)
-        | SubjectRefusal::UnboundCapacity(_) => ZoneCertificateRefusal::UnsupportedItem,
+        | SubjectRefusal::ProtocolAbstractSide => ZoneCertificateRefusal::UnsupportedItem,
     }
 }
 

@@ -925,13 +925,8 @@ fn timed_refinement_refusal(refusal: &TimedRefinementRefusal) -> Refusal {
         TimedRefinementRefusal::Zone(zone) => zone_refusal(zone),
         TimedRefinementRefusal::Subject(SubjectRefusal::Admission(failure)) => admission(failure),
         // The subjects EN-6 does not refine yet.
-        // `open_systems` returns no capacity refusal: only an abstract
-        // protocol side has a capacity binding.
         TimedRefinementRefusal::Subject(
-            SubjectRefusal::ProtocolSubject
-            | SubjectRefusal::ProtocolAbstractSide
-            | SubjectRefusal::Capacity(_)
-            | SubjectRefusal::UnboundCapacity(_),
+            SubjectRefusal::ProtocolSubject | SubjectRefusal::ProtocolAbstractSide,
         ) => Refusal::Unsupported(NOT_YET),
         // A request defect: a refinement with no model, a universe the
         // request does not give, or a concrete subject that is not timed.

@@ -66,10 +66,7 @@ fn a_symbolic_capacity_settles_from_the_capacities_binding() {
     let unbound = run("capacity-unbound", &symbolic, json!({}));
     assert_eq!(label(&unbound), "inconclusive", "{unbound}");
     let text = unbound.to_string();
-    assert!(
-        text.contains("premise-not-stated"),
-        "{text}"
-    );
+    assert!(text.contains("premise-not-stated"), "{text}");
     assert!(!text.contains("requires-bound"), "{text}");
     let bound = run(
         "capacity-bound",

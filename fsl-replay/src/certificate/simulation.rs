@@ -429,11 +429,7 @@ pub fn check_simulation_certificate(
         SubjectRefusal::NoModels | SubjectRefusal::NoUniverse => {
             Checker::Simulation.fault("the-subjects-of-a-refinement-open")
         }
-        // `open_systems` returns no capacity refusal: only an abstract
-        // protocol side has a capacity binding.
-        SubjectRefusal::ProtocolAbstractSide
-        | SubjectRefusal::Capacity(_)
-        | SubjectRefusal::UnboundCapacity(_) => ClosureRefusal::ProtocolAbstractSide,
+        SubjectRefusal::ProtocolAbstractSide => ClosureRefusal::ProtocolAbstractSide,
     })?;
     for system in [&concrete, &abstract_system] {
         check_model_bounds(system, BOUND_POSITIONS)

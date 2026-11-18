@@ -1553,27 +1553,35 @@ fn a_symbolic_capacity_is_decided_at_its_bound_value_under_bounded() {
             value: Some(1)
         }
     );
+    assert_eq!(
+        premise(&at_two),
+        CapacityPremise::Symbolic {
+            name: "Bound".to_owned(),
+            value: Some(2)
+        }
+    );
     assert_ne!(at_one.key, at_two.key);
     for outcome in [&at_one, &at_two] {
         assert!(
-            !matches!(
+            matches!(
                 outcome.outcome,
-                AnalysisOutcome::Unsupported(_) | AnalysisOutcome::Inconclusive(_)
+                AnalysisOutcome::Proved(_) | AnalysisOutcome::Refuted(_)
             ),
             "decided: {:?}",
             outcome.outcome
         );
     }
     let literal = decided(&fixture("1"), &[]);
-    assert_eq!(
-        std::mem::discriminant(&at_one.outcome),
-        std::mem::discriminant(&literal.outcome),
-        "{:?} {:?}",
-        at_one.outcome,
-        literal.outcome
-    );
+    assert_eq!(at_one.outcome, literal.outcome);
 
     let unbound = decided(&symbolic, &[]);
+    assert_eq!(
+        premise(&unbound),
+        CapacityPremise::Symbolic {
+            name: "Bound".to_owned(),
+            value: None
+        }
+    );
     assert_eq!(
         inconclusive(unbound),
         InconclusiveCause::PremiseNotStated {
