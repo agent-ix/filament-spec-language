@@ -394,3 +394,69 @@ fn a_package_selection_names_a_directory_not_a_file() {
     assert!(diagnostic.to_string().contains("file"), "{diagnostic}");
     assert_eq!(run.exit, 20);
 }
+
+fn reach_three() -> &'static str {
+    "possible ReachThree using v over (c: M::Counter) { c.value = 3 }\n"
+}
+
+/// FR-850-AC-7 and FR-940-AC-7: the package names its invariant and
+/// state-graph claims in FSpec FR-322's `claim_names`, the package route
+/// resolves them through it with the source route's records, an absent name
+/// is `unknown-claim`, and an uncovered or duplicate name table refuses the
+/// request before any engine runs.
+#[trace("TC-2967", "FSpec-TC-2011", "FR-850-AC-7", "FR-940-AC-7", "FSpec-FR-322-AC-457")]
+#[test]
+#[ignore = "QSL-2402: the checked package's claim_names table and package-route claim resolution through it not implemented yet"]
+fn package_claims_resolve_through_the_claim_name_table() {
+    let body = format!("{}{}{}", bounded(), not_above_three(), reach_three());
+    let items = json!([{"claim": "NotAboveThree"}, {"claim": "ReachThree"}, {"claim": "Missing"}]);
+    let ws = Workspace::new("package-claim-names");
+    let source = analyze(&counter_request(&ws, &body, items.clone()));
+    let members = handoff_request(&ws, &body, items);
+    let directory = ws
+        .write("analyze-probe.json", b"{}")
+        .parent()
+        .expect("the workspace")
+        .join("handoff");
+    let package_path = directory.join("checked-package.json");
+    let package: Value =
+        serde_json::from_slice(&std::fs::read(&package_path).expect("package")).expect("JSON");
+    let rows = package["claim_names"].as_array().expect("claim_names rows");
+    let names: Vec<&Value> = rows.iter().map(|row| &row["qualified_name"]).collect();
+    assert!(names.contains(&&json!(["NotAboveThree"])), "{rows:?}");
+    assert!(names.contains(&&json!(["ReachThree"])), "{rows:?}");
+
+    let run = analyze_members(&ws, "analyze-claim-names.json", &members);
+    for index in 0..2 {
+        assert_eq!(run.item(index)["record"], source.item(index)["record"], "{index}");
+    }
+    assert_eq!(
+        run.item(2)["record"]["diagnostic"]["cause"], "unknown-claim",
+        "{}",
+        run.item(2)
+    );
+
+    let reach = rows
+        .iter()
+        .find(|row| row["qualified_name"] == json!(["ReachThree"]))
+        .expect("the ReachThree row")
+        .clone();
+    let mut uncovered = package.clone();
+    uncovered["claim_names"] = json!([reach.clone()]);
+    std::fs::write(&package_path, uncovered.to_string()).expect("write");
+    let run = analyze_members(&ws, "analyze-uncovered.json", &members);
+    let diagnostic = first_diagnostic(&run);
+    assert_eq!(diagnostic["code"], "invalid_package", "{diagnostic}");
+    assert_eq!(run.document()["items"], json!([]));
+
+    let mut duplicate = package;
+    for row in duplicate["claim_names"].as_array_mut().expect("rows") {
+        row["qualified_name"] = json!(["ReachThree"]);
+        row["name"] = json!("ReachThree");
+    }
+    std::fs::write(&package_path, duplicate.to_string()).expect("write");
+    let run = analyze_members(&ws, "analyze-duplicate.json", &members);
+    let diagnostic = first_diagnostic(&run);
+    assert_eq!(diagnostic["code"], "ambiguous_declaration", "{diagnostic}");
+    assert_eq!(diagnostic["cause"], "ambiguous-name", "{diagnostic}");
+}

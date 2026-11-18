@@ -937,7 +937,7 @@ fn default_initial_item(claim: &str, max_candidates: Option<u64>) -> Value {
 /// position 0, never a refusal.
 #[trace("TC-2964", "FR-630-AC-5")]
 #[test]
-#[ignore = "QSL-2127: default abstract initial states (admissible completions under one max_candidates total, InitialNotAbstract on an empty set) not implemented yet"]
+#[ignore = "QSL-2127: the analyze wire reads no temporal.limits.max_candidates (FR-625), and this branch predates #2875; the one-total initial candidate cap and InitialNotAbstract are not implemented yet"]
 fn default_abstract_initial_states_are_every_admissible_completion() {
     let hidden = "refinement Hidden using t0 abstract Spec concrete M {\n\
         population Spec::counters from M::counters;\n\

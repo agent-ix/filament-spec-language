@@ -106,6 +106,8 @@ pub trait AnalysisView: sealed::Sealed {
     fn identity(&self) -> &LibraryName;
     fn model_selections(&self) -> Vec<DomainPackageRef>;
     fn dependencies(&self) -> DependencyClosure<'_>;
+    fn claim_name(&self, name: &str) -> Option<ClaimOccurrence>;
+    fn claim_names(&self) -> ClaimNameRows<'_>;
     // ... one accessor per fact row of FR-531 "What the entry derives from
     // the bytes", each reading `package()`.
 }
@@ -156,6 +158,24 @@ and `FR-621`'s outcome document is unchanged.
   (FR-850 "Equality with the source route"). No package-route item SHALL
   settle `unsupported` for a fact or an evaluator the source route reads.
 
+### Claim names
+
+- The package's claim-name source SHALL be its name tables: FSpec FR-322's
+  `temporal_clause_names` for temporal clauses and `claim_names` for state
+  clauses, refinements and every non-temporal claim. `AnalysisView` SHALL
+  expose `claim_name(name) -> Option<ClaimOccurrence>`, which resolves a bare
+  or qualified claim name to the (`declaration`, `occurrence`) of exactly one
+  row of those tables, and `claim_names()`, the admitted rows in package
+  order; the claim-name lookup, the default-item rule and counterexample
+  replay of both routes read claim names through these accessors only.
+- On the source route the `AdmittedPackageRead` SHALL read the same tables
+  from its own S4 emission, so both routes resolve a name to the same
+  occurrence. A claim that the source declares and the tables do not name is
+  a package-writer defect the strict reader refuses (FSpec FR-322-AC-458),
+  never a claim the package route silently lacks.
+- No implementation SHALL derive a claim name from a node body, a source
+  region, a `NodeRef` path or source text.
+
 ## Acceptance Criteria
 
 | ID | Criteria | Verification |
@@ -166,6 +186,7 @@ and `FR-621`'s outcome document is unchanged.
 | FR-940-AC-4 | Over source, the Counter request with the items `Bounded`, `AtMostTwo` and the `invariant` state clause `NotAboveThree` (`self.value <= 3`, FR-625-AC-4) settles `proved`, `refuted` with `replay.reproduced` `true`, and `proved` basis `exhaustive` respectively, and the store-buffering litmus claim over `SB` with `memory` `tso` settles `refuted` (FR-629-AC-1); no record of either request is `unsupported` and no diagnostic names a package fact. | Test (TC-2958) |
 | FR-940-AC-5 | The `package` request over the handoff directory of AC-4's Counter unit, written by its compile request's `handoff` member, gives, for `NotAboveThree` and `AtMostTwo`, item records equal to the source route's, `AtMostTwo` with the same counterexample, replay target and `reproduced` `true`. | Test (TC-2958) |
 | FR-940-AC-6 | For each item family whose evaluator FR-531's inventory lists as taking a source-checked value (the temporal clauses `Bounded` and `AtMostTwo`, the invariant `NotAboveThree`, the deadlock-freedom item and the `SB` litmus claim under `tso`), a `program` request and a `package` request over the handoff directory of the same compiled unit give equal item records, counterexamples and replays, and no package-route record is `unsupported`; a handoff directory whose `checked-package.json` the strict reader refuses, or that holds no `identities.json`, settles no item and compiles no source (FR-850-AC-3, FR-850-AC-6). | Test (TC-2958) |
+| FR-940-AC-7 | For AC-4's Counter unit, `claim_name("NotAboveThree")`, `claim_name("Bounded")` and `claim_name("AtMostTwo")` return equal occurrences over the `AdmittedPackageRead` and over the `BarePackage` of its handoff directory, the first from a `claim_names` row and the others from `temporal_clause_names` rows; `claim_name("Missing")` returns `None` on both. | Test (TC-2967) |
 
 ## Dependencies
 

@@ -121,13 +121,24 @@ member is the same as the source route gives.
   `identities.json`, exit 20, before any item is resolved. An identity file
   that `ReadIdentityRows::read` refuses SHALL refuse the request
   `invalid_package` with the cause of its `IdentityFileRefusal`, naming
-  `identities.json`: `Malformed` (not JSON, or not the identity file's
-  shape) as `malformed-file`, `Format` (another `format` string) as
-  `unknown-format` naming that string, `Unjoined` as `unjoined-row` naming
-  the first row, and `Native` as `native-witness`, retaining the native code
-  and structural locus. The causes name the file defect itself, so a reader
-  tells a missing witness from a foreign or mis-joined one without reading
-  a message.
+  `identities.json`. The refusal is a closed set of seven variants, and each
+  maps to one cause:
+
+  | `IdentityFileRefusal` | Cause | Retained |
+  | --- | --- | --- |
+  | `Malformed` (not JSON, not the identity file's shape, an unknown or repeated member) | `malformed-file` | the member the parse stopped at |
+  | `Format` (another `format` string) | `unknown-format` | that string |
+  | `Unjoined` (a row the package does not join) | `unjoined-row` | the member and index of the first such row |
+  | `Native` (IR refused the producer rows at its typed structural locus) | `native-witness` | the native code and structural locus |
+  | `SourceObject` (IR refused the source-object rows against the admitted graph) | `native-witness` | IR's source-object error |
+  | `SourceOperation` (IR refused the source-operation rows against the admitted graph) | `native-witness` | IR's source-operation member error |
+  | `Rows` (a producer adapter denial with its original locus) | `native-witness` | the adapter error and its locus |
+
+  The last four each refuse the witness rows the file carries, by Contract IR
+  or by the producer adapter, so they share the one cause and differ in what
+  they retain. The
+  causes name the file defect itself, so a reader tells a missing witness
+  from a foreign, mis-joined or IR-refused one without reading a message.
 - A present `equality.json` that `ReadEqualityRows::read` refuses SHALL
   refuse the request `invalid_package`, cause `refused-file`, naming
   `equality.json` and retaining the `EqualityFileRefusal` variant
@@ -172,12 +183,19 @@ member is the same as the source route gives.
   reads them through their package forms (FR-940), so every engine, the
   default-item rule, the subject binding and the replay of a counterexample
   read one value per fact on both routes.
-- An item's `claim` SHALL resolve by name against the package: a temporal
-  clause through its `temporal_clause_names` row, and any other claim through
-  the `declaration.qualified_name` of its `claim` node (FSpec FR-322). The
-  name lookup gives the occurrence key `ClaimItem::new` takes, as FR-620
-  states; a name no row and no declaration carries settles the item
-  `invalid-request` with `invalid_capability`/`unknown-claim`.
+- An item's `claim` SHALL resolve by name against the package's name tables
+  only: a temporal clause through its `temporal_clause_names` row, and an
+  invariant, precondition or postcondition state clause, a refinement and
+  every non-temporal claim (state-graph, hyperproperty, probabilistic)
+  through its `claim_names` row (FSpec FR-322 "Claim declaration names"), a
+  bare name matching the last `qualified_name` segment of exactly one row and
+  a qualified name the whole path. The row's (`declaration`, `occurrence`)
+  gives the occurrence key `ClaimItem::new` takes, as FR-620 states. A name
+  no row carries settles the item `invalid-request` with
+  `invalid_capability`/`unknown-claim`, as the source route settles it. The
+  graph's state-clause nodes are identified by structure and carry no name,
+  so a name is never read from a node body, a source region or a `NodeRef`
+  path.
 - The default items of a request with no `items` member SHALL be FR-620's
   default items, in the order the package's source map gives each claim's
   declaration span, so the order equals the source route's order.
@@ -207,6 +225,7 @@ The Counter fixture is FR-620's.
 | FR-850-AC-4 | AC-1's package request with `program` also present, with a `libraries` entry, and with `integer_division` `floor` each refuse `invalid-request` at the request stage naming that member, exit 20; with `models` empty it refuses `missing_import`/`missing-selection` naming `test/counter`; with an extra `models` entry the package does not record it refuses `invalid_package`/`conflicting-definition` naming that entry. | Test (TC-2410) |
 | FR-850-AC-5 | AC-1's package request with the item `{"claim": "Missing"}` settles that item `invalid-request` with `invalid_capability`/`unknown-claim` naming `Missing`, as the source route does. | Test (TC-2410) |
 | FR-850-AC-6 | AC-1's handoff directory with `identities.json` removed refuses the whole request at the request stage, `invalid_package`, cause `missing-file`, naming `identities.json`, exit 20, `items` empty and no engine run; with `identities.json` replaced by `{}` it refuses `invalid_package`, `malformed-file`, naming `identities.json`; with its `format` changed it refuses `invalid_package`, `unknown-format`; with `equality.json` removed the request analyzes as AC-1 states; with `equality.json` replaced by `not json` it refuses `invalid_package`, `refused-file`, naming `equality.json`; a `package` `{"directory": "absent"}` refuses `invalid_package`, `missing-file`, naming the path. | Test (TC-2966) |
+| FR-850-AC-7 | Over the handoff directory of FR-940-AC-4's Counter unit, a `package` request with the items `{"claim": "NotAboveThree"}` (an invariant state clause) and `{"claim": "ReachThree"}` (a `possible` state-graph claim) resolves each through its `claim_names` row and settles it with the source route's record; `{"claim": "Missing"}` settles `invalid-request` `unknown-claim`; the same directory whose `checked-package.json` has the `NotAboveThree` row removed refuses `invalid_package`/`invalid-value` at `/claim_names`, and one with two rows of one `qualified_name` refuses `ambiguous_declaration`/`ambiguous-name`, each before any engine runs. | Test (TC-2967) |
 
 ## Dependencies
 
