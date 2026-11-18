@@ -55,9 +55,13 @@ fn validate_activated_population(
             }
         }
         let role_pointer = format!("{group_pointer}/role");
-        let Some(role) = group.get("role").and_then(serde_json::Value::as_str) else {
+        if group
+            .get("role")
+            .and_then(serde_json::Value::as_str)
+            .is_none()
+        {
             return invalid_at(role_pointer, "role must be a string".to_owned());
-        };
+        }
         if let Some(instance) = group.get("instance") {
             if !instance.is_null() && !instance.is_string() {
                 return invalid_at(
