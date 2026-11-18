@@ -519,10 +519,10 @@ fn a_reference_literal_checks_and_stays_pending_in_a_barred_slot() {
             &protocol(literal),
         )
     };
-    assert!(
-        check_protocol("M::Counter#\"a\"").is_ok(),
-        "a well-typed reference literal checks"
-    );
+    match check_protocol("M::Counter#\"a\"") {
+        Ok(_) => {}
+        Err(refusals) => panic!("a well-typed reference literal checks: {refusals:?}"),
+    }
     for (literal, expected, at) in [
         (
             "M::Nothing#\"a\"",
