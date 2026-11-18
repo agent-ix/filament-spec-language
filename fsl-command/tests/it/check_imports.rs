@@ -49,7 +49,7 @@ fn check_outcome_admits_model_and_retains_source() {
 }
 
 #[test]
-#[trace("TC-2457", "FR-866-AC-1")]
+/// Provenance: QSL-2423.
 fn malformed_check_source_refusal_uses_the_supplied_path_identity() {
     let directory = tempfile::tempdir().unwrap();
     let path = directory.path().join("malformed.fsl");
