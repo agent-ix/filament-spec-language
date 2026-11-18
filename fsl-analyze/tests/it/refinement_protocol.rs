@@ -38,8 +38,8 @@ pub(crate) fn cas_twice(peek: bool, lost_update: bool) -> String {
          protocol Twice using p over (c: Spec::Counter) on origin {{\n\
          role w on Spec::Counter; scheduling adversarial;\n\
          run sequence Main {{\n\
-         attempt a1 by w on Spec::Counter::inc contracts [] as (r1: Spec::Counter) {{ true }};\n\
-         attempt a2 by w on Spec::Counter::inc contracts [] as (r2: Spec::Counter) {{ true }};\n\
+         attempt a1 by w on Spec::Counter::inc contracts [] as (r1: Boolean) {{ true }};\n\
+         attempt a2 by w on Spec::Counter::inc contracts [] as (r2: Boolean) {{ true }};\n\
          }}\n\
          finish Done as (d: Boolean) {{ true }};\n\
          }}\n\
@@ -60,7 +60,7 @@ fn cas_once() -> String {
         .replace("abstract Spec::Twice", "abstract Spec::Once")
         .replace("refinement CasTwice", "refinement CasOnce")
         .replace(
-            "attempt a2 by w on Spec::Counter::inc contracts [] as (r2: Spec::Counter) { true };",
+            "attempt a2 by w on Spec::Counter::inc contracts [] as (r2: Boolean) { true };",
             "",
         )
 }
@@ -378,10 +378,10 @@ fn ac8_two_class_source() -> String {
     let source = cas_twice(true, true)
         .replace(
             "run sequence Main {\n\
-         attempt a1 by w on Spec::Counter::inc contracts [] as (r1: Spec::Counter) { true };\n\
-         attempt a2 by w on Spec::Counter::inc contracts [] as (r2: Spec::Counter) { true };\n\
+         attempt a1 by w on Spec::Counter::inc contracts [] as (r1: Boolean) { true };\n\
+         attempt a2 by w on Spec::Counter::inc contracts [] as (r2: Boolean) { true };\n\
          }",
-            "run repeat Loop by w visible () while { true } sequence Main { attempt left by w on Spec::Counter::inc contracts [] as (r: Spec::Counter) { true }; }",
+            "run repeat Loop by w visible () while { true } sequence Main { attempt left by w on Spec::Counter::inc contracts [] as (r: Boolean) { true }; }",
         )
         .replace(
             "role w on Spec::Counter; scheduling adversarial;",
@@ -618,8 +618,8 @@ fn ac9_toggle_source(spec_kind: &str, impl_kind: &str) -> String {
          run repeat Loop by w visible () while {{ true }} sequence Main {{\n\
          event Select by w as (one: Boolean) {{ one = (c.value = 1) }};\n\
          choice Pick by w visible (one) {{\n\
-         case Zero when {{ not one }} sequence AtZero {{ attempt Tick0 by w on Spec::Counter::tick0 contracts [] as (r0: Spec::Counter) {{ true }}; }}\n\
-         case One when {{ one }} sequence AtOne {{ event Choose by w as (take: Boolean) {{ true }}; choice Advance by w visible (take) {{ case Toggle when {{ not take }} sequence Toggle {{ attempt Tick1 by w on Spec::Counter::tick1 contracts [] as (r1: Spec::Counter) {{ true }}; }} case Increment when {{ take }} sequence Increment {{ attempt TryInc by w on Spec::Counter::inc contracts [] as (ri: Spec::Counter) {{ true }}; }} }} }}\n\
+         case Zero when {{ not one }} sequence AtZero {{ attempt Tick0 by w on Spec::Counter::tick0 contracts [] as (r0: Boolean) {{ true }}; }}\n\
+         case One when {{ one }} sequence AtOne {{ event Choose by w as (take: Boolean) {{ true }}; choice Advance by w visible (take) {{ case Toggle when {{ not take }} sequence Toggle {{ attempt Tick1 by w on Spec::Counter::tick1 contracts [] as (r1: Boolean) {{ true }}; }} case Increment when {{ take }} sequence Increment {{ attempt TryInc by w on Spec::Counter::inc contracts [] as (ri: Boolean) {{ true }}; }} }} }}\n\
          }}\n\
          }}\n\
          finish Done as (d: Boolean) {{ true }};\n\
@@ -1086,7 +1086,7 @@ fn an_undetermined_assumption_predicate_has_a_typed_finite_witness() {
     let source = cas_twice(false, false)
         .replace(
             "protocol Twice",
-            "pre UnknownCommit using v on Impl::Counter::commitA { 6 mod (1 - self.value) >= 0 }\nprotocol Twice",
+            "pre UnknownCommit using v on Impl::Counter::commitA { mod_defined(self.value) }\nfunction mod_defined using v(n: Int[0, 2]): Boolean pure { 6 mod (1 - n) >= 0 }\nprotocol Twice",
         )
         .replace(
             "step Impl::Counter::commitB -> Spec::Counter::inc(self);",
@@ -1189,7 +1189,7 @@ fn an_undetermined_protocol_assumption_has_a_typed_finite_witness() {
     let source = cas_twice(false, false)
         .replace(
             "protocol Twice",
-            "pre UnknownProtocol using v on Spec::Counter::inc { 6 mod (1 - self.value) >= 0 }\n\
+            "pre UnknownProtocol using v on Spec::Counter::inc { mod_defined(self.value) }\nfunction mod_defined using v(n: Int[0, 2]): Boolean pure { 6 mod (1 - n) >= 0 }\n\
              temporal Left using inf over (k: Spec::Counter) clock \"model-steps\" on origin { fair weak whole Spec::Counter::inc; eventually holds(k.value >= 0) }\n\
              protocol Twice",
         )
@@ -1434,8 +1434,8 @@ fn a_stuttering_peek_loop_is_protocol_observable_divergence() {
 #[test]
 fn a_terminal_refusal_of_a_protocol_event_replays() {
     let source = cas_twice(false, false).replace(
-        "attempt a2 by w on Spec::Counter::inc contracts [] as (r2: Spec::Counter) { true };",
-        "attempt a2 by w on Spec::Counter::inc contracts [] as (r2: Spec::Counter) { true };\n\
+        "attempt a2 by w on Spec::Counter::inc contracts [] as (r2: Boolean) { true };",
+        "attempt a2 by w on Spec::Counter::inc contracts [] as (r2: Boolean) { true };\n\
          event ack by w as (worked: Boolean) { true };",
     );
     let world = World::with_internals(
@@ -1529,8 +1529,8 @@ fn a_refusal_is_permitted_when_one_stable_protocol_candidate_refuses() {
     let source = cas_twice(false, false)
         .replace(
             "run sequence Main {\n\
-         attempt a1 by w on Spec::Counter::inc contracts [] as (r1: Spec::Counter) { true };\n\
-         attempt a2 by w on Spec::Counter::inc contracts [] as (r2: Spec::Counter) { true };\n\
+         attempt a1 by w on Spec::Counter::inc contracts [] as (r1: Boolean) { true };\n\
+         attempt a2 by w on Spec::Counter::inc contracts [] as (r2: Boolean) { true };\n\
          }\n\
          finish Done as (d: Boolean) { true };",
             "run sequence Main {\n\
@@ -1579,12 +1579,12 @@ fn a_refusal_is_permitted_when_one_stable_protocol_candidate_refuses() {
 fn an_incoming_step_rule_failure_precedes_refusal_at_the_same_state() {
     let source = cas_twice(false, false)
         .replace(
-            "attempt a1 by w on Spec::Counter::inc contracts [] as (r1: Spec::Counter) { true };",
-            "attempt a2 by w on Spec::Counter::inc contracts [] as (r2: Spec::Counter) { true };\n\
+            "attempt a1 by w on Spec::Counter::inc contracts [] as (r1: Boolean) { true };",
+            "attempt a2 by w on Spec::Counter::inc contracts [] as (r2: Boolean) { true };\n\
              event ack by w as (worked: Boolean) { true };",
         )
         .replace(
-            "attempt a2 by w on Spec::Counter::inc contracts [] as (r2: Spec::Counter) { true };",
+            "attempt a2 by w on Spec::Counter::inc contracts [] as (r2: Boolean) { true };",
             "",
         )
         .replace(
@@ -1638,11 +1638,11 @@ fn an_incoming_step_rule_failure_precedes_refusal_at_the_same_state() {
 fn an_intended_protocol_terminal_mismatch_replays() {
     let source = cas_twice(false, true)
         .replace(
-            "attempt a1 by w on Spec::Counter::inc contracts [] as (r1: Spec::Counter) { true };\n",
+            "attempt a1 by w on Spec::Counter::inc contracts [] as (r1: Boolean) { true };\n",
             "",
         )
         .replace(
-            "attempt a2 by w on Spec::Counter::inc contracts [] as (r2: Spec::Counter) { true };\n",
+            "attempt a2 by w on Spec::Counter::inc contracts [] as (r2: Boolean) { true };\n",
             "",
         )
         .replace(
@@ -1743,11 +1743,11 @@ fn an_intended_protocol_terminal_mismatch_replays() {
 fn a_concrete_terminal_success_mismatch_replays() {
     let source = cas_twice(false, true)
         .replace(
-            "attempt a1 by w on Spec::Counter::inc contracts [] as (r1: Spec::Counter) { true };\n",
+            "attempt a1 by w on Spec::Counter::inc contracts [] as (r1: Boolean) { true };\n",
             "",
         )
         .replace(
-            "attempt a2 by w on Spec::Counter::inc contracts [] as (r2: Spec::Counter) { true };\n",
+            "attempt a2 by w on Spec::Counter::inc contracts [] as (r2: Boolean) { true };\n",
             "",
         )
         .replace(
@@ -2068,8 +2068,8 @@ fn an_any_row_can_take_a_visible_protocol_transition() {
 #[trace("TC-553", "FR-148-AC-1")]
 #[test]
 fn a_node_row_matches_the_attempt_identity_and_binder() {
-    let source =
-        cas_twice(false, false).replace("Spec::Counter::inc(self)", "node Spec::Twice::a1(self)");
+    let source = cas_twice(false, false)
+        .replace("Spec::Counter::inc(self)", "node Spec::Twice::a1(self, _)");
     let world = World::with_internals(
         Variant {
             peek: false,

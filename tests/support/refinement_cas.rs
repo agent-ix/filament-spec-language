@@ -299,14 +299,24 @@ impl Variant {
     };
 }
 
+/// `op` returning a `Boolean`, which an `attempt` binder needs (FR-882-AC-4).
+fn boolean_result(mut op: Json) -> Json {
+    op["returns"] = json!({
+        "typeRef": "ix://filament/native/Boolean",
+        "multiplicity": {"lower": 1, "upper": 1, "ordered": false, "unique": true},
+        "nullable": false,
+    });
+    op
+}
+
 /// `Counter { value: Int[0, 2] }` with `inc()`, and `add(n: Bit)` when
 /// `add`, under the package identity `package`.
 fn spec_document(package: &str, add: bool, tick: bool, fairness_toggle: bool) -> Vec<u8> {
-    let mut operations = vec![operation(package, "inc", &["value"])];
+    let mut operations = vec![boolean_result(operation(package, "inc", &["value"]))];
     let mut fields = vec![field(package, "value", &ident(package, "Level"))];
     if fairness_toggle {
-        operations.push(operation(package, "tick0", &["value"]));
-        operations.push(operation(package, "tick1", &["value"]));
+        operations.push(boolean_result(operation(package, "tick0", &["value"])));
+        operations.push(boolean_result(operation(package, "tick1", &["value"])));
     }
     if tick {
         let mut tick = operation(package, "tick", &["value"]);
@@ -607,7 +617,7 @@ pub fn check_with_internals(
         None => declarations.with_unwritten_refinements(),
     };
     declarations
-        .check(CheckMode::Linked, CheckingLimits::default())
+        .check(CheckMode::Kernel, CheckingLimits::default())
         .map_err(|refusals| format!("{refusals:?}"))
 }
 

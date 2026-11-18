@@ -550,7 +550,7 @@ impl Unit {
         .with_unwritten_refinements();
         let regions = declarations.regions();
         declarations
-            .check(CheckMode::Linked, CheckingLimits::default())
+            .check(CheckMode::Kernel, CheckingLimits::default())
             .map_err(|refusals| {
                 refusals
                     .into_iter()

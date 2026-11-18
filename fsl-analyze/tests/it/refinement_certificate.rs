@@ -777,7 +777,7 @@ fn an_undetermined_contract_is_a_bad_state() {
         "",
     );
     let guarded = World::new(&format!(
-        "pre PeekDefined using v on Impl::Counter::peek {{ 6 mod (2 - self.value) >= 0 }}\n{text}"
+        "function mod_defined using v(n: Int[0, 2]): Boolean pure {{ 6 mod (2 - n) >= 0 }}\npre PeekDefined using v on Impl::Counter::peek {{ mod_defined(self.value) }}\n{text}"
     ));
     assert_eq!(
         rejected(check(&guarded, &certificate)).0,
