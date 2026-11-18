@@ -172,8 +172,10 @@ fn supplied_root_internal_lists_reach_the_semantic_owner_before_native_admission
         panic!("located native refusal");
     };
     assert_eq!(format!("{refusal:?}"), native_before);
-    let CompileRefusal::Check { refusals, .. } = *refusal else {
-        panic!("S3 list check: {refusal:?}")
+    let refusals = match *refusal {
+        CompileRefusal::Check { refusals, .. }
+        | CompileRefusal::CheckDiagnostics { refusals, .. } => refusals,
+        other => panic!("S3 list check: {other:?}"),
     };
     let fsl_semantics::check::CheckCause::Refinement(refusal) = &refusals[0].cause else {
         panic!("typed refinement list cause: {refusals:?}")
