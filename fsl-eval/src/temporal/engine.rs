@@ -1034,9 +1034,17 @@ impl<'a> Evaluator<'a> {
             }
         };
         let mut every_activation_true = true;
+        // The first undefined capture atom any activation read (FR-860).
+        let mut earliest: Option<UndefinedEvaluation> = None;
         if evaluates {
             let mut position = first;
             while position < limit {
+                if earliest
+                    .as_ref()
+                    .is_some_and(|first| position >= i128::from(first.at.index()))
+                {
+                    break;
+                }
                 if !self.represents(position) {
                     self.charge()?;
                 }
@@ -1091,17 +1099,24 @@ impl<'a> Evaluator<'a> {
                     own.undefined
                 };
                 let value = self.solve(self.plan.root, position)?;
-                // The activation's own undefined atom: positions from it on
-                // read unknown, and only a false activation is returned
-                // before it (FR-327 "Undefined evaluation").
+                // An activation's own undefined atom makes the positions from
+                // it on unknown for that activation; the clause's result is
+                // the first undefined position over every activation, unless
+                // an activation before it is false (FR-327 "Undefined
+                // evaluation"), so later activations are still read.
                 if let Some(undefined) = activation_undefined {
-                    if value != Tri::False {
-                        return Ok(TemporalOutcome::Undefined(undefined));
+                    if earliest.as_ref().is_none_or(|first: &UndefinedEvaluation| {
+                        undefined.at.index() < first.at.index()
+                    }) {
+                        earliest = Some(undefined);
                     }
                 }
+                let refutes = earliest
+                    .as_ref()
+                    .is_none_or(|first| position < i128::from(first.at.index()));
                 match value {
                     Tri::True => {}
-                    Tri::False => {
+                    Tri::False if refutes => {
                         let at = u64::try_from(position).map_err(|_| fault("position-in-u64"))?;
                         if self.seek {
                             self.decisive = Some(self.descend(position));
@@ -1110,11 +1125,18 @@ impl<'a> Evaluator<'a> {
                             at: TemporalPosition::new(at),
                         });
                     }
-                    Tri::Unknown => every_activation_true = false,
+                    Tri::False | Tri::Unknown => every_activation_true = false,
                 }
                 position += 1;
             }
         }
+        let undefined = match (undefined, earliest) {
+            (Some(clause), Some(activation)) if activation.at.index() < clause.at.index() => {
+                Some(activation)
+            }
+            (Some(clause), _) => Some(clause),
+            (None, activation) => activation,
+        };
         if let Some(undefined) = undefined {
             return Ok(TemporalOutcome::Undefined(undefined));
         }
