@@ -377,3 +377,20 @@ fn the_method_option_is_negotiated_by_its_published_values() {
     assert_eq!(items[0]["record"]["backend"], "en-6", "{}", items[0]);
     assert_eq!(label(&items[1]), "unsupported", "{}", items[1]);
 }
+
+/// FR-625-AC-3 on the digital-clock route: a state budget returns
+/// `incomplete` naming the limit, never a verdict, on backend `en-1`.
+#[trace("TC-1592", "FR-632-AC-2")]
+#[test]
+fn a_digital_clock_state_budget_is_incomplete() {
+    let (run, items) = run(
+        "timed-digital-budget",
+        &rpc_unit(4, &settles("[0 ms, 3 ms]")),
+        json!([{"claim": "Settles", "options": {"method": "digital-clocks"},
+            "temporal": {"limits": {"max_states": 2}}}]),
+    );
+    assert_eq!(label(&items[0]), "incomplete", "{}", items[0]);
+    assert_eq!(items[0]["record"]["cause"]["limit"], "max_states", "{}", items[0]);
+    assert_eq!(items[0]["record"]["backend"], "en-1", "{}", items[0]);
+    assert_eq!(run.exit, 22);
+}

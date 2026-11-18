@@ -1359,6 +1359,9 @@ pub struct CandidateSet {
     missing_fairness: BTreeSet<FairnessKind>,
     missing_reduction: Option<ReductionKind>,
     evidence: Option<ItemEvidence>,
+    /// The candidates a timing restriction set aside, with their fairness
+    /// kinds: an option value that selects one readmits it (FSL FR-243).
+    set_aside: BTreeMap<Candidate, BTreeSet<FairnessKind>>,
 }
 
 impl CandidateSet {
@@ -1374,6 +1377,7 @@ impl CandidateSet {
             missing_fairness: BTreeSet::new(),
             missing_reduction: None,
             evidence: None,
+            set_aside: BTreeMap::new(),
         }
     }
 
@@ -1806,7 +1810,7 @@ impl Registry {
     /// unchanged.
     pub fn restrict_to_timed(&self, outcome: CandidateOutcome, timed: bool) -> CandidateOutcome {
         if timed {
-            self.keep_candidates(outcome, BackendDescriptor::decides_timed)
+            self.keep_timing(outcome, BackendDescriptor::decides_timed)
         } else {
             outcome
         }
@@ -1832,7 +1836,7 @@ impl Registry {
     /// clause item read from an analyze document routes to EN-1 and a timed
     /// one to EN-6. An unknown named backend is returned unchanged.
     pub fn restrict_to_timing(&self, outcome: CandidateOutcome, timed: bool) -> CandidateOutcome {
-        self.keep_candidates(outcome, |descriptor| descriptor.decides_timed() == timed)
+        self.keep_timing(outcome, |descriptor| descriptor.decides_timed() == timed)
     }
 
     /// FSL FR-243 and FR-635: `outcome` restricted to the backends that
@@ -1853,11 +1857,58 @@ impl Registry {
         if options.is_empty() {
             return self.restrict_to_timing(outcome, timed);
         }
-        self.keep_candidates(outcome, |descriptor| {
+        let CandidateOutcome::Candidates(mut set) = outcome else {
+            return outcome;
+        };
+        // A candidate an earlier timing restriction set aside, which the
+        // options select by value, is readmitted: it met every other rule.
+        if timed {
+            let readmitted: Vec<(Candidate, BTreeSet<FairnessKind>)> = set
+                .set_aside
+                .iter()
+                .filter(|(candidate, _)| {
+                    self.held
+                        .get(&candidate.id)
+                        .is_some_and(|descriptor| descriptor.selected_by(options))
+                })
+                .map(|(candidate, kinds)| (candidate.clone(), kinds.clone()))
+                .collect();
+            for (candidate, kinds) in readmitted {
+                if !set.candidates.contains(&candidate) {
+                    set.candidates.push(candidate.clone());
+                }
+                set.fairness.insert(candidate, kinds);
+            }
+            set.candidates.sort();
+        }
+        self.keep_timing(CandidateOutcome::Candidates(set), |descriptor| {
             descriptor.admits_options(options)
                 && (descriptor.decides_timed() == timed
                     || (timed && descriptor.selected_by(options)))
         })
+    }
+
+    /// [`Self::keep_candidates`] for a timing restriction: the candidates it
+    /// drops are set aside with their fairness kinds (FSL FR-243).
+    fn keep_timing(
+        &self,
+        outcome: CandidateOutcome,
+        keep: impl Fn(&BackendDescriptor) -> bool,
+    ) -> CandidateOutcome {
+        let CandidateOutcome::Candidates(mut set) = outcome else {
+            return outcome;
+        };
+        let (kept, dropped): (Vec<Candidate>, Vec<Candidate>) =
+            set.candidates.iter().cloned().partition(|candidate| {
+                self.held.get(&candidate.id).is_some_and(&keep)
+            });
+        for candidate in dropped {
+            if let Some(kinds) = set.fairness.remove(&candidate) {
+                set.set_aside.insert(candidate, kinds);
+            }
+        }
+        set.candidates = kept;
+        CandidateOutcome::Candidates(set)
     }
 
     /// FR-144 and FSpec FR-430: `outcome`, a candidate set computed for a
@@ -1945,6 +1996,7 @@ impl Registry {
             missing_reduction: None,
             evidence: matches!(kind, Capability::ProbabilisticSatisfaction)
                 .then(|| evidence.clone()),
+            set_aside: BTreeMap::new(),
         })
     }
 }
