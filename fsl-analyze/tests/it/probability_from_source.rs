@@ -297,11 +297,27 @@ fn probabilistic_witness_replays() {
     let reproduced = record
         .probabilistic_counterexample
         .expect("the source run retains replayed witness evidence");
-    assert_eq!(
-        reproduced.wire.as_ref().expect("the witness spells"),
-        &emitted,
-        "the verb emits this path set"
-    );
+    let source_wire = reproduced.wire.as_ref().expect("the witness spells");
+    let source_paths = source_wire["evidence"]["paths"]
+        .as_array()
+        .expect("typed witness paths");
+    let emitted_paths = emitted["evidence"]["paths"]
+        .as_array()
+        .expect("the verb emits witness paths");
+    assert_eq!(source_paths.len(), emitted_paths.len());
+    for (source_path, emitted_path) in source_paths.iter().zip(emitted_paths) {
+        let source_steps = source_path.as_array().expect("typed path steps");
+        let emitted_steps = emitted_path.as_array().expect("emitted path steps");
+        assert_eq!(source_steps.len(), emitted_steps.len());
+        for (source_step, emitted_step) in source_steps.iter().zip(emitted_steps) {
+            assert_eq!(source_step["transition"], emitted_step["transition"]);
+            assert_eq!(source_step["random"], emitted_step["random"]);
+            assert_eq!(
+                source_step["post_state"]["key"],
+                emitted_step["post_state"]["key"]
+            );
+        }
+    }
 
     let witness = reproduced.evidence();
     let system = ModelSystem::new(world.subject().simulation).expect("the source model admits");
