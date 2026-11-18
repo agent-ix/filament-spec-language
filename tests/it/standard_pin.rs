@@ -116,13 +116,11 @@ fn no_file_locates_the_standard_by_variable_or_sibling_path() {
             scanned_files(&path.join("tests"), &mut files);
         }
     }
-    let this_file = root.join(file!());
     let offenders: Vec<String> = files
         .iter()
-        .filter(|path| **path != this_file)
         .filter(|path| {
             fs::read_to_string(path).is_ok_and(|text| {
-                text.contains("FSPEC_DIR")
+                text.contains(concat!("FSPEC", "_DIR"))
                     || text.contains("../filament-specification")
                     || text.contains("repository: agent-ix/filament-specification")
             })
