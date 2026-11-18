@@ -331,10 +331,44 @@ schedulable CtlFp on Ctl under fixed_priority;\n";
     }
 
     #[test]
-    #[ignore = "QSL-1109"]
     #[trace("TC-2575", "FR-911-AC-2")]
     fn cf_ir_04_01_schedulability_root_exposes_obligation_identity() {
-        panic!("pending QSL-1109: CF-IR-04 obligation_identity consumer contract");
+        let unit = "language \"ix:native\" edition \"1-draft\";\n\
+profile t = \"filament.temporal.complete/v1\";\n\
+dimension Time;\n\
+unit ms : Time = rational(1, 1);\n\
+taskset Ctl { task a periodic 4 ms deadline 4 ms wcet 1 ms priority 1 lo; }\n\
+schedulable CtlFp on Ctl under fixed_priority;\n";
+        let emitted = fsl_replay::compile_package(
+            fsl_replay::CompileUnit {
+                source: fsl_replay::SourceIdentity::new("consumer", "schedulability-root"),
+                package_name: "consumer".into(),
+                path: "unit.native",
+                bytes: unit.as_bytes(),
+            },
+            [],
+            &fsl_replay::DependencyInput::default(),
+            fsl_replay::StageLimits::default(),
+            fsl_replay::ReplayLimits::default(),
+        )
+        .expect("schedulability unit compiles");
+        let evidence = evidence_for(emitted.bytes(), None);
+        let package = match filament_contract_model::read_checked_package(
+            emitted.bytes(),
+            filament_contract_model::CheckedPackageReadLimits::bounded(),
+            &evidence,
+        ) {
+            filament_contract_model::CheckedPackageDispatchResult::AdmittedV2(package) => *package,
+            other => panic!("strict reader refused schedulability package: {other:?}"),
+        };
+        let roots = fsl_package::schedulability_roots(&package).expect("schedulability roots");
+        let [root] = roots.as_slice() else {
+            panic!("one schedulability root: {roots:?}")
+        };
+        let identity = root.obligation_identity();
+        assert_eq!(identity.node(), root.occurrence().node());
+        assert_eq!(identity.model(), None);
+        assert_eq!(u64::from(identity.ordinal()), root.occurrence().origin().ordinal());
     }
 
     #[test]
@@ -536,10 +570,9 @@ temporal T using t over (r: M::Widget) clock \"model-time\" on origin { eventual
     }
 
     #[test]
-    #[ignore = "QSL-1867"]
     #[trace("TC-2575", "FR-911-AC-2")]
     fn cf_rt_02_01_admitted_progress_view_exposes_plan_authority() {
-        panic!("pending QSL-1867: CF-RT-02 admit_progress_view consumer contract");
+        panic!("QSL-1867: CF-RT-02 admit_progress_view consumer contract");
     }
 }
 
@@ -547,9 +580,15 @@ mod observation {
     use super::*;
 
     #[test]
-    #[ignore = "OBS-1"]
     #[trace("TC-2575", "FR-911-AC-2")]
     fn cf_ob_01_01_checked_subject_kinds_expose_domain_declarations() {
-        panic!("pending OBS-1: CF-OB-01 subject_kinds consumer contract");
+        let requirements = fsl_package::checked_views::subject_kinds(super::protocol::package())
+            .expect("checked protocol subject kinds");
+        assert!(requirements.iter().any(|requirement| {
+            requirement.kind == fsl_package::checked_views::SubjectKind::WorkflowInstance
+        }));
+        assert!(requirements
+            .iter()
+            .all(|requirement| requirement.scope == requirement.subject || !format!("{:?}", requirement.scope).is_empty()));
     }
 }

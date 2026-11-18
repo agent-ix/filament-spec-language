@@ -130,7 +130,7 @@ fn checked_protocol() -> filament_contract_model::CheckedPackageV2 {
     }
 }
 
-fn package() -> &'static filament_contract_model::CheckedPackageV2 {
+pub(super) fn package() -> &'static filament_contract_model::CheckedPackageV2 {
     static PACKAGE: std::sync::OnceLock<filament_contract_model::CheckedPackageV2> =
         std::sync::OnceLock::new();
     PACKAGE.get_or_init(checked_protocol)
