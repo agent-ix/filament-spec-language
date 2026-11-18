@@ -2425,7 +2425,9 @@ fn check_retains_the_owning_protocol_locus() {
             && declaration_span.end == x_start + 1
             && locus.source() == parsed.source().reference()
             && locus.start() == x_start as u64
-            && locus.end() == (x_start + 1) as u64
+            && locus.end() == (x_start + 1) as u64,
+        "{:#?}",
+        results.protocol_results
     ));
     let without_payload = crate::ReplayRefusal::Recompile(*refusal);
     assert_eq!(with_payload_category, without_payload.code().category());
