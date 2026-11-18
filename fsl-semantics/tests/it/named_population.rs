@@ -505,7 +505,7 @@ fn a_reference_literal_checks_and_stays_pending_in_a_barred_slot() {
                 "receive Got via ch of Go as (got: Pick) {{ true }};\n",
                 "choice Decide by S visible (got.target) {{ ",
                 "case yes when {{ got.target = {literal} }} sequence Yes {{ }} ",
-                "case no when {{ true }} sequence No {{ }} }} }}\n",
+                "case no when {{ not (got.target = {literal}) }} sequence No {{ }} }} }}\n",
                 "finish Done as (d: Boolean) {{ true }};\n",
                 "}}"
             ),
