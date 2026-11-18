@@ -181,7 +181,7 @@ fn counterexample_steps(
                 .map_err(|_| fault("a-mapped-state-key-is-json"))?;
             Ok(json!({"position": position, "abstract_state": state}))
         })
-        .collect::<Result<Vec<_>, _>>()?;
+        .collect::<Result<Vec<_>, fsl_replay::ReplayRefusal>>()?;
     let records: Vec<Value> = refinement
         .step_simulations()
         .iter()

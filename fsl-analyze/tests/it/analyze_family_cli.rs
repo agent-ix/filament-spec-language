@@ -197,7 +197,14 @@ fn an_abstract_subject_of_another_package_is_an_invalid_request() {
         json!("test/counter");
     let path = ws.write("analyze.json", request.to_string().as_bytes());
     let run = analyze(&path);
-    assert_eq!(label(&run.item(0)), "invalid-request", "{}", run.document());
+    let item = run.item(0);
+    assert_eq!(item["category"], "refusal", "{item}");
+    assert_eq!(item["record"]["settled_by"], "disposition", "{item}");
+    assert_eq!(
+        item["record"]["diagnostic"]["detail"]["member"],
+        "temporal.abstract_subject.identity",
+        "{item}"
+    );
 }
 
 /// FR-630-AC-2: `refinement_internals` reaches compilation.
