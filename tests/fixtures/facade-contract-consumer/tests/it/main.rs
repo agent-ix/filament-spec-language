@@ -478,6 +478,7 @@ mod protocol {
 profile p = \"filament.protocol.finite-global/v1\";\n\
 profile v = \"filament.value.complete/v1\";\n\
 profile t = \"filament.temporal.event-position.false-extension/v1\";\n\
+profile u = \"filament.temporal.infinite-trace/v1\";\n\
 model M = \"acme/orders\";\n\
 protocol Flow using p over (input: M::Widget) on origin {\n\
   role Buyer on M::Widget;\n\
@@ -494,7 +495,7 @@ protocol Flow using p over (input: M::Widget) on origin {\n\
     effect Applied of Update as (applied: M::Widget) { true };\n\
     send Offer via Ch as (sent: Boolean) { true };\n\
     receive Seen via Ch of Offer as (received: Boolean) { true };\n\
-    await Wait after Main::Applied using v clock \"ticks\" within [0, 1] match event Arrived by Seller as (arrived: Boolean) { true }; then sequence Then {} timeout sequence Late {}\n\
+    await Wait after Main::Applied using u clock \"ticks\" within [0, 1] match event Arrived by Seller as (arrived: Boolean) { true }; then sequence Then {} timeout sequence Late {}\n\
   choice Pick by Seller visible (received) { case yes when { true } sequence Yes {} case no when { false } sequence No {} }\n\
   }\n\
   finish End as (outcome: Boolean) { true };\n\
