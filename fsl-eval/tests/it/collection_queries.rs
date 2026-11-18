@@ -315,8 +315,8 @@ fn completed(run: &Run) -> &Value {
     }
 }
 
-#[trace("TC-1320", "FR-144-AC-31")]
-#[trace("TC-1927", "FR-144-AC-34")]
+#[trace("FSpec-TC-1320", "FSpec-FR-144-AC-31")]
+#[trace("FSpec-TC-1927", "FSpec-FR-144-AC-34")]
 #[test]
 fn index_reads_ordered_collection_elements_and_returns_no_element_out_of_range() {
     let package = plain();
