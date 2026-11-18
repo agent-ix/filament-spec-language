@@ -1064,6 +1064,7 @@ fn an_attempt_outside_the_precondition_records_one_finding_per_candidate_post_st
             role: "w".to_owned(),
             model: BANK.to_owned(),
         }],
+        capacities: Vec::new(),
         memory: package
             .graph()
             .protocol("P")
