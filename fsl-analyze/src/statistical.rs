@@ -586,13 +586,11 @@ impl Plan<'_> {
         let fixed = match sequential {
             Some(_) => None,
             None => match self.request.method {
-                StatisticalMethod::ClopperPearson => clopper_pearson_sample_count(
-                    &self.alpha,
-                    &self.beta,
-                    iota,
-                )
-                .map_err(fault)?
-                .to_u64(),
+                StatisticalMethod::ClopperPearson => {
+                    clopper_pearson_sample_count(&self.alpha, &self.beta, iota)
+                        .map_err(fault)?
+                        .to_u64()
+                }
                 StatisticalMethod::Okamoto | StatisticalMethod::Regenerative { .. } => {
                     okamoto_sample_count(&self.alpha, &self.beta, iota)
                         .map_err(fault)?
@@ -984,9 +982,9 @@ pub fn check_sampled<S: BehaviourSampler>(
                 min_cycles,
             })
         }
-        StatisticalMethod::Okamoto | StatisticalMethod::Sprt | StatisticalMethod::ClopperPearson => {
-            None
-        }
+        StatisticalMethod::Okamoto
+        | StatisticalMethod::Sprt
+        | StatisticalMethod::ClopperPearson => None,
     };
 
     let mut results = Vec::with_capacity(request.tests.len());

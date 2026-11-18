@@ -439,21 +439,14 @@ mod tests {
         let cases = [
             (231, Decision::Accepted),
             (219, Decision::Accepted),
-            (
-                218,
-                Decision::Undecided(UndecidedCause::IndifferenceRegion),
-            ),
-            (
-                197,
-                Decision::Undecided(UndecidedCause::IndifferenceRegion),
-            ),
+            (218, Decision::Undecided(UndecidedCause::IndifferenceRegion)),
+            (197, Decision::Undecided(UndecidedCause::IndifferenceRegion)),
             (196, Decision::Rejected),
             (184, Decision::Rejected),
         ];
         for (held, expected) in cases {
             assert_eq!(
-                clopper_pearson_decision(&bound, held, 231, &alpha, &beta)
-                    .expect("binomial tails"),
+                clopper_pearson_decision(&bound, held, 231, &alpha, &beta).expect("binomial tails"),
                 expected,
                 "held count {held}"
             );
@@ -467,8 +460,7 @@ mod tests {
     fn clopper_pearson_known_intervals() {
         let alpha = ratio(1, 100);
         let beta = ratio(1, 100);
-        let (lower, upper) =
-            clopper_pearson_interval(219, 231, &alpha, &beta).expect("interval");
+        let (lower, upper) = clopper_pearson_interval(219, 231, &alpha, &beta).expect("interval");
         let published_lower = decimal("90351472792271070929", 20);
         let published_upper = decimal("97621175445884490995", 20);
         let printed_unit = int(1).divided_by_power_of_ten(20);

@@ -104,17 +104,16 @@ impl ClaimForm {
             (
                 Self::LongRunFraction,
                 StatisticalMethod::Okamoto
-                    | StatisticalMethod::Sprt
-                    | StatisticalMethod::ClopperPearson,
+                | StatisticalMethod::Sprt
+                | StatisticalMethod::ClopperPearson,
             )
             | (
                 Self::Probability | Self::Quantile | Self::MeanOfFraction,
                 StatisticalMethod::Regenerative { .. },
             )
-            | (
-                Self::MeanOfFraction,
-                StatisticalMethod::Sprt | StatisticalMethod::ClopperPearson,
-            ) => false,
+            | (Self::MeanOfFraction, StatisticalMethod::Sprt | StatisticalMethod::ClopperPearson) => {
+                false
+            }
         }
     }
 }

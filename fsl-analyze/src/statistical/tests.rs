@@ -1267,12 +1267,7 @@ fn clopper_pearson_selectable() {
     let tests = one_test();
     let mut always_holds = fixed(Ok(Sample::Event(true)));
     let verdict = completed(run(
-        request(
-            &claim,
-            &tests,
-            StatisticalMethod::ClopperPearson,
-            &sampler,
-        ),
+        request(&claim, &tests, StatisticalMethod::ClopperPearson, &sampler),
         &mut always_holds,
     ));
 
