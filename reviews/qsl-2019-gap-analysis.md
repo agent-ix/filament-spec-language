@@ -3,7 +3,7 @@ id: SR-2026111612172400000032
 title: "Gap analysis - QSL-2019 FSL command extraction slice"
 type: SpecReview
 analysis: gap-analysis
-scope: "agent-ix/filament-spec-language; PR #2891 @b1f676f1a6b75164e2694daa845ea43b180bda94 (base 80bd45a); FR-662-AC-3, FR-031-AC-2/5/7/8/10, TC-109, TC-1744"
+scope: "agent-ix/filament-spec-language; PR #2891 @bb70eaf88ee5bf48582891b7e26a8b1a4f821161 (base e7a41d5a32704c7b6a83ea74898dd9051a1f3bc5); FR-662-AC-3, FR-031-AC-2/5/7/8/10, TC-109, TC-1744"
 review_set: subset
 relationships:
   - { target: "ix://agent-ix/filament-spec-language/FR-662", type: references }
@@ -12,17 +12,17 @@ relationships:
 
 ## Summary
 
-This focused planless review covers the command extraction slice. The previous TC-1744 step-2 gap, command-level success/error envelope gaps, and normal body-span original_regions gap are fixed. The failure branch for an unmappable body locus remains uncovered and silently omits original_regions.
+This focused planless review covers the command extraction slice. Prior TC-1744 step-2, success/error envelope, and normal body-span original_regions gaps are fixed. The unmappable body-locus failure branch now emits invalid_source_map with the unchanged locus, and a focused unit test checks that envelope plus foreign dependency behavior.
 
 ## Verdict
 
-**CONDITIONAL** - one medium FR-031 uncovered-map behavior and regression-test gap remains; plan completion was not assessed.
+**PASS** - no remaining coverage gap in the reviewed extraction slice. Plan completion was not assessed. Focused unit and command filters are rerunning; this reviewer ran no tests or builds.
 
 ## Coverage
 
-- Reconciliation: quoin matrix --repo . --json completed with Quoin 0.36.6 and Quire 0.52.0; FR-662-AC-3 and FR-031-AC-5/7/10 are statically tagged with the expected command test binders. Matrix run evidence is absent. No test was run by this reviewer; focused five-test gates are active.
+- Reconciliation: quoin matrix --repo . --json completed with Quoin 0.36.6 and Quire 0.52.0; FR-662-AC-3 and FR-031-AC-5/7/10 are statically tagged with the expected command test binders. Matrix run evidence is absent. No test was run by this reviewer; focused unit and command filters are rerunning.
 - Focused criteria: TC-1744 steps 1 and 2 have separate command-level tests; step 2 asserts exit 20, extraction-selection, original identity and binding. The new selection test also checks completed outcome details; the unavailable test checks quire stage and producer outcome. The successful extraction test checks the /2 record and strict reader round trip.
-- FR-031-AC-8: the command-level compile-refusal test now checks exact mapped original_regions and preserved body span. However, there is no failure-path test for a body-identity locus outside the verified map. That branch currently treats map failure as no regions instead of an invalid_source_map refusal.
+- FR-031-AC-8: the command-level compile-refusal test now checks exact mapped original_regions and preserved body span. The unit test `unmappable_body_locus_fails_closed_and_foreign_loci_remain_unmapped` asserts an invalid_source_map extraction failure with the exact unchanged body locus, and separately checks that foreign identity/path loci produce no mapped regions.
 - Plan completion: not assessed
 - Semantic review: skipped; not opted in.
 
@@ -39,7 +39,8 @@ This focused planless review covers the command extraction slice. The previous T
 | FND-001 | fixed | the_run_command_preserves_a_missing_markdown_clause_selection now exercises TC-1744 step 2 through command::run and asserts the stage, original identity, and binding. |
 | FND-002 | fixed | the_run_command_writes_a_strictly_readable_markdown_extraction_record asserts the /2 extraction member and strict-reader equality. |
 | FND-003 | fixed | The selection and unavailable extraction tests now assert completed outcome details; the unavailable test asserts stage quire. |
-| FND-004 | fixed | `the_run_command_maps_body_refusal_regions_to_the_original_markdown` asserts exact original regions for a body-span compile refusal while preserving the body span in the `/2` extraction record. |
+| FND-004 | fixed | `the_run_command_maps_a_compile_refusal_to_original_markdown_regions` asserts exact original regions for a body-span compile refusal while preserving the body span in the `/2` extraction record. |
+| FND-005 | fixed | The adapter now fails closed with invalid_source_map and the unchanged locus; the focused unit test also checks foreign dependency loci remain unmapped. |
 
 ## New findings (disposition pass 1)
 
@@ -60,6 +61,14 @@ This focused planless review covers the command extraction slice. The previous T
 | --- | --- | --- | --- |
 | FND-005 | medium | No targeted command-level regression covers a body-identity refusal locus that the source map does not cover. The adapter returns no `original_regions` and still writes the result, but FR-031 requires an `invalid_source_map` refusal that preserves the body span. Test the explicit failure branch; retain no-region behavior for dependency loci and refusals without body spans. | fsl-command/src/command/output.rs:482-511; tests/it/request_surface_s1.rs:500-577; spec/functional/FR-031-run-extracted-native-source.md:172-176; fsl-foundation/src/diagnostic.rs:201,625-630 |
 
+## Dispositions (round 4)
+
+| FND | Outcome | Reason |
+| --- | --- | --- |
+| FND-005 | fixed | The adapter returns an invalid_source_map extraction failure with the exact body locus, and the unit test asserts both that envelope and foreign dependency no-region behavior. |
+
 ## Plan Completion
 
 Plan completion: not assessed.
+
+Focused test run: not run by reviewer; focused unit and command filters are rerunning.

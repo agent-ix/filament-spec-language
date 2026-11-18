@@ -3,7 +3,7 @@ id: SR-2026111612172400000031
 title: "Code review - QSL-2019 FSL command extraction route"
 type: SpecReview
 analysis: code-review
-scope: "agent-ix/filament-spec-language; PR #2891 @b1f676f1a6b75164e2694daa845ea43b180bda94 (base 80bd45a); fsl-command/Cargo.toml, fsl-command/src/command.rs, fsl-command/src/command/output.rs, fsl-replay/src/spine/native_result.rs, tests/it/request_surface_s1.rs; FR-662-AC-3, FR-031-AC-2/5/6/7/8/10, FR-030"
+scope: "agent-ix/filament-spec-language; PR #2891 @bb70eaf88ee5bf48582891b7e26a8b1a4f821161 (base e7a41d5a32704c7b6a83ea74898dd9051a1f3bc5); fsl-command/Cargo.toml, fsl-command/src/command.rs, fsl-command/src/command/output.rs, fsl-replay/src/spine/native_result.rs, tests/it/request_surface_s1.rs; FR-662-AC-3, FR-031-AC-2/5/6/7/8/10, FR-030"
 review_set: subset
 relationships:
   - { target: "ix://agent-ix/filament-spec-language/FR-662", type: references }
@@ -13,17 +13,17 @@ relationships:
 
 ## Summary
 
-Re-reviewed PR #2891 at b1f676f1a6b75164e2694daa845ea43b180bda94 (base 80bd45a). The prior call-mode, formatting, TC-1744 step-2, stage mapping, success /2 result, completed Quire outcome, and ordinary body-span original_regions findings are fixed. One failure-path gap remains: a body locus that the verified map cannot map is silently omitted instead of refusing invalid_source_map.
+Re-reviewed PR #2891 at bb70eaf88ee5bf48582891b7e26a8b1a4f821161 (base e7a41d5a32704c7b6a83ea74898dd9051a1f3bc5). All prior findings are fixed at this head: call-mode classification, rustfmt, TC-1744 step-2 selection, extraction stage mapping, successful /2 extraction round-trip, completed Quire outcome details, and exact original_regions for body-span refusals. The new fail-closed adapter converts an unmappable body locus into an invalid_source_map extraction-selection refusal and preserves the locus; a targeted unit test checks this and confirms foreign dependency loci remain unmapped.
 
 ## Verdict
 
-**CONDITIONAL** - one medium finding remains. The branch is based on current origin/main. Focused five-test gates are active; no tests or builds were run by this reviewer.
+**PASS** - no remaining review findings at exact head. The branch is based on origin/main e7a41d5a. Focused unit and command filters are rerunning; this reviewer did not run tests or builds.
 
 ## Review Scope
 
 - Changed FSL files: fsl-command/Cargo.toml; fsl-command/src/command.rs; fsl-command/src/command/clause.rs; fsl-command/src/command/output.rs; fsl-command/src/command/output/types.rs; fsl-replay/src/spine.rs; fsl-replay/src/spine/native_result.rs; tests/it/request_surface_s1.rs.
 - Examined FR-030, FR-031-AC-2/5/6/7/8/10, FR-662-AC-3, TC-109, TC-1744, and the downstream clause-result writer.
-- The computed Quoin matrix lists FR-662-AC-3 and FR-031-AC-5/7/10 as tagged with binders. It has no run evidence in the matrix snapshot. Current Quoin 0.36.6 / Quire 0.52.0 were used. No test or build was run by this reviewer; focused five-test gates are active. No aggregate or package-wide gate was run by this reviewer.
+- The computed Quoin matrix lists FR-662-AC-3 and FR-031-AC-5/7/10 as tagged with binders. It has no run evidence in the matrix snapshot. Current Quoin 0.36.6 / Quire 0.52.0 were used. No test or build was run by this reviewer; focused unit and command filters are rerunning. No aggregate or package-wide gate was run by this reviewer.
 
 ## Findings
 
@@ -42,6 +42,7 @@ Re-reviewed PR #2891 at b1f676f1a6b75164e2694daa845ea43b180bda94 (base 80bd45a).
 | FND-004 | fixed | The command creates an extraction record and passes it to the extraction-aware result writer; the success test checks the /2 member and strict read-back equality. |
 | FND-005 | fixed | The command error adapter now inserts the completed Quire outcome when present; focused selection and unavailable tests inspect that details member. |
 | FND-006 | fixed | Body-span refusals now map to original document regions in the `/2` extraction record; the command test asserts exact mapped regions and retained body span. |
+| FND-007 | fixed | `extraction_regions_for_locus` converts an unmappable body locus to `invalid_source_map` at extraction-selection, retains the exact locus in details, and has a unit test for both that failure and foreign dependency loci remaining unmapped. |
 
 ## New findings (disposition pass 1)
 
@@ -63,8 +64,14 @@ Re-reviewed PR #2891 at b1f676f1a6b75164e2694daa845ea43b180bda94 (base 80bd45a).
 | --- | --- | --- | --- |
 | FND-007 | medium | If a refusal locus identifies the extracted body but `map_regions` returns `None` (or a mapped region cannot be located in the original), the helper returns `Ok(None)`. The command therefore emits an otherwise successful clause-run refusal without `original_regions`, silently violating FR-031's explicit rule that an uncovered body mapping request refuses with `invalid_source_map` while retaining the body span. Keep no-body and dependency/foreign loci as no-region cases; add a focused failure-branch test that asserts the `invalid_source_map` refusal and unchanged body span. | fsl-command/src/command/output.rs:482-511; spec/functional/FR-031-run-extracted-native-source.md:172-176; fsl-foundation/src/diagnostic.rs:201,625-630 |
 
+## Dispositions (round 4)
+
+| FND | Outcome | Reason |
+| --- | --- | --- |
+| FND-007 | fixed | The adapter now fails closed with `invalid_source_map` at extraction-selection and preserves the exact body locus; `unmappable_body_locus_fails_closed_and_foreign_loci_remain_unmapped` asserts the error code, stage, exact locus, and dependency behavior. |
+
 ## Gate Notes
 
-- Focused test run: not run by reviewer; focused five-test gates are active.
-- Exact-head approval: withheld pending fail-closed handling for an unmappable body locus and its focused regression, then focused gates.
+- Focused test run: not run by reviewer; focused unit and command filters are rerunning.
+- Exact-head disposition: pass on code and coverage; focused unit and command gates remain pending their reported results.
 - No aggregate or package-wide test gate was run.
