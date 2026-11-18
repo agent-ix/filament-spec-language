@@ -25,7 +25,6 @@ struct Consumer {
     facts: Vec<Fact>,
 }
 #[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
 struct Fact {
     id: String,
 }
