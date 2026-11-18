@@ -4,7 +4,7 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use filament_exact::{Cancel, Integer, Origin, Role};
+use filament_exact::{Integer, Origin, Role};
 use fsl_foundation::bound::{DomainKey, DomainKind, FiniteBound, ProofBound};
 use fsl_foundation::source::provenance::OccurrenceKey;
 use fsl_foundation::{BackendId, Code, RequestIndex, SourceIdentity};
