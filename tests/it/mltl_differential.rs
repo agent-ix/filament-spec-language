@@ -291,3 +291,72 @@ fn lowering_preserves_the_classification() {
         "{value}"
     );
 }
+
+/// FR-931-AC-8, negative half: a lowered formula stamped with the wrong
+/// correspondence at the `fsl-command` library entry (never through the
+/// request) is a classification loss naming the clause and both
+/// classifications, with no `classification`, and the run's exit is 30; the
+/// faithful lowering carries the native classification.
+#[test]
+#[trace("TC-2979", "FR-931-AC-8")]
+#[ignore = "QSL-2147: the lowering does not classify its lowered formula or report a classification loss yet"]
+fn a_wrong_lowered_profile_is_a_classification_loss() {
+    let directory = tempfile::tempdir().unwrap();
+    let unit = "language \"ix:native\" edition \"1-draft\";\n\
+         profile v = \"filament.value.complete/v1\";\n\
+         profile e = \"filament.temporal.event-position.false-extension/v1\";\n\
+         record Counter { level: Int[0, 9]; }\n\
+         temporal C using e over (c: Counter) clock \"events\" on origin \
+         { always[0,2] holds(c.level = 1) }\n";
+    std::fs::write(directory.path().join("unit.native"), unit).unwrap();
+    let samples: Vec<Value> = [1, 1, 1]
+        .iter()
+        .map(|level: &i64| json!({"sample": {"level": {"integer": level.to_string()}}}))
+        .collect();
+    let request = json!({"format": "native-run/1", "request": {
+        "models": [],
+        "program": {"source": {"file": "unit.native", "authority": "agent-ix",
+            "identity": "test:mltl-classification-loss", "document": "Mltl", "formal_revision": 1}},
+        "clocks": {"events": {"kind": "event_position", "sequence_authority": "events"}},
+        "clause": {"selection": {"temporal": {"name": "C", "trace": {"finite": samples}}},
+            "observations": {}}}});
+    let path = directory.path().join("request.json");
+    std::fs::write(&path, request.to_string()).unwrap();
+    let clause_run = fsl_command::command::read_clause_run_request(&path).expect("a clause run");
+    let report = fsl_replay::spine::run_temporal_valuation(clause_run).expect("a report");
+    let fsl_replay::spine::ClauseDisposition::TemporalValuation(valuation) = &report.disposition
+    else {
+        panic!("a valuation: {:?}", report.disposition);
+    };
+    let native = json!({"correspondence": "mltl.closed-trace/v1", "fragment": "bounded-future"});
+
+    let faithful = fsl_command::command::tl_record(
+        valuation,
+        unit,
+        None,
+        &fsl_command::command::AtomMapping::default(),
+    )
+    .expect("the clause lowers");
+    assert_eq!(faithful.exit_code, 0, "{}", faithful.record);
+    assert_eq!(faithful.record["classification"], native);
+
+    let mapping = fsl_command::command::AtomMapping {
+        lowered_correspondence: Some("mltl.origin-complete-history/v1".to_owned()),
+        ..fsl_command::command::AtomMapping::default()
+    };
+    let lost = fsl_command::command::tl_record(valuation, unit, None, &mapping)
+        .expect("the clause lowers");
+    assert_eq!(lost.exit_code, 30, "{}", lost.record);
+    assert_eq!(
+        lost.record["classification"],
+        Value::Null,
+        "{}",
+        lost.record
+    );
+    assert_eq!(
+        lost.record["classification_fault"],
+        json!({"kind": "classification-loss", "clause": "C", "native": native,
+            "lowered": {"correspondence": "mltl.origin-complete-history/v1",
+                "fragment": "bounded-future"}})
+    );
+}
