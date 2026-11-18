@@ -482,7 +482,6 @@ impl EmitRefusal {
                 Code::UnsupportedConstruct
             }
             Self::NativeLiteralNotEmitted { .. } => Code::UnsupportedConstruct,
-            Self::SourceObjectEmission { .. } => Code::UnsupportedConstruct,
             Self::MonitorPlanAmbiguous { .. } => Code::InvalidProjectionCorrespondence,
             Self::MonitorBaseRefused(read) => read.code(),
             Self::ClockSelection(_) => Code::InvalidRequest,
