@@ -189,8 +189,10 @@ pub(super) enum SimulationFault {
 
 /// The `{category, cause}` of a run that ended at `end`.
 fn ending(end: &EnumerationEnd, settings: &SimulationSelection) -> (Category, Option<Value>) {
-    let limit = |limit: &str, value: u64| {
-        Some(json!({"kind": "limit-reached", "limit": limit, "value": value}))
+    // FSpec FR-181 "Simulation bounds and their published defaults": each
+    // bound is reported with its FR-461 setting name.
+    let limit = |limit: &str, setting: &str, value: u64| {
+        Some(json!({"kind": "limit-reached", "limit": limit, "setting": setting, "value": value}))
     };
     match end {
         EnumerationEnd::Exhausted => (Category::Success, None),
@@ -198,6 +200,7 @@ fn ending(end: &EnumerationEnd, settings: &SimulationSelection) -> (Category, Op
             Category::Incomplete,
             limit(
                 "max_states",
+                "explore.states",
                 settings
                     .max_states
                     .map_or(DEFAULT_MAX_STATES, NonZeroU64::get),
@@ -207,6 +210,7 @@ fn ending(end: &EnumerationEnd, settings: &SimulationSelection) -> (Category, Op
             Category::Incomplete,
             limit(
                 "max_steps",
+                "simulation.max_steps",
                 settings
                     .max_steps
                     .map_or(DEFAULT_MAX_STEPS, NonZeroU64::get),
@@ -216,7 +220,7 @@ fn ending(end: &EnumerationEnd, settings: &SimulationSelection) -> (Category, Op
             Category::Incomplete,
             Some(
                 json!({"kind": "state-key-limit-exceeded", "limit": "max_state_key_bytes",
-                "value": settings.max_state_key_bytes()}),
+                "setting": "identity.input_bytes", "value": settings.max_state_key_bytes()}),
             ),
         ),
         EnumerationEnd::Meter(incomplete) => (Category::Incomplete, Some(meter_cause(incomplete))),
@@ -513,7 +517,7 @@ fn sample(
             Category::Incomplete,
             Some(
                 json!({"kind": "state-key-limit-exceeded", "limit": "max_state_key_bytes",
-                "value": limit}),
+                "setting": "identity.input_bytes", "value": limit}),
             ),
         )
     } else if drawn < settings.samples() {

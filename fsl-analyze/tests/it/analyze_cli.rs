@@ -390,6 +390,7 @@ fn a_step_bound_leaves_the_horizon_state_in_the_frontier() {
     assert_eq!(item["category"], "incomplete", "{item}");
     assert_eq!(item["cause"]["kind"], "limit-reached", "{item}");
     assert_eq!(item["cause"]["limit"], "max_steps", "{item}");
+    assert_eq!(item["cause"]["setting"], "simulation.max_steps", "{item}");
     assert_eq!(item["frontier"].as_array().map(Vec::len), Some(1), "{item}");
     let traces = item["traces"].as_array().expect("traces");
     assert_eq!(traces.len(), 1, "{item}");
