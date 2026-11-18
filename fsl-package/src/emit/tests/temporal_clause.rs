@@ -11,13 +11,43 @@ use filament_semantic_value::checking::CheckMode;
 
 use super::admission_corpus::config_version_unit;
 use super::*;
-use crate::checked_v2::{clause_roots, resolve_clause_root, ClauseRoot, V2ReadRefusal};
+use crate::checked_v2::{ClauseRoot, V2ReadRefusal, clause_roots, resolve_clause_root};
 
 pub(super) const INFINITE: &str = "filament.temporal.infinite-trace/v1";
 pub(super) const EVENT: &str = "filament.temporal.event-position.false-extension/v1";
 
 /// ADR-018 §6's clause formula.
 const EVENTUALLY_TWO: &str = "always eventually holds(c.versionNumber = 2)";
+
+/// FR-1000-AC-3 (TC-2957): a reference literal emits its canonical key bytes
+/// with the wire's dedicated `reference` value kind, and model aliases share
+/// the same lowered term.
+#[trace("TC-2957", "FR-1000-AC-3")]
+#[test]
+fn a_reference_literal_emits_its_kind_and_canonical_identity() {
+    let graph = check_graph(&unit(
+        EVENT,
+        "model Alias = \"example/config-version\";\n\
+         function same_config using v(): Reference<Config::ConfigVersion> pure { Config::ConfigVersion#\"a\" }\n\
+         function same_alias using v(): Reference<Alias::ConfigVersion> pure { Alias::ConfigVersion#\"a\" }",
+    ));
+    let emission = crate::emit::emit_checked(
+        &CheckedPackage::link(graph),
+        crate::emit::EmitLimits::fixture(),
+    )
+    .expect("the package emits the reference literal");
+    let wire = wire(&emission);
+    let literals: Vec<_> = nodes(&wire)
+        .iter()
+        .filter(|node| node["node_tag"] == "value" && node["semantic_form"] == "literal")
+        .collect();
+    let [literal] = literals.as_slice() else {
+        panic!("the two aliases share one literal term: {literals:?}");
+    };
+    assert_eq!(literal["body"]["term"], "literal");
+    assert_eq!(literal["body"]["value_kind"], "reference");
+    assert_eq!(literal["body"]["value"], "61");
+}
 
 /// The ConfigVersion domain package document.
 pub(super) fn document() -> &'static [u8] {
@@ -1055,11 +1085,13 @@ fn reaches_two_emits_as_a_v2_temporal_clause_node_the_i2_read_admits() {
     );
     assert_eq!(body["operation"]["member"], Value::Null);
     // The lock selects the same profile under the same role.
-    assert!(wire["lock"]["profile_selections"]
-        .as_array()
-        .unwrap()
-        .contains(&json!({"role": "temporal_profile", "definition": {
-            "authority": "agent-ix", "identity": INFINITE}})));
+    assert!(
+        wire["lock"]["profile_selections"]
+            .as_array()
+            .unwrap()
+            .contains(&json!({"role": "temporal_profile", "definition": {
+            "authority": "agent-ix", "identity": INFINITE}}))
+    );
     let arguments = body["arguments"].as_array().expect("arguments");
     assert_eq!(arguments.len(), 6);
     // over: a reference to `c`'s parameter node.
