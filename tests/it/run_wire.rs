@@ -1280,7 +1280,6 @@ fn clocks_rebuilt_from_package_rows_compile_the_same_package() {
 /// member supplies the law its program's `div` needs.
 #[test]
 #[trace("TC-2196", "FR-767-AC-10")]
-#[ignore = "QSL-1989: the native-monitor/1 integer_division member is not implemented yet"]
 fn a_monitor_request_supplies_the_integer_division_law() {
     let directory = tempfile::tempdir().unwrap();
     let mut records = observations(&[0, 1, 2]);
@@ -1304,12 +1303,21 @@ fn a_monitor_request_supplies_the_integer_division_law() {
             ),
         )
         .unwrap();
+        if law.is_none() {
+            // The missing law must refuse before the records file is read.
+            std::fs::remove_file(directory.path().join("half.jsonl")).unwrap();
+        }
         run_file(&path)
     };
 
     let output = run(Some("floor"));
     let monitored = result(&output);
     assert_eq!(monitored["format"], "filament.monitor-run/1", "{monitored}");
+    let clauses = monitored["summary"]["clauses"]
+        .as_array()
+        .expect("a monitor summary with clause results");
+    assert_eq!(clauses.len(), 1, "{monitored}");
+    assert_eq!(clauses[0]["clause"], "Half", "{monitored}");
 
     let output = run(None);
     assert_eq!(output.status.code(), Some(20));

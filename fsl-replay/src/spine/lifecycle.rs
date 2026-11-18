@@ -1733,6 +1733,7 @@ pub fn check(
             temporal_selections: &[],
             clocks: None,
             check_mode: None,
+            integer_division: None,
         },
         models,
         dependencies,
@@ -1970,8 +1971,9 @@ pub fn check_units(
 }
 
 /// The per-source inputs of a check beside the unit itself: the request's
-/// unchecked refinement-internal-list value (FR-147/FR-099) and the clock
-/// selections S3 reads ([`super::RequestClocks::check_selections`]).
+/// unchecked refinement-internal-list value (FR-147/FR-099), clock selections
+/// S3 reads ([`super::RequestClocks::check_selections`]), and optional
+/// caller-supplied integer-division law (FR-767).
 #[derive(Clone, Debug, Default)]
 pub struct SourceInputs<'a> {
     /// The unit's unchecked internal-list value; `None` when absent.
@@ -1985,11 +1987,12 @@ pub struct SourceInputs<'a> {
     /// function body is checked under; `None` is `Linked`. Declared clauses
     /// stay under `Linked`.
     pub check_mode: Option<CheckMode>,
+    /// The caller-supplied integer-division law (FR-767), when selected.
+    pub integer_division: Option<&'a crate::AdmittedIntegerDivision>,
 }
 
-/// S3 and S4 over an admitted source-unit list, with the root request's
-/// unchecked refinement-internal-list value carried into the combined unit and the
-/// request's clock selections ([`SourceInputs`]).
+/// S3 and S4 over an admitted source-unit list with request inputs carried in
+/// [`SourceInputs`].
 pub fn check_units_with_refinement_internals(
     admitted: &AdmittedUnitList,
     package_name: String,
@@ -2009,6 +2012,7 @@ pub fn check_units_with_refinement_internals(
             temporal_selections: inputs.temporal_selections,
             clocks: inputs.clocks,
             check_mode: inputs.check_mode,
+            integer_division: inputs.integer_division.copied(),
             ..UnitCheckOptions::default()
         },
         limits,
@@ -2262,7 +2266,7 @@ pub(crate) fn check_with_refinement_internals_and_function_modes(
         inputs.refinement_internals,
         inputs.temporal_selections,
         inputs.clocks,
-        None,
+        inputs.integer_division.copied(),
         None,
         function_modes,
         None,
@@ -2388,7 +2392,7 @@ pub fn check_with_execution_points_and_source_inputs(
         inputs.refinement_internals,
         inputs.temporal_selections,
         inputs.clocks,
-        None,
+        inputs.integer_division.copied(),
         None,
         None,
         inputs.check_mode,

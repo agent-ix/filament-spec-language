@@ -29,8 +29,9 @@ use serde_json::{json, Value};
 
 use super::settle::Settle;
 use super::{
-    check_sources, intake_with_bytes, request, require_complete_edition, wire, FileCounts,
-    NativeResult, Result, RunCause, RunError, RunLimits, RunResult,
+    check_sources, intake_with_bytes, request, request_integer_division,
+    require_complete_edition, wire, FileCounts, NativeResult, Result, RunCause, RunError,
+    RunLimits, RunResult,
 };
 
 /// The format of one event.
@@ -520,6 +521,7 @@ fn drive(
     cancel: &Cancel,
 ) -> Result<MonitorSummary> {
     let request: wire::MonitorRequest = request(bytes)?;
+    let integer_division = request_integer_division(request.integer_division)?;
     let records_file = request.records.clone();
     match (matches!(source, Records::Batch), &records_file) {
         (true, None) => {
@@ -563,7 +565,7 @@ fn drive(
         std::slice::from_ref(&program),
         false,
         SpineLimits::default(),
-        None,
+        integer_division,
         None,
         |checked, selections, _, packages, libraries, _, _, _, _| {
             // FR-644 "Provider-routed items": the items settle after the
