@@ -514,7 +514,8 @@ mod tests {
     use super::*;
     use filament_exact::{Integer, LimitKind, ScalarLimits};
     use fsl_forms::{Expression, FunctionDeclaration, TypeForm};
-    use fsl_semantics::check::{CheckMode, CheckingLimits, PackageDeclarations};
+    use filament_semantic_value::checking::{CheckMode, CheckingLimits};
+    use fsl_semantics::check::PackageDeclarations;
     use ix_trace_rs::trace;
 
     const SPAN: fsl_foundation::Span = fsl_foundation::Span { start: 0, end: 0 };
