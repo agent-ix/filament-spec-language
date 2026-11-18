@@ -16,10 +16,7 @@ use crate::bounds::ReplayLimits;
 use crate::execute::{process_provider_obligation, BoundEntries};
 use crate::limits::CallerLimits;
 use crate::result::ReplayResult;
-use crate::spine::{
-    admit_parsed_unit_list, check, package, parse, select, DependencyInput, PackageLimits,
-    ParseRequest, check_units_with_options, select_units, UnitCheckOptions,
-};
+use crate::spine::{compose_in_mode, ComposeModes, DependencyInput};
 use crate::witness::{CanonicalAssignment, WitnessValue};
 
 fn wrong(pointer: &str) -> PluginResultRefusal {
@@ -745,107 +742,40 @@ struct Fixture {
 }
 
 fn fixture() -> Fixture {
-    fixture_of(SOURCE, &BTreeMap::new(), &DependencyInput::default())
+    fixture_of(
+        SOURCE,
+        &BTreeMap::new(),
+        &DependencyInput::default(),
+        None,
+    )
 }
 
 fn fixture_of(
     source: &str,
     packages: &fsl_semantics::model::intake::PackageInput,
     dependencies: &DependencyInput,
+    check_mode: Option<filament_semantic_value::checking::CheckMode>,
 ) -> Fixture {
     let identity = SourceIdentity::new("agent-ix", "test:plugin");
     let limits = CallerLimits::default();
-    let cancel = Cancel::new();
-    let parsed = parse(
-        &ParseRequest {
-            source: &identity,
-            path: "unit.native",
-            bytes: source.as_bytes(),
-        },
-        limits.spine.source,
-        &cancel,
-    )
-    .unwrap_or_else(|failure| panic!("parse: {failure:?}"))
-    .into_value();
-    let models = select(&parsed, packages, limits.spine.model, &cancel)
-        .unwrap_or_else(|failure| panic!("select: {failure:?}"))
-        .into_value();
-    let checked = check(
-        &parsed,
-        "fixture".to_owned(),
-        &models,
-        dependencies,
-        limits.spine,
-        &cancel,
-    )
-    .unwrap_or_else(|failure| panic!("check: {failure:?}"))
-    .into_value();
-    let emitted = package(&checked, PackageLimits::default(), &cancel)
-        .unwrap_or_else(|failure| panic!("package: {failure:?}"))
-        .into_value();
-    Fixture {
-        checked,
-        emitted,
-        models,
-    }
-}
-
-fn kernel_fixture_of(
-    source: &str,
-    packages: &fsl_semantics::model::intake::PackageInput,
-    dependencies: &DependencyInput,
-) -> Fixture {
-    use filament_semantic_value::checking::CheckMode;
-
-    let identity = SourceIdentity::new("agent-ix", "test:plugin");
-    let limits = CallerLimits::default();
-    let cancel = Cancel::new();
-    let parsed = parse(
-        &ParseRequest {
-            source: &identity,
-            path: "unit.native",
-            bytes: source.as_bytes(),
-        },
-        limits.spine.source,
-        &cancel,
-    )
-    .unwrap_or_else(|failure| panic!("parse: {failure:?}"))
-    .into_value();
-    let admitted = admit_parsed_unit_list(vec![parsed], dependencies)
-        .unwrap_or_else(|failure| panic!("admit: {failure:?}"));
-    let models = select_units(
-        &admitted,
+    let function_modes = BTreeMap::new();
+    let composed = compose_in_mode(
+        identity,
+        "unit.native",
+        source.as_bytes(),
         packages,
-        limits.spine.model,
-        limits.spine.source,
-        &cancel,
-    )
-    .unwrap_or_else(|failure| panic!("select: {failure:?}"))
-    .into_value();
-    let checked = check_units_with_options(
-        &admitted,
-        "fixture".to_owned(),
-        &models,
         dependencies,
-        UnitCheckOptions {
-            check_mode: Some(CheckMode::Kernel),
-            ..UnitCheckOptions::default()
-        },
         limits.spine,
-        &cancel,
+        ComposeModes {
+            check_mode,
+            function_modes: &function_modes,
+        },
     )
-    .unwrap_or_else(|failure| panic!("check: {failure:?}"))
-    .into_value()
-    .into_iter()
-    .next()
-    .expect("one admitted unit checks to one unit");
-    let emitted = package(&checked, PackageLimits::default(), &cancel)
-        .unwrap_or_else(|failure| panic!("package: {failure:?}"))
-        .into_value();
+    .unwrap_or_else(|failure| panic!("compose: {failure:?}"));
     Fixture {
-        checked,
-        emitted,
-        models,
+        checked: composed.checked,
+        emitted: composed.emitted_unit,
+        models: composed.models,
     }
 }
 
@@ -1103,7 +1033,12 @@ fn tc_774_function_contract_and_application_items_replay() {
 #[test]
 fn tc_774_an_undefined_application_item_is_refuted() {
     let source = format!("{SOURCE}function m using v(x: Int[0, 9]): Integer pure {{ 10 mod x }}\n");
-    let fixture = kernel_fixture_of(&source, &BTreeMap::new(), &DependencyInput::default());
+    let fixture = fixture_of(
+        &source,
+        &BTreeMap::new(),
+        &DependencyInput::default(),
+        Some(filament_semantic_value::checking::CheckMode::Kernel),
+    );
     let context = context(&fixture, CallerLimits::default());
     let (_, x) = declaration(&fixture, "m");
     let application = fixture
