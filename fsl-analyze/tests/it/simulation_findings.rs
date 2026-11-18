@@ -43,7 +43,7 @@ fn assert_violation(finding: &Value, trace: u64, position: u64) {
 /// reported with its finding; no claim is settled.
 #[test]
 #[trace("TC-2976", "FR-634-AC-6", "FSpec-TC-2013", "FSpec-FR-181-AC-33")]
-#[ignore = "QSL-2132: simulation items do not report invariant findings yet"]
+
 fn a_violated_invariant_is_a_finding_on_the_violating_run() {
     let ws = Workspace::new("simulation-findings-violated");
     let request = counter_request(
@@ -76,7 +76,7 @@ fn a_violated_invariant_is_a_finding_on_the_violating_run() {
 /// else; a bound that stops before `value = 3` reports none.
 #[test]
 #[trace("TC-2976", "FR-634-AC-7")]
-#[ignore = "QSL-2132: simulation items do not report invariant findings yet"]
+
 fn a_holding_invariant_or_an_unreached_violation_gives_no_finding() {
     let items = json!([{"kind": "simulation", "simulation": {"mode": "enumerate"}},
         {"kind": "simulation", "simulation": {"mode": "sample", "seed": 5}}]);
