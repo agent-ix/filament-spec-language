@@ -397,7 +397,7 @@ fn sample(
             let mut states = Vec::new();
             let mut steps = Vec::new();
             let mut keep = |key: &StateKey| -> Result<bool, SimulationFault> {
-                if u64::try_from(key.as_bytes().len()).map_or(true, |len| len > limit) {
+                if !u64::try_from(key.as_bytes().len()).is_ok_and(|len| len <= limit) {
                     states.push(json!({"position": states.len()}));
                     oversized = true;
                     return Ok(false);
