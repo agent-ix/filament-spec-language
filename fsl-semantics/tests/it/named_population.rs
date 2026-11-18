@@ -501,11 +501,9 @@ fn a_reference_literal_checks_and_stays_pending_in_a_barred_slot() {
                 "channel ch from R to S carries Pick ordering unordered delivery ",
                 "exactly-once-premise capacity 2 overflow reject;\n",
                 "run sequence Main {{\n",
-                "send Go via ch as (go: Pick) {{ true }};\n",
+                "send Go via ch as (go: Pick) {{ go.target = {literal} }};\n",
                 "receive Got via ch of Go as (got: Pick) {{ true }};\n",
-                "choice Decide by S visible (got.target) {{ ",
-                "case yes when {{ got.target = {literal} }} sequence Yes {{ }} ",
-                "case no when {{ not (got.target = {literal}) }} sequence No {{ }} }} }}\n",
+                "}}\n",
                 "finish Done as (d: Boolean) {{ true }};\n",
                 "}}"
             ),
