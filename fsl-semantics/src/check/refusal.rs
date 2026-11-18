@@ -228,6 +228,21 @@ pub enum ProtocolAnchorCause {
         /// The span of the type form (or nested argument form) at fault.
         span: Span,
     },
+    /// FR-218-AC-44 (FR-218 "Attempts"): a read of an attempt binder whose
+    /// declared type is not the operation's result type, or whose operation
+    /// has no result. `ill_typed`/`type-mismatch` at the read, never at the
+    /// binder declaration, which stays admitted (ADR-027 ST-1).
+    AttemptBinderRead {
+        /// The attempt binder's declared name.
+        binder: String,
+        /// The operation result type, or `None` for an operation without a
+        /// result.
+        expected_result: Option<Box<ValueType>>,
+        /// The binder's declared type.
+        actual_result: Box<ValueType>,
+        /// The read's own span.
+        span: Span,
+    },
     /// FR-218 "Channels": a channel's `from` or `to` names no role the
     /// protocol declares. `missing_declaration`/`missing-name`, at the role
     /// name; both ends refuse independently.
@@ -1156,6 +1171,7 @@ impl ProtocolAnchorCause {
             | Self::MissingRoleType { span, .. }
             | Self::MissingRole { span, .. }
             | Self::BinderType { span, .. }
+            | Self::AttemptBinderRead { span, .. }
             | Self::ChannelRole { span, .. }
             | Self::ChannelType { span, .. }
             | Self::ChannelDeliveryRange { span, .. }
@@ -1237,6 +1253,7 @@ impl ProtocolAnchorCause {
             | Self::RelatedConnection { .. }
             | Self::RolePopulationType { .. }
             | Self::RoleMax { .. } => Code::IllTyped,
+            Self::AttemptBinderRead { .. } => Code::IllTyped,
             Self::JoinFunctionKind { .. } | Self::JoinFunctionType { .. } => Code::IllTyped,
             Self::KeyClause { cause, .. } | Self::SlotClause { cause, .. } => cause.code(),
             Self::WrongObservation { .. } => Code::WrongSnapshot,
@@ -1295,6 +1312,7 @@ impl ProtocolAnchorCause {
             | Self::RolePopulationType { .. }
             | Self::RoleMax { .. } => "type-mismatch",
             Self::JoinFunctionType { .. } => "type-mismatch",
+            Self::AttemptBinderRead { .. } => "type-mismatch",
             Self::KeyModelState { .. }
             | Self::KeyEquality { .. }
             | Self::SlotModelState { .. }

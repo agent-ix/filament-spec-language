@@ -140,6 +140,7 @@ fn request(with_dependency: bool) -> ReplayRequestWire {
             refinement_internals: Some(root_internals.clone()),
             temporal_selections: &[],
             clocks: None,
+            check_mode: None,
         },
         &models,
         &dependencies,

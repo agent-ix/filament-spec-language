@@ -2513,7 +2513,6 @@ fn no_required_construct_settles_unsupported() {
 /// the read, never at the binder declaration.
 #[trace("TC-2972", "FR-218-AC-44")]
 #[test]
-#[ignore = "QSL-2409: attempt binder reads checked against the application record (refused at each read) not implemented yet"]
 fn an_attempt_binder_read_is_checked_against_the_record() {
     let flag = |binder: &str, gate: &str| {
         format!(

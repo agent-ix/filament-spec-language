@@ -501,26 +501,120 @@ fn an_unregistered_backend_is_refused() {
     assert!(registry.contains(&json!("en-1")) && registry.contains(&json!("en-7")));
 }
 
-/// FR-636-AC-1: the order protocol's deadlock item proves, and refutes
-/// without the receive.
+/// FR-636-AC-1: the order protocol's deadlock item proves; a protocol that
+/// starts at a receive with no matching send refutes with its blocked thread.
 #[trace("TC-1596", "FR-636-AC-1")]
 #[test]
-#[ignore = "QSL-2224: protocol analysis items are not reachable through fsl analyze yet"]
 fn protocol_deadlock_proves_and_refutes() {
-    for (receive, expected) in [(true, "proved"), (false, "refuted")] {
-        let ws = Workspace::new(&format!("cli-protocol-{receive}"));
+    let binding = json!({"type": "model-binding", "selection": "test/litmus"});
+    let subject = json!({"protocol": {"protocol": "Flow",
+        "over": {"reference": {"population": "ix://test/litmus/cores", "key": "core"}},
+        "roles": {"Buyer": binding, "Seller": binding}}});
+    let blocked = order_protocol(true).replace(
+        "receive Got via Order of Placed as (got: Ack) { true }",
+        "receive Got via Order of Placed as (got: Ack) { false }",
+    );
+    for (name, body, expected) in [
+        ("complete", order_protocol(true), "proved"),
+        ("blocked", blocked, "refuted"),
+    ] {
+        let ws = Workspace::new(&format!("cli-protocol-{name}"));
         let run = analyze(&litmus_request(
             &ws,
-            &order_protocol(receive),
-            json!({"items": [{"claim": "Flow", "temporal": {"item_kind": "deadlock-freedom"}}]}),
+            &body,
+            json!({"items": [{"claim": "Flow", "kind": "global-conformance",
+                "temporal": {"item_kind": "deadlock-freedom", "subject": subject}}]}),
         ));
+        assert!(run.item(0).is_object(), "{}", run.document());
         let item = run.item(0);
-        assert_eq!(label(&item), expected, "receive {receive}");
-        if !receive {
-            assert!(item["counterexample"]["witness"].is_object(), "{item}");
+        assert_eq!(label(&item), expected, "{}", run.document());
+        if name == "blocked" {
+            assert!(
+                item["counterexample"]["blocked"]
+                    .as_array()
+                    .is_some_and(|blocked| !blocked.is_empty()),
+                "the counterexample names blocked threads: {item}"
+            );
             assert_eq!(item["replay"]["reproduced"], true);
+            assert_eq!(run.exit, 10);
         }
     }
+}
+
+/// FR-624-AC-4 and FR-636: a request naming no protocol refuses with that
+/// protocol name as its locus.
+#[trace("TC-1584", "FR-624-AC-4")]
+#[trace("TC-1596", "FR-636-AC-1")]
+#[test]
+fn an_unknown_protocol_name_is_refused_at_its_name() {
+    let ws = Workspace::new("cli-unknown-protocol");
+    let run = analyze(&litmus_request(
+        &ws,
+        &order_protocol(true),
+        json!({"items": [{"claim": "MissingFlow", "kind": "global-conformance"}]}),
+    ));
+    assert_eq!(run.exit, 20);
+    let item = run.item(0);
+    assert_eq!(item["category"], "refusal", "{item}");
+    assert_eq!(
+        item["record"]["diagnostic"]["cause"], "unknown-claim",
+        "{item}"
+    );
+    assert_eq!(
+        item["record"]["diagnostic"]["detail"]["name"], "MissingFlow",
+        "{item}"
+    );
+}
+
+/// FR-636-AC-1/FR-212: scheduler fairness changes whether a protocol liveness
+/// clause can be refuted by starving an enabled role attempt.
+#[trace("TC-1596", "FR-636-AC-1")]
+#[test]
+fn protocol_liveness_follows_the_fairness_setting() {
+    let run = format!(
+        "parallel Both {{ branch s sequence Sender {{ {} }} \
+         branch r sequence Receiver {{ repeat Loop by w visible () while {{ true }} \
+         attempt Tick by w on M::Cell::touch contracts [TouchPre] as (tick: Boolean) {{ true }}; }} }} \
+         join all [s, r];",
+        crate::fill::attempt("Done", "set", "SetPost", "done", "true"),
+    );
+    let claim = "temporal Eventually using t0 over (k: M::Cell) clock \"model-steps\" \
+                 on origin { eventually holds(k.v = 1) }\n";
+    let subject = json!({"protocol": {"protocol": "Flow",
+    "over": {"reference": {"population": "ix://test/fill/cells", "key": "c"}},
+    "roles": {
+        "w": {"type": "model-binding", "selection": "test/fill"}
+    }}});
+    let run_with = |name: &str, scheduling: &str| {
+        let ws = Workspace::new(&format!("cli-protocol-liveness-{name}"));
+        let body = format!(
+            "{}{}{}",
+            crate::fill::contracts("self.v = 0"),
+            crate::fill::protocol("Flow", &format!("terminal any; {scheduling}"), &run, "d",),
+            claim
+        );
+        let unit = crate::fill::unit_text_with(crate::fill::PROTOCOL_PROFILE, &body);
+        let mut documents = crate::fill::Documents::new();
+        documents.start("s0", &[("c", 0)]);
+        let snapshots: Vec<Vec<u8>> = documents.snapshots.values().cloned().collect();
+        let path = crate::analyze_cli_support::request_over(
+            &ws,
+            &unit,
+            &crate::fill::document(),
+            &snapshots,
+            json!({"subject": subject, "items": [{"claim": "Eventually", "temporal": {
+                "limits": {"max_states": 10000, "max_transitions": 100000,
+                    "max_automaton_states": 256, "max_walk_steps": 64}
+            }}]}),
+        );
+        analyze(&path)
+    };
+    let fair = run_with("fair", "");
+    assert!(fair.item(0).is_object(), "{}", fair.document());
+    assert_eq!(label(&fair.item(0)), "proved", "{}", fair.document());
+    let unfair = run_with("adversarial", "scheduling adversarial;");
+    assert_eq!(label(&unfair.item(0)), "refuted", "{}", unfair.document());
+    assert!(unfair.item(0)["counterexample"]["loop"].is_array());
 }
 
 /// FR-626-AC-1: the refuted deadlock item's counterexample is a finite prefix
@@ -801,10 +895,12 @@ fn recording_item_references_require_a_provisioned_recording_document() {
         let document = run.document();
         assert_eq!(document["category"], "refusal");
         assert_eq!(document["diagnostics"][0]["code"], "invalid-request");
-        assert!(document["diagnostics"][0]["message"]
-            .as_str()
-            .expect("diagnostic message")
-            .contains("/items/0/recording"));
+        assert!(
+            document["diagnostics"][0]["message"]
+                .as_str()
+                .expect("diagnostic message")
+                .contains("/items/0/recording")
+        );
     };
 
     let missing_ws = Workspace::new("cli-recording-reference-missing");

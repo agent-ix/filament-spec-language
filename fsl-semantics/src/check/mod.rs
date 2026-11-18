@@ -4308,6 +4308,7 @@ impl PackageDeclarations {
                     match protocol_slots::check(
                         protocol,
                         &checked,
+                        &bound,
                         &slot_declarations,
                         &mut slot_cx,
                         &regions,

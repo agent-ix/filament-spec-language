@@ -3459,6 +3459,7 @@ fn an_unimported_library_internal_list_defect_refuses_the_compile_at_its_owner()
             refinement_internals: None,
             temporal_selections: &[],
             clocks: None,
+            check_mode: None,
         },
         &models,
         &dependencies,

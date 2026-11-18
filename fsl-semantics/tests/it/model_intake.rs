@@ -2595,7 +2595,6 @@ fn a_port_role_on_a_shared_alias_is_its_own_units_packages_port() {
 /// `Map<Rational[0, 1; 1, 12], Integer>` is admitted.
 #[trace("FSpec-TC-1321", "FSpec-FR-144-AC-33")]
 #[test]
-#[ignore = "QSL-2416: a source Map keyed by an unconstrained domain-package Rational refused at the key type not implemented yet"]
 fn a_map_keyed_by_an_unbounded_package_rational_is_refused() {
     let mut document = rational_intake_document();
     document["types"][0]["constraints"] = serde_json::json!([]);

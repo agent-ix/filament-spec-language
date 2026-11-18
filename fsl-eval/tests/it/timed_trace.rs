@@ -1526,7 +1526,6 @@ fn a_timed_interval_with_no_upper_bound_reads_every_difference_from_its_lower_bo
 /// formula the automaton accepts exactly where the evaluator refutes.
 #[trace("TC-2969", "FR-1034-AC-1")]
 #[test]
-#[ignore = "QSL-2408: zone claim automaton for [q, *] not implemented yet"]
 fn an_open_upper_interval_automaton_agrees_with_the_evaluator() {
     let mut stream = Stream(0x2408_0e2e_0000_0001);
     let (mut held, mut violated) = (0, 0);
@@ -1551,7 +1550,6 @@ fn an_open_upper_interval_automaton_agrees_with_the_evaluator() {
 /// positions start it, whose only constant is the lower bound.
 #[trace("TC-2969", "FR-1034-AC-2")]
 #[test]
-#[ignore = "QSL-2408: one lower-bound-only clock per [q, *] operator not implemented yet"]
 fn an_open_upper_interval_takes_one_clock_with_its_lower_bound() {
     for body in [
         "always (holds(c.level = 1) implies eventually[2 ms, *] holds(c.level = 2))",
@@ -1574,7 +1572,6 @@ fn an_open_upper_interval_takes_one_clock_with_its_lower_bound() {
 /// never discharged and the automaton accepts.
 #[trace("TC-2980", "FR-1034-AC-4")]
 #[test]
-#[ignore = "QSL-2408: until[q, *] acceptance fulfilled when kept pending at a position holding psi and chi not implemented yet"]
 fn an_open_upper_until_kept_pending_with_its_witness_is_fulfilled() {
     // Stamps 0 ms and 0.5 ms (in quarters), both level 1, re-entering
     // position 0 1 ms after it: every gap is below 1 ms, so the claim is
