@@ -63,6 +63,7 @@ mod load_buffering;
 mod loop_proof;
 mod model_check;
 mod model_check_captures;
+mod model_check_input;
 mod model_check_oracle;
 mod model_check_safety;
 mod model_instances;

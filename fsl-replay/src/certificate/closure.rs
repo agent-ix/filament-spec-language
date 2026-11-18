@@ -397,15 +397,17 @@ fn check_protocol(
     cancel: &Cancel,
 ) -> Result<TemporalCertificateCheck, ClosureRefusal> {
     let model = admit(request.subject.model.simulation.clone())?;
-    let graph = request.subject.model.simulation.package.graph();
-    let protocol = graph.protocol(&request.subject.protocol).ok_or_else(|| {
-        ClosureRefusal::Protocol(ProtocolRefusal::UnknownProtocol {
-            protocol: request.subject.protocol.clone(),
-        })
-    })?;
+    let evaluator = request.subject.model.simulation.input.evaluator;
+    let protocol = evaluator
+        .protocol(&request.subject.protocol)
+        .ok_or_else(|| {
+            ClosureRefusal::Protocol(ProtocolRefusal::UnknownProtocol {
+                protocol: request.subject.protocol.clone(),
+            })
+        })?;
     let capacities = Capacities::admit(protocol, &request.subject.capacities)
         .map_err(|refusal| ClosureRefusal::Protocol(ProtocolRefusal::Capacity(refusal)))?;
-    check_protocol_bounds(&model, protocol, &capacities, graph, BOUND_POSITIONS)
+    check_protocol_bounds(&model, protocol, &capacities, evaluator, BOUND_POSITIONS)
         .map_err(|refusal| ClosureRefusal::NotSimulated(Box::new(refusal)))?;
     let subject = &request.subject;
     let live_instances = live_instance_bound(request.max_live_instances);

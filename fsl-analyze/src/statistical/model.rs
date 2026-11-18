@@ -135,7 +135,10 @@ pub fn check_statistical(
     if !form.admits(method) {
         return Err(StatisticalRefusal::NotStatistical { method, form });
     }
-    let package = subject.simulation.package;
+    let package = subject
+        .simulation
+        .source_package()
+        .ok_or_else(|| fault("the-statistical-check-reads-source-forms"))?;
     let system = ModelSystem::new(subject.simulation)
         .map_err(|failure| StatisticalRefusal::Admission(Box::new(failure)))?;
     let group = if symmetry.is_empty() {

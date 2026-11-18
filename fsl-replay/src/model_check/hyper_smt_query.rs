@@ -107,7 +107,10 @@ impl HyperProductIdentity {
         }
         check_subjects(clause, request.subjects)?;
         check_instance(clause, request.subjects, request.instance)?;
-        let package = request.subjects[0].simulation.package;
+        let package = request.subjects[0]
+            .simulation
+            .source_package()
+            .ok_or(SmtEncodingRefusal::fault("hyper-query-reads-source-forms"))?;
         let no_identity = || Refusal::ProductIdentity {
             clause: clause.name().to_owned(),
         };
@@ -180,8 +183,11 @@ fn check_subjects(
         let Some(subject) = subjects.get(index) else {
             return Err(binding(Some(alias.as_str())).into());
         };
-        let (one, other) = (first.simulation.package, subject.simulation.package);
-        if !std::ptr::eq(one, other) {
+        let (one, other) = (
+            first.simulation.input.evaluator,
+            subject.simulation.input.evaluator,
+        );
+        if !std::ptr::addr_eq(one, other) {
             return Err(binding(Some(alias.as_str())).into());
         }
     }

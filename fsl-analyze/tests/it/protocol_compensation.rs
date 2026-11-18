@@ -1020,7 +1020,13 @@ fn a_prefix_through_a_compensation_replays() {
         refinement: None,
         final_delay: None,
     };
-    let graph = subject.model.simulation.package.graph();
+    let graph = subject
+        .model
+        .simulation
+        .input
+        .source
+        .expect("a source-route subject")
+        .graph();
     let pay = graph.protocol("Pay").expect("the checked protocol");
     let [refund] = pay.obligations.compensations.as_slice() else {
         panic!("one Refund template");
@@ -1805,7 +1811,7 @@ fn an_attempt_type_is_bound_at_its_own_templates_node() {
         protocol.obligations.compensations[0].attempt_type,
         protocol.obligations.compensations[1].attempt_type
     );
-    let domains = protocol_domains(protocol, checked.graph());
+    let domains = protocol_domains(protocol, &checked);
     for (node, template) in [(&zeta, 0), (&alpha, 1)] {
         let attempt_type = &protocol.obligations.compensations[template].attempt_type;
         assert!(

@@ -89,9 +89,9 @@ pub fn over_reference(
     protocol: &str,
     over: &ModelInstance,
 ) -> Option<ObjectReference> {
-    let package = simulation.package;
+    let evaluator = simulation.input.evaluator;
     let model = ModelSystem::new(simulation).ok()?;
-    let protocol = package.graph().protocol(protocol)?;
+    let protocol = evaluator.protocol(protocol)?;
     match over_value(&model, protocol, over).ok()? {
         Value::Reference(reference) => Some(reference),
         _ => None,

@@ -131,7 +131,7 @@ fn reachable(source: &str) -> fsl_eval::simulation::protocol::Reachable<Sc> {
     };
     let request = ModelSimulationRequest {
         emit: fsl_package::EmitLimits::fixture(),
-        package: &package,
+        input: fsl_eval::simulation::model::ModelCheckInput::source(&package),
         packages: &packages,
         normalization: ModelNormalizationLimits::default(),
         snapshots: &snapshots,
