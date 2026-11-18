@@ -35,7 +35,7 @@ relationships:
 The protocol system SHALL take the step kinds `attempt`, `event`, `send`,
 `receive`, `recommend`, `duplicate`, `lose`, `fork`, `join`, `timeout`,
 `finish`, `fence` and memory steps, each enabled and applied as FSpec FR-426 states
-(ADR-027 ST-1 to ST-10). The protocol system SHALL enable a `fence` step by its memory model's
+(ADR-027 ST-1 to ST-10, and ST-19 for `recommend`). The protocol system SHALL enable a `fence` step by its memory model's
 fence rule alone and SHALL make it wait on nothing else (ADR-027 SE-5). The protocol system SHALL fold every structural
 move into the step that causes it (ADR-027 FO-1, FO-2). The protocol
 system SHALL apply each step atomically, an attempt as one FR-120
@@ -112,7 +112,7 @@ add states that no behaviour distinguishes.
   application of its operation whose effective precondition over the clauses
   its `contracts` select is true over the thread observation, whose record
   satisfies its constraint and where the gate holds, one step per
-  application (FSpec FR-426, FR-822). The step binds the binder to the
+  application (ADR-027 ST-19; FSpec FR-426, FR-822). The step binds the binder to the
   recommendation record, computes no post-state and writes nothing through
   the memory model, and its transition carries the record
   `{node, role, actor, instance, operation, receiver, arguments}` as
@@ -153,7 +153,7 @@ add states that no behaviour distinguishes.
 
 ## Dependencies
 
-- ADR-027 §2.1 FO-1 and FO-2, §1 PS-6, §2.2 ST-1 to ST-10 and "Waiting", §2.3 AT-1
+- ADR-027 §2.1 FO-1 and FO-2, §1 PS-6, §2.2 ST-1 to ST-10, ST-19 and "Waiting", §2.3 AT-1
   to AT-3, §2.5 SE-5 (fences).
 - [FR-120](FR-120-simulate-a-checked-package-s-state-family.md) (the one
   application rule), [FR-114](FR-114-bind-a-protocol-attempt-to-its-operation-frame.md)
