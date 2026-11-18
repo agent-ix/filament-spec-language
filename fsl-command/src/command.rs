@@ -15,13 +15,13 @@ mod tl;
 mod wire;
 
 pub use analyze::{
-    AnalyzeInput, PreparedAnalyze, analyze, analyze_with_limits, analyze_with_providers,
-    analyze_with_providers_and_limits, prepare_analyze,
+    analyze, analyze_with_limits, analyze_with_providers, analyze_with_providers_and_limits,
+    prepare_analyze, AnalyzeInput, PreparedAnalyze,
 };
-pub use flow::{FlowAnalyzeError, analyze_flow_report};
-pub use monitor::{MonitorEvent, MonitorSummary, monitor};
+pub use flow::{analyze_flow_report, FlowAnalyzeError};
+pub use monitor::{monitor, MonitorEvent, MonitorSummary};
 pub use output::NativeResult;
-pub use tl::{AtomMapping, TlRecord, record as tl_record};
+pub use tl::{record as tl_record, AtomMapping, TlRecord};
 
 use crate::formal_source::FormalSource;
 use filament_contract_model as ir;
@@ -267,7 +267,8 @@ pub fn check_outcome(source_path: &Path, inputs: &CheckInputs) -> CheckOutcome {
     let result = check_outcome_inner(source_path, inputs);
     match result {
         Ok((document, sources)) => CheckOutcome { document, sources },
-        Err((cause, sources)) => {
+        Err(failure) => {
+            let (cause, sources) = *failure;
             let document = RunError {
                 cause,
                 sources: sources.clone(),
@@ -281,8 +282,10 @@ pub fn check_outcome(source_path: &Path, inputs: &CheckInputs) -> CheckOutcome {
 fn check_outcome_inner(
     source_path: &Path,
     inputs: &CheckInputs,
-) -> std::result::Result<(fsl_replay::OutcomeDocument, crate::Sources), (RunCause, crate::Sources)>
-{
+) -> std::result::Result<
+    (fsl_replay::OutcomeDocument, crate::Sources),
+    Box<(RunCause, crate::Sources)>,
+> {
     let mut intake = intake_with_bytes(
         Path::new("."),
         FileCounts {
@@ -293,7 +296,7 @@ fn check_outcome_inner(
         },
         inputs.dependent_bytes,
     )
-    .map_err(|cause| (cause, crate::Sources::default()))?;
+    .map_err(|cause| Box::new((cause, crate::Sources::default())))?;
     let run = (|| -> Result<fsl_replay::OutcomeDocument> {
         validate_check_selections(&inputs.models, "--model")?;
         validate_check_selections(&inputs.libraries, "--library")?;
@@ -441,7 +444,7 @@ fn check_outcome_inner(
     })();
     let sources = crate::Sources::from_sources(intake.sources);
     run.map(|document| (document, sources.clone()))
-        .map_err(|cause| (cause, sources))
+        .map_err(|cause| Box::new((cause, sources)))
 }
 
 fn check_missing_model_help(
@@ -2311,6 +2314,10 @@ fn handoff_clock_selections(
 /// The pipeline of [`complete_sources`] through S4: the checked unit is
 /// handed to `finish` with the admitted domain packages, the library
 /// sources and the map from a spine failure to its located cause.
+#[allow(
+    clippy::too_many_arguments,
+    reason = "mirrors the existing wide signature; a parameter struct is a separate refactor"
+)]
 fn check_sources<T>(
     request: &wire::CompileRequest,
     intake: &mut Intake<'_>,
@@ -3120,14 +3127,12 @@ fn prepare_complete_run(
             }
         }))
         .and_then(|dependencies| {
-            dependencies.with_refinement_internals(libraries.iter().filter_map(
-                |(library, _)| {
-                    library
-                        .refinement_internals
-                        .as_ref()
-                        .map(|value| (library.identity.clone(), value.clone()))
-                },
-            ))
+            dependencies.with_refinement_internals(libraries.iter().filter_map(|(library, _)| {
+                library
+                    .refinement_internals
+                    .as_ref()
+                    .map(|value| (library.identity.clone(), value.clone()))
+            }))
         })
         .and_then(|dependencies| dependencies.with_integer_division(library_integer_division))
         .map_err(|refusal| {

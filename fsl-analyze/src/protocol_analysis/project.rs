@@ -504,15 +504,12 @@ fn witness(
         .events()
         .iter()
         .filter_map(|event| match &event.kind {
-            GlobalEventKind::Control { operation, .. }
-                if matches!(
-                    operation,
+            GlobalEventKind::Control {
+                operation:
                     fsl_package::protocol_view::ControlOperation::Check
-                        | fsl_package::protocol_view::ControlOperation::Fence
-                ) =>
-            {
-                Some(event.at.clone())
-            }
+                    | fsl_package::protocol_view::ControlOperation::Fence,
+                ..
+            } => Some(event.at.clone()),
             _ => None,
         })
         .collect();

@@ -6,9 +6,9 @@
 //! adapter (`fsl_command::command::run`) and asserts on the output document,
 //! because the engines' own entry points do not exist yet.
 
-use crate::support::config_version_spine::{Case, spine};
+use crate::support::config_version_spine::{spine, Case};
 use ix_trace_rs::trace;
-use serde_json::{Value, json};
+use serde_json::{json, Value};
 use std::path::Path;
 
 const MODEL_HEADER: &str = "language \"ix:native\" edition \"1-draft\";\n\
@@ -1461,8 +1461,8 @@ fn a_work_budget_stop_during_enumeration_exits_incomplete() {
             .next()
             .expect("the snapshot")
             .clone();
-        let report = fsl_replay::spine::run_temporal_behaviours(clause_run, &initial, 2)
-            .expect("a report");
+        let report =
+            fsl_replay::spine::run_temporal_behaviours(clause_run, &initial, 2).expect("a report");
         let fsl_replay::spine::ClauseDisposition::TemporalValuation(valuation) =
             &report.disposition
         else {
@@ -1486,7 +1486,12 @@ fn a_work_budget_stop_during_enumeration_exits_incomplete() {
         let record = run(work_units);
         let cross = &record.record["cross_evaluation"];
         assert_ne!(record.exit_code, 30, "{work_units}: {}", record.record);
-        assert_eq!(cross["faults"], json!([]), "{work_units}: {}", record.record);
+        assert_eq!(
+            cross["faults"],
+            json!([]),
+            "{work_units}: {}",
+            record.record
+        );
         assert_eq!(record.exit_code, 22, "{work_units}: {}", record.record);
         assert!(
             cross["traces"].as_u64() < complete.as_u64(),

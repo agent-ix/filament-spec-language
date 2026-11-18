@@ -454,11 +454,11 @@ pub use spine::{
 // FR-535: the bounded `native-run-result/2` consumer boundary, so CG reads and
 // writes the exact result bytes without naming `spine` (ADR-011 FB-05).
 pub use spine::{
-    read_native_run_result_bounded, write_clause_run_result, CallLocationRead, CallLocusRead,
-    CallOriginRead, ClauseDisposition, ClauseRunRecord, ClauseRunReport, ClauseRunUsage,
-    CommandErrorRecord, ConsequentSourceEvents, NativeRunLimits, NativeRunOutcome,
-    NativeRunReadError, NativeRunResult, NativeRunResultError, RefusalLocusRead, SourceRefRead,
-    SpanRead, TemporalRecord, temporal_disposition_json,
+    read_native_run_result_bounded, temporal_disposition_json, write_clause_run_result,
+    CallLocationRead, CallLocusRead, CallOriginRead, ClauseDisposition, ClauseRunRecord,
+    ClauseRunReport, ClauseRunUsage, CommandErrorRecord, ConsequentSourceEvents, NativeRunLimits,
+    NativeRunOutcome, NativeRunReadError, NativeRunResult, NativeRunResultError, RefusalLocusRead,
+    SourceRefRead, SpanRead, TemporalRecord,
 };
 // The input refusal a `ReplayRefusal::Input` and a value-parity
 // `ValueParityResult::RefusedInput` carry.

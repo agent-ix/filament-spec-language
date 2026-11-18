@@ -83,20 +83,16 @@ fn complete_source_builds_a_byte_exact_trivia_preserving_cst() {
         assert_eq!(resolved.production(), node.production());
         assert_eq!(resolved.identity(), node.identity());
     }
-    assert!(
-        parsed
-            .cst()
-            .tokens()
-            .iter()
-            .any(|token| token.class() == TokenClass::Comment)
-    );
-    assert!(
-        parsed
-            .cst()
-            .tokens()
-            .iter()
-            .any(|token| token.class() == TokenClass::Whitespace)
-    );
+    assert!(parsed
+        .cst()
+        .tokens()
+        .iter()
+        .any(|token| token.class() == TokenClass::Comment));
+    assert!(parsed
+        .cst()
+        .tokens()
+        .iter()
+        .any(|token| token.class() == TokenClass::Whitespace));
 
     let productions: BTreeSet<_> = parsed
         .cst()
@@ -404,13 +400,11 @@ fn a_missing_semicolon_gives_one_diagnostic() {
     let (text, parsed) = recover("record A { x: Integer }\nrecord B { y: Integer; }\n");
     assert_eq!(parsed.diagnostics().len(), 1, "{:?}", parsed.diagnostics());
     let start = byte_at(&text, "record B");
-    assert!(
-        parsed
-            .cst()
-            .nodes()
-            .iter()
-            .any(|node| node.production() == Production::Declaration && node.span().start == start)
-    );
+    assert!(parsed
+        .cst()
+        .nodes()
+        .iter()
+        .any(|node| node.production() == Production::Declaration && node.span().start == start));
 }
 
 #[trace("TC-2152", "FR-762-AC-5")]
@@ -452,11 +446,9 @@ fn the_diagnostic_list_is_cut_at_its_bound() {
     let (text, parsed) = recover(&body);
     let diagnostics = parsed.diagnostics();
     assert_eq!(diagnostics.len(), 101);
-    assert!(
-        diagnostics[..100]
-            .iter()
-            .all(|diagnostic| diagnostic.cause == CompleteCause::UnexpectedToken)
-    );
+    assert!(diagnostics[..100]
+        .iter()
+        .all(|diagnostic| diagnostic.cause == CompleteCause::UnexpectedToken));
     let cut = &diagnostics[100];
     assert_eq!(cut.code, CompleteCode::InvalidSyntax);
     assert_eq!(cut.cause.as_str(), "diagnostic-list-cut");
@@ -474,11 +466,9 @@ fn the_diagnostic_list_is_cut_at_its_bound() {
             && !cut.message.contains("s1.diagnostics")
             && !cut.message.contains("i2.diagnostics")
     );
-    assert!(
-        diagnostics
-            .iter()
-            .all(|diagnostic| diagnostic.limit().is_none())
-    );
+    assert!(diagnostics
+        .iter()
+        .all(|diagnostic| diagnostic.limit().is_none()));
 }
 
 #[trace("TC-2154", "FR-762-AC-7")]
@@ -527,21 +517,17 @@ fn recovery_stops_at_the_work_budget() {
     // The cut is located at the token at which the budget ran out: one whole
     // token of the unit, after the first recorded error.
     let span = last.byte_span().expect("the cut is located");
-    assert!(
-        parsed
-            .cst()
-            .tokens()
-            .iter()
-            .any(|token| token.span().start == span.start && token.span().end == span.end)
-    );
+    assert!(parsed
+        .cst()
+        .tokens()
+        .iter()
+        .any(|token| token.span().start == span.start && token.span().end == span.end));
     let first = parsed.diagnostics()[0].byte_span().expect("located");
     assert!(span.start > first.start, "{span:?} after {first:?}");
-    assert!(
-        parsed
-            .diagnostics()
-            .iter()
-            .all(|diagnostic| diagnostic.limit().is_none())
-    );
+    assert!(parsed
+        .diagnostics()
+        .iter()
+        .all(|diagnostic| diagnostic.limit().is_none()));
 }
 
 #[trace("TC-2187", "FR-762-AC-9")]

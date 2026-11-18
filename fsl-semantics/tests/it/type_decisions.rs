@@ -370,12 +370,17 @@ fn a_tuple_position_read_names_its_tuple_by_node_key() {
     )
     .unwrap_or_else(|refusals| panic!("the read checks: {refusals:?}"));
     let text = format!("{graph:?}");
-    let at = text.find("TupleProject").expect("a checked TupleProject node");
+    let at = text
+        .find("TupleProject")
+        .expect("a checked TupleProject node");
     let node = &text[at..];
     let node = &node[..node.find("position").expect("its position")];
     assert!(
         !node.contains("DeclarationKey") && !node.contains("package:"),
         "the tuple is named by its node key: {node}"
     );
-    assert!(node.contains("NodeKey"), "the tuple is named by its node key: {node}");
+    assert!(
+        node.contains("NodeKey"),
+        "the tuple is named by its node key: {node}"
+    );
 }

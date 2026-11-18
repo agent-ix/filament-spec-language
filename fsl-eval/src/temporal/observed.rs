@@ -21,13 +21,13 @@ use fsl_semantics::check::{FormulaNodeId, TemporalClauseNode};
 use fsl_semantics::model::object_environment::ObjectEnvironment;
 
 use super::engine::DecisiveSearch;
-use super::finite_window::{TimestampedTrace, Valuation, WindowEvaluation, evaluate_finite_window};
+use super::finite_window::{evaluate_finite_window, TimestampedTrace, Valuation, WindowEvaluation};
 use super::tape::{TapeEntry, TapeLetter, TapeReading};
 use super::{
     AtomReading, CaptureReading, LetterStop, TemporalLetters, TemporalOutcome, TemporalPosition,
     TemporalRefusal, TemporalTrace, UndefinedCause,
 };
-use crate::value::{CheckedPackageEvaluation, evaluate_capture};
+use crate::value::{evaluate_capture, CheckedPackageEvaluation};
 use filament_eval::{CallFailure, Evaluation};
 
 /// Why a `holds` condition stopped the run without a reading, kept whole so
@@ -424,7 +424,7 @@ fn evaluate_window_over(
 
 /// FR-820: [`evaluate_positions_finite_window`] carried across a trace that
 /// grows. The state reads only the positions an open activation can still
-/// read ([`WindowState`]), so each step's work is bounded by them, and its
+/// read ([`WindowState`](super::finite_window::WindowState)), so each step's work is bounded by them, and its
 /// report equals the batch report over the prefix.
 #[derive(Clone, Debug, Default)]
 pub struct CarriedWindow {

@@ -1559,8 +1559,8 @@ fn an_open_upper_until_kept_pending_with_its_witness_is_fulfilled() {
         ),
     ] {
         let fixture = timed(body);
-        let mut claim = TimedClaim::new(&fixture.clause, 1 << 20)
-            .unwrap_or_else(|why| panic!("{body}: {why}"));
+        let mut claim =
+            TimedClaim::new(&fixture.clause, 1 << 20).unwrap_or_else(|why| panic!("{body}: {why}"));
         let atom_levels = levels_of(&fixture, claim.atoms());
         let word: Vec<Letter> = levels
             .iter()

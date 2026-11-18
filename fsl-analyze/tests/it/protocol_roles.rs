@@ -30,16 +30,15 @@ use fsl_eval::simulation::protocol::{
 use fsl_eval::simulation::{Location, SubjectSystem, TransitionSystem};
 use fsl_eval::temporal::AtomReading;
 use fsl_foundation::diagnostic::Code;
-use fsl_foundation::MemoryModelName;
 use fsl_foundation::source::provenance::OccurrenceKey;
+use fsl_foundation::MemoryModelName;
 use fsl_package::CheckedPackage;
 use fsl_replay::{
-    node_occurrence, replay_protocol_trace, settle_protocol_check, CounterexampleKind,
-    Execution, InconclusiveCause, InstanceBound, ModelCheckItem, ModelCheckLimits,
-    ModelCheckOutcome, ModelCheckRecord, ModelTraceReplayResult, ModelTraceSubject,
-    ProtocolCertificateRequest, ProtocolTraceSubject, ReplayLimits, ReplayRefusal, ResultLabel,
-    StatedInstanceBound, TemporalCounterexample, TerminalValue, Truth, UndecidedCause,
-    UndefinedLocus,
+    node_occurrence, replay_protocol_trace, settle_protocol_check, CounterexampleKind, Execution,
+    InconclusiveCause, InstanceBound, ModelCheckItem, ModelCheckLimits, ModelCheckOutcome,
+    ModelCheckRecord, ModelTraceReplayResult, ModelTraceSubject, ProtocolCertificateRequest,
+    ProtocolTraceSubject, ReplayLimits, ReplayRefusal, ResultLabel, StatedInstanceBound,
+    TemporalCounterexample, TerminalValue, Truth, UndecidedCause, UndefinedLocus,
 };
 use fsl_route::deadlock::{ItemObligation, ObligationKind};
 use fsl_route::model_request::ModelRequest;
@@ -266,11 +265,8 @@ impl World {
             &Cancel::new(),
             |payload| {
                 let (node, occurrence) = protocol_anchor(&self.checked, "R");
-                let unit = crate::fill::unit_text_with(
-                    crate::fill::PROTOCOL_PROFILE,
-                    &self.body,
-                )
-                .into_bytes();
+                let unit = crate::fill::unit_text_with(crate::fill::PROTOCOL_PROFILE, &self.body)
+                    .into_bytes();
                 replay_protocol_trace(
                     request(
                         &self.checked,
@@ -876,7 +872,10 @@ fn a_scope_role_stays_live_for_the_compensation_attempt_it_owns() {
             .map(|(step, _)| step)
             .find(|step| step.kind() == kind)
             .unwrap_or_else(|| panic!("{kind:?} dispatches while the scope role is live"));
-        assert_eq!(dispatch.actor().expect("the dispatch has an actor").role, "r");
+        assert_eq!(
+            dispatch.actor().expect("the dispatch has an actor").role,
+            "r"
+        );
     }
     for state in reached
         .iter()
@@ -2232,7 +2231,6 @@ fn an_undecided_protocol_capture_is_a_finding_on_each() {
         )),
         "{findings:?}"
     );
-
 }
 
 /// FR-882-AC-2 (TC-2505): a choice guard that calls a Kernel-checked
@@ -2295,10 +2293,13 @@ fn an_undecided_initial_choice_guard_is_a_finding_on_origin_and_each() {
         .iter()
         .flat_map(|state| system.successors(&state.state).expect("expands").findings)
         .collect::<Vec<_>>();
-    assert!(findings.iter().any(|finding| matches!(
-        finding,
-        ModelFinding::ProtocolExpressionUndetermined { node, .. } if node.contains("Pick")
-    )), "{findings:?}");
+    assert!(
+        findings.iter().any(|finding| matches!(
+            finding,
+            ModelFinding::ProtocolExpressionUndetermined { node, .. } if node.contains("Pick")
+        )),
+        "{findings:?}"
+    );
     let outcome = each.deadlock();
     let record = each.settle_deadlock(&outcome);
     assert_eq!(record.label, ResultLabel::Refuted);
@@ -2423,11 +2424,13 @@ fn an_attempt_binder_is_bound() {
             .expect("expands")
             .findings
             .iter()
-            .all(|finding| !matches!(
-                finding,
-                ModelFinding::ProtocolExpressionUndetermined { node, .. }
-                    if node.rsplit('/').next() == Some("t")
-            ))
+            .all(|finding| {
+                !matches!(
+                    finding,
+                    ModelFinding::ProtocolExpressionUndetermined { node, .. }
+                        if node.rsplit('/').next() == Some("t")
+                )
+            })
     }));
 }
 
@@ -2449,8 +2452,7 @@ fn an_effect_enables_whatever_the_binder_type() {
     ] {
         let world = World::new(&unit(ORIGIN, "", "", run), &["c"], &[0]);
         let subject = world.subject();
-        let model =
-            ModelSystem::new(subject.model.simulation.clone()).expect("the subject admits");
+        let model = ModelSystem::new(subject.model.simulation.clone()).expect("the subject admits");
         let system = ProtocolSystem::new(model, &subject, Sc)
             .unwrap_or_else(|refusal| panic!("the system is built: {refusal:?}"));
         assert!(
@@ -2481,10 +2483,7 @@ fn no_required_construct_settles_unsupported() {
                     + &crate::litmus::protocol("SB", run)
                     + crate::litmus::NO_BOTH_ZERO;
                 let case = crate::weak_memory::Case::new(&text);
-                let selection = [crate::weak_memory::select(
-                    "SB::Both",
-                    MemoryModelName::Tso,
-                )];
+                let selection = [crate::weak_memory::select("SB::Both", MemoryModelName::Tso)];
                 let refused = case.system(&selection, Sc).err();
                 assert!(matches!(
                     refused,
@@ -2497,8 +2496,8 @@ fn no_required_construct_settles_unsupported() {
                             [FlagPre, FlagPost] as (t: Boolean) { true }; }";
                 let world = World::new(&unit(ORIGIN, "", "", run), &["c"], &[0]);
                 let subject = world.subject();
-                let model = ModelSystem::new(subject.model.simulation.clone())
-                    .expect("the subject admits");
+                let model =
+                    ModelSystem::new(subject.model.simulation.clone()).expect("the subject admits");
                 ProtocolSystem::new(model, &subject, Sc).is_ok()
             }
         }
@@ -2538,7 +2537,10 @@ fn an_attempt_binder_read_is_checked_against_the_record() {
     for (run, reads) in [
         (flag("Integer", " check Gate using v { t = 1 };"), 1),
         (touch(" check Gate using v { t };"), 1),
-        (flag("Integer", " check Gate using v { t = 1 and t = 2 };"), 2),
+        (
+            flag("Integer", " check Gate using v { t = 1 and t = 2 };"),
+            2,
+        ),
     ] {
         let refusals = check_refusals(&unit(ORIGIN, "", "", &run));
         assert_eq!(refusals.len(), reads, "{run}: {refusals:?}");

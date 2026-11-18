@@ -22,7 +22,7 @@ use fsl_semantics::model::observation::{
 
 use super::evaluate::Machine;
 use super::s6a::separation::{
-    InvocationBinding, RuntimeValuePath, ValuePathStep, ValuePathSubject, observation_identity,
+    observation_identity, InvocationBinding, RuntimeValuePath, ValuePathStep, ValuePathSubject,
 };
 use filament_eval::CallFailure;
 use filament_eval::Evaluation;

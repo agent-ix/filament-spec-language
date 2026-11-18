@@ -7,7 +7,7 @@ use std::path::{Path, PathBuf};
 use fsl_command::command;
 use fsl_replay::Operation;
 use ix_trace_rs::trace;
-use serde_json::{Value, json};
+use serde_json::{json, Value};
 
 const HEADER: &str =
     "language \"ix:native\" edition \"1-draft\";\nprofile v = \"filament.value.complete/v1\";\n";
@@ -219,12 +219,18 @@ fn program_and_library_laws_are_selected_independently_during_run() {
     let library_run = request(directory.path(), None, "native-run/1", body.clone());
     assert_eq!(returned(&library_run), "-2");
 
-    body["libraries"][0].as_object_mut().unwrap().remove("integer_division");
+    body["libraries"][0]
+        .as_object_mut()
+        .unwrap()
+        .remove("integer_division");
     let missing_library_law = request(directory.path(), None, "native-run/1", body);
     let error = command::run(&missing_library_law, &crate::negotiation::Fr290)
         .expect_err("the program law does not supply an imported library's law");
     let (code, cause, _) = refusal(&error, Operation::Execute);
-    assert_eq!((code.as_str(), cause.as_str()), ("missing_declaration", "missing-selection"));
+    assert_eq!(
+        (code.as_str(), cause.as_str()),
+        ("missing_declaration", "missing-selection")
+    );
 }
 
 #[test]

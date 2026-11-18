@@ -2762,7 +2762,25 @@ impl<'a, 'm, N: NodeSource<'a>> Machine<'a, 'm, N> {
                     Value::Integer(value) => Rational::from_integer(value),
                     Value::Rational(value) => value,
                     Value::Decimal(value) => value.normalized().to_rational(),
-                    _ => return Err(invariant("quantity-scale-factor-expected")),
+                    Value::Boolean(_)
+                    | Value::Float(_)
+                    | Value::Quantity(_)
+                    | Value::Text(_)
+                    | Value::String(_)
+                    | Value::Bytes(_)
+                    | Value::JsonObject(_)
+                    | Value::Uuid(_)
+                    | Value::Timestamp(_)
+                    | Value::Enum(_)
+                    | Value::Population(_)
+                    | Value::Option(_)
+                    | Value::Composite(_)
+                    | Value::Union(_)
+                    | Value::Collection(_)
+                    | Value::Map(_)
+                    | Value::Reference(_) => {
+                        return Err(invariant("quantity-scale-factor-expected"));
+                    }
                 };
                 let Value::Quantity(quantity) = self.pop()? else {
                     return Err(invariant("quantity-scale-operand-expected"));
@@ -3341,7 +3359,24 @@ impl<'a, 'm, N: NodeSource<'a>> Machine<'a, 'm, N> {
                         let found = crate::value::map_entry(&map, &item).is_some();
                         collections::retain_scalar(Value::Boolean(found), self.meter)?
                     }
-                    _ => return Err(invariant("collection-value-expected")),
+                    Value::Boolean(_)
+                    | Value::Integer(_)
+                    | Value::Rational(_)
+                    | Value::Decimal(_)
+                    | Value::Float(_)
+                    | Value::Quantity(_)
+                    | Value::Text(_)
+                    | Value::String(_)
+                    | Value::Bytes(_)
+                    | Value::JsonObject(_)
+                    | Value::Uuid(_)
+                    | Value::Timestamp(_)
+                    | Value::Enum(_)
+                    | Value::Population(_)
+                    | Value::Option(_)
+                    | Value::Composite(_)
+                    | Value::Union(_)
+                    | Value::Reference(_) => return Err(invariant("collection-value-expected")),
                 }
             }
             NodeKind::Navigate {

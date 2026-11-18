@@ -4,8 +4,8 @@
 //! safety half settles as a terminal record from the outcome and the replay.
 
 use filament_exact::Cancel;
-use filament_semantic_value::checking::CheckMode;
 use filament_semantic_value::catalog::InternalFault;
+use filament_semantic_value::checking::CheckMode;
 use fsl_analyze::model_check::{check_refinement, RefinementCheckRequest};
 use fsl_eval::model_subject::ModelSubject;
 use fsl_eval::simulation::model::{operation_identity_text, ModelSimulationRequest, ModelSystem};

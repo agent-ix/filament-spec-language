@@ -87,7 +87,6 @@ fn compile_stage_and_output_limits_come_from_request_overrides() {
     let outcome =
         command::compile_outcome_with_limits_and_overrides(&path, RunLimits::default(), &overrides)
             .unwrap();
-    let mut limits = limits;
     limits.package.output_bytes = outcome.package_bytes().len() as u64 - 1;
     let overrides = RequestOverrides {
         limits: Some(&limits),

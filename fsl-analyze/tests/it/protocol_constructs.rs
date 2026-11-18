@@ -6,13 +6,13 @@
 use std::collections::BTreeSet;
 
 use filament_exact::Cancel;
-use fsl_analyze::model_check::{ProtocolCheckRequest, check_protocol};
+use fsl_analyze::model_check::{check_protocol, ProtocolCheckRequest};
 use fsl_eval::simulation::protocol::{
     ProtocolState, ProtocolSystem, ProtocolTransition, Sc, StepKind, ThreadPath, WaitCause,
 };
 use fsl_eval::simulation::{Limits, SubjectSystem, TransitionSystem};
 use ix_trace_rs::trace;
-use serde_json::{Value as Json, json};
+use serde_json::{json, Value as Json};
 
 use fsl_foundation::diagnostic::Code;
 use fsl_replay::{
@@ -22,9 +22,9 @@ use fsl_replay::{
 use fsl_semantics::check::{CheckCause, ProtocolConstruct, ProtocolReferenceCause};
 
 use crate::fill::{
-    Reached, attempt, compiled, contracts, json_of, projections, protocol, reachable, sc_system,
+    attempt, compiled, contracts, json_of, projections, protocol, reachable, sc_system, Reached,
 };
-use crate::protocol_system::{Case, touch};
+use crate::protocol_system::{touch, Case};
 
 /// The protocol `P` with `members` and `run` over `ADR-027 §7`'s contracts,
 /// from `c.v = 0`.
@@ -334,10 +334,12 @@ fn unknown_delivery_loop_stops_at_the_fr126_state_limit() {
     let run = "sequence Main { send S1 via Pay as (s1: Boolean) { s1 }; }";
     let unit = contracts("self.v = 0") + &protocol("Pipeline", &members, run, "d");
     let case = Case::new(&unit, &[0]);
-    let mut limits = ModelCheckLimits::default();
-    limits.limits = Limits {
-        max_states: 64,
-        max_transitions: 4096,
+    let limits = ModelCheckLimits {
+        limits: Limits {
+            max_states: 64,
+            max_transitions: 4096,
+        },
+        ..ModelCheckLimits::default()
     };
 
     let outcome = check_protocol(

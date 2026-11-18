@@ -15,8 +15,8 @@ use fsl_semantics::model::state::{ModelState, StateField, StateModel, StateObjec
 use quire_canonical::{Error, Limits, Sink, Writer};
 
 use super::super::{ModelKeyBudget, ModelKeyError};
-use super::Typing;
 use super::projection::{self, ArrayOrder, Scalar, StructuralSink, ValueSink};
+use super::Typing;
 use crate::simulation::EncodingRefusal;
 
 struct Scope<'a> {
