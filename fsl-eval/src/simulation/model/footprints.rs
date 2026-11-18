@@ -33,7 +33,6 @@ use crate::model_subject::ModelInstance;
 
 use super::encode::{parse_optional_reference, parse_reference};
 use super::walk::stop;
-<<<<<<< HEAD
 use super::{Application, ModelSimState, ModelSystem, ReferenceBinding, BROKEN};
 use crate::simulation::expansion::{Expansion, ExpansionStop};
 use crate::simulation::footprint::{Footprint, Location};
