@@ -36,4 +36,18 @@ A manual, planless acceptance and matrix audit of the changed diagnostic, varian
 
 ### FND-001 — FR-031-AC-7 has no tagged test binder
 
-The computed matrix contains no binder for FR-031-AC-7. The behavioral test `quire_context_refusal_preserves_its_diagnostics` in `fsl-command/tests/it/extraction_request_refusals.rs` is present and has a doc-comment trace line, but the active matrix does not recognize it as a binder. The source-inspection catalogue test does not prove that the producer is exercised. Add a matrix-recognized trace binding and confirm the criterion is tagged.
+The computed matrix initially contained no binder for FR-031-AC-7. The behavioral test `quire_context_refusal_preserves_its_diagnostics` in `fsl-command/tests/it/extraction_request_refusals.rs` is present and has a doc-comment trace line, but the active matrix did not recognize it as a binder. The source-inspection catalogue test did not prove that the producer was exercised. The delta review found the new matrix binding is still only source inspection.
+
+## New findings (disposition pass 1)
+
+| ID | Severity | Summary | Refs |
+| --- | --- | --- | --- |
+| FND-002 | medium | FR-031-AC-7 appears tagged only because a source-inspection test is bound to it | fsl-foundation/tests/code_catalogue.rs:151-169 |
+
+The updated matrix reports FR-031-AC-7 as tagged, with `the_request_reader_produces_the_extraction_refusal_codes` as its only binder. That test reads source with `include_str!` and checks for spellings; it does not exercise the producer. The separate runtime test is still unbound, so the matrix overstates behavioral coverage. Bind the runtime test and remove the criterion tag from the source-inspection test.
+
+## Dispositions
+
+| FND | outcome | reason |
+| --- | --- | --- |
+| FND-001 | still-open | The runtime behavior test remains unbound. The new matrix binder is a source-inspection test, not evidence that the invalid-context producer is exercised. |

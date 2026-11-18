@@ -32,3 +32,17 @@ Static review examined the QSL-1993 rendering and refusal-list changes, QSL-2009
 ### FND-001 — FR-031-AC-7 has no matrix binder
 
 The new test has a `/// Trace: TC-109, FR-031-AC-7` doc comment, but `quoin matrix --repo <worktree> --json` reports FR-031-AC-7 as `untagged`. The adjacent catalogue test uses `include_str!` to look for producer spellings; it does not exercise the invalid-context producer. The behavioral test exists, but its criterion is not represented in the computed traceability matrix. Give the test a tag form recognized by the active matrix and confirm FR-031-AC-7 becomes tagged.
+
+## New findings (disposition pass 1)
+
+| ID | Severity | Summary | Refs |
+| --- | --- | --- | --- |
+| FND-002 | medium | FR-031-AC-7 is bound to a source-inspection test that does not exercise the invalid-context producer | fsl-foundation/tests/code_catalogue.rs:151-169 |
+
+The canonical trace marker now makes the matrix report FR-031-AC-7 as tagged, but its only binder is `the_request_reader_produces_the_extraction_refusal_codes`. That test uses `include_str!` to search the command source for code spellings and never submits a request to `read_clause_run_request`. The actual behavior test remains unbound. Bind the runtime behavior test and remove the AC-7 binding from the source-inspection test.
+
+## Dispositions
+
+| FND | outcome | reason |
+| --- | --- | --- |
+| FND-001 | still-open | The canonical tag was added to a different test. `quire_context_refusal_preserves_its_diagnostics` still has no matrix-recognized binding. |
