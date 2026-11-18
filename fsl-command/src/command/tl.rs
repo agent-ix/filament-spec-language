@@ -209,6 +209,11 @@ pub(super) fn selection(lowering: &TlLowering) -> Value {
 pub struct AtomMapping {
     /// The TL atom names (`p0`, ...) read as the negation of their leaf.
     pub negated: BTreeSet<String>,
+    /// A correspondence identity to stamp on the lowered formula in place of
+    /// the one the lowering chose, so that FR-931-AC-8 can show that a
+    /// lowered formula whose classification differs from the clause's is a
+    /// classification loss. The lowering does not read it yet.
+    pub lowered_correspondence: Option<String>,
 }
 
 /// A lowering record and the exit code FR-285 gives it.
