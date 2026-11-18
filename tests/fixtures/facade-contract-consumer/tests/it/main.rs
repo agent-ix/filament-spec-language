@@ -476,10 +476,10 @@ protocol Flow using p over (input: M::Widget) on origin {\n\
   run sequence Main {\n\
     attempt Update by Buyer on M::Widget::touch contracts [] as (tried: M::Widget) { true };\n\
     effect Applied of Update as (applied: M::Widget) { true };\n\
-    event Done by Buyer as (done: Boolean) { true };\n\
+
     send Offer via Ch as (sent: Boolean) { true };\n\
     receive Seen via Ch of Offer as (received: Boolean) { true };\n\
-    await Wait after Done using t clock \"model-steps\" within [0, 1] match event Arrived by Seller as (arrived: Boolean) { true }; then sequence Then {} timeout sequence Late {}\n\
+    await Wait after Main::Applied using t clock \"ticks\" within [0, 1] match event Arrived by Seller as (arrived: Boolean) { true }; then sequence Then {} timeout sequence Late {}\n\
   choice Pick by Seller visible (received) { case yes when { true } sequence Yes {} case no when { false } sequence No {} }\n\
   }\n\
   finish End as (outcome: Boolean) { true };\n\
@@ -669,10 +669,10 @@ protocol Flow using p over (input: M::Widget) on origin {\n\
 
         let relation =
             fsl_package::protocol_view::causal_relation(package, &id).expect("causal relation");
-        let done = control_named(
+        let applied = control_named(
             package,
-            fsl_package::protocol_view::ControlOperation::Event,
-            "Done",
+            fsl_package::protocol_view::ControlOperation::Effect,
+            "Applied",
         );
         let await_node = control_named(
             package,
@@ -681,7 +681,7 @@ protocol Flow using p over (input: M::Widget) on origin {\n\
         );
         let anchor_edge = fsl_package::protocol_view::CausalEdge {
             from: fsl_package::protocol_view::PortRef {
-                node: done.node_id.clone(),
+                node: applied.node_id.clone(),
                 port: fsl_package::protocol_view::Port::Exit,
             },
             to: fsl_package::protocol_view::PortRef {
@@ -709,14 +709,14 @@ protocol Flow using p over (input: M::Widget) on origin {\n\
             anchor.kind,
             fsl_package::protocol_view::AwaitAnchorKind::Event
         );
-        assert_eq!(anchor.target, &done.node_id);
+        assert_eq!(anchor.target, &applied.node_id);
 
         let choice_node = control_named(
             package,
             fsl_package::protocol_view::ControlOperation::Choice,
             "Pick",
         );
-        assert!(view.controls().contains(&&done.node_id));
+        assert!(view.controls().contains(&&applied.node_id));
         assert!(view.controls().contains(&&await_node.node_id));
         assert!(view.controls().contains(&&choice_node.node_id));
         let choice =
