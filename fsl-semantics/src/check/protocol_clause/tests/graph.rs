@@ -417,10 +417,11 @@ fn awaiting(members: &str, within: &str, matched: &str) -> String {
 fn an_await_matches_an_event_in_a_closed_window_under_a_temporal_profile() {
     let event = "event Seen by R as (seen: Boolean) { true };";
     let source = awaiting("", "[2,5]", event);
-    let graph = checks(&source);
+    let (text, graph) = super::check_refusals(&source);
+    let graph = graph.expect("the await checks");
     let protocol = graph.protocol("Flow").expect("the checked protocol");
     let await_span = protocol.awaits[0].span;
-    assert!(source[await_span.start..await_span.end].starts_with("await Wait"));
+    assert!(text[await_span.start..await_span.end].starts_with("await Wait"));
     assert_eq!(
         protocol.awaits,
         [CheckedAwait {
@@ -578,10 +579,11 @@ fn an_await_matches_a_receive_and_an_effect_as_it_matches_an_event() {
         "effect Applied of Start as (applied: Boolean) { true };",
     );
     for source in [received, applied] {
-        let graph = checks(&source);
+        let (text, graph) = super::check_refusals(&source);
+        let graph = graph.expect("the await checks");
         let protocol = graph.protocol("Flow").expect("the checked protocol");
         let await_span = protocol.awaits[0].span;
-        assert!(source[await_span.start..await_span.end].starts_with("await Wait"));
+        assert!(text[await_span.start..await_span.end].starts_with("await Wait"));
         assert_eq!(
             protocol.awaits,
             [CheckedAwait {
@@ -888,14 +890,14 @@ fn a_decision_reads_only_listed_facts_of_its_owner() {
             "R",
             &received(&pick("R", "rx.ready", "rx.ready", "not rx.ready"))
         ),
-        [read("rx", ObservationReason::OtherRole, "rx.ready")]
+        vec![read("rx", ObservationReason::OtherRole, "rx.ready"); 3]
     );
     assert_eq!(
         observed(
             "S",
             &received(&pick("S", "tx.ready", "tx.ready", "not tx.ready"))
         ),
-        [read("tx", ObservationReason::IneligibleKind, "tx.ready")]
+        vec![read("tx", ObservationReason::IneligibleKind, "tx.ready"); 3]
     );
     assert_eq!(
         observed("S", &received(&pick("S", "", "rx.ready", "not rx.ready"))),
@@ -999,11 +1001,14 @@ fn a_decision_reads_only_listed_facts_of_its_owner() {
         );
         assert_eq!(
             observed("R", &source),
-            [read(
-                binder,
-                ObservationReason::IneligibleKind,
-                &format!("{binder}.ready")
-            )]
+            vec![
+                read(
+                    binder,
+                    ObservationReason::IneligibleKind,
+                    &format!("{binder}.ready")
+                );
+                3
+            ]
         );
         let skipped = flow(
             "",
@@ -1029,11 +1034,7 @@ fn a_decision_reads_only_listed_facts_of_its_owner() {
     );
     assert_eq!(
         observed("R", &activated),
-        [read(
-            "tick",
-            ObservationReason::IneligibleKind,
-            "tick.ready"
-        )]
+        vec![read("tick", ObservationReason::IneligibleKind, "tick.ready"); 3]
     );
 
     let over = located_causes(&received(&pick("S", "", "input.ready", "not input.ready")));
