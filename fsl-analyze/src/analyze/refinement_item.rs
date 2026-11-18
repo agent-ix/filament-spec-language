@@ -17,10 +17,13 @@ use fsl_eval::simulation::model::{ExpansionLimits, ModelSimulationRequest};
 use fsl_foundation::source::provenance::OccurrenceKey;
 use fsl_foundation::RequestIndex;
 use fsl_package::CheckedPackage;
+use filament_semantic_value::catalog::InternalFault;
 use fsl_replay::{
     open_systems, replay_refinement_trace, settle_refinement, settle_refinement_refusal,
-    SimulationCertificateRequest, TemporalCounterexample,
+    RefinementTraceSettlement, SimulationCertificateRequest, TemporalCounterexample,
 };
+use fsl_semantics::model::state::ModelState;
+use serde_json::{json, Value};
 use fsl_semantics::check::{AbstractSide, Capability, CheckedRefinement, DeclarationFamily};
 use fsl_semantics::model::observation::DocumentRef;
 
@@ -72,10 +75,14 @@ pub(super) fn refinement_item<'a>(
         meter: limits.accounting,
         emit: limits.emit,
     };
-    // FR-630 "Request item": the abstract subject's initial states default
-    // to the request's own subject, read in the abstract model; the declaring
-    // package holds the abstract model's selection (ADR-020 RM-1).
-    let abstract_initial: Vec<DocumentRef> = binding.initial.clone();
+    // FR-630 "Request item": the item's `abstract_subject` names the
+    // abstract initial snapshots; absent, the concrete subject's are read
+    // in the abstract model. The declaring package holds the abstract
+    // model's selection (ADR-020 RM-1).
+    let abstract_initial: Vec<DocumentRef> = form
+        .abstract_initial
+        .clone()
+        .unwrap_or_else(|| binding.initial.clone());
     let form = form.clone();
     Some(
         AnalyzeItem::new(
@@ -129,16 +136,59 @@ fn run(
         abstract_package: package,
         abstract_initial: abstract_initial.clone(),
     };
+    // FR-630 "Outputs": the replay that reproduces a counterexample gives
+    // the abstract image of each of its positions.
+    let mut steps = None;
     let replay = |payload: &TemporalCounterexample| {
         let systems = open_systems(refinement, concrete, package, abstract_initial.clone())
             .map_err(|_| {
-                fsl_replay::ReplayRefusal::Fault(filament_semantic_value::catalog::InternalFault::new(
+                fsl_replay::ReplayRefusal::Fault(InternalFault::new(
                     "analyze",
                     "the-refinement-subjects-reopen",
                 ))
             })?;
-        replay_refinement_trace(refinement, &systems, payload)
+        let settled = replay_refinement_trace(refinement, &systems, payload)?;
+        if let RefinementTraceSettlement::Reproduced { mapped, .. } = &settled {
+            steps = Some(counterexample_steps(refinement, &systems, mapped)?);
+        }
+        Ok(settled)
     };
     let settled = settle_refinement(&outcome, &form.limits, &certified, cancel, replay);
-    EngineReport::Model(Box::new(settled.record))
+    EngineReport::Refinement(Box::new(settled.record), steps)
+}
+
+/// A reproduced refinement counterexample's members: `steps`, for each position, from
+/// 0 to the failing one, the abstract state it maps to in FSpec FR-181's
+/// typed canonical form, and `step_simulations`, the refinement's FR-146 step records by their
+/// occurrence (role `generated`, ordinal 0 for `Initial`, row position + 1
+/// for a `Step`).
+fn counterexample_steps(
+    refinement: &CheckedRefinement,
+    systems: &fsl_replay::RefinementSystems<'_>,
+    mapped: &[ModelState],
+) -> Result<Value, fsl_replay::ReplayRefusal> {
+    let fault =
+        |invariant| fsl_replay::ReplayRefusal::Fault(InternalFault::new("analyze", invariant));
+    let positions = mapped
+        .iter()
+        .enumerate()
+        .map(|(position, state)| {
+            let (_, key) = systems
+                .abstract_system
+                .state_key_of(state)
+                .map_err(|_| fault("a-mapped-state-encodes"))?;
+            let state: Value = serde_json::from_slice(key.as_bytes())
+                .map_err(|_| fault("a-mapped-state-key-is-json"))?;
+            Ok(json!({"position": position, "abstract_state": state}))
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    let records: Vec<Value> = refinement
+        .step_simulations()
+        .iter()
+        .map(|entry| {
+            json!({"role": entry.occurrence().origin().role().to_string(),
+                "ordinal": entry.occurrence().origin().ordinal()})
+        })
+        .collect();
+    Ok(json!({"steps": positions, "step_simulations": records}))
 }
