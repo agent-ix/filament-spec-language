@@ -83,82 +83,82 @@ impl ReferenceBindings {
         let mut barred = BTreeSet::new();
 
         for clause in graph.state_clauses() {
-            collect_literals(clause.body(), &mut literals);
+            collect_literals(graph, clause.body(), &mut literals);
         }
         for clause in graph.temporal_clauses() {
             for (index, formula_node) in clause.clause().formula().nodes().iter().enumerate() {
                 let atom = FormulaNodeId::from_arena_index(index);
                 if matches!(formula_node, FormulaNode::Holds { .. }) {
                     if let Some((condition, _)) = clause.condition(atom) {
-                        collect_literals(condition, &mut literals);
+                        collect_literals(graph, condition, &mut literals);
                     }
                 }
                 if matches!(formula_node, FormulaNode::Aggregate { .. }) {
                     if let Some(aggregate) = clause.aggregate_conditions(atom) {
                         if let Some((value, _)) = aggregate.value {
-                            collect_literals(value, &mut literals);
+                            collect_literals(graph, value, &mut literals);
                         }
                         if let Some((filter, _)) = aggregate.filter {
-                            collect_literals(filter, &mut literals);
+                            collect_literals(graph, filter, &mut literals);
                         }
                         if let Some((predicate, _)) = aggregate.predicate {
-                            collect_literals(predicate, &mut literals);
+                            collect_literals(graph, predicate, &mut literals);
                         }
-                        collect_literals(aggregate.threshold.0, &mut literals);
+                        collect_literals(graph, aggregate.threshold.0, &mut literals);
                     }
                 }
             }
             if let Some((guard, _)) = clause.guard() {
-                collect_literals(guard, &mut literals);
+                collect_literals(graph, guard, &mut literals);
             }
             for index in 0..clause.clause().captures().len() {
                 if let Some((capture, _)) = clause.capture(index) {
-                    collect_literals(capture, &mut literals);
+                    collect_literals(graph, capture, &mut literals);
                 }
             }
         }
         for protocol in graph.protocols() {
             let slots = &protocol.slots;
             for body in &slots.bodies {
-                collect_literals(body.body.root(), &mut literals);
+                collect_literals(graph, body.body.root(), &mut literals);
                 if protocol
                     .controls
                     .control(body.node)
                     .is_some_and(|control| control.kind == fsl_forms::ProtocolNodeKind::Check)
                 {
-                    collect_literals(body.body.root(), &mut barred);
+                    collect_literals(graph, body.body.root(), &mut barred);
                 }
             }
             for choice in &slots.choices {
                 for visible in &choice.visible {
-                    collect_literals(visible.root(), &mut literals);
-                    collect_literals(visible.root(), &mut barred);
+                    collect_literals(graph, visible.root(), &mut literals);
+                    collect_literals(graph, visible.root(), &mut barred);
                 }
                 for case in &choice.cases {
-                    collect_literals(case.guard.root(), &mut literals);
-                    collect_literals(case.guard.root(), &mut barred);
+                    collect_literals(graph, case.guard.root(), &mut literals);
+                    collect_literals(graph, case.guard.root(), &mut barred);
                 }
             }
             for repeat in &slots.repeats {
-                collect_literals(repeat.guard.root(), &mut literals);
-                collect_literals(repeat.guard.root(), &mut barred);
+                collect_literals(graph, repeat.guard.root(), &mut literals);
+                collect_literals(graph, repeat.guard.root(), &mut barred);
                 for visible in &repeat.visible {
-                    collect_literals(visible.root(), &mut literals);
-                    collect_literals(visible.root(), &mut barred);
+                    collect_literals(graph, visible.root(), &mut literals);
+                    collect_literals(graph, visible.root(), &mut barred);
                 }
                 if let Some(proof) = &repeat.loop_proof {
-                    collect_literals(proof.invariant.root(), &mut literals);
-                    collect_literals(proof.variant.root(), &mut literals);
+                    collect_literals(graph, proof.invariant.root(), &mut literals);
+                    collect_literals(graph, proof.variant.root(), &mut literals);
                 }
             }
             for role in &slots.roles {
                 if let CheckedLifetime::Until { predicate, .. } = &role.lifetime {
-                    collect_literals(predicate.root(), &mut literals);
+                    collect_literals(graph, predicate.root(), &mut literals);
                 }
             }
             for related in &slots.related {
                 for end in &related.ends {
-                    collect_literals(end.root(), &mut literals);
+                    collect_literals(graph, end.root(), &mut literals);
                 }
             }
         }
@@ -243,10 +243,22 @@ impl ReferenceBindings {
     }
 }
 
-fn collect_literals(root: CheckedNode<'_>, literals: &mut BTreeSet<ReferenceLiteralKey>) {
+fn collect_literals(
+    graph: &CheckedGraph,
+    root: CheckedNode<'_>,
+    literals: &mut BTreeSet<ReferenceLiteralKey>,
+) {
+    let mut visited_functions = BTreeSet::new();
     let mut pending = vec![root];
     while let Some(node) = pending.pop() {
         pending.extend(node.children());
+        if let NodeKind::Call { function, .. } = node.kind() {
+            if visited_functions.insert(*function) {
+                if let Some(function) = graph.function_state(*function) {
+                    pending.push(function.body);
+                }
+            }
+        }
         if let NodeKind::ReferenceLiteral {
             object_type,
             identity,

@@ -1061,6 +1061,27 @@ fn a_reference_literal_in_a_clause_reads_related_population_membership() {
     let fixed = footprint_on(&system, "Gate", "literalFixed", &receiver);
     assert!(!fixed.reads.contains(&any_membership("cells")));
     assert!(!fixed.enabling.contains(&any_membership("cells")));
+
+    let over = (
+        "g".to_owned(),
+        ValueType::Reference(receiver.object_type().clone()),
+    );
+    let graph = subject.package.graph();
+    let clause = |name: &str| {
+        graph
+            .state_clauses()
+            .iter()
+            .find(|clause| clause.name() == name)
+            .expect("the checked literal clause exists")
+    };
+    let created_reads = system
+        .atom_reads(&over, clause("LiteralIsCreated").body())
+        .expect("created literal has an atom footprint");
+    assert!(created_reads.contains(&any_membership("cells")));
+    let fixed_reads = system
+        .atom_reads(&over, clause("LiteralIsFixed").body())
+        .expect("fixed literal has an atom footprint");
+    assert!(!fixed_reads.contains(&any_membership("cells")));
 }
 
 fn gates_start(subject: &mut Subject) -> DocumentRef {
