@@ -282,6 +282,7 @@ mod tests {
             &models,
             &dependencies,
             spine::UnitCheckOptions {
+                check_mode: Some(CheckMode::Kernel),
                 function_modes: Some(&function_modes),
                 ..spine::UnitCheckOptions::default()
             },
