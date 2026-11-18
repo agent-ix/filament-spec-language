@@ -2091,26 +2091,24 @@ mod tests {
     };
 
     fn package() -> fsl_package::CheckedPackage {
-        let declarations = fsl_semantics::check::PackageDeclarations {
-            types: TypeEnvironment::new(
-                [CompositeDeclaration::new(
-                    crate::fixture_node(8),
-                    "CaptureFixture",
-                    CompositeShape::Record(vec![FieldDeclaration::new(
-                        "flag",
-                        ValueType::Boolean,
-                        filament_exact::Presence::Required,
-                    )]),
-                )],
-                [],
-            )
-            .expect("the capture fixture type admits"),
-            ..fsl_semantics::check::PackageDeclarations::new(
-                fsl_semantics::check::fixture_source(),
-                "fixture",
-                fsl_foundation::IdentityLimits::default(),
-            )
-        };
+        let mut declarations = fsl_semantics::check::PackageDeclarations::new(
+            fsl_semantics::check::fixture_source(),
+            "fixture",
+            fsl_foundation::IdentityLimits::default(),
+        );
+        declarations.types = TypeEnvironment::new(
+            [CompositeDeclaration::new(
+                crate::fixture_node(8),
+                "CaptureFixture",
+                CompositeShape::Record(vec![FieldDeclaration::new(
+                    "flag",
+                    ValueType::Boolean,
+                    filament_exact::Presence::Required,
+                )]),
+            )],
+            [],
+        )
+        .expect("the capture fixture type admits");
         fsl_package::CheckedPackage::link(
             declarations
                 .check(
