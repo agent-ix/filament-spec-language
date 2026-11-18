@@ -2,10 +2,11 @@
 //! FSL FR-740: the random parameters, workloads and delays of an admitted
 //! package, read from its `probabilistic` nodes.
 //!
-//! The IR's typed read ([`CheckedPackageV2::random_parameters`],
-//! [`CheckedPackageV2::workloads`]) is keyed by a model node and an
+//! The IR's typed reads (such as [`CheckedPackageV2::random_parameters`] and
+//! [`CheckedPackageV2::workloads`]) are keyed by a model node and an
 //! operation, so a reader that does not know either walks the nodes itself;
-//! this reads each node's admitted body. The result names nodes and spells
+//! this reads the admitted body of each random parameter, workload and
+//! delay distribution node. The result names nodes and spells
 //! values: [`fsl_semantics::model::state::StateModel::probabilistic_model`]
 //! joins it to the selected domain packages and rebuilds S3's records.
 

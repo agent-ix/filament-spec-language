@@ -25,6 +25,7 @@ use super::{
     CheckedProbabilisticModel, Delay, DelayDistribution, ProbabilisticOperation, RandomParameter,
     SupportValue, Workload,
 };
+use crate::check::DelayFault;
 use crate::model::operation::{OperationLookup, OperationTable};
 use crate::model::state::StateModel;
 
@@ -161,6 +162,16 @@ pub enum PackageProbabilisticRefusal {
         /// The parameter.
         parameter: String,
     },
+    /// A delay breaks FR-253: a `uniform_interval` outside `0 <= a <= b`, a
+    /// negative or repeated `discrete` delay, or a rate or weight that is not
+    /// positive.
+    #[error("the delay of `{operation}` breaks FR-253: {fault:?}")]
+    InvalidDelay {
+        /// The operation.
+        operation: String,
+        /// The rule it breaks.
+        fault: DelayFault,
+    },
     /// A package's weights sum to zero.
     #[error("the weights of `{operation}({parameter})` sum to zero")]
     ZeroSum {
@@ -204,6 +215,12 @@ impl StateModel {
         }
         for delay in &read.delays {
             let (operation, _) = self.operation(operations, &delay.declaring, &delay.operation)?;
+            if let Some(fault) = delay_fault(&delay.family) {
+                return Err(PackageProbabilisticRefusal::InvalidDelay {
+                    operation: delay.operation.clone(),
+                    fault,
+                });
+            }
             model.delays.push(Delay {
                 declared,
                 operation,
@@ -377,6 +394,36 @@ impl StateModel {
             model_key,
             weights,
         })
+    }
+}
+
+/// The FR-253 rule `family` breaks, if any: the checks S3 makes of a written
+/// distribution, repeated on the read-back so a package from another producer
+/// rebuilds no record S3 could not have checked.
+fn delay_fault(family: &PackageDelayFamily) -> Option<DelayFault> {
+    let positive = |value: &Rational| !value.is_zero() && !value.numerator().is_negative();
+    match family {
+        PackageDelayFamily::Uniform => None,
+        PackageDelayFamily::UniformInterval { lower, upper } => (lower.numerator().is_negative()
+            || upper.sub(lower).numerator().is_negative())
+        .then_some(DelayFault::UniformRange),
+        PackageDelayFamily::Exponential { rate } => {
+            (!positive(rate)).then_some(DelayFault::NonPositiveRate)
+        }
+        PackageDelayFamily::Discrete(rows) => {
+            for (at, (delay, weight)) in rows.iter().enumerate() {
+                if delay.numerator().is_negative() {
+                    return Some(DelayFault::NegativeDelay);
+                }
+                if rows[..at].iter().any(|(earlier, _)| earlier == delay) {
+                    return Some(DelayFault::RepeatedDelay);
+                }
+                if !positive(weight) {
+                    return Some(DelayFault::NonPositiveWeight);
+                }
+            }
+            None
+        }
     }
 }
 

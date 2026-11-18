@@ -33,8 +33,8 @@ struct Pending {
     region: CheckedSourceRegion,
 }
 
-/// Write a `probabilistic` node for each checked random parameter and
-/// workload of `graph`, with its source-map entry.
+/// Write a `probabilistic` node for each checked random parameter, workload
+/// and delay of `graph`, with its source-map entry.
 ///
 /// # Errors
 ///
@@ -400,7 +400,10 @@ fn member(term: &CheckedTerm, position: usize) -> Option<&CheckedTerm> {
 /// The unit node of the `dense` time source of the timed model rooted on
 /// `declaring`, read from the timed nodes already written. IR's reader
 /// types each delay time by this node (FR-640 Reader rule 5).
-fn dense_unit(nodes: &[CheckedSemanticNodeV2], declaring: &CheckedNodeId) -> Option<CheckedNodeId> {
+pub(super) fn dense_unit(
+    nodes: &[CheckedSemanticNodeV2],
+    declaring: &CheckedNodeId,
+) -> Option<CheckedNodeId> {
     let reference_of = |term: Option<&CheckedTerm>| match term {
         Some(CheckedTerm::Reference { target }) => Some(target.clone()),
         _ => None,

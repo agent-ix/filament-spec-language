@@ -871,55 +871,122 @@ fn discrete_delays_are_emitted_as_delay_distribution_nodes() {
 
 /// The `time dense` unit of [`with_tick`] with no random parameter, so a delay is
 /// the only probabilistic declaration but the workload.
-fn delay_only_world(delay: &str) -> World {
+fn delay_only_world(delays: &str) -> World {
     let document = retx_document(&[("send", &["late", "x"]), ("tick", &["retried"])]);
     let body = format!(
         "{dense}{TICK}\
          pre Send using v on M::Call::send {{ not self.late{GUARD} }}\n\
          post Sent using v on M::Call::send {{ self.late = true and self.x = 0 ms }}\n\
          time invariant Deadline when {{ not self.late }} {{ self.x <= 2 ms }}\n\
-         {delay}\n\
+         {delays}\n\
          workload Both on M {{ weight Call::send = 1; weight Call::tick = 1; }}\n",
         dense = timed_world::DENSE,
     );
     timed_world::world(&document, PROFILES, &body)
 }
 
+/// The `delay_distribution` nodes of the package `world` emits, as wire JSON.
+fn emitted_delays(world: &World) -> Vec<serde_json::Value> {
+    let emission = fsl_package::emit_checked(&world.package, fsl_package::EmitLimits::fixture())
+        .unwrap_or_else(|refusal| panic!("S4 emits the timed unit: {refusal:?}"));
+    let wire: serde_json::Value =
+        serde_json::from_slice(emission.package().bytes()).expect("JSON bytes");
+    wire["semantic_graph"]["nodes"]
+        .as_array()
+        .expect("nodes")
+        .iter()
+        .filter(|node| {
+            node["node_tag"] == "probabilistic" && node["semantic_form"] == "delay_distribution"
+        })
+        .cloned()
+        .collect()
+}
+
+/// Each literal under `term`, in order, as its kind and its spelled value.
+fn literals(term: &serde_json::Value, found: &mut Vec<(String, String)>) {
+    if let Some(kind) = term.get("value_kind") {
+        found.push((
+            kind.as_str().expect("a kind").to_owned(),
+            term["value"].as_str().expect("a spelled value").to_owned(),
+        ));
+    }
+    for member in term
+        .get("members")
+        .and_then(serde_json::Value::as_array)
+        .into_iter()
+        .flatten()
+    {
+        literals(member, found);
+    }
+    if let Some(value) = term.get("value").filter(|value| value.is_object()) {
+        literals(value, found);
+    }
+}
+
 /// FR-740-AC-3 (TC-2062), FSpec FR-640-AC-2 (TC-1563): a `time dense` unit
 /// with a delay of each family emits one `probabilistic`/`delay_distribution`
-/// node of that family, with no random parameter in the unit.
+/// node of that family with the AC's values (`discrete { 1 ms: 90, 3 ms: 10 }`
+/// has the delays 1 and 3 and the weights 90 and 10), with no random
+/// parameter in the unit.
 #[trace("TC-2062", "FR-740-AC-3")]
 #[trace("FSpec-TC-1563", "FSpec-FR-640-AC-2")]
 #[test]
 fn each_delay_family_is_emitted_as_a_delay_distribution_node() {
-    for (family, written) in [
-        ("uniform", "uniform"),
-        ("uniform_interval", "uniform[1 ms, 3 ms]"),
-        ("exponential", "exponential(rational(3, 2))"),
-        ("discrete", "discrete { 1 ms: 90, 3 ms: 10 }"),
+    for (family, written, expected) in [
+        ("uniform", "uniform", vec![]),
+        (
+            "uniform_interval",
+            "uniform[1 ms, 4 ms]",
+            vec![("quantity", "1"), ("quantity", "4")],
+        ),
+        (
+            "exponential",
+            "exponential(rational(1, 2))",
+            vec![("rational", "1/2")],
+        ),
+        (
+            "discrete",
+            "discrete { 1 ms: 90, 3 ms: 10 }",
+            vec![
+                ("quantity", "1"),
+                ("rational", "90"),
+                ("quantity", "3"),
+                ("rational", "10"),
+            ],
+        ),
     ] {
-        let world = delay_only_world(&format!("delay M::Call::send ~ {written};"));
-        let emission =
-            fsl_package::emit_checked(&world.package, fsl_package::EmitLimits::fixture())
-                .unwrap_or_else(|refusal| panic!("{family}: S4 emits the timed unit: {refusal:?}"));
-        let wire: serde_json::Value =
-            serde_json::from_slice(emission.package().bytes()).expect("JSON bytes");
-        let delays: Vec<&serde_json::Value> = wire["semantic_graph"]["nodes"]
-            .as_array()
-            .expect("nodes")
-            .iter()
-            .filter(|node| {
-                node["node_tag"] == "probabilistic" && node["semantic_form"] == "delay_distribution"
-            })
-            .collect();
-        let [delay] = delays[..] else {
+        let delays = emitted_delays(&delay_only_world(&format!(
+            "delay M::Call::send ~ {written};"
+        )));
+        let [delay] = &delays[..] else {
             panic!("{family}: one delay_distribution node: {delays:?}");
         };
         assert!(
             delay["body"].to_string().contains(&format!("\"{family}\"")),
             "{delay}"
         );
+        let mut found = Vec::new();
+        literals(&delay["body"]["members"][3]["value"], &mut found);
+        let found: Vec<(&str, &str)> = found
+            .iter()
+            .map(|(kind, value)| (kind.as_str(), value.as_str()))
+            .collect();
+        assert_eq!(found, expected, "{family}");
     }
+}
+
+/// FSpec FR-640-AC-3 (TC-1563): a unit with two delays emits the same
+/// `delay_distribution` nodes, byte for byte and in the same order, whichever
+/// order it declares them in.
+#[trace("FSpec-TC-1563", "FSpec-FR-640-AC-3")]
+#[test]
+fn reordering_two_delays_changes_no_delay_node() {
+    let send = "delay M::Call::send ~ discrete { 1 ms: 90, 3 ms: 10 };";
+    let tick = "delay M::Call::tick ~ uniform[1 ms, 4 ms];";
+    let forward = emitted_delays(&delay_only_world(&format!("{send}\n{tick}")));
+    let reversed = emitted_delays(&delay_only_world(&format!("{tick}\n{send}")));
+    assert_eq!(forward.len(), 2);
+    assert_eq!(forward, reversed);
 }
 
 /// FSpec FR-420-AC-8 (TC-1561): under a workload that gives `tick` weight 0,
