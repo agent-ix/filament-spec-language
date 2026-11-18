@@ -73,8 +73,11 @@ consistent with FR-100's `1-draft` request. A compile request whose
 at stage `request`, exit 20, before it reads a dependent file, in every
 build (FR-031). Each model a `1-draft` request
 selects is a domain package
-document in format `semantic-ir/2.0.0`, read and handed
-to spine `compile` as FR-056's package input; the program's `model`
+document in format `semantic-ir/2.0.0`, or a model unit in format
+`native-model-unit/1` that the command compiles to its document (FR-710),
+read and handed to spine `compile` as FR-056's package input; a model in
+any other format refuses `invalid-request`, exit 20, naming `models` and the
+format; the program's `model`
 declarations select it by identity, and the package records each selected
 package by its `model_root` node, which carries the identity (FSpec FR-322). A `1-draft` request may carry `libraries`: one
 `{identity, source}` object per supplied library, where `source` is
