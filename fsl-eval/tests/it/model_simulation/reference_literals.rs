@@ -60,7 +60,7 @@ fn hyper_fixture(
         Some(Ok(CheckedHyper::Behaviours(clause))) if checked.is_empty() => *clause,
         other => panic!("one checked hyper clause: {other:?}"),
     };
-    (super::world(operations, ""), clause)
+    (super::world_with_level_bound(operations, "", 5), clause)
 }
 
 fn first_holds_atom(clause: &fsl_semantics::check::CheckedHyperClause) -> FormulaNodeId {
@@ -79,20 +79,20 @@ fn first_holds_atom(clause: &fsl_semantics::check::CheckedHyperClause) -> Formul
 #[trace("TC-2957", "FR-1000-AC-8")]
 #[test]
 fn a_fixed_reference_literal_is_constant_in_hyper_evaluation() {
-    // The two component predicates are false (0 != 2 and 1 != 2), so the
-    // true result demonstrates that the fixed literal branch is evaluated.
-    let body = "always holds(c.value @ a = 2 or c.value @ b = 2 or c = M::Counter#\"a\")";
+    // Both component predicates are false (4 and 5 exceed the threshold),
+    // so True requires the fixed literal branch.
+    let body = "always holds(c.value @ a <= 3 or c.value @ b <= 3 or c = M::Counter#\"a\")";
     let (mut world, clause) = hyper_fixture(body, Vec::new());
-    let start_a = world.start("reference-literal-fixed-a", &[Obj("a", 0, 0, None)]);
-    let start_b = world.start("reference-literal-fixed-b", &[Obj("a", 1, 0, None)]);
+    let start_a = world.start("reference-literal-fixed-a", &[Obj("a", 4, 0, None)]);
+    let start_b = world.start("reference-literal-fixed-b", &[Obj("a", 5, 0, None)]);
     let system_a = system(&world, vec![start_a], &["a", "b"], UNLIMITED);
     let system_b = system(&world, vec![start_b], &["a", "b"], UNLIMITED);
     let letters = CheckedHyperLetters::new(&world.package, &clause, vec![&system_a, &system_b])
         .expect("fixed references are admitted in hyper atoms");
     let initial_a = system_a.initial();
     let initial_b = system_b.initial();
-    assert_eq!(super::int_field(initial_a[0].state(), "a", "value"), "0");
-    assert_eq!(super::int_field(initial_b[0].state(), "a", "value"), "1");
+    assert_eq!(super::int_field(initial_a[0].state(), "a", "value"), "4");
+    assert_eq!(super::int_field(initial_b[0].state(), "a", "value"), "5");
     let states = [&initial_a[0], &initial_b[0]];
     let bindings = [ParameterBinding {
         parameter: "c".to_owned(),
