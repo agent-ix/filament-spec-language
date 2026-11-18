@@ -780,6 +780,24 @@ pub(crate) struct RecordWire<E> {
         skip_serializing_if = "Option::is_none"
     )]
     quantifier: Option<OccurrenceWire>,
+    #[serde(
+        default,
+        deserialize_with = "present",
+        skip_serializing_if = "Option::is_none"
+    )]
+    deciding_comparison: Option<OccurrenceWire>,
+    #[serde(
+        default,
+        deserialize_with = "present",
+        skip_serializing_if = "Option::is_none"
+    )]
+    operands: Option<Vec<Box<RawValue>>>,
+    #[serde(
+        default,
+        deserialize_with = "present",
+        skip_serializing_if = "Option::is_none"
+    )]
+    decision_path: Option<Vec<OccurrenceWire>>,
     deciding_element: E,
     #[serde(
         default,
@@ -798,12 +816,28 @@ pub(crate) struct RecordWire<E> {
 
 impl RecordWire<Box<RawValue>> {
     pub(crate) fn of(record: &SeparatingWitnessRecord) -> Result<Self, CauseCodecError> {
+        let comparison = match (
+            &record.deciding_comparison,
+            &record.operands,
+            &record.decision_path,
+        ) {
+            (None, None, None) => None,
+            (Some(comparison), Some(operands), Some(path))
+                if record.quantifier.is_none()
+                    && record.index.is_none()
+                    && path.len() > 0
+                    && operands.len() == 2 =>
+            {
+                Some((comparison, operands, path))
+            }
+            _ => return Err(CauseCodecError::Shape("deciding_comparison")),
+        };
         let deciding_element = match &record.deciding_element {
             DecidingElement::Value(value) => {
-                if record.index.is_none() {
+                if comparison.is_none() && record.index.is_none() {
                     return Err(CauseCodecError::MissingIndex);
                 }
-                if record.quantifier.is_none() {
+                if comparison.is_none() && record.quantifier.is_none() {
                     return Err(CauseCodecError::Shape("quantifier"));
                 }
                 encode_element(value)?
@@ -818,13 +852,30 @@ impl RecordWire<Box<RawValue>> {
                 if record.trace_position.is_none() {
                     return Err(CauseCodecError::Shape("trace_position"));
                 }
+                if comparison.is_some() {
+                    return Err(CauseCodecError::Shape("deciding_comparison"));
+                }
                 crate::protocol_analysis::read_node_text(node)
                     .map_err(|_| CauseCodecError::Shape("deciding_element"))?;
                 RawValue::from_string(serde_json::to_string(node)?)?
             }
         };
+        let operands = comparison
+            .map(|(_, operands, _)| {
+                operands
+                    .iter()
+                    .map(encode_element)
+                    .collect::<Result<Vec<_>, _>>()
+            })
+            .transpose()?;
         Ok(Self {
             quantifier: record.quantifier.as_ref().map(OccurrenceWire::of),
+            deciding_comparison: record.deciding_comparison.as_ref().map(OccurrenceWire::of),
+            operands,
+            decision_path: record
+                .decision_path
+                .as_ref()
+                .map(|path| path.iter().map(OccurrenceWire::of).collect()),
             deciding_element,
             index: record.index,
             value_path: PathWire::of(&record.value_path),
@@ -838,20 +889,58 @@ impl RecordWire<Box<RawValue>> {
     /// Validate the state-clause subset of the shared witness shape without
     /// resolving its deciding value against an in-memory checked package.
     pub(crate) fn validate_state(&self) -> Result<(), CauseCodecError> {
-        if self.index.is_none() {
-            return Err(CauseCodecError::MissingIndex);
-        }
         if self.trace_position.is_some() {
             return Err(CauseCodecError::Shape("trace_position"));
         }
-        self.quantifier
-            .clone()
-            .ok_or(CauseCodecError::Shape("quantifier"))?
-            .read()?;
-        let element = quire_canonical::read(self.deciding_element.get().as_bytes(), u64::MAX)
-            .map_err(|_| CauseCodecError::Shape("deciding_element"))?;
-        validate_element_shape(element.root())
-            .map_err(|_| CauseCodecError::Shape("deciding_element"))?;
+        match (
+            &self.deciding_comparison,
+            &self.operands,
+            &self.decision_path,
+        ) {
+            (Some(comparison), Some(operands), Some(path)) => {
+                if self.quantifier.is_some() {
+                    return Err(CauseCodecError::Shape("quantifier"));
+                }
+                if self.index.is_some() {
+                    return Err(CauseCodecError::Shape("index"));
+                }
+                comparison.clone().read()?;
+                if operands.len() != 2 {
+                    return Err(CauseCodecError::Shape("operands"));
+                }
+                if path.is_empty() {
+                    return Err(CauseCodecError::Shape("decision_path"));
+                }
+                for occurrence in path {
+                    occurrence.clone().read()?;
+                }
+                let value = quire_canonical::read(self.deciding_element.get().as_bytes(), u64::MAX)
+                    .map_err(|_| CauseCodecError::Shape("deciding_element"))?;
+                if !matches!(value.root().node(), Node::Bool(_)) {
+                    return Err(CauseCodecError::Shape("deciding_element"));
+                }
+                for operand in operands {
+                    let value = quire_canonical::read(operand.get().as_bytes(), u64::MAX)
+                        .map_err(|_| CauseCodecError::Shape("operands"))?;
+                    validate_element_shape(value.root())
+                        .map_err(|_| CauseCodecError::Shape("operands"))?;
+                }
+            }
+            (None, None, None) => {
+                if self.index.is_none() {
+                    return Err(CauseCodecError::MissingIndex);
+                }
+                self.quantifier
+                    .clone()
+                    .ok_or(CauseCodecError::Shape("quantifier"))?
+                    .read()?;
+                let value = quire_canonical::read(self.deciding_element.get().as_bytes(), u64::MAX)
+                    .map_err(|_| CauseCodecError::Shape("deciding_element"))?;
+                validate_element_shape(value.root())
+                    .map_err(|_| CauseCodecError::Shape("deciding_element"))?;
+            }
+            _ => return Err(CauseCodecError::Shape("deciding_comparison")),
+        }
         self.value_path
             .validate_shape()
             .map_err(|_| CauseCodecError::Shape("value_path"))?;
@@ -867,16 +956,43 @@ impl RecordWire<Box<RawValue>> {
         element: NodeRef<'_>,
     ) -> Result<SeparatingWitnessRecord, CauseCodecError> {
         let keys = Keys::new(package);
+        let deciding_comparison = self
+            .deciding_comparison
+            .clone()
+            .map(OccurrenceWire::read)
+            .transpose()?;
+        let operands = self
+            .operands
+            .as_ref()
+            .map(|values| {
+                let [left, right] = values.as_slice() else {
+                    return Err(CauseCodecError::Shape("operands"));
+                };
+                let left = quire_canonical::read(left.get().as_bytes(), u64::MAX)
+                    .map_err(|_| CauseCodecError::Shape("operands"))?;
+                let right = quire_canonical::read(right.get().as_bytes(), u64::MAX)
+                    .map_err(|_| CauseCodecError::Shape("operands"))?;
+                Ok([
+                    decode_element(left.root(), keys)?,
+                    decode_element(right.root(), keys)?,
+                ])
+            })
+            .transpose()?;
+        let decision_path = self
+            .decision_path
+            .clone()
+            .map(|path| path.into_iter().map(OccurrenceWire::read).collect())
+            .transpose()?;
+        let quantifier = self
+            .quantifier
+            .clone()
+            .map(OccurrenceWire::read)
+            .transpose()?;
         Ok(SeparatingWitnessRecord {
-            quantifier: Some(
-                self.quantifier
-                    .clone()
-                    .ok_or(CauseCodecError::Shape("quantifier"))?
-                    .read()?,
-            ),
-            deciding_comparison: None,
-            operands: None,
-            decision_path: None,
+            quantifier,
+            deciding_comparison,
+            operands,
+            decision_path,
             deciding_element: DecidingElement::Value(decode_element(element, keys)?),
             index: self.index,
             value_path: self.value_path.clone().read(keys)?,
