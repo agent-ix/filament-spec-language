@@ -275,11 +275,9 @@ fn compiled() -> ComposedUnit {
     .unwrap_or_else(|refusal| panic!("compile refused: {refusal:?}"))
 }
 
+/// FR-868: the closed `model` header, `{"identity": I}`.
 fn model_header_json() -> serde_json::Value {
-    json!({
-        "identity": PACKAGE_IDENTITY,
-        "version": "1.0.0",
-    })
+    json!({ "identity": PACKAGE_IDENTITY })
 }
 
 fn document_identity_json(label: &DocumentRef) -> serde_json::Value {
