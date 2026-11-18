@@ -1321,3 +1321,54 @@ fn only_fsl_command_names_the_tl_crates() {
         );
     }
 }
+
+/// FR-931-AC-6: `cross_evaluate.initial` evaluates every `over` instance of
+/// the snapshot's universe and reads each behaviour of 1 to `max_steps`
+/// steps as its own closed trace, so the trace count grows with `max_steps`.
+#[test]
+#[trace("TC-2962", "FR-931-AC-6")]
+#[ignore = "QSL-2147: cross_evaluate.initial instance enumeration and closed-trace reading are not implemented yet"]
+fn tl_cross_evaluation_reads_each_behaviour_as_a_closed_trace() {
+    let unit = low(EVENT_POSITION, LOW_BODY);
+    let traces = |max_steps: u64| {
+        let (code, value) = run(
+            &unit,
+            true,
+            (
+                "tl_lowering",
+                json!({"clause": "Low",
+                    "cross_evaluate": {"initial": "spine-snapshot.json", "max_steps": max_steps}}),
+            ),
+        );
+        assert_eq!(code, 0, "{value}");
+        let cross = &value["tl_lowering"]["cross_evaluation"];
+        assert_eq!(cross["agree"], true, "{value}");
+        cross["traces"].as_u64().expect("a trace count")
+    };
+    let one = traces(1);
+    let two = traces(2);
+    assert!(one >= 1);
+    assert!(
+        two > one,
+        "the 1-step behaviours are traces of their own beside the 2-step ones"
+    );
+}
+
+/// FR-931-AC-7 (negative): `over` beside `initial` refuses naming it.
+#[test]
+#[trace("TC-2962", "FR-931-AC-7")]
+#[ignore = "QSL-2147: cross_evaluate.initial refusals are not implemented yet"]
+fn tl_cross_evaluation_refuses_over_beside_initial() {
+    let unit = low(EVENT_POSITION, LOW_BODY);
+    let (code, value) = run(
+        &unit,
+        true,
+        (
+            "tl_lowering",
+            json!({"clause": "Low", "cross_evaluate": {"initial": "spine-snapshot.json",
+                "max_steps": 2, "over": {"reference": {"population": "P", "key": "c1"}}}}),
+        ),
+    );
+    assert_eq!(code, 20, "{value}");
+    refusal_names(&value, "tl_lowering.cross_evaluate.over");
+}

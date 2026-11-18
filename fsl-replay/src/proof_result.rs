@@ -1935,6 +1935,28 @@ impl TerminalRecord {
         Ok(Self::with_backend(request_index, backend, value))
     }
 
+    /// The record of `value`, FR-248's settlement of the closed-form
+    /// `outcome` produced by `backend`: a `refuted` value only with the miss
+    /// evidence `outcome` carries.
+    ///
+    /// # Errors
+    ///
+    /// [`TerminalRecordRefusal::RefutedWithoutCounterexample`] for a
+    /// `refuted` value whose outcome is not a miss.
+    pub fn of_closed_form(
+        request_index: RequestIndex,
+        backend: BackendId,
+        value: TerminalValue,
+        outcome: &crate::ClosedFormOutcome,
+    ) -> Result<Self, TerminalRecordRefusal> {
+        if matches!(value, TerminalValue::Refuted)
+            && !matches!(outcome, crate::ClosedFormOutcome::Miss(_))
+        {
+            return Err(TerminalRecordRefusal::RefutedWithoutCounterexample);
+        }
+        Ok(Self::with_backend(request_index, backend, value))
+    }
+
     pub(crate) fn with_backend(
         request_index: RequestIndex,
         backend: BackendId,

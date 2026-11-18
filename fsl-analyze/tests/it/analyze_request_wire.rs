@@ -144,7 +144,6 @@ fn the_deadline_and_item_limits_settle_incomplete() {
 #[trace("TC-1580", "FR-620-AC-8")]
 #[trace("TC-1580", "FR-281-AC-23")]
 #[test]
-#[ignore = "QSL-2130: EN-7 is not registered in Engines::fsl() yet"]
 fn the_fsl_registry_holds_en7() {
     let engines = fsl_analyze::analyze::Engines::fsl().expect("the layer-A engines register");
     assert!(
@@ -626,17 +625,7 @@ fn a_package_selection_analyzes_as_its_source() {
     let ws = Workspace::new("wire-package-selection");
     let source = analyze(&counter_request(&ws, &body, items.clone()));
     let request = request_members(Some(items));
-    let compile = json!({"format": "native-compile/1", "request": {
-        "models": request["models"], "program": request["program"]}});
-    let compile_path = ws.write("compile.json", compile.to_string().as_bytes());
-    let package = fsl_command::command::compile(&compile_path).expect("the program compiles");
-    ws.write("package.json", &package);
-    let mut selected = request.clone();
-    selected
-        .as_object_mut()
-        .expect("a request object")
-        .remove("program");
-    selected["package"] = json!({"file": "package.json"});
+    let (mut selected, _) = crate::analyze_cli_support::package_selection(&ws, &request);
     let document = json!({"format": "native-analyze/1", "request": selected});
     let path = ws.write("analyze-package.json", document.to_string().as_bytes());
     let run = analyze(&path);
@@ -678,17 +667,7 @@ fn a_package_selection_names_its_implementation_gap() {
     let ws = Workspace::new("wire-package-gap");
     let request = request_members(Some(json!([{"claim": "Bounded"}])));
     let _ = counter_request_with(&ws, &bounded(), request.clone());
-    let compile = json!({"format": "native-compile/1", "request": {
-        "models": request["models"], "program": request["program"]}});
-    let compile_path = ws.write("compile.json", compile.to_string().as_bytes());
-    let package = fsl_command::command::compile(&compile_path).expect("the program compiles");
-    ws.write("package.json", &package);
-    let mut selected = request;
-    selected
-        .as_object_mut()
-        .expect("a request object")
-        .remove("program");
-    selected["package"] = json!({"file": "package.json"});
+    let (selected, _) = crate::analyze_cli_support::package_selection(&ws, &request);
     let document = json!({"format": "native-analyze/1", "request": selected});
     let path = ws.write("analyze-package-gap.json", document.to_string().as_bytes());
     let run = analyze(&path);

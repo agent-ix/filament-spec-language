@@ -3455,6 +3455,7 @@ impl<'a> Typer<'a> {
                 | ValueType::Reference(_)
                 | ValueType::Population(_) => {}
                 ValueType::Uuid | ValueType::Timestamp => {}
+                ValueType::Bytes | ValueType::JsonObject => {}
             }
         }
         Ok(())
@@ -3723,13 +3724,27 @@ impl<'a> Typer<'a> {
                 location,
             ));
         }
-        let undeclared_case = name.rsplit_once("::").is_some_and(|(type_name, _)| {
-            self.scope
+        if let Some((type_name, case)) = name.rsplit_once("::") {
+            if let Some(declared) = self
+                .scope
                 .variant_type_named(self.source_owner.as_ref(), type_name)
-                .is_some()
-        });
-        if undeclared_case
-            || self.signatures.declares(name)
+            {
+                let owner = declared
+                    .name()
+                    .rsplit("::")
+                    .next()
+                    .unwrap_or(declared.name())
+                    .to_owned();
+                return Err(refuse(
+                    location,
+                    CheckCause::UndeclaredVariantCase {
+                        owner,
+                        case: case.to_owned(),
+                    },
+                ));
+            }
+        }
+        if self.signatures.declares(name)
             || (self.scope.is_variant_case_name(name)
                 && matches!(expected, Some(ValueType::Enum(shape)) if self.scope.is_variant_shape(shape)))
         {
@@ -3827,6 +3842,8 @@ impl<'a> Typer<'a> {
                 | ValueType::String
                 | ValueType::Uuid
                 | ValueType::Timestamp
+                | ValueType::Bytes
+                | ValueType::JsonObject
                 | ValueType::Enum(_)
                 | ValueType::Option(_)
                 | ValueType::Composite(_)
@@ -3974,6 +3991,8 @@ impl<'a> Typer<'a> {
             | (ValueType::String, ValueType::String)
             | (ValueType::Uuid, ValueType::Uuid)
             | (ValueType::Timestamp, ValueType::Timestamp) => return Err(ineligible(location)),
+            (ValueType::Bytes, ValueType::Bytes)
+            | (ValueType::JsonObject, ValueType::JsonObject) => return Err(ineligible(location)),
             _ => return Err(mismatch(location)),
         };
         Ok(node(
@@ -4392,6 +4411,9 @@ impl<'a> Typer<'a> {
             | ValueType::Uuid
             | ValueType::String
             | ValueType::Timestamp => return Err(mismatch(&location.child(0))),
+            ValueType::Bytes | ValueType::JsonObject => {
+                return Err(mismatch(&location.child(0)))
+            }
             // FR-497-AC-2: a carried quantity is no operand of unary `-`.
             ValueType::CarriedQuantity(_) => return Err(mismatch(location)),
         };
@@ -4734,6 +4756,7 @@ impl<'a> Typer<'a> {
             | ValueType::Quantity(_)
             | ValueType::BoundedQuantity(_)
             | ValueType::CarriedQuantity(_) => false,
+            ValueType::Bytes | ValueType::JsonObject => false,
         }
     }
 
@@ -4759,6 +4782,7 @@ impl<'a> Typer<'a> {
             | ValueType::BoundedQuantity(_)
             | ValueType::CarriedQuantity(_)
             | ValueType::Population(_) => false,
+            ValueType::Bytes | ValueType::JsonObject => false,
         }
     }
 
@@ -5895,6 +5919,7 @@ pub(super) fn holds_float(mut ty: &ValueType) -> bool {
             | ValueType::Composite(_)
             | ValueType::Reference(_)
             | ValueType::Population(_) => return false,
+            ValueType::Bytes | ValueType::JsonObject => return false,
         }
     }
 }

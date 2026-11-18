@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //! Public API tests for the unreduced graph core and the model checker.
 
+mod analysis_view;
 mod analyze;
 mod analyze_cli;
 mod analyze_cli_support;
@@ -9,6 +10,7 @@ mod analyze_family_cli;
 mod analyze_last_stage;
 mod analyze_liveness_cli;
 mod analyze_package_selection;
+mod analyze_protocol_subject;
 mod analyze_reach_rulings;
 mod analyze_reduction_cli;
 mod analyze_request_wire;
@@ -105,6 +107,7 @@ mod provision_contract;
 mod quotient;
 mod race_freedom;
 mod rc11_oracle;
+mod recording_population;
 #[path = "../support/rc11.rs"]
 mod rc11_support;
 mod reduction;

@@ -846,6 +846,10 @@ pub enum NativeKind {
     Uuid,
     /// `"timestamp"`.
     Timestamp,
+    /// `"bytes"`.
+    Bytes,
+    /// `"json_object"`.
+    JsonObject,
     /// `"text"`: admitted only into a `Text[min, max; profile]` slot; every
     /// other slot refuses it `wrong-value-kind` (FR-106-AC-35).
     Text,

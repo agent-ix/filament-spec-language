@@ -169,6 +169,52 @@ fn the_plan_search_stops_at_its_named_limits() {
     }
 }
 
+/// FSpec FR-801-AC-7: every plan search limit has its published default, a
+/// request overrides one member only, and an invalid value refuses at its
+/// pointer before any search.
+#[test]
+#[trace("FSpec-TC-2003", "FSpec-FR-801-AC-7")]
+#[trace("TC-2861", "FR-1011-AC-3")]
+#[ignore = "QSL-1978: plan_search limit defaults and their refusals are not implemented yet"]
+fn plan_search_limits_have_published_defaults_and_refuse_invalid_values() {
+    let unit = plan_unit("Int[0, 3]", "", "Reach.length >= 1");
+    let defaults = json!({
+        "plan_search.max_states": 10_000_000_u64,
+        "plan_search.max_work": 100_000_000_u64,
+        "plan_search.max_certificate_entries": 16_777_216_u64,
+        "plan_search.max_check_work": 100_000_000_u64,
+        "plan_search.max_state_key_bytes": 1_048_576_u64,
+    });
+    let (_, value) = plan(&unit, json!({}));
+    assert_eq!(value["synthesis"]["limits"], defaults, "{value}");
+
+    let (_, value) = plan(&unit, json!({"limits": {"max_states": 500}}));
+    let mut overridden = defaults.clone();
+    overridden["plan_search.max_states"] = json!(500);
+    assert_eq!(value["synthesis"]["limits"], overridden, "{value}");
+
+    for (limit, cause) in [
+        (json!(0), "invalid-value"),
+        (json!(-1), "invalid-value"),
+        (json!(1.5), "invalid-value"),
+        (
+            serde_json::from_str::<Value>("18446744073709551616").unwrap(),
+            "invalid-value",
+        ),
+        (json!("10"), "wrong-value-kind"),
+    ] {
+        let (exit, value) = plan(&unit, json!({"limits": {"max_work": limit}}));
+        assert_eq!(exit, 20, "{value}");
+        names(&value, cause);
+        names(&value, "/limits/max_work");
+        assert!(value["synthesis"].get("status").is_none(), "{value}");
+    }
+    let (exit, value) = plan(&unit, json!({"limits": {"max_steps": 1}}));
+    assert_eq!(exit, 20, "{value}");
+    names(&value, "unknown-member");
+    names(&value, "/limits/max_steps");
+}
+
 /// FR-1011-AC-2, FSpec FR-801-AC-2: an exhausted evaluation meter names
 /// its `accounting` setting.
 #[test]

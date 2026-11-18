@@ -1511,17 +1511,33 @@ mod tests {
     #[trace("TC-783", "FR-298-AC-1", "FR-298-AC-6")]
     #[test]
     fn diagnostic_text_resolves_path_and_scalar_column_or_falls_back_to_the_reference() {
-        let text_source = "a\néx\n";
+        let text_source = "a\r\néx\r\n";
         let input = source_under("ref-inv", "src/inv.fsl", text_source);
         let region = input
-            .region(Span { start: 4, end: 5 })
+            .region(Span { start: 5, end: 6 })
             .expect("region starts after multibyte scalar");
         let document = refusal_over(&region, region.end(), "bad value");
-        // Column 2: the scalar column, not the byte-based 3.
+        // CRLF advances one line, and the multibyte `é` occupies one scalar
+        // column rather than two bytes.
         assert_eq!(
             text_of(&document, &RenderSources::from_sources([input.clone()])),
             "analyze: refusal (exit 20)\nsrc/inv.fsl:2:2: ill_typed: bad value\n"
         );
+
+        let json = render_outcome(
+            &document,
+            RenderForm::Json,
+            &RenderSources::from_sources([input.clone()]),
+            RenderLimits::default(),
+            &Cancel::new(),
+        )
+        .expect("JSON outcome renders");
+        let json: serde_json::Value =
+            serde_json::from_slice(json.value().bytes()).expect("outcome is JSON");
+        assert_eq!(json["diagnostics"][0]["locus"]["start"], 5);
+        assert_eq!(json["diagnostics"][0]["locus"]["end"], 6);
+        assert!(json["diagnostics"][0]["locus"]["line"].is_null());
+        assert!(json["diagnostics"][0]["locus"]["column"].is_null());
 
         let fallback_label = format!(
             "{}:{}-{}: ill_typed:",
@@ -1544,8 +1560,9 @@ mod tests {
         assert_eq!(
             text,
             format!(
-                "analyze: refusal (exit 20)\n{}:4-{past_end_by_one}: ill_typed: bad range\n",
-                source_label(region.source())
+                "analyze: refusal (exit 20)\n{}:{}-{past_end_by_one}: ill_typed: bad range\n",
+                source_label(region.source()),
+                region.start(),
             )
         );
         // The region's end exactly at the source's length still resolves.

@@ -77,6 +77,10 @@ obligation rather than declining the input.
   document holding the trace in FSpec FR-433's spelling.
 - `recording`: for `global-conformance` in replay mode, the `{authority, identity}`
   of a provisioned FSpec FR-737 recording document (FR-895).
+- `population`: optional, only beside `recording`: the activated role
+  instances of each replicated role per protocol instance, which enumerate
+  the fan-out members whose closure the recording must show (FR-990
+  "Fan-out members over a recording").
 
 ## Outputs
 

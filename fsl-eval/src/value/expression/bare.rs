@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-//! FR-531, FR-533: the protocol-slot evaluation of a package read from its
+//! FR-531, FR-533, FR-945: evaluation of calls from a package read from its
 //! bytes alone.
 //!
 //! The call selects the slot from the package's `protocol` node, projects its
@@ -10,8 +10,11 @@
 
 use std::collections::BTreeMap;
 
-use filament_eval::{CallAdmissionFailure, CallAdmissionLocus, CallFailure, Evaluation};
-use filament_exact::{Meter, NodeKey, Value};
+use filament_eval::{
+    CallAdmissionFailure, CallAdmissionLocus, CallFailure, Evaluation, FamilyOutcome,
+};
+use filament_exact::{Charge, ChargePoint, Meter, NodeKey, Outcome, Value};
+use filament_semantic_value::call::InputRefusal;
 use filament_semantic_value::catalog::InternalFault;
 use fsl_package::{BarePackage, BareSelectionFailure, BareSlot, BareWorld, ProtocolSlotDescriptor};
 use fsl_semantics::model::object_environment::ObjectEnvironment;
@@ -23,7 +26,8 @@ use super::slot_supply::{admit_slot_supply, AdmittedSupply, SlotHost, SourceView
 use super::{
     unsupported_projection, ApplicationObservation, ApplicationObservationOptions,
     CheckedPackageEvaluation, ClauseEvaluation, ClauseSetEvaluation, FrameEvaluation,
-    QualifiedName, Separation, SuppliedRun, ValueInvariantEvaluation,
+    QualifiedName, Separation, SuppliedFailure, SuppliedLimits, SuppliedRun,
+    ValueInvariantEvaluation,
 };
 
 /// A selection or projection refusal as the call reports it (FR-533
@@ -35,6 +39,50 @@ fn refusal(package: &BarePackage<'_>, failure: BareSelectionFailure) -> CallFail
         Ok(view) => unsupported_projection(&view),
         Err(failure) => resolve::selection_failure(failure),
     }
+}
+
+fn function_projection(
+    package: &BarePackage<'_>,
+    function: &QualifiedName,
+) -> Result<fsl_package::ReaderProtocolProjection, CallFailure> {
+    let name = function
+        .as_unqualified()
+        .ok_or_else(|| InputRefusal::UnknownFunction(function.to_string()))?;
+    package
+        .project_function(name)
+        .map_err(|failure| function_refusal(package, failure))?
+        .ok_or_else(|| InputRefusal::UnknownFunction(function.to_string()).into())
+}
+
+fn function_refusal(package: &BarePackage<'_>, failure: BareSelectionFailure) -> CallFailure {
+    match failure {
+        BareSelectionFailure::FunctionParameterType { position, view } => {
+            unsupported_function_type(&view, "position", position.to_string())
+        }
+        BareSelectionFailure::FunctionResultType { function, view } => {
+            unsupported_function_type(&view, "function", function)
+        }
+        other => refusal(package, other),
+    }
+}
+
+fn unsupported_function_type(
+    view: &fsl_package::UnsupportedView,
+    detail: &'static str,
+    value: String,
+) -> CallFailure {
+    let (code, cause) = view.catalog();
+    let mut record = super::occurrence_record(code, cause, Vec::new());
+    record.fields.insert(detail, value);
+    let locus = view
+        .locus()
+        .key()
+        .map_or(CallAdmissionLocus::Package, |key| {
+            CallAdmissionLocus::Node(key.clone())
+        });
+    CallFailure::Admission(Box::new(CallAdmissionFailure::Refused(
+        filament_eval::CallAdmissionRecord { record, locus },
+    )))
 }
 
 /// What supply admission reads from a bytes-only package: the bare
@@ -197,45 +245,139 @@ const SOURCE_CHECKED_FORM: &str = "needs-source-checked-form";
 impl CheckedPackageEvaluation for BarePackage<'_> {
     fn call(
         &self,
-        _function: &QualifiedName,
-        _arguments: Vec<Value>,
-        _objects: &ObjectEnvironment,
-        _meter: &mut Meter,
+        function: &QualifiedName,
+        arguments: Vec<Value>,
+        objects: &ObjectEnvironment,
+        meter: &mut Meter,
     ) -> Result<Evaluation, CallFailure> {
-        Err(unmet(self, SOURCE_DECLARATION))
+        let cancel = meter.cancel().cloned().unwrap_or_default();
+        let mut run = SuppliedRun::new(SuppliedLimits::default(), cancel)
+            .map_err(|stop| CallFailure::from(SuppliedFailure::Stop(stop)))?;
+        self.call_supplied(function, arguments, objects, meter, &mut run)
     }
 
     fn call_observing_applications(
         &self,
-        _function: &QualifiedName,
-        _arguments: Vec<Value>,
-        _objects: &ObjectEnvironment,
+        function: &QualifiedName,
+        arguments: Vec<Value>,
+        objects: &ObjectEnvironment,
         meter: &mut Meter,
         options: ApplicationObservationOptions,
     ) -> ApplicationObservation {
         let displaced_capture = meter.disable_charge_capture();
-        let capture = super::OperationCapture::new(options);
+        let mut capture = super::OperationCapture::new(options);
+        capture.start(meter);
+        let mut observed = Vec::new();
+        let mut unavailable_imported_call = false;
+        let mut function_evaluations = 0;
+        let mut function_case_limit_reached = false;
+        let evaluation = (|| {
+            let projection = function_projection(self, function)?;
+            let selected = projection.selected_function().ok_or_else(|| {
+                CallFailure::Fault(InternalFault::new(
+                    "FR-945",
+                    "bare-call-has-selected-function",
+                ))
+            })?;
+            let parameters = selected
+                .parameters
+                .iter()
+                .map(|parameter| (parameter.name.clone(), parameter.value_type.clone()))
+                .collect::<Vec<_>>();
+            let world = self.world().map_err(|failure| refusal(self, failure))?;
+            let cancel = meter.cancel().cloned().unwrap_or_default();
+            let mut run = SuppliedRun::new(SuppliedLimits::default(), cancel)
+                .map_err(|stop| CallFailure::from(SuppliedFailure::Stop(stop)))?;
+            super::admit_arguments(&parameters, &arguments, objects, world.types(), &mut run)?;
+            if let Err(incomplete) = meter.charge(Charge::new(ChargePoint::FunctionCall)) {
+                return Ok(Evaluation {
+                    outcome: FamilyOutcome::Evaluated(Outcome::Incomplete(incomplete)),
+                    location: None,
+                    losses: Vec::new(),
+                    frame_depth: 0,
+                });
+            }
+            capture.drain(meter, projection.location(selected.body));
+            if options.function_case_limit == 0 {
+                function_case_limit_reached = true;
+                return Ok(Evaluation {
+                    outcome: FamilyOutcome::Evaluated(Outcome::Incomplete(
+                        filament_exact::Incomplete {
+                            limit_kind: filament_exact::LimitKind::WorkUnits,
+                            limit: 0,
+                            consumed: 0,
+                            next_charge: filament_exact::Integer::from(1_u64),
+                            charge_point: ChargePoint::FunctionCall,
+                        },
+                    )),
+                    location: projection.location(selected.body).cloned(),
+                    losses: Vec::new(),
+                    frame_depth: 0,
+                });
+            }
+            function_evaluations = 1;
+            Ok(Machine::observing_bare_package(
+                &world,
+                objects,
+                meter,
+                super::ApplicationObserver {
+                    observed: &mut observed,
+                    unavailable_imported_call: &mut unavailable_imported_call,
+                    function_case_limit: options.function_case_limit,
+                    function_evaluations: &mut function_evaluations,
+                    function_case_limit_reached: &mut function_case_limit_reached,
+                    capture: &mut capture,
+                },
+            )
+            .run(ReaderNode::root(&projection), selected.slots, arguments)
+            .map_err(CallFailure::Fault)?)
+        })();
+        let ledger = capture.finish(meter);
         ApplicationObservation {
-            evaluation: Err(unmet(self, SOURCE_DECLARATION)),
-            observed: Vec::new(),
-            unavailable_imported_call: false,
-            function_evaluations: 0,
-            function_case_limit_reached: false,
+            evaluation,
+            observed,
+            unavailable_imported_call,
+            function_evaluations,
+            function_case_limit_reached,
             meter_totals: super::ChargeAmounts::from_meter(meter),
-            ledger: capture.finish(meter),
+            ledger,
             displaced_capture,
         }
     }
 
     fn call_supplied(
         &self,
-        _function: &QualifiedName,
-        _arguments: Vec<Value>,
-        _objects: &ObjectEnvironment,
-        _meter: &mut Meter,
-        _run: &mut SuppliedRun,
+        function: &QualifiedName,
+        arguments: Vec<Value>,
+        objects: &ObjectEnvironment,
+        meter: &mut Meter,
+        run: &mut SuppliedRun,
     ) -> Result<Evaluation, CallFailure> {
-        Err(unmet(self, SOURCE_DECLARATION))
+        let projection = function_projection(self, function)?;
+        let selected = projection.selected_function().ok_or_else(|| {
+            CallFailure::Fault(InternalFault::new(
+                "FR-945",
+                "bare-call-has-selected-function",
+            ))
+        })?;
+        let parameters = selected
+            .parameters
+            .iter()
+            .map(|parameter| (parameter.name.clone(), parameter.value_type.clone()))
+            .collect::<Vec<_>>();
+        let world = self.world().map_err(|failure| refusal(self, failure))?;
+        super::admit_arguments(&parameters, &arguments, objects, world.types(), run)?;
+        if let Err(incomplete) = meter.charge(Charge::new(ChargePoint::FunctionCall)) {
+            return Ok(Evaluation {
+                outcome: FamilyOutcome::Evaluated(Outcome::Incomplete(incomplete)),
+                location: None,
+                losses: Vec::new(),
+                frame_depth: 0,
+            });
+        }
+        Machine::from_bare_package(&world, objects, meter)
+            .run(ReaderNode::root(&projection), selected.slots, arguments)
+            .map_err(CallFailure::Fault)
     }
 
     fn evaluate(
@@ -284,6 +426,7 @@ impl CheckedPackageEvaluation for BarePackage<'_> {
         _clause: &fsl_semantics::check::TemporalClauseNode,
         _atom: fsl_semantics::check::FormulaNodeId,
         _over: Value,
+        _captures: &[Value],
         _objects: &ObjectEnvironment,
         _meter: &mut Meter,
     ) -> Result<Evaluation, CallFailure> {
@@ -294,7 +437,7 @@ impl CheckedPackageEvaluation for BarePackage<'_> {
         &self,
         _clause: &fsl_semantics::check::TemporalClauseNode,
         _atom: fsl_semantics::check::FormulaNodeId,
-        _over: &filament_exact::ObjectReference,
+        _binders: super::HoldsBinders<'_>,
         _objects: &ObjectEnvironment,
         _observation: super::ObservationIdentity,
         _meter: &mut Meter,
@@ -406,5 +549,425 @@ impl CheckedPackageEvaluation for BarePackage<'_> {
         _meter: &mut Meter,
     ) -> Result<Option<super::collection_write::WrittenCollection>, CallFailure> {
         Err(unmet(self, SOURCE_DECLARATION))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use filament_exact::{Integer, LimitKind, ScalarLimits};
+    use filament_semantic_value::checking::{CheckMode, CheckingLimits};
+    use fsl_forms::{DeclarationSpans, Expression, ExpressionSpans, FunctionDeclaration, TypeForm};
+    use fsl_semantics::check::PackageDeclarations;
+    use ix_trace_rs::trace;
+
+    const SPAN: fsl_foundation::Span = fsl_foundation::Span { start: 0, end: 0 };
+    const UNLIMITED: ScalarLimits = ScalarLimits {
+        integer_bits: u64::MAX,
+        decimal_digits: u64::MAX,
+        scale_expansion: u64::MAX,
+        text_input_bytes: u64::MAX,
+        text_scalars: u64::MAX,
+        normalized_scalars: u64::MAX,
+        unit_edges: u64::MAX,
+        value_occurrences: u64::MAX,
+        work_units: u64::MAX,
+        result_units: u64::MAX,
+    };
+
+    fn package() -> fsl_package::CheckedPackage {
+        let integer = TypeForm::builtin(fsl_forms::BuiltinType::Integer, SPAN);
+        let mut declarations = PackageDeclarations::new(
+            fsl_semantics::check::fixture_source(),
+            "bare-call-test".to_owned(),
+            fsl_foundation::IdentityLimits::default(),
+        );
+        declarations.functions.push(
+            FunctionDeclaration::new(
+                "one",
+                vec![("a".to_owned(), integer.clone())],
+                integer,
+                None,
+                Expression::name("a".to_owned()),
+            )
+            .with_spans(DeclarationSpans {
+                declaration: fsl_foundation::Span { start: 0, end: 20 },
+                body: ExpressionSpans::new(fsl_foundation::Span { start: 10, end: 11 })
+                    .expect("the body span is ordered"),
+                measure: None,
+            })
+            .expect("the declaration owns its body span"),
+        );
+        fsl_package::CheckedPackage::link(
+            declarations
+                .check(CheckMode::Linked, CheckingLimits::default())
+                .expect("the identity function checks"),
+        )
+    }
+
+    fn population_collection_package() -> (
+        fsl_package::CheckedPackage,
+        fsl_semantics::model::intake::PackageInput,
+    ) {
+        let model_bytes =
+            include_bytes!("../../../../examples/config-version/model.semantic-ir.json");
+        let models = fsl_semantics::model::intake::package_input([model_bytes.as_slice()])
+            .expect("model document reads");
+        let source_text =
+            "language \"ix:native\" edition \"1-draft\";\n\
+             profile v = \"filament.value.complete/v1\";\n\
+             model M = \"example/config-version\";\n\
+             function takes using v(a: Sequence<Integer>[0, 3], b: Sequence<Integer>[0, 3]): Integer pure { 1 }\n\
+             function gives using v(): Sequence<Integer>[0, 3] pure { sequence[1] }\n\
+             function population_source using v(p: Population<M::ConfigVersion>[3]): Integer pure { 1 }\n";
+        let parsed = fsl_cst::parse(
+            fsl_foundation::SourceIdentity::new("test", "bare-call-types"),
+            "bare-call-types.native",
+            source_text.as_bytes(),
+            fsl_cst::Limits::default(),
+        )
+        .expect("the source unit parses");
+        assert!(parsed.is_admissible(), "{:?}", parsed.diagnostics());
+        let unit = fsl_forms::build_unit(&parsed).expect("the source unit builds");
+        let selected_models = fsl_semantics::model::intake::admit_unit(
+            &unit.selections().models,
+            &models,
+            fsl_semantics::model::accounting::ModelNormalizationLimits::default(),
+        )
+        .expect("the model selection admits");
+        let declarations = PackageDeclarations::assemble(
+            parsed.source().reference().clone(),
+            "bare-call-types-test".to_owned(),
+            unit,
+            selected_models,
+            Vec::new(),
+        )
+        .expect("the declarations assemble");
+        let source = fsl_package::CheckedPackage::link(
+            declarations
+                .check(CheckMode::Linked, CheckingLimits::default())
+                .expect("the source-supported package checks"),
+        );
+        (source, models)
+    }
+
+    fn completed_integer(evaluation: Evaluation) -> Integer {
+        match evaluation.outcome {
+            FamilyOutcome::Evaluated(Outcome::Completed(Value::Integer(value))) => value,
+            other => panic!("expected a completed integer call, got {other:?}"),
+        }
+    }
+
+    /// FR-531/FR-945: a call through a bytes-only package returns the same
+    /// value and work usage as the checked package, including observation.
+    #[trace("FR-531-AC-1", "FR-945-AC-1")]
+    #[test]
+    fn call_matches_the_checked_package_from_admitted_bytes() {
+        let source = package();
+        let models = fsl_semantics::model::intake::package_input(std::iter::empty::<&[u8]>())
+            .expect("the package selects no models");
+        let read = fsl_package::read_evaluation_package(
+            &source,
+            fsl_semantics::library::LibraryName::new("bare-call-test").expect("library identity"),
+            &models,
+            fsl_package::V2ReadLimits::fixture(),
+            fsl_package::EmitLimits::fixture(),
+        )
+        .expect("the package emits and its bytes are admitted");
+        let admitted = read.admitted();
+        let mut rows_budget = fsl_package::V2ReadLimits::fixture().native_join_budget();
+        let rows = read
+            .emission()
+            .identity_rows(admitted, &mut rows_budget)
+            .expect("identity rows join the package");
+        let mut join_budget = fsl_package::V2ReadLimits::fixture().native_join_budget();
+        let bare = BarePackage::new(admitted)
+            .with_supply(
+                fsl_package::BareSupply {
+                    identities: &rows,
+                    equality: None,
+                },
+                &mut join_budget,
+            )
+            .expect("the bytes view admits its supply");
+        let function = QualifiedName::unqualified("one").expect("function name");
+        let objects = ObjectEnvironment::default();
+        let argument = Value::Integer(Integer::from(17_i64));
+        let mut source_meter = Meter::new(UNLIMITED);
+        let source_result = source
+            .call(
+                &function,
+                vec![argument.clone()],
+                &objects,
+                &mut source_meter,
+            )
+            .expect("source call evaluates");
+        let mut bare_meter = Meter::new(UNLIMITED);
+        let bare_result = bare
+            .call(&function, vec![argument], &objects, &mut bare_meter)
+            .expect("bytes call evaluates");
+        let source_value = completed_integer(source_result);
+        let bare_value = completed_integer(bare_result);
+        assert_eq!(source_value, bare_value);
+        assert_eq!(
+            source_meter.consumed(LimitKind::WorkUnits),
+            bare_meter.consumed(LimitKind::WorkUnits)
+        );
+
+        let mut observed_meter = Meter::new(UNLIMITED);
+        let observed = bare.call_observing_applications(
+            &function,
+            vec![Value::Integer(Integer::from(17_i64))],
+            &objects,
+            &mut observed_meter,
+            ApplicationObservationOptions {
+                function_case_limit: 10,
+                max_events: 32,
+                max_size_requests: 32,
+            },
+        );
+        let observed_value =
+            completed_integer(observed.evaluation.expect("observed bytes call evaluates"));
+        assert_eq!(observed_value, Integer::from(17_i64));
+        assert_eq!(observed.function_evaluations, 1);
+        assert_eq!(
+            observed_meter.consumed(LimitKind::WorkUnits),
+            bare_meter.consumed(LimitKind::WorkUnits)
+        );
+    }
+
+    /// FR-945-AC-2 / FR-650: nested population types are refused from the
+    /// admitted package before argument admission or a function-call charge.
+    #[trace("FR-945-AC-2", "FR-650-AC-6")]
+    #[test]
+    fn nested_population_parameter_and_result_have_typed_details() {
+        let (source, models) = population_collection_package();
+        let limits = fsl_package::V2ReadLimits::fixture();
+        let emit_limits = fsl_package::EmitLimits::fixture();
+        let original = fsl_package::read_evaluation_package(
+            &source,
+            fsl_semantics::library::LibraryName::new("bare-call-types-test")
+                .expect("library identity"),
+            &models,
+            limits,
+            emit_limits,
+        )
+        .expect("source package emits and is admitted");
+        let mut wire = fsl_semantics::check::wire_id::resolved_package_value(
+            original.emission().package().bytes(),
+        )
+        .expect("emitted package resolves to its node ids");
+        let nodes = wire["semantic_graph"]["nodes"]
+            .as_array_mut()
+            .expect("semantic graph has nodes");
+        let population_type = nodes
+            .iter()
+            .find(|node| {
+                node["node_tag"] == "bounded_domain" && node["semantic_form"] == "model_population"
+            })
+            .expect("the admitted package carries its population type")["node_id"]
+            .clone();
+        let sequence = nodes
+            .iter_mut()
+            .find(|node| {
+                node["node_tag"] == "composite_type" && node["semantic_form"] == "sequence"
+            })
+            .expect("the admitted package carries its sequence type");
+        sequence["body"]["members"][0]["target"] = population_type.clone();
+        sequence["dependencies"] = serde_json::json!([population_type]);
+        wire["semantic_graph"]
+            .as_object_mut()
+            .expect("semantic graph is an object")
+            .remove("operand_rows");
+        fsl_semantics::check::wire_id::write_operand_rows(&mut wire);
+        let nested_population_bytes = serde_json::to_vec(&wire).expect("mutated package encodes");
+        let emission = original
+            .emission()
+            .clone()
+            .with_package_bytes(nested_population_bytes);
+        let admitted = fsl_package::read_evaluation_emission(
+            &source,
+            &emission,
+            fsl_semantics::library::LibraryName::new("bare-call-types-test")
+                .expect("library identity"),
+            &models,
+            limits,
+            emit_limits,
+            fsl_package::SourceWitnessSupplier::new(&emission),
+        )
+        .expect("the checked package with nested-population type nodes admits");
+        let mut rows_budget = limits.native_join_budget();
+        let rows = admitted
+            .emission()
+            .identity_rows(admitted.admitted(), &mut rows_budget)
+            .expect("identity rows join the admitted bytes");
+        let mut join_budget = limits.native_join_budget();
+        let bare = BarePackage::new(admitted.admitted())
+            .with_supply(
+                fsl_package::BareSupply {
+                    identities: &rows,
+                    equality: None,
+                },
+                &mut join_budget,
+            )
+            .expect("the bare view admits its rows");
+        let objects = ObjectEnvironment::default();
+
+        let mut parameter_meter = Meter::new(UNLIMITED);
+        let parameter_failure = bare
+            .call(
+                &QualifiedName::unqualified("takes").expect("function name"),
+                vec![Value::Boolean(true)],
+                &objects,
+                &mut parameter_meter,
+            )
+            .expect_err("the unsupported parameter is refused before argument admission");
+        assert_type_refusal(parameter_failure, "position", "0");
+        assert_eq!(parameter_meter.consumed(LimitKind::WorkUnits), 0);
+
+        let mut result_meter = Meter::new(UNLIMITED);
+        let result_failure = bare
+            .call(
+                &QualifiedName::unqualified("gives").expect("function name"),
+                vec![Value::Boolean(true)],
+                &objects,
+                &mut result_meter,
+            )
+            .expect_err("the unsupported result is refused before argument admission");
+        assert_type_refusal(result_failure, "function", "gives");
+        assert_eq!(result_meter.consumed(LimitKind::WorkUnits), 0);
+    }
+
+    /// FR-945-AC-2 / FR-650: a supported checked result type does not turn an
+    /// unsupported operation at the body root into a result-type refusal.
+    #[trace("FR-945-AC-2", "FR-650-AC-6")]
+    #[test]
+    fn unsupported_body_root_operation_keeps_generic_refusal_details() {
+        let models = fsl_semantics::model::intake::package_input(std::iter::empty::<&[u8]>())
+            .expect("the package selects no models");
+        let source_text = "language \"ix:native\" edition \"1-draft\";\n\
+             profile v = \"filament.value.complete/v1\";\n\
+             function gives using v(): Set<Integer>[0, 3] pure { set[1] }\n";
+        let parsed = fsl_cst::parse(
+            fsl_foundation::SourceIdentity::new("test", "bare-call-operation"),
+            "bare-call-operation.native",
+            source_text.as_bytes(),
+            fsl_cst::Limits::default(),
+        )
+        .expect("the source unit parses");
+        assert!(parsed.is_admissible(), "{:?}", parsed.diagnostics());
+        let unit = fsl_forms::build_unit(&parsed).expect("the source unit builds");
+        let selected_models = fsl_semantics::model::intake::admit_unit(
+            &unit.selections().models,
+            &models,
+            fsl_semantics::model::accounting::ModelNormalizationLimits::default(),
+        )
+        .expect("the package selects no models");
+        let declarations = PackageDeclarations::assemble(
+            parsed.source().reference().clone(),
+            "bare-call-operation-test".to_owned(),
+            unit,
+            selected_models,
+            Vec::new(),
+        )
+        .expect("the declarations assemble");
+        let source = fsl_package::CheckedPackage::link(
+            declarations
+                .check(CheckMode::Linked, CheckingLimits::default())
+                .expect("the set-returning function checks"),
+        );
+        let limits = fsl_package::V2ReadLimits::fixture();
+        let emit_limits = fsl_package::EmitLimits::fixture();
+        let original = fsl_package::read_evaluation_package(
+            &source,
+            fsl_semantics::library::LibraryName::new("bare-call-operation-test")
+                .expect("library identity"),
+            &models,
+            limits,
+            emit_limits,
+        )
+        .expect("source package emits and is admitted");
+        let mut rows_budget = limits.native_join_budget();
+        let rows = original
+            .emission()
+            .identity_rows(original.admitted(), &mut rows_budget)
+            .expect("identity rows join the package");
+        let mut join_budget = limits.native_join_budget();
+        let bare = BarePackage::new(original.admitted())
+            .with_supply(
+                fsl_package::BareSupply {
+                    identities: &rows,
+                    equality: None,
+                },
+                &mut join_budget,
+            )
+            .expect("the bare view admits its rows");
+        let mut meter = Meter::new(UNLIMITED);
+        let failure = bare
+            .call(
+                &QualifiedName::unqualified("gives").expect("function name"),
+                vec![Value::Boolean(true)],
+                &ObjectEnvironment::default(),
+                &mut meter,
+            )
+            .expect_err("the unsupported operation is refused before argument admission");
+        assert_operation_refusal_without_function_detail(failure);
+        assert_eq!(meter.consumed(LimitKind::WorkUnits), 0);
+    }
+
+    fn assert_operation_refusal_without_function_detail(failure: CallFailure) {
+        let CallFailure::Admission(failure) = failure else {
+            panic!("expected typed admission refusal, got {failure:?}");
+        };
+        let CallAdmissionFailure::Refused(failure) = *failure else {
+            panic!("expected typed refusal, got {failure:?}");
+        };
+        assert_eq!(
+            (
+                failure.record.catalog.code(),
+                failure.record.catalog.cause()
+            ),
+            ("unknown_required_feature", "unsupported-feature")
+        );
+        assert!(
+            failure
+                .record
+                .fields
+                .get("reason")
+                .is_some_and(|reason| { reason.starts_with("missing-operation-projection:") }),
+            "expected the operation projection reason, fields: {:?}",
+            failure.record.fields
+        );
+        assert!(
+            !failure.record.fields.contains_key("function"),
+            "a supported checked result type must not add function detail: {:?}",
+            failure.record.fields
+        );
+    }
+
+    fn assert_type_refusal(failure: CallFailure, detail: &str, value: &str) {
+        let CallFailure::Admission(failure) = failure else {
+            panic!("expected typed admission refusal, got {failure:?}");
+        };
+        let CallAdmissionFailure::Refused(failure) = *failure else {
+            panic!("expected typed refusal, got {failure:?}");
+        };
+        assert_eq!(
+            (
+                failure.record.catalog.code(),
+                failure.record.catalog.cause()
+            ),
+            ("unknown_required_feature", "unsupported-feature")
+        );
+        assert_eq!(
+            failure.record.fields.len(),
+            1,
+            "fields: {:?}",
+            failure.record.fields
+        );
+        assert_eq!(
+            failure.record.fields.get(detail).map(String::as_str),
+            Some(value)
+        );
     }
 }

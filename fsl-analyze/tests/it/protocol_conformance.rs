@@ -74,9 +74,9 @@ fn order_recording(closure: Value) -> Value {
 /// The required premises of instance `w-1` of the order fixture.
 fn order_premises() -> Value {
     json!([
-        {"kind": "execution", "identity": "w-1"},
-        {"kind": "branch", "identity": "w-1/Flow::Main::Decide::no"},
-        {"kind": "branch", "identity": "w-1/Flow::Main::Decide::yes"}
+        {"kind": "execution", "node": "Flow::Done"},
+        {"kind": "branch", "node": "Flow::Main::Decide::no"},
+        {"kind": "branch", "node": "Flow::Main::Decide::yes"}
     ])
 }
 
@@ -137,7 +137,8 @@ fn matching_implementations_conform_globally() {
 
 /// QSL-2209 AC-2; FR-896-AC-3, FR-991-AC-4: over a recording, a send on
 /// `Tell` where the protocol enables none refutes conformance with an
-/// `unexpected` enabledness violation, and the counterexample replays.
+/// `unexpected` enabledness violation; without a `ProtocolSubject`, the item
+/// publishes no replay claim for the supplied bytes.
 #[trace(
     "TC-2532",
     "TC-2803",
@@ -176,7 +177,7 @@ fn an_out_of_protocol_send_refutes_conformance() {
         "{item}"
     );
     assert_eq!(item["global"]["complete"], false);
-    assert_eq!(item["replay"]["reproduced"], true, "{item}");
+    assert!(item["replay"].is_null(), "{item}");
 }
 
 /// QSL-2209 AC-3; FR-990-AC-2, FR-991-AC-2: the refutation without the
@@ -334,13 +335,13 @@ fn a_malformed_closure_premise_set_refuses_the_recording() {
     let all = premises.as_array().expect("premises").clone();
     let omitted: Vec<Value> = all
         .iter()
-        .filter(|p| p["identity"] != "w-1/Flow::Main::Decide::yes")
+        .filter(|p| p["node"] != "Flow::Main::Decide::yes")
         .cloned()
         .collect();
     let mut duplicated = all.clone();
     duplicated.push(all[0].clone());
     let mut crossed = all.clone();
-    crossed[0] = json!({"kind": "execution", "identity": "w-2"});
+    crossed[0] = json!({"kind": "execution", "node": "Flow::Main::Decide::yes"});
     for (name, set) in [
         ("omitted", omitted),
         ("duplicated", duplicated),
@@ -516,7 +517,6 @@ fn a_compiled_handoff_publishes_its_source_provision() {
 /// one component is refused before any verdict.
 #[trace("TC-2831", "FR-990-AC-6", "FSpec-FR-247-AC-3")]
 #[test]
-#[ignore = "QSL-2210: closure premises do not carry the componentwise {kind, instance, node} identity yet"]
 fn closure_premises_carry_their_componentwise_identity() {
     let engine = conformance("gc-premise-identity", &order_protocol(true), json!({}), &[]);
     assert_eq!(engine["closure"]["premises"], order_premises(), "{engine}");
@@ -553,7 +553,7 @@ fn closure_premises_carry_their_componentwise_identity() {
             )],
         );
         assert_eq!(
-            item["diagnostics"][0]["code"], "invalid_runtime_input",
+            item["record"]["diagnostic"]["code"], "invalid_runtime_input",
             "{name}: {item}"
         );
         assert!(item["obligations"].is_null(), "{name}: {item}");

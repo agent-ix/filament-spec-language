@@ -19,6 +19,10 @@
 extern crate alloc;
 
 #[cfg(feature = "std")]
+mod analysis_view;
+#[cfg(feature = "std")]
+pub use analysis_view::{AnalysisView, DependencyClosure};
+#[cfg(feature = "std")]
 mod bare;
 #[cfg(feature = "std")]
 mod bare_slot;
@@ -136,8 +140,8 @@ pub use protocol_occurrence_key::{
 pub use protocol_selection::{ProtocolSlotDescriptor, SlotSelectionFailure};
 #[cfg(feature = "std")]
 pub use reader_protocol_projection::{
-    MissingLocation, ReaderProtocolFunction, ReaderProtocolProjection, ReaderSlot,
-    UnsupportedReason, UnsupportedView, ViewLocus,
+    MissingLocation, ReaderProtocolFunction, ReaderProtocolParameter, ReaderProtocolProjection,
+    ReaderSlot, UnsupportedReason, UnsupportedView, ViewLocus,
 };
 
 #[cfg(feature = "std")]

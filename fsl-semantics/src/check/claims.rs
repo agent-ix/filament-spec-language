@@ -354,6 +354,14 @@ impl std::fmt::Debug for RequirementRecord {
 }
 
 impl RequirementRecord {
+    /// The record with its requirements marked as an `invariant` state
+    /// clause's ([`Requirements::of_invariant_clause`]).
+    #[must_use]
+    pub(crate) fn of_invariant_clause(mut self) -> Self {
+        self.requirements = self.requirements.of_invariant_clause();
+        self
+    }
+
     /// The record with its path condition replaced: the seam a test uses to
     /// build a record whose guard sits at an occurrence that is not a
     /// checked node.
@@ -470,9 +478,12 @@ fn is_scalar_application(node: CheckedNode<'_>) -> bool {
         | NodeKind::IeeeFloat32Fma(..)
         | NodeKind::IeeeFloat64Fma(..)
         | NodeKind::Quantity(..)
+        | NodeKind::QuantityScale { .. }
+        | NodeKind::QuantityScaleDiv { .. }
         | NodeKind::QuantityNegate(..)
         | NodeKind::QuantityPower(..)
         | NodeKind::ConvertDecimal(..)
+        | NodeKind::ConvertText(..)
         | NodeKind::Order(..)
         | NodeKind::IeeeToRational(..) => true,
         NodeKind::ConvertScalar(target, operand) => {
@@ -526,6 +537,7 @@ fn is_scalar_application(node: CheckedNode<'_>) -> bool {
         | NodeKind::NamedPopulation { .. }
         | NodeKind::Seq { .. }
         | NodeKind::Case { .. } => false,
+        NodeKind::TupleProject { .. } | NodeKind::Index { .. } => false,
         #[cfg(seam_probe)]
         NodeKind::__SeamProbe => unreachable!("never constructed outside the probe build"),
     }
@@ -560,7 +572,9 @@ fn scalar_equality(compared: &ValueType) -> bool {
         // equality carries no bound to prove.
         | ValueType::String
         | ValueType::Uuid
-        | ValueType::Timestamp => false,
+        | ValueType::Timestamp
+        | ValueType::Bytes
+        | ValueType::JsonObject => false,
     }
 }
 

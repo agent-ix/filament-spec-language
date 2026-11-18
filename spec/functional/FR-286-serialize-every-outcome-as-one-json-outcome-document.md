@@ -95,7 +95,14 @@ the same document (FSpec FR-300-AC-3). The document's members are:
   a `format` outcome whose formatting completes, which carries
   `{"kind": "formatted", "text": T}` with `T` the exact formatted source as a
   JSON string (FR-003), so the JSON form of a format run holds the same text
-  its plain-text form writes. The library's format outcome owns this member:
+  its plain-text form writes. A `replay` outcome whose replay runs carries
+  `{"kind": "replayed", "results": [R, ...]}`, each `R` one row of the FSpec
+  FR-323 `results` document FR-862 returns, unchanged and in row order, so its
+  `arm`, `settlement`, `category`, `value`, `charges` and other FR-072 members
+  are all present;
+  `OutcomeDocument::from_replay` builds it from the replay result, so the
+  replay's outcome document and its text carry the arm and settlement the
+  results document carries. A refused replay carries `null`. The library's format outcome owns this member:
   `OutcomeDocument::from_format` builds it from the completed format before
   serialization, and the CLI writes the document unchanged, adding no member
   (driver FR-002-AC-3). Formatting is idempotent, so formatting `T` gives
@@ -180,6 +187,8 @@ A `monitor` item carries the members of FR-283's record for its verdict, besides
 | `InsufficientData` | `position`, `count` and `min_count`; no `counterexample` and no `witness` |
 | `Pending`, `Tested` | none |
 | `Indeterminate` | `position` where FR-501's reason names one |
+| `Declined` at stage `select` | `diagnostic` `{code, cause, detail}`: the refusal's catalog code and cause, and its FR-272 payload as `detail`, so the selected name and, for a non-`Boolean` function, its expected and actual result types reach the document ([FR-867](FR-867-name-the-function-and-its-result-type-when-a-non-boolean-function-is-selected-as-a-claim.md)) |
+| `Declined` at any other stage, `Unsupported`, `Incomplete` | none |
 
 `pending` and `indeterminate` are catalog labels (`Category::as_str`), not
 FR-331 terminal-record labels: a clause run that did not settle has no terminal
@@ -284,8 +293,8 @@ The outcome document's bytes.
   `backend-not-supplied` and `backend` the engine's name (`aot` or `jit`), in
   category unsupported (FR-285, exit 21).
 - `OutcomeItem::from_clause_run` shall give each item the members the
-  "Monitor documents from clause runs" member table lists for its verdict and
-  no other, reading `counterexample` from `ClauseRunReport::counterexample`
+  "Monitor documents from clause runs" member table lists for its verdict,
+  a `select` refusal's `diagnostic` included, and no other, reading `counterexample` from `ClauseRunReport::counterexample`
   (FR-330 Outputs; the same record FR-267 writes in its `temporal` member).
 - `OutcomeItem::from_clause_run` shall write `decisive`, a sibling of `counterexample`, from `ClauseRunReport::decisive` (FR-330 Outputs) on a temporal `Violated` item whose report holds one, and no `decisive` on any other item.
 - `OutcomeItem::from_clause_run` shall write `witness` exactly when
@@ -382,6 +391,7 @@ FR-634's members. A clause-run and a `monitor` item carry FR-622's `axes`.
 | FR-286-AC-18 | The `execute` outcome document of a call of `function` `nope` holds a diagnostic with `details` `{"function": "nope"}`; of `id_rec` called with an argument naming the parameter `zz` instead of `a`, `details` `{"parameter": "zz"}`; and of `id_big` called with `"7"`, stage `request`, `details` `{"path": "/call/arguments/0/value"}`. | Test (TC-2378) |
 | FR-286-AC-19 | The `execute` outcome document of a run whose unit S3 refuses `ill_typed` (`function bad using v(): Int[0, 9] pure { true }`) and the `parse` outcome document of FR-763-AC-2's unit each hold diagnostics whose `details` is `null`; no diagnostic of any document holds a `details` member outside the closed vocabulary or an empty `details` object. | Test (TC-2379) |
 | FR-286-AC-20 | A `monitor` document of settled clause runs (`MonitorOutcome::document`, here with no records) has `last_stage` `S6a`; the whole-request refusal document of `MonitorRefusal::UnknownClause` has `S4` and of `MonitorRefusal::Observation` `S6a`, each with its refusal category. | Test (TC-2383) |
+| FR-286-AC-21 | The `replay` outcome of FR-862-AC-2's replay of `entry` serializes with `result` `{"kind": "replayed", "results": [R]}`, `R` equal to the one row of the `results` document `command::run` returns (`arm` `input`, `settlement` `reproduced-without-witness`); FR-862-AC-1's refused request serializes with `result` `null`. | Test (TC-2963) |
 
 ## Status
 

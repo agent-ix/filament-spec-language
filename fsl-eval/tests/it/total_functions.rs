@@ -35,7 +35,7 @@ use fsl_semantics::check::{
 };
 use fsl_semantics::family::FamilyKind;
 use fsl_semantics::model::object_environment::ObjectEnvironment;
-use fsl_semantics::value::{admit_ieee_profile, DefinitionReference, DefinitionRole};
+use fsl_semantics::value::{DefinitionReference, DefinitionRole, admit_ieee_profile};
 use ix_trace_rs::trace;
 
 /// FR-090: `CheckedPackage::call`/`evaluate` return `Evaluation { outcome:
@@ -893,7 +893,7 @@ fn p09_intervals_come_only_from_declared_types_and_literal_guards() {
                     lower: Some(integer(lower)),
                     upper: Some(integer(upper)),
                 }),
-                operand: Default::default(),
+                operand: fsl_semantics::check::OperandText::default(),
             },
             "unproved-range",
         )

@@ -21,10 +21,9 @@ fn observation(
     intake: &mut Intake<'_>,
     key: &str,
     file: &str,
-    document_bytes: u64,
 ) -> Result<SuppliedObservation> {
-    let bytes =
-        intake.observation_file(file, usize::try_from(document_bytes).unwrap_or(usize::MAX))?;
+    let remaining = intake.remaining;
+    let bytes = intake.file(file, remaining)?;
     let mut observation = SuppliedObservation::from_document(key, bytes)
         .map_err(|error| invalid(error.member, error.reason))?;
     observation.path = Some(file.to_owned());
@@ -84,7 +83,7 @@ pub(super) fn read(
         let observed = if let Some(existing) = by_file.get(file) {
             existing.clone()
         } else {
-            let observed = observation(intake, key, file, observation_limits.document_bytes)?;
+            let observed = observation(intake, key, file)?;
             by_file.insert(file.clone(), observed.clone());
             observed
         };
@@ -99,7 +98,15 @@ pub(super) fn read(
                 .map_err(|error| invalid(error.member, error.reason))
         })
         .transpose()?;
-    // FR-526: the evidence ledger file a prior run wrote, read once here.
+    // The selection is decoded first, so a correction member off a
+    // timestamped trace refuses naming the member before any file is read
+    // (FR-985).
+    let mut selection = clause
+        .selection
+        .into_parts()
+        .map_err(|error| invalid(error.member, error.reason))?;
+    // FR-526, FR-975: the evidence ledger file a prior run wrote, read once
+    // here.
     let evidence_ledger = clause
         .selection
         .correction()
@@ -110,10 +117,6 @@ pub(super) fn read(
                 .map_err(|error| invalid("evidence_ledger", error.to_string()))
         })
         .transpose()?;
-    let mut selection = clause
-        .selection
-        .into_parts()
-        .map_err(|error| invalid(error.member, error.reason))?;
     if let fsl_replay::spine::ClauseSelectionPartsKind::Temporal {
         trace: fsl_replay::spine::TemporalTraceParts::Timestamped(timestamped),
         ..

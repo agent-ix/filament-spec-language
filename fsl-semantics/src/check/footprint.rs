@@ -288,6 +288,8 @@ fn referenced_types(value_type: &ValueType, found: &mut Vec<EffectiveId>) {
         | ValueType::String
         | ValueType::Uuid
         | ValueType::Timestamp
+        | ValueType::Bytes
+        | ValueType::JsonObject
         | ValueType::Enum(_)
         | ValueType::Composite(_)
         | ValueType::Population(_) => {}

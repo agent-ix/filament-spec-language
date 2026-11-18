@@ -25,8 +25,8 @@
 
 mod counterexample;
 pub use counterexample::{
-    assignments_wire, graph_evidence_wire, probabilistic_wire, protocol_temporal_wire,
-    temporal_wire, CounterexampleWireError, ProtocolWire,
+    CounterexampleWireError, ProtocolWire, assignments_wire, graph_evidence_wire,
+    probabilistic_wire, protocol_temporal_wire, temporal_wire,
 };
 
 use crate::hybrid::{BoundDimension, SolverHorizon};
@@ -42,6 +42,7 @@ use serde::ser::SerializeStruct;
 use serde::{Serialize, Serializer};
 use std::collections::{BTreeMap, BTreeSet};
 
+use crate::ReplayRefusal;
 use crate::certificate::{CertificateLocus, CertificateRule};
 use crate::model_check::state_graph::WitnessSource;
 use crate::proof_result::{
@@ -52,12 +53,11 @@ use crate::proof_result::{
 use crate::result::ReplayResult;
 use crate::spine::kernel_undefined_reason;
 use crate::spine::{
-    classify_clause_run, item_record, CallIncomplete, CallOutcome, CallRefusal, CheckedUnit,
-    ClauseDisposition, ClauseRunReport, CompileRefusal, EmittedUnit, FrontEndFailure,
-    ParsedUnitSource, ReasonWire, RunRefusal, SpineStage, TemporalUndefinedCause, TemporalVerdict,
+    CallIncomplete, CallOutcome, CallRefusal, CheckedUnit, ClauseDisposition, ClauseRunReport,
+    CompileRefusal, EmittedUnit, FrontEndFailure, ParsedUnitSource, ReasonWire, RunRefusal,
+    SpineStage, TemporalUndefinedCause, TemporalVerdict, classify_clause_run, item_record,
 };
 use crate::statistical::{self, Decision, StatisticalVerdict};
-use crate::ReplayRefusal;
 use filament_semantic_value::fairness::PropertyForm;
 use fsl_eval::temporal::UndefinedCause;
 
@@ -945,9 +945,21 @@ pub struct ProtocolConformanceOutput {
     /// Per-role projection results, absent in recording mode.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub projections: Option<Vec<ConformanceProjectionOutput>>,
+    /// The provisioned FR-737 recording identity, present in recording mode.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub recording: Option<ConformanceRecordingIdentity>,
     /// Whether the global counterexample replay reproduced its violation.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub replay: Option<ConformanceReplayOutput>,
+}
+
+/// The command-level identity under which a protocol recording was provisioned.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+pub struct ConformanceRecordingIdentity {
+    /// The authority that provisioned the recording.
+    pub authority: String,
+    /// The provisioned recording identity.
+    pub identity: String,
 }
 
 /// The in-process replay result for a global-conformance counterexample.
@@ -1566,6 +1578,29 @@ fn clause_run_cause(report: &ClauseRunReport) -> Option<ItemCause> {
                 | fsl_semantics::model::observation::AdmissionFailure::Incomplete(record),
             document,
             path,
+        } if record.fields.get("setting").map(String::as_str)
+            == Some("observation.input_bytes") =>
+        {
+            let bound = record.fields.get("bound")?;
+            let actual = record.fields.get("actual")?;
+            Some(ItemCause {
+                code: Some(record.catalog.code().to_owned()),
+                limit: Some(CauseLimit::Name("input-bytes-exceeded")),
+                value: bound.parse().ok(),
+                counter: Some(actual.clone()),
+                setting: Some("observation.input_bytes"),
+                bound: Some(bound.clone()),
+                locus: snapshot_admission_locus(record, document, path.as_deref())
+                    .map(ItemLocus::Outcome),
+                ..ItemCause::kind("input-bytes-exceeded")
+            })
+        }
+        ClauseDisposition::SnapshotAdmission {
+            failure:
+                fsl_semantics::model::observation::AdmissionFailure::Refused(record)
+                | fsl_semantics::model::observation::AdmissionFailure::Incomplete(record),
+            document,
+            path,
         } => Some(ItemCause {
             kind: Some(record.catalog.cause()),
             code: Some(record.catalog.code().to_owned()),
@@ -1632,7 +1667,7 @@ fn accounting_limit_cause(
     } else {
         incomplete.next_charge.clone()
     };
-    let setting = crate::limits::AccountingLimits::setting_of(incomplete.limit_kind).name();
+    let setting = crate::limits::AccountingLimits::setting_name(incomplete.limit_kind);
     ItemCause {
         code: code.map(str::to_owned),
         limit: Some(CauseLimit::Name(incomplete.limit_kind.as_str())),
@@ -2070,7 +2105,7 @@ impl From<&CallIncomplete> for ResultLimit {
             bound: incomplete.record.limit.to_string(),
             counter: incomplete.counter().to_string(),
             field: incomplete.limits_field(),
-            setting: incomplete.setting().name(),
+            setting: incomplete.setting_name(),
         }
     }
 }
@@ -2303,8 +2338,8 @@ impl OutcomeDocument {
                     | StageFailure::LimitWithPayload(_, payload) => payload.parsed.as_deref(),
                     _ => None,
                 };
-                document.result =
-                    parsed.map(|parsed| OutcomeResult::Parsed(ParsedOutcome::from(parsed)));
+                document.result = parsed
+                    .map(|parsed| OutcomeResult::Parsed(ParsedOutcome::from(parsed.as_ref())));
                 document
             }
         }
@@ -2763,10 +2798,10 @@ mod tests {
 
     use filament_exact::{Cancel, CancelCause, Identifier, ScalarLimits};
     use filament_semantic_value::catalog::{CatalogCode, InternalFault};
-    use fsl_foundation::diagnostic::LimitExceeded;
     use fsl_foundation::Setting;
+    use fsl_foundation::diagnostic::LimitExceeded;
     use fsl_semantics::model::object_environment::ObjectEnvironment;
-    use serde_json::{json, Value};
+    use serde_json::{Value, json};
 
     use super::*;
     use crate::identity::QualifiedName;
@@ -2908,8 +2943,8 @@ mod tests {
     use crate::proof_result::{IncompleteCause, ProofRefusalCause, UnavailabilityCause};
     use crate::result::{DisagreementCause, EvaluatedValue, InputArmResult, Verdict, WitnessCheck};
     use crate::spine::{
-        check, default_accounting, package, parse, run, select, Call, CallLocus, DependencyInput,
-        PackageLimits, ParseRequest, SpineLimits,
+        Call, CallLocus, DependencyInput, PackageLimits, ParseRequest, SpineLimits, check,
+        default_accounting, package, parse, run, select,
     };
 
     const FIXTURE: &str = include_str!("../../tests/fixtures/spine-compile.native");
@@ -2994,6 +3029,7 @@ mod tests {
                     label: "proved".to_owned(),
                     counterexample: None,
                 }]),
+                recording: None,
                 replay: Some(ConformanceReplayOutput { reproduced: true }),
             });
         let wire = serde_json::to_value(item).expect("serializes");

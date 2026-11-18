@@ -43,9 +43,9 @@ use filament_semantic_value::catalog::InternalFault;
 use filament_semantic_value::fairness::{FairnessConstraint, FairnessKind};
 use filament_semantic_value::model_transition::ModelTransition;
 use fsl_eval::fairness::{analyze, Analysis, EdgeLabel, FairnessError, Graph, Identity, Vertex};
-use fsl_eval::model_subject::{ModelInstance, ModelSubject};
+use fsl_eval::model_subject::{CapacityBinding, ModelInstance, ModelSubject};
 use fsl_eval::simulation::model::{check_model_bounds, ModelFinding, ModelSimState, ModelSystem};
-use fsl_eval::simulation::protocol::ProtocolTarget;
+use fsl_eval::simulation::protocol::{ProtocolRefusal, ProtocolTarget};
 use fsl_eval::simulation::{ExpansionLimit, ExpansionStop, TransitionSystem};
 use fsl_package::CheckedPackage;
 use fsl_replay::{
@@ -53,13 +53,13 @@ use fsl_replay::{
     check_protocol_step, check_step, open_protocol_systems, open_systems, AbstractClass,
     AbstractProtocolSystem, CertifiedEdge, CertifiedPosition, ConcreteStep, CounterexampleKind,
     IncompleteCause, Lasso, LivenessHalf, ModelCheckLimit, ModelCheckLimits, ModelCheckOutcome,
-    ModelStep, ProtocolRelationError, ProtocolStateRelation, ReachedLimit, RefinementFailure,
-    RefinementOutcome, RefinementPosition, RefinementSystems, RunStats, SafetyOutcome,
-    SafetyUndecided, SimulationCertificate, StepResult, StepVerdict, SubjectRefusal, Taken,
-    TemporalCounterexample, UnavailabilityCause, UndecidedCause, UndefinedEvaluation, Undetermined,
+    ModelStep, ProtocolRelationError, ProtocolStateRelation, ProtocolSystemsRefusal, ReachedLimit,
+    RefinementFailure, RefinementOutcome, RefinementPosition, RefinementSystems, RunStats,
+    SafetyOutcome, SafetyUndecided, SimulationCertificate, StepResult, StepVerdict, SubjectRefusal,
+    Taken, TemporalCounterexample, UnavailabilityCause, UndecidedCause, UndefinedEvaluation,
+    Undetermined,
 };
 use fsl_semantics::check::CheckedRefinement;
-use fsl_semantics::model::observation::DocumentRef;
 
 use super::check::{fault, not_simulated, widen, ModelCheckRefusal, BOUND_POSITIONS};
 use super::fair_walk::{fairness_constraints, FairModel};
@@ -73,11 +73,13 @@ pub struct RefinementCheckRequest<'a> {
     /// The package that holds the abstract model: the declaring package, or
     /// a dependency (ADR-020 RM-1).
     pub abstract_package: &'a CheckedPackage,
-    /// The abstract subject's FR-106 initial snapshots.
-    pub abstract_initial: Vec<DocumentRef>,
+    /// The abstract subject's initial states: its FR-106 snapshots, or the
+    /// mapping's image of the concrete initial states.
+    pub abstract_initial: fsl_replay::AbstractInitial,
     /// Bindings for an abstract protocol subject. The clause and static
-    /// roles remain owned by `abstract_package`; the request supplies only
-    /// the model instance bound to its `over` parameter.
+    /// roles remain owned by `abstract_package`; the request supplies the
+    /// model instance bound to its `over` parameter and the capacity binding
+    /// of its symbolic capacities.
     pub abstract_protocol_binding: Option<AbstractProtocolBinding>,
     /// The search horizon `k`; `None` sets none.
     pub max_depth: Option<usize>,
@@ -90,6 +92,8 @@ pub struct RefinementCheckRequest<'a> {
 pub struct AbstractProtocolBinding {
     /// The object bound to the protocol's checked `over` input.
     pub over: ModelInstance,
+    /// The binding of the clause's symbolic capacities (FSpec FR-785).
+    pub capacities: Vec<CapacityBinding>,
 }
 
 /// A product state's key: the concrete state's key bytes, its history
@@ -205,7 +209,8 @@ fn check_with(
             &request.concrete.simulation,
             request.abstract_package,
             request.abstract_initial.clone(),
-        ),
+        )
+        .map_err(ProtocolSystemsRefusal::Subject),
         (fsl_semantics::check::AbstractSide::Protocol { .. }, Some(binding)) => {
             open_protocol_systems(
                 refinement,
@@ -213,20 +218,47 @@ fn check_with(
                 request.abstract_package,
                 request.abstract_initial.clone(),
                 binding.over,
+                &binding.capacities,
             )
         }
         (fsl_semantics::check::AbstractSide::Protocol { .. }, None) => {
             return Err(ModelCheckRefusal::ProtocolAbstractSide)
         }
     };
-    let systems = opened.map_err(|refusal| match refusal {
-        SubjectRefusal::Admission(failure) => ModelCheckRefusal::Admission(failure),
-        SubjectRefusal::ProtocolSubject => ModelCheckRefusal::ProtocolRefinement,
-        SubjectRefusal::NoModels | SubjectRefusal::NoUniverse => {
-            fault("the-subjects-of-a-refinement-open")
+    let systems = match opened {
+        Ok(systems) => systems,
+        // FSL FR-630: building the abstract initial states from the mapping
+        // stopped on a budget, which settles the run V-7 naming it.
+        Err(ProtocolSystemsRefusal::Subject(SubjectRefusal::Stopped(stop))) => {
+            let stats = RunStats {
+                product_states: 0,
+                product_edges: 0,
+                stutter_edges: 0,
+                automaton_states: 0,
+                depth: 0,
+                bound_limited: 0,
+                instance_limited: 0,
+            };
+            let simulation = &request.concrete.simulation;
+            let safety =
+                match expansion_end(stop, &simulation.meter, simulation.expansion.max_candidates) {
+                    End::Fault(fault) => SafetyOutcome::Fault { fault, stats },
+                    End::Stopped(cause, limit) => SafetyOutcome::Stopped {
+                        cause,
+                        limit,
+                        stats,
+                    },
+                    End::Undecided(_) | End::Violated(_) | End::Refusal(_) => {
+                        return Err(fault("the-abstract-initial-states-build"))
+                    }
+                };
+            return Ok(RefinementOutcome {
+                safety,
+                liveness: None,
+            });
         }
-        SubjectRefusal::ProtocolAbstractSide => ModelCheckRefusal::ProtocolAbstractSide,
-    })?;
+        Err(refusal) => return Err(open_refusal(refusal)),
+    };
     let protocol_system = systems.abstract_protocol.as_ref();
     let RefinementSystems {
         concrete,
@@ -369,6 +401,53 @@ fn check_with(
         None
     };
     Ok(RefinementOutcome { safety, liveness })
+}
+
+/// An expansion stop: a named budget settles V-7 naming it, a broken
+/// invariant is a fault, any other stop settles V-7 with no limit.
+fn expansion_end(
+    stop: ExpansionStop,
+    meter: &filament_exact::ScalarLimits,
+    max_candidates: u64,
+) -> End {
+    match stop.limit {
+        Some(ExpansionLimit::EvaluationMeter(counter)) => Run::stopped(
+            ModelCheckLimit::EvaluationMeter { counter },
+            fsl_replay::meter_bound(meter, counter),
+        ),
+        Some(ExpansionLimit::MaxCandidates) => {
+            Run::stopped(ModelCheckLimit::MaxCandidates, max_candidates)
+        }
+        None if stop.is_internal_failure() => {
+            End::Fault(InternalFault::new("refinement-check", "model-expansion"))
+        }
+        None => End::Stopped(IncompleteCause::ResourceExhausted, None),
+    }
+}
+
+/// The refusal an abstract system that does not open gives.
+fn open_refusal(refusal: ProtocolSystemsRefusal) -> ModelCheckRefusal {
+    match refusal {
+        ProtocolSystemsRefusal::Subject(SubjectRefusal::Admission(failure)) => {
+            ModelCheckRefusal::Admission(failure)
+        }
+        ProtocolSystemsRefusal::Subject(SubjectRefusal::ProtocolSubject) => {
+            ModelCheckRefusal::ProtocolRefinement
+        }
+        ProtocolSystemsRefusal::Subject(SubjectRefusal::NoModels | SubjectRefusal::NoUniverse) => {
+            fault("the-subjects-of-a-refinement-open")
+        }
+        ProtocolSystemsRefusal::Subject(SubjectRefusal::ProtocolAbstractSide) => {
+            ModelCheckRefusal::ProtocolAbstractSide
+        }
+        ProtocolSystemsRefusal::Capacity(refusal) => {
+            ModelCheckRefusal::Protocol(ProtocolRefusal::Capacity(refusal))
+        }
+        ProtocolSystemsRefusal::UnboundCapacity(names) => ModelCheckRefusal::UnboundCapacity(names),
+        ProtocolSystemsRefusal::Subject(SubjectRefusal::Stopped(_)) => {
+            fault("the-abstract-initial-states-stop-before-they-refuse")
+        }
+    }
 }
 
 struct Run<'r, 'a> {
@@ -1772,19 +1851,7 @@ impl Run<'_, '_> {
     /// An expansion stop: a named budget settles V-7 naming it, a broken
     /// invariant is a fault, any other stop settles V-7 with no limit.
     fn expansion_stop(&self, stop: ExpansionStop) -> End {
-        match stop.limit {
-            Some(ExpansionLimit::EvaluationMeter(counter)) => Self::stopped(
-                ModelCheckLimit::EvaluationMeter { counter },
-                fsl_replay::meter_bound(&self.meter, counter),
-            ),
-            Some(ExpansionLimit::MaxCandidates) => {
-                Self::stopped(ModelCheckLimit::MaxCandidates, self.max_candidates)
-            }
-            None if stop.is_internal_failure() => {
-                End::Fault(InternalFault::new("refinement-check", "model-expansion"))
-            }
-            None => End::Stopped(IncompleteCause::ResourceExhausted, None),
-        }
+        expansion_end(stop, &self.meter, self.max_candidates)
     }
 
     fn encoding<T>(result: Result<T, fsl_eval::simulation::EncodingRefusal>) -> Result<T, End> {
@@ -2638,7 +2705,7 @@ mod tests {
                 proof_bounds: Vec::new(),
             },
             abstract_package: world.package(),
-            abstract_initial: vec![world.abstract_initial()],
+            abstract_initial: vec![world.abstract_initial()].into(),
             abstract_protocol_binding: None,
             max_depth: None,
             limits: ModelCheckLimits::default(),

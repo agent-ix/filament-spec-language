@@ -305,7 +305,7 @@ const fn monitor_input(trace: Input, clauses: &'static [&'static str]) -> Monito
 /// The `s3.nodes` counter of [`COMPILE`] less one.
 const COMPILE_S3_NODES_BELOW: u64 = 10;
 /// The `emit.output_bytes` counter of [`COMPILE`]'s package less one.
-const COMPILE_OUTPUT_BYTES_BELOW: u64 = 20_470;
+const COMPILE_OUTPUT_BYTES_BELOW: u64 = 20_514;
 
 const fn front_end(unit: Input, limit: FrontEndLimit) -> FrontEndInput {
     FrontEndInput {
@@ -769,4 +769,32 @@ static MATRIX: &[MatrixCell] = &[
 #[must_use]
 pub fn lifecycle_matrix() -> &'static [MatrixCell] {
     MATRIX
+}
+
+/// FR-633's `analyze` cell over a task set: ADR-026 §12's `Ctl` beside the
+/// Counter-step model, whose `schedulable CtlFp on Ctl under fixed_priority;`
+/// EN-7 proves in closed form. It is a further cell of the `analyze` row,
+/// beside the lifecycle matrix's one case per outcome kind.
+#[must_use]
+pub fn task_set_case() -> MatrixCase {
+    MatrixCase {
+        verb: Verb::Analyze,
+        kind: OutcomeKind::Success,
+        input: CaseInput::Analyze(AnalyzeInput::Engine {
+            subject: SubjectInput {
+                unit: input(
+                    "counter-step-ctl.native",
+                    include_bytes!("../cases/counter-step-ctl.native"),
+                ),
+                ..COUNTER_STEP_SUBJECT
+            },
+            item: EngineItem::Schedulability { claim: "CtlFp" },
+            deadline: DeadlineSupply::Unbounded,
+        }),
+        parameters: PARAMETERS,
+        cancellation: Cancellation::None,
+        working_directory: WorkingDirectory::NewEmpty,
+        expected_category: Category::Success,
+        expected_exit: 0,
+    }
 }

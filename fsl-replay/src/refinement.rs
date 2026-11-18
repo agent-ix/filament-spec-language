@@ -53,6 +53,9 @@ pub use step_view::{
     step_view_over, ProtocolStep, ProtocolStepView, ProtocolSteps, StateIndex, StepViewRefusal,
     UnsteppedConstruct,
 };
-pub use subject::{open_protocol_systems, open_systems, RefinementSystems, SubjectRefusal};
+pub use subject::{
+    open_protocol_systems, open_systems, AbstractInitial, ProtocolSystemsRefusal,
+    RefinementSystems, SubjectRefusal,
+};
 
 pub(crate) use step::stop_verdict;

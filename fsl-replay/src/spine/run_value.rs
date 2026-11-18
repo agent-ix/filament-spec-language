@@ -13,14 +13,14 @@ use std::collections::BTreeSet;
 use super::identity_form;
 use filament_exact::{
     CollectionKind, CollectionType, Decimal, EffectiveId, EnumMember, FieldValue, IeeeValue,
-    IeeeWidth, Integer, Meter, NodeKey, ObjectId, ObjectReference, OptionValue, Presence, Quantity,
-    Rational, TextPayload, UnitId, UniverseId, Value, ValueType,
+    IeeeWidth, Integer, JsonObject, MapType, Meter, NodeKey, ObjectId, ObjectReference,
+    OptionValue, Presence, Quantity, Rational, TextPayload, UnitId, UniverseId, Value, ValueType,
 };
 use filament_semantic_value::declaration::{CompositeShape, TypeEnvironment};
 use fsl_foundation::diagnostic::Code;
 use fsl_semantics::check::EnumBinding;
 use fsl_semantics::model::object_environment::ObjectEnvironment;
-use serde_json::{json, Map, Value as Json};
+use serde_json::{Map, Value as Json, json};
 
 /// One argument defect: the catalog code and cause FR-650's table names, and
 /// the JSON pointer of the defect inside the argument's `value`.
@@ -40,8 +40,6 @@ pub struct ArgumentDefect {
 pub(crate) enum ReadStop {
     /// The argument is not a value of the parameter's declared type.
     Defect(ArgumentDefect),
-    /// The declared type has a form this reader does not carry.
-    Unsupported,
     /// An established invariant of the checked package is broken.
     Fault(&'static str),
 }
@@ -100,11 +98,7 @@ impl<'a> Forms<'a> {
     }
 
     /// One exhaustive mapping from the checked type to its form: a
-    /// population below the top level has none (FR-650 "Types with no form"),
-    /// and neither has a map: FR-650 gives Map the form `{"map": [{key,
-    /// value}]}`, but `filament_exact::Value` has no map value to read it
-    /// into or write it from, so a map parameter or result refuses as
-    /// unsupported rather than being advertised and never read.
+    /// population below the top level has none (FR-650 "Types with no form").
     fn has_form_visiting(
         &self,
         value_type: &ValueType,
@@ -120,12 +114,18 @@ impl<'a> Forms<'a> {
             | ValueType::Float(_)
             | ValueType::Text(_)
             | ValueType::String
+            | ValueType::Bytes
+            | ValueType::JsonObject
             | ValueType::Uuid
             | ValueType::Timestamp
             | ValueType::Enum(_) => true,
             ValueType::Option(payload) => self.has_form_visiting(payload, false, seen),
             ValueType::Collection(collection) => {
                 self.has_form_visiting(collection.element(), false, seen)
+            }
+            ValueType::Map(map) => {
+                self.has_form_visiting(map.key(), false, seen)
+                    && self.has_form_visiting(map.values(), false, seen)
             }
             ValueType::Composite(key) => {
                 if !seen.insert(key.clone()) {
@@ -154,7 +154,6 @@ impl<'a> Forms<'a> {
             | ValueType::CarriedQuantity(_)
             | ValueType::Reference(_) => true,
             ValueType::Population(_) => top,
-            ValueType::Map(_) => false,
         }
     }
 
@@ -252,6 +251,21 @@ impl<'a> Forms<'a> {
                     string_member(object, "text", path)?.to_owned(),
                 ))
             }
+            ValueType::Bytes => {
+                native(object, "bytes", &["text"], path)?;
+                let text = string_member(object, "text", path)?;
+                let bytes = read_bytes(text)
+                    .ok_or_else(|| defect(Code::InvalidRuntimeInput, "invalid-value", path))?;
+                self.leaf(Value::Bytes(bytes), value_type, path)
+            }
+            ValueType::JsonObject => {
+                native(object, "json_object", &["text"], path)?;
+                let text = string_member(object, "text", path)?;
+                let json = JsonObject::from_json_text(text)
+                    .map(Value::JsonObject)
+                    .map_err(|_| defect(Code::InvalidRuntimeInput, "invalid-value", path))?;
+                self.leaf(json, value_type, path)
+            }
             ValueType::Text(declared) => {
                 native(object, "text", &["text"], path)?;
                 let text = string_member(object, "text", path)?;
@@ -291,9 +305,7 @@ impl<'a> Forms<'a> {
             | ValueType::CarriedQuantity(_) => self.read_quantity(object, value_type, path),
             ValueType::Reference(declared) => self.read_reference(object, declared, path),
             ValueType::Population(_) => self.read_population(object, path),
-            // A map value has no kernel representation yet, so a map argument
-            // has no reader.
-            ValueType::Map(_) => Err(ReadStop::Unsupported),
+            ValueType::Map(map_type) => self.read_map(object, map_type, path),
         }
     }
 
@@ -554,6 +566,79 @@ impl<'a> Forms<'a> {
                     .ok_or_else(|| defect(Code::InvalidRuntimeInput, "invalid-value", path))
             }
         }
+    }
+
+    /// FR-650's typed Map value form, with duplicate keys refused at the
+    /// later entry's key member.
+    fn read_map(
+        &self,
+        object: &Map<String, Json>,
+        map_type: &MapType,
+        path: &mut Path,
+    ) -> Result<Value, ReadStop> {
+        let payload = tagged(object, "map", path)?;
+        let Some(items) = payload.as_array() else {
+            return Err(wrong_kind_at(path, "map"));
+        };
+        if let Some(bound) = map_type.bound() {
+            if let Some(violation) = bound.violation(filament_exact::length_amount(items.len())) {
+                return Err(defect(
+                    Code::CardinalityOutOfBound,
+                    violation.as_str(),
+                    path,
+                ));
+            }
+        }
+        path.push("map");
+        let result = (|| {
+            let mut entries = Vec::with_capacity(items.len());
+            for (index, item) in items.iter().enumerate() {
+                path.push(&index.to_string());
+                let Some(entry) = item.as_object() else {
+                    return Err(wrong_kind(path));
+                };
+                if let Some(extra) = entry
+                    .keys()
+                    .find(|name| name.as_str() != "key" && name.as_str() != "value")
+                {
+                    path.push(extra);
+                    let found = defect(Code::InvalidRuntimeInput, "unknown-member", path);
+                    path.pop();
+                    return Err(found);
+                }
+                if !entry.contains_key("key") || !entry.contains_key("value") {
+                    return Err(defect(Code::InvalidRuntimeInput, "missing-member", path));
+                }
+                path.push("key");
+                let key = self.read_at(&entry["key"], map_type.key(), path);
+                path.pop();
+                let key = key?;
+                path.push("value");
+                let value = self.read_at(&entry["value"], map_type.values(), path);
+                path.pop();
+                let value = value?;
+                entries.push((key, value));
+                path.pop();
+            }
+            filament_exact::from_admitted_map(map_type.clone(), entries).map_err(|refusal| {
+                match (refusal.component, refusal.cause) {
+                    (
+                        filament_exact::Component::Element(index),
+                        filament_exact::ConstructionCause::DuplicateMember,
+                    ) => {
+                        path.push(&index.to_string());
+                        path.push("key");
+                        let found = defect(Code::InvalidRuntimeInput, "duplicate-member", path);
+                        path.pop();
+                        path.pop();
+                        found
+                    }
+                    _ => defect(Code::InvalidRuntimeInput, "invalid-value", path),
+                }
+            })
+        })();
+        path.pop();
+        result
     }
 
     fn read_enum(
@@ -898,6 +983,10 @@ impl<'a> Forms<'a> {
             }
             Value::String(held) => json!({"kind": "string", "text": held}),
             Value::Text(held) => json!({"kind": "text", "text": held.retained()}),
+            Value::Bytes(held) => json!({"kind": "bytes", "text": bytes_text(held)}),
+            Value::JsonObject(held) => {
+                json!({"kind": "json_object", "text": held.canonical_text()})
+            }
             Value::Enum(member) => {
                 let name = self
                     .enums
@@ -936,6 +1025,29 @@ impl<'a> Forms<'a> {
                 object.insert(collection_tag(kind).to_owned(), Json::Array(items));
                 Json::Object(object)
             }
+            Value::Map(map) => {
+                // FR-650's run form sorts by the RFC 8785 bytes of the
+                // normalized key form. Semantic walks use FR-144 order.
+                let mut keyed = map
+                    .entries()
+                    .iter()
+                    .map(|(key, value)| {
+                        let key_form = self.write_at(key, below)?;
+                        Ok((order_key(&key_form), key_form, value))
+                    })
+                    .collect::<Result<Vec<_>, WriteStop>>()?;
+                keyed.sort_by(|left, right| left.0.cmp(&right.0));
+                let entries = keyed
+                    .into_iter()
+                    .map(|(_, key, value)| {
+                        Ok(json!({
+                            "key": key,
+                            "value": self.write_at(value, below)?,
+                        }))
+                    })
+                    .collect::<Result<Vec<_>, WriteStop>>()?;
+                json!({"map": entries})
+            }
             Value::Composite(composite) => {
                 let declaration = self
                     .types
@@ -964,7 +1076,7 @@ impl<'a> Forms<'a> {
                         json!({"tuple": {"type": declaration_name(declaration), "components": components}})
                     }
                     CompositeShape::Union(_) => {
-                        return Err(WriteStop::Fault("union-value-is-not-a-composite"))
+                        return Err(WriteStop::Fault("union-value-is-not-a-composite"));
                     }
                 }
             }
@@ -1095,6 +1207,36 @@ fn order_key(form: &Json) -> Vec<u8> {
     let mut normalized = form.clone();
     normalize_decimals(&mut normalized);
     normalized.to_string().into_bytes()
+}
+
+/// FR-106's canonical lowercase hexadecimal spelling of a Bytes payload.
+fn bytes_text(bytes: &[u8]) -> String {
+    const HEX: &[u8; 16] = b"0123456789abcdef";
+    let mut text = String::with_capacity(bytes.len().saturating_mul(2));
+    for byte in bytes {
+        text.push(char::from(HEX[usize::from(*byte >> 4)]));
+        text.push(char::from(HEX[usize::from(*byte & 0x0f)]));
+    }
+    text
+}
+
+/// Parse only FR-106's canonical lowercase, even-length hexadecimal payload.
+fn read_bytes(text: &str) -> Option<Vec<u8>> {
+    if text.len() % 2 != 0
+        || !text
+            .bytes()
+            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+    {
+        return None;
+    }
+    text.as_bytes()
+        .chunks_exact(2)
+        .map(|pair| {
+            let high = u8::from_str_radix(std::str::from_utf8(&pair[..1]).ok()?, 16).ok()?;
+            let low = u8::from_str_radix(std::str::from_utf8(&pair[1..]).ok()?, 16).ok()?;
+            Some((high << 4) | low)
+        })
+        .collect()
 }
 
 /// Rewrite each Decimal object inside `form` with its trailing zeros
@@ -1441,18 +1583,14 @@ mod tests {
         Forms::new(types, &[])
     }
 
-    /// FR-650-AC-6: a type with no run value form is refused, never read.
+    /// FR-650-AC-6: population has a top-level form, but not a nested one.
     #[trace("FR-650-AC-6")]
     #[test]
     fn types_with_no_run_value_form_are_not_encodable() {
         let forms = forms();
-        let map = ValueType::Map(std::sync::Arc::new(
-            filament_exact::MapType::new(ValueType::String, ValueType::Boolean, None)
-                .expect("a leaf key"),
-        ));
-        // A population is a form only at the top: a collection, an option or a
-        // map over one has none (a checked package can carry such a type
-        // though source cannot).
+        // A population is a form only at the top: a collection or option
+        // over one has none (a checked package can carry such a type though
+        // source cannot).
         assert!(forms.has_form(&ValueType::Population(Some(1))));
         let over_population = ValueType::option(ValueType::Population(Some(1)));
         assert!(!forms.has_form(&over_population));
@@ -1463,13 +1601,35 @@ mod tests {
         )));
         assert!(!forms.has_form(&sequence));
         assert!(forms.has_form(&ValueType::option(ValueType::Boolean)));
-        // A map has no kernel value yet, so it advertises no form.
-        assert!(!forms.has_form(&map));
-        let form = serde_json::json!({"boolean": true});
-        assert!(matches!(
-            forms.read(&form, &map),
-            Err(ReadStop::Unsupported)
+    }
+
+    /// FR-650: run forms write Map entries in normalized run-key form order;
+    /// FR-144's mathematical order belongs to semantic traversal.
+    #[trace("FR-650-AC-11", "FR-144-AC-6")]
+    #[test]
+    fn maps_write_entries_in_run_form_order() {
+        let forms = forms();
+        let map = ValueType::Map(std::sync::Arc::new(
+            filament_exact::MapType::new(ValueType::Integer, ValueType::Boolean, None)
+                .expect("a leaf key"),
         ));
+        assert!(forms.has_form(&map));
+        let form = serde_json::json!({
+            "map": [
+                {"key": {"integer": "10"}, "value": {"boolean": true}},
+                {"key": {"integer": "9"}, "value": {"boolean": false}},
+            ]
+        });
+        let value = forms.read(&form, &map).expect("the map form is valid");
+        assert_eq!(
+            forms.write(&value).expect("the map value is writable"),
+            serde_json::json!({
+                "map": [
+                    {"key": {"integer": "10"}, "value": {"boolean": true}},
+                    {"key": {"integer": "9"}, "value": {"boolean": false}},
+                ]
+            })
+        );
     }
 
     /// FR-650: a set orders its elements by the form with every Decimal

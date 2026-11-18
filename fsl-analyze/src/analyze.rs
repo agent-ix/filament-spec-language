@@ -36,9 +36,13 @@ mod clause_item;
 mod derived_item;
 pub mod document;
 mod exact;
+mod invariant_item;
 mod items;
 mod reduction_item;
+mod refinement_item;
 mod request;
+mod schedule_item;
+mod simulation_item;
 mod state_graph_item;
 mod timed_item;
 pub(crate) use request::analyze_bound;
@@ -85,6 +89,7 @@ pub use items::{
     protocol_item, statistical_item, timed_refinement_item, zone_item, DerivedItemMismatch,
     ModelItem, ProtocolItem, ProtocolReplayFn, RefinementReplayFn, TimedItem, TimedRefinementItem,
 };
+pub use simulation_item::{SimulationItem, SimulationMode, SimulationSelection};
 
 use crate::provider::{ExternalProvider, NotUnbounded, ProviderOptions, ProviderReport};
 use crate::zone_check::ZoneCheckRecord;
@@ -272,6 +277,16 @@ impl Engine {
     /// Only if the registry's admission rules refuse EN-5's own manifest.
     pub fn exact_probabilistic() -> Result<Self, RegistrationRefusal> {
         crate::exact_probabilistic::manifest::descriptor(ProviderOrigin::Linked).map(Self::new)
+    }
+
+    /// EN-7, the closed-form schedulability engine (FR-247), which decides
+    /// `schedulability` items over a checked task set (FR-633).
+    ///
+    /// # Errors
+    ///
+    /// Only if the registry's admission rules refuse EN-7's own manifest.
+    pub fn schedulability() -> Result<Self, RegistrationRefusal> {
+        crate::schedulability::manifest::descriptor(ProviderOrigin::Linked).map(Self::new)
     }
 
     /// The value-validity check arm (FSpec FR-483, FR-484).
@@ -471,6 +486,9 @@ pub struct AnalyzeOutcome {
     /// The FR-990 global-conformance output for each settled conformance item.
     pub protocol_conformance:
         std::collections::BTreeMap<RequestIndex, fsl_replay::ProtocolConformanceOutput>,
+    /// EN-7's closed-form outcome, with its evidence, for each item it
+    /// settled (FR-247, FR-633).
+    pub closed_form: std::collections::BTreeMap<RequestIndex, fsl_replay::ClosedFormOutcome>,
 }
 
 /// What an item's engine reported beside its terminal record (FR-621).
@@ -862,6 +880,7 @@ impl Engines {
                 Engine::value_check()?,
                 Engine::contract_check()?,
                 Engine::protocol_analysis()?,
+                Engine::schedulability()?,
             ],
         })
     }
@@ -1082,6 +1101,9 @@ pub(crate) enum EngineReport {
     /// EN-1's record over an authored clause, with the object the clause's
     /// `over` parameter is bound to in its counterexample.
     Clause(Box<ModelCheckRecord>, Option<ObjectReference>),
+    /// EN-1's record over a refinement (FR-630), with the counterexample's
+    /// per-position abstract images and FR-146 step records.
+    Refinement(Box<ModelCheckRecord>, Option<serde_json::Value>),
     /// EN-1's record over a protocol subject, settled by
     /// `settle_protocol_check`.
     Protocol(
@@ -1103,6 +1125,9 @@ pub(crate) enum EngineReport {
     Zone(Box<ZoneCheckRecord>, Option<ObjectReference>),
     /// EN-5's report, settled by FR-203 and the exact certificate check.
     Exact(Box<exact::ExactReport>),
+    /// EN-7's outcome, settled by FR-248's map once its evidence was
+    /// recomputed.
+    ClosedForm(Box<schedule_item::ClosedFormReport>),
     /// The protocol analysis engine's report, settled by FR-573's map.
     ProtocolAnalysis(Box<crate::protocol_analysis::ProtocolAnalysisArtifact>),
     /// The protocol analysis engine's replay of a supplied finite trace.
@@ -1404,6 +1429,10 @@ pub struct AnalyzeRecord {
     /// The object an EN-1 clause counterexample's `over` parameter is bound
     /// to, which only the run's subject can name (FSpec FR-364).
     pub over_reference: Option<ObjectReference>,
+    /// A refinement counterexample's added members (FR-630 "Outputs"):
+    /// `steps`, the abstract image of each position, and `step_simulations`,
+    /// the FR-146 step records.
+    pub refinement_steps: Option<serde_json::Value>,
     /// The protocol subject an EN-1 protocol counterexample was found over
     /// (FSpec FR-433's `subject`).
     pub protocol_subject: Option<fsl_replay::ProtocolWire>,
@@ -1416,6 +1445,9 @@ pub struct AnalyzeRecord {
     pub protocol_conformance_counterexample: Option<serde_json::Value>,
     /// The state-graph engine's report (FR-628).
     pub state_graph: Option<Box<GraphReport>>,
+    /// EN-7's closed-form outcome with its evidence (FR-247): the miss of a
+    /// `refuted` item, the fixpoints or demand points of a `proved` one.
+    pub closed_form: Option<Box<fsl_replay::ClosedFormOutcome>>,
     /// The number of steps of a supplied trace a `finite-replay` item
     /// replayed to its proof (FR-941).
     pub replayed_steps: Option<u64>,
@@ -1445,11 +1477,13 @@ impl AnalyzeRecord {
             exact_probabilistic: None,
             probabilistic_counterexample: None,
             over_reference: None,
+            refinement_steps: None,
             protocol_subject: None,
             replayed_steps: None,
             protocol_analysis: None,
             protocol_conformance: None,
             protocol_conformance_counterexample: None,
+            closed_form: None,
             state_graph: None,
         }
     }
@@ -1471,11 +1505,18 @@ impl AnalyzeRecord {
                     .and_then(|record| record.counterexample.as_ref())
             })
         {
-            return Some(fsl_replay::temporal_wire(
-                found,
-                self.over_reference.as_ref(),
-                claim,
-            ));
+            return Some(
+                fsl_replay::temporal_wire(found, self.over_reference.as_ref(), claim).map(
+                    |mut wire| {
+                        if let (Some(serde_json::Value::Object(steps)), Some(members)) =
+                            (&self.refinement_steps, wire.as_object_mut())
+                        {
+                            members.extend(steps.clone());
+                        }
+                        wire
+                    },
+                ),
+            );
         }
         if let Some(found) = self.protocol_counterexample() {
             return Some(match &self.protocol_subject {
@@ -1995,6 +2036,11 @@ fn settle(
             settled.over_reference = over;
             settled
         }
+        EngineReport::Refinement(model, steps) => {
+            let mut settled = settle(index, kind, engine, EngineReport::Model(model));
+            settled.refinement_steps = steps;
+            settled
+        }
         EngineReport::Value(report) => {
             let (settled_record, counterexample) = value_check::settle(*report, index, backend);
             let mut settled = record(terminal(settled_record), None);
@@ -2092,6 +2138,19 @@ fn settle(
             settled.probabilistic_counterexample =
                 counterexample.map(|(found, wire)| Spelled { found, wire });
             settled
+        }
+        EngineReport::ClosedForm(report) => {
+            let schedule_item::ClosedFormReport { value, outcome } = *report;
+            // A refuted value without its miss evidence is an engine fault,
+            // never a verdict.
+            let settlement = terminal(
+                TerminalRecord::of_closed_form(index, backend.clone(), value, &outcome)
+                    .unwrap_or_else(|_| TerminalRecord::failed(index, backend)),
+            );
+            AnalyzeRecord {
+                closed_form: Some(Box::new(outcome)),
+                ..AnalyzeRecord::of(index, settlement)
+            }
         }
         EngineReport::StateGraph(graph) => {
             let settlement = terminal(TerminalRecord::of_state_graph(
@@ -2258,6 +2317,7 @@ mod tests {
                 label: "proved".to_owned(),
                 counterexample: None,
             }]),
+            recording: None,
             replay: None,
         };
         let document = analyze_document_routed_with_conformance(
@@ -2706,7 +2766,8 @@ mod tests {
     }
 
     /// FR-489-AC-5: linked registrations are borrowed from the EN-1, EN-4, EN-5
-    /// and EN-6 engines, the two check arms and the protocol analysis engine,
+    /// and EN-6 engines, the two check arms, the protocol analysis engine and
+    /// EN-7,
     /// and retain each engine's own identity and advertised kinds.
     #[trace("TC-1272", "FR-489-AC-5")]
     #[test]
@@ -2726,15 +2787,21 @@ mod tests {
                 "en-6",
                 "value-checker",
                 "contract-checker",
-                "protocol-analysis"
+                "protocol-analysis",
+                "en-7"
             ]
         );
-        let [en1, en4, en5, _en6, value, contract, protocol] = registrations.as_slice() else {
+        let [en1, en4, en5, _en6, value, contract, protocol, en7] = registrations.as_slice()
+        else {
             panic!(
-                "the linked engine set contains EN-1, EN-4, EN-5, EN-6, the two check arms and \
-                 the protocol analysis engine"
+                "the linked engine set contains EN-1, EN-4, EN-5, EN-6, the two check arms, \
+                 the protocol analysis engine and EN-7"
             );
         };
+        assert_eq!(
+            en7.advertises().collect::<Vec<_>>(),
+            [(Capability::Schedulability, Mode::Unbounded)]
+        );
         assert!(registrations
             .iter()
             .all(|descriptor| descriptor.origin() == ProviderOrigin::Linked));
@@ -2757,7 +2824,12 @@ mod tests {
         kinds.sort_by_key(|kind| kind.to_wire());
         assert_eq!(
             kinds,
-            [Capability::LocalProjection, Capability::Realizability]
+            [
+                Capability::FiniteReplay,
+                Capability::GlobalConformance,
+                Capability::LocalProjection,
+                Capability::Realizability,
+            ]
         );
     }
 

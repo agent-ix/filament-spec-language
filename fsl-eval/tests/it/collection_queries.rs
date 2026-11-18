@@ -26,8 +26,8 @@ use fsl_eval::value::CheckedPackageEvaluation;
 use fsl_forms::{Accumulation, BinaryOperator, BinderQuery, Expression, FunctionDeclaration};
 use fsl_package::CheckedPackage;
 use fsl_semantics::check::{
-    CheckCause, CheckRefusal, CollectionLoss, CollectionProperty, Obligation, PackageDeclarations,
-    ProvedInterval,
+    CheckCause, CheckRefusal, CollectionLoss, CollectionProperty, Obligation, OperandText,
+    PackageDeclarations, ProvedInterval,
 };
 use fsl_semantics::model::object_environment::ObjectEnvironment;
 use ix_trace_rs::trace;
@@ -1148,7 +1148,7 @@ fn q13_sum_proves_every_prefix_inside_its_domain_for_every_order() {
                     lower: Some(Integer::from(-3_i64)),
                     upper: Some(Integer::from(6_i64)),
                 }),
-                operand: Default::default(),
+                operand: OperandText::default(),
             })
         );
     }
@@ -1532,7 +1532,7 @@ fn tc_441_an_unbounded_source_has_no_proved_size_maximum() {
                 lower: Some(Integer::from(0_i64)),
                 upper: None,
             }),
-            operand: Default::default(),
+            operand: OperandText::default(),
         })
     );
 }
@@ -1592,9 +1592,10 @@ fn tc_500_a_running_total_outside_the_domain_is_undefined_at_the_sum_node() {
         run.charges.last(),
         Some(&ChargePoint::IntegerArithmeticArithmetic)
     );
-    assert!(!run
-        .charges
-        .contains(&ChargePoint::IntegerArithmeticResultRetain));
+    assert!(
+        !run.charges
+            .contains(&ChargePoint::IntegerArithmeticResultRetain)
+    );
     assert!(!run.charges.contains(&ChargePoint::CollectionResultRetain));
 }
 
@@ -1737,10 +1738,14 @@ fn tc_500_an_empty_sum_whose_domain_excludes_zero_is_undefined_at_the_sum_node()
         evaluation.location.as_ref(),
         Some(checked.root().location())
     );
-    assert!(!crate::support::admitted_charge_points(&meter)
-        .contains(&ChargePoint::CollectionResultRetain));
-    assert!(!crate::support::admitted_charge_points(&meter)
-        .contains(&ChargePoint::IntegerArithmeticArithmetic));
+    assert!(
+        !crate::support::admitted_charge_points(&meter)
+            .contains(&ChargePoint::CollectionResultRetain)
+    );
+    assert!(
+        !crate::support::admitted_charge_points(&meter)
+            .contains(&ChargePoint::IntegerArithmeticArithmetic)
+    );
 }
 
 /// FSpec FR-041's example domain: `Amount` 1..20, `N = 5`, `Total` 0..100 and
@@ -2268,7 +2273,7 @@ fn unproved_count(required: (i64, i64), proved: (i64, Option<i64>)) -> CheckCaus
             lower: Some(Integer::from(proved.0)),
             upper: proved.1.map(Integer::from),
         }),
-        operand: Default::default(),
+        operand: OperandText::default(),
     })
 }
 

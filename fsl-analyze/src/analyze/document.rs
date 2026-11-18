@@ -39,6 +39,12 @@ use fsl_eval::simulation::model::PopulationUniverse;
 /// The request document format FR-620 reads.
 pub const REQUEST_FORMAT: &str = "native-analyze/1";
 
+fn present_json_value<'de, D: serde::Deserializer<'de>>(
+    decoder: D,
+) -> Result<Option<Value>, D::Error> {
+    Value::deserialize(decoder).map(Some)
+}
+
 /// A `{authority, identity}` reference to a provisioned document.
 #[derive(Clone, Debug, Deserialize, Eq, Ord, PartialEq, PartialOrd)]
 #[serde(deny_unknown_fields)]
@@ -46,6 +52,29 @@ pub struct DocumentSelection {
     /// The document's declared authority.
     pub authority: String,
     /// The document's declared identity.
+    pub identity: String,
+}
+
+/// One activated protocol role population supplied with a recording request.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct ActivatedRolePopulation {
+    /// The checked protocol role whose activated members are listed.
+    pub role: String,
+    /// The protocol activation instance, when the protocol is `on each`.
+    #[serde(default, deserialize_with = "present_json_value")]
+    pub instance: Option<Value>,
+    /// The activated role members.
+    pub members: Vec<ActivatedRoleMember>,
+}
+
+/// One authority-scoped identity in an activated role population.
+#[derive(Clone, Debug, Deserialize, Eq, Ord, PartialEq, PartialOrd)]
+#[serde(deny_unknown_fields)]
+pub struct ActivatedRoleMember {
+    /// The member reference authority.
+    pub authority: String,
+    /// The member reference identity.
     pub identity: String,
 }
 
@@ -405,6 +434,18 @@ impl TemporalLimitsSelection {
     }
 }
 
+/// A refinement item's abstract subject, FSpec FR-368's `{identity,
+/// initial_states}`: the abstract model's domain package identity and the
+/// snapshots its initial states are read from.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct AbstractSubjectSelection {
+    /// The abstract model's domain package identity.
+    pub identity: String,
+    /// The abstract subject's initial-state snapshots, in request order.
+    pub initial_states: Vec<DocumentSelection>,
+}
+
 /// FSpec FR-331's `temporal` member of a document item, without the
 /// `fairness` FSL resolves from the checked clause.
 #[derive(Clone, Debug, Default, Deserialize, PartialEq)]
@@ -416,9 +457,9 @@ pub struct TemporalSelection {
     /// The item's model subject; the request's when absent.
     #[serde(default)]
     pub subject: Option<SubjectSelection>,
-    /// A refinement item's abstract subject.
+    /// A refinement item's abstract subject (FR-630, FSpec FR-368).
     #[serde(default)]
-    pub abstract_subject: Option<Value>,
+    pub abstract_subject: Option<AbstractSubjectSelection>,
     /// The stutter-closure premise.
     #[serde(default)]
     pub stutter_closure: Option<bool>,
@@ -518,9 +559,12 @@ pub struct ItemSelection {
     /// A `global-conformance` item's supplied FR-737 recording.
     #[serde(default)]
     pub recording: Option<DocumentSelection>,
-    /// A `simulation` item's settings.
+    /// The activated population used to close a recording's fan-out scope.
+    #[serde(default, deserialize_with = "present_json_value")]
+    pub population: Option<Value>,
+    /// A `simulation` item's settings (FR-634).
     #[serde(default)]
-    pub simulation: Option<Value>,
+    pub simulation: Option<super::SimulationSelection>,
 }
 
 impl ItemSelection {
@@ -554,7 +598,8 @@ impl ItemSelection {
                     .as_ref()
                     .is_some_and(|options| !options.is_empty()))
             || temporal.is_some_and(|temporal| {
-                temporal.abstract_subject.is_some()
+                (temporal.abstract_subject.is_some()
+                    && !matches!(temporal.item_kind, Some(ItemKindSelection::Refinement)))
                     || temporal.smt_encoding.is_some()
                     || temporal
                         .limits
@@ -568,6 +613,9 @@ impl ItemSelection {
 pub enum ResolvedItem {
     /// An item `analyze` runs once it is negotiated.
     Claim(Box<ResolvedClaim>),
+    /// A `simulation` item (FR-634), which settles no claim and is not
+    /// negotiated.
+    Simulation(Box<super::SimulationItem>),
     /// An item settled without running: its terminal record.
     Settled {
         /// The declared name the item used, when it named one.
@@ -692,6 +740,12 @@ fn unknown_option(
     })
 }
 
+/// FR-634: the request kind of a simulation item.
+pub const SIMULATION_KIND: &str = "simulation";
+
+/// FR-630: the request kind of a refinement item.
+const REFINEMENT_KIND: &str = "refinement";
+
 /// The checked declarations by their declared qualified name.
 fn declarations(package: &CheckedPackage) -> BTreeMap<String, filament_exact::NodeKey> {
     let graph = package.graph();
@@ -702,11 +756,27 @@ fn declarations(package: &CheckedPackage) -> BTreeMap<String, filament_exact::No
             .iter()
             .map(|clause| (clause.clause().name().to_owned(), clause.identity())),
     );
+    // FR-625: an `invariant` state clause is a claim by its declared name.
+    names.extend(
+        graph
+            .state_clauses()
+            .iter()
+            .filter(|clause| clause.is_invariant())
+            .map(|clause| (clause.name().to_owned(), clause.identity())),
+    );
     names.extend(
         graph.state_graph_claims().iter().filter_map(|claim| {
             Some((claim.name().to_owned(), claim.occurrence()?.node().clone()))
         }),
     );
+    // FR-630: a refinement is named by its declared name and keyed at the
+    // node of its requirement record (FR-144).
+    names.extend(graph.refinements().iter().filter_map(|refinement| {
+        Some((
+            refinement.name().to_owned(),
+            refinement.requirement_occurrence()?.node().clone(),
+        ))
+    }));
     names
 }
 
@@ -760,6 +830,16 @@ fn claim_occurrence(
         .temporal_clauses()
         .iter()
         .find(|clause| clause.identity() == *node)
+    {
+        return Some(OccurrenceKey::new(
+            clause.identity(),
+            clause.claim().clone(),
+        ));
+    }
+    if let Some(clause) = graph
+        .state_clauses()
+        .iter()
+        .find(|clause| clause.is_invariant() && clause.identity() == *node)
     {
         return Some(OccurrenceKey::new(
             clause.identity(),
@@ -890,6 +970,150 @@ pub fn resolve_items(
     }
 }
 
+/// An item of a `package` request (FR-850) whose claim names an item family
+/// the package route does not settle yet (FR-940 "Package forms of the
+/// source-checked evaluators"): the request is refused whole rather than
+/// settle that item `unsupported`.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct PendingPackageFamily {
+    /// The request index of the first such item, `None` for the default
+    /// items of a request with no `items` member.
+    pub request_index: Option<RequestIndex>,
+    /// What the item names.
+    pub family: PendingFamily,
+}
+
+/// What a pending package-route item names.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum PendingFamily {
+    /// The default items of a request with no `items` member.
+    DefaultItems,
+    /// A claimless `simulation` item (FR-634).
+    Simulation,
+    /// A derived item over a model (FSpec FR-368).
+    Derived,
+    /// A temporal clause, named by its `temporal_clause_names` row.
+    Temporal,
+    /// A named declaration.
+    Declaration,
+    /// A name the package carries no row for while it holds a claim whose
+    /// name it does not carry ([`fsl_package::AnalysisView::unnamed_claims`]):
+    /// the name may be that claim's, so it is not settled `unknown-claim`.
+    UnnamedClaim,
+}
+
+impl PendingFamily {
+    /// The family's name in a refusal message.
+    #[must_use]
+    pub const fn name(self) -> &'static str {
+        match self {
+            Self::DefaultItems => "default-items",
+            Self::Simulation => "simulation",
+            Self::Derived => "derived",
+            Self::Temporal => "temporal",
+            Self::Declaration => "declaration",
+            Self::UnnamedClaim => "unnamed-claim",
+        }
+    }
+}
+
+/// FR-850 "Building the analysis input": resolve a `package` request's items
+/// by name against the package, read only through `view` (FR-940). A
+/// temporal clause is named by its `temporal_clause_names` row and any other
+/// claim by the `declaration.qualified_name` of its node. A name neither
+/// carries settles `invalid-request` with `invalid_capability`/`unknown-claim`
+/// as the source route settles it, but only when the package holds no claim
+/// whose name it does not carry (an `invariant` state clause, a refinement,
+/// a state-graph claim): the name could be that claim's.
+///
+/// # Errors
+///
+/// [`PendingPackageFamily`] for the first item that names a claim, a
+/// derived item or a simulation, or a name that may be an unnamed claim's,
+/// and for the default items: the package route settles no engine family
+/// yet, and it never settles one `unsupported` for a fact the source route
+/// reads (FR-940).
+pub fn resolve_package_items(
+    view: &dyn fsl_package::AnalysisView,
+    selections: Option<&[ItemSelection]>,
+) -> Result<Vec<ResolvedItem>, PendingPackageFamily> {
+    let Some(selections) = selections else {
+        return Err(PendingPackageFamily {
+            request_index: None,
+            family: PendingFamily::DefaultItems,
+        });
+    };
+    let clauses = view.clause_names();
+    let declared = view.declared_names();
+    let unnamed = !view.unnamed_claims().is_empty();
+    selections
+        .iter()
+        .enumerate()
+        .map(|(position, selection)| {
+            let index = RequestIndex::new(position);
+            let pending = |family| PendingPackageFamily {
+                request_index: Some(index),
+                family,
+            };
+            let Some(name) = selection.claim.as_deref() else {
+                return Err(pending(PendingFamily::Simulation));
+            };
+            // A derived item names a model, not a claim (FSpec FR-368).
+            if selection
+                .temporal
+                .as_ref()
+                .is_some_and(|temporal| temporal.item_kind.is_some())
+            {
+                return Err(pending(PendingFamily::Derived));
+            }
+            if clauses.iter().any(|row| row.name.as_ref() == name) {
+                return Err(pending(PendingFamily::Temporal));
+            }
+            if declared.iter().any(|(declared, _)| declared == name) {
+                return Err(pending(PendingFamily::Declaration));
+            }
+            if unnamed {
+                return Err(pending(PendingFamily::UnnamedClaim));
+            }
+            Ok(unknown_claim(index, name))
+        })
+        .collect()
+}
+
+/// [`settle_run`] for the items of a `package` request (FR-850) that
+/// [`resolve_package_items`] settled: the same document, with the registry
+/// of `engines`, written by the one writer both routes share.
+///
+/// # Errors
+///
+/// [`AnalyzeDocumentError::Fault`] when an item is not settled.
+pub fn settle_package_items(
+    items: Vec<ResolvedItem>,
+    engines: &Engines,
+) -> Result<SettledRun, AnalyzeDocumentError> {
+    let mut settled = BTreeMap::new();
+    for item in items {
+        let ResolvedItem::Settled { claim_name, record } = item else {
+            return Err(AnalyzeDocumentError::Fault);
+        };
+        settled.insert(record.request_index(), (claim_name, *record));
+    }
+    write_run(
+        SettledParts {
+            records: Vec::new(),
+            counterexamples: Vec::new(),
+            details: Vec::new(),
+            protocol_conformance: BTreeMap::new(),
+        },
+        &settled,
+        &BTreeMap::new(),
+        &BTreeMap::new(),
+        &BTreeMap::new(),
+        &[],
+        engines,
+    )
+}
+
 /// One requirement item of a run call (FR-395 "Item of the call") with the
 /// backend and options the run names for it (FR-960).
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -974,6 +1198,7 @@ fn resolve_call_item(
             max_cases: None,
             trace: None,
             recording: None,
+            population: None,
             backend_options: call_item.options.clone(),
         },
         form: None,
@@ -1008,8 +1233,20 @@ fn resolve_one(
 ) -> ResolvedItem {
     let name = selection.claim.as_deref();
     let Some(name) = name else {
-        // A claimless item is a simulation item (FR-634), which settles no
-        // claim and is not negotiated; it has no in-process route yet.
+        // FR-634: a claimless `simulation` item runs on the in-process
+        // simulator over the request's subject.
+        if let (Some(SIMULATION_KIND), Some(settings)) =
+            (selection.kind.as_deref(), selection.simulation.as_ref())
+        {
+            return ResolvedItem::Simulation(Box::new(super::SimulationItem {
+                index,
+                settings: settings.clone(),
+                subject: selection
+                    .temporal
+                    .as_ref()
+                    .and_then(|temporal| temporal.subject.clone()),
+            }));
+        }
         return ResolvedItem::Settled {
             claim_name: None,
             record: Box::new(TerminalRecord::disposition_unsupported(
@@ -1040,6 +1277,14 @@ fn resolve_one(
         .filter(|record| record.node() == &node || record.occurrence() == &claim)
         .collect();
     let kind = match selection.kind.as_deref() {
+        // FR-630 "Request item": a refinement item names kind `refinement`,
+        // the `temporal-satisfaction` record S3 writes for the declaration
+        // (FR-144).
+        Some(REFINEMENT_KIND)
+            if super::refinement_item::refinement_at(package, &claim).is_some() =>
+        {
+            Capability::TemporalSatisfaction
+        }
         Some(label) => match Capability::from_wire(label) {
             Ok(kind) => kind,
             Err(_) => return invalid_kind(index, Some(name), "unknown-kind"),
@@ -1058,6 +1303,31 @@ fn resolve_one(
             }
         }
     };
+    // FSpec FR-368: a refinement item's `abstract_subject.identity` names
+    // the refinement's abstract model package.
+    if let (Some(abstract_subject), Some(refinement)) = (
+        selection
+            .temporal
+            .as_ref()
+            .and_then(|temporal| temporal.abstract_subject.as_ref()),
+        super::refinement_item::refinement_at(package, &claim),
+    ) {
+        if abstract_subject.identity != refinement.abstract_model_selection().identity {
+            let mut detail = Map::new();
+            detail.insert(
+                "member".to_owned(),
+                json!("temporal.abstract_subject.identity"),
+            );
+            return ResolvedItem::Settled {
+                claim_name: Some(name.to_owned()),
+                record: Box::new(TerminalRecord::disposition_invalid_request(
+                    index,
+                    CatalogCode::new("invalid_runtime_input", "invalid-value"),
+                    detail,
+                )),
+            };
+        }
+    }
     let record = own.iter().find(|record| record.kind() == kind);
     // FR-967: options are checked after kind admission and the
     // inapplicable-kind rule, which `analyze` applies to an item whose kind
@@ -1165,6 +1435,7 @@ fn resolve_one(
                 .recording
                 .as_ref()
                 .map(DocumentSelection::reference),
+            population: selection.population.clone(),
             backend_options,
         },
         form,
@@ -1259,7 +1530,9 @@ fn resolve_derived(
             {
                 Some(claim)
             }
-            ResolvedItem::Claim(_) | ResolvedItem::Settled { .. } => None,
+            ResolvedItem::Claim(_) | ResolvedItem::Settled { .. } | ResolvedItem::Simulation(_) => {
+                None
+            }
         });
     let Some(mut claim) = derived else {
         return Some(invalid_kind(index, Some(name), "inapplicable-kind"));
@@ -1288,6 +1561,7 @@ fn resolve_derived(
         max_cases: None,
         trace: None,
         recording: None,
+        population: None,
         backend_options,
     };
     let mut form = temporal_item(package, &claim.item.claim, temporal);
@@ -1347,6 +1621,13 @@ fn temporal_item(
             .map(|depth| usize::try_from(depth).unwrap_or(usize::MAX)),
         witness_samples: selection.witness_samples,
         seed: selection.seed_count(),
+        abstract_initial: selection.abstract_subject.as_ref().map(|subject| {
+            subject
+                .initial_states
+                .iter()
+                .map(DocumentSelection::reference)
+                .collect()
+        }),
         ..TemporalItem::default()
     };
     if item.item_kind == ItemKind::Formula {
@@ -1514,7 +1795,9 @@ fn derived_items(
             {
                 Some(claim.item.claim.clone())
             }
-            ResolvedItem::Claim(_) | ResolvedItem::Settled { .. } => None,
+            ResolvedItem::Claim(_) | ResolvedItem::Settled { .. } | ResolvedItem::Simulation(_) => {
+                None
+            }
         })
         .collect();
     let requirements = fsl_semantics::family::Requirements::new(
@@ -1567,6 +1850,7 @@ fn derived_items(
                         max_cases: None,
                         trace: None,
                         recording: None,
+                        population: None,
                         backend_options: BTreeMap::new(),
                     },
                     form: Some(ItemForm::Temporal(TemporalItem {
@@ -1639,6 +1923,9 @@ impl ClaimItem {
                 "recording".to_owned(),
                 json!({"authority": recording.authority, "identity": recording.identity}),
             );
+        }
+        if let Some(population) = &self.options.population {
+            item.insert("population".to_owned(), population.clone());
         }
         if let Some(max_cases) = self.options.max_cases {
             item.insert(
@@ -1818,8 +2105,10 @@ pub fn settle_run(
     let mut unrouted_items: Vec<RequestIndex> = Vec::new();
     let mut settled: BTreeMap<RequestIndex, (Option<String>, TerminalRecord)> = BTreeMap::new();
     let mut echoes: BTreeMap<RequestIndex, Echo> = BTreeMap::new();
+    let mut simulations: Vec<super::SimulationItem> = Vec::new();
     for resolved in items {
         match resolved {
+            ResolvedItem::Simulation(item) => simulations.push(*item),
             ResolvedItem::Settled { claim_name, record } => {
                 settled.insert(record.request_index(), (claim_name, *record));
             }
@@ -1940,9 +2229,6 @@ pub fn settle_run(
         _ => AnalyzeDocumentError::Fault,
     })?
     .into_value();
-    let mut records: Vec<TerminalRecord> = outcome.records;
-    records.extend(settled.values().map(|(_, record)| record.clone()));
-    records.sort_by_key(TerminalRecord::request_index);
     // FR-621 "Last stage": each negotiated item's route. An item negotiated
     // to an FSL engine settles at S6c, one negotiated to an outside provider
     // or settled by its negotiation's disposition at S6b.
@@ -1967,7 +2253,64 @@ pub fn settle_run(
             .iter()
             .map(|index| (*index, super::ItemRoute::Negotiated)),
     );
-    let base = super::analyze_document_routed(&records, &outcome.counterexamples, &routes)
+    // FR-634: each simulation item's document at its request index; it
+    // settles no claim, so it is no aggregate gap, and its category ranks
+    // in the exit code.
+    let mut simulated = Vec::new();
+    for item in &simulations {
+        match super::simulation_item::simulate(package, &binding, &limits, item, cancel) {
+            Ok(written) => simulated.push(written),
+            Err(super::simulation_item::SimulationFault::Binding(failure)) => {
+                return Err(AnalyzeDocumentError::Refused(
+                    super::AnalyzeRefusal::Binding(failure),
+                ))
+            }
+            Err(super::simulation_item::SimulationFault::Fault) => {
+                return Err(AnalyzeDocumentError::Fault)
+            }
+        }
+    }
+    write_run(
+        SettledParts {
+            records: outcome.records,
+            counterexamples: outcome.counterexamples,
+            details: outcome.details,
+            protocol_conformance: outcome.protocol_conformance,
+        },
+        &settled,
+        &echoes,
+        &targets,
+        &routes,
+        &simulated,
+        engines,
+    )
+}
+
+/// What the engines settled for a run's negotiated items.
+struct SettledParts {
+    records: Vec<TerminalRecord>,
+    counterexamples: Vec<super::ItemCounterexample>,
+    details: Vec<super::ItemDetail>,
+    protocol_conformance: BTreeMap<RequestIndex, fsl_replay::ProtocolConformanceOutput>,
+}
+
+/// The FR-621 document of a run: the engines' records beside the items
+/// settled without running, each item's entry, the aggregate, the registry
+/// and the exit code. The source route and the package route (FR-850)
+/// write their documents through this one function.
+fn write_run(
+    outcome: SettledParts,
+    settled: &BTreeMap<RequestIndex, (Option<String>, TerminalRecord)>,
+    echoes: &BTreeMap<RequestIndex, Echo>,
+    targets: &BTreeMap<RequestIndex, BackendId>,
+    routes: &BTreeMap<RequestIndex, super::ItemRoute>,
+    simulated: &[(Value, Category)],
+    engines: &Engines,
+) -> Result<SettledRun, AnalyzeDocumentError> {
+    let mut records: Vec<TerminalRecord> = outcome.records;
+    records.extend(settled.values().map(|(_, record)| record.clone()));
+    records.sort_by_key(TerminalRecord::request_index);
+    let base = super::analyze_document_routed(&records, &outcome.counterexamples, routes)
         .map_err(|_| AnalyzeDocumentError::Fault)?;
     let mut document = serde_json::to_value(&base).map_err(|_| AnalyzeDocumentError::Fault)?;
     let written: Vec<Value> = document["items"].as_array().cloned().unwrap_or_default();
@@ -2002,11 +2345,19 @@ pub fn settle_run(
             gaps.push(json!({"request_index": index.get(), "reason": "not-proved",
                 "result": written["result"].as_str().unwrap_or("invalid-request")}));
         }
-        let target = outcome
-            .counterexamples
-            .iter()
-            .find(|found| found.request_index == index)
-            .and_then(|found| claim_name.as_deref().map(|name| replay_target(found, name)));
+        let replay_was_published = outcome
+            .protocol_conformance
+            .get(&index)
+            .is_none_or(|conformance| conformance.replay.is_some());
+        let target = replay_was_published
+            .then(|| {
+                outcome
+                    .counterexamples
+                    .iter()
+                    .find(|found| found.request_index == index)
+                    .and_then(|found| claim_name.as_deref().map(|name| replay_target(found, name)))
+            })
+            .flatten();
         items.push(item_document(
             written,
             ItemMembers {
@@ -2024,6 +2375,8 @@ pub fn settle_run(
             },
         ));
     }
+    items.extend(simulated.iter().map(|(written, _)| written.clone()));
+    items.sort_by_key(|item| item["request_index"].as_u64().unwrap_or(u64::MAX));
     document["items"] = Value::Array(items.clone());
     document["aggregate"] = json!({
         "status": if gaps.is_empty() { "complete" } else { "incomplete" },
@@ -2045,7 +2398,8 @@ pub fn settle_run(
     let exit_code = Category::most_severe(
         records
             .iter()
-            .map(|record| record.value().category().exit_code()),
+            .map(|record| record.value().category().exit_code())
+            .chain(simulated.iter().map(|(_, category)| category.exit_code())),
     )
     .unwrap_or(0);
     Ok(SettledRun {
@@ -2223,7 +2577,13 @@ fn item_document(written: Value, members: ItemMembers) -> Value {
         }
         item.insert("counterexample".to_owned(), counterexample);
     }
-    for member in ["obligations", "closure", "global", "projections"] {
+    for member in [
+        "obligations",
+        "closure",
+        "global",
+        "projections",
+        "recording",
+    ] {
         if let Some(value) = record.get(member) {
             item.insert(member.to_owned(), value.clone());
         }

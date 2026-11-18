@@ -676,6 +676,30 @@ impl Subject {
                     }),
                 )
             }
+            EngineItem::Schedulability { claim: name } => {
+                let claim = graph
+                    .task_sets()
+                    .claims()
+                    .iter()
+                    .find(|claim| claim.name == *name)
+                    .and_then(fsl_semantics::check::CheckedScheduleClaim::occurrence)
+                    .ok_or(CaseError::at(CaseStage::Check))?;
+                let candidate = Candidate::new(BackendId::new("en-7"));
+                NegotiatedItem {
+                    item: ClaimItem {
+                        request_index,
+                        claim,
+                        kind: Capability::Schedulability,
+                        extent: unbounded,
+                        backend: Some(BackendId::new("en-7")),
+                        candidates: vec![candidate.clone()],
+                        options: ItemOptions::default(),
+                        form: None,
+                    },
+                    disposition: Disposition::Supported(candidate),
+                    diagnostic: None,
+                }
+            }
         })
     }
 }

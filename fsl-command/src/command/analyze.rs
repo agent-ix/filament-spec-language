@@ -10,8 +10,8 @@ use std::path::Path;
 
 use filament_exact::{Cancel, CancelCause};
 use fsl_analyze::analyze::document::{
-    analyze_document, resolve_items, AnalyzeDocumentError, AnalyzeRun, ItemSelection, Negotiate,
-    SubjectSelection,
+    AnalyzeDocumentError, AnalyzeRun, ItemSelection, Negotiate, SubjectSelection, analyze_document,
+    resolve_items, resolve_package_items, settle_package_items,
 };
 use fsl_analyze::analyze::{AnalyzeLimits, DeadlineSupply, Engine, Engines, SourceProvision};
 use fsl_analyze::provider::ProviderOptions;
@@ -27,6 +27,85 @@ fn invalid(member: &str, reason: impl Into<String>) -> RunCause {
         member: member.to_owned(),
         reason: reason.into(),
     }
+}
+
+fn validate_activated_population(
+    position: usize,
+    population: &serde_json::Value,
+) -> std::result::Result<(), (String, String)> {
+    let base = format!("/items/{position}/population");
+    let invalid_at = |pointer: String, reason: String| Err((pointer, reason));
+    let Some(groups) = population.as_array() else {
+        return invalid_at(base, "population must be an array".to_owned());
+    };
+    for (group_index, group) in groups.iter().enumerate() {
+        let group_pointer = format!("{base}/{group_index}");
+        let Some(group) = group.as_object() else {
+            return invalid_at(
+                group_pointer,
+                "population entry must be an object".to_owned(),
+            );
+        };
+        for key in group.keys() {
+            if !matches!(key.as_str(), "role" | "instance" | "members") {
+                return invalid_at(
+                    format!("{group_pointer}/{}", pointer_token(key)),
+                    format!("unknown population entry member `{key}`"),
+                );
+            }
+        }
+        let role_pointer = format!("{group_pointer}/role");
+        if group
+            .get("role")
+            .and_then(serde_json::Value::as_str)
+            .is_none()
+        {
+            return invalid_at(role_pointer, "role must be a string".to_owned());
+        }
+        if let Some(instance) = group.get("instance") {
+            if !instance.is_null() && !instance.is_string() {
+                return invalid_at(
+                    format!("{group_pointer}/instance"),
+                    "instance must be a string or null".to_owned(),
+                );
+            }
+        }
+        let members_pointer = format!("{group_pointer}/members");
+        let Some(members) = group.get("members").and_then(serde_json::Value::as_array) else {
+            return invalid_at(members_pointer, "members must be an array".to_owned());
+        };
+        for (member_index, member) in members.iter().enumerate() {
+            let member_pointer = format!("{members_pointer}/{member_index}");
+            let Some(member) = member.as_object() else {
+                return invalid_at(
+                    member_pointer,
+                    "population member must be an object".to_owned(),
+                );
+            };
+            for key in member.keys() {
+                if !matches!(key.as_str(), "authority" | "identity") {
+                    return invalid_at(
+                        format!("{member_pointer}/{}", pointer_token(key)),
+                        format!("unknown population member field `{key}`"),
+                    );
+                }
+            }
+            for field in ["authority", "identity"] {
+                let pointer = format!("{member_pointer}/{field}");
+                let Some(value) = member.get(field).and_then(serde_json::Value::as_str) else {
+                    return invalid_at(pointer, format!("{field} must be a string"));
+                };
+                if value.is_empty() {
+                    return invalid_at(pointer, format!("{field} must be nonempty"));
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
+fn pointer_token(value: &str) -> String {
+    value.replace('~', "~0").replace('/', "~1")
 }
 
 /// A read `native-analyze/1` request: its compiled-from sources, supplied
@@ -84,8 +163,89 @@ fn prepare_bytes(
     bytes: &[u8],
     dependent_bytes: usize,
 ) -> Result<PreparedAnalyze> {
-    read(directory, bytes, dependent_bytes).map(|(input, _)| PreparedAnalyze {
-        input: Box::new(input),
+    match read(directory, bytes, dependent_bytes)? {
+        Readout::Source(input, _) => Ok(PreparedAnalyze {
+            input: Box::new(input),
+        }),
+        // A prepared run holds the source it compiles; a package request
+        // has none to prepare (FR-850).
+        Readout::Package(_) => Err(RunCause::AnalyzeNotYetImplemented {
+            member: "package",
+            detail: ": a prepared run holds a program source".to_owned(),
+        }),
+    }
+}
+
+/// What [`read`] read: a `program` request's inputs with the intake that
+/// still charges compilation, or a `package` request's admitted package.
+enum Readout<'d> {
+    Source(AnalyzeInput, super::Intake<'d>),
+    Package(PackageSelection),
+}
+
+/// A `package` request (FR-850): the package the strict reader admitted
+/// from the request's bytes, with the request's items.
+struct PackageSelection {
+    admitted: AdmittedHandoff,
+    items: Option<Vec<ItemSelection>>,
+}
+
+/// FR-850, FR-940: analyze a `package` request over the `BarePackage` of
+/// its admitted package, read through `AnalysisView`, never compiling
+/// source. Items whose engine family has no package form yet refuse the
+/// request whole, as not yet implemented, rather than settle `unsupported`.
+fn run_package(
+    selection: PackageSelection,
+    providers: Vec<Engine>,
+    options: &ProviderOptions,
+) -> Result<RunResult> {
+    let engines = engines_with(providers, options)?;
+    let AdmittedHandoff {
+        package: admitted,
+        identities,
+        equality,
+        mut budget,
+    } = selection.admitted;
+    let package = fsl_package::BarePackage::new(&admitted)
+        .with_supply(
+            fsl_package::BareSupply {
+                identities: &identities,
+                equality: equality.as_ref(),
+            },
+            &mut budget,
+        )
+        .map_err(|failure| {
+            // FR-531 "Denial is its own typed refusal": a denied identity
+            // join names the `i2.*` setting, never a witness defect.
+            let setting = failure
+                .setting()
+                .map_or_else(|| "i2.work_units".to_owned(), |setting| setting.to_string());
+            RunCause::AnalyzePackage {
+                code: fsl_foundation::Code::StageLimitExceeded,
+                cause: None,
+                pointer: None,
+                message: format!("stage_limit_exceeded: {setting}: {failure:?}"),
+            }
+        })?;
+    let items = resolve_package_items(&package, selection.items.as_deref())
+        .map_err(|pending| RunCause::AnalyzeNotYetImplemented {
+            member: "package",
+            detail: match pending.request_index {
+                Some(index) => format!(
+                    ": items[{}] names the {} family, which has no package form yet",
+                    index.get(),
+                    pending.family.name()
+                ),
+                None => format!(": the {} rule has no package form yet", pending.family.name()),
+            },
+        })?;
+    let settled = settle_package_items(items, &engines).map_err(|_| RunCause::AnalyzeFault)?;
+    Ok(RunResult {
+        exit_code: settled.exit_code,
+        value: NativeResult::analyze_document(settled.document),
+        outcome: None,
+        requirements: None,
+        sources: crate::Sources::default(),
     })
 }
 
@@ -95,16 +255,88 @@ fn read<'d>(
     directory: &'d Path,
     bytes: &[u8],
     dependent_bytes: usize,
-) -> Result<(AnalyzeInput, super::Intake<'d>)> {
+) -> Result<Readout<'d>> {
     let request: wire::AnalyzeRequest = request(bytes).map_err(|cause| match cause {
         RunCause::Json(error) => invalid("request", error.to_string()),
         cause => cause,
     })?;
+    for (position, item) in request.items.iter().flatten().enumerate() {
+        if item.recording.is_some()
+            && item.kind.as_deref()
+                != Some(fsl_semantics::check::Capability::GlobalConformance.to_wire())
+        {
+            return Err(invalid(
+                &format!("/items/{position}/recording"),
+                "recording is only valid on a global-conformance item",
+            ));
+        }
+        if let Some(population) = &item.population {
+            if item.kind.as_deref()
+                != Some(fsl_semantics::check::Capability::GlobalConformance.to_wire())
+            {
+                return Err(invalid(
+                    &format!("/items/{position}/population"),
+                    "population is only valid on a global-conformance item",
+                ));
+            }
+            if item.recording.is_none() {
+                return Err(invalid(
+                    &format!("/items/{position}/population"),
+                    "population requires a recording",
+                ));
+            }
+            validate_activated_population(position, population)
+                .map_err(|(pointer, reason)| invalid(&pointer, reason))?;
+            serde_json::from_value::<Vec<fsl_analyze::analyze::document::ActivatedRolePopulation>>(
+                population.clone(),
+            )
+            .map_err(|error| {
+                invalid(&format!("/items/{position}/population"), error.to_string())
+            })?;
+        }
+    }
+    // FR-634: a `simulation` item names no claim and carries its
+    // `simulation` member, and only it does; `seed` and `samples` belong to
+    // `sample` only.
+    for (position, item) in request.items.iter().flatten().enumerate() {
+        let simulation =
+            item.kind.as_deref() == Some(fsl_analyze::analyze::document::SIMULATION_KIND);
+        match (&item.simulation, simulation) {
+            (Some(_), false) => {
+                return Err(invalid(
+                    &format!("/items/{position}/simulation"),
+                    "simulation is only valid on a simulation item",
+                ))
+            }
+            (None, true) => {
+                return Err(invalid(
+                    &format!("/items/{position}/simulation"),
+                    "a simulation item carries its simulation member",
+                ))
+            }
+            (Some(settings), true) => {
+                if item.claim.is_some() {
+                    return Err(invalid(
+                        &format!("/items/{position}/claim"),
+                        "a simulation item settles no claim",
+                    ));
+                }
+                if let Some(member) = settings.misplaced_member() {
+                    return Err(invalid(
+                        &format!("/items/{position}/simulation/{member}"),
+                        format!("{member} belongs to a sample simulation only"),
+                    ));
+                }
+            }
+            (None, false) => {}
+        }
+    }
     if let Some(package) = &request.package {
-        admit_package(directory, dependent_bytes, &request, package)?;
-        // The engines analyze an in-process checked package that only a
-        // source compile builds, so an admitted package stops here.
-        return Err(RunCause::AnalyzeNotYetImplemented { member: "package" });
+        let admitted = admit_package(directory, dependent_bytes, &request, package)?;
+        return Ok(Readout::Package(PackageSelection {
+            admitted,
+            items: request.items,
+        }));
     }
     if request.integer_division.is_some() {
         return Err(invalid(
@@ -134,18 +366,78 @@ fn read<'d>(
     let source = intake.source(&program.source, "program.source")?;
     require_complete_edition(source.source())?;
     let mut documents = DocumentProvision::new();
-    for document in &request.documents {
+    let mut recording_documents = std::collections::BTreeSet::new();
+    for (position, document) in request.documents.iter().enumerate() {
         let bytes = intake.file(&document.file, intake.remaining)?;
-        let Some(reference) = fsl_semantics::model::observation::document_reference(&bytes) else {
+        let parsed: serde_json::Value = serde_json::from_slice(&bytes).map_err(|error| {
+            invalid(
+                &format!("/documents/{position}"),
+                format!("{} is not a JSON document: {error}", document.file),
+            )
+        })?;
+        let format = parsed.get("format").and_then(serde_json::Value::as_str);
+        let declared_identity = match parsed.get("identity") {
+            Some(value) => Some(
+                serde_json::from_value::<fsl_analyze::analyze::document::DocumentSelection>(
+                    value.clone(),
+                )
+                .map_err(|error| {
+                    invalid(
+                        &format!("/documents/{position}/identity"),
+                        format!("document identity is malformed: {error}"),
+                    )
+                })?,
+            ),
+            None => None,
+        };
+        let stated_identity = match &document.identity {
+            Some(value) => Some(
+                serde_json::from_value::<fsl_analyze::analyze::document::DocumentSelection>(
+                    value.clone(),
+                )
+                .map_err(|error| {
+                    invalid(
+                        &format!("/documents/{position}/identity"),
+                        format!("document identity is malformed: {error}"),
+                    )
+                })?,
+            ),
+            None => None,
+        };
+        if format == Some("filament.state.snapshot/v1") && document.identity.is_some() {
             return Err(invalid(
-                "documents",
-                format!("{} declares no identity", document.file),
+                &format!("/documents/{position}/identity"),
+                "a supplied snapshot uses its declared identity and cannot state a wrapper identity",
+            ));
+        }
+        if let (Some(declared), Some(stated)) = (&declared_identity, &stated_identity) {
+            if declared != stated {
+                return Err(invalid(
+                    &format!("/documents/{position}/identity"),
+                    format!(
+                        "stated identity {{{}, {}}} contradicts declared identity {{{}, {}}}",
+                        stated.authority, stated.identity, declared.authority, declared.identity
+                    ),
+                ));
+            }
+        }
+        let Some(identity) = declared_identity.as_ref().or(stated_identity.as_ref()) else {
+            return Err(invalid(
+                &format!("/documents/{position}"),
+                format!("{} declares no identity and none was stated", document.file),
             ));
         };
+        let reference = fsl_semantics::model::observation::DocumentRef {
+            authority: identity.authority.clone(),
+            identity: identity.identity.clone(),
+        };
+        if format == Some("filament.protocol-recording/1") {
+            recording_documents.insert((reference.authority.clone(), reference.identity.clone()));
+        }
         if documents.insert(reference, bytes).is_some() {
             return Err(invalid(
-                "documents",
-                format!("{} repeats a provisioned identity", document.file),
+                &format!("/documents/{position}"),
+                format!("{} repeats a provisioned document identity", document.file),
             ));
         }
     }
@@ -179,12 +471,13 @@ fn read<'d>(
                     .map(|recording| (position, recording))
             })
     {
-        if !documents.contains_key(&recording.reference()) {
+        let identity = recording.reference();
+        if !recording_documents.contains(&(identity.authority.clone(), identity.identity.clone())) {
             return Err(invalid(
-                "items",
+                &format!("/items/{position}/recording"),
                 format!(
-                    "items[{position}].recording {{{}, {}}} names no provisioned document",
-                    recording.authority, recording.identity
+                    "recording {{{}, {}}} does not name a provisioned protocol recording",
+                    recording.authority, recording.identity,
                 ),
             ));
         }
@@ -225,7 +518,7 @@ fn read<'d>(
         output: None,
         handoff: None,
     };
-    Ok((
+    Ok(Readout::Source(
         AnalyzeInput {
             source,
             compile,
@@ -321,7 +614,12 @@ pub fn analyze_with_providers_and_limits(
     cancel: &Cancel,
 ) -> std::result::Result<RunResult, Box<RunError>> {
     super::with_request_limits(path, limits.request_bytes, |directory, bytes| {
-        let (input, mut intake) = read(directory, bytes, limits.dependent_bytes)?;
+        let (input, mut intake) = match read(directory, bytes, limits.dependent_bytes)? {
+            Readout::Source(input, intake) => (input, intake),
+            Readout::Package(selection) => {
+                return run_package(selection, providers, options);
+            }
+        };
         let mut result = run_input(&mut intake, input, negotiate, providers, options, cancel)?;
         result.sources = crate::Sources::from_sources(intake.sources.iter().cloned());
         Ok(result)
@@ -462,8 +760,8 @@ fn admit_package(
     directory: &Path,
     dependent_bytes: usize,
     request: &wire::AnalyzeRequest,
-    package: &wire::FileSelection,
-) -> Result<()> {
+    package: &wire::HandoffSelection,
+) -> Result<AdmittedHandoff> {
     if request.program.is_some() {
         return Err(invalid(
             "program",
@@ -488,14 +786,35 @@ fn admit_package(
     let mut intake = intake_with_bytes(
         directory,
         FileCounts {
-            programs: 1,
+            // The handoff's package, identity and equality files.
+            programs: 3,
             models: request.models.len(),
             observations: request.documents.len(),
             extensions: 0,
         },
         dependent_bytes,
     )?;
-    let bytes = intake.file(&package.file, intake.remaining)?;
+    let handoff = handoff_directory(&package.directory)?;
+    // FR-850 "Admission": an absent handoff directory or package file is a
+    // package refusal, not an I/O failure.
+    if !directory.join(&handoff).is_dir() {
+        return Err(witness_refusal(
+            &handoff,
+            "missing-file",
+            "the request names no handoff directory there",
+        ));
+    }
+    if !directory.join(&handoff).join(PACKAGE_FILE).is_file() {
+        return Err(witness_refusal(
+            PACKAGE_FILE,
+            "missing-file",
+            "the handoff directory holds no checked package",
+        ));
+    }
+    let bytes = intake.file(
+        &format!("{handoff}/{PACKAGE_FILE}"),
+        intake.remaining,
+    )?;
     if request
         .models
         .iter()
@@ -537,7 +856,97 @@ fn admit_package(
             return Err(conflicting_model(identity));
         }
     }
-    Ok(())
+    // FR-850 "Admission": the handoff's identity rows are required, its
+    // equality rows read when the producer wrote them (FR-531).
+    if !directory.join(&handoff).join(IDENTITIES_FILE).is_file() {
+        return Err(witness_refusal(
+            IDENTITIES_FILE,
+            "missing-file",
+            "the handoff directory holds no identity file",
+        ));
+    }
+    let identity_bytes = intake.file(
+        &format!("{handoff}/{IDENTITIES_FILE}"),
+        intake.remaining,
+    )?;
+    // One native budget for the pass: the identity read, then the supply's
+    // join (FR-531 "One join, then borrowing").
+    let mut budget = limits.native_join_limits().budget();
+    let identities = fsl_package::ReadIdentityRows::read(&identity_bytes, &admitted, &mut budget)
+        .map_err(|refusal| {
+            let cause = match &refusal {
+                fsl_package::IdentityFileRefusal::Malformed { .. } => "malformed-file",
+                fsl_package::IdentityFileRefusal::Format(_) => "unknown-format",
+                fsl_package::IdentityFileRefusal::Unjoined { .. } => "unjoined-row",
+                fsl_package::IdentityFileRefusal::Native(_)
+                | fsl_package::IdentityFileRefusal::Rows(_)
+                | fsl_package::IdentityFileRefusal::SourceObject(_)
+                | fsl_package::IdentityFileRefusal::SourceOperation(_) => "native-witness",
+            };
+            witness_refusal(IDENTITIES_FILE, cause, &refusal.to_string())
+        })?;
+    let equality = if directory.join(&handoff).join(EQUALITY_FILE).is_file() {
+        let equality_bytes =
+            intake.file(&format!("{handoff}/{EQUALITY_FILE}"), intake.remaining)?;
+        Some(
+            fsl_package::ReadEqualityRows::read(&equality_bytes, &admitted).map_err(
+                |refusal| witness_refusal(EQUALITY_FILE, "refused-file", &refusal.to_string()),
+            )?,
+        )
+    } else {
+        None
+    };
+    Ok(AdmittedHandoff {
+        package: admitted,
+        identities,
+        equality,
+        budget,
+    })
+}
+
+/// The FR-517 files a `package` selection reads from its handoff directory.
+const PACKAGE_FILE: &str = "checked-package.json";
+const IDENTITIES_FILE: &str = "identities.json";
+const EQUALITY_FILE: &str = "equality.json";
+
+/// The admitted handoff of a `package` request: the package the strict
+/// reader admitted, its identity rows and its equality rows when present.
+struct AdmittedHandoff {
+    package: filament_contract_model::CheckedPackageV2,
+    identities: fsl_package::ReadIdentityRows,
+    equality: Option<fsl_package::ReadEqualityRows>,
+    budget: filament_contract_model::NativeJoinBudget,
+}
+
+/// The handoff directory a `package` selection names, beneath the request's
+/// directory.
+fn handoff_directory(directory: &str) -> Result<String> {
+    use std::path::Component;
+    let path = Path::new(directory);
+    if directory.is_empty()
+        || path.components().any(|component| {
+            matches!(
+                component,
+                Component::ParentDir | Component::RootDir | Component::Prefix(_)
+            )
+        })
+    {
+        return Err(invalid(
+            "package.directory",
+            "must name a directory beneath the request directory",
+        ));
+    }
+    Ok(directory.trim_end_matches('/').to_owned())
+}
+
+/// FR-850 "Admission": a handoff witness file that is absent or refused.
+fn witness_refusal(file: &str, cause: &str, detail: &str) -> RunCause {
+    RunCause::AnalyzePackage {
+        code: fsl_foundation::Code::InvalidPackage,
+        cause: Some(cause.to_owned()),
+        pointer: None,
+        message: format!("invalid_package/{cause}: {file}: {detail}"),
+    }
 }
 
 fn conflicting_model(identity: &str) -> RunCause {

@@ -55,6 +55,7 @@ pub mod model_request;
 pub mod reductions;
 pub mod request;
 pub mod routing;
+pub mod tie;
 
 use filament_semantic_value::catalog::CatalogCode;
 #[cfg(test)]
@@ -1322,6 +1323,28 @@ impl CandidateSet {
             missing_fairness: BTreeSet::new(),
             missing_reduction: None,
             evidence: None,
+        }
+    }
+
+    /// This set with the member `backend` removed, every other member
+    /// unchanged: FR-962's exclusion of a provider no row of the item's
+    /// claim form selects.
+    #[must_use]
+    pub fn without(&self, backend: &BackendId) -> Self {
+        Self {
+            candidates: self
+                .candidates
+                .iter()
+                .filter(|candidate| candidate.id() != backend)
+                .cloned()
+                .collect(),
+            fairness: self
+                .fairness
+                .iter()
+                .filter(|(candidate, _)| candidate.id() != backend)
+                .map(|(candidate, kinds)| (candidate.clone(), kinds.clone()))
+                .collect(),
+            ..self.clone()
         }
     }
 

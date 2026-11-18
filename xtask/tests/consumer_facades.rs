@@ -8,7 +8,7 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 
 use ix_trace_rs::trace;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
 fn workspace_root() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR"))
@@ -64,7 +64,6 @@ fn check_with(bindings: &Value) -> Output {
 
 #[test]
 #[trace("TC-2141", "FR-760-AC-3", "FSpec-TC-1642", "FSpec-FR-660-AC-3")]
-#[ignore = "QSL-2227: `xtask pin-check` and tag pins on every agent-ix dependency are not implemented yet"]
 fn pin_check_passes_the_workspace_and_refuses_a_branch_dependency() {
     let workspace = xtask(&["pin-check"]);
     assert_eq!(workspace.status.code(), Some(0), "{}", report(&workspace));
@@ -74,7 +73,8 @@ fn pin_check_passes_the_workspace_and_refuses_a_branch_dependency() {
     fs::write(
         &manifest,
         "[package]\nname = \"scratch\"\nversion = \"0.0.0\"\nedition = \"2021\"\n\n\
-         [dependencies]\nfilament-contract-model = { git = \"https://github.com/agent-ix/filament-contract-ir\", branch = \"main\" }\n",
+         [dependencies]\nfilament-contract-model = { git = \"https://github.com/agent-ix/filament-contract-ir\", branch = \"main\" }\n\n\
+         [patch.\"https://github.com/agent-ix/filament-contract-ir\"]\nfilament-contract-model = { git = \"https://github.com/agent-ix/filament-contract-ir\", branch = \"main\" }\n",
     )
     .expect("write scratch manifest");
     fs::create_dir(scratch.path().join("src")).expect("src");
@@ -91,6 +91,22 @@ fn pin_check_passes_the_workspace_and_refuses_a_branch_dependency() {
         text.contains(manifest.to_str().expect("UTF-8 path")),
         "{text}"
     );
+
+    fs::write(
+        &manifest,
+        "[package]\nname = \"scratch\"\nversion = \"0.0.0\"\nedition = \"2021\"\n\n\
+         [replace]\n\"filament-contract-model:0.1.0\" = { git = \"https://github.com/agent-ix/filament-contract-ir\", rev = \"deadbeef\" }\n",
+    )
+    .expect("write replace-only manifest");
+    let refused = xtask(&[
+        "pin-check",
+        "--manifest",
+        manifest.to_str().expect("UTF-8 path"),
+    ]);
+    let text = report(&refused);
+    assert_eq!(refused.status.code(), Some(1), "{text}");
+    assert!(text.contains("replace"), "{text}");
+    assert!(text.contains("uses rev"), "{text}");
 }
 
 #[test]

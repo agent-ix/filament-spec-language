@@ -5,7 +5,7 @@ version = 4
 [[package]]
 name = "agent-ix-extraction-frontend"
 version = "0.2.1"
-source = "git+https://github.com/agent-ix/filament-core-data?branch=main#dd3485073737e6a892b96042123fe2ad4acfe1e9"
+source = "git+https://github.com/agent-ix/filament-core-data?tag=agent-ix-semantic-ir-v0.1.1#c23980ea9943fc61a1c2b489322e77dec85f3d9d"
 dependencies = [
  "agent-ix-semantic-ir",
  "clap",
@@ -17,7 +17,7 @@ dependencies = [
 [[package]]
 name = "agent-ix-semantic-ir"
 version = "0.1.1"
-source = "git+https://github.com/agent-ix/filament-core-data?branch=main#dd3485073737e6a892b96042123fe2ad4acfe1e9"
+source = "git+https://github.com/agent-ix/filament-core-data?tag=agent-ix-semantic-ir-v0.1.1#c23980ea9943fc61a1c2b489322e77dec85f3d9d"
 
 [[package]]
 name = "agent-ix-semantic-schema"
@@ -288,16 +288,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "chrono"
-version = "0.4.45"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1aa79e62e7697b8e29b513a68abacf485adcd1fe8284a4316c5ae868e6633327"
-dependencies = [
- "num-traits",
- "serde",
-]
-
-[[package]]
 name = "ciborium"
 version = "0.2.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -535,17 +525,6 @@ dependencies = [
 
 [[package]]
 name = "fancy-regex"
-version = "0.13.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "531e46835a22af56d1e3b66f04844bed63158bc094a628bec1d321d9b4c44bf2"
-dependencies = [
- "bit-set 0.5.3",
- "regex-automata",
- "regex-syntax",
-]
-
-[[package]]
-name = "fancy-regex"
 version = "0.19.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d301f5bf187b3c295fce6468d3875037a0bccc5f6b151c63cac2f85babf21912"
@@ -563,8 +542,8 @@ checksum = "da7c62ceae207dd37ea5b845da6a0696c799f85e97da1ab5b7910be3c1c80223"
 
 [[package]]
 name = "filament-checked"
-version = "0.1.0"
-source = "git+https://github.com/agent-ix/filament-eval?branch=main#63d365201424de3964c5cead12eecf3879ecc22b"
+version = "0.1.4"
+source = "git+https://github.com/agent-ix/filament-eval?tag=v0.1.4#dd9f701f4996a673f397795cbf52995f083837f6"
 dependencies = [
  "filament-exact",
  "filament-semantic-value",
@@ -576,8 +555,8 @@ dependencies = [
 
 [[package]]
 name = "filament-contract-model"
-version = "0.1.0"
-source = "git+https://github.com/agent-ix/filament-contract-ir?tag=v0.1.0#47e3459b48b44187829230ded3922ba2b21c8f57"
+version = "0.1.2"
+source = "git+https://github.com/agent-ix/filament-contract-ir?tag=v0.1.4#f9963634f67213d54b3fcf3278acbc1e9bd1f3e0"
 dependencies = [
  "filament-exact",
  "filament-semantic-value",
@@ -602,8 +581,8 @@ dependencies = [
 
 [[package]]
 name = "filament-eval"
-version = "0.1.0"
-source = "git+https://github.com/agent-ix/filament-eval?branch=main#63d365201424de3964c5cead12eecf3879ecc22b"
+version = "0.1.4"
+source = "git+https://github.com/agent-ix/filament-eval?tag=v0.1.4#dd9f701f4996a673f397795cbf52995f083837f6"
 dependencies = [
  "filament-exact",
  "filament-semantic-value",
@@ -612,8 +591,8 @@ dependencies = [
 
 [[package]]
 name = "filament-exact"
-version = "0.1.0"
-source = "git+https://github.com/agent-ix/filament-exact?branch=main#0fe3d91ccaffced0b7e5bfaae17f5c17c399c6cf"
+version = "0.3.0"
+source = "git+https://github.com/agent-ix/filament-exact?tag=v0.3.0#086c11fc6b6a4db85e55749968fb6ca7894ed342"
 dependencies = [
  "allocator-api2",
  "arrayvec",
@@ -621,6 +600,9 @@ dependencies = [
  "num-integer",
  "num-traits",
  "once_cell",
+ "ryu-js",
+ "serde",
+ "serde_json",
  "spin",
  "thiserror",
  "triomphe",
@@ -629,11 +611,10 @@ dependencies = [
 
 [[package]]
 name = "filament-observation"
-version = "0.1.0"
-source = "git+https://github.com/agent-ix/filament-observation?branch=main#594dc0024f2f257dede49cbc60970af8721cd167"
+version = "0.1.1"
+source = "git+https://github.com/agent-ix/filament-observation?tag=v0.1.1#8399e97c836e62503da5478daf3023759d34e783"
 dependencies = [
  "filament-exact",
- "fsl-foundation",
  "quire-canonical",
  "serde",
  "serde_json",
@@ -643,8 +624,8 @@ dependencies = [
 
 [[package]]
 name = "filament-semantic-value"
-version = "0.1.0"
-source = "git+https://github.com/agent-ix/filament-semantic-value?branch=main#c496d7a5ae6db77fd18f737e209317132eb68d16"
+version = "0.1.5"
+source = "git+https://github.com/agent-ix/filament-semantic-value?tag=v0.1.5#f808f26986efbfc08295e6ec5793f47e4e9e92a3"
 dependencies = [
  "filament-exact",
  "quire-canonical",
@@ -653,13 +634,14 @@ dependencies = [
 
 [[package]]
 name = "filament-spec-language"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "filament-checked",
  "filament-contract-model",
  "filament-eval",
  "filament-exact",
  "filament-semantic-value",
+ "filament-specification-qualification",
  "fsl-analyze",
  "fsl-command",
  "fsl-cst",
@@ -688,11 +670,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "filament-specification-qualification"
+version = "0.1.1"
+source = "git+https://github.com/agent-ix/filament-specification?tag=v0.1.1#1946638cc301d236190f66cf30e272b8a2b85aca"
+
+[[package]]
 name = "filament-verification-contracts"
-version = "0.1.0"
-source = "git+https://github.com/agent-ix/filament-verification-contracts?branch=main#b79af1b550c91288778ee5df1becc6e7388dd66f"
+version = "0.2.0"
+source = "git+https://github.com/agent-ix/filament-verification-contracts?tag=v0.2.0#ded996da2c3591818f7658d0518f6637b79bf2f4"
 dependencies = [
- "chrono",
  "jsonschema 0.55.1",
  "quire-canonical",
  "regress",
@@ -701,13 +687,14 @@ dependencies = [
  "serde_json",
  "sha2",
  "thiserror",
+ "time",
  "typify",
 ]
 
 [[package]]
 name = "filament-walk"
-version = "0.1.0"
-source = "git+https://github.com/agent-ix/filament-walk?branch=main#ab0c37a0a88cf5bf4b45a32fc12a01992abea00d"
+version = "0.1.1"
+source = "git+https://github.com/agent-ix/filament-walk?tag=v0.1.1#6b37f032708dd0a3be9fd82f595641f9574af4fe"
 
 [[package]]
 name = "find-msvc-tools"
@@ -759,16 +746,6 @@ dependencies = [
 
 [[package]]
 name = "fraction"
-version = "0.15.4"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e076045bb43dac435333ed5f04caf35c7463631d0dae2deb2638d94dd0a5b872"
-dependencies = [
- "lazy_static",
- "num",
-]
-
-[[package]]
-name = "fraction"
 version = "0.17.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e246562084dde8ebbcc943b261c406ce4f68e5032ec28029a251a47d6a295500"
@@ -779,7 +756,7 @@ dependencies = [
 
 [[package]]
 name = "fsl-analyze"
-version = "0.1.0"
+version = "0.3.0"
 dependencies = [
  "base64 0.22.1",
  "filament-checked",
@@ -852,6 +829,7 @@ dependencies = [
  "fsl-replay",
  "fsl-route",
  "fsl-semantics",
+ "fsl-source",
  "ix-trace-rs",
  "quire-canonical",
  "serde",
@@ -970,7 +948,7 @@ dependencies = [
 
 [[package]]
 name = "fsl-package"
-version = "0.1.0"
+version = "0.3.0"
 dependencies = [
  "allocation-counter",
  "filament-checked",
@@ -1008,7 +986,7 @@ dependencies = [
 
 [[package]]
 name = "fsl-replay"
-version = "0.1.0"
+version = "0.3.0"
 dependencies = [
  "base64 0.22.1",
  "filament-checked",
@@ -1083,7 +1061,7 @@ version = "0.1.0"
 dependencies = [
  "fsl-foundation",
  "ix-trace-rs",
- "quire-rs 0.50.3",
+ "quire-rs 0.62.2",
  "serde",
  "serde_json",
  "thiserror",
@@ -1113,7 +1091,7 @@ dependencies = [
 [[package]]
 name = "fsv-failing-allocator"
 version = "0.0.0"
-source = "git+https://github.com/agent-ix/filament-semantic-value?branch=main#c496d7a5ae6db77fd18f737e209317132eb68d16"
+source = "git+https://github.com/agent-ix/filament-semantic-value?tag=v0.1.5#f808f26986efbfc08295e6ec5793f47e4e9e92a3"
 
 [[package]]
 name = "futures-core"
@@ -1428,7 +1406,7 @@ checksum = "8f42a60cbdf9a97f5d2305f08a87dc4e09308d1276d28c869c684d7777685682"
 [[package]]
 name = "ix-trace-rs"
 version = "0.1.2"
-source = "git+https://github.com/agent-ix/ix-trace-rs?branch=main#3cd3285055e32e4c08fb124d76e489b9dd412b6b"
+source = "git+https://github.com/agent-ix/ix-trace-rs?tag=v0.1.2#e29cc07f70394ff018884d12406c1e150bded5f4"
 
 [[package]]
 name = "js-sys"
@@ -1453,34 +1431,6 @@ dependencies = [
  "bytecount",
  "fancy-regex 0.11.0",
  "fraction 0.13.1",
- "getrandom 0.2.17",
- "iso8601",
- "itoa",
- "memchr",
- "num-cmp",
- "once_cell",
- "parking_lot",
- "percent-encoding",
- "regex",
- "serde",
- "serde_json",
- "time",
- "url",
- "uuid",
-]
-
-[[package]]
-name = "jsonschema"
-version = "0.18.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "fa0f4bea31643be4c6a678e9aa4ae44f0db9e5609d5ca9dc9083d06eb3e9a27a"
-dependencies = [
- "ahash",
- "anyhow",
- "base64 0.22.1",
- "bytecount",
- "fancy-regex 0.13.0",
- "fraction 0.15.4",
  "getrandom 0.2.17",
  "iso8601",
  "itoa",
@@ -1942,8 +1892,8 @@ dependencies = [
 
 [[package]]
 name = "quire-canonical"
-version = "0.3.0"
-source = "git+https://github.com/agent-ix/quire-canonical?branch=main#7d2f8389d01fcbf318e658746015b85a31526cc9"
+version = "0.3.1"
+source = "git+https://github.com/agent-ix/quire-canonical?tag=v0.3.1#2204c5c3fc0ca13dd655400d94e923edd2e8416c"
 dependencies = [
  "quire-canonical-derive",
  "ryu-js",
@@ -1956,7 +1906,7 @@ dependencies = [
 [[package]]
 name = "quire-canonical-derive"
 version = "0.3.0"
-source = "git+https://github.com/agent-ix/quire-canonical?branch=main#7d2f8389d01fcbf318e658746015b85a31526cc9"
+source = "git+https://github.com/agent-ix/quire-canonical?tag=v0.3.1#2204c5c3fc0ca13dd655400d94e923edd2e8416c"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -1965,14 +1915,14 @@ dependencies = [
 
 [[package]]
 name = "quire-rs"
-version = "0.50.3"
-source = "git+https://github.com/agent-ix/quire-rs?rev=5b4be36d594a488b21c854051f05116eb9302d78#5b4be36d594a488b21c854051f05116eb9302d78"
+version = "0.53.0"
+source = "git+https://github.com/agent-ix/quire-rs?rev=71a1f970bebc8d7267424dda26cf4c665bcc5ae5#71a1f970bebc8d7267424dda26cf4c665bcc5ae5"
 dependencies = [
  "agent-ix-semantic-schema",
  "globset",
  "ignore",
  "indexmap",
- "jsonschema 0.18.3",
+ "jsonschema 0.56.0",
  "loom",
  "rayon",
  "regex",
@@ -1985,8 +1935,8 @@ dependencies = [
 
 [[package]]
 name = "quire-rs"
-version = "0.53.0"
-source = "git+https://github.com/agent-ix/quire-rs?rev=71a1f970bebc8d7267424dda26cf4c665bcc5ae5#71a1f970bebc8d7267424dda26cf4c665bcc5ae5"
+version = "0.62.2"
+source = "git+https://github.com/agent-ix/quire-rs?tag=v0.62.2#335be94e8490b1d186a4d168eb5b2e7bab9a4f68"
 dependencies = [
  "agent-ix-semantic-schema",
  "globset",
@@ -2309,6 +2259,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "serde_spanned"
+version = "0.6.9"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "bf41e0cfaf7226dca15e8197172c295a782857fcb97fad1808a166870dee75a3"
+dependencies = [
+ "serde",
+]
+
+[[package]]
 name = "serde_stacker"
 version = "0.1.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2562,8 +2521,8 @@ checksum = "1f3ccbac311fea05f86f61904b462b55fb3df8837a366dfc601a0161d0532f20"
 
 [[package]]
 name = "tl-mltl"
-version = "0.4.0"
-source = "git+https://github.com/agent-ix/tl-mltl?branch=main#eede964c7effd340dd7784454af72e096157460b"
+version = "0.4.1"
+source = "git+https://github.com/agent-ix/tl-mltl?tag=v0.4.1#5fa14622e9f1461ec95589e53f400e4386cd1ddb"
 dependencies = [
  "serde",
  "serde_json",
@@ -2574,12 +2533,53 @@ dependencies = [
 [[package]]
 name = "tl-syntax"
 version = "0.4.0"
-source = "git+https://github.com/agent-ix/tl-syntax.git?rev=9607722f24ac1978b5e0e0ceeb0cb2a828e10177#9607722f24ac1978b5e0e0ceeb0cb2a828e10177"
+source = "git+https://github.com/agent-ix/tl-syntax.git?tag=v0.4.0#9607722f24ac1978b5e0e0ceeb0cb2a828e10177"
 dependencies = [
  "serde",
  "serde_json",
  "sha2",
 ]
+
+[[package]]
+name = "toml"
+version = "0.8.23"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "dc1beb996b9d83529a9e75c17a1686767d148d70663143c7854d8b4a09ced362"
+dependencies = [
+ "serde",
+ "serde_spanned",
+ "toml_datetime",
+ "toml_edit",
+]
+
+[[package]]
+name = "toml_datetime"
+version = "0.6.11"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "22cddaf88f4fbc13c51aebbf5f8eceb5c7c5a9da2ac40a13519eb5b0a0e8f11c"
+dependencies = [
+ "serde",
+]
+
+[[package]]
+name = "toml_edit"
+version = "0.22.27"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "41fe8c660ae4257887cf66394862d21dbca4a6ddd26f04a3560410406a2f819a"
+dependencies = [
+ "indexmap",
+ "serde",
+ "serde_spanned",
+ "toml_datetime",
+ "toml_write",
+ "winnow",
+]
+
+[[package]]
+name = "toml_write"
+version = "0.1.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "5d99f8c9a7727884afe522e9bd5edbfc91a3312b36a77b5fb8926e4c31a41801"
 
 [[package]]
 name = "tracing"
@@ -2900,6 +2900,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "winnow"
+version = "0.7.15"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "df79d97927682d2fd8adb29682d1140b343be4ac0f08fd68b7765d9c059d3945"
+dependencies = [
+ "memchr",
+]
+
+[[package]]
 name = "wit-bindgen"
 version = "0.57.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2919,6 +2928,7 @@ dependencies = [
  "filament-exact",
  "filament-semantic-value",
  "filament-spec-language",
+ "filament-specification-qualification",
  "fsl-analyze",
  "fsl-command",
  "fsl-conformance",
@@ -2939,6 +2949,7 @@ dependencies = [
  "syn 2.0.119",
  "tempfile",
  "thiserror",
+ "toml",
 ]
 
 [[package]]

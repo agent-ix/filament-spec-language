@@ -23,11 +23,11 @@
 use std::cell::Cell;
 
 use filament_exact::{
-    admit_text, form, from_admitted_slots, CardinalityBound, CollectionKind, CollectionType,
-    Decimal, DecimalType, EffectiveId, EnumMember, EnumShape, FieldValue, FloatType, IeeeValue,
-    IeeeWidth, Integer, IntegerInterval, Meter, ObjectId, ObjectReference, OptionValue, Outcome,
-    Presence, Quantity, Rational, RationalDomain, RoundingMode, ScalarLimits, TextPayload,
-    TextProfile, TextType, UnitDomain, UnitId, Value, ValueType,
+    CardinalityBound, CollectionKind, CollectionType, Decimal, DecimalType, EffectiveId,
+    EnumMember, EnumShape, FieldValue, FloatType, IeeeValue, IeeeWidth, Integer, IntegerInterval,
+    Meter, ObjectId, ObjectReference, OptionValue, Outcome, Presence, Quantity, Rational,
+    RationalDomain, RoundingMode, ScalarLimits, TextPayload, TextProfile, TextType, UnitDomain,
+    UnitId, Value, ValueType, admit_text, form, from_admitted_slots,
 };
 use filament_semantic_value::declaration::{CompositeDeclaration, CompositeShape, TypeEnvironment};
 use fsl_package::CheckedPackage;
@@ -35,7 +35,7 @@ use quire_canonical::{FixedShape, Limits, Node, NodeRef, Sink, Writer};
 use serde::{Deserialize, Serialize};
 use serde_json::value::RawValue;
 
-use super::{malformed, present, spelled, CauseCodecError};
+use super::{CauseCodecError, malformed, present, spelled};
 
 #[cfg(test)]
 mod tests {
@@ -131,9 +131,11 @@ mod tests {
         let package = package();
         let value = OptionValue::none(ValueType::String);
         let encoded = encode_element(&value).unwrap();
-        assert!(encoded
-            .get()
-            .contains(r#""payload_type":{"kind":"string"}"#));
+        assert!(
+            encoded
+                .get()
+                .contains(r#""payload_type":{"kind":"string"}"#)
+        );
         let document = quire_canonical::read(encoded.get().as_bytes(), u64::MAX).unwrap();
         match decode_element(document.root(), Keys::new(&package)).unwrap() {
             Value::Option(option) => assert_eq!(option.payload_type(), &ValueType::String),
@@ -826,6 +828,8 @@ impl TypeLeafWire {
             | ValueType::BoundedQuantity(_)
             | ValueType::CarriedQuantity(_)
             | ValueType::Map(_)
+            | ValueType::Bytes
+            | ValueType::JsonObject
             | ValueType::Uuid
             | ValueType::Timestamp => return None,
         })
@@ -1037,6 +1041,9 @@ impl ScalarWire {
             | Value::Collection(_)
             | Value::Population(_)
             | Value::Union(_)
+            | Value::Map(_)
+            | Value::Bytes(_)
+            | Value::JsonObject(_)
             | Value::Uuid(_)
             | Value::Timestamp(_) => return None,
         })
@@ -1244,7 +1251,7 @@ impl quire_canonical::Encode for ElementEncode<'_> {
                         None => {
                             return Err(quire_canonical::Error::Internal {
                                 invariant: "a value is a scalar or one of the forms matched above",
-                            })
+                            });
                         }
                     },
                 },
@@ -1280,7 +1287,7 @@ impl quire_canonical::Encode for ElementEncode<'_> {
                         None => {
                             return Err(quire_canonical::Error::Internal {
                                 invariant: "a type is a leaf or one of the forms matched above",
-                            })
+                            });
                         }
                     },
                 },
@@ -1513,7 +1520,7 @@ pub(super) fn decode_element(node: NodeRef<'_>, keys: Keys<'_>) -> Result<Value,
                             _ => {
                                 return Err(malformed(
                                     "a composite slot is not present, absent or null",
-                                ))
+                                ));
                             }
                         }
                     }

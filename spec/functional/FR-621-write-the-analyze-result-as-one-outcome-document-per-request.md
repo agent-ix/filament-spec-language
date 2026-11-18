@@ -127,6 +127,24 @@ The settlement of an item is its record's `settled_by` together with, for a
 disposition record, the negotiation disposition and diagnostic the record
 carries.
 
+### A refuted schedulability item
+
+A `schedulable` or `response` claim refuted by EN-7 (FR-247, FR-248) carries
+its miss as the item's `counterexample`: the FSpec FR-331 counterexample
+entry `{request_index, backend, counterexample}` whose `counterexample` is
+FSpec FR-419's `schedulability-miss` object, written from the `Miss`
+evidence `check_closed_form` agreed with. The document writer SHALL write it from the record's `MissEvidence` and
+pass it to `OutcomeItem::from_analyze`: a `FixedPriority` miss as the
+`response` miss (`task`, `job`, `iterates`, the response time of the last
+iterate and the claim's bound, with `mode` `lo` for an AMC-rtb low-mode
+miss), an `Edf` demand witness as the `demand` miss, and `Utilization(U)` as
+the `utilization` miss, every value an exact rational in the task set's
+checked unit. The item carries no `replay` member: the closed-form check
+recomputed the miss from the recompiled task set, and FSpec FR-419 gives it
+no replay target. Its `last_stage` contribution is `S7`, a typed witness not
+replayed. A refuted EN-7 item SHALL NOT fail the document for a missing
+counterexample.
+
 ### The record's `backend` member
 
 FSpec FR-331 keeps two artifacts per item: the result entry, which carries
@@ -230,6 +248,7 @@ The Counter fixture is FR-620's.
 | FR-621-AC-10 | Over the Counter subject, the `proved` item of `Bounded` and the `refuted` item of `BelowThree` each carry `record.settled_by` `result` and `record.backend` `en-1`; the `invalid-request` item of an unknown claim `Missing` carries `record.settled_by` `disposition` and no `backend` member. | Test (TC-2296) |
 | FR-621-AC-11 | Over the Counter subject, the analyze document of `[{"claim": "Bounded"}]` has `last_stage` `S6c`; of `[{"claim": "Bounded"}, {"claim": "BelowThree"}]`, whose refuted item is replayed, `S8`; of `[{"claim": "Bounded", "temporal": {"limits": {"max_states": 2}}}]`, whose item is `incomplete`, `S6c`; and of `[{"claim": "Nothing", "temporal": {"item_kind": "deadlock-freedom"}}]`, whose only item is an `unknown-claim` disposition, `S4`. | Test (TC-2381) |
 | FR-621-AC-12 | A malformed `native-analyze/1` document gives `last_stage` `null`; a program the checker refuses gives `S3`; a snapshot naming the undeclared population `ix://test/counter/nowhere` gives `S4`; and a request cancelled before its first item gives `null`. | Test (TC-2382) |
+| FR-621-AC-13 | A request over FR-246-AC-1's `Ctl` with the third WCET 6 and the items `CtlFp` and `CtlEdf` gives two `refuted` items, category `violation`, exit 10, each with a `counterexample` entry whose `counterexample` is FSpec FR-419's `schedulability-miss`: for `CtlFp` `analysis` `fixed-priority` and `miss` `{"kind": "response", "task": "c", "job": "0", "iterates": [6, 10, 13], "response": 13, "bound": 12}` in unit `ms`, for `CtlEdf` `analysis` `edf` and `miss` `{"kind": "utilization", "utilization": 13/12}`; neither carries `replay`, the document's `last_stage` is `S7`, and no item is refused for a missing counterexample. Over the unchanged `Ctl` both items are `proved` with no `counterexample`. | Test (TC-2960) |
 
 ## Dependencies
 

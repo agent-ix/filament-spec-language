@@ -210,11 +210,10 @@ impl CompileRefusal {
             Self::Dependency { refusal, .. } => refusal.causes(),
             Self::Link(refusal) => vec![RefusalCause::new(refusal.code(), refusal.cause())],
             Self::Emit(refusal, _) => vec![RefusalCause::new(refusal.code(), refusal.cause())],
-            Self::Limit(limit) => vec![RefusalCause::new(
-                Code::StageLimitExceeded,
-                Some(limit.kind().catalog_cause()),
-            )
-            .reaching(Some(ReachedLimit::of(limit)))],
+            Self::Limit(limit) => vec![
+                RefusalCause::new(Code::StageLimitExceeded, Some(limit.kind().catalog_cause()))
+                    .reaching(Some(ReachedLimit::of(limit))),
+            ],
             Self::Omitted(_) => vec![RefusalCause::new(Code::UnsupportedProjection, None)],
             Self::Extension(refusal) => vec![RefusalCause::new(
                 refusal.code(),
@@ -339,6 +338,7 @@ fn check_limit(cause: &CheckCause) -> Option<ReachedLimit> {
         | CheckCause::PopulationFormNotChecked { .. }
         | CheckCause::ModelConformance(_)
         | CheckCause::IllTyped(_)
+        | CheckCause::UndeclaredVariantCase { .. }
         | CheckCause::OperandTypeMismatch { .. }
         | CheckCause::IdentityObservingForm(_)
         | CheckCause::WrongSnapshot(_)
@@ -635,15 +635,17 @@ fn classify_outcome(outcome: &CallOutcome) -> Classification {
         ),
         CallOutcome::Incomplete(incomplete) => Classification::new(
             Incomplete,
-            vec![RefusalCause::new(Code::ResourceExhausted, None)
-                .reaching(Some(accounting_limit(incomplete)))],
+            vec![
+                RefusalCause::new(Code::ResourceExhausted, None)
+                    .reaching(Some(accounting_limit(incomplete))),
+            ],
         ),
     }
 }
 
 fn accounting_limit(incomplete: &CallIncomplete) -> ReachedLimit {
     ReachedLimit {
-        name: incomplete.setting().name(),
+        name: incomplete.setting_name(),
         bound: incomplete.record.limit,
     }
 }

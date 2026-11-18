@@ -338,9 +338,108 @@ fn a_reference_literal_parses_as_one_node() {
         assert!(!parsed.is_admissible(), "{malformed}");
         let diagnostic = parsed.diagnostics().first().expect("a diagnostic");
         assert_eq!(diagnostic.code, CompleteCode::InvalidSyntax, "{malformed}");
+        assert_eq!(diagnostic.cause, CompleteCause::UnexpectedToken, "{malformed}");
         let region = diagnostic.region.as_ref().expect("a located diagnostic");
         let from = text.find(malformed).unwrap();
         let at = from + text[from..].find(offending).unwrap();
         assert_eq!(usize::try_from(region.start()).unwrap(), at, "{malformed}");
     }
+}
+
+/// The first diagnostic of `text`, whether S1 recovers or stops.
+fn first_diagnostic(text: &str) -> fsl_cst::CompleteDiagnostic {
+    match fsl_cst::parse(
+        SourceIdentity::new("test", "model-syntax"),
+        "model-syntax.native",
+        text.as_bytes(),
+        Limits::default(),
+    ) {
+        Ok(parsed) => {
+            assert!(!parsed.is_admissible(), "{text}");
+            parsed.diagnostics()[0].clone()
+        }
+        Err(diagnostic) => *diagnostic,
+    }
+}
+
+/// FR-1000-AC-6 (TC-2952): a reference literal is written solid with a
+/// string key; each malformed spelling refuses with its exact cause at the
+/// offending token, `#` inside a string or comment is text, and the admitted
+/// literal's node holds the qualified name, `#` and the string in order.
+#[trace("TC-2952", "FR-1000-AC-6", "FSpec-TC-2002", "FSpec-FR-480-AC-6")]
+#[test]
+#[ignore = "QSL-2166: the reference-literal production, its solid spelling and its refusals are not in the grammar yet"]
+fn a_malformed_reference_literal_refuses_at_the_offending_token() {
+    // (spelling, offending text, nth occurrence of it in the spelling, cause)
+    for (malformed, offending, nth, cause) in [
+        ("M::T #\"s1\"", "#", 0, CompleteCause::UnexpectedToken),
+        ("(x)#\"s1\"", "#", 0, CompleteCause::UnexpectedToken),
+        ("f(x)#\"s1\"", "#", 0, CompleteCause::UnexpectedToken),
+        ("M::T#\"a\"#\"b\"", "#", 1, CompleteCause::UnexpectedToken),
+        ("M::T# \"s1\"", "\"s1\"", 0, CompleteCause::UnexpectedToken),
+        ("M::T#1", "1", 0, CompleteCause::UnexpectedToken),
+        ("M::T#)", ")", 0, CompleteCause::UnexpectedToken),
+        ("M::T#\"\\q\"", "\"\\q\"", 0, CompleteCause::InvalidEscape),
+    ] {
+        let text = source(&format!("self = {malformed}"));
+        let diagnostic = first_diagnostic(&text);
+        assert_eq!(diagnostic.code, CompleteCode::InvalidSyntax, "{malformed}");
+        assert_eq!(diagnostic.cause, cause, "{malformed}");
+        let region = diagnostic.region.as_ref().expect("a located diagnostic");
+        let from = text.find(malformed).unwrap();
+        let at = from
+            + malformed
+                .match_indices(offending)
+                .nth(nth)
+                .expect("offending text")
+                .0;
+        assert_eq!(usize::try_from(region.start()).unwrap(), at, "{malformed}");
+    }
+
+    let truncated = source("self = M::T#");
+    let truncated = &truncated[..truncated.find("M::T#").unwrap() + "M::T#".len()];
+    let diagnostic = first_diagnostic(truncated);
+    assert_eq!(
+        (diagnostic.code, diagnostic.cause),
+        (CompleteCode::InvalidSyntax, CompleteCause::UnexpectedEnd)
+    );
+
+    for body in ["self = \"a#b\"", "true // a#b\n", "self = M::T#\"\""] {
+        let text = source(body);
+        let parsed = parse(&text, Limits::default());
+        assert!(parsed.is_admissible(), "{body}: {:?}", parsed.diagnostics());
+        if !body.contains("M::T#") {
+            assert!(
+                parsed
+                    .cst()
+                    .tokens()
+                    .iter()
+                    .all(|token| token.spelling() != b"#"),
+                "{body}"
+            );
+        }
+    }
+
+    let text = source("self = M::T#\"s1\"");
+    let parsed = parse(&text, Limits::default());
+    assert!(parsed.is_admissible(), "{:?}", parsed.diagnostics());
+    let cst = parsed.cst();
+    let node = cst
+        .nodes()
+        .iter()
+        .find(|node| format!("{:?}", node.production()) == "ReferenceLiteral")
+        .expect("one reference-literal node");
+    let children: Vec<String> = node
+        .children()
+        .iter()
+        .map(|child| match *child {
+            fsl_cst::CstElement::Node(index) => {
+                format!("{:?}", cst.nodes()[index].production())
+            }
+            fsl_cst::CstElement::Token(index) => {
+                String::from_utf8_lossy(cst.tokens()[index].spelling()).into_owned()
+            }
+        })
+        .collect();
+    assert_eq!(children, ["QualifiedName", "#", "\"s1\""]);
 }

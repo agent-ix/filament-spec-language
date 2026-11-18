@@ -1488,3 +1488,115 @@ fn a_symbolic_capacity_premise_carries_the_bound_value_in_the_key() {
         );
     }
 }
+
+/// FSpec FR-785-AC-6 and FR-891-AC-2 (TC-1911 step 6, TC-2523): under
+/// `bounded`, a symbolic capacity is decided at the value the subject's
+/// `capacities` binding gives it, with that value in the key, so another
+/// value is another key. With `Bound` = 1 and two sends before any receive
+/// under `overflow reject`, the result is the result of the literal capacity
+/// 1. With no binding the item settles `inconclusive`, `premise-not-stated`
+/// naming the member `capacities`, never `requires-bound`.
+#[trace("FSpec-TC-1911", "FSpec-FR-785-AC-6", "TC-2523", "FR-891-AC-2")]
+#[test]
+fn a_symbolic_capacity_is_decided_at_its_bound_value_under_bounded() {
+    use fsl_eval::model_subject::CapacityBinding;
+    use fsl_replay::protocol_analysis::{CapacityPremise, ProtocolAnalysisKey};
+
+    let run_text = "sequence Main { send A via Sym as (a: Ack) { true }; \
+         send A2 via Sym as (a2: Ack) { true }; \
+         receive B via Sym of A as (b: Ack) { true }; \
+         receive B2 via Sym of A2 as (b2: Ack) { true }; }";
+    let fixture = |capacity: &str| {
+        Fixture::built(
+            "on origin",
+            "exactly-once-premise",
+            "",
+            &format!(
+                "channel Sym from Buyer to Seller carries Ack ordering unordered delivery \
+                 exactly-once-premise capacity {capacity} overflow reject;\n"
+            ),
+            run_text,
+            &[0],
+        )
+    };
+    let symbolic = fixture("symbolic(Bound)");
+    let decided = |fixture: &Fixture, capacities: &[(&str, u64)]| {
+        let mut request = fixture.request(64);
+        request.strategy_profile = Some("bounded".to_owned());
+        request.subject.capacities = capacities
+            .iter()
+            .map(|(name, value)| CapacityBinding {
+                name: (*name).to_owned(),
+                value: *value,
+            })
+            .collect();
+        fixture.decide(request)
+    };
+    let premise = |outcome: &RealizabilityOutcome| {
+        let ProtocolAnalysisKey::Realizability(key) = &outcome.key else {
+            panic!("a realizability key");
+        };
+        key.premises
+            .channels
+            .iter()
+            .find(|channel| channel.channel == symbolic.named("Sym"))
+            .map(|channel| channel.capacity.clone())
+            .expect("the Sym premise")
+    };
+
+    let at_one = decided(&symbolic, &[("Bound", 1)]);
+    let at_two = decided(&symbolic, &[("Bound", 2)]);
+    assert_eq!(
+        premise(&at_one),
+        CapacityPremise::Symbolic {
+            name: "Bound".to_owned(),
+            value: Some(1)
+        }
+    );
+    assert_eq!(
+        premise(&at_two),
+        CapacityPremise::Symbolic {
+            name: "Bound".to_owned(),
+            value: Some(2)
+        }
+    );
+    assert_ne!(at_one.key, at_two.key);
+    for outcome in [&at_one, &at_two] {
+        assert!(
+            matches!(
+                outcome.outcome,
+                AnalysisOutcome::Proved(_) | AnalysisOutcome::Refuted(_)
+            ),
+            "decided: {:?}",
+            outcome.outcome
+        );
+    }
+    // Two sends at capacity 1 under `reject` lose the second message, so the
+    // environment defeats the protocol; the defeat equals the literal's in
+    // every member but the key, which holds the premise as written.
+    let literal = decided(&fixture("1"), &[]);
+    let defeat = |outcome: &RealizabilityOutcome| match &outcome.outcome {
+        AnalysisOutcome::Refuted(RealizabilityCounterexample::EnvironmentDefeat {
+            defeats_per_branch,
+            obligation,
+            ..
+        }) => (defeats_per_branch.clone(), obligation.clone()),
+        other => panic!("an environment defeat: {other:?}"),
+    };
+    assert_eq!(defeat(&at_one), defeat(&literal));
+
+    let unbound = decided(&symbolic, &[]);
+    assert_eq!(
+        premise(&unbound),
+        CapacityPremise::Symbolic {
+            name: "Bound".to_owned(),
+            value: None
+        }
+    );
+    assert_eq!(
+        inconclusive(unbound),
+        InconclusiveCause::PremiseNotStated {
+            member: "capacities"
+        }
+    );
+}

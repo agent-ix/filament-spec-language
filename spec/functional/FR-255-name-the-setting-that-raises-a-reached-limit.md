@@ -292,6 +292,11 @@ its row (FR-315 "Size limits").
 | `smt_encoding.max_script_bytes` | `max_script_bytes` | SMT proof-query encoding | `SmtEncodingLimits` max_script_bytes | 268435456 bytes | FR-315 |
 | `smt.max_solver_steps` | `max_solver_steps` | SMT backend (EN-2, EN-3) | `SmtRunLimits` max_solver_steps | 100000000 steps | FR-315 |
 | `smt.max_solver_time` | `max_solver_time` | SMT backend (EN-2, EN-3) | `SmtRunLimits` max_solver_time | 60 seconds | FR-315 |
+| `plan_search.max_states` | `max_states` | plan search | `PlanSearchLimits` max_states | 10000000 search nodes | FR-1011 |
+| `plan_search.max_work` | `max_work` | plan search | `PlanSearchLimits` max_work | 100000000 work units | FR-1011 |
+| `plan_search.max_certificate_entries` | `max_certificate_entries` | plan search | `PlanSearchLimits` max_certificate_entries | 16777216 entries | FR-1011 |
+| `plan_search.max_check_work` | `max_check_work` | plan certificate checker | `PlanSearchLimits` max_check_work | 100000000 work units | FR-1011 |
+| `plan_search.max_state_key_bytes` | `max_state_key_bytes` | plan search | `PlanSearchLimits` max_state_key_bytes | 1048576 bytes | FR-1011 |
 
 The method bounds `max_live_instances` (FR-209), `max_store_buffer` and
 `max_messages` (FR-225) are members of FSpec's `TemporalLimits`, so they

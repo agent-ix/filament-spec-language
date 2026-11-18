@@ -12,34 +12,34 @@
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet, VecDeque};
 
 use filament_contract_model::{
-    encode_checked_package_v2, ApplicationOperator, CheckedAbstractionField,
-    CheckedAbstractionFrame, CheckedAbstractionObject, CheckedAbstractionParameter,
-    CheckedAbstractionPopulation, CheckedArtifactRef, CheckedCapability,
-    CheckedCapabilityDisposition, CheckedComponentClause, CheckedCompositionComponent,
-    CheckedCompositionPremise, CheckedDeclaration, CheckedDependencySelection,
-    CheckedDiagnosticsV2, CheckedDimensionOperand, CheckedEffectiveId, CheckedEnvironmentEntry,
-    CheckedEnvironmentSupplies, CheckedFairnessGranularity, CheckedFairnessKind,
-    CheckedFairnessSupply, CheckedFieldScope, CheckedFrameModification, CheckedGuaranteeMeasure,
-    CheckedGuaranteeProgress, CheckedJson, CheckedNodeId, CheckedNodeKind, CheckedNodeOwner,
-    CheckedNodeTag, CheckedOccurrence, CheckedOccurrenceRole, CheckedOperandEntry,
-    CheckedOperationAnchorBody, CheckedOriginalDeclarationId, CheckedPackageEvidence,
-    CheckedPackageLockV2, CheckedPackageSidecarsRef, CheckedPackageSourceCorrespondenceRef,
-    CheckedPackageV2, CheckedRational, CheckedRefinementStepRowRegion, CheckedScopedDeletion,
-    CheckedSelection, CheckedSelectionRole, CheckedSemanticGraphV2, CheckedSemanticNodeV2,
-    CheckedSourceMapEntry, CheckedSourceRef, CheckedSourceRegion, CheckedTerm, DimensionTerm,
-    LiteralKind, NominalBody, OperationBody, OperationBodyRow, ProtocolForm, ScalarTypeForm,
-    StateForm, ValueForm,
+    ApplicationOperator, CheckedAbstractionField, CheckedAbstractionFrame,
+    CheckedAbstractionObject, CheckedAbstractionParameter, CheckedAbstractionPopulation,
+    CheckedArtifactRef, CheckedCapability, CheckedCapabilityDisposition, CheckedComponentClause,
+    CheckedCompositionComponent, CheckedCompositionPremise, CheckedDeclaration,
+    CheckedDependencySelection, CheckedDiagnosticsV2, CheckedDimensionOperand, CheckedEffectiveId,
+    CheckedEnvironmentEntry, CheckedEnvironmentSupplies, CheckedFairnessGranularity,
+    CheckedFairnessKind, CheckedFairnessSupply, CheckedFieldScope, CheckedFrameModification,
+    CheckedGuaranteeMeasure, CheckedGuaranteeProgress, CheckedJson, CheckedNodeId, CheckedNodeKind,
+    CheckedNodeOwner, CheckedNodeTag, CheckedOccurrence, CheckedOccurrenceRole,
+    CheckedOperandEntry, CheckedOperationAnchorBody, CheckedOriginalDeclarationId,
+    CheckedPackageEvidence, CheckedPackageLockV2, CheckedPackageSidecarsRef,
+    CheckedPackageSourceCorrespondenceRef, CheckedPackageV2, CheckedRational,
+    CheckedRefinementStepRowRegion, CheckedScopedDeletion, CheckedSelection, CheckedSelectionRole,
+    CheckedSemanticGraphV2, CheckedSemanticNodeV2, CheckedSourceMapEntry, CheckedSourceRef,
+    CheckedSourceRegion, CheckedTerm, DimensionTerm, LiteralKind, NominalBody, OperationBody,
+    OperationBodyRow, ProtocolForm, ScalarTypeForm, StateForm, ValueForm,
+    encode_checked_package_v2,
 };
 use serde::Deserialize;
 
 use filament_exact::{Cancel, NodeKey, Origin, PathSegment, Role};
 use filament_semantic_value::catalog::Category;
 use filament_semantic_value::location::ExpressionLocation as Location;
-use fsl_foundation::source::node_table::{scoped, DebugTable, DebugWith, With};
+use fsl_foundation::Code;
+use fsl_foundation::source::node_table::{DebugTable, DebugWith, With, scoped};
 use fsl_foundation::source::provenance::{
     OccurrenceKey, PackageSourceMap, RawSourceRef, SourceRegion,
 };
-use fsl_foundation::Code;
 use fsl_semantics::check::wire_id::StructuralIds;
 use fsl_semantics::check::{
     AbstractionNodeRefusal, AbstractionNodes, Arrival, BindingValue, BodyTerm, CheckedGraph,
@@ -51,8 +51,8 @@ use fsl_semantics::check::{
 };
 use fsl_semantics::value::nominal_payload::NominalPayload;
 use fsl_semantics::value::{
-    native_diagnostics_catalog, DefinitionReference, DefinitionRole, HeaderLayer, Member,
-    ModelRole, NodeOwner, TemporalRole,
+    DefinitionReference, DefinitionRole, HeaderLayer, Member, ModelRole, NodeOwner, TemporalRole,
+    native_diagnostics_catalog,
 };
 use ix_trace_rs::string_edge;
 
@@ -300,8 +300,19 @@ pub enum EmitRefusal {
     },
     /// FR-148's top-level `numericEqual` schedule has no checked-package/v2
     /// equality schedule in the pinned contract IR (QSL-2173).
-    #[error("float equality schedule is not supported by the pinned checked-package/v2 contract IR yet (QSL-2173)")]
+    #[error(
+        "float equality schedule is not supported by the pinned checked-package/v2 contract IR yet (QSL-2173)"
+    )]
     FloatEqualityScheduleNotEmitted,
+    /// The pinned checked-package/v2 literal vocabulary has no form for this
+    /// native construct yet (QSL-2242).
+    #[error(
+        "{construct} literals are not supported by the pinned checked-package/v2 contract IR yet (QSL-2242)"
+    )]
+    NativeLiteralNotEmitted {
+        /// The native construct without a checked-package/v2 literal form.
+        construct: &'static str,
+    },
     /// A temporal declaration whose selected profile requires a clock
     /// configuration has no exact producer selection.
     #[error(
@@ -487,6 +498,7 @@ impl EmitRefusal {
             | Self::TimedModelNotEmitted { .. }
             | Self::SourceObjectEmission { .. } => Code::UnsupportedConstruct,
             Self::FloatEqualityScheduleNotEmitted => Code::UnsupportedConstruct,
+            Self::NativeLiteralNotEmitted { .. } => Code::UnsupportedConstruct,
             Self::MonitorPlanAmbiguous { .. } => Code::InvalidProjectionCorrespondence,
             Self::MonitorBaseRefused(read) => read.code(),
             Self::ClockSelection(_) => Code::InvalidRequest,
@@ -546,6 +558,7 @@ impl EmitRefusal {
             | Self::OperandNotInGraph { .. }
             | Self::MissingEqualityIdentityContext { .. } => None,
             Self::FloatEqualityScheduleNotEmitted => Some("not-yet-implemented"),
+            Self::NativeLiteralNotEmitted { .. } => Some("not-yet-implemented"),
             Self::MissingTemporalClockSelection { .. } => Some("missing-selection"),
             Self::SurplusTemporalClockSelection { .. }
             | Self::DuplicateTemporalClockSelection { .. }
@@ -2274,7 +2287,7 @@ fn extension_term(
 fn leaf_term(ids: &StructuralIds, leaf: &LeafTerm) -> Result<CheckedTerm, EmitRefusal> {
     Ok(match leaf {
         LeafTerm::Literal { ty, value } => {
-            let (value_kind, value) = literal_value(value);
+            let (value_kind, value) = literal_value(value)?;
             let value = checked_literal_json(&value)?;
             CheckedTerm::Literal {
                 type_id: admitted_id(ids, ty)?,
@@ -2356,7 +2369,7 @@ fn member_term(ids: &StructuralIds, member: &MemberTerm) -> Result<CheckedTerm, 
     })
 }
 
-fn literal_value(value: &LiteralValue) -> (LiteralKind, serde_json::Value) {
+fn literal_value(value: &LiteralValue) -> Result<(LiteralKind, serde_json::Value), EmitRefusal> {
     use serde_json::json;
     fn rational(value: &filament_exact::Rational) -> String {
         if value.is_integer() {
@@ -2365,7 +2378,7 @@ fn literal_value(value: &LiteralValue) -> (LiteralKind, serde_json::Value) {
             format!("{}/{}", value.numerator(), value.denominator())
         }
     }
-    match value {
+    let value = match value {
         LiteralValue::Boolean(value) => (LiteralKind::Boolean, json!(value)),
         LiteralValue::Integer(value) => (LiteralKind::Integer, json!(value.to_string())),
         LiteralValue::Count(value) => (LiteralKind::Integer, json!(value)),
@@ -2382,9 +2395,18 @@ fn literal_value(value: &LiteralValue) -> (LiteralKind, serde_json::Value) {
         LiteralValue::String(value) => (LiteralKind::String, json!(value)),
         LiteralValue::Uuid(value) => (LiteralKind::Uuid, json!(value.to_string())),
         LiteralValue::Timestamp(value) => (LiteralKind::Timestamp, json!(value.to_string())),
+        LiteralValue::Bytes(_) => {
+            return Err(EmitRefusal::NativeLiteralNotEmitted { construct: "Bytes" });
+        }
+        LiteralValue::JsonObject(_) => {
+            return Err(EmitRefusal::NativeLiteralNotEmitted {
+                construct: "JsonObject",
+            });
+        }
         LiteralValue::None => (LiteralKind::None, serde_json::Value::Null),
         LiteralValue::Enum(value) => (LiteralKind::Enum, json!(value)),
-    }
+    };
+    Ok(value)
 }
 
 fn application_operator(operator: Operator) -> ApplicationOperator {
@@ -9095,12 +9117,12 @@ pub(crate) mod equality_reader;
 #[cfg(test)]
 mod extent_agreement;
 pub use clock_selection::{
-    clock_kind, is_model_binding_name, profile_clock_kind, ClockSelectionCause,
-    ClockSelectionDeclaration, ClockSelectionRefusal,
+    ClockSelectionCause, ClockSelectionDeclaration, ClockSelectionRefusal, clock_kind,
+    is_model_binding_name, profile_clock_kind,
 };
 mod identity_rows;
 mod monitor_plan;
 pub(crate) mod protocol_locations;
-pub use monitor_plan::{declaration_less_function_id, emit_monitor_plan_over, MonitorPlanWire};
+pub use monitor_plan::{MonitorPlanWire, declaration_less_function_id, emit_monitor_plan_over};
 mod timed_order;
 pub use timed_order::OrderFault as TimedOrderFault;

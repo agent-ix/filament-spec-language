@@ -17,8 +17,8 @@
 //! that typer's.
 
 use filament_checked::node::{
-    CheckedLiteral, Connective, ConnectiveOrigin, IntegerDivisionOperator, NodeKind, RecordSlot,
-    Visit,
+    CheckedLiteral, Connective, ConnectiveOrigin, IndexedKind, IntegerDivisionOperator, NodeKind,
+    RecordSlot, Visit,
 };
 use std::borrow::Cow;
 use std::sync::Arc;
@@ -275,7 +275,7 @@ enum Frame<'e, 'r> {
     /// `operand[index]` after its source expression is typed.
     Index(Box<IndexFrame<'e>>),
     /// The key type of a map index after its key expression is typed.
-    IndexKey(Location),
+    IndexKey(Box<(Node, Location)>),
     /// The element-position obligation after the index has integer type.
     IndexPosition(u64, ExprRef<'e>, Location),
     /// `present(r.f)` or `present(r.f.c)` of a guarded clock place: the
@@ -2707,20 +2707,20 @@ impl<'a> Typer<'a> {
         }
     }
 
-    /// Type the index form's source and static selector constraints. The
-    /// checked IR currently has no tuple projection, map lookup, or collection
-    /// index node, so a proved read remains unsupported after its source-level
-    /// type checks.
+    /// Type the index form's source and static selector constraints. A map
+    /// lookup builds the `Index` node (FSpec FR-144 "Indexing"); the tuple
+    /// projection and sequence index nodes are not built yet, so a proved read
+    /// of those remains unsupported after its source-level type checks.
     fn accept_index<'e, 'r>(
         &mut self,
-        frame: IndexFrame<'e>,
+        frame: Box<IndexFrame<'e>>,
         source: Node,
         frames: &mut Vec<Frame<'e, 'r>>,
     ) -> Result<Step<'e, 'r>, CheckRefusal>
     where
         'a: 'r,
     {
-        let IndexFrame { index, location } = frame;
+        let IndexFrame { index, location } = *frame;
         match &source.value_type {
             ValueType::Composite(declaration) => {
                 let positions =
@@ -2769,10 +2769,11 @@ impl<'a> Typer<'a> {
             }
             ValueType::Map(map_type) => {
                 let key_location = location.child(1);
-                frames.push(Frame::IndexKey(location));
+                let key = map_type.key().clone();
+                frames.push(Frame::IndexKey(Box::new((source, location))));
                 Ok(Step::Descend(Goal::Expect(
                     index,
-                    Expected::Checked(Cow::Owned(map_type.key().clone())),
+                    Expected::Checked(Cow::Owned(key)),
                     key_location,
                 )))
             }
@@ -2843,13 +2844,23 @@ impl<'a> Typer<'a> {
             Frame::Field(field, member_span, location) => self
                 .field(typed, field, member_span, &location)
                 .map(Step::Typed),
-            Frame::Index(frame) => self.accept_index(*frame, typed, frames),
-            Frame::IndexKey(location) => Err(refuse(
-                &location,
-                CheckCause::UnsupportedFeature {
-                    loci: vec![location.clone()],
-                },
-            )),
+            Frame::Index(frame) => self.accept_index(frame, typed, frames),
+            Frame::IndexKey(frame) => {
+                let (collection, location) = *frame;
+                let ValueType::Map(map_type) = &collection.value_type else {
+                    return Err(mismatch(&location));
+                };
+                let value_type = map_type.values().clone();
+                Ok(Step::Typed(node(
+                    NodeKind::Index {
+                        collection: self.push(collection),
+                        index: self.push(typed),
+                        kind: IndexedKind::Map,
+                    },
+                    value_type,
+                    &location,
+                )))
+            }
             Frame::IndexPosition(minimum, index, location) => {
                 let proved = match index.node() {
                     ExprNode::Integer(position) => {
@@ -3642,7 +3653,9 @@ impl<'a> Typer<'a> {
                         &location,
                     )?
                 } else {
-                    self.element_type(&operand)?;
+                    if !matches!(operand.value_type, ValueType::Map(_)) {
+                        self.element_type(&operand)?;
+                    }
                     ValueType::Integer
                 };
                 let sized = node(NodeKind::Size(self.push(operand)), value_type, &location);
@@ -4306,7 +4319,12 @@ impl<'a> Typer<'a> {
     ) -> Result<Step<'e, 'r>, CheckRefusal> {
         match frame.collection.take() {
             None => {
-                let element = self.element_type(&typed)?;
+                // `contains(m, k)` on a map tests keys only (FSpec FR-144 "Map
+                // values"): its probe type is the key type.
+                let element = match (&typed.value_type, frame.form) {
+                    (ValueType::Map(map_type), ProbeForm::Contains) => map_type.key().clone(),
+                    _ => self.element_type(&typed)?,
+                };
                 let goal = Goal::Expect(
                     frame.item,
                     Expected::Checked(Cow::Owned(element.clone())),
