@@ -5,7 +5,6 @@ resolver = "2"
 exclude = ["fuzz"]
 
 [workspace.dependencies]
-filament-specification-qualification = { git = "https://github.com/agent-ix/filament-specification", tag = "v0.1.1" }
 filament-specification = { package = "filament-specification-qualification", git = "https://github.com/agent-ix/filament-specification", tag = "v0.1.1" }
 # `default-features = false`: the encoder builds `no_std` + `alloc`, so the
 # layer-SV leaf `filament-semantic-value` can mint the compound-unit id
@@ -98,7 +97,6 @@ ix-trace-rs = { git = "https://github.com/agent-ix/ix-trace-rs", tag = "v0.1.2" 
 [dev-dependencies]
 # FR-660: acceptance reads the pinned standard only through its published
 # file API; production code has no need for this dependency.
-filament-specification-qualification = { workspace = true }
 filament-specification = { workspace = true }
 # Non-core request-file intake exercised by the root acceptance tests.
 fsl-command = { path = "fsl-command" }

@@ -126,8 +126,8 @@ fn collect_items(
                         .canonicalize()
                         .map_err(|error| Error::io(&path, error))?;
                     if !canonical.starts_with(test_root) {
-                        return Err(Error::QualificationRefusal(format!(
-                            "facade-tests: module {} escapes test root {}",
+                        return Err(Error::FacadeTestsRefusal(format!(
+                            "module {} escapes test root {}",
                             canonical.display(),
                             test_root.display()
                         )));
@@ -166,10 +166,7 @@ fn collect_file(
 ) -> Result<()> {
     let source = fs::read_to_string(path).map_err(|error| Error::io(path, error))?;
     let file = syn::parse_file(&source).map_err(|error| {
-        Error::QualificationRefusal(format!(
-            "facade-tests: cannot parse {}: {error}",
-            path.display()
-        ))
+        Error::FacadeTestsRefusal(format!("cannot parse {}: {error}", path.display()))
     })?;
     collect_items(
         &file.items,
@@ -201,15 +198,12 @@ fn inventory_facts(override_path: Option<&Path>) -> Result<Vec<Fact>> {
         Some(path) => fs::read(path).map_err(|error| Error::io(path, error))?,
         None => filament_specification::published_file(INVENTORY)
             .ok_or_else(|| {
-                Error::QualificationRefusal(format!(
-                    "facade-tests: pinned inventory {INVENTORY} is absent"
-                ))
+                Error::FacadeTestsRefusal(format!("pinned inventory {INVENTORY} is absent"))
             })?
             .to_vec(),
     };
-    let inventory: Inventory = serde_json::from_slice(&bytes).map_err(|error| {
-        Error::QualificationRefusal(format!("facade-tests: invalid inventory: {error}"))
-    })?;
+    let inventory: Inventory = serde_json::from_slice(&bytes)
+        .map_err(|error| Error::FacadeTestsRefusal(format!("invalid inventory: {error}")))?;
     Ok(inventory
         .consumers
         .into_iter()

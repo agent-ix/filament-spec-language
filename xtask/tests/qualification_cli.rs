@@ -15,7 +15,9 @@ fn fspec_dir() -> TempDir {
 
 fn fixture_dir() -> (TempDir, PathBuf) {
     let fspec = fspec_dir();
-    let fixtures = fspec.path().join("proposals/conformance-corpus-v1/fixtures");
+    let fixtures = fspec
+        .path()
+        .join("proposals/conformance-corpus-v1/fixtures");
     (fspec, fixtures)
 }
 

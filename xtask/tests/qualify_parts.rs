@@ -15,7 +15,9 @@ fn fspec_dir() -> TempDir {
 
 fn inputs() -> (TempDir, QualifyInputs) {
     let fspec = fspec_dir();
-    let fixtures = fspec.path().join("proposals/conformance-corpus-v1/fixtures");
+    let fixtures = fspec
+        .path()
+        .join("proposals/conformance-corpus-v1/fixtures");
     let inputs = QualifyInputs {
         fspec: fspec.path().to_path_buf(),
         operands: vec!["--corpus".into(), fixtures.into_os_string()],
