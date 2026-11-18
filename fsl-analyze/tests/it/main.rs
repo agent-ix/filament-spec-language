@@ -141,6 +141,7 @@ mod ring_world;
 mod schedulability;
 mod schedulability_routing;
 mod scheduler_fairness;
+mod simulation_findings;
 mod smt_query;
 mod state_graph;
 mod state_graph_certificate;

@@ -225,3 +225,69 @@ fn a_mis_mapped_atom_is_a_correspondence_loss() {
             "native": true, "tl": false}])
     );
 }
+
+/// FR-931-AC-8: each supported lowering of the corpus carries the
+/// classification read from its lowered formula, equal to the clause's own
+/// (its default correspondence and its operators' direction); a named
+/// online-prefix correspondence is carried as named; the mixed case has none.
+#[test]
+#[trace("TC-2979", "FR-931-AC-8")]
+#[ignore = "QSL-2147: the tl_lowering record carries no classification of its lowered formula yet"]
+fn lowering_preserves_the_classification() {
+    for (cases, correspondence, fragment) in [
+        (PAST, "mltl.origin-complete-history/v1", "bounded-past"),
+        (FUTURE, "mltl.closed-trace/v1", "bounded-future"),
+    ] {
+        for body in cases {
+            for values in traces() {
+                let (code, value) = run(body, &values, true);
+                let record = &value["tl_lowering"];
+                assert_eq!(code, 0, "{body} over {values:?}: {value}");
+                assert_eq!(
+                    record["classification"],
+                    json!({"correspondence": correspondence, "fragment": fragment}),
+                    "{body} over {values:?}"
+                );
+                assert_eq!(
+                    record["classification"]["correspondence"], record["correspondence"],
+                    "{body}"
+                );
+                assert_eq!(record["classification_fault"], Value::Null, "{body}");
+            }
+        }
+    }
+
+    let directory = tempfile::tempdir().unwrap();
+    let unit = "language \"ix:native\" edition \"1-draft\";\n\
+         profile v = \"filament.value.complete/v1\";\n\
+         profile e = \"filament.temporal.event-position.false-extension/v1\";\n\
+         record Counter { level: Int[0, 9]; }\n\
+         temporal C using e over (c: Counter) clock \"events\" on origin \
+         { always[0,3] holds(c.level <= 2) }\n";
+    std::fs::write(directory.path().join("unit.native"), unit).unwrap();
+    let request = json!({"format": "native-run/1", "request": {
+        "models": [],
+        "program": {"source": {"file": "unit.native", "authority": "agent-ix",
+            "identity": "test:mltl-classification", "document": "Mltl", "formal_revision": 1}},
+        "clocks": {"events": {"kind": "event_position", "sequence_authority": "events"}},
+        "tl_lowering": {"clause": "C", "correspondence": "mltl.online-prefix/v1"}}});
+    let path = directory.path().join("request.json");
+    std::fs::write(&path, request.to_string()).unwrap();
+    let output = run_file(&path);
+    assert_eq!(output.status.code(), Some(0));
+    let value: Value = serde_json::from_slice(&output.stdout).expect("a JSON document");
+    assert_eq!(
+        value["tl_lowering"]["classification"],
+        json!({"correspondence": "mltl.online-prefix/v1", "fragment": "bounded-future"}),
+        "{value}"
+    );
+
+    let (code, value) = run(MIXED, &[0, 1], true);
+    assert_eq!(code, 21, "{value}");
+    assert_eq!(value["tl_lowering"]["disposition"], "unsupported");
+    assert_eq!(
+        value["tl_lowering"]["classification"],
+        Value::Null,
+        "{value}"
+    );
+}
