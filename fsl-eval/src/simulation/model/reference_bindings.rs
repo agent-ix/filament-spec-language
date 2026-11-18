@@ -240,7 +240,7 @@ impl ReferenceBindings {
                     else {
                         continue;
                     };
-                    let Some(actual_type) = model.type_identity(object.type_identity.clone())
+                    let Some(actual_type) = model.type_identity(&object.type_identity)
                     else {
                         return Err(super::fault("reference-literal-member-type-is-selected"));
                     };
@@ -321,7 +321,7 @@ fn overlaps(
     object_type: &EffectiveId,
 ) -> bool {
     population.member_types.iter().any(|member| {
-        model.type_identity(member.clone()).is_some_and(|member| {
+        model.type_identity(member).is_some_and(|member| {
             types.conforms(member.clone(), object_type.clone())
                 || types.conforms(object_type.clone(), member)
         })

@@ -70,6 +70,7 @@ pub(crate) fn ordered_map_entries(
 pub use expression::bare_evaluate_selected_protocol_slot;
 pub use expression::collection_write::{Provenance, WrittenCollection};
 pub(crate) use expression::evaluate_over_admitted_environment;
+pub(crate) use expression::evaluate_state_predicate_with_reference_bindings;
 pub use expression::object_environment_refusal;
 pub use expression::{
     AdmittedEvaluationViewEvaluation, ApplicationObservation, ApplicationObservationOptions,

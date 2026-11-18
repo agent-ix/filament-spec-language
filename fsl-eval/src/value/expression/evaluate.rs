@@ -2453,6 +2453,7 @@ impl<'a, 'm, N: NodeSource<'a>> Machine<'a, 'm, N> {
     fn apply(&mut self, node: N) -> Result<(), Halt> {
         let value = match node.kind() {
             NodeKind::Literal(_)
+            | NodeKind::ReferenceLiteral { .. }
             | NodeKind::Local(_)
             | NodeKind::Let { .. }
             | NodeKind::If { .. }

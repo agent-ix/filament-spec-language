@@ -349,9 +349,10 @@ pub(crate) fn evaluate_state_predicate_with_reference_bindings(
         meter,
         package.graph().dispatch_tables(),
     );
-    let machine = reference_bindings.map_or(machine, |bindings| {
-        machine.with_reference_bindings(bindings)
-    });
+    let machine = match reference_bindings {
+        Some(bindings) => machine.with_reference_bindings(bindings),
+        None => machine,
+    };
     machine.run(
         predicate.body(),
         predicate.slots(),
