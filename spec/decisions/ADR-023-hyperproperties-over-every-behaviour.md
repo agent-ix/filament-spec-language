@@ -248,9 +248,10 @@ it does not make the engine able to apply it. For a hyper item EN-1 builds
 the quotient by the copy group (§16) alone. A selected reduction whose row
 reads "no" settles V-6 `ReductionNotPreserving` before any expansion. A
 selected reduction whose row reads "yes", key symmetry with the diagonal
-action or a state constraint, is one EN-1 does not apply to a hyper product:
-it settles V-8 `unsupported-requested-capability` before any expansion,
-naming the reduction, and is never ignored. Copy-swap is never selected, so
+action or a state constraint, is executed on an HP-2 item that FSL FR-174's
+hyper reduction eligibility rule admits, and on any other item settles V-8
+`unsupported-requested-capability` before any expansion, naming the
+reduction; it is never ignored. Copy-swap is never selected, so
 it has no place in a request. HP-6's partial-order row reads "no", so a
 partial-order selection settles `ReductionNotPreserving` naming the form
 `ProjectionAligned`; its key-symmetry row, over one subject, and its

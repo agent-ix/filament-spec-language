@@ -13,6 +13,10 @@ relationships:
     type: references
   - target: ix://agent-ix/filament-spec-language/FR-187
     type: references
+  - target: ix://agent-ix/filament-spec-language/FR-569
+    type: depends_on
+  - target: ix://agent-ix/filament-spec-language/FR-230
+    type: references
   - target: ix://agent-ix/filament-specification/FR-640
     type: depends_on
   - target: ix://agent-ix/filament-specification/FR-322
@@ -67,6 +71,21 @@ its `reward` node; `fsl analyze` then runs the vote claim from that package.
 - S4 SHALL emit a `probabilistic`/`delay_distribution` node for each checked
   delay declaration, with the family and its parameters converted exactly to
   the timed model's time unit.
+- S4 SHALL emit each checked random parameter, workload and delay whatever
+  the origin of the object type that declares its operation, or that a
+  workload is on: an object type of a selected domain package or an object
+  type the unit declares in its own source (FR-569). For a source-declared
+  type, an operation reference's `declaring`, and a workload's `model`, SHALL
+  reference that type's source `model`/`object_type` node, the node its
+  source declaration key `ix://I/<Type>` names (`I` the unit's `SourceOwner`
+  identity, FSpec FR-610 "Declaration keys"), and the operation is named by
+  its name as a model operation is. A delay on an operation of the source
+  model has its times in the unit of the source model's `dense` time member
+  (FR-230 "The source model's time member"), whichever source object type
+  declares the operation, because that time member times the whole source
+  model and not only the type it names. S3 admits these declarations on the
+  source model as on a selected model (FR-185, FR-253), so a package that
+  dropped or refused them would leave a checked unit that no request can run.
 - Each node SHALL carry one `declaration` occurrence whose source region is
   the declaration's label span, so a diagnostic about the node is located at
   the declaration.
@@ -92,6 +111,8 @@ its `reward` node; `fsl analyze` then runs the vote claim from that package.
 | FR-740-AC-2 | Over the read package, `ModelSystem::weighted_steps` at FR-187-AC-1's state under `Steady` returns the six steps and probabilities FR-187-AC-1 states. | Test (TC-2062) |
 | FR-740-AC-3 | A `time dense` unit with `delay Call::reply ~ discrete { 1 ms: 90, 3 ms: 10 };` emits a `delay_distribution` node of family `discrete` and the reader admits it; a workload with `Server::reset: 0` emits weight 0; writing `Steady`'s weight lines in another order emits byte-identical output. | Test (TC-2062) |
 | FR-740-AC-4 | A claim `under Steady` emitted with `Service` resolves its scheduler to the `Steady` workload node, and the package holding the claim, the random parameters, the reward and the workload is admitted by the strict reader. | Test (TC-2062) |
+| FR-740-AC-5 | A unit that selects no domain package and declares `object O { d: Clock; operation step() modifies self.d; }`, `object Other { n: Integer; operation poke() modifies self.n; }`, `time O dense unit ms;`, `delay O::step ~ uniform;` and `delay Other::poke ~ discrete { 1 ms: 9, 3 ms: 1 };` checks and emits two `delay_distribution` nodes, one whose `declaring` references the source `model`/`object_type` node of `O` and one whose `declaring` references that of `Other`, the second with the delays `1` and `3` typed by the unit node of `ms`; the strict reader admits the package and the identity-row join admits both operation references. Without the `time` member, `delay O::step ~ uniform;` refuses `invalid_probabilistic_model`/`delay-on-untimed-model` at its span. | Test (TC-3009) |
+| FR-740-AC-6 | A unit that selects no domain package and declares `object O { n: Integer; operation step(k: Int[1, 3]) modifies self.n; }`, `random O::step(k) ~ { 1: 1, 3: 3 };` and `workload W on O { weight O::step = 1; }` checks and emits one `random_parameter` node and one `workload` node whose `declaring` and `model` reference the source `model`/`object_type` node of `O`; the strict reader and the identity-row join admit the package, and FSL's reader rebuilds a `RandomParameter` with probabilities `1/4` and `3/4` and a `Workload` equal to S3's. | Test (TC-3009) |
 
 ## Dependencies
 

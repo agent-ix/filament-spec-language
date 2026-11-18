@@ -47,7 +47,9 @@ A hyper `temporal` clause with no object parameter quantifies over the
 behaviours of the whole subject. It SHALL be emitted as a v2 hyperproperty
 node (FR-488) like any other hyper clause and be analyzable through this
 item; checking it without emitting it would leave a checked claim no request
-can name.
+can name. The wrapper's `over` argument of such a clause references the
+`model`/`model_root` node of its first subject (FR-488 "The body"), because
+the clause has no slot parameter to reference.
 
 ## Inputs
 
@@ -58,8 +60,10 @@ can name.
 - `temporal.subject` as FR-625; every copy reads the same subject.
 - `temporal.limits`: FR-625's limits plus `max_witness_set` and
   `max_relation_tuples` (FR-184).
-- `reductions.symmetry` selects the copy-swap reduction where FR-174 admits
-  it (FR-623's rules apply).
+- `reductions.symmetry` selects a key symmetry and `reductions.constraint` a
+  state constraint, which FR-174 executes on an item its hyper reduction
+  eligibility rule admits (FR-623's rules apply); copy-swap is never
+  selected, the compiler applies it where FR-174 finds the clause symmetric.
 
 ## Outputs
 
