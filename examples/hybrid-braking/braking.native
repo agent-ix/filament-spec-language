@@ -1,0 +1,13 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+// Braking without `t`, with one held and one violated claim (FR-1019)
+language "ix:native" edition "1-draft";
+profile p = "filament.temporal.infinite-trace/v1";
+hybrid Braking using p {
+  mode Moving invariant { v >= 0 and v <= 20 and a >= 1 and a <= 2 }
+    flow { v' = -a; a' = 0; }
+    transition to Stopped when { v = 0 } reset { v = 0 };
+  mode Stopped invariant { v = 0 }
+    flow { v' = 0; a' = 0; }
+}
+temporal SlowEnough using p over (h: Braking) clock "model-time" on origin { always [0, 10] holds(h.v < 30) }
+temporal TooSlow using p over (h: Braking) clock "model-time" on origin { always [0, 10] holds(h.v > 5) }

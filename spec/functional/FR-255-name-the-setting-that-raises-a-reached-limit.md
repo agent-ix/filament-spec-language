@@ -294,8 +294,8 @@ its row (FR-315 "Size limits").
 | `schedule.max_demand_points` | `max_demand_points` | schedulability analysis | `ScheduleLimits` max_demand_points | 1048576 points | FR-247 |
 | `monitor.max_window_values` | `max_window_values` | window aggregates | the monitor run's max_window_values | 1048576 values | FR-194 |
 | `inspect.max_view_entries` | `max_view_entries` | typed view construction | `fsl_inspect::InspectLimits` max_view_entries | 10000000 entries | FR-297 |
-| `hybrid.max_solver_steps` | `max_solver_steps` | hybrid provider | `hybrid.limits` max_solver_steps | 1000000 steps | FR-250 |
-| `hybrid.max_solver_time` | `max_solver_time` | hybrid provider | `hybrid.limits` max_solver_time | 60 seconds | FR-250 |
+| `hybrid.max_solver_steps` | `max_solver_steps` | hybrid provider; `fsl-hybrid-reference` publishes this default in its descriptor `bounds` and counts one step per Picard attempt (FR-1019) | `hybrid.limits` max_solver_steps | 1000000 steps | FR-250, FR-1019 |
+| `hybrid.max_solver_time` | `max_solver_time` | hybrid provider; `fsl-hybrid-reference` publishes this default in its descriptor `bounds` (FR-1019) | `hybrid.limits` max_solver_time | 60 seconds | FR-250, FR-1019 |
 | `smt_encoding.max_constants` | `max_constants` | SMT proof-query encoding | `SmtEncodingLimits` max_constants | 1048576 constants | FR-315 |
 | `smt_encoding.max_applications` | `max_applications` | SMT proof-query encoding | `SmtEncodingLimits` max_applications | 65536 applications | FR-315 |
 | `smt_encoding.max_monitor_atoms` | `max_monitor_atoms` | SMT proof-query encoding | `SmtEncodingLimits` max_monitor_atoms | 8 atoms | FR-315 |
