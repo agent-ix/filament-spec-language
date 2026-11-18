@@ -2740,7 +2740,8 @@ mod tests {
     }
 
     /// FR-489-AC-5: linked registrations are borrowed from the EN-1, EN-4, EN-5
-    /// and EN-6 engines, the two check arms and the protocol analysis engine,
+    /// and EN-6 engines, the two check arms, the protocol analysis engine and
+    /// EN-7,
     /// and retain each engine's own identity and advertised kinds.
     #[trace("TC-1272", "FR-489-AC-5")]
     #[test]
@@ -2760,15 +2761,21 @@ mod tests {
                 "en-6",
                 "value-checker",
                 "contract-checker",
-                "protocol-analysis"
+                "protocol-analysis",
+                "en-7"
             ]
         );
-        let [en1, en4, en5, _en6, value, contract, protocol] = registrations.as_slice() else {
+        let [en1, en4, en5, _en6, value, contract, protocol, en7] = registrations.as_slice()
+        else {
             panic!(
-                "the linked engine set contains EN-1, EN-4, EN-5, EN-6, the two check arms and \
-                 the protocol analysis engine"
+                "the linked engine set contains EN-1, EN-4, EN-5, EN-6, the two check arms, \
+                 the protocol analysis engine and EN-7"
             );
         };
+        assert_eq!(
+            en7.advertises().collect::<Vec<_>>(),
+            [(Capability::Schedulability, Mode::Unbounded)]
+        );
         assert!(registrations
             .iter()
             .all(|descriptor| descriptor.origin() == ProviderOrigin::Linked));
