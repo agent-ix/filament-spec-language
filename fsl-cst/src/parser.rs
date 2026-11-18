@@ -244,6 +244,8 @@ pub(super) fn parse(
     diagnostics.extend(reference_literal_spacing(&source, &cst));
     diagnostics.extend(interval_bounds(&source, &cst));
     diagnostics.extend(decimal_constructor_numbers(&source, &cst));
+    diagnostics
+        .sort_by_key(|diagnostic| diagnostic.byte_span().map_or(usize::MAX, |span| span.start));
     Ok(ParsedSource::from_parts(
         source,
         cst,

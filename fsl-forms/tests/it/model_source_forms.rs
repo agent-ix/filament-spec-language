@@ -348,7 +348,11 @@ fn a_ref_term_wraps_its_place_operand() {
 #[trace("TC-2953", "FR-1000-AC-7")]
 #[test]
 fn a_reference_literal_builds_one_value_form() {
-    for (literal, key) in [("M::T#\"s1\"", "s1"), ("M::T#\"\\u00e9\"", "\u{e9}")] {
+    for (literal, key) in [
+        ("M::T#\"s1\"", "s1"),
+        ("M::T#\"\\u00e9\"", "\u{e9}"),
+        ("M::T#\"e\\u0301\"", "e\u{301}"),
+    ] {
         let (source, function) = function(literal);
         let ExprNode::ReferenceLiteral {
             type_name,
