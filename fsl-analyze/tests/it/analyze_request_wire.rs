@@ -144,7 +144,6 @@ fn the_deadline_and_item_limits_settle_incomplete() {
 #[trace("TC-1580", "FR-620-AC-8")]
 #[trace("TC-1580", "FR-281-AC-23")]
 #[test]
-#[ignore = "QSL-2130: EN-7 is not registered in Engines::fsl() yet"]
 fn the_fsl_registry_holds_en7() {
     let engines = fsl_analyze::analyze::Engines::fsl().expect("the layer-A engines register");
     assert!(

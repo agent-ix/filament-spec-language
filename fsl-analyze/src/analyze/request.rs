@@ -146,9 +146,16 @@ impl ClaimItem {
     ) -> Result<Self, ClaimRefusal> {
         let graph = package.graph();
         let family = crate::claim_family::claim_family(package, ItemKind::Formula, &claim);
+        // A task-set claim's node is minted beside the semantic graph
+        // (FSpec FR-482), so its occurrence is the checked claim's own.
         let occurs = graph
             .occurrences()
-            .any(|(node, origin, _)| node == *claim.node() && origin == *claim.origin());
+            .any(|(node, origin, _)| node == *claim.node() && origin == *claim.origin())
+            || graph
+                .task_sets()
+                .claims()
+                .iter()
+                .any(|checked| checked.occurrence().as_ref() == Some(&claim));
         let wrong_authored_occurrence = graph
             .temporal_clauses()
             .iter()
@@ -359,6 +366,15 @@ pub(crate) fn analyze_bound(
                 .map(|output| (record.request_index, output))
         })
         .collect();
+    let closed_form = settled
+        .iter()
+        .filter_map(|record| {
+            record
+                .closed_form
+                .as_deref()
+                .map(|outcome| (record.request_index, outcome.clone()))
+        })
+        .collect();
     let (records, counterexamples) = super::split_records(settled, package);
     Ok(Staged::new(super::AnalyzeOutcome {
         records,
@@ -366,6 +382,7 @@ pub(crate) fn analyze_bound(
         aggregate,
         details,
         protocol_conformance,
+        closed_form,
     }))
 }
 
@@ -770,6 +787,10 @@ fn work<'a>(
                 });
             super::contract_item(item.request_index, package, &item.claim, selection)
         }
+        None if item.kind == Capability::Schedulability => {
+            super::schedule_item::schedule_item(package, item.request_index, &item.claim)
+                .unwrap_or_else(absent)
+        }
         _ => absent(),
     };
     let expected = match &item.form {
@@ -788,6 +809,9 @@ fn work<'a>(
             EvidenceKind::Statistical => Some(crate::statistical::manifest::BACKEND_ID),
         },
         Some(ItemForm::Hybrid(_)) => None,
+        None if item.kind == Capability::Schedulability => {
+            Some(crate::schedulability::manifest::BACKEND_ID)
+        }
         None => None,
     };
     if let (Some(expected), fsl_route::routing::Disposition::Supported(candidate)) =
@@ -805,10 +829,14 @@ fn work<'a>(
     built.family = family;
     built.claim = Some(item.claim.clone());
     // EN-6 decides over the subject's universes alone (FR-239): it advertises
-    // the bounded mode, and an item it runs is read in it.
+    // the bounded mode, and an item it runs is read in it. EN-7 decides a
+    // task set in closed form, which has no bound to ask for, so a
+    // schedulability item is read in the `unbounded` mode it advertises
+    // (FR-247).
     let zone = matches!(&item.form, Some(ItemForm::Temporal(_))) && super::document::timed(package);
     built.mode = match item.extent {
         _ if zone => fsl_route::Mode::Bounded,
+        _ if item.kind == Capability::Schedulability => fsl_route::Mode::Unbounded,
         ExtentClassification::Bounded => fsl_route::Mode::Bounded,
         ExtentClassification::Unbounded { .. } => fsl_route::Mode::Unbounded,
     };
