@@ -143,11 +143,11 @@ fn every_complete_cause_appears_in_a_diagnostic_test() {
     }
 }
 
-/// FR-031-AC-6 and AC-7 (TC-109): the extraction refusal codes stay catalogued, and
+/// FR-031-AC-6 (TC-109): the extraction refusal codes stay catalogued, and
 /// the clause-run request reader (FR-312) produces them: `extraction-package-conflict`
 /// for a request carrying `extraction` and `package`, `extraction-clause-count`
 /// for a non-singleton binding list, and `invalid-quire-context` for a context Quire rejects.
-#[trace("TC-109", "FR-031-AC-6", "FR-031-AC-7")]
+#[trace("TC-109", "FR-031-AC-6")]
 #[test]
 fn the_request_reader_produces_the_extraction_refusal_codes() {
     const READER: &str = include_str!("../../fsl-command/src/command.rs");

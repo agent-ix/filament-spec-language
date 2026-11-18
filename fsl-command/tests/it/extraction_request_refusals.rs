@@ -2,6 +2,7 @@
 #![cfg(feature = "quire-extraction")]
 
 use fsl_command::command::{read_clause_run_request, RunCause};
+use ix_trace_rs::trace;
 use serde_json::{json, Value};
 use std::fs;
 
@@ -87,7 +88,7 @@ fn extraction_requires_one_clause_binding_and_reports_the_actual_count() {
     }
 }
 
-/// Trace: TC-109, FR-031-AC-7.
+#[trace("TC-109", "FR-031-AC-7")]
 #[test]
 fn quire_context_refusal_preserves_its_diagnostics() {
     let directory = tempfile::tempdir().expect("temporary directory");
@@ -102,8 +103,5 @@ fn quire_context_refusal_preserves_its_diagnostics() {
     assert_eq!(outcome["stage"], "quire-context");
     assert_eq!(error.category().exit_code(), 20);
     assert_eq!(outcome["code"], "invalid-quire-context");
-    assert_eq!(
-        outcome["details"]["diagnostics"],
-        json!(diagnostics)
-    );
+    assert_eq!(outcome["details"]["diagnostics"], json!(diagnostics));
 }
