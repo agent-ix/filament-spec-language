@@ -11,7 +11,7 @@ use std::path::Path;
 use filament_exact::{Cancel, CancelCause};
 use fsl_analyze::analyze::document::{
     AnalyzeDocumentError, AnalyzeRun, ItemSelection, Negotiate, SubjectSelection, analyze_document,
-    resolve_items,
+    resolve_items, resolve_package_items, settle_package_items,
 };
 use fsl_analyze::analyze::{AnalyzeLimits, DeadlineSupply, Engine, Engines, SourceProvision};
 use fsl_analyze::provider::ProviderOptions;
@@ -84,8 +84,50 @@ fn prepare_bytes(
     bytes: &[u8],
     dependent_bytes: usize,
 ) -> Result<PreparedAnalyze> {
-    read(directory, bytes, dependent_bytes).map(|(input, _)| PreparedAnalyze {
-        input: Box::new(input),
+    match read(directory, bytes, dependent_bytes)? {
+        Readout::Source(input, _) => Ok(PreparedAnalyze {
+            input: Box::new(input),
+        }),
+        // A prepared run holds the source it compiles; a package request
+        // has none to prepare (FR-850).
+        Readout::Package(_) => Err(RunCause::AnalyzeNotYetImplemented { member: "package" }),
+    }
+}
+
+/// What [`read`] read: a `program` request's inputs with the intake that
+/// still charges compilation, or a `package` request's admitted package.
+enum Readout<'d> {
+    Source(AnalyzeInput, super::Intake<'d>),
+    Package(PackageSelection),
+}
+
+/// A `package` request (FR-850): the package the strict reader admitted
+/// from the request's bytes, with the request's items.
+struct PackageSelection {
+    admitted: filament_contract_model::CheckedPackageV2,
+    items: Option<Vec<ItemSelection>>,
+}
+
+/// FR-850, FR-940: analyze a `package` request over the `BarePackage` of
+/// its admitted package, read through `AnalysisView`, never compiling
+/// source. Items whose engine family has no package form yet refuse the
+/// request whole, as not yet implemented, rather than settle `unsupported`.
+fn run_package(
+    selection: PackageSelection,
+    providers: Vec<Engine>,
+    options: &ProviderOptions,
+) -> Result<RunResult> {
+    let engines = engines_with(providers, options)?;
+    let package = fsl_package::BarePackage::new(&selection.admitted);
+    let items = resolve_package_items(&package, selection.items.as_deref())
+        .map_err(|_| RunCause::AnalyzeNotYetImplemented { member: "package" })?;
+    let settled = settle_package_items(items, &engines).map_err(|_| RunCause::AnalyzeFault)?;
+    Ok(RunResult {
+        exit_code: settled.exit_code,
+        value: NativeResult::analyze_document(settled.document),
+        outcome: None,
+        requirements: None,
+        sources: crate::Sources::default(),
     })
 }
 
@@ -95,7 +137,7 @@ fn read<'d>(
     directory: &'d Path,
     bytes: &[u8],
     dependent_bytes: usize,
-) -> Result<(AnalyzeInput, super::Intake<'d>)> {
+) -> Result<Readout<'d>> {
     let request: wire::AnalyzeRequest = request(bytes).map_err(|cause| match cause {
         RunCause::Json(error) => invalid("request", error.to_string()),
         cause => cause,
@@ -148,10 +190,11 @@ fn read<'d>(
         }
     }
     if let Some(package) = &request.package {
-        admit_package(directory, dependent_bytes, &request, package)?;
-        // The engines analyze an in-process checked package that only a
-        // source compile builds, so an admitted package stops here.
-        return Err(RunCause::AnalyzeNotYetImplemented { member: "package" });
+        let admitted = admit_package(directory, dependent_bytes, &request, package)?;
+        return Ok(Readout::Package(PackageSelection {
+            admitted,
+            items: request.items,
+        }));
     }
     if request.integer_division.is_some() {
         return Err(invalid(
@@ -333,7 +376,7 @@ fn read<'d>(
         output: None,
         handoff: None,
     };
-    Ok((
+    Ok(Readout::Source(
         AnalyzeInput {
             source,
             compile,
@@ -429,7 +472,12 @@ pub fn analyze_with_providers_and_limits(
     cancel: &Cancel,
 ) -> std::result::Result<RunResult, Box<RunError>> {
     super::with_request_limits(path, limits.request_bytes, |directory, bytes| {
-        let (input, mut intake) = read(directory, bytes, limits.dependent_bytes)?;
+        let (input, mut intake) = match read(directory, bytes, limits.dependent_bytes)? {
+            Readout::Source(input, intake) => (input, intake),
+            Readout::Package(selection) => {
+                return run_package(selection, providers, options);
+            }
+        };
         let mut result = run_input(&mut intake, input, negotiate, providers, options, cancel)?;
         result.sources = crate::Sources::from_sources(intake.sources.iter().cloned());
         Ok(result)
@@ -571,7 +619,7 @@ fn admit_package(
     dependent_bytes: usize,
     request: &wire::AnalyzeRequest,
     package: &wire::FileSelection,
-) -> Result<()> {
+) -> Result<filament_contract_model::CheckedPackageV2> {
     if request.program.is_some() {
         return Err(invalid(
             "program",
@@ -645,7 +693,7 @@ fn admit_package(
             return Err(conflicting_model(identity));
         }
     }
-    Ok(())
+    Ok(admitted)
 }
 
 fn conflicting_model(identity: &str) -> RunCause {

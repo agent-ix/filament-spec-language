@@ -938,6 +938,101 @@ pub fn resolve_items(
     }
 }
 
+/// An item of a `package` request (FR-850) whose claim names an item family
+/// the package route does not settle yet (FR-940 "Package forms of the
+/// source-checked evaluators"): the request is refused whole rather than
+/// settle that item `unsupported`.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct PendingPackageFamily {
+    /// The request index of the first such item, `None` for the default
+    /// items of a request with no `items` member.
+    pub request_index: Option<RequestIndex>,
+}
+
+/// FR-850 "Building the analysis input": resolve a `package` request's items
+/// by name against the package, read only through `view` (FR-940). A
+/// temporal clause is named by its `temporal_clause_names` row and any other
+/// claim by the `declaration.qualified_name` of its node; a name neither
+/// carries settles `invalid-request` with `invalid_capability`/`unknown-claim`
+/// as the source route settles it.
+///
+/// # Errors
+///
+/// [`PendingPackageFamily`] for the first item that names a claim, a
+/// derived item or a simulation, and for the default items: the package
+/// route settles no engine family yet, and it never settles one
+/// `unsupported` for a fact the source route reads (FR-940).
+pub fn resolve_package_items(
+    view: &dyn fsl_package::AnalysisView,
+    selections: Option<&[ItemSelection]>,
+) -> Result<Vec<ResolvedItem>, PendingPackageFamily> {
+    let Some(selections) = selections else {
+        return Err(PendingPackageFamily {
+            request_index: None,
+        });
+    };
+    let clauses = view.clause_names();
+    let declared = view.declared_names();
+    selections
+        .iter()
+        .enumerate()
+        .map(|(position, selection)| {
+            let index = RequestIndex::new(position);
+            let pending = PendingPackageFamily {
+                request_index: Some(index),
+            };
+            let Some(name) = selection.claim.as_deref() else {
+                return Err(pending);
+            };
+            let named = clauses.iter().any(|row| row.name.as_ref() == name)
+                || declared.iter().any(|(declared, _)| declared == name);
+            // A derived item names a model, not a claim (FSpec FR-368).
+            let derived = selection
+                .temporal
+                .as_ref()
+                .is_some_and(|temporal| temporal.item_kind.is_some());
+            if named || derived {
+                return Err(pending);
+            }
+            Ok(unknown_claim(index, name))
+        })
+        .collect()
+}
+
+/// [`settle_run`] for the items of a `package` request (FR-850) that
+/// [`resolve_package_items`] settled: the same document, with the registry
+/// of `engines`, written by the one writer both routes share.
+///
+/// # Errors
+///
+/// [`AnalyzeDocumentError::Fault`] when an item is not settled.
+pub fn settle_package_items(
+    items: Vec<ResolvedItem>,
+    engines: &Engines,
+) -> Result<SettledRun, AnalyzeDocumentError> {
+    let mut settled = BTreeMap::new();
+    for item in items {
+        let ResolvedItem::Settled { claim_name, record } = item else {
+            return Err(AnalyzeDocumentError::Fault);
+        };
+        settled.insert(record.request_index(), (claim_name, *record));
+    }
+    write_run(
+        SettledParts {
+            records: Vec::new(),
+            counterexamples: Vec::new(),
+            details: Vec::new(),
+            protocol_conformance: BTreeMap::new(),
+        },
+        &settled,
+        &BTreeMap::new(),
+        &BTreeMap::new(),
+        &BTreeMap::new(),
+        &[],
+        engines,
+    )
+}
+
 /// One requirement item of a run call (FR-395 "Item of the call") with the
 /// backend and options the run names for it (FR-960).
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -2046,9 +2141,6 @@ pub fn settle_run(
         _ => AnalyzeDocumentError::Fault,
     })?
     .into_value();
-    let mut records: Vec<TerminalRecord> = outcome.records;
-    records.extend(settled.values().map(|(_, record)| record.clone()));
-    records.sort_by_key(TerminalRecord::request_index);
     // FR-621 "Last stage": each negotiated item's route. An item negotiated
     // to an FSL engine settles at S6c, one negotiated to an outside provider
     // or settled by its negotiation's disposition at S6b.
@@ -2073,7 +2165,64 @@ pub fn settle_run(
             .iter()
             .map(|index| (*index, super::ItemRoute::Negotiated)),
     );
-    let base = super::analyze_document_routed(&records, &outcome.counterexamples, &routes)
+    // FR-634: each simulation item's document at its request index; it
+    // settles no claim, so it is no aggregate gap, and its category ranks
+    // in the exit code.
+    let mut simulated = Vec::new();
+    for item in &simulations {
+        match super::simulation_item::simulate(package, &binding, &limits, item, cancel) {
+            Ok(written) => simulated.push(written),
+            Err(super::simulation_item::SimulationFault::Binding(failure)) => {
+                return Err(AnalyzeDocumentError::Refused(
+                    super::AnalyzeRefusal::Binding(failure),
+                ))
+            }
+            Err(super::simulation_item::SimulationFault::Fault) => {
+                return Err(AnalyzeDocumentError::Fault)
+            }
+        }
+    }
+    write_run(
+        SettledParts {
+            records: outcome.records,
+            counterexamples: outcome.counterexamples,
+            details: outcome.details,
+            protocol_conformance: outcome.protocol_conformance,
+        },
+        &settled,
+        &echoes,
+        &targets,
+        &routes,
+        &simulated,
+        engines,
+    )
+}
+
+/// What the engines settled for a run's negotiated items.
+struct SettledParts {
+    records: Vec<TerminalRecord>,
+    counterexamples: Vec<super::ItemCounterexample>,
+    details: Vec<super::ItemDetail>,
+    protocol_conformance: BTreeMap<RequestIndex, fsl_replay::ProtocolConformanceOutput>,
+}
+
+/// The FR-621 document of a run: the engines' records beside the items
+/// settled without running, each item's entry, the aggregate, the registry
+/// and the exit code. The source route and the package route (FR-850)
+/// write their documents through this one function.
+fn write_run(
+    outcome: SettledParts,
+    settled: &BTreeMap<RequestIndex, (Option<String>, TerminalRecord)>,
+    echoes: &BTreeMap<RequestIndex, Echo>,
+    targets: &BTreeMap<RequestIndex, BackendId>,
+    routes: &BTreeMap<RequestIndex, super::ItemRoute>,
+    simulated: &[(Value, Category)],
+    engines: &Engines,
+) -> Result<SettledRun, AnalyzeDocumentError> {
+    let mut records: Vec<TerminalRecord> = outcome.records;
+    records.extend(settled.values().map(|(_, record)| record.clone()));
+    records.sort_by_key(TerminalRecord::request_index);
+    let base = super::analyze_document_routed(&records, &outcome.counterexamples, routes)
         .map_err(|_| AnalyzeDocumentError::Fault)?;
     let mut document = serde_json::to_value(&base).map_err(|_| AnalyzeDocumentError::Fault)?;
     let written: Vec<Value> = document["items"].as_array().cloned().unwrap_or_default();
@@ -2137,23 +2286,6 @@ pub fn settle_run(
                 disposed,
             },
         ));
-    }
-    // FR-634: each simulation item's document at its request index; it
-    // settles no claim, so it is no aggregate gap, and its category ranks
-    // in the exit code.
-    let mut simulated = Vec::new();
-    for item in &simulations {
-        match super::simulation_item::simulate(package, &binding, &limits, item, cancel) {
-            Ok(written) => simulated.push(written),
-            Err(super::simulation_item::SimulationFault::Binding(failure)) => {
-                return Err(AnalyzeDocumentError::Refused(
-                    super::AnalyzeRefusal::Binding(failure),
-                ))
-            }
-            Err(super::simulation_item::SimulationFault::Fault) => {
-                return Err(AnalyzeDocumentError::Fault)
-            }
-        }
     }
     items.extend(simulated.iter().map(|(written, _)| written.clone()));
     items.sort_by_key(|item| item["request_index"].as_u64().unwrap_or(u64::MAX));

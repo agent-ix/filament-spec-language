@@ -19,7 +19,7 @@
 
 use std::collections::VecDeque;
 
-use filament_contract_model::{CheckedNodeId, CheckedPackageV2};
+use filament_contract_model::{CheckedNodeId, CheckedPackageV2, TemporalClauseName};
 use fsl_semantics::library::LibraryName;
 use fsl_semantics::model::domain_package::DomainPackageRef;
 
@@ -46,6 +46,9 @@ mod sealed {
 ///     fn package(&self) -> &filament_contract_model::CheckedPackageV2 {
 ///         unreachable!()
 ///     }
+///     fn identity(&self) -> &fsl_semantics::library::LibraryName {
+///         unreachable!()
+///     }
 /// }
 /// ```
 ///
@@ -61,10 +64,9 @@ pub trait AnalysisView: sealed::Sealed {
     /// The admitted package every other accessor reads.
     fn package(&self) -> &CheckedPackageV2;
 
-    /// The package's identity, `None` when its name is no library name.
-    fn identity(&self) -> Option<LibraryName> {
-        LibraryName::new(self.package().name()).ok()
-    }
+    /// The package's identity: its admitted `name()`, which the strict
+    /// reader keeps nonempty (FR-940 `identity`).
+    fn identity(&self) -> &LibraryName;
 
     /// The model identities the package selects, ascending (FR-533).
     fn model_selections(&self) -> Vec<DomainPackageRef> {
@@ -101,6 +103,34 @@ pub trait AnalysisView: sealed::Sealed {
     ) -> Result<TemporalSubjectView<'_>, ViewRefusal> {
         checked_views::temporal_subject(self.package(), clause)
     }
+
+    /// The declared name of each temporal clause occurrence: the package's
+    /// `temporal_clause_names` rows, in row order (FR-531 "clause name";
+    /// FR-850 claim lookup). Empty when the package carries none.
+    fn clause_names(&self) -> &[TemporalClauseName] {
+        self.package().temporal_clause_names().unwrap_or_default()
+    }
+
+    /// Each named declaration's `declaration.qualified_name`, its segments
+    /// joined by `::`, with its node, in the package's node order (FSpec
+    /// FR-322; FR-850 claim lookup).
+    fn declared_names(&self) -> Vec<(String, &CheckedNodeId)> {
+        self.package()
+            .resolved_graph()
+            .nodes
+            .iter()
+            .filter_map(|node| {
+                let declaration = node.declaration.as_ref()?;
+                let name = declaration
+                    .qualified_name
+                    .iter()
+                    .map(AsRef::as_ref)
+                    .collect::<Vec<&str>>()
+                    .join("::");
+                Some((name, &node.node_id))
+            })
+            .collect()
+    }
 }
 
 fn closure(package: &CheckedPackageV2) -> DependencyClosure<'_> {
@@ -123,10 +153,18 @@ impl AnalysisView for AdmittedPackageRead<'_> {
     fn package(&self) -> &CheckedPackageV2 {
         self.admitted()
     }
+
+    fn identity(&self) -> &LibraryName {
+        self.admitted_identity()
+    }
 }
 
 impl AnalysisView for BarePackage<'_> {
     fn package(&self) -> &CheckedPackageV2 {
         BarePackage::package(self)
+    }
+
+    fn identity(&self) -> &LibraryName {
+        self.admitted_identity()
     }
 }

@@ -166,7 +166,6 @@ fn compile_members_and_mismatched_models_refuse_beside_a_package() {
 /// item `unknown-claim`, as the source route does.
 #[trace("TC-2410", "FR-850-AC-5")]
 #[test]
-#[ignore = "QSL-2271: the in-process checked-package builder from package bytes conflicts with FR-087-AC-2"]
 fn an_unknown_claim_over_a_package_settles_unknown_claim() {
     let ws = Workspace::new("package-unknown-claim");
     let (members, _) = package_request(&ws, &bounded(), json!([{"claim": "Missing"}]));
@@ -216,7 +215,6 @@ fn not_above_three() -> &'static str {
 /// for a fact the package bytes lack.
 #[trace("TC-2958", "FR-940-AC-4")]
 #[test]
-#[ignore = "QSL-2271: source-route engines reading the CheckedGraph beside the view is not implemented yet"]
 fn source_analysis_decides_every_family_over_its_checked_graph() {
     let body = format!("{}{}{}", bounded(), at_most_two(), not_above_three());
     let items =
@@ -228,7 +226,7 @@ fn source_analysis_decides_every_family_over_its_checked_graph() {
     assert_eq!(run.item(1)["replay"]["reproduced"], true);
     assert_eq!(label(&run.item(2)), "proved", "{}", run.document());
     assert_eq!(
-        run.item(2)["record"]["proof_basis"]["type"],
+        run.item(2)["record"]["basis"]["type"],
         "exhaustive",
         "{}",
         run.document()
