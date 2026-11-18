@@ -80,7 +80,7 @@ seven rules:
 
 | Rule | Role | Protects | Allowed callers (today) | Requires |
 | --- | --- | --- | --- | --- |
-| T12-A | Cg | The layer-6 `fsl-replay` facade crate | CG's `replay` adapter module; a call spelled `filament_spec_language::replay::` is a violation from any module, because the root crate has no `replay` module, and so is any reference to `fsl_replay::spine`, the spine compile `command` shares with the executor, which is not part of the facade: found by parsing, as a `use` tree leaf or a path through the crate or an alias of it, a glob import of the crate, or a `fsl_replay::spine` token run inside a macro | `fsl-replay/src/lib.rs` |
+| T12-A | Cg | The layer-6 `fsl-replay` facade crate (CG's other permitted FSL crate, `fsl-package`, for `ObligationIdentity` and the other types that layer owns, is outside T12-A's patterns) | CG's `replay` adapter module; a call spelled `filament_spec_language::replay::` is a violation from any module, because the root crate has no `replay` module, and so is any reference to `fsl_replay::spine`, the spine compile `command` shares with the executor, which is not part of the facade: found by parsing, as a `use` tree leaf or a path through the crate or an alias of it, a glob import of the crate, or a `fsl_replay::spine` token run inside a macro | `fsl-replay/src/lib.rs` |
 | T12-B | Fsl | **RETIRED (the `NodeKey` constructors it guarded no longer exist).** | none | none |
 | T12-C | Fsl | **RETIRED (the `EffectiveId` constructors it guarded no longer exist).** | none | none |
 | T12-D | Fsl | **RETIRED (the `PopulationId` constructors it guarded no longer exist).** | none | none |
@@ -159,7 +159,12 @@ FSL output, calls this entry and never names `fsl_replay::spine`.
 ### T12-A and the evaluator differential corpus
 
 T12-A protects the `fsl-replay` facade, the FSL crate through which CG
-calls into FSL; its call patterns name only `fsl_replay`. A crate from its own
+calls into FSL; its call patterns name only `fsl_replay`. CG may also name
+`fsl_package` for the types that layer owns, such as `ObligationIdentity`
+(QSL-1109, CF-IR-04), which `fsl-replay` does not re-export (QSL-2166). These
+are data types, not an entry into the spine, so T12-A does not confine them
+to CG's `replay` module. CG names no other FSL crate, such as `fsl-eval`,
+`fsl-route` or `fsl-semantics`; FR-059 refuses the edge. A crate from its own
 repository is not an FSL crate for T12-A, even when FSL owns it: the
 evaluation leaf `filament-eval`, the evaluator corpus crate
 `filament-eval-corpus` and the checked-term leaf `filament-checked` (all in
