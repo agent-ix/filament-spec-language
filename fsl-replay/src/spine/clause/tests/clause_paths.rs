@@ -329,8 +329,9 @@ fn clause_item_cause_never_null_for_typed_halt() {
 fn run_sum_clause(domain: &str) -> ClauseRunReport {
     let (mut unit, packages) = super::config_version_unit_and_packages();
     unit.push_str(&format!(
-        "invariant S using v on Config::ConfigVersion at current {{ \
-         sum<{domain}>(x in seq(i in 0 .. 1: i): x) >= 1 }}\n"
+        "type SumDomain = {domain};\n\
+         invariant S using v on Config::ConfigVersion at current {{ \
+         sum<SumDomain>(x in seq(i in 0 .. 1: i): x) >= 1 }}\n"
     ));
     let label = super::config_version_document_ref("sum-domain");
     let snapshot = super::config_version_snapshot(&label, 1, None);
