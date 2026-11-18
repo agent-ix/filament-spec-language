@@ -508,3 +508,136 @@ impl CheckedPackageEvaluation for BarePackage<'_> {
         Err(unmet(self, SOURCE_DECLARATION))
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use filament_exact::{Integer, LimitKind, ScalarLimits};
+    use fsl_forms::{Expression, FunctionDeclaration, TypeForm};
+    use fsl_semantics::check::{CheckMode, CheckingLimits, PackageDeclarations};
+    use ix_trace_rs::trace;
+
+    const SPAN: fsl_foundation::Span = fsl_foundation::Span { start: 0, end: 0 };
+    const UNLIMITED: ScalarLimits = ScalarLimits {
+        integer_bits: u64::MAX,
+        decimal_digits: u64::MAX,
+        scale_expansion: u64::MAX,
+        text_input_bytes: u64::MAX,
+        text_scalars: u64::MAX,
+        normalized_scalars: u64::MAX,
+        unit_edges: u64::MAX,
+        value_occurrences: u64::MAX,
+        work_units: u64::MAX,
+        result_units: u64::MAX,
+    };
+
+    fn package() -> fsl_package::CheckedPackage {
+        let integer = TypeForm::builtin(fsl_forms::BuiltinType::Integer, SPAN);
+        let mut declarations = PackageDeclarations::new(
+            fsl_semantics::check::fixture_source(),
+            "bare-call-test".to_owned(),
+            fsl_foundation::IdentityLimits::default(),
+        );
+        declarations.functions.push(FunctionDeclaration::new(
+            "one",
+            vec![("a".to_owned(), integer.clone())],
+            integer,
+            None,
+            Expression::name("a".to_owned()),
+        ));
+        fsl_package::CheckedPackage::link(
+            declarations
+                .check(CheckMode::Linked, CheckingLimits::default())
+                .expect("the identity function checks"),
+        )
+    }
+
+    fn completed_integer(evaluation: Evaluation) -> Integer {
+        match evaluation.outcome {
+            FamilyOutcome::Evaluated(Outcome::Completed(Value::Integer(value))) => value,
+            other => panic!("expected a completed integer call, got {other:?}"),
+        }
+    }
+
+    /// FR-531/FR-945: a call through a bytes-only package returns the same
+    /// value and work usage as the checked package, including observation.
+    #[trace("FR-531-AC-1", "FR-945-AC-1")]
+    #[test]
+    fn call_matches_the_checked_package_from_admitted_bytes() {
+        let source = package();
+        let models = fsl_semantics::model::intake::package_input(std::iter::empty::<&[u8]>())
+            .expect("the package selects no models");
+        let read = fsl_package::read_evaluation_package(
+            &source,
+            fsl_semantics::library::LibraryName::new("bare-call-test")
+                .expect("library identity"),
+            &models,
+            fsl_package::V2ReadLimits::fixture(),
+            fsl_package::EmitLimits::fixture(),
+        )
+        .expect("the package emits and its bytes are admitted");
+        let admitted = read.admitted();
+        let mut rows_budget = fsl_package::V2ReadLimits::fixture().native_join_budget();
+        let rows = read
+            .emission()
+            .identity_rows(admitted, &mut rows_budget)
+            .expect("identity rows join the package");
+        let mut join_budget = fsl_package::V2ReadLimits::fixture().native_join_budget();
+        let bare = BarePackage::new(admitted)
+            .with_supply(
+                fsl_package::BareSupply {
+                    identities: &rows,
+                    equality: None,
+                },
+                &mut join_budget,
+            )
+            .expect("the bytes view admits its supply");
+        let function = QualifiedName::unqualified("one").expect("function name");
+        let objects = ObjectEnvironment::default();
+        let argument = Value::Integer(Integer::from(17_i64));
+        let mut source_meter = Meter::new(UNLIMITED);
+        let source_result = source
+            .call(
+                &function,
+                vec![argument.clone()],
+                &objects,
+                &mut source_meter,
+            )
+            .expect("source call evaluates");
+        let mut bare_meter = Meter::new(UNLIMITED);
+        let bare_result = bare
+            .call(&function, vec![argument], &objects, &mut bare_meter)
+            .expect("bytes call evaluates");
+        let source_value = completed_integer(source_result);
+        let bare_value = completed_integer(bare_result);
+        assert_eq!(source_value, bare_value);
+        assert_eq!(
+            source_meter.consumed(LimitKind::WorkUnits),
+            bare_meter.consumed(LimitKind::WorkUnits)
+        );
+
+        let mut observed_meter = Meter::new(UNLIMITED);
+        let observed = bare.call_observing_applications(
+            &function,
+            vec![Value::Integer(Integer::from(17_i64))],
+            &objects,
+            &mut observed_meter,
+            ApplicationObservationOptions {
+                function_case_limit: 10,
+                max_events: 32,
+                max_size_requests: 32,
+            },
+        );
+        let observed_value = completed_integer(
+            observed
+                .evaluation
+                .expect("observed bytes call evaluates"),
+        );
+        assert_eq!(observed_value, Integer::from(17_i64));
+        assert_eq!(observed.function_evaluations, 1);
+        assert_eq!(
+            observed_meter.consumed(LimitKind::WorkUnits),
+            bare_meter.consumed(LimitKind::WorkUnits)
+        );
+    }
+}
