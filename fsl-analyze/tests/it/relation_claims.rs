@@ -144,7 +144,7 @@ fn a_holding_relation_is_checked_over_reachable_transition_tuples() {
     let ModelRelationOutcome::Holds { stats } = outcome else {
         panic!("the relation holds: {outcome:?}");
     };
-    assert_eq!(stats.transitions, 4);
+    assert_eq!(stats.transitions, 8);
     assert_eq!(stats.relation_tuples, 64);
 }
 
