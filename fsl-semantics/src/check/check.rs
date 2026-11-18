@@ -100,7 +100,7 @@ use filament_semantic_value::location::{
 use filament_semantic_value::quantity::UnitTable;
 use filament_semantic_value::quantity::{
     check_comparable, evaluate_quantity_unit, result_unit, IdentifiedUnit, QuantityOperation,
-    QuantityRefusal, UnitOperation, UnitScope,
+    QuantityRefusal, QuantityUnit, UnitOperation, UnitScope,
 };
 use fsl_forms::{
     Accumulation, BinaryOperator, BinderQuery, ClauseKind, ExprId, ExprNode, ExprRef,
@@ -494,7 +494,8 @@ pub struct PackageDeclarations {
     /// FR-098-AC-34: the mode a replay recompile checks a named function body
     /// under, by function name, overriding the requested mode. A declared
     /// clause function is checked `Linked` whatever this holds.
-    pub function_modes: std::collections::BTreeMap<String, filament_semantic_value::checking::CheckMode>,
+    pub function_modes:
+        std::collections::BTreeMap<String, filament_semantic_value::checking::CheckMode>,
     /// Resolved signatures standing in for some `functions` entries' own
     /// type forms; see [`ResolvedSignatures`].
     pub resolved_signatures: ResolvedSignatures,
@@ -2603,6 +2604,15 @@ fn uncarried_quantity_unit(value_type: &ValueType) -> Option<&filament_exact::Un
     }
 }
 
+/// Exact scalar operands that preserve the explicitly written quantity unit
+/// under FR-142 quantity scaling.
+fn is_exact_quantity_factor(value_type: &ValueType) -> bool {
+    matches!(
+        value_type,
+        ValueType::Integer | ValueType::Int(_) | ValueType::Rational(_) | ValueType::Decimal(_)
+    )
+}
+
 fn ineligible(location: &Location) -> CheckRefusal {
     CheckRefusal::ill_typed(location, IllTypedCause::OperatorIneligible)
 }
@@ -4133,6 +4143,40 @@ impl<'a> Typer<'a> {
         let (left_type, right_type) = (left.value_type.clone(), right.value_type.clone());
         let (left_box, right_box) = (self.push(left), self.push(right));
         let (kind, value_type) = match (&left_type, &right_type, operator) {
+            (ValueType::Quantity(unit), factor, ArithmeticOperator::Multiply)
+                if is_exact_quantity_factor(factor) =>
+            {
+                let Some(quantity_unit) = self.units.get(unit.clone()) else {
+                    return Err(mismatch(location));
+                };
+                if matches!(quantity_unit, QuantityUnit::Declared(unit) if unit.is_affine()) {
+                    return Err(mismatch(location));
+                }
+                (
+                    NodeKind::QuantityScale {
+                        quantity: left_box,
+                        factor: right_box,
+                    },
+                    ValueType::Quantity(unit.clone()),
+                )
+            }
+            (factor, ValueType::Quantity(unit), ArithmeticOperator::Multiply)
+                if is_exact_quantity_factor(factor) =>
+            {
+                let Some(quantity_unit) = self.units.get(unit.clone()) else {
+                    return Err(mismatch(location));
+                };
+                if matches!(quantity_unit, QuantityUnit::Declared(unit) if unit.is_affine()) {
+                    return Err(mismatch(location));
+                }
+                (
+                    NodeKind::QuantityScale {
+                        quantity: right_box,
+                        factor: left_box,
+                    },
+                    ValueType::Quantity(unit.clone()),
+                )
+            }
             (l, r, ArithmeticOperator::Divide) if is_integer(l) && is_integer(r) => {
                 if !self.complete_value {
                     return Err(refuse(
@@ -4410,9 +4454,7 @@ impl<'a> Typer<'a> {
             | ValueType::Uuid
             | ValueType::String
             | ValueType::Timestamp => return Err(mismatch(&location.child(0))),
-            ValueType::Bytes | ValueType::JsonObject => {
-                return Err(mismatch(&location.child(0)))
-            }
+            ValueType::Bytes | ValueType::JsonObject => return Err(mismatch(&location.child(0))),
             // FR-497-AC-2: a carried quantity is no operand of unary `-`.
             ValueType::CarriedQuantity(_) => return Err(mismatch(location)),
         };
