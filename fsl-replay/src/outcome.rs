@@ -3757,7 +3757,7 @@ mod tests {
                 TerminalValue::Inconclusive(InconclusiveCause::ScalarAgrees(
                     crate::scalar::ScalarAgreement::new(
                         crate::scalar::ScalarClaim::Function(Box::new(crate::ValueIdentity {
-                            obligation: crate::identity::ObligationIdentity::new(
+                            obligation: fsl_package::ObligationIdentity::new(
                                 crate::fixture_node(1),
                                 None,
                                 0,
