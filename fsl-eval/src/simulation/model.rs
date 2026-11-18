@@ -61,7 +61,7 @@ use fsl_semantics::model::state::{ModelState, StateField, StateModel};
 use quire_canonical::Limits as CanonicalLimits;
 
 use crate::model_subject::ModelInstance;
-use crate::simulation::expansion::{Expansion, ExpansionStop};
+use crate::simulation::expansion::{Expansion, ExpansionStop, StateFindings};
 use crate::simulation::explore::{explore_request, Exploration, Limits, TransitionSystem};
 use crate::simulation::footprint::{Footprint, Location};
 use crate::simulation::not_simulated::NotSimulated;
@@ -71,9 +71,7 @@ use crate::simulation::reduction::{
     ConstraintValue, OfferedReductions, Permutation, SymmetryGroup,
 };
 use crate::simulation::sample::{sample_request, sample_request_until, SampleRequest};
-use crate::simulation::trace::{
-    replay, ReplayError, SampleProvenance, StateFindings, Step, StopReason, Trace,
-};
+use crate::simulation::trace::{replay, ReplayError, SampleProvenance, Step, StopReason, Trace};
 use crate::value::QualifiedName;
 
 pub(crate) use application::{FirstApplication, Observed, ObservedIdentities, OperationRef};
