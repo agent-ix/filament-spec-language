@@ -495,13 +495,18 @@ fn a_claim_with_a_formula_is_decided_over_the_replayed_behaviour() {
 /// still declines at position 0.
 #[trace("TC-2965", "FR-941-AC-5")]
 #[test]
-#[ignore = "QSL-2272: spec gap - fsl analyze checks packages in Linked mode, which refuses every protocol expression that can be undefined (unproved-nonzero, expression-form), so FR-941-AC-5 has no authorable fixture through the CLI"]
+#[ignore = "QSL-2272: spec gap - fsl analyze checks authored source in Linked mode only (a function body's mode comes from a package's recorded check_mode, read by replay requests, or the in-process CheckMode API), so a Kernel function q(x) = 6 mod x is refused unproved-nonzero and FR-941-AC-5 has no authorable CLI fixture"]
 fn an_undefined_protocol_expression_refutes_at_its_state() {
     let steps = order_steps(&[StepKind::Send, StepKind::Receive, StepKind::Finish]);
-    let undefined_got = order_protocol(true).replacen(
-        "receive Got via Order of Placed as (got: Ack) { true }",
-        "receive Got via Order of Placed as (got: Ack) { 6 mod (2 - k.r1) >= 0 }",
-        1,
+    let undefined_got = format!(
+        "function q using v(x: Integer): Integer pure {{ 6 mod x }}\n{}",
+        order_protocol(true)
+            .replacen("role Buyer on M::Cell;", "capture c: Integer = 0;\nrole Buyer on M::Cell;", 1)
+            .replacen(
+                "receive Got via Order of Placed as (got: Ack) { true }",
+                "receive Got via Order of Placed as (got: Ack) { q(c) = 0 }",
+                1,
+            )
     );
 
     let refuted_at_one = |item: &Value| {
