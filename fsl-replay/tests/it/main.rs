@@ -35,6 +35,7 @@ mod refinement_ring;
 mod refinement_smt;
 mod refinement_step;
 mod refinement_unmapped;
+mod replay_result_rows;
 #[path = "../../../tests/support/ring_world.rs"]
 mod ring_world;
 mod run_axes;

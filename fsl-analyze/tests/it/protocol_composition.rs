@@ -382,3 +382,165 @@ fn a_supplied_trace_over_a_symbolic_capacity_requires_a_bound() {
         "{item}"
     );
 }
+
+/// [`replay_item`] over the protocol unit body `body` in place of the order
+/// fixture.
+fn replay_item_over(identity: &str, body: &str, trace: &Value) -> crate::analyze_cli_support::Run {
+    let ws = Workspace::new(&format!("protocol-trace-over-{identity}"));
+    let path = litmus_request(
+        &ws,
+        body,
+        json!({"items": [{"claim": "Flow", "kind": "finite-replay",
+            "trace": {"authority": "test", "identity": identity}}]}),
+    );
+    ws.write("trace.json", trace.to_string().as_bytes());
+    let mut document: Value =
+        serde_json::from_slice(&std::fs::read(&path).expect("request")).expect("json");
+    document["request"]["documents"]
+        .as_array_mut()
+        .expect("documents")
+        .push(json!({"file": "trace.json"}));
+    ws.write("analyze.json", document.to_string().as_bytes());
+    analyze(&path)
+}
+
+/// The order fixture requiring the temporal clauses `clauses`, each a
+/// `(name, formula)` over `k: M::Core` under the infinite-trace profile,
+/// in `requires` order.
+fn order_requiring(clauses: &[(&str, &str)]) -> String {
+    let mut declarations = String::new();
+    let mut requirements = String::new();
+    for (name, formula) in clauses {
+        declarations.push_str(&format!(
+            "temporal {name} using t0 over (k: M::Core) clock \"model-steps\" on origin {{ {formula} }}\n"
+        ));
+        requirements.push_str(&format!("requires temporal {name};\n"));
+    }
+    let protocol = order_protocol(true).replacen(
+        "role Seller on M::Cell;\n",
+        &format!("role Seller on M::Cell;\n{requirements}"),
+        1,
+    );
+    format!("{declarations}{protocol}")
+}
+
+/// FR-941-AC-4: a protocol clause that requires temporal clauses is decided
+/// over the replayed behaviour by the one temporal evaluator, reporting the
+/// deciding clause's FSpec FR-352 disposition: `holds` proves, `violated`
+/// and `undefined` refute with a replayed counterexample, `pending` is
+/// inconclusive with exit 0, and the first refuting requirement decides.
+#[trace("TC-2965", "FR-941-AC-4")]
+#[test]
+#[ignore = "QSL-2272: finite-replay of a protocol clause with required temporal clauses not implemented yet"]
+fn a_claim_with_a_formula_is_decided_over_the_replayed_behaviour() {
+    let steps = order_steps(&[StepKind::Send, StepKind::Receive, StepKind::Finish]);
+    let run_with = |identity: &str, clauses: &[(&str, &str)]| {
+        replay_item_over(
+            identity,
+            &order_requiring(clauses),
+            &trace_document(identity, &steps),
+        )
+    };
+
+    let holds = run_with("formula-holds", &[("R", "eventually holds(k.r1 = k.r1)")]);
+    let item = holds.item(0);
+    assert_eq!(label(&item), "proved", "{item}");
+    assert_eq!(item["disposition"]["temporal"]["kind"], "holds", "{item}");
+    assert_eq!(item["record"]["steps"], 3, "{item}");
+
+    let violated = run_with("formula-violated", &[("R", "always holds(k.r1 != k.r1)")]);
+    let item = violated.item(0);
+    assert_eq!(label(&item), "refuted", "{item}");
+    assert_eq!(item["disposition"]["temporal"]["kind"], "violated", "{item}");
+    assert_eq!(item["disposition"]["temporal"]["position"], 0, "{item}");
+    assert_eq!(item["counterexample"]["kind"], "formula", "{item}");
+    assert_eq!(item["replay"]["reproduced"], true, "{item}");
+
+    let pending = run_with("formula-pending", &[("R", "always holds(k.r1 = k.r1)")]);
+    let item = pending.item(0);
+    assert_eq!(label(&item), "inconclusive", "{item}");
+    assert_eq!(item["disposition"]["temporal"]["kind"], "pending", "{item}");
+    assert_eq!(item["disposition"]["temporal"]["category"], "pending", "{item}");
+    assert_eq!(item["disposition"]["temporal"]["basis"], "unsettled", "{item}");
+    assert_eq!(pending.exit, 0);
+
+    let undefined = run_with(
+        "formula-undefined",
+        &[("R", "always holds(1 mod (k.r1 - k.r1) = 0)")],
+    );
+    let item = undefined.item(0);
+    assert_eq!(label(&item), "refuted", "{item}");
+    assert_eq!(item["disposition"]["temporal"]["kind"], "undefined", "{item}");
+    assert_eq!(item["record"]["cause"]["kind"], "undefined-evaluation", "{item}");
+    assert_eq!(item["record"]["cause"]["cause"], "division-by-zero", "{item}");
+    assert_eq!(item["record"]["cause"]["where"]["position"], 0, "{item}");
+
+    let first_refuting = run_with(
+        "formula-order",
+        &[
+            ("P", "always holds(k.r1 = k.r1)"),
+            ("R", "always holds(k.r1 != k.r1)"),
+        ],
+    );
+    let item = first_refuting.item(0);
+    assert_eq!(label(&item), "refuted", "{item}");
+    assert_eq!(item["disposition"]["temporal"]["kind"], "violated", "{item}");
+}
+
+/// FR-941-AC-5: a protocol expression undefined at a replayed state refutes
+/// the item there, cause `undefined-evaluation` with locus `protocol`, with
+/// a replayed counterexample, before a later stale step; a stale first step
+/// still declines at position 0.
+#[trace("TC-2965", "FR-941-AC-5")]
+#[test]
+#[ignore = "QSL-2272: refuting a finite-replay item at an undefined protocol step not implemented yet"]
+fn an_undefined_protocol_expression_refutes_at_its_state() {
+    let steps = order_steps(&[StepKind::Send, StepKind::Receive, StepKind::Finish]);
+    let undefined_got = order_protocol(true).replacen(
+        "receive Got via Order of Placed as (got: Ack) { true }",
+        "receive Got via Order of Placed as (got: Ack) { 1 mod (k.r1 - k.r1) = 0 }",
+        1,
+    );
+
+    let refuted_at_one = |item: &Value| {
+        assert_eq!(label(item), "refuted", "{item}");
+        let cause = &item["record"]["cause"];
+        assert_eq!(cause["kind"], "undefined-evaluation", "{item}");
+        assert_eq!(cause["where"]["position"], 1, "{item}");
+        assert_eq!(cause["where"]["locus"], "protocol", "{item}");
+        assert_eq!(cause["cause"], "division-by-zero", "{item}");
+    };
+
+    let run = replay_item_over(
+        "undefined-step",
+        &undefined_got,
+        &trace_document("undefined-step", &steps),
+    );
+    let item = run.item(0);
+    refuted_at_one(&item);
+    assert_eq!(
+        item["counterexample"]["prefix"].as_array().map(Vec::len),
+        Some(1),
+        "{item}"
+    );
+    assert_eq!(item["replay"]["reproduced"], true, "{item}");
+
+    let mut moved = steps.clone();
+    moved[2]["post_state"]["key"] = json!("AAAA");
+    let run = replay_item_over(
+        "undefined-before-stale",
+        &undefined_got,
+        &trace_document("undefined-before-stale", &moved),
+    );
+    refuted_at_one(&run.item(0));
+
+    let run = replay_item_over(
+        "undefined-stale-first",
+        &undefined_got,
+        &trace_document("undefined-stale-first", &steps[1..]),
+    );
+    let item = run.item(0);
+    assert_eq!(label(&item), "declined", "{item}");
+    assert_eq!(item["record"]["diagnostic"]["cause"], "invalid-value", "{item}");
+    assert_eq!(item["record"]["diagnostic"]["detail"]["position"], 0, "{item}");
+}
