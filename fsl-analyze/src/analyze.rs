@@ -81,7 +81,10 @@ use fsl_semantics::model::observation::{
 pub use crate::contract_check::contract_item;
 pub use crate::value_check::value_item;
 pub(crate) use clause_item::{replay_protocol_over, ProtocolReplayInputs, ReplayShape};
-pub use clause_item::{ClauseItemRefusal, ClauseLimits, ClauseSubject, CLAUSE_TRANSCRIPT};
+pub use clause_item::{
+    ClauseItemRefusal, ClauseLimits, ClauseSubject, PackageClauseSubject, CLAUSE_TRANSCRIPT,
+};
+pub use derived_item::{deadlock_model_item, PackageDeadlockSubject};
 pub(crate) use derived_item::{derived_target, NoLetters};
 pub use exact::{exact_probabilistic_item, ExactProbabilityEvidence};
 #[cfg(feature = "test-support")]
@@ -382,6 +385,28 @@ pub struct Engines {
     /// The run's provider options (FR-964), which every provider request
     /// this run sends carries.
     options: ProviderOptions,
+}
+
+/// What every item of one analyze run reads of its package (FR-531,
+/// FR-940): the checked package, and the model-check input the run builds
+/// once, which each item's model system reads instead of building its own.
+#[derive(Clone)]
+pub struct RunInput<'a> {
+    /// The checked package the run analyzes.
+    pub package: &'a fsl_package::CheckedPackage,
+    /// The model-check input every item's model system reads.
+    pub model: fsl_eval::simulation::model::ModelCheckInput<'a>,
+}
+
+impl<'a> RunInput<'a> {
+    /// The source route's run input (FR-531): the package and the input
+    /// read from its `CheckedGraph`.
+    pub fn source(package: &'a fsl_package::CheckedPackage) -> Self {
+        Self {
+            package,
+            model: fsl_eval::simulation::model::ModelCheckInput::source(package),
+        }
+    }
 }
 
 /// FR-120's caller-supplied subject members other than the checked package.

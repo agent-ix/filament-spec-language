@@ -99,6 +99,26 @@ pub(crate) fn counter() -> Domain {
     }
 }
 
+/// The `Counter` package with no operation: its object type keeps its field
+/// and population and declares nothing a step applies, so every state of a
+/// model over it deadlocks (FR-124).
+pub(crate) fn still_counter() -> Domain {
+    let mut document: Json = serde_json::from_slice(&crate::counter::document(false))
+        .expect("the Counter document is JSON");
+    for declared in document["types"]
+        .as_array_mut()
+        .expect("the document declares types")
+    {
+        if declared.get("operations").is_some() {
+            declared["operations"] = Json::Array(Vec::new());
+        }
+    }
+    Domain {
+        document: document.to_string().into_bytes(),
+        ..counter()
+    }
+}
+
 /// FR-126-AC-4's `Health` package: object `Health` with `healthy: Boolean`
 /// and `failures: Int[0, 1]`, operation `fail` modifying both and `recover`
 /// modifying `healthy`, population `systems`.
@@ -351,6 +371,34 @@ impl World {
         }
     }
 
+    /// The FR-517 handoff this world's package is written to.
+    pub(crate) fn handoff(&self) -> WorldHandoff {
+        let emission = fsl_package::emit_checked(&self.package, fsl_package::EmitLimits::fixture())
+            .expect("the package emits");
+        let bytes = emission.package().bytes().to_vec();
+        let admitted = fsl_package::admit_checked_package(
+            &bytes,
+            &self.packages,
+            fsl_package::V2ReadLimits::fixture(),
+        )
+        .expect("the strict reader admits the bytes");
+        let mut budget = fsl_package::V2ReadLimits::fixture().native_join_budget();
+        let identities = emission
+            .identity_rows(&admitted, &mut budget)
+            .expect("the identity rows");
+        let equality = emission
+            .equality_witness(&admitted, &mut budget)
+            .expect("the equality rows");
+        WorldHandoff {
+            identity_bytes: identities.to_bytes(&admitted).expect("identities.json"),
+            equality_bytes: equality.to_bytes(&admitted).expect("equality.json"),
+            bytes,
+            admitted,
+            identities,
+            equality,
+        }
+    }
+
     /// The bytes of each provisioned snapshot, by label.
     pub(crate) fn snapshot_bytes(
         &self,
@@ -531,5 +579,40 @@ impl ModelLetters for Letters {
 
     fn activation_reads(&self) -> crate::units::Reads {
         self.guard_reads.clone()
+    }
+}
+
+/// The FR-517 handoff a [`World`]'s package is written to: the package
+/// bytes, their strict read-back, and the identity and equality rows with
+/// the bytes of `identities.json` and `equality.json`.
+pub(crate) struct WorldHandoff {
+    pub(crate) bytes: Vec<u8>,
+    admitted: fsl_package::CheckedPackageV2,
+    identities: fsl_package::ReadIdentityRows,
+    equality: fsl_package::ReadEqualityRows,
+    identity_bytes: Vec<u8>,
+    equality_bytes: Vec<u8>,
+}
+
+impl WorldHandoff {
+    /// The admitted package with the handoff's rows attached.
+    pub(crate) fn bare(&self) -> fsl_package::BarePackage<'_> {
+        fsl_package::BarePackage::new(&self.admitted)
+            .with_supply(
+                fsl_package::BareSupply {
+                    identities: &self.identities,
+                    equality: Some(&self.equality),
+                },
+                &mut fsl_package::V2ReadLimits::fixture().native_join_budget(),
+            )
+            .expect("the supply joins")
+    }
+
+    /// The handoff's identity and equality file bytes.
+    pub(crate) fn supply(&self) -> fsl_replay::HandoffSupply<'_> {
+        fsl_replay::HandoffSupply {
+            identities: &self.identity_bytes,
+            equality: Some(&self.equality_bytes),
+        }
     }
 }

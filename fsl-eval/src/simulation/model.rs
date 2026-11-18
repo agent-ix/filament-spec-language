@@ -26,7 +26,8 @@ mod footprints;
 mod frames;
 mod input;
 pub use input::{
-    ModelCheckInput, ModelEvaluator, PackageModelInput, PendingPackageForm, StateClauseEntry,
+    ModelCheckInput, ModelEvaluator, PackageModelInput, PendingClauseForm, PendingPackageForm,
+    StateClauseEntry,
 };
 mod key_budget;
 mod letters;
@@ -175,6 +176,12 @@ impl<'a> ModelSimulationRequest<'a> {
     /// package form yet; `None` on the package route.
     pub fn source_package(&self) -> Option<&'a CheckedPackage> {
         self.input.source_package()
+    }
+
+    /// The admitted package the request is over on the package route
+    /// (FR-940); `None` on the source route.
+    pub fn admitted_package(&self) -> Option<&'a fsl_package::CheckedPackageV2> {
+        self.input.admitted_package()
     }
 }
 
@@ -758,13 +765,6 @@ impl<'a> ModelSystem<'a> {
         let types = input.types;
         let only = selections.selections();
         let model = StateModel::new(selections, types, request.packages, request.normalization)?;
-        if !input.operations_read && model.declares_operations() {
-            return Err(refused(
-                Code::UnknownRequiredFeature,
-                "unsupported-feature",
-                &[("form", "operation".to_owned())],
-            ));
-        }
         let populations = model.populations();
 
         let mut universes = BTreeMap::new();

@@ -11,7 +11,9 @@
 
 use filament_semantic_value::catalog::{CatalogCode, InternalFault};
 use fsl_eval::model_subject::{ModelInstance, ModelLetters, ProtocolSubject};
-use fsl_eval::simulation::model::{ExpansionLimits, ModelSimulationRequest, ModelSystem};
+use fsl_eval::simulation::model::{
+    ExpansionLimits, ModelCheckInput, ModelSimulationRequest, ModelSystem,
+};
 use fsl_eval::simulation::protocol::{classify_accesses, ProtocolTransition, ResolvedMemory};
 use fsl_foundation::source::provenance::OccurrenceKey;
 use fsl_foundation::RequestIndex;
@@ -69,13 +71,13 @@ fn over_instance(binding: &SubjectBinding<'_>, over: &(String, String)) -> Model
 }
 
 fn simulation<'a>(
-    package: &'a CheckedPackage,
+    input: &ModelCheckInput<'a>,
     binding: &SubjectBinding<'a>,
     limits: &AnalyzeLimits,
     max_candidates: u64,
 ) -> ModelSimulationRequest<'a> {
     ModelSimulationRequest {
-        input: fsl_eval::simulation::model::ModelCheckInput::source(package),
+        input: input.clone(),
         packages: binding.packages,
         normalization: limits.normalization,
         snapshots: binding.snapshots,
@@ -90,6 +92,7 @@ fn simulation<'a>(
 
 fn subject_of<'a>(
     package: &'a CheckedPackage,
+    input: &ModelCheckInput<'a>,
     binding: &SubjectBinding<'a>,
     limits: &AnalyzeLimits,
     max_candidates: u64,
@@ -99,6 +102,7 @@ fn subject_of<'a>(
     protocol_subject(
         SubjectPackage {
             package,
+            input: input.clone(),
             packages: binding.packages,
             snapshots: binding.snapshots,
         },
@@ -139,7 +143,7 @@ pub(super) fn has_non_atomic_access(
         return false;
     };
     let Ok(model) = ModelSystem::new(simulation(
-        package,
+        &ModelCheckInput::source(package),
         binding,
         limits,
         super::clause_item::DEFAULT_MAX_CANDIDATES,
@@ -155,7 +159,7 @@ pub(super) fn has_non_atomic_access(
 /// derived item `form.item_kind` names anchored there. `None` when the
 /// package holds neither.
 pub(super) fn protocol_clause_item<'a>(
-    package: &'a CheckedPackage,
+    analysis: &super::RunInput<'a>,
     binding: &SubjectBinding<'a>,
     limits: AnalyzeLimits,
     provision: &'a SourceProvision,
@@ -163,6 +167,7 @@ pub(super) fn protocol_clause_item<'a>(
     index: RequestIndex,
     form: &TemporalItem,
 ) -> Option<AnalyzeItem<'a>> {
+    let (package, input) = (analysis.package, &analysis.model);
     let protocol = form.protocol.as_ref()?;
     let node: Option<&'a TemporalClauseNode> =
         match form.item_kind {
@@ -179,11 +184,12 @@ pub(super) fn protocol_clause_item<'a>(
     }
     let family = claim_family(package, form.item_kind, claim);
     let anchored = claim_for(node, claim);
-    let (binding, form, protocol, claim) = (
+    let (binding, form, protocol, claim, input) = (
         binding.clone(),
         form.clone(),
         protocol.clone(),
         claim.clone(),
+        input.clone(),
     );
     Some(
         AnalyzeItem::new(
@@ -215,7 +221,15 @@ pub(super) fn protocol_clause_item<'a>(
                 }
                 let over = over_instance(&binding, &(population, key));
                 let subject = |max_candidates| {
-                    subject_of(package, &binding, &limits, max_candidates, &protocol, &over)
+                    subject_of(
+                        package,
+                        &input,
+                        &binding,
+                        &limits,
+                        max_candidates,
+                        &protocol,
+                        &over,
+                    )
                 };
                 let refused = |refusal: &SubjectRefusal| {
                     EngineReport::Refused(match refusal {
@@ -242,7 +256,7 @@ pub(super) fn protocol_clause_item<'a>(
                         (Err(refusal), _) | (_, Err(refusal)) => return refused(&refusal),
                     };
                 let system = match ModelSystem::new(simulation(
-                    package,
+                    &input,
                     &binding,
                     &limits,
                     form.max_candidates,

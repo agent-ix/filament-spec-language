@@ -50,19 +50,20 @@ pub(super) fn refinement_at<'p>(
 /// keyed there. A protocol abstract side is FR-147's arm, which this item
 /// does not build.
 pub(super) fn refinement_item<'a>(
-    package: &'a CheckedPackage,
+    analysis: &super::RunInput<'a>,
     binding: &SubjectBinding<'a>,
     limits: AnalyzeLimits,
     claim: &OccurrenceKey,
     index: RequestIndex,
     form: &TemporalItem,
 ) -> Option<AnalyzeItem<'a>> {
+    let (package, input) = (analysis.package, &analysis.model);
     let refinement = refinement_at(package, claim)?;
     if !matches!(refinement.abstract_side(), AbstractSide::Model) {
         return None;
     }
     let concrete = ModelSimulationRequest {
-        input: fsl_eval::simulation::model::ModelCheckInput::source(package),
+        input: input.clone(),
         packages: binding.packages,
         normalization: limits.normalization,
         snapshots: binding.snapshots,

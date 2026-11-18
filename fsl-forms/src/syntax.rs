@@ -3933,6 +3933,13 @@ impl TemporalNodeId {
     pub fn index(self) -> usize {
         self.0
     }
+
+    /// The id of the node at arena `index` of a formula a checked package
+    /// carries (FR-940): the package form of a clause names its operators
+    /// by the arena position the source form gives them.
+    pub const fn from_index(index: usize) -> Self {
+        Self(index)
+    }
 }
 
 /// An expression with the span of each of its nodes: a `holds(e)` operand,
