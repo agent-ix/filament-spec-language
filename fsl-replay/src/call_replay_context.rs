@@ -275,14 +275,13 @@ mod tests {
         )
         .expect("selects")
         .into_value();
-        let function_modes = BTreeMap::from([("q".to_owned(), CheckMode::Kernel)]);
         let checked = spine::check_units_with_options(
             &admitted,
             "fixture".to_owned(),
             &models,
             &dependencies,
             spine::UnitCheckOptions {
-                function_modes: Some(&function_modes),
+                check_mode: Some(CheckMode::Kernel),
                 ..spine::UnitCheckOptions::default()
             },
             limits.spine,
@@ -448,10 +447,10 @@ mod tests {
     #[trace("TC-1173", "FR-404-AC-3")]
     #[test]
     fn a_member_request_carries_the_process_provider_identity() {
-        let source = SOURCE.replace(
-            "function q using v(x: Int[0, 9]): Integer pure { x + 1 }",
-            "function q using v(x: Integer): Integer pure { 6 mod x }",
-        );
+        let source = "language \"ix:native\" edition \"1-draft\";\n\
+            profile v = \"filament.value.complete/v1\";\n\
+            function q using v(x: Integer): Integer pure { 6 mod x }\n"
+            .to_owned();
         let call = Call {
             clocks: Default::default(),
             wire_arguments: Vec::new(),
