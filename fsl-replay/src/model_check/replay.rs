@@ -2078,8 +2078,26 @@ pub fn behaviour_valuations(
                 };
                 match fsl_eval::temporal::letters_valuation(clause, &mut replayed, trace, meter) {
                     Ok(valuation) => {
-                        traces.push(valuation);
-                        std::ops::ControlFlow::Continue(())
+                        // A meter stop inside the evaluator is an
+                        // `Incomplete` activation, not a verdict: the
+                        // work budget ended the enumeration there.
+                        let stopped = valuation.activations.iter().find_map(
+                            |(_, outcome)| match outcome {
+                                TemporalOutcome::Incomplete(incomplete) => Some(incomplete.clone()),
+                                _ => None,
+                            },
+                        );
+                        match stopped {
+                            Some(incomplete) => std::ops::ControlFlow::Break(
+                                fsl_eval::temporal::ValuationStop::Letter(LetterStop::Incomplete(
+                                    incomplete,
+                                )),
+                            ),
+                            None => {
+                                traces.push(valuation);
+                                std::ops::ControlFlow::Continue(())
+                            }
+                        }
                     }
                     Err(stop) => std::ops::ControlFlow::Break(stop),
                 }

@@ -1406,6 +1406,21 @@ fn snapshot_of(directory: &Path, keys: &[&str], complete: bool) -> Value {
 /// object's modified field, so two objects over `Int[0, 1000]` give 1001^2
 /// candidates per application, past the default `max_candidates`.
 fn cross_from(unit: &str, keys: &[&str], complete: bool, max_steps: u64) -> (u8, Value) {
+    let directory = bump_directory(unit, keys, complete);
+    write_request(
+        directory.path(),
+        &json!({"format": "native-run/1", "request": {
+            "models": [{"format": "semantic-ir/2.0.0",
+                "source": source("spine-model.semantic-ir.json")}],
+            "program": {"source": source("unit.native")},
+            "tl_lowering": {"clause": "Low",
+                "cross_evaluate": {"initial": "s.json", "max_steps": max_steps}}}}),
+    )
+}
+
+/// The spine files with the model narrowed to `versionNumber: Int[0, 3]`,
+/// `unit` as `unit.native` and `snapshot_of(keys, complete)` as `s.json`.
+fn bump_directory(unit: &str, keys: &[&str], complete: bool) -> tempfile::TempDir {
     let directory = tempfile::tempdir().unwrap();
     spine::write(directory.path(), Case::Healthy).unwrap();
     let model = directory.path().join("spine-model.semantic-ir.json");
@@ -1421,15 +1436,78 @@ fn cross_from(unit: &str, keys: &[&str], complete: bool, max_steps: u64) -> (u8,
     )
     .unwrap();
     std::fs::write(directory.path().join("unit.native"), unit).unwrap();
-    write_request(
-        directory.path(),
-        &json!({"format": "native-run/1", "request": {
-            "models": [{"format": "semantic-ir/2.0.0",
-                "source": source("spine-model.semantic-ir.json")}],
-            "program": {"source": source("unit.native")},
-            "tl_lowering": {"clause": "Low",
-                "cross_evaluate": {"initial": "s.json", "max_steps": max_steps}}}}),
-    )
+    directory
+}
+
+/// FR-931 "Cross-evaluation": a work-budget stop during enumeration reports
+/// the counts reached and exits 22, never a correspondence loss (exit 30),
+/// wherever the budget runs out: at an expansion, inside the subject's own
+/// clause evaluation, or inside the native evaluator of a trace. The
+/// request has no budget member, so the run is driven through the library
+/// entry (`run_temporal_behaviours`, `tl_record`) under each `work_units`
+/// bound up to one that completes.
+#[test]
+#[trace("TC-2962", "FR-931-AC-6")]
+fn a_work_budget_stop_during_enumeration_exits_incomplete() {
+    let unit = bump_low();
+    let directory = bump_directory(&unit, &["a", "b"], true);
+    let request = json!({"format": "native-run/1", "request": {
+        "models": [{"format": "semantic-ir/2.0.0",
+            "source": source("spine-model.semantic-ir.json")}],
+        "program": {"source": source("unit.native")},
+        "clause": {"selection": {"temporal": {"name": "Low", "trace": {"finite": []}}},
+            "observations": {"initial": "s.json"}}}});
+    let path = directory.path().join("budget.json");
+    std::fs::write(&path, request.to_string()).unwrap();
+    let run = |work_units: u64| {
+        let mut clause_run =
+            fsl_command::command::read_clause_run_request(&path).expect("a clause run");
+        clause_run.accounting.work_units = work_units;
+        let initial = clause_run
+            .snapshots
+            .keys()
+            .next()
+            .expect("the snapshot")
+            .clone();
+        let report = fsl_replay::spine::run_temporal_behaviours(clause_run, &initial, 2)
+            .expect("a report");
+        let fsl_replay::spine::ClauseDisposition::TemporalValuation(valuation) =
+            &report.disposition
+        else {
+            panic!("a valuation: {:?}", report.disposition);
+        };
+        fsl_command::command::tl_record(
+            valuation,
+            &unit,
+            None,
+            &fsl_command::command::AtomMapping::default(),
+        )
+        .expect("the clause lowers")
+    };
+    let full = run(u64::MAX);
+    assert_eq!(full.exit_code, 0, "{}", full.record);
+    let complete = full.record["cross_evaluation"]["traces"].clone();
+    let mut stopped = 0;
+    let mut work_units = 1;
+    loop {
+        let record = run(work_units);
+        let cross = &record.record["cross_evaluation"];
+        assert_ne!(record.exit_code, 30, "{work_units}: {}", record.record);
+        assert_eq!(cross["faults"], json!([]), "{work_units}: {}", record.record);
+        if record.exit_code == 0 {
+            assert_eq!(cross["traces"], complete, "{}", record.record);
+            break;
+        }
+        assert_eq!(record.exit_code, 22, "{work_units}: {}", record.record);
+        assert!(
+            cross["traces"].as_u64() < complete.as_u64(),
+            "{}",
+            record.record
+        );
+        stopped += 1;
+        work_units = work_units + work_units / 8 + 1;
+    }
+    assert!(stopped > 0, "a low budget stops the enumeration");
 }
 
 /// FR-931-AC-6: from a snapshot of `a` and `b` whose model steps `bump`, the
