@@ -67,32 +67,41 @@ fn run(name: &str, bounds: &str, limits: Option<Value>) -> Run {
     analyze(&ws.write("analyze.json", request.to_string().as_bytes()))
 }
 
-/// FR-851-AC-1, AC-2: with `max_candidates` 400 the item explores to
-/// completion and reports the unlimited run's exploration, since no
-/// expansion generates more than `loseLidar`'s 301 speeds plus `sample`'s
-/// assignments; with 300 it stops on `loseLidar`'s 301 kept candidates.
+/// FR-851-AC-1, AC-2: the largest expansion is the initial state's, and it
+/// charges 630 by FR-120's one counting rule: `loseLidar`'s argument
+/// vector, its 301 speeds and one (candidate, result) pair for each, since
+/// every rover operation returns a `Boolean`; the argument vectors of
+/// `brake`, `halt` and `enterFailsafe`, whose preconditions are false; and
+/// `sample`'s 8 argument vectors, each with its one solved candidate and
+/// one pair. So with `max_candidates` 630 the item explores to completion
+/// and reports the unlimited run's exploration, with 629 it stops, and
+/// with 300 it stops on `loseLidar`'s 301 kept candidates. (FR-851-AC-2
+/// states 400, which leaves out the pairs FR-120 counts.)
 #[trace("TC-2411", "FR-851-AC-1")]
 #[trace("TC-2411", "FR-851-AC-2")]
 #[test]
 fn bounded_fields_are_enumerated_inside_their_postcondition_interval() {
     let unlimited = run("bounded-unlimited", LOSE_LIDAR_BOUNDS, None);
     let narrowed = run(
-        "bounded-400",
+        "bounded-630",
         LOSE_LIDAR_BOUNDS,
-        Some(json!({"max_candidates": 400})),
+        Some(json!({"max_candidates": 630})),
     );
     assert_eq!(label(&narrowed.item(0)), "proved", "{}", narrowed.item(0));
     assert_eq!(
         narrowed.item(0)["exploration"],
         unlimited.item(0)["exploration"]
     );
-    let short = run(
-        "bounded-300",
-        LOSE_LIDAR_BOUNDS,
-        Some(json!({"max_candidates": 300})),
-    );
-    assert_eq!(label(&short.item(0)), "incomplete", "{}", short.item(0));
-    assert_eq!(short.item(0)["record"]["cause"]["limit"], "max_candidates");
+    for (name, limit) in [("bounded-629", 629), ("bounded-300", 300)] {
+        let short = run(
+            name,
+            LOSE_LIDAR_BOUNDS,
+            Some(json!({"max_candidates": limit})),
+        );
+        assert_eq!(label(&short.item(0)), "incomplete", "{}", short.item(0));
+        assert_eq!(short.item(0)["record"]["cause"]["limit"], "max_candidates");
+        assert_eq!(short.item(0)["exploration"]["states"], "1", "{name}");
+    }
 }
 
 /// FR-851-AC-3 (negative): a bound not of the `self.f op e` form, and a

@@ -25,6 +25,8 @@ use fsl_semantics::model::state::{ModelState, StateField, StateObject};
 use quire_canonical::Limits as CanonicalLimits;
 
 pub(super) mod judge;
+#[cfg(test)]
+mod narrowing_tests;
 
 use super::contracts::{conjunction, Conjunction};
 use super::domain::{Domain, Odometer};
@@ -853,11 +855,12 @@ impl Run<'_, '_, '_> {
                 created: Vec::new(),
                 deleted: Vec::new(),
             };
-            let Ok(found) = self.walk.system.evaluator().evaluate_post_targets(
+            let found = self.walk.system.evaluator().evaluate_post_targets(
                 &info.qualified,
                 &observations,
                 &mut || self.walk.meter(),
-            ) else {
+            );
+            let Ok(found) = found else {
                 return Ok(None);
             };
             if found.names_result {
