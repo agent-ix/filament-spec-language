@@ -1297,9 +1297,12 @@ fn a_monitor_request_supplies_the_integer_division_law() {
         std::fs::write(
             directory.path().join("unit.native"),
             format!(
-                "{}function half using v(a: Int[0, 9]): Int[0, 9] pure {{ a div 2 }}\n\
-                 temporal Half using i over (r: Reading) clock \"steps\" on origin {{ always holds(half(r.level) < 5) }}\n",
-                unit()
+                "language \"ix:native\" edition \"1-draft\";\n\
+                 profile v = \"filament.value.complete/v1\";\n\
+                 profile i = \"filament.temporal.infinite-trace/v1\";\n\
+                 record Reading {{ level: Int[0, 9]; }}\n\
+                 function half using v(a: Int[0, 9]): Int[0, 9] pure {{ a div 2 }}\n\
+                 temporal Half using i over (r: Reading) clock \"steps\" on origin {{ always holds(half(r.level) < 5) }}\n"
             ),
         )
         .unwrap();
