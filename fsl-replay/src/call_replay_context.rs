@@ -265,25 +265,23 @@ mod tests {
         )
         .expect("parses")
         .into_value();
-        let admitted = spine::admit_parsed_unit_list(vec![parsed], &dependencies).expect("admits");
-        let models = spine::select_units(
-            &admitted,
+        let models = spine::select(
+            &parsed,
             &packages,
             limits.spine.model,
-            limits.spine.source,
             &cancel,
         )
         .expect("selects")
         .into_value();
-        let checked = spine::check_units_with_options(
-            &admitted,
+        let checked = spine::check_with_refinement_internals(
+            &parsed,
             "fixture".to_owned(),
+            spine::SourceInputs {
+                check_mode: Some(CheckMode::Kernel),
+                ..spine::SourceInputs::default()
+            },
             &models,
             &dependencies,
-            spine::UnitCheckOptions {
-                check_mode: Some(CheckMode::Kernel),
-                ..spine::UnitCheckOptions::default()
-            },
             limits.spine,
             &cancel,
         )
