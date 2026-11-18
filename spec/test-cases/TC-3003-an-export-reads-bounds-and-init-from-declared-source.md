@@ -17,11 +17,11 @@ Verify that the export takes bounds only from `bound` declarations, read through
 1. Export the spine unit with `bound HistoryBound on Config::config_history [8]` and no reachability, then without the bound.
 2. Export the spine unit's `Low` with no `initial`, then with `constraint Small` added, and `SlowEnough` over `Braking` with no `initial`.
 3. Read `CheckedGraph::population_bound` for the `config_history` entry with and without the bound.
-4. Read the `fsl:` comment preceding `TypeOK` in the bounded export.
+4. Read the `fsl:` comment before the `Cardinality` conjunct inside `TypeOK`, and the comment before `TypeOK ==`, in the bounded export.
 
 ## Expected Results
 
 - Step 1: `TypeOK` holds a `Cardinality(DOMAIN v_…) <= 8` conjunct. Without the bound, there is no `Cardinality`.
 - Step 2: `Init == TypeOK` with exit 0. With `Small` added, `Init` holds no `<= 3`. `Braking`'s `Init` names `Moving`.
 - Step 3: `None` without the bound. With the bound, `maximum` 8, label `HistoryBound` and the region of `[8]`.
-- Step 4: the comment's region is `<authority>/<identity>:<start>-<end>` over the bytes `[8]`.
+- Step 4: the conjunct's comment names `<authority>/<identity>:<start>-<end>` over the bytes `[8]`. The `TypeOK ==` comment does not name it.

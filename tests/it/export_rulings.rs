@@ -286,10 +286,18 @@ fn the_type_ok_comment_names_the_bound_region() {
         .iter()
         .position(|line| line.starts_with("TypeOK =="))
         .expect("a TypeOK definition");
-    let comment = lines[..type_ok]
+    let own = lines[type_ok - 1];
+    assert!(own.starts_with("\\* fsl: "), "the TypeOK comment: {own}");
+    assert!(!own.contains(&region), "{own} names only TypeOK's region");
+    let conjunct = lines[type_ok..]
         .iter()
-        .rev()
-        .find(|line| line.starts_with("\\* fsl: "))
-        .expect("the TypeOK comment");
+        .position(|line| line.contains("Cardinality(DOMAIN v_") && line.contains(") <= 8"))
+        .map(|offset| type_ok + offset)
+        .expect("the bound's conjunct inside TypeOK");
+    let comment = lines[conjunct - 1].trim_start();
+    assert!(
+        comment.starts_with("\\* fsl: "),
+        "the conjunct's comment: {comment}"
+    );
     assert!(comment.contains(&region), "{comment} names {region}");
 }
