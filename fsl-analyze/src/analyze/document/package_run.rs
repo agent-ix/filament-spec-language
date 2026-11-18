@@ -93,9 +93,6 @@ pub enum PendingFamily {
     /// A derived item other than a model subject's deadlock-freedom item
     /// (FSpec FR-368).
     Derived,
-    /// A derived item naming its model by an alias: the package records its
-    /// model selections by identity and carries no alias.
-    ModelAlias,
     /// A named declaration.
     Declaration,
     /// A name the package carries no row for while it holds a claim whose
@@ -118,7 +115,6 @@ impl PendingFamily {
             Self::DefaultItems => "default-items",
             Self::Simulation => "simulation",
             Self::Derived => "derived",
-            Self::ModelAlias => "model-alias",
             Self::Declaration => "declaration",
             Self::UnnamedClaim => "unnamed-claim",
             Self::ProtocolSubject => "protocol-subject",
@@ -465,7 +461,7 @@ fn resolve_names<'s>(
                         selection,
                     }),
                     (_, true, _) => Err(pending(PendingFamily::Derived)),
-                    (_, false, _) => Err(pending(PendingFamily::ModelAlias)),
+                    (_, false, _) => Ok(Named::Settled(model_alias(index, name, &models))),
                 };
             }
             if unnamed {
@@ -474,6 +470,24 @@ fn resolve_names<'s>(
             Ok(Named::Settled(unknown_claim(index, name)))
         })
         .collect()
+}
+
+/// FR-850: a derived item whose `claim` names no claim row and no model
+/// identity the package records settles `invalid-request`
+/// `invalid_capability`/`model-alias`, naming the claim and every recorded
+/// identity in model-selection order.
+fn model_alias(index: RequestIndex, name: &str, identities: &[String]) -> ResolvedItem {
+    let mut detail = Map::new();
+    detail.insert("name".to_owned(), json!(name));
+    detail.insert("identities".to_owned(), json!(identities));
+    ResolvedItem::Settled {
+        claim_name: Some(name.to_owned()),
+        record: Box::new(TerminalRecord::disposition_invalid_request(
+            index,
+            CatalogCode::new("invalid_capability", "model-alias"),
+            detail,
+        )),
+    }
 }
 
 /// What a resolved claim reads beside its name.
