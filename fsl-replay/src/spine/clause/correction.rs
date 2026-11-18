@@ -273,9 +273,7 @@ fn correction(
         format: EVIDENCE_LEDGER_FORMAT.to_owned(),
         results: Vec::new(),
     });
-    let held = ledger
-        .results
-        .binary_search_by(|entry| entry.key.cmp(key));
+    let held = ledger.results.binary_search_by(|entry| entry.key.cmp(key));
     let (lineage, superseded) = match relation.predecessor() {
         None => (0, Vec::new()),
         Some(previous) => {
