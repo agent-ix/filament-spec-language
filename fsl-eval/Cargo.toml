@@ -22,6 +22,7 @@ serde_json = "1.0.151"
 ix-trace-rs = { git = "https://github.com/agent-ix/ix-trace-rs", tag = "v0.1.2" }
 fsl-foundation = { path = "../fsl-foundation" }
 fsl-package = { path = "../fsl-package" }
+fsl-forms = { path = "../fsl-forms" }
 fsl-semantics = { path = "../fsl-semantics" }
 filament-exact = { workspace = true }
 # ADR-011 X-8: the owner of the partial-value, completeness, activation and
@@ -55,7 +56,6 @@ test-support = []
 # (`Expression`, `FunctionDeclaration`, `TypeForm`): `check` takes forms as its
 # input and fsl-semantics exposes no builder of them. Layer 2 is below this
 # crate, so the edge closes no cycle; TC-390 admits it in this table only.
-fsl-forms = { path = "../fsl-forms" }
 # FR-091-AC-13: a function compiled from source text through S1 and S2 is
 # called here.
 fsl-cst = { path = "../fsl-cst" }

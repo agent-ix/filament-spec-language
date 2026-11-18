@@ -730,7 +730,11 @@ fn an_envelope_clause_node_other_than_the_frame_refuses_before_recompiling() {
     )
     .unwrap_err();
     assert!(
-        matches!(refusal, ReplayRefusal::Recompile(_)),
+        matches!(
+            refusal,
+            ReplayRefusal::Recompile(_)
+                | ReplayRefusal::RecompileWithProtocolResults { .. }
+        ),
         "{refusal:?}"
     );
 

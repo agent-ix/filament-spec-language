@@ -17,16 +17,70 @@ use std::collections::hash_map;
 use filament_exact::{NodeKey, PathSegment};
 
 use super::temporal::stage_fault;
-use super::{Lowering, NodeContent, SemanticNode};
+use super::{Lowering, NodeContent, NodeRef, SemanticNode};
 use crate::check::family::OccurrenceRole;
 use crate::check::node_key::{BodyTerm, NodeTag};
-use crate::check::probabilistic::CheckedProbabilisticClaim;
+use crate::check::probabilistic::{CheckedProbabilisticClaim, CheckedProbabilisticModel};
 use crate::check::refusal::CheckRefusal;
 
 /// The semantic form of a probabilistic claim's node.
 const FORM: &str = "probabilistic_claim";
 
 impl Lowering<'_> {
+    /// FSpec FR-640 "Emission": root the nodes a checked random parameter or
+    /// workload refers to, so a package that emits it holds them: the model
+    /// node of each declaring type and of each workload's model type, and the
+    /// type node of each random parameter, which brings the unit of a
+    /// quantity and the variant type, with its case nodes, of an enum.
+    pub(crate) fn probabilistic_declarations(
+        &mut self,
+        model: &CheckedProbabilisticModel,
+    ) -> Result<(), CheckRefusal> {
+        for random in model.random_parameters() {
+            let at = random.declaration_location();
+            self.charge(1, &at)?;
+            if let Some(declaring) = random.operation().declaring_key() {
+                self.rooted_model_node(declaring, &at)?;
+            }
+            if let NodeRef::Admitted(key) = self.type_ref(random.value_type(), &at)? {
+                self.record_generated(key, &at);
+            }
+        }
+        for workload in model.workloads() {
+            let at = workload.declaration_location();
+            self.charge(1, &at)?;
+            for (operation, _) in workload.weights() {
+                if let Some(declaring) = operation.declaring_key() {
+                    self.rooted_model_node(declaring, &at)?;
+                }
+            }
+            if let Some(model) = workload.model_key() {
+                self.rooted_model_node(model, &at)?;
+            }
+        }
+        Ok(())
+    }
+
+    /// The model node of `declaration`, given a `generated` occurrence at
+    /// `at` when nothing else recorded one.
+    fn rooted_model_node(
+        &mut self,
+        declaration: &filament_checked::key::DeclarationKey,
+        at: &crate::check::Location,
+    ) -> Result<(), CheckRefusal> {
+        let key = self.model_node(declaration, at)?;
+        self.record_generated(key, at);
+        Ok(())
+    }
+
+    /// Give `key` a `generated` occurrence at `at` when nothing else recorded
+    /// one, which places the nodes it brings with it at the declaration.
+    fn record_generated(&mut self, key: NodeKey, at: &crate::check::Location) {
+        if !self.occurrences.has(key.clone()) {
+            self.record(key, OccurrenceRole::Generated, at.clone());
+        }
+    }
+
     /// Key and add the node of each of `claims`, recording its one `claim`
     /// occurrence at the claim's declaration. The keys are in `claims`'
     /// order.

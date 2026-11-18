@@ -19,6 +19,8 @@ relationships:
     type: depends_on
   - target: ix://agent-ix/filament-specification/FR-160
     type: depends_on
+  - target: ix://agent-ix/filament-spec-language/FR-944
+    type: references
 ---
 # FR-966: Admit interval stamps and arrival watermarks, classify late observations, and identify both in a finite-window result
 
@@ -68,6 +70,11 @@ refusal.
   visited.
 - With a nominal stamp inside its interval, the establishment margin
   `latest - t` of FR-501 is never negative.
+- Where an interval stamp is compared through filament-observation's closed
+  intervals (FR-944), it maps to quarter ticks by its flags: a closed end `c`
+  to `4c`, an open `earliest` `a` to `4a+1` and an open `latest` `b` to
+  `4b-1`, so an open end stays strictly inside the next whole tick and a
+  difference of two open ends never crosses an integer bound.
 
 ### The classified instant
 

@@ -626,6 +626,15 @@ pub enum ExprNode {
     /// Unicode scalar sequence, kept exactly, with the source spelling it was
     /// decoded from. It is always a `String`.
     String(StringLiteral),
+    /// `M::T#"key"`: an object reference whose model type is resolved later.
+    ReferenceLiteral {
+        /// The qualified object type, exactly as written.
+        type_name: NameForm,
+        /// The decoded key and its source spelling.
+        key: StringLiteral,
+        /// The quoted key token's source span, for located S3 refusals.
+        key_span: Span,
+    },
     /// A parameter, `let` or binder name, or a qualified enum member.
     Name(NameForm),
     /// `let name [: type] = value in body`.
@@ -979,6 +988,7 @@ impl ExprNode {
             | Self::DecimalValue { .. }
             | Self::Quantity(_)
             | Self::String(_)
+            | Self::ReferenceLiteral { .. }
             | Self::Name(_)
             | Self::SelfRef
             | Self::Result
@@ -1096,6 +1106,7 @@ impl ExprNode {
             | Self::DecimalValue { .. }
             | Self::Quantity(_)
             | Self::String(_)
+            | Self::ReferenceLiteral { .. }
             | Self::Name(_)
             | Self::SelfRef
             | Self::Result
@@ -1179,6 +1190,7 @@ impl ExprNode {
             | Self::DecimalValue { .. }
             | Self::Quantity(_)
             | Self::String(_)
+            | Self::ReferenceLiteral { .. }
             | Self::SelfRef
             | Self::Result
             | Self::If { .. }
@@ -1239,6 +1251,7 @@ impl ExprNode {
             | Self::DecimalValue { .. }
             | Self::Quantity(_)
             | Self::String(_)
+            | Self::ReferenceLiteral { .. }
             | Self::Name(_)
             | Self::SelfRef
             | Self::Result

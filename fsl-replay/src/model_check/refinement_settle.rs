@@ -196,6 +196,7 @@ fn settle_liveness(
             UndecidedCause::NoInstance => InconclusiveCause::NoInstance,
             UndecidedCause::MatchUndetermined => InconclusiveCause::MatchUndetermined,
             UndecidedCause::VacuousMatch => InconclusiveCause::VacuousMatch,
+            UndecidedCause::NoAdmittedBehaviour => InconclusiveCause::NoAdmittedBehaviour,
             UndecidedCause::InstanceBoundReached { bound, states } => {
                 InconclusiveCause::InstanceBoundReached {
                     bound: *bound,

@@ -1149,6 +1149,7 @@ pub(crate) fn scalar_conversion_target<'t>(
 pub(crate) fn node_children(kind: &NodeKind<NodeId>) -> Vec<NodeId> {
     match kind {
         NodeKind::Literal(_)
+        | NodeKind::ReferenceLiteral { .. }
         | NodeKind::Local(_)
         | NodeKind::ProtocolReference { .. }
         | NodeKind::PopulationObjects { .. }

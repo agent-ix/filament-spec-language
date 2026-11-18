@@ -325,6 +325,11 @@ impl World {
     }
 
     /// The workload declared `name`.
+    /// The domain packages the world's unit selects.
+    pub(crate) fn packages(&self) -> &fsl_semantics::model::intake::PackageInput {
+        &self.packages
+    }
+
     pub(crate) fn workload(&self, name: &str) -> &Workload {
         self.package
             .graph()

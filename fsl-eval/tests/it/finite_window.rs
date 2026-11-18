@@ -14,9 +14,9 @@ use filament_exact::{ChargePoint, LimitKind, Meter, ScalarLimits, Undefined};
 use fsl_eval::temporal::{
     evaluate, evaluate_finite_window, Assessment, AtomReading, Basis, CaptureReading, ClockCover,
     Containment, IndeterminateReason, LetterStop, LowerBoundary, OrderKey, ProgressClosure,
-    ProgressCompleteness, TemporalLetters, TemporalOutcome, TemporalPosition, TemporalRefusal,
-    TemporalTrace, TimestampedObservation, TimestampedTrace, UndefinedCause, Valuation, Watermark,
-    WindowClock, WindowProgress, WindowVerdict,
+    ProgressCompleteness, StampInterval, TemporalLetters, TemporalOutcome, TemporalPosition,
+    TemporalRefusal, TemporalTrace, TimestampedObservation, TimestampedTrace, UndefinedCause,
+    Valuation, Watermark, WindowClock, WindowProgress, WindowVerdict,
 };
 use fsl_semantics::check::{FormulaNode, FormulaNodeId, SCALAR_LIMITS_UNLIMITED};
 use ix_trace_rs::trace;
@@ -71,6 +71,8 @@ struct Request {
     lower: LowerBoundary,
     cover: ClockCover,
     unit: &'static str,
+    /// Each row's own interval stamp, in row order; empty when none has one.
+    intervals: Vec<Option<StampInterval>>,
 }
 
 fn request(rows: Vec<Row>, watermark: u64, complete: Option<u64>) -> Request {
@@ -85,6 +87,7 @@ fn request(rows: Vec<Row>, watermark: u64, complete: Option<u64>) -> Request {
         lower: LowerBoundary::AuthoritativeOrigin,
         cover: ClockCover::Exact,
         unit: "ms",
+        intervals: Vec::new(),
     }
 }
 
@@ -104,31 +107,48 @@ impl Request {
         self
     }
 
+    fn bounded(mut self, uncertainty: u64) -> Self {
+        self.cover = ClockCover::Bounded { uncertainty };
+        self
+    }
+
     fn admit(&self, fixture: &Fixture) -> Result<TimestampedTrace, TemporalRefusal> {
+        let progress = WindowProgress {
+            watermark: self.watermark,
+            completeness: self.complete,
+            scope: self.scope,
+            execution: self.execution,
+            lower_boundary: self.lower,
+        };
+        let clock = WindowClock {
+            unit: self.unit.to_owned(),
+            cover: self.cover,
+        };
+        let observation = |row: &Row| TimestampedObservation {
+            stamp: row.stamp,
+            order_key: row.key.map(|(authority, key)| OrderKey {
+                authority: authority.to_owned(),
+                key,
+            }),
+            observation: format!("{:?}", row.atoms),
+        };
+        if !self.intervals.is_empty() {
+            return TimestampedTrace::admit_uncertain(
+                fixture.clause.name(),
+                clock,
+                self.rows
+                    .iter()
+                    .map(observation)
+                    .zip(self.intervals.iter().copied())
+                    .collect(),
+                progress,
+            );
+        }
         TimestampedTrace::admit(
             fixture.clause.name(),
-            WindowClock {
-                unit: self.unit.to_owned(),
-                cover: self.cover,
-            },
-            self.rows
-                .iter()
-                .map(|row| TimestampedObservation {
-                    stamp: row.stamp,
-                    order_key: row.key.map(|(authority, key)| OrderKey {
-                        authority: authority.to_owned(),
-                        key,
-                    }),
-                    observation: format!("{:?}", row.atoms),
-                })
-                .collect(),
-            WindowProgress {
-                watermark: self.watermark,
-                completeness: self.complete,
-                scope: self.scope,
-                execution: self.execution,
-                lower_boundary: self.lower,
-            },
+            clock,
+            self.rows.iter().map(observation).collect(),
+            progress,
         )
     }
 }
@@ -1794,4 +1814,43 @@ fn a_carried_window_state_holds_only_the_positions_it_still_reads() {
         );
         assert!(held <= bound, "{body} held {held} positions");
     }
+}
+
+/// FR-944-AC-5 (TC-2624): under a bounded cover with interval stamps whose
+/// ends are open, the bound a doubly-open difference straddles is
+/// indeterminate (a half-tick mapping would read it as met), and an
+/// acknowledgement wholly inside the bound holds.
+#[trace("TC-2624", "FR-944-AC-5")]
+#[test]
+fn a_doubly_open_difference_straddling_the_bound_is_indeterminate() {
+    let clause = origin("holds(req) implies eventually[0,3] holds(ack)");
+    let row = |stamp, req, ack| Row {
+        stamp,
+        atoms: vec![("req", req), ("ack", ack)],
+        key: None,
+    };
+    let interval = |earliest, latest, earliest_open, latest_open| {
+        Some(StampInterval {
+            earliest,
+            latest,
+            earliest_open,
+            latest_open,
+        })
+    };
+    let with_ack = |stamp, ack_interval| {
+        let mut request =
+            request(vec![row(1, "T", "F"), row(stamp, "F", "T")], 10, Some(10)).bounded(0);
+        request.intervals = vec![interval(0, 1, true, false), ack_interval];
+        request
+    };
+    assert_eq!(
+        verdict(&clause, &with_ack(3, interval(3, 4, false, true))),
+        indeterminate(0, IndeterminateReason::StraddlesBound),
+        "an acknowledgement stamped 3 with interval [3, 4)"
+    );
+    assert_eq!(
+        verdict(&clause, &with_ack(2, interval(2, 3, false, true))),
+        WindowVerdict::Holds,
+        "an acknowledgement stamped 2 with interval [2, 3)"
+    );
 }

@@ -722,13 +722,14 @@ enforces it; before #226, §3's interim rule applies.
 | R | `route` (#185 registry and router) | candidate sets over S4 before E7; after E7, the `BackendId` of each item settled `supported`, read from the FR-331 dispositions as wire. The backend is chosen only by the `BackendId` argument. | 4, 3, F, C, SV, K |
 | tool | `complete::editor`, `complete::edit` | tooling over S1 | 1, F |
 | 6 | `replay` | the CG-facing replay facade: S1 to S4 recompile, then S6a. Its public API includes the #231 envelopes. Amended by ADR-018 LA-3: also the model-check verdict types, the `replay_model_trace` arm, the proof certificate checkers and the model-check settlement map | layers 1 to 5, F, C, E, SV, K; `filament-contract-model` for `Std001Code`, the STD-001 code type `DeclineCode::Std001` carries (ADR-013 O-16); I3 under feature `quire-extraction` |
-| A | `fsl-analyze` crate: `analyze` (the in-process engines, ADR-018's `model_check` among them) < `monitor`. Added by ADR-029 CB-3, above the qualified core. Its dependents are the root crate and the orchestrating driver; nothing in layers K to 6, R, tool or `fsl-command` depends on it | S6c; offline `monitor` | 6, 5, 4, 3, R, F, C, E, SV, K |
+| H | `fsl-hybrid-reference` crate: the first-party reference hybrid solver (FR-1019), an implementation of the `HybridProvider` trait that layer 6's `hybrid` module defines. Added by FR-1019, above the qualified core: its proofs are trusted only through the layer-6 certificate checker (FR-751), so the solver itself needs no qualification. Its dependents are layer A, which registers it through `Engine::hybrid` in `Engines::fsl_with_reference_hybrid()`, and the root crate; nothing in layers K to 6, R, tool or `fsl-command` depends on it. It sits below A because A builds the engine set that holds it, and the trait it implements lives in layer 6 for the same reason, so no edge points from H up into A | S6c by the reference hybrid provider | 6, 4, 3, F, C, SV, K |
+| A | `fsl-analyze` crate: `analyze` (the in-process engines, ADR-018's `model_check` among them) < `monitor`. Added by ADR-029 CB-3, above the qualified core. Its dependents are the root crate and the orchestrating driver; nothing in layers K to 6, R, tool or `fsl-command` depends on it | S6c; offline `monitor` | H, 6, 5, 4, 3, R, F, C, E, SV, K |
 | P | `fsl-inspect` crate: `inspect` < `render`. Added by ADR-029 §9, above the qualified core. Its dependents are the root crate and the orchestrating driver; nothing in layers K to 6, R, tool, A or `fsl-command` depends on it | typed views and their rendering | A, 6, 5, 4, 3, R, 1, F, C, E, SV, K |
 | X | `fsl-jit` crate: the JIT execution backend behind layer 5's `ExecutionBackend` seam. Added by ADR-029 EB-7, above the qualified core. Its dependents are the root crate and the orchestrating driver, which pass it to `execute`; nothing in layers K to 6, R, tool, A, P or `fsl-command` depends on it | S6a by a non-reference backend | 5, 4, 3, F, C, E, SV, K; the code-generator crate ADR-029 EB-7 selects |
 | command (outside core) | `fsl-command` crate: `formal_source` < `command`, including its one request decoder, bounded filesystem intake and native result projection | FR-027 and FR-100 request-file preparation and orchestration | 6, 3, 1, F, SV, K; `filament-contract-model` for the existing request and source-coordinate contract; `tl-syntax`, `tl-mltl` and `filament-mltl` for the temporal correspondence stage only (FR-757, FR-931); neither I3 nor quire-rs directly; never CG, A, P, X or the driver |
 | driver | the orchestrating driver crate that calls both FSL and CG, from S1 through the FR-331 terminal record (T-13, implemented by #248; #225 accepts its design). It is the crate `filament-driver` in its own repository, agent-ix/filament-driver, downstream of FSL and CG. Nothing depends on it, so the FSL and CG gates never build it. | orchestration across repositories | the FSL layer crates and CG; a separate crate downstream of CG, because CG → FSL is a normal edge and Cargo refuses a package cycle |
 
-Crate map. Layers F, 1, I3, 2, 3, 4, 5, R, A, P, X and the layer-6 `replay` facade are
+Crate map. Layers F, 1, I3, 2, 3, 4, 5, R, H, A, P, X and the layer-6 `replay` facade are
 each their own workspace crate (§7.2). K is `filament-exact` (X-1), SV is
 `filament-semantic-value` (X-11), W is `filament-walk`, an external crate in its own repository, `agent-ix/filament-walk`, C is `filament-checked`, an external crate in the repository `agent-ix/filament-eval` (X-13), and WG is `fsl-walk-grow`
 (ADR-030 FR-356). A layer
@@ -753,6 +754,7 @@ edges.
 | `fsl-eval` | 5 |
 | `fsl-route` | R |
 | `fsl-replay` | 6 (`replay`) |
+| `fsl-hybrid-reference` | H |
 | `fsl-analyze` | A |
 | `fsl-inspect` | P |
 | `fsl-jit` | X |

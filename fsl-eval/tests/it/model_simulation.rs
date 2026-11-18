@@ -37,6 +37,8 @@ use serde_json::{json, Value as Json};
 mod mbt_generate;
 #[path = "mbt_shrink.rs"]
 mod mbt_shrink;
+#[path = "model_simulation/reference_literals.rs"]
+mod reference_literals;
 
 pub(crate) const PACKAGE: &str = "test/counters";
 

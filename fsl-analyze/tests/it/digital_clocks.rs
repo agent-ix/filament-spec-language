@@ -845,7 +845,7 @@ fn a_randomized_mdp_entry_is_bounded_by_the_transition_limit() {
 #[trace("TC-2062", "FR-740-AC-3")]
 #[trace("FSpec-TC-1563", "FSpec-FR-640-AC-2")]
 #[test]
-#[ignore = "QSL-2000: delay declarations emitted as v2 probabilistic nodes not implemented yet"]
+#[ignore = "QSL-2439: delay declarations emitted as v2 probabilistic nodes not implemented yet"]
 fn discrete_delays_are_emitted_as_delay_distribution_nodes() {
     let world = with_tick(
         "delay M::Call::send ~ discrete { 1 ms: 90, 3 ms: 10 };\n",

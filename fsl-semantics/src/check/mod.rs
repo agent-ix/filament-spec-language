@@ -182,6 +182,10 @@ pub use probabilistic::{
     ProbabilisticFeature, ProbabilisticOperation, QualitativeForm, RandomParameter, ReachTarget,
     Reward, SupportValue, WeightOwner, Workload,
 };
+pub use probabilistic::{
+    PackageLiteral, PackageProbabilistic, PackageProbabilisticRefusal, PackageRandomParameter,
+    PackageSupport, PackageWeight, PackageWorkload,
+};
 pub use state_model::StateModelRefusal;
 pub use sum_case::{mint_union_member_key, ExhaustivenessObligation, SumCaseCause};
 pub use task_set::{
@@ -6233,6 +6237,11 @@ impl PackageDeclarations {
                 Err(refusal) => refusals.push(refusal),
             }
         }
+        // FSpec FR-640: the nodes each checked random parameter and
+        // workload refers to.
+        if let Err(refusal) = lowering.probabilistic_declarations(&probabilistic_model) {
+            refusals.push(refusal);
+        }
         // FR-498: each checked probabilistic claim's node.
         let lowered_probabilistic =
             match lowering.probabilistic_claims(probabilistic_model.claims()) {
@@ -6774,6 +6783,8 @@ impl PackageDeclarations {
                         scope.types(),
                         &state_clauses,
                         &model,
+                        None,
+                        None,
                         footprint::Operation {
                             receiver_type: binding.receiver.clone(),
                             declaring,

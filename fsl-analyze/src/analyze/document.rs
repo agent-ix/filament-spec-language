@@ -759,7 +759,15 @@ impl ItemSelection {
     /// Whether the item carries a member whose in-process route `analyze`
     /// does not build yet, so the item settles `unsupported` on its own.
     fn unrouted(&self) -> bool {
-        self.unrouted_beyond_sampling()
+        self.unrouted_routing_options(false)
+    }
+
+    /// [`Self::unrouted`] for an item whose `options` are negotiated against
+    /// its candidates' published values (FR-243, FR-635) when it names no
+    /// backend, as a temporal claim's `method` is; `options_negotiated`
+    /// false sends an option only to the backend the item names (FR-967).
+    fn unrouted_routing_options(&self, options_negotiated: bool) -> bool {
+        self.unrouted_members(options_negotiated)
             || self.temporal.as_ref().is_some_and(|temporal| {
                 temporal.witness_samples.is_some() || temporal.seed.is_some()
             })
@@ -768,6 +776,10 @@ impl ItemSelection {
     /// [`Self::unrouted`] without the witness sampling members, which a
     /// state-graph claim reads (FR-628).
     fn unrouted_beyond_sampling(&self) -> bool {
+        self.unrouted_members(false)
+    }
+
+    fn unrouted_members(&self, options_negotiated: bool) -> bool {
         let temporal = self.temporal.as_ref();
         self.probabilistic.is_some()
             || self.hybrid.is_some()
@@ -779,8 +791,10 @@ impl ItemSelection {
             || (self.recording.is_some()
                 && self.kind.as_deref() != Some(Capability::GlobalConformance.to_wire()))
             || self.simulation.is_some()
-            // An option is sent only to the backend the item names (FR-967).
-            || (self.backend.is_none()
+            // An option is sent only to the backend the item names (FR-967),
+            // unless the item's candidates negotiate it (FR-243).
+            || (!options_negotiated
+                && self.backend.is_none()
                 && self
                     .options
                     .as_ref()
@@ -1437,7 +1451,10 @@ fn resolve_one(
             fsl_route::StateGraphFormKind::of(claim.form()),
         )
     } else if kind == Capability::TemporalSatisfaction {
-        registry.restrict_to_timing(candidates, timed(package))
+        // FR-243, FR-635: `options.method` is negotiated against each
+        // candidate's published values, so `digital-clocks` over a timed
+        // subject reaches EN-1's digital-clock route and `zones` EN-6.
+        registry.restrict_to_options_and_timing(candidates, &backend_options, timed(package))
     } else {
         candidates
     };
@@ -1560,7 +1577,7 @@ fn resolve_one(
         unrouted: if state_graph.is_some() {
             selection.unrouted_beyond_sampling()
         } else {
-            selection.unrouted()
+            selection.unrouted_routing_options(kind == Capability::TemporalSatisfaction)
         } || (selection.reductions.is_some() && kind != Capability::TemporalSatisfaction)
             || reads_no_clocks(package, &temporal)
             || (!protocol_bound

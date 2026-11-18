@@ -83,7 +83,7 @@ caller raises or lowers it, and the value is used as given (a limit over a
 `u32` quantity, `model.sequence_maximum`, takes at most `u32::MAX`; FR-506). The requirement that owns each limit defines its counter:
 NFR-001 (`s1.*`; FR-762 for `s1.diagnostics`), NFR-011 (`s3.*`), FR-082 (`environment.*`), FR-260 (`intake.*`), FR-297 (`inspect.*`), FR-298 (`render.*`),
 NFR-012 and FR-506 (`model.*`, `admission.*`), FR-106 (`observation.*`), FR-523 (`temporal_evidence.*`), FR-111
-(`library.*`), FR-099 (`dependency.*`), FR-098 (`replay.*`), FR-264 (`i2.*`, `emit.*`),
+(`library.*`), FR-099 (`dependency.*`), FR-098 (`replay.*`), FR-264 (`i2.*`, `emit.*`), FR-1015 (`export.*`),
 FR-003 (`format.*`), FR-294 (`prepare.*`), FR-101 (`explore.*`) and NFR-130 (`evaluation.live_occurrences`). Analysis
 engine limits and the typed inspection operation's limit have their own table
 (Engine limit setting names).
@@ -152,6 +152,9 @@ engine limits and the typed inspection operation's limit have their own table
 | `i2.work_units` | I2 v2 reader and native identity join | work budget | the v2 read limits' work; native-join budget work | 1000000 units |
 | `i2.native_join_storage` | I2 v2 reader native identity join | logical storage | `V2ReadLimits.storage`; native-join budget storage | 16777216 logical units |
 | `emit.output_bytes` | E4 emit | input bytes | `fsl_package::EmitLimits` output_bytes; `fsl_replay::spine::PackageLimits` output_bytes | 16777216 bytes |
+| `export.output_bytes` | export | input bytes | the export limits' output_bytes: the bytes of the TLA+ or Lean target text (FR-1015) | 16777216 bytes |
+| `export.nodes` | export | node count | the export limits' nodes: the nodes of the dependency closures the mapper reads | 100000 nodes |
+| `export.work_units` | export | work budget | the export limits' work: one unit per node mapped and per region written | 16777216 units |
 | `explore.states` | exploration | node count | exploration `Limits` max_states | 10000000 states |
 | `explore.transitions` | exploration | edge count | exploration `Limits` max_transitions | 100000000 transitions |
 | `evaluation.live_occurrences` | S6a evaluation | occurrence count | the evaluator's live-occurrence bound (NFR-130): call frames in progress and their bound argument values | 1048576 occurrences |
@@ -195,6 +198,15 @@ where the outer configuration supplies it: `PackageLimits::default()` of the
 compile lifecycle's E4 entry; no layer below that entry supplies one, and
 fixtures state explicit values. The bound is a `u64` allowance, used as given,
 from zero through `u64::MAX`.
+
+The `export.*` settings bound one TLA+ or Lean export (FR-1015, FSpec FR-817).
+Their defaults are the compile lifecycle's: `export.output_bytes` takes
+`emit.output_bytes`'s 16777216, `export.nodes` takes `s3.nodes`'s 100000 and
+`export.work_units` takes `s3.work_units`'s 16777216, so a model the default
+compile emits also exports under the defaults, and a caller who raised a
+compile limit raises the matching export limit by the same rule. An export
+request sets them in its `export.limits` member by these names, and
+`fsl export` through `--limit`. Each is a `u64` allowance, used as given.
 
 Both native-join bounds are `u64` allowances and accept every value from zero
 through `u64::MAX`. A native join that cannot admit its next work or storage
@@ -282,8 +294,8 @@ its row (FR-315 "Size limits").
 | `schedule.max_demand_points` | `max_demand_points` | schedulability analysis | `ScheduleLimits` max_demand_points | 1048576 points | FR-247 |
 | `monitor.max_window_values` | `max_window_values` | window aggregates | the monitor run's max_window_values | 1048576 values | FR-194 |
 | `inspect.max_view_entries` | `max_view_entries` | typed view construction | `fsl_inspect::InspectLimits` max_view_entries | 10000000 entries | FR-297 |
-| `hybrid.max_solver_steps` | `max_solver_steps` | hybrid provider | `hybrid.limits` max_solver_steps | 1000000 steps | FR-250 |
-| `hybrid.max_solver_time` | `max_solver_time` | hybrid provider | `hybrid.limits` max_solver_time | 60 seconds | FR-250 |
+| `hybrid.max_solver_steps` | `max_solver_steps` | hybrid provider; `fsl-hybrid-reference` publishes this default in its descriptor `bounds` and counts one step per Picard attempt (FR-1019) | `hybrid.limits` max_solver_steps | 1000000 steps | FR-250, FR-1019 |
+| `hybrid.max_solver_time` | `max_solver_time` | hybrid provider; `fsl-hybrid-reference` publishes this default in its descriptor `bounds` (FR-1019) | `hybrid.limits` max_solver_time | 60 seconds | FR-250, FR-1019 |
 | `smt_encoding.max_constants` | `max_constants` | SMT proof-query encoding | `SmtEncodingLimits` max_constants | 1048576 constants | FR-315 |
 | `smt_encoding.max_applications` | `max_applications` | SMT proof-query encoding | `SmtEncodingLimits` max_applications | 65536 applications | FR-315 |
 | `smt_encoding.max_monitor_atoms` | `max_monitor_atoms` | SMT proof-query encoding | `SmtEncodingLimits` max_monitor_atoms | 8 atoms | FR-315 |
@@ -394,6 +406,7 @@ these names through the same operand grammar as the stage settings
    | exploration limits | no catalog code: exploration returns `Outcome::Bounded` (FR-101) | `explore.*` |
    | `TemporalEvidenceLimits` and the progress ledger capacity (FR-523, FR-502) | no catalog code: the call returns `Incomplete(LimitReached{limit, value, setting})` with `limit` one of `node count`, `work budget`, `input bytes` or `tick count` (the kind of `temporal_evidence.history_span`) and the call's stop scope as FR-523 states | `temporal_evidence.*`, `progress.covered_positions` |
    | an engine's limits type | no catalog code: the engine stops and the item settles `incomplete`, `LimitReached{limit, value, setting}` (FR-127 V-7, FSpec FR-461 Behavior 5) | the engine table's names |
+   | the export limits (FR-1015) | no catalog code: the export stops with `status` `incomplete` naming the setting, no package and no target file, category incomplete (FSpec FR-817) | `export.output_bytes`, `export.nodes`, `export.work_units` |
    | `PrepareLimits`, an execution backend's prepare limits (FR-294) | `stage_limit_exceeded`, carried as `PrepareFailure::Limit` and, from `execute`, as `CallFailure::Limit(PrepareLimitReached)` | `prepare.compile_work_units`, `prepare.code_bytes` |
 
    Each `stage_limit_exceeded` outcome carries `kind`, `bound`, `actual` and
@@ -515,6 +528,7 @@ these names through the same operand grammar as the stage settings
 | FR-255-AC-19 | A refused native join returns the `stage_limit_exceeded`-class refusal with `kind`, `bound`, `actual` and `setting` of FR-255 Behavior 1; IR's `ExactTypeProjectionError` has code `exhausted_work` or `exhausted_storage` and no separate public `cause` field, and `NativeJoinBudget::first_unpaid()` reports the first denied kind and amount. | Test (TC-721) |
 | FR-255-AC-20 | Setting `emit.output_bytes` through the emit limits' builder, a replay request's `stage_limits` and the settings operation changes only `EmitLimits.output_bytes` (`PackageLimits.output_bytes` of the compile lifecycle); `EmitLimits` has no `Default`, so a limits value built without an output-byte value does not compile and a fixture states an explicit value; the outer configuration's `PackageLimits::default()` supplies 16777216; and the setting accepts 0 and `u64::MAX`. | Test (TC-721) |
 | FR-255-AC-21 | The settings operation given `explore.workers=4` returns caller limits whose `workers.explore` is 4, `workers.model_check` and `workers.statistical` are 1 and every limit is at its default; likewise `model_check.workers=2` and `statistical.workers=8`. Given `explore.workers=0` it returns a usage refusal naming the operand with cause `invalid_runtime_input`/`invalid-value`; given `explore.threads=4` it refuses an unknown setting. None of the three worker names appears in the engine limit table, and `explore.workers=2` leaves `explore.states` at 10000000. | Test (TC-720) |
+| FR-255-AC-22 | The settings operation lists `export.output_bytes`, `export.nodes` and `export.work_units` with defaults 16777216, 100000 and 16777216, equal to the defaults of `emit.output_bytes`, `s3.nodes` and `s3.work_units`; given `export.nodes=7` it changes only that export limit; and an export of FR-756-AC-1's counter under `export.work_units` 1 stops `incomplete` naming `export.work_units`, bound 1, exit 22. | Test (TC-2993) |
 
 ## Status
 
