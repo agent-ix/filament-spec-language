@@ -213,7 +213,7 @@ fn hyper_letters_refuse_disagreeing_reference_bindings() {
 
     let declaration = "hyper W using inf over behaviours (v: V::Vault) \
                        forall trace a of V forall trace b of V \
-                       { always holds(v.l @ a = v.l @ b or v = V::Vault#\"w\") }";
+                       { always holds((v = V::Vault#\"w\") @ a or v.l @ a = v.l @ b) }";
     let fixed = World::with_vaults(Vault::Secure, &[("v", (0, 0)), ("w", (0, 0))], declaration);
     let created = World::with_snapshots(
         Vault::Secure,
