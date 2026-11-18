@@ -442,7 +442,16 @@ mod protocol {
                     .obligations
                     .compensations
                     .iter()
-                    .filter(|template| template.temporal_profile.is_some())
+                    .filter(|template| {
+                        matches!(
+                            template.temporal_profile,
+                            Some(
+                                fsl_semantics::check::TemporalProfile::EventPositionFalseExtension
+                                    | fsl_semantics::check::TemporalProfile::FixedSampleFalseExtension
+                                    | fsl_semantics::check::TemporalProfile::TimestampedEventFiniteWindow
+                            )
+                        )
+                    })
                     .map(|template| template.span)
                     .chain(
                         protocol
@@ -930,7 +939,7 @@ mod runtime {
         let packages = fsl_semantics::model::intake::PackageInput::new();
         let unit = "language \"ix:native\" edition \"1-draft\";\n\
 profile v = \"filament.value.complete/v1\";\n\
-profile t = \"filament.temporal.timed/v1\";\n\
+profile t = \"filament.temporal.event-position.false-extension/v1\";\n\
 record Reading { level: Int[0, 9]; }\n\
 dimension Positions;\n\
 unit position : Positions = rational(1, 1);\n\
