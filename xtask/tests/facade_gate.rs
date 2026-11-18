@@ -336,7 +336,7 @@ fn gate_fails_on_test_for_unlisted_fact() {
     assert!(text.contains("cf_pr_99_unknown"));
     assert!(text.contains("CF-PR-99"));
     let makefile = fs::read_to_string(workspace_root().join("Makefile")).expect("Makefile");
-    assert!(makefile.contains("xtask facade-tests"));
+    assert!(makefile.contains("cargo run --locked --package xtask -- facade-tests"));
 }
 
 #[test]
