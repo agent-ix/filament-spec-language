@@ -232,7 +232,6 @@ fn a_mis_mapped_atom_is_a_correspondence_loss() {
 /// online-prefix correspondence is carried as named; the mixed case has none.
 #[test]
 #[trace("TC-2979", "FR-931-AC-8")]
-#[ignore = "QSL-2147: the tl_lowering record carries no classification of its lowered formula yet"]
 fn lowering_preserves_the_classification() {
     for (cases, correspondence, fragment) in [
         (PAST, "mltl.origin-complete-history/v1", "bounded-past"),
@@ -299,7 +298,6 @@ fn lowering_preserves_the_classification() {
 /// faithful lowering carries the native classification.
 #[test]
 #[trace("TC-2979", "FR-931-AC-8")]
-#[ignore = "QSL-2147: the lowering does not classify its lowered formula or report a classification loss yet"]
 fn a_wrong_lowered_profile_is_a_classification_loss() {
     let directory = tempfile::tempdir().unwrap();
     let unit = "language \"ix:native\" edition \"1-draft\";\n\
