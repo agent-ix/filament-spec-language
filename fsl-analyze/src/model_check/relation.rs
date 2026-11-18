@@ -42,7 +42,7 @@ impl Encode for RelationTransition {
     ) -> Result<(), quire_canonical::Error> {
         writer.begin_array()?;
         self.transition.encode_into(writer)?;
-        writer.boolean(self.result.is_some())?;
+        writer.bool(self.result.is_some())?;
         if let Some(result) = &self.result {
             writer.string(result)?;
         }
