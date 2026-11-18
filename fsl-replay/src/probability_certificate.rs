@@ -458,7 +458,7 @@ pub fn region_probability_product_key(
                     value / subdivisions
                 }
                 .to_string(),
-                (cap / subdivisions).to_string(),
+                cap.div_ceil(subdivisions).to_string(),
                 fraction_rank(value, cap)
             ])
         })
