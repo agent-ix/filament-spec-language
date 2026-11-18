@@ -36,7 +36,7 @@ fn request(world: &World) -> SimulationCertificateRequest<'_> {
         refinement: world.refinement(),
         concrete: world.concrete_request(UNLIMITED),
         abstract_package: world.package(),
-        abstract_initial: vec![world.abstract_initial()],
+        abstract_initial: vec![world.abstract_initial()].into(),
     }
 }
 
@@ -59,7 +59,7 @@ fn run(world: &World) -> SafetyOutcome {
                 proof_bounds: Vec::new(),
             },
             abstract_package: world.package(),
-            abstract_initial: vec![world.abstract_initial()],
+            abstract_initial: vec![world.abstract_initial()].into(),
             abstract_protocol_binding: None,
             max_depth: None,
             limits: ModelCheckLimits::default(),
@@ -697,7 +697,7 @@ fn run_to(world: &World, max_depth: Option<usize>) -> SafetyOutcome {
                 proof_bounds: Vec::new(),
             },
             abstract_package: world.package(),
-            abstract_initial: vec![world.abstract_initial()],
+            abstract_initial: vec![world.abstract_initial()].into(),
             abstract_protocol_binding: None,
             max_depth,
             limits: ModelCheckLimits::default(),

@@ -74,7 +74,10 @@ fn refinement_request(ws: &Workspace, body: &str, items: Value) -> std::path::Pa
             "a", value,
         )])))
         .expect("the fixture is UTF-8")
-        .replace("\"identity\":\"start\"", &format!("\"identity\":\"{identity}\""))
+        .replace(
+            "\"identity\":\"start\"",
+            &format!("\"identity\":\"{identity}\""),
+        )
         .into_bytes()
     };
     ws.write("program.fsl", unit.as_bytes());
@@ -85,8 +88,17 @@ fn refinement_request(ws: &Workspace, body: &str, items: Value) -> std::path::Pa
     ws.write("spec-start-one.json", &spec_snapshot(1, "spec-start-one"));
     let mut items = items;
     for item in items.as_array_mut().expect("items") {
-        if item["temporal"].get("abstract_subject").is_none() {
-            item["temporal"]["abstract_subject"] = abstract_start("spec-start");
+        // An item whose `abstract_subject` is JSON null names none, which
+        // FR-630 defaults to the mapping's image of the concrete initial states.
+        match item["temporal"].get("abstract_subject") {
+            None => item["temporal"]["abstract_subject"] = abstract_start("spec-start"),
+            Some(Value::Null) => {
+                item["temporal"]
+                    .as_object_mut()
+                    .expect("temporal")
+                    .remove("abstract_subject");
+            }
+            Some(_) => {}
         }
     }
     let mut request = request_members(Some(items));
@@ -127,6 +139,34 @@ fn a_refinement_proves_and_a_wrong_mapping_refutes() {
     let refuted = run.item(1);
     assert_eq!(refuted["replay"]["reproduced"], true);
     assert!(refuted["counterexample"]["steps"].is_array(), "{refuted}");
+    assert_eq!(
+        refuted["counterexample"]["refinement_failure"]["kind"], "AbstractStepRejected",
+        "{refuted}"
+    );
+}
+
+/// FR-630 "Request item", FR-144: with no `abstract_subject` the abstract
+/// initial states are the states the mapping gives the concrete initial
+/// states, so the wrong mapping of the test above refutes the same way
+/// without naming the abstract snapshot (`value = 1`), which the concrete
+/// subject's snapshot (`value = 0`) is not.
+#[trace("TC-1590", "FR-630")]
+#[test]
+fn an_absent_abstract_subject_starts_at_the_mapped_concrete_initial_states() {
+    let body = refinement("Same", "self.value", "")
+        + &refinement("Off", "if self.value = 0 then 1 else self.value", "");
+    let ws = Workspace::new("family-refinement-mapped-initial");
+    let run = analyze(&refinement_request(
+        &ws,
+        &body,
+        json!([{"claim": "Same", "kind": "refinement", "temporal": {"item_kind": "refinement", "abstract_subject": null}},
+            {"claim": "Off", "kind": "refinement", "temporal": {"item_kind": "refinement",
+                "abstract_subject": null}}]),
+    ));
+    assert_eq!(results(&run, 2), ["proved", "refuted"]);
+    assert_eq!(run.item(0)["record"]["certification"], "certified");
+    let refuted = run.item(1);
+    assert_eq!(refuted["replay"]["reproduced"], true, "{refuted}");
     assert_eq!(
         refuted["counterexample"]["refinement_failure"]["kind"], "AbstractStepRejected",
         "{refuted}"
@@ -878,4 +918,3 @@ fn a_hyper_clause_over_two_models_analyzes_and_replays_per_trace() {
         assert_eq!(item["replay"]["reproduced"], true, "{item}");
     }
 }
-
