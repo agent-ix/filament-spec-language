@@ -38,6 +38,7 @@ pub mod document;
 mod exact;
 mod items;
 mod reduction_item;
+mod refinement_item;
 mod request;
 mod state_graph_item;
 mod timed_item;
