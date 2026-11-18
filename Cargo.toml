@@ -8,14 +8,14 @@ exclude = ["fuzz"]
 # `default-features = false`: the encoder builds `no_std` + `alloc`, so the
 # layer-SV leaf `filament-semantic-value` can mint the compound-unit id
 # through it; a crate that writes through `io::Write` turns on `std`.
-quire-canonical = { git = "https://github.com/agent-ix/quire-canonical", branch = "main", default-features = false }
+quire-canonical = { git = "https://github.com/agent-ix/quire-canonical", tag = "v0.3.1", default-features = false }
 # The shared no_std exact-value kernel and the semantic-value leaf above it,
 # each its own repository so IR, RT and CG depend on them without the FSL repo.
-filament-exact = { git = "https://github.com/agent-ix/filament-exact", branch = "main" }
-filament-semantic-value = { git = "https://github.com/agent-ix/filament-semantic-value", branch = "main" }
+filament-exact = { git = "https://github.com/agent-ix/filament-exact", tag = "v0.3.0" }
+filament-semantic-value = { git = "https://github.com/agent-ix/filament-semantic-value", tag = "v0.1.5" }
 # ADR-011 §6.1 layer W: the shared no_std walker toolkit (ADR-030 D-1 item 2),
 # its own repository so IR, RT and CG depend on it without the FSL repo.
-filament-walk = { git = "https://github.com/agent-ix/filament-walk", branch = "main" }
+filament-walk = { git = "https://github.com/agent-ix/filament-walk", tag = "v0.1.1" }
 # ADR-011 §6.1 layer C: the checked terms the evaluator reads (FR-400), its own
 # repository so IR, RT and CG depend on it without the FSL repo. Only
 # `fsl-semantics` requests `construct` in its manifest; Cargo unifies the
@@ -25,7 +25,7 @@ filament-checked = { git = "https://github.com/agent-ix/filament-eval", branch =
 # its own repository so RT and CG depend on it without the FSL repo.
 filament-eval = { git = "https://github.com/agent-ix/filament-eval", branch = "main" }
 # IR-owned staged identity, operation-member, and model-enum witness joins.
-filament-contract-model = { git = "https://github.com/agent-ix/filament-contract-ir", tag = "v0.1.0" }
+filament-contract-model = { git = "https://github.com/agent-ix/filament-contract-ir", branch = "peter/qsl-2244-ir-batch" }
 
 [package]
 name = "filament-spec-language"
