@@ -69,6 +69,36 @@ writes no target bytes of its own, so the two give byte-identical files.
   `export.output` with an `output` override refuses `invalid-request` naming
   `output` and `--output`, exit `20`, and writes no file. The outcome's
   `output` member names the path as given and the bytes written.
+- FSL SHALL lower every construct that FSpec FR-811's coverage table marks
+  `preserved` or `conditional` for the selected target, and writes
+  `target-unrepresentable` only for a construct that the table or FSpec
+  FR-651 "Fidelity" marks `unrepresented`. The cause spells `target` as the
+  family (`tla` or `lean`, not the profile), `construct` as the node's
+  `node_tag`/`semantic_form`, `node` as its node id and `locus` as its
+  region in FR-286's `{"kind": "region", "source", "start", "end"}` locus
+  form. FSL has no record, cause or exit for a construct it has not lowered.
+  Meeting one is a mapper failure, `internal-failure` with exit `30` and no
+  package or file, so the floor refuses (exit `21`) only for constructs the
+  target cannot state.
+- `obligations` SHALL be a nonempty list of the program's declared
+  obligations as FSpec FR-817 states: an absent member refuses
+  `missing-member` and `[]` refuses `invalid-value` at
+  `/request/export/obligations`, exit `20`. A `temporal` clause such as
+  `SlowEnough` is named by its declared name. A `pre`, `post` or
+  `constraint` clause, or a name that the program does not declare, gives a
+  `refused` record with `not-an-obligation{name}` in request order, not a
+  whole-request refusal.
+- FSL SHALL stop in FSpec FR-817's order: admission, then classification
+  (`export.nodes` and per-node `export.work_units`), then the floor, then
+  the text (`export.output_bytes` and per-region `export.work_units`). A
+  request below its floor exits `21` under any `export.output_bytes`.
+- The `package` member's `generator` SHALL be `{"identity":
+  "filament-spec-language", "version": V}`, with `V` the application
+  version that `fsl version` and the build inventory report (FR-661). This
+  is the same name and version pair as the inventory's `application`, read
+  from the same constant, so one build names itself one way everywhere. It
+  is not a crate's own version, and no `/export` suffix is added, because
+  the target profile beside it already names the mapper.
 
 ## Acceptance Criteria
 
@@ -78,6 +108,10 @@ writes no target bytes of its own, so the two give byte-identical files.
 | FR-1015-AC-2 | `limits` `{"export.output_bytes": 1}` writes `incomplete` naming `export.output_bytes`, exit `22`; `limits` `{"output_bytes": 1}` refuses `invalid-request` naming `output_bytes`, exit `20`; the same request with `RequestOverrides::limits` setting `export.output_bytes` refuses `invalid-request` naming `limits` and `export.output_bytes`, exit `20`, and the request without that `limits` entry under the override set to 1 writes `incomplete` naming `export.output_bytes`, exit `22`. | Test (TC-2865) |
 | FR-1015-AC-3 | Exporting FR-756-AC-1's counter with `output` `{"file": "counter.tla"}` writes a file whose bytes equal the outcome's `target_text`, and an `output` member `{"path": "counter.tla", "bytes_written": N}` with `N` that text's length; the same request through `RequestOverrides::output` naming the same path in a fresh directory writes byte-identical bytes; a path that already exists refuses `invalid-request` naming it, exit `20`, `last_stage` null, bytes unchanged; the member and the override together refuse naming `output` and `--output`, exit `20`, with no file. | Test (TC-2992) |
 | FR-1015-AC-4 | The counter export's `package` member is `{"source_package", "target_profile", "generator", "limits"}` with `limits` `{"export.output_bytes": 16777216, "export.nodes": 100000, "export.work_units": 16777216}`; two runs give equal members, and a run with `limits` `{"export.nodes": 99999}` gives a member that differs only in that limit. | Test (TC-2992) |
+| FR-1015-AC-5 | The counter's `Bounded` exports `preserved` with no cause under the default floor, exit `0`. `SlowEnough` over `Braking` under `any` gives `target-unrepresentable` causes whose `target` is `tla`, whose `construct` holds a `/`, whose `node` is a node id of the package and whose `locus` has `kind` `region`. | Test (TC-3002) |
+| FR-1015-AC-6 | `obligations` `[]` refuses `invalid-value` at `/request/export/obligations`, exit `20`. `["CanInc", "Bounded", "Nope"]` gives three records in that order, with `CanInc` and `Nope` `refused` with `not-an-obligation`, and exit `21`. | Test (TC-3002) |
+| FR-1015-AC-7 | `SlowEnough` under the default floor with `limits` `{"export.output_bytes": 1}` refuses `below-fidelity-floor`, exit `21`. | Test (TC-3002) |
+| FR-1015-AC-8 | The counter export's `generator` is `{"identity": "filament-spec-language", "version": V}` with `V` equal to `filament_spec_language::VERSION`. | Test (TC-3002) |
 
 ## Dependencies
 
