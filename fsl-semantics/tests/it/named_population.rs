@@ -10,7 +10,7 @@ use filament_exact::{
     CardinalityBound, CollectionKind, CollectionType, Identifier, IntegerInterval, ValueType,
 };
 use fsl_foundation::bound::{DomainKey, DomainKind};
-use fsl_semantics::check::{CheckedGraph, CheckedNode};
+use fsl_semantics::check::{BodyTerm, CheckedGraph, CheckedNode, LeafTerm, LiteralValue};
 use fsl_semantics::family::ClaimExtent;
 use fsl_semantics::model::clause_observation::Observation;
 use ix_trace_rs::trace;
@@ -548,4 +548,36 @@ fn a_reference_literal_checks_and_stays_pending_in_a_barred_slot() {
         );
         assert_eq!(refusal.at, at, "{literal}");
     }
+}
+
+/// FR-1000-AC-3 (TC-2834): S4 lowers aliases of one typed reference literal
+/// to the same reference-valued literal term.
+#[trace("TC-2834", "FR-1000-AC-3")]
+#[test]
+fn reference_literal_aliases_share_one_lowered_value_term() {
+    let checked = fixture::checked(
+        false,
+        "model N = \"test/counter\";\n\
+         function same using v(): Boolean pure { M::Counter#\"a\" = N::Counter#\"a\" }",
+    );
+    let matching: Vec<_> = checked
+        .graph
+        .semantic_graph()
+        .nodes()
+        .filter(|node| {
+            matches!(
+                node.body(),
+                BodyTerm::Leaf(LeafTerm::Literal {
+                    value: LiteralValue::String(value),
+                    ..
+                }) if value == "a"
+            )
+        })
+        .collect();
+    assert_eq!(matching.len(), 1, "one interned literal term");
+    assert_eq!(
+        matching[0].node_tag(),
+        filament_semantics::check::NodeTag::Value
+    );
+    assert_eq!(matching[0].semantic_form(), "literal");
 }

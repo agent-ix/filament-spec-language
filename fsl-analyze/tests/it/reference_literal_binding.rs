@@ -5,10 +5,10 @@
 //! and evaluation reads a created-object literal by a per-state key lookup.
 
 use ix_trace_rs::trace;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
 use crate::analyze_cli_support::{
-    analyze, counter_request_with, counter_snapshot, label, request_members, Workspace,
+    Workspace, analyze, counter_request_with, counter_snapshot, label, request_members,
 };
 
 /// One analyze run over the Counter subject whose initial state holds `a`
@@ -126,7 +126,6 @@ fn hyper(name: &str, formula: &str) -> String {
 /// components.
 #[trace("TC-2957", "FR-1000-AC-8")]
 #[test]
-#[ignore = "QSL-2166: a fixed reference literal in a hyper atom is not bound per component yet"]
 fn a_fixed_literal_is_admitted_in_a_hyper_atom() {
     let run = over_wide_universe(
         "reflit-hyper-fixed",
@@ -145,7 +144,6 @@ fn a_fixed_literal_is_admitted_in_a_hyper_atom() {
 /// its innermost enclosing `@ t`, whatever the atom's other reads.
 #[trace("TC-2957", "FR-1000-AC-9")]
 #[test]
-#[ignore = "QSL-2166: a created-object literal in a hyper atom is not resolved in its enclosing component yet"]
 fn a_created_object_literal_resolves_in_its_enclosing_component() {
     let cases = [
         (
@@ -174,7 +172,6 @@ fn a_created_object_literal_resolves_in_its_enclosing_component() {
 /// is admitted.
 #[trace("TC-2957", "FR-1000-AC-10")]
 #[test]
-#[ignore = "QSL-2166: a created-object literal outside every `@ t` is not refused yet"]
 fn a_created_object_literal_outside_every_indexed_read_refuses() {
     let cases = [
         ("bare", "always holds(c = M::Counter#\"K\")"),
@@ -209,7 +206,6 @@ fn a_created_object_literal_outside_every_indexed_read_refuses() {
 /// disagree on a literal refuse before any state is observed.
 #[trace("TC-2957", "FR-1000-AC-11")]
 #[test]
-#[ignore = "QSL-2166: hyper letters do not compare their components' reference bindings yet"]
 fn hyper_letters_refuse_disagreeing_reference_bindings() {
     use crate::hyper_world::{Vault, World};
     use fsl_eval::hyper::CheckedHyperLetters;
@@ -236,13 +232,18 @@ fn hyper_letters_refuse_disagreeing_reference_bindings() {
     .err();
     let text = format!("{refusal:?}");
     assert!(
-        text.contains("ReferenceBindingsDisagree") && text.contains("77"),
+        text.contains("ReferenceBindingsDisagree")
+            && text.contains("Vault")
+            && text.contains("77")
+            && text.contains("[0, 1]"),
         "{text}"
     );
-    assert!(CheckedHyperLetters::new(
-        &fixed.package,
-        &fixed.clause,
-        vec![&fixed_system, &fixed_system],
-    )
-    .is_ok());
+    assert!(
+        CheckedHyperLetters::new(
+            &fixed.package,
+            &fixed.clause,
+            vec![&fixed_system, &fixed_system],
+        )
+        .is_ok()
+    );
 }

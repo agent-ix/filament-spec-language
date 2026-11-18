@@ -30,9 +30,9 @@ use fsl_semantics::check::{
 };
 use fsl_semantics::model::observation::Observation;
 
-use super::contracts::{verdict, Verdict};
-use super::walk::{rows_of, stop, Row};
-use super::{state_document, ClauseOutcome, ModelSimState, ModelSystem, BROKEN};
+use super::contracts::{Verdict, verdict};
+use super::walk::{Row, rows_of, stop};
+use super::{BROKEN, ClauseOutcome, ModelSimState, ModelSystem, state_document};
 use crate::model_subject::{AtomStop, ModelInstance, ModelLetters};
 use crate::simulation::StateKey;
 use crate::temporal::{AtomReading, CaptureReading};
@@ -56,6 +56,19 @@ pub enum LettersRefusal {
     /// the clause's trace variables (FR-487).
     #[error("a hyper clause needs one model system for each of its trace variables")]
     ComponentsMismatch,
+    /// A hyper clause's components resolve at least one reference literal
+    /// differently at subject admission (FR-1000-AC-11).
+    #[error(
+        "hyper components {components:?} disagree on reference literal {object_type}#{identity}"
+    )]
+    ReferenceBindingsDisagree {
+        /// The effective object type named by the literal.
+        object_type: String,
+        /// The UTF-8 identity bytes, rendered as lowercase hexadecimal.
+        identity: String,
+        /// The first component and the component with a differing binding.
+        components: Vec<usize>,
+    },
 }
 
 /// The `holds` atoms of one checked temporal clause, read at the states of a

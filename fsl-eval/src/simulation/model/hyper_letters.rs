@@ -75,6 +75,25 @@ impl<'s, 'a> CheckedHyperLetters<'s, 'a> {
         if systems.len() != clause.quantifiers().len() {
             return Err(LettersRefusal::ComponentsMismatch);
         }
+        if let Some(first) = systems.first() {
+            for (component, system) in systems.iter().enumerate().skip(1) {
+                if let Some(literal) = first
+                    .reference_bindings
+                    .first_disagreement(&system.reference_bindings)
+                {
+                    let identity = literal
+                        .identity
+                        .iter()
+                        .map(|byte| format!("{byte:02x}"))
+                        .collect::<String>();
+                    return Err(LettersRefusal::ReferenceBindingsDisagree {
+                        object_type: format!("{:?}", literal.object_type),
+                        identity,
+                        components: vec![0, component],
+                    });
+                }
+            }
+        }
         let mut overlapping = Vec::new();
         for slot in clause.atom_slots() {
             let object = parameter_type(clause, slot.parameter)?;

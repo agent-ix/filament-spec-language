@@ -42,10 +42,24 @@ pub(crate) enum ReferenceBinding {
 }
 
 /// One immutable subject's reference-literal decisions.
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub(crate) struct ReferenceBindings(BTreeMap<ReferenceLiteralKey, ReferenceBinding>);
 
 impl ReferenceBindings {
+    pub(crate) fn first_disagreement(&self, other: &Self) -> Option<&ReferenceLiteralKey> {
+        self.0
+            .iter()
+            .find_map(|(literal, binding)| {
+                (other.0.get(literal) != Some(binding)).then_some(literal)
+            })
+            .or_else(|| {
+                other
+                    .0
+                    .keys()
+                    .find(|literal| !self.0.contains_key(*literal))
+            })
+    }
+
     pub(crate) fn created_for_footprints(
         &self,
     ) -> BTreeMap<(EffectiveId, Vec<u8>), Vec<filament_checked::key::DeclarationKey>> {
@@ -230,6 +244,7 @@ impl ReferenceBindings {
             }
 
             let mut fixed = None;
+            let mut initial_nonconforming = false;
             'states: for state in initial {
                 for population in &overlapping {
                     let Some(object) = state
@@ -240,17 +255,18 @@ impl ReferenceBindings {
                     else {
                         continue;
                     };
-                    let Some(actual_type) = model.type_identity(&object.type_identity)
-                    else {
+                    let Some(actual_type) = model.type_identity(&object.type_identity) else {
                         return Err(super::fault("reference-literal-member-type-is-selected"));
                     };
                     if types.conforms(actual_type, literal.object_type.clone()) {
                         fixed = Some(
                             model
-                                .object_reference(type_key, text)
+                                .object_reference(&object.type_identity, text)
                                 .map_err(|_| super::fault("reference-literal-fixed-reference"))?,
                         );
                         break 'states;
+                    } else {
+                        initial_nonconforming = true;
                     }
                 }
             }
@@ -258,6 +274,13 @@ impl ReferenceBindings {
             let binding = if let Some(reference) = fixed {
                 ReferenceBinding::Fixed(reference)
             } else {
+                if initial_nonconforming {
+                    return Err(super::refused(
+                        Code::MissingDeclaration,
+                        "missing-name",
+                        &[("key", identity_hex(&literal.identity))],
+                    ));
+                }
                 if barred.contains(&literal) {
                     // W36's barred-slot refusal is occurrence-specific: a
                     // fixed key remains a constant and is admitted above.
