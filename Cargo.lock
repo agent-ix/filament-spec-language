@@ -682,8 +682,8 @@ source = "git+https://github.com/agent-ix/filament-specification?tag=v0.1.1#1946
 
 [[package]]
 name = "filament-verification-contracts"
-version = "0.2.0"
-source = "git+https://github.com/agent-ix/filament-verification-contracts?tag=v0.2.0#ded996da2c3591818f7658d0518f6637b79bf2f4"
+version = "0.2.1"
+source = "git+https://github.com/agent-ix/filament-verification-contracts?tag=v0.2.1#99942db336b1bad6c43617e6d272710b924fec86"
 dependencies = [
  "jsonschema 0.55.1",
  "quire-canonical",
