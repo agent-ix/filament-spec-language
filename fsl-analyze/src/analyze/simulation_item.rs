@@ -512,7 +512,9 @@ fn clause_cause(outcome: &ClauseOutcome) -> Value {
             json!({"kind": "undefined-evaluation"})
         }
         ClauseOutcome::KernelRefused(refusal) => json!({"kind": "refused", "code": refusal.code()}),
-        ClauseOutcome::FamilyRefused(code) => json!({"code": code.code(), "kind": code.cause()}),
+        ClauseOutcome::FamilyRefused(code) | ClauseOutcome::Stopped(code) => {
+            json!({"code": code.code(), "kind": code.cause()})
+        }
         ClauseOutcome::Incomplete(incomplete) => meter_cause(incomplete),
         ClauseOutcome::NotBoolean => json!({"kind": "not-boolean"}),
     }

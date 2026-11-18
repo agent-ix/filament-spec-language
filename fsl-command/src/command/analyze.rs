@@ -10,13 +10,14 @@ use std::path::Path;
 
 use filament_exact::{Cancel, CancelCause};
 use fsl_analyze::analyze::document::{
-    analyze_document, resolve_items, resolve_package_items, settle_package_items,
-    AnalyzeDocumentError, AnalyzeRun, ItemSelection, Negotiate, SubjectSelection,
+    resolve_items, resolve_package_items, settle_package_items, settle_run, AnalyzeDocumentError,
+    AnalyzeRun, ItemSelection, Negotiate, SettledRun, SubjectSelection,
 };
 use fsl_analyze::analyze::{AnalyzeLimits, DeadlineSupply, Engine, Engines, SourceProvision};
 use fsl_analyze::provider::ProviderOptions;
 use fsl_semantics::model::observation::DocumentProvision;
 
+use super::settle::Settle;
 use super::{
     check_sources, intake_with_bytes, request, require_complete_edition, wire, FileCounts,
     FormalSource, NativeResult, Result, RunCause, RunError, RunLimits, RunResult,
@@ -263,77 +264,7 @@ fn read<'d>(directory: &'d Path, bytes: &[u8], dependent_bytes: usize) -> Result
         RunCause::Json(error) => invalid("request", error.to_string()),
         cause => cause,
     })?;
-    for (position, item) in request.items.iter().flatten().enumerate() {
-        if item.recording.is_some()
-            && item.kind.as_deref()
-                != Some(fsl_semantics::check::Capability::GlobalConformance.to_wire())
-        {
-            return Err(invalid(
-                &format!("/items/{position}/recording"),
-                "recording is only valid on a global-conformance item",
-            ));
-        }
-        if let Some(population) = &item.population {
-            if item.kind.as_deref()
-                != Some(fsl_semantics::check::Capability::GlobalConformance.to_wire())
-            {
-                return Err(invalid(
-                    &format!("/items/{position}/population"),
-                    "population is only valid on a global-conformance item",
-                ));
-            }
-            if item.recording.is_none() {
-                return Err(invalid(
-                    &format!("/items/{position}/population"),
-                    "population requires a recording",
-                ));
-            }
-            validate_activated_population(position, population)
-                .map_err(|(pointer, reason)| invalid(&pointer, reason))?;
-            serde_json::from_value::<Vec<fsl_analyze::analyze::document::ActivatedRolePopulation>>(
-                population.clone(),
-            )
-            .map_err(|error| {
-                invalid(&format!("/items/{position}/population"), error.to_string())
-            })?;
-        }
-    }
-    // FR-634: a `simulation` item names no claim and carries its
-    // `simulation` member, and only it does; `seed` and `samples` belong to
-    // `sample` only.
-    for (position, item) in request.items.iter().flatten().enumerate() {
-        let simulation =
-            item.kind.as_deref() == Some(fsl_analyze::analyze::document::SIMULATION_KIND);
-        match (&item.simulation, simulation) {
-            (Some(_), false) => {
-                return Err(invalid(
-                    &format!("/items/{position}/simulation"),
-                    "simulation is only valid on a simulation item",
-                ))
-            }
-            (None, true) => {
-                return Err(invalid(
-                    &format!("/items/{position}/simulation"),
-                    "a simulation item carries its simulation member",
-                ))
-            }
-            (Some(settings), true) => {
-                if item.claim.is_some() {
-                    return Err(invalid(
-                        &format!("/items/{position}/claim"),
-                        "a simulation item settles no claim",
-                    ));
-                }
-                if let Some(member) = settings.misplaced_member() {
-                    return Err(invalid(
-                        &format!("/items/{position}/simulation/{member}"),
-                        format!("{member} belongs to a sample simulation only"),
-                    ));
-                }
-            }
-            (None, false) => {}
-        }
-    }
+    validate_items(request.items.as_deref())?;
     if let Some(package) = &request.package {
         let admitted = admit_package(directory, dependent_bytes, &request, package)?;
         return Ok(Readout::Package(PackageSelection {
@@ -363,150 +294,9 @@ fn read<'d>(directory: &'d Path, bytes: &[u8], dependent_bytes: usize) -> Result
     )?;
     let source = intake.source(&program.source, "program.source")?;
     require_complete_edition(source.source())?;
-    let mut documents = DocumentProvision::new();
-    let mut recording_documents = std::collections::BTreeSet::new();
-    for (position, document) in request.documents.iter().enumerate() {
-        let bytes = intake.file(&document.file, intake.remaining)?;
-        let parsed: serde_json::Value = serde_json::from_slice(&bytes).map_err(|error| {
-            invalid(
-                &format!("/documents/{position}"),
-                format!("{} is not a JSON document: {error}", document.file),
-            )
-        })?;
-        let format = parsed.get("format").and_then(serde_json::Value::as_str);
-        let declared_identity = match parsed.get("identity") {
-            Some(value) => Some(
-                serde_json::from_value::<fsl_analyze::analyze::document::DocumentSelection>(
-                    value.clone(),
-                )
-                .map_err(|error| {
-                    invalid(
-                        &format!("/documents/{position}/identity"),
-                        format!("document identity is malformed: {error}"),
-                    )
-                })?,
-            ),
-            None => None,
-        };
-        let stated_identity = match &document.identity {
-            Some(value) => Some(
-                serde_json::from_value::<fsl_analyze::analyze::document::DocumentSelection>(
-                    value.clone(),
-                )
-                .map_err(|error| {
-                    invalid(
-                        &format!("/documents/{position}/identity"),
-                        format!("document identity is malformed: {error}"),
-                    )
-                })?,
-            ),
-            None => None,
-        };
-        if format == Some("filament.state.snapshot/v1") && document.identity.is_some() {
-            return Err(invalid(
-                &format!("/documents/{position}/identity"),
-                "a supplied snapshot uses its declared identity and cannot state a wrapper identity",
-            ));
-        }
-        if let (Some(declared), Some(stated)) = (&declared_identity, &stated_identity) {
-            if declared != stated {
-                return Err(invalid(
-                    &format!("/documents/{position}/identity"),
-                    format!(
-                        "stated identity {{{}, {}}} contradicts declared identity {{{}, {}}}",
-                        stated.authority, stated.identity, declared.authority, declared.identity
-                    ),
-                ));
-            }
-        }
-        let Some(identity) = declared_identity.as_ref().or(stated_identity.as_ref()) else {
-            return Err(invalid(
-                &format!("/documents/{position}"),
-                format!("{} declares no identity and none was stated", document.file),
-            ));
-        };
-        let reference = fsl_semantics::model::observation::DocumentRef {
-            authority: identity.authority.clone(),
-            identity: identity.identity.clone(),
-        };
-        if format == Some("filament.protocol-recording/1") {
-            recording_documents.insert((reference.authority.clone(), reference.identity.clone()));
-        }
-        if documents.insert(reference, bytes).is_some() {
-            return Err(invalid(
-                &format!("/documents/{position}"),
-                format!("{} repeats a provisioned document identity", document.file),
-            ));
-        }
-    }
-    // FR-636: a `trace` naming no provisioned document refuses the request.
-    for (position, trace) in request
-        .items
-        .iter()
-        .flatten()
-        .enumerate()
-        .filter_map(|(position, item)| item.trace.as_ref().map(|trace| (position, trace)))
-    {
-        if !documents.contains_key(&trace.reference()) {
-            return Err(invalid(
-                "items",
-                format!(
-                    "items[{position}].trace {{{}, {}}} names no provisioned document",
-                    trace.authority, trace.identity
-                ),
-            ));
-        }
-    }
-    for (position, recording) in
-        request
-            .items
-            .iter()
-            .flatten()
-            .enumerate()
-            .filter_map(|(position, item)| {
-                item.recording
-                    .as_ref()
-                    .map(|recording| (position, recording))
-            })
-    {
-        let identity = recording.reference();
-        if !recording_documents.contains(&(identity.authority.clone(), identity.identity.clone())) {
-            return Err(invalid(
-                &format!("/items/{position}/recording"),
-                format!(
-                    "recording {{{}, {}}} does not name a provisioned protocol recording",
-                    recording.authority, recording.identity,
-                ),
-            ));
-        }
-    }
-    let mut limits = AnalyzeLimits::unbounded();
-    let mut accounting = fsl_replay::AccountingLimits(limits.accounting);
-    for (setting, bound) in request.limits.accounting.entries() {
-        accounting.set_bound(setting, bound);
-    }
-    limits.accounting = accounting.0;
-    limits.observation = request.limits.observation.resolve();
-    limits.normalization = request.limits.normalization.resolve();
-    limits.deadline = request
-        .deadline_ms
-        .map_or(DeadlineSupply::Unbounded, DeadlineSupply::Milliseconds);
-    // FR-620: an explicit `subject.universes` refuses an unprovisioned or
-    // incomplete reference; the default subject's universes are the complete
-    // populations its snapshots declare, so it refuses neither.
-    let default_subject = SubjectSelection::default_over(&documents);
-    let mut subject = match request.subject {
-        // A subject that states only its `protocol` keeps the default model
-        // parts (FSL FR-1033).
-        Some(subject) => {
-            let subject = subject.completed_by(&default_subject);
-            subject
-                .check_universes(&documents)
-                .map_err(RunCause::AnalyzeUniverse)?;
-            subject
-        }
-        None => default_subject,
-    };
+    let documents = read_documents(&mut intake, &request.documents, request.items.as_deref())?;
+    let limits = analyze_limits(&request.limits, request.deadline_ms);
+    let mut subject = read_subject(request.subject, &documents)?;
     subject.memory.clone_from(&memory);
     let compile = wire::CompileRequest {
         models: request.models,
@@ -672,6 +462,14 @@ fn run_input(
         limits,
         deadline_ms,
     } = input;
+    let routed = RoutedItems {
+        documents,
+        subject,
+        memory,
+        items,
+        limits,
+        deadline_ms,
+    };
     let sources = std::slice::from_ref(&source);
     check_sources(
         &compile,
@@ -682,61 +480,106 @@ fn run_input(
         None,
         None,
         |checked, _, _, packages, libraries, _, _, _, _| {
-            let package = checked.package();
-            let mut provision = SourceProvision::default();
-            // FR-620: the request's units in request order, the program then
-            // each library as listed, rank the default items.
-            let mut units = Vec::new();
-            for read in std::iter::once(&source).chain(libraries) {
-                units.push(read.source().reference().clone());
-                provision.insert(
-                    read.source().reference(),
-                    read.source().text().as_bytes().to_vec(),
-                );
-            }
-            let mut registry = fsl_route::Registry::new();
-            for descriptor in engines.registrations() {
-                registry
-                    .register(descriptor.clone())
-                    .map_err(|_| RunCause::AnalyzeFault)?;
-            }
-            check_memory(package, &memory)?;
-            let binding = subject.binding(&packages, &documents);
-            let resolved = resolve_items(
-                package,
-                &subject,
-                items.as_deref(),
-                &registry,
-                &units,
-                &binding,
-                &limits,
-            );
-            let run = AnalyzeRun {
-                package,
-                binding,
-                provision,
-                items: resolved,
-                engines: &engines,
-                limits,
-            };
-            let written = with_deadline(cancel, deadline_ms, || {
-                analyze_document(run, negotiate, cancel)
-            });
-            match written {
-                Ok((document, exit_code)) => Ok(RunResult {
-                    exit_code,
-                    value: NativeResult::analyze_document(document),
-                    outcome: None,
-                    requirements: None,
-                    sources: crate::Sources::default(),
-                }),
-                Err(AnalyzeDocumentError::Refused(refusal)) => {
-                    Err(RunCause::AnalyzeRefused(Box::new(refusal)))
-                }
-                Err(AnalyzeDocumentError::Fault) => Err(RunCause::AnalyzeFault),
-            }
+            let units = std::iter::once(&source).chain(libraries);
+            let settled = settle_items(
+                checked.package(),
+                &packages,
+                units,
+                &routed,
+                &Settle {
+                    negotiate,
+                    engines: &engines,
+                    cancel,
+                },
+            )?;
+            Ok(RunResult {
+                exit_code: settled.exit_code,
+                value: NativeResult::analyze_document(settled.document),
+                outcome: None,
+                requirements: None,
+                sources: crate::Sources::default(),
+            })
         },
     )
+}
+
+/// The FR-620 items of one request and what they read besides the compiled
+/// program: an analyze request's, or a monitor request's provider-routed
+/// `items` (FR-644).
+pub(super) struct RoutedItems {
+    /// The supplied documents, each under its own identity.
+    pub documents: DocumentProvision,
+    /// The request's default model subject.
+    pub subject: SubjectSelection,
+    /// The request's `memory` member (FSL FR-1033, FR-219).
+    pub memory: Vec<fsl_eval::simulation::protocol::MemorySelection>,
+    /// The caller's items; `None` for FR-620's default items.
+    pub items: Option<Vec<ItemSelection>>,
+    /// The limits every item of the run shares.
+    pub limits: AnalyzeLimits,
+    /// The run's deadline in milliseconds.
+    pub deadline_ms: Option<u64>,
+}
+
+/// The FR-620 settlement of `routed` over the compiled `package`: each item
+/// resolved against `settle`'s registry, negotiated by its negotiator, the
+/// in-process items run on the linked engines and the provider items sent
+/// through one FR-950 request per backend (FR-635), all under its cancel
+/// handle and the run's deadline. `units` are the request's units in
+/// request order, the program then each library as listed.
+///
+/// # Errors
+///
+/// A whole-request refusal (FR-624) of the subject binding or source
+/// provision, or an internal fault.
+pub(super) fn settle_items<'u>(
+    package: &fsl_package::CheckedPackage,
+    packages: &fsl_semantics::model::intake::PackageInput,
+    units: impl IntoIterator<Item = &'u FormalSource>,
+    routed: &RoutedItems,
+    settle: &Settle<'_>,
+) -> Result<SettledRun> {
+    let mut provision = SourceProvision::default();
+    let mut labels = Vec::new();
+    for read in units {
+        labels.push(read.source().reference().clone());
+        provision.insert(
+            read.source().reference(),
+            read.source().text().as_bytes().to_vec(),
+        );
+    }
+    let mut registry = fsl_route::Registry::new();
+    for descriptor in settle.engines.registrations() {
+        registry
+            .register(descriptor.clone())
+            .map_err(|_| RunCause::AnalyzeFault)?;
+    }
+    check_memory(package, &routed.memory)?;
+    let binding = routed.subject.binding(packages, &routed.documents);
+    let resolved = resolve_items(
+        package,
+        &routed.subject,
+        routed.items.as_deref(),
+        &registry,
+        &labels,
+        &binding,
+        &routed.limits,
+    );
+    let run = AnalyzeRun {
+        package,
+        binding,
+        provision,
+        items: resolved,
+        engines: settle.engines,
+        limits: routed.limits,
+    };
+    with_deadline(settle.cancel, routed.deadline_ms, || {
+        settle_run(run, settle.negotiate, settle.cancel)
+    })
+    .map_err(|error| match error {
+        AnalyzeDocumentError::Refused(refusal) => RunCause::AnalyzeRefused(Box::new(refusal)),
+        AnalyzeDocumentError::Fault => RunCause::AnalyzeFault,
+    })
 }
 
 /// Run `work` with `cancel` cancelled for `deadline` once `deadline_ms`
@@ -1096,4 +939,250 @@ fn check_memory(
         }
     }
     Ok(())
+}
+
+/// FR-620's item checks that need no compiled program: `recording` and
+/// `population` belong to a global-conformance item, and FR-634's
+/// `simulation` member to a simulation item alone.
+pub(super) fn validate_items(items: Option<&[ItemSelection]>) -> Result<()> {
+    for (position, item) in items.unwrap_or_default().iter().enumerate() {
+        if item.recording.is_some()
+            && item.kind.as_deref()
+                != Some(fsl_semantics::check::Capability::GlobalConformance.to_wire())
+        {
+            return Err(invalid(
+                &format!("/items/{position}/recording"),
+                "recording is only valid on a global-conformance item",
+            ));
+        }
+        if let Some(population) = &item.population {
+            if item.kind.as_deref()
+                != Some(fsl_semantics::check::Capability::GlobalConformance.to_wire())
+            {
+                return Err(invalid(
+                    &format!("/items/{position}/population"),
+                    "population is only valid on a global-conformance item",
+                ));
+            }
+            if item.recording.is_none() {
+                return Err(invalid(
+                    &format!("/items/{position}/population"),
+                    "population requires a recording",
+                ));
+            }
+            validate_activated_population(position, population)
+                .map_err(|(pointer, reason)| invalid(&pointer, reason))?;
+            serde_json::from_value::<Vec<fsl_analyze::analyze::document::ActivatedRolePopulation>>(
+                population.clone(),
+            )
+            .map_err(|error| {
+                invalid(&format!("/items/{position}/population"), error.to_string())
+            })?;
+        }
+    }
+    // FR-634: a `simulation` item names no claim and carries its
+    // `simulation` member, and only it does; `seed` and `samples` belong to
+    // `sample` only.
+    for (position, item) in items.unwrap_or_default().iter().enumerate() {
+        let simulation =
+            item.kind.as_deref() == Some(fsl_analyze::analyze::document::SIMULATION_KIND);
+        match (&item.simulation, simulation) {
+            (Some(_), false) => {
+                return Err(invalid(
+                    &format!("/items/{position}/simulation"),
+                    "simulation is only valid on a simulation item",
+                ))
+            }
+            (None, true) => {
+                return Err(invalid(
+                    &format!("/items/{position}/simulation"),
+                    "a simulation item carries its simulation member",
+                ))
+            }
+            (Some(settings), true) => {
+                if item.claim.is_some() {
+                    return Err(invalid(
+                        &format!("/items/{position}/claim"),
+                        "a simulation item settles no claim",
+                    ));
+                }
+                if let Some(member) = settings.misplaced_member() {
+                    return Err(invalid(
+                        &format!("/items/{position}/simulation/{member}"),
+                        format!("{member} belongs to a sample simulation only"),
+                    ));
+                }
+            }
+            (None, false) => {}
+        }
+    }
+    Ok(())
+}
+
+/// Read the supplied `documents` through `intake`, each under its declared
+/// or stated identity (FR-821), and refuse an item `trace` or `recording`
+/// naming no provisioned document (FR-636).
+pub(super) fn read_documents(
+    intake: &mut super::Intake<'_>,
+    selections: &[wire::DocumentFileSelection],
+    items: Option<&[ItemSelection]>,
+) -> Result<DocumentProvision> {
+    let mut documents = DocumentProvision::new();
+    let mut recording_documents = std::collections::BTreeSet::new();
+    for (position, document) in selections.iter().enumerate() {
+        let bytes = intake.file(&document.file, intake.remaining)?;
+        let parsed: serde_json::Value = serde_json::from_slice(&bytes).map_err(|error| {
+            invalid(
+                &format!("/documents/{position}"),
+                format!("{} is not a JSON document: {error}", document.file),
+            )
+        })?;
+        let format = parsed.get("format").and_then(serde_json::Value::as_str);
+        let declared_identity = match parsed.get("identity") {
+            Some(value) => Some(
+                serde_json::from_value::<fsl_analyze::analyze::document::DocumentSelection>(
+                    value.clone(),
+                )
+                .map_err(|error| {
+                    invalid(
+                        &format!("/documents/{position}/identity"),
+                        format!("document identity is malformed: {error}"),
+                    )
+                })?,
+            ),
+            None => None,
+        };
+        let stated_identity = match &document.identity {
+            Some(value) => Some(
+                serde_json::from_value::<fsl_analyze::analyze::document::DocumentSelection>(
+                    value.clone(),
+                )
+                .map_err(|error| {
+                    invalid(
+                        &format!("/documents/{position}/identity"),
+                        format!("document identity is malformed: {error}"),
+                    )
+                })?,
+            ),
+            None => None,
+        };
+        if format == Some("filament.state.snapshot/v1") && document.identity.is_some() {
+            return Err(invalid(
+                &format!("/documents/{position}/identity"),
+                "a supplied snapshot uses its declared identity and cannot state a wrapper identity",
+            ));
+        }
+        if let (Some(declared), Some(stated)) = (&declared_identity, &stated_identity) {
+            if declared != stated {
+                return Err(invalid(
+                    &format!("/documents/{position}/identity"),
+                    format!(
+                        "stated identity {{{}, {}}} contradicts declared identity {{{}, {}}}",
+                        stated.authority, stated.identity, declared.authority, declared.identity
+                    ),
+                ));
+            }
+        }
+        let Some(identity) = declared_identity.as_ref().or(stated_identity.as_ref()) else {
+            return Err(invalid(
+                &format!("/documents/{position}"),
+                format!("{} declares no identity and none was stated", document.file),
+            ));
+        };
+        let reference = fsl_semantics::model::observation::DocumentRef {
+            authority: identity.authority.clone(),
+            identity: identity.identity.clone(),
+        };
+        if format == Some("filament.protocol-recording/1") {
+            recording_documents.insert((reference.authority.clone(), reference.identity.clone()));
+        }
+        if documents.insert(reference, bytes).is_some() {
+            return Err(invalid(
+                &format!("/documents/{position}"),
+                format!("{} repeats a provisioned document identity", document.file),
+            ));
+        }
+    }
+    // FR-636: a `trace` naming no provisioned document refuses the request.
+    for (position, trace) in items
+        .unwrap_or_default()
+        .iter()
+        .enumerate()
+        .filter_map(|(position, item)| item.trace.as_ref().map(|trace| (position, trace)))
+    {
+        if !documents.contains_key(&trace.reference()) {
+            return Err(invalid(
+                "items",
+                format!(
+                    "items[{position}].trace {{{}, {}}} names no provisioned document",
+                    trace.authority, trace.identity
+                ),
+            ));
+        }
+    }
+    for (position, recording) in
+        items
+            .unwrap_or_default()
+            .iter()
+            .enumerate()
+            .filter_map(|(position, item)| {
+                item.recording
+                    .as_ref()
+                    .map(|recording| (position, recording))
+            })
+    {
+        let identity = recording.reference();
+        if !recording_documents.contains(&(identity.authority.clone(), identity.identity.clone())) {
+            return Err(invalid(
+                &format!("/items/{position}/recording"),
+                format!(
+                    "recording {{{}, {}}} does not name a provisioned protocol recording",
+                    recording.authority, recording.identity,
+                ),
+            ));
+        }
+    }
+    Ok(documents)
+}
+
+/// The limits every item of the run shares: FR-620's `limits` over the
+/// unbounded defaults, and the run's deadline.
+pub(super) fn analyze_limits(
+    request: &wire::AnalyzeLimits,
+    deadline_ms: Option<u64>,
+) -> AnalyzeLimits {
+    let mut limits = AnalyzeLimits::unbounded();
+    let mut accounting = fsl_replay::AccountingLimits(limits.accounting);
+    for (setting, bound) in request.accounting.entries() {
+        accounting.set_bound(setting, bound);
+    }
+    limits.accounting = accounting.0;
+    limits.observation = request.observation.resolve();
+    limits.normalization = request.normalization.resolve();
+    limits.deadline = deadline_ms.map_or(DeadlineSupply::Unbounded, DeadlineSupply::Milliseconds);
+    limits
+}
+
+/// The request's model subject: `subject` completed by the default subject
+/// over `documents`, or that default.
+pub(super) fn read_subject(
+    subject: Option<SubjectSelection>,
+    documents: &DocumentProvision,
+) -> Result<SubjectSelection> {
+    // FR-620: an explicit `subject.universes` refuses an unprovisioned or
+    // incomplete reference; the default subject's universes are the complete
+    // populations its snapshots declare, so it refuses neither.
+    let default_subject = SubjectSelection::default_over(documents);
+    Ok(match subject {
+        // A subject that states only its `protocol` keeps the default model
+        // parts (FSL FR-1033).
+        Some(subject) => {
+            let subject = subject.completed_by(&default_subject);
+            subject
+                .check_universes(documents)
+                .map_err(RunCause::AnalyzeUniverse)?;
+            subject
+        }
+        None => default_subject,
+    })
 }
