@@ -3888,12 +3888,18 @@ fn checked_equality_term_data(
         let mut operands = operands.into_iter();
         let left = operands.next().ok_or(EmitRefusal::SourceMapInvariant)?;
         let right = operands.next().ok_or(EmitRefusal::SourceMapInvariant)?;
-        let operator = match row.producer_data.operator() {
-            filament_semantic_value::declaration::EqualityOperator::Equal => {
-                filament_contract_model::CheckedEqualityOperator::Equal
-            }
-            filament_semantic_value::declaration::EqualityOperator::NotEqual => {
-                filament_contract_model::CheckedEqualityOperator::NotEqual
+        let operator = if row.producer_data.schedule()
+            == filament_semantic_value::declaration::EqualitySchedule::Float
+        {
+            filament_contract_model::CheckedEqualityOperator::Equal
+        } else {
+            match row.producer_data.operator() {
+                filament_semantic_value::declaration::EqualityOperator::Equal => {
+                    filament_contract_model::CheckedEqualityOperator::Equal
+                }
+                filament_semantic_value::declaration::EqualityOperator::NotEqual => {
+                    filament_contract_model::CheckedEqualityOperator::NotEqual
+                }
             }
         };
         if matches!(

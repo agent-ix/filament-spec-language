@@ -513,7 +513,7 @@ fn corpus_values() {
 }
 
 /// STD-654: the five float-bearing equality cases now check, while
-/// `String = Text` keeps its settled `operator-ineligible` refusal.
+/// `String = Text` keeps its settled `type-mismatch` refusal.
 #[trace("FSpec-TC-194", "FSpec-FR-149-AC-22", "FSpec-FR-149-AC-25", "FSpec-FR-149-AC-26")]
 #[test]
 fn std654_equality_corpus_cases_follow_the_settled_matrix() {

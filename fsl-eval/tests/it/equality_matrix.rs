@@ -2157,44 +2157,6 @@ fn e27_structural_mismatch_and_cardinality_short_circuit_pair_counts() {
     );
 }
 
-#[trace("FSpec-TC-194", "FSpec-FR-149-AC-9")]
-#[trace("TC-1339", "FR-534-AC-1")]
-#[test]
-fn e28_equality_on_ieee_bearing_types_is_operator_ineligible() {
-    let env = TypeEnvironment::new(
-        [CompositeDeclaration::new(
-            key("F"),
-            "F",
-            CompositeShape::Record(vec![FieldDeclaration::new(
-                "x",
-                ValueType::Float(FloatType::exact(IeeeWidth::Binary32)),
-                Presence::Required,
-            )]),
-        )],
-        [],
-    )
-    .unwrap();
-    let ineligible = IllTyped {
-        cause: IllTypedCause::OperatorIneligible,
-    };
-    for value_type in [
-        ValueType::Float(FloatType::exact(IeeeWidth::Binary32)),
-        ValueType::Composite(key("F")),
-    ] {
-        assert_eq!(check(&env, &value_type, &value_type), Err(ineligible));
-    }
-    assert_eq!(ineligible.cause.tag(), Some("operator-ineligible"));
-    let set = ValueType::collection(collection_type(
-        CollectionKind::Set,
-        ValueType::Float(FloatType::exact(IeeeWidth::Binary64)),
-        2,
-    ));
-    assert_eq!(
-        env.try_check_type(&set),
-        Err(filament_semantic_value::declaration::TypeCheckError::Refused(ineligible))
-    );
-}
-
 #[trace("FSpec-TC-194", "FSpec-FR-149-AC-10")]
 #[test]
 fn e29_integer_to_decimal_conversion_charges_its_decimal_schedule() {
@@ -3954,6 +3916,8 @@ fn admits_equality_conversion_is_exactly_the_closed_table() {
 /// FSpec FR-149-AC-9 and AC-25/26: float-bearing composites and collections
 /// are admitted under the settled IEEE equality matrix.
 #[trace("FSpec-TC-194", "FSpec-FR-149-AC-9")]
+#[trace("FSpec-TC-194", "FSpec-FR-149-AC-25")]
+#[trace("FSpec-TC-194", "FSpec-FR-149-AC-26")]
 #[test]
 fn e28b_equality_on_float_bearing_types_is_admitted() {
     let env = TypeEnvironment::new(
@@ -3969,13 +3933,14 @@ fn e28b_equality_on_float_bearing_types_is_admitted() {
         [],
     )
     .unwrap();
+    let float = ValueType::Float(FloatType::exact(IeeeWidth::Binary32));
     let set = ValueType::collection(collection_type(
         CollectionKind::Set,
         ValueType::Float(FloatType::exact(IeeeWidth::Binary64)),
         2,
     ));
     assert!(env.try_check_type(&set).is_ok());
-    for value_type in [ValueType::Composite(key("F")), set] {
+    for value_type in [float, ValueType::Composite(key("F")), set] {
         assert!(
             check(&env, &value_type, &value_type).is_ok(),
             "{value_type:?}"

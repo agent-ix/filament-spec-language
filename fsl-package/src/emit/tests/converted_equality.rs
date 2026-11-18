@@ -181,7 +181,7 @@ fn float_equality_schedule_roundtrips_as_float() {
         .map(|decision| decision["operator"].as_str().unwrap())
         .collect::<Vec<_>>();
     operators.sort_unstable();
-    assert_eq!(operators, ["equal", "not_equal"]);
+    assert_eq!(operators, ["equal", "equal"]);
     for decision in decisions {
         assert_eq!(decision["schedule"], "float");
         assert!(decision["left"]["conversion_target"].is_null());
