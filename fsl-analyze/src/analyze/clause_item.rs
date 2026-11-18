@@ -18,11 +18,10 @@
 
 use filament_exact::Identifier;
 use filament_semantic_value::catalog::InternalFault;
+use fsl_eval::simulation::Limits;
 use fsl_eval::simulation::model::{
     ExpansionLimits, ModelCheckInput, ModelSimulationRequest, ModelSystem,
 };
-use fsl_eval::simulation::Limits;
-use fsl_eval::simulation::model::{ExpansionLimits, ModelSimulationRequest, ModelSystem};
 use fsl_foundation::RequestIndex;
 use fsl_foundation::source::provenance::OccurrenceKey;
 use fsl_package::CheckedPackage;
@@ -87,7 +86,9 @@ pub enum ClauseItemRefusal {
     /// form does not read yet (a fairness set, an interval, an aggregate
     /// atom, a shared formula node, a profile other than the infinite-trace
     /// one or a capture), at the node that carries it.
-    #[error("unsupported_construct/not-yet-implemented: the clause's package form does not read its {fact} at {node:?} yet")]
+    #[error(
+        "unsupported_construct/not-yet-implemented: the clause's package form does not read its {fact} at {node:?} yet"
+    )]
     Pending {
         /// The fact not read yet.
         fact: &'static str,
