@@ -272,6 +272,31 @@ fn a_hyper_clause_emits_the_hyperproperty_node_with_its_seven_bindings() {
     assert_eq!(binding(body, "align_skip")["members"], json!([]));
 }
 
+/// FR-631-AC-4: a temporal whose body reads no object slots still emits a
+/// hyperproperty, anchored to its selected model subject.
+#[trace("TC-1591", "FR-631-AC-4")]
+#[test]
+fn an_object_free_hyper_temporal_emits() {
+    let declaration = "hyper Whole using t over behaviours () \
+                       forall trace a of Config forall trace b of Config \
+                       { always holds(true) }";
+    let compiled = compile(&unit(INFINITE, declaration));
+    let node = hyper_node(&compiled.wire);
+    assert_eq!(text(binding(&node["body"], "domain")), "behaviours");
+    assert!(binding(&node["body"], "parameters")["members"]
+        .as_array()
+        .unwrap()
+        .is_empty());
+    assert_eq!(
+        binding(&node["body"], "subjects")["members"]
+            .as_array()
+            .unwrap()
+            .len(),
+        1
+    );
+    admit(&compiled);
+}
+
 /// FR-488-AC-4, AC-5: the `body` binding references a
 /// `temporal`/`temporal_clause` wrapper over the slot-0 node, and the slot
 /// nodes are named by FR-488 "Slot node names" at their index as level.

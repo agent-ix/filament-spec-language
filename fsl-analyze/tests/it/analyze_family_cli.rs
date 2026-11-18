@@ -172,7 +172,7 @@ fn non_interference_proves_and_refutes() {
 /// FR-631-AC-4: a hyper clause with no object parameter is analyzable.
 #[trace("TC-1591", "FR-631-AC-4")]
 #[test]
-#[ignore = "QSL-2248: a hyper clause with no object parameter is checked but not emitted"]
+#[ignore = "QSL-2128: hyperproperty items are not reachable through fsl analyze yet"]
 fn an_object_free_hyper_clause_is_analyzed() {
     use crate::hyper_world::{request_files, Vault};
     let declaration = "hyper Whole using inf over behaviours () \

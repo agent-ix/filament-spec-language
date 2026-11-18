@@ -14,6 +14,8 @@
 //! A clause names no position of its own beyond its declaration, so each
 //! node is located at an `Origin::TypeDeclaration` site of the clause
 //! (`hyper_site`); the node's `claim` occurrence is at the clause's name.
+//! When the clause has no object-parameter slots, its temporal wrapper is
+//! anchored to the first selected model root.
 
 use std::collections::BTreeMap;
 
@@ -319,7 +321,8 @@ impl Lowering<'_> {
         let over = scope
             .first()
             .map(|binder| binder.parameter.clone())
-            .ok_or_else(|| stage_fault(&claim, "clause-has-an-atom-slot"))?;
+            .or_else(|| input.subject_roots.first().cloned())
+            .ok_or_else(|| stage_fault(&claim, "clause-has-a-subject"))?;
 
         // The body wrapper over the clause's formula.
         let conditions: BTreeMap<usize, FormulaCondition<'_>> = clause
