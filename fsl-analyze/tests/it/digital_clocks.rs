@@ -869,6 +869,59 @@ fn discrete_delays_are_emitted_as_delay_distribution_nodes() {
     assert!(delay["body"].to_string().contains("discrete"), "{delay}");
 }
 
+/// The `time dense` unit of [`with_tick`] with no random parameter, so a delay is
+/// the only probabilistic declaration but the workload.
+fn delay_only_world(delay: &str) -> World {
+    let document = retx_document(&[("send", &["late", "x"]), ("tick", &["retried"])]);
+    let body = format!(
+        "{dense}{TICK}\
+         pre Send using v on M::Call::send {{ not self.late{GUARD} }}\n\
+         post Sent using v on M::Call::send {{ self.late = true and self.x = 0 ms }}\n\
+         time invariant Deadline when {{ not self.late }} {{ self.x <= 2 ms }}\n\
+         {delay}\n\
+         workload Both on M {{ weight Call::send = 1; weight Call::tick = 1; }}\n",
+        dense = timed_world::DENSE,
+    );
+    timed_world::world(&document, PROFILES, &body)
+}
+
+/// FR-740-AC-3 (TC-2062), FSpec FR-640-AC-2 (TC-1563): a `time dense` unit
+/// with a delay of each family emits one `probabilistic`/`delay_distribution`
+/// node of that family, with no random parameter in the unit.
+#[trace("TC-2062", "FR-740-AC-3")]
+#[trace("FSpec-TC-1563", "FSpec-FR-640-AC-2")]
+#[test]
+fn each_delay_family_is_emitted_as_a_delay_distribution_node() {
+    for (family, written) in [
+        ("uniform", "uniform"),
+        ("uniform_interval", "uniform[1 ms, 3 ms]"),
+        ("exponential", "exponential(rational(3, 2))"),
+        ("discrete", "discrete { 1 ms: 90, 3 ms: 10 }"),
+    ] {
+        let world = delay_only_world(&format!("delay M::Call::send ~ {written};"));
+        let emission =
+            fsl_package::emit_checked(&world.package, fsl_package::EmitLimits::fixture())
+                .unwrap_or_else(|refusal| panic!("{family}: S4 emits the timed unit: {refusal:?}"));
+        let wire: serde_json::Value =
+            serde_json::from_slice(emission.package().bytes()).expect("JSON bytes");
+        let delays: Vec<&serde_json::Value> = wire["semantic_graph"]["nodes"]
+            .as_array()
+            .expect("nodes")
+            .iter()
+            .filter(|node| {
+                node["node_tag"] == "probabilistic" && node["semantic_form"] == "delay_distribution"
+            })
+            .collect();
+        let [delay] = delays[..] else {
+            panic!("{family}: one delay_distribution node: {delays:?}");
+        };
+        assert!(
+            delay["body"].to_string().contains(&format!("\"{family}\"")),
+            "{delay}"
+        );
+    }
+}
+
 /// FSpec FR-420-AC-8 (TC-1561): under a workload that gives `tick` weight 0,
 /// the unit checks, its digital product builds, and the probabilities
 /// leaving every product state sum to 1: a tie with the weight-0 `tick`
