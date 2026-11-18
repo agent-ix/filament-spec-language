@@ -378,7 +378,7 @@ fn the_run_command_preserves_a_missing_markdown_clause_selection() {
     let directory = tempfile::tempdir().unwrap();
     std::fs::write(
         directory.path().join("spec.md"),
-        "# Doc\n\n## Rules\n\n### Present\n```ix:native\nopaque body\n```\n",
+        "# Doc\n\n## Invariants\n\n### Present\n```ix:native\nopaque body\n```\n",
     )
     .unwrap();
     let mut request = current_clause_request();
