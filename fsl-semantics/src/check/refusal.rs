@@ -25,6 +25,16 @@ use fsl_foundation::Span;
 /// has no expression tree for a path to walk.
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
 pub enum ProtocolAnchorCause {
+    /// FR-218 observe-only boundaries: this action changes shared state,
+    /// queues, or compensation registrations behind an observe-only mark.
+    ObserveOnlyAction {
+        /// The offending action's catalog name.
+        action: &'static str,
+        /// The innermost observing control or role name.
+        boundary: String,
+        /// The complete action declaration.
+        span: Span,
+    },
     /// FR-113 "Refusals": no scope declares the anchor's first segment, or
     /// a later segment names nothing its previous target declares.
     Missing {
@@ -1154,7 +1164,8 @@ impl ProtocolAnchorCause {
     /// `Location`'s path).
     pub fn span(&self) -> Span {
         match self {
-            Self::Missing { span, .. }
+            Self::ObserveOnlyAction { span, .. }
+            | Self::Missing { span, .. }
             | Self::Ambiguous { span, .. }
             | Self::WrongKind { span, .. }
             | Self::ChannelMismatch { span, .. }
@@ -1238,7 +1249,8 @@ impl ProtocolAnchorCause {
             Self::WrongProfileKind { .. } => Code::UnknownProfile,
             Self::RefusedDependency { .. } => Code::MissingDeclaration,
             Self::Ambiguous { .. } | Self::Shadow { .. } => Code::AmbiguousDeclaration,
-            Self::WrongKind { .. }
+            Self::ObserveOnlyAction { .. }
+            | Self::WrongKind { .. }
             | Self::ChannelMismatch { .. }
             | Self::CarriesMismatch { .. }
             | Self::ChannelDeliveryRange { .. }
@@ -1313,7 +1325,8 @@ impl ProtocolAnchorCause {
             | Self::RoleMax { .. } => "type-mismatch",
             Self::JoinFunctionType { .. } => "type-mismatch",
             Self::AttemptBinderRead { .. } => "type-mismatch",
-            Self::KeyModelState { .. }
+            Self::ObserveOnlyAction { .. }
+            | Self::KeyModelState { .. }
             | Self::KeyEquality { .. }
             | Self::SlotModelState { .. }
             | Self::AccessOrdering { .. }

@@ -384,6 +384,7 @@ pub(crate) fn protocol_declaration(
         collector.declarations.push(ProtocolNodeDeclaration {
             kind: ProtocolNodeKind::Finish,
             name: declared_name(&finish_items, finish)?,
+            span: finish.span(),
             scope: None,
             channel: None,
             related: Vec::new(),
@@ -691,6 +692,7 @@ fn compensation_anchors(
     collector.declarations.push(ProtocolNodeDeclaration {
         kind: ProtocolNodeKind::CompensateTemplate,
         name: name.clone(),
+        span: node.span(),
         scope: None,
         channel: None,
         related: Vec::new(),
@@ -865,7 +867,13 @@ impl<'c> ControlWalk<'c, '_, '_> {
         };
         let enclosing_items = items(cst, enclosing);
         let name = declared_name(&enclosing_items, enclosing)?;
-        declare(self.collector.declarations, kind, name.clone(), self.scope);
+        declare(
+            self.collector.declarations,
+            kind,
+            name.clone(),
+            self.scope,
+            enclosing.span(),
+        );
         self.open(name);
         children.push(ControlNode::Control(only(
             &enclosing_items,
@@ -911,7 +919,7 @@ impl<'c> ControlWalk<'c, '_, '_> {
                         .push(repeat_form(cst, matched, declaration)?);
                 }
                 let (kind, name) = named(kind)?;
-                declare(self.collector.declarations, kind, name.clone(), self.scope);
+                declare(self.collector.declarations, kind, name.clone(), self.scope, matched.span());
                 self.open(name);
                 children.extend(
                     nodes_of(&matched_items, Production::Control)
@@ -926,7 +934,7 @@ impl<'c> ControlWalk<'c, '_, '_> {
                     .choices
                     .push(choice_form(cst, matched, declaration)?);
                 let (kind, name) = named(ProtocolNodeKind::Choice)?;
-                declare(self.collector.declarations, kind, name.clone(), self.scope);
+                declare(self.collector.declarations, kind, name.clone(), self.scope, matched.span());
                 self.open(name);
                 children.extend(
                     nodes_of(&matched_items, Production::Case)
@@ -939,7 +947,7 @@ impl<'c> ControlWalk<'c, '_, '_> {
                 let (kind, name) = named(ProtocolNodeKind::Parallel)?;
                 let form = parallel_form(cst, matched, self.collector.declarations.len())?;
                 self.collector.parallels.push(form);
-                declare(self.collector.declarations, kind, name.clone(), self.scope);
+                declare(self.collector.declarations, kind, name.clone(), self.scope, matched.span());
                 self.open(name);
                 children.extend(
                     nodes_of(&matched_items, Production::Branch)
@@ -953,7 +961,7 @@ impl<'c> ControlWalk<'c, '_, '_> {
             Production::Check => {
                 let (kind, name) = named(ProtocolNodeKind::Check)?;
                 let owner = self.collector.declarations.len();
-                declare(self.collector.declarations, kind, name, self.scope);
+                declare(self.collector.declarations, kind, name, self.scope, matched.span());
                 // `check N using p { e };`: the name and the alias are its
                 // only two identifier tokens.
                 let [_, alias] = tokens_of(&matched_items, TokenKind::Identifier)[..] else {
@@ -990,13 +998,14 @@ impl<'c> ControlWalk<'c, '_, '_> {
                     ProtocolNodeKind::Fence,
                     name,
                     self.scope,
+                    matched.span(),
                 );
                 Ok(())
             }
             Production::Commit => {
                 let (kind, name) = named(ProtocolNodeKind::Commit)?;
                 let owner = self.collector.declarations.len();
-                declare(self.collector.declarations, kind, name, self.scope);
+                declare(self.collector.declarations, kind, name, self.scope, matched.span());
                 // `commit N by R as (..) { e };`: the role is the
                 // identifier right after `by`.
                 let role = token_after(&matched_items, b"by")
@@ -1068,6 +1077,7 @@ impl<'c> ControlWalk<'c, '_, '_> {
             ProtocolNodeKind::Await,
             name.clone(),
             self.scope,
+            node.span(),
         );
         self.open(name);
         let matched_event = only(await_items, Production::EventNode, node)?;
@@ -1109,10 +1119,12 @@ fn declare(
     kind: ProtocolNodeKind,
     name: DeclaredName,
     scope: Option<ScopeId>,
+    span: Span,
 ) {
     out_decls.push(ProtocolNodeDeclaration {
         kind,
         name,
+        span,
         scope,
         channel: None,
         related: Vec::new(),
@@ -1146,6 +1158,9 @@ fn event_node_anchors(
         }
         Some(Item::Token(token)) if token.spelling() == b"event" => {
             (ProtocolNodeKind::Event, Some(AnchorSite::EventFor))
+        }
+        Some(Item::Token(token)) if token.spelling() == b"recommend" => {
+            (ProtocolNodeKind::Event, None)
         }
         Some(Item::Token(_) | Item::Node(_)) | None => return Err(unexpected(node)),
     };
@@ -1190,6 +1205,7 @@ fn event_node_anchors(
     collector.declarations.push(ProtocolNodeDeclaration {
         kind,
         name,
+        span: node.span(),
         scope,
         channel: channel.clone(),
         related,
@@ -1217,7 +1233,11 @@ fn event_node_anchors(
     if kind == ProtocolNodeKind::Attempt {
         collector
             .attempts
-            .push(attempt_form(cst, &event_items, node, declaration_index)?);
+            .push(attempt_form(cst, &event_items, node, declaration_index, false)?);
+    } else if has_token(&event_items, b"recommend") {
+        collector
+            .attempts
+            .push(attempt_form(cst, &event_items, node, declaration_index, true)?);
     }
     let Some(site) = site else {
         return Ok(());
@@ -1261,6 +1281,7 @@ fn attempt_form(
     event_items: &[Item<'_>],
     node: &CstNode,
     declaration_index: usize,
+    recommendation: bool,
 ) -> Result<AttemptForm, FormsRefusal> {
     let declared = |token: &fsl_cst::CstToken| -> Result<DeclaredName, FormsRefusal> {
         Ok(DeclaredName {
@@ -1314,6 +1335,7 @@ fn attempt_form(
             .first()
             .map(|order| access_ordering(cst, order))
             .transpose()?,
+        recommendation,
     })
 }
 

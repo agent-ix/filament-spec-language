@@ -242,6 +242,23 @@ impl std::fmt::Debug for CheckedAttempt {
     }
 }
 
+/// One checked side-effect-free recommendation node (FR-218, FR-206).
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct CheckedRecommendation {
+    /// The protocol declaration index of the recommendation control.
+    pub declaration: usize,
+    /// The role the recommendation names.
+    pub role: String,
+    /// The resolved operation.
+    pub operation: ClauseOperation,
+    /// The object type of the operation receiver.
+    pub receiver: filament_exact::EffectiveId,
+    /// The operation's `operation_anchor` node.
+    pub anchor: filament_exact::NodeKey,
+    /// The contracts named by the recommendation.
+    pub contracts: Vec<filament_exact::NodeKey>,
+}
+
 /// One protocol declaration FR-113 has checked: every scoped anchor's
 /// resolved target, in the same order as the form's own `scoped_anchors`.
 /// `attempts` starts empty: `check` checks FR-114's `contracts` binding
@@ -257,6 +274,8 @@ pub struct CheckedProtocol {
     pub resolved_anchors: Vec<ProtocolNodeId>,
     /// Every `attempt`'s own fully checked binding, filled in after S4.
     pub attempts: Vec<CheckedAttempt>,
+    /// Every checked recommendation, separate from state-changing attempts.
+    pub recommendations: Vec<CheckedRecommendation>,
     /// The protocol's activation, captures and compensation templates
     /// (FR-381), filled in by `check::mod`'s own pipeline once their
     /// expressions are checked.
@@ -324,6 +343,7 @@ impl DebugWith for CheckedProtocol {
             name,
             resolved_anchors,
             attempts,
+            recommendations,
             obligations,
             channels,
             controls,
@@ -346,6 +366,7 @@ impl DebugWith for CheckedProtocol {
             .field("name", &name)
             .field("resolved_anchors", &resolved_anchors)
             .field("attempts", &With(attempts, table))
+            .field("recommendations", &recommendations)
             .field("obligations", &obligations)
             .field("channels", &channels)
             .field("controls", &controls)

@@ -3359,6 +3359,8 @@ pub struct ProtocolNodeDeclaration {
     pub kind: ProtocolNodeKind,
     /// The declared name and its span.
     pub name: DeclaredName,
+    /// The construct's complete source span.
+    pub span: Span,
     /// The innermost named control enclosing this declaration; `None` at
     /// the top level.
     pub scope: Option<ScopeId>,
@@ -3738,6 +3740,9 @@ pub struct AttemptForm {
     /// The `ordering o` memory order with the span of its text, when
     /// written (FR-220).
     pub ordering: Option<Spanned<crate::protocol_control::AccessOrdering>>,
+    /// True when this operation reference belongs to a side-effect-free
+    /// `recommend` control rather than an `attempt`.
+    pub recommendation: bool,
 }
 
 /// `protocol Name using p over (params) activation { ... run Control

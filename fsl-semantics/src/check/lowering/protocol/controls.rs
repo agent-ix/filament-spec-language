@@ -432,6 +432,37 @@ impl Lowering<'_> {
                     ],
                 )
             }
+            ProtocolNodeKind::Event
+                if form.attempts.iter().any(|attempt| {
+                    attempt.declaration == node.0 && attempt.recommendation
+                }) =>
+            {
+                let recommendation = checked
+                    .recommendations
+                    .iter()
+                    .find(|recommendation| recommendation.declaration == node.0)
+                    .ok_or_else(unchecked)?;
+                let constraint = self.control_body(controls, node, entry, true, location)?;
+                (
+                    "recommend",
+                    vec![
+                        role(Some(&recommendation.role))?,
+                        MemberTerm::bound(
+                            "operation",
+                            LeafTerm::reference(recommendation.anchor.clone()),
+                        ),
+                        MemberTerm::binding(
+                            "contracts",
+                            BindingValue::Group(GroupTerm::references(sorted(
+                                recommendation.contracts.iter().cloned(),
+                            ))),
+                        ),
+                        binder()?,
+                        related,
+                        MemberTerm::bound("constraint", constraint),
+                    ],
+                )
+            }
             ProtocolNodeKind::Event => {
                 let constraint = self.control_body(controls, node, entry, true, location)?;
                 (
