@@ -87,11 +87,16 @@ impl fmt::Display for ObligationIdentity {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use filament_exact::{PathSegment, Role};
-    use fsl_foundation::source::provenance::{OccurrenceKey, Origin};
+    use filament_exact::{Origin, PathSegment, Role};
+    use fsl_foundation::source::provenance::OccurrenceKey;
 
     fn node(ordinal: u32) -> NodeKey {
-        NodeKey::new("pkg", vec![PathSegment::Text("claim".to_owned())], ordinal).unwrap()
+        NodeKey::new(
+            "pkg",
+            vec![PathSegment::Text("claim".to_owned())],
+            ordinal.into(),
+        )
+        .unwrap()
     }
 
     #[test]

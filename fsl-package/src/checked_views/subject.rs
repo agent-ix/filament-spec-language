@@ -7,7 +7,7 @@ use filament_contract_model::{
     CheckedBindingNameKind, CheckedLiteralValue, CheckedNodeId, CheckedNodeKind,
     CheckedOccurrenceRole, CheckedOperationInterval, CheckedOperationMember, CheckedPackageV2,
     CheckedSelection, CheckedSelectionRole, CheckedSemanticNodeV2, CheckedSourceMapEntry,
-    CheckedTerm, LawRole, TemporalBinding, TemporalForm, ValueForm,
+    CheckedTerm, LawRole, ModelForm, TemporalBinding, TemporalForm, ValueForm,
 };
 use filament_exact::{Origin, Role};
 use fsl_foundation::source::provenance::OccurrenceKey;
@@ -696,14 +696,16 @@ fn reference_position(graph: &Graph<'_>, term: &CheckedTerm) -> Result<usize, Vi
         .ok_or(ViewRefusal::UnresolvedClause)
 }
 
-/// The id of the `value`/`parameter` node `term` references.
+/// The id of the `value`/`parameter` node or object-free hyper clause's
+/// `model_root` anchor that `term` references.
 fn parameter_reference<'p>(
     graph: &Graph<'p>,
     term: &'p CheckedTerm,
 ) -> Result<&'p CheckedNodeId, ViewRefusal> {
     let at = reference_position(graph, term)?;
     match graph.kind(at) {
-        Some(CheckedNodeKind::Value(ValueForm::Parameter)) => graph
+        Some(CheckedNodeKind::Value(ValueForm::Parameter))
+        | Some(CheckedNodeKind::Model(ModelForm::ModelRoot)) => graph
             .node(at)
             .map(|node| &node.node_id)
             .ok_or(ViewRefusal::UnresolvedClause),
