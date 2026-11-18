@@ -38,10 +38,9 @@ fn over_wide_universe_with_prelude(
     });
     let path = counter_request_with(&ws, body, request);
     if !prelude.is_empty() {
-        ws.write(
-            "program.fsl",
-            unit_text(&format!("{prelude}{CONTRACT}{body}")).as_bytes(),
-        );
+        let mut source = unit_text(&format!("{CONTRACT}{body}"));
+        source = source.replacen("model M =", &format!("{prelude}model M ="), 1);
+        ws.write("program.fsl", source.as_bytes());
     }
     ws.write("wide.json", wide.to_string().as_bytes());
     analyze(&path)
