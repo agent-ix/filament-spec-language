@@ -876,7 +876,7 @@ fn evaluate_declaration(
     meter: &mut Meter,
 ) -> Result<Evaluation, InternalFault> {
     let mismatch = || InternalFault::new("S6a", "family-and-evaluation-environment-disagree");
-    let (outcome, location, losses) = match (family, env) {
+    let (outcome, location, losses, frame_depth) = match (family, env) {
         (S6aFamilyKind::Value, EvaluationTarget::Value(env)) => {
             let outcome =
                 fsl_semantics::check::ValueFunctionFamily::evaluate(identity, env, meter)?;
@@ -884,6 +884,7 @@ fn evaluate_declaration(
                 outcome.into(),
                 env.location.take(),
                 std::mem::take(&mut env.losses),
+                env.frame_depth,
             )
         }
         (S6aFamilyKind::ProtocolClause, EvaluationTarget::ProtocolClause(env)) => {
@@ -893,6 +894,7 @@ fn evaluate_declaration(
                 outcome.into(),
                 env.location.take(),
                 std::mem::take(&mut env.losses),
+                0,
             )
         }
         (S6aFamilyKind::Value, EvaluationTarget::ProtocolClause(_))
@@ -914,7 +916,7 @@ fn evaluate_declaration(
         outcome,
         location,
         losses,
-        frame_depth: 0,
+        frame_depth,
     })
 }
 
