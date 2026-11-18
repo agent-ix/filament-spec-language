@@ -255,9 +255,7 @@ pub fn protocol_item<'a>(
         ModelCheckItem::Clause { .. } => Ok(run_protocol_item(index, CLAUSE_FAMILY, item)),
         ModelCheckItem::DeadlockFreedom
         | ModelCheckItem::RaceFreedom
-        | ModelCheckItem::Invariant { .. } => {
-            Err(DerivedItemMismatch::DerivedRun { index })
-        }
+        | ModelCheckItem::Invariant { .. } => Err(DerivedItemMismatch::DerivedRun { index }),
     }
 }
 

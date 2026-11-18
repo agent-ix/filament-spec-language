@@ -1453,9 +1453,7 @@ pub(super) fn precheck(
                 .ok_or_else(|| fault("a-decided-clause-has-a-form"))?,
             ModelCheckItem::DeadlockFreedom
             | ModelCheckItem::RaceFreedom
-            | ModelCheckItem::Invariant { .. } => {
-                PropertyForm::ReachableInvariant
-            }
+            | ModelCheckItem::Invariant { .. } => PropertyForm::ReachableInvariant,
         };
         return Ok(Admitted::Settled(settled(ReductionCause::NotPreserving {
             reduction,

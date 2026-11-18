@@ -1333,7 +1333,8 @@ fn a_refused_key_rejects_the_certificate_at_the_least_refused_state() {
     );
 }
 
-const AT_MOST: &str = "invariant AtMostThree using v on M::Counter at current { self.value <= 3 }\n\
+const AT_MOST: &str =
+    "invariant AtMostThree using v on M::Counter at current { self.value <= 3 }\n\
                        invariant AtMostTwo using v on M::Counter at current { self.value <= 2 }\n\
                        constraint Low using v on M::Counter at current { self.value <= 3 }\n";
 
@@ -1386,7 +1387,10 @@ fn an_invariant_proof_is_certified_under_the_invariant_root() {
         serde_json::from_slice(certificate.states[0].automaton_state.as_bytes()).expect("JSON");
     let context = &key[1];
     assert_eq!(context[0][0], "invariant", "{key}");
-    assert!(context[0][1].is_object(), "the root's node is a NodeId: {key}");
+    assert!(
+        context[0][1].is_object(),
+        "the root's node is a NodeId: {key}"
+    );
     assert_eq!(context[0][2], "claim", "{key}");
     assert_eq!(context[0][3], three.claim().ordinal().to_string(), "{key}");
     assert_eq!(context[1], "filament.temporal.infinite-trace/v1", "{key}");

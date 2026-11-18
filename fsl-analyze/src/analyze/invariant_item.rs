@@ -46,7 +46,8 @@ pub(super) fn invariant_item<'a>(
             && clause.identity() == *claim.node()
             && clause.claim() == claim.origin()
     })?;
-    let name = QualifiedName::new(vec![filament_exact::Identifier::new(clause.name()).ok()?]).ok()?;
+    let name =
+        QualifiedName::new(vec![filament_exact::Identifier::new(clause.name()).ok()?]).ok()?;
     let simulation = move |binding: &SubjectBinding<'a>| ModelSimulationRequest {
         package,
         packages: binding.packages,

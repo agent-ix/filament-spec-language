@@ -1328,11 +1328,13 @@ fn invariant(
                     trace_position: payload.trace_position(),
                 });
             }
-            (ConstraintValue::Undefined { cause, .. }, CounterexampleKind::UndefinedEvaluation(claimed))
-                if at_last
-                    && claimed.cause == cause
-                    && claimed.site.position == position_of(index)
-                    && claimed.site.locus == UndefinedLocus::Invariant(clause.name().to_owned()) =>
+            (
+                ConstraintValue::Undefined { cause, .. },
+                CounterexampleKind::UndefinedEvaluation(claimed),
+            ) if at_last
+                && claimed.cause == cause
+                && claimed.site.position == position_of(index)
+                && claimed.site.locus == UndefinedLocus::Invariant(clause.name().to_owned()) =>
             {
                 return Ok(ModelTraceSettlement::Reproduced {
                     value: ModelTraceValue::Undefined(UndefinedEvaluation {

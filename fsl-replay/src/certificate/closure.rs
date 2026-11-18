@@ -76,8 +76,9 @@ use fsl_eval::simulation::protocol::{
 };
 use fsl_eval::simulation::StateKey;
 use fsl_eval::simulation::{
-    ConstraintError, ConstraintValue, Cut, EncodingRefusal, Expansion, ExpansionStop, NotSimulated, SubjectSystem,
-    SubjectTransition, TransitionSystem, ZeroProgress, ZeroProgressError, BOUND_POSITIONS,
+    ConstraintError, ConstraintValue, Cut, EncodingRefusal, Expansion, ExpansionStop, NotSimulated,
+    SubjectSystem, SubjectTransition, TransitionSystem, ZeroProgress, ZeroProgressError,
+    BOUND_POSITIONS,
 };
 use fsl_eval::temporal::{AtomReading, CaptureReading};
 use fsl_semantics::model::observation::AdmissionFailure;
