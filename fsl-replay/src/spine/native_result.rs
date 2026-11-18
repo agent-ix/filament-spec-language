@@ -1149,6 +1149,7 @@ struct ClauseRead {
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
+#[allow(dead_code, reason = "the closed wire shape is validated during deserialization")]
 struct ExtractionRead {
     original: ExtractionOriginalRead,
     body: ExtractionBodyRead,
@@ -1161,6 +1162,7 @@ struct ExtractionRead {
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
+#[allow(dead_code, reason = "the closed wire shape is validated during deserialization")]
 struct ExtractionOriginalRead {
     authority: String,
     identity: String,
@@ -1170,6 +1172,7 @@ struct ExtractionOriginalRead {
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
+#[allow(dead_code, reason = "the closed wire shape is validated during deserialization")]
 struct ExtractionBodyRead {
     authority: String,
     identity: String,
@@ -1179,6 +1182,7 @@ struct ExtractionBodyRead {
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
+#[allow(dead_code, reason = "the closed wire shape is validated during deserialization")]
 struct ExtractionBindingRead {
     clause: String,
     package: String,
@@ -1186,6 +1190,7 @@ struct ExtractionBindingRead {
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
+#[allow(dead_code, reason = "the closed wire shape is validated during deserialization")]
 struct ExtractionMapRead {
     region: ExtractionSpanRead,
     segments: Vec<ExtractionSegmentRead>,
@@ -1193,6 +1198,7 @@ struct ExtractionMapRead {
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
+#[allow(dead_code, reason = "the closed wire shape is validated during deserialization")]
 struct ExtractionSpanRead {
     start: u64,
     end: u64,
@@ -1200,6 +1206,7 @@ struct ExtractionSpanRead {
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
+#[allow(dead_code, reason = "the closed wire shape is validated during deserialization")]
 struct ExtractionSegmentRead {
     body_start: u64,
     body_end: u64,
@@ -1209,6 +1216,7 @@ struct ExtractionSegmentRead {
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
+#[allow(dead_code, reason = "the closed wire shape is validated during deserialization")]
 struct ExtractionRegionRead {
     start: ExtractionPositionRead,
     end: ExtractionPositionRead,
@@ -1216,6 +1224,7 @@ struct ExtractionRegionRead {
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
+#[allow(dead_code, reason = "the closed wire shape is validated during deserialization")]
 struct ExtractionPositionRead {
     byte: u64,
     line: u64,
