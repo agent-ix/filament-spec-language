@@ -46,6 +46,7 @@ mod check_mode;
 mod checked_views;
 mod child_composite;
 mod clock_places;
+mod collection_if;
 mod composition;
 mod control_node;
 mod converted_equality;

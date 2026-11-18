@@ -2179,3 +2179,77 @@ fn the_encoder_writes_set_and_bag_elements_in_canonical_form() {
         json!({"ordered-set": written(&["9", "10"])})
     );
 }
+
+/// The FR-360 package with the payload-bearing variant type `Shape` (`Empty`;
+/// `Circle` carrying an `Integer`) and `Account.describe(s: Shape, t: Tier):
+/// Boolean`.
+fn payload_variant_document() -> Value {
+    let mut shape = fixture::variant_type("Shape", &["Empty", "Circle"]);
+    shape["variants"][1]["payloadType"] = json!("ix://filament/native/Integer");
+    let mut document = fixture::with_types(vec![shape]);
+    let account = document["types"]
+        .as_array_mut()
+        .expect("types")
+        .iter_mut()
+        .find(|ty| ty["displayName"] == "Account")
+        .expect("Account");
+    account["operations"]
+        .as_array_mut()
+        .expect("operations")
+        .push(fixture::operation_with(
+            "Account",
+            "describe",
+            &[("s", fixture::id("Shape")), ("t", fixture::id("Tier"))],
+            "ix://filament/native/Boolean",
+        ));
+    document
+}
+
+/// The refusals `clause` is checked with over [`payload_variant_document`].
+fn describe_refusals(clause: &str) -> Vec<CheckRefusal> {
+    let (declarations, _packages) = declarations_of(
+        &payload_variant_document(),
+        "Config",
+        &format!("post D using v on Config::Account::describe {{ {clause} }}"),
+    );
+    declarations
+        .check(CheckMode::Linked, CheckingLimits::default())
+        .map(|_| Vec::new())
+        .unwrap_or_else(|refusals| refusals)
+}
+
+/// TC-1009 step 5 (FR-360-AC-12): a variant type with a payload-bearing case is
+/// a union, so an operation parameter of it is the scrutinee of a `case` in a
+/// state clause and checks; the parameter of a variant type with no payload is
+/// an enum, whose `case` refuses `ill_typed`/`type-mismatch` at the scrutinee,
+/// so no arity-0 union is declarable through a domain package.
+#[trace("TC-1009", "FR-360-AC-12")]
+#[test]
+fn a_payload_variant_parameter_is_a_union_scrutinee_and_a_nullary_one_is_not() {
+    assert_eq!(
+        describe_refusals("case s { Empty: true; Circle(r): r > 0; }"),
+        vec![],
+        "the union parameter is cased"
+    );
+    let missing = describe_refusals("case s { Circle(r): r > 0; }");
+    let found: Vec<_> = missing
+        .iter()
+        .map(|refusal| (refusal.cause.code(), refusal.cause.cause()))
+        .collect();
+    assert_eq!(
+        found,
+        [(
+            fsl_foundation::diagnostic::Code::UndefinedExpression,
+            Some("unproved-exhaustiveness")
+        )],
+        "an arm set missing `Empty` refuses exhaustiveness and nothing else"
+    );
+    let nullary = describe_refusals("case t { Gold: true; Standard: false; }");
+    assert_eq!(nullary.len(), 1, "{nullary:?}");
+    assert_eq!(nullary[0].cause, mismatch());
+    assert_eq!(
+        nullary[0].cause.code(),
+        fsl_foundation::diagnostic::Code::IllTyped
+    );
+    assert_eq!(nullary[0].location.path(), &[0], "at the scrutinee");
+}
