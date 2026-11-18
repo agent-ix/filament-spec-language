@@ -49,6 +49,18 @@ most one retained counterexample.
 - A retained counterexample settles the clause `refuted` only after native
   replay; a run with no failure records `tested` evidence and settles no
   verdict.
+- For a clause over a state model, the result record SHALL carry FSpec
+  FR-190 "Operation coverage": one `operations` entry per operation the
+  model declares, `covered` with its first case or `uncovered` with its
+  reason, and the `coverage` summary. The reachability behind `unreachable`,
+  `unreachable-within-bound` and `not-generated` SHALL come from exploring
+  FR-120's `ModelSystem` from the generation's initial-state domain under
+  the run's limits, never from the generated cases alone, so an operation
+  no case happened to apply is not reported unreachable.
+- Coverage SHALL NOT change the item's verdict or its FR-285 category: an
+  uncovered operation leaves a passing run `tested` with the exit of a
+  completed run, and a refuted run exits as a violation, with the uncovered
+  entries beside the counterexample.
 
 ## Acceptance Criteria
 
@@ -57,6 +69,7 @@ most one retained counterexample.
 | FR-752-AC-1 | Over `test/counters` with `inc` on `Int[0, 5]` and `value <= 3`, every generated invocation is enabled, the first cases include `value` 0 and 5 and the just-outside refusals, and the retained counterexample is four `inc` from 0, 1-minimal and replay-reproduced. | Test (TC-2102) |
 | FR-752-AC-2 | For every seed in a fixed set, every shrink step the shrinker accepts is strictly smaller in the pinned order, domain-valid, enabled and fails the same clause; no single removal or one-step decrease of the retained case still fails. | Test (TC-2102) |
 | FR-752-AC-3 | A `verify` step `check t claim Bounded method model_based_test domain M::Counter bound 50;` runs at most 50 cases and its record names the step; a passing run settles no verdict and records `tested`. | Test (TC-2102) |
+| FR-752-AC-4 | Over a counter model with `inc` (enabled while `value < 5`, `value` in `Int[0, 5]`), `reset` (enabled at `value = 5`) and `jam` (enabled at `value > 5`), seed 7, `max_cases` 100 and `max_trace_length` 8, `operations` lists `inc` and `reset` `covered` with their first case and `jam` `uncovered`, reason `unreachable`, and `coverage` is `partial`; with `max_trace_length` 3, `reset` is `uncovered`, reason `unreachable-within-bound`. Two equal runs give equal `operations`, and the passing run stays `tested` with no verdict. | Test (TC-2956) |
 
 ## Dependencies
 
