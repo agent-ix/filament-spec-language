@@ -692,6 +692,22 @@ fn admit_package(
         dependent_bytes,
     )?;
     let handoff = handoff_directory(&package.directory)?;
+    // FR-850 "Admission": an absent handoff directory or package file is a
+    // package refusal, not an I/O failure.
+    if !directory.join(&handoff).is_dir() {
+        return Err(witness_refusal(
+            &handoff,
+            "missing-file",
+            "the request names no handoff directory there",
+        ));
+    }
+    if !directory.join(&handoff).join(PACKAGE_FILE).is_file() {
+        return Err(witness_refusal(
+            PACKAGE_FILE,
+            "missing-file",
+            "the handoff directory holds no checked package",
+        ));
+    }
     let bytes = intake.file(
         &format!("{handoff}/{PACKAGE_FILE}"),
         intake.remaining,

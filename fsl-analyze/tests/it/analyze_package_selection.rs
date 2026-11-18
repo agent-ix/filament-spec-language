@@ -365,3 +365,25 @@ fn an_invariant_named_over_a_package_is_never_an_unknown_claim() {
         "{diagnostic}"
     );
 }
+
+/// FR-850 "Admission" (FSpec FR-520): an absent handoff directory, and a
+/// handoff with no `checked-package.json`, refuse the request
+/// `invalid_package`/`missing-file` at the request stage, exit 20.
+#[trace("TC-2410", "FR-850-AC-3")]
+#[test]
+fn an_absent_handoff_or_package_file_refuses_missing_file() {
+    let ws = Workspace::new("package-absent");
+    let (members, _) = package_request(&ws, &bounded(), json!([{"claim": "Missing"}]));
+    let mut elsewhere = members.clone();
+    elsewhere["package"] = json!({"directory": "no-such-handoff"});
+    std::fs::remove_file(ws.path(&handoff_file("checked-package.json")))
+        .expect("the package file is removed");
+    for (name, request) in [("no-directory", &elsewhere), ("no-package", &members)] {
+        let run = analyze_members(&ws, &format!("analyze-{name}.json"), request);
+        let diagnostic = first_diagnostic(&run);
+        assert_eq!(diagnostic["code"], "invalid_package", "{name}: {diagnostic}");
+        assert_eq!(diagnostic["cause"], "missing-file", "{name}: {diagnostic}");
+        assert_eq!(run.document()["items"], json!([]), "{name}");
+        assert_eq!(run.exit, 20, "{name}");
+    }
+}
