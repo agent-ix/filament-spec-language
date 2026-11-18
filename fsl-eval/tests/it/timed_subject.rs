@@ -5737,14 +5737,9 @@ fn absent_drops_an_option_clock() {
 #[trace("TC-685", "FR-230-AC-52")]
 #[test]
 fn the_clock_presence_frame_vectors_step_as_published() {
-    let fspec = std::env::var_os("FSPEC_DIR")
-        .expect("FSPEC_DIR must name a filament-specification checkout");
-    let path = std::path::Path::new(&fspec)
-        .join("proposals/checked-package-v2/clock-presence-frame-vectors.json");
-    let vectors: Json = serde_json::from_slice(
-        &std::fs::read(&path).unwrap_or_else(|failure| panic!("{}: {failure}", path.display())),
-    )
-    .expect("the vectors are JSON");
+    let vectors: Json = crate::published_fspec::json(
+        "proposals/checked-package-v2/clock-presence-frame-vectors.json",
+    );
     let millis = |text: &Json| -> Option<Rational> {
         let text = text.as_str()?;
         let amount: i64 = text.strip_suffix(" ms")?.parse().ok()?;

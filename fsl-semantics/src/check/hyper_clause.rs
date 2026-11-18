@@ -14,9 +14,10 @@
 //! abstraction-relation binding it also has a second requirement, the code
 //! claim.
 
-use fsl_foundation::source::node_table::{DebugTable, DebugWith, NodeKeyDebug, standalone};
+use fsl_foundation::source::node_table::{standalone, DebugTable, DebugWith, NodeKeyDebug};
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 
+use crate::model::clause_observation::Observation;
 use filament_exact::{CollectionKind, EffectiveId, Identifier, NodeKey, ValueType};
 use filament_semantic_value::catalog::InternalFault;
 use filament_semantic_value::fairness::{FairnessConstraint, FairnessOperation};
@@ -29,32 +30,32 @@ use fsl_forms::{
     QuantifierKind, SpanId, StepLabelForm, TemporalFormulaForm, TemporalNodeForm, TemporalOperator,
     TypeFormHead,
 };
-use fsl_foundation::Span;
 use fsl_foundation::bound::{DomainKey, DomainKind};
 use fsl_foundation::diagnostic::{Code, StageFailure, Staged};
 use fsl_foundation::source::provenance::OccurrenceKey;
+use fsl_foundation::Span;
 
-use super::Scope;
 use super::abstraction::{AbstractionKey, CheckedAbstractionRelation, OperationKey};
 use super::check::{HyperTyping, Signatures, Typer};
 use super::ir::{CheckedBody, CheckedNode};
 use super::profile::TemporalProfile;
 use super::refusal::{CheckCause, CheckRefusal, Obligation, TemporalCause};
-use super::state_clause::{PopulationDomain, population_of};
+use super::state_clause::{population_of, PopulationDomain};
 use super::temporal_clause::FormulaNodeId;
 use super::temporal_clause::{
-    CheckedFormula, CheckedOperator, IntervalReading, TemporalClaim, TemporalDeclarations,
-    build_formula, checked_constraint, checked_operators, in_safety_fragment,
+    build_formula, checked_constraint, checked_operators, in_safety_fragment, CheckedFormula,
+    CheckedOperator, IntervalReading, TemporalClaim, TemporalDeclarations,
 };
+use super::Scope;
 use super::{AdmittedModel, Capability};
-use crate::family::requirements::{ClaimExtent, ClassifyFailure, Requirements, classify_domains};
+use crate::family::requirements::{classify_domains, ClaimExtent, ClassifyFailure, Requirements};
 use crate::family::{CheckContext, CheckOutcome, FamilyContract};
 use crate::model::operation::OperationLookup;
 
 pub(crate) mod emission;
 pub(crate) mod lowering;
 
-pub use lowering::{AtomSlot, STUTTER_TEXT, operation_text};
+pub use lowering::{operation_text, AtomSlot, STUTTER_TEXT};
 
 /// The stage name this module's faults report.
 const STAGE: &str = "check.hyper";
@@ -694,6 +695,8 @@ pub struct CheckedModelRelation {
     typed_body: CheckedBody,
     /// The body binder names and types in the slot order above.
     body_parameters: Vec<(String, ValueType)>,
+    /// The execution and state observation selected by each model read.
+    component_reads: BTreeMap<Location, (usize, Observation)>,
     claim: TemporalClaim,
     code_domains: BTreeMap<(usize, Vec<u32>), DomainKind>,
     /// The S4 step-relation node key, once assembled.
@@ -713,6 +716,7 @@ impl DebugWith for CheckedModelRelation {
             body_spans,
             typed_body,
             body_parameters,
+            component_reads,
             claim,
             code_domains,
             identity,
@@ -727,6 +731,7 @@ impl DebugWith for CheckedModelRelation {
             .field("body_spans", &body_spans)
             .field("typed_body", &typed_body)
             .field("body_parameters", &body_parameters)
+            .field("component_reads", &component_reads)
             .field("claim", &claim)
             .field("code_domains", &code_domains)
             .field(
@@ -803,7 +808,7 @@ impl CheckedModelRelation {
     }
 
     /// The selected model alias for each execution, in source order.
-    pub(crate) fn execution_aliases(&self) -> &[String] {
+    pub fn execution_aliases(&self) -> &[String] {
         &self.execution_aliases
     }
 
@@ -820,13 +825,18 @@ impl CheckedModelRelation {
     }
 
     /// The typed S3 body whose nodes S4 lowers.
-    pub(crate) fn typed_body(&self) -> &CheckedBody {
+    pub fn typed_body(&self) -> &CheckedBody {
         &self.typed_body
     }
 
     /// The typed body binders, in the order their local slots name them.
-    pub(crate) fn body_parameters(&self) -> &[(String, ValueType)] {
+    pub fn body_parameters(&self) -> &[(String, ValueType)] {
         &self.body_parameters
+    }
+
+    /// Execution index and pre/post observation for each model read.
+    pub fn component_reads(&self) -> &BTreeMap<Location, (usize, Observation)> {
+        &self.component_reads
     }
 
     /// The relation's form: always HP-1 (FR-173).
@@ -3638,6 +3648,13 @@ fn check_relation(
             }
             ClassifyFailure::Fault(fault) => StageFailure::Fault(fault),
         })?;
+    let component_reads = relation_component_reads(
+        &form.body.expression,
+        &body_location,
+        &form.executions,
+        &typed_body,
+        body_parameters.len(),
+    );
     Ok(CheckedModelRelation {
         name: form.name.name.clone(),
         span: form.span,
@@ -3647,11 +3664,51 @@ fn check_relation(
         body_spans: form.body.spans.clone(),
         typed_body,
         body_parameters,
+        component_reads,
         claim: TemporalClaim::new(BTreeMap::new(), true, true),
         code_domains,
         identity: None,
         occurrence: None,
     })
+}
+
+/// Track which transition observation each model read in a relation body uses.
+fn relation_component_reads(
+    expression: &Expression,
+    body_location: &Location,
+    executions: &[fsl_forms::ExecutionBindingForm],
+    typed_body: &CheckedBody,
+    parameter_count: usize,
+) -> BTreeMap<Location, (usize, Observation)> {
+    let execution_index: BTreeMap<_, _> = executions
+        .iter()
+        .enumerate()
+        .map(|(index, execution)| (execution.variable.name.as_str(), index))
+        .collect();
+    let observations = super::observation::Observations::of(
+        typed_body.root(),
+        Observation::Current,
+        parameter_count,
+    );
+    let mut reads = BTreeMap::new();
+    let mut pending = vec![(expression.root(), Vec::<usize>::new())];
+    while let Some((node, path)) = pending.pop() {
+        if matches!(node.node(), ExprNode::Field { .. } | ExprNode::Deref(_)) {
+            if let Some(index) = read_root(node).and_then(|root| execution_index.get(root)) {
+                let location = Location::at(body_location.origin.clone(), &path);
+                let observation = observations
+                    .of_read(&location)
+                    .unwrap_or(Observation::Current);
+                reads.insert(location, (*index, observation));
+            }
+        }
+        for (index, child) in node.children().into_iter().enumerate().rev() {
+            let mut child_path = path.clone();
+            child_path.push(index);
+            pending.push((child, child_path));
+        }
+    }
+    reads
 }
 
 /// Every `hyper` clause and `relation` of `package`, checked as the

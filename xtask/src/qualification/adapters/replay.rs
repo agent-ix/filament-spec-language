@@ -142,18 +142,9 @@ mod depth_tests {
     #[trace("TC-1325", "FR-350-AC-11")]
     #[test]
     fn malformed_typed_witnesses_at_depth_keep_the_decode_partition() {
-        let fspec = std::env::var_os("FSPEC_DIR")
-            .map(std::path::PathBuf::from)
-            .unwrap_or_else(|| {
-                std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-                    .ancestors()
-                    .map(|parent| parent.join("filament-specification"))
-                    .find(|path| path.is_dir())
-                    .expect("an FSpec checkout or FSPEC_DIR")
-            });
         let mut schema: serde_json::Value = serde_json::from_slice(
-            &std::fs::read(fspec.join("proposals/conformance-corpus-v1/schema.json"))
-                .expect("the published corpus schema"),
+            filament_specification::published_file("proposals/conformance-corpus-v1/schema.json")
+                .expect("pinned FSpec publishes the corpus schema"),
         )
         .expect("the selected schema is JSON");
         let alternatives = schema["$defs"]["WitnessValue"]["oneOf"]

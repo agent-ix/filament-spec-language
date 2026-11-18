@@ -15,10 +15,7 @@ const SHARED_GRAMMAR: &str = "proposals/filament-v1/shared-grammar.md";
 /// `filament_specification` crate (FR-760, FSpec FR-660): no environment
 /// variable, no sibling checkout, no filesystem path.
 fn published_file(path: &str) -> Option<&'static str> {
-    // QSL-2107: until the workspace takes `filament-specification-qualification`
-    // as a tagged dev-dependency (FR-760), this is the one place that becomes
-    // `filament_specification::published_file(path)`.
-    panic!("{path}: the pinned filament_specification crate is not a dependency yet (FR-760)")
+    filament_specification::published_file(path).and_then(|bytes| std::str::from_utf8(bytes).ok())
 }
 
 /// Every production name defined in an `ebnf` fence of the shared grammar.

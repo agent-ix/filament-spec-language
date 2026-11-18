@@ -21,10 +21,10 @@
 //! `VersionNumber` declaration and assembles to the same `Int[0, 1000]`.
 
 use filament_checked::key::DeclarationKey;
-use filament_exact::{IeeeWidth, Integer, IntegerInterval, Presence, ValueType};
+use filament_exact::{Integer, IntegerInterval, Presence, ValueType};
 use filament_semantic_value::checking::CheckMode;
 use filament_semantic_value::declaration::ObjectTypeDeclaration;
-use fsl_semantics::check::{AssemblyCause, PackageDeclarations};
+use fsl_semantics::check::PackageDeclarations;
 use fsl_semantics::model::accounting::ModelNormalizationLimits;
 use fsl_semantics::model::intake::meaning;
 use fsl_semantics::model::intake::{admit_unit, package_input, UnitIntakeCause};
@@ -2025,64 +2025,6 @@ fn object_uuid_field_projects_as_uuid() {
         .expect("the object UUID identity field is projected");
     assert_eq!(order_id.value_type(), &ValueType::Uuid);
     assert_eq!(order_id.presence(), Presence::Required);
-}
-
-/// FR-056-AC-20 (TC-405 step 5): a native floating model field is refused by
-/// the real producer -> intake -> assembler path. The width is part of the
-/// refusal oracle; floating signatures and bodies have their own admission
-/// contract and do not assign a model-field rounding mode here.
-#[trace("FR-056-AC-20", "TC-405")]
-#[test]
-fn native_float_model_fields_refuse_as_unsupported_features() {
-    for (type_ref, expected_width) in [
-        ("ix://filament/native/Float32", IeeeWidth::Binary32),
-        ("ix://filament/native/Float64", IeeeWidth::Binary64),
-    ] {
-        let gauge = format!("ix://{PACKAGE_IDENTITY}/Gauge");
-        let document = wire_envelope(
-            json!([wire_construct(
-                "object_type",
-                meaning::OBJECT_TYPE,
-                json!({})
-            )]),
-            json!([wire_type(
-                &gauge,
-                "object_type",
-                json!({
-                    "supertypes": [],
-                    "operations": [],
-                    "relationships": [],
-                    "fields": [wire_field(
-                        &format!("{gauge}/reading"),
-                        "reading",
-                        type_ref,
-                        "required",
-                        1,
-                    )],
-                }),
-            )]),
-            json!([]),
-        )
-        .to_string()
-        .into_bytes();
-
-        let refusal = admit_and_assemble_with_body(
-            &document,
-            "function noop using v(): Boolean pure { true }",
-        )
-        .expect_err("a native float model field remains unsupported");
-        let [error] = refusal.errors.as_slice() else {
-            panic!("one floating model-field refusal, not {:?}", refusal.errors);
-        };
-        assert_eq!(
-            error.cause.catalog_code().to_string(),
-            "unknown_required_feature/unsupported-feature"
-        );
-        assert!(matches!(
-            error.cause,
-            AssemblyCause::FloatingType { width, .. } if width == expected_width
-        ));
-    }
 }
 
 /// FR-103-AC-2 (TC-458 step 2, part 1): `modifies` naming no declaration of

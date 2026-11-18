@@ -149,6 +149,19 @@ registration with `{discrete, hybrid}` is a candidate for both. An item of
 any other kind carries no requirement, and its candidates do not read
 `dynamics`.
 
+For a `schedulability` item, the request builder SHALL carry the record's
+release-backed marker (FR-246) as the item requirement `task-product` when
+the marker is `true`, and no such requirement otherwise. EN-6's registration
+(`en-6`), which advertises `schedulability` for task-automaton products
+(FR-249), SHALL match a `schedulability` item exactly when the item carries
+`task-product`; every other registration advertising `schedulability`,
+including `en-7`, matches a `schedulability` item whether or not it carries
+the requirement. So a claim over a task set with no checked release has the
+matching set `[en-7]`, and a release-backed claim has `[en-6, en-7]`, ordered
+bytewise by identity as every candidate set is. When such an item names no
+backend, FR-962 narrows that set to `[en-7]`, so EN-7's closed-form answer
+remains the default and EN-6 runs only when the request names `en-6`.
+
 For other items, matching remains by capability kind alone, subject to the
 probabilistic evidence and temporal dynamics rules above. In every case,
 candidate matching SHALL NOT use mode, display name or registration order. A
@@ -199,7 +212,8 @@ of a probabilistic item" when the request names both evidence kinds. Each `Requi
 - for a `probabilistic-satisfaction` record, its evidence kind, by the
   rule of "Evidence kind of a probabilistic item" below;
 - its requirements: `hybrid-dynamics` for a `temporal-satisfaction` record
-  whose claim is a hybrid claim (FR-447), none for every other record;
+  whose claim is a hybrid claim (FR-447), `task-product` for a release-backed
+  `schedulability` record (FR-246), none for every other record;
 - its candidate outcome, `Registry::candidates(kind, evidence kind when
   probabilistic, requirements, named backend)` by this requirement's
   candidate rules.
@@ -442,6 +456,7 @@ were added.
 | FR-075-AC-20 | `descriptor_from_manifest` refuses a `temporal-satisfaction` descriptor whose `dynamics` is `[]`, `["hybrid", "hybrid"]`, `["continuous"]`, `"hybrid"`, or `["hybrid"]` with `bounds` lacking `max_solver_time`, with `invalid_capability`/`invalid-dynamics` keyed by `BackendId`, retaining `empty`, `duplicate-label`, `unknown-label`, `not-a-list` and `missing-bounds` naming `max_solver_time`, before insertion and leaving an earlier registration of that identity standing; one with a `fairness_kinds` defect as well refuses `invalid-fairness-kinds`; a `dynamics` on a descriptor advertising only `value-validity` is ignored and the descriptor is admitted holding none; a descriptor with no `dynamics` is admitted holding none and is read as `{discrete}` for candidates, and the manifest FSL writes from the fixture registration `fsl-model-check`'s descriptor carries no `dynamics` key, its RFC 8785 bytes equal to those of the same descriptor written without the member, so a temporal request over it keeps its request identity; a registration of the fixture's identity supplying `dynamics` `["discrete"]` beside one supplying none is refused `duplicate-backend`. Two registrations of one identity differing only in `dynamics` conflict as FR-075-AC-4 states. | Test (TC-193) |
 | FR-075-AC-21 | For each FR-390 state-graph form, the request builder carries its exact `StateGraphFormKind` derived from the checked claim's `StateGraphForm`, and the candidate set contains exactly registrations whose typed `state_graph_forms` includes that value, subject to the temporal-dynamics rule; a descriptor with no `state_graph_forms` matches no state-graph form; a temporal-formula item and every other capability kind is unaffected by `state_graph_forms`; two otherwise identical descriptors with different form sets conflict under FR-075-AC-4. | Test (TC-193) |
 | FR-075-AC-22 | `descriptor_from_manifest` admits a temporal descriptor with any nonempty, duplicate-free subset of `possible`, `always-possible` and `unique-path`, admits the member absent as no state-graph forms, and refuses an empty, duplicate or unknown list, a present non-array member, or the member on a descriptor without `temporal-satisfaction` with `invalid_capability`/`invalid-state-graph-forms`, keyed by backend identity, before registry insertion and leaving an earlier registration standing. | Test (TC-193) |
+| FR-075-AC-23 | Over `Engines::fsl()`'s registry, a `schedulability` record with release-backed `false` gives an item with no `task-product` requirement whose unnamed candidate set is `[en-7]`, and naming `en-6` gives the empty set (the item settles `unsupported`); the same record with release-backed `true` carries `task-product`, its matching set is `[en-6, en-7]`, unnamed it narrows to `[en-7]` (FR-962) and never settles `ambiguous-backend`, and naming `en-6` gives `[en-6]`. Swapping the registration order changes none of these sets. | Test (TC-3009) |
 
 ## Dependencies
 

@@ -29,6 +29,7 @@ mod query;
 mod refinement;
 mod refusal;
 pub(crate) mod relation;
+mod relation_query;
 pub mod script;
 
 pub use hyper::{encode_hyper_script, HyperScriptRequest};
@@ -38,3 +39,4 @@ pub use monitor::{MonitorTable, Move};
 pub use query::{encode_smt_query, SmtItem};
 pub use refinement::{encode_refinement_query, RefinementCertificateRequest, RefinementQueryKind};
 pub use refusal::{ExpressionLocus, LifecycleLocus, Measure, Refusal, SmtEncodingRefusal};
+pub use relation_query::encode_relation_tuple;

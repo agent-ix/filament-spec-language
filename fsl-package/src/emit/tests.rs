@@ -2816,15 +2816,13 @@ fn explicit_text_literal_emits_and_reads_back_as_a_typed_text_value() {
 /// The FSpec checked-package v2 Text-literal vectors (FR-322-AC-304,
 /// TX-01..TX-14), read from the specification checkout.
 fn text_literal_vectors() -> Value {
-    let root = std::env::var_os("FSPEC_DIR")
-        .map(std::path::PathBuf::from)
-        .unwrap_or_else(|| {
-            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../filament-specification")
-        });
-    let path = root.join("proposals/checked-package-v2/text-literal-vectors.json");
-    let bytes = std::fs::read(&path)
-        .unwrap_or_else(|error| panic!("FSPEC_DIR vectors {}: {error}", path.display()));
-    serde_json::from_slice(&bytes).expect("the vectors are JSON")
+    serde_json::from_slice(
+        filament_specification::published_file(
+            "proposals/checked-package-v2/text-literal-vectors.json",
+        )
+        .expect("pinned FSpec publishes Text-literal vectors"),
+    )
+    .expect("the vectors are JSON")
 }
 
 /// `Text[min, max; profile]` for one vector type.

@@ -519,6 +519,26 @@ dependencies = [
 ]
 
 [[package]]
+name = "facade-contract-consumer"
+version = "0.1.0"
+dependencies = [
+ "filament-contract-model",
+ "filament-exact",
+ "filament-observation",
+ "filament-semantic-value",
+ "fsl-analyze",
+ "fsl-cst",
+ "fsl-forms",
+ "fsl-foundation",
+ "fsl-package",
+ "fsl-replay",
+ "fsl-semantics",
+ "ix-trace-rs",
+ "quire-canonical",
+ "serde_json",
+]
+
+[[package]]
 name = "fancy-regex"
 version = "0.11.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -771,6 +791,7 @@ dependencies = [
  "filament-exact",
  "filament-observation",
  "filament-semantic-value",
+ "filament-specification-qualification",
  "fsl-analyze",
  "fsl-command",
  "fsl-cst",
@@ -854,6 +875,7 @@ dependencies = [
  "filament-eval",
  "filament-exact",
  "filament-semantic-value",
+ "filament-specification-qualification",
  "fsl-analyze",
  "fsl-command",
  "fsl-cst",
@@ -891,6 +913,7 @@ dependencies = [
  "filament-exact",
  "filament-observation",
  "filament-semantic-value",
+ "filament-specification-qualification",
  "fsl-cst",
  "fsl-forms",
  "fsl-foundation",
@@ -962,6 +985,7 @@ dependencies = [
  "filament-contract-model",
  "filament-exact",
  "filament-semantic-value",
+ "filament-specification-qualification",
  "fsl-cst",
  "fsl-forms",
  "fsl-foundation",
@@ -971,6 +995,7 @@ dependencies = [
  "quire-canonical",
  "serde",
  "serde_json",
+ "tempfile",
  "thiserror",
 ]
 
@@ -984,6 +1009,7 @@ dependencies = [
  "fsl-analyze",
  "fsl-eval",
  "fsl-foundation",
+ "fsl-package",
  "fsl-replay",
  "fsl-semantics",
  "ix-trace-rs",
@@ -1001,6 +1027,7 @@ dependencies = [
  "filament-eval",
  "filament-exact",
  "filament-semantic-value",
+ "filament-specification-qualification",
  "fsl-cst",
  "fsl-eval",
  "fsl-forms",
@@ -1043,6 +1070,7 @@ dependencies = [
  "filament-contract-model",
  "filament-exact",
  "filament-semantic-value",
+ "filament-specification-qualification",
  "filament-walk",
  "fsl-cst",
  "fsl-forms",

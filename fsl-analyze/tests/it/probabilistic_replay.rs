@@ -250,7 +250,7 @@ fn duplicate_paths_live_prefixes_and_threshold_equality_have_no_token() {
     let equal_world = World::new(&prob_world::link(&CLAIMS.replace("<= 0.5", "<= 0.9")));
     let mut equal = witness;
     // Use the equal-threshold claim's exact checked identity and scheduler binding.
-    equal.item = fsl_replay::ObligationIdentity::new(
+    equal.item = fsl_package::ObligationIdentity::new(
         equal_world
             .claim("TooMuch")
             .occurrence()
@@ -395,7 +395,7 @@ fn claim_and_package_mismatches_are_refused() {
     let world = World::new(&prob_world::link(CLAIMS));
     let witness = evidence(&world, "TooMuch");
     let system = ModelSystem::new(world.subject().simulation).unwrap();
-    let other = fsl_replay::ObligationIdentity::new(
+    let other = fsl_package::ObligationIdentity::new(
         world
             .claim("TooLittle")
             .occurrence()
@@ -553,7 +553,7 @@ fn graph_arithmetic_limits_and_cyclic_models_cannot_reproduce() {
     );
     let cyclic = World::new(&model);
     let mut changed = witness;
-    changed.item = fsl_replay::ObligationIdentity::new(
+    changed.item = fsl_package::ObligationIdentity::new(
         cyclic.claim("TooMuch").occurrence().unwrap().node().clone(),
         None,
         0,
@@ -575,7 +575,7 @@ fn graph_arithmetic_limits_and_cyclic_models_cannot_reproduce() {
         .replace("not self.delivered and ", "")
         .replace("self.delivered or ", "");
     let target_cycle = World::new(&model);
-    changed.item = fsl_replay::ObligationIdentity::new(
+    changed.item = fsl_package::ObligationIdentity::new(
         target_cycle
             .claim("TooMuch")
             .occurrence()
@@ -697,13 +697,13 @@ fn fix_round_poisoned_model_and_ordinal_in_both_copies_are_refused() {
     let original = evidence(&world, "TooMuch");
     let system = ModelSystem::new(world.subject().simulation).unwrap();
     for (model, ordinal) in [
-        (Some(fsl_replay::ModelIdentity::new("wrong-model")), 0),
+        (Some(fsl_package::ModelIdentity::new("wrong-model")), 0),
         (None, 123),
-        (Some(fsl_replay::ModelIdentity::new("wrong-model")), 123),
+        (Some(fsl_package::ModelIdentity::new("wrong-model")), 123),
     ] {
         let mut witness = original.clone();
         let poisoned =
-            fsl_replay::ObligationIdentity::new(original.item.node().clone(), model, ordinal);
+            fsl_package::ObligationIdentity::new(original.item.node().clone(), model, ordinal);
         witness.item = poisoned.clone();
         assert!(
             matches!(

@@ -21,7 +21,8 @@ use filament_exact::Origin;
 use filament_exact::ScalarLimits;
 
 use crate::bounds::{BoundExceeded, ReplayLimits};
-use crate::identity::{DeclaredDomain, ObligationIdentity, ProfileSelection, TracePosition};
+use crate::identity::{DeclaredDomain, ProfileSelection, TracePosition};
+use fsl_package::ObligationIdentity;
 use crate::model_check::state_graph::GraphEvidenceEnvelope;
 use crate::target::{ReplayTarget, ReplayTargetMembers, TargetMember, TargetSelectionRefusal};
 use fsl_foundation::bound::{DomainKey, FiniteBound};

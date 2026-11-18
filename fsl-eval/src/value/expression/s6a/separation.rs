@@ -410,8 +410,9 @@ pub(crate) fn occurrence_at(
                 if wanted.is_none_or(|wanted| *applied == wanted)
         )
     };
-    let at = || graph.occurrences().filter(|(_, _, at)| *at == location);
-    at().find(|(key, _, _)| applies(key.clone(), operator))
-        .or_else(|| operator.is_none().then(|| at().next()).flatten())
-        .map(|(key, origin, _)| OccurrenceKey::new(key.clone(), origin))
+    let at = graph.occurrences_at(location);
+    at.iter()
+        .find(|(key, _)| applies(key.clone(), operator))
+        .or_else(|| operator.is_none().then(|| at.first()).flatten())
+        .map(|(key, origin)| OccurrenceKey::new(key.clone(), origin.clone()))
 }

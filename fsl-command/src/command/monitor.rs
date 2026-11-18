@@ -29,8 +29,9 @@ use serde_json::{json, Value};
 
 use super::settle::Settle;
 use super::{
-    check_sources, intake_with_bytes, request, require_complete_edition, wire, FileCounts,
-    NativeResult, Result, RunCause, RunError, RunLimits, RunResult,
+    check_sources, intake_with_bytes, request, request_integer_division,
+    require_complete_edition, wire, FileCounts, NativeResult, Result, RunCause, RunError,
+    RunLimits, RunResult,
 };
 
 /// The format of one event.
@@ -415,7 +416,6 @@ struct Inputs {
     ledger: Option<fsl_replay::spine::ProgressLedger>,
     state: Option<MonitorState>,
     snapshots: BTreeMap<String, Vec<u8>>,
-    compile: wire::CompileRequest,
     /// The provider-routed `items` and what they read, when the request
     /// carries `items` (FR-644 "Provider-routed items").
     routed: Option<super::analyze::RoutedItems>,
@@ -484,20 +484,6 @@ fn read_inputs(
         state,
         snapshots,
         routed,
-        compile: wire::CompileRequest {
-            models: request.models,
-            program: wire::CompileProgram {
-                sources: Vec::new(),
-                extraction: false,
-            },
-            refinement_internals: None,
-            libraries: request.libraries,
-            extensions: Vec::new(),
-            clocks: request.clocks,
-            output: None,
-            handoff: None,
-            check_mode: filament_semantic_value::checking::CheckMode::Linked,
-        },
     })
 }
 
@@ -519,7 +505,8 @@ fn drive(
     settle: &Settle<'_>,
     cancel: &Cancel,
 ) -> Result<MonitorSummary> {
-    let request: wire::MonitorRequest = request(bytes)?;
+    let mut request: wire::MonitorRequest = request(bytes)?;
+    let integer_division = request_integer_division(request.integer_division.take())?;
     let records_file = request.records.clone();
     match (matches!(source, Records::Batch), &records_file) {
         (true, None) => {
@@ -551,21 +538,39 @@ fn drive(
     )?;
     let program = intake.source(&request.program.source, "program.source")?;
     require_complete_edition(program.source())?;
-    let records: Box<dyn Iterator<Item = Result<Vec<u8>>> + '_> = match source {
-        Records::Batch => Box::new(file_lines(&mut intake, records_file.as_deref())?.into_iter()),
-        Records::Stream(records) => records,
+    let compile = wire::CompileRequest {
+        models: std::mem::take(&mut request.models),
+        program: wire::CompileProgram {
+            sources: Vec::new(),
+            extraction: false,
+        },
+        refinement_internals: None,
+        libraries: std::mem::take(&mut request.libraries),
+        extensions: Vec::new(),
+        clocks: std::mem::take(&mut request.clocks),
+        output: None,
+        handoff: None,
+        check_mode: filament_semantic_value::checking::CheckMode::Linked,
     };
-    let inputs = read_inputs(&mut intake, request)?;
-    let compile = &inputs.compile;
+    let program_source = program.source().clone();
     check_sources(
-        compile,
+        &compile,
         &mut intake,
         std::slice::from_ref(&program),
         false,
         SpineLimits::default(),
+        integer_division,
         None,
-        None,
-        |checked, selections, _, packages, libraries, _, _, _, _| {
+        |intake, checked, selections, _, packages, libraries, _, _, _, _| {
+            // A missing integer-division selection refuses during compilation;
+            // defer reading observations until that stage has succeeded.
+            let records: Box<dyn Iterator<Item = Result<Vec<u8>>> + '_> = match source {
+                Records::Batch => {
+                    Box::new(file_lines(intake, records_file.as_deref())?.into_iter())
+                }
+                Records::Stream(records) => records,
+            };
+            let inputs = read_inputs(intake, request)?;
             // FR-644 "Provider-routed items": the items settle after the
             // program compiles and before the first record is read.
             let items = inputs
@@ -602,7 +607,7 @@ fn drive(
                     })
                 })
                 .transpose()?;
-            let mut sources: Vec<Source> = vec![program.source().clone()];
+            let mut sources: Vec<Source> = vec![program_source];
             sources.extend(libraries.iter().map(|library| library.source().clone()));
             let limits = MonitorLimits {
                 observation: Default::default(),

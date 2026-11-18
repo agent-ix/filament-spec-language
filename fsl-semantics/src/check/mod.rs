@@ -219,7 +219,7 @@ pub use type_invariant::{
 };
 
 use crate::model::domain_package::DomainPackageRef;
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 
 pub use check::FormedUnits;
 use check::{bind_parameters, NamedScope, Typer};
@@ -741,6 +741,20 @@ pub(crate) struct PendingDependencyReference {
     pub(crate) target: PendingDependencyTarget,
 }
 
+/// A [`CheckedGraph`]'s occurrences by location, each location's in
+/// [`CheckedGraph::occurrences`] order.
+type OccurrencesByLocation =
+    HashMap<Location, Vec<(filament_exact::NodeKey, filament_exact::Origin)>>;
+
+/// `occurrences` by location.
+fn occurrences_by_location(occurrences: &family::OccurrenceMap<Location>) -> OccurrencesByLocation {
+    let mut index = OccurrencesByLocation::new();
+    for (key, origin, at) in occurrences.iter() {
+        index.entry(at.clone()).or_default().push((key, origin));
+    }
+    index
+}
+
 /// S3's stage output (ADR-013 T-1): a package whose every function is
 /// admitted. Its constructor and every field are private to this module
 /// (ADR-011 §4): `package`'s S4 link step (which builds the *different*
@@ -797,6 +811,10 @@ pub struct CheckedGraph {
     /// declaration and function-application occurrence this package
     /// checked.
     occurrences: family::OccurrenceMap<Location>,
+    /// [`Self::occurrences`] by location, in that order, indexed once every
+    /// occurrence is recorded: an evaluation reads the occurrence of each
+    /// comparison it reports by its location (ADR-013 O-07).
+    occurrences_by_location: OccurrencesByLocation,
     parameter_spans:
         BTreeMap<(filament_exact::NodeKey, filament_exact::Origin), fsl_foundation::Span>,
     /// ADR-012 §13.5, ADR-011 E7: this package's requirement records, one
@@ -1087,6 +1105,7 @@ impl DebugWith for CheckedGraph {
             functions,
             dispatch_tables,
             occurrences,
+            occurrences_by_location: _,
             parameter_spans,
             requirements,
             model_correspondence,
@@ -6425,6 +6444,10 @@ impl PackageDeclarations {
         {
             refusals.push(refusal);
         }
+        let declared_nominal_nodes: Vec<_> = self.nominal_spans.keys().cloned().collect();
+        if let Err(refusal) = lowering.declared_nominal_nodes(&declared_nominal_nodes) {
+            refusals.push(refusal);
+        }
         // FR-092 rule 1: every admitted enum's declaration and member nodes,
         // which enum types and enum literals name by key.
         for enum_binding in scope.enums() {
@@ -7717,6 +7740,7 @@ impl PackageDeclarations {
             functions,
             dispatch_tables,
             occurrences,
+            occurrences_by_location: OccurrencesByLocation::default(),
             parameter_spans,
             requirements: requirements.into(),
             model_correspondence,
@@ -7865,6 +7889,26 @@ impl PackageDeclarations {
             }
         }
         finish_step_relations(&mut graph, checked_relations, lowered_relations)?;
+        // FSpec FR-746 admits no empty checked graph. A type alias is a
+        // name for another node and does not itself populate the wire graph,
+        // so refuse it here at S3 rather than letting E4 report an empty
+        // projection later. Type declarations are kept separately from the
+        // expression semantic graph, which is why both inventories are
+        // checked.
+        if graph.semantic_graph.nodes().next().is_none()
+            && graph.type_nodes.is_empty()
+            && graph.model_roots.is_empty()
+        {
+            return Err(vec![CheckRefusal {
+                location: root(Origin::Expression),
+                cause: CheckCause::EmptyPackage {
+                    package_name: graph.package_name.clone(),
+                    sources: graph.sources.clone(),
+                },
+            }]);
+        }
+        // Every occurrence is recorded by now.
+        graph.occurrences_by_location = occurrences_by_location(&graph.occurrences);
         Ok(graph)
     }
 }
@@ -9622,6 +9666,17 @@ impl CheckedGraph {
         &self,
     ) -> impl Iterator<Item = (filament_exact::NodeKey, filament_exact::Origin, &Location)> {
         self.occurrences.iter()
+    }
+
+    /// The occurrences [`Self::occurrences`] yields at `location`, as
+    /// (node, origin), in its order.
+    pub fn occurrences_at(
+        &self,
+        location: &Location,
+    ) -> &[(filament_exact::NodeKey, filament_exact::Origin)] {
+        self.occurrences_by_location
+            .get(location)
+            .map_or(&[], Vec::as_slice)
     }
 
     /// This package's requirement records (ADR-012 §13.5, ADR-011 E7): one

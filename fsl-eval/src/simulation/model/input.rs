@@ -43,7 +43,7 @@ use fsl_semantics::model::operation::{OperationDeclaration, OperationTable};
 use fsl_semantics::model::state::StateModel;
 
 use crate::value::{
-    CheckedPackageEvaluation, ClauseEvaluation, ClauseSetEvaluation, QualifiedName,
+    CheckedPackageEvaluation, ClauseEvaluation, ClauseSetEvaluation, PostTargets, QualifiedName,
     WrittenCollection,
 };
 
@@ -481,6 +481,21 @@ pub trait ModelEvaluator: sealed::Sealed + Sync {
         meter: &mut Meter,
     ) -> Result<Option<WrittenCollection>, CallFailure>;
 
+    /// FR-120 "Directly solved assignments", FR-851 "Eligible conjuncts":
+    /// the equation and bound conjuncts of the postcondition `clause` over
+    /// `observations`, each conjunct's `e` evaluated once with a fresh meter
+    /// from `meter`. Both routes read the clause's checked form.
+    ///
+    /// # Errors
+    ///
+    /// As [`CheckedPackageEvaluation::evaluate_clause`].
+    fn evaluate_post_targets(
+        &self,
+        clause: &QualifiedName,
+        observations: &AdmittedObservations,
+        meter: &mut dyn FnMut() -> Meter,
+    ) -> Result<PostTargets, CallFailure>;
+
     /// FR-487 "Evaluating an atom".
     ///
     /// # Errors
@@ -830,6 +845,15 @@ impl ModelEvaluator for CheckedPackage {
         )
     }
 
+    fn evaluate_post_targets(
+        &self,
+        clause: &QualifiedName,
+        observations: &AdmittedObservations,
+        meter: &mut dyn FnMut() -> Meter,
+    ) -> Result<PostTargets, CallFailure> {
+        crate::value::source_post_targets(self, clause, observations, meter)
+    }
+
     fn evaluate_hyper_holds(
         &self,
         clause: &CheckedHyperClause,
@@ -1150,6 +1174,15 @@ impl ModelEvaluator for BarePackage<'_> {
             written,
             meter,
         )
+    }
+
+    fn evaluate_post_targets(
+        &self,
+        clause: &QualifiedName,
+        observations: &AdmittedObservations,
+        meter: &mut dyn FnMut() -> Meter,
+    ) -> Result<PostTargets, CallFailure> {
+        crate::value::bare_post_targets(self, clause, observations, meter)
     }
 
     fn evaluate_hyper_holds(

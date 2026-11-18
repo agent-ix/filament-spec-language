@@ -7,10 +7,11 @@ use std::collections::BTreeMap;
 use filament_exact::{Cancel, PathSegment, ScalarLimits};
 use fsl_cst::Limits as SourceLimits;
 use fsl_foundation::SourceIdentity;
+use fsl_package::ObligationIdentity;
 use fsl_replay::spine::{self, ParseRequest};
 use fsl_replay::{
     call_site, replay, replay_state_clause, DependencyEntryWire, DependencyInput, EnvelopeSource,
-    ObligationIdentity, QualifiedName, ReplayLimits, ReplayRefusal, ReplayRequestWire,
+    QualifiedName, ReplayLimits, ReplayRefusal, ReplayRequestWire,
     ReplaySource, ReplayTargetMembers, RequestTargetWire, StateClauseCounterexample,
     StateEnvironment, SuppliedLibrary, WitnessEnvelope, WitnessPacket,
 };

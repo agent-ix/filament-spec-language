@@ -14,7 +14,7 @@ use std::convert::Infallible;
 use std::rc::Rc;
 
 use filament_checked::key::DeclarationKey;
-use filament_exact::{ObjectReference, Value};
+use filament_exact::{Integer, ObjectReference, OrderingOperator, Value};
 use filament_semantic_value::model_transition::ModelTransition;
 use fsl_semantics::model::domain_package::OperationEffect;
 use fsl_semantics::model::observation::{
@@ -25,6 +25,8 @@ use fsl_semantics::model::state::{ModelState, StateField, StateObject};
 use quire_canonical::Limits as CanonicalLimits;
 
 pub(super) mod judge;
+#[cfg(test)]
+mod narrowing_tests;
 
 use super::contracts::{conjunction, Conjunction};
 use super::domain::{Domain, Odometer};
@@ -38,6 +40,7 @@ use super::{
 use crate::simulation::expansion::ExpansionStop;
 use crate::simulation::footprint::Footprint;
 use crate::simulation::key;
+use crate::value::PostTarget;
 use crate::value::{Provenance, WrittenCollection};
 use filament_semantic_value::catalog::CatalogCode;
 use fsl_semantics::check::CollectionWrite;
@@ -533,6 +536,111 @@ struct Plan<'p> {
     slots: &'p [Slot],
     writable: &'p WritableFields,
     stop_after_first: bool,
+    /// What the postconditions say about the receiver's fields, when the
+    /// application is solved and narrowed rather than enumerated.
+    narrowing: Option<&'p Narrowing>,
+}
+
+/// FR-120 "Directly solved assignments" and FR-851 "Narrowing": what the
+/// postconditions of one application say about each written field of its
+/// receiver, by field name.
+type Narrowing = BTreeMap<String, FieldTargets>;
+
+/// The equation and bound conjuncts on one field, each with its `e`'s
+/// value (`None` when it was not `Completed`).
+#[derive(Default)]
+struct FieldTargets {
+    /// Each equation's value.
+    equations: Vec<Option<Value>>,
+    /// Each bound, the field as its left operand.
+    bounds: Vec<(OrderingOperator, Option<Value>)>,
+}
+
+/// Which positions of a field's domain a candidate takes, in ascending
+/// order.
+enum Allowed {
+    /// Every position: the field is enumerated.
+    All,
+    /// The `len` positions from `start`: an integer field inside its bounds.
+    Range { start: u128, len: u128 },
+    /// These positions: a solved field.
+    Listed(Vec<u128>),
+}
+
+impl Allowed {
+    /// The positions of `domain`, the domain of a required field the frame
+    /// writes on the receiver, that `targets` admits; `None` when the
+    /// application is enumerated instead: two equations assign the field,
+    /// or an `e` the field reads has no value (FR-120 "Value", FR-851
+    /// "Narrowing").
+    fn of(domain: &Domain, targets: &FieldTargets) -> Option<Self> {
+        // FR-851: a bound narrows only an integer field with a finite range;
+        // on any other field it is a conjunct like any other.
+        let integers = match domain {
+            Domain::Int { lower, len } => Some((lower, u64::try_from(*len).ok()?)),
+            _ => None,
+        };
+        let mut bounds = Vec::new();
+        if integers.is_some() {
+            for (operator, value) in &targets.bounds {
+                let Some(Value::Integer(bound)) = value else {
+                    return None;
+                };
+                bounds.push((*operator, bound));
+            }
+        }
+        let admits = |value: &Integer| {
+            bounds
+                .iter()
+                .all(|(operator, bound)| operator.holds(value.cmp(bound)))
+        };
+        match targets.equations.as_slice() {
+            [] => {}
+            [Some(equal)] => {
+                let positions: Vec<u128> = match (integers, equal) {
+                    (Some((lower, len)), Value::Integer(value)) => value
+                        .sub(lower)
+                        .to_u64()
+                        .filter(|offset| *offset < len && admits(value))
+                        .map(u128::from)
+                        .into_iter()
+                        .collect(),
+                    (Some(_), _) => Vec::new(),
+                    (None, _) => (0..domain.len())
+                        .filter(|index| {
+                            domain
+                                .nth(*index)
+                                .is_some_and(|candidate| values_equal(&candidate, equal))
+                        })
+                        .collect(),
+                };
+                return Some(Self::Listed(positions));
+            }
+            _ => return None,
+        }
+        let Some((lower, len)) = integers.filter(|_| !bounds.is_empty()) else {
+            return Some(Self::All);
+        };
+        let (mut least, mut most) = (
+            lower.clone(),
+            lower.add(&Integer::from(len)).sub(&Integer::one()),
+        );
+        for (operator, bound) in bounds {
+            match operator {
+                OrderingOperator::Less => most = most.min(bound.sub(&Integer::one())),
+                OrderingOperator::LessOrEqual => most = most.min(bound.clone()),
+                OrderingOperator::Greater => least = least.max(bound.add(&Integer::one())),
+                OrderingOperator::GreaterOrEqual => least = least.max(bound.clone()),
+            }
+        }
+        if least > most {
+            return Some(Self::Listed(Vec::new()));
+        }
+        Some(Self::Range {
+            start: u128::from(least.sub(lower).to_u64()?),
+            len: u128::from(most.sub(&least).add(&Integer::one()).to_u64()?),
+        })
+    }
 }
 
 /// An unused universe key an operation may create an object under.
@@ -557,17 +665,33 @@ struct Dimension<'f> {
     key: String,
     field: &'f StateField,
     domain: Domain,
+    allowed: Allowed,
 }
 
 impl Dimension<'_> {
     fn radix(&self) -> u128 {
-        self.domain
-            .len()
-            .saturating_add(u128::from(self.field.optional))
+        match &self.allowed {
+            Allowed::All => self
+                .domain
+                .len()
+                .saturating_add(u128::from(self.field.optional)),
+            Allowed::Range { len, .. } => *len,
+            Allowed::Listed(positions) => positions.len() as u128,
+        }
     }
 
     /// The value at `index`: `Some(None)` for an absent `?` field.
     fn value(&self, index: u128) -> Option<Option<Value>> {
+        match &self.allowed {
+            Allowed::All => {}
+            Allowed::Range { start, .. } => {
+                return self.domain.nth(start.checked_add(index)?).map(Some);
+            }
+            Allowed::Listed(positions) => {
+                let position = positions.get(usize::try_from(index).ok()?)?;
+                return self.domain.nth(*position).map(Some);
+            }
+        }
         if self.field.optional {
             match index.checked_sub(1) {
                 None => Some(None),
@@ -677,6 +801,93 @@ impl Run<'_, '_, '_> {
         slots
     }
 
+    /// FR-120 "Directly solved assignments" and FR-851 "Narrowing": what
+    /// this application's postconditions say about its receiver's fields,
+    /// each conjunct's `e` evaluated once with a fresh meter, or `None` when
+    /// the application is enumerated. It is enumerated when its frame
+    /// deletes or creates, a clause names `result`, two equations assign one
+    /// field, or an `e` has no value (`Undefined`, `Refused`, `Incomplete`,
+    /// or a non-integer bound), so that its findings and stops are the
+    /// enumeration's.
+    fn narrowing(&self) -> Result<Option<Narrowing>, ExpansionStop> {
+        let effect = self.effect();
+        if self.postconditions.is_empty()
+            || !effect.creates.is_empty()
+            || !effect.deletes.is_empty()
+            || effect.deletes_receiver
+            || !effect.deletes_arguments.is_empty()
+        {
+            return Ok(None);
+        }
+        // `e` reads no `result` and no post-state: the clause is bound over
+        // the pre-state as its post-state, with a result of the operation's
+        // type standing in for the one it never reads.
+        let result = match self.application.declaration.result() {
+            None => None,
+            Some(result_type) => {
+                let domain = Domain::of(
+                    result_type,
+                    &self.walk.references(),
+                    self.walk.system.types,
+                    &self.walk.system.record_orders,
+                );
+                match domain.and_then(|domain| domain.nth(0)) {
+                    Some(value) => Some(value),
+                    None => return Ok(None),
+                }
+            }
+        };
+        let mut narrowing = Narrowing::new();
+        for info in self.postconditions {
+            let observations = AdmittedObservations {
+                usage: AdmissionUsage::default(),
+                clause: info.identity.clone(),
+                current: None,
+                pre: Some(self.walk.observation.clone()),
+                post: Some(self.walk.observation.clone()),
+                self_object: self.row.reference.clone(),
+                invocation: None,
+                self_kind: SelfKind::Object,
+                receiver_pre: None,
+                receiver_post: None,
+                parameters: self.args.to_vec(),
+                result: result.clone(),
+                created: Vec::new(),
+                deleted: Vec::new(),
+            };
+            let found = self.walk.system.evaluator().evaluate_post_targets(
+                &info.qualified,
+                &observations,
+                &mut || self.walk.meter(),
+            );
+            let Ok(found) = found else {
+                return Ok(None);
+            };
+            if found.names_result {
+                return Ok(None);
+            }
+            for target in found.targets {
+                match target {
+                    PostTarget::Equation { field, value } => {
+                        narrowing.entry(field).or_default().equations.push(value);
+                    }
+                    PostTarget::Bound {
+                        field,
+                        operator,
+                        value,
+                    } => {
+                        narrowing
+                            .entry(field)
+                            .or_default()
+                            .bounds
+                            .push((operator, value));
+                    }
+                }
+            }
+        }
+        Ok(Some(narrowing))
+    }
+
     /// Generate every candidate post-state of this application, one at a
     /// time, in canonical order, counting each against the bound.
     fn candidates(
@@ -712,10 +923,12 @@ impl Run<'_, '_, '_> {
         let deletable = self.deletable();
         let slots = self.slots();
         let writable = self.writable()?;
+        let narrowing = self.narrowing()?;
         let plan = Plan {
             slots: &slots,
             writable: &writable,
             stop_after_first,
+            narrowing: narrowing.as_ref(),
         };
         let mut deletions = Odometer::new(vec![2; deletable.len()]);
         while let Some(deleted) = deletions.next_digits() {
@@ -804,6 +1017,7 @@ impl Run<'_, '_, '_> {
             .collect();
 
         let mut dimensions = Vec::new();
+        let mut enumerated = false;
         for member in &members {
             let Some(fields) = system.fields.get(&member.type_key) else {
                 return Err(stop(BROKEN));
@@ -821,12 +1035,34 @@ impl Run<'_, '_, '_> {
                 let domain = system
                     .field_domain(&member.type_key, field, &post_references)
                     .ok_or_else(|| stop(BROKEN))?;
+                // `None` marks a field whose targets send the whole
+                // application back to enumeration.
+                let allowed = match plan
+                    .narrowing
+                    .and_then(|narrowing| narrowing.get(&field.name))
+                {
+                    Some(targets)
+                        if !member.created
+                            && !field.optional
+                            && member.reference == self.row.reference =>
+                    {
+                        Allowed::of(&domain, targets)
+                    }
+                    _ => Some(Allowed::All),
+                };
+                enumerated |= allowed.is_none();
                 dimensions.push(Dimension {
                     population: member.population.clone(),
                     key: member.key.clone(),
                     field,
                     domain,
+                    allowed: allowed.unwrap_or(Allowed::All),
                 });
+            }
+        }
+        if enumerated {
+            for dimension in &mut dimensions {
+                dimension.allowed = Allowed::All;
             }
         }
 

@@ -270,9 +270,7 @@ fn set(plan: &mut Value, path: &str, value: &Value) {
 }
 
 fn vectors() -> Value {
-    let path = std::path::Path::new(&std::env::var("FSPEC_DIR").expect("FSPEC_DIR"))
-        .join("proposals/checked-package-v2/monitor-plan-vectors.json");
-    serde_json::from_slice(&std::fs::read(path).unwrap()).unwrap()
+    crate::published_fspec::json("proposals/checked-package-v2/monitor-plan-vectors.json")
 }
 
 #[trace("TC-978", "FR-487-AC-2")]

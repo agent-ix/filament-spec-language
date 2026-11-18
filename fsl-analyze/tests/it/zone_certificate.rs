@@ -943,17 +943,12 @@ fn a_certificate_with_no_initials_is_malformed_at_initials() {
 
 /// FSpec FR-331-AC-46 (TC-1197): the certificate-member locus names
 /// exactly the 51 members of FSpec's backend-provider schema, in its order,
-/// each by its FR-331 spelling. The schema is read in place from
-/// `$FSPEC_DIR`, which the test requires; `initial` is no member.
+/// each by its FR-331 spelling. The schema comes from the pinned FSpec package;
+/// `initial` is no member.
 #[trace("TC-1197", "FSpec-FR-331-AC-46")]
 #[test]
 fn the_certificate_members_are_the_schema_fifty_one_names() {
-    let fspec = std::env::var_os("FSPEC_DIR")
-        .expect("FSPEC_DIR names the FSpec checkout whose schema this reads");
-    let path = std::path::PathBuf::from(fspec).join("proposals/backend-provider-v1/schema.json");
-    let schema: serde_json::Value =
-        serde_json::from_slice(&std::fs::read(&path).expect("the schema reads"))
-            .expect("the schema is JSON");
+    let schema = crate::published_fspec::json("proposals/backend-provider-v1/schema.json");
     let branches = schema["$defs"]["CertificateRejected"]["oneOf"]
         .as_array()
         .expect("the rejection branches");

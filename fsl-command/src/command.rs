@@ -43,6 +43,12 @@ const REQUEST_BYTES: usize = 1_048_576;
 const TOTAL_BYTES: usize = 8_388_608;
 const FILES: usize = 64;
 
+fn request_integer_division(
+    value: Option<serde_json::Value>,
+) -> Result<Option<fsl_replay::AdmittedIntegerDivision>> {
+    read_integer_division(value.as_ref(), "integer_division")
+}
+
 /// Caller byte ceilings for one `run` or `compile` invocation (FR-312, FR-869).
 #[derive(Clone, Copy, Debug)]
 pub struct RunLimits {
@@ -1200,8 +1206,8 @@ impl RunError {
             RunCause::Io { .. }
             | RunCause::Json(_)
             | RunCause::ClauseRequest { .. }
-            | RunCause::TlCorrespondence { .. }
             | RunCause::IntegerDivisionLaw { .. }
+            | RunCause::TlCorrespondence { .. }
             | RunCause::TlClause { .. }
             | RunCause::TlSubject(_)
             | RunCause::TlFault(_)
@@ -1234,7 +1240,10 @@ impl RunError {
             | RunCause::ReplayOutput(_)
             | RunCause::ItemsFault => OutcomeDocument::new(operation, None, self.category())
                 .with_diagnostics(vec![OutcomeDiagnostic::new(
-                    None,
+                    match &self.cause {
+                        RunCause::IntegerDivisionLaw { .. } => Some("unsupported-selection"),
+                        _ => None,
+                    },
                     self.cause.code().as_str(),
                     None,
                     self.outcome_message(),
@@ -2547,7 +2556,7 @@ fn complete_sources(
         limits,
         None,
         None,
-        |checked, selections, points, packages, _, libraries, models, inventory, failure| {
+        |_intake, checked, selections, points, packages, _, libraries, models, inventory, failure| {
             let cancel = filament_exact::Cancel::new();
             let result = fsl_replay::spine::package_with_temporal_selections(
                 &checked,
@@ -2637,9 +2646,10 @@ fn check_sources<T>(
     sources: &[FormalSource],
     unit_list: bool,
     limits: fsl_replay::spine::SpineLimits,
-    _integer_division: Option<fsl_replay::AdmittedIntegerDivision>,
+    integer_division: Option<fsl_replay::AdmittedIntegerDivision>,
     extension_catalog_override: Option<fsl_semantics::library::bundle::DefinitionCatalog>,
     finish: impl FnOnce(
+        &mut Intake<'_>,
         fsl_replay::spine::CheckedUnit,
         &[fsl_replay::spine::TemporalClockSelection],
         fsl_replay::spine::StateClauseExecutionPoints,
@@ -2804,6 +2814,7 @@ fn check_sources<T>(
                 temporal_selections: &check_selections,
                 clocks: Some(&request.clocks),
                 check_mode: Some(request.check_mode),
+                integer_division: integer_division.as_ref(),
             },
             &models,
             &dependencies,
@@ -2842,6 +2853,7 @@ fn check_sources<T>(
                 temporal_selections: &check_selections,
                 clocks: Some(&request.clocks),
                 check_mode: Some(request.check_mode),
+                integer_division: integer_division.as_ref(),
             },
             &models,
             &dependencies,
@@ -2866,6 +2878,7 @@ fn check_sources<T>(
         (checked, selections)
     };
     finish(
+        intake,
         checked,
         &package_selections,
         execution_points,

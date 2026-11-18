@@ -21,7 +21,8 @@ use super::parity_identity::{
 use super::scalar_site::{applies, check_node_operands, in_body};
 use super::{function_target, lookup, recompile, request_limits, ReplayRefusal};
 use crate::bounds::ReplayLimits;
-use crate::identity::{ObligationIdentity, QualifiedName};
+use crate::identity::QualifiedName;
+use fsl_package::ObligationIdentity;
 use crate::request::{ReplayRequest, ReplayRequestWire};
 use crate::scalar::{
     compare, OperatorClaim, OperatorIdentity, OperatorParityReport, OperatorParityResult,

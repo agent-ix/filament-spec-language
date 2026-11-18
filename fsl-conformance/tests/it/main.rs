@@ -9,5 +9,7 @@ mod matrix_shape;
 mod monitor_row;
 mod plugin_invariance;
 mod prove_row;
+#[path = "../../../tests/support/published_fspec.rs"]
+pub(crate) mod published_fspec;
 mod support;
 mod type_decision_cases;
