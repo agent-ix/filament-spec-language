@@ -18,7 +18,6 @@ use fsl_eval::simulation::model::{ExpansionLimits, ModelSimState, ModelSimulatio
 use fsl_eval::temporal::AtomReading;
 use fsl_foundation::source::provenance::OccurrenceKey;
 use fsl_foundation::RequestIndex;
-use fsl_package::CheckedPackage;
 use fsl_replay::{
     CertificateRequest, ModelCheckItem, QualifiedName, ReplayRefusal, ReplayTargetMembers,
     RequestTargetWire, TemporalCounterexample,
@@ -94,7 +93,7 @@ pub(crate) fn derived_target() -> Option<QualifiedName> {
 /// the binding, with the item's budgets. A derived item carries no `max_depth` (FSpec
 /// FR-368-AC-20), so the search has no horizon.
 pub(super) fn deadlock_item<'a>(
-    package: &'a CheckedPackage,
+    analysis: &super::RunInput<'a>,
     binding: &SubjectBinding<'a>,
     limits: AnalyzeLimits,
     provision: &'a SourceProvision,
@@ -102,8 +101,10 @@ pub(super) fn deadlock_item<'a>(
     index: RequestIndex,
     form: &TemporalItem,
 ) -> Option<AnalyzeItem<'a>> {
+    let (package, input) = (analysis.package, &analysis.model);
+    let input = input.clone();
     let simulation = move |binding: &SubjectBinding<'a>| ModelSimulationRequest {
-        input: fsl_eval::simulation::model::ModelCheckInput::source(package),
+        input: input.clone(),
         packages: binding.packages,
         normalization: limits.normalization,
         snapshots: binding.snapshots,

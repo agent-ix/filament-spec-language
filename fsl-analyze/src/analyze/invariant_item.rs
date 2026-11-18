@@ -15,7 +15,6 @@ use fsl_eval::model_subject::ModelSubject;
 use fsl_eval::simulation::model::{ExpansionLimits, ModelSimulationRequest};
 use fsl_foundation::source::provenance::OccurrenceKey;
 use fsl_foundation::RequestIndex;
-use fsl_package::CheckedPackage;
 use fsl_replay::{
     CertificateRequest, ModelCheckItem, QualifiedName, ReplayTargetMembers, RequestTargetWire,
     TemporalCounterexample,
@@ -33,7 +32,7 @@ use crate::model_check::ModelCheckRequest;
 /// `state_clause` node and `claim` occurrence) over the binding, with the
 /// budgets of `form`; `None` when `claim` names no checked invariant.
 pub(super) fn invariant_item<'a>(
-    package: &'a CheckedPackage,
+    analysis: &super::RunInput<'a>,
     binding: &SubjectBinding<'a>,
     limits: AnalyzeLimits,
     provision: &'a SourceProvision,
@@ -41,6 +40,7 @@ pub(super) fn invariant_item<'a>(
     index: RequestIndex,
     form: &TemporalItem,
 ) -> Option<AnalyzeItem<'a>> {
+    let (package, input) = (analysis.package, &analysis.model);
     let clause = package.graph().state_clauses().iter().find(|clause| {
         clause.is_invariant()
             && clause.identity() == *claim.node()
@@ -48,8 +48,9 @@ pub(super) fn invariant_item<'a>(
     })?;
     let name =
         QualifiedName::new(vec![filament_exact::Identifier::new(clause.name()).ok()?]).ok()?;
+    let input = input.clone();
     let simulation = move |binding: &SubjectBinding<'a>| ModelSimulationRequest {
-        input: fsl_eval::simulation::model::ModelCheckInput::source(package),
+        input: input.clone(),
         packages: binding.packages,
         normalization: limits.normalization,
         snapshots: binding.snapshots,

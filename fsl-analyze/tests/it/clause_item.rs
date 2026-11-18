@@ -45,7 +45,7 @@ pub(crate) fn subject(world: &World, limits: ClauseLimits) -> ClauseSubject<'_> 
     let node = &world.package.graph().temporal_clauses()[0];
     let key = OccurrenceKey::new(node.identity(), node.claim().clone());
     ClauseSubject::new(
-        &world.package,
+        &fsl_analyze::analyze::RunInput::source(&world.package),
         world.binding(&["c"]),
         AnalyzeLimits::unbounded(),
         &world.provision,
@@ -294,7 +294,7 @@ fn the_same_clause_under_one_state_settles_incomplete_naming_the_state_budget() 
 
 fn refused(world: &World, key: &OccurrenceKey) -> ClauseItemRefusal {
     ClauseSubject::new(
-        &world.package,
+        &fsl_analyze::analyze::RunInput::source(&world.package),
         world.binding(&["c"]),
         AnalyzeLimits::unbounded(),
         &world.provision,
@@ -390,7 +390,7 @@ fn a_package_of_two_source_units_replays_from_its_complete_provision() {
         );
     }
     let subject = ClauseSubject::new(
-        package,
+        &fsl_analyze::analyze::RunInput::source(package),
         world.binding(&["c"]),
         AnalyzeLimits::unbounded(),
         &provision,
@@ -481,7 +481,7 @@ fn a_tampered_counterexample_or_another_unit_is_refused_by_the_replay() {
     let other_unit = b"language \"ix:native\" edition \"1-draft\";\n";
     let other_provision = SourceProvision::single(world.package.graph().source(), other_unit);
     let wrong = ClauseSubject::new(
-        &world.package,
+        &fsl_analyze::analyze::RunInput::source(&world.package),
         world.binding(&["c"]),
         AnalyzeLimits::unbounded(),
         &other_provision,

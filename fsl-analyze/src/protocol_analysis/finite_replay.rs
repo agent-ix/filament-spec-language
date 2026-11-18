@@ -625,6 +625,7 @@ fn replay_steps<M: MemoryModel>(
 /// request of the analyze subject, and the protocol the claim names.
 pub(crate) struct ReplaySubject<'a, 'b> {
     pub(crate) package: &'a CheckedPackage,
+    pub(crate) input: &'b fsl_eval::simulation::model::ModelCheckInput<'a>,
     pub(crate) binding: &'b SubjectBinding<'a>,
     pub(crate) limits: &'b AnalyzeLimits,
     pub(crate) protocol: &'a CheckedProtocol,
@@ -633,7 +634,7 @@ pub(crate) struct ReplaySubject<'a, 'b> {
 impl<'a> ReplaySubject<'a, '_> {
     pub(crate) fn simulation(&self) -> ModelSimulationRequest<'a> {
         ModelSimulationRequest {
-            input: fsl_eval::simulation::model::ModelCheckInput::source(self.package),
+            input: self.input.clone(),
             packages: self.binding.packages,
             normalization: self.limits.normalization,
             snapshots: self.binding.snapshots,
@@ -1069,13 +1070,15 @@ fn declined(cause: &'static str, position: Option<usize>, path: Option<String>) 
 /// defect is declined before any step replays (FSpec FR-433-AC-8).
 pub(crate) fn finite_replay_item<'a>(
     index: RequestIndex,
-    package: &'a CheckedPackage,
+    analysis: &crate::analyze::RunInput<'a>,
     binding: SubjectBinding<'a>,
     limits: AnalyzeLimits,
     provision: &'a SourceProvision,
     protocol: &'a CheckedProtocol,
     trace: Result<SuppliedTrace, TraceDefect>,
 ) -> AnalyzeItem<'a> {
+    let (package, input) = (analysis.package, &analysis.model);
+    let input = input.clone();
     AnalyzeItem::new(
         index,
         Capability::FiniteReplay,
@@ -1095,6 +1098,7 @@ pub(crate) fn finite_replay_item<'a>(
             };
             let subject = ReplaySubject {
                 package,
+                input: &input,
                 binding: &binding,
                 limits: &limits,
                 protocol,

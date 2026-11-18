@@ -270,8 +270,12 @@ pub(super) fn simulate(
         .as_ref()
         .map(|subject| subject.binding(binding.packages, binding.snapshots));
     let binding = own.as_ref().unwrap_or(binding);
-    let system = ModelSystem::new(super::request::simulation(package, binding, limits))
-        .map_err(SimulationFault::Binding)?;
+    let system = ModelSystem::new(super::request::simulation(
+        &fsl_eval::simulation::model::ModelCheckInput::source(package),
+        binding,
+        limits,
+    ))
+    .map_err(SimulationFault::Binding)?;
     let settings = &item.settings;
     let mut document = Map::new();
     document.insert("request_index".to_owned(), json!(item.index.get()));

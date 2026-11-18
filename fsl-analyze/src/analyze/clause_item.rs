@@ -18,7 +18,9 @@
 
 use filament_exact::Identifier;
 use filament_semantic_value::catalog::InternalFault;
-use fsl_eval::simulation::model::{ExpansionLimits, ModelSimulationRequest, ModelSystem};
+use fsl_eval::simulation::model::{
+    ExpansionLimits, ModelCheckInput, ModelSimulationRequest, ModelSystem,
+};
 use fsl_eval::simulation::Limits;
 use fsl_foundation::source::provenance::OccurrenceKey;
 use fsl_foundation::RequestIndex;
@@ -86,6 +88,7 @@ pub enum ClauseItemRefusal {
 #[derive(Clone)]
 pub struct ClauseSubject<'a> {
     package: &'a CheckedPackage,
+    input: ModelCheckInput<'a>,
     binding: SubjectBinding<'a>,
     limits: AnalyzeLimits,
     provision: &'a super::SourceProvision,
@@ -107,20 +110,20 @@ impl<'a> ClauseSubject<'a> {
     ///
     /// [`ClauseItemRefusal`] when the package holds no such named clause.
     pub fn new(
-        package: &'a CheckedPackage,
+        analysis: &super::RunInput<'a>,
         binding: SubjectBinding<'a>,
         limits: AnalyzeLimits,
         provision: &'a super::SourceProvision,
         key: &OccurrenceKey,
         run: ClauseLimits,
     ) -> Result<Self, ClauseItemRefusal> {
-        Self::from_provision(package, binding, limits, provision, key, run, Vec::new())
+        Self::from_provision(analysis, binding, limits, provision, key, run, Vec::new())
     }
 
     /// Build a clause subject over the operation's complete source provision
     /// and the item's explicit proof-bound substitution.
     pub fn from_provision(
-        package: &'a CheckedPackage,
+        analysis: &super::RunInput<'a>,
         binding: SubjectBinding<'a>,
         limits: AnalyzeLimits,
         provision: &'a super::SourceProvision,
@@ -128,6 +131,7 @@ impl<'a> ClauseSubject<'a> {
         run: ClauseLimits,
         proof_bounds: Vec<fsl_foundation::bound::ProofBound>,
     ) -> Result<Self, ClauseItemRefusal> {
+        let (package, input) = (analysis.package, &analysis.model);
         let node = package
             .graph()
             .temporal_clauses()
@@ -137,6 +141,7 @@ impl<'a> ClauseSubject<'a> {
         clause_name(node)?;
         Ok(Self {
             package,
+            input: input.clone(),
             binding,
             limits,
             provision,
@@ -256,7 +261,7 @@ impl<'a> ClauseSubject<'a> {
 
     fn simulation(&self) -> ModelSimulationRequest<'a> {
         ModelSimulationRequest {
-            input: fsl_eval::simulation::model::ModelCheckInput::source(self.package),
+            input: self.input.clone(),
             packages: self.binding.packages,
             normalization: self.limits.normalization,
             snapshots: self.binding.snapshots,

@@ -384,6 +384,28 @@ pub struct Engines {
     options: ProviderOptions,
 }
 
+/// What every item of one analyze run reads of its package (FR-531,
+/// FR-940): the checked package, and the model-check input the run builds
+/// once, which each item's model system reads instead of building its own.
+#[derive(Clone)]
+pub struct RunInput<'a> {
+    /// The checked package the run analyzes.
+    pub package: &'a fsl_package::CheckedPackage,
+    /// The model-check input every item's model system reads.
+    pub model: fsl_eval::simulation::model::ModelCheckInput<'a>,
+}
+
+impl<'a> RunInput<'a> {
+    /// The source route's run input (FR-531): the package and the input
+    /// read from its `CheckedGraph`.
+    pub fn source(package: &'a fsl_package::CheckedPackage) -> Self {
+        Self {
+            package,
+            model: fsl_eval::simulation::model::ModelCheckInput::source(package),
+        }
+    }
+}
+
 /// FR-120's caller-supplied subject members other than the checked package.
 ///
 /// The provider and analyze operations combine this value with the package
