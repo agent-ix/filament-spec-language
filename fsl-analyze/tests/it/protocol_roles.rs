@@ -872,7 +872,10 @@ fn a_scope_role_stays_live_for_the_compensation_attempt_it_owns() {
             .map(|(step, _)| step)
             .find(|step| step.kind() == kind)
             .unwrap_or_else(|| panic!("{kind:?} dispatches while the scope role is live"));
-        assert_eq!(dispatch.actor().expect("the dispatch has an actor").role, "r");
+        assert_eq!(
+            dispatch.actor().expect("the dispatch has an actor").role,
+            "r"
+        );
     }
     for state in reached
         .iter()

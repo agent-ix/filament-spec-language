@@ -1461,8 +1461,8 @@ fn a_work_budget_stop_during_enumeration_exits_incomplete() {
             .next()
             .expect("the snapshot")
             .clone();
-        let report = fsl_replay::spine::run_temporal_behaviours(clause_run, &initial, 2)
-            .expect("a report");
+        let report =
+            fsl_replay::spine::run_temporal_behaviours(clause_run, &initial, 2).expect("a report");
         let fsl_replay::spine::ClauseDisposition::TemporalValuation(valuation) =
             &report.disposition
         else {
@@ -1486,7 +1486,12 @@ fn a_work_budget_stop_during_enumeration_exits_incomplete() {
         let record = run(work_units);
         let cross = &record.record["cross_evaluation"];
         assert_ne!(record.exit_code, 30, "{work_units}: {}", record.record);
-        assert_eq!(cross["faults"], json!([]), "{work_units}: {}", record.record);
+        assert_eq!(
+            cross["faults"],
+            json!([]),
+            "{work_units}: {}",
+            record.record
+        );
         assert_eq!(record.exit_code, 22, "{work_units}: {}", record.record);
         assert!(
             cross["traces"].as_u64() < complete.as_u64(),

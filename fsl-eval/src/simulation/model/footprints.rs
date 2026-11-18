@@ -17,10 +17,10 @@ use filament_checked::key::DeclarationKey;
 use filament_exact::{EffectiveId, NodeKey, ObjectReference, Value, ValueType};
 use filament_semantic_value::declaration::{CompositeDeclaration, CompositeShape, TypeEnvironment};
 use filament_semantic_value::model_transition::ModelTransition;
-use fsl_semantics::check::CheckedNode;
 use fsl_semantics::check::footprint::{
     FootprintObject, FootprintRefusal, SymbolicFootprint, SymbolicLocation,
 };
+use fsl_semantics::check::CheckedNode;
 use fsl_semantics::model::clause_observation::Observation;
 use fsl_semantics::model::object_environment::{ObservedRead, ReadLog};
 use fsl_semantics::model::observation::AdmittedObservations;
@@ -30,7 +30,7 @@ use crate::model_subject::ModelInstance;
 
 use super::encode::{parse_optional_reference, parse_reference};
 use super::walk::stop;
-use super::{Application, BROKEN, ModelSimState, ModelSystem};
+use super::{Application, ModelSimState, ModelSystem, BROKEN};
 use crate::simulation::expansion::{Expansion, ExpansionStop};
 use crate::simulation::footprint::{Footprint, Location};
 
@@ -668,28 +668,30 @@ impl<'a> ModelSystem<'a> {
         if over.is_none() && !symbolic.is_empty() {
             return Ok(None);
         }
-        Ok(Some(symbolic
-            .iter()
-            .filter_map(|location| {
-                lower(location, &|bound| match bound {
-                    FootprintObject::Receiver => over.cloned(),
-                    FootprintObject::Param(_) => None,
+        Ok(Some(
+            symbolic
+                .iter()
+                .filter_map(|location| {
+                    lower(location, &|bound| match bound {
+                        FootprintObject::Receiver => over.cloned(),
+                        FootprintObject::Param(_) => None,
+                    })
                 })
-            })
-            .flat_map(|location| match location {
-                Location::AnyField { field } => match self.universe_declaring(&field) {
-                    Some(objects) => objects
-                        .into_iter()
-                        .map(|object| Location::Field {
-                            object,
-                            field: field.clone(),
-                        })
-                        .collect(),
-                    None => vec![Location::AnyField { field }],
-                },
-                other => vec![other],
-            })
-            .collect()))
+                .flat_map(|location| match location {
+                    Location::AnyField { field } => match self.universe_declaring(&field) {
+                        Some(objects) => objects
+                            .into_iter()
+                            .map(|object| Location::Field {
+                                object,
+                                field: field.clone(),
+                            })
+                            .collect(),
+                        None => vec![Location::AnyField { field }],
+                    },
+                    other => vec![other],
+                })
+                .collect(),
+        ))
     }
 
     /// FR-156 "Atom footprints": the symbolic locations the `holds` atom
