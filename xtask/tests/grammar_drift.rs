@@ -124,6 +124,7 @@ struct Divergence {
     production: &'static str,
     register_row: &'static str,
     ticket: &'static str,
+    reason: &'static str,
 }
 
 /// Known unmatched production names, each with the issue that owns their
@@ -133,49 +134,64 @@ const DIVERGENCES: &[Divergence] = &[
         side: Side::Parser,
         production: "PopulationBound",
         register_row: "G-249",
-        ticket: "QSL-820",
+        ticket: "STD-694",
+        reason: "the parser production awaits standard inventory reconciliation",
+    },
+    Divergence {
+        side: Side::Parser,
+        production: "QuantifiedClockBound",
+        register_row: "G-250",
+        ticket: "STD-694",
+        reason: "the parser production awaits standard inventory reconciliation",
     },
     Divergence {
         side: Side::Parser,
         production: "DeliveryInterval",
         register_row: "G-251",
-        ticket: "QSL-1526",
+        ticket: "STD-694",
+        reason: "the parser production awaits standard inventory reconciliation",
     },
     Divergence {
         side: Side::Parser,
         production: "ObjectDeclaration",
         register_row: "G-257",
-        ticket: "QSL-1880",
+        ticket: "STD-698",
+        reason: "the parser splits an object declaration into dedicated productions",
     },
     Divergence {
         side: Side::Parser,
         production: "ObjectPopulation",
         register_row: "G-257",
-        ticket: "QSL-1880",
+        ticket: "STD-698",
+        reason: "the parser splits object populations into dedicated productions",
     },
     Divergence {
         side: Side::Parser,
         production: "ObjectOperation",
         register_row: "G-257",
-        ticket: "QSL-1880",
+        ticket: "STD-698",
+        reason: "the parser splits object operations into dedicated productions",
     },
     Divergence {
         side: Side::Parser,
         production: "FrameClause",
         register_row: "G-257",
-        ticket: "QSL-1880",
+        ticket: "STD-698",
+        reason: "the parser splits frame clauses into dedicated productions",
     },
     Divergence {
         side: Side::Parser,
         production: "FieldTarget",
         register_row: "G-257",
-        ticket: "QSL-1880",
+        ticket: "STD-698",
+        reason: "the parser splits field targets into dedicated productions",
     },
     Divergence {
         side: Side::Parser,
         production: "DeleteTarget",
         register_row: "G-257",
-        ticket: "QSL-1880",
+        ticket: "STD-698",
+        reason: "the parser splits delete targets into dedicated productions",
     },
 ];
 
@@ -302,6 +318,12 @@ fn allow_list_errors(
                 divergence.production
             ));
         }
+        if divergence.reason.trim().is_empty() {
+            errors.push(format!(
+                "allow-list entry `{}` has no reason",
+                divergence.production
+            ));
+        }
         let still_diverges = match divergence.side {
             Side::Standard => {
                 standard.contains(divergence.production)
@@ -363,9 +385,39 @@ fn parser_drift(standard: &BTreeSet<String>, parser: &BTreeSet<String>) -> Vec<S
         .collect()
 }
 
+fn mapping_errors(standard: &BTreeSet<String>, parser: &BTreeSet<String>) -> Vec<String> {
+    let mut found = Vec::new();
+    for (standard_name, parser_name) in CORRESPONDENCE {
+        if !standard.contains(*standard_name) {
+            found.push(format!(
+                "stale correspondence `{standard_name}`: not in the standard"
+            ));
+        }
+        if !parser.contains(*parser_name) {
+            found.push(format!(
+                "stale correspondence `{parser_name}`: not in the parser"
+            ));
+        }
+    }
+    for (parser_name, standard_name) in PARSER_SUBPRODUCTIONS {
+        if !standard.contains(*standard_name) {
+            found.push(format!(
+                "stale parser subproduction `{parser_name}`: `{standard_name}` is not in the standard"
+            ));
+        }
+        if !parser.contains(*parser_name) {
+            found.push(format!(
+                "stale parser subproduction `{parser_name}`: not in the parser"
+            ));
+        }
+    }
+    found
+}
+
 fn drift_with(standard: &BTreeSet<String>, parser: &BTreeSet<String>) -> Vec<String> {
     let mut found = standard_drift(standard, parser);
     found.extend(parser_drift(standard, parser));
+    found.extend(mapping_errors(standard, parser));
     found.extend(allow_list_errors(DIVERGENCES, standard, parser));
     found
 }
@@ -381,7 +433,8 @@ fn every_standard_production_maps_to_a_parser_production() {
     let grammar = configured_grammar().expect("FSPEC_DIR must name an FSpec checkout");
     let standard = grammar_productions(&grammar);
     let parser = parser_productions();
-    let found = standard_drift(&standard, &parser);
+    let mut found = standard_drift(&standard, &parser);
+    found.extend(mapping_errors(&standard, &parser));
     assert!(
         !standard.is_empty(),
         "the shared grammar defines productions"
@@ -399,7 +452,8 @@ fn every_parser_production_appears_in_the_standard() {
     let grammar = configured_grammar().expect("FSPEC_DIR must name an FSpec checkout");
     let standard = grammar_productions(&grammar);
     let parser = parser_productions();
-    let found = parser_drift(&standard, &parser);
+    let mut found = parser_drift(&standard, &parser);
+    found.extend(mapping_errors(&standard, &parser));
     assert!(
         found.is_empty(),
         "parser grammar drift:\n{}",
