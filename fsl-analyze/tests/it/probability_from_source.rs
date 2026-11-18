@@ -60,6 +60,10 @@ const ALWAYS: &str = "probabilistic Always using ev on M over (m: M::Msg) under 
 const REWARD: &str = "probabilistic Reward using inf on M over (m: M::Msg) under Even on origin \
      { expected accumulate cost until holds(m.delivered or m.attempts = 2) <= rational(2, 1) }";
 
+const FAIR_DELIVER: &str = "probabilistic DeliverFair using ev on M over (m: M::Msg) \
+     under every scheduler fair weak Msg::send_a on origin \
+     { probability >= rational(97, 100) [ eventually[0,2] holds(m.delivered) ] }";
+
 fn run(name: &str, claims: &str, items: Value) -> Value {
     let ws = Workspace::new(name);
     let request = request_over(
@@ -476,11 +480,28 @@ fn every_scheduler_without_random_is_refuted() {
 #[ix_trace_rs::trace("TC-2488", "FR-876-AC-3")]
 #[ix_trace_rs::trace("FSpec-TC-1766", "FSpec-FR-724-AC-2")]
 #[test]
-#[ignore = "QSL-2159: every-scheduler claims with random lines settling from source not implemented yet"]
-fn every_scheduler_with_random_is_proved() {
+fn exact_every_scheduler_from_source() {
     let document = run_unit("every-random-proved", &unit(EVERY));
     let item = &document["items"][0];
     assert_eq!(label(item), "proved", "{item}");
     let text = item.to_string();
     assert!(text.contains("24") && text.contains("25"), "{text}");
+}
+
+#[test]
+fn exact_fair_scheduler_from_source() {
+    let document = run(
+        "fair-scheduler",
+        FAIR_DELIVER,
+        json!([{"claim": "DeliverFair", "probabilistic": {"evidence": "exact"}}]),
+    );
+    let item = &document["items"][0];
+    assert_eq!(label(item), "proved", "{item}");
+    assert_eq!(item["certificate"]["accepted"], true, "{item}");
+    assert_eq!(item["certificate"]["kind"], "exact", "{item}");
+    assert!(item["certificate"]["document"].is_object(), "{item}");
+    assert!(
+        item.to_string().contains("24") && item.to_string().contains("25"),
+        "{item}"
+    );
 }
