@@ -46,20 +46,6 @@ pub(crate) enum ReferenceBinding {
 pub(crate) struct ReferenceBindings(BTreeMap<ReferenceLiteralKey, ReferenceBinding>);
 
 impl ReferenceBindings {
-    pub(crate) fn first_disagreement(&self, other: &Self) -> Option<&ReferenceLiteralKey> {
-        self.0
-            .iter()
-            .find_map(|(literal, binding)| {
-                (other.0.get(literal) != Some(binding)).then_some(literal)
-            })
-            .or_else(|| {
-                other
-                    .0
-                    .keys()
-                    .find(|literal| !self.0.contains_key(*literal))
-            })
-    }
-
     pub(crate) fn created_for_footprints(
         &self,
     ) -> BTreeMap<(EffectiveId, Vec<u8>), Vec<filament_checked::key::DeclarationKey>> {

@@ -16,14 +16,16 @@ use std::collections::BTreeSet;
 use std::rc::Rc;
 
 use filament_checked::key::DeclarationKey;
+use filament_checked::node::NodeKind;
 use filament_eval::CallFailure;
 use filament_exact::{Meter, ObjectReference, Value};
 use filament_semantic_value::catalog::InternalFault;
 use fsl_package::CheckedPackage;
-use fsl_semantics::check::{CheckedHyperClause, FormulaNodeId};
+use fsl_semantics::check::{CheckedHyperClause, FormulaNode, FormulaNodeId};
 
 use super::contracts::{Verdict, verdict};
 use super::letters::{LettersRefusal, Observed};
+use super::reference_bindings::ReferenceLiteralKey;
 use super::walk::{rows_of, stop};
 use super::{BROKEN, ClauseOutcome, ModelSimState, ModelSystem, state_document};
 use crate::hyper::{HyperLetters, HyperSlot, ParameterBinding};
@@ -76,11 +78,16 @@ impl<'s, 'a> CheckedHyperLetters<'s, 'a> {
             return Err(LettersRefusal::ComponentsMismatch);
         }
         if let Some(first) = systems.first() {
+            let literals = reference_literals(clause);
             for (component, system) in systems.iter().enumerate().skip(1) {
-                if let Some(literal) = first
-                    .reference_bindings
-                    .first_disagreement(&system.reference_bindings)
-                {
+                if let Some(literal) = literals.iter().find(|literal| {
+                    first
+                        .reference_bindings
+                        .get(&literal.object_type, &literal.identity)
+                        != system
+                            .reference_bindings
+                            .get(&literal.object_type, &literal.identity)
+                }) {
                     let identity = literal
                         .identity
                         .iter()
@@ -206,6 +213,35 @@ impl<'s, 'a> CheckedHyperLetters<'s, 'a> {
             }
         }
     }
+}
+
+/// The reference literals whose subject binding affects this hyper clause.
+fn reference_literals(clause: &CheckedHyperClause) -> BTreeSet<ReferenceLiteralKey> {
+    let mut literals = BTreeSet::new();
+    for (index, formula) in clause.body().nodes().iter().enumerate() {
+        if !matches!(formula, FormulaNode::Holds { .. }) {
+            continue;
+        }
+        let atom = FormulaNodeId::from_arena_index(index);
+        let Some((condition, _)) = clause.condition(atom) else {
+            continue;
+        };
+        let mut pending = vec![condition];
+        while let Some(node) = pending.pop() {
+            pending.extend(node.children());
+            if let NodeKind::ReferenceLiteral {
+                object_type,
+                identity,
+            } = node.kind()
+            {
+                literals.insert(ReferenceLiteralKey {
+                    object_type: object_type.clone(),
+                    identity: identity.clone(),
+                });
+            }
+        }
+    }
+    literals
 }
 
 /// The object type that the parameter `index` of `clause` declares.
