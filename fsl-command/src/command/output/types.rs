@@ -13,6 +13,8 @@ pub(super) enum Stage {
     Request,
     #[cfg(feature = "quire-extraction")]
     QuireContext,
+    ExtractionSelection,
+    Quire,
     Output,
     Envelope,
     Intake,
@@ -31,6 +33,8 @@ impl Serialize for Stage {
             Self::Request => "request",
             #[cfg(feature = "quire-extraction")]
             Self::QuireContext => "quire-context",
+            Self::ExtractionSelection => "extraction-selection",
+            Self::Quire => "quire",
             Self::Output => "output",
             Self::Envelope => "envelope",
             Self::Intake => "intake",

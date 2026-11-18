@@ -269,7 +269,8 @@ mod protocol_structure;
 pub(crate) use native_result::{item_record, ReasonWire};
 pub use native_result::{
     read_native_run_result, read_native_run_result_bounded, temporal_disposition_json,
-    write_clause_run_result, write_clause_run_result_for, CallLocationRead, CallLocusRead,
+    write_clause_run_result, write_clause_run_result_for,
+    write_clause_run_result_for_with_extraction, CallLocationRead, CallLocusRead,
     CallOriginRead, ClauseRunRecord, ClosureRead, CommandErrorRecord, CounterexampleRead,
     DimensionRead, EffectiveIdRead, FairnessGranularityRead, FairnessKindRead,
     FairnessOperationRead, FairnessRead, GuardRead, IndeterminateReasonRead, NativeRunLimits,
