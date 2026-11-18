@@ -153,6 +153,9 @@ fn settlement_value(settlement: &Settlement) -> Value {
     let mut members = serde_json::Map::new();
     members.insert("step".to_owned(), json!(settlement.step.to_string()));
     members.insert("trigger".to_owned(), json!(settlement.trigger.as_str()));
+    if let SettleTrigger::Cancelled(cause) = settlement.trigger {
+        members.insert("cause".to_owned(), json!(cancel_cause(cause)));
+    }
     if let (SettleTrigger::Decided, Some(reading)) = (settlement.trigger, &settlement.reading) {
         members.insert("basis".to_owned(), json!(reading.basis.as_str()));
         members.insert("horizon".to_owned(), json!(reading.horizon.to_string()));
@@ -162,6 +165,14 @@ fn settlement_value(settlement: &Settlement) -> Value {
         );
     }
     Value::Object(members)
+}
+
+/// FR-276's wire spelling of a cancellation cause.
+fn cancel_cause(cause: filament_exact::CancelCause) -> &'static str {
+    match cause {
+        filament_exact::CancelCause::Requested => "requested",
+        filament_exact::CancelCause::Deadline => "deadline",
+    }
 }
 
 /// The event of a session refusal: FR-643's record as the disposition.
@@ -601,7 +612,7 @@ fn drive(
                 retained_positions: fsl_analyze::monitor::DEFAULT_RETAINED_POSITIONS,
                 retained_identities: fsl_analyze::monitor::DEFAULT_RETAINED_IDENTITIES,
             };
-            let open = MonitorOpen {
+            let open = || MonitorOpen {
                 clauses: inputs.clauses.clone(),
                 kind: inputs.kind,
                 lower_boundary: inputs.lower_boundary,
@@ -613,9 +624,16 @@ fn drive(
                 temporal_selections: selections,
             };
             let package = checked.package();
-            let session = match &inputs.state {
-                Some(state) => MonitorSession::resume(package, state, open, &limits, cancel),
-                None => MonitorSession::open(package, open, &limits, cancel),
+            let start = |under: &Cancel| match &inputs.state {
+                Some(state) => MonitorSession::resume(package, state, open(), &limits, under),
+                None => MonitorSession::open(package, open(), &limits, under),
+            };
+            // FR-853: a tripped handle still opens the session, so an `open`
+            // or `resume` refusal wins over the cancellation; the stream then
+            // reads no record and returns the cancelled summary.
+            let session = match start(cancel) {
+                Err(StageFailure::Cancelled(_)) => start(&Cancel::new()),
+                started => started,
             }
             .map_err(cause_of)?;
             stream(
@@ -655,7 +673,19 @@ fn stream(
     let mut emit = |value: Value| {
         sink(&MonitorEvent { value });
     };
-    for (index, line) in records.enumerate() {
+    let mut records = records.enumerate();
+    // FR-853: the handle is read before each record, after each step and when
+    // the iterator ends; a tripped handle wins over the end of the iterator.
+    let mut stopped = None;
+    loop {
+        if let Some(cause) = cancel.cause() {
+            stopped = Some(cause);
+            break;
+        }
+        let Some((index, line)) = records.next() else {
+            stopped = cancel.cause();
+            break;
+        };
         let line = line?;
         if line.iter().all(u8::is_ascii_whitespace) {
             continue;
@@ -712,10 +742,24 @@ fn stream(
                 refused += 1;
                 emit(session_refusal_event(index, position, &refusal)?);
             }
+            // FR-853: a step the cancellation interrupts is atomic: the
+            // session is unchanged, and the record is not counted as read.
+            Err(StageFailure::Cancelled(cause)) => {
+                read -= 1;
+                stopped = Some(cause);
+                break;
+            }
             Err(other) => return Err(cause_of(other)),
         }
     }
-    let outcome = session.finish(cancel).map_err(cause_of)?;
+    if stopped.is_none() {
+        stopped = cancel.cause();
+    }
+    let outcome = match stopped {
+        Some(cause) => session.cancelled(cause),
+        None => session.finish(cancel),
+    }
+    .map_err(cause_of)?;
     let mut clauses = Vec::new();
     let mut codes = Vec::new();
     for (name, (record, settlement)) in names
@@ -727,7 +771,10 @@ fn stream(
         codes.push(record.category.exit_code());
         clauses.push(json!({
             "clause": name,
-            "settled": settlement.trigger != SettleTrigger::Finish,
+            "settled": !matches!(
+                settlement.trigger,
+                SettleTrigger::Finish | SettleTrigger::Cancelled(_)
+            ),
             "category": disposition.get("category").cloned().unwrap_or(Value::Null),
             "basis": basis,
             "disposition": disposition,
@@ -747,13 +794,16 @@ fn stream(
             filament_semantic_value::catalog::Category::InternalFailure,
         )
     });
-    let value = json!({
+    let mut value = json!({
         "format": SUMMARY_FORMAT,
         "clauses": clauses,
         "records": read,
         "refused": refused,
         "ledger": ledger,
     });
+    if let (Some(cause), Some(members)) = (stopped, value.as_object_mut()) {
+        members.insert("cancelled".to_owned(), json!(cancel_cause(cause)));
+    }
     Ok(MonitorSummary {
         value,
         outcome: lifecycle,

@@ -3028,6 +3028,7 @@ pub(crate) fn item_record(report: &ClauseRunReport) -> Result<ItemRecord, Native
         | TemporalVerdict::PendingNextEvent { .. }
         | TemporalVerdict::MissingFairnessPremise { .. }
         | TemporalVerdict::Incomplete(_)
+        | TemporalVerdict::Cancelled(_)
         | TemporalVerdict::ActivationIncomplete { .. }
         | TemporalVerdict::WindowLimitReached { .. }
         | TemporalVerdict::ProgressLimitReached(_)

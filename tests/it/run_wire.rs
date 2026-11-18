@@ -1583,25 +1583,48 @@ fn cancelled_monitor(
     Vec<fsl_command::command::MonitorEvent>,
     fsl_command::command::MonitorSummary,
 ) {
+    let (seen, summary, _) = monitor_records(clauses, observations(levels), cause, cancel);
+    (
+        seen,
+        summary.expect("a cancelled stream returns its summary"),
+    )
+}
+
+/// Run `command::monitor` over `records` of `clauses`, tripping `cancel` with
+/// `cause` when the stream asks for the record after the last one; the
+/// iterator then ends. Also returns the number of records the stream pulled.
+fn monitor_records(
+    clauses: Value,
+    records: Vec<Value>,
+    cause: Option<filament_exact::CancelCause>,
+    cancel: &filament_exact::Cancel,
+) -> (
+    Vec<fsl_command::command::MonitorEvent>,
+    Result<fsl_command::command::MonitorSummary, Box<fsl_command::command::RunError>>,
+    usize,
+) {
     use fsl_command::command::{monitor, RunLimits};
 
     let directory = tempfile::tempdir().unwrap();
     let request = monitor_request(clauses, json!({"kind": "finite"}));
     let path = write_trace(directory.path(), "cancelled.json", &request);
-    let lines: Vec<String> = observations(levels).iter().map(Value::to_string).collect();
-    let total = lines.len();
-    let records = lines.into_iter().enumerate().map(move |(index, line)| {
-        if index + 1 == total {
+    let pulled = std::cell::Cell::new(0_usize);
+    let lines = records
+        .iter()
+        .map(|record| {
+            pulled.set(pulled.get() + 1);
+            Ok(record.to_string().into_bytes())
+        })
+        .chain(std::iter::from_fn(|| {
             if let Some(cause) = cause {
                 cancel.cancel(cause);
             }
-        }
-        Ok(line.into_bytes())
-    });
+            None
+        }));
     let mut seen = Vec::new();
     let summary = monitor(
         &path,
-        records,
+        lines,
         &mut |event| seen.push(event.clone()),
         fsl_command::command::MonitorProviders {
             negotiate: &crate::negotiation::Fr290,
@@ -1610,9 +1633,8 @@ fn cancelled_monitor(
         },
         RunLimits::default(),
         cancel,
-    )
-    .expect("a cancelled stream returns its summary");
-    (seen, summary)
+    );
+    (seen, summary, pulled.get())
 }
 
 /// FR-853-AC-1 (TC-2413): a stream cancelled with `Requested` after two
@@ -1620,7 +1642,6 @@ fn cancelled_monitor(
 /// settlement, makes no `finish`, and exits 22.
 #[test]
 #[trace("TC-2413", "FR-853-AC-1")]
-#[ignore = "QSL-2284: a cancelled monitor stream returns a refusal, not a summary of cancelled clauses"]
 fn a_cancelled_stream_reports_its_open_clauses_incomplete() {
     let cancel = filament_exact::Cancel::new();
     let (_, summary) = cancelled_monitor(
@@ -1639,17 +1660,39 @@ fn a_cancelled_stream_reports_its_open_clauses_incomplete() {
             json!({"step": "2", "trigger": "cancelled", "cause": "requested"}),
             "{value}"
         );
+        assert_eq!(clause["basis"], "unsettled", "{value}");
+        assert_eq!(
+            clause["disposition"]["temporal"]["kind"], "incomplete",
+            "{value}"
+        );
     }
     assert_eq!(value["cancelled"], "requested", "{value}");
     assert_eq!(value["records"], 2, "{value}");
     assert_eq!(summary.exit_code, 22);
+
+    let mut ended = observations(&[0, 1]);
+    ended.push(json!({"end": true}));
+    let (_, finished, _) = monitor_records(
+        json!([{"name": "Reaches"}, {"name": "Never"}]),
+        ended,
+        None,
+        &filament_exact::Cancel::new(),
+    );
+    let finished = finished.expect("an ended stream returns its summary");
+    let value = finished.as_value();
+    for index in 0..2 {
+        assert_eq!(
+            value["clauses"][index]["settlement"]["trigger"], "finish",
+            "{value}"
+        );
+    }
+    assert!(value.get("cancelled").is_none(), "{value}");
 }
 
 /// FR-853-AC-2 (TC-2413): clauses settled before a `Deadline` cancellation
 /// keep their settlements; an open one is cancelled with cause `deadline`.
 #[test]
 #[trace("TC-2413", "FR-853-AC-2")]
-#[ignore = "QSL-2284: a cancelled monitor stream returns a refusal, not a summary of cancelled clauses"]
 fn a_deadline_cancellation_keeps_settled_clauses() {
     let cancel = filament_exact::Cancel::new();
     let (_, settled) = cancelled_monitor(
@@ -1687,16 +1730,40 @@ fn a_deadline_cancellation_keeps_settled_clauses() {
 /// hands the sink no event; every clause is cancelled at step 0.
 #[test]
 #[trace("TC-2413", "FR-853-AC-3")]
-#[ignore = "QSL-2284: a cancelled monitor stream returns a refusal, not a summary of cancelled clauses"]
 fn an_already_cancelled_stream_reads_no_record() {
     let cancel = filament_exact::Cancel::new();
     cancel.cancel(filament_exact::CancelCause::Requested);
-    let (seen, summary) = cancelled_monitor(json!([{"name": "Reaches"}]), &[0, 1], None, &cancel);
+    let (seen, summary, pulled) = monitor_records(
+        json!([{"name": "Reaches"}]),
+        observations(&[0, 1]),
+        None,
+        &cancel,
+    );
+    let summary = summary.expect("a cancelled stream returns its summary");
     let value = summary.as_value();
+    assert_eq!(pulled, 0, "{value}");
     assert!(seen.is_empty(), "{seen:?}");
     assert_eq!(value["records"], 0, "{value}");
-    assert_eq!(value["clauses"][0]["settlement"]["step"], "0", "{value}");
+    assert_eq!(
+        value["clauses"][0]["settlement"],
+        json!({"step": "0", "trigger": "cancelled", "cause": "requested"}),
+        "{value}"
+    );
+    assert_eq!(value["cancelled"], "requested", "{value}");
     assert_eq!(summary.exit_code, 22);
+
+    // FR-644-AC-4's refusal still wins over the tripped handle.
+    let (seen, refused, pulled) = monitor_records(
+        json!([{"name": "Absent"}]),
+        observations(&[0, 1]),
+        None,
+        &cancel,
+    );
+    let error = refused.expect_err("an unknown clause refuses");
+    assert_eq!(error.category().exit_code(), 20);
+    let envelope = error.value().expect("a refusal envelope");
+    assert!(envelope.to_string().contains("Absent"), "{envelope}");
+    assert_eq!((seen.len(), pulled), (0, 0));
 }
 
 /// FR-644-AC-6 (TC-2324), refusal half: `{"end": "closed"}`, `{"end": "open"}`
@@ -2346,7 +2413,6 @@ fn command_monitor_settles_unknown_backends_and_unknown_answers() {
 /// provider request.
 #[test]
 #[trace("TC-2984", "FR-644-AC-11")]
-#[ignore = "QSL-2437: an already-cancelled monitor returns MonitorCancelled, not its summary (FR-853-AC-3)"]
 fn a_cancelled_monitor_settles_its_items_incomplete() {
     let cancel = filament_exact::Cancel::new();
     cancel.cancel(filament_exact::CancelCause::Requested);
