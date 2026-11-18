@@ -254,7 +254,7 @@ mod tests {
         let packages = BTreeMap::new();
         let dependencies = DependencyInput::default();
         let cancel = Cancel::new();
-        let parsed = spine::parse(
+        let parsed = spine::parse_for_continuation(
             &ParseRequest {
                 source: &identity,
                 path: "unit.native",
