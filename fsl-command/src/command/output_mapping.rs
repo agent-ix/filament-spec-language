@@ -117,6 +117,8 @@ fn render(
     definitions: &[Definition],
     target: Target,
 ) -> Result<GeneratedModule, RenderError> {
+    use std::fmt::Write as _;
+
     let module = module_name(package_name);
     let mut names = std::collections::BTreeSet::new();
     let mut name_map = Vec::with_capacity(definitions.len());
@@ -151,7 +153,6 @@ fn render(
             Target::Tla => "\\* fsl:",
             Target::Lean => "-- fsl:",
         };
-        use std::fmt::Write as _;
         writeln!(
             &mut text,
             "{comment} {} [{}, {})",
