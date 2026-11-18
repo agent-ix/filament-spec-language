@@ -2086,13 +2086,31 @@ mod tests {
     use super::*;
     use filament_exact::{Decimal, EnumMember, Integer, Timestamp, VariantId};
     use filament_semantic_value::checking::CheckMode;
+    use filament_semantic_value::declaration::{
+        CompositeDeclaration, CompositeShape, FieldDeclaration, TypeEnvironment,
+    };
 
     fn package() -> fsl_package::CheckedPackage {
-        let declarations = fsl_semantics::check::PackageDeclarations::new(
-            fsl_semantics::check::fixture_source(),
-            "fixture",
-            fsl_foundation::IdentityLimits::default(),
-        );
+        let declarations = fsl_semantics::check::PackageDeclarations {
+            types: TypeEnvironment::new(
+                [CompositeDeclaration::new(
+                    crate::fixture_node(8),
+                    "CaptureFixture",
+                    CompositeShape::Record(vec![FieldDeclaration::new(
+                        "flag",
+                        ValueType::Boolean,
+                        filament_exact::Presence::Required,
+                    )]),
+                )],
+                [],
+            )
+            .expect("the capture fixture type admits"),
+            ..fsl_semantics::check::PackageDeclarations::new(
+                fsl_semantics::check::fixture_source(),
+                "fixture",
+                fsl_foundation::IdentityLimits::default(),
+            )
+        };
         fsl_package::CheckedPackage::link(
             declarations
                 .check(
