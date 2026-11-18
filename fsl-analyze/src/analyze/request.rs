@@ -538,6 +538,13 @@ fn work<'a>(
             .is_some_and(|claim| claim != &item.claim);
     let family = if wrong_occurrence { None } else { family };
     let absent = || AnalyzeItem::unadapted(item.request_index, item.kind, family);
+    // FR-243: an item naming `options.method` `digital-clocks` negotiated to
+    // EN-1's digital-clock route; every other timed item is EN-6's.
+    let digital = item
+        .options
+        .backend_options
+        .get(crate::zone_check::manifest::METHOD)
+        .is_some_and(|method| method == crate::model_check::manifest::METHOD_DIGITAL_CLOCKS);
     let mut built = match &item.form {
         Some(ItemForm::Temporal(_form)) if item.kind == Capability::GlobalConformance => {
             if _form.item_kind == ItemKind::DeadlockFreedom {
@@ -698,16 +705,29 @@ fn work<'a>(
                 && form.item_kind == ItemKind::Formula
                 && super::document::timed(package) =>
         {
-            super::timed_item::zone_clause_item(
-                analysis,
-                binding,
-                *limits,
-                provision,
-                &item.claim,
-                item.request_index,
-                form,
-            )
-            .unwrap_or_else(absent)
+            if digital {
+                super::digital_item::digital_clause_item(
+                    analysis,
+                    binding,
+                    *limits,
+                    provision,
+                    &item.claim,
+                    item.request_index,
+                    form,
+                )
+                .unwrap_or_else(absent)
+            } else {
+                super::timed_item::zone_clause_item(
+                    analysis,
+                    binding,
+                    *limits,
+                    provision,
+                    &item.claim,
+                    item.request_index,
+                    form,
+                )
+                .unwrap_or_else(absent)
+            }
         }
         Some(ItemForm::Temporal(form)) if item.kind == Capability::TemporalSatisfaction => {
             match super::ClauseSubject::from_provision(
@@ -910,6 +930,13 @@ fn work<'a>(
             Some(crate::protocol_analysis::manifest::BACKEND_ID)
         }
         Some(ItemForm::Temporal(_)) if super::document::is_state_graph(package, &item.claim) => {
+            Some(crate::model_check::manifest::BACKEND_ID)
+        }
+        Some(ItemForm::Temporal(form))
+            if digital
+                && form.item_kind == ItemKind::Formula
+                && super::document::timed(package) =>
+        {
             Some(crate::model_check::manifest::BACKEND_ID)
         }
         Some(ItemForm::Temporal(_)) if super::document::timed(package) => {

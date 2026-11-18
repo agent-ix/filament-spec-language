@@ -257,7 +257,7 @@ fn constraints_of<'m>(
 }
 
 /// The model's clock constraints in guard-then-invariant declaration order.
-fn model_constraints<'m>(
+pub(crate) fn model_constraints<'m>(
     timed: &'m TimedSystem<'_, '_>,
 ) -> Vec<&'m fsl_semantics::check::ClockConstraint> {
     let mut found = Vec::new();

@@ -53,7 +53,6 @@ fn counters_request(
 #[trace("TC-2290", "FR-632-AC-4")]
 #[trace("TC-2290", "FR-243-AC-4")]
 #[test]
-#[ignore = "QSL-2129: the digital-clock route is not reachable through fsl analyze yet"]
 fn digital_clocks_refuse_strict_constraints_and_intervals() {
     let claim = "temporal NoLateReply using tt over (c: M::Call) clock \"model-time\" on origin \
                  { always holds(not c.late) }\n\
@@ -76,6 +75,21 @@ fn digital_clocks_refuse_strict_constraints_and_intervals() {
     assert_eq!(label(&proved), "proved", "{proved}");
     assert_eq!(proved["record"]["basis"]["type"], "exhaustive", "{proved}");
     assert_eq!(proved["record"]["backend"], "en-1", "{proved}");
+    // FR-243-AC-4: with `options.method` absent the item negotiates to EN-6.
+    let ws = Workspace::new("rulings-digital-absent");
+    let run = analyze(&crate::analyze_family_cli::rpc_request(
+        &ws,
+        4,
+        claim,
+        json!({"items": [{"claim": "NoLateReply"}]}),
+    ));
+    let zoned = run.item(0);
+    assert_eq!(label(&zoned), "proved", "{zoned}");
+    assert_eq!(zoned["record"]["backend"], "en-6", "{zoned}");
+    assert_eq!(
+        zoned["record"]["basis"]["type"], "zone-certified",
+        "{zoned}"
+    );
 
     let ws = Workspace::new("rulings-digital-interval");
     let run = analyze(&crate::analyze_family_cli::rpc_request(
