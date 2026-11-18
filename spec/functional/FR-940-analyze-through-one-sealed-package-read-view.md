@@ -185,8 +185,10 @@ and `FR-621`'s outcome document is unchanged.
   region, a `NodeRef` path or source text.
 - A model is named on the package route by the package identity of its
   model selection, read from `model_selections()`, never by a source alias:
-  the package records model selections by identity only, so units importing
-  one domain package under different aliases write equal bytes. A derived
+  the package records model selections by identity only, so untimed units
+  importing one domain package under different aliases write equal bytes; a
+  timed model's qualified name carries its alias (`[alias, "Timed"]`), which
+  is never read as the model's name. A derived
   item over a model subject that names its model by an alias settles
   `invalid-request` `invalid_capability`/`model-alias`, naming the identity
   to use, as FR-850 "Building the analysis input" states.
