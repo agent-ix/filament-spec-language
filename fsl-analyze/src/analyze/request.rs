@@ -829,6 +829,7 @@ fn work<'a>(
                         package,
                         binding.clone(),
                         *limits,
+                        provision,
                         protocol,
                         trace,
                     )

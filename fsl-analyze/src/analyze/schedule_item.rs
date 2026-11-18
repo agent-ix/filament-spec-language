@@ -11,9 +11,9 @@ use fsl_foundation::source::provenance::OccurrenceKey;
 use fsl_foundation::RequestIndex;
 use fsl_package::CheckedPackage;
 use fsl_replay::{
-    Arrival, ClosedFormAnalysis, ClosedFormOutcome, MissEvidence, Criticality, DeclineCode, ProofRefusalCause, QualifiedName,
-    ScheduleClaim, ScheduleSubject, SchedulingPolicy, Task, TaskSet, TaskSetRefusal, TerminalValue,
-    Wcet,
+    Arrival, ClosedFormAnalysis, ClosedFormOutcome, Criticality, DeclineCode, MissEvidence,
+    ProofRefusalCause, QualifiedName, ScheduleClaim, ScheduleSubject, SchedulingPolicy, Task,
+    TaskSet, TaskSetRefusal, TerminalValue, Wcet,
 };
 use fsl_route::Mode;
 use fsl_semantics::check::{self as checked, Capability, DeclarationFamily};
@@ -117,7 +117,11 @@ fn subject_of(
         },
     };
     let subject = ScheduleSubject::new(task_set, claim).map_err(Lowering::Refused)?;
-    let unit = set.unit.as_ref().map(|unit| unit.name.clone()).unwrap_or_default();
+    let unit = set
+        .unit
+        .as_ref()
+        .map(|unit| unit.name.clone())
+        .unwrap_or_default();
     Ok((subject, checked.name.clone(), unit))
 }
 
@@ -183,8 +187,10 @@ pub(super) fn miss_wire(
         } => {
             let found = subject.task_set().task(task)?;
             let last = iterates.last()?;
-            let offset = filament_exact::Rational::from_integer(filament_exact::Integer::from(i128::from(*job)))
-                .mul(found.arrival.interval());
+            let offset = filament_exact::Rational::from_integer(filament_exact::Integer::from(
+                i128::from(*job),
+            ))
+            .mul(found.arrival.interval());
             let response = last.add(&found.jitter).sub(&offset);
             let bound = match subject.claim() {
                 ScheduleClaim::Response { bound, .. } => bound.clone(),

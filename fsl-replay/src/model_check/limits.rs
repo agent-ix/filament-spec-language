@@ -252,6 +252,9 @@ pub enum ModelCheckLimit {
     MaxWitnessSet,
     /// `ModelCheckLimits::max_relation_tuples` (FR-184).
     MaxRelationTuples,
+    /// FR-194: the values a window aggregate of a required clause may hold
+    /// (FR-941); setting `monitor.max_window_values`.
+    MaxWindowValues,
     /// An EN-4 budget (FR-191, FR-192).
     Statistical(StatisticalLimit),
     /// EN-6's `max_symbolic_states` (FR-239); setting
@@ -330,6 +333,7 @@ impl ModelCheckLimit {
             Self::MaxWalkSteps => "max_walk_steps",
             Self::MaxWitnessSet => "max_witness_set",
             Self::MaxRelationTuples => "max_relation_tuples",
+            Self::MaxWindowValues => "max_window_values",
             Self::Statistical(limit) => limit.as_str(),
             Self::ZoneMaxSymbolicStates => "max_symbolic_states",
             Self::ZoneMaxSymbolicTransitions => "max_symbolic_transitions",
@@ -378,6 +382,7 @@ impl ModelCheckLimit {
             Self::MaxWalkSteps => "model_check.max_walk_steps",
             Self::MaxWitnessSet => "model_check.max_witness_set",
             Self::MaxRelationTuples => "model_check.max_relation_tuples",
+            Self::MaxWindowValues => "monitor.max_window_values",
             Self::Statistical(limit) => limit.setting(),
             Self::ZoneMaxSymbolicStates => "zone_check.max_symbolic_states",
             Self::ZoneMaxSymbolicTransitions => "zone_check.max_symbolic_transitions",
@@ -608,6 +613,7 @@ mod tests {
             ModelCheckLimit::MaxRelationTuples => {
                 ("max_relation_tuples", "model_check.max_relation_tuples")
             }
+            ModelCheckLimit::MaxWindowValues => ("max_window_values", "monitor.max_window_values"),
             ModelCheckLimit::Statistical(budget) => match budget {
                 StatisticalLimit::MaxSamples => ("max_samples", "statistical.max_samples"),
                 StatisticalLimit::MaxDraws => ("max_draws", "statistical.max_draws"),
@@ -674,6 +680,7 @@ mod tests {
             ModelCheckLimit::MaxWalkSteps,
             ModelCheckLimit::MaxWitnessSet,
             ModelCheckLimit::MaxRelationTuples,
+            ModelCheckLimit::MaxWindowValues,
             ModelCheckLimit::Statistical(StatisticalLimit::MaxSamples),
             ModelCheckLimit::Statistical(StatisticalLimit::MaxDraws),
             ModelCheckLimit::Statistical(StatisticalLimit::MaxCycleSteps),

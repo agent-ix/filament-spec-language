@@ -27,7 +27,7 @@ use crate::checked_v2::{resolve_clause_root, role_spelling, wire_graph};
 /// segments, a few hundred bytes), so a formula at the limit holds on the
 /// order of a hundred megabytes. The spec's `&[CheckedNodeId]` accessors need
 /// owned ids, so the per-visit cost is not reduced here.
-pub(super) const FORMULA_VISITS: u64 = CheckedPackageReadLimits::bounded().work;
+pub const FORMULA_VISITS: u64 = CheckedPackageReadLimits::bounded().work;
 
 /// The temporal operation a checked formula node applies (FR-337). A package
 /// spells it as an operation identity; [`FormulaOperation::of`] is the one

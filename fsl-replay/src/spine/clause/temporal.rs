@@ -2745,11 +2745,12 @@ pub(super) fn decisive_over(
         ))
     };
     let position = atom.position.index();
+    let named = fsl_eval::value::HoldsAtom::of_source(node, atom.atom)
+        .ok_or_else(|| fault("decisive-atom-is-a-formula-use"))?;
     let evaluation = run
         .package
         .evaluate_holds_traced(
-            node,
-            atom.atom,
+            &named,
             fsl_eval::value::HoldsBinders { over, captures },
             objects,
             observation,
@@ -3309,7 +3310,7 @@ pub struct FiniteWindowReport {
 
 /// The spine's own form of the evaluator's outcome (FR-100-AC-8).
 /// The spine's own form of the evaluator's outcome (FR-100-AC-8).
-fn verdict(outcome: TemporalOutcome) -> TemporalVerdict {
+pub(crate) fn verdict(outcome: TemporalOutcome) -> TemporalVerdict {
     match outcome {
         TemporalOutcome::Holds => TemporalVerdict::Holds,
         TemporalOutcome::Violated { at } => TemporalVerdict::Violated { at: at.index() },
@@ -3351,7 +3352,7 @@ fn verdict(outcome: TemporalOutcome) -> TemporalVerdict {
 }
 
 /// The spine's own form of the evaluator's trace refusal (FR-100-AC-8).
-fn trace_refusal(refusal: TemporalRefusal) -> TemporalTraceRefusal {
+pub(crate) fn trace_refusal(refusal: TemporalRefusal) -> TemporalTraceRefusal {
     match refusal {
         TemporalRefusal::EmptyTrace => TemporalTraceRefusal::EmptyTrace,
         TemporalRefusal::TupleArity { expected, found } => {

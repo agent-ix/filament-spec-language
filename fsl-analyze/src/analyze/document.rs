@@ -213,10 +213,12 @@ impl ProtocolSelection {
             .unwrap_or_default();
         Some(super::request::ProtocolBinding {
             protocol: self.protocol.clone(),
-            over: self
-                .over
-                .as_ref()
-                .map(|over| (over.reference.population.clone(), over.reference.key.clone())),
+            over: self.over.as_ref().map(|over| {
+                (
+                    over.reference.population.clone(),
+                    over.reference.key.clone(),
+                )
+            }),
             roles: self
                 .roles
                 .iter()
@@ -381,7 +383,9 @@ impl SubjectSelection {
     #[must_use]
     pub fn completed_by(mut self, base: &Self) -> Self {
         self.memory.clone_from(&base.memory);
-        if self.initial_states.is_empty() && self.universes.is_empty() && self.proof_bounds.is_empty()
+        if self.initial_states.is_empty()
+            && self.universes.is_empty()
+            && self.proof_bounds.is_empty()
         {
             self.initial_states.clone_from(&base.initial_states);
             self.universes.clone_from(&base.universes);
@@ -535,6 +539,7 @@ count_members! {
     read_max_walk_steps => "temporal.limits.max_walk_steps",
     read_max_witness_set => "temporal.limits.max_witness_set",
     read_max_relation_tuples => "temporal.limits.max_relation_tuples",
+    read_max_candidates => "temporal.limits.max_candidates",
     read_max_clocks => "temporal.limits.max_clocks",
     read_max_task_product_work => "temporal.limits.max_task_product_work",
     read_max_store_buffer => "temporal.limits.max_store_buffer",
@@ -571,6 +576,9 @@ pub struct TemporalLimitsSelection {
     /// `max_relation_tuples`.
     #[serde(default, deserialize_with = "read_max_relation_tuples")]
     pub max_relation_tuples: Option<NonZeroU64>,
+    /// `max_candidates` (FR-625): the most successor candidates one expansion enumerates.
+    #[serde(default, deserialize_with = "read_max_candidates")]
+    pub max_candidates: Option<NonZeroU64>,
     /// `max_clocks` (FSpec FR-415).
     #[serde(default, deserialize_with = "read_max_clocks")]
     pub max_clocks: Option<NonZeroU64>,
@@ -1434,11 +1442,14 @@ fn resolve_one(
             )),
         };
     };
-    if let Some(resolved) = resolve_protocol_freedom(package, subject, index, selection, registry, name)
+    if let Some(resolved) =
+        resolve_protocol_freedom(package, subject, index, selection, registry, name)
     {
         return resolved;
     }
-    if let Some(resolved) = resolve_schedule_claim(package, subject, index, selection, registry, name) {
+    if let Some(resolved) =
+        resolve_schedule_claim(package, subject, index, selection, registry, name)
+    {
         return resolved;
     }
     let Some(node) = declarations(package).get(name).cloned() else {
@@ -1580,7 +1591,9 @@ fn resolve_one(
         .clone()
         .map_or_else(|| subject.clone(), |own| own.completed_by(subject));
     let protocol = if kind == Capability::TemporalSatisfaction
-        && temporal.item_kind.is_none_or(|item_kind| item_kind.kind() == ItemKind::Formula)
+        && temporal
+            .item_kind
+            .is_none_or(|item_kind| item_kind.kind() == ItemKind::Formula)
         && package
             .graph()
             .temporal_clauses()
@@ -1623,11 +1636,11 @@ fn resolve_one(
     let protocol_bound = protocol.is_some();
     let form = (kind == Capability::TemporalSatisfaction || kind == Capability::GlobalConformance)
         .then(|| {
-        let mut form = temporal_item(package, &claim, &temporal);
-        form.pending_reductions.clone_from(&selection.reductions);
-        form.protocol = protocol;
-        ItemForm::Temporal(form)
-    });
+            let mut form = temporal_item(package, &claim, &temporal);
+            form.pending_reductions.clone_from(&selection.reductions);
+            form.protocol = protocol;
+            ItemForm::Temporal(form)
+        });
     let item = ClaimItem {
         request_index: index,
         claim,
@@ -1783,8 +1796,9 @@ fn resolve_derived(
     form.pending_reductions.clone_from(&selection.reductions);
     claim.item.form = Some(ItemForm::Temporal(form));
     claim.claim_name = name.to_owned();
-    claim.unrouted =
-        selection.unrouted() || reads_no_clocks(package, temporal) || !own_subject.same_model(subject);
+    claim.unrouted = selection.unrouted()
+        || reads_no_clocks(package, temporal)
+        || !own_subject.same_model(subject);
     claim.subject = own_subject;
     Some(ResolvedItem::Claim(claim))
 }
@@ -2075,6 +2089,7 @@ fn temporal_item(
             limits.max_relation_tuples,
             &mut item.limits.max_relation_tuples,
         );
+        set(limits.max_candidates, &mut item.max_candidates);
     }
     item
 }
@@ -2289,7 +2304,9 @@ fn derived_claim(
         timed(package),
     );
     let claim_name = declared_name(package, item.node()).unwrap_or_else(|| {
-        protocol.map(|binding| binding.protocol.clone()).unwrap_or_default()
+        protocol
+            .map(|binding| binding.protocol.clone())
+            .unwrap_or_default()
     });
     ResolvedItem::Claim(Box::new(ResolvedClaim {
         item: ClaimItem {
@@ -2343,7 +2360,8 @@ fn protocol_derived_items(
     let Some(checked) = graph.protocol(&binding.protocol) else {
         return Vec::new();
     };
-    let non_atomic = super::protocol_item::has_non_atomic_access(package, admission, limits, &binding);
+    let non_atomic =
+        super::protocol_item::has_non_atomic_access(package, admission, limits, &binding);
     let occurrences: Vec<OccurrenceKey> = authored
         .iter()
         .filter_map(|resolved| match resolved {
@@ -2365,7 +2383,8 @@ fn protocol_derived_items(
         Capability::TemporalSatisfaction,
         fsl_semantics::family::ClaimExtent::Bounded,
     );
-    let mut request = fsl_route::model_request::ModelRequest::<super::request::ProtocolBinding>::new();
+    let mut request =
+        fsl_route::model_request::ModelRequest::<super::request::ProtocolBinding>::new();
     for occurrence in &occurrences {
         request.protocol(
             &fsl_route::deadlock::ProtocolTemporalItem {
@@ -2920,7 +2939,7 @@ fn write_run(
                 request: echo.map(|echo| echo.request.clone()),
                 identity: echo.and_then(|echo| echo.identity.clone()),
                 target,
-                detail: detail.copied(),
+                detail: detail.cloned(),
                 scoped: echo.is_some_and(|echo| echo.scoped),
                 axes: OutcomeAxes::of_record(record.value(), disposed),
                 producer: record
@@ -3114,7 +3133,7 @@ fn item_document(written: Value, members: ItemMembers) -> Value {
     item.insert("request".to_owned(), request.unwrap_or(Value::Null));
     item.insert("category".to_owned(), category);
     if let (Some(checker), Some(identity), Some("proved")) = (
-        detail.and_then(|detail| detail.checker),
+        detail.as_ref().and_then(|detail| detail.checker),
         identity,
         record.get("result").and_then(Value::as_str),
     ) {
@@ -3123,8 +3142,10 @@ fn item_document(written: Value, members: ItemMembers) -> Value {
             json!({"identity": identity, "checker": checker.as_str(), "accepted": true}),
         );
     }
+    let mut spelled = None;
     if let Some(mut counterexample) = counterexample {
         spell_states(&mut counterexample);
+        spelled = Some(counterexample.clone());
         if let Some(target) = target {
             item.insert(
                 "replay".to_owned(),
@@ -3144,7 +3165,7 @@ fn item_document(written: Value, members: ItemMembers) -> Value {
             item.insert(member.to_owned(), value.clone());
         }
     }
-    if let Some(stats) = detail.and_then(|detail| detail.exploration) {
+    if let Some(stats) = detail.as_ref().and_then(|detail| detail.exploration) {
         item.insert(
             "exploration".to_owned(),
             json!({
@@ -3159,13 +3180,16 @@ fn item_document(written: Value, members: ItemMembers) -> Value {
     }
     // FSpec FR-439: the record states the memory budget the run used and
     // whether it reached it.
-    let memory_bound = detail.and_then(|detail| detail.memory_bound).map(|stated| {
-        json!({
-            "bound": stated.bound.member.as_str(),
-            "value": stated.bound.value,
-            "reached": stated.reached,
-        })
-    });
+    let memory_bound = detail
+        .as_ref()
+        .and_then(|detail| detail.memory_bound.clone())
+        .map(|stated| {
+            json!({
+                "bound": stated.bound.member.as_str(),
+                "value": stated.bound.value,
+                "reached": stated.reached,
+            })
+        });
     if scoped {
         item.insert(
             "axes".to_owned(),
@@ -3174,11 +3198,35 @@ fn item_document(written: Value, members: ItemMembers) -> Value {
     }
     // FR-941 "Bare claim": a proof over a supplied trace names the trace and
     // the steps it replayed; it is about that trace only.
-    if let Some(steps) = detail.and_then(|detail| detail.replayed_steps) {
+    if let Some(steps) = detail.as_ref().and_then(|detail| detail.replayed_steps) {
         if let Some(trace) = item.get("request").and_then(|request| request.get("trace")) {
             record.insert("trace".to_owned(), trace.clone());
         }
         record.insert("steps".to_owned(), json!(steps));
+    }
+    // FR-941: a claim's required clauses are read by the temporal evaluator,
+    // whose reading is the item's FSpec FR-352 `disposition.temporal`; a
+    // protocol expression undefined at a replayed state names where.
+    if let Some(finite) = detail
+        .as_ref()
+        .and_then(|detail| detail.finite_replay.as_ref())
+    {
+        if let Some(evaluation) = &finite.evaluation {
+            if let Ok(disposition) =
+                fsl_replay::temporal_disposition_json(evaluation.as_ref(), spelled.clone())
+            {
+                if let (Some(axes), Some(basis)) = (item.get_mut("axes"), disposition.get("basis"))
+                {
+                    axes["settlement"] = basis.clone();
+                }
+                item.insert("disposition".to_owned(), disposition);
+            }
+        }
+        if let (Some(at), Some(Value::Object(cause))) =
+            (&finite.undefined_where, record.get_mut("cause"))
+        {
+            cause.insert("where".to_owned(), at.clone());
+        }
     }
     // FR-621: `settled_by`, and `backend` exactly when a result settled
     // the record.
