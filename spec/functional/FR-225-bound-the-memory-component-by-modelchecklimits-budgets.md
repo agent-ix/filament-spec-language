@@ -46,29 +46,30 @@ FSpec FR-439 states (ADR-025 MB-3, MB-4), and every terminal record of an
 item over a subject with a weak `parallel` SHALL state the bound used and
 whether it was reached.
 
-### Decision: `max_messages` bounds every message in flight
+### Decision: `max_messages` also bounds each channel's occupancy
 
-A protocol's channels hold messages as well as the RA message store does,
-and a protocol loop that sends repeatedly can grow its channel queues
-without end, as a loop that stores grows a store buffer. A channel's declared
-capacity is not such a bound: it is part of the model, and its overflow
-policy (FR-206, FR-572) decides what an overflowing send does. The method
-needs one bound outside the model on the messages a state holds, and no
-other setting carries one. So `max_messages` SHALL bound the total number of
-messages in flight in a state: the entries queued on every protocol channel,
-of every channel kind, plus the RA component's messages, counted together.
-It applies to every subject whose model holds a channel or a weak
-`parallel`, RA or not. A step that offers a message (any `send`, whatever
-its channel's overflow policy, or an RA store that adds a message) in a
-state whose total is already `max_messages` is a cut step under the bound
-rule below, exactly as a store FSpec FR-439 cuts. The bound is checked
-before the channel's overflow policy applies, because the policy's outcome
-(enqueue, reject, loss or displacement) is part of the step the bound
-leaves unexplored. A step that offers no message (a `receive`, a `finish`, a
-structural move) is never cut. The
-terminal record of an item over a subject with a channel states
-`max_messages`, its value and whether it was reached, as for a weak
-`parallel`, and FR-255's `model_check.max_messages` and FR-636's
+Under `ra`, `max_messages` bounds the live messages per location after
+garbage collection (ADR-025 MB-2, FSpec FR-439), and that meaning is
+unchanged. A protocol's channels also hold messages, and a protocol loop that
+sends repeatedly can grow a channel's queue toward its declared capacity on
+every path, as a loop that stores grows a store buffer. A channel's declared
+capacity is part of the model, and its overflow policy (FR-206, FR-572)
+decides what an overflowing send does; the method needs a bound outside the
+model, and no other setting carries one. So `max_messages` SHALL also bound
+the occupancy of each protocol channel, counted per channel, of every
+channel kind, on every subject whose model holds a channel, RA or not. A
+`send` offered to a channel that already holds `max_messages` entries is a
+cut step under the bound rule below, exactly as a store FSpec FR-439 cuts,
+whatever the channel's overflow policy: the bound is checked before the
+policy applies, because the policy's outcome (enqueue, reject, loss or
+displacement) is part of the step the bound leaves unexplored. A step that
+offers no message to a channel (a `receive`, a `finish`, a structural move)
+is never cut by the channel bound. The two counts are separate: an RA
+location's live messages and a channel's entries never add together, so a
+run with no channel whose capacity reaches the bound explores exactly what
+it explored before. The terminal record of an item over a subject with a
+channel states `max_messages`, its value and whether it was reached, as for
+a weak `parallel`, and FR-255's `model_check.max_messages` and FR-636's
 `temporal.limits.max_messages` raise it.
 
 ## Use case
@@ -134,7 +135,7 @@ again.
 | FR-225-AC-3 | `SB` under `tso` with `max_store_buffer` 1 still settles `refuted` (V-4). `SB` under `ra` with `max_messages` 1 settles V-6 `MemoryBoundReached` with `bound: max_messages 1`, since no store can add a second message. | Test (TC-670) |
 | FR-225-AC-4 | In AC-2 with bound 2, a state whose only enabled step is the third store is not reported by the deadlock-freedom item and has no stutter successor. AC-2's protocol written in ADR-025 §10's vocabulary (`Cell` with `v: Int[0, 2]`, so a `read` stores it in `Core.r: Int[0, 2]`, universe `{x, y, z}` at 0, `set()` storing 1 with `ordering release`; `Core` with `r: Int[0, 2]` at 2; branch `left` on `c1` runs `set` on `x`, `y`, then `z`; branch `right` on `c2` runs `read(x)`, `read(y)`, then `read(z)` with `ordering acquire`), under `tso` with `max_store_buffer` 2, the claim `always holds(x.v <= 1)` and the request naming `constraint Zero using v on M::Cell at current { self.v <= 0 }`, stores 21 states: the initial state, at the `parallel` before its fork (the fork is a step, so the state before it is a reached state of its own); 12 expanded states after the fork with no store flushed, 4 of them bound-limited (`left`'s third store cut); and 8 boundary states reached by `left`'s first flush. Widening `v` to `Int[0, 2]` adds no reachable value, since `set()` stores only 1 over an initial 0, so the 12 and the 8 are unchanged. It settles `ConstraintReached{boundary_states: 8}` with no counterexample, and its terminal record states `max_store_buffer` 2 as reached; the same request without `Zero` settles `MemoryBoundReached` (AC-2). | Test (TC-670) |
 | FR-225-AC-5 | ADR-025 §10's `SB` under `ra` with `max_messages` 1 (AC-3) and the request naming `constraint One using v on M::Cell at current { self.v >= 1 }`, false at the initial state, stores one state and settles `ConstraintReached{boundary_states: 1}`; the initial state, whose only enabled steps are stores the bound would cut, is not bound-limited, and the terminal record states `max_messages` 1 as not reached. | Test (TC-670) |
-| FR-225-AC-6 | FR-636-AC-4's `Burst`, a parallel join whose two branches each send on the `unordered` channel `Order` of capacity 1 with `overflow reject` and which has no RA access, checked with `max_messages` 1 leaves the second send unexpanded in the state where `Order` holds one message, so the overflow is never reached and the item settles as FR-636-AC-4 states, its cause naming `max_messages`, its record stating `max_messages` 1 reached; with `max_messages` 2 the bound is not reached, the second send is rejected and the item settles `refuted` with the overflow as FR-572 keys it; with `max_messages` unset the record states `max_messages` 4, not reached. | Test (TC-2986) |
+| FR-225-AC-6 | FR-636-AC-4's `Burst`, a parallel join whose two branches each send on the `unordered` channel `Order` of capacity 1 with `overflow reject` and which has no RA access, checked with `max_messages` 1 leaves the second send unexpanded in the state where `Order` holds one entry, so the overflow is never reached and the item settles as FR-636-AC-4 states, its cause naming `max_messages`, its record stating `max_messages` 1 reached; with `max_messages` 2, and unset (4, stated not reached), `Order` never holds the bound, the second send is rejected and the item settles `refuted` with the overflow as FR-572 keys it; ADR-025 §10's `SB` under `ra`, which has no channel, gives AC-1's and AC-3's records unchanged. | Test (TC-2986) |
 
 ## Dependencies
 
