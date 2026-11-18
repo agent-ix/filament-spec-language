@@ -234,7 +234,7 @@ fn a_timed_unit_without_clock_selection_is_refused_by_declaration_name() {
     ));
     let message = refusal.to_string();
     assert!(
-        message.contains("compensate template Flow::Full"),
+        message.contains("compensate template `Flow::Full`"),
         "{message}"
     );
     assert!(!message.contains("temporal declaration"), "{message}");
