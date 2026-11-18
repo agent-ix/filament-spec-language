@@ -321,12 +321,12 @@ fn two_protocols_declaring_one_channel_name_keep_their_queues_apart() {
     }
 }
 
-/// FR-101-AC-7/15 (TC-455/TC-536): unknown delivery allows a duplicate/lose
+/// FR-126-AC-8 (TC-536): unknown delivery allows a duplicate/lose
 /// loop that keeps producing distinct states. The public checker stops at
 /// the caller's state budget and names the limit it reached.
-#[trace("TC-455", "TC-536", "FR-101-AC-7", "FR-101-AC-15")]
+#[trace("TC-536", "FR-126-AC-8")]
 #[test]
-fn unknown_delivery_loop_stops_at_the_fr101_state_limit() {
+fn unknown_delivery_loop_stops_at_the_fr126_state_limit() {
     let members = channel(
         "Pay",
         "ordering fifo by (m: Boolean) { true } delivery unknown capacity 2 overflow block",
