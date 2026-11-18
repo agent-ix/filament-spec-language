@@ -201,100 +201,178 @@ impl ReferenceBindings {
             }
         }
 
-        let mut bindings = BTreeMap::new();
-        for literal in literals {
-            let text = std::str::from_utf8(&literal.identity)
-                .map_err(|_| super::fault("reference-literal-identity-is-utf8"))?;
-            model
-                .type_key(literal.object_type.clone())
-                .ok_or_else(|| super::fault("reference-literal-type-is-selected"))?;
-            let overlapping: Vec<&StatePopulation> = populations
-                .iter()
-                .filter(|population| overlaps(model, types, population, &literal.object_type))
-                .collect();
-            let available: Vec<&StatePopulation> = overlapping
-                .iter()
-                .copied()
-                .filter(|population| {
-                    universes
-                        .get(&population.key)
-                        .is_some_and(|keys| keys.iter().any(|key| key == text))
-                })
-                .collect();
-            if available.is_empty() {
+        Ok(Self(resolve_literals(
+            literals,
+            &barred,
+            model,
+            types,
+            populations,
+            universes,
+            initial,
+        )?))
+    }
+
+    /// Add the literals from a separately checked hyper clause. Hyper clauses
+    /// are checked apart from the package's base graph, so their bindings must
+    /// be admitted against each component's subject here.
+    pub(super) fn with_hyper_clause(
+        &self,
+        graph: &CheckedGraph,
+        clause: &fsl_semantics::check::CheckedHyperClause,
+        model: &StateModel,
+        types: &TypeEnvironment,
+        populations: &[StatePopulation],
+        universes: &BTreeMap<filament_checked::key::DeclarationKey, Vec<String>>,
+        initial: &[ModelSimState],
+    ) -> Result<Self, fsl_semantics::model::observation::AdmissionFailure> {
+        let mut literals = BTreeSet::new();
+        let mut barred = BTreeSet::new();
+        for (index, formula) in clause.body().nodes().iter().enumerate() {
+            if !matches!(formula, FormulaNode::Holds { .. }) {
+                continue;
+            }
+            let atom = FormulaNodeId::from_arena_index(index);
+            let Some((condition, _)) = clause.condition(atom) else {
+                continue;
+            };
+            collect_literals(graph, condition, &mut literals);
+            let components = clause.component_reads(atom);
+            let mut pending = vec![condition];
+            while let Some(node) = pending.pop() {
+                pending.extend(node.children());
+                if let NodeKind::ReferenceLiteral {
+                    object_type,
+                    identity,
+                } = node.kind()
+                {
+                    if !components.is_some_and(|reads| reads.contains_key(node.location())) {
+                        barred.insert(ReferenceLiteralKey {
+                            object_type: object_type.clone(),
+                            identity: identity.clone(),
+                        });
+                    }
+                }
+            }
+        }
+        let mut extended = self.0.clone();
+        extended.extend(resolve_literals(
+            literals,
+            &barred,
+            model,
+            types,
+            populations,
+            universes,
+            initial,
+        )?);
+        Ok(Self(extended))
+    }
+}
+
+fn resolve_literals(
+    literals: BTreeSet<ReferenceLiteralKey>,
+    barred: &BTreeSet<ReferenceLiteralKey>,
+    model: &StateModel,
+    types: &TypeEnvironment,
+    populations: &[StatePopulation],
+    universes: &BTreeMap<filament_checked::key::DeclarationKey, Vec<String>>,
+    initial: &[ModelSimState],
+) -> Result<
+    BTreeMap<ReferenceLiteralKey, ReferenceBinding>,
+    fsl_semantics::model::observation::AdmissionFailure,
+> {
+    let mut bindings = BTreeMap::new();
+    for literal in literals {
+        let text = std::str::from_utf8(&literal.identity)
+            .map_err(|_| super::fault("reference-literal-identity-is-utf8"))?;
+        model
+            .type_key(literal.object_type.clone())
+            .ok_or_else(|| super::fault("reference-literal-type-is-selected"))?;
+        let overlapping: Vec<&StatePopulation> = populations
+            .iter()
+            .filter(|population| overlaps(model, types, population, &literal.object_type))
+            .collect();
+        let available: Vec<&StatePopulation> = overlapping
+            .iter()
+            .copied()
+            .filter(|population| {
+                universes
+                    .get(&population.key)
+                    .is_some_and(|keys| keys.iter().any(|key| key == text))
+            })
+            .collect();
+        if available.is_empty() {
+            return Err(super::refused(
+                Code::MissingDeclaration,
+                "missing-name",
+                &[("key", identity_hex(&literal.identity))],
+            ));
+        }
+
+        let mut fixed = None;
+        let mut initial_nonconforming = false;
+        'states: for state in initial {
+            for population in &overlapping {
+                let Some(object) = state
+                    .state()
+                    .populations
+                    .get(&population.key)
+                    .and_then(|objects| objects.get(text))
+                else {
+                    continue;
+                };
+                let Some(actual_type) = model.type_identity(&object.type_identity) else {
+                    return Err(super::fault("reference-literal-member-type-is-selected"));
+                };
+                if types.conforms(actual_type, literal.object_type.clone()) {
+                    fixed = Some(
+                        model
+                            .object_reference(&object.type_identity, text)
+                            .map_err(|_| super::fault("reference-literal-fixed-reference"))?,
+                    );
+                    break 'states;
+                } else {
+                    initial_nonconforming = true;
+                }
+            }
+        }
+
+        let binding = if let Some(reference) = fixed {
+            ReferenceBinding::Fixed(reference)
+        } else {
+            if initial_nonconforming {
                 return Err(super::refused(
                     Code::MissingDeclaration,
                     "missing-name",
                     &[("key", identity_hex(&literal.identity))],
                 ));
             }
-
-            let mut fixed = None;
-            let mut initial_nonconforming = false;
-            'states: for state in initial {
-                for population in &overlapping {
-                    let Some(object) = state
-                        .state()
-                        .populations
-                        .get(&population.key)
-                        .and_then(|objects| objects.get(text))
-                    else {
-                        continue;
-                    };
-                    let Some(actual_type) = model.type_identity(&object.type_identity) else {
-                        return Err(super::fault("reference-literal-member-type-is-selected"));
-                    };
-                    if types.conforms(actual_type, literal.object_type.clone()) {
-                        fixed = Some(
-                            model
-                                .object_reference(&object.type_identity, text)
-                                .map_err(|_| super::fault("reference-literal-fixed-reference"))?,
-                        );
-                        break 'states;
-                    } else {
-                        initial_nonconforming = true;
-                    }
-                }
+            if barred.contains(&literal) {
+                // W36's barred-slot refusal is occurrence-specific: a
+                // fixed key remains a constant and is admitted above.
+                return Err(super::refused(
+                    Code::IllTyped,
+                    "operator-ineligible",
+                    &[("key", identity_hex(&literal.identity))],
+                ));
             }
-
-            let binding = if let Some(reference) = fixed {
-                ReferenceBinding::Fixed(reference)
-            } else {
-                if initial_nonconforming {
-                    return Err(super::refused(
-                        Code::MissingDeclaration,
-                        "missing-name",
-                        &[("key", identity_hex(&literal.identity))],
-                    ));
-                }
-                if barred.contains(&literal) {
-                    // W36's barred-slot refusal is occurrence-specific: a
-                    // fixed key remains a constant and is admitted above.
-                    return Err(super::refused(
-                        Code::IllTyped,
-                        "operator-ineligible",
-                        &[("key", identity_hex(&literal.identity))],
-                    ));
-                }
-                // StateModel::populations is declaration-key ordered, so the
-                // first overlapping universe gives a stable absent-key locus.
-                ReferenceBinding::CreatedObject {
-                    object_type: literal.object_type.clone(),
-                    identity: text.to_owned(),
-                    population: available[0].key.clone(),
-                    populations: overlapping
-                        .iter()
-                        .map(|population| population.key.clone())
-                        .collect(),
-                }
-            };
-            bindings.insert(literal, binding);
-        }
-        Ok(Self(bindings))
+            // StateModel::populations is declaration-key ordered, so the
+            // first overlapping universe gives a stable absent-key locus.
+            ReferenceBinding::CreatedObject {
+                object_type: literal.object_type.clone(),
+                identity: text.to_owned(),
+                population: available[0].key.clone(),
+                populations: overlapping
+                    .iter()
+                    .map(|population| population.key.clone())
+                    .collect(),
+            }
+        };
+        bindings.insert(literal, binding);
     }
+    Ok(bindings)
 }
 
-fn collect_literals(
+pub(super) fn collect_literals(
     graph: &CheckedGraph,
     root: CheckedNode<'_>,
     literals: &mut BTreeSet<ReferenceLiteralKey>,

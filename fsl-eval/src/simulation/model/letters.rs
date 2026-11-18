@@ -59,7 +59,7 @@ pub enum LettersRefusal {
     /// A hyper clause's components resolve at least one reference literal
     /// differently at subject admission (FR-1000-AC-11).
     #[error(
-        "hyper components {components:?} disagree on reference literal {object_type}#{identity}"
+        "hyper components {components:?} disagree on reference literal {object_type}#{identity}: {bindings:?}"
     )]
     ReferenceBindingsDisagree {
         /// The effective object type named by the literal.
@@ -68,7 +68,13 @@ pub enum LettersRefusal {
         identity: String,
         /// The first component and the component with a differing binding.
         components: Vec<usize>,
+        /// The resolved binding for each reported component.
+        bindings: Vec<String>,
     },
+    /// A separately checked hyper clause contains a literal that the
+    /// component subject cannot admit.
+    #[error("hyper reference literal admission failed: {0}")]
+    ReferenceBindingsAdmission(fsl_semantics::model::observation::AdmissionFailure),
 }
 
 /// The `holds` atoms of one checked temporal clause, read at the states of a

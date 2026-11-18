@@ -235,7 +235,9 @@ fn hyper_letters_refuse_disagreeing_reference_bindings() {
         text.contains("ReferenceBindingsDisagree")
             && text.contains("Vault")
             && text.contains("77")
-            && text.contains("[0, 1]"),
+            && text.contains("[0, 1]")
+            && text.contains("Fixed")
+            && text.contains("CreatedObject"),
         "{text}"
     );
     assert!(

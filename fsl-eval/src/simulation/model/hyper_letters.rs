@@ -16,7 +16,6 @@ use std::collections::BTreeSet;
 use std::rc::Rc;
 
 use filament_checked::key::DeclarationKey;
-use filament_checked::node::NodeKind;
 use filament_eval::CallFailure;
 use filament_exact::{Meter, ObjectReference, Value};
 use filament_semantic_value::catalog::InternalFault;
@@ -25,7 +24,7 @@ use fsl_semantics::check::{CheckedHyperClause, FormulaNode, FormulaNodeId};
 
 use super::contracts::{Verdict, verdict};
 use super::letters::{LettersRefusal, Observed};
-use super::reference_bindings::ReferenceLiteralKey;
+use super::reference_bindings::{ReferenceBindings, ReferenceLiteralKey};
 use super::walk::{rows_of, stop};
 use super::{BROKEN, ClauseOutcome, ModelSimState, ModelSystem, state_document};
 use crate::hyper::{HyperLetters, HyperSlot, ParameterBinding};
@@ -51,6 +50,9 @@ pub struct CheckedHyperLetters<'s, 'a> {
     clause: &'s CheckedHyperClause,
     /// One system per trace variable, in quantifier order.
     systems: Vec<&'s ModelSystem<'a>>,
+    /// Each component's base subject bindings extended with this separately
+    /// checked clause's reference literals.
+    reference_bindings: Vec<ReferenceBindings>,
     /// For each atom slot, the populations of its component's system that
     /// overlap the type of its object parameter.
     overlapping: Vec<BTreeSet<DeclarationKey>>,
@@ -77,16 +79,27 @@ impl<'s, 'a> CheckedHyperLetters<'s, 'a> {
         if systems.len() != clause.quantifiers().len() {
             return Err(LettersRefusal::ComponentsMismatch);
         }
-        if let Some(first) = systems.first() {
-            let literals = reference_literals(clause);
-            for (component, system) in systems.iter().enumerate().skip(1) {
+        let mut reference_bindings = Vec::with_capacity(systems.len());
+        for system in &systems {
+            let extended = ReferenceBindings::with_hyper_clause(
+                &system.reference_bindings,
+                package.graph(),
+                clause,
+                &system.model,
+                system.types,
+                &system.populations,
+                &system.universes,
+                &system.initial,
+            )
+            .map_err(LettersRefusal::ReferenceBindingsAdmission)?;
+            reference_bindings.push(extended);
+        }
+        if let Some(first) = reference_bindings.first() {
+            let literals = reference_literals(package.graph(), clause);
+            for (component, bindings) in reference_bindings.iter().enumerate().skip(1) {
                 if let Some(literal) = literals.iter().find(|literal| {
-                    first
-                        .reference_bindings
-                        .get(&literal.object_type, &literal.identity)
-                        != system
-                            .reference_bindings
-                            .get(&literal.object_type, &literal.identity)
+                    first.get(&literal.object_type, &literal.identity)
+                        != bindings.get(&literal.object_type, &literal.identity)
                 }) {
                     let identity = literal
                         .identity
@@ -97,6 +110,13 @@ impl<'s, 'a> CheckedHyperLetters<'s, 'a> {
                         object_type: format!("{:?}", literal.object_type),
                         identity,
                         components: vec![0, component],
+                        bindings: vec![
+                            format!("{:?}", first.get(&literal.object_type, &literal.identity)),
+                            format!(
+                                "{:?}",
+                                bindings.get(&literal.object_type, &literal.identity)
+                            ),
+                        ],
                     });
                 }
             }
@@ -125,6 +145,7 @@ impl<'s, 'a> CheckedHyperLetters<'s, 'a> {
             clause,
             observed: systems.iter().map(|_| RefCell::new(None)).collect(),
             systems,
+            reference_bindings,
             overlapping,
         })
     }
@@ -216,7 +237,10 @@ impl<'s, 'a> CheckedHyperLetters<'s, 'a> {
 }
 
 /// The reference literals whose subject binding affects this hyper clause.
-fn reference_literals(clause: &CheckedHyperClause) -> BTreeSet<ReferenceLiteralKey> {
+fn reference_literals(
+    graph: &fsl_semantics::check::CheckedGraph,
+    clause: &CheckedHyperClause,
+) -> BTreeSet<ReferenceLiteralKey> {
     let mut literals = BTreeSet::new();
     for (index, formula) in clause.body().nodes().iter().enumerate() {
         if !matches!(formula, FormulaNode::Holds { .. }) {
@@ -226,20 +250,7 @@ fn reference_literals(clause: &CheckedHyperClause) -> BTreeSet<ReferenceLiteralK
         let Some((condition, _)) = clause.condition(atom) else {
             continue;
         };
-        let mut pending = vec![condition];
-        while let Some(node) = pending.pop() {
-            pending.extend(node.children());
-            if let NodeKind::ReferenceLiteral {
-                object_type,
-                identity,
-            } = node.kind()
-            {
-                literals.insert(ReferenceLiteralKey {
-                    object_type: object_type.clone(),
-                    identity: identity.clone(),
-                });
-            }
-        }
+        super::reference_bindings::collect_literals(graph, condition, &mut literals);
     }
     literals
 }
@@ -305,11 +316,7 @@ impl HyperLetters for CheckedHyperLetters<'_, '_> {
             .iter()
             .map(|observed| &observed.observation.environment)
             .collect();
-        let reference_bindings: Vec<_> = self
-            .systems
-            .iter()
-            .map(|system| &system.reference_bindings)
-            .collect();
+        let reference_bindings: Vec<_> = self.reference_bindings.iter().collect();
         let evaluation = evaluate_hyper_holds_with_component_bindings(
             self.package,
             self.clause,
