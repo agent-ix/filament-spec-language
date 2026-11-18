@@ -997,7 +997,7 @@ fn a_timed_await_answers_unsupported_when_its_package_is_admitted() {
 
 /// FR-892-AC-3 (TC-2525): a protocol await control node is a valid temporal
 /// binding declaration and admits through the strict package reader.
-#[trace("FR-892-AC-3", "TC-2525")]
+#[trace("FR-892-AC-1", "TC-2525")]
 #[test]
 #[ignore = "Blocked by QSL-2391: Contract IR must admit await-keyed temporal bindings."]
 fn a_timed_await_package_is_admitted_at_its_binding_row() {
