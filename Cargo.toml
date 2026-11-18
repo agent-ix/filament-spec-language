@@ -30,7 +30,7 @@ filament-contract-model = { git = "https://github.com/agent-ix/filament-contract
 
 [package]
 name = "filament-spec-language"
-version = "0.2.0"
+version = "0.3.0"
 publish = false
 edition = "2021"
 rust-version = "1.98"

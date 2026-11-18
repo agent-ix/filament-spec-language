@@ -634,7 +634,7 @@ dependencies = [
 
 [[package]]
 name = "filament-spec-language"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "filament-checked",
  "filament-contract-model",
@@ -756,7 +756,7 @@ dependencies = [
 
 [[package]]
 name = "fsl-analyze"
-version = "0.1.0"
+version = "0.3.0"
 dependencies = [
  "base64 0.22.1",
  "filament-checked",
@@ -948,7 +948,7 @@ dependencies = [
 
 [[package]]
 name = "fsl-package"
-version = "0.1.0"
+version = "0.3.0"
 dependencies = [
  "allocation-counter",
  "filament-checked",
@@ -986,7 +986,7 @@ dependencies = [
 
 [[package]]
 name = "fsl-replay"
-version = "0.1.0"
+version = "0.3.0"
 dependencies = [
  "base64 0.22.1",
  "filament-checked",
