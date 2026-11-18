@@ -399,7 +399,7 @@ mod protocol {
         CheckedBindingNameKind, CheckedNodeId, CheckedPackageV2, CheckedSemanticNodeV2, CheckedTerm,
     };
 
-    fn temporal_selections(model: &[u8]) -> Vec<fsl_package::TemporalClockSelection> {
+    fn protocol_emission(model: &[u8]) -> fsl_package::Emission {
         use filament_semantic_value::checking::{CheckMode, CheckingLimits};
         use fsl_semantics::check::PackageDeclarations;
 
@@ -434,7 +434,7 @@ mod protocol {
         let clock = filament_contract_model::ClockConfiguration::EventPosition {
             sequence_authority: "protocol-events".into(),
         };
-        graph
+        let selections = graph
             .protocols()
             .iter()
             .flat_map(|protocol| {
@@ -455,7 +455,14 @@ mod protocol {
             .map(|span| {
                 fsl_package::TemporalClockSelection::new(source.clone(), span, clock.clone())
             })
-            .collect()
+            .collect::<Vec<_>>();
+        let package = fsl_package::CheckedPackage::link(graph);
+        fsl_package::emit_checked_with_temporal_selections(
+            &package,
+            &selections,
+            fsl_package::EmitLimits::new(1 << 20),
+        )
+        .expect("protocol package emits")
     }
 
     const UNIT: &str = "language \"ix:native\" edition \"1-draft\";\n\
@@ -485,26 +492,11 @@ protocol Flow using p over (input: M::Widget) on origin {\n\
 }\n";
 
     fn checked_protocol() -> filament_contract_model::CheckedPackageV2 {
-        let source = fsl_replay::SourceIdentity::new("consumer", "protocol-contract");
         let model = super::code_generation::model_with_touch();
-        let selections = temporal_selections(&model);
-        let emitted = fsl_replay::compile_package_with_temporal_selections(
-            fsl_replay::CompileUnit {
-                source,
-                package_name: "protocol-consumer".into(),
-                path: "protocol.native",
-                bytes: UNIT.as_bytes(),
-            },
-            [&model[..]],
-            &fsl_replay::DependencyInput::default(),
-            &selections,
-            fsl_replay::StageLimits::default(),
-            fsl_replay::ReplayLimits::default(),
-        )
-        .expect("public facade compiles protocol and clock choices");
-        let evidence = evidence_for(emitted.bytes(), Some(("acme/orders", &model)));
+        let emitted = protocol_emission(&model);
+        let evidence = evidence_for(emitted.package().bytes(), Some(("acme/orders", &model)));
         match filament_contract_model::read_checked_package(
-            emitted.bytes(),
+            emitted.package().bytes(),
             filament_contract_model::CheckedPackageReadLimits::bounded(),
             &evidence,
         ) {
