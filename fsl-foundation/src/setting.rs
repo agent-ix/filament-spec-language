@@ -122,6 +122,9 @@ settings! {
     I2WorkUnits => "i2.work_units", "I2 v2 reader", WorkBudget;
     I2NativeJoinStorage => "i2.native_join_storage", "I2 v2 reader native identity join", LogicalStorage;
     EmitOutputBytes => "emit.output_bytes", "E4 emit", InputBytes;
+    ExportOutputBytes => "export.output_bytes", "export", InputBytes;
+    ExportNodes => "export.nodes", "export", NodeCount;
+    ExportWorkUnits => "export.work_units", "export", WorkBudget;
     ExploreStates => "explore.states", "exploration", NodeCount;
     ExploreTransitions => "explore.transitions", "exploration", EdgeCount;
     ModelCheckMaxStates => "model_check.max_states", "EN-1 model checker", NodeCount;

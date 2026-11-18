@@ -3,6 +3,7 @@
 
 mod analyze;
 mod clause;
+mod export;
 mod flow;
 mod items;
 mod monitor;
@@ -703,6 +704,14 @@ pub enum RunCause {
         /// The existing output path.
         path: PathBuf,
     },
+    /// FSpec FR-817: the export mapper failed on a construct it does not lower.
+    #[error("the export mapper does not lower {construct}: {reason}")]
+    ExportMapper {
+        /// The construct the mapper stopped at.
+        construct: String,
+        /// Why it stopped.
+        reason: String,
+    },
     /// FR-312: a clause request member cannot form a typed selection.
     #[error("invalid clause request member {member}: {reason}")]
     ClauseRequest {
@@ -1009,6 +1018,7 @@ impl RunCause {
             | Self::ClocksGivenTwice
             | Self::OutputGivenTwice
             | Self::OutputExists { .. } => Code::InvalidRequest,
+            Self::ExportMapper { .. } => Code::RuntimeInvariant,
             Self::Output(_) | Self::ClauseOutput(_) => Code::OutputFailure,
             Self::Format => Code::UnknownWire,
             Self::Limit(_) => Code::ResourceExhausted,
@@ -1198,6 +1208,7 @@ impl RunError {
             | RunCause::ClocksGivenTwice
             | RunCause::OutputGivenTwice
             | RunCause::OutputExists { .. }
+            | RunCause::ExportMapper { .. }
             | RunCause::Output(_)
             | RunCause::ClauseOutput(_)
             | RunCause::Format
@@ -1614,6 +1625,9 @@ fn run_configured(
             // FR-862: a `native-replay/1` request replays its FR-336 request.
             replay::run_bytes(directory, bytes, limits.dependent_bytes).map(Some)
         } else {
+            if let Some(result) = export::run_bytes(directory, bytes, limits, overrides)? {
+                return Ok(Some(result));
+            }
             if let Some(result) = version_argv(bytes)? {
                 Ok(Some(result))
             } else if let Some(result) = check_argv(directory, bytes)? {
