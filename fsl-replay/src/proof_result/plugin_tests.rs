@@ -4,7 +4,7 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use filament_exact::{Cancel, Integer, Origin, Role};
+use filament_exact::{Integer, Origin, Role};
 use fsl_foundation::bound::{DomainKey, DomainKind, FiniteBound, ProofBound};
 use fsl_foundation::source::provenance::OccurrenceKey;
 use fsl_foundation::{BackendId, Code, RequestIndex, SourceIdentity};
@@ -16,7 +16,7 @@ use crate::bounds::ReplayLimits;
 use crate::execute::{process_provider_obligation, BoundEntries};
 use crate::limits::CallerLimits;
 use crate::result::ReplayResult;
-use crate::spine::{check, package, parse, select, DependencyInput, PackageLimits, ParseRequest};
+use crate::spine::{compose_in_mode, ComposeModes, DependencyInput};
 use crate::witness::{CanonicalAssignment, WitnessValue};
 
 fn wrong(pointer: &str) -> PluginResultRefusal {
@@ -742,48 +742,40 @@ struct Fixture {
 }
 
 fn fixture() -> Fixture {
-    fixture_of(SOURCE, &BTreeMap::new(), &DependencyInput::default())
+    fixture_of(
+        SOURCE,
+        &BTreeMap::new(),
+        &DependencyInput::default(),
+        None,
+    )
 }
 
 fn fixture_of(
     source: &str,
     packages: &fsl_semantics::model::intake::PackageInput,
     dependencies: &DependencyInput,
+    check_mode: Option<filament_semantic_value::checking::CheckMode>,
 ) -> Fixture {
     let identity = SourceIdentity::new("agent-ix", "test:plugin");
     let limits = CallerLimits::default();
-    let cancel = Cancel::new();
-    let parsed = parse(
-        &ParseRequest {
-            source: &identity,
-            path: "unit.native",
-            bytes: source.as_bytes(),
-        },
-        limits.spine.source,
-        &cancel,
-    )
-    .unwrap_or_else(|failure| panic!("parse: {failure:?}"))
-    .into_value();
-    let models = select(&parsed, packages, limits.spine.model, &cancel)
-        .unwrap_or_else(|failure| panic!("select: {failure:?}"))
-        .into_value();
-    let checked = check(
-        &parsed,
-        "fixture".to_owned(),
-        &models,
+    let function_modes = BTreeMap::new();
+    let composed = compose_in_mode(
+        identity,
+        "unit.native",
+        source.as_bytes(),
+        packages,
         dependencies,
         limits.spine,
-        &cancel,
+        ComposeModes {
+            check_mode,
+            function_modes: &function_modes,
+        },
     )
-    .unwrap_or_else(|failure| panic!("check: {failure:?}"))
-    .into_value();
-    let emitted = package(&checked, PackageLimits::default(), &cancel)
-        .unwrap_or_else(|failure| panic!("package: {failure:?}"))
-        .into_value();
+    .unwrap_or_else(|failure| panic!("compose: {failure:?}"));
     Fixture {
-        checked,
-        emitted,
-        models,
+        checked: composed.checked,
+        emitted: composed.emitted_unit,
+        models: composed.models,
     }
 }
 
@@ -1041,7 +1033,12 @@ fn tc_774_function_contract_and_application_items_replay() {
 #[test]
 fn tc_774_an_undefined_application_item_is_refuted() {
     let source = format!("{SOURCE}function m using v(x: Int[0, 9]): Integer pure {{ 10 mod x }}\n");
-    let fixture = fixture_of(&source, &BTreeMap::new(), &DependencyInput::default());
+    let fixture = fixture_of(
+        &source,
+        &BTreeMap::new(),
+        &DependencyInput::default(),
+        Some(filament_semantic_value::checking::CheckMode::Kernel),
+    );
     let context = context(&fixture, CallerLimits::default());
     let (_, x) = declaration(&fixture, "m");
     let application = fixture
@@ -1174,7 +1171,7 @@ fn tc_774_limits_flow_into_the_request_and_refusals_are_ordered() {
 #[test]
 fn tc_774_a_state_clause_record_is_not_replayable() {
     let (source, packages) = crate::spine::clause::tests::config_version_unit_and_packages();
-    let fixture = fixture_of(&source, &packages, &DependencyInput::default());
+    let fixture = fixture_of(&source, &packages, &DependencyInput::default(), None);
     let context = context(&fixture, CallerLimits::default());
     let keys: Vec<OccurrenceKey> = fixture
         .checked
@@ -1223,7 +1220,7 @@ fn tc_774_a_transitive_dependency_replays() {
     };
     let supplied =
         DependencyInput::new(vec![library("b", &b), library("c", &c)]).expect("supplied");
-    let fixture = fixture_of(&a, &BTreeMap::new(), &supplied);
+    let fixture = fixture_of(&a, &BTreeMap::new(), &supplied, None);
     let context = context(&fixture, CallerLimits::default());
     let (q, q_x) = declaration(&fixture, "q");
     let wire = context
@@ -1286,7 +1283,7 @@ fn plugin_replay_retains_every_source_of_each_selected_library() {
         .unwrap()
         .with_library_units("test/b", vec![second.clone(), first.clone()])
         .unwrap();
-    let fixture = fixture_of(&root, &BTreeMap::new(), &dependencies);
+    let fixture = fixture_of(&root, &BTreeMap::new(), &dependencies, None);
     let context = context(&fixture, CallerLimits::default());
     let (q, parameter) = declaration(&fixture, "q");
     let wire = context

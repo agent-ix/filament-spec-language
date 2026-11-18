@@ -1940,8 +1940,10 @@ fn refinement_internals_pointer(
         CompileRefusal::Dependency { path, refusal } => (Some(path.last()?), refusal.as_ref()),
         refusal => (None, refusal),
     };
-    let CompileRefusal::Check { refusals, .. } = refusal else {
-        return None;
+    let refusals = match refusal {
+        CompileRefusal::Check { refusals, .. }
+        | CompileRefusal::CheckDiagnostics { refusals, .. } => refusals,
+        _ => return None,
     };
     let fsl_semantics::check::CheckCause::Refinement(refinement) = &refusals.first()?.cause else {
         return None;
