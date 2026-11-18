@@ -320,7 +320,6 @@ fn store_buffering_separates_sc_and_tso() {
 /// FR-634-AC-1: enumerating the Counter subject reports coverage and traces.
 #[trace("TC-1594", "FR-634-AC-1")]
 #[test]
-#[ignore = "QSL-2296 (from QSL-2132): FR-634 does not say which traces an enumerate item reports nor what coverage.choices counts, and fsl-eval exploration returns no traces (spec question open)"]
 fn simulation_enumerates_the_counter_subject() {
     let ws = Workspace::new("cli-simulation");
     let run = analyze(&counter_request(
@@ -341,7 +340,6 @@ fn simulation_enumerates_the_counter_subject() {
 /// FR-635-AC-3: an unregistered backend is an invalid request.
 #[trace("TC-1595", "FR-635-AC-3")]
 #[test]
-#[ignore = "QSL-2132: backend selection is not reachable through fsl analyze yet"]
 fn an_unregistered_backend_is_refused() {
     let ws = Workspace::new("cli-backend");
     let run = analyze(&counter_request(

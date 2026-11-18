@@ -530,9 +530,9 @@ pub struct ItemSelection {
     /// A `global-conformance` item's supplied FR-737 recording.
     #[serde(default)]
     pub recording: Option<DocumentSelection>,
-    /// A `simulation` item's settings.
+    /// A `simulation` item's settings (FR-634).
     #[serde(default)]
-    pub simulation: Option<Value>,
+    pub simulation: Option<super::SimulationSelection>,
 }
 
 impl ItemSelection {
@@ -581,6 +581,9 @@ impl ItemSelection {
 pub enum ResolvedItem {
     /// An item `analyze` runs once it is negotiated.
     Claim(Box<ResolvedClaim>),
+    /// A `simulation` item (FR-634), which settles no claim and is not
+    /// negotiated.
+    Simulation(Box<super::SimulationItem>),
     /// An item settled without running: its terminal record.
     Settled {
         /// The declared name the item used, when it named one.
@@ -704,6 +707,9 @@ fn unknown_option(
         )),
     })
 }
+
+/// FR-634: the request kind of a simulation item.
+pub const SIMULATION_KIND: &str = "simulation";
 
 /// FR-630: the request kind of a refinement item.
 const REFINEMENT_KIND: &str = "refinement";
@@ -1032,8 +1038,20 @@ fn resolve_one(
 ) -> ResolvedItem {
     let name = selection.claim.as_deref();
     let Some(name) = name else {
-        // A claimless item is a simulation item (FR-634), which settles no
-        // claim and is not negotiated; it has no in-process route yet.
+        // FR-634: a claimless `simulation` item runs on the in-process
+        // simulator over the request's subject.
+        if let (Some(SIMULATION_KIND), Some(settings)) =
+            (selection.kind.as_deref(), selection.simulation.as_ref())
+        {
+            return ResolvedItem::Simulation(Box::new(super::SimulationItem {
+                index,
+                settings: settings.clone(),
+                subject: selection
+                    .temporal
+                    .as_ref()
+                    .and_then(|temporal| temporal.subject.clone()),
+            }));
+        }
         return ResolvedItem::Settled {
             claim_name: None,
             record: Box::new(TerminalRecord::disposition_unsupported(
@@ -1316,7 +1334,9 @@ fn resolve_derived(
             {
                 Some(claim)
             }
-            ResolvedItem::Claim(_) | ResolvedItem::Settled { .. } => None,
+            ResolvedItem::Claim(_)
+            | ResolvedItem::Settled { .. }
+            | ResolvedItem::Simulation(_) => None,
         });
     let Some(mut claim) = derived else {
         return Some(invalid_kind(index, Some(name), "inapplicable-kind"));
@@ -1578,7 +1598,9 @@ fn derived_items(
             {
                 Some(claim.item.claim.clone())
             }
-            ResolvedItem::Claim(_) | ResolvedItem::Settled { .. } => None,
+            ResolvedItem::Claim(_)
+            | ResolvedItem::Settled { .. }
+            | ResolvedItem::Simulation(_) => None,
         })
         .collect();
     let requirements = fsl_semantics::family::Requirements::new(
@@ -1882,8 +1904,10 @@ pub fn settle_run(
     let mut unrouted_items: Vec<RequestIndex> = Vec::new();
     let mut settled: BTreeMap<RequestIndex, (Option<String>, TerminalRecord)> = BTreeMap::new();
     let mut echoes: BTreeMap<RequestIndex, Echo> = BTreeMap::new();
+    let mut simulations: Vec<super::SimulationItem> = Vec::new();
     for resolved in items {
         match resolved {
+            ResolvedItem::Simulation(item) => simulations.push(*item),
             ResolvedItem::Settled { claim_name, record } => {
                 settled.insert(record.request_index(), (claim_name, *record));
             }
@@ -2096,6 +2120,25 @@ pub fn settle_run(
             },
         ));
     }
+    // FR-634: each simulation item's document at its request index; it
+    // settles no claim, so it is no aggregate gap, and its category ranks
+    // in the exit code.
+    let mut simulated = Vec::new();
+    for item in &simulations {
+        match super::simulation_item::simulate(package, &binding, &limits, item, cancel) {
+            Ok(written) => simulated.push(written),
+            Err(super::simulation_item::SimulationFault::Binding(failure)) => {
+                return Err(AnalyzeDocumentError::Refused(
+                    super::AnalyzeRefusal::Binding(failure),
+                ))
+            }
+            Err(super::simulation_item::SimulationFault::Fault) => {
+                return Err(AnalyzeDocumentError::Fault)
+            }
+        }
+    }
+    items.extend(simulated.iter().map(|(written, _)| written.clone()));
+    items.sort_by_key(|item| item["request_index"].as_u64().unwrap_or(u64::MAX));
     document["items"] = Value::Array(items.clone());
     document["aggregate"] = json!({
         "status": if gaps.is_empty() { "complete" } else { "incomplete" },
@@ -2117,7 +2160,8 @@ pub fn settle_run(
     let exit_code = Category::most_severe(
         records
             .iter()
-            .map(|record| record.value().category().exit_code()),
+            .map(|record| record.value().category().exit_code())
+            .chain(simulated.iter().map(|(_, category)| category.exit_code())),
     )
     .unwrap_or(0);
     Ok(SettledRun {

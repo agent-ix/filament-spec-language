@@ -346,7 +346,6 @@ fn edf_proves_ctl() {
 #[trace("TC-1594", "FR-634-AC-2")]
 #[trace("TC-1594", "FR-634-AC-3")]
 #[test]
-#[ignore = "QSL-2296 (from QSL-2132): FR-634 does not say which traces an enumerate item reports nor what coverage.choices counts, and fsl-eval exploration returns no traces (spec question open)"]
 fn simulation_budget_and_seeded_sampling() {
     let ws = Workspace::new("cov-simulation");
     let request = request_members(Some(json!([

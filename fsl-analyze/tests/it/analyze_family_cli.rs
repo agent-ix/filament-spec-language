@@ -91,7 +91,6 @@ fn refinement_request(ws: &Workspace, body: &str, items: Value) -> std::path::Pa
 /// replayed counterexample carrying per-step records.
 #[trace("TC-1590", "FR-630-AC-1")]
 #[test]
-#[ignore = "QSL-2127: refinement items are not reachable through fsl analyze yet"]
 fn a_refinement_proves_and_a_wrong_mapping_refutes() {
     let body = refinement("Same", "self.value", "") + &refinement_stepping("Off", "self.value", "stutter", "");
     let ws = Workspace::new("family-refinement");
@@ -101,7 +100,6 @@ fn a_refinement_proves_and_a_wrong_mapping_refutes() {
         json!([{"claim": "Same", "kind": "refinement", "temporal": {"item_kind": "refinement"}},
             {"claim": "Off", "kind": "refinement", "temporal": {"item_kind": "refinement"}}]),
     ));
-    eprintln!("DOC {}", run.document());
     assert_eq!(results(&run, 2), ["proved", "refuted"]);
     assert_eq!(run.item(0)["record"]["certification"], "certified");
     let refuted = run.item(1);
@@ -361,24 +359,31 @@ fn schedulability_proves_on_en7_and_a_tight_response_refutes() {
     assert_eq!(miss["deadline"], "11");
 }
 
-/// FR-635-AC-1, AC-2: an item naming a registered external provider settles
-/// on it, the registry lists it, and another item is unchanged by it.
+/// FR-635-AC-1, AC-2: an item naming a process provider handed to
+/// `analyze_with_providers` settles on it, the registry lists it, and another
+/// item is unchanged by it. The provider stands where the driver passes a
+/// started plugin session (FR-635 "One rule for every provider-routing
+/// entry"); starting the plugin process is the driver's transport.
 #[trace("TC-1595", "FR-635-AC-1")]
 #[trace("TC-1595", "FR-635-AC-2")]
 #[test]
-#[ignore = "QSL-2296 (from QSL-2132): FR-635 says the driver loads providers from their manifests but no requirement states where manifests are found or how a process provider is run; FR-489 forbids test-only registrations in the production registry (spec question open)"]
+#[ignore = "QSL-2131: EN-7 is not registered in Engines::fsl() yet (FR-489-AC-5), and this criterion lists it"]
 fn an_item_naming_a_registered_provider_settles_on_it() {
-    let provider =
-        std::env::var("FSL_TEST_PROVIDER").unwrap_or_else(|_| "test-value-provider".to_owned());
+    use fsl_analyze::provider::ProviderVerdict;
+    let provider = PROCESS_PROVIDER.to_owned();
     let body = "function Even using v(n: Integer): Boolean pure { n * 2 - n = n }\n".to_owned()
         + &crate::analyze_cli_support::bounded();
     let ws = Workspace::new("family-provider");
-    let run = analyze(&counter_request(
+    let request = counter_request(
         &ws,
         &body,
         json!([{"claim": "Even", "kind": "value-validity", "backend": provider},
             {"claim": "Bounded"}]),
-    ));
+    );
+    let run = crate::analyze_cli_support::analyze_with_providers(
+        &request,
+        vec![process_provider(PROCESS_PROVIDER, ProviderVerdict::Proved)],
+    );
     let item = run.item(0);
     assert_eq!(label(&item), "proved");
     assert_eq!(item["record"]["backend"], provider.as_str());
@@ -408,7 +413,7 @@ fn an_item_naming_a_registered_provider_settles_on_it() {
 /// answers `verdict`. It stands where the driver passes a started plugin
 /// session; the real plugin process is the driver's test (QSL-2283).
 #[derive(Debug)]
-struct AnsweringProvider(fsl_analyze::provider::ProviderVerdict);
+pub(crate) struct AnsweringProvider(pub(crate) fsl_analyze::provider::ProviderVerdict);
 
 impl fsl_analyze::provider::ExternalProvider for AnsweringProvider {
     fn settle(
@@ -424,9 +429,9 @@ impl fsl_analyze::provider::ExternalProvider for AnsweringProvider {
     }
 }
 
-const PROCESS_PROVIDER: &str = "fsl.test-process-provider";
+pub(crate) const PROCESS_PROVIDER: &str = "fsl.test-process-provider";
 
-fn process_descriptor(backend: &str) -> fsl_route::BackendDescriptor {
+pub(crate) fn process_descriptor(backend: &str) -> fsl_route::BackendDescriptor {
     use fsl_semantics::check::Capability;
     fsl_route::descriptor_from_manifest(
         fsl_route::Candidate::new(fsl_foundation::BackendId::new(backend)),
@@ -446,7 +451,7 @@ fn process_descriptor(backend: &str) -> fsl_route::BackendDescriptor {
     .expect("the descriptor advertises the external value arm")
 }
 
-fn process_provider(
+pub(crate) fn process_provider(
     backend: &str,
     verdict: fsl_analyze::provider::ProviderVerdict,
 ) -> fsl_analyze::analyze::Engine {

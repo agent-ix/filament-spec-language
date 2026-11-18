@@ -222,7 +222,6 @@ fn several_instances_report_the_first_refuted_and_state_graph_replay_names_the_c
 #[trace("TC-2293", "FR-634-AC-4")]
 #[trace("TC-2293", "FR-634-AC-5")]
 #[test]
-#[ignore = "QSL-2132: simulation items are not reachable through fsl analyze yet"]
 fn simulation_reports_discovery_tree_traces_and_choice_points() {
     let ws = Workspace::new("rulings-simulation");
     let run = analyze(&staying_counter_request(
@@ -273,25 +272,52 @@ fn simulation_reports_discovery_tree_traces_and_choice_points() {
     );
 }
 
-/// FR-635-AC-4: no process plugin joins the linked set FR-489's layering
-/// snapshot is built from, and an analyze run with no configured plugin
-/// lists only linked backends. The misadvertising-plugin half needs
-/// `analyze_with_providers` and the workspace test plugin, which the coder
-/// adds.
+/// FR-635-AC-4: a process provider whose manifest advertises
+/// `value-validity` only in the `bounded` mode is refused at registration
+/// naming its `BackendId`, so the run it would join lists only what did
+/// register; a production layering snapshot (FR-489) built in the same
+/// process as an `analyze_with_providers` run holds exactly the linked
+/// descriptors and not the process provider.
 #[trace("TC-2294", "FR-635-AC-4")]
 #[test]
-#[ignore = "QSL-2132: process providers are not reachable through fsl analyze yet"]
 fn a_misadvertising_plugin_is_refused_and_never_joins_the_layering_snapshot() {
-    let engines = fsl_analyze::analyze::Engines::fsl().expect("the layer-A engines register");
-    assert!(engines
-        .registrations()
-        .all(|descriptor| !descriptor.id().as_str().starts_with("fsl.test-plugin")));
+    use fsl_semantics::check::Capability;
+    const BOUNDED_ONLY: &str = "fsl.test-plugin-bounded";
+    let descriptor = fsl_route::descriptor_from_manifest(
+        fsl_route::Candidate::new(fsl_foundation::BackendId::new(BOUNDED_ONLY)),
+        fsl_route::ProviderOrigin::Process,
+        vec![(
+            Some(Capability::ValueValidity.to_wire()),
+            Some(fsl_route::Mode::Bounded.to_wire()),
+        )],
+        fsl_route::ManifestMembers {
+            domains: Some(&[fsl_foundation::bound::DomainKind::Integer.to_wire()]),
+            fairness_kinds: None,
+            evidence_kinds: None,
+            memory_models: None,
+            reductions: None,
+        },
+    )
+    .expect("the descriptor converts");
+    let Err(refused) = fsl_analyze::analyze::Engine::external(
+        descriptor,
+        fsl_analyze::analyze::BackendTool::new("test-provider", "1").expect("a tool"),
+        Box::new(crate::analyze_family_cli::AnsweringProvider(
+            fsl_analyze::provider::ProviderVerdict::Proved,
+        )),
+    ) else {
+        panic!("a bounded-only value-validity provider is refused");
+    };
+    assert_eq!(refused.backend.as_str(), BOUNDED_ONLY);
+
     let ws = Workspace::new("rulings-plugin");
-    let run = analyze(&counter_request(
-        &ws,
-        &bounded(),
-        json!([{"claim": "Bounded"}]),
-    ));
+    let run = crate::analyze_cli_support::analyze_with_providers(
+        &counter_request(&ws, &bounded(), json!([{"claim": "Bounded"}])),
+        vec![crate::analyze_family_cli::process_provider(
+            crate::analyze_family_cli::PROCESS_PROVIDER,
+            fsl_analyze::provider::ProviderVerdict::Proved,
+        )],
+    );
     let registry: Vec<String> = run.document()["registry"]
         .as_array()
         .expect("registry")
@@ -305,9 +331,19 @@ fn a_misadvertising_plugin_is_refused_and_never_joins_the_layering_snapshot() {
     assert!(
         registry
             .iter()
-            .all(|backend| !backend.starts_with("fsl.test-plugin")),
+            .any(|backend| backend == crate::analyze_family_cli::PROCESS_PROVIDER),
         "{registry:?}"
     );
+    assert!(
+        registry.iter().all(|backend| backend != BOUNDED_ONLY),
+        "{registry:?}"
+    );
+    // The layering snapshot built after that run: the linked set alone.
+    let engines = fsl_analyze::analyze::Engines::fsl().expect("the layer-A engines register");
+    assert!(engines.registrations().all(|descriptor| {
+        descriptor.origin() == fsl_route::ProviderOrigin::Linked
+            && descriptor.id().as_str() != crate::analyze_family_cli::PROCESS_PROVIDER
+    }));
 }
 
 /// FR-621-AC-10: `backend` is present exactly when a result entry settles
