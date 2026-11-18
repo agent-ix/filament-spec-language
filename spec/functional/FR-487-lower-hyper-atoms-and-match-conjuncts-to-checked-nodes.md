@@ -175,6 +175,12 @@ fn evaluate_step_predicate(
   at S3, and keyed by the read's location, as FR-104 records the observation
   of each read. A reference stored in a `let` or chosen by an `if` inside
   `@ t` is therefore read in component `t` wherever it is used.
+  The record also holds, for each reference literal that some `@ t`
+  encloses, the trace variable of its innermost enclosing `@ t`, keyed by the
+  literal's location; a literal that no `@ t` encloses has no entry. A
+  literal is not a model read, but a created-object literal reads population
+  membership at a state (FR-1000 "In a hyper atom"), so it takes its component
+  by the same rule.
 - The S3 hyper check SHALL run FR-104's definedness check over each condition
   under the clause's check mode, as `check_conditions` does for a temporal
   atom. The check SHALL treat each component as its own observation: a fact
@@ -258,14 +264,13 @@ fn evaluate_step_predicate(
   `components[r]`, `r` being the component that `component_reads(atom)`
   records for that read. References compare by (universe, object type,
   key), ignoring the component (FR-107).
-- A reference literal in the condition is not a model read and has no
-  entry in `component_reads`. `evaluate_hyper_holds` SHALL read it from the
-  `ReferenceBindings` of the component systems
+- `evaluate_hyper_holds` SHALL read a reference literal of the condition from
+  the `ReferenceBindings` of the component systems
   ([FR-1000](FR-1000-keep-a-reference-literal-pending-until-subject-binding.md)
   "In a hyper atom"): a `Fixed` literal is the same reference in every
-  component, and a `CreatedObject` literal is looked up in the one component
-  that `component_reads(atom)` records. An atom whose reads span several
-  components, or none, admits no `CreatedObject` literal; binding refuses it.
+  component, and a `CreatedObject` literal is looked up in the component that
+  `component_reads(atom)` records for it. Binding refuses a `CreatedObject`
+  literal that has no recorded component.
 - For a slot bound `HyperSlot::Absent { key, population }`, the evaluator
   SHALL read the slot as `evaluate_state_predicate_at_absent_key` reads its
   slot 0. It binds `Value::Reference(key)` and marks the slot as

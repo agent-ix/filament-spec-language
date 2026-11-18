@@ -143,37 +143,47 @@ fn a_fixed_literal_is_admitted_in_a_hyper_atom() {
     assert!(!text.contains("operator-ineligible"), "{text}");
 }
 
-/// FR-1000-AC-9: a created-object literal in a single-component atom is
-/// looked up in that component.
+/// FR-1000-AC-9: a created-object literal is looked up in the component of
+/// its innermost enclosing `@ t`, whatever the atom's other reads.
 #[trace("TC-2957", "FR-1000-AC-9")]
 #[test]
-#[ignore = "QSL-2166: a created-object literal in a hyper atom is not resolved against its component yet"]
-fn a_created_object_literal_resolves_in_the_atom_s_component() {
-    let run = over_wide_universe(
-        "reflit-hyper-created",
-        &hyper(
-            "HC",
-            "always holds((deref(M::Counter#\"b\").value = 0) @ a)",
-        ),
-        "HC",
-    );
-    let text = run.document().to_string();
-    assert!(text.contains("absent-key"), "{text}");
-    assert!(!text.contains("operator-ineligible"), "{text}");
-}
-
-/// FR-1000-AC-10: a created-object literal in an atom that reads several
-/// components, or none, refuses at binding; a fixed one there is admitted.
-#[trace("TC-2957", "FR-1000-AC-10")]
-#[test]
-#[ignore = "QSL-2166: a created-object literal in a spanning or component-free hyper atom is not refused yet"]
-fn a_created_object_literal_in_a_spanning_or_empty_atom_refuses() {
+#[ignore = "QSL-2166: a created-object literal in a hyper atom is not resolved in its enclosing component yet"]
+fn a_created_object_literal_resolves_in_its_enclosing_component() {
     let cases = [
         (
-            "spanning",
-            "always holds((deref(M::Counter#\"K\").value) @ a = c.value @ b)",
+            "single",
+            "always holds((deref(M::Counter#\"b\").value = 0) @ a)",
         ),
-        ("empty", "always holds(c = M::Counter#\"K\")"),
+        (
+            "spanning",
+            "always holds((deref(M::Counter#\"b\").value) @ a = c.value @ b)",
+        ),
+    ];
+    for (name, formula) in cases {
+        let run = over_wide_universe(
+            &format!("reflit-hyper-created-{name}"),
+            &hyper("HC", formula),
+            "HC",
+        );
+        let text = run.document().to_string();
+        assert!(text.contains("absent-key"), "{text}");
+        assert!(!text.contains("operator-ineligible"), "{text}");
+    }
+}
+
+/// FR-1000-AC-10: a created-object literal that no `@ t` encloses refuses at
+/// binding, even when the atom reads a component elsewhere; a fixed one there
+/// is admitted.
+#[trace("TC-2957", "FR-1000-AC-10")]
+#[test]
+#[ignore = "QSL-2166: a created-object literal outside every `@ t` is not refused yet"]
+fn a_created_object_literal_outside_every_indexed_read_refuses() {
+    let cases = [
+        ("bare", "always holds(c = M::Counter#\"K\")"),
+        (
+            "beside-a-read",
+            "always holds(c.value @ a = 0 or c = M::Counter#\"K\")",
+        ),
     ];
     for (name, formula) in cases {
         let refused = over_wide_universe(

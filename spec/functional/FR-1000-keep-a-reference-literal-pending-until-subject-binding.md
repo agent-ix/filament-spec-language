@@ -214,9 +214,11 @@ observed through its own component's admitted `ModelSystem` and so carrying
 that system's `ReferenceBindings`
 ([FR-487](FR-487-lower-hyper-atoms-and-match-conjuncts-to-checked-nodes.md)
 "Evaluating an atom"). A model read of the atom names its component through
-FR-487's `component_reads`; a reference literal is not a model read and
-carries no component index of its own. Which component's table and state a
-literal uses therefore follows from its kind.
+FR-487's `component_reads`: the trace variable of the innermost indexed read
+`@ t` that encloses it. The same record gives each reference literal that
+some `@ t` encloses the component of its innermost enclosing `@ t`, and
+gives a literal that no `@ t` encloses no entry. Which component's table and
+state a literal uses follows from its kind.
 
 - **Fixed.** A literal whose `(T, identity)` resolves `Fixed(r)` SHALL be
   admitted anywhere in a hyper atom's condition, whatever components the
@@ -241,29 +243,29 @@ literal uses therefore follows from its kind.
   subject per request and never does.
 - **CreatedObject.** A literal whose `(T, identity)` resolves
   `CreatedObject` reads population membership at a state, so it SHALL be
-  read in exactly one component: the one component that the atom's model
-  reads read, the single distinct value of `component_reads(atom)`. It
+  read in exactly one component: the component of its innermost enclosing
+  `@ t`, as `component_reads(atom)` records it, the rule FR-487 gives every
+  model read. The atom's other reads do not affect it, so in
+  `(deref(M::T#"k").f) @ a = v.f @ b` the literal is read in `a`. It
   evaluates by the per-state key lookup above, over that component's object
   environment and that component system's table. The atom's per-trace read
   footprint (FR-155) for that component SHALL gain the membership of the
   populations overlapping `T` in that component's model, and no other
   component's footprint gains it.
-- **Spanning or no component.** A `CreatedObject` literal in an atom whose
-  `component_reads(atom)` holds more than one distinct component, or none,
+- **No enclosing `@ t`.** A `CreatedObject` literal that no `@ t` encloses
   SHALL be refused `ill_typed`/`operator-ineligible` at the literal, naming
-  the literal's type, its hexadecimal identity and the components the atom
-  reads (empty for none). It is the cause a created-object literal gets in a
-  slot that bars model state: the literal is admitted only where one
-  population state is in scope, and an atom over two traces, or over none,
-  offers no single state to look the key up in. No component is chosen by
-  default, since any choice would silently decide the property over one
-  trace. The refusal SHALL be decided at binding, in the same admission
-  pass as the barred-slot check, once the table exists: `fsl-analyze`
-  reports it as the request's binding refusal before any item runs, and
-  `CheckedHyperLetters::new` refuses
+  the literal's type and its hexadecimal identity. It is the cause a
+  created-object literal gets in a slot that bars model state: the literal is
+  admitted only where one population state is in scope, and outside every
+  `@ t` no trace's state is. No component is chosen by default, since any
+  choice would silently decide the property over one trace; the components
+  the atom's other reads name do not supply one. The refusal SHALL be decided
+  at binding, in the same admission pass as the barred-slot check, once the
+  table exists: `fsl-analyze` reports it as the request's binding refusal
+  before any item runs, and `CheckedHyperLetters::new` refuses
   `LettersRefusal::ReferenceLiteralComponent` with the same names for a
-  caller that builds the letters directly, before any state is observed.
-  A `Fixed` literal in the same atom is not refused.
+  caller that builds the letters directly, before any state is observed. A
+  `Fixed` literal there is not refused.
 
 ## Acceptance Criteria
 
@@ -277,8 +279,8 @@ literal uses therefore follows from its kind.
 | FR-1000-AC-6 | In a clause body, `M::T #"s1"`, `(x)#"s1"`, `f(x)#"s1"` and `M::T#"a"#"b"` refuse `invalid_syntax`/`unexpected-token` at the first, first, first and second `#`; `M::T# "s1"`, `M::T#1` and `M::T#)` refuse `invalid_syntax`/`unexpected-token` at `"s1"`, `1` and `)`; a source ending in `M::T#` refuses `invalid_syntax`/`unexpected-end`; `M::T#"\q"` refuses `invalid_syntax`/`invalid-escape` at the string; `"a#b"` and `// a#b` parse as a string and a comment; `M::T#""` parses. The admitted `M::T#"s1"`'s `ReferenceLiteral` node has the children `QualifiedName` (`M::T`), the `#` token and the string token, in that order. | Test (TC-2952) |
 | FR-1000-AC-7 | S2 builds the body `M::T#"s1"` of a function as the one value form `ReferenceLiteral{type_name: "M::T", key: "s1"}` whose span is the literal's source span, and `M::T#"é"` as the key `é` (one scalar, no normalization). | Test (TC-2953) |
 | FR-1000-AC-8 | Over the AC-4 subject, the hyper clause `hyper HF using t0 over behaviours (c: M::Counter) forall trace a of M forall trace b of M { always holds(c.value @ a <= 3 or c.value @ b <= 3 or c = M::Counter#"a") }` holds the fixed literal in an atom that reads components 0 and 1 and in an atom position that is no model read: it is admitted with no binding refusal and analyzed, exit 0, and no `operator-ineligible` refusal is reported. | Test (TC-2957) |
-| FR-1000-AC-9 | Over the AC-4 subject, `always holds((deref(M::Counter#"b").value = 0) @ a)`, whose one atom reads only component 0, is admitted and resolves the created-object literal against component 0: the atom is undefined with reason `absent-key`, since no state of component 0 holds `b`. | Test (TC-2957) |
-| FR-1000-AC-10 | Over the AC-4 subject, `always holds((deref(M::Counter#"b").value) @ a = c.value @ b)`, whose atom reads components 0 and 1, and `always holds(c = M::Counter#"b")`, whose atom makes no model read, each refuse `ill_typed`/`operator-ineligible` at the literal, naming `Counter`, `62` and the components `[0, 1]` and `[]`, as the request's binding refusal (exit 20) before any item runs; the same two atoms over `M::Counter#"a"` are admitted. | Test (TC-2957) |
+| FR-1000-AC-9 | Over the AC-4 subject, `always holds((deref(M::Counter#"b").value = 0) @ a)` is admitted and resolves the created-object literal in component 0, its innermost enclosing `@ a`: the atom is undefined with reason `absent-key`, since no state of component 0 holds `b`. `always holds((deref(M::Counter#"b").value) @ a = c.value @ b)`, whose atom also reads component 1, is admitted the same way and resolves the literal in component 0, undefined with reason `absent-key`. | Test (TC-2957) |
+| FR-1000-AC-10 | Over the AC-4 subject, `always holds(c = M::Counter#"b")`, whose literal no `@ t` encloses, and `always holds(c.value @ a = 0 or c = M::Counter#"b")`, whose literal no `@ t` encloses though the atom reads component 0, each refuse `ill_typed`/`operator-ineligible` at the literal, naming `Counter` and `62`, as the request's binding refusal (exit 20) before any item runs; the same two atoms over `M::Counter#"a"` are admitted. | Test (TC-2957) |
 | FR-1000-AC-11 | For FR-487's vault and a hyper clause over `forall trace a of V forall trace b of V` whose atom compares `v` with `V::Vault#"w"`, `CheckedHyperLetters::new` given one system admitted with vaults `v` and `w` in its initial state and one admitted with only `v` initially and universe `{v, w}` refuses `LettersRefusal::ReferenceBindingsDisagree` naming `Vault`, `77` and components `[0, 1]`; given the first system for both components, it admits. | Test (TC-2957) |
 
 ## Dependencies
