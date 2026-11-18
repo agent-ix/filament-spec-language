@@ -8,16 +8,15 @@ license = "AGPL-3.0-or-later"
 description = "Non-core bounded request-file intake and typed command orchestration"
 
 [features]
-default = []
+# FR-031 and FR-662: command requests can carry Markdown extraction records.
+default = ["quire-extraction"]
 quire-extraction = ["dep:fsl-source", "fsl-replay/quire-extraction"]
 
 [dependencies]
 ix-trace-rs = { git = "https://github.com/agent-ix/ix-trace-rs", tag = "v0.1.2" }
 fsl-foundation = { path = "../fsl-foundation" }
 fsl-cst = { path = "../fsl-cst" }
-# FR-031 and FR-662: the command's default build must reach clause-run
-# requests carrying Markdown extraction records.
-fsl-replay = { path = "../fsl-replay", features = ["quire-extraction"] }
+fsl-replay = { path = "../fsl-replay" }
 fsl-eval = { path = "../fsl-eval" }
 filament-eval = { workspace = true }
 fsl-semantics = { path = "../fsl-semantics" }
