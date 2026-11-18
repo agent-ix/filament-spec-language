@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-//! FR-531, FR-533: the protocol-slot evaluation of a package read from its
+//! FR-531, FR-533, FR-945: evaluation of calls from a package read from its
 //! bytes alone.
 //!
 //! The call selects the slot from the package's `protocol` node, projects its
