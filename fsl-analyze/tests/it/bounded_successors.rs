@@ -74,7 +74,6 @@ fn run(name: &str, bounds: &str, limits: Option<Value>) -> Run {
 #[trace("TC-2411", "FR-851-AC-1")]
 #[trace("TC-2411", "FR-851-AC-2")]
 #[test]
-#[ignore = "QSL-2287: successor generation enumerates a bounded integer field over its whole range"]
 fn bounded_fields_are_enumerated_inside_their_postcondition_interval() {
     let unlimited = run("bounded-unlimited", LOSE_LIDAR_BOUNDS, None);
     let narrowed = run(
@@ -101,7 +100,6 @@ fn bounded_fields_are_enumerated_inside_their_postcondition_interval() {
 /// 2001-value speed range.
 #[trace("TC-2411", "FR-851-AC-3")]
 #[test]
-#[ignore = "QSL-2287: successor generation enumerates a bounded integer field over its whole range"]
 fn an_ineligible_bound_is_enumerated_over_the_whole_range() {
     for (name, bounds) in [
         ("bounded-not-form", "300 - self.speed >= 0"),
@@ -121,7 +119,6 @@ fn an_ineligible_bound_is_enumerated_over_the_whole_range() {
 /// within 60 seconds.
 #[trace("TC-2411", "FR-851-AC-4")]
 #[test]
-#[ignore = "QSL-2287: the rover mode-machine search does not finish within its budget"]
 fn the_rover_mode_machine_item_proves_at_default_limits() {
     let started = Instant::now();
     let run = run("bounded-rover", LOSE_LIDAR_BOUNDS, None);

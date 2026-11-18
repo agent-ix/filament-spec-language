@@ -23,6 +23,7 @@ mod causes;
 mod clause_set;
 mod closure;
 pub mod collection_write;
+pub mod post_targets;
 mod evaluate;
 mod family;
 mod protocol_slot;
@@ -35,6 +36,7 @@ mod value_invariants;
 
 pub use bare::evaluate_selected_protocol_slot as bare_evaluate_selected_protocol_slot;
 pub use bare::{evaluate_frame as bare_evaluate_frame, PackageOperations};
+pub(crate) use bare::post_targets as bare_post_targets;
 use evaluate::Machine;
 use filament_eval::Registry;
 use filament_exact::{FieldValue, Meter, NodeKey, Outcome, Value, ValueType};
@@ -2477,6 +2479,50 @@ impl CheckedPackageEvaluation for CheckedPackage {
             witness: env.witness.take(),
         })
     }
+}
+
+/// FR-120 "Directly solved assignments", FR-851: the targets of the
+/// postcondition `clause` of `package` over `observations`, each `e`
+/// evaluated with a meter from `meter`.
+///
+/// # Errors
+///
+/// Refuses as [`CheckedPackageEvaluation::evaluate_clause`] does for an
+/// unknown clause or mismatched observations; a fault of an evaluation.
+pub(crate) fn source_post_targets(
+    package: &CheckedPackage,
+    clause: &QualifiedName,
+    observations: &fsl_semantics::model::observation::AdmittedObservations,
+    meter: &mut dyn FnMut() -> Meter,
+) -> Result<post_targets::PostTargets, CallFailure> {
+    let setup = ClauseSetup::of(package, clause, observations)?;
+    let graph = package.graph();
+    let reads: std::collections::BTreeMap<_, _> = setup
+        .declaration
+        .reads()
+        .map(|(location, observation)| (location.clone(), observation))
+        .collect();
+    let mut frame: Vec<Option<Value>> = setup.bindings.iter().cloned().map(Some).collect();
+    frame.resize(setup.declaration.slots().max(frame.len()), None);
+    post_targets::targets(
+        setup.declaration.body(),
+        setup.declaration.binds_result(),
+        |node| {
+            let mut meter = meter();
+            Machine::with_pre(
+                graph.scope(),
+                graph,
+                setup.current,
+                setup.pre,
+                Some(&reads),
+                &mut meter,
+                graph.dispatch_tables(),
+            )
+            .run_frame(node, frame.clone())
+            .map(|evaluation| evaluation.outcome)
+            .map_err(CallFailure::Fault)
+        },
+    )
 }
 
 #[cfg(test)]

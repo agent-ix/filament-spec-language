@@ -69,6 +69,8 @@ pub(crate) fn ordered_map_entries(
 // impl here is E0116: `CheckedPackage` is `fsl-package`'s own type (X-7).
 pub use expression::bare_evaluate_selected_protocol_slot;
 pub use expression::collection_write::{Provenance, WrittenCollection};
+pub use expression::post_targets::{PostTarget, PostTargets};
+pub(crate) use expression::{bare_post_targets, source_post_targets};
 pub(crate) use expression::evaluate_over_admitted_environment;
 pub use expression::object_environment_refusal;
 pub use expression::{

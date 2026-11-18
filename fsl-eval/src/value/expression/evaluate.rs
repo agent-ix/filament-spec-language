@@ -4960,7 +4960,7 @@ mod carried_sum;
 #[cfg(test)]
 mod invariants;
 
-mod node_source;
+pub(super) mod node_source;
 pub(super) mod reader_source;
 mod world;
 
