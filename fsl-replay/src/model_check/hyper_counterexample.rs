@@ -53,6 +53,10 @@ pub struct HyperTrace {
     pub initial: u32,
     /// Its steps, in order.
     pub steps: Vec<HyperStep>,
+    /// Canonical operation results aligned with `steps`, when a relation
+    /// witness must distinguish result-bearing edges that share a post-state.
+    /// Empty for counterexamples whose meaning does not read operation results.
+    pub results: Vec<Option<String>>,
     /// For a `Projected` counterexample, the mark of each step, in step
     /// order; empty for every other kind.
     pub marks: Vec<StepMark>,
@@ -62,6 +66,8 @@ pub struct HyperTrace {
 /// `UndefinedEvaluation` `where.locus`).
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum HyperLocus {
+    /// A model relation's body over a tuple of reachable transitions.
+    RelationBody,
     /// A `holds` atom of the clause's body.
     Atom(FormulaNodeId),
     /// A universal conjunct of the clause's `match` block, by its index.
@@ -126,6 +132,8 @@ pub enum HyperCounterexampleKind {
     /// loop, and `trace_position` is the projected position the visible steps
     /// reach.
     Projected,
+    /// HP-1: a tuple of reachable transitions refutes a model relation.
+    StepTuple,
     /// Any form: the traces are finite paths to the state an undefined
     /// evaluation reads, one per trace variable (ADR-023 HV-8).
     Undefined(HyperUndefined),
@@ -178,6 +186,20 @@ impl MatchWitness {
                         .len()
                         .saturating_mul(std::mem::size_of::<StepMark>()),
                 )
+                .saturating_add(
+                    trace
+                        .results
+                        .len()
+                        .saturating_mul(std::mem::size_of::<Option<String>>()),
+                )
+                .saturating_add(
+                    trace
+                        .results
+                        .iter()
+                        .filter_map(Option::as_ref)
+                        .map(String::len)
+                        .sum::<usize>(),
+                )
         });
         let instance_bytes = self
             .instance
@@ -223,6 +245,20 @@ impl FamilyPayload for HyperCounterexample {
                             .marks
                             .len()
                             .saturating_mul(std::mem::size_of::<StepMark>()),
+                    )
+                    .saturating_add(
+                        trace
+                            .results
+                            .len()
+                            .saturating_mul(std::mem::size_of::<Option<String>>()),
+                    )
+                    .saturating_add(
+                        trace
+                            .results
+                            .iter()
+                            .filter_map(Option::as_ref)
+                            .map(String::len)
+                            .sum::<usize>(),
                     )
             })
             .sum();

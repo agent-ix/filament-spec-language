@@ -139,6 +139,7 @@ mod refinement_replay;
 mod refinement_request;
 mod refinement_safety;
 mod related_by;
+mod relation_claims;
 mod release_acquire;
 mod repeat_guard;
 #[path = "../../../tests/support/ring_world.rs"]
@@ -193,3 +194,4 @@ mod cyclic_mdp_certificate;
 
 mod bounded_fair_certificate;
 mod cyclic_mdp_reward_certificate;
+mod relation_vs_smt;
