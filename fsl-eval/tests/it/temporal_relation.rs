@@ -191,7 +191,6 @@ fn a_relation_that_changes_nothing_or_has_no_ledger_is_refused_uncharged() {
 /// naming the superseded `r1` is refused `predecessor-not-latest`.
 #[trace("FR-526-AC-8", "TC-1321")]
 #[test]
-#[ignore = "QSL-2339: superseded list and predecessor-unknown for an identity the ledger does not hold not implemented yet"]
 fn a_predecessor_the_ledger_does_not_hold_is_unknown_not_stale() {
     let (env, p) = setup();
     let r1 = run(&env, &asking(&env, p, Valuation::True)).expect("a result");
@@ -357,7 +356,6 @@ fn two_occurrences_of_one_body_keep_separate_instances_results_and_progress() {
 /// ledger is accepted.
 #[trace("FR-526-AC-24", "TC-1321")]
 #[test]
-#[ignore = "QSL-2339: predecessor-unknown for a predecessor the ledger does not hold not implemented yet"]
 fn only_the_ledger_entry_the_evaluator_wrote_for_the_predecessor_grants_authority() {
     let (env, p) = setup();
     let r1 = run(&env, &asking(&env, p, Valuation::True)).expect("a result");

@@ -3000,7 +3000,31 @@ fn finite_window_report(
         admitted_late: Vec::new(),
         unmatched_admissions: Vec::new(),
         correction: None,
+        key: evidence_key(run, node)?,
     })
+}
+
+/// FR-975: the obligation instance of the clause `node` in a run: the
+/// package, the declaration node key's canonical text and the selected
+/// occurrence, with no trigger (a run request carries no trigger delivery).
+fn evidence_key(
+    run: &CompiledRun<'_>,
+    node: &fsl_semantics::check::TemporalClauseNode,
+) -> Result<super::correction::EvidenceKey, Box<RunRefusal>> {
+    let clause = fsl_foundation::node_wire::node_key_to_text(&node.identity()).map_err(|_| {
+        Box::new(RunRefusal::Fault(
+            filament_semantic_value::catalog::InternalFault::new(
+                "temporal",
+                "clause-node-key-has-a-text-spelling",
+            ),
+        ))
+    })?;
+    Ok(super::correction::EvidenceKey::new(
+        run.package_name.to_owned(),
+        clause,
+        node.claim().role().as_str().to_owned(),
+        node.claim().ordinal(),
+    ))
 }
 
 /// The name of the `holds` or window-aggregate atom `atom` of the clause
@@ -3231,6 +3255,9 @@ pub struct FiniteWindowReport {
     /// FR-526: the run's place in a correction chain, once the run settles
     /// its relation.
     pub correction: Option<super::correction::CorrectionRecord>,
+    /// FR-975: the obligation instance the result is of, the key of its
+    /// evidence ledger entry.
+    pub key: super::correction::EvidenceKey,
 }
 
 /// The spine's own form of the evaluator's outcome (FR-100-AC-8).

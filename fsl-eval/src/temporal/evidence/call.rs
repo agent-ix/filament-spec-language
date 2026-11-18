@@ -170,6 +170,9 @@ struct Facts<'a> {
     input_identity: InputIdentity,
     result_identity: ResultIdentity,
     lineage: Option<u64>,
+    /// The `result_identity` of each earlier result of the chain, oldest
+    /// first (FR-526).
+    superseded: Box<[ResultIdentity]>,
     progress_ledger: Option<crate::temporal::ledger::ProgressLedger>,
     /// The covered-position limit the progress assertion reached, if any.
     progress_stop: Option<crate::temporal::ledger::CoveredPositionsLimitReached>,
@@ -411,7 +414,7 @@ fn admit<'a>(
     )
     .map_err(|_| fault("identity-members-encode"))?;
     let (result_identity, input_identity) = (identity.result_identity(), identity.input_identity());
-    let lineage = admit_relation(request, &obligation, &input_identity)?;
+    let (lineage, superseded) = admit_relation(request, &obligation, &input_identity)?;
     match subject.facts.activation() {
         ClauseActivation::Each { .. } if !request.origins.is_empty() => {
             return Err(refusal("activation-list-mismatch", "origins", &[]));
@@ -429,6 +432,7 @@ fn admit<'a>(
         input_identity,
         result_identity,
         lineage,
+        superseded,
         progress_ledger,
         progress_stop,
     })
@@ -567,16 +571,16 @@ fn admit_progress(
     }
 }
 
-/// FR-526: the lineage the request's relation gives, or its refusal. A sum
-/// that does not fit is `None`, which the call reports as `Incomplete`
-/// naming `lineage`.
+/// FR-526: the lineage the request's relation gives and the superseded list
+/// its entry records, or its refusal. A sum that does not fit is `None`,
+/// which the call reports as `Incomplete` naming `lineage`.
 fn admit_relation(
     request: &EvidenceRequest,
     obligation: &ObligationKey,
     input: &InputIdentity,
-) -> Result<Option<u64>, CallFailure> {
+) -> Result<(Option<u64>, Box<[ResultIdentity]>), CallFailure> {
     let prev = match &request.relation {
-        Relation::Original => return Ok(Some(0)),
+        Relation::Original => return Ok((Some(0), Box::default())),
         Relation::Superseding(prev) | Relation::Invalidating(prev) => prev,
     };
     let ledger = request
@@ -587,7 +591,14 @@ fn admit_relation(
         .result(obligation, request.trigger.as_ref())
         .ok_or_else(|| refusal("predecessor-unknown", "relation", &[]))?;
     if entry.result_identity() != prev {
-        return Err(refusal("predecessor-not-latest", "relation", &[]));
+        // A predecessor a later correction replaced is held in the entry's
+        // superseded list; any other identity is not held at all.
+        let cause = if entry.superseded().contains(prev) {
+            "predecessor-not-latest"
+        } else {
+            "predecessor-unknown"
+        };
+        return Err(refusal(cause, "relation", &[]));
     }
     if entry.input_identity() == input {
         return Err(refusal("unchanged-input", "relation", &[]));
@@ -596,7 +607,13 @@ fn admit_relation(
     {
         return Err(refusal("correspondence-changed", "relation", &[]));
     }
-    Ok(entry.lineage().checked_add(1))
+    let superseded = entry
+        .superseded()
+        .iter()
+        .chain(std::iter::once(entry.result_identity()))
+        .cloned()
+        .collect();
+    Ok((entry.lineage().checked_add(1), superseded))
 }
 
 fn encode_ref(encoder: MemberEncoder, evidence: &EvidenceRef) -> MemberEncoder {
@@ -2012,6 +2029,7 @@ fn conclude(facts: &Facts<'_>, outcome: Outcome, _meter: &Meter) -> EvidenceResu
                     .finish()
                     .into_boxed_slice(),
                 facts.lineage.unwrap_or_default(),
+                facts.superseded.clone(),
             ),
         )
     };
