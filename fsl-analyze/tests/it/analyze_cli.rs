@@ -7,11 +7,11 @@
 //! text mode is tested in the driver repository.
 
 use ix_trace_rs::trace;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
 use crate::analyze_cli_support::{
-    analyze, below_three, bounded, clause, counter_request, label, litmus_request, order_protocol,
-    Workspace,
+    Workspace, analyze, below_three, bounded, clause, counter_request, label, litmus_request,
+    order_protocol,
 };
 
 const DONE: &str = "terminal Done using v on M when { self.value = 3 };\n";
@@ -447,7 +447,7 @@ fn global_conformance_is_decided_over_every_behaviour() {
 
 /// FR-1032-AC-1: bind the recording under its request-level identity and
 /// echo that identity in the settled item without claiming independent replay.
-#[trace("TC-2922", "FR-1032-AC-1", "FR-990-AC-3")]
+#[trace("TC-2922", "FR-1032-AC-1", "FR-1032-AC-2", "FR-990-AC-3")]
 #[test]
 fn a_recording_result_echoes_its_provisioned_identity_without_replay_subject() {
     let ws = Workspace::new("cli-replay-mode");
@@ -479,10 +479,10 @@ fn a_recording_result_echoes_its_provisioned_identity_without_replay_subject() {
         &ws,
         &order_protocol(true),
         json!({"items": [{"claim": "Flow", "kind": "global-conformance",
-                   "recording": {"authority": "test", "identity": "recording"}}],
-         "documents": [{"file": "recording.json", "identity": {
-             "authority": "test", "identity": "recording"
-         }}]}),
+                  "recording": {"authority": "test", "identity": "recording"}}],
+        "documents": [{"file": "recording.json", "identity": {
+            "authority": "test", "identity": "recording"
+        }}]}),
     ));
     let item = run.item(0);
     assert_eq!(label(&item), "proved", "{item}");
@@ -501,8 +501,12 @@ fn a_recording_result_echoes_its_provisioned_identity_without_replay_subject() {
         item.get("replay").is_none(),
         "recording bytes are not an independent replay: {item}"
     );
-    assert_eq!(item["recording"], json!({"authority":"test", "identity":"recording"}));
+    assert_eq!(
+        item["recording"],
+        json!({"authority":"test", "identity":"recording"})
+    );
 
+    let other_binding_recording = recording.clone();
     let mut declared = recording;
     declared["identity"] = json!({"authority":"test", "identity":"recording"});
     let declared_ws = Workspace::new("cli-replay-mode-declared");
@@ -519,4 +523,170 @@ fn a_recording_result_echoes_its_provisioned_identity_without_replay_subject() {
     assert_eq!(declared_item["obligations"], item["obligations"]);
     assert_eq!(declared_item["closure"], item["closure"]);
     assert_eq!(declared_item["global"], item["global"]);
+
+    let other_ws = Workspace::new("cli-replay-mode-other-identity");
+    other_ws.write(
+        "recording.json",
+        other_binding_recording.to_string().as_bytes(),
+    );
+    let other_run = analyze(&litmus_request(
+        &other_ws,
+        &order_protocol(true),
+        json!({"items": [{"claim": "Flow", "kind": "global-conformance",
+                  "recording": {"authority": "test", "identity": "other"}}],
+        "documents": [{"file": "recording.json", "identity": {
+            "authority": "test", "identity": "other"
+        }}]}),
+    ));
+    let other_item = other_run.item(0);
+    assert_eq!(label(&other_item), "proved", "{other_item}");
+    assert_eq!(
+        other_item["recording"],
+        json!({"authority":"test", "identity":"other"})
+    );
+    assert_eq!(other_item["obligations"], item["obligations"]);
+    assert_eq!(
+        other_item["closure"]["premises"],
+        item["closure"]["premises"]
+    );
+    assert_eq!(other_item["global"], item["global"]);
+}
+
+/// FR-1032-AC-3: document identity errors point at the identity member (or
+/// the document when it is absent) and refuse before resolving any items.
+#[trace("TC-2922", "FR-1032-AC-3")]
+#[test]
+fn recording_document_identity_refusals_name_the_exact_request_pointer() {
+    let assert_refusal = |request: &std::path::Path, pointer: &str, fragments: &[&str]| {
+        let run = analyze(request);
+        assert_eq!(run.exit, 20, "{}", run.document());
+        let document = run.document();
+        assert_eq!(document["category"], "refusal");
+        assert_eq!(document["items"], json!([]));
+        assert_eq!(document["diagnostics"][0]["code"], "invalid-request");
+        let message = document["diagnostics"][0]["message"]
+            .as_str()
+            .expect("diagnostic message");
+        assert!(message.contains(pointer), "{message}");
+        for fragment in fragments {
+            assert!(
+                message.contains(fragment),
+                "missing {fragment:?} in {message}"
+            );
+        }
+    };
+
+    let malformed_ws = Workspace::new("cli-recording-identity-malformed");
+    malformed_ws.write(
+        "recording.json",
+        br#"{"format":"filament.protocol-recording/1"}"#,
+    );
+    let malformed = litmus_request(
+        &malformed_ws,
+        &order_protocol(true),
+        json!({"documents":[{"file":"recording.json", "identity":{"authority":"test"}}]}),
+    );
+    assert_refusal(&malformed, "/documents/0/identity", &["malformed"]);
+
+    let mismatch_ws = Workspace::new("cli-recording-identity-mismatch");
+    mismatch_ws.write(
+        "recording.json",
+        br#"{"format":"filament.protocol-recording/1","identity":{"authority":"test","identity":"declared"}}"#,
+    );
+    let mismatch = litmus_request(
+        &mismatch_ws,
+        &order_protocol(true),
+        json!({"documents":[{"file":"recording.json", "identity":{"authority":"test","identity":"stated"}}]}),
+    );
+    assert_refusal(
+        &mismatch,
+        "/documents/0/identity",
+        &["stated identity", "stated", "declared"],
+    );
+
+    let unidentified_ws = Workspace::new("cli-recording-identity-missing");
+    unidentified_ws.write(
+        "recording.json",
+        br#"{"format":"filament.protocol-recording/1"}"#,
+    );
+    let unidentified = litmus_request(
+        &unidentified_ws,
+        &order_protocol(true),
+        json!({"documents":[{"file":"recording.json"}]}),
+    );
+    assert_refusal(&unidentified, "/documents/0", &["declares no identity"]);
+
+    let snapshot_ws = Workspace::new("cli-recording-identity-snapshot");
+    snapshot_ws.write(
+        "snapshot.json",
+        br#"{"format":"filament.state.snapshot/v1","identity":{"authority":"test","identity":"start"}}"#,
+    );
+    snapshot_ws.write(
+        "recording.json",
+        br#"{"format":"filament.protocol-recording/1"}"#,
+    );
+    let snapshot = litmus_request(
+        &snapshot_ws,
+        &order_protocol(true),
+        json!({"documents":[
+            {"file":"snapshot.json"},
+            {"file":"recording.json", "identity":{"authority":"test","identity":"start"}}
+        ]}),
+    );
+    assert_refusal(
+        &snapshot,
+        "/documents/1",
+        &["repeats a provisioned document identity"],
+    );
+}
+
+/// FR-1032-AC-4: recording references must name provisioned recordings and
+/// may only appear on global-conformance items.
+#[trace("TC-2922", "FR-1032-AC-4")]
+#[test]
+fn recording_item_references_require_a_provisioned_recording_document() {
+    let assert_refusal = |request: &std::path::Path| {
+        let run = analyze(request);
+        assert_eq!(run.exit, 20, "{}", run.document());
+        let document = run.document();
+        assert_eq!(document["category"], "refusal");
+        assert_eq!(document["diagnostics"][0]["code"], "invalid-request");
+        assert!(
+            document["diagnostics"][0]["message"]
+                .as_str()
+                .expect("diagnostic message")
+                .contains("/items/0/recording")
+        );
+    };
+
+    let missing_ws = Workspace::new("cli-recording-reference-missing");
+    let missing = litmus_request(
+        &missing_ws,
+        &order_protocol(true),
+        json!({"items":[{"claim":"Flow", "kind":"global-conformance", "recording":{"authority":"test","identity":"missing"}}]}),
+    );
+    assert_refusal(&missing);
+
+    let snapshot_ws = Workspace::new("cli-recording-reference-snapshot");
+    snapshot_ws.write(
+        "snapshot.json",
+        br#"{"format":"filament.state.snapshot/v1","identity":{"authority":"test","identity":"start"}}"#,
+    );
+    let snapshot = litmus_request(
+        &snapshot_ws,
+        &order_protocol(true),
+        json!({
+            "documents":[{"file":"snapshot.json"}],
+            "items":[{"claim":"Flow", "kind":"global-conformance", "recording":{"authority":"test","identity":"start"}}]
+        }),
+    );
+    assert_refusal(&snapshot);
+
+    let wrong_kind_ws = Workspace::new("cli-recording-reference-wrong-kind");
+    let wrong_kind = litmus_request(
+        &wrong_kind_ws,
+        &order_protocol(true),
+        json!({"items":[{"claim":"Flow", "kind":"temporal-satisfaction", "recording":{"authority":"test","identity":"missing"}}]}),
+    );
+    assert_refusal(&wrong_kind);
 }

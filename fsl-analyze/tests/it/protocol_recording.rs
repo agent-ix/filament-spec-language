@@ -2,10 +2,10 @@
 //! FR-895: replay-mode reading and obligation assessment of protocol recordings.
 
 use fsl_analyze::protocol_analysis::recording::{
-    assess_recording, RecordingFact, RecordingVerdict,
+    RecordingFact, RecordingVerdict, assess_recording,
 };
 use ix_trace_rs::trace;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
 use crate::analyze_cli_support::order_protocol;
 
@@ -193,16 +193,22 @@ fn a_closed_recording_assesses_observed_and_unobserved_obligations() {
         "{:#?}",
         assessed.obligations
     );
-    assert!(assessed
-        .obligations
-        .iter()
-        .all(|entry| entry.verdict == RecordingVerdict::Satisfied));
+    assert!(
+        assessed
+            .obligations
+            .iter()
+            .all(|entry| entry.verdict == RecordingVerdict::Satisfied)
+    );
 
     let mut cut = complete_observations();
     cut.as_array_mut().expect("array").truncate(2);
     let open = recording(cut, json!({"Buyer": [0], "Seller": [1]}), "open");
     let assessed = assess_recording(&package, open.to_string().as_bytes()).expect("readable run");
-    assert_eq!(assessed.global.label, "inconclusive");
+    assert_eq!(
+        assessed.global.label, "inconclusive",
+        "{:#?}",
+        assessed.obligations
+    );
     assert!(assessed.obligations.iter().any(|entry| {
         entry.obligation.kind == "control" && entry.verdict == RecordingVerdict::Pending
     }));
@@ -274,6 +280,185 @@ fn an_empty_closed_recording_does_not_prove_vacuously() {
     assert!(assessed.obligations.iter().any(|entry| {
         entry.obligation.kind == "closure" && entry.verdict == RecordingVerdict::Violated
     }));
+}
+
+/// FR-990: `incomplete` is a valid closure state, but it cannot settle a
+/// missing closure obligation or produce complete global success.
+#[trace("TC-2801", "FR-990-AC-3")]
+#[test]
+fn an_incomplete_closure_is_admitted_and_keeps_closure_pending() {
+    let package = protocol();
+    let run = json!({
+        "format":"filament.protocol-recording/1", "protocol":"Flow",
+        "observations":[], "local_order":{}, "correlations":[],
+        "closure":{"state":"incomplete", "premises":[]}
+    });
+    let assessed = assess_recording(&package, run.to_string().as_bytes())
+        .expect("incomplete is an admitted closure state");
+    assert_eq!(assessed.closure.state, "incomplete");
+    assert_eq!(
+        assessed.global.label, "inconclusive",
+        "{:#?}",
+        assessed.obligations
+    );
+    assert!(!assessed.global.complete);
+    assert!(assessed.obligations.iter().any(|entry| {
+        entry.obligation.kind == "closure" && entry.verdict == RecordingVerdict::Pending
+    }));
+}
+
+/// FR-990 closure identity includes each activated member of a fan-out
+/// branch, grounded by that member's FR-737 object reference.
+#[trace("TC-2831", "FR-990-AC-6")]
+#[test]
+fn fanout_branch_closure_premises_include_each_role_instance() {
+    let run_body = "sequence Main { parallel Both { branch left sequence Left { event LeftWork by r as (left_worked: Boolean) { true }; } branch right sequence Right { event RightWork by r as (right_worked: Boolean) { true }; } } join all [left, right]; }";
+    let source = crate::protocol_roles::unit(
+        crate::protocol_roles::ORIGIN,
+        &crate::protocol_roles::role(2, "workflow"),
+        "",
+        run_body,
+    );
+    let package = crate::fill::package(&source);
+    let member = |identity: &str| json!({"authority":"test", "identity":identity});
+    let run = json!({
+        "format":"filament.protocol-recording/1", "protocol":"R",
+        "observations":[
+            {"kind":"event", "node":"R::Main::Both::left::Left::LeftWork", "role":"r", "role_instance":member("cell-a"), "keys":{}, "record":true},
+            {"kind":"event", "node":"R::Main::Both::left::Left::LeftWork", "role":"r", "role_instance":member("cell-b"), "keys":{}, "record":true},
+            {"kind":"event", "node":"R::Main::Both::right::Right::RightWork", "role":"r", "role_instance":member("cell-a"), "keys":{}, "record":true},
+            {"kind":"event", "node":"R::Main::Both::right::Right::RightWork", "role":"r", "role_instance":member("cell-b"), "keys":{}, "record":true}
+        ],
+        "local_order":{"r":[0,1,2,3]}, "correlations":[],
+        "closure":{"state":"closed", "premises":[
+            {"kind":"execution", "node":"R::Done"},
+            {"kind":"branch", "node":"R::Main::Both::left", "role_instance":member("cell-a")},
+            {"kind":"branch", "node":"R::Main::Both::left", "role_instance":member("cell-b")},
+            {"kind":"branch", "node":"R::Main::Both::right", "role_instance":member("cell-a")},
+            {"kind":"branch", "node":"R::Main::Both::right", "role_instance":member("cell-b")}
+        ]}
+    });
+    let assessed = assess_recording(&package, run.to_string().as_bytes())
+        .expect("complete per-member fan-out premise set");
+    let role_instance =
+        |identity: &str| fsl_analyze::protocol_analysis::recording::RecordingRoleInstance {
+            authority: "test".to_owned(),
+            identity: identity.to_owned(),
+        };
+    let branch =
+        |node: &str, identity: &str| fsl_analyze::protocol_analysis::recording::RecordingPremise {
+            kind: fsl_analyze::protocol_analysis::recording::RecordingPremiseKind::Branch,
+            instance: None,
+            node: node.to_owned(),
+            role_instance: Some(role_instance(identity)),
+        };
+    assert_eq!(
+        assessed.closure.premises,
+        vec![
+            fsl_analyze::protocol_analysis::recording::RecordingPremise {
+                kind: fsl_analyze::protocol_analysis::recording::RecordingPremiseKind::Execution,
+                instance: None,
+                node: "R::Done".to_owned(),
+                role_instance: None,
+            },
+            branch("R::Main::Both::left", "cell-a"),
+            branch("R::Main::Both::left", "cell-b"),
+            branch("R::Main::Both::right", "cell-a"),
+            branch("R::Main::Both::right", "cell-b"),
+        ]
+    );
+    assert_eq!(
+        assessed.global.label, "inconclusive",
+        "{:#?}",
+        assessed.obligations
+    );
+    assert!(!assessed.global.complete);
+    assert!(assessed.obligations.iter().any(|entry| {
+        entry.obligation.kind == "closure" && entry.verdict == RecordingVerdict::Pending
+    }));
+    assert!(assessed.obligations.iter().any(|entry| {
+        entry.obligation.kind == "join"
+            && entry.obligation.node.as_deref() == Some("R::Main::Both")
+            && entry.verdict == RecordingVerdict::Satisfied
+    }));
+
+    let mut omitted = run.clone();
+    omitted["closure"]["premises"]
+        .as_array_mut()
+        .expect("closure premises")
+        .remove(2);
+    let refusal = assess_recording(&package, omitted.to_string().as_bytes())
+        .expect_err("an omitted observed fan-out member is refused");
+    assert!(
+        format!("{refusal}").contains("closure premise set"),
+        "{refusal:?}"
+    );
+
+    let mut crossed = run;
+    crossed["closure"]["premises"][1]["role_instance"] = member("cell-z");
+    let refusal = assess_recording(&package, crossed.to_string().as_bytes())
+        .expect_err("a cross-wired fan-out member is refused");
+    assert!(
+        format!("{refusal}").contains("closure premise set"),
+        "{refusal:?}"
+    );
+}
+
+/// Fan-out branch closure is member-scoped for every checked join policy.
+#[trace("TC-2831", "FR-990-AC-6")]
+#[test]
+fn fanout_join_policies_do_not_reuse_a_member_closure_for_another_member() {
+    let policies = [
+        ("join all [left, right];", false),
+        ("join any [left, right] outstanding continue;", false),
+        ("join quorum(1) [left, right] outstanding continue;", false),
+        (
+            "join predicate(both) [left, right] outstanding continue;",
+            true,
+        ),
+    ];
+    let run = json!({
+        "format":"filament.protocol-recording/1", "protocol":"R",
+        "observations":[
+            {"kind":"event", "node":"R::Main::Both::left::Left::LeftWork", "role":"r", "role_instance":{"authority":"test","identity":"cell-a"}, "keys":{}, "record":true},
+            {"kind":"event", "node":"R::Main::Both::left::Left::LeftWork", "role":"r", "role_instance":{"authority":"test","identity":"cell-b"}, "keys":{}, "record":true},
+            {"kind":"event", "node":"R::Main::Both::right::Right::RightWork", "role":"r", "role_instance":{"authority":"test","identity":"cell-a"}, "keys":{}, "record":true},
+            {"kind":"event", "node":"R::Main::Both::right::Right::RightWork", "role":"r", "role_instance":{"authority":"test","identity":"cell-b"}, "keys":{}, "record":true}
+        ],
+        "local_order":{"r":[0,1,2,3]}, "correlations":[],
+        "closure":{"state":"open", "premises":[
+            {"kind":"branch", "node":"R::Main::Both::left", "role_instance":{"authority":"test","identity":"cell-a"}},
+            {"kind":"branch", "node":"R::Main::Both::right", "role_instance":{"authority":"test","identity":"cell-a"}}
+        ]}
+    });
+    for (policy, needs_predicate) in policies {
+        let run_body = format!(
+            "sequence Main {{ parallel Both {{ branch left sequence Left {{ event LeftWork by r as (left_worked: Boolean) {{ true }}; }} branch right sequence Right {{ event RightWork by r as (right_worked: Boolean) {{ true }}; }} }} {policy} }}"
+        );
+        let mut source = crate::protocol_roles::unit(
+            crate::protocol_roles::ORIGIN,
+            &crate::protocol_roles::role(2, "workflow"),
+            "",
+            &run_body,
+        );
+        if needs_predicate {
+            source = format!(
+                "function both using v(left: Boolean, right: Boolean): Boolean pure {{ left and right }}\n{source}"
+            );
+        }
+        let package = crate::fill::package(&source);
+        let assessed = assess_recording(&package, run.to_string().as_bytes())
+            .expect("readable partial fan-out closure");
+        assert!(
+            assessed.obligations.iter().any(|entry| {
+                entry.obligation.kind == "join"
+                    && entry.obligation.node.as_deref() == Some("R::Main::Both")
+                    && entry.verdict == RecordingVerdict::Pending
+            }),
+            "policy {policy}: {:#?}",
+            assessed.obligations
+        );
+    }
 }
 
 /// Trace: FR-895-AC-4.
@@ -654,10 +839,12 @@ fn failed_attempt_then_successful_retry_has_one_effect_and_no_duplicate() {
         recovery("successful")
     ]));
 
-    assert!(!assessed
-        .facts
-        .iter()
-        .any(|fact| matches!(fact, RecordingFact::DuplicateBusinessEffect { .. })));
+    assert!(
+        !assessed
+            .facts
+            .iter()
+            .any(|fact| matches!(fact, RecordingFact::DuplicateBusinessEffect { .. }))
+    );
     let attempts: Vec<_> = assessed
         .facts
         .iter()
@@ -731,17 +918,21 @@ fn distinct_effect_occurrences_and_repeated_effect_keys_are_not_duplicates() {
         paid_effect_at("effect-1", "operation-1", 0),
         paid_effect_at("effect-2", "operation-2", 1)
     ]));
-    assert!(!distinct
-        .facts
-        .iter()
-        .any(|fact| matches!(fact, RecordingFact::DuplicateBusinessEffect { .. })));
+    assert!(
+        !distinct
+            .facts
+            .iter()
+            .any(|fact| matches!(fact, RecordingFact::DuplicateBusinessEffect { .. }))
+    );
 
     let repeated_effect = paid_effect("effect-replayed", "operation-replayed");
     let replayed = assess_paid(json!([repeated_effect.clone(), repeated_effect]));
-    assert!(!replayed
-        .facts
-        .iter()
-        .any(|fact| matches!(fact, RecordingFact::DuplicateBusinessEffect { .. })));
+    assert!(
+        !replayed
+            .facts
+            .iter()
+            .any(|fact| matches!(fact, RecordingFact::DuplicateBusinessEffect { .. }))
+    );
     assert_eq!(
         replayed
             .facts
@@ -775,10 +966,12 @@ fn duplicate_delivery_is_classified_against_the_channel_premise() {
     }));
 
     let refused = assess_duplicate_delivery("exactly-once-premise");
-    assert!(refused
-        .facts
-        .iter()
-        .any(|fact| matches!(fact, RecordingFact::DuplicateDelivery { .. })));
+    assert!(
+        refused
+            .facts
+            .iter()
+            .any(|fact| matches!(fact, RecordingFact::DuplicateDelivery { .. }))
+    );
     assert!(refused.obligations.iter().any(|entry| {
         entry.obligation.kind == "channel-premise"
             && entry.obligation.node.as_deref() == Some("Order")
@@ -896,10 +1089,12 @@ fn an_unregistered_compensation_is_not_required_when_its_effect_was_not_observed
     closed["closure"]["premises"] = json!([{"kind":"execution", "node":"Pay::Done"}]);
     let assessed =
         assess_recording(&package, closed.to_string().as_bytes()).expect("readable paid recording");
-    assert!(!assessed
-        .obligations
-        .iter()
-        .any(|entry| entry.obligation.kind == "compensation"));
+    assert!(
+        !assessed
+            .obligations
+            .iter()
+            .any(|entry| entry.obligation.kind == "compensation")
+    );
 }
 
 /// Trace: FR-895-AC-2.
@@ -1115,6 +1310,53 @@ fn mixed_cases_across_repeat_iterations_remain_pending() {
     );
 }
 
+/// Repeated observations of the same case are assessed independently; a
+/// later false guard must refute the choice even when its first guard held.
+#[trace("FR-895-AC-1")]
+#[test]
+fn repeated_same_case_checks_each_guard_observation() {
+    let mut source = crate::analyze_cli_support::order_protocol(true).replace(
+        "run sequence Main {",
+        "run sequence Main { repeat Loop by Seller visible () max 2 while { true } sequence Body {",
+    );
+    let finish = source.find("finish Done").expect("finish terminal");
+    let body_close = source[..finish]
+        .rfind(" }")
+        .expect("the main sequence closes before finish");
+    source.replace_range(
+        body_close..body_close + 2,
+        " } exhausted sequence Out { } }",
+    );
+    let package = crate::litmus::package_called("analysis-unit", &source);
+    let run = json!({
+        "format":"filament.protocol-recording/1", "protocol":"Flow",
+        "observations":[
+            {"kind":"send", "node":"Flow::Main::Loop::Body::Placed", "role":"Buyer", "keys":{"message":"m-1", "delivery":"d-1"}, "record":{"ok":true}},
+            {"kind":"receive", "node":"Flow::Main::Loop::Body::Got", "role":"Seller", "keys":{"message":"m-1", "delivery":"d-1"}, "record":{"ok":true}},
+            {"kind":"case", "node":"Flow::Main::Loop::Body::Decide::yes", "role":"Seller", "keys":{}},
+            {"kind":"send", "node":"Flow::Main::Loop::Body::Placed", "role":"Buyer", "keys":{"message":"m-2", "delivery":"d-2"}, "record":{"ok":false}},
+            {"kind":"receive", "node":"Flow::Main::Loop::Body::Got", "role":"Seller", "keys":{"message":"m-2", "delivery":"d-2"}, "record":{"ok":false}},
+            {"kind":"case", "node":"Flow::Main::Loop::Body::Decide::yes", "role":"Seller", "keys":{}}
+        ],
+        "local_order":{"Buyer":[0,3], "Seller":[1,2,4,5]},
+        "correlations":[{"send":0,"receive":1}, {"send":3,"receive":4}],
+        "closure":{"state":"open", "premises":[]}
+    });
+    let assessed = assess_recording(&package, run.to_string().as_bytes())
+        .expect("readable repeated-choice recording");
+    assert!(
+        assessed.obligations.iter().any(|entry| {
+            entry.obligation.kind == "control"
+                && entry.obligation.node.as_deref() == Some("Flow::Main::Loop::Body::Decide")
+                && entry.verdict == RecordingVerdict::Violated
+                && entry.witness.contains(&2)
+                && entry.witness.contains(&5)
+        }),
+        "{:#?}",
+        assessed.obligations
+    );
+}
+
 /// Trace: FR-895 control obligations.
 #[trace("FR-895-AC-1")]
 #[test]
@@ -1226,7 +1468,10 @@ fn predicate_join_evaluates_the_checked_function_over_branch_premises() {
     ]);
     let refusal = assess_recording(&package, incomplete.to_string().as_bytes())
         .expect_err("omitted closure premise is refused");
-    assert!(format!("{refusal}").contains("closure premise set"), "{refusal:?}");
+    assert!(
+        format!("{refusal}").contains("closure premise set"),
+        "{refusal:?}"
+    );
 }
 
 /// Trace: FR-895 channel premises.
@@ -1274,6 +1519,9 @@ fn closure_workflow_premise_is_retained_as_recorded_fact() {
     });
     let assessed = assess_recording(&package, run.to_string().as_bytes()).expect("readable run");
     assert_eq!(assessed.closure.premises.len(), 1);
-    assert_eq!(assessed.closure.premises[0].kind, fsl_analyze::protocol_analysis::recording::RecordingPremiseKind::Workflow);
+    assert_eq!(
+        assessed.closure.premises[0].kind,
+        fsl_analyze::protocol_analysis::recording::RecordingPremiseKind::Workflow
+    );
     assert_eq!(assessed.closure.premises[0].node, "Pay::Main::Spend");
 }

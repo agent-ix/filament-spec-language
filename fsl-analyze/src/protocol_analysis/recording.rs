@@ -339,6 +339,8 @@ struct Observation {
     #[serde(default)]
     instance: Option<String>,
     #[serde(default)]
+    role_instance: Option<RecordingRoleInstance>,
+    #[serde(default)]
     keys: BTreeMap<String, serde_json::Value>,
     #[serde(default)]
     record: Option<serde_json::Value>,
@@ -411,11 +413,11 @@ pub fn assess_recording(
         })?;
     if !matches!(
         document.closure.state.as_str(),
-        "open" | "closed" | "contradicted"
+        "open" | "closed" | "incomplete" | "contradicted"
     ) {
         return Err(RecordingRefusal::new(
             "invalid-value",
-            "closure state must be open, closed or contradicted",
+            "closure state must be open, closed, incomplete or contradicted",
             None,
         ));
     }
@@ -434,6 +436,30 @@ pub fn assess_recording(
                 format!("undeclared role `{}`", observation.role),
                 Some(position),
             ));
+        }
+        if let Some(role_instance) = &observation.role_instance {
+            if role_instance.authority.is_empty() || role_instance.identity.is_empty() {
+                return Err(RecordingRefusal::new(
+                    "invalid-value",
+                    "role_instance requires nonempty authority and identity",
+                    Some(position),
+                ));
+            }
+            if !protocol
+                .roles
+                .iter()
+                .find(|role| role.name == observation.role)
+                .is_some_and(|role| role.replicated)
+            {
+                return Err(RecordingRefusal::new(
+                    "invalid-value",
+                    format!(
+                        "static role `{}` cannot name a role_instance",
+                        observation.role
+                    ),
+                    Some(position),
+                ));
+            }
         }
         let Some(expected_kind) = nodes.get(observation.node.as_str()) else {
             return Err(RecordingRefusal::new(
@@ -459,7 +485,7 @@ pub fn assess_recording(
     validate_correlations(&document)?;
     validate_identities(&document)?;
 
-    let obligations = assess_obligations(package, protocol, &document);
+    let obligations = assess_obligations(package, protocol, &document, closure_scope_complete);
     let trace_position = obligations
         .iter()
         .find(|entry| {
@@ -532,7 +558,10 @@ fn validate_closure_premises(
     if document.closure.state != "closed" {
         return Ok(false);
     }
-    let on_each = protocol.roles.iter().any(|role| role.replicated);
+    let on_each = matches!(
+        protocol.obligations.activation,
+        fsl_semantics::check::CheckedActivation::OnEach { .. }
+    );
     let instances = if on_each {
         document
             .observations
@@ -557,6 +586,7 @@ fn validate_closure_premises(
     }
 
     let mut expected = BTreeSet::new();
+    let mut has_unresolved_fanout_scope = false;
     let Some((_, finish)) = &protocol.finish else {
         return Err(RecordingRefusal::new(
             "established-invariant-broken",
@@ -579,12 +609,66 @@ fn validate_closure_premises(
             ) {
                 continue;
             }
-            expected.insert(RecordingPremise {
-                kind: RecordingPremiseKind::Branch,
-                instance: instance.clone(),
-                node: format!("{}::{}", protocol.name, control.path.join("::")),
-                role_instance: None,
-            });
+            let node = format!("{}::{}", protocol.name, control.path.join("::"));
+            let fanout_roles = protocol
+                .owners
+                .iter()
+                .filter_map(|owner| {
+                    let role = protocol.roles.get(owner.role)?;
+                    if !role.replicated
+                        || !protocol_node_name(protocol, owner.node.0)
+                            .starts_with(&format!("{node}::"))
+                    {
+                        return None;
+                    }
+                    Some(role.name.as_str())
+                })
+                .collect::<BTreeSet<_>>();
+            let members = document
+                .observations
+                .iter()
+                .filter(|observation| {
+                    observation.instance == *instance
+                        && fanout_roles.contains(observation.role.as_str())
+                        && observation.node.starts_with(&format!("{node}::"))
+                })
+                .collect::<Vec<_>>();
+            if fanout_roles.is_empty() {
+                expected.insert(RecordingPremise {
+                    kind: RecordingPremiseKind::Branch,
+                    instance: instance.clone(),
+                    node,
+                    role_instance: None,
+                });
+            } else {
+                // The request has no population binding from which to prove
+                // that the observed member references enumerate the complete
+                // fan-out. Validate their stated premises, but keep closure
+                // unsettled until that scope is available.
+                has_unresolved_fanout_scope = true;
+                let mut role_instances = BTreeSet::new();
+                for observation in members {
+                    let Some(role_instance) = &observation.role_instance else {
+                        return Err(RecordingRefusal::new(
+                            "invalid-value",
+                            format!(
+                                "fan-out observation at `{}` has no role_instance",
+                                observation.node
+                            ),
+                            None,
+                        ));
+                    };
+                    role_instances.insert(role_instance.clone());
+                }
+                for role_instance in role_instances {
+                    expected.insert(RecordingPremise {
+                        kind: RecordingPremiseKind::Branch,
+                        instance: instance.clone(),
+                        node: node.clone(),
+                        role_instance: Some(role_instance),
+                    });
+                }
+            }
         }
     }
 
@@ -593,15 +677,20 @@ fn validate_closure_premises(
         if observation.kind != ObservationKind::Effect {
             continue;
         }
-        let Some(template) = protocol.obligations.compensations.iter().find(|template| {
-            protocol_node_name(protocol, template.effect.0) == observation.node
-        }) else {
+        let Some(template) =
+            protocol.obligations.compensations.iter().find(|template| {
+                protocol_node_name(protocol, template.effect.0) == observation.node
+            })
+        else {
             continue;
         };
         if !observation.keys.contains_key("registration") {
             return Err(RecordingRefusal::new(
                 "invalid-value",
-                format!("compensation registration at `{}` has no registration key", observation.node),
+                format!(
+                    "compensation registration at `{}` has no registration key",
+                    observation.node
+                ),
                 None,
             ));
         }
@@ -634,7 +723,9 @@ fn validate_closure_premises(
         let extra: Vec<_> = actual_set.difference(&expected).cloned().collect();
         return Err(RecordingRefusal::new(
             "invalid-value",
-            format!("closure premise set does not match protocol scope (missing: {missing:?}; extra: {extra:?})"),
+            format!(
+                "closure premise set does not match protocol scope (missing: {missing:?}; extra: {extra:?})"
+            ),
             None,
         ));
     }
@@ -644,7 +735,10 @@ fn validate_closure_premises(
     // unsettled instead of being collapsed into one apparently complete fact.
     let ambiguous_workflows = workflow_identities.values().any(|count| *count > 1);
     let unresolved_fanout = actual.iter().any(|premise| premise.role_instance.is_some());
-    Ok(!ambiguous_workflows && !unresolved_fanout && !(on_each && instances.is_empty()))
+    Ok(!ambiguous_workflows
+        && !unresolved_fanout
+        && !has_unresolved_fanout_scope
+        && !(on_each && instances.is_empty()))
 }
 
 fn recording_facts(protocol: &CheckedProtocol, document: &RecordingDocument) -> Vec<RecordingFact> {
@@ -1089,6 +1183,7 @@ fn assess_obligations(
     package: &CheckedPackage,
     protocol: &CheckedProtocol,
     document: &RecordingDocument,
+    closure_scope_complete: bool,
 ) -> Vec<RecordingObligation> {
     let mut obligations = Vec::new();
     let closure_closed = document.closure.state == "closed";
@@ -1306,29 +1401,45 @@ fn assess_obligations(
                     .collect::<BTreeSet<_>>()
                     .len()
                     > 1;
-            let choice_verdict = if repeated_choice_is_ambiguous {
-                decisions.first().map(|(position, _)| (*position, None))
+            let choice_verdict = if control.kind.label() != "choice" || decisions.is_empty() {
+                None
             } else {
-                decisions.first().and_then(|(position, observation)| {
+                let positions = decisions.iter().map(|(position, _)| *position).collect();
+                let result = if repeated_choice_is_ambiguous {
+                    None
+                } else {
                     let choice = protocol
                         .slots
                         .choices
                         .iter()
-                        .find(|choice| choice.node == control.node)?;
-                    let case_name = observation.node.rsplit("::").next()?;
-                    let case = choice.cases.iter().find(|case| case.name == case_name)?;
-                    Some((
-                        *position,
-                        evaluate_body(
-                            package,
-                            protocol,
-                            document,
-                            &case.guard,
-                            observation.instance.as_deref(),
-                            *position,
-                        ),
-                    ))
-                })
+                        .find(|choice| choice.node == control.node);
+                    let values = decisions
+                        .iter()
+                        .filter_map(|(position, observation)| {
+                            let choice = choice?;
+                            let case_name = observation.node.rsplit("::").next()?;
+                            let case = choice.cases.iter().find(|case| case.name == case_name)?;
+                            Some(evaluate_body(
+                                package,
+                                protocol,
+                                document,
+                                &case.guard,
+                                observation.instance.as_deref(),
+                                *position,
+                            ))
+                        })
+                        .collect::<Vec<_>>();
+                    if values.len() != decisions.len()
+                        || values.iter().any(|value| *value == Some(false))
+                    {
+                        Some(false)
+                    } else if values.iter().any(Option::is_none) {
+                        None
+                    } else {
+                        Some(true)
+                    }
+                };
+                Some((positions, result))
             };
             let check_verdict = if control.kind.label() == "check" {
                 let body = protocol
@@ -1457,31 +1568,55 @@ fn assess_obligations(
                         .filter_map(|child| protocol.controls.control(*child))
                         .map(|branch| format!("{}::{}", protocol.name, branch.path.join("::")))
                         .collect::<Vec<_>>();
-                    let closed_branches = branch_names
+                    let branch_states = branch_names
                         .iter()
-                        .filter(|branch| {
-                            let premise_instance = protocol
-                                .roles
-                                .iter()
-                                .any(|role| role.replicated)
-                                .then_some(instance.as_deref())
-                                .flatten();
-                            document.closure.premises.iter().any(|premise| {
-                                premise.kind == RecordingPremiseKind::Branch
-                                    && premise.instance.as_deref() == premise_instance
-                                    && premise.node == **branch
-                            })
+                        .map(|branch| {
+                            branch_completion(
+                                protocol,
+                                document,
+                                &qualified,
+                                branch,
+                                instance.as_deref(),
+                            )
                         })
+                        .collect::<Vec<_>>();
+                    let completed_branches = branch_states
+                        .iter()
+                        .filter(|completed| **completed == Some(true))
+                        .count();
+                    let undecided_branches = branch_states
+                        .iter()
+                        .filter(|completed| completed.is_none())
                         .count();
                     let policy_holds = match &parallel.policy {
                         fsl_semantics::check::CheckedJoinPolicy::All => {
-                            Some(closed_branches == branch_names.len())
+                            if completed_branches == branch_names.len() {
+                                Some(true)
+                            } else if completed_branches + undecided_branches < branch_names.len() {
+                                Some(false)
+                            } else {
+                                None
+                            }
                         }
-                        fsl_semantics::check::CheckedJoinPolicy::Any => Some(closed_branches >= 1),
+                        fsl_semantics::check::CheckedJoinPolicy::Any => {
+                            if completed_branches > 0 {
+                                Some(true)
+                            } else if undecided_branches == 0 {
+                                Some(false)
+                            } else {
+                                None
+                            }
+                        }
                         fsl_semantics::check::CheckedJoinPolicy::Quorum(count) => {
-                            usize::try_from(*count)
-                                .ok()
-                                .map(|required| closed_branches >= required)
+                            usize::try_from(*count).ok().and_then(|required| {
+                                if completed_branches >= required {
+                                    Some(true)
+                                } else if completed_branches + undecided_branches < required {
+                                    Some(false)
+                                } else {
+                                    None
+                                }
+                            })
                         }
                         fsl_semantics::check::CheckedJoinPolicy::Predicate { function } => {
                             let mut labels = parallel.joined.clone();
@@ -1494,20 +1629,16 @@ fn assess_obligations(
                                         .iter()
                                         .filter_map(|child| protocol.controls.control(*child))
                                         .find(|branch| branch.name == *label)?;
-                                    let qualified =
+                                    let branch_qualified =
                                         format!("{}::{}", protocol.name, branch.path.join("::"));
-                                    let premise_instance = protocol
-                                        .roles
-                                        .iter()
-                                        .any(|role| role.replicated)
-                                        .then_some(instance.as_deref())
-                                        .flatten();
-                                    let completed = document.closure.premises.iter().any(|premise| {
-                                        premise.kind == RecordingPremiseKind::Branch
-                                            && premise.instance.as_deref() == premise_instance
-                                            && premise.node == qualified
-                                    });
-                                    Some(Value::Boolean(completed))
+                                    branch_completion(
+                                        protocol,
+                                        document,
+                                        &qualified,
+                                        &branch_qualified,
+                                        instance.as_deref(),
+                                    )
+                                    .map(Value::Boolean)
                                 })
                                 .collect::<Option<Vec<_>>>();
                             arguments.and_then(|arguments| {
@@ -1537,12 +1668,6 @@ fn assess_obligations(
                             Some(RecordingCause::Missing),
                             Vec::new(),
                         )
-                    } else if closure_closed {
-                        (
-                            RecordingVerdict::Violated,
-                            Some(RecordingCause::Missing),
-                            Vec::new(),
-                        )
                     } else {
                         (RecordingVerdict::Pending, None, Vec::new())
                     }
@@ -1551,13 +1676,13 @@ fn assess_obligations(
                 None
             };
             let (verdict, cause, witness) = match choice_verdict {
-                Some((position, Some(true))) => (RecordingVerdict::Satisfied, None, vec![position]),
-                Some((position, Some(false))) => (
+                Some((positions, Some(true))) => (RecordingVerdict::Satisfied, None, positions),
+                Some((positions, Some(false))) => (
                     RecordingVerdict::Violated,
                     Some(RecordingCause::Unexpected),
-                    vec![position],
+                    positions,
                 ),
-                Some((position, None)) => (RecordingVerdict::Pending, None, vec![position]),
+                Some((positions, None)) => (RecordingVerdict::Pending, None, positions),
                 None if check_verdict.is_some() => match check_verdict.unwrap_or((None, None)) {
                     (Some(position), Some(true)) => {
                         (RecordingVerdict::Satisfied, None, vec![position])
@@ -2273,22 +2398,25 @@ fn assess_obligations(
                     && document.observations[*position].instance == instance
             })
         });
-        let (verdict, cause, witness) =
-            if finish_seen && document.closure.state == "closed" && finish_enabled {
-                (
-                    RecordingVerdict::Satisfied,
-                    None,
-                    finish.cloned().unwrap_or_default(),
-                )
-            } else if document.closure.state == "closed" && finish_enabled {
-                (
-                    RecordingVerdict::Violated,
-                    Some(RecordingCause::Missing),
-                    Vec::new(),
-                )
-            } else {
-                (RecordingVerdict::Pending, None, Vec::new())
-            };
+        let (verdict, cause, witness) = if finish_seen
+            && document.closure.state == "closed"
+            && finish_enabled
+            && closure_scope_complete
+        {
+            (
+                RecordingVerdict::Satisfied,
+                None,
+                finish.cloned().unwrap_or_default(),
+            )
+        } else if document.closure.state == "closed" && finish_enabled && closure_scope_complete {
+            (
+                RecordingVerdict::Violated,
+                Some(RecordingCause::Missing),
+                Vec::new(),
+            )
+        } else {
+            (RecordingVerdict::Pending, None, Vec::new())
+        };
         obligations.push(RecordingObligation {
             obligation: RecordingObligationId {
                 kind: "closure".to_owned(),
@@ -2569,6 +2697,68 @@ fn evaluate_body(
     }
 }
 
+fn branch_completion(
+    protocol: &CheckedProtocol,
+    document: &RecordingDocument,
+    parallel_node: &str,
+    branch_node: &str,
+    instance: Option<&str>,
+) -> Option<bool> {
+    let premise_instance = matches!(
+        protocol.obligations.activation,
+        fsl_semantics::check::CheckedActivation::OnEach { .. }
+    )
+    .then_some(instance)
+    .flatten();
+    let fanout_roles = protocol
+        .owners
+        .iter()
+        .filter_map(|owner| {
+            let role = protocol.roles.get(owner.role)?;
+            if !role.replicated
+                || !protocol_node_name(protocol, owner.node.0)
+                    .starts_with(&format!("{branch_node}::"))
+            {
+                return None;
+            }
+            Some(role.name.as_str())
+        })
+        .collect::<BTreeSet<_>>();
+
+    if fanout_roles.is_empty() {
+        return Some(document.closure.premises.iter().any(|premise| {
+            premise.kind == RecordingPremiseKind::Branch
+                && premise.instance.as_deref() == premise_instance
+                && premise.node == branch_node
+                && premise.role_instance.is_none()
+        }));
+    }
+
+    let mut members = BTreeSet::new();
+    for observation in document.observations.iter().filter(|observation| {
+        observation.instance.as_deref() == instance
+            && fanout_roles.contains(observation.role.as_str())
+            && observation.node.starts_with(&format!("{parallel_node}::"))
+    }) {
+        let Some(role_instance) = &observation.role_instance else {
+            return None;
+        };
+        members.insert(role_instance.clone());
+    }
+    if members.is_empty() {
+        return None;
+    }
+
+    Some(members.iter().all(|role_instance| {
+        document.closure.premises.iter().any(|premise| {
+            premise.kind == RecordingPremiseKind::Branch
+                && premise.instance.as_deref() == premise_instance
+                && premise.node == branch_node
+                && premise.role_instance.as_ref() == Some(role_instance)
+        })
+    }))
+}
+
 /// Whether a recorded action has the branch decision required by its checked
 /// control ancestry before it occurs.
 fn observation_enabled(
@@ -2604,6 +2794,7 @@ fn observation_enabled(
         .observations
         .iter()
         .filter(|entry| entry.node == observation.node && entry.instance == observation.instance)
+        .filter(|entry| entry.role_instance == observation.role_instance)
         .count();
     if !u64::try_from(occurrences).is_ok_and(|count| count <= occurrence_limit) {
         return Some(false);
@@ -2617,6 +2808,7 @@ fn observation_enabled(
             .filter(|entry| {
                 entry.kind == ObservationKind::Case
                     && entry.instance == observation.instance
+                    && entry.role_instance == observation.role_instance
                     && entry.node.starts_with(&format!("{choice_name}::"))
             })
             .count();
@@ -2646,11 +2838,17 @@ fn observation_enabled(
         }
         let case_name = format!("{}::{}", protocol.name, selected_case.path.join("::"));
         let choice_name = format!("{}::{}", protocol.name, ancestor.path.join("::"));
-        let selected = document.observations.iter().enumerate().filter(|(_, entry)| {
-            entry.kind == ObservationKind::Case
-                && entry.node.starts_with(&format!("{choice_name}::"))
-                && entry.instance == observation.instance
-        }).collect::<Vec<_>>();
+        let selected = document
+            .observations
+            .iter()
+            .enumerate()
+            .filter(|(_, entry)| {
+                entry.kind == ObservationKind::Case
+                    && entry.node.starts_with(&format!("{choice_name}::"))
+                    && entry.instance == observation.instance
+                    && entry.role_instance == observation.role_instance
+            })
+            .collect::<Vec<_>>();
         if selected.is_empty() {
             return Some(false);
         }
@@ -2666,7 +2864,8 @@ fn observation_enabled(
             // Mixed repeated choices cannot safely prove or refute this path.
             return None;
         }
-        let Some((case_position, _)) = selected.iter().find(|(_, entry)| entry.node == case_name) else {
+        let Some((case_position, _)) = selected.iter().find(|(_, entry)| entry.node == case_name)
+        else {
             return Some(false);
         };
         if !causally_after(protocol, document, position, *case_position) {

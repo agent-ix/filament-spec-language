@@ -10,16 +10,16 @@ use std::path::Path;
 
 use filament_exact::{Cancel, CancelCause};
 use fsl_analyze::analyze::document::{
-    analyze_document, resolve_items, AnalyzeDocumentError, AnalyzeRun, ItemSelection, Negotiate,
-    SubjectSelection,
+    AnalyzeDocumentError, AnalyzeRun, ItemSelection, Negotiate, SubjectSelection, analyze_document,
+    resolve_items,
 };
 use fsl_analyze::analyze::{AnalyzeLimits, DeadlineSupply, Engine, Engines, SourceProvision};
 use fsl_analyze::provider::ProviderOptions;
 use fsl_semantics::model::observation::DocumentProvision;
 
 use super::{
-    check_sources, intake_with_bytes, request, require_complete_edition, wire, FileCounts,
-    FormalSource, NativeResult, Result, RunCause, RunError, RunLimits, RunResult,
+    FileCounts, FormalSource, NativeResult, Result, RunCause, RunError, RunLimits, RunResult,
+    check_sources, intake_with_bytes, request, require_complete_edition, wire,
 };
 
 fn invalid(member: &str, reason: impl Into<String>) -> RunCause {
@@ -162,7 +162,21 @@ fn read<'d>(
                 )
                 .map_err(|error| {
                     invalid(
-                        &format!("/documents/{position}"),
+                        &format!("/documents/{position}/identity"),
+                        format!("document identity is malformed: {error}"),
+                    )
+                })?,
+            ),
+            None => None,
+        };
+        let stated_identity = match &document.identity {
+            Some(value) => Some(
+                serde_json::from_value::<fsl_analyze::analyze::document::DocumentSelection>(
+                    value.clone(),
+                )
+                .map_err(|error| {
+                    invalid(
+                        &format!("/documents/{position}/identity"),
                         format!("document identity is malformed: {error}"),
                     )
                 })?,
@@ -175,7 +189,7 @@ fn read<'d>(
                 "a supplied snapshot uses its declared identity and cannot state a wrapper identity",
             ));
         }
-        if let (Some(declared), Some(stated)) = (&declared_identity, &document.identity) {
+        if let (Some(declared), Some(stated)) = (&declared_identity, &stated_identity) {
             if declared != stated {
                 return Err(invalid(
                     &format!("/documents/{position}/identity"),
@@ -186,7 +200,7 @@ fn read<'d>(
                 ));
             }
         }
-        let Some(identity) = declared_identity.as_ref().or(document.identity.as_ref()) else {
+        let Some(identity) = declared_identity.as_ref().or(stated_identity.as_ref()) else {
             return Err(invalid(
                 &format!("/documents/{position}"),
                 format!("{} declares no identity and none was stated", document.file),
@@ -224,16 +238,17 @@ fn read<'d>(
             ));
         }
     }
-    for (position, recording) in request
-        .items
-        .iter()
-        .flatten()
-        .enumerate()
-        .filter_map(|(position, item)| {
-            item.recording
-                .as_ref()
-                .map(|recording| (position, recording))
-        })
+    for (position, recording) in
+        request
+            .items
+            .iter()
+            .flatten()
+            .enumerate()
+            .filter_map(|(position, item)| {
+                item.recording
+                    .as_ref()
+                    .map(|recording| (position, recording))
+            })
     {
         let identity = recording.reference();
         if !recording_documents.contains(&(identity.authority.clone(), identity.identity.clone())) {

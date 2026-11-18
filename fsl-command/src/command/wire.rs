@@ -2,8 +2,8 @@
 //! FR-026–028, FR-031: closed records; existing constructors own identifier validity.
 
 use filament_contract_model as ir;
-use fsl_foundation::serde_object::{deserialize_objects, from_object};
 use fsl_foundation::AccountingSetting;
+use fsl_foundation::serde_object::{deserialize_objects, from_object};
 use serde::Deserialize;
 use serde_json::value::RawValue;
 
@@ -153,7 +153,7 @@ fn compile_program<'de, D: serde::Deserializer<'de>>(
         other => {
             return Err(serde::de::Error::custom(format!(
                 "expected a compile program object or source array, found {other}"
-            )))
+            )));
         }
     };
     Ok(CompileProgram {
@@ -490,7 +490,7 @@ pub(super) struct FileSelection {
 pub(super) struct DocumentFileSelection {
     pub file: String,
     #[serde(default)]
-    pub identity: Option<fsl_analyze::analyze::document::DocumentSelection>,
+    pub identity: Option<serde_json::Value>,
 }
 
 /// The request-level `limits`: what every item of the run shares.
