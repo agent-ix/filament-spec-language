@@ -39,6 +39,8 @@ relationships:
     type: depends_on
   - target: ix://agent-ix/filament-specification/FR-466
     type: depends_on
+  - target: ix://agent-ix/filament-specification/FR-822
+    type: depends_on
   - target: ix://agent-ix/filament-spec-language/FR-086
     type: depends_on
   - target: ix://agent-ix/filament-spec-language/FR-088
@@ -95,8 +97,9 @@ protocol system only ever runs a protocol whose meaning is fixed.
   `requires temporal` requirements, each bound to the temporal clause it names
   by that clause's position among the unit's `temporal` clauses in declaration
   order; the owner and visible facts of each `choice` and `repeat`; the owner of each `send` (its channel's `from` role) and each `receive` (its channel's `to` role);
-  the compensation templates and the activation (FR-381); and the protocol's
-  `terminal` and `scheduling` members (FR-211, FR-212).
+  the compensation templates and the activation (FR-381); the protocol's
+  `terminal` and `scheduling` members (FR-211, FR-212); and each observe-only
+  role and control and each `recommend` (Observe-only boundaries).
 - A typed `CheckRefusal` with a span on refusal, and no checked clause.
   Every refusal in this requirement holds the S3 stage, the `ProtocolClause`
   family, the code and cause named at it, the located span named at it and the
@@ -611,6 +614,54 @@ capture enclosed within a composite expression remains permitted.
   FR-255's setting at every entry point. Atom collection and comparison add
   no charge beyond the checked guard-term node charges.
 
+### Observe-only boundaries
+
+A role member or a control written with the leading word `observe` is
+observe-only (FSpec FR-822, shared grammar `role` and `control`): `observe
+role Auditor on M::Actor;` marks every action the role performs, and `observe
+sequence Review { ... }` marks the control and every control nested in it.
+`observe` is a keyword only as the first word of a role member or a control,
+so a capture, binder or type named `observe` keeps its meaning. The parser
+SHALL refuse `observe observe` with `invalid_syntax`/`unexpected-token` at the
+second `observe`, and the formatter SHALL print `observe` and one space before
+the role or control keyword (FR-003). The boundary is written in the source,
+not inferred from a run, so S3 proves it once for every consumer.
+
+- An action is behind an observe-only boundary when an observe-only control
+  holds it, at any depth (cases, branches, bodies, `exhausted`, and an
+  `await`'s `match` event, `then` and `timeout` controls included), or an
+  observe-only role performs it: an `attempt`, `event`, `commit` or
+  `recommend` `by` the role, a `send` on a channel whose `from` is the role, a
+  `receive` on a channel whose `to` is the role, and a compensation template
+  `by` the role.
+- S3 SHALL refuse, behind an observe-only boundary, each `attempt`, `effect`,
+  `send`, `commit`, `event` with a `for` target and compensation template with
+  `ill_typed`/`operator-ineligible` located at the offending action's own
+  declaration (its keyword through its `;`), retaining `action` (`attempt`,
+  `effect`, `send`, `commit`, `event-for` or `compensate`) and `boundary`
+  (the innermost observe-only control above the action, else the role). Each
+  offending action refuses once, in source order, and no refusal is placed at
+  the role or the observe-only control. These are the actions that change the
+  model state, a queue another role takes from, or a compensation
+  registration.
+- S3 SHALL admit `receive`, a domain `event` with no `for`, `check`, `choice`,
+  `repeat`, `sequence`, `parallel`, `await`, `fence` and `recommend` behind the
+  boundary, with the captures and guards they read. A clause with no offending
+  action checks to the checked clause it has with every `observe` removed,
+  plus the recorded marks.
+- **Recommend.** `recommend N by R on T::op contracts [...] as (r: B)
+  { constraint };` is admitted anywhere an event node is. S3 SHALL resolve
+  `R`, `T::op` and the `contracts` as it does for an `attempt` (FR-114), and
+  SHALL admit any declared `B`. A recommendation applies no operation and has
+  no result, so S3 SHALL refuse every read of `r` with `ill_typed`/
+  `type-mismatch` at the read, retaining `expected` (no result) and `actual`
+  (`B`), as for an attempt over an operation with no result; a recommend
+  binder is eligible as a decision fact for no role.
+- S3 SHALL record on the checked clause each observe-only role and each
+  observe-only control as written, and each `recommend` with its role,
+  operation, contracts and binder; S4 emits them as FSpec FR-465's and
+  FR-466's `boundary` argument and `recommend` operator (FR-383).
+
 ### Scopes
 
 - For each binder, S3 SHALL record the set of nodes that read it, by the
@@ -714,6 +765,9 @@ one protocol declared in the same unit. It carries no package selector.
 | FR-218-AC-42 | With `capture ready: Boolean = input.ready;`, a `choice` by `R` with `visible ()` whose guards are `ready` and `not ready` checks, and its guards read the capture. The same `choice` with guards `input.ready` and `not input.ready` refuses twice with `ill_typed`/`operator-ineligible`, naming the guard slot, and each refusal region's text is exactly `input.ready`; no refusal region covers the guard block, the `choice` or the protocol declaration. | Test (TC-2021) |
 | FR-218-AC-43 | A `repeat` with `invariant { true } variant { n }` checks when `n` has an integer type and when the variant is a tuple of two integer-typed terms; a variant of type `Boolean` and a variant of a record type each refuse `ill_typed`/`type-mismatch` at the variant, retaining `expected` and `actual`. | Test (TC-2022) |
 | FR-218-AC-44 | Over the Cell fixture, whose `flag` returns `Boolean` and whose `touch` returns nothing: `attempt T by w on M::Cell::flag contracts [FlagPre, FlagPost] as (t: Boolean) { true }` followed by `check Gate using v { t }` checks and the check reads the result; the same attempt with `as (t: Integer)` and no read of `t`, and the `touch` attempt with `as (t: Boolean)` and no read, each check; with `as (t: Integer)` and `check Gate using v { t = 1 }`, and with the `touch` attempt and `check Gate using v { t }`, each unit refuses exactly once, `ill_typed`/`type-mismatch` at the read `t` inside the check, never at the binder declaration, retaining `expected` `Boolean` (or no result for `touch`) and `actual` the binder's type; two reads of a mismatched binder refuse twice, once at each read. | Test (TC-2972) |
+| FR-218-AC-45 | `observe role Auditor on M::Actor;` with a `receive` to `Auditor`, a `choice by Auditor`, a `check` and `recommend Advise by Auditor on M::Actor::op contracts [] as (r: Boolean) { true };` checks, and `run observe sequence Review { check Gate using v { true }; recommend Advise by R on M::Actor::op contracts [] as (r: Boolean) { true }; }` checks; each checked clause records the observe-only role or control, and the same clauses without `observe` check to clauses equal except for those marks. `observe observe sequence ...` fails at the parser with `invalid_syntax`/`unexpected-token` at the second `observe`, and a capture named `observe` checks. | Test (TC-2989) |
+| FR-218-AC-46 | Inside `observe sequence Review`, each of `attempt Tried by R on M::Actor::op ...`, an `effect` of an attempt outside `Review`, a `send`, a `commit` and an `event ... for` a compensation refuses `ill_typed`/`operator-ineligible` whose refusal region's text is exactly that action's declaration, retaining `action` (`attempt`, `effect`, `send`, `commit`, `event-for`) and `boundary` `Review`; the same action outside `Review` checks. Under `observe role R`, `attempt Tried by R ...` refuses with `boundary` `R`, and a compensation template `by R` refuses with `action` `compensate` at the template. A nested `choice` in `Review` holding the attempt in one case refuses at the attempt. Two offending actions give two refusals in source order and none whose region is the role or the `Review` header. | Test (TC-2989) |
+| FR-218-AC-47 | A `recommend` over an unknown operation refuses as an `attempt` over it does; a `recommend` whose `contracts` names a clause of another operation refuses as for an attempt; a `while` guard or `visible` entry reading the recommend binder `r` refuses `ill_typed`/`type-mismatch` at the read with `expected` no result. | Test (TC-2989) |
 
 ## Dependencies
 

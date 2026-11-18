@@ -26,6 +26,7 @@ mod controls;
 mod coverage;
 mod declaration;
 mod graph;
+mod observe_only;
 mod refusal_corpus;
 mod rules;
 

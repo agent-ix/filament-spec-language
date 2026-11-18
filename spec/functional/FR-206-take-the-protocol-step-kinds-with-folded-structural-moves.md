@@ -25,14 +25,16 @@ relationships:
     type: depends_on
   - target: ix://agent-ix/filament-specification/FR-426
     type: depends_on
+  - target: ix://agent-ix/filament-specification/FR-822
+    type: depends_on
 ---
 # FR-206: Take the protocol step kinds, with structural moves folded and attempts atomic
 
 ## Description
 
 The protocol system SHALL take the step kinds `attempt`, `event`, `send`,
-`receive`, `duplicate`, `lose`, `fork`, `join`, `timeout`, `finish`,
-`fence` and memory steps, each enabled and applied as FSpec FR-426 states
+`receive`, `recommend`, `duplicate`, `lose`, `fork`, `join`, `timeout`,
+`finish`, `fence` and memory steps, each enabled and applied as FSpec FR-426 states
 (ADR-027 ST-1 to ST-10). The protocol system SHALL enable a `fence` step by its memory model's
 fence rule alone and SHALL make it wait on nothing else (ADR-027 SE-5). The protocol system SHALL fold every structural
 move into the step that causes it (ADR-027 FO-1, FO-2). The protocol
@@ -106,6 +108,27 @@ add states that no behaviour distinguishes.
   the exploration with that limit's refusal, as any other evaluation the
   protocol system runs. The predicate's value is not stored in the state, so
   it is recomputed at every state where the join is reached.
+- The protocol system SHALL enable a `recommend` step for each FR-120
+  application of its operation whose effective precondition over the clauses
+  its `contracts` select is true over the thread observation, whose record
+  satisfies its constraint and where the gate holds, one step per
+  application (FSpec FR-426, FR-822). The step binds the binder to the
+  recommendation record, computes no post-state and writes nothing through
+  the memory model, and its transition carries the record
+  `{node, role, actor, instance, operation, receiver, arguments}` as
+  `recommendation`, so every behaviour, counterexample and replay that holds
+  the step holds the record.
+- The protocol system SHALL take every step of an action behind an
+  observe-only boundary (FR-218 "Observe-only boundaries"), and every
+  `recommend` step, to a successor whose model state and compensation
+  registrations equal its predecessor's; such a step changes only its own
+  thread's rest point and binder environment, a `receive` taking its one
+  delivered entry and a `fork` or `join` its own parallel instance.
+- When a run's request selects `boundary` `observe-only` (FSpec FR-822), the
+  protocol system SHALL refuse the run before its first step at each action
+  FR-218's observe-only refusals would refuse if every role and the whole
+  `run` were written `observe`, with that refusal's code, cause, region and
+  members.
 - A thread whose rest point has no enabled step SHALL wait, and a
   `cancelled` thread SHALL take no step. The protocol system SHALL leave no
   thread between two positions inside an attempt.
@@ -126,6 +149,7 @@ add states that no behaviour distinguishes.
 | FR-206-AC-10 | `run sequence Main { parallel P { branch left attempt A as (a); branch right attempt B } join all; effect E of Main::P::left::A as (e) { true } }`, with `A` and `B` always enabled: at the state after `join(P)`, `event(E)` is enabled and the root thread's environment holds `A`'s binder, added by the join. | Test (TC-651) |
 | FR-206-AC-11 | Three branches `a`, `b` and `c`, each one always-enabled attempt, joined `join predicate(f) [c, a] outstanding cancel` with `function f using v(x: Boolean, y: Boolean): Boolean pure { x and not y }`: `f` receives `a`'s disposition first and `c`'s second, so `join(P)` is enabled in a state where `a` has completed and `c` is `running`, whatever `b` is, is not enabled where only `c` has completed, and is not enabled where both have; its step makes every branch thread still `running` `cancelled`. The same protocol written `[a, c]` reaches the same states and the same transitions. | Test (TC-651) |
 | FR-206-AC-12 | Over an `unordered` channel `ch` of capacity 2 holding `P1` sent before `P2`, a third `send` of `P3` under `overflow loss head` is enabled, gives outcome `accepted` with `displaced` `P1`, and leaves `P2` and `P3` queued; under `overflow loss tail` it gives `accepted` with `displaced` `P2` and leaves `P1` and `P3` queued. In both, the protocol is explored rather than refused as unsupported, and each queued entry is still deliverable to a matching `receive`. The same sends made in the order `P2` then `P1` displace `P2` under `loss head` and `P1` under `loss tail`. With capacity 3 under `loss head` and the queue `[A, B, A]` in send order, the two `receive` steps of `A` reach the two states `[B, A]` and `[A, B]`. Under delivery `at-least-once`, capacity 3 and `loss tail`, with `P1` then `P2` queued, a `duplicate` of `P1` followed by a send of `P3` displaces the duplicate copy of `P1`, leaving `[P1, P2, P3]`; under `loss head` the same sequence displaces the original `P1`, leaving `[P2, P1, P3]`. | Test (TC-651) |
+| FR-206-AC-13 | Over the FR-218-AC-45 role clause from an `M::Actor` with `ready = false`, the reachable graph has a `recommend` step at `Advise` whose transition carries a `recommendation` naming `Advise`, `Auditor` and `M::Actor::op` with its receiver and empty arguments, and every successor of a step at `Advise` or at the `receive` to `Auditor` has the predecessor's `semantic` key member and compensation registrations; an `attempt` by another role in the same clause, over an operation writing `ready`, reaches a state with `ready = true`. A run of a clause holding an `attempt` with `boundary` `observe-only` refuses before the first step with the FR-218-AC-46 refusal at the attempt, and a clause of `receive`, `check` and `recommend` only runs with every step keeping the model state. | Test (TC-2990) |
 
 ## Dependencies
 
