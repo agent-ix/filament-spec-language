@@ -7,8 +7,8 @@
 use filament_exact::{Cancel, CancelCause, Integer, Rational};
 use filament_semantic_value::catalog::CatalogCode;
 use fsl_analyze::analyze::{
-    analyze, Aggregate, AnalyzeLimits, AnalyzeOutcome, AnalyzeRequest, ClaimItem, Engines,
-    ItemForm, ItemOptions, NegotiatedItem, ProbabilisticItem, ProbabilisticLimits, TemporalItem,
+    Aggregate, AnalyzeLimits, AnalyzeOutcome, AnalyzeRequest, ClaimItem, Engines, ItemForm,
+    ItemOptions, NegotiatedItem, ProbabilisticItem, ProbabilisticLimits, TemporalItem, analyze,
 };
 use fsl_analyze::exact_probabilistic::ExactProbLimits;
 use fsl_analyze::provider;
@@ -18,14 +18,13 @@ use fsl_replay::{
     Certification, IncompleteCause, ModelCheckLimit, ModelCheckLimits, ProofBasis,
     ProofRefusalCause, TerminalRecord, TerminalValue,
 };
-use fsl_route::{request::ExtentClassification, routing::Disposition, Candidate, EvidenceKind};
+use fsl_route::{Candidate, EvidenceKind, request::ExtentClassification, routing::Disposition};
 use fsl_semantics::check::Capability;
 use ix_trace_rs::trace;
 
 use crate::prob_world::{self, World};
 
-const CLAIMS: &str =
-    "probabilistic Likely using inf on M over (m: M::Msg) under every scheduler on origin \
+const CLAIMS: &str = "probabilistic Likely using inf on M over (m: M::Msg) under every scheduler on origin \
      { probability >= 0.95 [ eventually holds(m.delivered) ] }\n";
 
 fn item(world: &World, index: usize, limits: ExactProbLimits) -> NegotiatedItem {
@@ -55,6 +54,7 @@ fn item(world: &World, index: usize, limits: ExactProbLimits) -> NegotiatedItem 
                 seed: None,
                 sampler: None,
                 max_witnesses: None,
+                workers: None,
                 symmetry: Vec::new(),
                 timed_sampling: None,
             })),
