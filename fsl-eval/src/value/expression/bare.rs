@@ -438,6 +438,63 @@ fn evaluate_state_clause(
     Ok(ClauseEvaluation::new(evaluation, trail, receiver_path))
 }
 
+/// FR-940 package form of [`super::source_post_targets`]: the targets of
+/// the postcondition `name` read from its admitted node, bound over
+/// `observations` as [`evaluate_state_clause`] binds it, each `e` evaluated
+/// with a meter from `meter`.
+///
+/// # Errors
+///
+/// As [`evaluate_state_clause`].
+pub(crate) fn post_targets(
+    package: &BarePackage<'_>,
+    name: &QualifiedName,
+    observations: &fsl_semantics::model::observation::AdmittedObservations,
+    meter: &mut dyn FnMut() -> Meter,
+) -> Result<super::post_targets::PostTargets, CallFailure> {
+    use fsl_semantics::model::clause_observation::Observation;
+    let clause = state_clause(package, name, observations)?;
+    let world = package
+        .world()
+        .map_err(|failure| refusal(package, failure))?;
+    let names: Vec<String> = clause
+        .parameters()
+        .iter()
+        .map(|(parameter, _)| parameter.clone())
+        .collect();
+    let binds_result = clause.observation() == Observation::Post
+        && names.len() > 1
+        && observations.result.is_some();
+    let binding = super::bind_clause(clause.observation(), &names, binds_result, observations)?;
+    let reads: BTreeMap<filament_semantic_value::location::ExpressionLocation, Observation> =
+        clause
+            .projection()
+            .pre_read_locations()
+            .into_iter()
+            .map(|location| (location, Observation::Pre))
+            .collect();
+    let mut frame: Vec<Option<Value>> = binding.bindings.into_iter().map(Some).collect();
+    frame.resize(clause.projection().frame_slots().max(frame.len()), None);
+    super::post_targets::targets(
+        ReaderNode::root(clause.projection()),
+        binds_result,
+        |node| {
+            let mut meter = meter();
+            Machine::with_world(
+                World::Bytes(&world),
+                binding.current,
+                binding.pre,
+                Some(&reads),
+                &mut meter,
+                &[],
+            )
+            .run_frame(node, frame.clone())
+            .map(|evaluation| evaluation.outcome)
+            .map_err(CallFailure::Fault)
+        },
+    )
+}
+
 impl super::clause_set::ClauseHost for BarePackage<'_> {
     fn clause_observation(
         &self,

@@ -455,14 +455,14 @@ fn decode<E: From<RequestDefect>>(
         dependencies,
         replay_target: std::mem::take(&mut target_wire),
         source: replay_source,
-        obligation_identity: fsl_replay::ObligationIdentity::new(
+        obligation_identity: fsl_package::ObligationIdentity::new(
             node(
                 &obligation["node_id"],
                 "/obligation_identity/node_id",
                 &graph,
             )?,
             optional(&obligation["model"], |value| {
-                text(value, "/obligation_identity/model").map(fsl_replay::ModelIdentity::new)
+                text(value, "/obligation_identity/model").map(fsl_package::ModelIdentity::new)
             })?,
             ordinal,
         ),

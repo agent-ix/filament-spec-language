@@ -90,9 +90,14 @@ pub struct WindowProgress {
     pub lower_boundary: LowerBoundary,
 }
 
-/// The clock binding's unit and cover.
+/// The clock binding: its name and profile (FR-944 names them the owner's
+/// clock and clock revision), its unit and its cover.
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
 pub struct WindowClock {
+    /// The clock binding's name (FR-944's clock identity).
+    pub name: String,
+    /// The profile identity (FR-944's clock revision).
+    pub profile: String,
     /// The declared timestamp unit.
     pub unit: String,
     /// The declared cover of a stamp.

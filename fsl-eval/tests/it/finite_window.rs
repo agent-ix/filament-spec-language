@@ -14,9 +14,9 @@ use filament_exact::{ChargePoint, LimitKind, Meter, ScalarLimits, Undefined};
 use fsl_eval::temporal::{
     evaluate, evaluate_finite_window, Assessment, AtomReading, Basis, CaptureReading, ClockCover,
     Containment, IndeterminateReason, LetterStop, LowerBoundary, OrderKey, ProgressClosure,
-    ProgressCompleteness, TemporalLetters, TemporalOutcome, TemporalPosition, TemporalRefusal,
-    TemporalTrace, TimestampedObservation, TimestampedTrace, UndefinedCause, Valuation, Watermark,
-    WindowClock, WindowProgress, WindowVerdict,
+    ProgressCompleteness, StampInterval, TemporalLetters, TemporalOutcome, TemporalPosition,
+    TemporalRefusal, TemporalTrace, TimestampedObservation, TimestampedTrace, UndefinedCause,
+    Valuation, Watermark, WindowClock, WindowProgress, WindowVerdict,
 };
 use fsl_semantics::check::{FormulaNode, FormulaNodeId, SCALAR_LIMITS_UNLIMITED};
 use ix_trace_rs::trace;
@@ -71,6 +71,8 @@ struct Request {
     lower: LowerBoundary,
     cover: ClockCover,
     unit: &'static str,
+    /// Each row's own interval stamp, in row order; empty when none has one.
+    intervals: Vec<Option<StampInterval>>,
 }
 
 fn request(rows: Vec<Row>, watermark: u64, complete: Option<u64>) -> Request {
@@ -85,6 +87,7 @@ fn request(rows: Vec<Row>, watermark: u64, complete: Option<u64>) -> Request {
         lower: LowerBoundary::AuthoritativeOrigin,
         cover: ClockCover::Exact,
         unit: "ms",
+        intervals: Vec::new(),
     }
 }
 
@@ -104,31 +107,50 @@ impl Request {
         self
     }
 
+    fn bounded(mut self, uncertainty: u64) -> Self {
+        self.cover = ClockCover::Bounded { uncertainty };
+        self
+    }
+
     fn admit(&self, fixture: &Fixture) -> Result<TimestampedTrace, TemporalRefusal> {
+        let progress = WindowProgress {
+            watermark: self.watermark,
+            completeness: self.complete,
+            scope: self.scope,
+            execution: self.execution,
+            lower_boundary: self.lower,
+        };
+        let clock = WindowClock {
+            name: "clock".to_owned(),
+            profile: "profile".to_owned(),
+            unit: self.unit.to_owned(),
+            cover: self.cover,
+        };
+        let observation = |row: &Row| TimestampedObservation {
+            stamp: row.stamp,
+            order_key: row.key.map(|(authority, key)| OrderKey {
+                authority: authority.to_owned(),
+                key,
+            }),
+            observation: format!("{:?}", row.atoms),
+        };
+        if !self.intervals.is_empty() {
+            return TimestampedTrace::admit_uncertain(
+                fixture.clause.name(),
+                clock,
+                self.rows
+                    .iter()
+                    .map(observation)
+                    .zip(self.intervals.iter().copied())
+                    .collect(),
+                progress,
+            );
+        }
         TimestampedTrace::admit(
             fixture.clause.name(),
-            WindowClock {
-                unit: self.unit.to_owned(),
-                cover: self.cover,
-            },
-            self.rows
-                .iter()
-                .map(|row| TimestampedObservation {
-                    stamp: row.stamp,
-                    order_key: row.key.map(|(authority, key)| OrderKey {
-                        authority: authority.to_owned(),
-                        key,
-                    }),
-                    observation: format!("{:?}", row.atoms),
-                })
-                .collect(),
-            WindowProgress {
-                watermark: self.watermark,
-                completeness: self.complete,
-                scope: self.scope,
-                execution: self.execution,
-                lower_boundary: self.lower,
-            },
+            clock,
+            self.rows.iter().map(observation).collect(),
+            progress,
         )
     }
 }
@@ -890,15 +912,8 @@ fn a_counter_cover_straddling_the_bound_is_indeterminate() {
 #[trace("TC-1295", "FR-501-AC-9")]
 #[test]
 fn the_comparison_functions_agree_with_the_tick_cover_vectors() {
-    // A required input: the conformance vectors are FSpec's, and a run
-    // without them proves nothing.
-    let fspec = std::env::var_os("FSPEC_DIR").expect(
-        "FSPEC_DIR names the filament-specification checkout the tick-cover vectors live in",
-    );
-    let path =
-        std::path::Path::new(&fspec).join("proposals/checked-package-v2/tick-cover-vectors.json");
-    let text = std::fs::read_to_string(&path).expect("the vectors file reads");
-    let document: serde_json::Value = serde_json::from_str(&text).expect("the vectors parse");
+    let document =
+        crate::published_fspec::json("proposals/checked-package-v2/tick-cover-vectors.json");
     let cases = document["cases"].as_array().expect("cases");
     assert_eq!(cases.len(), 15);
     for case in cases {
@@ -1794,4 +1809,125 @@ fn a_carried_window_state_holds_only_the_positions_it_still_reads() {
         );
         assert!(held <= bound, "{body} held {held} positions");
     }
+}
+
+/// FR-944-AC-5 (TC-2624): under a bounded cover with interval stamps whose
+/// ends are open, the bound a doubly-open difference straddles is
+/// indeterminate (a half-tick mapping would read it as met), and an
+/// acknowledgement wholly inside the bound holds.
+#[trace("TC-2624", "FR-944-AC-5")]
+#[test]
+fn a_doubly_open_difference_straddling_the_bound_is_indeterminate() {
+    let clause = origin("holds(req) implies eventually[0,3] holds(ack)");
+    let row = |stamp, req, ack| Row {
+        stamp,
+        atoms: vec![("req", req), ("ack", ack)],
+        key: None,
+    };
+    let interval = |earliest, latest, earliest_open, latest_open| {
+        Some(StampInterval {
+            earliest,
+            latest,
+            earliest_open,
+            latest_open,
+        })
+    };
+    let with_ack = |stamp, ack_interval| {
+        let mut request =
+            request(vec![row(1, "T", "F"), row(stamp, "F", "T")], 10, Some(10)).bounded(0);
+        request.intervals = vec![interval(0, 1, true, false), ack_interval];
+        request
+    };
+    assert_eq!(
+        verdict(&clause, &with_ack(3, interval(3, 4, false, true))),
+        indeterminate(0, IndeterminateReason::StraddlesBound),
+        "an acknowledgement stamped 3 with interval [3, 4)"
+    );
+    assert_eq!(
+        verdict(&clause, &with_ack(2, interval(2, 3, false, true))),
+        WindowVerdict::Holds,
+        "an acknowledgement stamped 2 with interval [2, 3)"
+    );
+}
+
+/// FR-944-AC-6 (TC-2624): the one-sided bounds of a scan, decided on the
+/// scaled endpoints, read through the verdict. The anchor is a `p = F`
+/// position at stamp 0 with its own interval; the candidate is the `p = T`
+/// position that the bound selects or does not.
+#[trace("TC-2624", "FR-944-AC-6")]
+#[test]
+fn one_sided_bounds_decide_eligibility_on_the_scaled_endpoints() {
+    let straddles = IndeterminateReason::StraddlesBound;
+    let interval = |earliest, latest, earliest_open, latest_open| {
+        Some(StampInterval {
+            earliest,
+            latest,
+            earliest_open,
+            latest_open,
+        })
+    };
+    let scan = |bound: &str,
+                anchor: (u64, Option<StampInterval>),
+                candidate: (u64, Option<StampInterval>),
+                counter: u64| {
+        let clause = origin(&format!("eventually[{bound}] holds(p)"));
+        let keyed = |row: Row, key| Row {
+            key: Some(("order", key)),
+            ..row
+        };
+        let mut request = request(
+            vec![keyed(p(anchor.0, "F"), 0), keyed(p(candidate.0, "T"), 1)],
+            2000,
+            Some(2000),
+        )
+        .counter(counter);
+        request.intervals = vec![anchor.1, candidate.1];
+        verdict(&clause, &request)
+    };
+    let exact_anchor = (0, interval(0, 0, false, false));
+    // at_least 2: reading 2 is eligible, reading 1 is not, reading 2 under
+    // a counter cover of uncertainty 1 straddles.
+    assert_eq!(
+        scan("2,1000", exact_anchor, (2, None), 0),
+        WindowVerdict::Holds
+    );
+    assert_eq!(scan("2,1000", exact_anchor, (1, None), 0), violated(0));
+    assert_eq!(
+        scan("2,1000", exact_anchor, (2, None), 1),
+        indeterminate(0, straddles.clone())
+    );
+    // at_most 2: reading 1 is eligible, reading 3 is not, reading 2
+    // straddles.
+    assert_eq!(
+        scan("0,2", exact_anchor, (1, None), 0),
+        WindowVerdict::Holds
+    );
+    assert_eq!(scan("0,2", exact_anchor, (3, None), 0), violated(0));
+    assert_eq!(
+        scan("0,2", exact_anchor, (2, None), 0),
+        indeterminate(0, straddles.clone())
+    );
+    // Candidates of interval (1, 2] and [0, 1).
+    assert_eq!(
+        scan("1,1000", exact_anchor, (2, interval(1, 2, true, false)), 0),
+        WindowVerdict::Holds
+    );
+    assert_eq!(
+        scan("1,1000", exact_anchor, (0, interval(0, 1, false, true)), 0),
+        violated(0)
+    );
+    // `at_most 0` of a candidate of interval [0, 1) is decided on the extents
+    // in the `cover.rs` test of this AC: the anchor itself lies at distance 0,
+    // so the verdict would read the anchor, not the candidate.
+    // An anchor of interval (0, 1] and a candidate of interval [3, 4).
+    let open_anchor = (1, interval(0, 1, true, false));
+    let open_candidate = (3, interval(3, 4, false, true));
+    assert_eq!(
+        scan("0,3", open_anchor, open_candidate, 0),
+        indeterminate(0, straddles)
+    );
+    assert_eq!(
+        scan("2,1000", open_anchor, open_candidate, 0),
+        WindowVerdict::Holds
+    );
 }

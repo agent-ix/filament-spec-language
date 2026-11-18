@@ -870,8 +870,19 @@ pub(crate) struct Machine<'a, 'm, N> {
 pub(crate) struct ComponentReads<'a> {
     /// One observation per trace variable, in quantifier order.
     pub(crate) environments: &'a [&'a ObjectEnvironment],
+    /// One pre-state observation per trace variable, when evaluating a model
+    /// relation over transitions.
+    pub(crate) pre_environments: Option<&'a [&'a ObjectEnvironment]>,
     /// The component each model read observes, keyed by the read's location.
     pub(crate) reads: &'a std::collections::BTreeMap<Location, usize>,
+    /// The observation selected for each component read, when the caller has
+    /// both pre- and post-state observations.
+    pub(crate) observations: Option<
+        &'a std::collections::BTreeMap<
+            Location,
+            fsl_semantics::model::clause_observation::Observation,
+        >,
+    >,
 }
 
 /// A parameter of a claim at a key with no conforming object.
@@ -2467,8 +2478,38 @@ impl<'a, 'm, N: NodeSource<'a>> Machine<'a, 'm, N> {
             NodeKind::QuantityScaleDiv { .. } => {
                 return Err(unsupported_construct("quantity_scale"));
             }
-            NodeKind::TupleProject { .. } => {
-                return Err(unsupported_construct("tuple_project"));
+            NodeKind::TupleProject {
+                operand,
+                declaration,
+                position,
+            } => {
+                if node.at(*operand).value_type() != &ValueType::Composite(declaration.clone()) {
+                    return Err(invariant("tuple-project-operand-type-mismatch"));
+                }
+                let Value::Composite(tuple) = self.pop()? else {
+                    return Err(invariant("tuple-project-composite-value-expected"));
+                };
+                if tuple.declaration() != declaration {
+                    return Err(invariant("tuple-project-declaration-mismatch"));
+                }
+                let positions = match self
+                    .world
+                    .types()
+                    .composite(declaration.clone())
+                    .map(|declaration| declaration.shape())
+                {
+                    Some(CompositeShape::Tuple(positions)) => positions,
+                    _ => return Err(invariant("tuple-project-declaration-unresolved")),
+                };
+                if positions.get(*position) != Some(node.value_type()) {
+                    return Err(invariant("tuple-project-position-type-mismatch"));
+                }
+                let Some(FieldValue::Present(value)) = tuple.slots().get(*position) else {
+                    return Err(invariant("tuple-project-position-unavailable"));
+                };
+                // FR-143: a tuple position read retains exactly like a record
+                // field projection. It adds no charge of its own.
+                value.clone()
             }
             // FSpec FR-144 "Indexing": a map entry is located by its key's
             // canonical key; selection charges one `collection.element` and
@@ -3710,16 +3751,37 @@ impl<'a, 'm, N: NodeSource<'a>> Machine<'a, 'm, N> {
     /// case (SR-750 FND-013).
     fn objects_for(&self, node: N) -> Result<&'a ObjectEnvironment, Halt> {
         if let Some(components) = &self.components {
-            if let Some(component) = node
-                .location()
-                .and_then(|location| components.reads.get(location))
-            {
+            if let Some((location, component)) = node.location().and_then(|location| {
+                components
+                    .reads
+                    .get(location)
+                    .map(|component| (location, component))
+            }) {
+                if components
+                    .observations
+                    .and_then(|observations| observations.get(location))
+                    == Some(&fsl_semantics::model::clause_observation::Observation::Pre)
+                {
+                    if let Some(pre_environments) = components.pre_environments {
+                        return pre_environments
+                            .get(*component)
+                            .cloned()
+                            .ok_or_else(|| invariant("component-pre-environment-resolved"));
+                    }
+                }
                 return components
                     .environments
                     .get(*component)
                     .cloned()
                     .ok_or_else(|| invariant("component-environment-resolved"));
             }
+        }
+        // FR-120 "Eligible" (W50): a read inside `pre(...)` observes the
+        // pre-state, also a read in the body or precondition of a function or
+        // dispatched query that `pre(...)` calls, whose locations the clause's
+        // `reads` does not list.
+        if let (Some(_), Anchor::Pre, Some(pre)) = (self.reads, self.anchor, self.pre_objects) {
+            return Ok(pre);
         }
         match self.reads {
             Some(reads)
@@ -5083,7 +5145,7 @@ mod carried_sum;
 #[cfg(test)]
 mod invariants;
 
-mod node_source;
+pub(super) mod node_source;
 pub(super) mod reader_source;
 mod world;
 

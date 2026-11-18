@@ -2241,6 +2241,8 @@ fn run_finite_window(
     };
     let clause = node.clause();
     let clock = WindowClock {
+        name: clause.clock().to_owned(),
+        profile: clause.profile().identity().to_string(),
         unit: clause.clock().to_owned(),
         cover: match input.window.cover.unwrap_or(TimestampedCover::Exact) {
             TimestampedCover::Exact => fsl_eval::temporal::ClockCover::Exact,

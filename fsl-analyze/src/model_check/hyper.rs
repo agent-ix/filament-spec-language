@@ -1777,6 +1777,7 @@ impl<'a> Run<'_, 'a> {
                 alias,
                 initial,
                 steps,
+                results: Vec::new(),
                 marks,
             });
         }

@@ -2,6 +2,8 @@
 //! Public API tests for the unreduced graph core and the model checker.
 
 mod analysis_view;
+#[path = "../../../tests/support/published_fspec.rs"]
+pub(crate) mod published_fspec;
 mod analyze;
 mod analyze_cli;
 mod analyze_cli_support;
@@ -137,6 +139,7 @@ mod refinement_replay;
 mod refinement_request;
 mod refinement_safety;
 mod related_by;
+mod relation_claims;
 mod release_acquire;
 mod repeat_guard;
 #[path = "../../../tests/support/ring_world.rs"]
@@ -191,3 +194,4 @@ mod cyclic_mdp_certificate;
 
 mod bounded_fair_certificate;
 mod cyclic_mdp_reward_certificate;
+mod relation_vs_smt;

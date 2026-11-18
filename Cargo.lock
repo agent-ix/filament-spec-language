@@ -519,6 +519,26 @@ dependencies = [
 ]
 
 [[package]]
+name = "facade-contract-consumer"
+version = "0.1.0"
+dependencies = [
+ "filament-contract-model",
+ "filament-exact",
+ "filament-observation",
+ "filament-semantic-value",
+ "fsl-analyze",
+ "fsl-cst",
+ "fsl-forms",
+ "fsl-foundation",
+ "fsl-package",
+ "fsl-replay",
+ "fsl-semantics",
+ "ix-trace-rs",
+ "quire-canonical",
+ "serde_json",
+]
+
+[[package]]
 name = "fancy-regex"
 version = "0.11.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -561,7 +581,7 @@ dependencies = [
 [[package]]
 name = "filament-contract-model"
 version = "0.1.2"
-source = "git+https://github.com/agent-ix/filament-contract-ir?tag=v0.1.4#f9963634f67213d54b3fcf3278acbc1e9bd1f3e0"
+source = "git+https://github.com/agent-ix/filament-contract-ir?tag=v0.1.5#71914a075a6c9b9484b6d93596246c450f2d4a68"
 dependencies = [
  "filament-exact",
  "filament-semantic-value",
@@ -682,8 +702,8 @@ source = "git+https://github.com/agent-ix/filament-specification?tag=v0.1.1#1946
 
 [[package]]
 name = "filament-verification-contracts"
-version = "0.2.0"
-source = "git+https://github.com/agent-ix/filament-verification-contracts?tag=v0.2.0#ded996da2c3591818f7658d0518f6637b79bf2f4"
+version = "0.2.1"
+source = "git+https://github.com/agent-ix/filament-verification-contracts?tag=v0.2.1#99942db336b1bad6c43617e6d272710b924fec86"
 dependencies = [
  "jsonschema 0.55.1",
  "quire-canonical",
@@ -771,6 +791,7 @@ dependencies = [
  "filament-exact",
  "filament-observation",
  "filament-semantic-value",
+ "filament-specification-qualification",
  "fsl-analyze",
  "fsl-command",
  "fsl-cst",
@@ -854,6 +875,7 @@ dependencies = [
  "filament-eval",
  "filament-exact",
  "filament-semantic-value",
+ "filament-specification-qualification",
  "fsl-analyze",
  "fsl-command",
  "fsl-cst",
@@ -889,7 +911,9 @@ dependencies = [
  "filament-checked",
  "filament-eval",
  "filament-exact",
+ "filament-observation",
  "filament-semantic-value",
+ "filament-specification-qualification",
  "fsl-cst",
  "fsl-forms",
  "fsl-foundation",
@@ -961,6 +985,7 @@ dependencies = [
  "filament-contract-model",
  "filament-exact",
  "filament-semantic-value",
+ "filament-specification-qualification",
  "fsl-cst",
  "fsl-forms",
  "fsl-foundation",
@@ -970,6 +995,7 @@ dependencies = [
  "quire-canonical",
  "serde",
  "serde_json",
+ "tempfile",
  "thiserror",
 ]
 
@@ -983,6 +1009,7 @@ dependencies = [
  "fsl-analyze",
  "fsl-eval",
  "fsl-foundation",
+ "fsl-package",
  "fsl-replay",
  "fsl-semantics",
  "ix-trace-rs",
@@ -1000,6 +1027,7 @@ dependencies = [
  "filament-eval",
  "filament-exact",
  "filament-semantic-value",
+ "filament-specification-qualification",
  "fsl-cst",
  "fsl-eval",
  "fsl-forms",
@@ -1042,6 +1070,7 @@ dependencies = [
  "filament-contract-model",
  "filament-exact",
  "filament-semantic-value",
+ "filament-specification-qualification",
  "filament-walk",
  "fsl-cst",
  "fsl-forms",

@@ -8,10 +8,11 @@ use std::io::{Read, Write};
 use filament_checked::key::DeclarationKey;
 use filament_exact::{Cancel, CancelCause};
 use fsl_eval::simulation::model::{ExpansionLimits, PopulationUniverse};
+use fsl_package::ObligationIdentity;
 use fsl_replay::spine::SourceComponent;
 use fsl_replay::{
     check_probability_certificate_source, ByteProvision, DefinitionSourceRef,
-    ExactProbabilityCertificateCheck, ObligationIdentity, ProbabilityDocumentError,
+    ExactProbabilityCertificateCheck, ProbabilityDocumentError,
     ProbabilityDocumentLimits, ProbabilitySourceError, ProbabilitySourceLimits,
     ProbabilitySourceRequest,
 };
@@ -91,7 +92,7 @@ fn check(request: Request, cancel: &Cancel) -> Result<Value, String> {
         .map_err(|error| error.to_string())?;
     let item = ObligationIdentity::new(
         node,
-        request.item.model.map(fsl_replay::ModelIdentity::new),
+        request.item.model.map(fsl_package::ModelIdentity::new),
         request.item.ordinal,
     );
     let operands = request

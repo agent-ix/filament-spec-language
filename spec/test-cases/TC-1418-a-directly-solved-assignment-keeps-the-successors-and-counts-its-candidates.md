@@ -28,13 +28,17 @@ do not depend on it.
 
 1. `swap()` from `a` 3, `b` 5; read the successors and the charge.
 2. `step()` with `post A { self.a = pre(self.a) + 1 }` and with the
-   reference clause `... and true`: compare the successor sets of state
+   reference clause `(self.a = pre(self.a) + 1) = true`: compare the successor sets of state
    keys, effects and findings, read both charges, explore both to depth 3,
    and run both with `max_candidates` 300.
 3. Each ineligible form of FR-120-AC-31, including the `deletes` frame, with
-   `max_candidates` 1,000; then the out-of-domain value case.
-4. `self.a = pre(self.a) / 0`, and the meter budget `work_units` 0 case,
-   each against its `... and true` reference form.
+   `max_candidates` 1,000; then the out-of-domain value case; then
+   `post A { self.a = pre(self.b) }` with `post C { self.b > 0 }` and with
+   `post C { self.b * 1 > 0 }`, reading each charge and comparing each
+   successor set with the enumeration's.
+4. `self.a = pre(self.succ())` from `a` 3, `b` 5, where the query `succ()`'s
+   precondition `self.b != 5` is false, and the meter budget `work_units` 0 case,
+   each against its `(...) = true` reference form.
 5. The `mc/frame_candidates` axis's smallest-size test over both forms.
 
 Tag each test `#[trace("TC-1418", "FR-120-AC-n")]`.

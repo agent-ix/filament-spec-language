@@ -142,6 +142,12 @@ Bind each new test with a two-id attribute such as
 two-id attributes; a source-enum locus test names AC-30 rather than the equality
 materialization criterion.
 
+**Clock member entries (FR-531-AC-34).** Write and read back the `identities/5`
+file of the AC-34 unit; compare each data and clock entry, the `source_tuples`
+row, the union's `clock_payload` and the operation's `clock_parameters`; then
+feed the `/4` document and each malformed entry of AC-34 and expect `Malformed`
+with no partial read. Bind it `#[trace("TC-1331", "FR-531-AC-34")]`.
+
 ## Expected Results
 
 Each row's Expected column and each added criterion's complete value, refusal,
