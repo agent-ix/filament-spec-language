@@ -62,6 +62,7 @@ mod dispatch_emission;
 mod division_law_editor;
 mod doc_snippets;
 mod effect_boundary;
+mod first_rule_readme;
 mod emit_checked_v2;
 mod emit_readback_agreement;
 mod evaluate_reads_no_display_strings;
