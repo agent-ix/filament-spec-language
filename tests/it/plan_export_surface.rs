@@ -1118,7 +1118,7 @@ fn fixture_request(
     (directory, path)
 }
 
-fn run_path(path: &Path) -> (u8, Value) {
+fn run_plan_path(path: &Path) -> (u8, Value) {
     match fsl_command::command::run(path, &crate::negotiation::Fr290) {
         Ok(result) => (
             result.exit_code,
@@ -1131,12 +1131,12 @@ fn run_path(path: &Path) -> (u8, Value) {
 /// FR-755's `run_with_plan_fault`; see [`PlanFault`].
 fn run_with_plan_fault(path: &Path, fault: &PlanFault) -> (u8, Value) {
     let _ = fault;
-    run_path(path)
+    run_plan_path(path)
 }
 
 fn fixture(case: &str, edit: &dyn Fn(String) -> String, synthesis: Value) -> (u8, Value) {
     let (_directory, path) = fixture_request(case, edit, synthesis);
-    run_path(&path)
+    run_plan_path(&path)
 }
 
 fn counter_goal(goal: &str) -> impl Fn(String) -> String + '_ {
