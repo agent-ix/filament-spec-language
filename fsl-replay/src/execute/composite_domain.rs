@@ -22,8 +22,8 @@ use fsl_foundation::bound::{DomainKey, FiniteBound, FiniteBoundKind, ProofBound}
 use fsl_foundation::diagnostic::Code;
 use fsl_package::CheckedPackage;
 
-use super::ReplayRefusal;
 use super::argument::{declaration_of, enum_declarations};
+use super::ReplayRefusal;
 use crate::identity::DeclaredDomain;
 
 /// What a request, a claim or a derivation got wrong about a claim's

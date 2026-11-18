@@ -1533,3 +1533,48 @@ fn an_open_upper_interval_takes_one_clock_with_its_lower_bound() {
         assert_eq!(claim.all_constants(), vec![ms(2)], "{body}");
     }
 }
+
+/// FR-1034-AC-4 (TC-2980): the acceptance set of `until[q, *]` is fulfilled
+/// where the operator is kept pending at a position holding both its guard
+/// and its witness. With `p` and `r` true at every position of a
+/// time-divergent lasso, `always (p implies eventually[1 ms, *] r)` holds
+/// and the automaton does not accept; with `r` never true the operator is
+/// never discharged and the automaton accepts.
+#[trace("TC-2980", "FR-1034-AC-4")]
+#[test]
+#[ignore = "QSL-2408: until[q, *] acceptance fulfilled when kept pending at a position holding psi and chi not implemented yet"]
+fn an_open_upper_until_kept_pending_with_its_witness_is_fulfilled() {
+    // Stamps 0 ms and 0.5 ms (in quarters), both level 1, re-entering
+    // position 0 1 ms after it: every gap is below 1 ms, so the claim is
+    // fulfilled only where the operator is kept pending with its witness.
+    let (stamps, levels, loop_start, period) = ([0_u64, 2], [1_i64, 1], 0, 4);
+    for (body, refuted) in [
+        (
+            "always (holds(c.level = 1) implies eventually[1 ms, *] holds(c.level = 1))",
+            false,
+        ),
+        (
+            "always (holds(c.level = 1) implies eventually[1 ms, *] holds(c.level = 2))",
+            true,
+        ),
+    ] {
+        let fixture = timed(body);
+        let mut claim =
+            TimedClaim::new(&fixture.clause, 1 << 20).unwrap_or_else(|why| panic!("{body}: {why}"));
+        let atom_levels = levels_of(&fixture, claim.atoms());
+        let word: Vec<Letter> = levels
+            .iter()
+            .map(|level| letter_of(&atom_levels, *level))
+            .collect();
+        assert_eq!(
+            evaluator_refutes(&fixture, body, &stamps, &levels, loop_start, period),
+            refuted,
+            "{body}: the evaluator"
+        );
+        assert_eq!(
+            claim_accepts(&mut claim, &stamps, &word, loop_start, period),
+            refuted,
+            "{body}: the automaton"
+        );
+    }
+}

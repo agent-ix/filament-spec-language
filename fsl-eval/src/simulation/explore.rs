@@ -103,6 +103,17 @@ pub trait TransitionSystem {
     ) -> Option<Result<Footprint, ExpansionStop>> {
         None
     }
+
+    /// FR-634 "Invariant findings": the findings `state` carries when it is
+    /// evaluated for them alone, with no successor computed or keyed; `None`
+    /// when the system offers no such evaluation, or declares nothing to
+    /// evaluate, so a caller runs nothing for it.
+    fn state_findings(
+        &self,
+        _state: &Self::State,
+    ) -> Option<Result<Vec<Self::Finding>, ExpansionStop>> {
+        None
+    }
 }
 
 /// What [`TransitionSystem::successors`] returns: an [`Expansion`] or an

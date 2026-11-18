@@ -375,11 +375,7 @@ pub(crate) fn package_with(profiles: &str, body: &str) -> CheckedPackage {
 
 /// [`package_with`] checked under `mode`, for a function declaration whose
 /// Kernel semantics differ from its enclosing clauses' linked semantics.
-pub(crate) fn package_with_mode(
-    profiles: &str,
-    body: &str,
-    mode: CheckMode,
-) -> CheckedPackage {
+pub(crate) fn package_with_mode(profiles: &str, body: &str, mode: CheckMode) -> CheckedPackage {
     let graph = declarations_over(document(), "package", profiles, body)
         .check(mode, CheckingLimits::default())
         .unwrap_or_else(|refusals| panic!("{body}: the unit checks: {refusals:?}"));

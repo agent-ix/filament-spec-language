@@ -338,7 +338,11 @@ fn a_reference_literal_parses_as_one_node() {
         assert!(!parsed.is_admissible(), "{malformed}");
         let diagnostic = parsed.diagnostics().first().expect("a diagnostic");
         assert_eq!(diagnostic.code, CompleteCode::InvalidSyntax, "{malformed}");
-        assert_eq!(diagnostic.cause, CompleteCause::UnexpectedToken, "{malformed}");
+        assert_eq!(
+            diagnostic.cause,
+            CompleteCause::UnexpectedToken,
+            "{malformed}"
+        );
         let region = diagnostic.region.as_ref().expect("a located diagnostic");
         let from = text.find(malformed).unwrap();
         let at = from + text[from..].find(offending).unwrap();

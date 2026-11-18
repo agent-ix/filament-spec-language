@@ -5,8 +5,8 @@ mod types;
 
 use super::{LimitKind, RunCause, RunError, RunResult};
 use crate::formal_source::FormalSource;
-use fsl_foundation::Diagnostic;
 use fsl_foundation::source::SourceReadCause;
+use fsl_foundation::Diagnostic;
 use serde_json::Value;
 
 /// Immutable JSON produced from the typed native result schema.

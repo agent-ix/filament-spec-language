@@ -64,11 +64,9 @@ fn fault(invariant: &'static str) -> BareSelectionFailure {
 
 fn walk_failure(failure: WalkFailure) -> BareSelectionFailure {
     match failure {
-        WalkFailure::Unsupported(view)
-        | WalkFailure::FunctionParameterType { view, .. }
-        | WalkFailure::FunctionResultType { view, .. } => {
-            BareSelectionFailure::Unsupported(Box::new(view))
-        }
+        WalkFailure::Unsupported(view) => BareSelectionFailure::Unsupported(Box::new(view)),
+        WalkFailure::FunctionParameterType { view, .. }
+        | WalkFailure::FunctionResultType { view, .. } => BareSelectionFailure::Unsupported(view),
         WalkFailure::Equality(refusal) => BareSelectionFailure::Equality(refusal),
         WalkFailure::Fault(failure) => SlotSelectionFailure::Fault(failure).into(),
     }

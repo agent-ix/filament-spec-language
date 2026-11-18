@@ -6,8 +6,8 @@ use std::ffi::OsString;
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use crate::Outcome;
 use crate::error::{Error, Result};
+use crate::Outcome;
 
 const USAGE: &str = "usage: cargo xtask pin-check [--manifest <Cargo.toml-or-directory>]";
 
@@ -110,13 +110,7 @@ fn inspect_manifest(
         }
     }
     if let Some(replacements) = root.get("replace").and_then(toml::Value::as_table) {
-        inspect_dependencies(
-            replacements,
-            "replace",
-            path,
-            dependency_count,
-            findings,
-        );
+        inspect_dependencies(replacements, "replace", path, dependency_count, findings);
     }
     if let Some(workspace) = root.get("workspace").and_then(toml::Value::as_table) {
         if let Some(table) = workspace

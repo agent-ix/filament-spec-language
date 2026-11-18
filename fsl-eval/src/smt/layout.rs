@@ -8,7 +8,7 @@ use filament_exact::{Integer, Value, ValueType};
 use std::ops::Not;
 
 use crate::simulation::model::SymbolicSubject;
-use crate::smt::script::{Script, Sort, Term, symbol};
+use crate::smt::script::{symbol, Script, Sort, Term};
 use crate::smt::{Refusal, SmtEncodingRefusal};
 
 /// One state copy: the prefix of the names of its constants, `s<i>`.

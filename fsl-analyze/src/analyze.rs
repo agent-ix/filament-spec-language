@@ -1186,9 +1186,9 @@ pub(crate) enum EngineReport {
     /// The protocol analysis engine's report, settled by FR-573's map.
     ProtocolAnalysis(Box<crate::protocol_analysis::ProtocolAnalysisArtifact>),
     /// The protocol analysis engine's replay of a supplied finite trace.
-    FiniteReplay(crate::protocol_analysis::FiniteReplayReport),
+    FiniteReplay(Box<crate::protocol_analysis::FiniteReplayReport>),
     /// FR-896's result with the typed FR-990 item output.
-    GlobalConformance(crate::protocol_analysis::conformance::ConformanceReport),
+    GlobalConformance(Box<crate::protocol_analysis::conformance::ConformanceReport>),
     /// The engine refused the item, and its settlement map gives the refusal
     /// no terminal record.
     Refused(Refusal),
@@ -2226,7 +2226,7 @@ fn settle(
             let mut protocol_check = None;
             let mut protocol_subject = None;
             let mut finite_replay = None;
-            let settled_record = match report {
+            let settled_record = match *report {
                 FiniteReplayReport::Replayed(steps) => {
                     replayed = Some(steps);
                     TerminalRecord::proved_by_replay(index, backend, steps)

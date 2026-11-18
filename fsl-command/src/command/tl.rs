@@ -13,7 +13,9 @@ use fsl_semantics::check::{
     BinaryTemporal, CheckedFormula, CheckedInterval, FormulaNode, FormulaNodeId, UnaryTemporal,
 };
 use serde_json::{json, Map, Value};
-use tl_syntax::{Formula, Interval, Node, NodeId, NodeKind, PropositionId, SemanticProfile};
+use tl_syntax::{
+    Formula, Interval, Node, NodeId, NodeKind, PropositionId, SemanticProfile, TemporalFamily,
+};
 
 use super::{Result, RunCause};
 
@@ -209,6 +211,11 @@ pub(super) fn selection(lowering: &TlLowering) -> Value {
 pub struct AtomMapping {
     /// The TL atom names (`p0`, ...) read as the negation of their leaf.
     pub negated: BTreeSet<String>,
+    /// A correspondence identity to stamp on the lowered formula in place of
+    /// the one the lowering chose, so that FR-931-AC-8 can show that a
+    /// lowered formula whose classification differs from the clause's is a
+    /// classification loss.
+    pub lowered_correspondence: Option<String>,
 }
 
 /// A lowering record and the exit code FR-285 gives it.
@@ -242,6 +249,19 @@ pub fn record(
         ),
     };
     lowering_record(valuation, source, named, mapping)
+}
+
+/// The FR-931-AC-8 fragment of a formula by the direction of its operators.
+fn fragment_of(past: bool) -> &'static str {
+    if past {
+        "bounded-past"
+    } else {
+        "bounded-future"
+    }
+}
+
+fn classification(correspondence: &str, fragment: &str) -> Value {
+    json!({"correspondence": correspondence, "fragment": fragment})
 }
 
 fn direction(target: TlTarget) -> bool {
@@ -353,6 +373,29 @@ fn lowering_record(
         ),
     );
     let mut exit_code = 0;
+    // FR-931-AC-8: the native side is the FR-527 target plus its fragment;
+    // the TL side is read from the lowered formula alone, by its profile and
+    // the direction of its temporal nodes.
+    let native = classification(classified.identity(), fragment_of(past));
+    let lowered_past = tl
+        .nodes()
+        .iter()
+        .any(|node| node.kind.temporal_family() == Some(TemporalFamily::Past));
+    let lowered_profile = mapping
+        .lowered_correspondence
+        .as_deref()
+        .unwrap_or_else(|| tl.profile().as_str());
+    let lowered_class = classification(lowered_profile, fragment_of(lowered_past));
+    if lowered_class == native {
+        record.insert("classification".to_owned(), native);
+    } else {
+        record.insert(
+            "classification_fault".to_owned(),
+            json!({"kind": "classification-loss", "clause": clause.name(),
+                "native": native, "lowered": lowered_class}),
+        );
+        exit_code = 30;
+    }
     let traces: Option<(Vec<&fsl_eval::temporal::ObservedValuation>, bool)> =
         match (&valuation.positions, &valuation.behaviours) {
             (Some(positions), _) => Some((vec![positions], true)),
@@ -366,7 +409,7 @@ fn lowering_record(
         let cross = cross_evaluate(clause.name(), tl, &lowered, &traces, mapping, classified)?;
         if cross["agree"] != json!(true) {
             exit_code = 30;
-        } else if !complete {
+        } else if !complete && exit_code == 0 {
             // FR-931: a work-budget stop during enumeration reports the
             // counts reached and exits incomplete.
             exit_code = 22;

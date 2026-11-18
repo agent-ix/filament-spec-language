@@ -2,8 +2,8 @@
 //! FR-026–028, FR-031: closed records; existing constructors own identifier validity.
 
 use filament_contract_model as ir;
-use fsl_foundation::AccountingSetting;
 use fsl_foundation::serde_object::{deserialize_objects, from_object};
+use fsl_foundation::AccountingSetting;
 use serde::Deserialize;
 use serde_json::value::RawValue;
 
@@ -548,6 +548,8 @@ pub(super) struct HandoffSelection {
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(super) struct FileSelection {
+    /// Deserialized so the selection's shape is validated; no consumer reads it yet.
+    #[allow(dead_code)]
     pub file: String,
 }
 

@@ -66,7 +66,10 @@ fn an_observed_temporal_replay_writes_its_row() {
     assert_eq!(written["position"], "2", "{written}");
     assert_eq!(written["outcome"]["kind"], "violated", "{written}");
     assert_eq!(written["outcome"]["position"], 2, "{written}");
-    assert!(written["outcome"].get("counterexample").is_none(), "{written}");
+    assert!(
+        written["outcome"].get("counterexample").is_none(),
+        "{written}"
+    );
     assert_eq!(written["undefined_locus"], Value::Null, "{written}");
     assert!(written.get("parity").is_none(), "{written}");
     assert_eq!(written["charges"]["work_units"], "3", "{written}");

@@ -3186,7 +3186,7 @@ fn item_document(written: Value, members: ItemMembers) -> Value {
     // whether it reached it.
     let memory_bound = detail
         .as_ref()
-        .and_then(|detail| detail.memory_bound.clone())
+        .and_then(|detail| detail.memory_bound)
         .map(|stated| {
             json!({
                 "bound": stated.bound.member.as_str(),

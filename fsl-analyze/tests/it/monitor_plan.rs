@@ -1074,7 +1074,11 @@ fn position_outcomes(
         .map(|(position, row)| {
             crate::monitor_entries::Input::Reading(
                 u64::try_from(position).unwrap(),
-                spec.atoms.iter().copied().zip(row.iter().copied()).collect(),
+                spec.atoms
+                    .iter()
+                    .copied()
+                    .zip(row.iter().copied())
+                    .collect(),
             )
         })
         .collect();
@@ -1102,11 +1106,15 @@ fn a_position_witness_at_the_lower_bound_decides() {
         &[&[true], &[false], &[false], &[false]],
     );
     assert!(
-        once[2].iter().any(|&(origin, _, code)| origin == 2 && code == 4),
+        once[2]
+            .iter()
+            .any(|&(origin, _, code)| origin == 2 && code == 4),
         "indeterminate at position 2: {once:?}"
     );
     assert!(
-        once[3].iter().any(|&(origin, _, code)| origin == 3 && code == 1),
+        once[3]
+            .iter()
+            .any(|&(origin, _, code)| origin == 3 && code == 1),
         "true at position 3, the lower bound itself: {once:?}"
     );
     let eventually = position_outcomes(
@@ -1115,11 +1123,15 @@ fn a_position_witness_at_the_lower_bound_decides() {
         &[&[false], &[true], &[true]],
     );
     assert!(
-        !eventually[1].iter().any(|&(origin, _, code)| origin == 0 && code == 1),
+        !eventually[1]
+            .iter()
+            .any(|&(origin, _, code)| origin == 0 && code == 1),
         "a witness nearer than the lower bound does not discharge: {eventually:?}"
     );
     assert!(
-        eventually[2].iter().any(|&(origin, _, code)| origin == 0 && code == 1),
+        eventually[2]
+            .iter()
+            .any(|&(origin, _, code)| origin == 0 && code == 1),
         "a witness at the lower bound discharges true: {eventually:?}"
     );
 }
@@ -1134,14 +1146,24 @@ fn a_position_witness_at_the_upper_bound_decides() {
     let steps = position_outcomes(
         "filament.temporal.event-position.false-extension/v1",
         STEP_DEADLINE,
-        &[&[true, false], &[false, false], &[false, false], &[false, true]],
+        &[
+            &[true, false],
+            &[false, false],
+            &[false, false],
+            &[false, true],
+        ],
     );
     assert!(
-        steps[3].iter().any(|&(origin, _, code)| origin == 0 && code == 1),
+        steps[3]
+            .iter()
+            .any(|&(origin, _, code)| origin == 0 && code == 1),
         "the step-0 obligation settles true at step 3: {steps:?}"
     );
     assert!(
-        !steps.iter().flatten().any(|&(origin, _, code)| origin == 0 && code == 4),
+        !steps
+            .iter()
+            .flatten()
+            .any(|&(origin, _, code)| origin == 0 && code == 4),
         "never indeterminate at the bound: {steps:?}"
     );
 }

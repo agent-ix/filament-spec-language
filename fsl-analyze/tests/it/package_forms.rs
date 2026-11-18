@@ -131,7 +131,7 @@ fn counter(objects: &ObjectEnvironment) -> filament_exact::ObjectReference {
         .clone()
 }
 
-fn clause<'g>(handoff: &'g Handoff, index: usize) -> &'g TemporalClauseNode {
+fn clause(handoff: &Handoff, index: usize) -> &TemporalClauseNode {
     handoff
         .compiled
         .checked()
@@ -732,13 +732,12 @@ fn admitted_objects(
 
 /// The observations of the state clause `name` of the handoff's source
 /// package selected by `input`.
+type Documents = BTreeMap<DocumentRef, Vec<u8>>;
+
 fn admit_clause(
     handoff: &Handoff,
     name: &str,
-    provision: (
-        &BTreeMap<DocumentRef, Vec<u8>>,
-        &BTreeMap<DocumentRef, Vec<u8>>,
-    ),
+    provision: (&Documents, &Documents),
     input: fsl_semantics::model::observation::ClauseSelectionInput,
 ) -> fsl_semantics::model::observation::AdmittedObservations {
     use fsl_semantics::model::observation::{

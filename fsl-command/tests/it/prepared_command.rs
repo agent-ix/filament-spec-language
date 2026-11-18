@@ -5,12 +5,12 @@ use std::path::Path;
 
 use filament_exact::Cancel;
 use fsl_command::command::{self, PreparedRun, RunLimits};
-use fsl_foundation::SourceIdentity;
 use fsl_foundation::source::Source;
+use fsl_foundation::SourceIdentity;
 use fsl_replay::spine::{self, DependencyInput, ParseRequest, SpineLimits};
 use fsl_replay::{Operation, OutcomeDocument};
 use ix_trace_rs::trace;
-use serde_json::{Value, json};
+use serde_json::{json, Value};
 
 const PROGRAM: &[u8] = include_bytes!("../../../tests/fixtures/spine-run.native");
 const DOMAIN: &[u8] = include_bytes!("../../../examples/config-version/model.semantic-ir.json");

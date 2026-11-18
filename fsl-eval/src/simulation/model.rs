@@ -685,7 +685,8 @@ impl<'a> ModelSystem<'a> {
     /// [`Self::typing`] for values alone, which hold no element-count
     /// member: it lives as long as the package.
     pub(crate) fn value_typing(&self) -> encode::Typing<'a> {
-        encode::Typing::with_variants(self.types, self.input.variant_types).with_enums(self.input.enums)
+        encode::Typing::with_variants(self.types, self.input.variant_types)
+            .with_enums(self.input.enums)
     }
 
     /// Check the universes, then admit each initial document in the given
@@ -1752,6 +1753,16 @@ impl TransitionSystem for ModelSystem<'_> {
         Some(self.constraint_value(state, constraint))
     }
 
+    /// FR-634: the invariant findings of `state` alone, `None` for a package
+    /// declaring no invariant and no member bound.
+    fn state_findings(
+        &self,
+        state: &Self::State,
+    ) -> Option<Result<Vec<Self::Finding>, ExpansionStop>> {
+        (!self.clauses.invariants.is_empty() || !self.member_bounds.is_empty())
+            .then(|| self.invariant_findings(state))
+    }
+
     /// FR-162: [`ModelSystem::footprint`], which reads the transition alone.
     fn footprint(
         &self,
@@ -2122,7 +2133,7 @@ pub fn enumerate_model(
     bounds: crate::simulation::EnumerationBounds,
     meter: &mut filament_exact::Meter,
     poll: impl FnMut() -> bool,
-) -> Result<crate::simulation::Enumeration<ModelTransition>, NotSimulated> {
+) -> Result<crate::simulation::Enumeration<ModelTransition, ModelFinding>, NotSimulated> {
     let domains = system.rooted_domains();
     let roots: Vec<(NodeKey, Vec<u32>, &ValueType)> = domains
         .iter()

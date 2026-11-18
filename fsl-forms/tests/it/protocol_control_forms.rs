@@ -876,7 +876,11 @@ fn an_empty_join_list_fails_at_the_parser() {
         let diagnostic = &parsed.diagnostics()[0];
         assert_eq!(diagnostic.code, Code::InvalidSyntax, "{policy}");
         let at = diagnostic.byte_span().expect("the diagnostic is located");
-        assert_eq!(at.start, text.find("[]").expect("the list") + 1, "{policy}: at `]`");
+        assert_eq!(
+            at.start,
+            text.find("[]").expect("the list") + 1,
+            "{policy}: at `]`"
+        );
         assert!(build_unit(&parsed).is_err(), "{policy}");
     }
 }

@@ -9,17 +9,17 @@
 //! domains are in `witness_member`.
 
 use super::frame::object;
-use super::frame_replay::{Unit, packet, request, unit_for, witness_source};
+use super::frame_replay::{packet, request, unit_for, witness_source, Unit};
 use super::*;
-use crate::execute::{SeparationOutcome, separate, settle_separation, stopped_reason};
+use crate::execute::{separate, settle_separation, stopped_reason, SeparationOutcome};
 use crate::proof_result::SettlementBasis;
 use crate::result::{DecidingElement, SeparatingWitnessRecord};
-use crate::witness::{Derived, derive_separating_witness};
+use crate::witness::{derive_separating_witness, Derived};
 use crate::{
-    DisagreementCause, InputSettlement, ObservationIdentity, ReplayRefusal, ReplayResult,
-    ReplaySource, RuntimeValuePath, SeparationReason, SeparationStep, StateClauseCounterexample,
-    StateClauseReplayResult, ValuePathStep, ValuePathSubject, Verdict, WitnessEnvelope,
-    WitnessFailure, WitnessSettlement, replay_state_clause,
+    replay_state_clause, DisagreementCause, InputSettlement, ObservationIdentity, ReplayRefusal,
+    ReplayResult, ReplaySource, RuntimeValuePath, SeparationReason, SeparationStep,
+    StateClauseCounterexample, StateClauseReplayResult, ValuePathStep, ValuePathSubject, Verdict,
+    WitnessEnvelope, WitnessFailure, WitnessSettlement,
 };
 use filament_semantic_value::catalog::Category;
 use filament_semantic_value::checking::CheckMode;
@@ -2520,7 +2520,7 @@ fn tc_744_every_deciding_element_kind_round_trips() {
 /// that unit's id.
 fn metre_package() -> (fsl_package::CheckedPackage, filament_exact::UnitId) {
     use fsl_semantics::value::{
-        DimensionPreimage, NodeOwner, OwnerSelection, UnitPreimage, admit_unit_graph,
+        admit_unit_graph, DimensionPreimage, NodeOwner, OwnerSelection, UnitPreimage,
     };
     let owner = json!({"kind": "source", "authority": "agent-ix", "identity": "example", "package_name": "example"});
     let length = DimensionPreimage::from_json(json!({

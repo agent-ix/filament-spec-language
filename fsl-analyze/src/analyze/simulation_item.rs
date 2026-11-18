@@ -10,7 +10,9 @@ use std::num::NonZeroU64;
 
 use filament_exact::{length_amount, Cancel, Charge, ChargePoint, Incomplete, Meter};
 use filament_semantic_value::catalog::Category;
-use fsl_eval::simulation::model::{enumerate_model, sample_model_runs, ModelSystem, SampledRuns};
+use fsl_eval::simulation::model::{
+    enumerate_model, sample_model_runs, ClauseOutcome, ModelFinding, ModelSystem, SampledRuns,
+};
 use fsl_eval::simulation::{
     Coverage, EnumerationBounds, EnumerationEnd, NotSimulated, StateKey, BOUND_POSITIONS,
 };
@@ -367,6 +369,7 @@ fn enumerate(
             document.insert("cause".to_owned(), cause);
             document.insert("traces".to_owned(), json!([]));
             document.insert("coverage".to_owned(), coverage_value(&Coverage::default()));
+            document.insert("findings".to_owned(), json!([]));
             document.insert("frontier".to_owned(), json!([]));
             return Ok(category);
         }
@@ -385,6 +388,8 @@ fn enumerate(
         limit: limits.emit.output_bytes,
     };
     let mut traces = Vec::new();
+    let mut reported: Vec<(usize, usize, usize)> = Vec::new();
+    let mut seen = std::collections::HashSet::new();
     let mut cut = None;
     for leaf in run.leaves() {
         let depth = run.states.get(leaf).map_or(0, |state| state.depth);
@@ -405,6 +410,12 @@ fn enumerate(
         if let Err(cause) = emission.account(&trace) {
             cut = Some(cause);
             break;
+        }
+        // FR-634: a state on several traces is reported at the first one.
+        for (at, state) in positions.iter().enumerate() {
+            if seen.insert(*state) {
+                reported.push((*state, traces.len(), at));
+            }
         }
         traces.push(trace);
     }
@@ -429,10 +440,82 @@ fn enumerate(
     if let Some(cause) = cause {
         document.insert("cause".to_owned(), cause);
     }
+    reported.sort_unstable();
+    let mut found = Vec::new();
+    for (state, trace, at) in reported {
+        let findings = run
+            .states
+            .get(state)
+            .map_or(&[][..], |state| &state.findings[..]);
+        for finding in findings {
+            found.extend(finding_value(finding, trace, at)?);
+        }
+    }
+    document.insert("findings".to_owned(), Value::Array(found));
     document.insert("traces".to_owned(), Value::Array(traces));
     document.insert("coverage".to_owned(), coverage_value(&run.coverage));
     document.insert("frontier".to_owned(), Value::Array(frontier));
     Ok(category)
+}
+
+/// FR-634 "Invariant findings": the entry for one `finding` seen at
+/// `position` of trace `trace`, `None` for a finding that is not an
+/// invariant's.
+fn finding_value(
+    finding: &ModelFinding,
+    trace: usize,
+    position: usize,
+) -> Result<Option<Value>, SimulationFault> {
+    let (kind, clause, object, evaluation) = match finding {
+        ModelFinding::InvariantViolated {
+            clause,
+            self_object,
+            ..
+        } => ("invariant-violated", clause, self_object, None),
+        ModelFinding::InvariantUndetermined {
+            clause,
+            self_object,
+            evaluation,
+            ..
+        } => (
+            "invariant-undetermined",
+            clause,
+            self_object,
+            Some(evaluation),
+        ),
+        _ => return Ok(None),
+    };
+    let text = fsl_eval::simulation::model::reference_canonical_text(object)
+        .map_err(|_| SimulationFault::Fault)?;
+    let mut entry = Map::new();
+    entry.insert("kind".to_owned(), json!(kind));
+    entry.insert("invariant".to_owned(), json!(clause));
+    entry.insert(
+        "self".to_owned(),
+        serde_json::from_str(&text).map_err(|_| SimulationFault::Fault)?,
+    );
+    entry.insert("trace".to_owned(), json!(trace.to_string()));
+    entry.insert("position".to_owned(), json!(position.to_string()));
+    if let Some(evaluation) = evaluation {
+        entry.insert("cause".to_owned(), clause_cause(evaluation));
+    }
+    Ok(Some(Value::Object(entry)))
+}
+
+/// The typed cause of an invariant clause evaluation that decided no Boolean.
+fn clause_cause(outcome: &ClauseOutcome) -> Value {
+    if let Some(cause) = outcome.undefined_cause() {
+        return json!({"kind": "undefined-evaluation", "code": fsl_replay::undefined_reason(&cause)});
+    }
+    match outcome {
+        ClauseOutcome::KernelUndefined(_) | ClauseOutcome::FamilyUndefined(_) => {
+            json!({"kind": "undefined-evaluation"})
+        }
+        ClauseOutcome::KernelRefused(refusal) => json!({"kind": "refused", "code": refusal.code()}),
+        ClauseOutcome::FamilyRefused(code) => json!({"code": code.code(), "kind": code.cause()}),
+        ClauseOutcome::Incomplete(incomplete) => meter_cause(incomplete),
+        ClauseOutcome::NotBoolean => json!({"kind": "not-boolean"}),
+    }
 }
 
 /// The unpadded base64url spelling of a state key, FR-621's spelling, which
@@ -468,6 +551,7 @@ fn sample(
             document.insert("cause".to_owned(), cause);
             document.insert("traces".to_owned(), json!([]));
             document.insert("coverage".to_owned(), coverage_value(&Coverage::default()));
+            document.insert("findings".to_owned(), json!([]));
             document.insert("frontier".to_owned(), json!([]));
             return Ok(category);
         }
@@ -535,6 +619,19 @@ fn sample(
     if let Some(cause) = cause {
         document.insert("cause".to_owned(), cause);
     }
+    let mut found = Vec::new();
+    for (index, trace) in draw.traces.iter().take(written.len()).enumerate() {
+        let states = written
+            .get(index)
+            .and_then(|written| written["states"].as_array().map(Vec::len))
+            .unwrap_or(0);
+        for entry in trace.findings.iter().filter(|entry| entry.depth < states) {
+            for finding in &entry.findings {
+                found.extend(finding_value(finding, index, entry.depth)?);
+            }
+        }
+    }
+    document.insert("findings".to_owned(), Value::Array(found));
     document.insert("traces".to_owned(), Value::Array(written));
     document.insert("coverage".to_owned(), coverage_value(&draw.coverage));
     document.insert("frontier".to_owned(), json!([]));

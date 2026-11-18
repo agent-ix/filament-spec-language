@@ -1893,11 +1893,14 @@ fn actual_empty_admitted_identity_fault_propagates_from_package_into_replay_fail
         .with_population(binding)
         .unwrap();
     let span = fsl_foundation::Span { start: 0, end: 0 };
-    let source = Expression::size(Expression::all_instances(
-        TypeForm::builtin(BuiltinType::Reference, span)
-            .with_arguments(vec![TypeForm::name("M::A", span)]),
-        Expression::name("population"),
-    ), None);
+    let source = Expression::size(
+        Expression::all_instances(
+            TypeForm::builtin(BuiltinType::Reference, span)
+                .with_arguments(vec![TypeForm::name("M::A", span)]),
+            Expression::name("population"),
+        ),
+        None,
+    );
     let mut declarations = PackageDeclarations::new(
         fsl_semantics::check::fixture_source(),
         "fixture",
