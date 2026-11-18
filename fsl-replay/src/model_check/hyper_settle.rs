@@ -569,7 +569,13 @@ fn with_hyper_replay<T>(
             ))
         })?
         .simulation
-        .package;
+        .source_package()
+        .ok_or_else(|| {
+            ReplayRefusal::Fault(filament_semantic_value::catalog::InternalFault::new(
+                "hyper-settle-smt",
+                "the-hyper-letters-read-source-forms",
+            ))
+        })?;
     let letters =
         CheckedHyperLetters::new(package, item.clause, systems.clone()).map_err(|_| {
             ReplayRefusal::Fault(filament_semantic_value::catalog::InternalFault::new(

@@ -488,13 +488,13 @@ impl<'s, 'a> TimedSystem<'s, 'a> {
         max_clocks: std::num::NonZeroU64,
     ) -> Result<Self, TimedSubjectRefusal> {
         super::check_model_bounds(system, crate::simulation::BOUND_POSITIONS)?;
-        let graph = system.package.graph();
+        let input = system.input();
         let missing = || TimedSubjectRefusal::NoTimedModel {
             model: model.to_owned(),
         };
-        let timed = graph.timed_model(model).ok_or_else(missing)?;
-        let source = graph
-            .time_sources()
+        let timed = input.timed_model(model).ok_or_else(missing)?;
+        let source = input
+            .time_sources
             .iter()
             .find(|source| timed.is_timed_by(source))
             .ok_or_else(missing)?;
@@ -503,8 +503,8 @@ impl<'s, 'a> TimedSystem<'s, 'a> {
             // parameter is read by no guard here. A random parameter is read
             // by no precondition (FR-185), so it is no read.
             let random = |name: &str| {
-                graph
-                    .probabilistic_model()
+                input
+                    .probabilistic
                     .random_parameters()
                     .iter()
                     .any(|random| {

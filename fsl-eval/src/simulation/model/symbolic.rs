@@ -192,7 +192,9 @@ impl<'a> ModelSystem<'a> {
     /// two populations hold an object under one key, or when an operation
     /// creates or deletes objects.
     pub(crate) fn symbolic(&self) -> Result<SymbolicSubject<'a>, SmtEncodingRefusal> {
-        let package: &'a CheckedPackage = self.package;
+        let package: &'a CheckedPackage = self
+            .source_package()
+            .ok_or_else(|| fault("smt-encoding-reads-source-forms"))?;
         let first = self.initial.first().ok_or(Refusal::NoInitialState)?;
         let mut rows: Vec<(DeclarationKey, String, DeclarationKey)> = Vec::new();
         for (population, objects) in &first.state.populations {
@@ -355,7 +357,9 @@ impl<'a> ModelSystem<'a> {
         type_id: EffectiveId,
         references: &[ObjectReference],
     ) -> Result<Vec<SymbolicOperation<'a>>, SmtEncodingRefusal> {
-        let package: &'a CheckedPackage = self.package;
+        let package: &'a CheckedPackage = self
+            .source_package()
+            .ok_or_else(|| fault("smt-encoding-reads-source-forms"))?;
         let mut operations = Vec::new();
         for application in self.applications.get(&type_id).into_iter().flatten() {
             let effect = application.declaration.effect();

@@ -238,7 +238,7 @@ impl World {
         ModelSubject {
             simulation: ModelSimulationRequest {
                 emit: fsl_package::EmitLimits::fixture(),
-                package,
+                input: fsl_eval::simulation::model::ModelCheckInput::source(package),
                 packages: &self.packages,
                 normalization: ModelNormalizationLimits::default(),
                 snapshots: &self.snapshots,

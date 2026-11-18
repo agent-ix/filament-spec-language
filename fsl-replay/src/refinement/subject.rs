@@ -257,7 +257,7 @@ fn open_systems_inner<'a>(
         AbstractInitial::Mapped => (Vec::new(), true),
     };
     let abstract_request = ModelSimulationRequest {
-        package: abstract_package,
+        input: fsl_eval::simulation::model::ModelCheckInput::source(abstract_package),
         packages: concrete.packages,
         normalization: concrete.normalization,
         snapshots: concrete.snapshots,

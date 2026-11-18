@@ -5201,7 +5201,7 @@ fn reemit_subject<'a>(
 ) -> fsl_eval::model_subject::ModelSubject<'a> {
     fsl_eval::model_subject::ModelSubject {
         simulation: fsl_eval::simulation::model::ModelSimulationRequest {
-            package,
+            input: fsl_eval::simulation::model::ModelCheckInput::source(package),
             packages,
             normalization: fsl_semantics::model::accounting::ModelNormalizationLimits::default(),
             snapshots,

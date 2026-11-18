@@ -575,7 +575,7 @@ fn an_object_or_reference_read_is_model_state() {
         "",
         &attempted(
             "M::Receipt",
-            "attempted.n > 0",
+            "attempted.n",
             "attempted.n > 0",
             "not (attempted.n > 0)",
         ),

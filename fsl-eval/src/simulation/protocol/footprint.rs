@@ -939,14 +939,28 @@ impl<M: MemoryModel> ProtocolSystem<'_, M> {
         let own = control(path);
         built.enabling(own.clone());
         built.write(own);
-        if matches!(
+        let dispatches = matches!(
             step.kind(),
             StepKind::CAttempt | StepKind::CFail | StepKind::CTimeout
-        ) {
-            let Some(index) = template.role else {
-                return Err(unknown());
-            };
+        );
+        if let (true, Some(index)) = (dispatches, template.role) {
             built.enabling(self.role_location(path.instance, index)?);
+        }
+        let registration = protocol(ProtocolLocation::Registration {
+            instance: path.instance,
+            key,
+        });
+        if dispatches {
+            built.enabling(protocol(ProtocolLocation::Registrations {
+                instance: path.instance,
+                template: template.name.clone(),
+            }));
+            // The attempt's outcome is appended to this registration.
+            built.read(registration.clone());
+            built.write(registration.clone());
+            for location in self.model.record_reads(template.attempt_type) {
+                built.enabling(location);
+            }
         }
         self.scope_writes(&mut built, instance, path.instance)?;
         match step.kind() {
@@ -967,45 +981,18 @@ impl<M: MemoryModel> ProtocolSystem<'_, M> {
                     accesses.shared(),
                     &mut built.footprint,
                 );
-                built.enabling(protocol(ProtocolLocation::Registrations {
-                    instance: path.instance,
-                    template: template.name.clone(),
-                }));
-                // The records of the attempt type, and so the steps, depend
-                // on which objects a reference of the type ranges over
-                // (FT-1, FT-3).
-                for location in self.model.record_reads(template.attempt_type) {
-                    built.enabling(location);
-                }
             }
             StepKind::CFail | StepKind::CTimeout => {
                 let application = step.application().ok_or_else(unknown)?;
                 let model = self.model.footprint_selecting(application, None)?;
                 built.footprint.reads.extend(model.reads);
                 built.footprint.enabling.extend(model.enabling);
-                let registration = protocol(ProtocolLocation::Registration {
-                    instance: path.instance,
-                    key,
-                });
-                built.read(registration.clone());
-                built.write(registration);
-                for location in self.model.record_reads(template.attempt_type) {
-                    built.enabling(location);
-                }
             }
             StepKind::CExpire => {
-                let registration = protocol(ProtocolLocation::Registration {
-                    instance: path.instance,
-                    key,
-                });
                 built.read(registration.clone());
                 built.write(registration);
             }
             StepKind::CEnd if retry => {
-                let registration = protocol(ProtocolLocation::Registration {
-                    instance: path.instance,
-                    key,
-                });
                 built.read(registration.clone());
                 built.write(registration);
             }

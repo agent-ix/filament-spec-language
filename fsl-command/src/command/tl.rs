@@ -48,7 +48,12 @@ pub(super) enum CrossEvaluate {
     },
     /// Every finite behaviour of the subject's model from the snapshot
     /// `initial`, of 1 to `max_steps` steps.
-    Initial,
+    Initial {
+        /// The snapshot file.
+        initial: String,
+        /// The longest behaviour, in steps.
+        max_steps: u64,
+    },
 }
 
 fn invalid(member: &str, reason: impl Into<String>) -> RunCause {
@@ -149,14 +154,23 @@ fn decode_cross(cross: &Map<String, Value>) -> Result<CrossEvaluate> {
                     "over is given with trace only",
                 ));
             }
-            if !matches!(initial, Value::String(file) if !file.is_empty()) {
+            let Value::String(file) = initial.clone() else {
+                return Err(invalid(
+                    "cross_evaluate.initial",
+                    "expected a snapshot file name",
+                ));
+            };
+            if file.is_empty() {
                 return Err(invalid(
                     "cross_evaluate.initial",
                     "expected a snapshot file name",
                 ));
             }
             match cross.get("max_steps").and_then(Value::as_u64) {
-                Some(steps) if steps >= 1 => Ok(CrossEvaluate::Initial),
+                Some(steps) if steps >= 1 => Ok(CrossEvaluate::Initial {
+                    initial: file,
+                    max_steps: steps,
+                }),
                 _ => Err(invalid(
                     "cross_evaluate.max_steps",
                     "expected an integer of at least 1",
@@ -165,6 +179,9 @@ fn decode_cross(cross: &Map<String, Value>) -> Result<CrossEvaluate> {
         }
     }
 }
+
+/// The observations key the `initial` snapshot is read under.
+pub(super) const INITIAL_KEY: &str = "initial";
 
 /// The FR-312 clause selection a lowering reads its clause and valuation
 /// through: the trace to cross-evaluate over, or an empty finite trace,
@@ -177,7 +194,11 @@ pub(super) fn selection(lowering: &TlLowering) -> Value {
             temporal["over"] = over.clone();
         }
     }
-    json!({"selection": {"temporal": temporal}, "observations": {}})
+    let observations = match &lowering.cross {
+        Some(CrossEvaluate::Initial { initial, .. }) => json!({INITIAL_KEY: initial}),
+        _ => json!({}),
+    };
+    json!({"selection": {"temporal": temporal}, "observations": observations})
 }
 
 /// How the lowering maps TL atoms to native `holds` leaves. The request path
@@ -188,6 +209,11 @@ pub(super) fn selection(lowering: &TlLowering) -> Value {
 pub struct AtomMapping {
     /// The TL atom names (`p0`, ...) read as the negation of their leaf.
     pub negated: BTreeSet<String>,
+    /// A correspondence identity to stamp on the lowered formula in place of
+    /// the one the lowering chose, so that FR-931-AC-8 can show that a
+    /// lowered formula whose classification differs from the clause's is a
+    /// classification loss. The lowering does not read it yet.
+    pub lowered_correspondence: Option<String>,
 }
 
 /// A lowering record and the exit code FR-285 gives it.
@@ -332,10 +358,23 @@ fn lowering_record(
         ),
     );
     let mut exit_code = 0;
-    if let Some(positions) = &valuation.positions {
-        let cross = cross_evaluate(clause.name(), tl, &lowered, positions, mapping, classified)?;
+    let traces: Option<(Vec<&fsl_eval::temporal::ObservedValuation>, bool)> =
+        match (&valuation.positions, &valuation.behaviours) {
+            (Some(positions), _) => Some((vec![positions], true)),
+            (None, Some(behaviours)) => Some((
+                behaviours.traces.iter().collect(),
+                matches!(behaviours.end, fsl_replay::BehaviourValuationEnd::Complete),
+            )),
+            (None, None) => None,
+        };
+    if let Some((traces, complete)) = traces {
+        let cross = cross_evaluate(clause.name(), tl, &lowered, &traces, mapping, classified)?;
         if cross["agree"] != json!(true) {
             exit_code = 30;
+        } else if !complete {
+            // FR-931: a work-budget stop during enumeration reports the
+            // counts reached and exits incomplete.
+            exit_code = 22;
         }
         record.insert("cross_evaluation".to_owned(), cross);
     }
@@ -561,49 +600,53 @@ fn cross_evaluate(
     clause: &str,
     formula: Formula<'_>,
     lowered: &Lowered,
-    positions: &fsl_replay::spine::ObservedValuation,
+    traces: &[&fsl_replay::spine::ObservedValuation],
     mapping: &AtomMapping,
     target: TlTarget,
 ) -> std::result::Result<Value, String> {
-    // Each position's true propositions, in increasing order.
-    let mut trace: Vec<Vec<PropositionId>> = Vec::new();
-    for row in &positions.readings {
-        let mut true_at = Vec::new();
-        for (proposition, (atom, _)) in lowered.atoms.iter().enumerate() {
-            let column = positions
-                .atoms
-                .iter()
-                .position(|native| native == atom)
-                .ok_or_else(|| "lowered atom is a native atom".to_owned())?;
-            let native = matches!(row.get(column), Some(fsl_replay::spine::AtomReading::True));
-            let name = format!("p{proposition}");
-            if native != mapping.negated.contains(&name) {
-                true_at.push(PropositionId(
-                    u32::try_from(proposition).map_err(|_| "too many atoms".to_owned())?,
-                ));
+    let mut faults = Vec::new();
+    let mut compared = 0_usize;
+    for (index, positions) in traces.iter().enumerate() {
+        // Each position's true propositions, in increasing order.
+        let mut trace: Vec<Vec<PropositionId>> = Vec::new();
+        for row in &positions.readings {
+            let mut true_at = Vec::new();
+            for (proposition, (atom, _)) in lowered.atoms.iter().enumerate() {
+                let column = positions
+                    .atoms
+                    .iter()
+                    .position(|native| native == atom)
+                    .ok_or_else(|| "lowered atom is a native atom".to_owned())?;
+                let native = matches!(row.get(column), Some(fsl_replay::spine::AtomReading::True));
+                let name = format!("p{proposition}");
+                if native != mapping.negated.contains(&name) {
+                    true_at.push(PropositionId(
+                        u32::try_from(proposition).map_err(|_| "too many atoms".to_owned())?,
+                    ));
+                }
+            }
+            trace.push(true_at);
+        }
+        for (position, outcome) in &positions.activations {
+            let at = position.index();
+            let tl = tl_verdict(formula, &trace, at, target)?;
+            let native = native_verdict(outcome);
+            if native != json!(tl) {
+                faults.push(json!({
+                    "kind": "correspondence-loss",
+                    "clause": clause,
+                    "trace": index,
+                    "position": at,
+                    "native": native,
+                    "tl": tl,
+                }));
             }
         }
-        trace.push(true_at);
-    }
-    let mut faults = Vec::new();
-    for (position, outcome) in &positions.activations {
-        let at = position.index();
-        let tl = tl_verdict(formula, &trace, at, target)?;
-        let native = native_verdict(outcome);
-        if native != json!(tl) {
-            faults.push(json!({
-                "kind": "correspondence-loss",
-                "clause": clause,
-                "trace": 0,
-                "position": at,
-                "native": native,
-                "tl": tl,
-            }));
-        }
+        compared = compared.saturating_add(positions.activations.len());
     }
     Ok(json!({
-        "traces": 1,
-        "positions": positions.activations.len(),
+        "traces": traces.len(),
+        "positions": compared,
         "agree": faults.is_empty(),
         "faults": faults,
     }))

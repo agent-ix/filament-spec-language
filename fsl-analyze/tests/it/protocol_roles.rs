@@ -175,8 +175,13 @@ impl World {
         max_live_instances: Option<u64>,
     ) -> ModelCheckOutcome<ProtocolTransition> {
         let subject = self.subject();
-        let temporal_clock_selections =
-            crate::fill::tcb_01_event_position_selection(subject.model.simulation.package);
+        let temporal_clock_selections = crate::fill::tcb_01_event_position_selection(
+            subject
+                .model
+                .simulation
+                .source_package()
+                .expect("a source-route subject"),
+        );
         check_protocol(
             ProtocolCheckRequest {
                 temporal_clock_selections: &temporal_clock_selections,
@@ -819,26 +824,35 @@ fn refund_thread() -> ThreadPath {
     ThreadPath::compensation(0, "R::Refund", 0)
 }
 
-/// Part of FR-211-AC-5 (TC-656), the role part at a compensation attempt: a
-/// template taken `by r`, whose compensation thread is created when `r` has
-/// no live instance and no `spawn` is enabled, deadlocks with the thread
-/// `NoRoleInstance{r}`.
+/// FR-211-AC-5 (TC-656): retiring the last instance prevents a refund
+/// attempt from dispatching, while the compensation thread can expire.
+#[trace("TC-656", "FR-211-AC-5")]
 #[test]
-fn a_compensation_attempt_owned_by_a_role_with_no_instance_gives_no_role_instance() {
+fn a_compensation_attempt_owned_by_a_role_with_no_instance_can_expire() {
     let world = World::new(&pay_by_role("until(r.v >= 0)"), &["c"], &[0]);
     let subject = world.subject();
     let system = sc_system(&subject);
     let reached = reachable(&system);
-    let waits: Vec<WaitCause> = reached
+    let retired = reached
         .iter()
-        .filter(|state| state.steps.is_empty() && state.state.has_live_instance())
-        .flat_map(|state| {
-            SubjectSystem::blocked(&system, &state.state, &[]).expect("the blocked threads")
+        .find(|state| {
+            statuses(&system, state)
+                .get("c")
+                .is_some_and(|status| status == "retired")
+                && system
+                    .threads(&state.state)
+                    .expect("threads")
+                    .iter()
+                    .any(|thread| thread.path == refund_thread())
         })
-        .filter(|thread| thread.path == refund_thread())
-        .map(|thread| thread.cause)
-        .collect();
-    assert_eq!(waits, [no_role_instance()]);
+        .expect("the refund is active after the only role instance retires");
+    let [(expiration, next)] = retired.steps.as_slice() else {
+        panic!("one expiration, got {:?}", retired.steps);
+    };
+    assert_eq!(expiration.thread(), Some(&refund_thread()));
+    assert_eq!(expiration.kind(), StepKind::CExpire);
+    assert!(expiration.actor().is_none());
+    assert_eq!(kinds(&reached, *next), [StepKind::Finish]);
 }
 
 /// ADR-027 RR-4: a `scope` role owning only the template's compensation
@@ -851,10 +865,15 @@ fn a_scope_role_stays_live_for_the_compensation_attempt_it_owns() {
     let subject = world.subject();
     let system = sc_system(&subject);
     let reached = reachable(&system);
-    assert!(reached.iter().any(|state| state
-        .steps
-        .iter()
-        .any(|(step, _)| step.kind() == StepKind::CAttempt)));
+    for kind in [StepKind::CAttempt, StepKind::CFail, StepKind::CTimeout] {
+        let dispatch = reached
+            .iter()
+            .flat_map(|state| &state.steps)
+            .map(|(step, _)| step)
+            .find(|step| step.kind() == kind)
+            .unwrap_or_else(|| panic!("{kind:?} dispatches while the scope role is live"));
+        assert_eq!(dispatch.actor().expect("the dispatch has an actor").role, "r");
+    }
     for state in reached
         .iter()
         .filter(|state| state.steps.is_empty() && state.state.has_live_instance())

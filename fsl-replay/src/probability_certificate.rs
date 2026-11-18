@@ -989,9 +989,8 @@ fn claim_workload<'a>(
     match &claim.scheduler {
         ProbScheduler::Every => Ok(None),
         ProbScheduler::Workload(name) => system
-            .package()
-            .graph()
-            .probabilistic_model()
+            .input()
+            .probabilistic
             .workload(name)
             .filter(|workload| workload.model() == claim.subject.alias)
             .map(Some)

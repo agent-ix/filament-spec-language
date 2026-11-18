@@ -226,7 +226,14 @@ impl ModelCheckItem<'_> {
                 ),
             }]),
             Self::Invariant { clause } => {
-                let occurrence = invariant_root(subject.simulation.package, clause)?;
+                let package = subject
+                    .simulation
+                    .source_package()
+                    .ok_or(ItemRefusal::Fault(InternalFault::new(
+                        "model-check-item",
+                        "the-item-reads-source-forms",
+                    )))?;
+                let occurrence = invariant_root(package, clause)?;
                 Ok(vec![Instance {
                     binding: None,
                     translation: Translation::Safety(
@@ -236,8 +243,15 @@ impl ModelCheckItem<'_> {
                 }])
             }
             Self::Clause { clause, .. } => {
+                let package = subject
+                    .simulation
+                    .source_package()
+                    .ok_or(ItemRefusal::Fault(InternalFault::new(
+                        "model-check-item",
+                        "the-item-reads-source-forms",
+                    )))?;
                 let identity = ClauseIdentity::resolve(
-                    subject.simulation.package,
+                    package,
                     subject.simulation.packages,
                     clause,
                     temporal_clock_selections,

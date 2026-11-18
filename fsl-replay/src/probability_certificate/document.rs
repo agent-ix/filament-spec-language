@@ -901,7 +901,7 @@ fn subject_graph_with_identity(
 ) -> Result<SubjectGraph, ProbabilityDocumentError> {
     use fsl_eval::simulation::model::{TimedSubjectRefusal, TimedSystem};
     if !std::ptr::eq(
-        system.package().graph().probabilistic_model().claims(),
+        system.input().probabilistic.claims(),
         claims,
     ) {
         return Err(ProbabilityDocumentError::IdentityMismatch);

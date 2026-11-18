@@ -561,7 +561,7 @@ impl World {
         ModelSubject {
             simulation: ModelSimulationRequest {
                 emit: fsl_package::EmitLimits::fixture(),
-                package,
+                input: fsl_eval::simulation::model::ModelCheckInput::source(package),
                 packages: &self.packages,
                 normalization: ModelNormalizationLimits::default(),
                 snapshots: &self.snapshots,
@@ -770,7 +770,10 @@ mod tp4 {
         fn context(&self) -> StateContext {
             let subject = self.world.subject();
             let identity = ClauseIdentity::resolve(
-                subject.simulation.package,
+                subject
+                    .simulation
+                    .source_package()
+                    .expect("a source-route subject"),
                 subject.simulation.packages,
                 self.clause(),
                 &[],

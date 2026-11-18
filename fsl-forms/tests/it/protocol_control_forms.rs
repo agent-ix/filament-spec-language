@@ -390,15 +390,18 @@ fn a_parallel_builds_its_join_policy_and_outstanding_rule() {
     assert_eq!(parallel.quorum_count, None);
     assert_eq!(parallel.outstanding, None);
 
-    let run = format!("parallel P {PARALLEL_BRANCHES} join any [] outstanding continue;");
+    let run = format!("parallel P {PARALLEL_BRANCHES} join any [a] outstanding continue;");
     let text = source("", &run);
     let unit = build(&text);
     let [parallel] = &protocol(&unit).parallels[..] else {
         panic!("one parallel");
     };
     assert_eq!(parallel.join.value, JoinPolicy::Any);
-    assert!(parallel.labels.is_empty());
-    assert_eq!(slice(&text, parallel.labels_span), "[]");
+    let [label] = &parallel.labels[..] else {
+        panic!("one join label, got {:?}", parallel.labels);
+    };
+    assert_eq!(label.name, "a");
+    assert_eq!(slice(&text, parallel.labels_span), "[a]");
     assert_eq!(
         parallel.outstanding.as_ref().map(|rule| rule.value),
         Some(Outstanding::Continue)

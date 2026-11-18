@@ -59,7 +59,9 @@ pub(super) fn build<'s, 'a>(
     limits: &ExactProbLimits,
     cancel: &Cancel,
 ) -> Result<ProbBuild, ProductRefusal> {
-    let package = system.package();
+    let package = system
+        .source_package()
+        .ok_or_else(|| fault("the-product-reads-source-forms"))?;
     let workload = match &claim.scheduler {
         ProbScheduler::Workload(name) => Some(
             package
@@ -303,7 +305,7 @@ fn admit(
             return Err(ProductRefusal::StrictClockConstraint { span: claim.span });
         }
     }
-    let delays = system.package().graph().probabilistic_model().delays();
+    let delays = system.input().probabilistic.delays();
     for delay in delays
         .iter()
         .filter(|delay| delay.operation().model() == claim.subject.alias.as_str())
@@ -382,7 +384,7 @@ fn scale_of(
     if let Form::Deadline { bound, .. } = form {
         note(bound);
     }
-    for delay in system.package().graph().probabilistic_model().delays() {
+    for delay in system.input().probabilistic.delays() {
         if let DelayDistribution::Discrete(values) = delay.distribution() {
             for (delay, _) in values {
                 note(delay);
@@ -1508,9 +1510,8 @@ impl<'c> Builder<'_, '_, 'c> {
     /// The delay distribution of `operation`, when it has a `discrete` one.
     fn given(&self, operation: &str) -> Option<Vec<(Rational, Rational)>> {
         self.system
-            .package()
-            .graph()
-            .probabilistic_model()
+            .input()
+            .probabilistic
             .delays()
             .iter()
             .find(|delay| {

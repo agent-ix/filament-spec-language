@@ -327,6 +327,17 @@ pub struct StateModel {
 }
 
 impl StateModel {
+    /// Whether a selected domain package declares an operation member.
+    pub fn declares_operations(&self) -> bool {
+        self.views.iter().any(|view| {
+            view.view
+                .domain_package()
+                .records
+                .iter()
+                .any(|record| matches!(record, DomainPackageRecord::OperationMember(_)))
+        })
+    }
+
     /// Re-admit and re-normalize the domain packages `model_selections` name
     /// against `packages`, as FR-106 admission does.
     ///

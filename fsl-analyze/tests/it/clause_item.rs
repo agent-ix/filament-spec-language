@@ -399,7 +399,7 @@ fn a_package_of_two_source_units_replays_from_its_complete_provision() {
     )
     .expect("the complete multi-unit subject is accepted");
     let mut raw_subject = world.subject(&["c"], crate::counter::UNLIMITED);
-    raw_subject.simulation.package = package;
+    raw_subject.simulation.input = fsl_eval::simulation::model::ModelCheckInput::source(package);
     let system = fsl_eval::simulation::model::ModelSystem::new(raw_subject.simulation.clone())
         .expect("the multi-unit system admits");
     let letters = system
