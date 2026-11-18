@@ -760,8 +760,8 @@ fn every_behavior_result(
         temporal_clock_selections: &[],
         item,
         max_depth: form.max_depth,
-        max_store_buffer: None,
-        max_messages: None,
+        max_store_buffer: form.max_store_buffer,
+        max_messages: form.max_messages,
         ignore_memory_constraints: false,
         max_live_instances: None,
         limits: form.limits,
@@ -770,8 +770,8 @@ fn every_behavior_result(
         subject: certificate_subject,
         temporal_clock_selections: &[],
         item,
-        max_store_buffer: None,
-        max_messages: None,
+        max_store_buffer: form.max_store_buffer,
+        max_messages: form.max_messages,
         max_live_instances: None,
     };
     let outcome = match crate::model_check::check_protocol(request, cancel) {
