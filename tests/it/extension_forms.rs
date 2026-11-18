@@ -575,7 +575,7 @@ fn compile_with_library(library: &str) -> Result<(), Box<CompileRefusal>> {
     )
     .map(|_| ())
     .map_err(|failure| match failure {
-        fsl_replay::spine::ProfileCheckFailure::Check { failure, .. } => refusal(failure),
+        fsl_replay::spine::ProfileCheckFailure::Check { failure, .. } => refusal(*failure),
         other => panic!("expected a check failure, got {other:?}"),
     })
 }
