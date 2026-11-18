@@ -20,7 +20,7 @@
 
 use filament_eval::FamilyOutcome;
 use filament_eval::{CallFailure, Evaluation};
-use filament_exact::{Integer, Meter, Outcome, ScalarLimits};
+use filament_exact::{Integer, LimitKind, Meter, Outcome, ScalarLimits};
 use filament_exact::{Value, ValueType};
 use filament_semantic_value::call::InputRefusal;
 use filament_semantic_value::checking::{CheckMode, CheckingLimits};
@@ -29,7 +29,7 @@ use filament_semantic_value::location::{
 };
 use fsl_eval::value::{CheckedPackageEvaluation, QualifiedName};
 use fsl_forms::{BinaryOperator, Expression, FunctionDeclaration};
-use fsl_package::CheckedPackage;
+use fsl_package::{BarePackage, BareSupply, CheckedPackage, EmitLimits};
 use fsl_semantics::check::{CheckCause, CheckRefusal, CheckedGraph, PackageDeclarations};
 use fsl_semantics::model::object_environment::ObjectEnvironment;
 use ix_trace_rs::trace;
@@ -368,6 +368,89 @@ fn call_to_an_unknown_function_is_refused() {
         result,
         Err(CallFailure::Input(InputRefusal::UnknownFunction(name))) if name == "missing"
     ));
+}
+
+/// The checked-package and bytes-only entry points evaluate the same named
+/// pure function and account for its top-level call identically.
+#[trace("FR-531-AC-1", "FR-945-AC-1")]
+#[test]
+fn bare_package_call_matches_the_checked_package_call() {
+    let package = link(
+        declarations(vec![function_one()])
+            .check(CheckMode::Linked, CheckingLimits::default())
+            .expect("the one-function package checks"),
+    );
+    let domain_packages =
+        fsl_semantics::model::intake::package_input(std::iter::empty::<&[u8]>())
+            .expect("an empty model selection is admitted");
+    let read = fsl_package::read_evaluation_package(
+        &package,
+        fsl_semantics::library::LibraryName::new("fixture").expect("library identity"),
+        &domain_packages,
+        fsl_package::V2ReadLimits::fixture(),
+        EmitLimits::fixture(),
+    )
+    .expect("strict reader admits the function package");
+    let admitted = read.admitted();
+    let mut row_budget = fsl_package::V2ReadLimits::fixture().native_join_budget();
+    let rows = read
+        .emission()
+        .identity_rows(admitted, &mut row_budget)
+        .expect("the function package identity rows materialize");
+    let mut join_budget = fsl_package::V2ReadLimits::fixture().native_join_budget();
+    let bare = BarePackage::new(admitted)
+        .with_supply(
+            BareSupply {
+                identities: &rows,
+                equality: None,
+            },
+            &mut join_budget,
+        )
+        .expect("the bytes package admits its identity supply");
+
+    let objects = ObjectEnvironment::default();
+    let function = QualifiedName::unqualified("one").expect("function name");
+    let argument = Value::Integer(Integer::from(17_i64));
+    let mut source_meter = Meter::new(UNLIMITED);
+    let source = package
+        .call(
+            &function,
+            vec![argument.clone()],
+            &objects,
+            &mut source_meter,
+        )
+        .expect("the source call evaluates");
+    let mut bare_meter = Meter::new(UNLIMITED);
+    let bytes = bare
+        .call(&function, vec![argument], &objects, &mut bare_meter)
+        .expect("the bytes call evaluates");
+
+    assert_eq!(evaluated(source), evaluated(bytes));
+    assert_eq!(
+        source_meter.consumed(LimitKind::WorkUnits),
+        bare_meter.consumed(LimitKind::WorkUnits)
+    );
+    let mut observed_meter = Meter::new(UNLIMITED);
+    let observed = bare.call_observing_applications(
+        &function,
+        vec![Value::Integer(Integer::from(17_i64))],
+        &objects,
+        &mut observed_meter,
+        fsl_eval::value::ApplicationObservationOptions {
+            function_case_limit: 10,
+            max_events: 32,
+            max_size_requests: 32,
+        },
+    );
+    assert_eq!(
+        evaluated(observed.evaluation.expect("the observing bytes call evaluates")),
+        Outcome::Completed(Value::Integer(Integer::from(17_i64)))
+    );
+    assert_eq!(observed.function_evaluations, 1);
+    assert_eq!(
+        observed_meter.consumed(LimitKind::WorkUnits),
+        bare_meter.consumed(LimitKind::WorkUnits)
+    );
 }
 
 /// `CheckedPackage::call` charges the top-level call's own
