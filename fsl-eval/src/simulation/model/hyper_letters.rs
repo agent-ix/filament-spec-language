@@ -94,30 +94,35 @@ impl<'s, 'a> CheckedHyperLetters<'s, 'a> {
             .map_err(LettersRefusal::ReferenceBindingsAdmission)?;
             reference_bindings.push(extended);
         }
-        if let Some(first) = reference_bindings.first() {
-            let literals = reference_literals(package.graph(), clause);
-            for (component, bindings) in reference_bindings.iter().enumerate().skip(1) {
-                if let Some(literal) = literals.iter().find(|literal| {
-                    first.get(&literal.object_type, &literal.identity)
-                        != bindings.get(&literal.object_type, &literal.identity)
-                }) {
-                    let identity = literal
-                        .identity
-                        .iter()
-                        .map(|byte| format!("{byte:02x}"))
-                        .collect::<String>();
-                    return Err(LettersRefusal::ReferenceBindingsDisagree {
-                        object_type: format!("{:?}", literal.object_type),
-                        identity,
-                        components: vec![0, component],
-                        bindings: vec![
-                            format!("{:?}", first.get(&literal.object_type, &literal.identity)),
-                            format!(
-                                "{:?}",
-                                bindings.get(&literal.object_type, &literal.identity)
-                            ),
-                        ],
-                    });
+        let literals = reference_literals(package.graph(), clause);
+        for literal in &literals {
+            let mut first_declaring = None;
+            for (component, (system, bindings)) in
+                systems.iter().zip(&reference_bindings).enumerate()
+            {
+                if system.model.type_key(literal.object_type.clone()).is_none() {
+                    continue;
+                }
+                let current = format!(
+                    "{:?}",
+                    bindings.get(&literal.object_type, &literal.identity)
+                );
+                if let Some((first_component, first_binding)) = &first_declaring {
+                    if *first_binding != current {
+                        let identity = literal
+                            .identity
+                            .iter()
+                            .map(|byte| format!("{byte:02x}"))
+                            .collect::<String>();
+                        return Err(LettersRefusal::ReferenceBindingsDisagree {
+                            object_type: format!("{:?}", literal.object_type),
+                            identity,
+                            components: vec![*first_component, component],
+                            bindings: vec![first_binding.clone(), current],
+                        });
+                    }
+                } else {
+                    first_declaring = Some((component, current));
                 }
             }
         }

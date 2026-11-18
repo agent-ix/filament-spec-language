@@ -79,7 +79,9 @@ fn first_holds_atom(clause: &fsl_semantics::check::CheckedHyperClause) -> Formul
 #[trace("TC-2957", "FR-1000-AC-8")]
 #[test]
 fn a_fixed_reference_literal_is_constant_in_hyper_evaluation() {
-    let body = "always holds(c.value @ a <= 3 or c.value @ b <= 3 or c = M::Counter#\"a\")";
+    // The two component predicates are false (0 != 2 and 1 != 2), so the
+    // true result demonstrates that the fixed literal branch is evaluated.
+    let body = "always holds(c.value @ a = 2 or c.value @ b = 2 or c = M::Counter#\"a\")";
     let (mut world, clause) = hyper_fixture(body, Vec::new());
     let start_a = world.start("reference-literal-fixed-a", &[Obj("a", 0, 0, None)]);
     let start_b = world.start("reference-literal-fixed-b", &[Obj("a", 1, 0, None)]);
@@ -89,6 +91,8 @@ fn a_fixed_reference_literal_is_constant_in_hyper_evaluation() {
         .expect("fixed references are admitted in hyper atoms");
     let initial_a = system_a.initial();
     let initial_b = system_b.initial();
+    assert_eq!(super::int_field(initial_a[0].state(), "a", "value"), "0");
+    assert_eq!(super::int_field(initial_b[0].state(), "a", "value"), "1");
     let states = [&initial_a[0], &initial_b[0]];
     let bindings = [ParameterBinding {
         parameter: "c".to_owned(),

@@ -137,15 +137,24 @@ impl ReferenceBindings {
                 let Some(components) = clause.component_reads(atom) else {
                     continue;
                 };
-                let mut pending = vec![condition];
-                while let Some(node) = pending.pop() {
-                    pending.extend(node.children());
+                let mut visited_functions = BTreeSet::new();
+                let mut pending = vec![(condition, false)];
+                while let Some((node, indexed)) = pending.pop() {
+                    let indexed = indexed || components.contains_key(node.location());
+                    pending.extend(node.children().map(|child| (child, indexed)));
+                    if let NodeKind::Call { function, .. } = node.kind() {
+                        if visited_functions.insert(*function) {
+                            if let Some(function) = graph.function_state(*function) {
+                                pending.push((function.body, indexed));
+                            }
+                        }
+                    }
                     if let NodeKind::ReferenceLiteral {
                         object_type,
                         identity,
                     } = node.kind()
                     {
-                        if !components.contains_key(node.location()) {
+                        if !indexed {
                             barred.insert(ReferenceLiteralKey {
                                 object_type: object_type.clone(),
                                 identity: identity.clone(),
@@ -237,15 +246,25 @@ impl ReferenceBindings {
             };
             collect_literals(graph, condition, &mut literals);
             let components = clause.component_reads(atom);
-            let mut pending = vec![condition];
-            while let Some(node) = pending.pop() {
-                pending.extend(node.children());
+            let mut visited_functions = BTreeSet::new();
+            let mut pending = vec![(condition, false)];
+            while let Some((node, indexed)) = pending.pop() {
+                let indexed =
+                    indexed || components.is_some_and(|reads| reads.contains_key(node.location()));
+                pending.extend(node.children().map(|child| (child, indexed)));
+                if let NodeKind::Call { function, .. } = node.kind() {
+                    if visited_functions.insert(*function) {
+                        if let Some(function) = graph.function_state(*function) {
+                            pending.push((function.body, indexed));
+                        }
+                    }
+                }
                 if let NodeKind::ReferenceLiteral {
                     object_type,
                     identity,
                 } = node.kind()
                 {
-                    if !components.is_some_and(|reads| reads.contains_key(node.location())) {
+                    if !indexed {
                         barred.insert(ReferenceLiteralKey {
                             object_type: object_type.clone(),
                             identity: identity.clone(),
@@ -254,6 +273,11 @@ impl ReferenceBindings {
                 }
             }
         }
+        // A hyper component can select a model that does not declare a
+        // literal's qualified type. Such a component has no binding for that
+        // literal and does not participate in cross-component agreement.
+        literals.retain(|literal| model.type_key(literal.object_type.clone()).is_some());
+        barred.retain(|literal| literals.contains(literal));
         let mut extended = self.0.clone();
         extended.extend(resolve_literals(
             literals,

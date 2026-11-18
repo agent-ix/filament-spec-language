@@ -130,7 +130,7 @@ impl ClauseIdentity {
         // This identity and `over` are already in the immutable S3-checked
         // package, so resolve them directly when this clause contains that
         // node instead of round-tripping a representation I2 cannot express.
-        if temporal_clause_has_reference_literal(node) {
+        if temporal_clause_has_reference_literal(package.graph(), node) {
             return Ok(Self {
                 occurrence: triple,
                 over: Some(node.over()),
@@ -302,7 +302,7 @@ impl HyperIdentity {
         // reference literal in its checked representation. The checked
         // assembled occurrence is package-owned and does not come from the
         // replay request.
-        if hyper_clause_has_reference_literal(clause) {
+        if hyper_clause_has_reference_literal(package.graph(), clause) {
             return Ok(Self { occurrence });
         }
         let (admitted, library) = read_back(
@@ -326,9 +326,20 @@ impl HyperIdentity {
     }
 }
 
-fn node_has_reference_literal(root: fsl_semantics::check::CheckedNode<'_>) -> bool {
+fn node_has_reference_literal(
+    graph: &fsl_semantics::check::CheckedGraph,
+    root: fsl_semantics::check::CheckedNode<'_>,
+) -> bool {
+    let mut visited_functions = std::collections::BTreeSet::new();
     let mut pending = vec![root];
     while let Some(node) = pending.pop() {
+        if let filament_checked::NodeKind::Call { function, .. } = node.kind() {
+            if visited_functions.insert(*function) {
+                if let Some(function) = graph.function_state(*function) {
+                    pending.push(function.body);
+                }
+            }
+        }
         if matches!(
             node.kind(),
             filament_checked::NodeKind::ReferenceLiteral { .. }
@@ -340,7 +351,10 @@ fn node_has_reference_literal(root: fsl_semantics::check::CheckedNode<'_>) -> bo
     false
 }
 
-fn temporal_clause_has_reference_literal(node: &fsl_semantics::check::TemporalClauseNode) -> bool {
+fn temporal_clause_has_reference_literal(
+    graph: &fsl_semantics::check::CheckedGraph,
+    node: &fsl_semantics::check::TemporalClauseNode,
+) -> bool {
     let clause = node.clause();
     let formula = clause.formula();
     let atom_has_literal = (0..formula.nodes().len()).any(|index| {
@@ -348,32 +362,35 @@ fn temporal_clause_has_reference_literal(node: &fsl_semantics::check::TemporalCl
             return false;
         };
         node.condition(atom)
-            .is_some_and(|(root, _)| node_has_reference_literal(root))
+            .is_some_and(|(root, _)| node_has_reference_literal(graph, root))
             || node.aggregate_conditions(atom).is_some_and(|conditions| {
                 [conditions.value, conditions.filter, conditions.predicate]
                     .into_iter()
                     .flatten()
                     .chain([conditions.threshold])
-                    .any(|(root, _)| node_has_reference_literal(root))
+                    .any(|(root, _)| node_has_reference_literal(graph, root))
             })
     });
     atom_has_literal
         || node
             .guard()
-            .is_some_and(|(root, _)| node_has_reference_literal(root))
+            .is_some_and(|(root, _)| node_has_reference_literal(graph, root))
         || (0..clause.captures().len()).any(|index| {
             node.capture(index)
-                .is_some_and(|(root, _)| node_has_reference_literal(root))
+                .is_some_and(|(root, _)| node_has_reference_literal(graph, root))
         })
 }
 
-fn hyper_clause_has_reference_literal(clause: &CheckedHyperClause) -> bool {
+fn hyper_clause_has_reference_literal(
+    graph: &fsl_semantics::check::CheckedGraph,
+    clause: &CheckedHyperClause,
+) -> bool {
     (0..clause.body().nodes().len()).any(|index| {
         clause
             .body()
             .node_id(index)
             .and_then(|atom| clause.condition(atom))
-            .is_some_and(|(root, _)| node_has_reference_literal(root))
+            .is_some_and(|(root, _)| node_has_reference_literal(graph, root))
     })
 }
 
