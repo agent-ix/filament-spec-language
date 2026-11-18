@@ -124,7 +124,7 @@ fn package_of_with_mode(declarations: &str, mode: CheckMode) -> CheckedPackage {
     )
 }
 
-/// TC-2830 (FR-109-AC-14): a source function run preserves the same typed
+/// TC-2830: a source function run preserves the same typed
 /// sum cause that the clause-run mapping reports as an undefined evaluation.
 #[trace("TC-2830", "FR-100-AC-10", "FR-109-AC-14")]
 #[test]

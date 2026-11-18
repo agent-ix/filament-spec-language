@@ -278,7 +278,7 @@ fn report(disposition: ClauseDisposition) -> ClauseRunReport {
 
 fn sum_out_of_domain_report() -> ClauseRunReport {
     let compiled = super::compiled();
-    let mapped = super::super::call::convert_outcome(
+    let mapped = crate::spine::call::convert_outcome(
         filament_eval::Evaluation {
             outcome: FamilyOutcome::Evaluated(Outcome::Undefined(
                 filament_exact::Undefined::SumOutOfDomain,
@@ -293,7 +293,7 @@ fn sum_out_of_domain_report() -> ClauseRunReport {
     report(ClauseDisposition::Evaluate(mapped))
 }
 
-/// TC-2830 step 1 (FR-109-AC-14): the typed `sum-out-of-domain` outcome is
+/// TC-2830 step 1: the typed `sum-out-of-domain` outcome is
 /// a refuted claim in a clause run, with its cause retained on the item.
 #[trace("TC-2830", "FR-109-AC-14")]
 #[test]
@@ -304,7 +304,7 @@ fn sum_out_of_domain_is_undefined_in_clause_run() {
         report.category(),
         filament_semantic_value::catalog::Category::Violation
     );
-    assert_eq!(report.truth(), Some(false));
+    assert_eq!(report.disposition.truth(), Some(false));
     assert_eq!(report.category().exit_code(), 10);
 
     let item = run_item("S", &report);
@@ -313,7 +313,7 @@ fn sum_out_of_domain_is_undefined_in_clause_run() {
     assert_eq!(item["cause"]["code"], "sum-out-of-domain", "{item}");
 }
 
-/// TC-2830 (FR-109-AC-14): a typed evaluator halt always supplies an item
+/// TC-2830: a typed evaluator halt always supplies an item
 /// cause, including the non-null cause for a kernel undefined result.
 #[trace("TC-2830", "FR-109-AC-14")]
 #[test]
@@ -349,7 +349,7 @@ fn run_sum_clause(domain: &str) -> ClauseRunReport {
     run_clause(request).expect("a well-formed request reports")
 }
 
-/// TC-2830 steps 2 and 3 (FR-109-AC-14): Linked refuses a sum whose prefix
+/// TC-2830 steps 2 and 3: Linked refuses a sum whose prefix
 /// may leave its domain, while a domain that admits every prefix holds.
 #[trace("TC-2830", "FR-109-AC-14")]
 #[test]
@@ -372,7 +372,7 @@ fn sum_domain_clause_refuses_unproved_prefix_and_accepts_in_domain_prefix() {
         inside.category(),
         filament_semantic_value::catalog::Category::Success
     );
-    assert_eq!(inside.truth(), Some(true));
+    assert_eq!(inside.disposition.truth(), Some(true));
     assert_eq!(inside.category().exit_code(), 0);
 }
 
