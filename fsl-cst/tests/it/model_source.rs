@@ -304,7 +304,6 @@ fn model_sources_keep_the_existing_budget_refusals() {
 /// the offending token.
 #[trace("TC-2833", "FR-1000-AC-1", "FSpec-TC-965", "FSpec-FR-480-AC-1")]
 #[test]
-#[ignore = "QSL-2166: the reference-literal production is not in the grammar yet"]
 fn a_reference_literal_parses_as_one_node() {
     let literal = "M::T#\"s1\"";
     let text = source(&format!("self = {literal}"));
@@ -372,7 +371,6 @@ fn first_diagnostic(text: &str) -> fsl_cst::CompleteDiagnostic {
 /// literal's node holds the qualified name, `#` and the string in order.
 #[trace("TC-2952", "FR-1000-AC-6", "FSpec-TC-2002", "FSpec-FR-480-AC-6")]
 #[test]
-#[ignore = "QSL-2166: the reference-literal production, its solid spelling and its refusals are not in the grammar yet"]
 fn a_malformed_reference_literal_refuses_at_the_offending_token() {
     // (spelling, offending text, nth occurrence of it in the spelling, cause)
     for (malformed, offending, nth, cause) in [

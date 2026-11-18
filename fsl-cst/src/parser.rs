@@ -241,6 +241,7 @@ pub(super) fn parse(
         &mut diagnostics,
     );
     let cst = LosslessCst::new(source.clone(), tokens, nodes, root, recoveries);
+    diagnostics.extend(reference_literal_spacing(&source, &cst));
     diagnostics.extend(interval_bounds(&source, &cst));
     diagnostics.extend(decimal_constructor_numbers(&source, &cst));
     Ok(ParsedSource::from_parts(
@@ -251,6 +252,83 @@ pub(super) fn parse(
         false,
         limits,
     ))
+}
+
+/// Reject trivia around the reference literal's `#`; this grammar's ordinary
+/// terminals intentionally ignore trivia, while FR-1000 requires the three
+/// tokens of this spelling to be adjacent.
+fn reference_literal_spacing(source: &Source, cst: &LosslessCst) -> Vec<CompleteDiagnostic> {
+    let mut diagnostics = Vec::new();
+    for node in cst.nodes() {
+        if node.production() != Production::ReferenceLiteral {
+            continue;
+        }
+        let mut name_end = None;
+        let mut hash = None;
+        let mut text_start = None;
+        for child in node.children() {
+            match *child {
+                CstElement::Node(index)
+                    if cst
+                        .nodes()
+                        .get(index)
+                        .is_some_and(|n| n.production() == Production::QualifiedName) =>
+                {
+                    name_end = cst.nodes().get(index).map(|n| n.span().end);
+                }
+                CstElement::Token(index)
+                    if cst
+                        .tokens()
+                        .get(index)
+                        .is_some_and(|t| t.spelling() == b"#") =>
+                {
+                    hash = cst.tokens().get(index).map(|t| t.span());
+                }
+                CstElement::Token(index)
+                    if cst
+                        .tokens()
+                        .get(index)
+                        .is_some_and(|t| t.kind() == TokenKind::Text) =>
+                {
+                    text_start = cst.tokens().get(index).map(|t| t.span().start);
+                }
+                _ => {}
+            }
+        }
+        let (Some(name_end), Some(hash), Some(text_start)) = (name_end, hash, text_start) else {
+            continue;
+        };
+        let invalid = if name_end != hash.start {
+            Some((
+                hash,
+                "the `#` of a reference literal must touch its type name",
+            ))
+        } else if hash.end != text_start {
+            Some((
+                Span {
+                    start: text_start,
+                    end: text_start,
+                },
+                "the string key of a reference literal must touch its `#`",
+            ))
+        } else {
+            None
+        };
+        if let Some((span, message)) = invalid {
+            diagnostics.push(*super::diagnostic::error(
+                source,
+                CompleteCode::InvalidSyntax,
+                CompleteCause::UnexpectedToken,
+                Phase::Parse,
+                span.start,
+                span.end,
+                message,
+            ));
+        }
+    }
+    diagnostics
+        .sort_by_key(|diagnostic| diagnostic.byte_span().map_or(usize::MAX, |span| span.start));
+    diagnostics
 }
 
 /// Parse a unit, recovering independently at declaration boundaries. The
