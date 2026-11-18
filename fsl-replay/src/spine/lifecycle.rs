@@ -3617,6 +3617,8 @@ pub(crate) struct ComposedUnit {
     pub(crate) package: Arc<pkg::CheckedPackage>,
     /// The emitted wire bytes for the compiled package.
     pub(crate) emitted: pkg::EmittedPackage,
+    /// The source and evidence retained with the emitted package.
+    pub(crate) emitted_unit: EmittedUnit,
     /// The unit's own source.
     pub(crate) source: Source,
     /// The checked unit returned by S3 and S4.
@@ -3734,8 +3736,10 @@ pub(crate) fn compose_in_mode(
         .map_err(refusal)?
         .into_value();
     record_declarations(&checked.package);
+    let emitted_package = emitted.package().clone();
     Ok(ComposedUnit {
-        emitted: emitted.package().clone(),
+        emitted: emitted_package,
+        emitted_unit: emitted,
         source: checked.source.clone(),
         package: checked.package.clone(),
         checked,

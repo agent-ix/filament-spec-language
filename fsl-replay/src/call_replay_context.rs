@@ -272,7 +272,7 @@ mod tests {
         .expect("composes under Kernel");
         let checked = &composed.checked;
         let models = &composed.models;
-        let emitted = &composed.emitted;
+        let emitted = &composed.emitted_unit;
         let outcome = spine::run_compiled(
             checked,
             models,
