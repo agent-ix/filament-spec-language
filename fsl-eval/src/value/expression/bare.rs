@@ -513,7 +513,7 @@ impl CheckedPackageEvaluation for BarePackage<'_> {
 mod tests {
     use super::*;
     use filament_exact::{Integer, LimitKind, ScalarLimits};
-    use fsl_forms::{Expression, FunctionDeclaration, TypeForm};
+    use fsl_forms::{DeclarationSpans, Expression, ExpressionSpans, FunctionDeclaration, TypeForm};
     use filament_semantic_value::checking::{CheckMode, CheckingLimits};
     use fsl_semantics::check::PackageDeclarations;
     use ix_trace_rs::trace;
@@ -539,13 +539,22 @@ mod tests {
             "bare-call-test".to_owned(),
             fsl_foundation::IdentityLimits::default(),
         );
-        declarations.functions.push(FunctionDeclaration::new(
-            "one",
-            vec![("a".to_owned(), integer.clone())],
-            integer,
-            None,
-            Expression::name("a".to_owned()),
-        ));
+        declarations.functions.push(
+            FunctionDeclaration::new(
+                "one",
+                vec![("a".to_owned(), integer.clone())],
+                integer,
+                None,
+                Expression::name("a".to_owned()),
+            )
+            .with_spans(DeclarationSpans {
+                declaration: fsl_foundation::Span { start: 0, end: 20 },
+                body: ExpressionSpans::new(fsl_foundation::Span { start: 10, end: 11 })
+                    .expect("the body span is ordered"),
+                measure: None,
+            })
+            .expect("the declaration owns its body span"),
+        );
         fsl_package::CheckedPackage::link(
             declarations
                 .check(CheckMode::Linked, CheckingLimits::default())
