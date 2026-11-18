@@ -26,7 +26,9 @@ use super::{Binder, Binders, Lowering};
 use crate::check::abstraction::{AbstractionKey, CheckedAbstractionRelation};
 use crate::check::family::OccurrenceRole;
 use crate::check::hyper_clause::lowering::{hyper_location, Site};
-use crate::check::hyper_clause::{CheckedHyperClause, CheckedModelRelation, MatchPart};
+use crate::check::hyper_clause::{
+    CheckedFiniteHyperClause, CheckedHyperClause, CheckedModelRelation, MatchPart,
+};
 use crate::check::node_key::{
     AggregateTerm, Binding, BindingValue, BodyTerm, GroupMember, GroupTerm, LawRole, LeafTerm,
     MemberTerm, NodeTag, Operation, OperationLaw, Operator, TupleMember, TupleTerm,
@@ -48,6 +50,14 @@ pub(crate) struct HyperClauseInput<'a> {
     pub(crate) subject_roots: &'a [NodeKey],
 }
 
+/// One checked finite trace-set hyper clause, as lowering reads it.
+pub(crate) struct FiniteHyperClauseInput<'a> {
+    /// The clause's index among all hyper clauses in the unit.
+    pub(crate) index: usize,
+    /// The checked clause.
+    pub(crate) clause: &'a CheckedFiniteHyperClause,
+}
+
 /// One checked FR-180 step relation and the already keyed nodes it joins.
 pub(crate) struct StepRelationInput<'a> {
     pub(crate) index: usize,
@@ -62,6 +72,13 @@ pub(crate) struct StepRelationInput<'a> {
 #[derive(Clone, Debug)]
 pub(crate) struct LoweredHyperClause {
     /// The `claim`/`hyperproperty` node: the clause's identity.
+    pub(crate) key: NodeKey,
+}
+
+/// A lowered finite hyper clause's key.
+#[derive(Clone, Debug)]
+pub(crate) struct LoweredFiniteHyperClause {
+    /// The `claim`/`hyperproperty` node.
     pub(crate) key: NodeKey,
 }
 
@@ -86,6 +103,89 @@ pub(crate) struct LoweredStepRelation {
 }
 
 impl Lowering<'_> {
+    /// Lower and key a checked FR-898 finite trace-set clause.
+    pub(crate) fn finite_hyper_clause(
+        &mut self,
+        input: &FiniteHyperClauseInput<'_>,
+    ) -> Result<LoweredFiniteHyperClause, CheckRefusal> {
+        let clause = input.clause;
+        let claim = hyper_location(input.index, Site::Claim);
+        let boolean = self.type_node(&ValueType::Boolean, &claim)?;
+
+        let domain_at = hyper_location(input.index, Site::FiniteDomain);
+        let bound =
+            self.integer_literal(filament_exact::Integer::from(clause.bound()), &domain_at)?;
+        let domain = self.bounded(
+            "finite_trace_population",
+            clause.record().clone(),
+            vec![("bound", bound)],
+            &domain_at,
+        )?;
+        let domain = super::require_admitted(domain, &domain_at)?;
+        self.record(domain.clone(), OccurrenceRole::Type, domain_at);
+
+        let body_slot_names: Vec<_> = clause
+            .body_parameters()
+            .iter()
+            .map(|(name, _)| name.clone())
+            .collect();
+        let mut scope = Vec::with_capacity(body_slot_names.len());
+        for (level, (name, value_type)) in clause.body_parameters().iter().enumerate() {
+            let site = hyper_location(input.index, Site::FiniteSlot(level));
+            let semantic_type = self.binder_type(value_type, None, &site)?;
+            let parameter = self.parameter(name, level, semantic_type.clone(), &site)?;
+            self.record(semantic_type.clone(), OccurrenceRole::Type, site);
+            scope.push(Binder {
+                slot: level,
+                parameter: parameter.into(),
+                semantic_type: semantic_type.into(),
+            });
+        }
+        let mut binders = Binders::new(&body_slot_names, &scope);
+        let body = self.expression(clause.typed_body().root(), &mut binders)?;
+
+        let mut quantifiers = Vec::with_capacity(clause.quantifiers().len());
+        for quantifier in clause.quantifiers() {
+            let variable = self.text_literal(&quantifier.variable, &claim)?;
+            let spelling = match quantifier.kind {
+                fsl_forms::QuantifierKind::Forall => "forall",
+                fsl_forms::QuantifierKind::Exists => "exists",
+            };
+            let spelling = self.text_literal(spelling, &claim)?;
+            quantifiers.push(TupleMember::Group(GroupTerm::new(vec![
+                GroupMember::Binding(Binding::new("variable", variable)),
+                GroupMember::Binding(Binding::new("quantifier", spelling)),
+            ])));
+        }
+        let key = self.insert(
+            &claim,
+            NodeTag::Claim,
+            "hyperproperty",
+            Some(boolean),
+            None,
+            BodyTerm::aggregate(vec![
+                MemberTerm::bound("domain", LeafTerm::reference(domain)),
+                MemberTerm::binding("subjects", BindingValue::Group(GroupTerm::new(Vec::new()))),
+                MemberTerm::binding(
+                    "parameters",
+                    BindingValue::Group(GroupTerm::new(Vec::new())),
+                ),
+                MemberTerm::binding(
+                    "quantifiers",
+                    BindingValue::Tuple(TupleTerm::new(quantifiers)),
+                ),
+                MemberTerm::binding("match", BindingValue::Group(GroupTerm::new(Vec::new()))),
+                MemberTerm::binding(
+                    "align_skip",
+                    BindingValue::Group(GroupTerm::new(Vec::new())),
+                ),
+                MemberTerm::bound("body", body),
+            ]),
+        )?;
+        self.record(key.clone(), OccurrenceRole::Claim, claim);
+        Ok(LoweredFiniteHyperClause { key })
+    }
+
     /// Lower and key a checked FR-180 step relation using its checked body,
     /// selected model roots, operation anchors, state clauses, and optional
     /// abstraction relation.

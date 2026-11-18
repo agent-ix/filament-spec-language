@@ -462,9 +462,10 @@ pub use hybrid::{
 #[cfg(any(test, feature = "test-support"))]
 pub use hyper_clause::check_hyper_clauses;
 pub use hyper_clause::{
-    decodable_argument, operation_text, ArgumentRead, AtomSlot, CheckedHyper, CheckedHyperClause,
-    CheckedModelRelation, CheckedQuantifier, CheckedStepPredicate, CopyGenerator, CopyGroup,
-    HyperCause, HyperDeclaration, HyperDeclarations, HyperForm, HyperIdentity, HyperTraceFamily,
+    decodable_argument, operation_text, ArgumentRead, AtomSlot, CheckedFiniteHyperClause,
+    CheckedFiniteTraceQuantifier, CheckedHyper, CheckedHyperClause, CheckedModelRelation,
+    CheckedQuantifier, CheckedStepPredicate, CopyGenerator, CopyGroup, HyperCause,
+    HyperDeclaration, HyperDeclarations, HyperForm, HyperIdentity, HyperTraceFamily,
     HyperUnsupported, MatchPart, ModelAlias, ObjectParameter, OperationContractClaim, StepRead,
     STUTTER_TEXT,
 };
@@ -977,6 +978,9 @@ pub struct CheckedGraph {
     /// FR-488: every emitted hyper clause over `behaviours`, in declaration
     /// order, each carrying its `claim` occurrence.
     hyper_nodes: Vec<hyper_clause::CheckedHyperClause>,
+    /// FR-898: every emitted finite trace-set hyper clause, in declaration
+    /// order, each carrying its `claim` occurrence.
+    finite_hyper_nodes: Vec<hyper_clause::CheckedFiniteHyperClause>,
     /// FR-180: every checked model relation emitted as a step-relation claim.
     step_relations: Vec<hyper_clause::CheckedModelRelation>,
     /// FR-165: every checked state-graph claim, in declaration order.
@@ -1130,6 +1134,7 @@ impl DebugWith for CheckedGraph {
             protocol_node_keys,
             temporal_clauses,
             hyper_nodes,
+            finite_hyper_nodes,
             step_relations,
             state_graph_claims,
             hybrid_models,
@@ -1262,6 +1267,7 @@ impl DebugWith for CheckedGraph {
             )
             .field("temporal_clauses", &Seq(temporal_clauses, table))
             .field("hyper_nodes", &hyper_nodes)
+            .field("finite_hyper_nodes", &finite_hyper_nodes)
             .field("step_relations", &Seq(step_relations, table))
             .field("state_graph_claims", &state_graph_claims)
             .field("hybrid_models", &hybrid_models)
@@ -3238,10 +3244,7 @@ impl PackageDeclarations {
                     .function_selections
                     .get(&index)
                     .is_some_and(state_clause::is_complete_value),
-                mode: function_check_modes
-                    .get(&index)
-                    .copied()
-                    .unwrap_or(mode),
+                mode: function_check_modes.get(&index).copied().unwrap_or(mode),
                 model_scope: model_function_bodies
                     .get(index)
                     .copied()
@@ -6195,19 +6198,15 @@ impl PackageDeclarations {
                 Err(refusal) => refusals.push(refusal),
             }
         }
+        let mut lowered_finite_hyper = Vec::with_capacity(checked_finite_hyper.len());
         for (finite_index, clause) in checked_finite_hyper.iter().enumerate() {
-            let location = hyper_clause::lowering::hyper_location(
-                checked_hyper.len() + finite_index,
-                hyper_clause::lowering::Site::Claim,
-            );
-            refusals.push(CheckRefusal {
-                location,
-                cause: CheckCause::Hyper(Box::new(
-                    hyper_clause::HyperCause::FiniteDomainContractUnavailable {
-                        span: clause.span(),
-                    },
-                )),
-            });
+            match lowering.finite_hyper_clause(&lowering::FiniteHyperClauseInput {
+                index: checked_hyper.len() + finite_index,
+                clause,
+            }) {
+                Ok(lowered) => lowered_finite_hyper.push(lowered),
+                Err(refusal) => refusals.push(refusal),
+            }
         }
         // FR-410: each checked state-graph claim, after every function its
         // predicates may call.
@@ -6794,6 +6793,9 @@ impl PackageDeclarations {
         if lowered_hyper.len() != checked_hyper.len() {
             return Err(unlowered());
         }
+        if lowered_finite_hyper.len() != checked_finite_hyper.len() {
+            return Err(unlowered());
+        }
         if lowered_relations.len() != checked_relations.len() {
             return Err(unlowered());
         }
@@ -6905,6 +6907,33 @@ impl PackageDeclarations {
                     })?;
                 Ok(checked
                     .assembled_at(OccurrenceKey::new(claims::wire(lowered.key.clone()), claim)))
+            })
+            .collect::<Result<Vec<_>, Vec<CheckRefusal>>>()?;
+        let finite_hyper_nodes = checked_finite_hyper
+            .into_iter()
+            .zip(&lowered_finite_hyper)
+            .enumerate()
+            .map(|(finite_index, (checked, lowered))| {
+                let location = hyper_clause::lowering::hyper_location(
+                    hyper_nodes.len() + finite_index,
+                    hyper_clause::lowering::Site::Claim,
+                );
+                let claim = occurrences
+                    .first_origin(&lowered.key, family::OccurrenceRole::Claim, |at| {
+                        *at == location
+                    })
+                    .ok_or_else(|| {
+                        vec![CheckRefusal {
+                            location: location.clone(),
+                            cause: CheckCause::InternalFault(Box::new(
+                                KeyFault::UnkeyableRequirements,
+                            )),
+                        }]
+                    })?;
+                Ok(checked.assembled_at(
+                    lowered.key.clone(),
+                    OccurrenceKey::new(claims::wire(lowered.key.clone()), claim),
+                ))
             })
             .collect::<Result<Vec<_>, Vec<CheckRefusal>>>()?;
         // FR-410 "Outputs": each state-graph claim carries its `claim`
@@ -7749,6 +7778,7 @@ impl PackageDeclarations {
                 .collect(),
             temporal_clauses,
             hyper_nodes,
+            finite_hyper_nodes,
             step_relations: Vec::new(),
             state_graph_claims: state_graph_nodes,
             hybrid_models: checked_hybrid_models,
@@ -9122,6 +9152,12 @@ impl CheckedGraph {
     /// order, each with its `claim` occurrence.
     pub fn hyper_clauses(&self) -> &[hyper_clause::CheckedHyperClause] {
         &self.hyper_nodes
+    }
+
+    /// FR-898: every emitted finite trace-set hyper clause, in declaration
+    /// order, each with its `claim` occurrence.
+    pub fn finite_hyper_clauses(&self) -> &[hyper_clause::CheckedFiniteHyperClause] {
+        &self.finite_hyper_nodes
     }
 
     /// FR-180: every admitted `relation` declaration, in source order, with

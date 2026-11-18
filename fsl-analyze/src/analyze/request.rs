@@ -95,6 +95,8 @@ pub struct ItemOptions {
     pub max_cases: Option<std::num::NonZeroU64>,
     /// The provisioned document a `finite-replay` item replays.
     pub trace: Option<fsl_semantics::model::observation::DocumentRef>,
+    /// The provisioned FR-739 finite trace population for a finite hyper item.
+    pub traces: Option<fsl_semantics::model::observation::DocumentRef>,
     /// The provisioned FR-737 execution assessed by `global-conformance`.
     pub recording: Option<fsl_semantics::model::observation::DocumentRef>,
     /// The named backend's options (FSpec FR-196, FR-331 `options`),
@@ -154,6 +156,12 @@ impl ClaimItem {
             .iter()
             .find(|clause| clause.identity() == *claim.node())
             .is_some_and(|clause| clause.claim() != claim.origin())
+            || graph
+                .finite_hyper_clauses()
+                .iter()
+                .find(|clause| clause.identity() == Some(claim.node()))
+                .and_then(|clause| clause.occurrence())
+                .is_some_and(|occurrence| occurrence != &claim)
             || graph
                 .probabilistic_model()
                 .claims()

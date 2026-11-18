@@ -28,7 +28,7 @@ use fsl_route::{CandidateOutcome, Registry};
 use fsl_semantics::check::Capability;
 use fsl_semantics::model::observation::{DocumentProvision, DocumentRef};
 use serde::Deserialize;
-use serde_json::{Map, Value, json};
+use serde_json::{json, Map, Value};
 
 use super::{
     AnalyzeLimits, ClaimItem, Diagnostic, Engines, ItemForm, ItemOptions, NegotiatedItem,
@@ -515,6 +515,9 @@ pub struct ItemSelection {
     /// A `finite-replay` item's supplied trace.
     #[serde(default)]
     pub trace: Option<DocumentSelection>,
+    /// An FR-739 finite trace population for a finite hyper item.
+    #[serde(default)]
+    pub traces: Option<DocumentSelection>,
     /// A `global-conformance` item's supplied FR-737 recording.
     #[serde(default)]
     pub recording: Option<DocumentSelection>,
@@ -703,6 +706,12 @@ fn declarations(package: &CheckedPackage) -> BTreeMap<String, filament_exact::No
             .map(|clause| (clause.clause().name().to_owned(), clause.identity())),
     );
     names.extend(
+        graph
+            .finite_hyper_clauses()
+            .iter()
+            .filter_map(|clause| Some((clause.name().to_owned(), clause.identity()?.clone()))),
+    );
+    names.extend(
         graph.state_graph_claims().iter().filter_map(|claim| {
             Some((claim.name().to_owned(), claim.occurrence()?.node().clone()))
         }),
@@ -765,6 +774,13 @@ fn claim_occurrence(
             clause.identity(),
             clause.claim().clone(),
         ));
+    }
+    if let Some(clause) = graph
+        .finite_hyper_clauses()
+        .iter()
+        .find(|clause| clause.identity() == Some(node))
+    {
+        return clause.occurrence().cloned();
     }
     let body = graph
         .semantic_graph()
@@ -973,6 +989,7 @@ fn resolve_call_item(
             required: true,
             max_cases: None,
             trace: None,
+            traces: None,
             recording: None,
             backend_options: call_item.options.clone(),
         },
@@ -1146,10 +1163,10 @@ fn resolve_one(
     }
     let form = (kind == Capability::TemporalSatisfaction || kind == Capability::GlobalConformance)
         .then(|| {
-        let mut form = temporal_item(package, &claim, &temporal);
-        form.pending_reductions.clone_from(&selection.reductions);
-        ItemForm::Temporal(form)
-    });
+            let mut form = temporal_item(package, &claim, &temporal);
+            form.pending_reductions.clone_from(&selection.reductions);
+            ItemForm::Temporal(form)
+        });
     let item = ClaimItem {
         request_index: index,
         claim,
@@ -1161,6 +1178,7 @@ fn resolve_one(
             required: selection.required.unwrap_or(true),
             max_cases: selection.check.map(|check| check.limits.max_cases),
             trace: selection.trace.as_ref().map(DocumentSelection::reference),
+            traces: selection.traces.as_ref().map(DocumentSelection::reference),
             recording: selection
                 .recording
                 .as_ref()
@@ -1287,6 +1305,7 @@ fn resolve_derived(
         required: selection.required.unwrap_or(true),
         max_cases: None,
         trace: None,
+        traces: None,
         recording: None,
         backend_options,
     };
@@ -1566,6 +1585,7 @@ fn derived_items(
                         required: true,
                         max_cases: None,
                         trace: None,
+                        traces: None,
                         recording: None,
                         backend_options: BTreeMap::new(),
                     },
@@ -1632,6 +1652,12 @@ impl ClaimItem {
             item.insert(
                 "trace".to_owned(),
                 json!({"authority": trace.authority, "identity": trace.identity}),
+            );
+        }
+        if let Some(traces) = &self.options.traces {
+            item.insert(
+                "traces".to_owned(),
+                json!({"authority": traces.authority, "identity": traces.identity}),
             );
         }
         if let Some(recording) = &self.options.recording {

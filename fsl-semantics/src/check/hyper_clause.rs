@@ -1019,21 +1019,44 @@ pub enum HyperCause {
         span: Span,
     },
     /// A finite trace domain's bound is zero.
-    FiniteBoundZero { span: Span },
+    FiniteBoundZero {
+        /// The written zero bound.
+        span: Span,
+    },
     /// A finite trace domain requires an event-position, fixed-sample or
     /// timestamped-event profile.
-    FiniteProfileRequired { span: Span },
+    FiniteProfileRequired {
+        /// The selected profile alias.
+        span: Span,
+    },
     /// The finite trace domain names no record declaration.
-    FiniteRecordMissing { name: String, span: Span },
+    FiniteRecordMissing {
+        /// The unresolved record type name.
+        name: String,
+        /// The record type's source span.
+        span: Span,
+    },
     /// The finite trace domain names a type that is not a record value type.
-    FiniteRecordWrongKind { name: String, span: Span },
+    FiniteRecordWrongKind {
+        /// The type name that is not a record.
+        name: String,
+        /// The record type's source span.
+        span: Span,
+    },
     /// More than one type binds the finite population's name.
-    FiniteRecordAmbiguous { name: String, span: Span },
+    FiniteRecordAmbiguous {
+        /// The ambiguous record type name.
+        name: String,
+        /// The record type's source span.
+        span: Span,
+    },
     /// A finite trace variable is repeated in the quantifier prefix.
-    FiniteVariableRepeated { name: String, span: Span },
-    /// The current checked-package contract has no finite trace population
-    /// node form, so S4 cannot safely write the clause yet.
-    FiniteDomainContractUnavailable { span: Span },
+    FiniteVariableRepeated {
+        /// The repeated trace variable.
+        name: String,
+        /// The repeated variable's source span.
+        span: Span,
+    },
     /// An `of` alias, or an object parameter's alias, names no model of the
     /// unit. `missing_declaration`/`missing-name`, at the alias.
     UnresolvedAlias {
@@ -1235,7 +1258,6 @@ impl HyperCause {
             | Self::FiniteRecordWrongKind { span, .. }
             | Self::FiniteRecordAmbiguous { span, .. }
             | Self::FiniteVariableRepeated { span, .. }
-            | Self::FiniteDomainContractUnavailable { span }
             | Self::UnresolvedAlias { span, .. }
             | Self::UnboundParameterAlias { span, .. }
             | Self::ParameterNotAnObject { span, .. }
@@ -1281,7 +1303,6 @@ impl HyperCause {
             | Self::ExecutionNotAnOperation { .. }
             | Self::BodyUnsupported { .. }
             | Self::OutsideHyperClause => Code::UnsupportedConstruct,
-            Self::FiniteDomainContractUnavailable { .. } => Code::UnsupportedConstruct,
             Self::FiniteBoundZero { .. } => Code::InvalidPackage,
             Self::FiniteRecordWrongKind { .. } => Code::InvalidModelBinding,
             Self::FiniteRecordAmbiguous { .. } | Self::FiniteVariableRepeated { .. } => {
@@ -1325,7 +1346,6 @@ impl HyperCause {
             | Self::ExecutionNotAnOperation { .. }
             | Self::BodyUnsupported { .. }
             | Self::OutsideHyperClause => "expression-form",
-            Self::FiniteDomainContractUnavailable { .. } => "not-yet-implemented",
             Self::FiniteBoundZero { .. } => "invalid-value",
             Self::FiniteRecordWrongKind { .. } => "wrong-export",
             Self::FiniteRecordAmbiguous { .. } | Self::FiniteVariableRepeated { .. } => {
