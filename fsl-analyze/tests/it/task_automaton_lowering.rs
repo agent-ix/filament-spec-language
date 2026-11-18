@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //! FR-249-AC-7 to AC-9 (TC-3008): a task automaton lowers to a timed subject
 //! that carries the declared periods and deadlines, EN-6's verdict on it
-//! equals EN-7's response-time verdict on Buttazzo's task set, and an
+//! equals EN-7's response-time verdict on the three-task set `B`, and an
 //! unschedulable set refutes with a replayed counterexample whose first
 //! deadline miss is exact. The source is ADR-026 section 11's `Rpc` with one
 //! always-enabled `fire_*` operation per task, each releasing its task.
@@ -52,9 +52,9 @@ const PAIR: &str = "taskset Pair {\n\
      }\n\
      schedulable PairFp on Pair under fixed_priority;\n";
 
-/// Buttazzo's response-time example, `(C, T = D)` of `(1, 4)`, `(2, 6)` and
+/// Task set `B`, `(C, T = D)` of `(1, 4)`, `(2, 6)` and
 /// `(third, 10)` ms, priorities by period, every task fixed-work.
-fn buttazzo(third: u32) -> String {
+fn task_set_b(third: u32) -> String {
     format!(
         "taskset B {{\n\
          task t1 periodic 4 ms deadline 4 ms bcet 1 ms wcet 1 ms priority 1 lo;\n\
@@ -87,12 +87,14 @@ fn a_two_task_set_lowers_with_its_declared_periods_and_deadlines() {
         "task-product-timing",
         &["a", "b"],
         &declarations,
-        json!([{"claim": "PairFp", "backend": "en-6"}]),
+        json!([{"claim": "PairFp", "backend": "en-6"}, {"claim": "PairFp"}]),
     );
     let item = run.item(0);
+    assert_eq!(item["request"]["candidates"]["backends"], json!(["en-6"]));
+    // Unnamed, FR-962 narrows the release-backed `[en-6, en-7]` to EN-7.
     assert_eq!(
-        item["request"]["candidates"]["backends"],
-        json!(["en-7", "en-6"])
+        run.item(1)["request"]["candidates"]["backends"],
+        json!(["en-7"])
     );
     assert_eq!(label(&item), "proved", "{item}");
     let rows = item["certificate"]["task_product"]["queue_bounds"]
@@ -137,28 +139,36 @@ fn a_two_task_set_lowers_with_its_declared_periods_and_deadlines() {
         ],
         "{item}"
     );
-    // Without a release the claim keeps EN-7 alone.
+    // Without a release the claim is not release-backed: naming EN-6 leaves
+    // no candidate.
     let bare = run_bare();
-    assert_eq!(bare["request"]["candidates"]["backends"], json!(["en-7"]));
+    assert_eq!(bare["request"]["candidates"]["backends"], json!([]));
+    assert_eq!(label(&bare), "unsupported", "{bare}");
 }
 
 fn run_bare() -> Value {
-    run("task-product-bare", &[], PAIR, json!([{"claim": "PairFp"}])).item(0)
+    run(
+        "task-product-bare",
+        &[],
+        PAIR,
+        json!([{"claim": "PairFp", "backend": "en-6"}]),
+    )
+    .item(0)
 }
 
 #[trace("TC-3008", "FR-249-AC-8")]
 #[test]
 #[ignore = "QSL-2240: EN-6 deciding a task automaton, agreeing with EN-7's response-time verdict, not implemented yet"]
-fn the_zone_verdict_equals_the_response_time_verdict_on_buttazzo() {
+fn the_zone_verdict_equals_the_response_time_verdict_on_task_set_b() {
     let items = json!([
         {"claim": "BFp"}, {"claim": "BFp", "backend": "en-6"},
         {"claim": "BEdf"}, {"claim": "BEdf", "backend": "en-6"},
     ]);
     for (third, expected) in [(3, ["proved", "proved"]), (4, ["refuted", "proved"])] {
         let run = run(
-            &format!("buttazzo-{third}"),
+            &format!("task-set-b-{third}"),
             &["t1", "t2", "t3"],
-            &buttazzo(third),
+            &task_set_b(third),
             items.clone(),
         );
         for (claim, want) in expected.iter().enumerate() {
@@ -179,9 +189,9 @@ fn the_zone_verdict_equals_the_response_time_verdict_on_buttazzo() {
 #[ignore = "QSL-2240: a replayed task-derived counterexample naming its first deadline miss not implemented yet"]
 fn an_unschedulable_set_refutes_with_its_first_missed_deadline() {
     let run = run(
-        "buttazzo-miss",
+        "task-set-b-miss",
         &["t1", "t2", "t3"],
-        &buttazzo(4),
+        &task_set_b(4),
         json!([{"claim": "BFp", "backend": "en-6"}]),
     );
     let item = run.item(0);
@@ -210,4 +220,62 @@ fn an_unschedulable_set_refutes_with_its_first_missed_deadline() {
         "{}",
         item["counterexample"]
     );
+    // The earliest miss of the product, whatever order the search explores:
+    // declaring the sources in reverse reports the same miss.
+    let reversed = format!(
+        "{}{}",
+        task_set_b(4).split("post Fire_").next().unwrap_or_default(),
+        sources("B", &["t3", "t2", "t1"])
+    );
+    let again = self::run(
+        "task-set-b-miss-reversed",
+        &["t3", "t2", "t1"],
+        &reversed,
+        json!([{"claim": "BFp", "backend": "en-6"}]),
+    )
+    .item(0);
+    let miss = again["counterexample"]["prefix"]
+        .as_array()
+        .and_then(|prefix| {
+            prefix
+                .iter()
+                .map(|step| step["transition"].clone())
+                .find(|identity| identity["action"] == "deadline-miss")
+        })
+        .unwrap_or(Value::Null);
+    assert_eq!((&miss["task"], &miss["job"]), (&json!("t3"), &json!(0)));
+    assert_eq!(rational(&miss["deadline"]), whole(10), "{again}");
+}
+
+/// FR-246-AC-5, FR-075-AC-23, FR-962-AC-6: a release makes the `schedulable`
+/// claim release-backed, so EN-6 matches it; unnamed, the `[en-6, en-7]`
+/// tie narrows to EN-7 and never settles `ambiguous-backend`.
+#[trace("TC-3009", "FR-246-AC-5")]
+#[trace("TC-3009", "FR-075-AC-23")]
+#[trace("TC-3009", "FR-962-AC-6")]
+#[test]
+#[ignore = "QSL-2240: the release-backed marker and EN-6's task-product candidacy not implemented yet"]
+fn a_release_backed_claim_routes_to_en_6_only_when_named() {
+    let backed = format!("{PAIR}{}", sources("Pair", &["a", "b"]));
+    let items = json!([{"claim": "PairFp"}, {"claim": "PairFp", "backend": "en-6"}]);
+    let with = run("release-backed", &["a", "b"], &backed, items.clone());
+    let unnamed = with.item(0);
+    assert_eq!(
+        unnamed["request"]["candidates"]["backends"],
+        json!(["en-7"])
+    );
+    assert_eq!(
+        unnamed["record"]["basis"]["type"], "closed-form",
+        "{unnamed}"
+    );
+    assert_eq!(
+        with.item(1)["request"]["candidates"]["backends"],
+        json!(["en-6"])
+    );
+    let without = run("not-release-backed", &[], PAIR, items);
+    assert_eq!(
+        without.item(0)["request"]["candidates"]["backends"],
+        json!(["en-7"])
+    );
+    assert_eq!(label(&without.item(1)), "unsupported");
 }

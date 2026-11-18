@@ -129,12 +129,15 @@ replay.
 
 - The schedulability item of a task automaton is the `schedulable N on S
   under P;` claim (FR-246) over a task set `S` that has at least one checked
-  release. For such a claim the candidate set SHALL be `["en-7", "en-6"]`
-  in that order: EN-7 keeps deciding the closed-form question over the task
-  set alone (FR-247), and an analyze item naming the claim with `backend`
-  `en-6` (FR-620) runs this lowering and EN-6's search over the product of
-  the releasing model and `S` under `P`. A claim over a task set with no
-  checked release keeps FR-246's candidate set `["en-7"]`. Both engines then
+  release; its requirement record is release-backed (FR-246). FR-075 makes
+  the matching set of a release-backed item `[en-6, en-7]` and FR-962 narrows
+  it to `[en-7]` when the item names no backend: EN-7 keeps deciding the
+  closed-form question over the task set alone (FR-247) by default, and an
+  analyze item naming the claim with `backend` `en-6` (FR-620) runs this
+  lowering and EN-6's search over the product of the releasing model and `S`
+  under `P`. A claim over a task set with no checked release is not
+  release-backed, its matching set is `[en-7]`, and naming `en-6` for it gives
+  an empty candidate set. Both engines then
   answer one question for one task set, so their verdicts can be compared
   directly.
 
@@ -177,7 +180,15 @@ replay.
   behaviour: it names the task, the job occurrence, the job's exact
   `demand` and its absolute `deadline`, and no earlier step is a
   `deadline-miss`. At that step the job's completed service is below its
-  demand. FR-237 SHALL replay the prefix and the time-divergent
+  demand. The reported miss SHALL be the earliest deadline miss of the
+  product, not whichever miss the search reaches first: among all
+  behaviours that miss a deadline, the prefix SHALL reach its first
+  `deadline-miss` step at the least elapsed time, ties broken by the fewest
+  steps and then by the bytewise order of the miss step's (`task`, `job`)
+  identity; the prefix's steps before it are in step order with FR-241's
+  least admissible delays. So the reported task, job and absolute deadline
+  are a function of the claim and the product, independent of search order.
+  FR-237 SHALL replay the prefix and the time-divergent
   continuation against the rebuilt product before the item settles
   `refuted`; a prefix whose miss step's `deadline` or `demand` disagrees
   with the recomputed job refuses replay.
@@ -204,9 +215,9 @@ replay.
 | FR-249-AC-4 | The lowered subject and replay preserve the FSpec FR-419/FR-364 mode-change transition identity and captured job data. If the current FR-418 reader does not accept the mixed-criticality product as exact, a bounded run cannot settle `Holds` and settles incomplete with FR-331 `task_search` evidence when its limit is reached. | Test |
 | FR-249-AC-5 | For the periodic-source overload task, whose model repeats the release transition every `T=1` (`W=2`, `D=1`), under each admitted `fixed_priority` and `edf` policy, a refutation requires a concrete missed-job prefix followed by FSpec FR-364's replay-checked `queue_growth` continuation with positive elapsed time. Queue-cap overflow or a finite queue loop without the queue-growth identity induction does not refute. A task-search stop with an unexplored frontier replays as incomplete under FR-331. | Test |
 | FR-249-AC-6 | Two task releases bound to one operation are recorded in source order; a duplicate release of one task on that operation refuses `conflicting_declaration`/`duplicate-declaration`; unresolved task set, task or operation names refuse `missing_declaration`/`missing-name`; an ambiguous inherited operation refuses `ambiguous_declaration`/`ambiguous-name`; a `release` on a model without `time dense` is admitted by checking and refused only when lowering is requested. | Test |
-| FR-249-AC-7 | Task set `Pair` in `ms`: `a` periodic 4, deadline 3, `bcet` = `wcet` = 1, priority 1; `b` sporadic 6, deadline 5, `bcet` = `wcet` = 2, priority 2; each released by its own always-enabled operation of a `time dense` model. `schedulable PairFp on Pair under fixed_priority;` has candidates `["en-7", "en-6"]`, and its item with `backend` `en-6` proves with an accepted certificate. The lowered subject's task-timing rows, and the certificate's `task_product.queue_bounds`, are in order `(Pair, a, periodic, interarrival 4, relative_deadline 3, max_jitter 0, work 1..1, max_jobs 2)` and `(Pair, b, sporadic, 6, 5, 0, 2..2, 2)`. The same set with no `release` keeps candidates `["en-7"]`. | Test |
-| FR-249-AC-8 | Task set `B` in `ms` (Buttazzo's fixed-priority response-time example), `(C, T = D)` of `t1 (1, 4)`, `t2 (2, 6)`, `t3 (3, 10)`, `bcet` = `wcet`, priorities 1 to 3, each task released by its own always-enabled operation. EN-7 returns `Schedulable` under `fixed_priority` with fixpoints `(1, 3, 10)`, `t3` iterating `3, 6, 7, 9, 10, 10`, and under `edf` with utilization `53/60`; EN-6 proves both claims. With `t3`'s `bcet` = `wcet` = 4, EN-7 returns `Miss` for `t3`, job 0, iterates `4, 7, 10, 11` under `fixed_priority` and `Schedulable` (utilization `59/60`) under `edf`; EN-6 refutes the first and proves the second. For all four claims the EN-6 item's `proved`/`refuted` label equals the EN-7 item's. | Test |
-| FR-249-AC-9 | The refuted EN-6 item of `B` with `t3` work 4 under `fixed_priority` carries a model-arm counterexample whose first `deadline-miss` step names `t3`, job 0, `demand` 4, and an absolute `deadline` 10 after `t3`'s activation; no `t1` or `t2` miss precedes it, and `t3`'s completed service at that step is below 4. In the least-delay concretisation (FR-241), every task activates at 0 and the miss is at time 10 with completed service 3. FR-237 replays the prefix and its time-divergent continuation (`reproduced` true); the same prefix with the miss's `deadline` changed to 11, or its `demand` to 3, refuses replay. | Test |
+| FR-249-AC-7 | Task set `Pair` in `ms`: `a` periodic 4, deadline 3, `bcet` = `wcet` = 1, priority 1; `b` sporadic 6, deadline 5, `bcet` = `wcet` = 2, priority 2; each released by its own always-enabled operation of a `time dense` model. `schedulable PairFp on Pair under fixed_priority;` is release-backed: unnamed its candidate set is `[en-7]`, and its item with `backend` `en-6` has candidates `[en-6]` and proves with an accepted certificate. The lowered subject's task-timing rows, and the certificate's `task_product.queue_bounds`, are in order `(Pair, a, periodic, interarrival 4, relative_deadline 3, max_jitter 0, work 1..1, max_jobs 2)` and `(Pair, b, sporadic, 6, 5, 0, 2..2, 2)`. The same set with no `release` is not release-backed and its item naming `en-6` has an empty candidate set. | Test |
+| FR-249-AC-8 | Task set `B` in `ms`, `(C, T = D)` of `t1 (1, 4)`, `t2 (2, 6)`, `t3 (3, 10)`, `bcet` = `wcet`, priorities 1 to 3, each task released by its own always-enabled operation. EN-7 returns `Schedulable` under `fixed_priority` with fixpoints `(1, 3, 10)`, `t3` iterating `3, 6, 7, 9, 10, 10`, and under `edf` with utilization `53/60`; EN-6 proves both claims. With `t3`'s `bcet` = `wcet` = 4, EN-7 returns `Miss` for `t3`, job 0, iterates `4, 7, 10, 11` under `fixed_priority` and `Schedulable` (utilization `59/60`) under `edf`; EN-6 refutes the first and proves the second. For all four claims the EN-6 item's `proved`/`refuted` label equals the EN-7 item's. | Test |
+| FR-249-AC-9 | The refuted EN-6 item of `B` with `t3` work 4 under `fixed_priority` carries a model-arm counterexample whose first `deadline-miss` step in step order is the product's earliest deadline miss: it names `t3`, job 0, `demand` 4 and absolute `deadline` 10, at elapsed time 10 with completed service 3, every task having activated at time 0; no step before it is a `deadline-miss`. No behaviour misses earlier, since `t1` and `t2` meet every deadline and a `t3` miss needs 10 ms after its activation, so this miss is the reported one whatever order the search explores in. Rerunning with the source operations declared in reverse order reports the same task, job, deadline and time. FR-237 replays the prefix and its time-divergent continuation (`reproduced` true); the same prefix with the miss's `deadline` changed to 11, or its `demand` to 3, refuses replay. | Test |
 | FR-249-AC-10 | `taskset Bad { task p periodic 0 ms deadline 4 ms wcet 1 ms priority 1 lo; }` with `release Bad.p on M::o;` refuses `invalid_timed_model`/`invalid-task-set` naming `p` at `0 ms`, with no `missing-name` refusal for the release; `periodic -4 ms` refuses the same at its period quantity; an analyze request naming `schedulable BadFp on Bad under fixed_priority;` with `backend` `en-6` is refused as a whole at check and runs no engine. | Test |
 
 ## Dependencies
@@ -234,9 +245,6 @@ replay.
   interval execution with completion feedback and preemption does not admit
   that exact result. The latter is the reason bounded search may return
   unknown, not a refusal.
-- G. C. Buttazzo, *Hard Real-Time Computing Systems* (Springer), chapter 4,
-  response-time analysis of fixed-priority periodic tasks; the source of the
-  task set `B` used to compare EN-6 with EN-7.
 - M. Joseph and P. Pandya, "Finding response times in a real-time system"
   (The Computer Journal 29(5), 1986): the response-time recurrence and the
   synchronous release as its worst case.
