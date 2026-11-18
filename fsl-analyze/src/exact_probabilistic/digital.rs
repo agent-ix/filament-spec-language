@@ -1491,13 +1491,16 @@ impl<'c> Builder<'_, '_, 'c> {
         planned: &mut Vec<Planned>,
     ) -> Step<()> {
         if let Some(delayed) = self.unit_delay(local, state)? {
-            planned.push(self.delay_move(
+            let unit = self.delay_move(
                 at,
                 state,
                 ProductAction::UnitDelay,
                 delayed.clone(),
                 Tail::Running,
-            )?);
+            )?;
+            if self.subdivisions == 1 || unit.target.key != self.nodes[at].key {
+                planned.push(unit);
+            }
             if local.quiescent {
                 planned.push(self.delay_move(
                     at,
@@ -1515,13 +1518,16 @@ impl<'c> Builder<'_, '_, 'c> {
         let local = self.local(&state.model)?;
         let mut planned = Vec::new();
         if let Some(delayed) = self.unit_delay(&local, state)? {
-            planned.push(self.delay_move(
+            let delay = self.delay_move(
                 at,
                 state,
                 ProductAction::IdleDelay,
                 delayed,
                 Tail::IdleDelayed,
-            )?);
+            )?;
+            if self.subdivisions == 1 || delay.target.key != self.nodes[at].key {
+                planned.push(delay);
+            }
         }
         if state.tail == Tail::IdleDelayed {
             let reached = DState {
