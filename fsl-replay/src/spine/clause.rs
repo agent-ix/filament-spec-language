@@ -1469,6 +1469,7 @@ fn run_clause_reading(
             temporal_selections: &check_selections,
             clocks: by_name.then_some(&request.clocks),
             check_mode: None,
+            integer_division: None,
         };
         let checked = if let Some(function_modes) = function_modes {
             front_end::check_with_refinement_internals_and_function_modes(
@@ -2108,6 +2109,7 @@ fn compile_program_parts(
                 temporal_selections: &check_selections,
                 clocks: Some(clocks),
                 check_mode: None,
+                integer_division: None,
             },
             &models,
             dependencies,

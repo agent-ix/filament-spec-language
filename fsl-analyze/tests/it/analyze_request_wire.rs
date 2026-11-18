@@ -7,6 +7,7 @@
 use ix_trace_rs::trace;
 use serde_json::{json, Value};
 
+use crate::counter::{unit_text, CONTRACT};
 use crate::analyze_cli_support::{
     analyze, below_three, bounded, counter_request, counter_request_with, label, request_members,
     Workspace,
@@ -363,7 +364,6 @@ fn analyze_defaults_universes_and_limit_names() {
 /// member supplies the law its program's `div` needs.
 #[trace("TC-2196", "FR-767-AC-9", "FSpec-TC-1654", "FSpec-FR-520-AC-5")]
 #[test]
-#[ignore = "QSL-1989: the native-analyze/1 integer_division member is not implemented yet"]
 fn an_analyze_request_supplies_the_integer_division_law() {
     let body = format!(
         "function half using v(a: Int[0, 9]): Int[0, 9] pure {{ a div 2 }}\n{}",
@@ -383,7 +383,8 @@ fn an_analyze_request_supplies_the_integer_division_law() {
         &body,
         with_law(Some(json!("floor"))),
     ));
-    assert_ne!(run.exit, 20, "{}", run.document());
+    assert_eq!(run.exit, 0, "{}", run.document());
+    assert_eq!(label(&run.item(0)), "proved", "{}", run.document());
     assert!(run.item(0)["request"].is_object(), "{}", run.document());
 
     let ws = Workspace::new("division-law-absent");
@@ -391,17 +392,23 @@ fn an_analyze_request_supplies_the_integer_division_law() {
     assert_eq!(run.exit, 20);
     let document = run.document();
     assert_eq!(document["items"], json!([]), "{document}");
-    assert_eq!(document["diagnostics"][0]["code"], "missing_declaration");
-    assert_eq!(document["diagnostics"][0]["cause"], "missing-selection");
+    let diagnostic = &document["diagnostics"][0];
+    assert_eq!(diagnostic["code"], "missing_declaration", "{document}");
+    assert_eq!(diagnostic["cause"], "missing-selection", "{document}");
+    let source = unit_text(&format!("{CONTRACT}{body}"));
+    let div = source.find("a div 2").expect("the program's div expression") as u64;
+    assert_eq!(diagnostic["locus"]["start"], div, "{document}");
+    assert_eq!(diagnostic["locus"]["end"], div + 7, "{document}");
 
     let ws = Workspace::new("division-law-unknown");
-    let run = analyze(&counter_request_with(
-        &ws,
-        &body,
-        with_law(Some(json!("ceiling"))),
-    ));
+    let path = counter_request_with(&ws, &body, with_law(Some(json!("ceiling"))));
+    for file in ["program.fsl", "model.json", "start.json"] {
+        std::fs::remove_file(path.parent().unwrap().join(file)).unwrap();
+    }
+    let run = analyze(&path);
     assert_eq!(run.exit, 20);
     let document = run.document();
+    assert_eq!(document["items"], json!([]), "{document}");
     assert_eq!(document["diagnostics"][0]["code"], "unknown_profile");
     assert_eq!(document["diagnostics"][0]["cause"], "unsupported-selection");
 }

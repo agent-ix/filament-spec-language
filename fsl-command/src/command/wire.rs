@@ -780,6 +780,9 @@ pub(super) struct MonitorRequest {
     pub program: Program,
     #[serde(default, deserialize_with = "deserialize_objects")]
     pub libraries: Vec<Library>,
+    /// Optional caller-supplied integer-division law (FR-767).
+    #[serde(default, deserialize_with = "present_json_value")]
+    pub integer_division: Option<serde_json::Value>,
     #[serde(default, deserialize_with = "clocks")]
     pub clocks: fsl_replay::spine::RequestClocks,
     #[serde(deserialize_with = "deserialize_objects")]

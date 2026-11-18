@@ -1280,36 +1280,46 @@ fn clocks_rebuilt_from_package_rows_compile_the_same_package() {
 /// member supplies the law its program's `div` needs.
 #[test]
 #[trace("TC-2196", "FR-767-AC-10")]
-#[ignore = "QSL-1989: the native-monitor/1 integer_division member is not implemented yet"]
 fn a_monitor_request_supplies_the_integer_division_law() {
     let directory = tempfile::tempdir().unwrap();
     let mut records = observations(&[0, 1, 2]);
     records.push(json!({"end": true}));
     let lines: Vec<String> = records.iter().map(Value::to_string).collect();
     std::fs::write(directory.path().join("half.jsonl"), lines.join("\n")).unwrap();
+    let program = format!(
+        "language \"ix:native\" edition \"1-draft\";\n\
+         profile v = \"filament.value.complete/v1\";\n\
+         profile i = \"filament.temporal.infinite-trace/v1\";\n\
+         record Reading {{ level: Int[0, 9]; }}\n\
+         function half using v(a: Int[0, 9]): Int[0, 9] pure {{ a div 2 }}\n\
+         temporal Half using i over (r: Reading) clock \"steps\" on origin {{ always holds(half(r.level) < 5) }}\n"
+    );
+    let div_start = program.find("a div 2").expect("the program's div expression") as u64;
     let run = |law: Option<&str>| {
         let mut request = monitor_request(json!([{"name": "Half"}]), json!({"kind": "finite"}));
         request["request"]["records"] = json!("half.jsonl");
+        request["request"]["clocks"] = json!({});
         if let Some(law) = law {
             request["request"]["integer_division"] = json!(law);
         }
         let path = directory.path().join("half.json");
         std::fs::write(&path, serde_json::to_vec(&request).unwrap()).unwrap();
-        std::fs::write(
-            directory.path().join("unit.native"),
-            format!(
-                "{}function half using v(a: Int[0, 9]): Int[0, 9] pure {{ a div 2 }}\n\
-                 temporal Half using i over (r: Reading) clock \"steps\" on origin {{ always holds(half(r.level) < 5) }}\n",
-                unit()
-            ),
-        )
-        .unwrap();
+        std::fs::write(directory.path().join("unit.native"), &program).unwrap();
+        if law.is_none() {
+            // The missing law must refuse before the records file is read.
+            std::fs::remove_file(directory.path().join("half.jsonl")).unwrap();
+        }
         run_file(&path)
     };
 
     let output = run(Some("floor"));
     let monitored = result(&output);
     assert_eq!(monitored["format"], "filament.monitor-run/1", "{monitored}");
+    let clauses = monitored["summary"]["clauses"]
+        .as_array()
+        .expect("a monitor summary with clause results");
+    assert_eq!(clauses.len(), 1, "{monitored}");
+    assert_eq!(clauses[0]["clause"], "Half", "{monitored}");
 
     let output = run(None);
     assert_eq!(output.status.code(), Some(20));
@@ -1319,6 +1329,9 @@ fn a_monitor_request_supplies_the_integer_division_law() {
         Some("missing-selection"),
         "{refused}"
     );
+    let span = find(&refused, "span").expect("the missing law is located at `div`");
+    assert_eq!(span["start"]["byte"], div_start, "{refused}");
+    assert_eq!(span["end"]["byte"], div_start + 7, "{refused}");
 }
 
 /// FR-645, QSL-2138: a window aggregate over a record trace subject is read
