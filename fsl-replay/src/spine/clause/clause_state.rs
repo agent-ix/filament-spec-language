@@ -1472,6 +1472,7 @@ impl<'a> ClauseState<'a> {
                 report.disposition,
                 ClauseDisposition::Temporal(
                     TemporalVerdict::Violated { .. } | TemporalVerdict::Undefined { .. }
+                        | TemporalVerdict::Holds
                 )
             )
             .then(|| Arc::clone(report)),

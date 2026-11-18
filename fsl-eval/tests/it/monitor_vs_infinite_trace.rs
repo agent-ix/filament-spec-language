@@ -160,3 +160,80 @@ fn definite_monitor_verdicts_equal_the_infinite_trace_evaluator_with_a_lower_bou
     }
     agree_on(&shapes);
 }
+
+/// The tick monitor's verdict at origin 0 for the root of `body` over one
+/// position per level, each atom reading `truth(atom, level)`, and the batch
+/// verdict over the same prefix.
+fn monitor_and_batch(
+    body: &str,
+    levels: &[i64],
+    truth: fn(&str, i64) -> bool,
+) -> (Option<TickOutcome>, TemporalOutcome) {
+    let fixture = counter(INFINITE, body);
+    let formula = fixture.clause.formula();
+    let root = formula.root().index();
+    let mut capacities = BTreeMap::new();
+    capacities.insert(root, 64);
+    let mut monitor = TickMonitorReference::new(TickMonitorSpec {
+        formula,
+        activation: fixture.clause.activation(),
+        bounds: BTreeMap::new(),
+        uncertainty: int(0),
+        width_bits: 20,
+        max_reading_gap: 1,
+        capacities,
+        activation_capacity: 8,
+        unprojectable: Default::default(),
+    });
+    let atoms: Vec<(usize, &str)> = formula
+        .nodes()
+        .iter()
+        .enumerate()
+        .filter_map(|(index, node)| match node {
+            FormulaNode::Holds { span } => Some((index, &fixture.text[span.start..span.end])),
+            _ => None,
+        })
+        .collect();
+    for (position, level) in levels.iter().enumerate() {
+        let step = TickStep::Reading {
+            reading: u64::try_from(position).expect("a position"),
+            atoms: atoms
+                .iter()
+                .map(|(index, text)| (*index, truth(text, *level)))
+                .collect(),
+            guard: true,
+        };
+        monitor.step(&step).expect("the reading applies");
+    }
+    let mut letters = Letters::new(&fixture, counters(levels));
+    let mut meter = Meter::new(SCALAR_LIMITS_UNLIMITED);
+    let batch = fsl_eval::temporal::evaluate(
+        &fixture.clause,
+        finite(u64::try_from(levels.len()).expect("a length")),
+        &mut letters,
+        &mut meter,
+    )
+    .expect("the trace is readable");
+    (monitor.outcome(root, 0), batch)
+}
+
+/// FR-328-AC-7 (TC-2974), step 2: over the positions 0, 1, 2 the tick
+/// monitor settles `eventually holds(c.level = 1)` `true` at its witness,
+/// the batch good prefix `Holds`, and leaves `always holds(c.level <= 5)`
+/// `Pending`, the batch `Pending`: no absence of a counterexample decides it.
+#[trace("TC-2974", "FR-328-AC-7")]
+#[test]
+fn the_tick_monitor_agrees_with_a_good_prefix_and_a_pending_always() {
+    let levels = [0, 1, 2];
+    let (monitor, batch) =
+        monitor_and_batch("eventually holds(c.level = 1)", &levels, |_, level| {
+            level == 1
+        });
+    assert_eq!(monitor, Some(TickOutcome::True));
+    assert_eq!(batch, TemporalOutcome::Holds);
+    let (monitor, batch) = monitor_and_batch("always holds(c.level <= 5)", &levels, |_, level| {
+        level <= 5
+    });
+    assert_eq!(monitor, Some(TickOutcome::Pending));
+    assert_eq!(batch, TemporalOutcome::Pending);
+}

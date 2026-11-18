@@ -349,7 +349,7 @@ fn feeding_one_at_a_time_equals_the_batch_over_each_prefix() {
         .collect();
     assert_eq!(
         verdicts,
-        vec![MonitorVerdict::Pending, MonitorVerdict::Violated]
+        vec![MonitorVerdict::Tested, MonitorVerdict::Violated]
     );
 }
 
@@ -1320,7 +1320,8 @@ fn settled_before_end(outcome: &fsl_analyze::monitor::MonitorOutcome) -> Vec<boo
 /// FR-643-AC-1 (TC-1666) over snapshots: `Bounded` (event-position), `Reaches`
 /// and `always holds(c.value <= 1)` fed `c.value` 0, 1, 2, 1, 0 one at a time
 /// in a `Finite` session report `B(k)` while pending and `B(s)` once settled
-/// (`Bounded` at step 2, the `always` clause at step 3, `Reaches` never).
+/// (`Bounded` at step 2, the `always` clause at step 3, and `Reaches` at step 3,
+/// its good prefix).
 #[test]
 #[trace("TC-1666", "FR-643-AC-1")]
 fn snapshots_fed_one_at_a_time_equal_the_batch_with_settled_clauses_frozen() {
@@ -1404,7 +1405,7 @@ fn snapshots_fed_one_at_a_time_equal_the_batch_with_settled_clauses_frozen() {
             cancel: &Cancel::new(),
         })
     };
-    let settles = [Some(2), None, Some(3)];
+    let settles = [Some(2), Some(3), Some(3)];
     for (index, snapshot) in bytes.iter().enumerate() {
         let step = session
             .step(
@@ -1437,7 +1438,7 @@ fn snapshots_fed_one_at_a_time_equal_the_batch_with_settled_clauses_frozen() {
         }
     }
     let outcome = session.finish(&cancel).expect("ends");
-    assert_eq!(settled_before_end(&outcome), vec![true, false, true]);
+    assert_eq!(settled_before_end(&outcome), vec![true, true, true]);
 }
 
 /// FR-283-AC-17 (TC-2323): a `Finite` session ignores the selection list

@@ -1594,14 +1594,22 @@ fn a_window_aggregate_over_a_model_subject_is_refused_at_compile() {
     );
 }
 
-/// `Reaches` over the same `Finite` trace is pending: the catalog's pending, exit 0,
-/// no truth. Over a lasso with loop 0, 1 it violates at position 0; over a
-/// lasso with loop 0, 1, 2 it holds.
+/// `Reaches` over the same `Finite` trace 0, 1, 2 is a good prefix: success,
+/// exit 0, truth `true` (FR-328). Over the `Finite` trace 0, 1, which neither
+/// satisfies nor violates it for every extension, it is pending: the
+/// catalog's pending, exit 0, no truth. Over a lasso with loop 0, 1 it
+/// violates at position 0; over a lasso with loop 0, 1, 2 it holds.
 #[trace("TC-840", "FR-330-AC-2")]
 #[trace("TC-769", "FR-285-AC-9")]
 #[test]
-fn an_infinite_trace_clause_reads_a_finite_prefix_as_pending_and_a_lasso_exactly() {
-    let pending = report(finite(Unit::Infinite, "Reaches", &[0, 1, 2]));
+fn an_infinite_trace_clause_settles_a_good_prefix_pends_the_rest_and_reads_a_lasso_exactly() {
+    let good = report(finite(Unit::Infinite, "Reaches", &[0, 1, 2]));
+    assert_eq!(outcome(&good), &TemporalVerdict::Holds);
+    assert_eq!(good.disposition.category(), Category::Success);
+    assert_eq!(exit_code(&good), 0);
+    assert_eq!(good.disposition.truth(), Some(true));
+
+    let pending = report(finite(Unit::Infinite, "Reaches", &[0, 1]));
     assert_eq!(outcome(&pending), &TemporalVerdict::Pending);
     assert_eq!(pending.disposition.category(), Category::Pending);
     assert_eq!(exit_code(&pending), 0);
