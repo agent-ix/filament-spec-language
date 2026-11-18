@@ -349,6 +349,27 @@ fn an_export_below_its_fidelity_floor_refuses_with_no_text() {
     assert_eq!(exit, 0, "{value}");
 }
 
+/// FR-1015: the closed export request is admitted before any source stage.
+#[test]
+#[trace("TC-2865", "FR-1015-AC-1")]
+fn export_request_rejects_unknown_members_before_run_selection() {
+    let (exit, value) = run(
+        BRAKING,
+        false,
+        (
+            "export",
+            json!({
+                "profile": "filament.output.tla2/v1",
+                "obligations": ["SlowEnough"],
+                "unexpected": true
+            }),
+        ),
+    );
+    assert_eq!(exit, 20, "{value}");
+    assert!(value.to_string().contains("export"), "{value}");
+    assert!(value.to_string().contains("unexpected"), "{value}");
+}
+
 /// FR-1015-AC-2, FSpec FR-817-AC-4: a denied output-byte charge stops the
 /// export `incomplete` naming `export.output_bytes`, exit 22.
 #[test]

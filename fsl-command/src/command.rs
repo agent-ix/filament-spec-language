@@ -2793,6 +2793,14 @@ fn prepare_run_bytes_with_sources(
     if let Some(member) = &request.tl_lowering {
         tl::decode(member)?;
     }
+    // FR-1015: export's closed request shape and request-local values are
+    // admitted before reading any source or entering a run stage.
+    if let Some(member) = &request.export {
+        ExportRequest::read(member.clone()).map_err(|error| RunCause::ClauseRequest {
+            member: "export".to_owned(),
+            reason: error.to_string(),
+        })?;
+    }
     if request.items.is_some() {
         return Err(RunCause::ClauseRequest {
             member: "items".to_owned(),
