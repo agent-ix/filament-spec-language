@@ -1889,6 +1889,7 @@ impl<S: SubjectSystem> Run<'_, S> {
             | AutomatonError::InvertedInterval { .. }
             | AutomatonError::PastOverFuture
             | AutomatonError::RepeatedPunctualInterval
+            | AutomatonError::OpenTimedInterval
             | AutomatonError::ClockLimit { .. }
             | AutomatonError::ProfileNotTranslated { .. }
             | AutomatonError::Invariant { .. } => fault("monitor-steps").into(),

@@ -381,9 +381,12 @@ fn an_unwritten_clock_under_the_timed_profile_needs_a_timed_model() {
 /// unitless lower bound refuses as a type mismatch.
 #[trace("TC-2623", "FR-943-AC-1", "FSpec-TC-1841", "FSpec-FR-766-AC-1")]
 #[test]
-#[ignore = "QSL-2321: a timed interval [q, *] is refused OpenInterval under the timed profile"]
 fn a_timed_interval_with_no_upper_bound_checks() {
-    let timed = profile_t("filament.temporal.timed/v1");
+    // The model's `time` declaration needs the complete temporal layer.
+    let timed = format!(
+        "{}profile tc = \"filament.temporal.complete/v1\";\n",
+        profile_t("filament.temporal.timed/v1")
+    );
     for formula in [
         "once[5 ms, *] holds(c.versionNumber = 2)",
         "eventually[5 ms, *] holds(c.versionNumber = 2)",

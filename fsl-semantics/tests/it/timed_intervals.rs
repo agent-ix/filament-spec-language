@@ -256,7 +256,7 @@ fn timed_intervals_keep_their_openness_and_refuse_empty_or_inverted_bounds() {
     );
     assert_eq!(
         (left_open.lower(), left_open.upper()),
-        (&whole(1), &whole(3))
+        (&whole(1), Some(&whole(3)))
     );
     assert_ne!(right_open_key, closed_key);
     assert_ne!(left_open_key, closed_key);
@@ -264,7 +264,7 @@ fn timed_intervals_keep_their_openness_and_refuse_empty_or_inverted_bounds() {
     assert_eq!(seconds, closed);
     assert_eq!(seconds_key, closed_key);
     let (_, half) = checked("eventually[0 ms, rational(1, 2) ms] holds(c.healthy)");
-    assert_eq!(only_interval(&half).upper(), &ratio(1, 2));
+    assert_eq!(only_interval(&half).upper(), Some(&ratio(1, 2)));
 
     for (body, interval, reason) in [
         (
@@ -453,8 +453,8 @@ fn a_unit_spelled_role_over_a_trace_subject_refuses_under_the_timed_profile() {
 }
 
 /// FR-233 "Intervals" through FR-230's time units: a step interval has
-/// bounds with no unit (`ill_typed`/`type-mismatch`), `[a, *]` refuses as
-/// ADR-014 TR-3 states, and a bound whose unit is unknown or of another
+/// bounds with no unit (`ill_typed`/`type-mismatch`), `[a, *]` included
+/// (FR-943), and a bound whose unit is unknown or of another
 /// dimension refuses at the unit. A supplied time source whose unit is no
 /// time unit is a broken input, not a refusal: FR-230 checks the unit.
 #[trace("TC-689", "FR-234")]
@@ -474,7 +474,7 @@ fn timed_bounds_are_time_quantities_of_the_unit_graph() {
     let (text, cause) = refused("eventually[3, *] holds(c.healthy)");
     assert_eq!(
         cause,
-        TemporalCause::OpenInterval {
+        TemporalCause::UnitlessTimedBound {
             span: first(&text, "[3, *]")
         }
     );
