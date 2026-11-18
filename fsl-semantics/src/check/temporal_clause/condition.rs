@@ -601,6 +601,7 @@ fn type_condition(
             &input.scope.dispatch_operations,
         )
         .with_observations(&observations)
+        .with_divisors_left_to_kernel()
         .check(body.root())?;
         Ok(TypedCondition {
             body,

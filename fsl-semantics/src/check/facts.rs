@@ -609,6 +609,10 @@ pub(crate) struct Definedness<'a> {
     /// dispatch declaration refusal and a malformed Rational operand shape are
     /// unchanged. The walk still records every reachable call.
     mode: CheckMode,
+    /// Whether an integer `div`, `rem` or `mod` whose divisor may be zero is
+    /// left to the kernel, which reads it as `division-by-zero`: a temporal
+    /// condition carries no S3 nonzero obligation for it (FR-337).
+    kernel_divisors: bool,
 }
 
 impl<'a> Definedness<'a> {
@@ -627,7 +631,16 @@ impl<'a> Definedness<'a> {
             aliases: BTreeMap::new(),
             initial: Facts::default(),
             mode: CheckMode::Linked,
+            kernel_divisors: false,
         }
+    }
+
+    /// Leave the nonzero obligation of an integer `div`, `rem` or `mod` to
+    /// the kernel (FR-337): the evaluation is undefined where the divisor is
+    /// zero, and every other obligation is still discharged here.
+    pub(crate) fn with_divisors_left_to_kernel(mut self) -> Self {
+        self.kernel_divisors = true;
+        self
     }
 
     /// Check under `mode`: `CheckMode::Kernel` records no unproved obligation.
@@ -1356,7 +1369,17 @@ impl<'a> Definedness<'a> {
     /// and record the call sites it makes.
     fn discharge(&mut self, node: CheckedNode<'_>, facts: &Facts) -> Result<(), CheckRefusal> {
         match self.mode {
-            CheckMode::Linked => self.discharge_node(node, facts),
+            CheckMode::Linked => match self.discharge_node(node, facts) {
+                Err(CheckRefusal {
+                    cause: CheckCause::Unproved(Obligation::Nonzero),
+                    ..
+                }) if self.kernel_divisors
+                    && matches!(node.kind(), NodeKind::IntegerDivision { .. }) =>
+                {
+                    Ok(())
+                }
+                other => other,
+            },
             CheckMode::Kernel => {
                 if Self::rational_shape_invalid(node) {
                     return Err(Self::refuse(node, Obligation::RationalRange));
