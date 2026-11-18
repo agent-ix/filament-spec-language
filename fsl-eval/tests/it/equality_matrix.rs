@@ -3951,11 +3951,10 @@ fn admits_equality_conversion_is_exactly_the_closed_table() {
     assert_eq!(check(&env, &text, &string), mismatch);
 }
 
-/// FSpec FR-149-AC-9: a float-leaf record and a `Set<Float64>` are admitted as
-/// `=` operands under the equality schedule. When this lands, `e28` is removed.
+/// FSpec FR-149-AC-9 and AC-25/26: float-bearing composites and collections
+/// are admitted under the settled IEEE equality matrix.
 #[trace("FSpec-TC-194", "FSpec-FR-149-AC-9")]
 #[test]
-#[ignore = "QSL-2173: equality over float-bearing composites and float sets not implemented yet"]
 fn e28b_equality_on_float_bearing_types_is_admitted() {
     let env = TypeEnvironment::new(
         [CompositeDeclaration::new(

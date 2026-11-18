@@ -58,7 +58,7 @@ fn witnesses_for_occurrence<'a>(
 /// FSpec-TC-233's EQ-01..05 positive rows: each typed equality retains its
 /// selected schedule, explicit conversion target, resolved units and enum
 /// sub-index before the IR-owned wire writer is connected.
-#[ix_trace_rs::trace("FSpec-TC-233", "QSL-1390")]
+#[ix_trace_rs::trace("FSpec-TC-233", "FSpec-TC-194", "FSpec-FR-149-AC-25", "QSL-1390")]
 #[test]
 fn fspec_positive_equality_vectors_match_typed_producer_facts() {
     use filament_semantic_value::declaration::{EqualityOperator, EqualitySchedule};
@@ -73,11 +73,12 @@ fn fspec_positive_equality_vectors_match_typed_producer_facts() {
         function text using v(a: Text[0, 8; nfc], b: Text[0, 8; nfc]): Boolean pure { a = b }\n\
         function enumeration using v(a: Color, b: Color): Boolean pure { a != b }\n\
         function quantity using v(a: Quantity<ms>, b: Quantity<s>): Boolean pure { convert<Quantity<s>>(a) = b }\n\
-        function plan using v(a: Point, b: Point): Boolean pure { a = b }\n\
+         function plan using v(a: Point, b: Point): Boolean pure { a = b }\n\
+        function float using v(a: Float64[nearest-even], b: Float64[nearest-even]): Boolean pure { a = b }\n\
         function compound using v(a: Quantity<m>, b: Quantity<m>): Boolean pure { a * b = a * b }\n";
     let graph = checked_graph(declarations);
     let facts: Vec<_> = graph.equality_producer_data().values().collect();
-    assert_eq!(facts.len(), 5, "each equality application is retained once");
+    assert_eq!(facts.len(), 6, "each equality application is retained once");
 
     let text = facts
         .iter()
@@ -114,6 +115,13 @@ fn fspec_positive_equality_vectors_match_typed_producer_facts() {
     assert_eq!(plan.operator(), EqualityOperator::Equal);
     assert!(plan.units().ids().next().is_none());
 
+    let float = facts
+        .iter()
+        .find(|fact| fact.schedule() == EqualitySchedule::Float)
+        .expect("the float comparison selects the IEEE equality schedule");
+    assert_eq!(float.operator(), EqualityOperator::Equal);
+    assert!(float.units().ids().next().is_none());
+
     let compound = facts
         .iter()
         .find(|fact| {
@@ -148,19 +156,18 @@ fn nested_equalities_each_retain_producer_facts() {
     }));
 }
 
-/// QSL-2173: checked-package/v2 lacks FR-148's `numericEqual` schedule, so
-/// float equality fails closed with a typed unsupported-construct refusal.
+/// FSpec FR-149-AC-25: the emitted equality decision retains its IEEE schedule.
 #[ix_trace_rs::trace("QSL-2173")]
 #[test]
-fn float_equality_schedule_is_a_typed_unsupported_construct() {
-    let graph = checked_graph(
+fn float_equality_schedule_roundtrips_as_float() {
+    let emission = emitted(
         "function float_equal using v(a: Float64[nearest-even], b: Float64[nearest-even]): Boolean pure { a = b }",
     );
-    let refusal = emit_checked(&CheckedPackage::link(graph))
-        .expect_err("float equality is not representable yet");
-    assert_eq!(refusal.code(), fsl_foundation::Code::UnsupportedConstruct);
-    assert_eq!(refusal.cause(), Some("not-yet-implemented"));
-    assert!(refusal.to_string().contains("QSL-2173"));
+    super::assert_equality_reader_outcomes(&emission, read_back(&emission));
+    assert_eq!(
+        wire(&emission)["checked_term_data"]["equality_decisions"][0]["schedule"],
+        "float"
+    );
 }
 
 /// FSpec FR-290: the equality expression's producer identity remains keyed by

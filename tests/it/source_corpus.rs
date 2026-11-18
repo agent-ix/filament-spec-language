@@ -512,6 +512,32 @@ fn corpus_values() {
     println!("{report}");
 }
 
+/// STD-654: the five float-bearing equality cases now check, while
+/// `String = Text` keeps its settled `operator-ineligible` refusal.
+#[test]
+fn std654_equality_corpus_cases_follow_the_settled_matrix() {
+    let directory = corpus_root().join("values");
+    for stem in [
+        "float-record-eq-ac25",
+        "float-union-eq-ac25",
+        "float-opt-eq-ac25",
+        "float-seq-eq-ac25",
+        "float-set-elem-ac26",
+        "string-text-eq-ac22",
+    ] {
+        let program = directory.join(format!("{stem}.native"));
+        let expectation = directory.join(format!("{stem}.expected.json"));
+        let bytes = std::fs::read(&expectation)
+            .unwrap_or_else(|error| panic!("{}: {error}", expectation.display()));
+        let expected: Expectation = serde_json::from_slice(&bytes)
+            .unwrap_or_else(|error| panic!("{}: invalid expectation: {error}", expectation.display()));
+        assert_eq!(expected.flips_with, None, "{stem} is settled");
+        let actual = execute(&program, &expected)
+            .unwrap_or_else(|error| panic!("{}: {error}", program.display()));
+        assert_eq!(mismatch(&program, &expected, &actual), None, "{stem}");
+    }
+}
+
 const REQUIRED_VALUE_CASES: &[&str] = &[
     "alias-cycle-bad",
     "alias-ok",
@@ -550,7 +576,7 @@ const REQUIRED_VALUE_CASES: &[&str] = &[
     "float-exact-mix-bad",
     "float-ok",
     "float-opt-eq-ac25",
-    "float-record-eq-bad",
+    "float-record-eq-ac25",
     "float-seq-eq-ac25",
     "float-set-elem-ac26",
     "float-to-int-bad",
@@ -757,12 +783,6 @@ const REQUIRED_FLIPS_BY_CASE: &[(&str, &str)] = &[
     ("qty-carried", "none"),
     ("qty-carried-order", "none"),
     ("qty-affine", "none"),
-    ("string-text-eq-ac22", "STD-654"),
-    ("float-record-eq-bad", "STD-654"),
-    ("float-union-eq-ac25", "STD-654"),
-    ("float-opt-eq-ac25", "STD-654"),
-    ("float-seq-eq-ac25", "STD-654"),
-    ("float-set-elem-ac26", "STD-654"),
     ("float-conv-alias-eq", "QSL-2004"),
     ("float-conv-alias-onesided", "QSL-2004"),
     ("float-conv-inline-onesided", "QSL-2004"),
@@ -785,7 +805,6 @@ const EXPECTED_FLIP_COUNTS: &[(&str, usize)] = &[
     ("QSL-2006", 1),
     ("QSL-2007", 3),
     ("QSL-2008", 1),
-    ("STD-654", 6),
 ];
 
 fn assert_values_corpus_inventory(directory: &Path) {
