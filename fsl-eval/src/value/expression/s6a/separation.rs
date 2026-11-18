@@ -57,6 +57,17 @@ pub struct StopReport {
     pub value_path: RuntimeValuePath,
 }
 
+/// FR-265: an authored comparison evaluated on the claim's own level.
+#[derive(Clone, Debug)]
+pub struct ComparisonReport {
+    /// The comparison's occurrence key.
+    pub comparison: OccurrenceKey,
+    /// Its left and right operand values.
+    pub operands: [Value; 2],
+    /// Its Boolean result.
+    pub result: bool,
+}
+
 /// FR-107 "Read paths": one field or member selection a clause evaluated.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ClauseRead {
@@ -115,6 +126,11 @@ impl ClauseEvaluation {
     /// level, when it stopped before its last element.
     pub fn stop(&self, at: &Location) -> Option<&StopReport> {
         self.trail.stops.get(at)
+    }
+
+    /// Authored comparisons completed on the claim's own level.
+    pub fn comparison(&self, at: &Location) -> Option<&ComparisonReport> {
+        self.trail.comparisons.get(at)
     }
 }
 
@@ -284,6 +300,7 @@ pub(crate) struct Trail {
     reads: Vec<ClauseRead>,
     decisions: BTreeMap<Location, bool>,
     stops: BTreeMap<Location, StopReport>,
+    comparisons: BTreeMap<Location, ComparisonReport>,
     /// Each recorded collection or record beside its provenance; looked up
     /// by pointer identity, which a `let` binding or a stored copy keeps.
     located: Vec<(Value, Provenance)>,
@@ -304,6 +321,7 @@ impl Trail {
             reads: Vec::new(),
             decisions: BTreeMap::new(),
             stops: BTreeMap::new(),
+            comparisons: BTreeMap::new(),
             located: Vec::new(),
         }
     }
@@ -334,6 +352,10 @@ impl Trail {
 
     pub(crate) fn stopped(&mut self, at: &Location, report: StopReport) {
         self.stops.insert(at.clone(), report);
+    }
+
+    pub(crate) fn compared(&mut self, at: &Location, report: ComparisonReport) {
+        self.comparisons.insert(at.clone(), report);
     }
 
     /// Record where `value`, a collection, a record or an optional value,

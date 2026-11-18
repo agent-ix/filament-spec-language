@@ -62,7 +62,8 @@ pub use protocol_slot::{
 };
 pub use s6a::separation::{
     ClauseEvaluation, ClauseRead, InvocationBinding, ObservationIdentity, RuntimeValuePath,
-    Separation, SeparationStep, StopReport, ValuePathStep, ValuePathSubject, WitnessClaim,
+    ComparisonReport, Separation, SeparationStep, StopReport, ValuePathStep, ValuePathSubject,
+    WitnessClaim,
 };
 pub use value_invariants::{ValueInvariantEvaluation, ValueInvariantOutcome, ValueInvariantResult};
 

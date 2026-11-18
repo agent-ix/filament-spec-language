@@ -21,8 +21,8 @@ use super::causes::{
 };
 use super::protocol_slot::charges::{BinderCharges, ChargeRouting, Owner, Owners};
 use super::s6a::separation::{
-    locatable, occurrence_at, InvocationBinding, Provenance, RuntimeValuePath, Separation,
-    SeparationStep, StopReport, Trail, ValuePathStep, ValuePathSubject, WitnessClaim,
+    locatable, occurrence_at, ComparisonReport, InvocationBinding, Provenance, RuntimeValuePath,
+    Separation, SeparationStep, StopReport, Trail, ValuePathStep, ValuePathSubject, WitnessClaim,
 };
 use super::slot_admission;
 use filament_checked::key::DeclarationKey;
@@ -1126,6 +1126,33 @@ impl<'a, 'm, N: NodeSource<'a>> Machine<'a, 'm, N> {
             && self.frames.len() == 1
             && self.iterations == 0
             && self.imported.is_empty()
+    }
+
+    /// FR-265: retain a completed authored comparison on the claim's own
+    /// level, alongside its result and operands.
+    fn note_comparison(&mut self, node: N, left: &Value, right: &Value, result: bool) {
+        if !self.on_claim_level() || node.is_ordering_part() {
+            return;
+        }
+        let Some(location) = node.location() else {
+            return;
+        };
+        let Ok(graph) = self.world.graph() else {
+            return;
+        };
+        let Some(comparison) = occurrence_at(graph, location, Some(Operator::Binary)) else {
+            return;
+        };
+        if let Some(trail) = self.trail.as_mut() {
+            trail.compared(
+                location,
+                ComparisonReport {
+                    comparison,
+                    operands: [left.clone(), right.clone()],
+                    result,
+                },
+            );
+        }
     }
 
     /// Evaluate against `package` from now on, returning the package this
@@ -2862,7 +2889,9 @@ impl<'a, 'm, N: NodeSource<'a>> Machine<'a, 'm, N> {
             NodeKind::Order(operator, kind, _, _) => {
                 let right = self.pop()?;
                 let left = self.pop()?;
-                Value::Boolean(self.order(*operator, *kind, &left, &right)?)
+                let result = self.order(*operator, *kind, &left, &right)?;
+                self.note_comparison(node, &left, &right, result);
+                Value::Boolean(result)
             }
             NodeKind::Equality(operator, checked, left_node, right_node) => {
                 let right = self.pop()?;
@@ -2878,20 +2907,22 @@ impl<'a, 'm, N: NodeSource<'a>> Machine<'a, 'm, N> {
                         && !node.at(id).value_type().admits(value)
                         && self.reads_witnessed(node.at(id))
                 };
-                match (&left, &right) {
+                let result = match (&left, &right) {
                     (Value::Integer(l), Value::Integer(r))
                         if outside_declared_range(*left_node, &left)
                             || outside_declared_range(*right_node, &right) =>
                     {
-                        Value::Boolean((l == r) == (*operator == EqualityOperator::Equal))
+                        (l == r) == (*operator == EqualityOperator::Equal)
                     }
-                    _ => Value::Boolean(outcome_into_stop(checked.evaluate(
+                    _ => outcome_into_stop(checked.evaluate(
                         self.world.types(),
                         &left,
                         &right,
                         self.meter,
-                    ))?),
-                }
+                    ))?,
+                };
+                self.note_comparison(node, &left, &right, result);
+                Value::Boolean(result)
             }
             NodeKind::IeeeNumericEquality(_, _) => {
                 let right = self.pop()?;

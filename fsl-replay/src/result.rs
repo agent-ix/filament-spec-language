@@ -404,6 +404,13 @@ pub struct SeparatingWitnessRecord {
     /// The decisive quantifier's occurrence key (ADR-013 O-07); absent for a
     /// family with no quantifier occurrence (a protocol analysis).
     pub quantifier: Option<OccurrenceKey>,
+    /// The deciding authored comparison occurrence, for a comparison-leaf
+    /// witness.
+    pub deciding_comparison: Option<OccurrenceKey>,
+    /// The comparison's left and right operand values.
+    pub operands: Option<[Value; 2]>,
+    /// The claim nodes visited from its root through the deciding comparison.
+    pub decision_path: Option<Vec<OccurrenceKey>>,
     /// The deciding element: the kernel value bound to the quantifier's
     /// binder at the stop, or a protocol element.
     pub deciding_element: DecidingElement,
@@ -420,6 +427,13 @@ pub struct SeparatingWitnessRecord {
 impl PartialEq for SeparatingWitnessRecord {
     fn eq(&self, other: &Self) -> bool {
         self.quantifier == other.quantifier
+            && self.deciding_comparison == other.deciding_comparison
+            && (self.operands.as_ref().is_some_and(|left| {
+                other.operands.as_ref().is_some_and(|right| {
+                    same_element(&left[0], &right[0]) && same_element(&left[1], &right[1])
+                })
+            }) || (self.operands.is_none() && other.operands.is_none()))
+            && self.decision_path == other.decision_path
             && self.deciding_element == other.deciding_element
             && self.index == other.index
             && self.value_path == other.value_path
@@ -495,6 +509,24 @@ impl TemporalDecisive {
         }
     }
 
+    /// FR-265's state-clause record for a deciding authored comparison.
+    pub(crate) fn from_comparison(
+        comparison: &fsl_eval::value::ComparisonReport,
+        decision_path: Vec<OccurrenceKey>,
+        root: RuntimeValuePath,
+    ) -> Self {
+        Self {
+            quantifier: None,
+            deciding_comparison: Some(comparison.comparison.clone()),
+            operands: Some(comparison.operands.clone()),
+            decision_path: Some(decision_path),
+            deciding_element: DecidingElement::Value(Value::Boolean(comparison.result)),
+            index: None,
+            value_path: root,
+            trace_position: None,
+        }
+    }
+
     /// The decisive information of an atom no quantifier decides: its
     /// value `false` at `root`, the empty path at the observation's root.
     pub(crate) fn undecided(root: RuntimeValuePath) -> Self {
@@ -535,6 +567,9 @@ impl SeparatingWitnessRecord {
     pub(crate) fn from_stop(report: &StopReport) -> Self {
         Self {
             quantifier: Some(report.quantifier.clone()),
+            deciding_comparison: None,
+            operands: None,
+            decision_path: None,
             deciding_element: DecidingElement::Value(report.element.clone()),
             index: Some(report.index),
             value_path: report.value_path.clone(),
